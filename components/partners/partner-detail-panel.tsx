@@ -26,6 +26,7 @@ import {
   MapPin,
   StickyNote,
   Link as LinkIcon,
+  Tag,
 } from "lucide-react";
 import { UserPartner, PartnerFormData, ManualRemoval, ManualFileRemoval } from "@/types/partner";
 import { Transaction } from "@/types/transaction";
@@ -63,6 +64,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { FieldRow, SectionHeader, CollapsibleListSection, ListItem } from "@/components/ui/detail-panel-primitives";
 import { useAuth } from "@/components/auth";
 import { Bot, Hand, Sparkles, MousePointerClick } from "lucide-react";
+import { useNoReceiptCategories } from "@/hooks/use-no-receipt-categories";
 
 // ============================================================================
 // Match Source Badge
@@ -128,6 +130,7 @@ export function PartnerDetailPanel({
   const { updatePartner, deletePartner } = usePartners();
   const { integrations } = useEmailIntegrations();
   const { isPartnerMarkedAsMe } = useUserData();
+  const { categories: allCategories } = useNoReceiptCategories();
   const invoiceSourcesHook = useInvoiceSources({ partnerId: partner.id });
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isMarkingAsMe, setIsMarkingAsMe] = useState(false);
@@ -280,6 +283,28 @@ export function PartnerDetailPanel({
       fetchFiles();
     }
   }, [partner.id, transactions, isLoadingTransactions, userId]);
+
+  // Compute categories from transactions that have noReceiptCategoryId
+  const connectedCategories = useMemo(() => {
+    const categoryMap = new Map<string, { categoryId: string; name: string; count: number }>();
+    for (const tx of transactions) {
+      if (tx.noReceiptCategoryId) {
+        const existing = categoryMap.get(tx.noReceiptCategoryId);
+        if (existing) {
+          existing.count++;
+        } else {
+          // Look up category name from user's categories
+          const category = allCategories.find((c) => c.id === tx.noReceiptCategoryId);
+          categoryMap.set(tx.noReceiptCategoryId, {
+            categoryId: tx.noReceiptCategoryId,
+            name: category?.name || tx.noReceiptCategoryId,
+            count: 1,
+          });
+        }
+      }
+    }
+    return Array.from(categoryMap.values()).sort((a, b) => b.count - a.count);
+  }, [transactions, allCategories]);
 
   const handleEdit = async (data: PartnerFormData) => {
     await updatePartner(partner.id, data);
@@ -776,6 +801,28 @@ export function PartnerDetailPanel({
                 </>
               )}
             </CollapsibleListSection>
+
+            {/* Categories (No-Receipt) */}
+            {connectedCategories.length > 0 && (
+              <CollapsibleListSection
+                title="Categories"
+                icon={<Tag className="h-4 w-4" />}
+                count={connectedCategories.length}
+                isLoading={isLoadingTransactions}
+              >
+                {connectedCategories.map((cat) => (
+                  <div
+                    key={cat.categoryId}
+                    className="flex items-center justify-between py-1.5 px-2 -mx-2 rounded hover:bg-muted/50"
+                  >
+                    <span className="text-sm truncate">{cat.name}</span>
+                    <Badge variant="secondary" className="text-xs shrink-0 ml-2">
+                      {cat.count} tx
+                    </Badge>
+                  </div>
+                ))}
+              </CollapsibleListSection>
+            )}
           </div>
         </div>
       </ScrollArea>

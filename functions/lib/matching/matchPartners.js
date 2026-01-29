@@ -47,8 +47,12 @@ const db = (0, firestore_1.getFirestore)();
  */
 async function queueAgenticPartnerSearch(userId, transactionId, transactionData, topSuggestionConfidence) {
     const promptParts = [
-        `Find partner for transaction "${transactionData.name}"`,
+        `Find partner for transaction ID: ${transactionId}`,
     ];
+    // Add transaction name if available (not included in ID line to keep prompt clean)
+    if (transactionData.name) {
+        promptParts.push(`Transaction name: "${transactionData.name}"`);
+    }
     if (topSuggestionConfidence > 0) {
         promptParts.push(`Rule-based matching found suggestions but no confident match (top: ${topSuggestionConfidence}%)`);
     }

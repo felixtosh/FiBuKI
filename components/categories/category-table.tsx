@@ -31,8 +31,7 @@ export function CategoryTable({
       (c) =>
         c.name.toLowerCase().includes(search) ||
         c.description.toLowerCase().includes(search) ||
-        c.helperText.toLowerCase().includes(search) ||
-        c.learnedPatterns.some((p) => p.pattern.toLowerCase().includes(search))
+        c.helperText.toLowerCase().includes(search)
     );
   }, [categories, searchValue]);
 

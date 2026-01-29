@@ -1,10 +1,22 @@
 /**
- * Automation Definitions
+ * @deprecated This file is deprecated and will be removed.
  *
- * This file defines the automation metadata that lives alongside the matching logic.
- * The automation registry imports from here, ensuring a single source of truth.
+ * The new automation registry is in functions/src/automation/
+ * - Types: functions/src/automation/types.ts
+ * - Registry: functions/src/automation/automation-registry.ts
+ * - Callable: functions/src/automation/getAutomationsCallable.ts
  *
- * When you add/change matching logic, update the corresponding definition here.
+ * Automation metadata is now co-located with Cloud Function triggers
+ * (e.g., matchFilePartner.ts exports AUTOMATION_META).
+ *
+ * The admin page at /admin/automation now fetches from the getAutomations callable.
+ *
+ * For MCP server, run: npm run generate:mcp-automations
+ * This generates mcp-server/src/generated/automations.ts
+ *
+ * ============================================================================
+ * LEGACY FILE - KEEP FOR BACKWARD COMPATIBILITY DURING TRANSITION
+ * ============================================================================
  */
 
 import type { AutomationStep, AutomationPipeline, PipelineId } from "@/types/automation";

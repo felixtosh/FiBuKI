@@ -60,7 +60,7 @@ const storage = (0, storage_1.getStorage)();
 const INBOUND_ADDRESSES_COLLECTION = "inboundEmailAddresses";
 const INBOUND_LOGS_COLLECTION = "inboundEmailLogs";
 const FILES_COLLECTION = "files";
-const INBOUND_EMAIL_DOMAIN = "i7v6.com";
+const INBOUND_EMAIL_DOMAIN = "fibuki.com";
 /** Supported attachment MIME types */
 const SUPPORTED_MIME_TYPES = [
     "application/pdf",
@@ -412,7 +412,7 @@ function getToAddresses(to) {
  * Usage:
  * curl -X POST http://localhost:5001/PROJECT_ID/europe-west1/testInboundEmail \
  *   -H "Content-Type: application/json" \
- *   -d '{"to":"invoices-PREFIX@i7v6.com","from":"test@example.com","subject":"Test Invoice","html":"<h1>Test</h1>"}'
+ *   -d '{"to":"invoices-PREFIX@fibuki.com","from":"test@example.com","subject":"Test Invoice","html":"<h1>Test</h1>"}'
  */
 exports.testInboundEmail = (0, https_1.onRequest)({
     region: "europe-west1",

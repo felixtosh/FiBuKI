@@ -11,7 +11,7 @@
  *                                             -> matchFileTransactions fires
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.matchFilePartner = void 0;
+exports.matchFilePartner = exports.AUTOMATION_META = void 0;
 exports.runPartnerMatching = runPartnerMatching;
 const firestore_1 = require("firebase-functions/v2/firestore");
 const firestore_2 = require("firebase-admin/firestore");
@@ -20,6 +20,65 @@ const companyNameValidator_1 = require("../utils/companyNameValidator");
 const filePartnerMatcher_1 = require("../utils/filePartnerMatcher");
 const lookupCompany_1 = require("../ai/lookupCompany");
 const validateDomainOwnership_1 = require("../ai/validateDomainOwnership");
+// =============================================================================
+// AUTOMATION METADATA
+// =============================================================================
+exports.AUTOMATION_META = {
+    id: "matchFilePartner",
+    name: "Match File to Partner",
+    description: "Finds matching partners for uploaded files using IBAN, VAT, name, and email domain matching",
+    trigger: {
+        type: "document_update",
+        collection: "files",
+        conditions: [
+            { field: "extractionComplete", from: false, to: true },
+            { field: "extractionError", to: null },
+        ],
+    },
+    effects: [
+        {
+            entity: "file",
+            fields: [
+                "partnerId",
+                "partnerType",
+                "partnerMatchedBy",
+                "partnerMatchConfidence",
+                "partnerSuggestions",
+                "partnerMatchComplete",
+            ],
+            action: "update",
+        },
+        {
+            entity: "partner",
+            fields: ["aliases", "emailDomains"],
+            action: "update",
+        },
+    ],
+    learns: [
+        {
+            entity: "partner",
+            fields: ["aliases"],
+            description: "Adds extracted partner name as alias when matched",
+        },
+        {
+            entity: "partner",
+            fields: ["emailDomains"],
+            description: "Learns email sender domain from Gmail files (with validation)",
+        },
+    ],
+    config: {
+        autoMatchThreshold: 89,
+        maxSuggestions: 3,
+        lookupCreatedConfidence: 89,
+    },
+    chains: ["matchFileTransactions"],
+    icon: "Building2",
+    category: "matching",
+    aiPowered: true,
+};
+// =============================================================================
+// IMPLEMENTATION
+// =============================================================================
 const db = (0, firestore_2.getFirestore)();
 /**
  * Check if a VAT ID belongs to the user

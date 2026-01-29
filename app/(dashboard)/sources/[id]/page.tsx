@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { useImports } from "@/hooks/use-imports";
 import { ImportHistoryCard } from "@/components/sources/import-history-card";
+import { DraftImportsSection } from "@/components/sources/draft-imports-section";
 import { SyncStatusCard } from "@/components/sources/sync-status-card";
 import { EditSourceDialog } from "@/components/sources/edit-source-dialog";
 import { format } from "date-fns";
@@ -50,7 +51,7 @@ export default function SourceDetailPage({ params }: SourceDetailPageProps) {
   const { id } = use(params);
   const router = useRouter();
   const { sources, loading, deleteSource, updateSource } = useSources();
-  const { imports, loading: importsLoading, deleteImport } = useImports(id);
+  const { imports, drafts, loading: importsLoading, deleteImport, deleteDraft } = useImports(id);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
@@ -427,6 +428,14 @@ export default function SourceDetailPage({ params }: SourceDetailPageProps) {
               })()}
             </CardContent>
           </Card>
+
+          {/* Draft Imports */}
+          <DraftImportsSection
+            sourceId={source.id}
+            drafts={drafts}
+            onDeleteDraft={deleteDraft}
+            isLoading={importsLoading}
+          />
 
           {/* Import History */}
           <ImportHistoryCard

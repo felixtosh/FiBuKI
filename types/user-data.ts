@@ -49,6 +49,13 @@ export interface UserData {
   ownEmails?: string[];
 
   /**
+   * User's tax number (Steuernummer/FASTNR).
+   * For Austria: 9-digit number without spaces (e.g., "123456789").
+   * Required for FinanzOnline XML export.
+   */
+  taxNumber?: string;
+
+  /**
    * Partner IDs that were marked as "this is my company".
    * Used to show visual indicators and allow easy undo.
    */
@@ -72,6 +79,7 @@ export interface UserDataFormData {
   vatIds: string[];
   ibans: string[];
   ownEmails?: string[];
+  taxNumber?: string;
   markedAsMe?: string[];
 }
 

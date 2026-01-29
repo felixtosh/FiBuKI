@@ -15,6 +15,7 @@ import {
   startAuthentication,
 } from "@simplewebauthn/browser";
 import type { PublicKeyCredentialRequestOptionsJSON } from "@simplewebauthn/types";
+import type { MfaStatusResponse } from "@/types/mfa";
 
 export type MfaChallengeMethod = "totp" | "passkey" | "backup_code";
 
@@ -80,6 +81,46 @@ export function useMfaChallenge() {
     []
   );
 
+  // Handle custom MFA required (for passkey-only users who bypassed Firebase MFA)
+  const handleCustomMfaRequired = useCallback(
+    (mfaStatus: MfaStatusResponse) => {
+      // Determine available methods based on what the user has set up
+      const methods: MfaChallengeMethod[] = [];
+
+      // Passkeys are available (this is why we're here)
+      if (mfaStatus.passkeysEnabled) {
+        methods.push("passkey");
+      }
+
+      // TOTP if enabled (shouldn't be for passkey-only users, but include for completeness)
+      if (mfaStatus.totpEnabled) {
+        methods.push("totp");
+      }
+
+      // Backup codes if available
+      if (mfaStatus.backupCodesRemaining > 0) {
+        methods.push("backup_code");
+      }
+
+      // Determine the default method based on lastMfaMethod preference
+      let selectedMethod = methods[0] || null;
+      if (mfaStatus.lastMfaMethod && methods.includes(mfaStatus.lastMfaMethod)) {
+        selectedMethod = mfaStatus.lastMfaMethod;
+      }
+
+      setState({
+        isRequired: true,
+        resolver: null, // No Firebase resolver for custom MFA
+        availableMethods: methods,
+        selectedMethod,
+        enrolledFactors: [],
+      });
+
+      setError(null);
+    },
+    []
+  );
+
   // Select an MFA method
   const selectMethod = useCallback((method: MfaChallengeMethod) => {
     setState((prev) => ({ ...prev, selectedMethod: method }));
@@ -141,12 +182,12 @@ export function useMfaChallenge() {
     setError(null);
 
     try {
-      // Get authentication options from server
+      // Get authentication options from server (pass current origin for RP ID selection)
       const getOptionsFn = httpsCallable<
-        void,
+        { origin: string },
         PublicKeyCredentialRequestOptionsJSON
       >(functions, "generatePasskeyAuthOptions");
-      const optionsResult = await getOptionsFn();
+      const optionsResult = await getOptionsFn({ origin: window.location.origin });
       const options = optionsResult.data;
 
       // Trigger WebAuthn authentication
@@ -176,8 +217,17 @@ export function useMfaChallenge() {
         enrolledFactors: [],
       });
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Passkey verification failed";
+      // Handle user cancellation gracefully
+      const errorName = err instanceof Error ? err.name : "";
+      let message: string;
+
+      if (errorName === "NotAllowedError" || errorName === "AbortError") {
+        // User cancelled the WebAuthn prompt
+        message = "Verification was cancelled. Please try again.";
+      } else {
+        message = err instanceof Error ? err.message : "Passkey verification failed";
+      }
+
       setError(message);
       throw err;
     } finally {
@@ -248,6 +298,7 @@ export function useMfaChallenge() {
 
     // Actions
     handleMfaRequired,
+    handleCustomMfaRequired,
     selectMethod,
     verifyTotp,
     verifyPasskey,

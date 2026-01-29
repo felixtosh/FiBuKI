@@ -72,6 +72,32 @@ exports.DEFAULT_STRATEGIES = [
     "email_invoice",
     "email_attachment",
 ];
+/**
+ * Check if Gmail is connected but needs reauthentication.
+ * Returns true if processing should be paused (Gmail connected but needs reauth).
+ * Returns false if:
+ * - No Gmail integrations exist (proceed with non-email strategies)
+ * - Gmail is connected and healthy (proceed normally)
+ */
+async function shouldPauseForGmailReauth(userId) {
+    // Check for any email integrations that need reauth
+    const needsReauthSnapshot = await db
+        .collection("emailIntegrations")
+        .where("userId", "==", userId)
+        .where("isActive", "==", true)
+        .where("needsReauth", "==", true)
+        .limit(1)
+        .get();
+    if (!needsReauthSnapshot.empty) {
+        const integration = needsReauthSnapshot.docs[0].data();
+        return {
+            shouldPause: true,
+            reason: "Gmail connected but needs reconnection",
+            integrationEmail: integration.email,
+        };
+    }
+    return { shouldPause: false };
+}
 // ============================================================================
 // Helper Functions
 // ============================================================================
@@ -1446,6 +1472,18 @@ async function logSearchAttempt(transactionId, queueId, triggeredBy, attempt) {
 async function processQueueItem(queueItem) {
     const startTime = Date.now();
     console.log(`[PrecisionSearch] Processing queue ${queueItem.id} (${queueItem.scope}, ${queueItem.triggeredBy})`);
+    // Check if Gmail needs reauth - pause processing to avoid incomplete searches
+    const gmailStatus = await shouldPauseForGmailReauth(queueItem.userId);
+    if (gmailStatus.shouldPause) {
+        console.log(`[PrecisionSearch] Pausing queue ${queueItem.id}: ${gmailStatus.reason} (${gmailStatus.integrationEmail})`);
+        // Revert to pending so it will be picked up again after Gmail reconnection
+        await db.collection("precisionSearchQueue").doc(queueItem.id).update({
+            status: "pending",
+            startedAt: null,
+            lastError: `Paused: ${gmailStatus.reason}. Will resume when Gmail is reconnected.`,
+        });
+        return { paused: true, pauseReason: gmailStatus.reason };
+    }
     let transactionsProcessed = queueItem.transactionsProcessed;
     let transactionsWithMatches = queueItem.transactionsWithMatches;
     let totalFilesConnected = queueItem.totalFilesConnected;
@@ -1490,7 +1528,7 @@ async function processQueueItem(queueItem) {
             if (transactions.length === 0) {
                 // No more transactions to process
                 await completeQueueItem();
-                return;
+                return {};
             }
             await processTransactionBatch(transactions);
         }
@@ -1519,6 +1557,7 @@ async function processQueueItem(queueItem) {
         console.error(`[PrecisionSearch] Error processing queue:`, error);
         await handleError(error);
     }
+    return {};
     // ========== Helper functions ==========
     async function processTransactionBatch(transactions) {
         for (const tx of transactions) {
@@ -1723,7 +1762,10 @@ exports.processPrecisionSearchQueue = (0, scheduler_1.onSchedule)({
         startedAt: firestore_2.Timestamp.now(),
     });
     try {
-        await processQueueItem(queueItem);
+        const result = await processQueueItem(queueItem);
+        if (result.paused) {
+            console.log(`[PrecisionSearch] Queue item paused: ${result.pauseReason}`);
+        }
     }
     catch (error) {
         console.error("[PrecisionSearch] Queue processor error:", error);
@@ -1757,7 +1799,12 @@ exports.onPrecisionSearchQueueCreated = (0, firestore_1.onDocumentCreated)({
         startedAt: firestore_2.Timestamp.now(),
     });
     try {
-        await processQueueItem(queueItem);
+        const result = await processQueueItem(queueItem);
+        if (result.paused) {
+            console.log(`[PrecisionSearch] Queue item paused: ${result.pauseReason}`);
+            // Don't retry - item is already set back to pending and will resume when Gmail reconnects
+            return;
+        }
     }
     catch (error) {
         console.error("[PrecisionSearch] Immediate processing error:", error);

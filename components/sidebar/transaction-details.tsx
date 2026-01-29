@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { format } from "date-fns";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -25,7 +25,7 @@ import { AddPartnerDialog } from "@/components/partners/add-partner-dialog";
 import { PartnerPill } from "@/components/partners/partner-pill";
 import { FieldRow } from "@/components/ui/detail-panel-primitives";
 import { usePartnerSuggestions, useAssignedPartner } from "@/hooks/use-partner-suggestions";
-import { Plus, ExternalLink, Loader2, Search } from "lucide-react";
+import { Plus, ExternalLink, Loader2, WandSparkles } from "lucide-react";
 import { ShowMoreButton } from "@/components/ui/show-more-button";
 import { cn } from "@/lib/utils";
 import { functions } from "@/lib/firebase/config";
@@ -43,7 +43,7 @@ interface TransactionDetailsProps {
     confidence?: number
   ) => Promise<void>;
   onRemovePartner: () => Promise<void>;
-  onCreatePartner: (data: { name: string; aliases?: string[]; vatId?: string; ibans?: string[]; website?: string; country?: string; notes?: string }) => Promise<string>;
+  onCreatePartner: (data: { name: string; aliases?: string[]; vatId?: string; ibans?: string[]; website?: string; country?: string; notes?: string }, options?: { skipAutoMatch?: boolean }) => Promise<string>;
 }
 
 export function TransactionDetails({
@@ -68,6 +68,12 @@ export function TransactionDetails({
   // Get partner suggestions and assigned partner (all from server-side data)
   const suggestions = usePartnerSuggestions(transaction, userPartners, globalPartners);
   const assignedPartner = useAssignedPartner(transaction, userPartners, globalPartners);
+
+  // Memoize initialData to prevent unnecessary re-renders of AddPartnerDialog
+  const dialogInitialData = useMemo(() => ({
+    name: transaction.partner || transaction.name || undefined,
+    ibans: transaction.partnerIban ? [transaction.partnerIban] : undefined,
+  }), [transaction.partner, transaction.name, transaction.partnerIban]);
 
   // Trigger partner matching when opening a transaction without partner/suggestions
   useEffect(() => {
@@ -127,7 +133,9 @@ export function TransactionDetails({
   };
 
   const handleAddPartner = async (data: { name: string; aliases?: string[]; vatId?: string; ibans?: string[]; website?: string; country?: string; notes?: string }) => {
-    const partnerId = await onCreatePartner(data);
+    // Skip auto-match on partner create - we're manually assigning immediately after
+    // This prevents race condition where onPartnerCreate auto-matches before manual assignment
+    const partnerId = await onCreatePartner(data, { skipAutoMatch: true });
     // Auto-assign the newly created partner
     await onAssignPartner(partnerId, "user", "manual", 100);
     return partnerId;
@@ -240,12 +248,12 @@ export function TransactionDetails({
               className="h-6 w-6"
               onClick={() => startPartnerSearchThread(transaction.id)}
               disabled={isChatLoading}
-              title="Search for partner"
+              title="AI search for partner"
             >
               {isChatLoading ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
-                <Search className="h-3.5 w-3.5" />
+                <WandSparkles className="h-3.5 w-3.5" />
               )}
             </Button>
           )}
@@ -306,10 +314,7 @@ export function TransactionDetails({
         suggestions={suggestions}
         userPartners={userPartners}
         globalPartners={globalPartners}
-        initialData={{
-          name: transaction.partner || transaction.name || undefined,
-          ibans: transaction.partnerIban ? [transaction.partnerIban] : undefined,
-        }}
+        initialData={dialogInitialData}
       />
     </div>
   );

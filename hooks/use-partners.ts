@@ -59,10 +59,13 @@ export function usePartners() {
 
   // Mutations call Cloud Functions
   const createPartner = useCallback(
-    async (data: PartnerFormData): Promise<string> => {
-      const result = await callFunction<{ data: PartnerFormData }, { partnerId: string }>(
+    async (data: PartnerFormData, options?: { skipAutoMatch?: boolean }): Promise<string> => {
+      const result = await callFunction<
+        { data: PartnerFormData; skipAutoMatch?: boolean },
+        { partnerId: string }
+      >(
         "createUserPartner",
-        { data }
+        { data, skipAutoMatch: options?.skipAutoMatch }
       );
       return result.partnerId;
     },

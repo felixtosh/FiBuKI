@@ -1,11 +1,46 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.onPartnerCreate = void 0;
+exports.onPartnerCreate = exports.AUTOMATION_META = void 0;
 const firestore_1 = require("firebase-functions/v2/firestore");
 const firestore_2 = require("firebase-admin/firestore");
 const partner_matcher_1 = require("../utils/partner-matcher");
 const matchCategories_1 = require("./matchCategories");
 const createLocalPartnerFromGlobal_1 = require("./createLocalPartnerFromGlobal");
+// =============================================================================
+// AUTOMATION METADATA
+// =============================================================================
+exports.AUTOMATION_META = {
+    id: "onPartnerCreate",
+    name: "Re-match on Partner Create",
+    description: "Re-evaluates unmatched transactions when a new partner is created to find matches",
+    trigger: {
+        type: "document_create",
+        collection: "partners",
+    },
+    effects: [
+        {
+            entity: "transaction",
+            fields: [
+                "partnerId",
+                "partnerType",
+                "partnerMatchedBy",
+                "partnerMatchConfidence",
+                "partnerSuggestions",
+            ],
+            action: "update",
+        },
+    ],
+    config: {
+        autoApplyThreshold: 89,
+        maxTransactionsPerRun: 500,
+    },
+    chains: ["onTransactionUpdate"],
+    icon: "Building2",
+    category: "matching",
+};
+// =============================================================================
+// IMPLEMENTATION
+// =============================================================================
 const db = (0, firestore_2.getFirestore)();
 /**
  * Triggered when a new user partner is created
@@ -24,6 +59,12 @@ exports.onPartnerCreate = (0, firestore_1.onDocumentCreated)({
     console.log(`New partner created: ${partnerData.name} (${partnerId}) for user ${userId}`);
     if (partnerData.globalPartnerId && partnerData.createdBy === "auto_partner_match") {
         console.log(`Skipping re-match for localized partner ${partnerId} (global ${partnerData.globalPartnerId})`);
+        return;
+    }
+    // Skip for partners created for manual assignment
+    // (the calling code will assign the partner manually after creation)
+    if (partnerData.createdBy === "manual_assignment") {
+        console.log(`Skipping re-match for manually created partner ${partnerId} - will be assigned manually`);
         return;
     }
     try {

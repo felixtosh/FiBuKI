@@ -21,8 +21,7 @@ export interface CategoryDataTableHandle {
 
 // Default column sizes for categories table
 const DEFAULT_CATEGORY_COLUMN_SIZES: Record<string, number> = {
-  name: 300,
-  patterns: 120,
+  name: 350,
   partners: 120,
   transactions: 120,
 };

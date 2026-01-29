@@ -23,6 +23,7 @@ import {
 } from "firebase/auth";
 import { httpsCallable } from "firebase/functions";
 import { auth, functions } from "@/lib/firebase/config";
+import { MfaStatusResponse, MfaMethod } from "@/types/mfa";
 
 // Check if an error is an MFA required error
 function isMfaError(error: unknown): error is MultiFactorError {
@@ -44,15 +45,22 @@ interface AuthContextValue {
   signOut: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
   refreshAdminStatus: () => Promise<void>;
-  // MFA challenge state
+  // MFA challenge state (Firebase native TOTP)
   mfaRequired: boolean;
   mfaResolver: MultiFactorResolver | null;
   clearMfaChallenge: () => void;
+  // Custom MFA state (Passkeys - not part of Firebase MFA)
+  customMfaRequired: boolean;
+  customMfaStatus: MfaStatusResponse | null;
+  clearCustomMfaChallenge: () => void;
+  completeCustomMfaChallenge: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 const googleProvider = new GoogleAuthProvider();
+
+const MFA_SESSION_KEY = "fibuki_mfa_verified";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -60,6 +68,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [mfaRequired, setMfaRequired] = useState(false);
   const [mfaResolver, setMfaResolver] = useState<MultiFactorResolver | null>(null);
+  // Custom MFA state for passkey-only users
+  const [customMfaRequired, setCustomMfaRequired] = useState(false);
+  const [customMfaStatus, setCustomMfaStatus] = useState<MfaStatusResponse | null>(null);
+
+  // Check if MFA was already verified this session
+  const isMfaVerifiedForSession = useCallback(() => {
+    if (typeof window === "undefined") return false;
+    return sessionStorage.getItem(MFA_SESSION_KEY) === "true";
+  }, []);
+
+  const setMfaVerifiedForSession = useCallback(() => {
+    if (typeof window === "undefined") return;
+    sessionStorage.setItem(MFA_SESSION_KEY, "true");
+  }, []);
+
+  const clearMfaVerifiedForSession = useCallback(() => {
+    if (typeof window === "undefined") return;
+    sessionStorage.removeItem(MFA_SESSION_KEY);
+  }, []);
 
   const refreshAdminStatus = useCallback(async () => {
     if (!user) {
@@ -78,11 +105,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Get fresh token to check admin claim
         const token = await firebaseUser.getIdTokenResult();
         setIsAdmin(!!token.claims.admin);
+
+        // Check if user has custom MFA (passkeys) that we need to verify
+        // Skip if MFA was already verified this session
+        if (!isMfaVerifiedForSession()) {
+          try {
+            const getMfaStatusFn = httpsCallable<void, MfaStatusResponse>(
+              functions,
+              "getMfaStatus"
+            );
+            const result = await getMfaStatusFn();
+            const mfaStatus = result.data;
+            console.log("[AuthProvider] getMfaStatus result:", mfaStatus);
+
+            if (mfaStatus && mfaStatus.passkeysEnabled && !mfaStatus.totpEnabled) {
+              // User has passkeys but no TOTP - require custom MFA verification
+              console.log("[AuthProvider] Setting customMfaRequired=true with status:", mfaStatus);
+              setCustomMfaStatus(mfaStatus);
+              setCustomMfaRequired(true);
+            }
+          } catch (err) {
+            console.error("Error checking custom MFA status on auth state change:", err);
+          }
+        } else {
+          console.log("[AuthProvider] MFA already verified for session, skipping check");
+        }
+
+        // Only set loading false AFTER MFA check is complete
+        setLoading(false);
       } else {
         setIsAdmin(false);
+        // Clear MFA state when user signs out
+        setCustomMfaRequired(false);
+        setCustomMfaStatus(null);
+        setLoading(false);
       }
-
-      setLoading(false);
     });
 
     return () => unsubscribe();
@@ -91,6 +148,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signIn = useCallback(async (email: string, password: string) => {
     try {
       await signInWithEmailAndPassword(auth, email, password);
+      // Firebase auth succeeded - onAuthStateChanged will handle MFA check
     } catch (error) {
       if (isMfaError(error)) {
         // MFA is required - set up the resolver for the UI to handle
@@ -108,6 +166,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setMfaRequired(false);
     setMfaResolver(null);
   }, []);
+
+  const clearCustomMfaChallenge = useCallback(() => {
+    setCustomMfaRequired(false);
+    setCustomMfaStatus(null);
+  }, []);
+
+  const completeCustomMfaChallenge = useCallback(() => {
+    setCustomMfaRequired(false);
+    setMfaVerifiedForSession();
+    // Keep customMfaStatus for reference, it will be cleared on next login
+  }, [setMfaVerifiedForSession]);
 
   const signUp = useCallback(async (email: string, password: string) => {
     // Validate registration against allowedEmails
@@ -154,6 +223,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           );
         }
       }
+      // Firebase auth succeeded - onAuthStateChanged will handle MFA check
     } catch (error) {
       if (isMfaError(error)) {
         // MFA is required - set up the resolver for the UI to handle
@@ -167,8 +237,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signOut = useCallback(async () => {
+    clearMfaVerifiedForSession();
     await firebaseSignOut(auth);
-  }, []);
+  }, [clearMfaVerifiedForSession]);
 
   const resetPassword = useCallback(async (email: string) => {
     await sendPasswordResetEmail(auth, email);
@@ -185,10 +256,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     signOut,
     resetPassword,
     refreshAdminStatus,
-    // MFA challenge state
+    // MFA challenge state (Firebase native TOTP)
     mfaRequired,
     mfaResolver,
     clearMfaChallenge,
+    // Custom MFA state (Passkeys - not part of Firebase MFA)
+    customMfaRequired,
+    customMfaStatus,
+    clearCustomMfaChallenge,
+    completeCustomMfaChallenge,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

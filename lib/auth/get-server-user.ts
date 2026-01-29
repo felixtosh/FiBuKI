@@ -25,9 +25,12 @@ export async function getServerUserIdWithFallback(
       if (payload?.user_id || payload?.sub) {
         return payload.user_id || payload.sub || "";
       }
+      console.warn("[Auth] Token decoded but no user_id or sub found:", Object.keys(payload || {}));
     } catch (e) {
       console.warn("[Auth] Failed to decode token:", e);
     }
+  } else {
+    console.warn("[Auth] No Bearer token in Authorization header:", authHeader?.substring(0, 20));
   }
 
   throw new Error("Unauthorized: Missing or invalid Authorization header");
@@ -42,10 +45,18 @@ function decodeJwtPayload(token: string): Record<string, unknown> | null {
     const parts = token.split(".");
     if (parts.length !== 3) return null;
 
-    const payload = parts[1];
+    // Firebase uses base64url encoding (not standard base64)
+    // Convert base64url to base64: replace - with +, _ with /, add padding
+    let payload = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    // Add padding if needed
+    while (payload.length % 4) {
+      payload += "=";
+    }
+
     const decoded = Buffer.from(payload, "base64").toString("utf-8");
     return JSON.parse(decoded);
-  } catch {
+  } catch (e) {
+    console.warn("[Auth] JWT decode error:", e);
     return null;
   }
 }

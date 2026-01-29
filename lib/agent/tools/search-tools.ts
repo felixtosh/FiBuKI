@@ -147,12 +147,76 @@ export const generateSearchSuggestionsTool = tool(
     const tx = txDoc.data()!;
     const txDate = tx.date?.toDate?.() || new Date(tx.date);
 
-    // Get partner info if available
-    let partner = null;
+    // Get partner info if available - includes all context useful for agent
+    let partnerContext: {
+      partnerId: string;
+      name: string;
+      aliases: string[];
+      emailDomains: string[];
+      fileSourcePatterns: Array<{ sourceType: string; pattern: string }>;
+      website: string | null;
+      ibans: string[];
+      vatId: string | null;
+      // Resolution preference (file vs no-receipt)
+      resolution: {
+        type: string;
+        confidence: number;
+        stats: { fileCount: number; noReceiptCount: number };
+        preferredNoReceiptCategory: string | null;
+      } | null;
+    } | null = null;
+
     if (tx.partnerId) {
       const partnerDoc = await db.collection("partners").doc(tx.partnerId).get();
       if (partnerDoc.exists) {
-        partner = partnerDoc.data();
+        const partner = partnerDoc.data()!;
+
+        // Build comprehensive partner context
+        partnerContext = {
+          partnerId: tx.partnerId,
+          name: partner.name || "",
+          aliases: partner.aliases || [],
+          emailDomains: partner.emailDomains || [],
+          fileSourcePatterns: (partner.fileSourcePatterns || []).map((p: { sourceType: string; pattern: string }) => ({
+            sourceType: p.sourceType,
+            pattern: p.pattern,
+          })),
+          website: partner.website || null,
+          ibans: partner.ibans || [],
+          vatId: partner.vatId || null,
+          resolution: null,
+        };
+
+        // Add resolution preference if available
+        const pref = partner.resolutionPreference;
+        if (pref && pref.type !== "unknown") {
+          let preferredNoReceiptCategory: string | null = null;
+
+          // Get category name if partner prefers no-receipt
+          if (pref.type === "no_receipt" && pref.preferredNoReceiptCategoryId) {
+            try {
+              const categoryDoc = await db
+                .collection("noReceiptCategories")
+                .doc(pref.preferredNoReceiptCategoryId)
+                .get();
+              if (categoryDoc.exists) {
+                preferredNoReceiptCategory = categoryDoc.data()?.name || null;
+              }
+            } catch {
+              // Ignore category fetch errors
+            }
+          }
+
+          partnerContext.resolution = {
+            type: pref.type,
+            confidence: pref.confidence,
+            stats: {
+              fileCount: pref.stats?.fileCount || 0,
+              noReceiptCount: pref.stats?.noReceiptCount || 0,
+            },
+            preferredNoReceiptCategory,
+          };
+        }
       }
     }
 
@@ -171,7 +235,7 @@ export const generateSearchSuggestionsTool = tool(
     const transactionInfo = {
       id: transactionId,
       name: tx.name,
-      partner: tx.partner || partner?.name,
+      partner: tx.partner || partnerContext?.name,
       amount: tx.amount,
       amountFormatted: formattedAmount,
       date: txDate.toISOString(),
@@ -214,8 +278,19 @@ export const generateSearchSuggestionsTool = tool(
       const suggestions = queryResponse?.suggestions || [];
       const queries = queryResponse?.queries || [];
 
+      // Build hint based on partner resolution preference
+      let resolutionHint: string | undefined;
+      if (partnerContext?.resolution) {
+        if (partnerContext.resolution.type === "no_receipt") {
+          resolutionHint = `Partner "${partnerContext.name}" typically doesn't need receipts (${partnerContext.resolution.preferredNoReceiptCategory || "no-receipt category"}). Consider suggesting a no-receipt category instead of searching for files.`;
+        } else if (partnerContext.resolution.type === "mixed") {
+          resolutionHint = `Partner "${partnerContext.name}" is mixed (${partnerContext.resolution.stats.fileCount} files, ${partnerContext.resolution.stats.noReceiptCount} no-receipt). Check both file search and no-receipt category options.`;
+        }
+      }
+
       return {
         transaction: transactionInfo,
+        partnerContext,
         suggestions: suggestions.map((s) => ({
           query: s.query,
           type: s.type,
@@ -229,29 +304,42 @@ export const generateSearchSuggestionsTool = tool(
           score: s.score,
         })),
         queries,
+        resolutionHint,
         summary: queries.length > 0
           ? `Generated ${queries.length} search queries: ${queries.slice(0, 3).join(", ")}${queries.length > 3 ? "..." : ""}`
           : "No search queries generated",
-        nextSteps: "Use searchLocalFiles to check uploaded files, then searchGmailAttachments with each query to search Gmail.",
+        nextSteps: resolutionHint || "Use searchLocalFiles to check uploaded files, then searchGmailAttachments with each query to search Gmail.",
       };
     } catch (err) {
       console.error("[generateSearchSuggestions] AI query generation failed:", err);
 
       // Fallback to basic queries
-      const partnerName = tx.partner || partner?.name || tx.name;
+      const partnerName = tx.partner || partnerContext?.name || tx.name;
       const fallbackQueries = partnerName
         ? [partnerName, `${partnerName} invoice`, `${partnerName} rechnung`]
         : [];
 
+      // Build hint based on partner resolution preference
+      let resolutionHint: string | undefined;
+      if (partnerContext?.resolution) {
+        if (partnerContext.resolution.type === "no_receipt") {
+          resolutionHint = `Partner "${partnerContext.name}" typically doesn't need receipts (${partnerContext.resolution.preferredNoReceiptCategory || "no-receipt category"}). Consider suggesting a no-receipt category instead of searching for files.`;
+        } else if (partnerContext.resolution.type === "mixed") {
+          resolutionHint = `Partner "${partnerContext.name}" is mixed (${partnerContext.resolution.stats.fileCount} files, ${partnerContext.resolution.stats.noReceiptCount} no-receipt). Check both file search and no-receipt category options.`;
+        }
+      }
+
       return {
         transaction: transactionInfo,
+        partnerContext,
         suggestions: [],
         queries: fallbackQueries,
+        resolutionHint,
         summary: fallbackQueries.length > 0
           ? `AI generation failed. Fallback queries: ${fallbackQueries.join(", ")}`
           : "Could not generate search queries",
         error: "AI query generation failed, using fallback queries",
-        nextSteps: "Use searchLocalFiles to check uploaded files, then searchGmailAttachments with each query.",
+        nextSteps: resolutionHint || "Use searchLocalFiles to check uploaded files, then searchGmailAttachments with each query.",
       };
     }
   },
@@ -297,12 +385,79 @@ export const searchLocalFilesTool = tool(
     const txDate = tx.date?.toDate?.() || new Date(tx.date);
     const rejectedFileIds = new Set<string>(tx.rejectedFileIds || []);
 
-    // Get partner info if available
+    // Get partner info if available - includes all context useful for agent
+    let partnerContext: {
+      partnerId: string;
+      name: string;
+      aliases: string[];
+      emailDomains: string[];
+      fileSourcePatterns: Array<{ sourceType: string; pattern: string }>;
+      website: string | null;
+      ibans: string[];
+      vatId: string | null;
+      resolution: {
+        type: string;
+        confidence: number;
+        stats: { fileCount: number; noReceiptCount: number };
+        preferredNoReceiptCategory: string | null;
+      } | null;
+    } | null = null;
+
+    // Also keep partner data for scoring API
     let partner = null;
+
     if (tx.partnerId) {
       const partnerDoc = await db.collection("partners").doc(tx.partnerId).get();
       if (partnerDoc.exists) {
-        partner = partnerDoc.data();
+        const partnerData = partnerDoc.data()!;
+        partner = partnerData;
+
+        // Build comprehensive partner context
+        partnerContext = {
+          partnerId: tx.partnerId,
+          name: partnerData.name || "",
+          aliases: partnerData.aliases || [],
+          emailDomains: partnerData.emailDomains || [],
+          fileSourcePatterns: (partnerData.fileSourcePatterns || []).map((p: { sourceType: string; pattern: string }) => ({
+            sourceType: p.sourceType,
+            pattern: p.pattern,
+          })),
+          website: partnerData.website || null,
+          ibans: partnerData.ibans || [],
+          vatId: partnerData.vatId || null,
+          resolution: null,
+        };
+
+        // Add resolution preference if available
+        const pref = partnerData.resolutionPreference;
+        if (pref && pref.type !== "unknown") {
+          let preferredNoReceiptCategory: string | null = null;
+
+          // Get category name if partner prefers no-receipt
+          if (pref.type === "no_receipt" && pref.preferredNoReceiptCategoryId) {
+            try {
+              const categoryDoc = await db
+                .collection("noReceiptCategories")
+                .doc(pref.preferredNoReceiptCategoryId)
+                .get();
+              if (categoryDoc.exists) {
+                preferredNoReceiptCategory = categoryDoc.data()?.name || null;
+              }
+            } catch {
+              // Ignore category fetch errors
+            }
+          }
+
+          partnerContext.resolution = {
+            type: pref.type,
+            confidence: pref.confidence,
+            stats: {
+              fileCount: pref.stats?.fileCount || 0,
+              noReceiptCount: pref.stats?.noReceiptCount || 0,
+            },
+            preferredNoReceiptCategory,
+          };
+        }
       }
     }
 
@@ -335,6 +490,12 @@ export const searchLocalFilesTool = tool(
       });
 
     if (eligibleFiles.length === 0) {
+      // Build hint if partner prefers no-receipt
+      let resolutionHint: string | undefined;
+      if (partnerContext?.resolution?.type === "no_receipt") {
+        resolutionHint = `Partner "${partnerContext.name}" typically doesn't need receipts. Consider suggesting the "${partnerContext.resolution.preferredNoReceiptCategory || "no-receipt"}" category.`;
+      }
+
       return {
         searchType: "local_files",
         strategy: strategy || "all",
@@ -345,7 +506,11 @@ export const searchLocalFilesTool = tool(
           amount: tx.amount,
           date: txDate.toISOString(),
         },
-        summary: "No uploaded files available to search",
+        partnerContext,
+        resolutionHint,
+        summary: resolutionHint
+          ? `No uploaded files available. ${resolutionHint}`
+          : "No uploaded files available to search",
         candidates: [],
         totalFound: 0,
       };
@@ -450,6 +615,7 @@ export const searchLocalFilesTool = tool(
           amount: tx.amount,
           date: txDate.toISOString(),
         },
+        partnerContext,
         summary: "Error scoring files - please try again",
         candidates: [],
         totalFound: 0,
@@ -461,6 +627,14 @@ export const searchLocalFilesTool = tool(
 
     const topCandidates = candidates.slice(0, 10);
 
+    // Build hint if no files found but partner prefers no-receipt
+    let resolutionHint: string | undefined;
+    if (candidates.length === 0 && partnerContext?.resolution?.type === "no_receipt") {
+      resolutionHint = `Partner "${partnerContext.name}" typically doesn't need receipts. Consider suggesting the "${partnerContext.resolution.preferredNoReceiptCategory || "no-receipt"}" category.`;
+    } else if (partnerContext?.resolution?.type === "mixed") {
+      resolutionHint = `Partner is mixed (${partnerContext.resolution.stats.fileCount} files, ${partnerContext.resolution.stats.noReceiptCount} no-receipt historically).`;
+    }
+
     return {
       searchType: "local_files",
       strategy: strategy || "all",
@@ -471,10 +645,14 @@ export const searchLocalFilesTool = tool(
         amount: tx.amount,
         date: txDate.toISOString(),
       },
+      partnerContext,
+      resolutionHint,
       summary:
         candidates.length > 0
           ? `Found ${candidates.length} files. Top match: "${topCandidates[0]?.fileName}" (${topCandidates[0]?.score}%)`
-          : "No matching files found",
+          : resolutionHint
+            ? `No matching files found. ${resolutionHint}`
+            : "No matching files found",
       candidates: topCandidates.map((c) => ({
         ...c,
         scoreDetails: `${c.score}% - ${c.scoreReasons?.join(", ") || "no reasons"}`,
@@ -686,20 +864,15 @@ export const searchGmailAttachmentsTool = tool(
           }> = [];
 
           for (const message of messages) {
-            // Map attachments for classification (include required fields)
-            const attachments = message.attachments?.map((a) => ({
-              mimeType: a.mimeType,
-              filename: a.filename,
-              attachmentId: a.attachmentId,
-              messageId: message.messageId,
-              size: a.size || 0,
-              isLikelyReceipt: a.isLikelyReceipt,
-            })) || [];
-            const classification = classifyEmail(
-              message.subject || "",
-              message.snippet || "",
-              attachments
-            );
+            // Use server-computed classification (includes bodyText analysis) for consistency
+            // Fallback to basic classification if server didn't provide one
+            const classification = message.classification || {
+              hasPdfAttachment: message.attachments?.some((a) => a.mimeType === "application/pdf") || false,
+              possibleMailInvoice: false,
+              possibleInvoiceLink: false,
+              confidence: 20,
+              matchedKeywords: [] as string[],
+            };
 
             // Collect PDF attachments for scoring
             for (const attachment of message.attachments || []) {
@@ -768,11 +941,19 @@ export const searchGmailAttachmentsTool = tool(
                     emailBodyText: a.emailBodyText,
                     emailDate: a.emailDate,
                     integrationId: a.integrationId,
+                    // Include classification for scoring boost (+15% for mail invoice, +10% for invoice link)
+                    classification: a._classification ? {
+                      hasPdfAttachment: a._classification.hasPdfAttachment,
+                      possibleMailInvoice: a._classification.possibleMailInvoice,
+                      possibleInvoiceLink: a._classification.possibleInvoiceLink,
+                      confidence: a._classification.confidence,
+                    } : undefined,
                   })),
                   transaction: {
                     amount: tx.amount,
                     date: txDate.toISOString(),
                     name: tx.name,
+                    reference: tx.reference, // Include reference for invoice reference matching (+10%)
                     partner: tx.partner,
                   },
                   partner: partner ? {

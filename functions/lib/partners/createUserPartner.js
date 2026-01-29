@@ -24,7 +24,7 @@ function normalizeUrl(url) {
     return normalized.replace(/\/+$/, "");
 }
 exports.createUserPartnerCallable = (0, createCallable_1.createCallable)({ name: "createUserPartner" }, async (ctx, request) => {
-    const { data } = request;
+    const { data, skipAutoMatch } = request;
     if (!data?.name?.trim()) {
         throw new createCallable_1.HttpsError("invalid-argument", "Partner name is required");
     }
@@ -51,6 +51,11 @@ exports.createUserPartnerCallable = (0, createCallable_1.createCallable)({ name:
     // Mark as "my company" if specified
     if (data.isMyCompany) {
         newPartner.isMyCompany = true;
+    }
+    // Skip automatic matching if requested (used for manual assignment flow)
+    // This prevents race condition where onPartnerCreate auto-matches before manual assignment
+    if (skipAutoMatch) {
+        newPartner.createdBy = "manual_assignment";
     }
     const docRef = await ctx.db.collection("partners").add(newPartner);
     console.log(`[createUserPartner] Created partner ${docRef.id}`, {

@@ -25,6 +25,17 @@ const TAX_COUNTRIES: { value: TaxCountryCode; label: string; flag: string }[] = 
   { value: "CH", label: "Switzerland", flag: "🇨🇭" },
 ];
 
+/**
+ * Format Austrian tax number: 292090289 -> 29 209/0289
+ */
+function formatAustrianTaxNumber(value: string): string {
+  if (!value) return "";
+  const digits = value.replace(/\D/g, "");
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 5) return `${digits.slice(0, 2)} ${digits.slice(2)}`;
+  return `${digits.slice(0, 2)} ${digits.slice(2, 5)}/${digits.slice(5, 9)}`;
+}
+
 export default function IdentityPage() {
   const { user } = useAuth();
   const { userData, loading: userDataLoading, saving, save, isConfigured } = useUserData();
@@ -41,6 +52,7 @@ export default function IdentityPage() {
   const [newIban, setNewIban] = useState("");
   const [ownEmails, setOwnEmails] = useState<string[]>([]);
   const [newEmail, setNewEmail] = useState("");
+  const [taxNumber, setTaxNumber] = useState("");
   const [saveSuccess, setSaveSuccess] = useState(false);
 
   const inferredIbans = useMemo(() => {
@@ -54,9 +66,11 @@ export default function IdentityPage() {
 
   const inferredEmails = useMemo(() => {
     if (!user) return [];
-    return user.providerData
+    const emails = user.providerData
       .filter((p) => p.email)
       .map((p) => p.email!.toLowerCase());
+    // Deduplicate
+    return [...new Set(emails)];
   }, [user]);
 
   useEffect(() => {
@@ -68,6 +82,7 @@ export default function IdentityPage() {
       setVatIds(userData.vatIds || []);
       setIbans(userData.ibans || []);
       setOwnEmails(userData.ownEmails || []);
+      setTaxNumber(userData.taxNumber || "");
     }
   }, [userData]);
 
@@ -144,6 +159,7 @@ export default function IdentityPage() {
       vatIds,
       ibans,
       ownEmails,
+      taxNumber: taxNumber || undefined,
     };
     await save(data);
     setSaveSuccess(true);
@@ -155,6 +171,7 @@ export default function IdentityPage() {
     name !== (userData?.name || "") ||
     companyName !== (userData?.companyName || "") ||
     country !== (userData?.country || "AT") ||
+    taxNumber !== (userData?.taxNumber || "") ||
     JSON.stringify(aliases) !== JSON.stringify(userData?.aliases || []) ||
     JSON.stringify(vatIds) !== JSON.stringify(userData?.vatIds || []) ||
     JSON.stringify(ibans) !== JSON.stringify(userData?.ibans || []) ||
@@ -221,6 +238,32 @@ export default function IdentityPage() {
               </SelectContent>
             </Select>
           </div>
+
+          {/* Tax Number (FASTNR) - Austria only */}
+          {country === "AT" && (
+            <div className="space-y-2 max-w-xs">
+              <Label htmlFor="taxNumber">Steuernummer</Label>
+              <p className="text-sm text-muted-foreground">
+                Required for FinanzOnline XML export
+              </p>
+              <Input
+                id="taxNumber"
+                placeholder="e.g., 29 209/0289"
+                value={formatAustrianTaxNumber(taxNumber)}
+                onChange={(e) => {
+                  // Strip non-digits and limit to 9
+                  const value = e.target.value.replace(/\D/g, "").slice(0, 9);
+                  setTaxNumber(value);
+                }}
+                className="max-w-[180px] font-mono"
+              />
+              {taxNumber && taxNumber.length !== 9 && (
+                <p className="text-sm text-amber-600">
+                  Must be 9 digits (e.g., 29 209/0289)
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Aliases */}
           <div className="space-y-3">
@@ -395,7 +438,7 @@ export default function IdentityPage() {
               <div className="flex flex-wrap gap-2">
                 {inferredEmails.map((email) => (
                   <Badge
-                    key={email}
+                    key={`inferred-${email}`}
                     variant="outline"
                     className="gap-1 font-mono text-muted-foreground"
                   >
@@ -404,7 +447,7 @@ export default function IdentityPage() {
                   </Badge>
                 ))}
                 {ownEmails.map((email) => (
-                  <Badge key={email} variant="secondary" className="gap-1 pr-1 font-mono">
+                  <Badge key={`own-${email}`} variant="secondary" className="gap-1 pr-1 font-mono">
                     {email}
                     <button
                       type="button"

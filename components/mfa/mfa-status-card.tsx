@@ -27,7 +27,11 @@ import {
   RefreshCw,
 } from "lucide-react";
 
-export function MfaStatusCard() {
+interface MfaStatusCardProps {
+  showAsSection?: boolean;
+}
+
+export function MfaStatusCard({ showAsSection = false }: MfaStatusCardProps) {
   const {
     isMfaEnabled,
     totpEnabled,
@@ -53,7 +57,123 @@ export function MfaStatusCard() {
     setIsRegeneratingCodes(false);
   };
 
+  const content = (
+    <>
+      {/* Authenticator App Section */}
+      <div className="flex items-center justify-between py-4 border-b">
+        <div className="flex items-center gap-4">
+          <Smartphone className="h-6 w-6 text-muted-foreground" />
+          <div>
+            <p className="font-medium">Authenticator App</p>
+            <p className="text-sm text-muted-foreground">
+              {totpEnabled ? "Active" : "Use Google Authenticator, Authy, or similar"}
+            </p>
+          </div>
+        </div>
+        {totpEnabled ? (
+          <span className="text-sm text-green-600">Active</span>
+        ) : (
+          <Button size="sm" variant="outline" onClick={() => setShowTotpSetup(true)}>
+            <Plus className="h-4 w-4 mr-1" />
+            Set Up
+          </Button>
+        )}
+      </div>
+
+      {/* Passkeys Section */}
+      <div className={`py-4 ${isMfaEnabled ? "border-b" : ""}`}>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <Fingerprint className="h-6 w-6 text-muted-foreground" />
+            <div>
+              <p className="font-medium">Passkeys</p>
+              <p className="text-sm text-muted-foreground">
+                {passkeyCount > 0
+                  ? `${passkeyCount} registered`
+                  : "Use biometrics or security keys"}
+              </p>
+            </div>
+          </div>
+          {passkeyCount > 0 ? (
+            <span className="text-sm text-green-600">{passkeyCount} registered</span>
+          ) : passkeysSupported ? (
+            <Button size="sm" variant="outline" onClick={() => setShowPasskeySetup(true)}>
+              <Plus className="h-4 w-4 mr-1" />
+              Add
+            </Button>
+          ) : (
+            <span className="text-sm text-muted-foreground">Not supported</span>
+          )}
+        </div>
+
+        {passkeyCount > 0 && (
+          <div className="mt-3 ml-10">
+            <PasskeyList onAddPasskey={() => setShowPasskeySetup(true)} />
+            {passkeysSupported && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowPasskeySetup(true)}
+                className="mt-3"
+              >
+                <Plus className="h-4 w-4 mr-1" />
+                Add Another Passkey
+              </Button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Backup Codes Section */}
+      {isMfaEnabled && (
+        <div className="flex items-center justify-between py-4">
+          <div className="flex items-center gap-4">
+            <Key className="h-6 w-6 text-muted-foreground" />
+            <div>
+              <p className="font-medium">Backup Codes</p>
+              <p className="text-sm text-muted-foreground">
+                {hasBackupCodes
+                  ? `${backupCodesRemaining} codes remaining`
+                  : "Generate recovery codes"}
+              </p>
+            </div>
+          </div>
+          {hasBackupCodes ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleRegenerateCodes}
+            >
+              <RefreshCw className="h-4 w-4 mr-1" />
+              Regenerate
+            </Button>
+          ) : (
+            <Button size="sm" variant="outline" onClick={() => setShowBackupCodes(true)}>
+              <Plus className="h-4 w-4 mr-1" />
+              Generate
+            </Button>
+          )}
+        </div>
+      )}
+
+      {hasBackupCodes && backupCodesRemaining <= 3 && (
+        <p className="text-sm text-amber-600 mt-2">
+          You have only {backupCodesRemaining} backup code
+          {backupCodesRemaining !== 1 ? "s" : ""} left. Consider regenerating them.
+        </p>
+      )}
+    </>
+  );
+
   if (loading) {
+    if (showAsSection) {
+      return (
+        <div className="animate-pulse space-y-4">
+          <div className="h-4 bg-muted rounded w-3/4" />
+          <div className="h-4 bg-muted rounded w-1/2" />
+        </div>
+      );
+    }
     return (
       <Card>
         <CardHeader>
@@ -69,6 +189,35 @@ export function MfaStatusCard() {
           </div>
         </CardContent>
       </Card>
+    );
+  }
+
+  if (showAsSection) {
+    return (
+      <>
+        <div className="space-y-0">
+          {content}
+        </div>
+
+        {/* Dialogs */}
+        <TotpSetupDialog
+          open={showTotpSetup}
+          onOpenChange={setShowTotpSetup}
+          onSuccess={() => setShowTotpSetup(false)}
+        />
+
+        <PasskeySetupDialog
+          open={showPasskeySetup}
+          onOpenChange={setShowPasskeySetup}
+          onSuccess={() => setShowPasskeySetup(false)}
+        />
+
+        <BackupCodesDialog
+          open={showBackupCodes}
+          onOpenChange={handleBackupCodesClose}
+          isRegenerate={isRegeneratingCodes}
+        />
+      </>
     );
   }
 

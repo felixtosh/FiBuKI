@@ -13,6 +13,8 @@ export interface MfaSettings {
   backupCodesGenerated: boolean;
   backupCodesGeneratedAt?: Timestamp;
   backupCodesRemaining: number;
+  lastMfaMethod?: MfaMethod; // Last successfully used MFA method
+  lastMfaMethodAt?: Timestamp;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -160,6 +162,7 @@ export interface MfaStatusResponse {
   }>;
   backupCodesRemaining: number;
   hasAnyMfa: boolean;
+  lastMfaMethod?: MfaMethod;
 }
 
 /**

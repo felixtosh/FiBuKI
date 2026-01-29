@@ -1,24 +1,24 @@
 "use strict";
 /**
  * Server-side no-receipt category matching utilities
- * Mirrors the client-side matching logic for Cloud Functions
+ *
+ * Categories match ONLY by partner - patterns are learned on partners, not categories.
+ * When a transaction has a partnerId that's in the category's matchedPartnerIds,
+ * the category is suggested.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CATEGORY_MATCH_CONFIG = void 0;
 exports.matchTransactionToCategories = matchTransactionToCategories;
 exports.shouldAutoApplyCategory = shouldAutoApplyCategory;
 exports.isEligibleForCategoryMatching = isEligibleForCategoryMatching;
-const partner_matcher_1 = require("./partner-matcher");
 // ============ Thresholds ============
 exports.CATEGORY_MATCH_CONFIG = {
     /** Minimum confidence to show as suggestion */
     SUGGESTION_THRESHOLD: 60,
     /** Minimum confidence for auto-assignment */
     AUTO_APPLY_THRESHOLD: 89,
-    /** Base confidence for partner-only match (at threshold to auto-apply) */
+    /** Base confidence for partner match */
     PARTNER_MATCH_CONFIDENCE: 89,
-    /** Bonus confidence when both partner and pattern match */
-    COMBINED_MATCH_BONUS: 15,
     /** Maximum suggestions to return */
     MAX_SUGGESTIONS: 3,
     /** Maximum usage-based confidence boost (applied logarithmically) */
@@ -92,89 +92,48 @@ function partnerHasNoFilePatterns(partnerId, partnerFilePatternCounts) {
  * Match a transaction against a single category.
  * Returns null if no match found above threshold.
  *
- * Confidence boosting:
- * 1. Base confidence from match type (partner: 85%, pattern: variable, combined: +15)
+ * Categories match ONLY by partner. Confidence boosting:
+ * 1. Base confidence: 89% for partner match
  * 2. Usage boost: +0-10 based on category's transactionCount (logarithmic)
  * 3. No-file-patterns boost: +8 if partner has no file source patterns
+ * 4. Resolution preference boost: +0-9 if partner typically resolves with no-receipt
  */
 function matchSingleCategory(transaction, category, options) {
-    let confidence = 0;
-    let source = null;
-    // 1. Check if transaction's partner is in category's matched partners
+    // Categories only match by partner
     const partnerMatch = transaction.partnerId &&
         category.matchedPartnerIds.includes(transaction.partnerId);
-    // 2. Check pattern matches
-    const patternMatch = matchCategoryPatterns(transaction, category);
-    // Determine base confidence and source
-    if (partnerMatch && patternMatch) {
-        // Both match - highest confidence
-        confidence =
-            patternMatch.confidence + exports.CATEGORY_MATCH_CONFIG.COMBINED_MATCH_BONUS;
-        source = "partner+pattern";
+    if (!partnerMatch) {
+        return null;
     }
-    else if (partnerMatch) {
-        // Partner-only match
-        confidence = exports.CATEGORY_MATCH_CONFIG.PARTNER_MATCH_CONFIDENCE;
-        source = "partner";
+    let confidence = exports.CATEGORY_MATCH_CONFIG.PARTNER_MATCH_CONFIDENCE;
+    // Usage boost: categories used more often rank higher
+    const usageBoost = calculateUsageBoost(category.transactionCount);
+    confidence += usageBoost;
+    // No-file-patterns boost: if partner doesn't typically have files, boost category match
+    if (partnerHasNoFilePatterns(transaction.partnerId, options?.partnerFilePatternCounts)) {
+        confidence += exports.CATEGORY_MATCH_CONFIG.NO_FILE_PATTERNS_BOOST;
     }
-    else if (patternMatch) {
-        // Pattern-only match
-        confidence = patternMatch.confidence;
-        source = "pattern";
-    }
-    // Apply boosts if we have a base match
-    if (confidence > 0 && source) {
-        // Usage boost: categories used more often rank higher
-        const usageBoost = calculateUsageBoost(category.transactionCount);
-        confidence += usageBoost;
-        // No-file-patterns boost: if partner doesn't typically have files, boost category match
-        // Only applies when we have a partner match (partner is known to belong to this category)
-        if (partnerMatch &&
-            partnerHasNoFilePatterns(transaction.partnerId, options?.partnerFilePatternCounts)) {
-            confidence += exports.CATEGORY_MATCH_CONFIG.NO_FILE_PATTERNS_BOOST;
+    // Resolution preference boost: if partner typically resolves with no-receipt, boost
+    if (transaction.partnerId && options?.partnerResolutionPreferences) {
+        const pref = options.partnerResolutionPreferences.get(transaction.partnerId);
+        if (pref && pref.type === "no_receipt" && pref.confidence > 0) {
+            // Boost proportional to resolution confidence (up to +9 at 95% confidence)
+            const resolutionBoost = Math.round(pref.confidence * 0.1);
+            confidence += resolutionBoost;
         }
-        // Cap at 100
-        confidence = Math.min(100, confidence);
     }
+    // Cap at 100
+    confidence = Math.min(100, confidence);
     // Return suggestion if above threshold
-    if (confidence >= exports.CATEGORY_MATCH_CONFIG.SUGGESTION_THRESHOLD && source) {
+    if (confidence >= exports.CATEGORY_MATCH_CONFIG.SUGGESTION_THRESHOLD) {
         return {
             categoryId: category.id,
             templateId: category.templateId,
             confidence,
-            source,
+            source: "partner",
         };
     }
     return null;
-}
-/**
- * Match transaction text against category's learned patterns.
- * Returns the highest-confidence matching pattern, or null if none match.
- */
-function matchCategoryPatterns(transaction, category) {
-    if (!category.learnedPatterns || category.learnedPatterns.length === 0) {
-        return null;
-    }
-    // Build text to match against
-    const textToMatch = buildTransactionText(transaction);
-    let bestMatch = null;
-    for (const pattern of category.learnedPatterns) {
-        if ((0, partner_matcher_1.globMatch)(pattern.pattern, textToMatch)) {
-            if (!bestMatch || pattern.confidence > bestMatch.confidence) {
-                bestMatch = { confidence: pattern.confidence };
-            }
-        }
-    }
-    return bestMatch;
-}
-/**
- * Build searchable text from transaction fields.
- */
-function buildTransactionText(transaction) {
-    return [transaction.partner, transaction.name, transaction.reference]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
 }
 /**
  * Check if a category suggestion should be auto-applied.

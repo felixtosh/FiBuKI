@@ -12,10 +12,44 @@
  * Does NOT affect files manually assigned to this partner.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.onPartnerUpdate = void 0;
+exports.onPartnerUpdate = exports.AUTOMATION_META = void 0;
 const firestore_1 = require("firebase-functions/v2/firestore");
 const firestore_2 = require("firebase-admin/firestore");
 const filePartnerMatcher_1 = require("../utils/filePartnerMatcher");
+// =============================================================================
+// AUTOMATION METADATA
+// =============================================================================
+exports.AUTOMATION_META = {
+    id: "onPartnerUpdate",
+    name: "Re-match Files on Partner Update",
+    description: "Re-evaluates file matches when partner details (name, aliases, IBAN, VAT, website, email domains) change",
+    trigger: {
+        type: "document_update",
+        collection: "partners",
+    },
+    effects: [
+        {
+            entity: "file",
+            fields: [
+                "partnerId",
+                "partnerType",
+                "partnerMatchedBy",
+                "partnerMatchConfidence",
+                "partnerSuggestions",
+            ],
+            action: "update",
+        },
+    ],
+    config: {
+        autoMatchThreshold: 89,
+        maxFilesPerUpdate: 200,
+    },
+    icon: "FileText",
+    category: "matching",
+};
+// =============================================================================
+// IMPLEMENTATION
+// =============================================================================
 const db = (0, firestore_2.getFirestore)();
 // === Configuration ===
 const CONFIG = {

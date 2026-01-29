@@ -1,13 +1,19 @@
 /**
  * MCP Automation Tools
  *
- * IMPORTANT: This file contains duplicated automation definitions because
- * the MCP server runs in a separate Node.js context without Next.js path aliases.
+ * @deprecated The automation definitions in this file are deprecated.
  *
- * KEEP IN SYNC WITH: /lib/matching/automation-defs.ts
+ * NEW APPROACH:
+ * - Automation metadata is now defined in functions/src/matching/*.ts (co-located with triggers)
+ * - Use the generated file: import { AUTOMATIONS } from "../generated/automations.js"
+ * - To regenerate: npm run generate:mcp-automations (from root)
  *
- * When you add/change automations in the main app, update this file too.
- * Consider extracting to a shared package if this becomes burdensome.
+ * The duplicated definitions below are kept for backward compatibility but
+ * should be replaced with imports from the generated file.
+ *
+ * ============================================================================
+ * LEGACY DEFINITIONS - TO BE REMOVED
+ * ============================================================================
  */
 
 import { z } from "zod";

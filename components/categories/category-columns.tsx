@@ -1,7 +1,7 @@
 "use client";
 
 import { ColumnDef } from "@tanstack/react-table";
-import { Tag, Sparkles, Receipt } from "lucide-react";
+import { Tag, Building2, Receipt } from "lucide-react";
 import { UserNoReceiptCategory } from "@/types/no-receipt-category";
 
 export function getCategoryColumns(): ColumnDef<UserNoReceiptCategory>[] {
@@ -25,25 +25,15 @@ export function getCategoryColumns(): ColumnDef<UserNoReceiptCategory>[] {
       },
     },
     {
-      id: "patterns",
-      header: "Patterns",
-      cell: ({ row }) => {
-        const category = row.original;
-        return (
-          <div className="flex items-center gap-1.5">
-            <Sparkles className="h-3.5 w-3.5 text-muted-foreground" />
-            <span className="text-sm">{category.learnedPatterns.length}</span>
-          </div>
-        );
-      },
-    },
-    {
       id: "partners",
       header: "Partners",
       cell: ({ row }) => {
         const category = row.original;
         return (
-          <span className="text-sm">{category.matchedPartnerIds.length}</span>
+          <div className="flex items-center gap-1.5">
+            <Building2 className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="text-sm">{category.matchedPartnerIds.length}</span>
+          </div>
         );
       },
     },

@@ -9,7 +9,11 @@ export type NotificationType =
   | "partner_matching"
   | "pattern_learned"
   | "patterns_cleared"
-  | "worker_activity";
+  | "worker_activity"
+  | "export_complete"
+  | "export_failed"
+  | "data_import_complete"
+  | "data_import_failed";
 
 /**
  * Context data for notifications (varies by type)
@@ -44,6 +48,17 @@ export interface NotificationContext {
   sessionId?: string; // Link to chat session for user-triggered searches
   transactionId?: string;
   transactionName?: string; // Display name for transaction link during processing
+
+  // For export_complete / export_failed
+  exportId?: string;
+  downloadUrl?: string;
+  expiresAt?: string;
+  zipSize?: number;
+  exportCounts?: Record<string, number>;
+
+  // For data_import_complete / data_import_failed
+  importId?: string;
+  importCounts?: Record<string, number>;
 }
 
 /**

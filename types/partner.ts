@@ -1,5 +1,6 @@
 import { Timestamp } from "firebase/firestore";
 import { EmailSearchPattern } from "./email-integration";
+import { NoReceiptCategoryId } from "./no-receipt-category";
 
 /**
  * Matching algorithm source identifier
@@ -414,6 +415,14 @@ export interface UserPartner {
 
   createdAt: Timestamp;
   updatedAt: Timestamp;
+
+  // === RESOLUTION PREFERENCE ===
+
+  /**
+   * How this partner's transactions are typically resolved (file vs no-receipt).
+   * Learned automatically when transactions are marked complete.
+   */
+  resolutionPreference?: PartnerResolutionPreference;
 }
 
 /**
@@ -498,4 +507,46 @@ export interface PromotionCandidate {
   reviewedAt?: Timestamp;
   /** Admin who reviewed */
   reviewedBy?: string;
+}
+
+// ============================================================================
+// Partner Resolution Preference Types
+// ============================================================================
+
+/**
+ * How a partner's transactions are typically resolved.
+ * - "file_required": Partner typically needs file attachments (invoices, receipts)
+ * - "no_receipt": Partner typically doesn't need receipts (bank fees, internal transfers)
+ * - "mixed": Partner has both types (sometimes file, sometimes no-receipt)
+ * - "unknown": Not enough data yet (< 3 completed transactions)
+ */
+export type PartnerResolutionType = "file_required" | "no_receipt" | "mixed" | "unknown";
+
+/**
+ * Statistics about how transactions with this partner are resolved
+ */
+export interface PartnerResolutionStats {
+  /** Count of transactions resolved with file attachments */
+  fileCount: number;
+  /** Count of transactions resolved with no-receipt categories */
+  noReceiptCount: number;
+  /** When stats were last updated */
+  updatedAt: Timestamp;
+}
+
+/**
+ * Learned resolution preference for a partner.
+ * Used to predict how new transactions with this partner should be resolved.
+ */
+export interface PartnerResolutionPreference {
+  /** Current resolution type preference */
+  type: PartnerResolutionType;
+  /** Confidence level (0-100) based on sample size and consistency */
+  confidence: number;
+  /** Preferred no-receipt category ID (if type is "no_receipt" or "mixed") */
+  preferredNoReceiptCategoryId?: string | null;
+  /** Preferred no-receipt category template ID (for quick lookup) */
+  preferredNoReceiptCategoryTemplateId?: NoReceiptCategoryId | null;
+  /** Resolution statistics */
+  stats: PartnerResolutionStats;
 }

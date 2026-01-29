@@ -30,14 +30,53 @@ async function getBrowser(): Promise<Browser> {
     return browserLaunchPromise;
   }
 
-  // Disable WebGL for better performance
-  chromium.setGraphicsMode = false;
+  // Check if running in emulator - use local Chrome instead of @sparticuz/chromium
+  const isEmulator = process.env.FUNCTIONS_EMULATOR === "true";
 
-  browserLaunchPromise = puppeteer.launch({
-    args: chromium.args,
-    executablePath: await chromium.executablePath(),
-    headless: "shell",
-  });
+  if (isEmulator) {
+    // In emulator, try to use local Chrome/Chromium
+    // Common paths for Chrome on different platforms
+    const localChromePaths = [
+      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", // macOS
+      "/usr/bin/google-chrome", // Linux
+      "/usr/bin/chromium-browser", // Linux Chromium
+      "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe", // Windows
+    ];
+
+    let execPath: string | undefined;
+    for (const path of localChromePaths) {
+      try {
+        const { existsSync } = await import("fs");
+        if (existsSync(path)) {
+          execPath = path;
+          break;
+        }
+      } catch {
+        // Continue to next path
+      }
+    }
+
+    if (!execPath) {
+      throw new Error(
+        "PDF generation requires Chrome. Install Chrome or run in Cloud Functions."
+      );
+    }
+
+    browserLaunchPromise = puppeteer.launch({
+      executablePath: execPath,
+      headless: true,
+      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    });
+  } else {
+    // In Cloud Functions, use @sparticuz/chromium
+    chromium.setGraphicsMode = false;
+
+    browserLaunchPromise = puppeteer.launch({
+      args: chromium.args,
+      executablePath: await chromium.executablePath(),
+      headless: "shell",
+    });
+  }
 
   browserInstance = await browserLaunchPromise;
   browserLaunchPromise = null;

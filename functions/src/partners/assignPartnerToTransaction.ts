@@ -132,13 +132,15 @@ export const assignPartnerToTransactionCallable = createCallable<
       }
     }
 
-    // Trigger receipt search if transaction has no files attached
+    // Trigger receipt search if transaction has no files attached AND no no-receipt category
     // This runs in background and creates a worker request for the frontend to process
     const hasFiles = txData.fileIds && txData.fileIds.length > 0;
+    const hasNoReceiptCategory = !!txData.noReceiptCategoryId;
     const previousPartnerId = txData.partnerId;
     const partnerChanged = previousPartnerId !== partnerId;
 
-    if (!hasFiles && (partnerChanged || !previousPartnerId)) {
+    // Skip receipt search if transaction is already complete (has file or no-receipt category)
+    if (!hasFiles && !hasNoReceiptCategory && (partnerChanged || !previousPartnerId)) {
       try {
         const { queueReceiptSearchForTransaction } = await import(
           "../workers/runReceiptSearchForTransaction"

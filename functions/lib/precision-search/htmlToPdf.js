@@ -8,6 +8,39 @@
  *
  * Uses @sparticuz/chromium for serverless environments (Cloud Functions).
  */
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -27,13 +60,48 @@ async function getBrowser() {
     if (browserLaunchPromise) {
         return browserLaunchPromise;
     }
-    // Disable WebGL for better performance
-    chromium_1.default.setGraphicsMode = false;
-    browserLaunchPromise = puppeteer_core_1.default.launch({
-        args: chromium_1.default.args,
-        executablePath: await chromium_1.default.executablePath(),
-        headless: "shell",
-    });
+    // Check if running in emulator - use local Chrome instead of @sparticuz/chromium
+    const isEmulator = process.env.FUNCTIONS_EMULATOR === "true";
+    if (isEmulator) {
+        // In emulator, try to use local Chrome/Chromium
+        // Common paths for Chrome on different platforms
+        const localChromePaths = [
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", // macOS
+            "/usr/bin/google-chrome", // Linux
+            "/usr/bin/chromium-browser", // Linux Chromium
+            "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe", // Windows
+        ];
+        let execPath;
+        for (const path of localChromePaths) {
+            try {
+                const { existsSync } = await Promise.resolve().then(() => __importStar(require("fs")));
+                if (existsSync(path)) {
+                    execPath = path;
+                    break;
+                }
+            }
+            catch {
+                // Continue to next path
+            }
+        }
+        if (!execPath) {
+            throw new Error("PDF generation requires Chrome. Install Chrome or run in Cloud Functions.");
+        }
+        browserLaunchPromise = puppeteer_core_1.default.launch({
+            executablePath: execPath,
+            headless: true,
+            args: ["--no-sandbox", "--disable-setuid-sandbox"],
+        });
+    }
+    else {
+        // In Cloud Functions, use @sparticuz/chromium
+        chromium_1.default.setGraphicsMode = false;
+        browserLaunchPromise = puppeteer_core_1.default.launch({
+            args: chromium_1.default.args,
+            executablePath: await chromium_1.default.executablePath(),
+            headless: "shell",
+        });
+    }
     browserInstance = await browserLaunchPromise;
     browserLaunchPromise = null;
     // Handle browser disconnect

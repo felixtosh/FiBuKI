@@ -5,16 +5,13 @@ import { format } from "date-fns";
 import { de } from "date-fns/locale";
 import {
   FileText,
-  Calendar,
   ChevronLeft,
   ChevronRight,
   AlertCircle,
-  CheckCircle2,
-  Loader2,
-  RefreshCw,
   Download,
   ExternalLink,
   Clock,
+  Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -30,13 +27,11 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useUserData } from "@/hooks/use-user-data";
 import { useAuth } from "@/components/auth";
+import Link from "next/link";
 import { db } from "@/lib/firebase/config";
 import {
   getReportReadiness,
   calculateUVAReport,
-  createUVADraft,
-  getReportForPeriod,
-  recalculateReport,
 } from "@/lib/operations";
 import { OperationsContext } from "@/lib/operations/types";
 import {
@@ -93,7 +88,7 @@ function getAvailableYears(): number[] {
 }
 
 export default function ReportsPage() {
-  const { userId } = useAuth();
+  const { userId, user } = useAuth();
   const { userData, loading: userDataLoading } = useUserData();
 
   // Set page title
@@ -108,9 +103,9 @@ export default function ReportsPage() {
   // Report state
   const [readiness, setReadiness] = useState<ReportReadiness | null>(null);
   const [report, setReport] = useState<Omit<UVAReport, "id" | "createdAt" | "updatedAt"> | null>(null);
-  const [existingReport, setExistingReport] = useState<UVAReport | null>(null);
   const [loading, setLoading] = useState(true);
-  const [calculating, setCalculating] = useState(false);
+  const [exporting, setExporting] = useState<"pdf" | "xml" | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   // Operations context
   const ctx: OperationsContext = useMemo(
@@ -131,20 +126,13 @@ export default function ReportsPage() {
 
     const loadData = async () => {
       setLoading(true);
-      console.log("[ReportsPage] Loading data for period:", selectedPeriod, "userId:", userId);
       try {
-        // Load readiness check
-        const readinessResult = await getReportReadiness(ctx, selectedPeriod);
-        console.log("[ReportsPage] Readiness result:", readinessResult);
+        // Load readiness check and calculate report in parallel
+        const [readinessResult, reportData] = await Promise.all([
+          getReportReadiness(ctx, selectedPeriod),
+          calculateUVAReport(ctx, selectedPeriod, country),
+        ]);
         setReadiness(readinessResult);
-
-        // Check for existing report
-        const existing = await getReportForPeriod(ctx, selectedPeriod);
-        setExistingReport(existing);
-
-        // Calculate preview
-        const reportData = await calculateUVAReport(ctx, selectedPeriod, country);
-        console.log("[ReportsPage] Report data:", reportData);
         setReport(reportData);
       } catch (error) {
         console.error("Error loading report data:", error);
@@ -214,47 +202,73 @@ export default function ReportsPage() {
     });
   };
 
-  // Recalculate report
-  const handleRecalculate = async () => {
-    setCalculating(true);
-    try {
-      const reportData = await calculateUVAReport(ctx, selectedPeriod, country);
-      setReport(reportData);
-
-      // Also refresh readiness
-      const readinessResult = await getReportReadiness(ctx, selectedPeriod);
-      setReadiness(readinessResult);
-
-      // If there's an existing report, recalculate it
-      if (existingReport) {
-        await recalculateReport(ctx, existingReport.id);
-        const updated = await getReportForPeriod(ctx, selectedPeriod);
-        setExistingReport(updated);
-      }
-    } catch (error) {
-      console.error("Error recalculating:", error);
-    } finally {
-      setCalculating(false);
-    }
-  };
-
-  // Create draft report
-  const handleCreateDraft = async () => {
-    setCalculating(true);
-    try {
-      const reportId = await createUVADraft(ctx, selectedPeriod, country);
-      const newReport = await getReportForPeriod(ctx, selectedPeriod);
-      setExistingReport(newReport);
-    } catch (error) {
-      console.error("Error creating draft:", error);
-    } finally {
-      setCalculating(false);
-    }
-  };
-
   // Deadline info
   const deadline = getUvaDeadline(selectedPeriod);
   const deadlinePassed = isDeadlinePassed(selectedPeriod);
+
+  // Export handlers
+  const handleExport = async (format: "pdf" | "xml") => {
+    if (!report || !user) return;
+
+    // Check tax number for XML export
+    if (format === "xml" && (!userData?.taxNumber || userData.taxNumber.length !== 9)) {
+      setExportError("TAX_NUMBER_REQUIRED");
+      return;
+    }
+
+    setExporting(format);
+    setExportError(null);
+
+    try {
+      // Get auth token
+      const token = await user.getIdToken();
+
+      const response = await fetch("/api/reports/export", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          format,
+          report,
+          period: selectedPeriod,
+          taxNumber: userData?.taxNumber,
+          companyName: userData?.companyName,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Export failed");
+      }
+
+      const data = await response.json();
+
+      // Create download
+      const binaryStr = atob(data.data);
+      const bytes = new Uint8Array(binaryStr.length);
+      for (let i = 0; i < binaryStr.length; i++) {
+        bytes[i] = binaryStr.charCodeAt(i);
+      }
+      const blob = new Blob([bytes], { type: data.mimeType });
+      const url = URL.createObjectURL(blob);
+
+      // Trigger download
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = data.filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error("Export error:", error);
+      setExportError(error instanceof Error ? error.message : "Export failed");
+    } finally {
+      setExporting(null);
+    }
+  };
 
   if (userDataLoading) {
     return (
@@ -289,10 +303,8 @@ export default function ReportsPage() {
         {/* Period Selector */}
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-base">Reporting Period</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-wrap items-center gap-4 pb-4">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base">Reporting Period</CardTitle>
               {/* Period Type */}
               <Select value={periodType} onValueChange={(v) => handlePeriodTypeChange(v as "monthly" | "quarterly")}>
                 <SelectTrigger className="w-32">
@@ -303,7 +315,10 @@ export default function ReportsPage() {
                   <SelectItem value="quarterly">Quarterly</SelectItem>
                 </SelectContent>
               </Select>
-
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-wrap items-center gap-4 pb-4">
               {/* Period Navigation */}
               <div className="flex items-center gap-2">
                 <Button variant="outline" size="icon" onClick={goToPreviousPeriod}>
@@ -530,18 +545,52 @@ export default function ReportsPage() {
                       </div>
                     )}
 
+                    {exportError && (
+                      <div className="flex items-center gap-2 p-4 bg-red-50 border border-red-200 rounded-lg text-red-800">
+                        <AlertCircle className="h-5 w-5 flex-shrink-0" />
+                        {exportError === "TAX_NUMBER_REQUIRED" ? (
+                          <p className="text-sm">
+                            Tax number (9 digits) is required for XML export. Please update it in{" "}
+                            <Link href="/settings/identity" className="underline font-medium hover:text-red-900">
+                              Settings &gt; Identity
+                            </Link>.
+                          </p>
+                        ) : (
+                          <p className="text-sm">{exportError}</p>
+                        )}
+                      </div>
+                    )}
+
                     <div className="grid gap-4 sm:grid-cols-2">
-                      <Button variant="outline" className="h-auto py-4" disabled={!report}>
+                      <Button
+                        variant="outline"
+                        className="h-auto py-4"
+                        disabled={!report || exporting !== null}
+                        onClick={() => handleExport("pdf")}
+                      >
                         <div className="flex flex-col items-center gap-2">
-                          <Download className="h-5 w-5" />
+                          {exporting === "pdf" ? (
+                            <Loader2 className="h-5 w-5 animate-spin" />
+                          ) : (
+                            <Download className="h-5 w-5" />
+                          )}
                           <span>Download PDF</span>
                           <span className="text-xs text-muted-foreground">For your records</span>
                         </div>
                       </Button>
 
-                      <Button variant="outline" className="h-auto py-4" disabled={!report}>
+                      <Button
+                        variant="outline"
+                        className="h-auto py-4"
+                        disabled={!report || exporting !== null}
+                        onClick={() => handleExport("xml")}
+                      >
                         <div className="flex flex-col items-center gap-2">
-                          <Download className="h-5 w-5" />
+                          {exporting === "xml" ? (
+                            <Loader2 className="h-5 w-5 animate-spin" />
+                          ) : (
+                            <Download className="h-5 w-5" />
+                          )}
                           <span>Download XML</span>
                           <span className="text-xs text-muted-foreground">FinanzOnline format</span>
                         </div>
@@ -564,28 +613,6 @@ export default function ReportsPage() {
                 </Card>
               </TabsContent>
             </Tabs>
-
-            {/* Actions */}
-            <div className="flex items-center justify-between pt-4 border-t">
-              <Button variant="outline" onClick={handleRecalculate} disabled={calculating}>
-                {calculating ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <RefreshCw className="h-4 w-4 mr-2" />
-                )}
-                Recalculate
-              </Button>
-
-              {!existingReport ? (
-                <Button onClick={handleCreateDraft} disabled={calculating}>
-                  Save as Draft
-                </Button>
-              ) : (
-                <Badge variant="outline">
-                  Draft saved {existingReport.updatedAt ? format(existingReport.updatedAt.toDate(), "dd.MM.yyyy HH:mm", { locale: de }) : ""}
-                </Badge>
-              )}
-            </div>
           </>
         )}
       </div>

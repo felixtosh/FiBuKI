@@ -1,12 +1,12 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { Timestamp } from "firebase/firestore";
 import { functions } from "@/lib/firebase/config";
 import { httpsCallable } from "firebase/functions";
 import { callFunction } from "@/lib/firebase/callable";
 import { Transaction } from "@/types/transaction";
-import { FieldMapping, CSVAnalysis, AmountFormatConfig } from "@/types/import";
+import { FieldMapping, CSVAnalysis, AmountFormatConfig, ImportRecord } from "@/types/import";
 import { TransactionSource } from "@/types/source";
 import { parseDate } from "@/lib/import/date-parsers";
 import { parseAmount, getAmountParserConfig } from "@/lib/import/amount-parsers";
@@ -17,9 +17,11 @@ import {
 import { autoMatchColumns, validateMappings } from "@/lib/import/field-matcher";
 import { parseCSV } from "@/lib/import/csv-parser";
 import { uploadImportCSV } from "@/lib/operations";
+import { computeCsvHash } from "@/lib/import/csv-hash";
 import { useAuth } from "@/components/auth";
 
 const BATCH_SIZE = 500; // Firestore batch limit
+const MAPPINGS_SAVE_DEBOUNCE_MS = 1000; // Debounce time for auto-saving mappings
 
 export type ImportStep = "upload" | "mapping" | "preview" | "importing" | "complete";
 
@@ -28,6 +30,8 @@ export interface ImportState {
   // For navigable states, use URL params
   transientStep: "importing" | "complete" | null;
   file: File | null;
+  /** Filename - stored separately for when file object is not available (draft resumption) */
+  fileName: string | null;
   analysis: CSVAnalysis | null;
   mappings: FieldMapping[];
   isMatching: boolean; // True while AI is analyzing columns
@@ -42,31 +46,170 @@ export interface ImportState {
   error: string | null;
   /** Full CSV content stored for re-mapping later */
   csvContent: string | null;
+  /** Draft import ID - set after CSV is uploaded */
+  draftImportId: string | null;
+  /** True if an existing draft was found with the same CSV hash */
+  existingDraftFound: boolean;
 }
 
-export function useImport(source: TransactionSource | null) {
-  const { userId } = useAuth();
-  const [state, setState] = useState<ImportState>({
-    transientStep: null,
-    file: null,
-    analysis: null,
-    mappings: [],
-    isMatching: false,
-    progress: 0,
-    results: null,
-    error: null,
-    csvContent: null,
-  });
+export interface UseImportOptions {
+  /** Existing draft to resume (loaded by useDraftImport hook) */
+  initialDraft?: ImportRecord | null;
+  /** Pre-loaded CSV content from draft */
+  initialCsvContent?: string | null;
+}
 
-  // Returns true when file is ready to proceed to mapping step
+export function useImport(
+  source: TransactionSource | null,
+  options: UseImportOptions = {}
+) {
+  const { initialDraft, initialCsvContent } = options;
+  const { userId } = useAuth();
+
+  // Initialize state from draft if provided
+  const getInitialState = (): ImportState => {
+    if (initialDraft && initialCsvContent) {
+      // Parse the CSV content using saved options
+      const parseOptions = initialDraft.parseOptions || {
+        encoding: "UTF-8",
+        delimiter: ",",
+        hasHeader: true,
+        skipRows: 0,
+      };
+
+      return {
+        transientStep: null,
+        file: null, // File object not available when resuming
+        fileName: initialDraft.fileName || null,
+        analysis: {
+          options: parseOptions,
+          headers: initialDraft.detectedHeaders || [],
+          sampleRows: initialDraft.sampleRows || [],
+          totalRows: initialDraft.totalRows || 0,
+        },
+        mappings: initialDraft.fieldMappings || [],
+        isMatching: false,
+        progress: 0,
+        results: null,
+        error: null,
+        csvContent: initialCsvContent,
+        draftImportId: initialDraft.id,
+        existingDraftFound: false,
+      };
+    }
+
+    return {
+      transientStep: null,
+      file: null,
+      fileName: null,
+      analysis: null,
+      mappings: [],
+      isMatching: false,
+      progress: 0,
+      results: null,
+      error: null,
+      csvContent: null,
+      draftImportId: null,
+      existingDraftFound: false,
+    };
+  };
+
+  const [state, setState] = useState<ImportState>(getInitialState);
+
+  // Update state when draft data becomes available (async loading)
+  useEffect(() => {
+    if (initialDraft && initialCsvContent && !state.draftImportId) {
+      const parseOptions = initialDraft.parseOptions || {
+        encoding: "UTF-8",
+        delimiter: ",",
+        hasHeader: true,
+        skipRows: 0,
+      };
+
+      setState({
+        transientStep: null,
+        file: null,
+        fileName: initialDraft.fileName || null,
+        analysis: {
+          options: parseOptions,
+          headers: initialDraft.detectedHeaders || [],
+          sampleRows: initialDraft.sampleRows || [],
+          totalRows: initialDraft.totalRows || 0,
+        },
+        mappings: initialDraft.fieldMappings || [],
+        isMatching: false,
+        progress: 0,
+        results: null,
+        error: null,
+        csvContent: initialCsvContent,
+        draftImportId: initialDraft.id,
+        existingDraftFound: false,
+      });
+    }
+  }, [initialDraft, initialCsvContent, state.draftImportId]);
+
+  // Debounce timer ref for auto-saving mappings
+  const saveMappingsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Auto-save mappings to draft when they change
+  useEffect(() => {
+    if (!state.draftImportId || state.mappings.length === 0) return;
+
+    // Clear existing timeout
+    if (saveMappingsTimeoutRef.current) {
+      clearTimeout(saveMappingsTimeoutRef.current);
+    }
+
+    // Debounced save
+    saveMappingsTimeoutRef.current = setTimeout(async () => {
+      try {
+        // Sanitize mappings for Firestore
+        const sanitizedMappings = state.mappings.map((m) => ({
+          csvColumn: m.csvColumn,
+          targetField: m.targetField,
+          confidence: m.confidence,
+          userConfirmed: m.userConfirmed,
+          keepAsMetadata: m.keepAsMetadata,
+          format: m.format ?? null,
+        }));
+
+        await callFunction("updateDraftMappings", {
+          importId: state.draftImportId,
+          fieldMappings: sanitizedMappings,
+        });
+        console.log("[useImport] Auto-saved mappings to draft");
+      } catch (error) {
+        console.error("[useImport] Failed to auto-save mappings:", error);
+        // Non-fatal - user can still complete import
+      }
+    }, MAPPINGS_SAVE_DEBOUNCE_MS);
+
+    return () => {
+      if (saveMappingsTimeoutRef.current) {
+        clearTimeout(saveMappingsTimeoutRef.current);
+      }
+    };
+  }, [state.draftImportId, state.mappings]);
+
+  // Returns draft import ID when file is ready to proceed to mapping step
+  // Returns null if there was an error
   const handleFileAnalyzed = useCallback(
-    async (analysis: CSVAnalysis, file: File): Promise<boolean> => {
-      // Read the full CSV content for later storage (re-mapping feature)
+    async (
+      analysis: CSVAnalysis,
+      file: File
+    ): Promise<{ importId: string; existingDraft: boolean } | null> => {
+      if (!source || !userId) {
+        setState((s) => ({ ...s, error: "Source or user not available" }));
+        return null;
+      }
+
+      // Read the full CSV content
       const csvContent = await file.text();
 
       setState((s) => ({
         ...s,
         file,
+        fileName: file.name,
         analysis,
         csvContent,
         error: null,
@@ -74,11 +217,57 @@ export function useImport(source: TransactionSource | null) {
       }));
 
       try {
-        // Check if source has saved mappings
+        // 1. Compute CSV hash for duplicate detection
+        const csvHash = await computeCsvHash(csvContent);
+
+        // 2. Upload CSV to storage
+        const importJobId = `import_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+        const csvUploadResult = await uploadImportCSV(
+          userId,
+          importJobId,
+          csvContent
+        );
+
+        // 3. Create draft import
+        const draftResult = await callFunction<
+          {
+            sourceId: string;
+            fileName: string;
+            csvHash: string;
+            csvStoragePath: string;
+            csvDownloadUrl: string;
+            parseOptions: typeof analysis.options;
+            detectedHeaders: string[];
+            sampleRows: Record<string, string>[];
+            totalRows: number;
+          },
+          {
+            success: boolean;
+            importId: string;
+            existingDraftId?: string;
+          }
+        >("createDraftImport", {
+          sourceId: source.id,
+          fileName: file.name,
+          csvHash,
+          csvStoragePath: csvUploadResult.storagePath,
+          csvDownloadUrl: csvUploadResult.downloadUrl,
+          parseOptions: analysis.options,
+          detectedHeaders: analysis.headers,
+          sampleRows: analysis.sampleRows,
+          totalRows: analysis.totalRows,
+        });
+
+        const existingDraftFound = !!draftResult.existingDraftId;
+        const draftImportId = draftResult.importId;
+
+        // 4. Auto-match columns using AI or use saved mappings
+        let mappings: FieldMapping[];
+
         if (source?.fieldMappings) {
-          // Use saved mappings
+          // Use saved mappings from source
           const savedMappings = source.fieldMappings.mappings;
-          const mappings: FieldMapping[] = analysis.headers.map((header) => ({
+          mappings = analysis.headers.map((header) => ({
             csvColumn: header,
             targetField: savedMappings[header] || null,
             confidence: savedMappings[header] ? 1 : 0,
@@ -86,38 +275,31 @@ export function useImport(source: TransactionSource | null) {
             keepAsMetadata: !savedMappings[header],
             format: source.fieldMappings?.formats?.[header],
           }));
-
-          setState((s) => ({
-            ...s,
-            mappings,
-            isMatching: false,
-          }));
         } else {
-          // Auto-match columns using AI - returns FieldMapping with format already set
-          const mappings = await autoMatchColumns(
-            analysis.headers,
-            analysis.sampleRows
-          );
-
-          setState((s) => ({
-            ...s,
-            mappings,
-            isMatching: false,
-          }));
+          // Auto-match columns using AI
+          mappings = await autoMatchColumns(analysis.headers, analysis.sampleRows);
         }
 
-        return true; // Signal success - page can navigate to mapping step
+        setState((s) => ({
+          ...s,
+          mappings,
+          isMatching: false,
+          draftImportId,
+          existingDraftFound,
+        }));
+
+        return { importId: draftImportId, existingDraft: existingDraftFound };
       } catch (error) {
-        console.error("Column matching failed:", error);
+        console.error("Draft creation or column matching failed:", error);
         setState((s) => ({
           ...s,
           isMatching: false,
-          error: `Column matching failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+          error: `Import preparation failed: ${error instanceof Error ? error.message : "Unknown error"}`,
         }));
-        return false;
+        return null;
       }
     },
-    [source]
+    [source, userId]
   );
 
   const updateMapping = useCallback(
@@ -174,7 +356,9 @@ export function useImport(source: TransactionSource | null) {
   }, []);
 
   const executeImport = useCallback(async () => {
-    if (!source || !state.analysis || !state.file || !userId) return;
+    // For draft imports, we have analysis and csvContent but may not have file object
+    if (!source || !state.analysis || !userId) return;
+    if (!state.file && !state.csvContent) return;
 
     setState((s) => ({ ...s, transientStep: "importing", progress: 0, error: null }));
 
@@ -195,8 +379,10 @@ export function useImport(source: TransactionSource | null) {
       return;
     }
 
-    // Generate import job ID for tracking
-    const importJobId = `import_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    // Use existing draft ID or generate new one
+    const importJobId =
+      state.draftImportId ||
+      `import_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
     // Parse the full CSV file for import
     let rows: Record<string, string>[];
@@ -205,7 +391,16 @@ export function useImport(source: TransactionSource | null) {
       rows = state.analysis.sampleRows;
     } else {
       // Large file - need to parse the full file
-      const text = await state.file.text();
+      // Use csvContent if available (draft resumption), otherwise read from file
+      const text = state.csvContent || (await state.file?.text());
+      if (!text) {
+        setState((s) => ({
+          ...s,
+          error: "CSV content not available",
+          transientStep: null,
+        }));
+        return;
+      }
       const { rows: allRows } = parseCSV(text, state.analysis.options);
       rows = allRows;
     }
@@ -393,10 +588,11 @@ export function useImport(source: TransactionSource | null) {
       });
     }
 
-    // Upload CSV to storage for re-mapping feature
+    // Upload CSV to storage for re-mapping feature (skip if already uploaded for draft)
     let csvStoragePath: string | undefined;
     let csvDownloadUrl: string | undefined;
-    if (state.csvContent && userId) {
+    if (!state.draftImportId && state.csvContent && userId) {
+      // Only upload if this is not a draft (draft already has CSV uploaded)
       try {
         const csvUploadResult = await uploadImportCSV(
           userId,
@@ -425,7 +621,7 @@ export function useImport(source: TransactionSource | null) {
     await callFunction("createImportRecord", {
       importJobId,
       sourceId: source.id,
-      fileName: state.file.name,
+      fileName: state.fileName || "import.csv",
       importedCount,
       skippedCount,
       errorCount: errors.length,
@@ -455,6 +651,7 @@ export function useImport(source: TransactionSource | null) {
     setState({
       transientStep: null,
       file: null,
+      fileName: null,
       analysis: null,
       mappings: [],
       isMatching: false,
@@ -462,6 +659,8 @@ export function useImport(source: TransactionSource | null) {
       results: null,
       error: null,
       csvContent: null,
+      draftImportId: null,
+      existingDraftFound: false,
     });
   }, []);
 

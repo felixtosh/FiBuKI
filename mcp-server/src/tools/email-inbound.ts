@@ -20,7 +20,7 @@ const INBOUND_ADDRESSES_COLLECTION = "inboundEmailAddresses";
 const INBOUND_LOGS_COLLECTION = "inboundEmailLogs";
 
 /** Email domain for inbound addresses */
-const INBOUND_EMAIL_DOMAIN = "i7v6.com";
+const INBOUND_EMAIL_DOMAIN = "fibuki.com";
 
 /** Default daily email limit */
 const DEFAULT_DAILY_LIMIT = 100;

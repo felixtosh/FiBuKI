@@ -1,7 +1,8 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.migrateUserData = exports.markInviteUsed = exports.validateRegistration = exports.listAdmins = exports.beforeUserCreatedHandler = exports.setAdminClaim = exports.resetInboundDailyLimits = exports.testInboundEmail = exports.receiveInboundEmail = exports.convertHtmlToPdfCallable = exports.scoreAttachmentMatchCallable = exports.generateSearchQueriesCallable = exports.onGmailSyncComplete = exports.onPrecisionSearchQueueCreated = exports.processPrecisionSearchQueue = exports.searchGmailCallable = exports.onTransactionsImported = exports.onGmailConnected = exports.scheduledGmailSync = exports.onSyncQueueCreated = exports.processGmailSyncQueue = exports.lookupByVatId = exports.lookupCompany = exports.generateFileSearchQuery = exports.processOrphanedFiles = exports.matchFilesForPartner = exports.findTransactionMatchesForFile = exports.matchFileTransactions = exports.matchFilePartner = exports.retryFileExtraction = exports.extractFileDataOnUndelete = exports.extractFileData = exports.sendReauthReminders = exports.triggerGoCardlessSync = exports.scheduledGoCardlessSync = exports.matchColumns = exports.generatePromotionCandidates = exports.triggerLearningNow = exports.processLearningQueue = exports.queuePartnerForLearning = exports.onUserDataUpdate = exports.onTransactionPartnerChange = exports.onCategoryUpdate = exports.onCategoryCreate = exports.matchCategories = exports.searchExternalPartners = exports.learnPartnerPatterns = exports.matchPartners = exports.onPartnerUpdate = exports.onPartnerCreate = void 0;
-exports.runReceiptSearchForTransaction = exports.triggerFileMatchingWorker = exports.deleteSource = exports.updateSource = exports.createSource = exports.removePartnerFromTransaction = exports.assignPartnerToTransaction = exports.deleteUserPartner = exports.updateUserPartner = exports.createUserPartner = exports.createImportRecord = exports.bulkCreateTransactions = exports.unrejectFileFromTransaction = exports.dismissTransactionSuggestion = exports.disconnectFileFromTransaction = exports.connectFileToTransaction = exports.unmarkFileAsNotInvoice = exports.markFileAsNotInvoice = exports.restoreFile = exports.deleteFile = exports.updateFile = exports.createFile = exports.deleteTransactionsBySource = exports.bulkUpdateTransactions = exports.updateTransaction = exports.updateTotpStatus = exports.deletePasskey = exports.verifyPasskeyAuth = exports.generatePasskeyAuthOptions = exports.verifyPasskeyRegistration = exports.generatePasskeyRegistrationOptions = exports.adminResetMfa = exports.getMfaStatus = exports.verifyBackupCode = exports.generateBackupCodes = exports.checkMigrationStatus = void 0;
+exports.validateRegistration = exports.listAdmins = exports.beforeUserCreatedHandler = exports.setAdminClaim = exports.resetInboundDailyLimits = exports.testInboundEmail = exports.receiveInboundEmail = exports.convertHtmlToPdfCallable = exports.scoreAttachmentMatchCallable = exports.generateSearchQueriesCallable = exports.onGmailSyncComplete = exports.onPrecisionSearchQueueCreated = exports.processPrecisionSearchQueue = exports.searchGmailCallable = exports.onTransactionsImported = exports.onGmailReconnected = exports.onGmailConnected = exports.scheduledGmailSync = exports.onSyncQueueCreated = exports.processGmailSyncQueue = exports.lookupByVatId = exports.lookupCompany = exports.generateFileSearchQuery = exports.processOrphanedFiles = exports.matchFilesForPartner = exports.findTransactionMatchesForFile = exports.matchFileTransactions = exports.matchFilePartner = exports.retryFileExtraction = exports.extractFileDataOnUndelete = exports.extractFileData = exports.sendReauthReminders = exports.triggerGoCardlessSync = exports.scheduledGoCardlessSync = exports.matchColumns = exports.fixIsCompleteFlag = exports.generatePromotionCandidates = exports.triggerLearningNow = exports.processLearningQueue = exports.queuePartnerForLearning = exports.onUserDataUpdate = exports.onTransactionUpdate = exports.onCategoryUpdate = exports.onCategoryCreate = exports.matchCategories = exports.searchExternalPartners = exports.learnPartnerPatterns = exports.matchPartners = exports.onPartnerUpdate = exports.onPartnerCreate = void 0;
+exports.processUserExportOnCreate = exports.requestUserExport = exports.getAutomations = exports.generateUvaPdf = exports.generateUvaXml = exports.runReceiptSearchForTransaction = exports.triggerFileMatchingWorker = exports.deleteSource = exports.updateSource = exports.createSource = exports.removePartnerFromTransaction = exports.assignPartnerToTransaction = exports.deleteUserPartner = exports.updateUserPartner = exports.createUserPartner = exports.cleanupExpiredDrafts = exports.deleteImportRecord = exports.deleteDraftImport = exports.updateDraftMappings = exports.createDraftImport = exports.createImportRecord = exports.bulkCreateTransactions = exports.unrejectFileFromTransaction = exports.dismissTransactionSuggestion = exports.disconnectFileFromTransaction = exports.connectFileToTransaction = exports.unmarkFileAsNotInvoice = exports.markFileAsNotInvoice = exports.restoreFile = exports.deleteFile = exports.updateFile = exports.createFile = exports.deleteTransactionsBySource = exports.bulkUpdateTransactions = exports.updateTransaction = exports.setUserPassword = exports.updateTotpStatus = exports.deletePasskey = exports.verifyPasskeyAuth = exports.generatePasskeyAuthOptions = exports.verifyPasskeyRegistration = exports.generatePasskeyRegistrationOptions = exports.adminResetMfa = exports.recordMfaSuccess = exports.getMfaStatus = exports.verifyBackupCode = exports.generateBackupCodes = exports.checkMigrationStatus = exports.migrateUserData = exports.markInviteUsed = void 0;
+exports.processUserImportOnUpdate = exports.executeUserImport = exports.validateUserImport = exports.cleanupExpiredExports = exports.processUserExportScheduled = void 0;
 const app_1 = require("firebase-admin/app");
 // Initialize Firebase Admin
 (0, app_1.initializeApp)();
@@ -23,8 +24,8 @@ var onCategoryCreate_1 = require("./matching/onCategoryCreate");
 Object.defineProperty(exports, "onCategoryCreate", { enumerable: true, get: function () { return onCategoryCreate_1.onCategoryCreate; } });
 var onCategoryUpdate_1 = require("./matching/onCategoryUpdate");
 Object.defineProperty(exports, "onCategoryUpdate", { enumerable: true, get: function () { return onCategoryUpdate_1.onCategoryUpdate; } });
-var onTransactionPartnerChange_1 = require("./matching/onTransactionPartnerChange");
-Object.defineProperty(exports, "onTransactionPartnerChange", { enumerable: true, get: function () { return onTransactionPartnerChange_1.onTransactionPartnerChange; } });
+var onTransactionUpdate_1 = require("./matching/onTransactionUpdate");
+Object.defineProperty(exports, "onTransactionUpdate", { enumerable: true, get: function () { return onTransactionUpdate_1.onTransactionUpdate; } });
 // Export user data update trigger (re-calculates file counterparties)
 var onUserDataUpdate_1 = require("./matching/onUserDataUpdate");
 Object.defineProperty(exports, "onUserDataUpdate", { enumerable: true, get: function () { return onUserDataUpdate_1.onUserDataUpdate; } });
@@ -36,6 +37,8 @@ Object.defineProperty(exports, "triggerLearningNow", { enumerable: true, get: fu
 // Export admin functions
 var generatePromotionCandidates_1 = require("./admin/generatePromotionCandidates");
 Object.defineProperty(exports, "generatePromotionCandidates", { enumerable: true, get: function () { return generatePromotionCandidates_1.generatePromotionCandidates; } });
+var fixIsCompleteFlag_1 = require("./admin/fixIsCompleteFlag");
+Object.defineProperty(exports, "fixIsCompleteFlag", { enumerable: true, get: function () { return fixIsCompleteFlag_1.fixIsCompleteFlagCallable; } });
 // Export import functions
 var matchColumns_1 = require("./import/matchColumns");
 Object.defineProperty(exports, "matchColumns", { enumerable: true, get: function () { return matchColumns_1.matchColumns; } });
@@ -77,6 +80,7 @@ var scheduledGmailSync_1 = require("./gmail/scheduledGmailSync");
 Object.defineProperty(exports, "scheduledGmailSync", { enumerable: true, get: function () { return scheduledGmailSync_1.scheduledGmailSync; } });
 var onGmailConnected_1 = require("./gmail/onGmailConnected");
 Object.defineProperty(exports, "onGmailConnected", { enumerable: true, get: function () { return onGmailConnected_1.onGmailConnected; } });
+Object.defineProperty(exports, "onGmailReconnected", { enumerable: true, get: function () { return onGmailConnected_1.onGmailReconnected; } });
 var onTransactionsImported_1 = require("./gmail/onTransactionsImported");
 Object.defineProperty(exports, "onTransactionsImported", { enumerable: true, get: function () { return onTransactionsImported_1.onTransactionsImported; } });
 var searchGmailCallable_1 = require("./gmail/searchGmailCallable");
@@ -115,6 +119,7 @@ var mfaFunctions_1 = require("./auth/mfaFunctions");
 Object.defineProperty(exports, "generateBackupCodes", { enumerable: true, get: function () { return mfaFunctions_1.generateBackupCodes; } });
 Object.defineProperty(exports, "verifyBackupCode", { enumerable: true, get: function () { return mfaFunctions_1.verifyBackupCode; } });
 Object.defineProperty(exports, "getMfaStatus", { enumerable: true, get: function () { return mfaFunctions_1.getMfaStatus; } });
+Object.defineProperty(exports, "recordMfaSuccess", { enumerable: true, get: function () { return mfaFunctions_1.recordMfaSuccess; } });
 Object.defineProperty(exports, "adminResetMfa", { enumerable: true, get: function () { return mfaFunctions_1.adminResetMfa; } });
 Object.defineProperty(exports, "generatePasskeyRegistrationOptions", { enumerable: true, get: function () { return mfaFunctions_1.generatePasskeyRegistrationOptions; } });
 Object.defineProperty(exports, "verifyPasskeyRegistration", { enumerable: true, get: function () { return mfaFunctions_1.verifyPasskeyRegistration; } });
@@ -122,6 +127,7 @@ Object.defineProperty(exports, "generatePasskeyAuthOptions", { enumerable: true,
 Object.defineProperty(exports, "verifyPasskeyAuth", { enumerable: true, get: function () { return mfaFunctions_1.verifyPasskeyAuth; } });
 Object.defineProperty(exports, "deletePasskey", { enumerable: true, get: function () { return mfaFunctions_1.deletePasskey; } });
 Object.defineProperty(exports, "updateTotpStatus", { enumerable: true, get: function () { return mfaFunctions_1.updateTotpStatus; } });
+Object.defineProperty(exports, "setUserPassword", { enumerable: true, get: function () { return mfaFunctions_1.setUserPassword; } });
 // ============================================================================
 // DATA OPERATIONS - All mutations go through Cloud Functions
 // ============================================================================
@@ -146,6 +152,11 @@ Object.defineProperty(exports, "unrejectFileFromTransaction", { enumerable: true
 var imports_1 = require("./imports");
 Object.defineProperty(exports, "bulkCreateTransactions", { enumerable: true, get: function () { return imports_1.bulkCreateTransactionsCallable; } });
 Object.defineProperty(exports, "createImportRecord", { enumerable: true, get: function () { return imports_1.createImportRecordCallable; } });
+Object.defineProperty(exports, "createDraftImport", { enumerable: true, get: function () { return imports_1.createDraftImportCallable; } });
+Object.defineProperty(exports, "updateDraftMappings", { enumerable: true, get: function () { return imports_1.updateDraftMappingsCallable; } });
+Object.defineProperty(exports, "deleteDraftImport", { enumerable: true, get: function () { return imports_1.deleteDraftImportCallable; } });
+Object.defineProperty(exports, "deleteImportRecord", { enumerable: true, get: function () { return imports_1.deleteImportRecordCallable; } });
+Object.defineProperty(exports, "cleanupExpiredDrafts", { enumerable: true, get: function () { return imports_1.cleanupExpiredDrafts; } });
 // Partner operations
 var partners_1 = require("./partners");
 Object.defineProperty(exports, "createUserPartner", { enumerable: true, get: function () { return partners_1.createUserPartnerCallable; } });
@@ -163,4 +174,22 @@ var triggerFileMatchingWorker_1 = require("./workers/triggerFileMatchingWorker")
 Object.defineProperty(exports, "triggerFileMatchingWorker", { enumerable: true, get: function () { return triggerFileMatchingWorker_1.triggerFileMatchingWorkerCallable; } });
 var runReceiptSearchForTransaction_1 = require("./workers/runReceiptSearchForTransaction");
 Object.defineProperty(exports, "runReceiptSearchForTransaction", { enumerable: true, get: function () { return runReceiptSearchForTransaction_1.runReceiptSearchForTransactionCallable; } });
+// Report operations
+var reports_1 = require("./reports");
+Object.defineProperty(exports, "generateUvaXml", { enumerable: true, get: function () { return reports_1.generateUvaXmlCallable; } });
+Object.defineProperty(exports, "generateUvaPdf", { enumerable: true, get: function () { return reports_1.generateUvaPdfCallable; } });
+// Automation registry (for admin page)
+var automation_1 = require("./automation");
+Object.defineProperty(exports, "getAutomations", { enumerable: true, get: function () { return automation_1.getAutomationsCallable; } });
+// User data export operations
+var user_export_1 = require("./user-export");
+Object.defineProperty(exports, "requestUserExport", { enumerable: true, get: function () { return user_export_1.requestUserExportCallable; } });
+Object.defineProperty(exports, "processUserExportOnCreate", { enumerable: true, get: function () { return user_export_1.processUserExportOnCreate; } });
+Object.defineProperty(exports, "processUserExportScheduled", { enumerable: true, get: function () { return user_export_1.processUserExportScheduled; } });
+Object.defineProperty(exports, "cleanupExpiredExports", { enumerable: true, get: function () { return user_export_1.cleanupExpiredExports; } });
+// User data import operations
+var user_import_1 = require("./user-import");
+Object.defineProperty(exports, "validateUserImport", { enumerable: true, get: function () { return user_import_1.validateUserImportCallable; } });
+Object.defineProperty(exports, "executeUserImport", { enumerable: true, get: function () { return user_import_1.executeUserImportCallable; } });
+Object.defineProperty(exports, "processUserImportOnUpdate", { enumerable: true, get: function () { return user_import_1.processUserImportOnUpdate; } });
 //# sourceMappingURL=index.js.map

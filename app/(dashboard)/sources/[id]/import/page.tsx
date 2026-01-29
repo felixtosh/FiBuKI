@@ -1,9 +1,10 @@
 "use client";
 
-import { use, useCallback } from "react";
+import { use, useCallback, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSources } from "@/hooks/use-sources";
 import { useImport, ImportStep } from "@/hooks/use-import";
+import { useDraftImport } from "@/hooks/use-draft-import";
 import { CSVDropzone } from "@/components/import/csv-dropzone";
 import { MappingEditor } from "@/components/import/mapping-editor";
 import { ImportPreview } from "@/components/import/import-preview";
@@ -16,7 +17,9 @@ import {
   ArrowRight,
   CheckCircle2,
   Loader2,
+  AlertCircle,
 } from "lucide-react";
+import { formatDistanceToNow } from "date-fns";
 
 interface ImportPageProps {
   params: Promise<{ id: string }>;
@@ -29,6 +32,17 @@ export default function ImportPage({ params }: ImportPageProps) {
   const { sources, loading: sourcesLoading } = useSources();
   const source = sources.find((s) => s.id === id) || null;
 
+  // Check for draft import ID in URL
+  const importIdParam = searchParams.get("importId");
+
+  // Load draft if importId is provided
+  const {
+    data: draftData,
+    isLoading: draftLoading,
+    error: draftError,
+  } = useDraftImport(importIdParam);
+
+  // Initialize useImport with draft data if available
   const {
     state,
     handleFileAnalyzed,
@@ -39,29 +53,47 @@ export default function ImportPage({ params }: ImportPageProps) {
     clearError,
     executeImport,
     reset,
-  } = useImport(source);
+  } = useImport(source, {
+    initialDraft: draftData?.draft ?? null,
+    initialCsvContent: draftData?.csvContent ?? null,
+  });
 
   // Determine effective step from URL or transient state
   const urlStep = searchParams.get("step") as ImportStep | null;
-  const effectiveStep: ImportStep = state.transientStep || urlStep || "upload";
 
-  // Navigation helpers
+  // If resuming draft, default to mapping step (skip upload)
+  const getEffectiveStep = (): ImportStep => {
+    if (state.transientStep) return state.transientStep;
+    if (urlStep) return urlStep;
+    // If we have draft data loaded, skip to mapping
+    if (draftData && state.analysis) return "mapping";
+    return "upload";
+  };
+
+  const effectiveStep = getEffectiveStep();
+
+  // Navigation helpers - include importId in URL if we have one
   const navigateToStep = useCallback(
-    (step: ImportStep) => {
+    (step: ImportStep, draftImportId?: string) => {
+      const currentImportId = draftImportId || state.draftImportId || importIdParam;
+
       if (step === "upload") {
         router.push(`/sources/${id}/import`);
+      } else if (currentImportId) {
+        router.push(`/sources/${id}/import?importId=${currentImportId}&step=${step}`);
       } else {
         router.push(`/sources/${id}/import?step=${step}`);
       }
     },
-    [router, id]
+    [router, id, state.draftImportId, importIdParam]
   );
 
   const onFileAnalyzed = useCallback(
     async (analysis: CSVAnalysis, file: File) => {
-      const success = await handleFileAnalyzed(analysis, file);
-      if (success) {
-        navigateToStep("mapping");
+      const result = await handleFileAnalyzed(analysis, file);
+      if (result) {
+        // Navigate with the new draft import ID
+        navigateToStep("mapping", result.importId);
       }
     },
     [handleFileAnalyzed, navigateToStep]
@@ -80,10 +112,12 @@ export default function ImportPage({ params }: ImportPageProps) {
 
   const onReset = useCallback(() => {
     reset();
-    navigateToStep("upload");
-  }, [reset, navigateToStep]);
+    // Clear the importId from URL when starting fresh
+    router.push(`/sources/${id}/import`);
+  }, [reset, router, id]);
 
-  if (sourcesLoading) {
+  // Loading states
+  if (sourcesLoading || (importIdParam && draftLoading)) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -101,6 +135,19 @@ export default function ImportPage({ params }: ImportPageProps) {
           className="mt-2"
         >
           Back to sources
+        </Button>
+      </div>
+    );
+  }
+
+  // Draft loading error
+  if (importIdParam && draftError) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
+        <AlertCircle className="h-12 w-12 text-destructive" />
+        <p className="text-muted-foreground">{draftError}</p>
+        <Button onClick={() => router.push(`/sources/${id}/import`)}>
+          Start New Import
         </Button>
       </div>
     );
@@ -185,10 +232,21 @@ export default function ImportPage({ params }: ImportPageProps) {
         <div className="space-y-6">
           <div className="flex items-center justify-between">
             <div>
-              <p className="font-medium">{state.file?.name}</p>
+              <p className="font-medium">
+                {state.fileName || draftData?.draft.fileName || "CSV File"}
+              </p>
               <p className="text-sm text-muted-foreground">
                 {state.analysis.totalRows} rows • {state.analysis.headers.length}{" "}
                 columns
+                {draftData?.draft && (
+                  <>
+                    {" "}
+                    • Draft saved{" "}
+                    {formatDistanceToNow(draftData.draft.createdAt.toDate(), {
+                      addSuffix: true,
+                    })}
+                  </>
+                )}
               </p>
             </div>
             <Button variant="outline" onClick={onReset}>

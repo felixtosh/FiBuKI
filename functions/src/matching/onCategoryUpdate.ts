@@ -7,6 +7,46 @@ import {
   CategoryData,
   TransactionData,
 } from "../utils/category-matcher";
+import { AutomationMeta } from "../automation/types";
+
+// =============================================================================
+// AUTOMATION METADATA
+// =============================================================================
+
+export const AUTOMATION_META: AutomationMeta = {
+  id: "onCategoryUpdate",
+  name: "Re-match on Category Update",
+  description:
+    "Re-evaluates unmatched transactions when category patterns or matched partners change",
+  trigger: {
+    type: "document_update",
+    collection: "noReceiptCategories",
+  },
+  effects: [
+    {
+      entity: "transaction",
+      fields: [
+        "noReceiptCategoryId",
+        "noReceiptCategoryTemplateId",
+        "noReceiptCategoryConfidence",
+        "noReceiptCategoryMatchedBy",
+        "categorySuggestions",
+        "isComplete",
+      ],
+      action: "update",
+    },
+  ],
+  config: {
+    autoApplyThreshold: 89,
+    maxTransactionsPerRun: 500,
+  },
+  icon: "FolderOpen",
+  category: "matching",
+};
+
+// =============================================================================
+// IMPLEMENTATION
+// =============================================================================
 
 const db = getFirestore();
 

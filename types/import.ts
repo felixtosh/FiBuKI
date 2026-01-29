@@ -245,8 +245,13 @@ export interface CSVAnalysis {
 }
 
 /**
- * Persisted import record - lightweight summary of a completed import.
- * Stored in Firestore 'imports' collection.
+ * Import status - 'draft' until transactions are created, then 'completed'
+ */
+export type ImportStatus = "draft" | "completed";
+
+/**
+ * Persisted import record - stored in Firestore 'imports' collection.
+ * Can be either a draft (in-progress) or completed import.
  */
 export interface ImportRecord {
   /** Document ID (same as importJobId stored on transactions) */
@@ -258,23 +263,36 @@ export interface ImportRecord {
   /** Original filename */
   fileName: string;
 
-  /** When the import was executed */
+  /** When the import was created */
   createdAt: Timestamp;
-
-  /** Number of transactions successfully imported */
-  importedCount: number;
-
-  /** Number of rows skipped (duplicates) */
-  skippedCount: number;
-
-  /** Number of rows that had errors */
-  errorCount: number;
-
-  /** Total rows in the original file */
-  totalRows: number;
 
   /** Owner of this import */
   userId: string;
+
+  // === Status (draft support) ===
+
+  /** Import status - 'draft' until transactions created, then 'completed' */
+  status: ImportStatus;
+
+  /** Auto-expiration timestamp for drafts (7 days from creation) */
+  expiresAt?: Timestamp;
+
+  /** SHA-256 hash of CSV content for duplicate detection */
+  csvHash?: string;
+
+  /** Last update timestamp (for tracking draft edits) */
+  updatedAt?: Timestamp;
+
+  // === CSV Analysis Data (for draft resumption) ===
+
+  /** Detected headers from CSV (needed to resume draft) */
+  detectedHeaders?: string[];
+
+  /** Sample rows for preview (first 50 rows, needed for mapping UI) */
+  sampleRows?: Record<string, string>[];
+
+  /** Total rows in the original file */
+  totalRows: number;
 
   // === CSV Storage (for re-mapping) ===
 
@@ -289,6 +307,17 @@ export interface ImportRecord {
 
   /** Field mappings used for this import */
   fieldMappings?: FieldMapping[];
+
+  // === Completion Results (only set when status === 'completed') ===
+
+  /** Number of transactions successfully imported */
+  importedCount?: number;
+
+  /** Number of rows skipped (duplicates) */
+  skippedCount?: number;
+
+  /** Number of rows that had errors */
+  errorCount?: number;
 }
 
 // === Re-mapping Types ===

@@ -36,12 +36,24 @@ export default function LoginPage() {
     setIsLogoJumping(true);
     setTimeout(() => setIsLogoJumping(false), 600);
   };
-  const { signIn, signInWithGoogle, mfaRequired, mfaResolver, clearMfaChallenge } = useAuth();
-  const { handleMfaRequired } = useMfaChallenge();
+  const {
+    user,
+    signIn,
+    signInWithGoogle,
+    signOut,
+    mfaRequired,
+    mfaResolver,
+    clearMfaChallenge,
+    customMfaRequired,
+    customMfaStatus,
+    clearCustomMfaChallenge,
+    completeCustomMfaChallenge,
+  } = useAuth();
+  const { handleMfaRequired, handleCustomMfaRequired } = useMfaChallenge();
   const { hasPasskeys } = usePasskeys();
   const router = useRouter();
 
-  // When MFA is required by the auth provider, trigger the MFA challenge handler
+  // When Firebase MFA is required by the auth provider, trigger the MFA challenge handler
   useEffect(() => {
     if (mfaRequired && mfaResolver) {
       // Create a mock error to pass to the challenge handler
@@ -53,6 +65,13 @@ export default function LoginPage() {
     }
   }, [mfaRequired, mfaResolver, handleMfaRequired, hasPasskeys]);
 
+  // When custom MFA is required (passkey-only users), trigger the custom MFA handler
+  useEffect(() => {
+    if (customMfaRequired && customMfaStatus) {
+      handleCustomMfaRequired(customMfaStatus);
+    }
+  }, [customMfaRequired, customMfaStatus, handleCustomMfaRequired]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
@@ -60,7 +79,9 @@ export default function LoginPage() {
 
     try {
       await signIn(email, password);
-      router.push("/transactions");
+      // Don't navigate yet - the useEffect will check if customMfaRequired is set
+      // and show the MFA dialog. Only navigate if no MFA is needed.
+      // We check this via a small delay to allow state to update
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Failed to sign in. Please check your credentials."
@@ -70,13 +91,25 @@ export default function LoginPage() {
     }
   };
 
+  // Navigate to dashboard after successful login (when no MFA is pending)
+  useEffect(() => {
+    // Only redirect if:
+    // 1. User is logged in
+    // 2. No Firebase MFA challenge is pending
+    // 3. No custom MFA challenge is pending
+    // 4. Not currently loading
+    if (user && !mfaRequired && !customMfaRequired && !isLoading) {
+      router.push("/transactions");
+    }
+  }, [user, mfaRequired, customMfaRequired, isLoading, router]);
+
   const handleGoogleSignIn = async () => {
     setError("");
     setIsLoading(true);
 
     try {
       await signInWithGoogle();
-      router.push("/transactions");
+      // Don't navigate - the useEffect will handle navigation after MFA check
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Failed to sign in with Google."
@@ -207,7 +240,7 @@ export default function LoginPage() {
         </p>
       </CardFooter>
 
-      {/* MFA Challenge Dialog */}
+      {/* MFA Challenge Dialog - Firebase MFA (TOTP) */}
       <MfaChallengeDialog
         open={mfaRequired}
         onSuccess={() => {
@@ -216,6 +249,22 @@ export default function LoginPage() {
         }}
         onCancel={() => {
           clearMfaChallenge();
+          setError("Two-factor authentication is required");
+        }}
+      />
+
+      {/* MFA Challenge Dialog - Custom MFA (Passkeys) */}
+      <MfaChallengeDialog
+        open={customMfaRequired}
+        mfaStatus={customMfaStatus}
+        onSuccess={() => {
+          completeCustomMfaChallenge();
+          router.push("/transactions");
+        }}
+        onCancel={async () => {
+          // Sign out the user since they cancelled MFA verification
+          clearCustomMfaChallenge();
+          await signOut();
           setError("Two-factor authentication is required");
         }}
       />

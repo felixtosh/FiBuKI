@@ -1,6 +1,6 @@
 "use client";
 
-import { Package, Link2, Sparkles, Eraser, Bot } from "lucide-react";
+import { Package, Link2, Sparkles, Eraser, Bot, Download, Upload, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AutoActionNotification, NotificationType } from "@/types/notification";
 import { useChat } from "./chat-provider";
@@ -33,6 +33,22 @@ const typeConfig: Record<
   worker_activity: {
     icon: Bot,
     color: "text-blue-500",
+  },
+  export_complete: {
+    icon: Download,
+    color: "text-green-500",
+  },
+  export_failed: {
+    icon: AlertCircle,
+    color: "text-red-500",
+  },
+  data_import_complete: {
+    icon: Upload,
+    color: "text-green-500",
+  },
+  data_import_failed: {
+    icon: AlertCircle,
+    color: "text-red-500",
   },
 };
 

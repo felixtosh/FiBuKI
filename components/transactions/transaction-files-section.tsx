@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useCallback, useEffect } from "react";
+import { useMemo, useEffect } from "react";
 import { format } from "date-fns";
 import {
   Loader2,
@@ -9,9 +9,7 @@ import {
   X,
   Sparkles,
   Check,
-  Search,
-  History,
-  Info,
+  WandSparkles,
   AlertTriangle,
   UserCheck,
   RotateCcw,
@@ -34,14 +32,6 @@ import { ReceiptLostDialog } from "./receipt-lost-dialog";
 import { useTransactionFiles, useFiles } from "@/hooks/use-files";
 import { convertCurrency } from "@/lib/currency";
 import { useNoReceiptCategories } from "@/hooks/use-no-receipt-categories";
-import { usePrecisionSearch } from "@/hooks/use-precision-search";
-import {
-  AutomationHistoryDialog,
-  type LastRunOutcome,
-  type AutomationOutcome,
-} from "@/components/automations/automation-history-dialog";
-import { AutomationDialog } from "@/components/automations/automation-dialog";
-import { useAutomations } from "@/hooks/use-automations";
 // Category suggestions now come from transaction.categorySuggestions (computed on backend)
 import { cn } from "@/lib/utils";
 import Link from "next/link";
@@ -343,17 +333,10 @@ export function TransactionFilesSection({
   isConnectFileOpen = false,
 }: TransactionFilesSectionProps) {
   const [isReceiptLostDialogOpen, setIsReceiptLostDialogOpen] = useState(false);
-  const [isHistoryDialogOpen, setIsHistoryDialogOpen] = useState(false);
-  const [isAutomationInfoDialogOpen, setIsAutomationInfoDialogOpen] = useState(false);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
-  const [runningStepId, setRunningStepId] = useState<string | null>(null);
-  const [lastRunOutcome, setLastRunOutcome] = useState<LastRunOutcome | null>(null);
   const [dismissedSuggestions, setDismissedSuggestions] = useState<Set<string>>(new Set());
   const [showRejectedFiles, setShowRejectedFiles] = useState(false);
   const [unrejecting, setUnrejecting] = useState<string | null>(null);
-
-  // Get integration statuses for the automation dialog
-  const { integrationStatuses } = useAutomations();
 
   const { files, loading: filesLoading, connectFile, disconnectFile, unrejectFile } =
     useTransactionFiles(transaction.id);
@@ -367,34 +350,8 @@ export function TransactionFilesSection({
     getCategoryById,
   } = useNoReceiptCategories();
 
-  // Precision search for manual automation triggering
-  const {
-    triggerSearch: triggerPrecisionSearch,
-    isSearching: isPrecisionSearching,
-    strategyLabel: precisionSearchLabel,
-  } = usePrecisionSearch({
-    transactionId: transaction.id,
-    onComplete: (filesConnected: number) => {
-      const stepId = runningStepId || "file-transaction-matching";
-      const outcome: AutomationOutcome = filesConnected > 0 ? "match" : "no_results";
-      const details = filesConnected > 0
-        ? `${filesConnected} file${filesConnected !== 1 ? "s" : ""} connected`
-        : "Search completed - no matching files found";
-
-      setLastRunOutcome({
-        stepId,
-        outcome,
-        details,
-        timestamp: new Date(),
-      });
-      setRunningStepId(null);
-    },
-  });
-
   // Clear state when transaction changes
   useEffect(() => {
-    setLastRunOutcome(null);
-    setRunningStepId(null);
     setDismissedSuggestions(new Set());
     setShowRejectedFiles(false);
   }, [transaction.id]);
@@ -555,25 +512,6 @@ export function TransactionFilesSection({
     await removeFromTransaction(transaction.id);
   };
 
-  // Handle manual automation step trigger
-  const handleTriggerStep = useCallback(async (stepId: string) => {
-    setRunningStepId(stepId);
-
-    // Most file-finding automations run through precision search
-    if (
-      stepId === "file-transaction-matching" ||
-      stepId === "file-gmail-search" ||
-      stepId === "category-partner-match" ||
-      stepId === "category-pattern-match"
-    ) {
-      // Trigger precision search which runs the full pipeline
-      await triggerPrecisionSearch();
-    } else {
-      // Unknown step - just reset the running state
-      setRunningStepId(null);
-    }
-  }, [triggerPrecisionSearch]);
-
   const loading = filesLoading || categoriesLoading;
 
   return (
@@ -583,34 +521,6 @@ export function TransactionFilesSection({
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-medium">File</h3>
           <div className="flex items-center gap-1">
-            {/* Automation info button - explains Find Receipt pipeline */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6"
-                  onClick={() => setIsAutomationInfoDialogOpen(true)}
-                >
-                  <Info className="h-3.5 w-3.5" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>How file matching works</TooltipContent>
-            </Tooltip>
-            {/* Automation history button */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6"
-                  onClick={() => setIsHistoryDialogOpen(true)}
-                >
-                  <History className="h-3.5 w-3.5" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Automation history</TooltipContent>
-            </Tooltip>
             {/* Show search button for incomplete transactions (no files AND no category) */}
             {!hasFiles && !transaction.noReceiptCategoryId && onTriggerSearch && (
               <Tooltip>
@@ -625,11 +535,11 @@ export function TransactionFilesSection({
                     {isSearching ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
                     ) : (
-                      <Search className="h-3.5 w-3.5" />
+                      <WandSparkles className="h-3.5 w-3.5" />
                     )}
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>Search for receipt</TooltipContent>
+                <TooltipContent>AI search for receipt</TooltipContent>
               </Tooltip>
             )}
           </div>
@@ -937,24 +847,6 @@ export function TransactionFilesSection({
           transaction={transaction}
         />
 
-        {/* Automation history dialog */}
-        <AutomationHistoryDialog
-          open={isHistoryDialogOpen}
-          onClose={() => setIsHistoryDialogOpen(false)}
-          transaction={transaction}
-          pipelineId="find-file"
-          onTriggerStep={handleTriggerStep}
-          isRunning={runningStepId || (isPrecisionSearching ? "file-transaction-matching" : null)}
-          lastRunOutcome={lastRunOutcome}
-        />
-
-        {/* Automation info dialog - explains Find Receipt pipeline */}
-        <AutomationDialog
-          open={isAutomationInfoDialogOpen}
-          onClose={() => setIsAutomationInfoDialogOpen(false)}
-          pipelineId="find-file"
-          integrationStatuses={integrationStatuses}
-        />
       </div>
     </TooltipProvider>
   );

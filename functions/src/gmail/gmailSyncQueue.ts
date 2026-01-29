@@ -755,11 +755,31 @@ async function processQueueItem(
     }
   } catch (error) {
     console.error(`[GmailSync] Error processing queue item:`, error);
+    const errorMsg = error instanceof Error ? error.message : "Unknown error";
 
-    // Check if we should retry
+    // Check if this is a reauth error - pause instead of retry/fail
+    // This allows auto-resume when Gmail is reconnected
+    const isReauthError = errorMsg.includes("needs re-authentication") ||
+      errorMsg.includes("needsReauth") ||
+      errorMsg.includes("token expired");
+
+    if (isReauthError) {
+      console.log(`[GmailSync] Pausing queue item due to reauth required: ${queueItem.id}`);
+      await db.collection("gmailSyncQueue").doc(queueItem.id).update({
+        status: "paused",
+        lastError: "Gmail needs reconnection. Will resume automatically when reconnected.",
+        emailsProcessed,
+        filesCreated,
+        attachmentsSkipped,
+        errors,
+        processedMessageIds: Array.from(processedMessageIds),
+      });
+      // Don't retry or fail - just pause and wait for reconnection
+      return;
+    }
+
+    // Check if we should retry (for non-reauth errors)
     if (queueItem.retryCount < queueItem.maxRetries) {
-      const errorMsg = error instanceof Error ? error.message : "Unknown error";
-
       if (queueItem.type === "scheduled") {
         // Scheduled syncs: update and let cron retry
         await db.collection("gmailSyncQueue").doc(queueItem.id).update({

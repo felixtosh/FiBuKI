@@ -11,7 +11,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Receipt, Building2, Users, Settings, Activity, Globe, Files, Tag, Link2, User, LogOut, UserPlus, Mail, Palette, Shield, Zap, FileText, FlaskConical } from "lucide-react";
+import { Receipt, Building2, Users, Settings, Activity, Globe, Files, Tag, Link2, User, LogOut, UserPlus, Palette, Shield, Zap, FileText, FlaskConical, Download } from "lucide-react";
 import Link from "next/link";
 import { FibukiMascot } from "@/components/ui/fibuki-mascot";
 import { cn } from "@/lib/utils";
@@ -158,15 +158,9 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
               <DropdownMenuContent align="end" className="w-56">
                 <DropdownMenuLabel>Settings</DropdownMenuLabel>
                 <DropdownMenuItem asChild>
-                  <Link href="/settings/sign-in" className="flex items-center gap-2">
-                    <Mail className="h-4 w-4" />
-                    Sign-in Methods
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link href="/settings/security" className="flex items-center gap-2">
+                  <Link href="/settings/sign-in-security" className="flex items-center gap-2">
                     <Shield className="h-4 w-4" />
-                    Security
+                    Sign-in & Security
                   </Link>
                 </DropdownMenuItem>
                 <DropdownMenuItem asChild>
@@ -185,6 +179,12 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
                   <Link href="/settings/integrations" className="flex items-center gap-2">
                     <Link2 className="h-4 w-4" />
                     Integrations
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link href="/settings/import-export" className="flex items-center gap-2">
+                    <Download className="h-4 w-4" />
+                    Import / Export
                   </Link>
                 </DropdownMenuItem>
 

@@ -36,12 +36,14 @@ export async function saveUserData(
   const userData: UserData = {
     name: data.name.trim(),
     companyName: data.companyName.trim(),
+    country: data.country || existingDoc.data()?.country || "AT",
     aliases: data.aliases.map((a) => a.trim()).filter(Boolean),
     vatIds: (data.vatIds || []).map((v) => v.trim().toUpperCase().replace(/[^A-Z0-9]/g, "")).filter(Boolean),
     ibans: (data.ibans || []).map((i) => i.trim().toUpperCase().replace(/\s/g, "")).filter(Boolean),
     ownEmails: (data.ownEmails || existingDoc.data()?.ownEmails || [])
       .map((e: string) => e.trim().toLowerCase())
       .filter(Boolean),
+    taxNumber: data.taxNumber?.replace(/\D/g, "") || existingDoc.data()?.taxNumber,
     markedAsMe: data.markedAsMe || existingDoc.data()?.markedAsMe || [],
     updatedAt: now,
     createdAt: existingDoc.exists() ? existingDoc.data().createdAt : now,

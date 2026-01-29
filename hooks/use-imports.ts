@@ -13,20 +13,20 @@ import {
 } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
 import { ImportRecord } from "@/types/import";
-import { deleteImport as deleteImportOp } from "@/lib/operations";
+import { callFunction } from "@/lib/firebase/callable";
 import { useAuth } from "@/components/auth";
 
 const IMPORTS_COLLECTION = "imports";
 
 export function useImports(sourceId?: string) {
   const { userId } = useAuth();
-  const [imports, setImports] = useState<ImportRecord[]>([]);
+  const [allImports, setAllImports] = useState<ImportRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
     if (!sourceId || !userId) {
-      setImports([]);
+      setAllImports([]);
       setLoading(false);
       return;
     }
@@ -48,7 +48,7 @@ export function useImports(sourceId?: string) {
           ...doc.data(),
         })) as ImportRecord[];
 
-        setImports(data);
+        setAllImports(data);
         setLoading(false);
       },
       (err) => {
@@ -60,6 +60,18 @@ export function useImports(sourceId?: string) {
 
     return () => unsubscribe();
   }, [sourceId, userId]);
+
+  // Separate completed imports from drafts
+  // Treat missing status as 'completed' for backwards compatibility
+  const imports = useMemo(
+    () => allImports.filter((imp) => (imp.status ?? "completed") === "completed"),
+    [allImports]
+  );
+
+  const drafts = useMemo(
+    () => allImports.filter((imp) => imp.status === "draft"),
+    [allImports]
+  );
 
   /**
    * Create a new import record with a specific ID
@@ -81,34 +93,42 @@ export function useImports(sourceId?: string) {
     [userId]
   );
 
-  const ctx = useMemo(() => ({ db, userId: userId ?? "" }), [userId]);
-
   /**
    * Delete an import and all its associated transactions
+   * Uses Cloud Function which has Storage delete permissions
    */
-  const deleteImport = useCallback(
-    async (importId: string) => {
-      await deleteImportOp(ctx, importId);
-    },
-    [ctx]
-  );
+  const deleteImport = useCallback(async (importId: string) => {
+    await callFunction("deleteImportRecord", { importId });
+  }, []);
+
+  /**
+   * Delete a draft import (only for status === 'draft')
+   * Uses Cloud Function which also deletes the CSV from storage
+   */
+  const deleteDraft = useCallback(async (importId: string) => {
+    await callFunction("deleteDraftImport", { importId });
+  }, []);
 
   /**
    * Get a single import by ID (from the already-loaded imports)
    */
   const getImportById = useCallback(
     (importId: string): ImportRecord | undefined => {
-      return imports.find((imp) => imp.id === importId);
+      return allImports.find((imp) => imp.id === importId);
     },
-    [imports]
+    [allImports]
   );
 
   return {
+    /** All completed imports (status !== 'draft') */
     imports,
+    /** Draft imports that can be resumed */
+    drafts,
     loading,
     error,
     createImport,
     deleteImport,
+    deleteDraft,
     getImportById,
   };
 }

@@ -1,9 +1,44 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.onCategoryCreate = void 0;
+exports.onCategoryCreate = exports.AUTOMATION_META = void 0;
 const firestore_1 = require("firebase-functions/v2/firestore");
 const firestore_2 = require("firebase-admin/firestore");
 const category_matcher_1 = require("../utils/category-matcher");
+// =============================================================================
+// AUTOMATION METADATA
+// =============================================================================
+exports.AUTOMATION_META = {
+    id: "onCategoryCreate",
+    name: "Re-match on Category Create",
+    description: "Re-evaluates unmatched transactions when a new no-receipt category is created",
+    trigger: {
+        type: "document_create",
+        collection: "noReceiptCategories",
+    },
+    effects: [
+        {
+            entity: "transaction",
+            fields: [
+                "noReceiptCategoryId",
+                "noReceiptCategoryTemplateId",
+                "noReceiptCategoryConfidence",
+                "noReceiptCategoryMatchedBy",
+                "categorySuggestions",
+                "isComplete",
+            ],
+            action: "update",
+        },
+    ],
+    config: {
+        autoApplyThreshold: 89,
+        maxTransactionsPerRun: 500,
+    },
+    icon: "FolderOpen",
+    category: "matching",
+};
+// =============================================================================
+// IMPLEMENTATION
+// =============================================================================
 const db = (0, firestore_2.getFirestore)();
 /**
  * Triggered when a new no-receipt category is created.

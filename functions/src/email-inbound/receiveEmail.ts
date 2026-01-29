@@ -26,7 +26,7 @@ const INBOUND_ADDRESSES_COLLECTION = "inboundEmailAddresses";
 const INBOUND_LOGS_COLLECTION = "inboundEmailLogs";
 const FILES_COLLECTION = "files";
 
-const INBOUND_EMAIL_DOMAIN = "i7v6.com";
+const INBOUND_EMAIL_DOMAIN = "fibuki.com";
 
 /** Supported attachment MIME types */
 const SUPPORTED_MIME_TYPES = [
@@ -537,7 +537,7 @@ function getToAddresses(to: AddressObject | AddressObject[] | undefined): Array<
 // ============================================================================
 
 interface TestEmailPayload {
-  to: string; // e.g., "invoices-abc123@i7v6.com"
+  to: string; // e.g., "invoices-abc123@fibuki.com"
   from: string;
   fromName?: string;
   subject: string;
@@ -557,7 +557,7 @@ interface TestEmailPayload {
  * Usage:
  * curl -X POST http://localhost:5001/PROJECT_ID/europe-west1/testInboundEmail \
  *   -H "Content-Type: application/json" \
- *   -d '{"to":"invoices-PREFIX@i7v6.com","from":"test@example.com","subject":"Test Invoice","html":"<h1>Test</h1>"}'
+ *   -d '{"to":"invoices-PREFIX@fibuki.com","from":"test@example.com","subject":"Test Invoice","html":"<h1>Test</h1>"}'
  */
 export const testInboundEmail = onRequest(
   {

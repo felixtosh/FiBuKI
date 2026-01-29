@@ -18,6 +18,45 @@ import {
   shouldAutoApply,
   PartnerData,
 } from "../utils/filePartnerMatcher";
+import { AutomationMeta } from "../automation/types";
+
+// =============================================================================
+// AUTOMATION METADATA
+// =============================================================================
+
+export const AUTOMATION_META: AutomationMeta = {
+  id: "onPartnerUpdate",
+  name: "Re-match Files on Partner Update",
+  description:
+    "Re-evaluates file matches when partner details (name, aliases, IBAN, VAT, website, email domains) change",
+  trigger: {
+    type: "document_update",
+    collection: "partners",
+  },
+  effects: [
+    {
+      entity: "file",
+      fields: [
+        "partnerId",
+        "partnerType",
+        "partnerMatchedBy",
+        "partnerMatchConfidence",
+        "partnerSuggestions",
+      ],
+      action: "update",
+    },
+  ],
+  config: {
+    autoMatchThreshold: 89,
+    maxFilesPerUpdate: 200,
+  },
+  icon: "FileText",
+  category: "matching",
+};
+
+// =============================================================================
+// IMPLEMENTATION
+// =============================================================================
 
 const db = getFirestore();
 

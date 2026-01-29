@@ -14,7 +14,7 @@ export { searchExternalPartners } from "./matching/searchExternalPartners";
 export { matchCategories } from "./matching/matchCategories";
 export { onCategoryCreate } from "./matching/onCategoryCreate";
 export { onCategoryUpdate } from "./matching/onCategoryUpdate";
-export { onTransactionPartnerChange } from "./matching/onTransactionPartnerChange";
+export { onTransactionUpdate } from "./matching/onTransactionUpdate";
 
 // Export user data update trigger (re-calculates file counterparties)
 export { onUserDataUpdate } from "./matching/onUserDataUpdate";
@@ -28,6 +28,7 @@ export {
 
 // Export admin functions
 export { generatePromotionCandidates } from "./admin/generatePromotionCandidates";
+export { fixIsCompleteFlagCallable as fixIsCompleteFlag } from "./admin/fixIsCompleteFlag";
 
 // Export import functions
 export { matchColumns } from "./import/matchColumns";
@@ -64,7 +65,7 @@ export {
   onSyncQueueCreated,
 } from "./gmail/gmailSyncQueue";
 export { scheduledGmailSync } from "./gmail/scheduledGmailSync";
-export { onGmailConnected } from "./gmail/onGmailConnected";
+export { onGmailConnected, onGmailReconnected } from "./gmail/onGmailConnected";
 export { onTransactionsImported } from "./gmail/onTransactionsImported";
 export { searchGmailCallable } from "./gmail/searchGmailCallable";
 
@@ -96,6 +97,7 @@ export {
   generateBackupCodes,
   verifyBackupCode,
   getMfaStatus,
+  recordMfaSuccess,
   adminResetMfa,
   generatePasskeyRegistrationOptions,
   verifyPasskeyRegistration,
@@ -103,6 +105,7 @@ export {
   verifyPasskeyAuth,
   deletePasskey,
   updateTotpStatus,
+  setUserPassword,
 } from "./auth/mfaFunctions";
 
 // ============================================================================
@@ -134,6 +137,11 @@ export {
 export {
   bulkCreateTransactionsCallable as bulkCreateTransactions,
   createImportRecordCallable as createImportRecord,
+  createDraftImportCallable as createDraftImport,
+  updateDraftMappingsCallable as updateDraftMappings,
+  deleteDraftImportCallable as deleteDraftImport,
+  deleteImportRecordCallable as deleteImportRecord,
+  cleanupExpiredDrafts,
 } from "./imports";
 
 // Partner operations
@@ -155,3 +163,27 @@ export {
 // Worker operations
 export { triggerFileMatchingWorkerCallable as triggerFileMatchingWorker } from "./workers/triggerFileMatchingWorker";
 export { runReceiptSearchForTransactionCallable as runReceiptSearchForTransaction } from "./workers/runReceiptSearchForTransaction";
+
+// Report operations
+export {
+  generateUvaXmlCallable as generateUvaXml,
+  generateUvaPdfCallable as generateUvaPdf,
+} from "./reports";
+
+// Automation registry (for admin page)
+export { getAutomationsCallable as getAutomations } from "./automation";
+
+// User data export operations
+export {
+  requestUserExportCallable as requestUserExport,
+  processUserExportOnCreate,
+  processUserExportScheduled,
+  cleanupExpiredExports,
+} from "./user-export";
+
+// User data import operations
+export {
+  validateUserImportCallable as validateUserImport,
+  executeUserImportCallable as executeUserImport,
+  processUserImportOnUpdate,
+} from "./user-import";

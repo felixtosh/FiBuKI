@@ -1,11 +1,33 @@
 /**
  * Server-side no-receipt category matching utilities
- * Mirrors the client-side matching logic for Cloud Functions
+ *
+ * Categories match ONLY by partner - patterns are learned on partners, not categories.
+ * When a transaction has a partnerId that's in the category's matchedPartnerIds,
+ * the category is suggested.
  */
 
-import { globMatch } from "./partner-matcher";
+import { Timestamp } from "firebase-admin/firestore";
 
 // ============ Types ============
+
+// Local type definitions for partner resolution (mirrors types/partner.ts)
+// Defined locally to avoid rootDir issues with importing from parent types folder
+
+export type PartnerResolutionType = "file_required" | "no_receipt" | "mixed" | "unknown";
+
+export interface PartnerResolutionStats {
+  fileCount: number;
+  noReceiptCount: number;
+  updatedAt: Timestamp;
+}
+
+export interface PartnerResolutionPreference {
+  type: PartnerResolutionType;
+  confidence: number;
+  preferredNoReceiptCategoryId?: string | null;
+  preferredNoReceiptCategoryTemplateId?: NoReceiptCategoryId | null;
+  stats: PartnerResolutionStats;
+}
 
 export type NoReceiptCategoryId =
   | "bank-fees"
@@ -18,23 +40,12 @@ export type NoReceiptCategoryId =
   | "zero-value"
   | "receipt-lost";
 
-export interface CategoryLearnedPattern {
-  pattern: string;
-  confidence: number;
-}
-
-export interface CategoryManualRemoval {
-  transactionId: string;
-}
-
 export interface CategoryData {
   id: string;
   userId: string;
   templateId: NoReceiptCategoryId;
   name: string;
   matchedPartnerIds: string[];
-  learnedPatterns: CategoryLearnedPattern[];
-  manualRemovals: CategoryManualRemoval[];
   /** Number of transactions assigned to this category */
   transactionCount: number;
   isActive: boolean;
@@ -56,7 +67,8 @@ export interface CategorySuggestion {
   categoryId: string;
   templateId: NoReceiptCategoryId;
   confidence: number;
-  source: "partner" | "pattern" | "partner+pattern";
+  /** Categories match only by partner (patterns are learned on partners, not categories) */
+  source: "partner";
 }
 
 // ============ Thresholds ============
@@ -66,10 +78,8 @@ export const CATEGORY_MATCH_CONFIG = {
   SUGGESTION_THRESHOLD: 60,
   /** Minimum confidence for auto-assignment */
   AUTO_APPLY_THRESHOLD: 89,
-  /** Base confidence for partner-only match (at threshold to auto-apply) */
+  /** Base confidence for partner match */
   PARTNER_MATCH_CONFIDENCE: 89,
-  /** Bonus confidence when both partner and pattern match */
-  COMBINED_MATCH_BONUS: 15,
   /** Maximum suggestions to return */
   MAX_SUGGESTIONS: 3,
   /** Maximum usage-based confidence boost (applied logarithmically) */
@@ -87,6 +97,12 @@ export interface CategoryMatchOptions {
    * Partners with 0 or no entry are boosted (likely no-receipt partners).
    */
   partnerFilePatternCounts?: Map<string, number>;
+
+  /**
+   * Map of partnerId -> PartnerResolutionPreference.
+   * Partners with "no_receipt" preference get boosted confidence.
+   */
+  partnerResolutionPreferences?: Map<string, PartnerResolutionPreference>;
 }
 
 // ============ Matching Logic ============
@@ -171,114 +187,66 @@ function partnerHasNoFilePatterns(
  * Match a transaction against a single category.
  * Returns null if no match found above threshold.
  *
- * Confidence boosting:
- * 1. Base confidence from match type (partner: 85%, pattern: variable, combined: +15)
+ * Categories match ONLY by partner. Confidence boosting:
+ * 1. Base confidence: 89% for partner match
  * 2. Usage boost: +0-10 based on category's transactionCount (logarithmic)
  * 3. No-file-patterns boost: +8 if partner has no file source patterns
+ * 4. Resolution preference boost: +0-9 if partner typically resolves with no-receipt
  */
 function matchSingleCategory(
   transaction: TransactionData,
   category: CategoryData,
   options?: CategoryMatchOptions
 ): CategorySuggestion | null {
-  let confidence = 0;
-  let source: CategorySuggestion["source"] | null = null;
-
-  // 1. Check if transaction's partner is in category's matched partners
+  // Categories only match by partner
   const partnerMatch =
     transaction.partnerId &&
     category.matchedPartnerIds.includes(transaction.partnerId);
 
-  // 2. Check pattern matches
-  const patternMatch = matchCategoryPatterns(transaction, category);
-
-  // Determine base confidence and source
-  if (partnerMatch && patternMatch) {
-    // Both match - highest confidence
-    confidence =
-      patternMatch.confidence + CATEGORY_MATCH_CONFIG.COMBINED_MATCH_BONUS;
-    source = "partner+pattern";
-  } else if (partnerMatch) {
-    // Partner-only match
-    confidence = CATEGORY_MATCH_CONFIG.PARTNER_MATCH_CONFIDENCE;
-    source = "partner";
-  } else if (patternMatch) {
-    // Pattern-only match
-    confidence = patternMatch.confidence;
-    source = "pattern";
+  if (!partnerMatch) {
+    return null;
   }
 
-  // Apply boosts if we have a base match
-  if (confidence > 0 && source) {
-    // Usage boost: categories used more often rank higher
-    const usageBoost = calculateUsageBoost(category.transactionCount);
-    confidence += usageBoost;
+  let confidence = CATEGORY_MATCH_CONFIG.PARTNER_MATCH_CONFIDENCE;
 
-    // No-file-patterns boost: if partner doesn't typically have files, boost category match
-    // Only applies when we have a partner match (partner is known to belong to this category)
-    if (
-      partnerMatch &&
-      partnerHasNoFilePatterns(
-        transaction.partnerId,
-        options?.partnerFilePatternCounts
-      )
-    ) {
-      confidence += CATEGORY_MATCH_CONFIG.NO_FILE_PATTERNS_BOOST;
+  // Usage boost: categories used more often rank higher
+  const usageBoost = calculateUsageBoost(category.transactionCount);
+  confidence += usageBoost;
+
+  // No-file-patterns boost: if partner doesn't typically have files, boost category match
+  if (
+    partnerHasNoFilePatterns(
+      transaction.partnerId,
+      options?.partnerFilePatternCounts
+    )
+  ) {
+    confidence += CATEGORY_MATCH_CONFIG.NO_FILE_PATTERNS_BOOST;
+  }
+
+  // Resolution preference boost: if partner typically resolves with no-receipt, boost
+  if (transaction.partnerId && options?.partnerResolutionPreferences) {
+    const pref = options.partnerResolutionPreferences.get(transaction.partnerId);
+    if (pref && pref.type === "no_receipt" && pref.confidence > 0) {
+      // Boost proportional to resolution confidence (up to +9 at 95% confidence)
+      const resolutionBoost = Math.round(pref.confidence * 0.1);
+      confidence += resolutionBoost;
     }
-
-    // Cap at 100
-    confidence = Math.min(100, confidence);
   }
+
+  // Cap at 100
+  confidence = Math.min(100, confidence);
 
   // Return suggestion if above threshold
-  if (confidence >= CATEGORY_MATCH_CONFIG.SUGGESTION_THRESHOLD && source) {
+  if (confidence >= CATEGORY_MATCH_CONFIG.SUGGESTION_THRESHOLD) {
     return {
       categoryId: category.id,
       templateId: category.templateId,
       confidence,
-      source,
+      source: "partner",
     };
   }
 
   return null;
-}
-
-/**
- * Match transaction text against category's learned patterns.
- * Returns the highest-confidence matching pattern, or null if none match.
- */
-function matchCategoryPatterns(
-  transaction: TransactionData,
-  category: CategoryData
-): { confidence: number } | null {
-  if (!category.learnedPatterns || category.learnedPatterns.length === 0) {
-    return null;
-  }
-
-  // Build text to match against
-  const textToMatch = buildTransactionText(transaction);
-
-  let bestMatch: { confidence: number } | null = null;
-
-  for (const pattern of category.learnedPatterns) {
-    if (globMatch(pattern.pattern, textToMatch)) {
-      if (!bestMatch || pattern.confidence > bestMatch.confidence) {
-        bestMatch = { confidence: pattern.confidence };
-      }
-    }
-  }
-
-  return bestMatch;
-}
-
-/**
- * Build searchable text from transaction fields.
- */
-function buildTransactionText(transaction: TransactionData): string {
-  return [transaction.partner, transaction.name, transaction.reference]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
 }
 
 /**

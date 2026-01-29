@@ -7,7 +7,7 @@ export default function SettingsIndexRedirect() {
   const router = useRouter();
 
   useEffect(() => {
-    router.replace("/settings/sign-in");
+    router.replace("/settings/sign-in-security");
   }, [router]);
 
   return null;

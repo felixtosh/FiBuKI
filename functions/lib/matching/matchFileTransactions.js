@@ -22,11 +22,77 @@
  * - hooks/use-worker.ts (frontend hook)
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.matchFileTransactions = void 0;
+exports.matchFileTransactions = exports.AUTOMATION_META = void 0;
 exports.runTransactionMatching = runTransactionMatching;
 const firestore_1 = require("firebase-functions/v2/firestore");
 const firestore_2 = require("firebase-admin/firestore");
 const transactionScoring_1 = require("./transactionScoring");
+// =============================================================================
+// AUTOMATION METADATA
+// =============================================================================
+exports.AUTOMATION_META = {
+    id: "matchFileTransactions",
+    name: "Match File to Transactions",
+    description: "Scores file against transactions by amount, date, and partner overlap; auto-connects high-confidence matches",
+    trigger: {
+        type: "document_update",
+        collection: "files",
+        conditions: [
+            { field: "partnerMatchComplete", from: false, to: true },
+        ],
+    },
+    effects: [
+        {
+            entity: "file",
+            fields: [
+                "transactionIds",
+                "transactionSuggestions",
+                "transactionMatchComplete",
+                "transactionMatchedAt",
+            ],
+            action: "update",
+        },
+        {
+            entity: "transaction",
+            fields: ["fileIds", "partnerId", "partnerType", "partnerMatchedBy"],
+            action: "update",
+        },
+        {
+            entity: "fileConnection",
+            fields: ["fileId", "transactionId", "connectionType", "matchConfidence"],
+            action: "create",
+        },
+        {
+            entity: "notification",
+            fields: ["type", "title", "message", "transcript"],
+            action: "create",
+        },
+        {
+            entity: "workerRequest",
+            fields: ["workerType", "initialPrompt", "triggerContext"],
+            action: "create",
+        },
+    ],
+    learns: [
+        {
+            entity: "partner",
+            fields: ["emailDomains"],
+            description: "Learns Gmail sender domain from successful auto-matches",
+        },
+    ],
+    config: {
+        autoMatchThreshold: transactionScoring_1.SCORING_CONFIG.AUTO_MATCH_THRESHOLD,
+        suggestionThreshold: transactionScoring_1.SCORING_CONFIG.SUGGESTION_THRESHOLD,
+        dateRangeDays: transactionScoring_1.SCORING_CONFIG.DATE_RANGE_DAYS,
+        maxSuggestions: transactionScoring_1.SCORING_CONFIG.MAX_SUGGESTIONS,
+    },
+    icon: "FileSearch",
+    category: "matching",
+    aiPowered: true,
+};
+// =============================================================================
+// IMPLEMENTATION
+// =============================================================================
 const db = (0, firestore_2.getFirestore)();
 // Use shared config
 const CONFIG = transactionScoring_1.SCORING_CONFIG;
@@ -344,7 +410,32 @@ async function runTransactionMatching(fileId, fileData) {
         }
     }
     // Separate auto-matches from suggestions
-    const potentialAutoMatches = matches.filter((m) => m.confidence >= CONFIG.AUTO_MATCH_THRESHOLD);
+    let potentialAutoMatches = matches.filter((m) => m.confidence >= CONFIG.AUTO_MATCH_THRESHOLD);
+    // Check partner's resolution preference - if partner strongly prefers no-receipt,
+    // demote file matches to suggestions only (don't auto-connect)
+    if (potentialAutoMatches.length > 0 && fileData.partnerId) {
+        try {
+            const partnerDoc = await db.collection("partners").doc(fileData.partnerId).get();
+            if (partnerDoc.exists) {
+                const partnerData = partnerDoc.data();
+                const resolutionPref = partnerData.resolutionPreference;
+                if (resolutionPref?.type === "no_receipt" && resolutionPref.confidence > 0) {
+                    const topFileMatch = potentialAutoMatches[0];
+                    // If partner's no-receipt preference is stronger than file match, demote
+                    if (resolutionPref.confidence >= topFileMatch.confidence) {
+                        console.log(`[TxMatch] Partner ${fileData.partnerId} prefers no-receipt ` +
+                            `(${resolutionPref.confidence}%) over file match (${topFileMatch.confidence}%) - ` +
+                            `demoting ${potentialAutoMatches.length} matches to suggestions`);
+                        potentialAutoMatches = []; // All become suggestions only
+                    }
+                }
+            }
+        }
+        catch (err) {
+            console.warn("[TxMatch] Failed to check partner resolution preference:", err);
+            // Continue with normal matching if preference check fails
+        }
+    }
     // Filter out auto-matches for transactions that are already "covered"
     // This prevents over-matching (e.g., 6 monthly invoices all matching one transaction)
     const autoMatches = [];

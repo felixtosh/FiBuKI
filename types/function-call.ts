@@ -48,6 +48,10 @@ export type CloudFunctionName =
   // Import operations
   | "bulkCreateTransactions"
   | "createImportRecord"
+  | "createDraftImport"
+  | "updateDraftMappings"
+  | "deleteDraftImport"
+  | "deleteImportRecord"
   // Existing functions (already in codebase)
   | "matchColumns"
   | "matchPartners"
@@ -61,7 +65,13 @@ export type CloudFunctionName =
   | "matchFilesForPartner"
   | "lookupCompany"
   | "lookupByVatId"
-  | "retryFileExtraction";
+  | "retryFileExtraction"
+  // User data export/import
+  | "requestUserExport"
+  | "validateUserImport"
+  | "executeUserImport"
+  // Admin functions
+  | "getAutomations";
 
 /**
  * Summary statistics for function calls (for dashboards).

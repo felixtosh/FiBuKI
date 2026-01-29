@@ -28,6 +28,70 @@ import {
   parseViesAddress,
 } from "../ai/lookupCompany";
 import { geminiValidateDomainOwnership } from "../ai/validateDomainOwnership";
+import { AutomationMeta } from "../automation/types";
+
+// =============================================================================
+// AUTOMATION METADATA
+// =============================================================================
+
+export const AUTOMATION_META: AutomationMeta = {
+  id: "matchFilePartner",
+  name: "Match File to Partner",
+  description:
+    "Finds matching partners for uploaded files using IBAN, VAT, name, and email domain matching",
+  trigger: {
+    type: "document_update",
+    collection: "files",
+    conditions: [
+      { field: "extractionComplete", from: false, to: true },
+      { field: "extractionError", to: null },
+    ],
+  },
+  effects: [
+    {
+      entity: "file",
+      fields: [
+        "partnerId",
+        "partnerType",
+        "partnerMatchedBy",
+        "partnerMatchConfidence",
+        "partnerSuggestions",
+        "partnerMatchComplete",
+      ],
+      action: "update",
+    },
+    {
+      entity: "partner",
+      fields: ["aliases", "emailDomains"],
+      action: "update",
+    },
+  ],
+  learns: [
+    {
+      entity: "partner",
+      fields: ["aliases"],
+      description: "Adds extracted partner name as alias when matched",
+    },
+    {
+      entity: "partner",
+      fields: ["emailDomains"],
+      description: "Learns email sender domain from Gmail files (with validation)",
+    },
+  ],
+  config: {
+    autoMatchThreshold: 89,
+    maxSuggestions: 3,
+    lookupCreatedConfidence: 89,
+  },
+  chains: ["matchFileTransactions"],
+  icon: "Building2",
+  category: "matching",
+  aiPowered: true,
+};
+
+// =============================================================================
+// IMPLEMENTATION
+// =============================================================================
 
 const db = getFirestore();
 

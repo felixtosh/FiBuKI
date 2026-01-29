@@ -23,6 +23,12 @@ interface PartnerFormData {
 
 interface CreateUserPartnerRequest {
   data: PartnerFormData;
+  /**
+   * If true, skip automatic matching on partner create.
+   * Use this when the partner is being created for immediate manual assignment
+   * (to avoid race condition where onPartnerCreate auto-matches before manual assignment).
+   */
+  skipAutoMatch?: boolean;
 }
 
 interface CreateUserPartnerResponse {
@@ -55,7 +61,7 @@ export const createUserPartnerCallable = createCallable<
 >(
   { name: "createUserPartner" },
   async (ctx, request) => {
-    const { data } = request;
+    const { data, skipAutoMatch } = request;
 
     if (!data?.name?.trim()) {
       throw new HttpsError("invalid-argument", "Partner name is required");
@@ -87,6 +93,12 @@ export const createUserPartnerCallable = createCallable<
     // Mark as "my company" if specified
     if (data.isMyCompany) {
       newPartner.isMyCompany = true;
+    }
+
+    // Skip automatic matching if requested (used for manual assignment flow)
+    // This prevents race condition where onPartnerCreate auto-matches before manual assignment
+    if (skipAutoMatch) {
+      newPartner.createdBy = "manual_assignment";
     }
 
     const docRef = await ctx.db.collection("partners").add(newPartner);

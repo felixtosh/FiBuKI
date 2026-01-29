@@ -8,6 +8,46 @@ import {
 } from "../utils/partner-matcher";
 import { matchCategoriesForTransactions } from "./matchCategories";
 import { createLocalPartnerFromGlobal } from "./createLocalPartnerFromGlobal";
+import { AutomationMeta } from "../automation/types";
+
+// =============================================================================
+// AUTOMATION METADATA
+// =============================================================================
+
+export const AUTOMATION_META: AutomationMeta = {
+  id: "onPartnerCreate",
+  name: "Re-match on Partner Create",
+  description:
+    "Re-evaluates unmatched transactions when a new partner is created to find matches",
+  trigger: {
+    type: "document_create",
+    collection: "partners",
+  },
+  effects: [
+    {
+      entity: "transaction",
+      fields: [
+        "partnerId",
+        "partnerType",
+        "partnerMatchedBy",
+        "partnerMatchConfidence",
+        "partnerSuggestions",
+      ],
+      action: "update",
+    },
+  ],
+  config: {
+    autoApplyThreshold: 89,
+    maxTransactionsPerRun: 500,
+  },
+  chains: ["onTransactionUpdate"],
+  icon: "Building2",
+  category: "matching",
+};
+
+// =============================================================================
+// IMPLEMENTATION
+// =============================================================================
 
 const db = getFirestore();
 
@@ -33,6 +73,15 @@ export const onPartnerCreate = onDocumentCreated(
     if (partnerData.globalPartnerId && partnerData.createdBy === "auto_partner_match") {
       console.log(
         `Skipping re-match for localized partner ${partnerId} (global ${partnerData.globalPartnerId})`
+      );
+      return;
+    }
+
+    // Skip for partners created for manual assignment
+    // (the calling code will assign the partner manually after creation)
+    if (partnerData.createdBy === "manual_assignment") {
+      console.log(
+        `Skipping re-match for manually created partner ${partnerId} - will be assigned manually`
       );
       return;
     }

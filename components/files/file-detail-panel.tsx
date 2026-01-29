@@ -93,7 +93,7 @@ interface FileDetailPanelProps {
   isParsing?: boolean;
   userPartners: UserPartner[];
   globalPartners: GlobalPartner[];
-  onCreatePartner: (data: { name: string; aliases?: string[]; vatId?: string; ibans?: string[]; website?: string; country?: string; notes?: string }) => Promise<string>;
+  onCreatePartner: (data: { name: string; aliases?: string[]; vatId?: string; ibans?: string[]; website?: string; country?: string; notes?: string }, options?: { skipAutoMatch?: boolean }) => Promise<string>;
   onOpenViewer?: () => void;
   viewerOpen?: boolean;
   /** Called when user clicks an extracted field to highlight it in the viewer */
@@ -239,7 +239,8 @@ export function FileDetailPanel({
 
   const handleAddPartner = useCallback(
     async (data: { name: string; aliases?: string[]; vatId?: string; ibans?: string[]; website?: string; country?: string; notes?: string }) => {
-      const partnerId = await onCreatePartner(data);
+      // Skip auto-match on partner create - we're manually assigning immediately after
+      const partnerId = await onCreatePartner(data, { skipAutoMatch: true });
       await handleAssignPartner(partnerId, "user", "manual", 100);
       return partnerId;
     },

@@ -82,12 +82,12 @@ export function usePasskeys() {
       setError(null);
 
       try {
-        // Get registration options from server
+        // Get registration options from server (pass current origin for RP ID selection)
         const getOptionsFn = httpsCallable<
-          void,
+          { origin: string },
           PublicKeyCredentialCreationOptionsJSON
         >(functions, "generatePasskeyRegistrationOptions");
-        const optionsResult = await getOptionsFn();
+        const optionsResult = await getOptionsFn({ origin: window.location.origin });
         const options = optionsResult.data;
 
         // Trigger WebAuthn registration
@@ -134,12 +134,12 @@ export function usePasskeys() {
     setError(null);
 
     try {
-      // Get authentication options from server
+      // Get authentication options from server (pass current origin for RP ID selection)
       const getOptionsFn = httpsCallable<
-        void,
+        { origin: string },
         PublicKeyCredentialRequestOptionsJSON
       >(functions, "generatePasskeyAuthOptions");
-      const optionsResult = await getOptionsFn();
+      const optionsResult = await getOptionsFn({ origin: window.location.origin });
       const options = optionsResult.data;
 
       // Trigger WebAuthn authentication

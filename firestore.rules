@@ -214,5 +214,19 @@ service cloud.firestore {
       allow read: if isAuthenticated() && (resource == null || isOwner());
       allow write: if false; // Cloud Functions only
     }
+
+    // User data exports - users can read their own, write handled by Cloud Functions
+    match /userExports/{docId} {
+      allow get: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow list: if isAuthenticated();
+      allow write: if false; // Cloud Functions only
+    }
+
+    // User data imports - users can read their own, write handled by Cloud Functions
+    match /userImports/{docId} {
+      allow get: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow list: if isAuthenticated();
+      allow write: if false; // Cloud Functions only
+    }
   }
 }

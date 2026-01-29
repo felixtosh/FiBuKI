@@ -11,7 +11,8 @@
     "dev:all": "concurrently \"npm run dev:emulators\" \"npm run dev\"",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "generate:mcp-automations": "node scripts/generate-mcp-automations.js"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.2",
@@ -47,6 +48,7 @@
     "@types/node": "^25.0.3",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
+    "@xyflow/react": "^12.10.0",
     "ai": "^6.0.43",
     "autoprefixer": "^10.4.23",
     "class-variance-authority": "^0.7.1",

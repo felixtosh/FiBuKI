@@ -2,16 +2,16 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Mail, Shield, User, Tag, Link2, Activity } from "lucide-react";
+import { Shield, User, Tag, Link2, Activity, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const settingsNavItems = [
-  { href: "/settings/sign-in", label: "Sign-in Methods", icon: Mail },
-  { href: "/settings/security", label: "Security", icon: Shield },
+  { href: "/settings/sign-in-security", label: "Sign-in & Security", icon: Shield },
   { href: "/settings/identity", label: "Your Identity", icon: User },
   { href: "/settings/usage", label: "Usage", icon: Activity },
   { href: "/settings/categories", label: "Categories", icon: Tag },
   { href: "/settings/integrations", label: "Integrations", icon: Link2 },
+  { href: "/settings/import-export", label: "Import / Export", icon: Download },
 ];
 
 export function SettingsSidebar() {
@@ -25,7 +25,7 @@ export function SettingsSidebar() {
           const Icon = item.icon;
           const isActive =
             pathname === item.href ||
-            (item.href === "/settings/identity" && pathname === "/settings") ||
+            (item.href === "/settings/sign-in-security" && pathname === "/settings") ||
             (item.href === "/settings/categories" && pathname.startsWith("/settings/categories")) ||
             (item.href === "/settings/integrations" && pathname.startsWith("/settings/integrations"));
           return (

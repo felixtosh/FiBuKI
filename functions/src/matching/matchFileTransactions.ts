@@ -30,6 +30,77 @@ import {
   TransactionMatchScore,
   TransactionMatchSource,
 } from "./transactionScoring";
+import { AutomationMeta } from "../automation/types";
+
+// =============================================================================
+// AUTOMATION METADATA
+// =============================================================================
+
+export const AUTOMATION_META: AutomationMeta = {
+  id: "matchFileTransactions",
+  name: "Match File to Transactions",
+  description:
+    "Scores file against transactions by amount, date, and partner overlap; auto-connects high-confidence matches",
+  trigger: {
+    type: "document_update",
+    collection: "files",
+    conditions: [
+      { field: "partnerMatchComplete", from: false, to: true },
+    ],
+  },
+  effects: [
+    {
+      entity: "file",
+      fields: [
+        "transactionIds",
+        "transactionSuggestions",
+        "transactionMatchComplete",
+        "transactionMatchedAt",
+      ],
+      action: "update",
+    },
+    {
+      entity: "transaction",
+      fields: ["fileIds", "partnerId", "partnerType", "partnerMatchedBy"],
+      action: "update",
+    },
+    {
+      entity: "fileConnection",
+      fields: ["fileId", "transactionId", "connectionType", "matchConfidence"],
+      action: "create",
+    },
+    {
+      entity: "notification",
+      fields: ["type", "title", "message", "transcript"],
+      action: "create",
+    },
+    {
+      entity: "workerRequest",
+      fields: ["workerType", "initialPrompt", "triggerContext"],
+      action: "create",
+    },
+  ],
+  learns: [
+    {
+      entity: "partner",
+      fields: ["emailDomains"],
+      description: "Learns Gmail sender domain from successful auto-matches",
+    },
+  ],
+  config: {
+    autoMatchThreshold: SCORING_CONFIG.AUTO_MATCH_THRESHOLD,
+    suggestionThreshold: SCORING_CONFIG.SUGGESTION_THRESHOLD,
+    dateRangeDays: SCORING_CONFIG.DATE_RANGE_DAYS,
+    maxSuggestions: SCORING_CONFIG.MAX_SUGGESTIONS,
+  },
+  icon: "FileSearch",
+  category: "matching",
+  aiPowered: true,
+};
+
+// =============================================================================
+// IMPLEMENTATION
+// =============================================================================
 
 const db = getFirestore();
 
@@ -458,7 +529,35 @@ export async function runTransactionMatching(
   }
 
   // Separate auto-matches from suggestions
-  const potentialAutoMatches = matches.filter((m) => m.confidence >= CONFIG.AUTO_MATCH_THRESHOLD);
+  let potentialAutoMatches = matches.filter((m) => m.confidence >= CONFIG.AUTO_MATCH_THRESHOLD);
+
+  // Check partner's resolution preference - if partner strongly prefers no-receipt,
+  // demote file matches to suggestions only (don't auto-connect)
+  if (potentialAutoMatches.length > 0 && fileData.partnerId) {
+    try {
+      const partnerDoc = await db.collection("partners").doc(fileData.partnerId).get();
+      if (partnerDoc.exists) {
+        const partnerData = partnerDoc.data()!;
+        const resolutionPref = partnerData.resolutionPreference;
+
+        if (resolutionPref?.type === "no_receipt" && resolutionPref.confidence > 0) {
+          const topFileMatch = potentialAutoMatches[0];
+          // If partner's no-receipt preference is stronger than file match, demote
+          if (resolutionPref.confidence >= topFileMatch.confidence) {
+            console.log(
+              `[TxMatch] Partner ${fileData.partnerId} prefers no-receipt ` +
+              `(${resolutionPref.confidence}%) over file match (${topFileMatch.confidence}%) - ` +
+              `demoting ${potentialAutoMatches.length} matches to suggestions`
+            );
+            potentialAutoMatches = []; // All become suggestions only
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("[TxMatch] Failed to check partner resolution preference:", err);
+      // Continue with normal matching if preference check fails
+    }
+  }
 
   // Filter out auto-matches for transactions that are already "covered"
   // This prevents over-matching (e.g., 6 monthly invoices all matching one transaction)

@@ -25,10 +25,27 @@ const CORS_ORIGINS = [
   "https://taxstudio-f12fb.web.app",
   "http://localhost:3000",
 ];
-const RP_ID = process.env.FUNCTIONS_EMULATOR ? "localhost" : "taxstudio.app";
-const ORIGIN = process.env.FUNCTIONS_EMULATOR
-  ? "http://localhost:3000"
-  : "https://taxstudio.app";
+
+// WebAuthn configuration for different environments
+// Passkeys are domain-bound, so we need to track which RP ID was used during registration
+const WEBAUTHN_CONFIG: Record<string, { rpId: string; origin: string }> = {
+  "http://localhost:3000": { rpId: "localhost", origin: "http://localhost:3000" },
+  "https://fibuki.com": { rpId: "fibuki.com", origin: "https://fibuki.com" },
+  "https://www.fibuki.com": { rpId: "fibuki.com", origin: "https://www.fibuki.com" },
+};
+
+// Helper to get WebAuthn config from client-provided origin
+function getWebAuthnConfig(clientOrigin?: string): { rpId: string; origin: string } {
+  if (clientOrigin && WEBAUTHN_CONFIG[clientOrigin]) {
+    return WEBAUTHN_CONFIG[clientOrigin];
+  }
+  // Default based on environment
+  if (process.env.FUNCTIONS_EMULATOR) {
+    return WEBAUTHN_CONFIG["http://localhost:3000"];
+  }
+  // Production default
+  return WEBAUTHN_CONFIG["https://fibuki.com"];
+}
 
 // Helper to get Firestore paths
 const getMfaSettingsPath = (userId: string) =>
@@ -183,10 +200,12 @@ export const verifyBackupCode = onCall(
       usedAt: now,
     });
 
-    // Decrement remaining codes count
+    // Decrement remaining codes count and update lastMfaMethod
     const settingsRef = db.doc(getMfaSettingsPath(userId));
     batch.update(settingsRef, {
       backupCodesRemaining: FieldValue.increment(-1),
+      lastMfaMethod: "backup_code",
+      lastMfaMethodAt: now,
       updatedAt: now,
     });
 
@@ -266,6 +285,7 @@ export const getMfaStatus = onCall(
       passkeys,
       backupCodesRemaining,
       hasAnyMfa: settings.totpEnabled || totpEnrolled || passkeys.length > 0,
+      lastMfaMethod: settings.lastMfaMethod || null,
     };
   }
 );
@@ -382,6 +402,9 @@ export const generatePasskeyRegistrationOptions = onCall(
       throw new HttpsError("unauthenticated", "Must be logged in");
     }
 
+    const { origin: clientOrigin } = request.data || {};
+    const config = getWebAuthnConfig(clientOrigin);
+
     const userId = request.auth.uid;
     const userEmail = request.auth.token.email || "user@example.com";
     const db = getFirestore();
@@ -398,7 +421,7 @@ export const generatePasskeyRegistrationOptions = onCall(
 
     const options = await generateRegistrationOptions({
       rpName: RP_NAME,
-      rpID: RP_ID,
+      rpID: config.rpId,
       userID: Buffer.from(userId),
       userName: userEmail,
       userDisplayName: userEmail.split("@")[0],
@@ -412,10 +435,12 @@ export const generatePasskeyRegistrationOptions = onCall(
       timeout: 60000,
     });
 
-    // Store challenge for verification
+    // Store challenge and RP ID for verification
     await db.doc(getPasskeyChallengePath(userId)).set({
       challenge: options.challenge,
       type: "registration",
+      rpId: config.rpId,
+      origin: config.origin,
       createdAt: Timestamp.now(),
       expiresAt: Timestamp.fromMillis(Date.now() + 5 * 60 * 1000), // 5 min
     });
@@ -457,13 +482,17 @@ export const verifyPasskeyRegistration = onCall(
       throw new HttpsError("deadline-exceeded", "Registration challenge expired");
     }
 
+    // Use the stored RP ID and origin from challenge
+    const rpId = challengeData.rpId || getWebAuthnConfig().rpId;
+    const expectedOrigin = challengeData.origin || getWebAuthnConfig().origin;
+
     let verification: VerifiedRegistrationResponse;
     try {
       verification = await verifyRegistrationResponse({
         response: credential as RegistrationResponseJSON,
         expectedChallenge: challengeData.challenge,
-        expectedOrigin: ORIGIN,
-        expectedRPID: RP_ID,
+        expectedOrigin,
+        expectedRPID: rpId,
       });
     } catch (error) {
       console.error("Passkey registration verification failed:", error);
@@ -477,7 +506,7 @@ export const verifyPasskeyRegistration = onCall(
     const { registrationInfo } = verification;
     const now = Timestamp.now();
 
-    // Store the credential
+    // Store the credential with RP ID for future authentication
     const credentialIdBase64 = Buffer.from(registrationInfo.credential.id).toString(
       "base64url"
     );
@@ -492,6 +521,7 @@ export const verifyPasskeyRegistration = onCall(
       deviceName: deviceName || "Security Key",
       transports: registrationInfo.credential.transports || [],
       aaguid: registrationInfo.aaguid,
+      rpId, // Store the RP ID used during registration
       createdAt: now,
     });
 
@@ -532,32 +562,51 @@ export const generatePasskeyAuthOptions = onCall(
       throw new HttpsError("unauthenticated", "Must be logged in");
     }
 
+    const { origin: clientOrigin } = request.data || {};
+    const config = getWebAuthnConfig(clientOrigin);
+
     const userId = request.auth.uid;
     const db = getFirestore();
 
-    // Get user's passkeys
+    // Get user's passkeys - only include those that match the current RP ID
     const passkeysSnapshot = await db.collection(getPasskeysPath(userId)).get();
 
     if (passkeysSnapshot.empty) {
       throw new HttpsError("failed-precondition", "No passkeys registered");
     }
 
-    const allowCredentials = passkeysSnapshot.docs.map((doc) => ({
+    // Filter passkeys by RP ID (for backwards compatibility, include passkeys without rpId)
+    const matchingPasskeys = passkeysSnapshot.docs.filter((doc) => {
+      const data = doc.data();
+      // Include if no rpId stored (legacy) or if rpId matches
+      return !data.rpId || data.rpId === config.rpId;
+    });
+
+    if (matchingPasskeys.length === 0) {
+      throw new HttpsError(
+        "failed-precondition",
+        `No passkeys registered for this domain (${config.rpId}). Your passkeys may be registered for a different domain.`
+      );
+    }
+
+    const allowCredentials = matchingPasskeys.map((doc) => ({
       id: doc.data().credentialId as string,
       transports: doc.data().transports as AuthenticatorTransportFuture[],
     }));
 
     const options = await generateAuthenticationOptions({
-      rpID: RP_ID,
+      rpID: config.rpId,
       allowCredentials,
       userVerification: "preferred",
       timeout: 60000,
     });
 
-    // Store challenge for verification
+    // Store challenge and config for verification
     await db.doc(getPasskeyChallengePath(userId)).set({
       challenge: options.challenge,
       type: "authentication",
+      rpId: config.rpId,
+      origin: config.origin,
       createdAt: Timestamp.now(),
       expiresAt: Timestamp.fromMillis(Date.now() + 5 * 60 * 1000), // 5 min
     });
@@ -628,13 +677,17 @@ export const verifyPasskeyAuth = onCall(
 
     const passkeyData = passkeyDoc.data()!;
 
+    // Use stored config from challenge
+    const rpId = challengeData.rpId || getWebAuthnConfig().rpId;
+    const expectedOrigin = challengeData.origin || getWebAuthnConfig().origin;
+
     let verification: VerifiedAuthenticationResponse;
     try {
       verification = await verifyAuthenticationResponse({
         response: credential as AuthenticationResponseJSON,
         expectedChallenge: challengeData.challenge,
-        expectedOrigin: ORIGIN,
-        expectedRPID: RP_ID,
+        expectedOrigin,
+        expectedRPID: rpId,
         credential: {
           id: passkeyData.credentialId,
           publicKey: Buffer.from(passkeyData.publicKey, "base64url"),
@@ -671,6 +724,16 @@ export const verifyPasskeyAuth = onCall(
       counter: verification.authenticationInfo.newCounter,
       lastUsedAt: now,
     });
+
+    // Update lastMfaMethod in settings
+    await db.doc(getMfaSettingsPath(userId)).set(
+      {
+        lastMfaMethod: "passkey",
+        lastMfaMethodAt: now,
+        updatedAt: now,
+      },
+      { merge: true }
+    );
 
     // Delete challenge
     await db.doc(getPasskeyChallengePath(userId)).delete();
@@ -754,6 +817,41 @@ export const deletePasskey = onCall(
 );
 
 /**
+ * Record successful MFA verification
+ * Called by client after any successful MFA method verification to track the preferred method
+ */
+export const recordMfaSuccess = onCall(
+  { region: "europe-west1", cors: CORS_ORIGINS },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Must be logged in");
+    }
+
+    const { method } = request.data;
+    if (!method || !["totp", "passkey", "backup_code"].includes(method)) {
+      throw new HttpsError("invalid-argument", "Valid method is required (totp, passkey, backup_code)");
+    }
+
+    const userId = request.auth.uid;
+    const db = getFirestore();
+    const now = Timestamp.now();
+
+    await db.doc(getMfaSettingsPath(userId)).set(
+      {
+        lastMfaMethod: method,
+        lastMfaMethodAt: now,
+        updatedAt: now,
+      },
+      { merge: true }
+    );
+
+    console.log(`Recorded MFA success (${method}) for user ${userId}`);
+
+    return { success: true };
+  }
+);
+
+/**
  * Update TOTP enrollment status after Firebase MFA enrollment
  * Called by client after successful TOTP enrollment via Firebase Auth
  */
@@ -791,5 +889,59 @@ export const updateTotpStatus = onCall(
     console.log(`TOTP ${enabled ? "enabled" : "disabled"} for user ${userId}`);
 
     return { success: true };
+  }
+);
+
+/**
+ * Set password for an OAuth-only user
+ * Uses Admin SDK to add password authentication to existing account
+ */
+export const setUserPassword = onCall(
+  { region: "europe-west1", cors: CORS_ORIGINS },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Must be logged in");
+    }
+
+    const { password } = request.data;
+    if (!password || typeof password !== "string") {
+      throw new HttpsError("invalid-argument", "Password is required");
+    }
+
+    if (password.length < 8) {
+      throw new HttpsError("invalid-argument", "Password must be at least 8 characters");
+    }
+
+    const userId = request.auth.uid;
+    const auth = getAuth();
+
+    try {
+      // Get current user to check providers
+      const userRecord = await auth.getUser(userId);
+
+      // Check if user already has password provider
+      const hasPassword = userRecord.providerData.some(
+        (provider) => provider.providerId === "password"
+      );
+
+      if (hasPassword) {
+        throw new HttpsError("already-exists", "Password is already set. Use password reset to change it.");
+      }
+
+      // Update user with new password - this adds the password provider
+      await auth.updateUser(userId, {
+        password: password,
+      });
+
+      console.log(`Password set for user ${userId}`);
+
+      return { success: true };
+    } catch (error) {
+      if (error instanceof HttpsError) {
+        throw error;
+      }
+      console.error("Error setting password:", error);
+      throw new HttpsError("internal", "Failed to set password");
+    }
   }
 );

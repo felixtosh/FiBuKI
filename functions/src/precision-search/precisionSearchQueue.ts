@@ -153,6 +153,40 @@ interface EmailIntegration {
   email: string;
   isActive: boolean;
   needsReauth: boolean;
+  isPaused?: boolean;
+}
+
+/**
+ * Check if Gmail is connected but needs reauthentication.
+ * Returns true if processing should be paused (Gmail connected but needs reauth).
+ * Returns false if:
+ * - No Gmail integrations exist (proceed with non-email strategies)
+ * - Gmail is connected and healthy (proceed normally)
+ */
+async function shouldPauseForGmailReauth(userId: string): Promise<{
+  shouldPause: boolean;
+  reason?: string;
+  integrationEmail?: string;
+}> {
+  // Check for any email integrations that need reauth
+  const needsReauthSnapshot = await db
+    .collection("emailIntegrations")
+    .where("userId", "==", userId)
+    .where("isActive", "==", true)
+    .where("needsReauth", "==", true)
+    .limit(1)
+    .get();
+
+  if (!needsReauthSnapshot.empty) {
+    const integration = needsReauthSnapshot.docs[0].data() as EmailIntegration;
+    return {
+      shouldPause: true,
+      reason: "Gmail connected but needs reconnection",
+      integrationEmail: integration.email,
+    };
+  }
+
+  return { shouldPause: false };
 }
 
 interface EmailTokenDocument {
@@ -1831,11 +1865,29 @@ async function logSearchAttempt(
 // Queue Processor
 // ============================================================================
 
-async function processQueueItem(queueItem: PrecisionSearchQueueItem): Promise<void> {
+async function processQueueItem(queueItem: PrecisionSearchQueueItem): Promise<{
+  paused?: boolean;
+  pauseReason?: string;
+}> {
   const startTime = Date.now();
   console.log(
     `[PrecisionSearch] Processing queue ${queueItem.id} (${queueItem.scope}, ${queueItem.triggeredBy})`
   );
+
+  // Check if Gmail needs reauth - pause processing to avoid incomplete searches
+  const gmailStatus = await shouldPauseForGmailReauth(queueItem.userId);
+  if (gmailStatus.shouldPause) {
+    console.log(
+      `[PrecisionSearch] Pausing queue ${queueItem.id}: ${gmailStatus.reason} (${gmailStatus.integrationEmail})`
+    );
+    // Revert to pending so it will be picked up again after Gmail reconnection
+    await db.collection("precisionSearchQueue").doc(queueItem.id).update({
+      status: "pending",
+      startedAt: null,
+      lastError: `Paused: ${gmailStatus.reason}. Will resume when Gmail is reconnected.`,
+    });
+    return { paused: true, pauseReason: gmailStatus.reason };
+  }
 
   let transactionsProcessed = queueItem.transactionsProcessed;
   let transactionsWithMatches = queueItem.transactionsWithMatches;
@@ -1889,7 +1941,7 @@ async function processQueueItem(queueItem: PrecisionSearchQueueItem): Promise<vo
       if (transactions.length === 0) {
         // No more transactions to process
         await completeQueueItem();
-        return;
+        return {};
       }
 
       await processTransactionBatch(transactions);
@@ -1916,6 +1968,8 @@ async function processQueueItem(queueItem: PrecisionSearchQueueItem): Promise<vo
     console.error(`[PrecisionSearch] Error processing queue:`, error);
     await handleError(error);
   }
+
+  return {};
 
   // ========== Helper functions ==========
 
@@ -2145,7 +2199,10 @@ export const processPrecisionSearchQueue = onSchedule(
     });
 
     try {
-      await processQueueItem(queueItem);
+      const result = await processQueueItem(queueItem);
+      if (result.paused) {
+        console.log(`[PrecisionSearch] Queue item paused: ${result.pauseReason}`);
+      }
     } catch (error) {
       console.error("[PrecisionSearch] Queue processor error:", error);
     }
@@ -2185,7 +2242,12 @@ export const onPrecisionSearchQueueCreated = onDocumentCreated(
     });
 
     try {
-      await processQueueItem(queueItem);
+      const result = await processQueueItem(queueItem);
+      if (result.paused) {
+        console.log(`[PrecisionSearch] Queue item paused: ${result.pauseReason}`);
+        // Don't retry - item is already set back to pending and will resume when Gmail reconnects
+        return;
+      }
     } catch (error) {
       console.error("[PrecisionSearch] Immediate processing error:", error);
 

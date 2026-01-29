@@ -1,4 +1,4 @@
-import { onDocumentCreated } from "firebase-functions/v2/firestore";
+import { onDocumentCreated, onDocumentUpdated } from "firebase-functions/v2/firestore";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 
 const db = getFirestore();
@@ -124,6 +124,96 @@ export const onGmailConnected = onDocumentCreated(
         lastSyncError: error instanceof Error ? error.message : "Failed to start initial sync",
         updatedAt: Timestamp.now(),
       });
+    }
+  }
+);
+
+// ============================================================================
+// Trigger on Gmail Reconnection
+// ============================================================================
+
+/**
+ * Triggered when an email integration is updated.
+ * If needsReauth changes from true to false (reconnection), resume paused queues.
+ */
+export const onGmailReconnected = onDocumentUpdated(
+  {
+    document: "emailIntegrations/{integrationId}",
+    region: "europe-west1",
+    memory: "256MiB",
+    timeoutSeconds: 60,
+  },
+  async (event) => {
+    const beforeData = event.data?.before.data() as EmailIntegration | undefined;
+    const afterData = event.data?.after.data() as EmailIntegration | undefined;
+
+    if (!beforeData || !afterData) {
+      return;
+    }
+
+    // Check if this is a reconnection (needsReauth: true -> false)
+    const wasDisconnected = beforeData.needsReauth === true;
+    const isNowConnected = afterData.needsReauth === false && afterData.isActive;
+
+    if (!wasDisconnected || !isNowConnected) {
+      return;
+    }
+
+    const integrationId = event.params.integrationId;
+    const userId = afterData.userId;
+
+    console.log(`[GmailSync] Gmail reconnected: ${afterData.email}, resuming paused queues`);
+
+    try {
+      // Resume paused gmailSyncQueue items for this integration
+      const pausedSyncItems = await db
+        .collection("gmailSyncQueue")
+        .where("integrationId", "==", integrationId)
+        .where("status", "==", "paused")
+        .get();
+
+      for (const doc of pausedSyncItems.docs) {
+        await doc.ref.update({
+          status: "pending",
+          lastError: null,
+        });
+        console.log(`[GmailSync] Resumed gmailSyncQueue item: ${doc.id}`);
+      }
+
+      // Resume paused precisionSearchQueue items for this user
+      // (they might have been paused due to this integration needing reauth)
+      const pausedSearchItems = await db
+        .collection("precisionSearchQueue")
+        .where("userId", "==", userId)
+        .where("status", "==", "pending")
+        .get();
+
+      // Check if the lastError indicates it was paused for Gmail reauth
+      for (const doc of pausedSearchItems.docs) {
+        const data = doc.data();
+        if (data.lastError?.includes("Gmail") && data.lastError?.includes("reconnect")) {
+          await doc.ref.update({
+            lastError: null,
+          });
+          console.log(`[GmailSync] Cleared error on precisionSearchQueue item: ${doc.id}`);
+        }
+      }
+
+      // Create notification for user
+      await db.collection("notifications").add({
+        userId,
+        type: "gmail_reconnected",
+        title: "Gmail Reconnected",
+        message: `${afterData.email} is reconnected. Paused syncs will resume automatically.`,
+        read: false,
+        createdAt: Timestamp.now(),
+      });
+
+      console.log(
+        `[GmailSync] Resumed ${pausedSyncItems.size} paused sync items after Gmail reconnection`
+      );
+    } catch (error) {
+      console.error(`[GmailSync] Error resuming paused queues:`, error);
     }
   }
 );
