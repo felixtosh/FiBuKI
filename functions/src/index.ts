@@ -216,4 +216,5 @@ export {
   deleteBankingConnectionCallable as deleteBankingConnection,
   createApiSourceCallable as createApiSource,
   updateSourceApiConfigCallable as updateSourceApiConfig,
+  listBankInstitutionsCallable as listBankInstitutions,
 } from "./banking";

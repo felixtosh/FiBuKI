@@ -16,3 +16,6 @@ export { updateSourceApiConfigCallable } from "./updateSourceApiConfig";
 
 // Cleanup operations
 export { deleteBankingConnectionCallable } from "./deleteBankingConnection";
+
+// Institution lookup
+export { listBankInstitutionsCallable } from "./listInstitutions";

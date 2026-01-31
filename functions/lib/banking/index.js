@@ -3,7 +3,7 @@
  * Banking operations - Cloud Functions for bank sync, connections, and sources
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.deleteBankingConnectionCallable = exports.updateSourceApiConfigCallable = exports.createApiSourceCallable = exports.updateBankingConnectionCallable = exports.createBankingConnectionCallable = exports.cleanupOrphanedTransactionsCallable = exports.syncBankTransactionsCallable = void 0;
+exports.listBankInstitutionsCallable = exports.deleteBankingConnectionCallable = exports.updateSourceApiConfigCallable = exports.createApiSourceCallable = exports.updateBankingConnectionCallable = exports.createBankingConnectionCallable = exports.cleanupOrphanedTransactionsCallable = exports.syncBankTransactionsCallable = void 0;
 // Sync operations
 var syncBankTransactions_1 = require("./syncBankTransactions");
 Object.defineProperty(exports, "syncBankTransactionsCallable", { enumerable: true, get: function () { return syncBankTransactions_1.syncBankTransactionsCallable; } });
@@ -22,4 +22,7 @@ Object.defineProperty(exports, "updateSourceApiConfigCallable", { enumerable: tr
 // Cleanup operations
 var deleteBankingConnection_1 = require("./deleteBankingConnection");
 Object.defineProperty(exports, "deleteBankingConnectionCallable", { enumerable: true, get: function () { return deleteBankingConnection_1.deleteBankingConnectionCallable; } });
+// Institution lookup
+var listInstitutions_1 = require("./listInstitutions");
+Object.defineProperty(exports, "listBankInstitutionsCallable", { enumerable: true, get: function () { return listInstitutions_1.listBankInstitutionsCallable; } });
 //# sourceMappingURL=index.js.map
