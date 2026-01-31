@@ -67,10 +67,40 @@ export const assignPartnerToTransactionCallable = createCallable<
       throw new HttpsError("permission-denied", "Partner access denied");
     }
 
+    // Convert global partner to local partner
+    // This creates a user-owned copy and allows pattern learning
+    let effectivePartnerId = partnerId;
+    let effectivePartnerType: "global" | "user" = partnerType;
+
+    if (partnerType === "global") {
+      try {
+        const { createLocalPartnerFromGlobal } = await import(
+          "../matching/createLocalPartnerFromGlobal"
+        );
+        effectivePartnerId = await createLocalPartnerFromGlobal(ctx.userId, partnerId);
+        effectivePartnerType = "user";
+        console.log(
+          `[assignPartnerToTransaction] Converted global partner ${partnerId} to local ${effectivePartnerId}`
+        );
+      } catch (err) {
+        console.error(`[assignPartnerToTransaction] Failed to convert global partner:`, err);
+        // Continue with global partner if conversion fails
+      }
+    }
+
+    // Re-fetch partner data if we converted to local (for manualRemovals check)
+    let effectivePartnerData = partnerData;
+    if (effectivePartnerId !== partnerId) {
+      const localPartnerSnap = await ctx.db.collection("partners").doc(effectivePartnerId).get();
+      if (localPartnerSnap.exists) {
+        effectivePartnerData = localPartnerSnap.data()!;
+      }
+    }
+
     // Check if user previously rejected this partner for this transaction
     // Only block for auto/ai matches - manual/suggestion assignments are deliberate user overrides
     // manualRemovals is an array of { transactionId: string, ... }
-    const manualRemovals = partnerData.manualRemovals || [];
+    const manualRemovals = effectivePartnerData.manualRemovals || [];
     const wasRejected = manualRemovals.some(
       (r: { transactionId: string }) => r.transactionId === transactionId
     );
@@ -101,26 +131,28 @@ export const assignPartnerToTransactionCallable = createCallable<
 
     // Update transaction with partner assignment
     await transactionRef.update({
-      partnerId,
-      partnerType,
+      partnerId: effectivePartnerId,
+      partnerType: effectivePartnerType,
       partnerMatchedBy: matchedBy,
       partnerMatchConfidence: confidence ?? null,
       updatedAt: FieldValue.serverTimestamp(),
     });
 
-    console.log(`[assignPartnerToTransaction] Assigned partner ${partnerId} to transaction ${transactionId}`, {
+    console.log(`[assignPartnerToTransaction] Assigned partner ${effectivePartnerId} to transaction ${transactionId}`, {
       userId: ctx.userId,
-      partnerType,
+      partnerType: effectivePartnerType,
+      originalPartnerType: partnerType,
       matchedBy,
     });
 
     // Trigger pattern learning for user/AI assignments
     // Manual, suggestion clicks, and AI assignments should inform pattern learning
-    if ((matchedBy === "manual" || matchedBy === "suggestion" || matchedBy === "ai") && partnerType === "user") {
+    // Note: effectivePartnerType is always "user" now (global partners are converted)
+    if ((matchedBy === "manual" || matchedBy === "suggestion" || matchedBy === "ai") && effectivePartnerType === "user") {
       try {
         const { learnPatternsForPartnersBatch } = await import("../matching/learnPartnerPatterns");
         // Run pattern learning in background (don't await)
-        learnPatternsForPartnersBatch(ctx.userId, [partnerId])
+        learnPatternsForPartnersBatch(ctx.userId, [effectivePartnerId])
           .then((results) => {
             console.log(`[assignPartnerToTransaction] Pattern learning completed:`, results);
           })
@@ -137,7 +169,7 @@ export const assignPartnerToTransactionCallable = createCallable<
     const hasFiles = txData.fileIds && txData.fileIds.length > 0;
     const hasNoReceiptCategory = !!txData.noReceiptCategoryId;
     const previousPartnerId = txData.partnerId;
-    const partnerChanged = previousPartnerId !== partnerId;
+    const partnerChanged = previousPartnerId !== effectivePartnerId;
 
     // Skip receipt search if transaction is already complete (has file or no-receipt category)
     if (!hasFiles && !hasNoReceiptCategory && (partnerChanged || !previousPartnerId)) {
@@ -150,7 +182,7 @@ export const assignPartnerToTransactionCallable = createCallable<
         queueReceiptSearchForTransaction({
           transactionId,
           userId: ctx.userId,
-          partnerId,
+          partnerId: effectivePartnerId,
         })
           .then((result) => {
             console.log(`[assignPartnerToTransaction] Receipt search queued:`, result);
