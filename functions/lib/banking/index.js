@@ -3,7 +3,7 @@
  * Banking operations - Cloud Functions for bank sync, connections, and sources
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.listBankInstitutionsCallable = exports.deleteBankingConnectionCallable = exports.updateSourceApiConfigCallable = exports.createApiSourceCallable = exports.updateBankingConnectionCallable = exports.createBankingConnectionCallable = exports.cleanupOrphanedTransactionsCallable = exports.syncBankTransactionsCallable = void 0;
+exports.listBankInstitutionsCallable = exports.deleteBankingConnectionCallable = exports.updateSourceApiConfigCallable = exports.createApiSourceCallable = exports.initiateBankConnectionCallable = exports.updateBankingConnectionCallable = exports.createBankingConnectionCallable = exports.cleanupOrphanedTransactionsCallable = exports.syncBankTransactionsCallable = void 0;
 // Sync operations
 var syncBankTransactions_1 = require("./syncBankTransactions");
 Object.defineProperty(exports, "syncBankTransactionsCallable", { enumerable: true, get: function () { return syncBankTransactions_1.syncBankTransactionsCallable; } });
@@ -14,6 +14,8 @@ var createBankingConnection_1 = require("./createBankingConnection");
 Object.defineProperty(exports, "createBankingConnectionCallable", { enumerable: true, get: function () { return createBankingConnection_1.createBankingConnectionCallable; } });
 var updateBankingConnection_1 = require("./updateBankingConnection");
 Object.defineProperty(exports, "updateBankingConnectionCallable", { enumerable: true, get: function () { return updateBankingConnection_1.updateBankingConnectionCallable; } });
+var initiateBankConnection_1 = require("./initiateBankConnection");
+Object.defineProperty(exports, "initiateBankConnectionCallable", { enumerable: true, get: function () { return initiateBankConnection_1.initiateBankConnectionCallable; } });
 // API source operations (for banking integrations)
 var createApiSource_1 = require("./createApiSource");
 Object.defineProperty(exports, "createApiSourceCallable", { enumerable: true, get: function () { return createApiSource_1.createApiSourceCallable; } });

@@ -2,30 +2,27 @@ export const dynamic = "force-dynamic";
 /**
  * Unified Banking Connection API
  *
- * Creates bank connections through any configured provider.
- * Uses Cloud Function for Firestore operations.
+ * Creates bank connections through configured provider.
+ * Proxies to initiateBankConnection Cloud Function which has finAPI secrets.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
-import {
-  getBankingProvider,
-  BankingProviderId,
-  initializeBankingProviders,
-} from "@/lib/banking";
 import { callCloudFunction, setAuthToken } from "@/lib/firebase/callable-server";
-import {
-  CreateBankingConnectionRequest,
-  CreateBankingConnectionResponse,
-} from "@/types/banking-sync";
 
-// Initialize providers on module load
-initializeBankingProviders();
+interface InitiateBankConnectionRequest {
+  institutionId: string;
+  redirectUrl?: string;
+  maxHistoryDays?: number;
+  language?: string;
+  linkToSourceId?: string;
+}
 
-// Get redirect URL for provider callbacks
-function getRedirectUrl(providerId: BankingProviderId): string {
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-  return `${baseUrl}/api/finapi/callback`;
+interface InitiateBankConnectionResponse {
+  success: boolean;
+  connectionId: string;
+  authUrl: string;
+  expiresAt: string;
 }
 
 export async function POST(request: NextRequest) {
@@ -42,13 +39,6 @@ export async function POST(request: NextRequest) {
     const { providerId, institutionId, sourceId, maxHistoryDays, language } = body;
 
     // Validate required fields
-    if (!providerId) {
-      return NextResponse.json(
-        { error: "Provider ID is required" },
-        { status: 400 }
-      );
-    }
-
     if (!institutionId) {
       return NextResponse.json(
         { error: "Institution ID is required" },
@@ -56,58 +46,35 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate provider exists and is configured
-    let provider;
-    try {
-      provider = getBankingProvider(providerId as BankingProviderId);
-    } catch {
+    // Only finAPI is supported for now
+    if (providerId && providerId !== "finapi") {
       return NextResponse.json(
         { error: `Unknown provider: ${providerId}` },
         { status: 400 }
       );
     }
 
-    if (!provider.isConfigured()) {
-      return NextResponse.json(
-        { error: `Provider ${providerId} is not configured` },
-        { status: 400 }
-      );
-    }
+    // Get redirect URL for callback
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+    const redirectUrl = `${baseUrl}/api/finapi/callback`;
 
-    // Get institution info
-    const institution = await provider.getInstitution(institutionId);
-
-    // Create connection with provider (external API call)
-    const redirectUrl = getRedirectUrl(providerId as BankingProviderId);
-    const result = await provider.createConnection({
+    // Call Cloud Function which has finAPI secrets
+    const result = await callCloudFunction<
+      InitiateBankConnectionRequest,
+      InitiateBankConnectionResponse
+    >("initiateBankConnection", {
       institutionId,
       redirectUrl,
       maxHistoryDays,
       language,
-      reference: `conn_${userId}_${Date.now()}`,
-    });
-
-    // Store connection via Cloud Function
-    const connectionResult = await callCloudFunction<
-      CreateBankingConnectionRequest,
-      CreateBankingConnectionResponse
-    >("createBankingConnection", {
-      providerId,
-      providerConnectionId: result.connectionId,
-      institutionId,
-      institutionName: institution.name,
-      institutionLogo: institution.logoUrl || null,
-      authUrl: result.authUrl,
-      expiresAt: result.expiresAt.toISOString(),
-      providerData: result.providerData || {},
-      linkToSourceId: sourceId || null,
+      linkToSourceId: sourceId || undefined,
     });
 
     return NextResponse.json({
-      connectionId: connectionResult.connectionId,
+      connectionId: result.connectionId,
       authUrl: result.authUrl,
-      expiresAt: result.expiresAt.toISOString(),
-      provider: providerId,
+      expiresAt: result.expiresAt,
+      provider: "finapi",
     });
   } catch (error) {
     console.error("[Banking Connect API] Error:", error);

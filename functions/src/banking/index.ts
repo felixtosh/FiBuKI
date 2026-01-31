@@ -9,6 +9,7 @@ export { cleanupOrphanedTransactionsCallable } from "./cleanupOrphanedTransactio
 // Banking connection operations
 export { createBankingConnectionCallable } from "./createBankingConnection";
 export { updateBankingConnectionCallable } from "./updateBankingConnection";
+export { initiateBankConnectionCallable } from "./initiateBankConnection";
 
 // API source operations (for banking integrations)
 export { createApiSourceCallable } from "./createApiSource";

@@ -78,6 +78,7 @@ export type CloudFunctionName =
   | "syncBankTransactions"
   | "cleanupOrphanedTransactions"
   | "createBankingConnection"
+  | "initiateBankConnection"
   | "updateBankingConnection"
   | "deleteBankingConnection"
   | "createApiSource"

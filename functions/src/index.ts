@@ -212,6 +212,7 @@ export {
   syncBankTransactionsCallable as syncBankTransactions,
   cleanupOrphanedTransactionsCallable as cleanupOrphanedTransactions,
   createBankingConnectionCallable as createBankingConnection,
+  initiateBankConnectionCallable as initiateBankConnection,
   updateBankingConnectionCallable as updateBankingConnection,
   deleteBankingConnectionCallable as deleteBankingConnection,
   createApiSourceCallable as createApiSource,
