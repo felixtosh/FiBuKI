@@ -1,6 +1,14 @@
 {
   "indexes": [
     {
+      "collectionGroup": "system",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "pendingPartners", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "bankingConnections",
       "queryScope": "COLLECTION",
       "fields": [
