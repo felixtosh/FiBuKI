@@ -117,8 +117,22 @@ export const assignPartnerToTransactionCallable = createCallable<
 
     if (wasRejected) {
       // Manual/suggestion override of a previously rejected partner
+      // Remove from manualRemovals since user is explicitly re-adding
       console.log(
-        `[assignPartnerToTransaction] Manual override: Partner ${partnerId} was previously rejected but user is re-adding via ${matchedBy}`
+        `[assignPartnerToTransaction] Manual override: Partner ${effectivePartnerId} was previously rejected but user is re-adding via ${matchedBy}`
+      );
+
+      const updatedRemovals = manualRemovals.filter(
+        (r: { transactionId: string }) => r.transactionId !== transactionId
+      );
+
+      await ctx.db.collection("partners").doc(effectivePartnerId).update({
+        manualRemovals: updatedRemovals,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+
+      console.log(
+        `[assignPartnerToTransaction] Removed transaction ${transactionId} from manualRemovals (${manualRemovals.length} -> ${updatedRemovals.length})`
       );
     }
 

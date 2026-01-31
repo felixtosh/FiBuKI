@@ -623,15 +623,29 @@ export function PartnerDetailPanel({
                     title="Learned Patterns"
                     variant="learned"
                   >
-                    <div className="space-y-1">
+                    <div className="space-y-2">
                       {partner.learnedPatterns.slice(0, 3).map((pattern, idx) => (
-                        <div key={idx} className="flex items-center gap-2">
-                          <code className="text-xs bg-blue-100/50 dark:bg-blue-900/30 px-1.5 py-0.5 rounded font-mono flex-1 truncate">
-                            {pattern.pattern}
-                          </code>
-                          <Badge variant="outline" className="text-[10px]">
-                            {pattern.confidence}%
-                          </Badge>
+                        <div key={idx} className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <code className="text-xs bg-green-100/50 dark:bg-green-900/30 px-1.5 py-0.5 rounded font-mono flex-1 truncate">
+                              {pattern.pattern}
+                            </code>
+                            <Badge variant="outline" className="text-[10px]">
+                              {pattern.confidence}%
+                            </Badge>
+                          </div>
+                          {pattern.excludePatterns && pattern.excludePatterns.length > 0 && (
+                            <div className="flex flex-wrap gap-1 pl-2">
+                              {pattern.excludePatterns.map((excludePattern, exIdx) => (
+                                <code
+                                  key={exIdx}
+                                  className="text-xs bg-red-100/50 dark:bg-red-900/30 px-1.5 py-0.5 rounded font-mono line-through"
+                                >
+                                  {excludePattern}
+                                </code>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       ))}
                       {partner.learnedPatterns.length > 3 && (

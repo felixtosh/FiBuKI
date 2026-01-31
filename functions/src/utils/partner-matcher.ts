@@ -394,7 +394,9 @@ function matchSinglePartner(
     // Use flexible matching that tries multiple field combinations
     if (matchPatternFlexible(p.pattern, txName, txPartner, txReference)) {
       // Check exclusions - if any exclusion pattern matches, skip this pattern
-      const excluded = p.exclude?.some(excl => combinedForExclusion && globMatch(excl, combinedForExclusion)) ?? false;
+      // Check both p.exclude (static patterns) and p.excludePatterns (learned patterns)
+      const excludeList = [...(p.exclude || []), ...((p as { excludePatterns?: string[] }).excludePatterns || [])];
+      const excluded = excludeList.some(excl => combinedForExclusion && globMatch(excl, combinedForExclusion));
       if (excluded) continue;
 
       candidates.push({

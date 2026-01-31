@@ -132,6 +132,9 @@ export interface LearnedPattern extends MatchPattern {
 
   /** Transaction IDs that contributed to learning this pattern */
   sourceTransactionIds: string[];
+
+  /** Patterns that exclude this match (antipatterns from manual removals) */
+  excludePatterns?: string[];
 }
 
 /**

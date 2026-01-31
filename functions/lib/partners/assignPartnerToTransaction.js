@@ -111,7 +111,14 @@ exports.assignPartnerToTransactionCallable = (0, createCallable_1.createCallable
     }
     if (wasRejected) {
         // Manual/suggestion override of a previously rejected partner
-        console.log(`[assignPartnerToTransaction] Manual override: Partner ${partnerId} was previously rejected but user is re-adding via ${matchedBy}`);
+        // Remove from manualRemovals since user is explicitly re-adding
+        console.log(`[assignPartnerToTransaction] Manual override: Partner ${effectivePartnerId} was previously rejected but user is re-adding via ${matchedBy}`);
+        const updatedRemovals = manualRemovals.filter((r) => r.transactionId !== transactionId);
+        await ctx.db.collection("partners").doc(effectivePartnerId).update({
+            manualRemovals: updatedRemovals,
+            updatedAt: firestore_1.FieldValue.serverTimestamp(),
+        });
+        console.log(`[assignPartnerToTransaction] Removed transaction ${transactionId} from manualRemovals (${manualRemovals.length} -> ${updatedRemovals.length})`);
     }
     // Cancel running partner automation when user manually assigns or accepts suggestion
     if (matchedBy === "manual" || matchedBy === "suggestion") {

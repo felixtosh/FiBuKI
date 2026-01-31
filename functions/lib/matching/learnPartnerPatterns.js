@@ -274,10 +274,18 @@ Respond ONLY with valid JSON (no markdown, no explanation):
     {
       "pattern": "google*",
       "confidence": 95,
-      "reasoning": "All Google transactions start with 'google' and no collisions with other partners"
+      "reasoning": "All Google transactions start with 'google' and no collisions with other partners",
+      "excludePatterns": ["*cloud*", "*workspace*"]
     }
   ]
 }
+
+Notes on excludePatterns:
+- Use excludePatterns to EXCLUDE specific transactions that would otherwise match
+- Derived from the FALSE POSITIVES list (user explicitly said these are NOT this partner)
+- Example: If "*paypal*" matches both PayPal payments and "PayPal *foodora", but user removed "PayPal *foodora", add excludePatterns: ["*foodora*"]
+- Only include excludePatterns if there are false positives that need explicit exclusion
+- excludePatterns is optional - omit if not needed
 
 If no good patterns can be learned (e.g., only 1 transaction with no clear pattern), return:
 {"patterns": []}`;
@@ -694,6 +702,7 @@ exports.learnPartnerPatterns = (0, https_1.onCall)({
             .map((p) => ({
             pattern: p.pattern.toLowerCase().trim(),
             confidence: Math.min(100, Math.max(0, Math.round(p.confidence))),
+            ...(p.excludePatterns?.length ? { excludePatterns: p.excludePatterns } : {}),
         }));
         // === DRY-RUN VERIFICATION ===
         // Show LLM what transactions WOULD match before applying patterns
@@ -800,6 +809,7 @@ exports.learnPartnerPatterns = (0, https_1.onCall)({
             confidence: p.confidence,
             createdAt: now,
             sourceTransactionIds: transactionIds,
+            ...(p.excludePatterns?.length ? { excludePatterns: p.excludePatterns } : {}),
         }));
         // 5. Update the partner with learned patterns (always overwrite)
         await partnerDoc.ref.update({
@@ -1070,6 +1080,7 @@ async function learnPatternsForPartnersBatch(userId, partnerIds) {
                 confidence: Math.min(100, Math.max(0, Math.round(p.confidence))),
                 createdAt: now,
                 sourceTransactionIds: transactionIds,
+                ...(p.excludePatterns?.length ? { excludePatterns: p.excludePatterns.map((ep) => ep.toLowerCase().trim()) } : {}),
             }));
             await partnerDoc.ref.update({
                 learnedPatterns: learnedPatterns,

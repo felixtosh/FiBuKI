@@ -323,7 +323,9 @@ function matchSinglePartner(transaction, partner, partnerType) {
         // Use flexible matching that tries multiple field combinations
         if ((0, pattern_utils_1.matchPatternFlexible)(p.pattern, txName, txPartner, txReference)) {
             // Check exclusions - if any exclusion pattern matches, skip this pattern
-            const excluded = p.exclude?.some(excl => combinedForExclusion && (0, pattern_utils_1.globMatch)(excl, combinedForExclusion)) ?? false;
+            // Check both p.exclude (static patterns) and p.excludePatterns (learned patterns)
+            const excludeList = [...(p.exclude || []), ...(p.excludePatterns || [])];
+            const excluded = excludeList.some(excl => combinedForExclusion && (0, pattern_utils_1.globMatch)(excl, combinedForExclusion));
             if (excluded)
                 continue;
             candidates.push({
