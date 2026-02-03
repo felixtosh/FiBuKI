@@ -1,39 +1,13 @@
 /**
  * FiBuKI OpenClaw Plugin
  *
- * Exposes FiBuKI MCP tools as OpenClaw agent tools for managing
- * bank transactions, receipts, files, and tax categorization.
+ * Exposes FiBuKI tools as OpenClaw agent tools via the FiBuKI HTTP API.
+ * Users authenticate with an API key generated in FiBuKI Settings.
  */
 
-import { createContext } from "@taxstudio/mcp-server/src/context.js";
-import {
-  sourceToolDefinitions,
-  registerSourceTools,
-} from "@taxstudio/mcp-server/src/tools/sources.js";
-import {
-  transactionToolDefinitions,
-  registerTransactionTools,
-} from "@taxstudio/mcp-server/src/tools/transactions.js";
-import {
-  fileToolDefinitions,
-  registerFileTools,
-} from "@taxstudio/mcp-server/src/tools/files.js";
-import {
-  categoryToolDefinitions,
-  registerCategoryTools,
-} from "@taxstudio/mcp-server/src/tools/categories.js";
-import {
-  automationToolDefinitions,
-  registerAutomationTools,
-} from "@taxstudio/mcp-server/src/tools/automations.js";
-import {
-  emailInboundToolDefinitions,
-  registerEmailInboundTools,
-} from "@taxstudio/mcp-server/src/tools/email-inbound.js";
+const API_BASE_URL = "https://europe-west1-taxstudio-f12fb.cloudfunctions.net";
 
-import type { OperationsContext } from "@taxstudio/mcp-server/src/types.js";
-
-// OpenClaw plugin API types (simplified)
+// OpenClaw plugin API types
 interface OpenClawApi {
   config: PluginConfig;
   logger: {
@@ -46,8 +20,7 @@ interface OpenClawApi {
 }
 
 interface PluginConfig {
-  userId?: string;
-  useEmulators?: boolean;
+  apiKey?: string;
 }
 
 interface AgentTool {
@@ -63,52 +36,214 @@ interface Service {
   stop: () => void;
 }
 
-// All tool modules to register
-const toolModules = [
-  { definitions: sourceToolDefinitions, handler: registerSourceTools },
-  { definitions: transactionToolDefinitions, handler: registerTransactionTools },
-  { definitions: fileToolDefinitions, handler: registerFileTools },
-  { definitions: categoryToolDefinitions, handler: registerCategoryTools },
-  { definitions: automationToolDefinitions, handler: registerAutomationTools },
-  { definitions: emailInboundToolDefinitions, handler: registerEmailInboundTools },
+// Tool definitions with full documentation for Claude
+const TOOL_DEFINITIONS: AgentTool[] = [
+  // ========== SOURCES ==========
+  {
+    name: "list_sources",
+    description: "List all bank accounts/sources for the user. Returns account names, IBANs, types (bank_account/credit_card), and currency.",
+    inputSchema: { type: "object", properties: {} },
+    handler: async () => "", // Placeholder, replaced at registration
+  },
+  {
+    name: "get_source",
+    description: "Get details of a specific bank account/source by ID.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sourceId: { type: "string", description: "The bank account/source ID" },
+      },
+      required: ["sourceId"],
+    },
+    handler: async () => "",
+  },
+
+  // ========== TRANSACTIONS ==========
+  {
+    name: "list_transactions",
+    description:
+      "List transactions with optional filters. Returns date, amount (in cents!), partner, description, completion status. Use isComplete=false to find incomplete transactions.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sourceId: { type: "string", description: "Filter by bank account ID" },
+        dateFrom: { type: "string", description: "Start date (ISO format: 2024-01-01)" },
+        dateTo: { type: "string", description: "End date (ISO format)" },
+        search: { type: "string", description: "Search in name, description, partner" },
+        isComplete: { type: "boolean", description: "Filter by completion status" },
+        limit: { type: "number", description: "Max results (default 50, max 100)" },
+      },
+    },
+    handler: async () => "",
+  },
+  {
+    name: "get_transaction",
+    description: "Get full details of a specific transaction including partner suggestions and file attachments.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        transactionId: { type: "string", description: "The transaction ID" },
+      },
+      required: ["transactionId"],
+    },
+    handler: async () => "",
+  },
+  {
+    name: "update_transaction",
+    description: "Update a transaction's description or completion status. Use for adding tax-relevant notes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        transactionId: { type: "string", description: "The transaction ID" },
+        description: { type: "string", description: "Description for tax purposes" },
+        isComplete: { type: "boolean", description: "Mark as complete/incomplete" },
+      },
+      required: ["transactionId"],
+    },
+    handler: async () => "",
+  },
+
+  // ========== FILES ==========
+  {
+    name: "list_files",
+    description:
+      "List uploaded files (receipts/invoices) with match suggestions. Files have transactionSuggestions with confidence scores. Use hasConnections=false to find unmatched files.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        hasConnections: { type: "boolean", description: "true = matched files, false = unmatched" },
+        hasSuggestions: { type: "boolean", description: "Filter by whether file has transaction suggestions" },
+        limit: { type: "number", description: "Max results (default 50)" },
+      },
+    },
+    handler: async () => "",
+  },
+  {
+    name: "get_file",
+    description: "Get full details of a file including extracted data (amount, date, partner) and transaction suggestions.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fileId: { type: "string", description: "The file ID" },
+      },
+      required: ["fileId"],
+    },
+    handler: async () => "",
+  },
+  {
+    name: "connect_file_to_transaction",
+    description:
+      "Connect a file (receipt) to a transaction. This marks the transaction as complete. Use when you've confirmed a file matches a transaction.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fileId: { type: "string", description: "The file ID to connect" },
+        transactionId: { type: "string", description: "The transaction ID to connect to" },
+      },
+      required: ["fileId", "transactionId"],
+    },
+    handler: async () => "",
+  },
+  {
+    name: "disconnect_file_from_transaction",
+    description: "Disconnect a file from a transaction. Use when a match was incorrect.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fileId: { type: "string", description: "The file ID" },
+        transactionId: { type: "string", description: "The transaction ID" },
+      },
+      required: ["fileId", "transactionId"],
+    },
+    handler: async () => "",
+  },
+  {
+    name: "list_transactions_needing_files",
+    description:
+      "Find transactions without receipts (no files connected AND no no-receipt category). These need action.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        minAmount: { type: "number", description: "Minimum amount in cents (absolute value)" },
+        limit: { type: "number", description: "Max results (default 50)" },
+      },
+    },
+    handler: async () => "",
+  },
+  {
+    name: "auto_connect_file_suggestions",
+    description:
+      "Automatically connect files to transactions where suggestion confidence is above threshold. Great for bulk matching. Default threshold is 89%.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fileId: { type: "string", description: "Specific file ID, or omit for all unmatched files" },
+        minConfidence: { type: "number", description: "Minimum confidence 0-100 (default 89)" },
+      },
+    },
+    handler: async () => "",
+  },
+
+  // ========== CATEGORIES ==========
+  {
+    name: "list_no_receipt_categories",
+    description:
+      "List categories for transactions that don't need receipts: Bank fees, Interest, Internal transfers, Payroll, Taxes, etc.",
+    inputSchema: { type: "object", properties: {} },
+    handler: async () => "",
+  },
+  {
+    name: "assign_no_receipt_category",
+    description:
+      "Assign a no-receipt category to a transaction. This marks it complete without needing a file. Use for bank fees, interest, internal transfers, etc.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        transactionId: { type: "string", description: "The transaction ID" },
+        categoryId: { type: "string", description: "The category ID to assign" },
+      },
+      required: ["transactionId", "categoryId"],
+    },
+    handler: async () => "",
+  },
+  {
+    name: "remove_no_receipt_category",
+    description: "Remove a no-receipt category from a transaction.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        transactionId: { type: "string", description: "The transaction ID" },
+      },
+      required: ["transactionId"],
+    },
+    handler: async () => "",
+  },
 ];
 
 /**
- * Convert MCP tool result to OpenClaw string response
+ * Call the FiBuKI MCP API
  */
-function formatResult(
-  result: { content: Array<{ type: string; text: string }>; isError?: boolean } | null
-): string {
-  if (!result) {
-    return "Tool returned no result";
-  }
-  if (result.isError) {
-    return `Error: ${result.content[0]?.text || "Unknown error"}`;
-  }
-  return result.content.map((c) => c.text).join("\n");
-}
-
-/**
- * Create an OpenClaw agent tool from an MCP tool definition
- */
-function createAgentTool(
-  ctx: OperationsContext,
-  definition: { name: string; description: string; inputSchema: Record<string, unknown> },
-  handler: (
-    ctx: OperationsContext,
-    name: string,
-    args: unknown
-  ) => Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean } | null>
-): AgentTool {
-  return {
-    name: definition.name,
-    description: definition.description,
-    inputSchema: definition.inputSchema,
-    handler: async (args: Record<string, unknown>) => {
-      const result = await handler(ctx, definition.name, args);
-      return formatResult(result);
+async function callApi(
+  apiKey: string,
+  tool: string,
+  args: Record<string, unknown>
+): Promise<string> {
+  const response = await fetch(`${API_BASE_URL}/mcpApi`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
     },
-  };
+    body: JSON.stringify({ tool, arguments: args }),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok || !data.success) {
+    throw new Error(data.error || `API error: ${response.status}`);
+  }
+
+  return JSON.stringify(data.result, null, 2);
 }
 
 /**
@@ -118,43 +253,33 @@ export default function register(api: OpenClawApi) {
   const { config, logger } = api;
 
   // Validate required config
-  if (!config.userId) {
-    logger.error("FiBuKI plugin requires userId in config");
+  if (!config.apiKey) {
+    logger.error("FiBuKI plugin requires apiKey in config. Generate one at Settings > Integrations > AI Agents");
     return;
   }
 
-  // Set emulator env if configured
-  if (config.useEmulators) {
-    process.env.USE_EMULATORS = "true";
+  const apiKey = config.apiKey;
+  logger.info("FiBuKI plugin initializing...");
+
+  // Register all tools
+  for (const toolDef of TOOL_DEFINITIONS) {
+    api.registerAgentTool({
+      name: toolDef.name,
+      description: toolDef.description,
+      inputSchema: toolDef.inputSchema,
+      handler: async (args) => {
+        try {
+          return await callApi(apiKey, toolDef.name, args);
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : "Unknown error";
+          return `Error: ${msg}`;
+        }
+      },
+    });
+    logger.debug(`Registered tool: ${toolDef.name}`);
   }
 
-  // Create Firebase context
-  const ctx = createContext(config.userId);
-  logger.info(`FiBuKI plugin initialized for user ${config.userId}`);
-
-  // Register all tools from each module
-  for (const module of toolModules) {
-    for (const definition of module.definitions) {
-      const tool = createAgentTool(ctx, definition, module.handler);
-      api.registerAgentTool(tool);
-      logger.debug(`Registered tool: ${tool.name}`);
-    }
-  }
-
-  // Register a background service for connection management
-  api.registerService({
-    id: "fibuki-connection",
-    start: () => {
-      logger.info("FiBuKI connection service started");
-    },
-    stop: () => {
-      logger.info("FiBuKI connection service stopped");
-    },
-  });
-
-  logger.info(
-    `FiBuKI plugin loaded with ${toolModules.reduce((sum, m) => sum + m.definitions.length, 0)} tools`
-  );
+  logger.info(`FiBuKI plugin loaded with ${TOOL_DEFINITIONS.length} tools`);
 }
 
 // Export plugin metadata

@@ -1,7 +1,7 @@
 {
   "id": "fibuki",
   "name": "FiBuKI Tax Studio",
-  "description": "Manage bank transactions, receipts, files, and tax categorization through FiBuKI. 30+ tools for transactions, files, categories, Open Banking, and automations.",
+  "description": "Manage bank transactions, receipts, files, and tax categorization through FiBuKI. 15+ tools for transactions, files, and categories.",
   "skills": ["skills/fibuki-guide"],
   "channel": {
     "docsPath": "/integrations/fibuki",
@@ -10,26 +10,18 @@
   "configSchema": {
     "type": "object",
     "properties": {
-      "userId": {
+      "apiKey": {
         "type": "string",
-        "description": "Your FiBuKI user ID (find in Settings > Integrations > AI Agents)"
-      },
-      "useEmulators": {
-        "type": "boolean",
-        "description": "Connect to Firebase emulators instead of production (dev only)"
+        "description": "Your FiBuKI API key (generate at Settings > Integrations > AI Agents)"
       }
     },
-    "required": ["userId"]
+    "required": ["apiKey"]
   },
   "uiHints": {
-    "userId": {
-      "label": "User ID",
-      "placeholder": "Paste from FiBuKI Settings",
+    "apiKey": {
+      "label": "API Key",
+      "placeholder": "fk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
       "sensitive": true
-    },
-    "useEmulators": {
-      "label": "Use Emulators (dev only)",
-      "placeholder": "false"
     }
   }
 }

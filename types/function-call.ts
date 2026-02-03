@@ -83,7 +83,11 @@ export type CloudFunctionName =
   | "deleteBankingConnection"
   | "createApiSource"
   | "updateSourceApiConfig"
-  | "listBankInstitutions";
+  | "listBankInstitutions"
+  // API key operations
+  | "createApiKey"
+  | "listApiKeys"
+  | "revokeApiKey";
 
 /**
  * Summary statistics for function calls (for dashboards).

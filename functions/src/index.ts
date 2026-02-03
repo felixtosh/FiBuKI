@@ -225,3 +225,14 @@ export {
   updateSourceApiConfigCallable as updateSourceApiConfig,
   listBankInstitutionsCallable as listBankInstitutions,
 } from "./banking";
+
+// API key management (for external integrations)
+export {
+  createApiKeyCallable as createApiKey,
+  listApiKeysCallable as listApiKeys,
+  revokeApiKeyCallable as revokeApiKey,
+} from "./api-keys";
+
+// MCP HTTP API (for OpenClaw, Claude Desktop, ChatGPT, etc.)
+export { mcpApi, mcpToolsList, mcpSse } from "./mcp-api";
+export { openApiSpec, aiPluginManifest } from "./mcp-api/openapi";

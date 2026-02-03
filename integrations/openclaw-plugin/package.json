@@ -1,18 +1,21 @@
 {
-  "name": "@fibuki/openclaw-plugin",
+  "name": "@fibukiapp/openclaw-plugin",
   "version": "0.1.0",
+  "description": "FiBuKI Tax Studio plugin for OpenClaw - manage transactions, receipts, and tax categorization",
   "type": "module",
   "main": "src/index.ts",
   "openclaw": {
     "extensions": ["./src/index.ts"]
   },
-  "scripts": {
-    "build": "tsc",
-    "typecheck": "tsc --noEmit"
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fibuki/openclaw-plugin"
   },
-  "dependencies": {
-    "@taxstudio/mcp-server": "file:../../mcp-server",
-    "zod": "^3.22.0"
+  "keywords": ["openclaw", "fibuki", "tax", "accounting", "receipts", "invoices"],
+  "author": "FiBuKI",
+  "license": "MIT",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

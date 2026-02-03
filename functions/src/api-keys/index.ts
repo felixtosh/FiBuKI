@@ -7,7 +7,6 @@
 
 import { randomBytes, createHash } from "crypto";
 import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
-import { onRequest } from "firebase-functions/v2/https";
 import { createCallable, HttpsError } from "../utils/createCallable";
 
 const API_KEYS_COLLECTION = "apiKeys";
