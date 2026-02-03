@@ -293,7 +293,7 @@ Used for the main chat interface and LangGraph agent. Requires `ANTHROPIC_API_KE
 ## Deployment
 
 ### Frontend (Next.js)
-- Hosted on **Firebase Hosting**
+- Hosted on **Vercel** (connected to GitHub repo)
 - Auto-deploys when pushing to `main` branch
 - Domain: `fibuki.com`
 
@@ -302,14 +302,6 @@ Used for the main chat interface and LangGraph agent. Requires `ANTHROPIC_API_KE
 - Region: `europe-west1`
 - Deploy specific functions: `firebase deploy --only functions:functionName`
 
-### Full Deploy
-```bash
-# Functions only
-firebase deploy --only functions
-
-# Frontend only (after push to main, or manual)
-firebase deploy --only hosting
-
-# Everything
-firebase deploy
-```
+### Firebase Services (NOT Hosting)
+- Firestore, Storage, Functions, Auth - all on Firebase
+- Frontend hosting is on Vercel, NOT Firebase Hosting
