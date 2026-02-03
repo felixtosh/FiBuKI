@@ -293,15 +293,13 @@ Used for the main chat interface and LangGraph agent. Requires `ANTHROPIC_API_KE
 ## Deployment
 
 ### Frontend (Next.js)
-- Hosted on **Vercel** (connected to GitHub repo)
+- Hosted on **Firebase App Hosting** (not Firebase Hosting - different service)
 - Auto-deploys when pushing to `main` branch
+- Region: `europe-west4`
 - Domain: `fibuki.com`
+- Backend name: `taxstudio`
 
 ### Cloud Functions
 - Deploy manually: `firebase deploy --only functions`
 - Region: `europe-west1`
 - Deploy specific functions: `firebase deploy --only functions:functionName`
-
-### Firebase Services (NOT Hosting)
-- Firestore, Storage, Functions, Auth - all on Firebase
-- Frontend hosting is on Vercel, NOT Firebase Hosting
