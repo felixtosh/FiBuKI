@@ -7,6 +7,7 @@ import {
   getDoc,
   doc,
   updateDoc,
+  setDoc,
   addDoc,
   Timestamp,
   writeBatch,
@@ -16,7 +17,7 @@ import {
 } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
 import { functions } from "@/lib/firebase/config";
-import { PRESET_PARTNERS } from "@/lib/data/preset-partners";
+import { PRESET_PARTNERS, generatePresetId } from "@/lib/data/preset-partners";
 import {
   UserPartner,
   GlobalPartner,
@@ -862,57 +863,179 @@ export async function getPresetPartnersStatus(
 }
 
 /**
- * Enable preset partners by seeding them into the database
+ * Enable preset partners by seeding/upserting them into the database.
+ *
+ * Idempotent: can be called repeatedly. On each run it:
+ * - Creates new preset partners that don't exist yet
+ * - Updates changed fields (name, aliases, vatId, website, patterns, country) on existing ones
+ * - Migrates legacy random-ID docs to deterministic IDs
+ * - Preserves user-enriched fields (ibans, address, externalIds)
  */
 export async function enablePresetPartners(
   ctx: OperationsContext
-): Promise<{ created: number }> {
+): Promise<{ created: number; updated: number; migrated: number; unchanged: number }> {
   const now = Timestamp.now();
 
-  // Check if already enabled
-  const status = await getPresetPartnersStatus(ctx);
-  if (status.enabled) {
-    return { created: 0 };
+  // 1. Fetch all existing preset docs in one shot
+  const existingQuery = query(
+    collection(ctx.db, GLOBAL_PARTNERS_COLLECTION),
+    where("source", "==", "preset")
+  );
+  const existingSnapshot = await getDocs(existingQuery);
+
+  // Build lookup maps: by doc ID and by normalized name
+  const existingById = new Map<string, Record<string, unknown>>();
+  const existingByName = new Map<string, { id: string; data: Record<string, unknown> }>();
+
+  for (const docSnap of existingSnapshot.docs) {
+    const data = docSnap.data();
+    existingById.set(docSnap.id, data);
+    // Normalize name for matching legacy random-ID docs
+    const normalizedName = (data.name || "").toLowerCase().trim();
+    if (normalizedName) {
+      existingByName.set(normalizedName, { id: docSnap.id, data });
+    }
   }
 
-  // Batch write in groups of 500 (Firestore limit)
+  // 2. Process each preset partner
   const BATCH_SIZE = 500;
   let created = 0;
+  let updated = 0;
+  let migrated = 0;
+  let unchanged = 0;
 
-  for (let i = 0; i < PRESET_PARTNERS.length; i += BATCH_SIZE) {
+  // Collect operations to batch
+  type BatchOp = {
+    type: "set" | "update";
+    ref: ReturnType<typeof doc>;
+    data: Record<string, unknown>;
+  } | {
+    type: "delete";
+    ref: ReturnType<typeof doc>;
+  };
+  const operations: BatchOp[] = [];
+
+  // Fields we manage (will be updated if changed)
+  const managedFields = ["name", "aliases", "vatId", "website", "patterns", "country"] as const;
+
+  for (const partner of PRESET_PARTNERS) {
+    const deterministicId = generatePresetId(partner.name);
+    const normalizedName = partner.name.toLowerCase().trim();
+
+    const presetData = {
+      name: partner.name,
+      aliases: partner.aliases,
+      country: partner.country,
+      vatId: partner.vatId || null,
+      website: partner.website || null,
+      patterns: partner.patterns || [],
+    };
+
+    const existingDoc = existingById.get(deterministicId);
+
+    if (existingDoc) {
+      // Doc with deterministic ID exists — check if any managed fields changed
+      let hasChanges = false;
+      for (const field of managedFields) {
+        const existingVal = JSON.stringify(existingDoc[field] ?? null);
+        const presetVal = JSON.stringify(presetData[field as keyof typeof presetData] ?? null);
+        if (existingVal !== presetVal) {
+          hasChanges = true;
+          break;
+        }
+      }
+
+      if (hasChanges) {
+        operations.push({
+          type: "update",
+          ref: doc(ctx.db, GLOBAL_PARTNERS_COLLECTION, deterministicId),
+          data: { ...presetData, updatedAt: now },
+        });
+        updated++;
+      } else {
+        unchanged++;
+      }
+    } else {
+      // No deterministic-ID doc — check for legacy random-ID doc by name
+      const legacyMatch = existingByName.get(normalizedName);
+
+      if (legacyMatch && legacyMatch.id !== deterministicId) {
+        // Migrate: delete old doc, create new one with deterministic ID
+        // Preserve user-enriched fields from legacy doc
+        operations.push({
+          type: "delete",
+          ref: doc(ctx.db, GLOBAL_PARTNERS_COLLECTION, legacyMatch.id),
+        });
+        operations.push({
+          type: "set",
+          ref: doc(ctx.db, GLOBAL_PARTNERS_COLLECTION, deterministicId),
+          data: {
+            ...presetData,
+            // Preserve user-enriched fields from the legacy doc
+            address: legacyMatch.data.address ?? null,
+            ibans: legacyMatch.data.ibans ?? [],
+            externalIds: legacyMatch.data.externalIds ?? null,
+            source: "preset",
+            sourceDetails: legacyMatch.data.sourceDetails ?? {
+              contributingUserIds: ["system"],
+              confidence: 100,
+              verifiedAt: now,
+              verifiedBy: "system",
+            },
+            isActive: true,
+            createdAt: legacyMatch.data.createdAt ?? now,
+            updatedAt: now,
+          },
+        });
+        migrated++;
+        // Remove from byName so we don't match it again
+        existingByName.delete(normalizedName);
+      } else {
+        // Brand new partner — create with deterministic ID
+        operations.push({
+          type: "set",
+          ref: doc(ctx.db, GLOBAL_PARTNERS_COLLECTION, deterministicId),
+          data: {
+            ...presetData,
+            address: null,
+            ibans: [],
+            externalIds: null,
+            source: "preset",
+            sourceDetails: {
+              contributingUserIds: ["system"],
+              confidence: 100,
+              verifiedAt: now,
+              verifiedBy: "system",
+            },
+            isActive: true,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        created++;
+      }
+    }
+  }
+
+  // 3. Execute in batches of 500
+  for (let i = 0; i < operations.length; i += BATCH_SIZE) {
     const batch = writeBatch(ctx.db);
-    const chunk = PRESET_PARTNERS.slice(i, i + BATCH_SIZE);
+    const chunk = operations.slice(i, i + BATCH_SIZE);
 
-    for (const partner of chunk) {
-      const docRef = doc(collection(ctx.db, GLOBAL_PARTNERS_COLLECTION));
-      batch.set(docRef, {
-        name: partner.name,
-        aliases: partner.aliases,
-        address: null,
-        country: partner.country,
-        vatId: partner.vatId || null,
-        ibans: [],
-        website: partner.website || null,
-        externalIds: null,
-        source: "preset",
-        sourceDetails: {
-          contributingUserIds: ["system"],
-          confidence: 100,
-          verifiedAt: now,
-          verifiedBy: "system",
-        },
-        patterns: partner.patterns || [],
-        isActive: true,
-        createdAt: now,
-        updatedAt: now,
-      });
-      created++;
+    for (const op of chunk) {
+      if (op.type === "set") {
+        batch.set(op.ref, op.data);
+      } else if (op.type === "update") {
+        batch.update(op.ref, op.data);
+      } else {
+        batch.delete(op.ref);
+      }
     }
 
     await batch.commit();
   }
 
-  return { created };
+  return { created, updated, migrated, unchanged };
 }
 
 /**
@@ -960,7 +1083,7 @@ export async function disablePresetPartners(
 export async function togglePresetPartners(
   ctx: OperationsContext,
   enable: boolean
-): Promise<{ enabled: boolean; count: number }> {
+): Promise<{ enabled: boolean; count: number; created?: number; updated?: number; migrated?: number; unchanged?: number }> {
   if (enable) {
     const result = await enablePresetPartners(ctx);
 
@@ -968,7 +1091,11 @@ export async function togglePresetPartners(
     const { createDefaultUserData } = await import("./user-data-ops");
     await createDefaultUserData(ctx);
 
-    return { enabled: true, count: result.created };
+    return {
+      enabled: true,
+      count: result.created + result.updated + result.migrated,
+      ...result,
+    };
   } else {
     const result = await disablePresetPartners(ctx);
     return { enabled: false, count: result.deleted };

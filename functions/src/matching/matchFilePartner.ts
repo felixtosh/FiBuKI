@@ -30,6 +30,7 @@ import {
 import { geminiValidateDomainOwnership } from "../ai/validateDomainOwnership";
 import { AutomationMeta } from "../automation/types";
 import { logAIUsage } from "../utils/ai-usage-logger";
+import { ensureGlobalPartnerFromVies } from "../utils/globalPartnerUpsert";
 
 // =============================================================================
 // AUTOMATION METADATA
@@ -762,7 +763,7 @@ async function createUserPartnerFromLookup(
   userId: string,
   companyInfo: CompanyInfo,
   originalExtractedName: string,
-  options?: { viesVerified?: boolean }
+  options?: { viesVerified?: boolean; globalPartnerId?: string }
 ): Promise<string> {
   // === LLM-ASSISTED DEDUPLICATION ===
   // Before creating, check if this company already exists as a partner
@@ -823,6 +824,10 @@ async function createUserPartnerFromLookup(
     ...(options?.viesVerified && {
       viesVerified: true,
       viesVerifiedAt: Timestamp.now(),
+    }),
+    // Link to global partner if provided
+    ...(options?.globalPartnerId && {
+      globalPartnerId: options.globalPartnerId,
     }),
   };
 
@@ -1090,11 +1095,19 @@ export async function runPartnerMatching(
               : undefined,
           };
 
+          // Auto-create global partner from VIES data (idempotent)
+          const { globalPartnerId } = await ensureGlobalPartnerFromVies(
+            companyInfo.vatId!,
+            companyInfo.name!,
+            companyInfo.country || parsed.countryCode,
+            companyInfo.address ? { ...companyInfo.address, country: parsed.countryCode } : null
+          );
+
           const newPartnerId = await createUserPartnerFromLookup(
             userId,
             companyInfo,
             extractedPartner || viesResult.name,
-            { viesVerified: true }
+            { viesVerified: true, globalPartnerId }
           );
 
           await markPartnerMatchComplete(

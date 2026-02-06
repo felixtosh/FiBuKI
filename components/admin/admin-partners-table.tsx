@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { PRESET_PARTNERS_COUNT } from "@/lib/data/preset-partners";
 import {
   AdminPartnerRow,
   CandidateMatch,
@@ -298,7 +299,7 @@ function AdminPartnersTableInner(
                 ? "Loading..."
                 : presetPartnersEnabled
                 ? "Disable Presets"
-                : "Enable Presets (250)"}
+                : `Enable Presets (${PRESET_PARTNERS_COUNT})`}
             </Button>
           )}
 
