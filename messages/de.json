@@ -91,6 +91,10 @@
         "title": "Erhobene Daten",
         "content": "Wir erheben und verarbeiten folgende Kategorien personenbezogener Daten:\n\n• Kontodaten: Name, E-Mail-Adresse für die Authentifizierung\n• Finanzdaten: Banktransaktionen, Belege, Rechnungen die Sie hochladen oder verbinden\n• E-Mail-Daten: Gmail-Nachrichten und Anhänge (nur mit Ihrer ausdrücklichen Einwilligung)\n• Nutzungsdaten: Interaktionen mit der Anwendung für Verbesserungen"
       },
+      "legalBasis": {
+        "title": "Rechtsgrundlagen der Verarbeitung",
+        "content": "Wir verarbeiten Ihre personenbezogenen Daten auf folgenden Rechtsgrundlagen gemäß Art. 6 DSGVO:\n\n• Vertragserfüllung (Art. 6 Abs. 1 lit. b): Verarbeitung, die für die Kernfunktionalität von FiBuKI erforderlich ist, einschließlich Transaktionsverwaltung, Belegzuordnung und KI-gestützter Kategorisierung\n• Einwilligung (Art. 6 Abs. 1 lit. a): Die Gmail-Integration wird nur mit Ihrer ausdrücklichen Einwilligung aktiviert. Sie können diese Einwilligung jederzeit widerrufen, indem Sie Ihr Gmail-Konto trennen\n• Berechtigtes Interesse (Art. 6 Abs. 1 lit. f): Nutzungsanalysen und KI-Qualitätsüberwachung zur Verbesserung des Dienstes. Sie können dieser Verarbeitung jederzeit widersprechen"
+      },
       "services": {
         "title": "Eingesetzte Dienste",
         "intro": "Wir nutzen folgende Drittanbieterdienste zur Bereitstellung unserer Leistungen:",
@@ -127,6 +131,30 @@
           "purpose": "Analyse und Optimierung der KI-Interaktionen zur Qualitätsverbesserung."
         }
       },
+      "googleUserData": {
+        "title": "Google-Nutzerdaten",
+        "content": "FiBuKI greift über die Gmail API auf Google-Nutzerdaten zu, um Ihnen beim Auffinden und Zuordnen von Belegen und Rechnungen zu Ihren Banktransaktionen zu helfen.",
+        "whatWeAccess": {
+          "title": "Worauf wir zugreifen",
+          "content": "• Gmail-Nachrichten: Betreffzeilen, Absenderinformationen, Daten und Textinhalte von E-Mails, die Belege oder Rechnungen enthalten können\n• Gmail-Anhänge: PDF-, Bild- und Dokumentanhänge zur Belegextraktion\n• Google-Kontoprofil: Name und E-Mail-Adresse zur Authentifizierung"
+        },
+        "howWeUse": {
+          "title": "Wie wir diese Daten verwenden",
+          "content": "• Belegsuche: Wir durchsuchen Ihre E-Mails nach Belegen und Rechnungen, die zu Ihren Banktransaktionen passen\n• Datenextraktion: Wir extrahieren Beträge, Daten und Händlerinformationen aus E-Mail-Inhalten und Anhängen\n• Zuordnung: Extrahierte Daten werden mit Ihren Banktransaktionen zur automatischen Zuordnung verglichen"
+        },
+        "limitedUse": {
+          "title": "Eingeschränkte Nutzung (Limited Use Disclosure)",
+          "content": "Die Nutzung und Übertragung von Informationen, die FiBuKI von Google APIs erhält, entspricht der Google API Services User Data Policy, einschließlich der Limited Use-Anforderungen.\n\nInsbesondere:\n• Wir verwenden Google-Nutzerdaten nur für die in dieser Datenschutzerklärung beschriebenen Zwecke\n• Wir übertragen Google-Nutzerdaten nicht an Dritte, außer wenn dies zur Bereitstellung oder Verbesserung des Dienstes erforderlich ist oder gesetzlich vorgeschrieben wird\n• Wir verwenden Google-Nutzerdaten nicht zur Schaltung von Werbung\n• Wir erlauben keine Einsichtnahme in Google-Nutzerdaten durch Personen, außer mit Ihrer ausdrücklichen Zustimmung, zu Sicherheitszwecken, zur Einhaltung geltender Gesetze oder für interne Vorgänge, bei denen die Daten aggregiert und anonymisiert wurden"
+        },
+        "revocation": {
+          "title": "Zugriff widerrufen",
+          "content": "Sie können den Zugriff von FiBuKI auf Ihre Google-Daten jederzeit widerrufen:\n\n• In FiBuKI: Gehen Sie zu Einstellungen > Integrationen und trennen Sie Ihr Gmail-Konto\n• Bei Google: Besuchen Sie Ihre Google-Kontoberechtigungen unter myaccount.google.com/permissions\n\nBei Widerruf des Zugriffs werden alle gespeicherten E-Mail-Daten und OAuth-Token innerhalb von 24 Stunden gelöscht."
+        }
+      },
+      "internationalTransfers": {
+        "title": "Internationale Datenübermittlung",
+        "content": "Ihre Daten werden primär innerhalb der Europäischen Union gespeichert (Google Cloud, Region europe-west1). Einige Verarbeitungen umfassen jedoch Übermittlungen in die Vereinigten Staaten:\n\n• Anthropic (Claude AI): Ihre Chat-Nachrichten und Buchhaltungsanfragen werden von Anthropic-Servern in den USA verarbeitet. Diese Übermittlung basiert auf Standardvertragsklauseln (SCCs) gemäß Art. 46 Abs. 2 lit. c DSGVO\n• Google Cloud AI (Vertex AI, Cloud Vision): Dokumentenanalysen können in Googles globaler Infrastruktur verarbeitet werden, abgedeckt durch Googles Datenverarbeitungszusatz und SCCs\n\nAlle internationalen Datenübermittlungen sind durch angemessene Garantien gemäß Kapitel V der DSGVO geschützt."
+      },
       "dataProtection": {
         "title": "Datenschutzmaßnahmen",
         "content": "Wir setzen umfassende Sicherheitsmaßnahmen zum Schutz Ihrer Daten ein:\n\n• Verschlüsselung bei der Übertragung: Alle zwischen Ihrem Gerät und unseren Servern übertragenen Daten werden mit TLS 1.3 verschlüsselt\n• Verschlüsselung bei der Speicherung: Alle in unseren Datenbanken (Google Cloud Firestore) und Dateispeichern (Google Cloud Storage) gespeicherten Daten werden mit AES-256 verschlüsselt\n• Zugriffskontrollen: Ihre Daten sind nur für Sie über Ihr authentifiziertes Konto zugänglich. Unser Team greift nicht auf Ihre persönlichen Daten zu, außer für technischen Support auf Ihre ausdrückliche Anfrage\n• Infrastruktursicherheit: Unsere Dienste laufen auf der Google Cloud Platform, die SOC 2, ISO 27001 und andere Sicherheitszertifizierungen vorweist",
@@ -139,13 +167,17 @@
           "content": "• Ihre Daten werden aufbewahrt, solange Ihr Konto aktiv ist\n• Sie können jederzeit einzelne Dateien, Transaktionen oder verbundene Konten löschen\n• Sie können Ihr Konto unter Einstellungen > Anmeldung & Sicherheit > Konto löschen entfernen\n• Die Kontolöschung beinhaltet eine 30-tägige Frist, in der Sie die Anfrage stornieren können\n• Nach Ablauf der Frist werden alle zugehörigen Daten dauerhaft entfernt\n• OAuth-Token für verbundene Dienste (z.B. Gmail) werden widerrufen und können nicht wiederhergestellt werden\n• Datenbank-Backups werden für bis zu 90 Tage zur Notfallwiederherstellung aufbewahrt und danach automatisch gelöscht"
         }
       },
+      "automatedProcessing": {
+        "title": "Automatisierte Verarbeitung",
+        "content": "FiBuKI nutzt automatisierte Verarbeitung, einschließlich KI und maschinellem Lernen, für folgende Zwecke:\n\n• Belegzuordnung: Automatische Zuordnung hochgeladener Belege zu Banktransaktionen anhand von Beträgen, Daten und Händlerinformationen\n• Kategorisierung: KI-gestützte Kategorisierung von Transaktionen und Belegen\n• Partnererkennung: Automatische Identifikation von Geschäftspartnern aus Transaktionsbeschreibungen und Dokumenten\n• Bewertung: Konfidenzwerte für vorgeschlagene Zuordnungen zwischen Dateien und Transaktionen\n\nDiese automatisierten Prozesse dienen Ihrer Unterstützung und erzeugen keine Entscheidungen mit rechtlicher oder ähnlich erheblicher Wirkung. Alle vorgeschlagenen Zuordnungen und Kategorisierungen können von Ihnen jederzeit überprüft, korrigiert oder abgelehnt werden."
+      },
       "rights": {
         "title": "Ihre Rechte",
-        "content": "Nach der DSGVO haben Sie folgende Rechte:\n\n• Auskunftsrecht: Sie können Auskunft über Ihre gespeicherten Daten verlangen\n• Berichtigung: Sie können unrichtige Daten korrigieren lassen\n• Löschung: Sie können die Löschung Ihrer Daten verlangen\n• Einschränkung: Sie können die Verarbeitung einschränken lassen\n• Datenübertragbarkeit: Sie können Ihre Daten in einem gängigen Format erhalten\n• Widerspruch: Sie können der Verarbeitung widersprechen\n• Beschwerde: Sie können sich bei einer Aufsichtsbehörde beschweren"
+        "content": "Nach der DSGVO haben Sie folgende Rechte:\n\n• Auskunftsrecht (Art. 15): Sie können Auskunft über Ihre gespeicherten Daten verlangen\n• Berichtigung (Art. 16): Sie können unrichtige Daten korrigieren lassen\n• Löschung (Art. 17): Sie können die Löschung Ihrer Daten verlangen\n• Einschränkung (Art. 18): Sie können die Verarbeitung einschränken lassen\n• Datenübertragbarkeit (Art. 20): Sie können Ihre Daten in einem gängigen Format erhalten\n• Widerspruch (Art. 21): Sie können der Verarbeitung widersprechen\n• Automatisierte Entscheidungen (Art. 22): Sie haben das Recht, keiner ausschließlich automatisierten Entscheidung mit rechtlicher Wirkung unterworfen zu werden\n\nZur Ausübung Ihrer Rechte kontaktieren Sie uns unter privacy@fibuki.com.\n\nSie haben außerdem das Recht, Beschwerde bei der zuständigen Aufsichtsbehörde einzulegen:\nÖsterreichische Datenschutzbehörde\nBarichgasse 40–42\n1030 Wien, Österreich\nhttps://dsb.gv.at"
       },
       "contact": {
         "title": "Kontakt",
-        "content": "Bei Fragen zum Datenschutz erreichen Sie uns unter:\n\nInfinity Vertigo GmbH\nBergwald 43\n2812 Hollenthon\nÖsterreich"
+        "content": "Bei Fragen zum Datenschutz erreichen Sie uns unter:\n\nInfinity Vertigo GmbH\nBergwald 43\n2812 Hollenthon\nÖsterreich\n\nE-Mail: privacy@fibuki.com"
       }
     }
   },

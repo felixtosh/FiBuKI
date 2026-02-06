@@ -91,6 +91,10 @@
         "title": "Data We Collect",
         "content": "We collect and process the following categories of personal data:\n\n• Account data: Name, email address for authentication\n• Financial data: Bank transactions, receipts, invoices you upload or connect\n• Email data: Gmail messages and attachments (only with your explicit consent)\n• Usage data: Interactions with the application for improvements"
       },
+      "legalBasis": {
+        "title": "Legal Basis for Processing",
+        "content": "We process your personal data on the following legal bases under Art. 6 GDPR:\n\n• Contract performance (Art. 6(1)(b)): Processing necessary for the core functionality of FiBuKI, including transaction management, receipt matching, and AI-powered categorization\n• Consent (Art. 6(1)(a)): Gmail integration is only activated with your explicit consent. You can revoke this consent at any time by disconnecting your Gmail account\n• Legitimate interest (Art. 6(1)(f)): Usage analytics and AI quality monitoring to improve the service. You can object to this processing at any time"
+      },
       "services": {
         "title": "Third-Party Services",
         "intro": "We use the following third-party services to provide our services:",
@@ -127,6 +131,30 @@
           "purpose": "Analysis and optimization of AI interactions for quality improvement."
         }
       },
+      "googleUserData": {
+        "title": "Google User Data",
+        "content": "FiBuKI accesses Google user data through the Gmail API to help you find and match receipts and invoices to your bank transactions.",
+        "whatWeAccess": {
+          "title": "What We Access",
+          "content": "• Gmail messages: Subject lines, sender information, dates, and body content of emails that may contain receipts or invoices\n• Gmail attachments: PDF, image, and document attachments for receipt extraction\n• Google account profile: Name and email address for authentication"
+        },
+        "howWeUse": {
+          "title": "How We Use This Data",
+          "content": "• Receipt search: We scan your emails for receipts and invoices matching your bank transactions\n• Data extraction: We extract amounts, dates, and vendor information from email content and attachments\n• Matching: Extracted data is compared against your bank transactions for automatic matching"
+        },
+        "limitedUse": {
+          "title": "Limited Use Disclosure",
+          "content": "FiBuKI's use and transfer of information received from Google APIs adheres to the Google API Services User Data Policy, including the Limited Use requirements.\n\nSpecifically:\n• We only use Google user data for the purposes described in this privacy policy\n• We do not transfer Google user data to third parties, except as necessary to provide or improve the service, or as required by law\n• We do not use Google user data for serving advertisements\n• We do not allow humans to read Google user data, except with your affirmative consent, for security purposes, to comply with applicable law, or for internal operations where the data has been aggregated and anonymized"
+        },
+        "revocation": {
+          "title": "Revoking Access",
+          "content": "You can revoke FiBuKI's access to your Google data at any time:\n\n• In FiBuKI: Go to Settings > Integrations and disconnect your Gmail account\n• In Google: Visit your Google Account permissions at myaccount.google.com/permissions\n\nWhen you revoke access, all stored email data and OAuth tokens are deleted within 24 hours."
+        }
+      },
+      "internationalTransfers": {
+        "title": "International Data Transfers",
+        "content": "Your data is primarily stored within the European Union (Google Cloud, region europe-west1). However, some processing involves transfers to the United States:\n\n• Anthropic (Claude AI): Your chat messages and accounting queries are processed by Anthropic's servers in the US. This transfer is based on standard contractual clauses (SCCs) pursuant to Art. 46(2)(c) GDPR\n• Google Cloud AI (Vertex AI, Cloud Vision): Document analysis may be processed in Google's global infrastructure, covered by Google's Data Processing Amendment and SCCs\n\nAll international data transfers are protected by appropriate safeguards as required by Chapter V of the GDPR."
+      },
       "dataProtection": {
         "title": "Data Protection Mechanisms",
         "content": "We implement comprehensive security measures to protect your data:\n\n• Encryption in transit: All data transmitted between your device and our servers is encrypted using TLS 1.3\n• Encryption at rest: All data stored in our databases (Google Cloud Firestore) and file storage (Google Cloud Storage) is encrypted using AES-256\n• Access controls: Your data is only accessible to you via your authenticated account. Our team does not access your personal data except for technical support when explicitly requested by you\n• Infrastructure security: Our services run on Google Cloud Platform, which maintains SOC 2, ISO 27001, and other security certifications",
@@ -139,13 +167,17 @@
           "content": "• Your data is retained while your account is active\n• You can delete individual files, transactions, or connected accounts at any time\n• You can delete your account via Settings > Sign-in & Security > Delete Account\n• Account deletion includes a 30-day grace period during which you can cancel the request\n• After the grace period, all associated data is permanently removed\n• OAuth tokens for connected services (e.g., Gmail) are revoked and cannot be recovered\n• Database backups are retained for up to 90 days for disaster recovery, after which they are automatically purged"
         }
       },
+      "automatedProcessing": {
+        "title": "Automated Processing",
+        "content": "FiBuKI uses automated processing, including AI and machine learning, for the following purposes:\n\n• Receipt matching: Automatically matching uploaded receipts to bank transactions based on amounts, dates, and vendor information\n• Categorization: AI-powered categorization of transactions and receipts\n• Partner detection: Automatic identification of business partners from transaction descriptions and documents\n• Scoring: Confidence scores for suggested matches between files and transactions\n\nThese automated processes are designed to assist you and do not produce decisions with legal or similarly significant effects. All suggested matches and categorizations can be reviewed, corrected, or rejected by you at any time."
+      },
       "rights": {
         "title": "Your Rights",
-        "content": "Under GDPR, you have the following rights:\n\n• Right of access: You can request information about your stored data\n• Rectification: You can have incorrect data corrected\n• Erasure: You can request deletion of your data\n• Restriction: You can request restriction of processing\n• Data portability: You can receive your data in a common format\n• Objection: You can object to processing\n• Complaint: You can lodge a complaint with a supervisory authority"
+        "content": "Under GDPR, you have the following rights:\n\n• Right of access (Art. 15): You can request information about your stored data\n• Rectification (Art. 16): You can have incorrect data corrected\n• Erasure (Art. 17): You can request deletion of your data\n• Restriction (Art. 18): You can request restriction of processing\n• Data portability (Art. 20): You can receive your data in a common format\n• Objection (Art. 21): You can object to processing\n• Automated decisions (Art. 22): You have the right not to be subject to purely automated decisions with legal effect\n\nTo exercise your rights, contact us at privacy@fibuki.com.\n\nYou also have the right to lodge a complaint with the Austrian Data Protection Authority:\nÖsterreichische Datenschutzbehörde\nBarichgasse 40–42\n1030 Vienna, Austria\nhttps://dsb.gv.at"
       },
       "contact": {
         "title": "Contact",
-        "content": "For privacy questions, contact us at:\n\nInfinity Vertigo GmbH\nBergwald 43\n2812 Hollenthon\nAustria"
+        "content": "For privacy questions, contact us at:\n\nInfinity Vertigo GmbH\nBergwald 43\n2812 Hollenthon\nAustria\n\nEmail: privacy@fibuki.com"
       }
     }
   },

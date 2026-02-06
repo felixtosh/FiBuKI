@@ -64,6 +64,16 @@ export default async function PrivacyPage() {
               </p>
             </section>
 
+            {/* Legal Basis */}
+            <section>
+              <h2 className="text-xl font-semibold mb-3">
+                {t("sections.legalBasis.title")}
+              </h2>
+              <p className="text-muted-foreground whitespace-pre-line">
+                {t("sections.legalBasis.content")}
+              </p>
+            </section>
+
             {/* Third-Party Services */}
             <section>
               <h2 className="text-xl font-semibold mb-3">
@@ -84,6 +94,60 @@ export default async function PrivacyPage() {
                   </div>
                 ))}
               </div>
+            </section>
+
+            {/* Google User Data */}
+            <section className="rounded-lg border border-blue-200 bg-blue-50/50 p-6 dark:border-blue-900 dark:bg-blue-950/30">
+              <h2 className="text-xl font-semibold mb-3">
+                {t("sections.googleUserData.title")}
+              </h2>
+              <p className="text-muted-foreground mb-4">
+                {t("sections.googleUserData.content")}
+              </p>
+              <div className="space-y-4">
+                <div className="border-l-2 border-blue-300 pl-4 dark:border-blue-800">
+                  <h3 className="font-medium">
+                    {t("sections.googleUserData.whatWeAccess.title")}
+                  </h3>
+                  <p className="text-sm text-muted-foreground whitespace-pre-line">
+                    {t("sections.googleUserData.whatWeAccess.content")}
+                  </p>
+                </div>
+                <div className="border-l-2 border-blue-300 pl-4 dark:border-blue-800">
+                  <h3 className="font-medium">
+                    {t("sections.googleUserData.howWeUse.title")}
+                  </h3>
+                  <p className="text-sm text-muted-foreground whitespace-pre-line">
+                    {t("sections.googleUserData.howWeUse.content")}
+                  </p>
+                </div>
+                <div className="border-l-2 border-blue-300 pl-4 dark:border-blue-800">
+                  <h3 className="font-medium">
+                    {t("sections.googleUserData.limitedUse.title")}
+                  </h3>
+                  <p className="text-sm text-muted-foreground whitespace-pre-line">
+                    {t("sections.googleUserData.limitedUse.content")}
+                  </p>
+                </div>
+                <div className="border-l-2 border-blue-300 pl-4 dark:border-blue-800">
+                  <h3 className="font-medium">
+                    {t("sections.googleUserData.revocation.title")}
+                  </h3>
+                  <p className="text-sm text-muted-foreground whitespace-pre-line">
+                    {t("sections.googleUserData.revocation.content")}
+                  </p>
+                </div>
+              </div>
+            </section>
+
+            {/* International Data Transfers */}
+            <section>
+              <h2 className="text-xl font-semibold mb-3">
+                {t("sections.internationalTransfers.title")}
+              </h2>
+              <p className="text-muted-foreground whitespace-pre-line">
+                {t("sections.internationalTransfers.content")}
+              </p>
             </section>
 
             {/* Data Protection */}
@@ -112,6 +176,16 @@ export default async function PrivacyPage() {
                   </p>
                 </div>
               </div>
+            </section>
+
+            {/* Automated Processing */}
+            <section>
+              <h2 className="text-xl font-semibold mb-3">
+                {t("sections.automatedProcessing.title")}
+              </h2>
+              <p className="text-muted-foreground whitespace-pre-line">
+                {t("sections.automatedProcessing.content")}
+              </p>
             </section>
 
             {/* Rights */}

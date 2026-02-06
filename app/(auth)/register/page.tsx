@@ -208,6 +208,14 @@ export default function RegisterPage() {
           </svg>
           Continue with Google
         </Button>
+
+        <p className="text-xs text-muted-foreground text-center">
+          By creating an account, you agree to our{" "}
+          <Link href="/privacy" className="text-primary hover:underline">
+            Privacy Policy
+          </Link>
+          .
+        </p>
       </CardContent>
       <CardFooter>
         <p className="text-sm text-muted-foreground w-full text-center">
