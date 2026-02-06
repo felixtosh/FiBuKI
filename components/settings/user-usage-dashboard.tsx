@@ -16,7 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Activity, Zap, DollarSign, Calendar, History, Server, Clock } from "lucide-react";
 import { useUserUsage, formatFunctionName } from "@/hooks/use-user-usage";
 import { useFunctionCalls, formatFunctionDisplayName, formatDuration } from "@/hooks/use-function-calls";
-import { USER_TOKEN_RATE_PER_100K } from "@/types/ai-usage";
+import { USER_TOKEN_RATE_PER_100K_EUR } from "@/types/billing";
 import { cn } from "@/lib/utils";
 import { SettingsPageHeader } from "@/components/ui/settings-page-header";
 
@@ -154,7 +154,7 @@ export function UserUsageDashboard() {
               </Card>
             </div>
             <p className="text-xs text-muted-foreground mt-2">
-              Costs are estimated at {USER_TOKEN_RATE_PER_100K.toFixed(2)} EUR per
+              Costs are estimated at {USER_TOKEN_RATE_PER_100K_EUR.toFixed(2)} EUR per
               100,000 tokens.
             </p>
           </div>
@@ -361,7 +361,7 @@ export function UserUsageDashboard() {
 
           {/* Pricing Info */}
           <p className="text-xs text-muted-foreground">
-            Costs are estimated at {USER_TOKEN_RATE_PER_100K.toFixed(2)} EUR per
+            Costs are estimated at {USER_TOKEN_RATE_PER_100K_EUR.toFixed(2)} EUR per
             100,000 tokens.
           </p>
         </>

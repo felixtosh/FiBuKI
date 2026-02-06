@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import { Progress } from "@/components/ui/progress";
 import { CheckCircle2, XCircle, AlertCircle, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -45,37 +46,20 @@ export function ImportProgress({
       {/* Results */}
       {isComplete && results && (
         <div className="grid grid-cols-2 gap-4">
-          <ResultCard
-            icon={CheckCircle2}
-            iconColor="text-green-600"
-            bgColor="bg-green-50 dark:bg-green-950/30"
-            label="Imported"
-            value={results.imported}
-            total={results.total}
-          />
-          <ResultCard
-            icon={AlertCircle}
-            iconColor="text-yellow-600"
-            bgColor="bg-yellow-50 dark:bg-yellow-950/30"
-            label="Skipped (duplicates)"
-            value={results.skipped}
-            total={results.total}
-          />
-          <ResultCard
-            icon={XCircle}
-            iconColor="text-destructive"
-            bgColor="bg-destructive/10"
-            label="Errors"
-            value={results.errors}
-            total={results.total}
-          />
-          <ResultCard
-            icon={CheckCircle2}
-            iconColor="text-muted-foreground"
-            bgColor="bg-muted"
-            label="Total processed"
-            value={results.total}
-          />
+          {[
+            { icon: CheckCircle2, iconColor: "text-green-600", bgColor: "bg-green-50 dark:bg-green-950/30", label: "Imported", value: results.imported, total: results.total },
+            { icon: AlertCircle, iconColor: "text-yellow-600", bgColor: "bg-yellow-50 dark:bg-yellow-950/30", label: "Skipped (duplicates)", value: results.skipped, total: results.total },
+            { icon: XCircle, iconColor: "text-destructive", bgColor: "bg-destructive/10", label: "Errors", value: results.errors, total: results.total },
+            { icon: CheckCircle2, iconColor: "text-muted-foreground", bgColor: "bg-muted", label: "Total processed", value: results.total, total: undefined },
+          ].map((card, index) => (
+            <div
+              key={card.label}
+              className="animate-stagger-in"
+              style={{ "--stagger-index": index } as React.CSSProperties}
+            >
+              <ResultCard {...card} />
+            </div>
+          ))}
         </div>
       )}
 

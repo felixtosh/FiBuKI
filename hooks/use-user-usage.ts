@@ -13,8 +13,8 @@ import { db } from "@/lib/firebase/config";
 import {
   AIUsageRecord,
   AIFunction,
-  USER_TOKEN_RATE_PER_100K,
 } from "@/types/ai-usage";
+import { USER_TOKEN_RATE_PER_100K_EUR } from "@/types/billing";
 import { useAuth } from "@/components/auth";
 
 const MAX_RECORDS = 500; // Fetch more records for historical aggregation
@@ -38,7 +38,7 @@ export interface UserUsageData {
 }
 
 function calculateUserCost(tokens: number): number {
-  return (tokens * USER_TOKEN_RATE_PER_100K) / 100_000;
+  return (tokens * USER_TOKEN_RATE_PER_100K_EUR) / 100_000;
 }
 
 function getMonthKey(date: Date): string {

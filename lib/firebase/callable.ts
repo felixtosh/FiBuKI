@@ -133,3 +133,35 @@ export const createImportRecordCallable = createCallable<
   CreateImportRecordRequest,
   CreateImportRecordResponse
 >("createImportRecord");
+
+// Billing operations
+import type {
+  CreateCheckoutSessionRequest,
+  CreateCheckoutSessionResponse,
+  CreatePortalSessionRequest,
+  CreatePortalSessionResponse,
+  AddAICreditsRequest,
+  AddAICreditsResponse,
+  UpdateOverageSettingsRequest,
+  UpdateOverageSettingsResponse,
+} from "@/types/billing";
+
+export const createCheckoutSessionCallable = createCallable<
+  CreateCheckoutSessionRequest,
+  CreateCheckoutSessionResponse
+>("createCheckoutSession");
+
+export const createPortalSessionCallable = createCallable<
+  CreatePortalSessionRequest,
+  CreatePortalSessionResponse
+>("createPortalSession");
+
+export const addAICreditsCallable = createCallable<
+  AddAICreditsRequest,
+  AddAICreditsResponse
+>("addAICredits");
+
+export const updateOverageSettingsCallable = createCallable<
+  UpdateOverageSettingsRequest,
+  UpdateOverageSettingsResponse
+>("updateOverageSettings");

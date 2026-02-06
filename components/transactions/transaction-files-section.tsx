@@ -15,6 +15,7 @@ import {
   RotateCcw,
   ChevronDown,
   ChevronUp,
+  Globe,
 } from "lucide-react";
 import { Transaction } from "@/types/transaction";
 import { TaxFile } from "@/types/file";
@@ -75,6 +76,22 @@ interface TransactionFilesSectionProps {
   onOpenConnectFile?: () => void;
   /** Whether the connect overlay is currently open */
   isConnectFileOpen?: boolean;
+  /** Browser learn mode handlers (optional — shown when extension installed + partner assigned) */
+  learnMode?: {
+    isLearning: boolean;
+    actions: { step: number; actionType: string }[];
+    pdfCount: number;
+    isSaving: boolean;
+    startLearn: (params: {
+      partnerId: string;
+      partnerName: string;
+      transactionId?: string;
+    }) => void;
+  };
+  /** Partner name for display (needed for learn mode) */
+  partnerName?: string;
+  /** Whether the browser extension is installed */
+  extensionInstalled?: boolean;
 }
 
 interface DifferenceLineProps {
@@ -336,6 +353,9 @@ export function TransactionFilesSection({
   onTriggerSearch,
   onOpenConnectFile,
   isConnectFileOpen = false,
+  learnMode,
+  partnerName,
+  extensionInstalled = false,
 }: TransactionFilesSectionProps) {
   const [isReceiptLostDialogOpen, setIsReceiptLostDialogOpen] = useState(false);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
@@ -523,9 +543,38 @@ export function TransactionFilesSection({
     <TooltipProvider>
       <div className="space-y-3" data-onboarding="files-section">
         {/* Section Header with Search and History Buttons */}
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between relative z-10">
           <h3 className="text-sm font-medium">File</h3>
           <div className="flex items-center gap-1">
+            {/* Browser learn mode button — shown when extension installed + partner assigned + no files/category */}
+            {!hasFiles && !transaction.noReceiptCategoryId && extensionInstalled && transaction.partnerId && learnMode && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 relative z-10 pointer-events-auto"
+                    onClick={() => {
+                      learnMode.startLearn({
+                        partnerId: transaction.partnerId!,
+                        partnerName: partnerName || transaction.partner || "",
+                        transactionId: transaction.id,
+                      });
+                    }}
+                    disabled={learnMode.isLearning || learnMode.isSaving}
+                  >
+                    {learnMode.isLearning ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Globe className="h-3.5 w-3.5" />
+                    )}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {learnMode.isLearning ? "Recording browser actions..." : "Find invoice in browser"}
+                </TooltipContent>
+              </Tooltip>
+            )}
             {/* Show search button for incomplete transactions (no files AND no category) */}
             {!hasFiles && !transaction.noReceiptCategoryId && onTriggerSearch && (
               <Tooltip>
@@ -533,7 +582,7 @@ export function TransactionFilesSection({
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-6 w-6"
+                    className="h-6 w-6 relative z-10 pointer-events-auto"
                     onClick={onTriggerSearch}
                     disabled={isSearching}
                   >
@@ -555,6 +604,31 @@ export function TransactionFilesSection({
           <div className="flex items-center gap-2 text-sm text-muted-foreground py-1">
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
             <span>{searchLabel}</span>
+          </div>
+        )}
+
+        {/* Learn mode status indicator */}
+        {learnMode?.isLearning && (
+          <div className="flex items-center gap-2 text-sm text-amber-600 dark:text-amber-400 py-1">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500" />
+            </span>
+            <span>
+              Recording browser actions...{" "}
+              <span className="text-muted-foreground">
+                ({learnMode.actions.length} steps
+                {learnMode.pdfCount > 0 && ` · ${learnMode.pdfCount} files`})
+              </span>
+            </span>
+          </div>
+        )}
+
+        {/* Learn mode saving indicator */}
+        {learnMode?.isSaving && (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground py-1">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            <span>Saving browser recipe...</span>
           </div>
         )}
 

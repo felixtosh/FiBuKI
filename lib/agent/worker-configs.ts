@@ -125,6 +125,34 @@ export const WORKER_CONFIGS: Record<WorkerType, WorkerConfig> = {
     maxToolCalls: 20, // Slightly higher - needs search, download, wait, verify cycles
     timeoutSeconds: 120,
   },
+
+  partner_file_batch: {
+    type: "partner_file_batch",
+    name: "Partner File Batch Matcher",
+    description:
+      "Batches all unmatched files for a partner into one intelligent agent run. " +
+      "Searches Gmail/local once for the whole partner, scores NxM, and bulk-connects matches.",
+    toolNames: [
+      // Batch-specific tools
+      "loadPartnerBatchContext",
+      "searchGmailForPartner",
+      "searchLocalFilesForPartner",
+      "scoreBatchMatches",
+      "bulkConnectFiles",
+      "updateBatchTaskList",
+      // Fallback individual tools
+      "getFile",
+      "getTransaction",
+      "listTransactions",
+      "downloadGmailAttachment",
+      "waitForFileExtraction",
+      "connectFileToTransaction",
+    ],
+    systemPromptKey: "partner_file_batch",
+    maxMessages: 40,
+    maxToolCalls: 30,
+    timeoutSeconds: 180,
+  },
 };
 
 /**

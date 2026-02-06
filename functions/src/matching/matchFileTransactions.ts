@@ -29,8 +29,10 @@ import {
   formatScoreBreakdown,
   TransactionMatchScore,
   TransactionMatchSource,
+  ScoringOptions,
 } from "./transactionScoring";
 import { AutomationMeta } from "../automation/types";
+import { checkAIBudget } from "../billing/checkAIBudget";
 
 // =============================================================================
 // AUTOMATION METADATA
@@ -426,8 +428,9 @@ export async function runTransactionMatching(
     return;
   }
 
-  // Fetch partner aliases if file has an assigned partner
+  // Fetch partner aliases, billing cycle, and scoring weights if file has an assigned partner
   let partnerAliases: string[] = [];
+  let scoringOptions: ScoringOptions | undefined;
   if (fileData.partnerId) {
     try {
       const partnerDoc = await db.collection("partners").doc(fileData.partnerId).get();
@@ -439,9 +442,31 @@ export async function runTransactionMatching(
           ...(partnerData.aliases || []),
         ].filter(Boolean);
         console.log(`[TxMatch] Partner aliases: [${partnerAliases.map(a => `"${a}"`).join(", ")}]`);
+
+        // Read billing cycle and scoring weights for enhanced scoring
+        const bc = partnerData.billingCycle;
+        const sw = partnerData.scoringWeights;
+        if (bc || sw) {
+          scoringOptions = {};
+          if (bc) {
+            scoringOptions.billingCycle = {
+              invoiceToTransactionDelay: bc.invoiceToTransactionDelay,
+              delayVariance: bc.delayVariance,
+            };
+            console.log(`[TxMatch] Using billing cycle: delay=${bc.invoiceToTransactionDelay}d ±${bc.delayVariance}d`);
+          }
+          if (sw) {
+            scoringOptions.weights = {
+              amountWeight: sw.amountWeight,
+              dateWeight: sw.dateWeight,
+              partnerWeight: sw.partnerWeight,
+            };
+            console.log(`[TxMatch] Using scoring weights: amt=${sw.amountWeight} date=${sw.dateWeight} partner=${sw.partnerWeight}`);
+          }
+        }
       }
     } catch (error) {
-      console.warn("[TxMatch] Failed to fetch partner aliases:", error);
+      console.warn("[TxMatch] Failed to fetch partner data:", error);
     }
   }
 
@@ -450,11 +475,16 @@ export async function runTransactionMatching(
   let rejectedCount = 0;
 
   // Filter out transactions that have rejected this file
+  // Handles both legacy rejectedFileIds (string[]) and new rejectedFiles (object[])
   const eligibleTransactions = transactions.filter((doc) => {
     if (connectedIds.has(doc.id)) return false;
     const txData = doc.data();
     const rejectedFileIds: string[] = txData.rejectedFileIds || [];
-    if (rejectedFileIds.includes(fileId)) {
+    const rejectedFiles: Array<{ fileId: string }> = txData.rejectedFiles || [];
+    const isRejected =
+      rejectedFileIds.includes(fileId) ||
+      rejectedFiles.some((r) => r.fileId === fileId);
+    if (isRejected) {
       rejectedCount++;
       return false;
     }
@@ -491,7 +521,8 @@ export async function runTransactionMatching(
           partnerIban: txData.partnerIban,
           reference: txData.reference,
         },
-        partnerAliases
+        partnerAliases,
+        scoringOptions
       );
     });
 
@@ -599,6 +630,7 @@ export async function runTransactionMatching(
       connectionType: "auto_matched",
       matchSources: match.matchSources,
       matchConfidence: match.confidence,
+      scoreBreakdown: match.breakdown,
       createdAt: Timestamp.now(),
     });
 
@@ -705,17 +737,130 @@ export async function runTransactionMatching(
   }
 
   // Queue agentic worker when rule-based matching didn't auto-connect
-  // Matching files to transactions is critical - every file needs this treatment
-  // The agent can try smarter strategies (currency conversion, Gmail search, etc.)
+  // Uses partner-batch approach when partner is known (efficient: 1 search for N files)
+  // Falls back to per-file worker when no partner is assigned
   if (autoMatches.length === 0) {
-    const topSuggestionConfidence = suggestions[0]?.confidence || 0;
+    // Check AI budget before queuing agentic workers (rule-based scoring above stays free)
+    const aiBudget = await checkAIBudget(userId);
 
-    try {
-      await queueAgenticTransactionSearch(userId, fileId, fileData, topSuggestionConfidence);
-    } catch (err) {
-      console.error(`[TxMatch] Failed to queue agentic search for file ${fileId}:`, err);
+    if (!aiBudget.allowed) {
+      console.log(
+        `[TxMatch] AI budget exhausted for user ${userId}, skipping agentic worker for file ${fileId}`
+      );
+    } else {
+      const topSuggestionConfidence = suggestions[0]?.confidence || 0;
+
+      try {
+        if (fileData.partnerId) {
+          await queueForPartnerBatch(userId, fileId, fileData, topSuggestionConfidence);
+        } else {
+          await queueAgenticTransactionSearch(userId, fileId, fileData, topSuggestionConfidence);
+        }
+      } catch (err) {
+        console.error(`[TxMatch] Failed to queue agentic search for file ${fileId}:`, err);
+      }
     }
   }
+}
+
+/**
+ * Queue file into a partner-level batch worker request.
+ * Multiple files for the same partner are batched into ONE worker run,
+ * avoiding redundant Gmail/local searches.
+ */
+async function queueForPartnerBatch(
+  userId: string,
+  fileId: string,
+  fileData: FirebaseFirestore.DocumentData,
+  topConfidence: number
+): Promise<void> {
+  const partnerId = fileData.partnerId;
+  if (!partnerId) return;
+
+  // Skip for no-receipt partners with no suggestions
+  if (topConfidence === 0) {
+    try {
+      const partnerDoc = await db.collection("partners").doc(partnerId).get();
+      const resPref = partnerDoc?.data()?.resolutionPreference;
+      if (resPref?.type === "no_receipt" && resPref.confidence > 70) {
+        console.log(
+          `[TxMatch] Skipping batch queue for file ${fileId}: ` +
+          `partner ${partnerId} prefers no-receipt (${resPref.confidence}%)`
+        );
+        return;
+      }
+    } catch {
+      // Continue if partner check fails
+    }
+  }
+
+  // Check for existing pending batch for same partner
+  const existing = await db
+    .collection(`users/${userId}/workerRequests`)
+    .where("status", "==", "pending")
+    .where("triggerContext.partnerId", "==", partnerId)
+    .where("workerType", "==", "partner_file_batch")
+    .limit(1)
+    .get();
+
+  if (!existing.empty) {
+    // Append to existing batch
+    await existing.docs[0].ref.update({
+      "triggerContext.fileIds": FieldValue.arrayUnion(fileId),
+      updatedAt: Timestamp.now(),
+    });
+    console.log(
+      `[TxMatch] Added file ${fileId} to existing batch ${existing.docs[0].id} for partner ${partnerId}`
+    );
+    return;
+  }
+
+  // Skip if recent batch ran for this partner and no data changed since
+  const twentyFourHoursAgo = Timestamp.fromMillis(Date.now() - 24 * 60 * 60 * 1000);
+  const recentRun = await db
+    .collection(`users/${userId}/workerRuns`)
+    .where("triggerContext.partnerId", "==", partnerId)
+    .where("workerType", "==", "partner_file_batch")
+    .where("completedAt", ">", twentyFourHoursAgo)
+    .limit(1)
+    .get();
+
+  if (!recentRun.empty) {
+    try {
+      const partnerDoc = await db.collection("partners").doc(partnerId).get();
+      const partnerUpdatedAt = partnerDoc.data()?.updatedAt?.toMillis?.() || 0;
+      const runCompletedAt = recentRun.docs[0].data().completedAt?.toMillis?.() || 0;
+      if (partnerUpdatedAt < runCompletedAt) {
+        console.log(
+          `[TxMatch] Skipping batch for partner ${partnerId}: ` +
+          `recent run completed at ${new Date(runCompletedAt).toISOString()}, no data changes`
+        );
+        return;
+      }
+    } catch {
+      // Continue if check fails
+    }
+  }
+
+  // Create new batch request
+  const ref = db.collection(`users/${userId}/workerRequests`).doc();
+  await ref.set({
+    id: ref.id,
+    workerType: "partner_file_batch",
+    triggerContext: {
+      fileIds: [fileId],
+      partnerId,
+      topSuggestionConfidence: topConfidence,
+      triggeredAfterRuleBasedMatch: true,
+    },
+    triggeredBy: "auto",
+    status: "pending",
+    createdAt: Timestamp.now(),
+  });
+
+  console.log(
+    `[TxMatch] Created partner batch request ${ref.id} for partner ${partnerId}, file ${fileId}`
+  );
 }
 
 /**

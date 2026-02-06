@@ -13,6 +13,8 @@ interface PillProps {
   onRemove?: () => void;
   onClick?: () => void;
   disabled?: boolean;
+  /** Animate entrance with pop-in effect */
+  animate?: boolean;
   className?: string;
 }
 
@@ -25,6 +27,7 @@ export function Pill({
   onRemove,
   onClick,
   disabled,
+  animate,
   className,
 }: PillProps) {
   const isInteractive = onRemove || onClick;
@@ -55,6 +58,7 @@ export function Pill({
         isInteractive && "cursor-pointer",
         !isSuggestion && isInteractive && "hover:bg-accent",
         disabled && "opacity-50 cursor-not-allowed",
+        animate && "animate-pill-pop",
         className
       )}
       onClick={isInteractive ? handleClick : undefined}

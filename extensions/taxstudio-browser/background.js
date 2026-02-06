@@ -6,6 +6,9 @@
   var activeTabRuns = {};
   var pdfHistory = {};
   var DEBUG_LOG_URL = "http://localhost:3000/api/browser/log";
+
+  // Learn mode state
+  var learnRuns = {}; // { runId: { tabId, appTabId, partnerId, partnerName, transactionId, pdfCount } }
   console.log("[FiBuKI] Background service worker loaded");
 
   // Track URLs we've already started processing
@@ -112,7 +115,7 @@
     console.log("[FiBuKI] webNavigation listener registered for PDF tab detection");
   }
 
-  function fetchAndUploadPdfDirect(runId, url) {
+  function fetchAndUploadPdfDirect(runId, url, transactionId) {
     if (seenDownloadUrls[url]) {
       console.log("[FiBuKI] Already processed URL, skipping:", url.slice(0, 80));
       return;
@@ -135,7 +138,7 @@
 
         return resp.arrayBuffer().then(function(buf) {
           var filename = guessFilenameFromDisposition(disposition) || "invoice.pdf";
-          uploadBuffer(runId, buf, filename, mime || "application/pdf", url);
+          uploadBuffer(runId, buf, filename, mime || "application/pdf", url, transactionId);
         });
       })
       .catch(function(err) {
@@ -831,6 +834,16 @@
     var url = item.finalUrl || item.url;
     console.log("[FiBuKI] Download detected:", url, "tabId:", item.tabId, "filename:", item.filename);
 
+    // Check if this download is from a learn mode tab first
+    var learnRunId = null;
+    var learnTransactionId = null;
+    if (item && typeof item.tabId === "number" && item.tabId > 0) {
+      learnRunId = findLearnRunByTab(item.tabId);
+      if (learnRunId && learnRuns[learnRunId]) {
+        learnTransactionId = learnRuns[learnRunId].transactionId;
+      }
+    }
+
     // Try to find run by tab ID first
     var runId = null;
     if (item && typeof item.tabId === "number" && item.tabId > 0) {
@@ -866,18 +879,25 @@
     }
 
     if (!runId) {
-      // Even without an active run, if it's a document from a billing site, try to capture it
-      var lowerUrl = (url || "").toLowerCase();
-      var isBillingDocument = (lowerUrl.indexOf("payments.google.com") !== -1 ||
-                               lowerUrl.indexOf("admin.google.com") !== -1) &&
-                              (lowerUrl.indexOf("/doc") !== -1 || lowerUrl.indexOf("?doc=") !== -1);
-      if (isBillingDocument) {
-        console.log("[FiBuKI] No active run but capturing billing document anyway:", url.slice(0, 100));
-        runId = "orphan-" + Date.now();
-        runs[runId] = { tabId: null, downloadTabIds: [], attemptedUrls: {}, openedDownloadUrls: {}, appTabId: null, foundCount: 0, downloadedCount: 0, urls: [], overlaySent: false };
+      // Check if this is from a learn mode tab
+      if (learnRunId && learnRuns[learnRunId]) {
+        console.log("[FiBuKI] Download from learn mode tab, creating temp run:", learnRunId);
+        runId = learnRunId;
+        runs[runId] = { tabId: learnRuns[learnRunId].tabId, downloadTabIds: [], attemptedUrls: {}, openedDownloadUrls: {}, appTabId: learnRuns[learnRunId].appTabId, foundCount: 0, downloadedCount: 0, urls: [], overlaySent: false };
       } else {
-        console.log("[FiBuKI] Download not captured - no active run and not a billing document");
-        return;
+        // Even without an active run, if it's a document from a billing site, try to capture it
+        var lowerUrl2 = (url || "").toLowerCase();
+        var isBillingDocument = (lowerUrl2.indexOf("payments.google.com") !== -1 ||
+                                 lowerUrl2.indexOf("admin.google.com") !== -1) &&
+                                (lowerUrl2.indexOf("/doc") !== -1 || lowerUrl2.indexOf("?doc=") !== -1);
+        if (isBillingDocument) {
+          console.log("[FiBuKI] No active run but capturing billing document anyway:", url.slice(0, 100));
+          runId = "orphan-" + Date.now();
+          runs[runId] = { tabId: null, downloadTabIds: [], attemptedUrls: {}, openedDownloadUrls: {}, appTabId: null, foundCount: 0, downloadedCount: 0, urls: [], overlaySent: false };
+        } else {
+          console.log("[FiBuKI] Download not captured - no active run and not a billing document");
+          return;
+        }
       }
     }
     if (!url || url.indexOf("http") !== 0) return;
@@ -917,7 +937,15 @@
         }
         return resp.arrayBuffer().then(function (buf) {
           var filename = guessFilename(url, disposition) || item.filename || "invoice.pdf";
-          uploadBuffer(runId, buf, filename, mime || "application/pdf", url);
+          uploadBuffer(runId, buf, filename, mime || "application/pdf", url, learnTransactionId);
+          // If this was a learn mode download, notify the content tab
+          if (learnRunId && learnRuns[learnRunId]) {
+            learnRuns[learnRunId].pdfCount = (learnRuns[learnRunId].pdfCount || 0) + 1;
+            sendToTab(learnRuns[learnRunId].tabId, { type: "TS_LEARN_PDF_DETECTED", runId: learnRunId, sourceUrl: url });
+            if (learnRuns[learnRunId].appTabId) {
+              sendToTab(learnRuns[learnRunId].appTabId, { type: "TS_LEARN_PDF", runId: learnRunId, sourceUrl: url });
+            }
+          }
         });
       })
       .catch(function (err) {
@@ -1035,7 +1063,7 @@
     });
   }
 
-  function uploadBuffer(runId, buffer, filename, mimeType, sourceUrl) {
+  function uploadBuffer(runId, buffer, filename, mimeType, sourceUrl, transactionId) {
     console.log("[FiBuKI] uploadBuffer called:", {runId: runId, filename: filename, mimeType: mimeType, bufferSize: buffer.byteLength, sourceUrl: sourceUrl.slice(0, 100)});
     try {
       var blob = new Blob([buffer], { type: mimeType });
@@ -1044,6 +1072,9 @@
       form.append("sourceUrl", sourceUrl);
       form.append("sourceRunId", runId);
       form.append("sourceCollectorId", COLLECTOR_ID);
+      if (transactionId) {
+        form.append("transactionId", transactionId);
+      }
 
       console.log("[FiBuKI] Uploading to localhost:3000/api/browser/upload...");
       fetch("http://localhost:3000/api/browser/upload", {
@@ -1131,4 +1162,130 @@
     });
     return matches;
   }
+
+  // ============================================================================
+  // LEARN MODE handlers
+  // ============================================================================
+
+  function findLearnRunByTab(tabId) {
+    var ids = Object.keys(learnRuns);
+    for (var i = 0; i < ids.length; i++) {
+      if (learnRuns[ids[i]].tabId === tabId) return ids[i];
+    }
+    return null;
+  }
+
+  // TS_START_LEARN: App tab asks to start learn mode
+  chrome.runtime.onMessage.addListener(function (message, sender) {
+    if (!message || message.type !== "TS_START_LEARN") return;
+    var partnerId = message.partnerId;
+    var partnerName = message.partnerName || "";
+    var transactionId = message.transactionId || null;
+    var startUrl = message.startUrl || null;
+    if (!partnerId) return;
+
+    var runId = "learn_" + Date.now();
+    var appTabId = sender.tab ? sender.tab.id : null;
+
+    learnRuns[runId] = {
+      tabId: null,
+      appTabId: appTabId,
+      partnerId: partnerId,
+      partnerName: partnerName,
+      transactionId: transactionId,
+      pdfCount: 0,
+    };
+
+    console.log("[FiBuKI] TS_START_LEARN", runId, partnerId, partnerName);
+
+    // Open a new tab for the user to navigate
+    var openUrl = startUrl || "about:blank";
+    chrome.tabs.create({ url: openUrl, active: true }, function (tab) {
+      if (!tab || typeof tab.id !== "number") return;
+      learnRuns[runId].tabId = tab.id;
+
+      // Notify the app tab that learn mode started
+      if (appTabId) {
+        sendToTab(appTabId, {
+          type: "TS_LEARN_STARTED",
+          runId: runId,
+          partnerId: partnerId,
+        });
+      }
+
+      // Wait for the tab to load, then tell it to enter learn mode
+      setTimeout(function () {
+        sendToTab(tab.id, {
+          type: "TS_START_LEARN_TAB",
+          runId: runId,
+          partnerId: partnerId,
+          partnerName: partnerName,
+          transactionId: transactionId,
+        });
+      }, 1500);
+    });
+  });
+
+  // TS_LEARN_ACTION: Content script reports a recorded action
+  chrome.runtime.onMessage.addListener(function (message, sender) {
+    if (!message || message.type !== "TS_LEARN_ACTION") return;
+    // Forward to app tab
+    var tabId = sender.tab ? sender.tab.id : null;
+    var runId = tabId ? findLearnRunByTab(tabId) : null;
+    if (!runId || !learnRuns[runId]) return;
+
+    if (learnRuns[runId].appTabId) {
+      sendToTab(learnRuns[runId].appTabId, {
+        type: "TS_LEARN_ACTION",
+        runId: runId,
+        action: message.action,
+      });
+    }
+  });
+
+  // TS_LEARN_COMPLETE: Content script reports learn mode finished
+  chrome.runtime.onMessage.addListener(function (message, sender) {
+    if (!message || message.type !== "TS_LEARN_COMPLETE") return;
+    var tabId = sender.tab ? sender.tab.id : null;
+    var runId = tabId ? findLearnRunByTab(tabId) : null;
+    if (!runId || !learnRuns[runId]) return;
+
+    console.log("[FiBuKI] TS_LEARN_COMPLETE", runId, (message.actions || []).length, "actions", message.pdfCount, "PDFs");
+
+    // Forward to app tab
+    if (learnRuns[runId].appTabId) {
+      sendToTab(learnRuns[runId].appTabId, {
+        type: "TS_LEARN_COMPLETE",
+        runId: runId,
+        partnerId: learnRuns[runId].partnerId,
+        transactionId: learnRuns[runId].transactionId,
+        actions: message.actions || [],
+        pdfCount: message.pdfCount || 0,
+      });
+    }
+
+    // Clean up
+    delete learnRuns[runId];
+  });
+
+  // Intercept downloads during learn mode — upload with transactionId
+  // Piggyback on existing download listener by checking if the tab belongs to a learn run
+  var origDownloadHandler = chrome.downloads.onCreated._listeners;
+
+  // Add learn-mode-aware PDF upload for downloads from learn tabs
+  chrome.webNavigation.onCompleted.addListener(function (details) {
+    if (details.frameId !== 0) return;
+    var tabId = details.tabId;
+    var learnRunId = findLearnRunByTab(tabId);
+    if (!learnRunId || !learnRuns[learnRunId]) return;
+
+    // Re-send learn mode setup when tab navigates (SPA soft navs handled by content script)
+    sendToTab(tabId, {
+      type: "TS_START_LEARN_TAB",
+      runId: learnRunId,
+      partnerId: learnRuns[learnRunId].partnerId,
+      partnerName: learnRuns[learnRunId].partnerName,
+      transactionId: learnRuns[learnRunId].transactionId,
+    });
+  });
 })();

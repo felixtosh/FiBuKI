@@ -99,7 +99,7 @@ export function normalizeIban(iban: string): string {
 export function normalizeName(name: string): string {
   return name
     .toLowerCase()
-    .replace(/\s*(gmbh|ag|kg|ohg|ug|e\.?k\.?|inc\.?|ltd\.?|llc|co\.?)\s*/gi, " ")
+    .replace(/\s*(gmbh|ag|kg|ohg|ug|\be\.?k\.?|inc\.?|ltd\.?|llc|co\.?)\s*/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -199,9 +199,15 @@ export function calculateAmountScore(
   return { score, source, currencyMismatch };
 }
 
+export interface BillingCycleHint {
+  invoiceToTransactionDelay?: number;
+  delayVariance?: number;
+}
+
 export function calculateDateScore(
   fileDate: Date,
-  txDate: Date
+  txDate: Date,
+  billingCycle?: BillingCycleHint
 ): { score: number; source: TransactionMatchSource | null } {
   const daysDiff = Math.abs(
     Math.floor(
@@ -209,6 +215,22 @@ export function calculateDateScore(
     )
   );
 
+  // If billing cycle has a learned invoice-to-transaction delay, check against it
+  // This handles cases like "Telekom invoice Dec 1 → bank debit Dec 15" where
+  // daysDiff=14 normally scores 8, but the learned delay makes it a strong match
+  if (billingCycle?.invoiceToTransactionDelay != null) {
+    const expectedDelay = billingCycle.invoiceToTransactionDelay;
+    const variance = billingCycle.delayVariance ?? 3;
+    const actualDelay = Math.floor(
+      (txDate.getTime() - fileDate.getTime()) / (1000 * 60 * 60 * 24)
+    );
+    const delayDiff = Math.abs(actualDelay - expectedDelay);
+
+    if (delayDiff <= variance) return { score: 25, source: "date_exact" };
+    if (delayDiff <= variance * 2) return { score: 22, source: "date_close" };
+  }
+
+  // Standard date proximity scoring
   if (daysDiff === 0) return { score: 25, source: "date_exact" };
   if (daysDiff <= 3) return { score: 22, source: "date_close" };
   if (daysDiff <= 7) return { score: 15, source: "date_close" };
@@ -289,13 +311,25 @@ export function calculatePartnerScore(
   return { score: 0, source: null };
 }
 
+export interface ScoringOptions {
+  /** Per-partner weight multipliers for scoring factors */
+  weights?: {
+    amountWeight: number;
+    dateWeight: number;
+    partnerWeight: number;
+  };
+  /** Billing cycle data for improved date scoring */
+  billingCycle?: BillingCycleHint;
+}
+
 /**
  * Score a transaction against file data
  */
 export function scoreTransaction(
   fileData: FileMatchingData,
   txData: TransactionData,
-  partnerAliases?: string[]
+  partnerAliases?: string[],
+  options?: ScoringOptions
 ): TransactionMatchScore {
   let amountScore = 0;
   let dateScore = 0;
@@ -321,7 +355,8 @@ export function scoreTransaction(
   if (fileData.extractedDate) {
     const result = calculateDateScore(
       fileData.extractedDate.toDate(),
-      txData.date.toDate()
+      txData.date.toDate(),
+      options?.billingCycle
     );
     dateScore = result.score;
     if (result.source) matchSources.push(result.source);
@@ -388,10 +423,16 @@ export function scoreTransaction(
     matchSources.push("precision_hint");
   }
 
+  // Apply per-partner weight adjustments if provided
+  const w = options?.weights;
+  const weightedAmount = w ? amountScore * w.amountWeight : amountScore;
+  const weightedDate = w ? dateScore * w.dateWeight : dateScore;
+  const weightedPartner = w ? partnerScore * w.partnerWeight : partnerScore;
+
   const rawConfidence =
-    amountScore + dateScore + partnerScore + ibanScore + referenceScore + hintScore;
+    weightedAmount + weightedDate + weightedPartner + ibanScore + referenceScore + hintScore;
   // Cap at 100 (multiple strong signals shouldn't exceed 100%)
-  const confidence = Math.min(100, rawConfidence);
+  const confidence = Math.min(100, Math.round(rawConfidence));
 
   return {
     transactionId: txData.id,

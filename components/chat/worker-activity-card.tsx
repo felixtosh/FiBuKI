@@ -27,6 +27,9 @@ const workerIcons: Record<WorkerType, { icon: typeof Bot }> = {
   receipt_search: {
     icon: Receipt,
   },
+  partner_file_batch: {
+    icon: FileSearch,
+  },
 };
 
 /**

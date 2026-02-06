@@ -4,6 +4,7 @@
 
 import { Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
+import { checkTransactionQuota, incrementTransactionCount } from "../billing/checkTransactionQuota";
 
 interface TransactionData {
   sourceId: string;
@@ -81,6 +82,16 @@ export const bulkCreateTransactionsCallable = createCallable<
       throw new HttpsError("permission-denied", "Source access denied");
     }
 
+    // Check transaction quota before importing
+    const quota = await checkTransactionQuota(ctx.userId, transactions.length);
+    if (!quota.allowed) {
+      throw new HttpsError(
+        "resource-exhausted",
+        `Transaction limit reached. You have ${quota.remainingSlots} of ${quota.limit} slots remaining this month, ` +
+        `but this import contains ${transactions.length} transactions. Please upgrade your plan.`
+      );
+    }
+
     const now = Timestamp.now();
     const transactionIds: string[] = [];
 
@@ -139,6 +150,11 @@ export const bulkCreateTransactionsCallable = createCallable<
       userId: ctx.userId,
       sourceId,
     });
+
+    // Increment transaction count (non-blocking)
+    incrementTransactionCount(ctx.userId, transactionIds.length).catch((err) =>
+      console.error("[bulkCreateTransactions] Failed to increment transaction count:", err)
+    );
 
     return {
       success: true,

@@ -10,7 +10,7 @@ export type FirestoreTimestamp = Timestamp | AdminTimestamp;
 /**
  * Supported worker types for automation tasks
  */
-export type WorkerType = "file_matching" | "partner_matching" | "file_partner_matching" | "receipt_search";
+export type WorkerType = "file_matching" | "partner_matching" | "file_partner_matching" | "receipt_search" | "partner_file_batch";
 
 /**
  * Status of a worker run
@@ -65,6 +65,14 @@ export interface WorkerTriggerContext {
   fileId?: string;
   transactionId?: string;
   batchId?: string;
+  /** For partner_file_batch: the partner being batch-processed */
+  partnerId?: string;
+  /** For partner_file_batch: all file IDs in the batch */
+  fileIds?: string[];
+  /** Top suggestion confidence at time of queueing */
+  topSuggestionConfidence?: number;
+  /** Whether this was triggered after rule-based matching */
+  triggeredAfterRuleBasedMatch?: boolean;
 }
 
 /**

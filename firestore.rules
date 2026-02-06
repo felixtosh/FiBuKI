@@ -228,5 +228,11 @@ service cloud.firestore {
       allow list: if isAuthenticated();
       allow write: if false; // Cloud Functions only
     }
+
+    // Subscriptions - users can read their own, write handled by Cloud Functions (Stripe webhook + callables)
+    match /subscriptions/{userId} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow write: if false; // Cloud Functions only
+    }
   }
 }

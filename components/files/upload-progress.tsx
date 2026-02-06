@@ -67,7 +67,7 @@ export function UploadProgress({ uploads, onDismiss, className }: UploadProgress
         <div className="flex-shrink-0">
           {isComplete ? (
             allSuccessful ? (
-              <CheckCircle2 className="h-5 w-5 text-green-600" />
+              <CheckCircle2 className="h-5 w-5 text-green-600 animate-check-appear" />
             ) : otherErrorFiles.length > 0 ? (
               <XCircle className="h-5 w-5 text-destructive" />
             ) : (

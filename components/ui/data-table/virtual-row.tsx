@@ -40,7 +40,7 @@ function VirtualRowInner<TData extends { id: string }>({
       )}
       onClick={handleClick}
       className={cn(
-        "cursor-pointer transition-colors border-b hover:bg-muted/50",
+        "cursor-pointer transition-colors duration-300 border-b hover:bg-muted/50",
         // Primary selection: stronger highlight
         isPrimarySelected && "bg-primary/10 hover:bg-primary/15",
         // Additional selection (not primary): lighter highlight
@@ -80,6 +80,12 @@ function VirtualRowInner<TData extends { id: string }>({
 export const VirtualRow = memo(
   VirtualRowInner,
   (prevProps, nextProps) => {
+    // Check if TanStack Row object changed (happens when columns or data change)
+    // This ensures cells re-render when column closures update (e.g., partner maps populate)
+    if (prevProps.row !== nextProps.row) {
+      return false;
+    }
+
     // Check if row-specific state changed (e.g., searching state for this row)
     if (prevProps.rowStateKey !== nextProps.rowStateKey) {
       return false; // Row state changed, re-render
@@ -93,7 +99,6 @@ export const VirtualRow = memo(
     }
 
     return (
-      prevProps.row.id === nextProps.row.id &&
       prevProps.isSelected === nextProps.isSelected &&
       prevProps.isPrimarySelected === nextProps.isPrimarySelected &&
       prevProps.virtualStart === nextProps.virtualStart &&

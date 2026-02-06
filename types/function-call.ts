@@ -87,7 +87,14 @@ export type CloudFunctionName =
   // API key operations
   | "createApiKey"
   | "listApiKeys"
-  | "revokeApiKey";
+  | "revokeApiKey"
+  // Billing operations
+  | "createCheckoutSession"
+  | "createPortalSession"
+  | "addAICredits"
+  | "updateOverageSettings"
+  // Browser recipe operations
+  | "saveBrowserRecipe";
 
 /**
  * Summary statistics for function calls (for dashboards).

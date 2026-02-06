@@ -92,9 +92,17 @@ export const disconnectFileFromTransactionCallable = createCallable<
       transactionUpdate.isComplete = false;
     }
 
-    // If rejecting, add to rejectedFileIds to prevent auto-reconnection
+    // If rejecting, add to both rejectedFileIds (legacy) and rejectedFiles (with timestamp)
     if (rejectFile) {
       transactionUpdate.rejectedFileIds = FieldValue.arrayUnion(fileId);
+
+      // Find the fileConnection to get match confidence before it's deleted
+      const connectionData = !connectionQuery.empty ? connectionQuery.docs[0].data() : null;
+      transactionUpdate.rejectedFiles = FieldValue.arrayUnion({
+        fileId,
+        rejectedAt: now,
+        matchConfidence: connectionData?.matchConfidence ?? null,
+      });
     }
 
     batch.update(transactionRef, transactionUpdate);

@@ -10,6 +10,7 @@ export * from "./navigation-tools";
 export * from "./write-tools";
 export * from "./search-tools";
 export * from "./download-tools";
+export * from "./batch-tools";
 
 // Tool arrays for the agent
 import { READ_TOOLS } from "./read-tools";
@@ -17,6 +18,7 @@ import { NAVIGATION_TOOLS } from "./navigation-tools";
 import { WRITE_TOOLS } from "./write-tools";
 import { SEARCH_TOOLS } from "./search-tools";
 import { DOWNLOAD_TOOLS } from "./download-tools";
+import { BATCH_TOOLS } from "./batch-tools";
 
 /**
  * All tools available to the agent
@@ -27,6 +29,7 @@ export const ALL_TOOLS = [
   ...WRITE_TOOLS,
   ...SEARCH_TOOLS,
   ...DOWNLOAD_TOOLS,
+  ...BATCH_TOOLS,
 ];
 
 /**

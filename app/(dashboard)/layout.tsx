@@ -11,7 +11,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Receipt, Building2, Users, Settings, Activity, Globe, Files, Tag, Link2, User, LogOut, UserPlus, Palette, Shield, Zap, FileText, FlaskConical, Download } from "lucide-react";
+import { Receipt, Building2, Users, Settings, Activity, Globe, Files, Tag, Link2, User, LogOut, UserPlus, Palette, Shield, Zap, FileText, FlaskConical, Download, CreditCard } from "lucide-react";
 import Link from "next/link";
 import { FibukiMascot } from "@/components/ui/fibuki-mascot";
 import { cn } from "@/lib/utils";
@@ -213,6 +213,12 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
                   <Link href="/settings/identity" className="flex items-center gap-2">
                     <User className="h-4 w-4" />
                     Your Identity
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link href="/settings/billing" className="flex items-center gap-2">
+                    <CreditCard className="h-4 w-4" />
+                    Billing & Plan
                   </Link>
                 </DropdownMenuItem>
                 <DropdownMenuItem asChild>

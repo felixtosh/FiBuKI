@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -22,6 +22,7 @@ import { SearchButton } from "@/components/ui/search-button";
 import { SearchInput } from "@/components/ui/search-input";
 import { TransactionFilters } from "@/types/transaction";
 import { cn, formatCurrency } from "@/lib/utils";
+import { MOTION } from "@/design-system";
 import { UserPartner } from "@/types/partner";
 
 interface TransactionToolbarProps {
@@ -57,6 +58,20 @@ export function TransactionToolbar({
   const [partnerSearch, setPartnerSearch] = useState("");
   const [showFromCalendar, setShowFromCalendar] = useState(false);
   const [showToCalendar, setShowToCalendar] = useState(false);
+
+  // Counter bump animation when assignedCount changes
+  const prevAssignedRef = useRef(assignedCount);
+  const [counterBumping, setCounterBumping] = useState(false);
+  useEffect(() => {
+    if (assignedCount !== undefined && prevAssignedRef.current !== undefined &&
+        assignedCount !== prevAssignedRef.current) {
+      setCounterBumping(true);
+      const timer = setTimeout(() => setCounterBumping(false), MOTION.COUNTER_BUMP_DURATION_MS);
+      prevAssignedRef.current = assignedCount;
+      return () => clearTimeout(timer);
+    }
+    prevAssignedRef.current = assignedCount;
+  }, [assignedCount]);
 
   const hasDateFilter = filters.dateFrom || filters.dateTo;
   const hasStatusFilter = filters.isComplete !== undefined;
@@ -533,7 +548,10 @@ export function TransactionToolbar({
       {showCounter && (
         <div className="flex flex-col items-end justify-center text-sm">
           <span className="flex items-center gap-1.5 text-muted-foreground">
-            <span className="tabular-nums font-medium text-foreground">{assignedCount ?? 0}</span>
+            <span className={cn(
+              "tabular-nums font-medium text-foreground inline-block",
+              counterBumping && "animate-counter-bump"
+            )}>{assignedCount ?? 0}</span>
             <span>/</span>
             <span className="tabular-nums">{totalCount}</span>
           </span>

@@ -1,7 +1,7 @@
 /**
  * Worker Queue Processor
  *
- * Background component that processes pending worker requests one at a time.
+ * Background component that processes pending worker requests concurrently.
  * Runs silently in the background - no UI, just processing.
  */
 
@@ -16,20 +16,15 @@ import { useWorkerQueue } from "@/hooks/use-worker-queue";
  * processing of queued worker requests.
  */
 export function WorkerQueueProcessor() {
-  const { isProcessing, currentRequest, pendingCount } = useWorkerQueue({
+  const { isProcessing, pendingCount } = useWorkerQueue({
     enabled: true,
-    delayBetweenRequests: 3000, // 3 second delay between requests
   });
 
-  // Log processing state for debugging (can be removed in production)
   useEffect(() => {
-    if (isProcessing && currentRequest) {
-      console.log(
-        `[WorkerQueueProcessor] Processing ${currentRequest.workerType} ` +
-          `(${pendingCount} pending)`
-      );
+    if (isProcessing) {
+      console.log(`[WorkerQueueProcessor] Active (${pendingCount} pending)`);
     }
-  }, [isProcessing, currentRequest, pendingCount]);
+  }, [isProcessing, pendingCount]);
 
   // This component renders nothing - it just runs the hook
   return null;

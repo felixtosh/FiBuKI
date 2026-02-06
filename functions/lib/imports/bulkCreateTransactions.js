@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.bulkCreateTransactionsCallable = void 0;
 const firestore_1 = require("firebase-admin/firestore");
 const createCallable_1 = require("../utils/createCallable");
+const checkTransactionQuota_1 = require("../billing/checkTransactionQuota");
 const BATCH_SIZE = 500; // Firestore batch limit
 exports.bulkCreateTransactionsCallable = (0, createCallable_1.createCallable)({
     name: "bulkCreateTransactions",
@@ -33,6 +34,12 @@ exports.bulkCreateTransactionsCallable = (0, createCallable_1.createCallable)({
     }
     if (sourceSnap.data().userId !== ctx.userId) {
         throw new createCallable_1.HttpsError("permission-denied", "Source access denied");
+    }
+    // Check transaction quota before importing
+    const quota = await (0, checkTransactionQuota_1.checkTransactionQuota)(ctx.userId, transactions.length);
+    if (!quota.allowed) {
+        throw new createCallable_1.HttpsError("resource-exhausted", `Transaction limit reached. You have ${quota.remainingSlots} of ${quota.limit} slots remaining this month, ` +
+            `but this import contains ${transactions.length} transactions. Please upgrade your plan.`);
     }
     const now = firestore_1.Timestamp.now();
     const transactionIds = [];
@@ -82,6 +89,8 @@ exports.bulkCreateTransactionsCallable = (0, createCallable_1.createCallable)({
         userId: ctx.userId,
         sourceId,
     });
+    // Increment transaction count (non-blocking)
+    (0, checkTransactionQuota_1.incrementTransactionCount)(ctx.userId, transactionIds.length).catch((err) => console.error("[bulkCreateTransactions] Failed to increment transaction count:", err));
     return {
         success: true,
         transactionIds,

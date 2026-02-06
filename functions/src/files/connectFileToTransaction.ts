@@ -115,6 +115,18 @@ export const connectFileToTransactionCallable = createCallable<
     const now = Timestamp.now();
     const batch = ctx.db.batch();
 
+    // Check if this transaction was in file's suggestions (for tracking accuracy)
+    const suggestions: Array<{ transactionId: string; confidence: number }> =
+      fileData.transactionSuggestions || [];
+    const suggestedIndex = suggestions.findIndex(
+      (s) => s.transactionId === transactionId
+    );
+    const wasSuggested = suggestedIndex >= 0;
+    const suggestedConfidence = wasSuggested
+      ? suggestions[suggestedIndex].confidence
+      : null;
+    const suggestedRank = wasSuggested ? suggestedIndex : null;
+
     // 1. Create junction document
     const connectionRef = ctx.db.collection("fileConnections").doc();
     const connectionData: Record<string, unknown> = {
@@ -123,6 +135,9 @@ export const connectFileToTransactionCallable = createCallable<
       userId: ctx.userId,
       connectionType,
       matchConfidence: matchConfidence ?? null,
+      wasSuggested,
+      suggestedConfidence,
+      suggestedRank,
       createdAt: now,
     };
 

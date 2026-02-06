@@ -219,7 +219,7 @@ export function AmountMatchDisplay({
       ) : (rightText || showCheck) && (
         <span className={cn("flex items-center gap-1 text-xs", rightColor)}>
           {rightText && <span className="truncate">{rightText}</span>}
-          {showCheck && <Check className="h-3 w-3 flex-shrink-0" strokeWidth={3} />}
+          {showCheck && <Check className="h-3 w-3 flex-shrink-0 animate-check-appear" strokeWidth={3} />}
         </span>
       )}
     </div>

@@ -26,6 +26,17 @@
   var DEV_EXTRACTOR_MAX_CALLS = 6;
   var DEV_EXTRACTOR_WINDOW_MS = 60 * 1000;
   var clickGooglePaymentsRetryCount = 0;
+
+  // Learn mode state
+  var LEARN_OVERLAY_ID = "taxstudio-learn-overlay";
+  var learnMode = false;
+  var learnSessionStart = 0;
+  var learnPartnerName = "";
+  var learnTransactionId = null;
+  var learnActions = [];
+  var learnPdfCount = 0;
+  var learnLastUrl = "";
+
   var overlayState = {
     items: [],
     limit: 4,
@@ -104,6 +115,17 @@
         type: "TS_START_PULL",
         url: data.url,
         runId: data.runId,
+      });
+      return;
+    }
+    if (data.type === "TAXSTUDIO_START_LEARN" && data.partnerId) {
+      console.log("[FiBuKI] Start learn mode:", data.partnerId, data.partnerName);
+      chrome.runtime.sendMessage({
+        type: "TS_START_LEARN",
+        partnerId: data.partnerId,
+        partnerName: data.partnerName || "",
+        transactionId: data.transactionId || null,
+        startUrl: data.startUrl || null,
       });
       return;
     }
@@ -2909,6 +2931,471 @@
       return "Invoice";
     }
   }
+
+  // ============================================================================
+  // LEARN MODE — Record user navigation to teach invoice fetching
+  // ============================================================================
+
+  function buildClickTarget(el) {
+    if (!el) return null;
+    var text = (el.textContent || "").trim().slice(0, 120);
+    var tagName = (el.tagName || "").toLowerCase();
+    var ariaLabel = el.getAttribute("aria-label") || undefined;
+    var href = el.getAttribute("href") || undefined;
+
+    // Build CSS selector (brittle fallback)
+    var selector = tagName;
+    if (el.id) {
+      selector = "#" + el.id;
+    } else if (el.className && typeof el.className === "string") {
+      var classes = el.className.trim().split(/\s+/).slice(0, 3).join(".");
+      if (classes) selector = tagName + "." + classes;
+    }
+
+    // Get context: nearest heading or section text
+    var contextText = "";
+    var parent = el.parentElement;
+    for (var i = 0; i < 5 && parent; i++) {
+      var heading = parent.querySelector("h1, h2, h3, h4, [role='heading']");
+      if (heading) {
+        contextText = (heading.textContent || "").trim().slice(0, 80);
+        break;
+      }
+      parent = parent.parentElement;
+    }
+
+    return {
+      text: text,
+      tagName: tagName,
+      ariaLabel: ariaLabel,
+      href: href,
+      selector: selector,
+      contextText: contextText || undefined,
+    };
+  }
+
+  function recordLearnAction(actionType, extra) {
+    if (!learnMode) return;
+    var action = {
+      step: learnActions.length + 1,
+      actionType: actionType,
+      url: window.location.href,
+      relativeTimeMs: Date.now() - learnSessionStart,
+    };
+    if (extra) {
+      for (var key in extra) {
+        if (extra.hasOwnProperty(key)) {
+          action[key] = extra[key];
+        }
+      }
+    }
+    learnActions.push(action);
+
+    // Send to app tab in real-time
+    chrome.runtime.sendMessage({
+      type: "TS_LEARN_ACTION",
+      action: action,
+    });
+
+    updateLearnOverlayStatus();
+  }
+
+  function ensureLearnOverlay() {
+    if (document.getElementById(LEARN_OVERLAY_ID)) return;
+
+    // Amber/gold gradient styles for learn mode
+    var styleId = "ts-learn-overlay-styles";
+    if (!document.getElementById(styleId)) {
+      var style = document.createElement("style");
+      style.id = styleId;
+      style.textContent =
+        "@keyframes ts-learn-gradient { " +
+          "0% { background-position: 0% 50%; } " +
+          "50% { background-position: 100% 50%; } " +
+          "100% { background-position: 0% 50%; } " +
+        "} " +
+        "@keyframes ts-learn-pulse { " +
+          "0%, 100% { opacity: 0.8; } " +
+          "50% { opacity: 1; } " +
+        "} " +
+        "#" + LEARN_OVERLAY_ID + "-border { " +
+          "position: fixed !important; " +
+          "inset: 0 !important; " +
+          "background: linear-gradient(90deg, #f59e0b, #ef4444, #f59e0b, #eab308) !important; " +
+          "background-size: 300% 300% !important; " +
+          "animation: ts-learn-gradient 3s ease infinite !important; " +
+          "pointer-events: none !important; " +
+          "z-index: 2147483646 !important; " +
+          "-webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0) !important; " +
+          "mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0) !important; " +
+          "-webkit-mask-composite: xor !important; " +
+          "mask-composite: exclude !important; " +
+          "padding: 4px !important; " +
+        "}";
+      (document.head || document.documentElement).appendChild(style);
+    }
+
+    // Amber border
+    var borderEl = document.createElement("div");
+    borderEl.id = LEARN_OVERLAY_ID + "-border";
+    document.body.appendChild(borderEl);
+
+    // Panel
+    var panel = document.createElement("div");
+    panel.id = LEARN_OVERLAY_ID;
+    panel.style.position = "fixed";
+    panel.style.right = "12px";
+    panel.style.bottom = "12px";
+    panel.style.width = "340px";
+    panel.style.maxHeight = "50vh";
+    panel.style.overflow = "auto";
+    panel.style.borderRadius = "14px";
+    panel.style.background = "rgba(30, 20, 0, 0.94)";
+    panel.style.backdropFilter = "blur(8px)";
+    panel.style.color = "#fef3c7";
+    panel.style.font = "500 12px/1.4 'Inter', sans-serif";
+    panel.style.boxShadow = "0 12px 30px rgba(30, 20, 0, 0.5)";
+    panel.style.zIndex = "2147483647";
+
+    // Header
+    var header = document.createElement("div");
+    header.style.padding = "12px 14px";
+    header.style.borderBottom = "1px solid rgba(245, 158, 11, 0.3)";
+    header.style.display = "flex";
+    header.style.alignItems = "center";
+    header.style.justifyContent = "space-between";
+
+    var titleCol = document.createElement("div");
+
+    var title = document.createElement("div");
+    title.style.fontWeight = "700";
+    title.style.fontSize = "13px";
+    title.style.color = "#fbbf24";
+    title.style.animation = "ts-learn-pulse 2s ease-in-out infinite";
+    title.textContent = "FiBuKI Learn Mode";
+
+    var subtitle = document.createElement("div");
+    subtitle.style.fontSize = "10px";
+    subtitle.style.opacity = "0.7";
+    subtitle.style.marginTop = "2px";
+    subtitle.textContent = learnPartnerName || "Recording...";
+
+    titleCol.appendChild(title);
+    titleCol.appendChild(subtitle);
+
+    // Rec dot
+    var recDot = document.createElement("span");
+    recDot.style.width = "8px";
+    recDot.style.height = "8px";
+    recDot.style.borderRadius = "50%";
+    recDot.style.background = "#ef4444";
+    recDot.style.animation = "ts-learn-pulse 1s ease-in-out infinite";
+    recDot.style.marginRight = "6px";
+    recDot.style.display = "inline-block";
+
+    var recLabel = document.createElement("span");
+    recLabel.style.fontSize = "10px";
+    recLabel.style.color = "#fca5a5";
+    recLabel.textContent = "REC";
+
+    var recWrap = document.createElement("div");
+    recWrap.style.display = "flex";
+    recWrap.style.alignItems = "center";
+    recWrap.appendChild(recDot);
+    recWrap.appendChild(recLabel);
+
+    header.appendChild(titleCol);
+    header.appendChild(recWrap);
+
+    // Status area
+    var statusArea = document.createElement("div");
+    statusArea.id = LEARN_OVERLAY_ID + "-status";
+    statusArea.style.padding = "10px 14px";
+    statusArea.style.fontSize = "11px";
+    statusArea.style.color = "#fde68a";
+    statusArea.textContent = "Navigate to the invoice page. Click buttons as you normally would.";
+
+    // Breadcrumbs
+    var breadcrumbs = document.createElement("div");
+    breadcrumbs.id = LEARN_OVERLAY_ID + "-breadcrumbs";
+    breadcrumbs.style.padding = "0 14px 8px";
+    breadcrumbs.style.fontSize = "10px";
+    breadcrumbs.style.color = "rgba(254, 243, 199, 0.6)";
+
+    // Counter + buttons row
+    var footer = document.createElement("div");
+    footer.style.padding = "10px 14px";
+    footer.style.borderTop = "1px solid rgba(245, 158, 11, 0.2)";
+    footer.style.display = "flex";
+    footer.style.gap = "8px";
+    footer.style.alignItems = "center";
+    footer.style.justifyContent = "space-between";
+
+    var counterEl = document.createElement("span");
+    counterEl.id = LEARN_OVERLAY_ID + "-counter";
+    counterEl.style.fontSize = "11px";
+    counterEl.style.opacity = "0.7";
+    counterEl.textContent = "0 steps · 0 files";
+
+    var btnRow = document.createElement("div");
+    btnRow.style.display = "flex";
+    btnRow.style.gap = "6px";
+
+    // "This is the invoice" button
+    var markBtn = document.createElement("button");
+    markBtn.textContent = "This is the invoice";
+    markBtn.style.padding = "5px 12px";
+    markBtn.style.borderRadius = "6px";
+    markBtn.style.border = "1px solid rgba(245, 158, 11, 0.4)";
+    markBtn.style.background = "rgba(245, 158, 11, 0.15)";
+    markBtn.style.color = "#fbbf24";
+    markBtn.style.font = "600 11px/1 sans-serif";
+    markBtn.style.cursor = "pointer";
+    markBtn.addEventListener("click", function () {
+      recordLearnAction("mark_invoice_page", {
+        pageContext: {
+          title: document.title,
+          surroundingText: (document.body.innerText || "").slice(0, 500),
+        },
+      });
+      markBtn.textContent = "Marked!";
+      markBtn.style.background = "rgba(34, 197, 94, 0.2)";
+      markBtn.style.color = "#86efac";
+      setTimeout(function () {
+        markBtn.textContent = "This is the invoice";
+        markBtn.style.background = "rgba(245, 158, 11, 0.15)";
+        markBtn.style.color = "#fbbf24";
+      }, 2000);
+    });
+
+    // "Done" button
+    var doneBtn = document.createElement("button");
+    doneBtn.textContent = "Done";
+    doneBtn.style.padding = "5px 16px";
+    doneBtn.style.borderRadius = "6px";
+    doneBtn.style.border = "none";
+    doneBtn.style.background = "linear-gradient(135deg, #f59e0b, #ef4444)";
+    doneBtn.style.color = "#fff";
+    doneBtn.style.font = "700 11px/1 sans-serif";
+    doneBtn.style.cursor = "pointer";
+    doneBtn.addEventListener("click", function () {
+      finishLearnMode();
+    });
+
+    btnRow.appendChild(markBtn);
+    btnRow.appendChild(doneBtn);
+    footer.appendChild(counterEl);
+    footer.appendChild(btnRow);
+
+    panel.appendChild(header);
+    panel.appendChild(statusArea);
+    panel.appendChild(breadcrumbs);
+    panel.appendChild(footer);
+    document.body.appendChild(panel);
+  }
+
+  function updateLearnOverlayStatus() {
+    var counter = document.getElementById(LEARN_OVERLAY_ID + "-counter");
+    if (counter) {
+      counter.textContent = learnActions.length + " steps · " + learnPdfCount + " files";
+    }
+
+    // Update breadcrumbs
+    var bc = document.getElementById(LEARN_OVERLAY_ID + "-breadcrumbs");
+    if (bc) {
+      var visited = [];
+      for (var i = 0; i < learnActions.length; i++) {
+        var action = learnActions[i];
+        if (action.actionType === "navigate" && action.targetUrl) {
+          try {
+            visited.push(new URL(action.targetUrl).pathname);
+          } catch (e) {
+            visited.push(action.targetUrl);
+          }
+        }
+      }
+      // Deduplicate
+      var unique = [];
+      for (var j = 0; j < visited.length; j++) {
+        if (unique.indexOf(visited[j]) === -1) unique.push(visited[j]);
+      }
+      bc.textContent = unique.length > 0 ? unique.join(" → ") : "";
+    }
+  }
+
+  function removeLearnOverlay() {
+    var el = document.getElementById(LEARN_OVERLAY_ID);
+    if (el) el.remove();
+    var border = document.getElementById(LEARN_OVERLAY_ID + "-border");
+    if (border) border.remove();
+    var style = document.getElementById("ts-learn-overlay-styles");
+    if (style) style.remove();
+  }
+
+  function startLearnListeners() {
+    // Track clicks
+    document.addEventListener("click", learnClickHandler, true);
+    // Track navigations
+    learnLastUrl = window.location.href;
+    window.addEventListener("popstate", learnNavHandler);
+    window.addEventListener("hashchange", learnNavHandler);
+    // URL polling for SPA navigations
+    learnUrlPollId = setInterval(function () {
+      if (!learnMode) return;
+      var currentUrl = window.location.href;
+      if (currentUrl !== learnLastUrl) {
+        recordLearnAction("navigate", {
+          targetUrl: currentUrl,
+          pageContext: { title: document.title, surroundingText: "" },
+        });
+        learnLastUrl = currentUrl;
+      }
+    }, 500);
+  }
+
+  var learnUrlPollId = null;
+
+  function stopLearnListeners() {
+    document.removeEventListener("click", learnClickHandler, true);
+    window.removeEventListener("popstate", learnNavHandler);
+    window.removeEventListener("hashchange", learnNavHandler);
+    if (learnUrlPollId) {
+      clearInterval(learnUrlPollId);
+      learnUrlPollId = null;
+    }
+  }
+
+  function learnClickHandler(event) {
+    if (!learnMode) return;
+    var target = event.target;
+    if (!target) return;
+    // Walk up to find the closest interactive element
+    var el = target;
+    for (var i = 0; i < 5 && el; i++) {
+      var tag = (el.tagName || "").toLowerCase();
+      if (tag === "a" || tag === "button" || tag === "input" ||
+          tag === "select" || el.getAttribute("role") === "button" ||
+          el.getAttribute("role") === "link" || el.onclick) {
+        break;
+      }
+      el = el.parentElement;
+    }
+    if (!el) el = target;
+    // Skip clicks on the learn overlay itself
+    var overlayEl = document.getElementById(LEARN_OVERLAY_ID);
+    if (overlayEl && overlayEl.contains(target)) return;
+
+    var clickTarget = buildClickTarget(el);
+    recordLearnAction("click", { clickTarget: clickTarget });
+  }
+
+  function learnNavHandler() {
+    if (!learnMode) return;
+    var currentUrl = window.location.href;
+    if (currentUrl !== learnLastUrl) {
+      recordLearnAction("navigate", {
+        targetUrl: currentUrl,
+        pageContext: { title: document.title, surroundingText: "" },
+      });
+      learnLastUrl = currentUrl;
+    }
+  }
+
+  function finishLearnMode() {
+    if (!learnMode) return;
+    learnMode = false;
+    stopLearnListeners();
+
+    chrome.runtime.sendMessage({
+      type: "TS_LEARN_COMPLETE",
+      actions: learnActions,
+      pdfCount: learnPdfCount,
+    });
+
+    removeLearnOverlay();
+
+    // Reset state
+    learnActions = [];
+    learnPdfCount = 0;
+    learnPartnerName = "";
+    learnTransactionId = null;
+    learnSessionStart = 0;
+  }
+
+  // Forward learn events from background to window (app tab receives these)
+  chrome.runtime.onMessage.addListener(function (message) {
+    if (!message) return;
+    if (message.type === "TS_LEARN_STARTED") {
+      window.postMessage({
+        type: "TAXSTUDIO_LEARN_STARTED",
+        runId: message.runId,
+        partnerId: message.partnerId,
+      }, "*");
+    }
+    if (message.type === "TS_LEARN_ACTION") {
+      window.postMessage({
+        type: "TAXSTUDIO_LEARN_ACTION",
+        runId: message.runId,
+        action: message.action,
+      }, "*");
+    }
+    if (message.type === "TS_LEARN_PDF") {
+      window.postMessage({
+        type: "TAXSTUDIO_LEARN_PDF",
+        runId: message.runId,
+        sourceUrl: message.sourceUrl,
+      }, "*");
+    }
+    if (message.type === "TS_LEARN_COMPLETE") {
+      window.postMessage({
+        type: "TAXSTUDIO_LEARN_COMPLETE",
+        runId: message.runId,
+        partnerId: message.partnerId,
+        transactionId: message.transactionId,
+        actions: message.actions,
+        pdfCount: message.pdfCount,
+      }, "*");
+    }
+  });
+
+  // Handle TS_START_LEARN_TAB from background (in the opened target tab)
+  chrome.runtime.onMessage.addListener(function (message) {
+    if (!message || message.type !== "TS_START_LEARN_TAB") return;
+    if (learnMode) return; // Already in learn mode
+    console.log("[FiBuKI] Starting learn mode in tab:", message.partnerName);
+    learnMode = true;
+    learnSessionStart = Date.now();
+    learnPartnerName = message.partnerName || "";
+    learnTransactionId = message.transactionId || null;
+    learnActions = [];
+    learnPdfCount = 0;
+    learnLastUrl = window.location.href;
+    if (isTopFrame) {
+      ensureLearnOverlay();
+    }
+    startLearnListeners();
+    // Record the initial navigation
+    recordLearnAction("navigate", {
+      targetUrl: window.location.href,
+      pageContext: { title: document.title, surroundingText: "" },
+    });
+  });
+
+  // Handle PDF detected during learn mode
+  chrome.runtime.onMessage.addListener(function (message) {
+    if (!message || message.type !== "TS_LEARN_PDF_DETECTED") return;
+    if (!learnMode) return;
+    learnPdfCount++;
+    recordLearnAction("pdf_detected", {
+      pageContext: { title: document.title, surroundingText: "" },
+    });
+    updateLearnOverlayStatus();
+    var status = document.getElementById(LEARN_OVERLAY_ID + "-status");
+    if (status) {
+      status.textContent = "PDF detected and uploaded! (" + learnPdfCount + " file" + (learnPdfCount > 1 ? "s" : "") + ")";
+      status.style.color = "#86efac";
+    }
+  });
 
   // Network hook is injected via background (MAIN world) to avoid page CSP.
 

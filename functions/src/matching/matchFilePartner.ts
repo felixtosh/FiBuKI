@@ -31,6 +31,7 @@ import { geminiValidateDomainOwnership } from "../ai/validateDomainOwnership";
 import { AutomationMeta } from "../automation/types";
 import { logAIUsage } from "../utils/ai-usage-logger";
 import { ensureGlobalPartnerFromVies } from "../utils/globalPartnerUpsert";
+import { checkAIBudget } from "../billing/checkAIBudget";
 
 // =============================================================================
 // AUTOMATION METADATA
@@ -1223,14 +1224,28 @@ export async function runPartnerMatching(
   }
 
   // No high-confidence match - try Gemini lookup if valid company name
+  // Check AI budget before making Gemini calls (rule-based matching above stays free)
+  const aiBudget = await checkAIBudget(userId);
+
   if (hasValidCompanyName) {
-    console.log(
-      `[PartnerMatch] No match >= ${CONFIG.AUTO_MATCH_THRESHOLD}% for "${extractedPartner}", trying Gemini lookup`
-    );
+    if (!aiBudget.allowed) {
+      console.log(
+        `[PartnerMatch] AI budget exhausted for user ${userId}, skipping Gemini lookup for "${extractedPartner}"`
+      );
+      // Skip Gemini, fall through to basic partner creation below
+    }
+
+    const canUseAI = aiBudget.allowed;
+
+    if (canUseAI) {
+      console.log(
+        `[PartnerMatch] No match >= ${CONFIG.AUTO_MATCH_THRESHOLD}% for "${extractedPartner}", trying Gemini lookup`
+      );
+    }
 
     let geminiLookupSucceeded = false;
 
-    try {
+    if (canUseAI) try {
       const vertexAI = createVertexAI();
       const companyInfo = await searchByName(vertexAI, extractedPartner, userId);
 

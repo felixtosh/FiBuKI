@@ -10,6 +10,12 @@ export { matchPartners } from "./matching/matchPartners";
 export { learnPartnerPatterns } from "./matching/learnPartnerPatterns";
 export { learnPartnerCategoryPatterns } from "./matching/learnPartnerCategoryPatterns";
 export { searchExternalPartners } from "./matching/searchExternalPartners";
+export { learnBillingCycleCallable as learnBillingCycle } from "./matching/learnBillingCycle";
+export { learnScoringWeightsCallable as learnScoringWeights } from "./matching/learnScoringWeights";
+
+// Export analytics functions
+export { analyzeMatchAccuracyCallable as analyzeMatchAccuracy } from "./analytics/analyzeMatchAccuracy";
+export { exportMatchIntelligenceCallable as exportMatchIntelligence } from "./analytics/exportMatchIntelligence";
 
 // Export category matching functions
 export { matchCategories } from "./matching/matchCategories";
@@ -30,6 +36,10 @@ export {
 // Export admin functions
 export { generatePromotionCandidates } from "./admin/generatePromotionCandidates";
 export { fixIsCompleteFlagCallable as fixIsCompleteFlag } from "./admin/fixIsCompleteFlag";
+export {
+  aggregateGlobalInsightsCallable as aggregateGlobalInsights,
+  scheduledAggregateGlobalInsights,
+} from "./admin/aggregateGlobalInsights";
 
 // Export import functions
 export { matchColumns } from "./import/matchColumns";
@@ -232,6 +242,18 @@ export {
   listApiKeysCallable as listApiKeys,
   revokeApiKeyCallable as revokeApiKey,
 } from "./api-keys";
+
+// Billing operations
+export {
+  createCheckoutSessionCallable as createCheckoutSession,
+  createPortalSessionCallable as createPortalSession,
+  addAICreditsCallable as addAICredits,
+  updateOverageSettingsCallable as updateOverageSettings,
+  stripeWebhook,
+} from "./billing";
+
+// Browser recipe operations
+export { saveBrowserRecipeCallable as saveBrowserRecipe } from "./browser/saveBrowserRecipe";
 
 // MCP HTTP API (for OpenClaw, Claude Desktop, ChatGPT, etc.)
 export { mcpApi, mcpToolsList, mcpSse } from "./mcp-api";

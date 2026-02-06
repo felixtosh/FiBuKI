@@ -24,19 +24,27 @@ exports.dismissTransactionSuggestionCallable = (0, createCallable_1.createCallab
     if (fileData.userId !== ctx.userId) {
         throw new createCallable_1.HttpsError("permission-denied", "Access denied");
     }
-    // Filter out the dismissed suggestion
+    // Filter out the dismissed suggestion and capture its confidence
     const currentSuggestions = (fileData.transactionSuggestions || []);
+    const dismissedSuggestion = currentSuggestions.find((s) => s.transactionId === transactionId);
     const updatedSuggestions = currentSuggestions.filter((s) => s.transactionId !== transactionId);
     // Track dismissed suggestions to prevent them from being re-suggested
+    // Write both legacy (string[]) and new (object[]) formats
     const dismissedSuggestions = (fileData.dismissedTransactionIds || []);
     if (!dismissedSuggestions.includes(transactionId)) {
         dismissedSuggestions.push(transactionId);
     }
-    await fileRef.update({
+    const updateData = {
         transactionSuggestions: updatedSuggestions,
         dismissedTransactionIds: dismissedSuggestions,
+        dismissedTransactions: firestore_1.FieldValue.arrayUnion({
+            transactionId,
+            dismissedAt: firestore_1.Timestamp.now(),
+            confidence: dismissedSuggestion?.confidence ?? null,
+        }),
         updatedAt: firestore_1.FieldValue.serverTimestamp(),
-    });
+    };
+    await fileRef.update(updateData);
     console.log(`[dismissTransactionSuggestion] Dismissed suggestion for file ${fileId}`, {
         userId: ctx.userId,
         transactionId,

@@ -27,6 +27,8 @@ import { UserPartner, GlobalPartner, PartnerFormData } from "@/types/partner";
 import { usePrecisionSearch } from "@/hooks/use-precision-search";
 import { useAuth } from "@/components/auth";
 import { useChat } from "@/components/chat/chat-provider";
+import { useBrowserLearnMode } from "@/hooks/use-browser-learn-mode";
+import { useBrowserExtensionStatus } from "@/hooks/use-browser-extension";
 
 // Constants for file upload
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
@@ -75,6 +77,21 @@ export function TransactionDetailPanel({
   isConnectFileOpen = false,
 }: TransactionDetailPanelProps) {
   const { userId } = useAuth();
+
+  // Browser learn mode
+  const learnMode = useBrowserLearnMode();
+  const { status: extensionStatus } = useBrowserExtensionStatus();
+  const extensionInstalled = extensionStatus === "installed";
+
+  // Get partner name for learn mode
+  const partnerName = useMemo(() => {
+    if (!transaction.partnerId) return "";
+    const userPartner = partners.find((p) => p.id === transaction.partnerId);
+    if (userPartner) return userPartner.name;
+    const globalPartner = globalPartners.find((p) => p.id === transaction.partnerId);
+    if (globalPartner) return globalPartner.name;
+    return transaction.partner || "";
+  }, [transaction.partnerId, transaction.partner, partners, globalPartners]);
 
   // Handler for assigning a partner to the transaction
   const handleAssignPartner = useCallback(
@@ -286,6 +303,9 @@ export function TransactionDetailPanel({
               onTriggerSearch={triggerSearch}
               onOpenConnectFile={onOpenConnectFile}
               isConnectFileOpen={isConnectFileOpen}
+              learnMode={learnMode}
+              partnerName={partnerName}
+              extensionInstalled={extensionInstalled}
             />
           </div>
         </div>

@@ -209,13 +209,13 @@ export function CollapsibleListSection({
           </div>
           <ChevronDown
             className={cn(
-              "h-4 w-4 text-muted-foreground transition-transform",
+              "h-4 w-4 text-muted-foreground transition-transform duration-200",
               isOpen && "rotate-180"
             )}
           />
         </button>
       </CollapsibleTrigger>
-      <CollapsibleContent className="animate-in slide-in-from-top-2 duration-200">
+      <CollapsibleContent className="animate-in fade-in slide-in-from-top-2 duration-200">
         <div className="pt-2 space-y-1">
           {children}
           {viewAllLink && count > 5 && (

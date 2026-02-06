@@ -21,6 +21,8 @@ const filePartnerMatcher_1 = require("../utils/filePartnerMatcher");
 const lookupCompany_1 = require("../ai/lookupCompany");
 const validateDomainOwnership_1 = require("../ai/validateDomainOwnership");
 const ai_usage_logger_1 = require("../utils/ai-usage-logger");
+const globalPartnerUpsert_1 = require("../utils/globalPartnerUpsert");
+const checkAIBudget_1 = require("../billing/checkAIBudget");
 // =============================================================================
 // AUTOMATION METADATA
 // =============================================================================
@@ -618,6 +620,10 @@ async function createUserPartnerFromLookup(userId, companyInfo, originalExtracte
             viesVerified: true,
             viesVerifiedAt: firestore_2.Timestamp.now(),
         }),
+        // Link to global partner if provided
+        ...(options?.globalPartnerId && {
+            globalPartnerId: options.globalPartnerId,
+        }),
     };
     const docRef = await db.collection("partners").add(partnerData);
     console.log(`[PartnerMatch] Created new partner ${docRef.id} from lookup for "${originalExtractedName}"`);
@@ -806,7 +812,9 @@ async function runPartnerMatching(fileId, fileData) {
                             ? (0, lookupCompany_1.parseViesAddress)(viesResult.address, parsed.countryCode)
                             : undefined,
                     };
-                    const newPartnerId = await createUserPartnerFromLookup(userId, companyInfo, extractedPartner || viesResult.name, { viesVerified: true });
+                    // Auto-create global partner from VIES data (idempotent)
+                    const { globalPartnerId } = await (0, globalPartnerUpsert_1.ensureGlobalPartnerFromVies)(companyInfo.vatId, companyInfo.name, companyInfo.country || parsed.countryCode, companyInfo.address ? { ...companyInfo.address, country: parsed.countryCode } : null);
+                    const newPartnerId = await createUserPartnerFromLookup(userId, companyInfo, extractedPartner || viesResult.name, { viesVerified: true, globalPartnerId });
                     await markPartnerMatchComplete(fileId, newPartnerId, "user", "auto", 98, // Very high confidence for VIES-verified match
                     []);
                     // Learn email domain from Gmail files (non-blocking)
@@ -883,33 +891,43 @@ async function runPartnerMatching(fileId, fileData) {
         return;
     }
     // No high-confidence match - try Gemini lookup if valid company name
+    // Check AI budget before making Gemini calls (rule-based matching above stays free)
+    const aiBudget = await (0, checkAIBudget_1.checkAIBudget)(userId);
     if (hasValidCompanyName) {
-        console.log(`[PartnerMatch] No match >= ${CONFIG.AUTO_MATCH_THRESHOLD}% for "${extractedPartner}", trying Gemini lookup`);
+        if (!aiBudget.allowed) {
+            console.log(`[PartnerMatch] AI budget exhausted for user ${userId}, skipping Gemini lookup for "${extractedPartner}"`);
+            // Skip Gemini, fall through to basic partner creation below
+        }
+        const canUseAI = aiBudget.allowed;
+        if (canUseAI) {
+            console.log(`[PartnerMatch] No match >= ${CONFIG.AUTO_MATCH_THRESHOLD}% for "${extractedPartner}", trying Gemini lookup`);
+        }
         let geminiLookupSucceeded = false;
-        try {
-            const vertexAI = (0, lookupCompany_1.createVertexAI)();
-            const companyInfo = await (0, lookupCompany_1.searchByName)(vertexAI, extractedPartner, userId);
-            if (companyInfo && companyInfo.name) {
-                // Create new User Partner from lookup results
-                const newPartnerId = await createUserPartnerFromLookup(userId, companyInfo, extractedPartner);
-                await markPartnerMatchComplete(fileId, newPartnerId, "user", "auto", CONFIG.LOOKUP_CREATED_CONFIDENCE, [] // No suggestions since we created a new partner
-                );
-                // Learn email domain from Gmail files (non-blocking)
-                learnEmailDomainFromPartnerMatch(fileData, newPartnerId, companyInfo.name, companyInfo.website || null).catch((err) => {
-                    console.error(`[PartnerMatch] Failed to learn email domain:`, err);
-                });
-                console.log(`[PartnerMatch] Created partner from Gemini lookup: ${companyInfo.name} ` +
-                    `(vatId: ${companyInfo.vatId || "none"}, website: ${companyInfo.website || "none"})`);
-                geminiLookupSucceeded = true;
-                return;
+        if (canUseAI)
+            try {
+                const vertexAI = (0, lookupCompany_1.createVertexAI)();
+                const companyInfo = await (0, lookupCompany_1.searchByName)(vertexAI, extractedPartner, userId);
+                if (companyInfo && companyInfo.name) {
+                    // Create new User Partner from lookup results
+                    const newPartnerId = await createUserPartnerFromLookup(userId, companyInfo, extractedPartner);
+                    await markPartnerMatchComplete(fileId, newPartnerId, "user", "auto", CONFIG.LOOKUP_CREATED_CONFIDENCE, [] // No suggestions since we created a new partner
+                    );
+                    // Learn email domain from Gmail files (non-blocking)
+                    learnEmailDomainFromPartnerMatch(fileData, newPartnerId, companyInfo.name, companyInfo.website || null).catch((err) => {
+                        console.error(`[PartnerMatch] Failed to learn email domain:`, err);
+                    });
+                    console.log(`[PartnerMatch] Created partner from Gemini lookup: ${companyInfo.name} ` +
+                        `(vatId: ${companyInfo.vatId || "none"}, website: ${companyInfo.website || "none"})`);
+                    geminiLookupSucceeded = true;
+                    return;
+                }
+                else {
+                    console.log(`[PartnerMatch] Gemini lookup returned no results for "${extractedPartner}"`);
+                }
             }
-            else {
-                console.log(`[PartnerMatch] Gemini lookup returned no results for "${extractedPartner}"`);
+            catch (error) {
+                console.error(`[PartnerMatch] Gemini lookup failed for "${extractedPartner}":`, error);
             }
-        }
-        catch (error) {
-            console.error(`[PartnerMatch] Gemini lookup failed for "${extractedPartner}":`, error);
-        }
         // Fallback: If Gemini lookup failed/returned nothing but we have a valid company name,
         // create a basic partner with just the extracted name. This ensures we don't lose
         // valuable partner info when Gemini can't find additional data.

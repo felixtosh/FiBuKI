@@ -277,6 +277,24 @@ export interface TaxFile {
   /** When transaction matching was last run */
   transactionMatchedAt?: Timestamp | null;
 
+  /**
+   * Transaction IDs that user dismissed as suggestions.
+   * @deprecated Use dismissedTransactions instead (which includes timestamps)
+   */
+  dismissedTransactionIds?: string[];
+
+  /**
+   * Dismissed transaction records with timestamps and context.
+   * Prevents re-suggesting these transactions to this file.
+   * New format — code should handle both dismissedTransactionIds (legacy) and dismissedTransactions.
+   */
+  dismissedTransactions?: Array<{
+    transactionId: string;
+    dismissedAt: Timestamp;
+    /** Confidence of the suggestion that was dismissed */
+    confidence?: number | null;
+  }>;
+
   // === Partner Matching ===
 
   /** Whether partner matching has been completed (triggers transaction matching) */
@@ -361,6 +379,25 @@ export interface FileConnection {
 
   /** AI confidence if auto-matched (0-100) */
   matchConfidence?: number | null;
+
+  /** Score breakdown by factor (amount, date, partner, iban, reference, hint) */
+  scoreBreakdown?: {
+    amount: number;
+    date: number;
+    partner: number;
+    iban: number;
+    reference: number;
+    hint: number;
+  };
+
+  /** Whether this transaction was in the file's suggestions at time of manual connection */
+  wasSuggested?: boolean;
+
+  /** Confidence of the suggestion at time of manual connection */
+  suggestedConfidence?: number | null;
+
+  /** Rank in suggestions list at time of manual connection (0-indexed) */
+  suggestedRank?: number | null;
 
   // === Source Tracking (how the file was found during connection) ===
 

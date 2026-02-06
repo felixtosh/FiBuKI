@@ -91,6 +91,7 @@ function convertToWorkerMessages(
   // First pass: collect all tool results by tool_call_id
   const toolResults = new Map<string, unknown>();
   for (const msg of messages) {
+    if (!msg) continue;
     const msgType = msg._getType?.() || msg.type;
     if (msgType === "tool") {
       const toolCallId = msg.tool_call_id || msg.additional_kwargs?.tool_call_id;
@@ -111,6 +112,7 @@ function convertToWorkerMessages(
 
   // Second pass: build messages with tool results included
   for (const msg of messages) {
+    if (!msg) continue;
     const msgType = msg._getType?.() || msg.type;
 
     // Skip system, tool, and human messages
@@ -142,7 +144,8 @@ function convertToWorkerMessages(
     }
 
     // Add tool call parts with their results (truncate to prevent Firestore size limits)
-    const toolCalls = msg.tool_calls || msg.additional_kwargs?.tool_calls || [];
+    const toolCallsRaw = msg.tool_calls || msg.additional_kwargs?.tool_calls || [];
+    const toolCalls = Array.isArray(toolCallsRaw) ? toolCallsRaw : [];
     for (const tc of toolCalls) {
       const toolResult = toolResults.get(tc.id);
       parts.push({

@@ -46,6 +46,62 @@ export async function createLocalPartnerFromGlobal(
     createdBy: "auto_partner_match",
   };
 
+  // Copy behavioral insights from global partner as starting values
+  const insights = globalData.behavioralInsights;
+  if (insights) {
+    // Copy billing cycle hint
+    if (insights.billingFrequency || insights.typicalInvoiceDelay != null) {
+      const freqDaysMap: Record<string, number> = {
+        monthly: 30,
+        quarterly: 90,
+        yearly: 365,
+        irregular: 0,
+      };
+      const freqDays = insights.billingFrequency
+        ? freqDaysMap[insights.billingFrequency] || 0
+        : 0;
+      if (freqDays > 0) {
+        partnerData.billingCycle = {
+          frequencyDays: freqDays,
+          frequencyConfidence: Math.min(50, insights.contributingUsers * 10), // Low initial confidence
+          invoiceToTransactionDelay: insights.typicalInvoiceDelay ?? undefined,
+          sampleSize: 0, // No local data yet
+          updatedAt: Timestamp.now(),
+        };
+      }
+    }
+
+    // Copy scoring weights
+    if (insights.defaultScoringWeights) {
+      partnerData.scoringWeights = {
+        ...insights.defaultScoringWeights,
+        sampleSize: 0, // No local data yet
+        updatedAt: Timestamp.now(),
+      };
+    }
+
+    // Copy email domains
+    if (insights.commonEmailDomains?.length > 0) {
+      partnerData.emailDomains = insights.commonEmailDomains;
+      partnerData.emailDomainsUpdatedAt = Timestamp.now();
+    }
+
+    // Copy resolution preference hint
+    if (insights.typicalResolution && insights.typicalResolution !== "mixed") {
+      partnerData.resolutionPreference = {
+        type: insights.typicalResolution,
+        confidence: Math.min(40, insights.contributingUsers * 8), // Low initial confidence
+        stats: { fileCount: 0, noReceiptCount: 0, updatedAt: Timestamp.now() },
+      };
+    }
+
+    console.log(
+      `[PartnerMatch] Copied behavioral insights from global ${globalPartnerId}: ` +
+      `freq=${insights.billingFrequency || "N/A"}, res=${insights.typicalResolution || "N/A"}, ` +
+      `domains=${insights.commonEmailDomains?.length || 0}`
+    );
+  }
+
   const docRef = await db.collection("partners").add(partnerData);
   console.log(`[PartnerMatch] Created local partner ${docRef.id} from global ${globalPartnerId}`);
   await replaceGlobalPartnerReferences(userId, globalPartnerId, docRef.id);

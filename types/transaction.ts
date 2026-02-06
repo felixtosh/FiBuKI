@@ -81,9 +81,21 @@ export interface Transaction {
 
   /**
    * Array of file IDs that were manually rejected/removed by the user.
-   * Prevents automation from re-connecting these files to this transaction.
+   * @deprecated Use rejectedFiles instead (which includes timestamps)
    */
   rejectedFileIds?: string[];
+
+  /**
+   * Array of rejected file records with timestamps and context.
+   * Prevents automation from re-connecting these files to this transaction.
+   * New format — code should handle both rejectedFileIds (legacy) and rejectedFiles.
+   */
+  rejectedFiles?: Array<{
+    fileId: string;
+    rejectedAt: Timestamp;
+    /** Confidence of the match that was rejected */
+    matchConfidence?: number | null;
+  }>;
 
   /**
    * Which automation strategy connected the most recent file to this transaction.

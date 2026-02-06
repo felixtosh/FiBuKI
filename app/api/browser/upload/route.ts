@@ -30,6 +30,7 @@ function extractDomain(url: string): string | null {
  * - sourceUrl: string
  * - sourceRunId: string
  * - sourceCollectorId?: string
+ * - transactionId?: string (when provided, auto-connects the uploaded file)
  */
 export async function POST(request: NextRequest) {
   try {
@@ -39,6 +40,7 @@ export async function POST(request: NextRequest) {
     const sourceUrl = formData.get("sourceUrl");
     const sourceRunId = formData.get("sourceRunId");
     const sourceCollectorId = formData.get("sourceCollectorId");
+    const transactionId = formData.get("transactionId");
 
     if (!(file instanceof Blob)) {
       return NextResponse.json({ error: "file is required" }, { status: 400 });
@@ -105,6 +107,30 @@ export async function POST(request: NextRequest) {
     };
 
     const docRef = await db.collection(FILES_COLLECTION).add(fileDoc);
+
+    // Auto-connect to transaction if transactionId was provided (learn mode)
+    if (typeof transactionId === "string" && transactionId) {
+      try {
+        const txRef = db.collection("transactions").doc(transactionId);
+        const txDoc = await txRef.get();
+        if (txDoc.exists && txDoc.data()?.userId === userId) {
+          const existingFileIds: string[] = txDoc.data()?.fileIds || [];
+          if (!existingFileIds.includes(docRef.id)) {
+            await txRef.update({
+              fileIds: [...existingFileIds, docRef.id],
+              updatedAt: Timestamp.now(),
+            });
+            // Also update the file with the transaction connection
+            await docRef.update({
+              transactionIds: [transactionId],
+              updatedAt: Timestamp.now(),
+            });
+          }
+        }
+      } catch (connectErr) {
+        console.error("Auto-connect failed (non-fatal):", connectErr);
+      }
+    }
 
     return NextResponse.json({
       ok: true,

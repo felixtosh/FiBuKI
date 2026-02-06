@@ -64,6 +64,14 @@ exports.connectFileToTransactionCallable = (0, createCallable_1.createCallable)(
     }
     const now = firestore_1.Timestamp.now();
     const batch = ctx.db.batch();
+    // Check if this transaction was in file's suggestions (for tracking accuracy)
+    const suggestions = fileData.transactionSuggestions || [];
+    const suggestedIndex = suggestions.findIndex((s) => s.transactionId === transactionId);
+    const wasSuggested = suggestedIndex >= 0;
+    const suggestedConfidence = wasSuggested
+        ? suggestions[suggestedIndex].confidence
+        : null;
+    const suggestedRank = wasSuggested ? suggestedIndex : null;
     // 1. Create junction document
     const connectionRef = ctx.db.collection("fileConnections").doc();
     const connectionData = {
@@ -72,6 +80,9 @@ exports.connectFileToTransactionCallable = (0, createCallable_1.createCallable)(
         userId: ctx.userId,
         connectionType,
         matchConfidence: matchConfidence ?? null,
+        wasSuggested,
+        suggestedConfidence,
+        suggestedRank,
         createdAt: now,
     };
     // Add source tracking fields if provided

@@ -8,6 +8,7 @@ import {
   ResizableDataTable,
   DataTableHandle,
 } from "@/components/ui/data-table";
+import { MOTION, isRecentlyUpdated } from "@/design-system";
 
 interface DataTableProps<TData> {
   columns: ColumnDef<TData, unknown>[];
@@ -53,12 +54,17 @@ function DataTableInner<TData extends { id: string }>(
   const getRowClassName = React.useCallback(
     (row: TData, isSelected: boolean) => {
       if (isTransactionRow(row) && isRowComplete(row)) {
+        // Check if this row just became complete (glow animation)
+        const justCompleted = isRecentlyUpdated(
+          (row as unknown as Record<string, unknown>).updatedAt,
+          MOTION.JUST_COMPLETED_THRESHOLD_MS
+        );
+        const glowClass = justCompleted ? "animate-row-complete" : "";
+
         if (isSelected) {
-          // Active/selected completed rows: darker green
-          return "bg-[#b8e986] hover:bg-[#a8d976] dark:bg-green-900/40 dark:hover:bg-green-900/50";
+          return `bg-[#b8e986] hover:bg-[#a8d976] dark:bg-green-900/40 dark:hover:bg-green-900/50 ${glowClass}`;
         }
-        // Non-selected completed rows: light green
-        return "bg-[#d9ffb2] hover:bg-[#c9f59f] dark:bg-green-950/20 dark:hover:bg-green-950/30";
+        return `bg-[#d9ffb2] hover:bg-[#c9f59f] dark:bg-green-950/20 dark:hover:bg-green-950/30 ${glowClass}`;
       }
       return "";
     },
