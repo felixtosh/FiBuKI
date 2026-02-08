@@ -26,6 +26,10 @@ async function checkAIBudget(userId, isAdmin = false) {
         };
     }
     const sub = subDoc.data();
+    // Admin override: free_plan users have unlimited AI budget
+    if (sub.adminOverride === "free_plan") {
+        return { allowed: true, source: "fair_use", remainingEur: Infinity, paused: false };
+    }
     // Already paused
     if (sub.aiPaused) {
         return {

@@ -192,6 +192,12 @@ async function handleSubscriptionUpdated(db, subscription) {
         console.error("[StripeWebhook] subscription.updated missing userId metadata");
         return;
     }
+    // Skip plan changes if admin override is set (prevents Stripe from overwriting admin-set plans)
+    const subDoc = await db.collection("subscriptions").doc(userId).get();
+    if (subDoc.exists && subDoc.data()?.adminOverride) {
+        console.log(`[StripeWebhook] Skipping subscription update for user=${userId} (adminOverride=${subDoc.data()?.adminOverride})`);
+        return;
+    }
     const plan = (subscription.metadata?.plan || "starter");
     const planConfig = config_1.PLANS[plan] || config_1.PLANS.starter;
     await db.collection("subscriptions").doc(userId).update({

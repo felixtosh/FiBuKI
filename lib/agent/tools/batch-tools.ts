@@ -95,18 +95,20 @@ export const loadPartnerBatchContextTool = tool(
       .limit(200)
       .get();
 
-    const transactions = txSnap.docs.map((doc) => {
-      const data = doc.data();
-      return {
-        transactionId: doc.id,
-        amount: data.amount,
-        currency: data.currency || "EUR",
-        date: data.date?.toDate?.()?.toISOString?.()?.split("T")[0],
-        name: data.name,
-        hasFiles: (data.fileIds?.length || 0) > 0,
-        isComplete: data.isComplete,
-      };
-    });
+    const transactions = txSnap.docs
+      .filter((doc) => !doc.data().quotaExceeded)
+      .map((doc) => {
+        const data = doc.data();
+        return {
+          transactionId: doc.id,
+          amount: data.amount,
+          currency: data.currency || "EUR",
+          date: data.date?.toDate?.()?.toISOString?.()?.split("T")[0],
+          name: data.name,
+          hasFiles: (data.fileIds?.length || 0) > 0,
+          isComplete: data.isComplete,
+        };
+      });
 
     return {
       partner: {

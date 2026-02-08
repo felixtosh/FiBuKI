@@ -43,6 +43,8 @@ export interface TransactionQuotaResult {
   remainingSlots: number;
 }
 
+export type AdminOverride = "free_plan" | "plan_tester" | null;
+
 /** User-facing billing rate: EUR per 100,000 total tokens */
 export const USER_TOKEN_RATE_PER_100K_EUR = 0.35;
 

@@ -186,7 +186,7 @@ async function listTransactionsNeedingFiles(userId, args) {
     const snapshot = await query.get();
     let transactions = snapshot.docs
         .map((doc) => ({ id: doc.id, ...doc.data() }))
-        .filter((t) => (!t.fileIds || t.fileIds.length === 0) && !t.noReceiptCategoryId);
+        .filter((t) => (!t.fileIds || t.fileIds.length === 0) && !t.noReceiptCategoryId && !t.quotaExceeded);
     if (args.minAmount !== undefined) {
         const minAmount = args.minAmount;
         transactions = transactions.filter((t) => Math.abs(t.amount || 0) >= minAmount);
@@ -239,6 +239,9 @@ async function connectFileToTransaction(userId, args) {
     }
     if (!txDoc.exists || txDoc.data()?.userId !== userId) {
         throw new Error("Transaction not found");
+    }
+    if (txDoc.data()?.quotaExceeded) {
+        throw new Error("Cannot connect files to over-quota transactions via API");
     }
     const batch = db.batch();
     const now = firestore_1.FieldValue.serverTimestamp();

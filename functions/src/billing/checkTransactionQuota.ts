@@ -34,6 +34,12 @@ export async function checkTransactionQuota(
   }
 
   const sub = subDoc.data()!;
+
+  // Admin override: free_plan users have unlimited quota
+  if (sub.adminOverride === "free_plan") {
+    return { allowed: true, currentCount: 0, limit: Infinity, remainingSlots: Infinity };
+  }
+
   const plan = (sub.plan || "free") as PlanId;
   const limit = PLANS[plan]?.transactionLimit ?? PLANS.free.transactionLimit;
 

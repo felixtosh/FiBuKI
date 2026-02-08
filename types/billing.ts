@@ -132,6 +132,10 @@ export interface Subscription {
   transactionCountMonth: string; // "YYYY-MM"
   // Migration
   grandfatheredUntil?: Timestamp | null;
+  // Admin overrides
+  adminOverride?: "free_plan" | "plan_tester" | null;
+  adminOverrideSetBy?: string | null;
+  adminOverrideSetAt?: Timestamp | null;
   // Timestamps
   createdAt: Timestamp;
   updatedAt: Timestamp;

@@ -218,7 +218,7 @@ export async function listTransactionsNeedingFiles(userId: string, args: Record<
     .map((doc) => ({ id: doc.id, ...doc.data() } as Record<string, unknown>))
     .filter(
       (t) =>
-        (!(t.fileIds as string[]) || (t.fileIds as string[]).length === 0) && !t.noReceiptCategoryId
+        (!(t.fileIds as string[]) || (t.fileIds as string[]).length === 0) && !t.noReceiptCategoryId && !t.quotaExceeded
     );
 
   if (args.minAmount !== undefined) {
@@ -289,6 +289,10 @@ export async function connectFileToTransaction(userId: string, args: Record<stri
   }
   if (!txDoc.exists || txDoc.data()?.userId !== userId) {
     throw new Error("Transaction not found");
+  }
+
+  if (txDoc.data()?.quotaExceeded) {
+    throw new Error("Cannot connect files to over-quota transactions via API");
   }
 
   const batch = db.batch();

@@ -195,6 +195,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     await createUserWithEmailAndPassword(auth, email, password);
+
+    // Mark invite as used after successful registration
+    try {
+      const markUsedFn = httpsCallable(functions, "markInviteUsed");
+      await markUsedFn({});
+    } catch (e) {
+      console.warn("Failed to mark invite as used:", e);
+    }
   }, []);
 
   const signInWithGoogle = useCallback(async () => {
@@ -221,6 +229,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           throw new Error(
             "Registration not allowed. Please request an invite from an admin."
           );
+        }
+
+        // Mark invite as used (Google sign-up doesn't go through email/password flow)
+        try {
+          const markUsedFn = httpsCallable(functions, "markInviteUsed");
+          await markUsedFn({});
+        } catch (e) {
+          console.warn("Failed to mark invite as used:", e);
         }
       }
       // Firebase auth succeeded - onAuthStateChanged will handle MFA check

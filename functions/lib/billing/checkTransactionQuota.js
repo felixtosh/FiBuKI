@@ -27,6 +27,10 @@ async function checkTransactionQuota(userId, countToAdd = 1, isAdmin = false) {
         };
     }
     const sub = subDoc.data();
+    // Admin override: free_plan users have unlimited quota
+    if (sub.adminOverride === "free_plan") {
+        return { allowed: true, currentCount: 0, limit: Infinity, remainingSlots: Infinity };
+    }
     const plan = (sub.plan || "free");
     const limit = config_1.PLANS[plan]?.transactionLimit ?? config_1.PLANS.free.transactionLimit;
     let currentCount = sub.transactionCountCurrentMonth || 0;

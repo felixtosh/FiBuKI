@@ -367,6 +367,9 @@ async function runTransactionMatching(fileId, fileData) {
         if (connectedIds.has(doc.id))
             return false;
         const txData = doc.data();
+        // Skip over-quota transactions (soft limit)
+        if (txData.quotaExceeded)
+            return false;
         const rejectedFileIds = txData.rejectedFileIds || [];
         const rejectedFiles = txData.rejectedFiles || [];
         const isRejected = rejectedFileIds.includes(fileId) ||

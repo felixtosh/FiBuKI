@@ -1486,6 +1486,10 @@ export const connectFileToTransactionTool = tool(
       return { error: "Transaction not found" };
     }
 
+    if (txDoc.data()?.quotaExceeded) {
+      return { error: "Cannot connect files to over-quota transactions. This transaction exceeds the plan's transaction limit." };
+    }
+
     const file = fileDoc.data()!;
     const tx = txDoc.data()!;
 

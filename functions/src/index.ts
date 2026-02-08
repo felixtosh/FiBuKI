@@ -40,6 +40,11 @@ export {
   aggregateGlobalInsightsCallable as aggregateGlobalInsights,
   scheduledAggregateGlobalInsights,
 } from "./admin/aggregateGlobalInsights";
+export {
+  listAllUsers,
+  setUserOverride,
+  switchTesterPlan,
+} from "./admin/userManagement";
 
 // Export import functions
 export { matchColumns } from "./import/matchColumns";
@@ -170,6 +175,8 @@ export {
   createSourceCallable as createSource,
   updateSourceCallable as updateSource,
   deleteSourceCallable as deleteSource,
+  getBalanceAtDateCallable as getBalanceAtDate,
+  getAccountBalancesCallable as getAccountBalances,
 } from "./sources";
 
 // Worker operations
@@ -254,6 +261,15 @@ export {
 
 // Browser recipe operations
 export { saveBrowserRecipeCallable as saveBrowserRecipe } from "./browser/saveBrowserRecipe";
+
+// Card reconciliation operations
+export { processReconciliation } from "./reconciliation/processReconciliation";
+export {
+  confirmReconciliationCallable as confirmReconciliation,
+} from "./reconciliation/confirmReconciliation";
+export {
+  rejectReconciliationCallable as rejectReconciliation,
+} from "./reconciliation/rejectReconciliation";
 
 // MCP HTTP API (for OpenClaw, Claude Desktop, ChatGPT, etc.)
 export { mcpApi, mcpToolsList, mcpSse } from "./mcp-api";

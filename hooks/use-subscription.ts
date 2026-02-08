@@ -80,5 +80,9 @@ export function useSubscription() {
     isActive: subscription?.stripeSubscriptionStatus === "active",
     isPastDue: subscription?.stripeSubscriptionStatus === "past_due",
     cancelAtPeriodEnd: subscription?.cancelAtPeriodEnd ?? false,
+    // Admin overrides
+    adminOverride: subscription?.adminOverride ?? null,
+    isFreePlanOverride: subscription?.adminOverride === "free_plan",
+    isPlanTester: subscription?.adminOverride === "plan_tester",
   };
 }

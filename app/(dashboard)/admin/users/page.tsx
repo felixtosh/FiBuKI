@@ -12,10 +12,12 @@ import {
   Mail,
   CheckCircle,
   Clock,
+  Gift,
+  TestTube,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -40,6 +42,13 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { ProtectedRoute, useAuth } from "@/components/auth";
 import { httpsCallable } from "firebase/functions";
 import { functions, db } from "@/lib/firebase/config";
@@ -48,11 +57,11 @@ import {
   query,
   orderBy,
   onSnapshot,
-  where,
 } from "firebase/firestore";
 import { addAllowedEmail, removeAllowedEmail } from "@/lib/operations";
 import { AllowedEmail } from "@/types/auth";
 import { formatDistanceToNow } from "date-fns";
+import type { PlanId } from "@/types/billing";
 
 interface Admin {
   uid: string;
@@ -61,16 +70,40 @@ interface Admin {
   isSuperAdmin: boolean;
 }
 
+interface UserInfo {
+  uid: string;
+  email: string | null;
+  displayName: string | null;
+  isAdmin: boolean;
+  isSuperAdmin: boolean;
+  plan: PlanId;
+  adminOverride: "free_plan" | "plan_tester" | null;
+  stripeSubscriptionStatus: string;
+  transactionCount: number;
+  createdAt: string | null;
+}
+
+const PLAN_COLORS: Record<PlanId, string> = {
+  free: "bg-gray-100 text-gray-700",
+  starter: "bg-blue-100 text-blue-700",
+  business: "bg-purple-100 text-purple-700",
+  pro: "bg-amber-100 text-amber-700",
+};
+
 export default function AdminUsersPage() {
   const { userId, isAdmin } = useAuth();
   const [invites, setInvites] = useState<AllowedEmail[]>([]);
   const [admins, setAdmins] = useState<Admin[]>([]);
+  const [allUsers, setAllUsers] = useState<UserInfo[]>([]);
   const [loadingInvites, setLoadingInvites] = useState(true);
   const [loadingAdmins, setLoadingAdmins] = useState(true);
+  const [loadingUsers, setLoadingUsers] = useState(true);
   const [newEmail, setNewEmail] = useState("");
   const [inviting, setInviting] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
   const [togglingAdmin, setTogglingAdmin] = useState<string | null>(null);
+  const [settingOverride, setSettingOverride] = useState<string | null>(null);
+  const [testerPlanSelect, setTesterPlanSelect] = useState<{ uid: string; plan: PlanId } | null>(null);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
@@ -108,9 +141,27 @@ export default function AdminUsersPage() {
     }
   }, []);
 
+  // Load all users
+  const loadAllUsers = useCallback(async () => {
+    setLoadingUsers(true);
+    try {
+      const listAllUsersFn = httpsCallable<void, { users: UserInfo[] }>(
+        functions,
+        "listAllUsers"
+      );
+      const result = await listAllUsersFn();
+      setAllUsers(result.data.users);
+    } catch (err) {
+      console.error("Error loading users:", err);
+    } finally {
+      setLoadingUsers(false);
+    }
+  }, []);
+
   useEffect(() => {
     loadAdmins();
-  }, [loadAdmins]);
+    loadAllUsers();
+  }, [loadAdmins, loadAllUsers]);
 
   const handleInvite = async () => {
     if (!newEmail.trim() || !userId) return;
@@ -145,16 +196,16 @@ export default function AdminUsersPage() {
   };
 
   const handleToggleAdmin = async (admin: Admin) => {
-    if (admin.isSuperAdmin) return; // Can't modify super admin
+    if (admin.isSuperAdmin) return;
 
     setTogglingAdmin(admin.uid);
     try {
       const setAdminClaimFn = httpsCallable(functions, "setAdminClaim");
       await setAdminClaimFn({
         targetUid: admin.uid,
-        isAdmin: false, // Remove admin status
+        isAdmin: false,
       });
-      await loadAdmins(); // Refresh list
+      await loadAdmins();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update admin status");
     } finally {
@@ -162,35 +213,42 @@ export default function AdminUsersPage() {
     }
   };
 
-  const handleMakeAdmin = async (email: string, uid?: string) => {
-    if (!uid) return;
-
-    setTogglingAdmin(uid);
+  const handleSetOverride = async (
+    targetUid: string,
+    override: "free_plan" | "plan_tester" | null,
+    plan?: PlanId
+  ) => {
+    setSettingOverride(targetUid);
+    setError("");
     try {
-      const setAdminClaimFn = httpsCallable(functions, "setAdminClaim");
-      await setAdminClaimFn({
-        targetUid: uid,
-        isAdmin: true,
-      });
-      await loadAdmins();
-      setSuccess(`${email} is now an admin`);
+      const setOverrideFn = httpsCallable(functions, "setUserOverride");
+      await setOverrideFn({ targetUid, override, plan });
+      await loadAllUsers();
+      const label =
+        override === "free_plan"
+          ? "Free Plan"
+          : override === "plan_tester"
+            ? `Plan Tester (${plan})`
+            : "cleared";
+      setSuccess(`Override ${label} set for user`);
       setTimeout(() => setSuccess(""), 3000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to set admin status");
+      setError(err instanceof Error ? err.message : "Failed to set override");
     } finally {
-      setTogglingAdmin(null);
+      setSettingOverride(null);
+      setTesterPlanSelect(null);
     }
   };
 
   return (
     <ProtectedRoute requireAdmin>
       <div className="h-full overflow-auto p-6">
-        <div className="max-w-2xl mx-auto space-y-6">
+        <div className="max-w-4xl mx-auto space-y-6">
           {/* Header */}
           <div>
             <h1 className="text-2xl font-semibold">User Management</h1>
             <p className="text-sm text-muted-foreground mt-1">
-              Invite users and manage admin permissions
+              Invite users, manage admin permissions, and set plan overrides
             </p>
           </div>
 
@@ -418,6 +476,201 @@ export default function AdminUsersPage() {
               )}
             </CardContent>
           </Card>
+
+          {/* All Users Card */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Users className="h-5 w-5" />
+                All Users
+              </CardTitle>
+              <CardDescription>
+                View all users and set plan overrides (Free Plan or Plan Tester)
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {loadingUsers ? (
+                <div className="space-y-2">
+                  <Skeleton className="h-12 w-full" />
+                  <Skeleton className="h-12 w-full" />
+                  <Skeleton className="h-12 w-full" />
+                </div>
+              ) : allUsers.length === 0 ? (
+                <div className="text-center py-6 text-muted-foreground">
+                  <Users className="h-10 w-10 mx-auto mb-2 opacity-50" />
+                  <p>No users found</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {allUsers.map((user) => (
+                    <div
+                      key={user.uid}
+                      className="flex items-center justify-between p-3 border rounded-lg gap-3"
+                    >
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <div className="min-w-0">
+                          <p className="font-medium truncate">
+                            {user.displayName || user.email || user.uid}
+                          </p>
+                          {user.displayName && user.email && (
+                            <p className="text-xs text-muted-foreground truncate">
+                              {user.email}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        {/* Plan badge */}
+                        <Badge variant="outline" className={PLAN_COLORS[user.plan]}>
+                          {user.plan}
+                        </Badge>
+
+                        {/* Override badge */}
+                        {user.adminOverride === "free_plan" && (
+                          <Badge variant="outline" className="bg-green-100 text-green-700">
+                            <Gift className="h-3 w-3 mr-1" />
+                            Free Plan
+                          </Badge>
+                        )}
+                        {user.adminOverride === "plan_tester" && (
+                          <Badge variant="outline" className="bg-blue-100 text-blue-700">
+                            <TestTube className="h-3 w-3 mr-1" />
+                            Tester
+                          </Badge>
+                        )}
+
+                        {/* Admin badge */}
+                        {user.isAdmin && (
+                          <Badge variant="secondary">
+                            {user.isSuperAdmin ? "Super Admin" : "Admin"}
+                          </Badge>
+                        )}
+
+                        {/* Override actions */}
+                        {!user.isAdmin && !user.adminOverride && (
+                          <div className="flex gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-green-700 hover:text-green-800 h-8 px-2"
+                              disabled={settingOverride === user.uid}
+                              onClick={() => handleSetOverride(user.uid, "free_plan")}
+                            >
+                              {settingOverride === user.uid ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <>
+                                  <Gift className="h-3 w-3 mr-1" />
+                                  Free
+                                </>
+                              )}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-blue-700 hover:text-blue-800 h-8 px-2"
+                              disabled={settingOverride === user.uid}
+                              onClick={() => setTesterPlanSelect({ uid: user.uid, plan: "starter" })}
+                            >
+                              <TestTube className="h-3 w-3 mr-1" />
+                              Tester
+                            </Button>
+                          </div>
+                        )}
+
+                        {!user.isAdmin && user.adminOverride && (
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="text-destructive hover:text-destructive h-8 px-2"
+                                disabled={settingOverride === user.uid}
+                              >
+                                {settingOverride === user.uid ? (
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                ) : (
+                                  <>
+                                    <X className="h-3 w-3 mr-1" />
+                                    Clear
+                                  </>
+                                )}
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>Clear Override?</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                  This will reset {user.email} to the Free plan with no
+                                  special override.
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                <AlertDialogAction
+                                  onClick={() => handleSetOverride(user.uid, null)}
+                                >
+                                  Clear Override
+                                </AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Plan Tester Select Dialog */}
+          {testerPlanSelect && (
+            <AlertDialog open onOpenChange={() => setTesterPlanSelect(null)}>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Set Plan Tester</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Choose which plan the user should start with. They can switch
+                    plans freely on the billing page.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <div className="py-4">
+                  <Select
+                    value={testerPlanSelect.plan}
+                    onValueChange={(v) =>
+                      setTesterPlanSelect({ ...testerPlanSelect, plan: v as PlanId })
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="free">Free</SelectItem>
+                      <SelectItem value="starter">Starter</SelectItem>
+                      <SelectItem value="business">Business</SelectItem>
+                      <SelectItem value="pro">Pro</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={() =>
+                      handleSetOverride(
+                        testerPlanSelect.uid,
+                        "plan_tester",
+                        testerPlanSelect.plan
+                      )
+                    }
+                  >
+                    Set as Plan Tester
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
 
           {/* Info */}
           <div className="text-sm text-muted-foreground">

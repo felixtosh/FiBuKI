@@ -480,6 +480,8 @@ export async function runTransactionMatching(
   const eligibleTransactions = transactions.filter((doc) => {
     if (connectedIds.has(doc.id)) return false;
     const txData = doc.data();
+    // Skip over-quota transactions (soft limit)
+    if (txData.quotaExceeded) return false;
     const rejectedFileIds: string[] = txData.rejectedFileIds || [];
     const rejectedFiles: Array<{ fileId: string }> = txData.rejectedFiles || [];
     const isRejected =

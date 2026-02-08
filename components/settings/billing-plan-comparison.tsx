@@ -8,17 +8,25 @@ import { Check } from "lucide-react";
 import { PLANS, type PlanId } from "@/types/billing";
 import { useSubscription } from "@/hooks/use-subscription";
 import { createCheckoutSessionCallable } from "@/lib/firebase/callable";
+import { httpsCallable } from "firebase/functions";
+import { functions } from "@/lib/firebase/config";
 import { cn } from "@/lib/utils";
 
 const planOrder: PlanId[] = ["free", "starter", "business", "pro"];
 
 export function BillingPlanComparison() {
-  const { plan: currentPlan } = useSubscription();
+  const { plan: currentPlan, isPlanTester, isFreePlanOverride } = useSubscription();
   const [loading, setLoading] = useState<PlanId | null>(null);
 
   const handleUpgrade = async (planId: PlanId) => {
     setLoading(planId);
     try {
+      if (isPlanTester) {
+        const switchFn = httpsCallable(functions, "switchTesterPlan");
+        await switchFn({ plan: planId });
+        setLoading(null);
+        return;
+      }
       const result = await createCheckoutSessionCallable({
         plan: planId,
         billingPeriod: "monthly",
@@ -32,6 +40,9 @@ export function BillingPlanComparison() {
     }
   };
 
+  // Hide plan comparison for free_plan override users
+  if (isFreePlanOverride) return null;
+
   return (
     <Card>
       <CardHeader>
@@ -42,7 +53,9 @@ export function BillingPlanComparison() {
           {planOrder.map((planId) => {
             const config = PLANS[planId];
             const isCurrent = planId === currentPlan;
-            const isUpgrade = planOrder.indexOf(planId) > planOrder.indexOf(currentPlan);
+            const isUpgrade = isPlanTester
+              ? planId !== currentPlan
+              : planOrder.indexOf(planId) > planOrder.indexOf(currentPlan);
 
             return (
               <div
@@ -91,7 +104,9 @@ export function BillingPlanComparison() {
                     onClick={() => handleUpgrade(planId)}
                     disabled={loading !== null}
                   >
-                    {loading === planId ? "Redirecting..." : "Upgrade"}
+                    {loading === planId
+                      ? isPlanTester ? "Switching..." : "Redirecting..."
+                      : isPlanTester ? "Switch" : "Upgrade"}
                   </Button>
                 )}
               </div>

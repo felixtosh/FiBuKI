@@ -32,6 +32,10 @@ exports.connectFileToTransactionCallable = (0, createCallable_1.createCallable)(
     if (transactionData.userId !== ctx.userId) {
         throw new createCallable_1.HttpsError("permission-denied", "Transaction access denied");
     }
+    // Block automated connections to over-quota transactions (manual still allowed)
+    if (transactionData.quotaExceeded && connectionType !== "manual") {
+        throw new createCallable_1.HttpsError("failed-precondition", "Automated file matching is disabled for over-quota transactions.");
+    }
     // Check if connection already exists
     const existingQuery = await ctx.db
         .collection("fileConnections")
