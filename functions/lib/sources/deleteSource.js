@@ -112,15 +112,6 @@ exports.deleteSourceCallable = (0, createCallable_1.createCallable)({
                 console.warn(`[deleteSource] Failed to delete TrueLayer connection:`, err);
             }
         }
-        if (apiConfig.provider === "gocardless" && apiConfig.connectionId) {
-            try {
-                const requisitionRef = ctx.db.collection("gocardlessRequisitions").doc(apiConfig.connectionId);
-                await requisitionRef.delete();
-            }
-            catch (err) {
-                console.warn(`[deleteSource] Failed to delete GoCardless requisition:`, err);
-            }
-        }
         // Delete finAPI bank connection
         if (apiConfig.provider === "finapi" && apiConfig.bankConnectionId) {
             try {

@@ -2,7 +2,7 @@
  * Banking Provider Abstraction Layer
  *
  * Provides a unified interface for multiple Open Banking providers
- * (GoCardless, TrueLayer, Plaid, etc.)
+ * (finAPI, TrueLayer, Plaid, etc.)
  */
 
 import { Timestamp } from "firebase/firestore";
@@ -14,7 +14,7 @@ import { Timestamp } from "firebase/firestore";
 /**
  * Supported banking data providers
  */
-export type BankingProviderId = "gocardless" | "truelayer" | "plaid" | "finapi";
+export type BankingProviderId = "truelayer" | "plaid" | "finapi";
 
 /**
  * Provider metadata for UI display
@@ -193,17 +193,6 @@ export interface BaseBankingConfig {
 }
 
 /**
- * GoCardless-specific configuration
- */
-export interface GoCardlessBankingConfig extends BaseBankingConfig {
-  provider: "gocardless";
-  /** GoCardless requisition ID */
-  requisitionId: string;
-  /** GoCardless agreement ID */
-  agreementId?: string;
-}
-
-/**
  * TrueLayer-specific configuration
  */
 export interface TrueLayerBankingConfig extends BaseBankingConfig {
@@ -250,7 +239,6 @@ export interface FinapiBankingConfig extends BaseBankingConfig {
  * Union type for all provider configs
  */
 export type BankingConfig =
-  | GoCardlessBankingConfig
   | TrueLayerBankingConfig
   | PlaidBankingConfig
   | FinapiBankingConfig;

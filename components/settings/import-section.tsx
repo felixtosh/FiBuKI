@@ -132,7 +132,7 @@ export function ImportSection() {
             <p className="font-medium mb-2">After import:</p>
             <ul className="list-disc list-inside space-y-1">
               <li>Email integrations (Gmail) must be reconnected manually</li>
-              <li>Bank connections (GoCardless) must be re-established</li>
+              <li>Bank connections must be re-established</li>
             </ul>
           </div>
 

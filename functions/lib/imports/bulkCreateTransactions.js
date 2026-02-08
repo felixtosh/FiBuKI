@@ -99,6 +99,31 @@ exports.bulkCreateTransactionsCallable = (0, createCallable_1.createCallable)({
         userId: ctx.userId,
         sourceId,
     });
+    // Persist balance info on source if provided
+    if (request.balanceInfo) {
+        const { openingBalance, openingBalanceDate, latestBalance, latestBalanceDate } = request.balanceInfo;
+        const sourceData = sourceSnap.data();
+        const existingOpeningDate = sourceData.openingBalanceDate?.toDate();
+        const newOpeningDate = new Date(openingBalanceDate);
+        // Only update opening balance if no existing one or this one is earlier
+        const shouldUpdateOpening = !existingOpeningDate || newOpeningDate < existingOpeningDate;
+        const balanceUpdates = {
+            latestBalance,
+            latestBalanceDate: firestore_1.Timestamp.fromDate(new Date(latestBalanceDate)),
+            updatedAt: firestore_1.Timestamp.now(),
+        };
+        if (shouldUpdateOpening) {
+            balanceUpdates.openingBalance = openingBalance;
+            balanceUpdates.openingBalanceDate = firestore_1.Timestamp.fromDate(newOpeningDate);
+            balanceUpdates.openingBalanceSource = "csv_derived";
+        }
+        await sourceRef.update(balanceUpdates);
+        console.log(`[bulkCreateTransactions] Updated balance info on source ${sourceId}`, {
+            shouldUpdateOpening,
+            openingBalance,
+            latestBalance,
+        });
+    }
     // Only count within-quota transactions for billing
     const withinQuotaCount = transactionIds.length - overLimitTransactionIds.length;
     if (withinQuotaCount > 0) {

@@ -13,7 +13,8 @@ export type NotificationType =
   | "export_complete"
   | "export_failed"
   | "data_import_complete"
-  | "data_import_failed";
+  | "data_import_failed"
+  | "reconciliation_suggestion";
 
 /**
  * Context data for notifications (varies by type)
@@ -62,6 +63,12 @@ export interface NotificationContext {
   // For data_import_complete / data_import_failed
   importId?: string;
   importCounts?: Record<string, number>;
+
+  // For reconciliation_suggestion
+  reconciliationGroupCount?: number;
+  cardSourceName?: string;
+  bankSourceName?: string;
+  totalChargesCount?: number;
 }
 
 /**

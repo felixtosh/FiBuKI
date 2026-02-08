@@ -5,6 +5,8 @@ import { format } from "date-fns";
 import {
   Tag,
   Loader2,
+  CreditCard,
+  Link2,
 } from "lucide-react";
 import { Transaction } from "@/types/transaction";
 import { TransactionSource } from "@/types/source";
@@ -279,6 +281,55 @@ export function getTransactionColumns(
         return (
           <span className="text-sm text-muted-foreground">—</span>
         );
+      },
+    },
+    {
+      id: "reconciliation",
+      size: 40,
+      header: "",
+      cell: ({ row }) => {
+        const suggestions = row.original.reconciliationSuggestions;
+        const reconciledBy = row.original.reconciledByBankTxId;
+
+        // Card transaction that's been reconciled
+        if (reconciledBy) {
+          return (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className="flex items-center justify-center">
+                  <Link2 className="h-3.5 w-3.5 text-green-600" />
+                </div>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p className="text-xs">Reconciled with bank payment</p>
+              </TooltipContent>
+            </Tooltip>
+          );
+        }
+
+        // Bank transaction with pending reconciliation suggestions
+        if (suggestions && suggestions.length > 0) {
+          const topSuggestion = suggestions[0];
+          return (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className="flex items-center justify-center">
+                  <CreditCard className="h-3.5 w-3.5 text-blue-500 animate-pulse" />
+                </div>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p className="text-xs font-medium">
+                  {topSuggestion.chargeCount} card charge{topSuggestion.chargeCount !== 1 ? "s" : ""} detected
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Click to review reconciliation
+                </p>
+              </TooltipContent>
+            </Tooltip>
+          );
+        }
+
+        return null;
       },
     },
     {

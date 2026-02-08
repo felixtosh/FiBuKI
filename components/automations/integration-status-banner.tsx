@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 
-export type IntegrationType = "gmail" | "outlook" | "browser" | "gocardless";
+export type IntegrationType = "gmail" | "outlook" | "browser";
 
 export interface IntegrationStatusInfo {
   id: IntegrationType;

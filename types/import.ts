@@ -282,7 +282,7 @@ export interface ImportRecord {
   /** For API syncs: end date of the sync range */
   syncDateTo?: string;
 
-  /** For API syncs: provider name (e.g., "finapi", "gocardless") */
+  /** For API syncs: provider name (e.g., "finapi") */
   syncProvider?: string;
 
   // === Status (draft support) ===

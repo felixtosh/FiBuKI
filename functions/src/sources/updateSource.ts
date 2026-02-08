@@ -2,7 +2,7 @@
  * Update a source (bank account)
  */
 
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 
 interface SourceUpdateData {
@@ -18,6 +18,11 @@ interface SourceUpdateData {
     formats?: Record<string, string>;
     updatedAt: string;
   } | null;
+  openingBalance?: number | null;
+  openingBalanceDate?: string | null; // ISO string
+  openingBalanceSource?: "csv_derived" | "api_fetched" | "manual" | null;
+  latestBalance?: number | null;
+  latestBalanceDate?: string | null; // ISO string
 }
 
 interface UpdateSourceRequest {
@@ -85,6 +90,25 @@ export const updateSourceCallable = createCallable<
     }
     if (data.fieldMappings !== undefined) {
       updates.fieldMappings = data.fieldMappings;
+    }
+    if (data.openingBalance !== undefined) {
+      updates.openingBalance = data.openingBalance;
+    }
+    if (data.openingBalanceDate !== undefined) {
+      updates.openingBalanceDate = data.openingBalanceDate
+        ? Timestamp.fromDate(new Date(data.openingBalanceDate))
+        : null;
+    }
+    if (data.openingBalanceSource !== undefined) {
+      updates.openingBalanceSource = data.openingBalanceSource;
+    }
+    if (data.latestBalance !== undefined) {
+      updates.latestBalance = data.latestBalance;
+    }
+    if (data.latestBalanceDate !== undefined) {
+      updates.latestBalanceDate = data.latestBalanceDate
+        ? Timestamp.fromDate(new Date(data.latestBalanceDate))
+        : null;
     }
 
     await sourceRef.update(updates);

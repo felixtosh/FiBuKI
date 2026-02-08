@@ -3,7 +3,7 @@
  *
  * Implements BankingProvider interface for Plaid.
  *
- * Key differences from GoCardless/TrueLayer:
+ * Key differences from other providers:
  * - Uses Plaid Link (client-side modal) instead of redirect flow
  * - Uses /transactions/sync with cursor for incremental updates
  * - Amount sign is INVERTED: Plaid positive=outflow, our system positive=credit

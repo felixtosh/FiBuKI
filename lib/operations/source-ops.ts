@@ -117,7 +117,7 @@ export async function updateSource(
  * 1. Clears linkedSourceId on any credit cards linked to this bank account
  * 2. Deletes all imports for this source (and their transactions)
  * 3. Deletes any remaining transactions without an import
- * 4. Cleans up TrueLayer/GoCardless connection if this was an API source
+ * 4. Cleans up API provider connection if this was an API source
  * 5. Deletes the source document itself
  */
 export async function deleteSource(

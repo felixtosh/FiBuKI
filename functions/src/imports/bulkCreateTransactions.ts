@@ -26,9 +26,17 @@ interface TransactionData {
   };
 }
 
+interface BalanceInfo {
+  openingBalance: number; // in cents
+  openingBalanceDate: string; // ISO string
+  latestBalance: number; // in cents
+  latestBalanceDate: string; // ISO string
+}
+
 interface BulkCreateTransactionsRequest {
   transactions: TransactionData[];
   sourceId: string;
+  balanceInfo?: BalanceInfo;
 }
 
 interface BulkCreateTransactionsResponse {
@@ -163,6 +171,36 @@ export const bulkCreateTransactionsCallable = createCallable<
       userId: ctx.userId,
       sourceId,
     });
+
+    // Persist balance info on source if provided
+    if (request.balanceInfo) {
+      const { openingBalance, openingBalanceDate, latestBalance, latestBalanceDate } = request.balanceInfo;
+      const sourceData = sourceSnap.data()!;
+      const existingOpeningDate = sourceData.openingBalanceDate?.toDate();
+      const newOpeningDate = new Date(openingBalanceDate);
+
+      // Only update opening balance if no existing one or this one is earlier
+      const shouldUpdateOpening = !existingOpeningDate || newOpeningDate < existingOpeningDate;
+
+      const balanceUpdates: Record<string, unknown> = {
+        latestBalance,
+        latestBalanceDate: Timestamp.fromDate(new Date(latestBalanceDate)),
+        updatedAt: Timestamp.now(),
+      };
+
+      if (shouldUpdateOpening) {
+        balanceUpdates.openingBalance = openingBalance;
+        balanceUpdates.openingBalanceDate = Timestamp.fromDate(newOpeningDate);
+        balanceUpdates.openingBalanceSource = "csv_derived";
+      }
+
+      await sourceRef.update(balanceUpdates);
+      console.log(`[bulkCreateTransactions] Updated balance info on source ${sourceId}`, {
+        shouldUpdateOpening,
+        openingBalance,
+        latestBalance,
+      });
+    }
 
     // Only count within-quota transactions for billing
     const withinQuotaCount = transactionIds.length - overLimitTransactionIds.length;

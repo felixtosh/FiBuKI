@@ -93,7 +93,7 @@ export interface FetchTransactionsOptions {
 /**
  * Banking Provider Interface
  *
- * Each provider (GoCardless, TrueLayer, Plaid) implements this interface
+ * Each provider (finAPI, TrueLayer, Plaid) implements this interface
  * to provide a consistent API for banking operations.
  */
 export interface BankingProvider {

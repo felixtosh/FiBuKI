@@ -216,6 +216,20 @@ export interface Transaction {
   /** Whether this transaction exceeds the plan's monthly quota (imported but limited) */
   quotaExceeded?: boolean;
 
+  // === Card Reconciliation ===
+
+  /** Bank transactions: pending reconciliation suggestions from card matching */
+  reconciliationSuggestions?: import("./card-reconciliation").ReconciliationSuggestion[];
+
+  /** Bank transactions: whether the reconciliation trigger has processed this tx */
+  reconciliationMatchComplete?: boolean;
+
+  /** Card transactions: bank transaction ID that pays for this charge */
+  reconciledByBankTxId?: string | null;
+
+  /** Card transactions: reconciliation group membership */
+  reconciliationGroupId?: string | null;
+
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }

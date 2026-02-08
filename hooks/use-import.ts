@@ -43,6 +43,12 @@ export interface ImportState {
     errors: number;
     errorDetails: { row: number; message: string; rowData: Record<string, string> }[];
     overLimitCount: number;
+    balanceDetected?: {
+      openingBalance: number;
+      openingBalanceDate: string;
+      latestBalance: number;
+      latestBalanceDate: string;
+    };
   } | null;
   error: string | null;
   /** Full CSV content stored for re-mapping later */
@@ -363,12 +369,14 @@ export function useImport(
 
     setState((s) => ({ ...s, transientStep: "importing", progress: 0, error: null }));
 
-    // Get date and amount mappings with their formats
+    // Get date, amount, and balance mappings with their formats
     const dateMapping = state.mappings.find((m) => m.targetField === "date");
     const amountMapping = state.mappings.find((m) => m.targetField === "amount");
+    const balanceMapping = state.mappings.find((m) => m.targetField === "balance");
 
     const dateFormat = dateMapping?.format || "de";
     const amountFormat = amountMapping?.format || "de";
+    const balanceFormat = balanceMapping?.format || amountFormat;
 
     const amountConfig = getAmountParserConfig(amountFormat);
     if (!amountConfig) {
@@ -414,6 +422,13 @@ export function useImport(
       }
     }
 
+    // Balance format config (may be null if no balance column mapped)
+    const balanceConfig = balanceMapping ? getAmountParserConfig(balanceFormat) : null;
+
+    // Balance tracking: track first and last row with balance data to derive opening balance
+    let firstBalanceRow: { date: Date; balance: number; amount: number } | null = null;
+    let lastBalanceRow: { date: Date; balance: number; amount: number } | null = null;
+
     // Prepare transactions
     const transactions: Omit<Transaction, "id">[] = [];
     const hashes: string[] = [];
@@ -429,6 +444,7 @@ export function useImport(
         let partnerValue: string | null = null;
         let referenceValue: string | null = null;
         let partnerIbanValue: string | null = null;
+        let balanceValue: string | null = null;
 
         for (const [csvCol, targetField] of fieldMap) {
           const value = row[csvCol];
@@ -452,6 +468,9 @@ export function useImport(
               break;
             case "partnerIban":
               partnerIbanValue = value;
+              break;
+            case "balance":
+              balanceValue = value;
               break;
           }
         }
@@ -484,6 +503,18 @@ export function useImport(
         if (parsedAmount === null) {
           errors.push({ row: i + 1, message: `Invalid amount: ${amountValue}`, rowData: row });
           continue;
+        }
+
+        // Track balance data for opening balance derivation
+        if (balanceValue && balanceConfig) {
+          const parsedBalance = parseAmount(balanceValue, balanceConfig);
+          if (parsedBalance !== null) {
+            const balanceRow = { date: parsedDate, balance: parsedBalance, amount: parsedAmount };
+            if (!firstBalanceRow) {
+              firstBalanceRow = balanceRow;
+            }
+            lastBalanceRow = balanceRow;
+          }
         }
 
         // Generate dedupe hash (use sourceId as fallback for sources without IBAN like credit cards)
@@ -552,6 +583,32 @@ export function useImport(
     );
     const skippedCount = transactions.length - newTransactions.length;
 
+    // Derive opening balance from CSV balance column if available
+    let balanceInfo: {
+      openingBalance: number;
+      openingBalanceDate: string;
+      latestBalance: number;
+      latestBalanceDate: string;
+    } | undefined;
+
+    if (firstBalanceRow && lastBalanceRow) {
+      // Determine CSV ordering: first row date vs last row date
+      const isAscending = firstBalanceRow.date <= lastBalanceRow.date;
+      const earliest = isAscending ? firstBalanceRow : lastBalanceRow;
+      const latest = isAscending ? lastBalanceRow : firstBalanceRow;
+
+      // Opening balance = balance of earliest row MINUS the transaction amount of that row
+      // (because the balance shown is AFTER the transaction)
+      const openingBalance = earliest.balance - earliest.amount;
+
+      balanceInfo = {
+        openingBalance,
+        openingBalanceDate: earliest.date.toISOString(),
+        latestBalance: latest.balance,
+        latestBalanceDate: latest.date.toISOString(),
+      };
+    }
+
     // Batch write transactions using Cloud Function
     let importedCount = 0;
     const transactionIds: string[] = [];
@@ -568,10 +625,15 @@ export function useImport(
         updatedAt: (t.updatedAt as Timestamp).toDate().toISOString(),
       }));
 
+      // Include balanceInfo only on the first batch
       const result = await callFunction<
-        { transactions: typeof transactionsForCF; sourceId: string },
+        { transactions: typeof transactionsForCF; sourceId: string; balanceInfo?: typeof balanceInfo },
         { transactionIds: string[]; quotaExceeded?: boolean; overLimitCount?: number; overLimitTransactionIds?: string[] }
-      >("bulkCreateTransactions", { transactions: transactionsForCF, sourceId: source.id });
+      >("bulkCreateTransactions", {
+        transactions: transactionsForCF,
+        sourceId: source.id,
+        ...(i === 0 && balanceInfo ? { balanceInfo } : {}),
+      });
 
       transactionIds.push(...result.transactionIds);
       if (result.overLimitTransactionIds) {
@@ -649,6 +711,7 @@ export function useImport(
         errors: errors.length,
         errorDetails: errors,
         overLimitCount: overLimitTransactionIds.length,
+        balanceDetected: balanceInfo,
       },
     }));
   }, [source, state.file, state.analysis, state.mappings, state.csvContent, userId]);

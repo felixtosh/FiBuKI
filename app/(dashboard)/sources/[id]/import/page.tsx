@@ -299,6 +299,7 @@ export default function ImportPage({ params }: ImportPageProps) {
               progress={state.progress}
               results={state.results}
               isComplete={effectiveStep === "complete"}
+              currency={source?.currency}
             />
 
             {effectiveStep === "complete" && (

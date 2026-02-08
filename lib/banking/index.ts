@@ -2,7 +2,7 @@
  * Banking Provider Abstraction Layer
  *
  * Provides a unified interface for multiple Open Banking providers:
- * - GoCardless (formerly Nordigen)
+ * - finAPI (DACH region)
  * - TrueLayer
  * - Plaid (future)
  *
@@ -42,7 +42,6 @@ export {
 import { bankingRegistry } from "./registry";
 import { getFinapiProvider } from "./providers/finapi";
 // Disabled providers:
-// import { getGoCardlessProvider } from "./providers/gocardless";
 // import { getTrueLayerProvider } from "./providers/truelayer";
 // import { getPlaidProvider } from "./providers/plaid";
 
@@ -61,7 +60,6 @@ export function initializeBankingProviders(): void {
   }
 
   // Other providers disabled for now:
-  // - GoCardless: signups closed
   // - TrueLayer: not needed
   // - Plaid: too expensive
 

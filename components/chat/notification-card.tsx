@@ -1,6 +1,6 @@
 "use client";
 
-import { Package, Link2, Sparkles, Eraser, Bot, Download, Upload, AlertCircle } from "lucide-react";
+import { Package, Link2, Sparkles, Eraser, Bot, Download, Upload, AlertCircle, CreditCard } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AutoActionNotification, NotificationType } from "@/types/notification";
 import { useChat } from "./chat-provider";
@@ -49,6 +49,10 @@ const typeConfig: Record<
   data_import_failed: {
     icon: AlertCircle,
     color: "text-red-500",
+  },
+  reconciliation_suggestion: {
+    icon: CreditCard,
+    color: "text-blue-500",
   },
 };
 

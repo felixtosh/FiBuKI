@@ -2,7 +2,7 @@
  * Provider-agnostic banking operations
  *
  * This module provides a unified interface for all banking providers
- * (GoCardless, TrueLayer, etc.) using the banking abstraction layer.
+ * (finAPI, TrueLayer, etc.) using the banking abstraction layer.
  */
 
 import {
@@ -621,8 +621,6 @@ export async function getBankSyncStatus(
 
 function getRedirectUrl(providerId: BankingProviderId): string {
   switch (providerId) {
-    case "gocardless":
-      return process.env.GOCARDLESS_REDIRECT_URL || "";
     case "truelayer":
       return process.env.TRUELAYER_REDIRECT_URL || "";
     case "plaid":
@@ -648,14 +646,6 @@ function buildApiConfig(
   };
 
   switch (connection.providerId) {
-    case "gocardless":
-      return {
-        ...baseConfig,
-        provider: "gocardless",
-        requisitionId: connection.providerConnectionId,
-        agreementId: connection.providerData?.agreementId as string,
-      };
-
     case "truelayer":
       return {
         ...baseConfig,

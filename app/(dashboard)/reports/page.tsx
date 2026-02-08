@@ -12,6 +12,7 @@ import {
   ExternalLink,
   Clock,
   Loader2,
+  Wallet,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -29,6 +30,8 @@ import { useUserData } from "@/hooks/use-user-data";
 import { useAuth } from "@/components/auth";
 import Link from "next/link";
 import { db } from "@/lib/firebase/config";
+import { callFunction } from "@/lib/firebase/callable";
+import { formatCurrency } from "@/lib/utils";
 import {
   getReportReadiness,
   calculateUVAReport,
@@ -108,6 +111,20 @@ export default function ReportsPage() {
   const [exportError, setExportError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitResult, setSubmitResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  // Account balances state
+  interface AccountBalance {
+    sourceId: string;
+    sourceName: string;
+    currency: string;
+    accountKind: string;
+    openingBalance: number;
+    transactionSum: number;
+    balanceAtDate: number;
+  }
+  const [accountBalances, setAccountBalances] = useState<AccountBalance[] | null>(null);
+  const [balancesLoading, setBalancesLoading] = useState(false);
+  const [balancesDate, setBalancesDate] = useState<string>("");
 
   // Operations context
   const ctx: OperationsContext = useMemo(
@@ -334,6 +351,39 @@ export default function ReportsPage() {
     }
   };
 
+  // Load account balances
+  const loadAccountBalances = async (date: string) => {
+    if (!userId || !date) return;
+    setBalancesLoading(true);
+    try {
+      const result = await callFunction<
+        { date: string },
+        { balances: AccountBalance[]; date: string }
+      >("getAccountBalances", { date });
+      setAccountBalances(result.balances);
+      setBalancesDate(date);
+    } catch (error) {
+      console.error("Failed to load account balances:", error);
+    } finally {
+      setBalancesLoading(false);
+    }
+  };
+
+  // Compute period end date for balance loading
+  const getPeriodEndDate = (): string => {
+    if (selectedPeriod.type === "monthly") {
+      const year = selectedPeriod.year;
+      const month = selectedPeriod.period;
+      const lastDay = new Date(year, month, 0).getDate();
+      return `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+    } else {
+      const year = selectedPeriod.year;
+      const endMonth = selectedPeriod.period * 3;
+      const lastDay = new Date(year, endMonth, 0).getDate();
+      return `${year}-${String(endMonth).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+    }
+  };
+
   // Check if FinanzOnline submission is available
   const finanzonlineConfigured = userData?.finanzonline?.isConfigured;
   const canSubmitToFinanzOnline =
@@ -501,6 +551,9 @@ export default function ReportsPage() {
               <TabsList>
                 <TabsTrigger value="preview">Preview</TabsTrigger>
                 <TabsTrigger value="breakdown">Breakdown</TabsTrigger>
+                <TabsTrigger value="balances" onClick={() => {
+                  if (!accountBalances) loadAccountBalances(getPeriodEndDate());
+                }}>Account Balances</TabsTrigger>
                 <TabsTrigger value="export">Export</TabsTrigger>
               </TabsList>
 
@@ -593,6 +646,107 @@ export default function ReportsPage() {
                     ) : (
                       <p className="text-muted-foreground text-center py-8">
                         No transactions found for this period
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+              </TabsContent>
+
+              <TabsContent value="balances" className="mt-4">
+                <Card>
+                  <CardHeader>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <CardTitle className="flex items-center gap-2">
+                          <Wallet className="h-5 w-5" />
+                          Account Balances
+                        </CardTitle>
+                        <CardDescription>
+                          Balances at end of {formatPeriod(selectedPeriod)}
+                        </CardDescription>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => loadAccountBalances(getPeriodEndDate())}
+                        disabled={balancesLoading}
+                      >
+                        {balancesLoading && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+                        Refresh
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    {balancesLoading && !accountBalances ? (
+                      <div className="flex items-center justify-center py-8">
+                        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                      </div>
+                    ) : accountBalances && accountBalances.length > 0 ? (
+                      <div className="space-y-4">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b">
+                              <th className="text-left py-2">Account</th>
+                              <th className="text-right py-2">Opening Balance</th>
+                              <th className="text-right py-2">Transactions</th>
+                              <th className="text-right py-2">Balance</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {accountBalances.map((ab) => (
+                              <tr key={ab.sourceId} className="border-b">
+                                <td className="py-2">{ab.sourceName}</td>
+                                <td className="text-right py-2 font-mono">
+                                  {formatCurrency(ab.openingBalance, ab.currency)}
+                                </td>
+                                <td className="text-right py-2 font-mono">
+                                  {formatCurrency(ab.transactionSum, ab.currency)}
+                                </td>
+                                <td className={`text-right py-2 font-mono font-medium ${ab.balanceAtDate >= 0 ? "text-green-700" : "text-red-600"}`}>
+                                  {formatCurrency(ab.balanceAtDate, ab.currency)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                          <tfoot>
+                            {/* Group by currency for totals */}
+                            {Array.from(new Set(accountBalances.map((ab) => ab.currency))).map((currency) => {
+                              const currencyBalances = accountBalances.filter((ab) => ab.currency === currency);
+                              const total = currencyBalances.reduce((sum, ab) => sum + ab.balanceAtDate, 0);
+                              return (
+                                <tr key={currency} className="font-medium">
+                                  <td className="py-2">Total ({currency})</td>
+                                  <td className="text-right py-2 font-mono">
+                                    {formatCurrency(
+                                      currencyBalances.reduce((sum, ab) => sum + ab.openingBalance, 0),
+                                      currency
+                                    )}
+                                  </td>
+                                  <td className="text-right py-2 font-mono">
+                                    {formatCurrency(
+                                      currencyBalances.reduce((sum, ab) => sum + ab.transactionSum, 0),
+                                      currency
+                                    )}
+                                  </td>
+                                  <td className={`text-right py-2 font-mono ${total >= 0 ? "text-green-700" : "text-red-600"}`}>
+                                    {formatCurrency(total, currency)}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tfoot>
+                        </table>
+                        <p className="text-xs text-muted-foreground">
+                          Balance = Opening Balance + Sum of Transactions up to {balancesDate}
+                        </p>
+                      </div>
+                    ) : accountBalances && accountBalances.length === 0 ? (
+                      <p className="text-muted-foreground text-center py-8">
+                        No active accounts found
+                      </p>
+                    ) : (
+                      <p className="text-muted-foreground text-center py-8">
+                        Click the &quot;Account Balances&quot; tab to load period-end balances
                       </p>
                     )}
                   </CardContent>

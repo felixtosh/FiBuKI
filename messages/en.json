@@ -122,10 +122,6 @@
           "name": "TrueLayer",
           "purpose": "Open Banking access (UK/EU) for securely fetching your account transactions."
         },
-        "gocardless": {
-          "name": "GoCardless Bank Account Data",
-          "purpose": "Open Banking access (Europe) for securely fetching your account transactions."
-        },
         "langfuse": {
           "name": "LangFuse",
           "purpose": "Analysis and optimization of AI interactions for quality improvement."

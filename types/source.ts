@@ -37,6 +37,9 @@ export interface TransactionSource {
   /** For credit cards: card brand/network */
   cardBrand?: CardBrand;
 
+  /** Auto-created partner for this source (for pattern learning + reconciliation) */
+  sourcePartnerId?: string;
+
   /** How transactions are imported */
   type: "csv" | "api";
 
@@ -55,6 +58,17 @@ export interface TransactionSource {
   /** Owner of this source */
   userId: string;
 
+  /** Opening balance in cents, used as anchor for balance calculations */
+  openingBalance?: number | null;
+  /** Date of the opening balance */
+  openingBalanceDate?: Timestamp | null;
+  /** How the opening balance was determined */
+  openingBalanceSource?: "csv_derived" | "api_fetched" | "manual" | null;
+  /** Latest known balance in cents, for quick display */
+  latestBalance?: number | null;
+  /** Date of the latest known balance */
+  latestBalanceDate?: Timestamp | null;
+
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -63,32 +77,8 @@ export interface TransactionSource {
  * Configuration for API-based transaction connectors
  */
 export type ApiConnectorConfig =
-  | GoCardlessConnectorConfig
   | TrueLayerConnectorConfig
   | GenericConnectorConfig;
-
-/**
- * GoCardless-specific connector configuration
- */
-export interface GoCardlessConnectorConfig {
-  provider: "gocardless";
-  /** GoCardless requisition ID */
-  requisitionId: string;
-  /** GoCardless account ID */
-  accountId: string;
-  /** Institution identifier */
-  institutionId: string;
-  institutionName: string;
-  institutionLogo?: string;
-  /** When the agreement expires (90 days PSD2 limit) */
-  agreementExpiresAt: Timestamp;
-  /** Last successful sync */
-  lastSyncAt?: Timestamp;
-  /** Last sync error if any */
-  lastSyncError?: string;
-  /** Sync schedule (cron expression) */
-  syncSchedule?: string;
-}
 
 /**
  * TrueLayer-specific connector configuration
@@ -179,4 +169,8 @@ export interface SourceFormData {
   /** Primary currency for the account */
   currency: string;
   type: "csv" | "api";
+  /** Opening balance in cents (for manual entry) */
+  openingBalance?: number;
+  /** Opening balance date as ISO string (for manual entry) */
+  openingBalanceDate?: string;
 }

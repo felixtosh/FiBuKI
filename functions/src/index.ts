@@ -49,13 +49,6 @@ export {
 // Export import functions
 export { matchColumns } from "./import/matchColumns";
 
-// Export GoCardless sync functions
-export {
-  scheduledGoCardlessSync,
-  triggerGoCardlessSync,
-  sendReauthReminders,
-} from "./gocardless/scheduledSync";
-
 // Export file extraction functions
 export { extractFileData, extractFileDataOnUndelete } from "./extraction/extractFileData";
 export { retryFileExtraction } from "./extraction/retryExtraction";

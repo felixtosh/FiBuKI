@@ -235,10 +235,26 @@ exports.syncBankTransactionsCallable = (0, createCallable_1.createCallable)({
     // 7. Handle empty result
     // ========================================================================
     if (transactions.length === 0) {
+        // Still fetch balance even if no new transactions
+        const emptyBalanceUpdates = {};
+        try {
+            const acctResp = await fetch(`${getBaseUrl()}/api/v2/accounts/${accountId}`, { headers: { Authorization: `Bearer ${userToken}` } });
+            if (acctResp.ok) {
+                const acctData = await acctResp.json();
+                if (acctData.balance != null) {
+                    emptyBalanceUpdates.latestBalance = Math.round(acctData.balance * 100);
+                    emptyBalanceUpdates.latestBalanceDate = firestore_1.Timestamp.now();
+                }
+            }
+        }
+        catch {
+            // Non-fatal
+        }
         await sourceRef.update({
             "apiConfig.lastSyncAt": firestore_1.Timestamp.now(),
             "apiConfig.syncFromYear": syncFromYear,
             "apiConfig.lastSyncError": firestore_1.FieldValue.delete(),
+            ...emptyBalanceUpdates,
         });
         return {
             success: true,
@@ -382,12 +398,33 @@ exports.syncBankTransactionsCallable = (0, createCallable_1.createCallable)({
     await db.collection("imports").doc(syncJobId).set(importRecord);
     console.log(`[syncBankTransactions] Created import record ${syncJobId}`);
     // ========================================================================
-    // 12. Update source lastSyncAt
+    // 12. Fetch account balance from finAPI (best effort)
+    // ========================================================================
+    const balanceUpdates = {};
+    try {
+        const accountResponse = await fetch(`${getBaseUrl()}/api/v2/accounts/${accountId}`, { headers: { Authorization: `Bearer ${userToken}` } });
+        if (accountResponse.ok) {
+            const accountData = await accountResponse.json();
+            if (accountData.balance != null) {
+                const balanceCents = Math.round(accountData.balance * 100);
+                balanceUpdates.latestBalance = balanceCents;
+                balanceUpdates.latestBalanceDate = firestore_1.Timestamp.now();
+                console.log(`[syncBankTransactions] Updated balance: ${balanceCents} cents`);
+            }
+        }
+    }
+    catch (balanceError) {
+        // Non-fatal: balance fetch is optional
+        console.warn("[syncBankTransactions] Could not fetch balance:", balanceError);
+    }
+    // ========================================================================
+    // 13. Update source lastSyncAt
     // ========================================================================
     await sourceRef.update({
         "apiConfig.lastSyncAt": firestore_1.Timestamp.now(),
         "apiConfig.syncFromYear": syncFromYear,
         "apiConfig.lastSyncError": firestore_1.FieldValue.delete(),
+        ...balanceUpdates,
     });
     return {
         success: true,

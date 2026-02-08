@@ -17,6 +17,7 @@ import {
   Landmark,
 } from "lucide-react";
 import { formatIban } from "@/lib/import/deduplication";
+import { formatCurrency } from "@/lib/utils";
 import { format } from "date-fns";
 
 interface SourceCardProps {
@@ -26,19 +27,15 @@ interface SourceCardProps {
 }
 
 export function SourceCard({ source, onClick, onImportClick }: SourceCardProps) {
-  // Check API connection status (GoCardless, TrueLayer, or finAPI)
+  // Check API connection status (TrueLayer or finAPI)
   const isApiConnected = source.type === "api" &&
-    (source.apiConfig?.provider === "gocardless" ||
-     source.apiConfig?.provider === "truelayer" ||
+    (source.apiConfig?.provider === "truelayer" ||
      source.apiConfig?.provider === "finapi");
 
   // Get expiry date and last sync from any provider (type-safe access to provider-specific fields)
   const apiConfig = source.apiConfig as Record<string, unknown> | undefined;
   const expiresAt = (() => {
     if (!apiConfig) return null;
-    // GoCardless uses agreementExpiresAt
-    const agreementExpiry = apiConfig.agreementExpiresAt as { toDate?: () => Date } | undefined;
-    if (agreementExpiry?.toDate) return agreementExpiry.toDate();
     // finAPI/TrueLayer use expiresAt
     const expiry = apiConfig.expiresAt as { toDate?: () => Date } | string | undefined;
     if (typeof expiry === "object" && expiry?.toDate) return expiry.toDate();
@@ -140,11 +137,24 @@ export function SourceCard({ source, onClick, onImportClick }: SourceCardProps) 
           {statusBadge}
         </div>
 
-        <p className="text-sm font-mono text-muted-foreground mb-4">
+        <p className="text-sm font-mono text-muted-foreground mb-1">
           {source.accountKind === "credit_card"
             ? `${source.cardBrand?.toUpperCase() || "Card"} ••••${source.cardLast4 || ""}`
             : formatIban(source.iban)}
         </p>
+
+        {source.latestBalance != null && (
+          <p className={`text-lg font-semibold font-mono mb-3 ${source.latestBalance >= 0 ? "text-green-700" : "text-red-600"}`}>
+            {formatCurrency(source.latestBalance, source.currency)}
+            {source.latestBalanceDate && (
+              <span className="text-xs font-normal text-muted-foreground ml-2">
+                {format(source.latestBalanceDate.toDate(), "dd.MM.yyyy")}
+              </span>
+            )}
+          </p>
+        )}
+
+        {source.latestBalance == null && <div className="mb-4" />}
 
         <div className="flex items-center justify-between">
           {!isApiConnected && (

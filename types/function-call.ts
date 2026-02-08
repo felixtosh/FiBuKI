@@ -45,6 +45,8 @@ export type CloudFunctionName =
   | "createSource"
   | "updateSource"
   | "deleteSource"
+  | "getBalanceAtDate"
+  | "getAccountBalances"
   // Import operations
   | "bulkCreateTransactions"
   | "createImportRecord"
@@ -94,7 +96,10 @@ export type CloudFunctionName =
   | "addAICredits"
   | "updateOverageSettings"
   // Browser recipe operations
-  | "saveBrowserRecipe";
+  | "saveBrowserRecipe"
+  // Card reconciliation operations
+  | "confirmReconciliation"
+  | "rejectReconciliation";
 
 /**
  * Summary statistics for function calls (for dashboards).

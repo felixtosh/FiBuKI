@@ -5,10 +5,10 @@ import { useState, useEffect, useCallback } from "react";
 /**
  * Supported banking providers
  */
-export type BankingProvider = "finapi" | "gocardless" | "truelayer" | "plaid" | "all";
+export type BankingProvider = "finapi" | "truelayer" | "plaid" | "all";
 
 /**
- * Generic institution type (works with finAPI, TrueLayer, GoCardless, etc.)
+ * Generic institution type (works with finAPI, TrueLayer, etc.)
  */
 export interface Institution {
   id: string;
@@ -18,7 +18,7 @@ export interface Institution {
   bic?: string;
   transaction_total_days?: string;
   /** Which provider this institution is from */
-  providerId?: "finapi" | "gocardless" | "truelayer" | "plaid";
+  providerId?: "finapi" | "truelayer" | "plaid";
 }
 
 interface UseInstitutionsOptions {
@@ -39,7 +39,7 @@ interface UseInstitutionsReturn {
  *
  * Supports multiple providers:
  * - "truelayer" - Use TrueLayer only
- * - "gocardless" - Use GoCardless only
+ * - "finapi" - Use finAPI only
  * - "all" (default) - Query all configured providers and merge results
  */
 export function useInstitutions({

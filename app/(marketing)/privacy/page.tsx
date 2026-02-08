@@ -12,7 +12,6 @@ const SERVICES = [
   "vertexAi",
   "anthropic",
   "truelayer",
-  "gocardless",
   "langfuse",
 ] as const;
 

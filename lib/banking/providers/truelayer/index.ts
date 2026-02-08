@@ -188,7 +188,7 @@ export class TrueLayerProvider extends BaseBankingProvider implements BankingPro
       state,
     });
 
-    // TrueLayer doesn't have a pre-connection ID like GoCardless requisitions
+    // TrueLayer doesn't have a pre-connection ID like requisition-based providers
     // We use the state as the connection ID and store tokens after callback
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 90); // PSD2 max
@@ -265,7 +265,7 @@ export class TrueLayerProvider extends BaseBankingProvider implements BankingPro
     status: "pending" | "authorizing" | "linked" | "expired" | "rejected" | "suspended";
     accountIds?: string[];
   }> {
-    // TrueLayer doesn't have a connection status endpoint like GoCardless
+    // TrueLayer doesn't have a dedicated connection status endpoint
     // The status is determined by whether we have valid tokens
     // This would need to be checked against stored connection data
     return {

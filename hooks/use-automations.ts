@@ -88,15 +88,6 @@ export function useAutomations(): UseAutomationsResult {
       isPaused: false,
     });
 
-    // GoCardless/Open Banking (would need to check sources collection)
-    // For now, set as always available since it's a system feature
-    statuses.set("gocardless", {
-      integrationId: "gocardless",
-      displayName: "Open Banking",
-      isConnected: true, // This would need proper checking
-      needsReauth: false,
-    });
-
     return statuses;
   }, [integrations, browserExtensionStatus]);
 

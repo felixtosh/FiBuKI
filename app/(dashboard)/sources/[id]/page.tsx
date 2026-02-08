@@ -16,8 +16,6 @@ import {
   Trash2,
   Loader2,
   Link2,
-  RefreshCw,
-  AlertTriangle,
   Globe,
 } from "lucide-react";
 import { useImports } from "@/hooks/use-imports";
@@ -44,10 +42,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { GoCardlessConnectorConfig, ApiConnectorConfig } from "@/types/source";
 import { TrueLayerApiConfig } from "@/types/truelayer";
 import { formatIban } from "@/lib/import/deduplication";
+import { formatCurrency } from "@/lib/utils";
 import { usePageTitle } from "@/hooks/use-page-title";
+import { Wallet, Check } from "lucide-react";
+import { Input } from "@/components/ui/input";
 
 interface SourceDetailPageProps {
   params: Promise<{ id: string }>;
@@ -62,6 +62,10 @@ export default function SourceDetailPage({ params }: SourceDetailPageProps) {
   const [isDeleting, setIsDeleting] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
+  const [isEditingBalance, setIsEditingBalance] = useState(false);
+  const [balanceInput, setBalanceInput] = useState("");
+  const [balanceDateInput, setBalanceDateInput] = useState("");
+  const [isSavingBalance, setIsSavingBalance] = useState(false);
 
   const source = sources.find((s) => s.id === id);
 
@@ -110,6 +114,37 @@ export default function SourceDetailPage({ params }: SourceDetailPageProps) {
     await updateSource(source.id, data);
   };
 
+  const handleStartEditBalance = () => {
+    const currentBalance = source.openingBalance != null ? (source.openingBalance / 100).toFixed(2) : "";
+    const currentDate = source.openingBalanceDate ? format(source.openingBalanceDate.toDate(), "yyyy-MM-dd") : "";
+    setBalanceInput(currentBalance);
+    setBalanceDateInput(currentDate);
+    setIsEditingBalance(true);
+  };
+
+  const handleSaveBalance = async () => {
+    setIsSavingBalance(true);
+    try {
+      const parsed = parseFloat(balanceInput.replace(",", "."));
+      if (isNaN(parsed)) {
+        alert("Invalid amount");
+        setIsSavingBalance(false);
+        return;
+      }
+      const balanceCents = Math.round(parsed * 100);
+      await updateSource(source.id, {
+        openingBalance: balanceCents,
+        openingBalanceDate: balanceDateInput ? new Date(balanceDateInput).toISOString() : null,
+        openingBalanceSource: "manual",
+      } as any);
+      setIsEditingBalance(false);
+    } catch (error) {
+      console.error("Failed to save balance:", error);
+    } finally {
+      setIsSavingBalance(false);
+    }
+  };
+
   const handleSync = async (fromYear?: number) => {
     setIsSyncing(true);
     try {
@@ -150,21 +185,18 @@ export default function SourceDetailPage({ params }: SourceDetailPageProps) {
     await handleSync(newYear);
   };
 
-  // Check for any API connection (GoCardless, TrueLayer, or finAPI)
+  // Check for any API connection (TrueLayer or finAPI)
   const isApiConnected = source.type === "api" &&
-    (source.apiConfig?.provider === "gocardless" ||
-     source.apiConfig?.provider === "truelayer" ||
+    (source.apiConfig?.provider === "truelayer" ||
      source.apiConfig?.provider === "finapi");
-  const isGoCardless = source.apiConfig?.provider === "gocardless";
   const isTrueLayer = source.apiConfig?.provider === "truelayer";
   const isFinapi = source.apiConfig?.provider === "finapi";
 
-  const goCardlessConfig = isGoCardless ? source.apiConfig as unknown as GoCardlessConnectorConfig : undefined;
   const trueLayerConfig = isTrueLayer ? source.apiConfig as unknown as TrueLayerApiConfig : undefined;
   const finapiConfig = isFinapi ? source.apiConfig as any : undefined;
 
-  // Check if re-auth is needed (GoCardless and finAPI have expiry)
-  const expiresAt = goCardlessConfig?.agreementExpiresAt?.toDate() || finapiConfig?.expiresAt?.toDate();
+  // Check if re-auth is needed (finAPI has expiry)
+  const expiresAt = finapiConfig?.expiresAt?.toDate();
   const needsReauth = expiresAt ? expiresAt < new Date() : false;
 
   // Days until expiry
@@ -173,9 +205,9 @@ export default function SourceDetailPage({ params }: SourceDetailPageProps) {
     : null;
 
   // Get provider name for display
-  const providerName = goCardlessConfig?.institutionName || trueLayerConfig?.providerName || finapiConfig?.institutionName || "Bank";
-  const providerLogo = goCardlessConfig?.institutionLogo || trueLayerConfig?.providerLogo || finapiConfig?.institutionLogo;
-  const lastSyncAt = goCardlessConfig?.lastSyncAt || trueLayerConfig?.lastSyncAt || finapiConfig?.lastSyncAt;
+  const providerName = trueLayerConfig?.providerName || finapiConfig?.institutionName || "Bank";
+  const providerLogo = trueLayerConfig?.providerLogo || finapiConfig?.institutionLogo;
+  const lastSyncAt = trueLayerConfig?.lastSyncAt || finapiConfig?.lastSyncAt;
 
   return (
     <div className="px-6 py-6">
@@ -274,36 +306,12 @@ export default function SourceDetailPage({ params }: SourceDetailPageProps) {
             </AlertDialogContent>
           </AlertDialog>
 
-          {isApiConnected ? (
-            <>
-              {/* Renew/Reconnect button (only for GoCardless) */}
-              {isGoCardless && (
-                <Button
-                  variant={needsReauth ? "default" : "outline"}
-                  size="sm"
-                  onClick={handleConnect}
-                >
-                  {needsReauth ? (
-                    <>
-                      <AlertTriangle className="h-4 w-4 mr-2" />
-                      Reconnect
-                    </>
-                  ) : (
-                    <>
-                      <RefreshCw className="h-4 w-4 mr-2" />
-                      Renew
-                    </>
-                  )}
-                </Button>
-              )}
-            </>
-          ) : (
+          {!isApiConnected && (
             <Button variant="outline" size="sm" onClick={handleConnect}>
               <Link2 className="h-4 w-4 mr-2" />
               Connect Bank
             </Button>
           )}
-
           {!isApiConnected && (
             <Button size="sm" onClick={() => router.push(`/sources/${source.id}/import`)}>
               <Upload className="h-4 w-4 mr-2" />
@@ -377,6 +385,110 @@ export default function SourceDetailPage({ params }: SourceDetailPageProps) {
                     </p>
                   </div>
                 </div>
+              </div>
+
+              {/* Balance Section */}
+              <div className="mt-4 pt-4 border-t">
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-sm font-medium">Account Balance</p>
+                  {!isEditingBalance && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleStartEditBalance}
+                      className="h-7 text-xs text-muted-foreground"
+                    >
+                      <Pencil className="h-3 w-3 mr-1" />
+                      {source.openingBalance != null ? "Edit" : "Set Opening Balance"}
+                    </Button>
+                  )}
+                </div>
+
+                {isEditingBalance ? (
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-xs text-muted-foreground mb-1 block">Opening Balance ({source.currency || "EUR"})</label>
+                        <Input
+                          type="text"
+                          inputMode="decimal"
+                          placeholder="e.g. 1234.56"
+                          value={balanceInput}
+                          onChange={(e) => setBalanceInput(e.target.value)}
+                          className="h-8"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-muted-foreground mb-1 block">As of Date</label>
+                        <Input
+                          type="date"
+                          value={balanceDateInput}
+                          onChange={(e) => setBalanceDateInput(e.target.value)}
+                          className="h-8"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button size="sm" onClick={handleSaveBalance} disabled={isSavingBalance} className="h-7 text-xs">
+                        {isSavingBalance ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Check className="h-3 w-3 mr-1" />}
+                        Save
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => setIsEditingBalance(false)} className="h-7 text-xs">
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-muted rounded-lg">
+                        <Wallet className="h-4 w-4 text-muted-foreground" />
+                      </div>
+                      <div>
+                        <p className="text-sm text-muted-foreground">Opening Balance</p>
+                        {source.openingBalance != null ? (
+                          <div>
+                            <p className={`font-medium font-mono ${source.openingBalance >= 0 ? "text-green-700" : "text-red-600"}`}>
+                              {formatCurrency(source.openingBalance, source.currency)}
+                            </p>
+                            {source.openingBalanceDate && (
+                              <p className="text-xs text-muted-foreground">
+                                {format(source.openingBalanceDate.toDate(), "dd.MM.yyyy")}
+                              </p>
+                            )}
+                            {source.openingBalanceSource && (
+                              <Badge variant="secondary" className="text-xs mt-1">
+                                {source.openingBalanceSource === "csv_derived" ? "From CSV" :
+                                 source.openingBalanceSource === "api_fetched" ? "From Bank API" :
+                                 "Manual"}
+                              </Badge>
+                            )}
+                          </div>
+                        ) : (
+                          <p className="text-sm text-muted-foreground italic">Not set</p>
+                        )}
+                      </div>
+                    </div>
+                    {source.latestBalance != null && (
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 bg-muted rounded-lg">
+                          <Wallet className="h-4 w-4 text-muted-foreground" />
+                        </div>
+                        <div>
+                          <p className="text-sm text-muted-foreground">Latest Balance</p>
+                          <p className={`font-medium font-mono ${source.latestBalance >= 0 ? "text-green-700" : "text-red-600"}`}>
+                            {formatCurrency(source.latestBalance, source.currency)}
+                          </p>
+                          {source.latestBalanceDate && (
+                            <p className="text-xs text-muted-foreground">
+                              {format(source.latestBalanceDate.toDate(), "dd.MM.yyyy")}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Linked Account Section */}
@@ -511,7 +623,7 @@ export default function SourceDetailPage({ params }: SourceDetailPageProps) {
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Provider</span>
                   <span className="font-medium capitalize">
-                    {isTrueLayer ? "TrueLayer" : isGoCardless ? "GoCardless" : isFinapi ? "finAPI" : "API"}
+                    {isTrueLayer ? "TrueLayer" : isFinapi ? "finAPI" : "API"}
                   </span>
                 </div>
                 {expiresAt && (

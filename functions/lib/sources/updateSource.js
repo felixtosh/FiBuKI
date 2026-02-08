@@ -51,6 +51,25 @@ exports.updateSourceCallable = (0, createCallable_1.createCallable)({ name: "upd
     if (data.fieldMappings !== undefined) {
         updates.fieldMappings = data.fieldMappings;
     }
+    if (data.openingBalance !== undefined) {
+        updates.openingBalance = data.openingBalance;
+    }
+    if (data.openingBalanceDate !== undefined) {
+        updates.openingBalanceDate = data.openingBalanceDate
+            ? firestore_1.Timestamp.fromDate(new Date(data.openingBalanceDate))
+            : null;
+    }
+    if (data.openingBalanceSource !== undefined) {
+        updates.openingBalanceSource = data.openingBalanceSource;
+    }
+    if (data.latestBalance !== undefined) {
+        updates.latestBalance = data.latestBalance;
+    }
+    if (data.latestBalanceDate !== undefined) {
+        updates.latestBalanceDate = data.latestBalanceDate
+            ? firestore_1.Timestamp.fromDate(new Date(data.latestBalanceDate))
+            : null;
+    }
     await sourceRef.update(updates);
     console.log(`[updateSource] Updated source ${sourceId}`, {
         userId: ctx.userId,

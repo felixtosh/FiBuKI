@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { onSnapshot, doc } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
-import { TransactionSource, GoCardlessConnectorConfig } from "@/types/source";
+import { TransactionSource } from "@/types/source";
 import { TrueLayerApiConfig } from "@/types/truelayer";
 import { FinapiBankingConfig } from "@/lib/banking/types";
 import { useAuth } from "@/components/auth/auth-provider";
@@ -16,7 +16,7 @@ interface SyncStatus {
   reauthDaysRemaining: number | null;
 }
 
-type BankingProvider = "gocardless" | "truelayer" | "finapi" | null;
+type BankingProvider = "truelayer" | "finapi" | null;
 
 interface UseSyncStatusReturn {
   status: SyncStatus | null;
@@ -86,21 +86,6 @@ export function useSyncStatus(sourceId: string | null): UseSyncStatusReturn {
             reauthExpiresAt: expiresAt,
             reauthDaysRemaining: daysRemaining,
           });
-        } else if (sourceProvider === "gocardless") {
-          const config = source.apiConfig as GoCardlessConnectorConfig;
-          const expiresAt = config.agreementExpiresAt?.toDate() || null;
-          const now = new Date();
-          const daysRemaining = expiresAt
-            ? Math.max(0, Math.floor((expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
-            : null;
-
-          setStatus({
-            lastSyncAt: config.lastSyncAt?.toDate() || null,
-            lastSyncError: config.lastSyncError || null,
-            needsReauth: expiresAt ? expiresAt < now : false,
-            reauthExpiresAt: expiresAt,
-            reauthDaysRemaining: daysRemaining,
-          });
         } else if (sourceProvider === "truelayer") {
           const config = source.apiConfig as unknown as TrueLayerApiConfig;
 
@@ -140,9 +125,8 @@ export function useSyncStatus(sourceId: string | null): UseSyncStatusReturn {
         case "truelayer":
           endpoint = "/api/truelayer/sync";
           break;
-        case "gocardless":
         default:
-          endpoint = "/api/gocardless/sync";
+          endpoint = "/api/banking/sync";
           break;
       }
 

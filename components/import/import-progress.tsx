@@ -2,8 +2,8 @@
 
 import React from "react";
 import { Progress } from "@/components/ui/progress";
-import { CheckCircle2, XCircle, AlertCircle, Loader2, Lock } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { CheckCircle2, XCircle, AlertCircle, Loader2, Lock, Wallet } from "lucide-react";
+import { cn, formatCurrency } from "@/lib/utils";
 import Link from "next/link";
 
 interface ImportProgressProps {
@@ -15,14 +15,22 @@ interface ImportProgressProps {
     errors: number;
     errorDetails: { row: number; message: string; rowData: Record<string, string> }[];
     overLimitCount?: number;
+    balanceDetected?: {
+      openingBalance: number;
+      openingBalanceDate: string;
+      latestBalance: number;
+      latestBalanceDate: string;
+    };
   } | null;
   isComplete: boolean;
+  currency?: string;
 }
 
 export function ImportProgress({
   progress,
   results,
   isComplete,
+  currency = "EUR",
 }: ImportProgressProps) {
   return (
     <div className="space-y-6">
@@ -78,6 +86,22 @@ export function ImportProgress({
               <Link href="/settings/billing" className="underline underline-offset-2 font-medium hover:text-amber-700 dark:hover:text-amber-300">
                 Upgrade to unlock &rarr;
               </Link>
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Balance detected notice */}
+      {isComplete && results?.balanceDetected && (
+        <div className="flex items-start gap-3 p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
+          <Wallet className="h-5 w-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-blue-800 dark:text-blue-200">
+              Opening balance detected from CSV
+            </p>
+            <p className="text-xs text-blue-600 dark:text-blue-400 mt-0.5">
+              {formatCurrency(results.balanceDetected.openingBalance, currency)} as of{" "}
+              {new Date(results.balanceDetected.openingBalanceDate).toLocaleDateString("de-DE")}
             </p>
           </div>
         </div>

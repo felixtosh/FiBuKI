@@ -7,7 +7,7 @@
 /**
  * Supported integration types that automations can depend on
  */
-export type IntegrationId = "gmail" | "outlook" | "gocardless" | "browser" | null;
+export type IntegrationId = "gmail" | "outlook" | "browser" | null;
 
 /**
  * Pipeline types for different automation flows
