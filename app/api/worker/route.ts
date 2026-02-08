@@ -15,6 +15,7 @@ import { runWorkerGraph } from "@/lib/agent/worker-graph";
 import { getWorkerConfig } from "@/lib/agent/worker-configs";
 import { WorkerType, WorkerRunInput, WorkerMessage, WorkerRun } from "@/types/worker";
 import { ToolCallSummary } from "@/types/notification";
+import { TOOL_LABELS, SKIP_TOOLS, parseToolResult, cleanToolSummary } from "@/lib/tool-summary";
 import { ModelProvider } from "@/lib/agent/model";
 
 const db = getAdminDb();
@@ -180,28 +181,6 @@ function convertToWorkerMessages(
 }
 
 /**
- * Tool name to human-readable label mapping
- */
-const TOOL_LABELS: Record<string, string> = {
-  searchLocalFiles: "Local files",
-  searchGmailAttachments: "Gmail attachments",
-  searchGmailMessages: "Gmail messages",
-  connectFileToTransaction: "Connect file",
-  downloadGmailAttachment: "Download attachment",
-  assignPartnerToTransaction: "Assign partner",
-  searchReceiptForTransaction: "Receipt search",
-};
-
-/** Tools to skip in summary (read-only / setup tools) */
-const SKIP_TOOLS = new Set([
-  "getTransaction",
-  "listFiles",
-  "listTransactions",
-  "getPartner",
-  "listPartners",
-]);
-
-/**
  * Build a structured tool summary from worker transcript
  */
 function buildToolSummary(transcript: WorkerMessage[]): ToolCallSummary[] {
@@ -215,69 +194,8 @@ function buildToolSummary(transcript: WorkerMessage[]): ToolCallSummary[] {
       if (!tc || SKIP_TOOLS.has(tc.name)) continue;
 
       const label = TOOL_LABELS[tc.name] || tc.name;
-      let outcome = "";
-      let status: ToolCallSummary["status"] = "no_results";
-      let resultCount: number | undefined;
-      let confidence: number | undefined;
-
-      // Parse result to extract counts and status
-      const result = tc.result;
-      if (result && typeof result === "object" && !Array.isArray(result)) {
-        const r = result as Record<string, unknown>;
-
-        // Check for error
-        if (r.error) {
-          status = "error";
-          outcome = String(r.error);
-        } else if (r.success === true || r.connected === true) {
-          status = "success";
-          outcome = r.fileName ? String(r.fileName) : "Done";
-        } else if (r.results && Array.isArray(r.results)) {
-          resultCount = r.results.length;
-          if (resultCount > 0) {
-            status = "success";
-            outcome = `${resultCount} result${resultCount !== 1 ? "s" : ""}`;
-          } else {
-            outcome = "0 results";
-          }
-        } else if (r.files && Array.isArray(r.files)) {
-          resultCount = r.files.length;
-          if (resultCount > 0) {
-            status = "success";
-            outcome = `${resultCount} result${resultCount !== 1 ? "s" : ""}`;
-          } else {
-            outcome = "0 results";
-          }
-        } else if (r.totalResults !== undefined) {
-          resultCount = Number(r.totalResults);
-          if (resultCount > 0) {
-            status = "success";
-            outcome = `${resultCount} result${resultCount !== 1 ? "s" : ""}`;
-          } else {
-            outcome = "0 results";
-          }
-        } else if (r.partnerName) {
-          status = "success";
-          outcome = String(r.partnerName);
-        } else {
-          outcome = "Done";
-        }
-
-        // Extract confidence if present
-        if (typeof r.confidence === "number") {
-          confidence = r.confidence;
-        }
-      } else if (typeof result === "string") {
-        if (result.toLowerCase().includes("error") || result.toLowerCase().includes("failed")) {
-          status = "error";
-          outcome = result.slice(0, 80);
-        } else {
-          status = "success";
-          outcome = result.slice(0, 80);
-        }
-      }
-
-      summaries.push({ label, outcome, status, resultCount, confidence });
+      const parsed = parseToolResult(tc.result);
+      summaries.push(cleanToolSummary(label, parsed));
     }
   }
 

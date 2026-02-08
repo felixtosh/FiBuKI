@@ -7,7 +7,8 @@ import { useChat as useVercelChat } from "@ai-sdk/react";
 import { doc, setDoc, updateDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
 import { ChatContextValue, ChatTab, SidebarMode, UIControlActions, ToolCall, ChatSession, ModelProvider, ChatMessage } from "@/types/chat";
-import { AutoActionNotification } from "@/types/notification";
+import { AutoActionNotification, ToolCallSummary } from "@/types/notification";
+import { TOOL_LABELS, SKIP_TOOLS, parseToolResult, cleanToolSummary, isActionTool } from "@/lib/tool-summary";
 import { requiresConfirmation, getConfirmationDetails } from "@/lib/chat/confirmation-config";
 import { useNotifications } from "@/hooks/use-notifications";
 import { useChatPersistence } from "@/hooks/use-chat-persistence";
@@ -300,19 +301,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
       // Extract tool calls from streaming message parts
       const assistantMessages = (messages as any[]).filter((m: any) => m.role === "assistant");
 
-      // Tool label mapping (matches worker route)
-      const toolLabels: Record<string, string> = {
-        searchLocalFiles: "Local files",
-        searchGmailAttachments: "Gmail attachments",
-        searchGmailMessages: "Gmail messages",
-        connectFileToTransaction: "Connect file",
-        downloadGmailAttachment: "Download attachment",
-        assignPartnerToTransaction: "Assign partner",
-      };
-      const skipTools = new Set(["getTransaction", "listFiles", "listTransactions", "getPartner", "listPartners"]);
-
-      type ToolSummary = { label: string; outcome: string; status: "success" | "no_results" | "error"; resultCount?: number };
-      const toolSummaries: ToolSummary[] = [];
+      const toolSummaries: ToolCallSummary[] = [];
       let actionsPerformed = 0;
 
       for (const msg of assistantMessages) {
@@ -334,44 +323,16 @@ export function ChatProvider({ children }: ChatProviderProps) {
             }
           }
 
-          if (!toolName || skipTools.has(toolName)) continue;
+          if (!toolName || SKIP_TOOLS.has(toolName)) continue;
 
-          const label = toolLabels[toolName] || toolName;
-          let outcome = "";
-          let status: ToolSummary["status"] = "no_results";
-          let resultCount: number | undefined;
+          const label = TOOL_LABELS[toolName] || toolName;
+          const parsed = parseToolResult(toolResult);
+          toolSummaries.push(cleanToolSummary(label, parsed));
 
-          if (toolResult && typeof toolResult === "object" && !Array.isArray(toolResult)) {
-            const r = toolResult as Record<string, unknown>;
-            if (r.error) {
-              status = "error";
-              outcome = String(r.error).slice(0, 80);
-            } else if (r.success === true || r.connected === true) {
-              status = "success";
-              outcome = r.fileName ? String(r.fileName) : "Done";
-              actionsPerformed++;
-            } else if (r.results && Array.isArray(r.results)) {
-              resultCount = r.results.length;
-              status = resultCount > 0 ? "success" : "no_results";
-              outcome = `${resultCount} result${resultCount !== 1 ? "s" : ""}`;
-            } else if (r.files && Array.isArray(r.files)) {
-              resultCount = r.files.length;
-              status = resultCount > 0 ? "success" : "no_results";
-              outcome = `${resultCount} result${resultCount !== 1 ? "s" : ""}`;
-            } else if (r.totalResults !== undefined) {
-              resultCount = Number(r.totalResults);
-              status = resultCount > 0 ? "success" : "no_results";
-              outcome = `${resultCount} result${resultCount !== 1 ? "s" : ""}`;
-            } else if (r.partnerName) {
-              status = "success";
-              outcome = String(r.partnerName);
-              actionsPerformed++;
-            } else {
-              outcome = "Done";
-            }
+          // Count actions performed
+          if (parsed.status === "success" && isActionTool(toolName)) {
+            actionsPerformed++;
           }
-
-          toolSummaries.push({ label, outcome, status, resultCount });
         }
       }
 
