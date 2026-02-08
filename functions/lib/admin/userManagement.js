@@ -12,6 +12,7 @@ const https_1 = require("firebase-functions/v2/https");
 const auth_1 = require("firebase-admin/auth");
 const firestore_1 = require("firebase-admin/firestore");
 const config_1 = require("../billing/config");
+const clearQuotaExceeded_1 = require("../billing/clearQuotaExceeded");
 const SUPER_ADMIN_EMAIL = "felix@i7v6.com";
 const CORS_ORIGINS = [
     "https://fibuki.com",
@@ -96,6 +97,8 @@ exports.setUserOverride = (0, https_1.onCall)({ region: "europe-west1", cors: CO
                 adminOverrideSetAt: now,
             };
         await subRef.set(data, { merge: true });
+        // Clear any quotaExceeded flags on existing transactions
+        (0, clearQuotaExceeded_1.clearQuotaExceeded)(targetUid).catch((err) => console.error("[UserMgmt] Failed to clear quotaExceeded:", err));
         console.log(`[UserMgmt] Set free_plan override for ${targetUid} by ${callerEmail}`);
         return { success: true, override: "free_plan" };
     }
@@ -122,6 +125,8 @@ exports.setUserOverride = (0, https_1.onCall)({ region: "europe-west1", cors: CO
                 adminOverrideSetAt: now,
             };
         await subRef.set(data, { merge: true });
+        // Clear any quotaExceeded flags on existing transactions
+        (0, clearQuotaExceeded_1.clearQuotaExceeded)(targetUid).catch((err) => console.error("[UserMgmt] Failed to clear quotaExceeded:", err));
         console.log(`[UserMgmt] Set plan_tester override (${targetPlan}) for ${targetUid} by ${callerEmail}`);
         return { success: true, override: "plan_tester", plan: targetPlan };
     }
@@ -171,6 +176,8 @@ exports.switchTesterPlan = (0, https_1.onCall)({ region: "europe-west1", cors: C
         aiWarning100Sent: false,
         updatedAt: firestore_1.FieldValue.serverTimestamp(),
     });
+    // Clear quotaExceeded flags so previously greyed-out transactions become active
+    (0, clearQuotaExceeded_1.clearQuotaExceeded)(userId).catch((err) => console.error("[UserMgmt] Failed to clear quotaExceeded:", err));
     console.log(`[UserMgmt] Plan tester ${userId} switched to ${plan}`);
     return { success: true, plan };
 });

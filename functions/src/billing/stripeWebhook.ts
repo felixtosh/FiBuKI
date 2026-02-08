@@ -16,6 +16,7 @@ import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import Stripe from "stripe";
 import { PLANS } from "./config";
 import type { PlanId, BillingPeriod } from "./config";
+import { clearQuotaExceeded } from "./clearQuotaExceeded";
 
 const stripeSecretKey = defineSecret("STRIPE_SECRET_KEY");
 const stripeWebhookSecret = defineSecret("STRIPE_WEBHOOK_SECRET");
@@ -226,6 +227,11 @@ async function handleCheckoutCompleted(
       updatedAt: FieldValue.serverTimestamp(),
     },
     { merge: true }
+  );
+
+  // Clear quotaExceeded flags — user upgraded, previously limited transactions should be active
+  clearQuotaExceeded(userId).catch((err) =>
+    console.error("[StripeWebhook] Failed to clear quotaExceeded:", err)
   );
 
   console.log(`[StripeWebhook] Checkout completed: user=${userId} plan=${plan}`);

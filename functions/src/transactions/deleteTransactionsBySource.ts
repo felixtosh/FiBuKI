@@ -5,6 +5,7 @@
  * Individual transaction deletion is NOT allowed to maintain accounting integrity.
  */
 
+import { FieldValue } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 
 interface DeleteTransactionsBySourceRequest {
@@ -91,7 +92,24 @@ export const deleteTransactionsBySourceCallable = createCallable<
       await batch.commit();
     }
 
-    console.log(`[deleteTransactionsBySource] Deleted ${deleted} transactions`, {
+    // Decrement the transaction count (only non-quotaExceeded ones were counted)
+    const withinQuotaCount = snapshot.docs.filter(
+      (d) => !d.data().quotaExceeded
+    ).length;
+    if (withinQuotaCount > 0) {
+      const subRef = ctx.db.collection("subscriptions").doc(ctx.userId);
+      const subDoc = await subRef.get();
+      if (subDoc.exists) {
+        const current = (subDoc.data()!.transactionCountCurrentMonth as number) || 0;
+        const newCount = Math.max(0, current - withinQuotaCount);
+        await subRef.update({
+          transactionCountCurrentMonth: newCount,
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      }
+    }
+
+    console.log(`[deleteTransactionsBySource] Deleted ${deleted} transactions (${withinQuotaCount} counted toward quota)`, {
       userId: ctx.userId,
       sourceId,
     });

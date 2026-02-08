@@ -7,6 +7,7 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.deleteTransactionsBySourceCallable = void 0;
+const firestore_1 = require("firebase-admin/firestore");
 const createCallable_1 = require("../utils/createCallable");
 const BATCH_SIZE = 500; // Firestore batch limit
 exports.deleteTransactionsBySourceCallable = (0, createCallable_1.createCallable)({
@@ -63,7 +64,21 @@ exports.deleteTransactionsBySourceCallable = (0, createCallable_1.createCallable
         }
         await batch.commit();
     }
-    console.log(`[deleteTransactionsBySource] Deleted ${deleted} transactions`, {
+    // Decrement the transaction count (only non-quotaExceeded ones were counted)
+    const withinQuotaCount = snapshot.docs.filter((d) => !d.data().quotaExceeded).length;
+    if (withinQuotaCount > 0) {
+        const subRef = ctx.db.collection("subscriptions").doc(ctx.userId);
+        const subDoc = await subRef.get();
+        if (subDoc.exists) {
+            const current = subDoc.data().transactionCountCurrentMonth || 0;
+            const newCount = Math.max(0, current - withinQuotaCount);
+            await subRef.update({
+                transactionCountCurrentMonth: newCount,
+                updatedAt: firestore_1.FieldValue.serverTimestamp(),
+            });
+        }
+    }
+    console.log(`[deleteTransactionsBySource] Deleted ${deleted} transactions (${withinQuotaCount} counted toward quota)`, {
         userId: ctx.userId,
         sourceId,
     });

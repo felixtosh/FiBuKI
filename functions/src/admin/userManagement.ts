@@ -11,6 +11,7 @@ import { getAuth } from "firebase-admin/auth";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { PLANS, createDefaultSubscriptionData } from "../billing/config";
 import type { PlanId, AdminOverride } from "../billing/config";
+import { clearQuotaExceeded } from "../billing/clearQuotaExceeded";
 
 const SUPER_ADMIN_EMAIL = "felix@i7v6.com";
 
@@ -126,6 +127,10 @@ export const setUserOverride = onCall(
           };
 
       await subRef.set(data, { merge: true });
+      // Clear any quotaExceeded flags on existing transactions
+      clearQuotaExceeded(targetUid).catch((err) =>
+        console.error("[UserMgmt] Failed to clear quotaExceeded:", err)
+      );
       console.log(`[UserMgmt] Set free_plan override for ${targetUid} by ${callerEmail}`);
       return { success: true, override: "free_plan" };
     }
@@ -155,6 +160,10 @@ export const setUserOverride = onCall(
           };
 
       await subRef.set(data, { merge: true });
+      // Clear any quotaExceeded flags on existing transactions
+      clearQuotaExceeded(targetUid).catch((err) =>
+        console.error("[UserMgmt] Failed to clear quotaExceeded:", err)
+      );
       console.log(`[UserMgmt] Set plan_tester override (${targetPlan}) for ${targetUid} by ${callerEmail}`);
       return { success: true, override: "plan_tester", plan: targetPlan };
     }
@@ -225,6 +234,11 @@ export const switchTesterPlan = onCall(
       aiWarning100Sent: false,
       updatedAt: FieldValue.serverTimestamp(),
     });
+
+    // Clear quotaExceeded flags so previously greyed-out transactions become active
+    clearQuotaExceeded(userId).catch((err) =>
+      console.error("[UserMgmt] Failed to clear quotaExceeded:", err)
+    );
 
     console.log(`[UserMgmt] Plan tester ${userId} switched to ${plan}`);
     return { success: true, plan };

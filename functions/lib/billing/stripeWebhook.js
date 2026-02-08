@@ -20,6 +20,7 @@ const params_1 = require("firebase-functions/params");
 const firestore_1 = require("firebase-admin/firestore");
 const stripe_1 = __importDefault(require("stripe"));
 const config_1 = require("./config");
+const clearQuotaExceeded_1 = require("./clearQuotaExceeded");
 const stripeSecretKey = (0, params_1.defineSecret)("STRIPE_SECRET_KEY");
 const stripeWebhookSecret = (0, params_1.defineSecret)("STRIPE_WEBHOOK_SECRET");
 /**
@@ -184,6 +185,8 @@ async function handleCheckoutCompleted(db, session) {
         transactionCountMonth: yearMonth,
         updatedAt: firestore_1.FieldValue.serverTimestamp(),
     }, { merge: true });
+    // Clear quotaExceeded flags — user upgraded, previously limited transactions should be active
+    (0, clearQuotaExceeded_1.clearQuotaExceeded)(userId).catch((err) => console.error("[StripeWebhook] Failed to clear quotaExceeded:", err));
     console.log(`[StripeWebhook] Checkout completed: user=${userId} plan=${plan}`);
 }
 async function handleSubscriptionUpdated(db, subscription) {
