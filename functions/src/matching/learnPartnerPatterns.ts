@@ -1340,6 +1340,12 @@ export async function learnPatternsForPartnersBatch(
       console.log(`Learned ${learnedPatterns.length} patterns for ${partnerData.name}:`,
         learnedPatterns.map((p) => p.pattern));
 
+      // Cascade-unassign auto-matched transactions that no longer match updated patterns
+      const unassignedCount = await cascadeUnassignTransactions(userId, partnerId, learnedPatterns);
+      if (unassignedCount > 0) {
+        console.log(`[batch] Cascade-unassigned ${unassignedCount} transactions that no longer match updated patterns for ${partnerData.name}`);
+      }
+
       // Apply patterns to unassigned transactions for this partner
       if (learnedPatterns.length > 0) {
         const manualRemovalIds = new Set(manualRemovals.map((r) => r.transactionId));

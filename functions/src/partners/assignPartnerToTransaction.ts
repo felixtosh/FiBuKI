@@ -143,6 +143,11 @@ export const assignPartnerToTransactionCallable = createCallable<
       });
     }
 
+    // Capture previous partner info before overwriting (used for relearning + receipt search)
+    const previousPartnerId = txData.partnerId;
+    const previousPartnerType = txData.partnerType;
+    const partnerChanged = previousPartnerId !== effectivePartnerId;
+
     // Update transaction with partner assignment
     await transactionRef.update({
       partnerId: effectivePartnerId,
@@ -188,12 +193,28 @@ export const assignPartnerToTransactionCallable = createCallable<
       }
     }
 
+    // Trigger pattern relearning for the PREVIOUS partner when overwriting
+    // The old partner's patterns may now be based on fewer/no manual assignments,
+    // so cascade-unassign will clean up stale auto-matches
+    if (previousPartnerId && previousPartnerType === "user" && partnerChanged) {
+      try {
+        const { learnPatternsForPartnersBatch } = await import("../matching/learnPartnerPatterns");
+        learnPatternsForPartnersBatch(ctx.userId, [previousPartnerId])
+          .then(() => {
+            console.log(`[assignPartnerToTransaction] Previous partner ${previousPartnerId} pattern relearning completed`);
+          })
+          .catch((err) => {
+            console.error(`[assignPartnerToTransaction] Previous partner pattern relearning failed:`, err);
+          });
+      } catch (err) {
+        console.error(`[assignPartnerToTransaction] Failed to trigger previous partner relearning:`, err);
+      }
+    }
+
     // Trigger receipt search if transaction has no files attached AND no no-receipt category
     // This runs in background and creates a worker request for the frontend to process
     const hasFiles = txData.fileIds && txData.fileIds.length > 0;
     const hasNoReceiptCategory = !!txData.noReceiptCategoryId;
-    const previousPartnerId = txData.partnerId;
-    const partnerChanged = previousPartnerId !== effectivePartnerId;
 
     // Skip receipt search if transaction is already complete (has file or no-receipt category)
     if (!hasFiles && !hasNoReceiptCategory && (partnerChanged || !previousPartnerId)) {
