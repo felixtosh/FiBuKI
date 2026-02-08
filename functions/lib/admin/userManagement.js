@@ -100,8 +100,8 @@ exports.setUserOverride = (0, https_1.onCall)({ region: "europe-west1", cors: CO
         return { success: true, override: "free_plan" };
     }
     if (override === "plan_tester") {
-        const targetPlan = plan || "starter";
-        const planConfig = config_1.PLANS[targetPlan] || config_1.PLANS.starter;
+        const targetPlan = plan || "free";
+        const planConfig = config_1.PLANS[targetPlan] || config_1.PLANS.free;
         const data = subDoc.exists
             ? {
                 plan: targetPlan,
@@ -159,19 +159,16 @@ exports.switchTesterPlan = (0, https_1.onCall)({ region: "europe-west1", cors: C
         throw new https_1.HttpsError("permission-denied", "Only plan testers can switch plans");
     }
     const planConfig = config_1.PLANS[plan];
-    const now = new Date();
-    const yearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
     await subRef.update({
         plan,
         aiFairUseLimitEur: planConfig.aiFairUseLimitEur,
-        // Reset usage counters for clean testing
+        // Reset AI counters only — preserve transaction count so existing
+        // transactions aren't retroactively affected on downgrades
         aiUsageCurrentPeriodEur: 0,
         aiOverageCurrentPeriodEur: 0,
         aiPaused: false,
         aiWarning90Sent: false,
         aiWarning100Sent: false,
-        transactionCountCurrentMonth: 0,
-        transactionCountMonth: yearMonth,
         updatedAt: firestore_1.FieldValue.serverTimestamp(),
     });
     console.log(`[UserMgmt] Plan tester ${userId} switched to ${plan}`);

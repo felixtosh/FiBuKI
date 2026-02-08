@@ -42,13 +42,6 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { ProtectedRoute, useAuth } from "@/components/auth";
 import { httpsCallable } from "firebase/functions";
 import { functions, db } from "@/lib/firebase/config";
@@ -62,6 +55,7 @@ import { addAllowedEmail, removeAllowedEmail } from "@/lib/operations";
 import { AllowedEmail } from "@/types/auth";
 import { formatDistanceToNow } from "date-fns";
 import type { PlanId } from "@/types/billing";
+
 
 interface Admin {
   uid: string;
@@ -103,7 +97,6 @@ export default function AdminUsersPage() {
   const [removing, setRemoving] = useState<string | null>(null);
   const [togglingAdmin, setTogglingAdmin] = useState<string | null>(null);
   const [settingOverride, setSettingOverride] = useState<string | null>(null);
-  const [testerPlanSelect, setTesterPlanSelect] = useState<{ uid: string; plan: PlanId } | null>(null);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
@@ -236,7 +229,6 @@ export default function AdminUsersPage() {
       setError(err instanceof Error ? err.message : "Failed to set override");
     } finally {
       setSettingOverride(null);
-      setTesterPlanSelect(null);
     }
   };
 
@@ -571,10 +563,16 @@ export default function AdminUsersPage() {
                               size="sm"
                               className="text-blue-700 hover:text-blue-800 h-8 px-2"
                               disabled={settingOverride === user.uid}
-                              onClick={() => setTesterPlanSelect({ uid: user.uid, plan: "starter" })}
+                              onClick={() => handleSetOverride(user.uid, "plan_tester")}
                             >
-                              <TestTube className="h-3 w-3 mr-1" />
-                              Tester
+                              {settingOverride === user.uid ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <>
+                                  <TestTube className="h-3 w-3 mr-1" />
+                                  Tester
+                                </>
+                              )}
                             </Button>
                           </div>
                         )}
@@ -624,53 +622,6 @@ export default function AdminUsersPage() {
               )}
             </CardContent>
           </Card>
-
-          {/* Plan Tester Select Dialog */}
-          {testerPlanSelect && (
-            <AlertDialog open onOpenChange={() => setTesterPlanSelect(null)}>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Set Plan Tester</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    Choose which plan the user should start with. They can switch
-                    plans freely on the billing page.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <div className="py-4">
-                  <Select
-                    value={testerPlanSelect.plan}
-                    onValueChange={(v) =>
-                      setTesterPlanSelect({ ...testerPlanSelect, plan: v as PlanId })
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="free">Free</SelectItem>
-                      <SelectItem value="starter">Starter</SelectItem>
-                      <SelectItem value="business">Business</SelectItem>
-                      <SelectItem value="pro">Pro</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction
-                    onClick={() =>
-                      handleSetOverride(
-                        testerPlanSelect.uid,
-                        "plan_tester",
-                        testerPlanSelect.plan
-                      )
-                    }
-                  >
-                    Set as Plan Tester
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          )}
 
           {/* Info */}
           <div className="text-sm text-muted-foreground">

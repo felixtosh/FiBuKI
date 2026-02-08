@@ -131,8 +131,8 @@ export const setUserOverride = onCall(
     }
 
     if (override === "plan_tester") {
-      const targetPlan = plan || "starter";
-      const planConfig = PLANS[targetPlan] || PLANS.starter;
+      const targetPlan = plan || "free";
+      const planConfig = PLANS[targetPlan] || PLANS.free;
 
       const data = subDoc.exists
         ? {
@@ -212,20 +212,17 @@ export const switchTesterPlan = onCall(
     }
 
     const planConfig = PLANS[plan];
-    const now = new Date();
-    const yearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 
     await subRef.update({
       plan,
       aiFairUseLimitEur: planConfig.aiFairUseLimitEur,
-      // Reset usage counters for clean testing
+      // Reset AI counters only — preserve transaction count so existing
+      // transactions aren't retroactively affected on downgrades
       aiUsageCurrentPeriodEur: 0,
       aiOverageCurrentPeriodEur: 0,
       aiPaused: false,
       aiWarning90Sent: false,
       aiWarning100Sent: false,
-      transactionCountCurrentMonth: 0,
-      transactionCountMonth: yearMonth,
       updatedAt: FieldValue.serverTimestamp(),
     });
 
