@@ -69,6 +69,15 @@
       ]
     },
     {
+      "collectionGroup": "files",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "transactionIds", "order": "ASCENDING" },
+        { "fieldPath": "isNotInvoice", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "emailIntegrations",
       "queryScope": "COLLECTION",
       "fields": [

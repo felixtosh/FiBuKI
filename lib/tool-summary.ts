@@ -12,6 +12,7 @@ export const TOOL_LABELS: Record<string, string> = {
   downloadGmailAttachment: "Download attachment",
   assignPartnerToTransaction: "Assign partner",
   searchReceiptForTransaction: "Receipt search",
+  searchGmailEmails: "Gmail emails",
 };
 
 /** Tools to skip in summary (read-only / setup tools) */
