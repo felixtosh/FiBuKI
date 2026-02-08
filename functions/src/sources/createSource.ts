@@ -2,12 +2,13 @@
  * Create a new source (bank account)
  */
 
-import { Timestamp } from "firebase-admin/firestore";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
+import { buildSourcePartnerData } from "./sourcePartnerUtils";
 
 interface SourceFormData {
   name: string;
-  accountKind: "checking" | "savings" | "creditCard" | "other";
+  accountKind: "bank_account" | "credit_card";
   iban?: string | null;
   linkedSourceId?: string | null;
   cardLast4?: string | null;
@@ -66,8 +67,75 @@ export const createSourceCallable = createCallable<
     };
 
     const docRef = await ctx.db.collection("sources").add(newSource);
+    const sourceId = docRef.id;
 
-    console.log(`[createSource] Created source ${docRef.id}`, {
+    // Auto-create source partner for pattern learning + reconciliation
+    try {
+      const partnerData = buildSourcePartnerData({
+        name: newSource.name,
+        accountKind: newSource.accountKind,
+        iban: newSource.iban,
+        cardLast4: newSource.cardLast4,
+        cardBrand: newSource.cardBrand,
+      });
+
+      const newPartner: Record<string, unknown> = {
+        userId: ctx.userId,
+        name: partnerData.name,
+        aliases: partnerData.aliases,
+        address: null,
+        country: null,
+        vatId: null,
+        ibans: partnerData.ibans,
+        website: null,
+        notes: null,
+        defaultCategoryId: null,
+        identitySourceField: `source:${sourceId}`,
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+        createdBy: "source_sync",
+      };
+
+      // If credit card with a linked bank, add categoryMatchRule for internal-transfers
+      if (newSource.accountKind === "credit_card" && newSource.linkedSourceId) {
+        // Find the internal-transfers category for this user
+        const categoriesSnap = await ctx.db
+          .collection("noReceiptCategories")
+          .where("userId", "==", ctx.userId)
+          .where("templateId", "==", "internal-transfers")
+          .where("isActive", "==", true)
+          .limit(1)
+          .get();
+
+        if (!categoriesSnap.empty) {
+          const categoryDoc = categoriesSnap.docs[0];
+          newPartner.categoryMatchRules = [{
+            categoryId: categoryDoc.id,
+            templateId: "internal-transfers",
+            confidence: 95,
+            source: "source_sync",
+          }];
+        }
+      }
+
+      const partnerRef = await ctx.db.collection("partners").add(newPartner);
+
+      // Write sourcePartnerId back to the source
+      await docRef.update({
+        sourcePartnerId: partnerRef.id,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+
+      console.log(`[createSource] Created source partner ${partnerRef.id} for source ${sourceId}`, {
+        aliases: partnerData.aliases.length,
+      });
+    } catch (err) {
+      console.error(`[createSource] Failed to create source partner:`, err);
+      // Non-fatal — source was still created successfully
+    }
+
+    console.log(`[createSource] Created source ${sourceId}`, {
       userId: ctx.userId,
       name: data.name,
       type: data.type,
@@ -75,7 +143,7 @@ export const createSourceCallable = createCallable<
 
     return {
       success: true,
-      sourceId: docRef.id,
+      sourceId,
     };
   }
 );
