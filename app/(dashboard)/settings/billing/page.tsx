@@ -36,8 +36,8 @@ export default function BillingPage() {
       <BillingUsageSection />
       <BillingCreditsSection />
       <BillingOverageSettings />
-      <InvestmentsAddonCard subscription={subscription} />
       <BillingPlanComparison />
+      <InvestmentsAddonCard subscription={subscription} />
     </div>
   );
 }
