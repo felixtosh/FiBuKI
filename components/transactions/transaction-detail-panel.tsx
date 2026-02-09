@@ -169,46 +169,46 @@ export function TransactionDetailPanel({
         // Calculate hash for duplicate detection
         const contentHash = await calculateFileHash(file);
 
-        // Check for duplicate
+        // Check for duplicate — if exists, connect existing file instead of re-uploading
         const existingFile = await checkFileDuplicate(ctx, contentHash);
         if (existingFile) {
-          throw new Error(`Duplicate: "${existingFile.fileName}" already exists`);
+          await connectFileToTransaction(ctx, existingFile.id, transaction.id, "manual");
+        } else {
+          // Create storage path
+          const timestamp = Date.now();
+          const sanitizedName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
+          const storagePath = `files/${userId}/${timestamp}_${sanitizedName}`;
+
+          // Upload to Firebase Storage
+          const storageRef = ref(storage, storagePath);
+          const uploadTask = uploadBytesResumable(storageRef, file);
+
+          // Wait for upload to complete
+          await new Promise<void>((resolve, reject) => {
+            uploadTask.on(
+              "state_changed",
+              null,
+              (err) => reject(err),
+              () => resolve()
+            );
+          });
+
+          // Get download URL
+          const downloadUrl = await getDownloadURL(storageRef);
+
+          // Create file record in Firestore
+          const fileId = await createFile(ctx, {
+            fileName: file.name,
+            fileType: file.type,
+            fileSize: file.size,
+            storagePath,
+            downloadUrl,
+            contentHash,
+          });
+
+          // Connect file to transaction
+          await connectFileToTransaction(ctx, fileId, transaction.id, "manual");
         }
-
-        // Create storage path
-        const timestamp = Date.now();
-        const sanitizedName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
-        const storagePath = `files/${userId}/${timestamp}_${sanitizedName}`;
-
-        // Upload to Firebase Storage
-        const storageRef = ref(storage, storagePath);
-        const uploadTask = uploadBytesResumable(storageRef, file);
-
-        // Wait for upload to complete
-        await new Promise<void>((resolve, reject) => {
-          uploadTask.on(
-            "state_changed",
-            null,
-            (err) => reject(err),
-            () => resolve()
-          );
-        });
-
-        // Get download URL
-        const downloadUrl = await getDownloadURL(storageRef);
-
-        // Create file record in Firestore
-        const fileId = await createFile(ctx, {
-          fileName: file.name,
-          fileType: file.type,
-          fileSize: file.size,
-          storagePath,
-          downloadUrl,
-          contentHash,
-        });
-
-        // Connect file to transaction
-        await connectFileToTransaction(ctx, fileId, transaction.id, "manual");
       } catch (err) {
         console.error("File upload failed:", err);
         setUploadError(err instanceof Error ? err.message : "Upload failed");

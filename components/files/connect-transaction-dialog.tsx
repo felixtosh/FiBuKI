@@ -171,11 +171,28 @@ export function ConnectTransactionDialog({
     return map;
   }, [serverMatches, suggestions]);
 
-  // Sort transactions: server-matched first (by confidence), then by date
-  // Server handles search filtering, so we just sort here
+  // Filter and sort transactions: when searching, only show matches
   const filteredTransactions = useMemo(() => {
-    // Sort: server-matched transactions first (by confidence), then by date
-    return [...transactions].sort((a, b) => {
+    const trimmedSearch = search.trim().toLowerCase();
+
+    // When searching, filter to only matching transactions
+    const filtered = trimmedSearch
+      ? transactions.filter((tx) => {
+          // Include if server scored it
+          if (matchMap.has(tx.id)) return true;
+          // Include if local text match on name/partner/reference
+          const name = (tx.name || "").toLowerCase();
+          const partner = (tx.partner || "").toLowerCase();
+          const reference = (tx.reference || "").toLowerCase();
+          return (
+            name.includes(trimmedSearch) ||
+            partner.includes(trimmedSearch) ||
+            reference.includes(trimmedSearch)
+          );
+        })
+      : transactions;
+
+    return filtered.sort((a, b) => {
       const aMatch = matchMap.get(a.id);
       const bMatch = matchMap.get(b.id);
 
@@ -191,7 +208,7 @@ export function ConnectTransactionDialog({
       // Neither has a server score - sort by date (newest first)
       return b.date.toMillis() - a.date.toMillis();
     });
-  }, [transactions, matchMap]);
+  }, [transactions, matchMap, search]);
 
   // Combined loading state
   const loading = transactionsLoading || matchesLoading;
