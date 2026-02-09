@@ -7,7 +7,6 @@ import {
   getDoc,
   doc,
   updateDoc,
-  addDoc,
   Timestamp,
   writeBatch,
   increment,
@@ -18,7 +17,6 @@ import { functions } from "@/lib/firebase/config";
 import {
   UserNoReceiptCategory,
   NoReceiptCategoryId,
-  CategoryLearnedPattern,
   CategoryManualRemoval,
   ReceiptLostEntry,
 } from "@/types/no-receipt-category";
@@ -240,19 +238,11 @@ export async function assignCategoryToTransaction(
     });
   }
 
-  // Learn patterns from this assignment (non-blocking)
-  if (matchedBy === "manual" || matchedBy === "suggestion") {
-    // Local pattern learning (existing)
-    learnCategoryPatternFromTransaction(ctx, categoryId, txData).catch((error) => {
-      console.error("Failed to learn category pattern:", error);
+  // Trigger partner-level category pattern learning (non-blocking)
+  if ((matchedBy === "manual" || matchedBy === "suggestion") && txData.partnerId) {
+    triggerPartnerCategoryLearning(txData.partnerId, categoryId, transactionId).catch((error) => {
+      console.error("Failed to trigger partner category learning:", error);
     });
-
-    // Partner-level category pattern learning (new)
-    if (txData.partnerId) {
-      triggerPartnerCategoryLearning(txData.partnerId, categoryId, transactionId).catch((error) => {
-        console.error("Failed to trigger partner category learning:", error);
-      });
-    }
   }
 }
 
@@ -373,9 +363,6 @@ export async function removeCategoryFromTransaction(
 
   await batch.commit();
 
-  // Build transaction text for pattern matching
-  const transactionText = [txData.partner, txData.name].filter(Boolean).join(" ");
-
   // If this was a system-recommended assignment, track as false positive
   if (wasSystemRecommended) {
     try {
@@ -408,12 +395,7 @@ export async function removeCategoryFromTransaction(
         }
       }
 
-      // Unlearn patterns from this false positive (non-blocking)
-      unlearnCategoryPatternFromTransaction(ctx, categoryId, transactionId, transactionText).catch((error) => {
-        console.error("Failed to unlearn category pattern:", error);
-      });
-
-      // Store partner-level category removal and trigger re-learning (new)
+      // Store partner-level category removal and trigger re-learning
       if (txData.partnerId) {
         storePartnerCategoryRemoval(ctx, txData.partnerId, categoryId, transactionId, txData).catch((error) => {
           console.error("Failed to store partner category removal:", error);
@@ -429,13 +411,8 @@ export async function removeCategoryFromTransaction(
     }
   }
 
-  // Also unlearn patterns for manual removals (user explicitly disconnected)
+  // For manual removals, also trigger partner re-learning if there's a partner
   if (matchedBy === "manual") {
-    unlearnCategoryPatternFromTransaction(ctx, categoryId, transactionId, transactionText).catch((error) => {
-      console.error("Failed to unlearn category pattern on manual removal:", error);
-    });
-
-    // For manual removals, also trigger partner re-learning if there's a partner
     if (txData.partnerId) {
       storePartnerCategoryRemoval(ctx, txData.partnerId, categoryId, transactionId, txData).catch((error) => {
         console.error("Failed to store partner category removal:", error);
@@ -490,164 +467,6 @@ export async function triggerCategoryMatchingForAll(): Promise<{
     `[Category Match All] Processed ${result.data.processed}, auto-matched ${result.data.autoMatched}, suggestions ${result.data.withSuggestions}`
   );
   return result.data;
-}
-
-// ============ Pattern Learning ============
-
-/**
- * Remove a transaction from learned patterns when it's removed from a category.
- * If a pattern has no remaining source transactions, remove it entirely.
- * If the removal is a false positive, also reduce confidence on matching patterns.
- */
-async function unlearnCategoryPatternFromTransaction(
-  ctx: OperationsContext,
-  categoryId: string,
-  transactionId: string,
-  transactionText: string
-): Promise<void> {
-  const category = await getUserCategory(ctx, categoryId);
-  if (!category || category.learnedPatterns.length === 0) return;
-
-  // Find patterns that reference this transaction
-  const updatedPatterns = category.learnedPatterns
-    .map((pattern) => {
-      // Remove transaction from source list
-      const newSourceIds = pattern.sourceTransactionIds.filter(
-        (id) => id !== transactionId
-      );
-
-      // If this transaction was a source, update the pattern
-      if (newSourceIds.length !== pattern.sourceTransactionIds.length) {
-        // If no more sources, mark for removal (return null)
-        if (newSourceIds.length === 0) {
-          console.log(`[Category Pattern] Removing pattern "${pattern.pattern}" - no source transactions remaining`);
-          return null;
-        }
-
-        // Reduce confidence since we lost a source
-        const newConfidence = Math.max(50, pattern.confidence - 5);
-
-        return {
-          ...pattern,
-          sourceTransactionIds: newSourceIds,
-          confidence: newConfidence,
-        };
-      }
-
-      // Check if this transaction's text matches this pattern (even if not in sources)
-      // If so, reduce confidence as a false positive signal
-      const patternRegex = new RegExp(
-        "^" + pattern.pattern.toLowerCase().replace(/\*/g, ".*") + "$"
-      );
-      if (patternRegex.test(transactionText.toLowerCase())) {
-        // This is a false positive - reduce confidence significantly
-        const newConfidence = Math.max(40, pattern.confidence - 15);
-        console.log(`[Category Pattern] Reducing confidence on "${pattern.pattern}" due to false positive (${pattern.confidence} -> ${newConfidence})`);
-
-        // If confidence drops too low, remove the pattern
-        if (newConfidence <= 40) {
-          console.log(`[Category Pattern] Removing pattern "${pattern.pattern}" - confidence too low`);
-          return null;
-        }
-
-        return {
-          ...pattern,
-          confidence: newConfidence,
-        };
-      }
-
-      return pattern;
-    })
-    .filter((p): p is CategoryLearnedPattern => p !== null);
-
-  // Update if patterns changed
-  if (updatedPatterns.length !== category.learnedPatterns.length ||
-      JSON.stringify(updatedPatterns) !== JSON.stringify(category.learnedPatterns)) {
-    await updateDoc(doc(ctx.db, CATEGORIES_COLLECTION, categoryId), {
-      learnedPatterns: updatedPatterns,
-      patternsUpdatedAt: Timestamp.now(),
-      updatedAt: Timestamp.now(),
-    });
-  }
-}
-
-/**
- * Learn a pattern from a transaction assigned to a category.
- * Creates glob patterns from transaction text for future matching.
- */
-async function learnCategoryPatternFromTransaction(
-  ctx: OperationsContext,
-  categoryId: string,
-  transaction: Transaction
-): Promise<void> {
-  // Build text to analyze
-  const textParts = [
-    transaction.partner,
-    transaction.name,
-  ].filter(Boolean);
-
-  if (textParts.length === 0) return;
-
-  const text = textParts.join(" ").toLowerCase().trim();
-  if (text.length < 3) return;
-
-  // Simple pattern extraction:
-  // - Extract significant words (length >= 3)
-  // - Create glob patterns like "*word1*word2*"
-  const words = text
-    .replace(/[^a-z0-9äöüß\s]/gi, " ")
-    .split(/\s+/)
-    .filter((w) => w.length >= 3)
-    .slice(0, 3); // Max 3 words
-
-  if (words.length === 0) return;
-
-  const pattern = "*" + words.join("*") + "*";
-
-  // Check if pattern already exists
-  const category = await getUserCategory(ctx, categoryId);
-  if (!category) return;
-
-  const existingPattern = category.learnedPatterns.find(
-    (p) => p.pattern.toLowerCase() === pattern.toLowerCase()
-  );
-
-  if (existingPattern) {
-    // Update existing pattern with new source transaction
-    if (!existingPattern.sourceTransactionIds.includes(transaction.id)) {
-      const updatedPatterns = category.learnedPatterns.map((p) =>
-        p.pattern.toLowerCase() === pattern.toLowerCase()
-          ? {
-              ...p,
-              sourceTransactionIds: [...p.sourceTransactionIds, transaction.id],
-              confidence: Math.min(100, p.confidence + 2), // Slight boost
-            }
-          : p
-      );
-
-      await updateDoc(doc(ctx.db, CATEGORIES_COLLECTION, categoryId), {
-        learnedPatterns: updatedPatterns,
-        patternsUpdatedAt: Timestamp.now(),
-        updatedAt: Timestamp.now(),
-      });
-    }
-  } else {
-    // Create new pattern
-    const newPattern: CategoryLearnedPattern = {
-      pattern,
-      confidence: 75, // Start at 75%
-      createdAt: Timestamp.now(),
-      sourceTransactionIds: [transaction.id],
-    };
-
-    await updateDoc(doc(ctx.db, CATEGORIES_COLLECTION, categoryId), {
-      learnedPatterns: arrayUnion(newPattern),
-      patternsUpdatedAt: Timestamp.now(),
-      updatedAt: Timestamp.now(),
-    });
-
-    console.log(`[Category Pattern] Learned new pattern "${pattern}" for category ${categoryId}`);
-  }
 }
 
 /**
