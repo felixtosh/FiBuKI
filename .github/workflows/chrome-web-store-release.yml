@@ -1,0 +1,122 @@
+name: Publish Chrome Extension
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish-to-cws:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Package extension
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          extension_dir="extensions/taxstudio-browser"
+          zip_path="${RUNNER_TEMP}/taxstudio-browser-extension.zip"
+
+          # Keep only extension runtime files.
+          (
+            cd "${extension_dir}"
+            zip -r "${zip_path}" . \
+              -x "*.git*" \
+              -x "node_modules/*" \
+              -x "__tests__/*" \
+              -x "*.test.js" \
+              -x "jest.config.js" \
+              -x "README.md" \
+              -x "package.json" \
+              -x "package-lock.json"
+          )
+
+          echo "zip_path=${zip_path}" >> "${GITHUB_OUTPUT}"
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          credentials_json: "${{ secrets.CWS_SERVICE_ACCOUNT_KEY }}"
+          service_account: "${{ secrets.CWS_SERVICE_ACCOUNT_EMAIL }}"
+          token_format: "access_token"
+          access_token_scopes: "https://www.googleapis.com/auth/chromewebstore"
+
+      - name: Upload and publish to Chrome Web Store
+        shell: bash
+        env:
+          ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          CWS_PUBLISHER_ID: ${{ secrets.CWS_PUBLISHER_ID }}
+          CWS_EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
+          ZIP_PATH: ${{ steps.package.outputs.zip_path }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${CWS_PUBLISHER_ID}" || -z "${CWS_EXTENSION_ID}" ]]; then
+            echo "Missing required secret(s): CWS_PUBLISHER_ID and/or CWS_EXTENSION_ID"
+            exit 1
+          fi
+
+          base_url="https://chromewebstore.googleapis.com"
+          item_name="publishers/${CWS_PUBLISHER_ID}/items/${CWS_EXTENSION_ID}"
+          upload_url="${base_url}/upload/v2/${item_name}:upload"
+          status_url="${base_url}/v2/${item_name}:fetchStatus"
+          publish_url="${base_url}/v2/${item_name}:publish"
+
+          echo "Uploading extension package..."
+          upload_response="$(curl --silent --show-error --fail-with-body \
+            -X POST \
+            -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+            -H "Content-Type: application/zip" \
+            --data-binary "@${ZIP_PATH}" \
+            "${upload_url}")"
+
+          echo "${upload_response}" | jq
+
+          upload_state="$(echo "${upload_response}" | jq -r '.uploadState // "UPLOAD_STATE_UNSPECIFIED"')"
+
+          if [[ "${upload_state}" == "IN_PROGRESS" ]]; then
+            echo "Upload is asynchronous. Polling status..."
+            for i in {1..24}; do
+              sleep 5
+              status_response="$(curl --silent --show-error --fail-with-body \
+                -X GET \
+                -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+                "${status_url}")"
+              async_state="$(echo "${status_response}" | jq -r '.lastAsyncUploadState // "IN_PROGRESS"')"
+              echo "Poll ${i}: ${async_state}"
+              if [[ "${async_state}" == "SUCCEEDED" ]]; then
+                break
+              fi
+              if [[ "${async_state}" == "FAILED" || "${async_state}" == "NOT_FOUND" ]]; then
+                echo "${status_response}" | jq
+                echo "Upload failed with async state: ${async_state}"
+                exit 1
+              fi
+              if [[ "${i}" == "24" ]]; then
+                echo "Timed out waiting for upload completion."
+                echo "${status_response}" | jq
+                exit 1
+              fi
+            done
+          elif [[ "${upload_state}" != "SUCCEEDED" ]]; then
+            echo "Upload failed with state: ${upload_state}"
+            exit 1
+          fi
+
+          echo "Submitting publish request..."
+          publish_response="$(curl --silent --show-error --fail-with-body \
+            -X POST \
+            -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{"publishType":"DEFAULT_PUBLISH"}' \
+            "${publish_url}")"
+
+          echo "${publish_response}" | jq
+
+          publish_state="$(echo "${publish_response}" | jq -r '.state // "ITEM_STATE_UNSPECIFIED"')"
+          echo "Publish state: ${publish_state}"
