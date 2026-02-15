@@ -161,8 +161,8 @@ export function ToolPreviewCard({ type, className }: ToolPreviewCardProps) {
                 className={cn(
                   "text-[10px] px-1.5 py-0.5 rounded-full",
                   f.status === "connected"
-                    ? "bg-green-100 text-green-700"
-                    : "bg-yellow-100 text-yellow-700"
+                    ? "bg-green-50 text-green-900 border border-green-300"
+                    : "bg-amber-50 text-amber-900 border border-amber-300"
                 )}
               >
                 {f.status === "connected" ? "Connected" : "Matching..."}
@@ -188,7 +188,7 @@ export function ToolPreviewCard({ type, className }: ToolPreviewCardProps) {
             <div key={i} className="flex items-center gap-2 px-2.5 py-1.5">
               <Paperclip className="h-3 w-3 text-muted-foreground shrink-0" />
               <span className="text-xs truncate flex-1">{e.filename}</span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-700">
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-50 text-green-900">
                 {e.score}%
               </span>
             </div>
@@ -207,7 +207,7 @@ export function ToolPreviewCard({ type, className }: ToolPreviewCardProps) {
             <div key={i} className="flex items-center gap-2 px-2.5 py-1.5">
               <FileText className="h-3 w-3 text-muted-foreground shrink-0" />
               <span className="text-xs truncate flex-1">{e.filename}</span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-700">
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-50 text-green-900">
                 {e.score}%
               </span>
             </div>

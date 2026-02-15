@@ -88,11 +88,11 @@ function getSuggestionTypeLabelStyle(type: SuggestionType, isActive: boolean): s
     return "bg-primary-foreground/20 text-primary-foreground";
   }
   switch (type) {
-    case "invoice_number": return "bg-green-100 text-green-700";
-    case "company_name": return "bg-blue-100 text-blue-700";
-    case "email_domain": return "bg-purple-100 text-purple-700";
-    case "vat_id": return "bg-orange-100 text-orange-700";
-    case "iban": return "bg-yellow-100 text-yellow-700";
+    case "invoice_number": return "bg-green-50 text-green-900";
+    case "company_name": return "bg-blue-50 text-blue-900";
+    case "email_domain": return "bg-purple-50 text-purple-900";
+    case "vat_id": return "bg-orange-50 text-orange-900";
+    case "iban": return "bg-amber-50 text-amber-900";
     case "pattern": return "bg-muted text-muted-foreground";
     default: return "bg-muted text-muted-foreground";
   }

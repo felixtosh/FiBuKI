@@ -47,7 +47,10 @@ const documentExtractor_1 = require("./documentExtractor");
 const ai_usage_logger_1 = require("../utils/ai-usage-logger");
 const db = (0, firestore_1.getFirestore)();
 /**
- * Fetch user data from Firestore
+ * Fetch user data from Firestore.
+ * Normalizes both the new format (personalEntity + companies[]) and
+ * deprecated flat fields (name, companyName, vatIds) into the UserData
+ * interface used by counterparty matching.
  */
 async function getUserData(userId) {
     try {
@@ -60,7 +63,60 @@ async function getUserData(userId) {
         if (!doc.exists) {
             return null;
         }
-        return doc.data();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const raw = doc.data();
+        // Collect names from all sources
+        const names = [];
+        const aliases = [];
+        const vatIds = [];
+        const ibans = [];
+        // New format: personalEntity
+        if (raw.personalEntity?.name) {
+            names.push(raw.personalEntity.name);
+            aliases.push(...(raw.personalEntity.aliases || []));
+        }
+        if (raw.personalEntity?.vatId) {
+            vatIds.push(raw.personalEntity.vatId);
+        }
+        if (raw.personalEntity?.ibans) {
+            ibans.push(...raw.personalEntity.ibans);
+        }
+        // New format: companies[]
+        for (const company of raw.companies || []) {
+            if (company.name) {
+                names.push(company.name);
+                aliases.push(...(company.aliases || []));
+            }
+            if (company.vatId) {
+                vatIds.push(company.vatId);
+            }
+            if (company.ibans) {
+                ibans.push(...company.ibans);
+            }
+        }
+        // Deprecated flat fields (backward compat)
+        if (raw.name)
+            names.push(raw.name);
+        if (raw.companyName)
+            names.push(raw.companyName);
+        aliases.push(...(raw.aliases || []));
+        vatIds.push(...(raw.vatIds || []));
+        ibans.push(...(raw.ibans || []));
+        // Deduplicate
+        const uniqueNames = [...new Set(names)].filter(Boolean);
+        const uniqueAliases = [...new Set(aliases)].filter(Boolean);
+        const uniqueVatIds = [...new Set(vatIds)].filter(Boolean);
+        const uniqueIbans = [...new Set(ibans)].filter(Boolean);
+        // Build normalized UserData with the first personal name and first company name
+        const personalName = raw.personalEntity?.name || raw.name || uniqueNames[0] || "";
+        const companyName = raw.companies?.[0]?.name || raw.companyName || (uniqueNames.length > 1 ? uniqueNames[1] : "");
+        return {
+            name: personalName,
+            companyName: companyName,
+            aliases: [...uniqueAliases, ...uniqueNames], // include all names as aliases for broad matching
+            vatIds: uniqueVatIds,
+            ibans: uniqueIbans,
+        };
     }
     catch (error) {
         console.warn("[UserData] Failed to fetch user data:", error);

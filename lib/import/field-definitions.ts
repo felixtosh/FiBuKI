@@ -109,7 +109,7 @@ export const TRANSACTION_FIELDS: FieldDefinition[] = [
       "Description",
       "Motif",
     ],
-    required: true,
+    required: false,
     type: "text",
     examples: [
       "AMAZON EU SARL",

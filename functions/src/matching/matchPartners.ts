@@ -202,6 +202,15 @@ export const matchPartners = onCall<MatchPartnersRequest>(
       (partner) => !localizedGlobalIds.has(partner.id)
     );
 
+    // Build partner name map for automationHistory entries
+    const partnerNameMap = new Map<string, string>();
+    for (const p of userPartners) {
+      partnerNameMap.set(p.id, p.name);
+    }
+    for (const p of filteredGlobalPartners) {
+      partnerNameMap.set(p.id, p.name);
+    }
+
     // Get transactions to match
     let transactionsSnapshot;
 
@@ -329,6 +338,19 @@ export const matchPartners = onCall<MatchPartnersRequest>(
           updates.partnerMatchConfidence = topMatch.confidence;
           updates.partnerMatchedBy = "auto";
           autoMatched++;
+
+          const partnerName = partnerNameMap.get(assignedPartnerId) || partnerNameMap.get(topMatch.partnerId) || null;
+          updates.automationHistory = FieldValue.arrayUnion({
+            type: "partner_assigned",
+            ranAt: Timestamp.now(),
+            status: "completed",
+            actor: "auto",
+            level: "outcome",
+            forPartnerId: assignedPartnerId,
+            partnerName,
+            confidence: topMatch.confidence,
+            summary: `Partner "${partnerName || assignedPartnerId}" auto-assigned`,
+          });
 
           // Track partner for file matching (only user partners can have files)
           if (assignedPartnerType === "user") {

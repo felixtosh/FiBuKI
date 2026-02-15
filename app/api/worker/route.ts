@@ -208,16 +208,18 @@ function buildToolSummary(transcript: WorkerMessage[]): ToolCallSummary[] {
 function buildCompactMessage(summaries: ToolCallSummary[]): string {
   if (summaries.length === 0) return "No actions performed";
 
-  // Check if any action succeeded (connect/download/assign)
-  const actionTools = summaries.filter(s =>
-    s.label === "Connect file" || s.label === "Download attachment" || s.label === "Assign partner"
-  );
+  // Action tool labels (tools that mutate data)
+  const ACTION_LABELS = new Set([
+    "Connect file", "Connect files", "Download attachment", "Convert email",
+    "Assign partner", "Create partner",
+  ]);
+
+  // Check if any action succeeded
+  const actionTools = summaries.filter(s => ACTION_LABELS.has(s.label));
   const hasSuccessAction = actionTools.some(s => s.status === "success");
 
-  // Build search results line
-  const searchTools = summaries.filter(s =>
-    s.label === "Local files" || s.label === "Gmail attachments" || s.label === "Gmail messages"
-  );
+  // Search/lookup tools (everything that's not an action)
+  const searchTools = summaries.filter(s => !ACTION_LABELS.has(s.label));
 
   const parts: string[] = [];
   for (const s of searchTools) {
@@ -249,39 +251,49 @@ function formatAmount(amount: number, currency?: string): string {
 }
 
 /**
- * Create a chat session from worker transcript
- * This allows users to view the worker's reasoning via "View in chat"
+ * Create an empty chat session for a worker run.
+ * For user-triggered workers this is called upfront so "View in chat" works immediately.
+ * For auto-triggered workers this is called after completion.
  */
-async function createChatSessionFromTranscript(
+async function createWorkerChatSession(
   userId: string,
   workerType: WorkerType,
-  transcript: WorkerMessage[],
   initialPrompt: string
 ): Promise<string> {
   const config = getWorkerConfig(workerType);
 
-  // Create session document
   const sessionRef = db.collection(`users/${userId}/chatSessions`).doc();
   await sessionRef.set({
     title: config.name,
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
-    messageCount: transcript.length + 1, // +1 for user prompt
+    messageCount: 1,
     isWorkerSession: true,
     workerType,
   });
 
   // Add user prompt as first message
-  const messagesRef = sessionRef.collection("messages");
-  await messagesRef.add({
+  await sessionRef.collection("messages").add({
     role: "user",
     content: initialPrompt,
     createdAt: FieldValue.serverTimestamp(),
   });
 
-  // Add transcript messages (assistant responses only, user prompt already added above)
+  return sessionRef.id;
+}
+
+/**
+ * Append worker transcript messages to an existing chat session.
+ */
+async function appendTranscriptToSession(
+  userId: string,
+  sessionId: string,
+  transcript: WorkerMessage[]
+): Promise<void> {
+  const sessionRef = db.collection(`users/${userId}/chatSessions`).doc(sessionId);
+  const messagesRef = sessionRef.collection("messages");
+
   for (const msg of transcript) {
-    // Filter out undefined values from parts
     const cleanParts = msg.parts?.map(part => {
       const clean: Record<string, unknown> = { type: part.type };
       if ("text" in part) clean.text = part.text;
@@ -297,7 +309,10 @@ async function createChatSessionFromTranscript(
     });
   }
 
-  return sessionRef.id;
+  await sessionRef.update({
+    messageCount: transcript.length + 1,
+    updatedAt: FieldValue.serverTimestamp(),
+  });
 }
 
 /**
@@ -306,7 +321,8 @@ async function createChatSessionFromTranscript(
  */
 async function createStartingNotification(
   userId: string,
-  workerRun: Partial<WorkerRun>
+  workerRun: Partial<WorkerRun>,
+  sessionId?: string
 ): Promise<string> {
   const config = getWorkerConfig(workerRun.workerType!);
 
@@ -315,6 +331,10 @@ async function createStartingNotification(
     workerType: workerRun.workerType,
     workerStatus: "running",
   };
+
+  if (sessionId) {
+    notificationContext.sessionId = sessionId;
+  }
 
   // Fetch file/transaction name for display during processing
   if (workerRun.triggerContext?.fileId) {
@@ -461,11 +481,14 @@ export async function POST(req: Request) {
 
     const {
       workerType,
-      initialPrompt,
+      initialPrompt: rawPrompt,
       triggerContext,
       triggeredBy = "user",
       modelProvider = "gemini",
     } = body;
+
+    // Guard: initialPrompt must be a non-empty string (new HumanMessage(undefined) crashes)
+    const initialPrompt = rawPrompt || `Run ${workerType} worker`;
 
     // Validate worker type
     const config = getWorkerConfig(workerType);
@@ -510,10 +533,20 @@ export async function POST(req: Request) {
 
     await runRef.set(runData);
 
+    // For user-triggered workers, create chat session upfront so "View in chat" works immediately
+    let sessionId: string | undefined;
+    if (triggeredBy === "user") {
+      try {
+        sessionId = await createWorkerChatSession(userId, workerType, initialPrompt);
+      } catch (err) {
+        console.error(`[Worker API] Failed to create upfront chat session:`, err);
+      }
+    }
+
     // Create "starting" notification immediately so user sees activity
     let notificationId: string | undefined;
     try {
-      notificationId = await createStartingNotification(userId, initialRun);
+      notificationId = await createStartingNotification(userId, initialRun, sessionId);
     } catch (err) {
       console.error(`[Worker API] Failed to create starting notification:`, err);
     }
@@ -549,18 +582,17 @@ export async function POST(req: Request) {
 
       await runRef.update(completedRun);
 
-      // Create chat session from transcript so user can "View in chat"
-      let sessionId: string | undefined;
+      // Append transcript to existing session (user-triggered) or create new one (auto-triggered)
       if (transcript.length > 0) {
         try {
-          sessionId = await createChatSessionFromTranscript(
-            userId,
-            workerType,
-            transcript,
-            initialPrompt
-          );
+          if (sessionId) {
+            await appendTranscriptToSession(userId, sessionId, transcript);
+          } else {
+            sessionId = await createWorkerChatSession(userId, workerType, initialPrompt);
+            await appendTranscriptToSession(userId, sessionId, transcript);
+          }
         } catch (err) {
-          console.error(`[Worker API] Failed to create chat session:`, err);
+          console.error(`[Worker API] Failed to save chat session transcript:`, err);
         }
       }
 

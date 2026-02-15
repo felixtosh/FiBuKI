@@ -108,7 +108,7 @@ export default function CasaPage() {
                 <code className="text-sm bg-muted px-2 py-1 rounded">
                   https://www.googleapis.com/auth/gmail.readonly
                 </code>
-                <span className="text-xs bg-amber-100 text-amber-800 px-2 py-1 rounded">Restricted</span>
+                <span className="text-xs bg-amber-50 text-amber-900 border border-amber-300 px-2 py-1 rounded">Restricted</span>
               </div>
               <p className="text-sm text-muted-foreground mb-2">
                 <strong>Purpose:</strong> Search and read user&apos;s emails to find invoice and receipt attachments.
@@ -125,7 +125,7 @@ export default function CasaPage() {
                 <code className="text-sm bg-muted px-2 py-1 rounded">
                   https://www.googleapis.com/auth/userinfo.email
                 </code>
-                <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">Non-sensitive</span>
+                <span className="text-xs bg-green-50 text-green-900 border border-green-300 px-2 py-1 rounded">Non-sensitive</span>
               </div>
               <p className="text-sm text-muted-foreground">
                 <strong>Purpose:</strong> Identify the connected Gmail account and display it to the user
@@ -138,7 +138,7 @@ export default function CasaPage() {
                 <code className="text-sm bg-muted px-2 py-1 rounded">
                   https://www.googleapis.com/auth/userinfo.profile
                 </code>
-                <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">Non-sensitive</span>
+                <span className="text-xs bg-green-50 text-green-900 border border-green-300 px-2 py-1 rounded">Non-sensitive</span>
               </div>
               <p className="text-sm text-muted-foreground">
                 <strong>Purpose:</strong> Display the user&apos;s name in the integration settings for

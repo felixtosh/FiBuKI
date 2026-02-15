@@ -645,12 +645,6 @@
     this.startTime = Date.now();
     this.state = STATES.NAVIGATING;
 
-    // Check for login page immediately on start
-    if (isAuthPage(window.location.href)) {
-      this.handleAuth();
-      return;
-    }
-
     var recipe = this.config.recipe;
     var actions = recipe.recordedActions || [];
     // Also include agent-learned actions if available
@@ -660,6 +654,12 @@
     this._actions = actions;
     this._totalSteps = actions.length;
     this._invoiceMatchAttempted = false;
+
+    // Check for login page immediately on start
+    if (isAuthPage(window.location.href)) {
+      this.handleAuth();
+      return;
+    }
 
     // === Direct navigation mode ===
     // If recipe has invoiceListUrl, skip pre-list navigation and find the invoice directly.
@@ -727,10 +727,16 @@
       clearInterval(this._authCheckInterval);
       this._authCheckInterval = null;
     }
+    if (this._authGraceInterval) {
+      clearInterval(this._authGraceInterval);
+      this._authGraceInterval = null;
+    }
     if (this._navCheckInterval) {
       clearInterval(this._navCheckInterval);
       this._navCheckInterval = null;
     }
+    this._authGraceStart = null;
+    hideAuthSkipButton();
   };
 
   ReplayStateMachine.prototype.reportProgress = function (message) {
@@ -919,6 +925,20 @@
           callback(false);
         }
         break;
+
+      case "capture_page_as_pdf":
+        self.reportProgress("Capturing page as PDF...");
+        // Ask content script to capture and upload
+        window.postMessage({ type: "TS_REPLAY_CAPTURE_PAGE", runId: self.config.runId }, "*");
+        // Wait for TS_REPLAY_PDF_DOWNLOADED signal (same as download wait)
+        var captureTimeout = setTimeout(function () {
+          if (self.state !== STATES.SUCCESS) {
+            console.log("[FiBuKI Replay] Page capture timeout");
+            callback(false);
+          }
+        }, 30000); // 30s for conversion
+        self._captureTimeout = captureTimeout;
+        return; // Don't call callback — wait for PDF downloaded signal
 
       case "pdf_detected":
       case "mark_invoice_page":
@@ -1209,11 +1229,75 @@
     }
   };
 
+  // Grace period (ms) to wait before confirming an auth page.
+  // SSO passthroughs (e.g., accounts.google.com during Google OAuth) redirect
+  // automatically within ~2s. If the page leaves the auth URL within this window,
+  // we treat it as a passthrough and resume replay.
+  var AUTH_GRACE_MS = 3500;
+
   ReplayStateMachine.prototype.handleAuth = function () {
+    var self = this;
+
+    // If this is the first time we detect auth, start a grace period
+    // to distinguish real login pages from SSO passthroughs
+    if (!self._authGraceStart) {
+      self._authGraceStart = Date.now();
+      self.state = STATES.AUTH_WAITING;
+      self.reportProgress("Checking login status...");
+
+      self._authGraceInterval = setInterval(function () {
+        if (self._cancelled) {
+          clearInterval(self._authGraceInterval);
+          self._authGraceInterval = null;
+          return;
+        }
+
+        // SSO passthrough resolved — auth page disappeared within grace period
+        if (!isAuthPage(window.location.href)) {
+          clearInterval(self._authGraceInterval);
+          self._authGraceInterval = null;
+          self._authGraceStart = null;
+          console.log("[FiBuKI Replay] SSO passthrough detected, resuming...");
+          self._resumeAfterAuth();
+          return;
+        }
+
+        // Grace period expired — this is a real auth page
+        if (Date.now() - self._authGraceStart > AUTH_GRACE_MS) {
+          clearInterval(self._authGraceInterval);
+          self._authGraceInterval = null;
+          self._authGraceStart = null;
+          self._enterAuthWait();
+          return;
+        }
+      }, 500);
+      return;
+    }
+
+    // Already past grace period — enter auth wait directly
+    self._authGraceStart = null;
+    self._enterAuthWait();
+  };
+
+  /**
+   * Called when auth page is confirmed (grace period expired).
+   * Shows "Login required" message with a Skip button and polls for completion.
+   */
+  ReplayStateMachine.prototype._enterAuthWait = function () {
     var self = this;
     self.state = STATES.AUTH_WAITING;
     self.authWaitStart = Date.now();
     self.reportProgress("Login required — please sign in");
+
+    // Show a "Skip" button on the overlay
+    showAuthSkipButton(function () {
+      console.log("[FiBuKI Replay] Auth skipped by user");
+      if (self._authCheckInterval) {
+        clearInterval(self._authCheckInterval);
+        self._authCheckInterval = null;
+      }
+      self._resumeAfterAuth();
+    });
 
     if (self.config.onAuthRequired) {
       self.config.onAuthRequired();
@@ -1231,6 +1315,7 @@
         clearInterval(self._authCheckInterval);
         self._authCheckInterval = null;
         self.state = STATES.FAILED;
+        hideAuthSkipButton();
         if (self.config.onFailed) {
           self.config.onFailed({
             status: "failed_auth",
@@ -1246,31 +1331,67 @@
       if (!isAuthPage(window.location.href)) {
         clearInterval(self._authCheckInterval);
         self._authCheckInterval = null;
-        self.state = STATES.REPLAYING;
-        self.reportProgress("Login complete, resuming...");
-
-        // If we have a post-auth target (e.g., invoiceListUrl), navigate there
-        if (self._postAuthTarget && !samePageUrl(window.location.href, self._postAuthTarget)) {
-          var target = self._postAuthTarget;
-          self._postAuthTarget = null;
-          self.reportProgress("Navigating to invoice list...");
-          window.location.href = target;
-          // Background will re-send TS_START_REPLAY_TAB on navigation complete
-          return;
-        }
-        self._postAuthTarget = null;
-
-        // If direct nav mode and on invoice list, do smart matching
-        if (self.config.recipe.invoiceListUrl && samePageUrl(window.location.href, self.config.recipe.invoiceListUrl)) {
-          setTimeout(function () { self.findAndSelectInvoice(); }, 1500);
-          return;
-        }
-
-        // Resume normal replay
-        setTimeout(function () { self.replayNextAction(); }, 1500);
+        hideAuthSkipButton();
+        self._resumeAfterAuth();
       }
     }, 1000);
   };
+
+  /**
+   * Resume replay after auth is complete (or skipped).
+   */
+  ReplayStateMachine.prototype._resumeAfterAuth = function () {
+    var self = this;
+    self.state = STATES.REPLAYING;
+    self.reportProgress("Login complete, resuming...");
+
+    // If we have a post-auth target (e.g., invoiceListUrl), navigate there
+    if (self._postAuthTarget && !samePageUrl(window.location.href, self._postAuthTarget)) {
+      var target = self._postAuthTarget;
+      self._postAuthTarget = null;
+      self.reportProgress("Navigating to invoice list...");
+      window.location.href = target;
+      // Background will re-send TS_START_REPLAY_TAB on navigation complete
+      return;
+    }
+    self._postAuthTarget = null;
+
+    // If direct nav mode and on invoice list, do smart matching
+    if (self.config.recipe.invoiceListUrl && samePageUrl(window.location.href, self.config.recipe.invoiceListUrl)) {
+      setTimeout(function () { self.findAndSelectInvoice(); }, 1500);
+      return;
+    }
+
+    // Resume normal replay
+    setTimeout(function () { self.replayNextAction(); }, 1500);
+  };
+
+  /**
+   * Show a "Skip login" button on the replay overlay for false-positive auth detection.
+   */
+  function showAuthSkipButton(onSkip) {
+    var panel = document.getElementById(REPLAY_OVERLAY_ID);
+    if (!panel) return;
+    // Remove existing skip button if any
+    hideAuthSkipButton();
+
+    var skipBtn = document.createElement("button");
+    skipBtn.id = REPLAY_OVERLAY_ID + "-skip-auth";
+    skipBtn.textContent = "Not a login? Skip";
+    skipBtn.style.cssText = "display:block; margin:0 14px 10px; padding:6px 14px; border-radius:6px; " +
+      "border:1px solid rgba(251,191,36,0.4); background:rgba(251,191,36,0.12); color:#fbbf24; " +
+      "font:600 11px/1 sans-serif; cursor:pointer; width:calc(100% - 28px); text-align:center;";
+    skipBtn.addEventListener("click", function () {
+      hideAuthSkipButton();
+      if (onSkip) onSkip();
+    });
+    panel.appendChild(skipBtn);
+  }
+
+  function hideAuthSkipButton() {
+    var btn = document.getElementById(REPLAY_OVERLAY_ID + "-skip-auth");
+    if (btn) btn.remove();
+  }
 
   /**
    * Resume replay after Tier 2 agent sends commands.
@@ -1352,6 +1473,13 @@
 
       case "wait":
         setTimeout(function () { callback(true); }, cmd.ms || 1000);
+        break;
+
+      case "capturePageAsPdf":
+        self.reportProgress("Agent: Capturing page as PDF...");
+        window.postMessage({ type: "TS_REPLAY_CAPTURE_PAGE", runId: self.config.runId }, "*");
+        // Async — PDF upload signals separately via TS_REPLAY_PDF_DOWNLOADED
+        setTimeout(function () { callback(true); }, 1000);
         break;
 
       default:
@@ -1643,11 +1771,134 @@
   }
 
   // ============================================================================
+  // Draggable Panel with Corner-Snapping
+  // ============================================================================
+
+  /**
+   * Make a fixed-position panel draggable by its header.
+   * On mouseup, the panel snaps to the nearest corner with a smooth transition.
+   * @param {HTMLElement} panel - The panel element (position:fixed)
+   * @param {HTMLElement} handle - The drag handle (e.g., header element)
+   */
+  function makeDraggable(panel, handle) {
+    var isDragging = false;
+    var startX = 0, startY = 0;
+    var panelStartX = 0, panelStartY = 0;
+    var MARGIN = 12;
+
+    handle.style.cursor = "grab";
+    handle.style.userSelect = "none";
+
+    function getPanelRect() {
+      return panel.getBoundingClientRect();
+    }
+
+    function setPosition(x, y, animate) {
+      if (animate) {
+        panel.style.transition = "left 0.3s ease, top 0.3s ease, right 0.3s ease, bottom 0.3s ease";
+      } else {
+        panel.style.transition = "none";
+      }
+      // Clear all positional properties and use left/top for dragging
+      panel.style.right = "auto";
+      panel.style.bottom = "auto";
+      panel.style.left = x + "px";
+      panel.style.top = y + "px";
+    }
+
+    function snapToCorner() {
+      var rect = getPanelRect();
+      var cx = rect.left + rect.width / 2;
+      var cy = rect.top + rect.height / 2;
+      var vw = window.innerWidth;
+      var vh = window.innerHeight;
+
+      // Determine nearest corner
+      var isRight = cx > vw / 2;
+      var isBottom = cy > vh / 2;
+
+      // Clear left/top and use corner-based positioning
+      panel.style.transition = "left 0.3s ease, top 0.3s ease, right 0.3s ease, bottom 0.3s ease";
+      if (isRight) {
+        panel.style.left = "auto";
+        panel.style.right = MARGIN + "px";
+      } else {
+        panel.style.right = "auto";
+        panel.style.left = MARGIN + "px";
+      }
+      if (isBottom) {
+        panel.style.top = "auto";
+        panel.style.bottom = MARGIN + "px";
+      } else {
+        panel.style.bottom = "auto";
+        panel.style.top = MARGIN + "px";
+      }
+
+      // Clean up transition after animation
+      setTimeout(function () {
+        panel.style.transition = "none";
+      }, 350);
+    }
+
+    handle.addEventListener("mousedown", function (e) {
+      // Don't start drag on buttons
+      if (e.target.tagName === "BUTTON" || e.target.closest("button")) return;
+      isDragging = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      var rect = getPanelRect();
+      panelStartX = rect.left;
+      panelStartY = rect.top;
+      handle.style.cursor = "grabbing";
+      e.preventDefault();
+    });
+
+    document.addEventListener("mousemove", function (e) {
+      if (!isDragging) return;
+      var dx = e.clientX - startX;
+      var dy = e.clientY - startY;
+      var newX = panelStartX + dx;
+      var newY = panelStartY + dy;
+      // Clamp to viewport
+      var rect = getPanelRect();
+      newX = Math.max(0, Math.min(newX, window.innerWidth - rect.width));
+      newY = Math.max(0, Math.min(newY, window.innerHeight - rect.height));
+      setPosition(newX, newY, false);
+    });
+
+    document.addEventListener("mouseup", function () {
+      if (!isDragging) return;
+      isDragging = false;
+      handle.style.cursor = "grab";
+      snapToCorner();
+    });
+  }
+
+  // ============================================================================
   // Replay Overlay UI
   // ============================================================================
 
   function ensureReplayOverlay(partnerName) {
     if (document.getElementById(REPLAY_OVERLAY_ID)) return;
+
+    // Push page content inward so it's not hidden behind the 16px border.
+    // Apply to both html and body — some sites (Google Ads, SPAs) lay out on body.
+    if (!window.__tsReplayOriginalStyles) {
+      var de = document.documentElement;
+      var bd = document.body;
+      window.__tsReplayOriginalStyles = {
+        htmlPadding: de.style.padding || "",
+        htmlBoxSizing: de.style.boxSizing || "",
+        bodyPadding: bd.style.padding || "",
+        bodyBoxSizing: bd.style.boxSizing || "",
+        bodyMargin: bd.style.margin || "",
+      };
+    }
+    document.documentElement.style.setProperty("padding", "16px", "important");
+    document.documentElement.style.setProperty("box-sizing", "border-box", "important");
+    document.body.style.setProperty("padding", "16px", "important");
+    document.body.style.setProperty("box-sizing", "border-box", "important");
+    document.body.style.setProperty("margin", "0", "important");
 
     var styleId = "ts-replay-overlay-styles";
     if (!document.getElementById(styleId)) {
@@ -1726,6 +1977,9 @@
     panel.appendChild(status);
     panel.appendChild(progress);
     document.body.appendChild(panel);
+
+    // Make panel draggable by header, snaps to nearest corner
+    makeDraggable(panel, header);
   }
 
   function updateReplayOverlay(step, total, message) {
@@ -1736,13 +1990,25 @@
   }
 
   function removeReplayOverlay() {
-    var ids = [REPLAY_OVERLAY_ID, REPLAY_OVERLAY_ID + "-border", REPLAY_OVERLAY_ID + "-glow"];
+    var ids = [REPLAY_OVERLAY_ID, REPLAY_OVERLAY_ID + "-border", REPLAY_OVERLAY_ID + "-glow",
+               REPLAY_OVERLAY_ID + "-skip-auth"];
     for (var i = 0; i < ids.length; i++) {
       var el = document.getElementById(ids[i]);
       if (el) el.remove();
     }
     var style = document.getElementById("ts-replay-overlay-styles");
     if (style) style.remove();
+
+    // Restore original html/body styles
+    if (window.__tsReplayOriginalStyles) {
+      var orig = window.__tsReplayOriginalStyles;
+      document.documentElement.style.padding = orig.htmlPadding;
+      document.documentElement.style.boxSizing = orig.htmlBoxSizing;
+      document.body.style.padding = orig.bodyPadding;
+      document.body.style.boxSizing = orig.bodyBoxSizing;
+      document.body.style.margin = orig.bodyMargin;
+      window.__tsReplayOriginalStyles = undefined;
+    }
   }
 
   // Expose globally for content.js
@@ -1760,6 +2026,7 @@
     updateReplayOverlay: updateReplayOverlay,
     removeReplayOverlay: removeReplayOverlay,
     isAuthPage: isAuthPage,
+    makeDraggable: makeDraggable,
     STATES: STATES,
   };
 })();

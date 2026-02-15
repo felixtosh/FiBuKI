@@ -146,11 +146,11 @@ export interface ChatContextValue {
   markAllNotificationsRead: () => Promise<void>;
   startConversationFromNotification: (notification: AutoActionNotification) => void;
 
-  // Agentic search
-  startSearchThread: (transactionId: string) => void;
-  startPartnerSearchThread: (transactionId: string) => void;
-  startFilePartnerSearchThread: (fileId: string) => void;
-  startFileTransactionSearchThread: (
+  // Agentic search (via workers)
+  startReceiptSearch: (transactionId: string) => void;
+  startPartnerSearch: (transactionId: string) => void;
+  startFilePartnerSearch: (fileId: string) => void;
+  startFileTransactionSearch: (
     fileId: string,
     fileInfo?: {
       fileName?: string;
@@ -159,7 +159,9 @@ export interface ChatContextValue {
       date?: string;
       partner?: string;
     }
-  ) => Promise<void>;
+  ) => void;
+  /** Entity IDs with running wand searches */
+  activeWandTargets: Set<string>;
 
   // Sidebar mode (chat vs onboarding)
   sidebarMode: SidebarMode;

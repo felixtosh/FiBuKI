@@ -725,7 +725,8 @@ export interface RecordedAction {
     | "scroll"
     | "pdf_detected"
     | "mark_invoice_page"
-    | "selectInvoice";
+    | "selectInvoice"
+    | "capture_page_as_pdf";
   url: string;
   /** Target URL for navigate actions */
   targetUrl?: string;

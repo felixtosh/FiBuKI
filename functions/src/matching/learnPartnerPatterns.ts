@@ -147,6 +147,17 @@ async function rematchUnassignedTransactions(
           source: "pattern",
         }],
         updatedAt: FieldValue.serverTimestamp(),
+        automationHistory: FieldValue.arrayUnion({
+          type: "partner_assigned",
+          ranAt: Timestamp.now(),
+          status: "completed",
+          actor: "auto",
+          level: "outcome",
+          forPartnerId: partnerId,
+          partnerName: partnerName || null,
+          confidence: bestMatch.confidence,
+          summary: `Partner "${partnerName || partnerId}" auto-assigned (pattern match)`,
+        }),
       });
       matchedCount++;
 
@@ -179,7 +190,8 @@ async function rematchUnassignedTransactions(
 async function cascadeUnassignTransactions(
   userId: string,
   partnerId: string,
-  newPatterns: LearnedPattern[] = []
+  newPatterns: LearnedPattern[] = [],
+  partnerName: string | null = null
 ): Promise<number> {
   const allAssignedSnapshot = await db
     .collection("transactions")
@@ -229,6 +241,16 @@ async function cascadeUnassignTransactions(
       partnerMatchedBy: null,
       partnerMatchConfidence: null,
       updatedAt: FieldValue.serverTimestamp(),
+      automationHistory: FieldValue.arrayUnion({
+        type: "partner_removed",
+        ranAt: Timestamp.now(),
+        status: "completed",
+        actor: "auto",
+        level: "decision",
+        forPartnerId: partnerId,
+        partnerName: partnerName || null,
+        summary: `Partner "${partnerName || partnerId}" auto-removed (pattern change)`,
+      }),
     });
     unassignedCount++;
   }
@@ -432,7 +454,7 @@ export const learnPartnerPatterns = onCall<LearnPatternsRequest>(
           updatedAt: FieldValue.serverTimestamp(),
         });
 
-        const unassignedCount = await cascadeUnassignTransactions(userId, partnerId, []);
+        const unassignedCount = await cascadeUnassignTransactions(userId, partnerId, [], data.partnerName);
 
         if (unassignedCount > 0) {
           try {
@@ -524,7 +546,7 @@ export const learnPartnerPatterns = onCall<LearnPatternsRequest>(
         learnedPatterns.map((p) => p.pattern));
 
       // 6. Cascade-unassign auto-matched transactions that no longer match
-      const unassignedCount = await cascadeUnassignTransactions(userId, partnerId, learnedPatterns);
+      const unassignedCount = await cascadeUnassignTransactions(userId, partnerId, learnedPatterns, data.partnerName);
       if (unassignedCount > 0) {
         console.log(`Cascade-unassigned ${unassignedCount} transactions that no longer match updated patterns`);
       }
@@ -636,7 +658,7 @@ export async function learnPatternsForPartnersBatch(
           updatedAt: FieldValue.serverTimestamp(),
         });
 
-        await cascadeUnassignTransactions(userId, partnerId, []);
+        await cascadeUnassignTransactions(userId, partnerId, [], partnerData.name || null);
         continue;
       }
 
@@ -702,7 +724,7 @@ export async function learnPatternsForPartnersBatch(
         learnedPatterns.map((p) => p.pattern));
 
       // Cascade-unassign
-      const unassignedCount = await cascadeUnassignTransactions(userId, partnerId, learnedPatterns);
+      const unassignedCount = await cascadeUnassignTransactions(userId, partnerId, learnedPatterns, partnerData.name || null);
       if (unassignedCount > 0) {
         console.log(`[batch] Cascade-unassigned ${unassignedCount} transactions for ${partnerData.name}`);
       }

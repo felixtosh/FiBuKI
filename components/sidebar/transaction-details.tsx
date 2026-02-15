@@ -63,7 +63,8 @@ export function TransactionDetails({
   const matchedTransactionIds = useRef<Set<string>>(new Set());
 
   // Chat hook for agentic partner search
-  const { startPartnerSearchThread, isLoading: isChatLoading } = useChat();
+  const { startPartnerSearch, activeWandTargets } = useChat();
+  const isWandActive = activeWandTargets.has(transaction.id);
 
   // Get partner suggestions and assigned partner (all from server-side data)
   const suggestions = usePartnerSuggestions(transaction, userPartners, globalPartners);
@@ -246,11 +247,11 @@ export function TransactionDetails({
               variant="ghost"
               size="icon"
               className="h-6 w-6"
-              onClick={() => startPartnerSearchThread(transaction.id)}
-              disabled={isChatLoading}
+              onClick={() => startPartnerSearch(transaction.id)}
+              disabled={isWandActive}
               title="AI search for partner"
             >
-              {isChatLoading ? (
+              {isWandActive ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
                 <WandSparkles className="h-3.5 w-3.5" />

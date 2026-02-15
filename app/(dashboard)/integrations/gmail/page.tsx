@@ -14,6 +14,8 @@ import {
   RefreshCw,
   Pause,
   ArrowLeft,
+  Info,
+  Play,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -178,6 +180,7 @@ function GmailAccountCard({
 
   const isSyncingNow = !isPaused && (activeSync.isActive || (!initialSyncComplete && initialSyncStartedAt));
   const showReconnect = needsReauth;
+  const isNewAndPaused = isPaused && !initialSyncComplete;
 
   return (
     <div
@@ -197,18 +200,23 @@ function GmailAccountCard({
                   <AlertCircle className="h-3 w-3 mr-1" />
                   Reconnect Required
                 </Badge>
+              ) : isNewAndPaused ? (
+                <Badge variant="info" className="text-xs">
+                  <Play className="h-3 w-3 mr-1" />
+                  Ready to start
+                </Badge>
               ) : isPaused ? (
-                <Badge variant="secondary" className="text-xs border-amber-500 text-amber-600">
+                <Badge variant="warning" className="text-xs">
                   <Pause className="h-3 w-3 mr-1" />
                   Paused
                 </Badge>
               ) : isSyncingNow ? (
-                <Badge variant="secondary" className="text-xs border-blue-500 text-blue-600">
+                <Badge variant="info" className="text-xs">
                   <Loader2 className="h-3 w-3 mr-1 animate-spin" />
                   Syncing
                 </Badge>
               ) : (
-                <Badge variant="secondary" className="text-xs border-green-500 text-green-600">
+                <Badge variant="success" className="text-xs">
                   <Check className="h-3 w-3 mr-1" />
                   Connected
                 </Badge>
@@ -217,6 +225,12 @@ function GmailAccountCard({
             <div className="text-xs text-muted-foreground">
               Connected {formatDistanceToNow(integration.createdAt.toDate(), { addSuffix: true })}
             </div>
+            {isNewAndPaused && (
+              <div className="flex items-center gap-1.5 text-xs text-blue-600 dark:text-blue-400 mt-1">
+                <Info className="h-3 w-3 flex-shrink-0" />
+                <span>New connections start paused. Click to open settings and start syncing.</span>
+              </div>
+            )}
           </div>
         </div>
 

@@ -16,8 +16,9 @@ const params_1 = require("firebase-functions/params");
 const createCallable_1 = require("../utils/createCallable");
 const FINAPI_CLIENT_ID = (0, params_1.defineSecret)("FINAPI_CLIENT_ID");
 const FINAPI_CLIENT_SECRET = (0, params_1.defineSecret)("FINAPI_CLIENT_SECRET");
-// finAPI base URL (sandbox for now)
+// finAPI base URLs (sandbox for now)
 const FINAPI_BASE_URL = "https://sandbox.finapi.io";
+const FINAPI_WEBFORM_URL = "https://webform-sandbox.finapi.io";
 // Helper to generate deterministic password for finAPI user
 function generateFinapiPassword(userId) {
     const secret = "fibuki-finapi-default-secret";
@@ -42,7 +43,7 @@ exports.initiateBankConnectionCallable = (0, createCallable_1.createCallable)({
     secrets: [FINAPI_CLIENT_ID, FINAPI_CLIENT_SECRET],
     timeoutSeconds: 60,
 }, async (ctx, request) => {
-    const { institutionId, redirectUrl, maxHistoryDays, linkToSourceId, language } = request;
+    const { institutionId, redirectUrl, maxHistoryDays, linkToSourceId } = request;
     if (!institutionId) {
         throw new createCallable_1.HttpsError("invalid-argument", "institutionId is required");
     }
@@ -108,7 +109,7 @@ exports.initiateBankConnectionCallable = (0, createCallable_1.createCallable)({
     if (!userTokenRes.ok) {
         const err = await userTokenRes.text();
         console.error("[initiateBankConnection] User token error:", err);
-        throw new createCallable_1.HttpsError("unavailable", "Failed to authenticate finAPI user");
+        throw new createCallable_1.HttpsError("unavailable", `Failed to authenticate finAPI user: ${userTokenRes.status}`);
     }
     const userTokenData = await userTokenRes.json();
     const userToken = userTokenData.access_token;
@@ -122,17 +123,16 @@ exports.initiateBankConnectionCallable = (0, createCallable_1.createCallable)({
         throw new createCallable_1.HttpsError("not-found", `Bank not found: ${institutionId}`);
     }
     const bank = await bankRes.json();
-    // 4. Create web form for bank connection
+    // 4. Create web form for bank connection (Web Form 2.0 API, camelCase fields)
     const isHttps = redirectUrl?.startsWith("https://");
     const webFormBody = {
         bank: { id: parseInt(institutionId, 10) },
         maxDaysForDownload: maxHistoryDays || 90,
-        language: language || "de",
     };
     if (isHttps && redirectUrl) {
         webFormBody.redirectUrl = redirectUrl;
     }
-    const webFormRes = await fetch(`${FINAPI_BASE_URL}/api/v2/webForms/bankConnectionImport`, {
+    const webFormRes = await fetch(`${FINAPI_WEBFORM_URL}/api/webForms/bankConnectionImport`, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
@@ -142,13 +142,24 @@ exports.initiateBankConnectionCallable = (0, createCallable_1.createCallable)({
     });
     if (!webFormRes.ok) {
         const err = await webFormRes.text();
-        console.error("[initiateBankConnection] Web form error:", err);
-        throw new createCallable_1.HttpsError("unavailable", "Failed to create bank connection form");
+        console.error(`[initiateBankConnection] Web form error (HTTP ${webFormRes.status}), body sent:`, JSON.stringify(webFormBody), "response:", err);
+        let detail = "";
+        try {
+            const errJson = JSON.parse(err);
+            detail = errJson.errors?.[0]?.message || errJson.error || errJson.message || err.slice(0, 300);
+        }
+        catch {
+            // JSON parse failed — use truncated raw text
+            detail = err.slice(0, 300);
+        }
+        throw new createCallable_1.HttpsError("unavailable", `Failed to create bank connection form (HTTP ${webFormRes.status})${detail ? `: ${detail}` : ""}`);
     }
     const webForm = await webFormRes.json();
     // 5. Store connection in Firestore
     const now = firestore_1.Timestamp.now();
-    const expiresAt = new Date(Date.now() + 30 * 60 * 1000); // 30 min
+    const expiresAt = webForm.expiresAt
+        ? new Date(webForm.expiresAt)
+        : new Date(Date.now() + 30 * 60 * 1000);
     const connectionDoc = {
         providerId: "finapi",
         providerConnectionId: webForm.id,
@@ -165,7 +176,6 @@ exports.initiateBankConnectionCallable = (0, createCallable_1.createCallable)({
             userAccessToken: userToken,
             userRefreshToken: refreshToken,
             tokenExpiresAt: tokenExpiresAt.toISOString(),
-            webFormToken: webForm.token,
         },
         linkToSourceId: linkToSourceId || null,
         userId: ctx.userId,

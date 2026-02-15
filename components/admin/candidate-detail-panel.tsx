@@ -173,7 +173,7 @@ export function CandidateDetailPanel({
         <div className="flex items-center gap-2 min-w-0">
           <Building2 className="h-5 w-5 text-amber-500 flex-shrink-0" />
           <h2 className="font-semibold truncate">{userPartner.name}</h2>
-          <Badge variant="secondary" className="text-xs bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300">
+          <Badge variant="secondary" className="text-xs bg-amber-50 text-amber-900 border-amber-300 dark:bg-amber-900/50 dark:text-amber-300">
             Suggestion
           </Badge>
         </div>
@@ -196,9 +196,9 @@ export function CandidateDetailPanel({
             <Badge
               className={
                 candidate.confidence >= 90
-                  ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
+                  ? "bg-green-50 text-green-900 border-green-300 dark:bg-green-900/30 dark:text-green-300"
                   : candidate.confidence >= 70
-                  ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400"
+                  ? "bg-amber-50 text-amber-900 border-amber-300 dark:bg-amber-900/30 dark:text-amber-300"
                   : "bg-muted text-foreground"
               }
             >
@@ -264,12 +264,12 @@ export function CandidateDetailPanel({
                   <div className="flex items-center gap-2 mb-2">
                     <span className="text-sm font-medium">{delta.label}</span>
                     {delta.isNew && (
-                      <Badge variant="secondary" className="text-xs bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300">
+                      <Badge variant="secondary" className="text-xs bg-green-50 text-green-900 border-green-300 dark:bg-green-900/50 dark:text-green-300">
                         New
                       </Badge>
                     )}
                     {delta.isDifferent && (
-                      <Badge variant="secondary" className="text-xs bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300">
+                      <Badge variant="secondary" className="text-xs bg-amber-50 text-amber-900 border-amber-300 dark:bg-amber-900/50 dark:text-amber-300">
                         Different
                       </Badge>
                     )}

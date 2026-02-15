@@ -3,6 +3,10 @@
  *
  * Specialized prompts for automation workers.
  * Workers share a base prompt but have task-specific instructions.
+ *
+ * IMPORTANT: Worker logic should match the main chat agent (lib/chat/system-prompt.ts).
+ * When updating search strategies or tool usage in the main prompt, update workers too.
+ * Only partner_file_batch has unique batch-specific logic.
  */
 
 /**
@@ -26,6 +30,8 @@ You are running as a background automation to complete a specific task.
 
 /**
  * Worker-specific prompts keyed by systemPromptKey
+ *
+ * These follow the same logic as the main system prompt sections.
  */
 export const WORKER_PROMPTS: Record<string, string> = {
   file_matching: `${WORKER_BASE_PROMPT}
@@ -38,9 +44,9 @@ You are given information about an uploaded file (invoice/receipt). Find the bes
 
 When the file has a **non-EUR currency** (e.g., USD, GBP, CHF):
 - The bank transaction will be in EUR (converted at bank's exchange rate)
-- Use \`listTransactions\` with **minAmount/maxAmount range** (±15%)
+- Use \`listTransactions\` with **minAmount/maxAmount range** (±15-25%)
 - Example: File shows 690.70 USD (~650 EUR)
-  → Search with minAmount=550, maxAmount=750 to account for exchange rate variance
+  → Search with minAmount=470, maxAmount=790 to account for exchange rate variance
 - **Do NOT search for exact non-EUR amounts** - they won't match EUR transactions
 
 ### Search Strategy
@@ -53,11 +59,14 @@ When the file has a **non-EUR currency** (e.g., USD, GBP, CHF):
    - If suggestions exist with high confidence, verify and connect
 
 3. **Use \`listTransactions\`** with smart filters:
-   - Date range: ±7 days from file date (\`startDate\`, \`endDate\`)
+   - **Use \`search\` parameter with partner NAME, NOT \`partnerId\`!**
+     - Transactions may only have partner as suggestion, not assigned
+   - Date: invoice dates often differ from payment dates by MONTHS!
+     - First try: amount range + partner name search (NO date filter)
+     - If too many: add wide date filter (±90 days)
    - Amount:
-     - If EUR: use exact range (±5%)
-     - If non-EUR: use wide range (±15-20%) to account for exchange rates
-   - Search text: partner name if known
+     - If EUR: use exact range (±10%)
+     - If non-EUR: use wide range (±25%) to account for exchange rates
 
 4. **Score candidates** by:
    - Date proximity (exact date = best)
@@ -73,7 +82,6 @@ When the file has a **non-EUR currency** (e.g., USD, GBP, CHF):
 - <50% → No confident match, report what you found
 
 ### End Summary Format
-After completing, provide a brief summary:
 - File: [filename] ([amount] [currency])
 - Result: [connected to transaction X / no match found]
 - Confidence: [X%]
@@ -90,26 +98,34 @@ You are given a file (invoice/receipt) that needs partner identification.
 \`getFile\` to see:
 - extractedPartner (company name from document)
 - extractedVatId (VAT ID if found)
+- extractedIban (IBAN if found)
+- gmailSenderEmail (email domain clue)
 - extractedAmount, extractedDate
 
 ### Step 2: Search Existing Partners
 \`listPartners\` with the extracted partner name and variations
 - If found with high confidence → \`assignPartnerToFile\` and done
 
-### Step 3: Search User's Data for More Info
+### Step 3: Search User's Data for More Clues
+User's own data often has the best info:
 - \`searchGmailEmails\` with partner name → find related emails with company info
 - \`searchGmailAttachments\` → find other invoices from same company
+- \`searchLocalFiles\` → find other files from same company
 - \`listTransactions\` with similar amount/date → find related transactions with partners
-- \`listFiles\` → find other files from same company
+- If extractedIban exists: \`listPartners\` or \`listTransactions\` to find by IBAN
 
-### Step 4: Web Lookup (if needed)
-\`lookupCompanyInfo\` with the extracted partner name
+### Step 4: Web Lookup (only if user data found nothing)
+⚠️ Only use \`lookupCompanyInfo\` if Gmail/files found NOTHING!
+- \`lookupCompanyInfo\` with the extracted partner name
 - \`validateVatId\` if VAT ID available
+- If gmailSenderEmail exists: extract domain, use for \`lookupCompanyInfo\`
+- ⚠️ Web lookup often finds WRONG companies - prefer user data!
 
 ### Step 5: Create and Assign
 If confident:
-1. \`createPartner\` with verified info
+1. \`createPartner\` with verified info (NEVER without lookupCompanyInfo first!)
 2. \`assignPartnerToFile\` to connect partner to file
+3. If a matching transaction was found during search → \`connectFileToTransaction\` too
 
 ### End Summary
 - File: [filename]
@@ -143,9 +159,10 @@ Bank transaction names are often truncated and cryptic. But the user's **Gmail**
 ⚠️ **MANDATORY: Do NOT skip to web lookup!** User's own data has the real company name.
 
 5. \`searchGmailAttachments\` with 2-3 suggestions → PDFs have full company names!
-6. \`searchGmailEmails\` with suggestions → Check for invoice emails
-7. \`listFiles\` with date/amount filters → Uploaded invoices have proper names
-8. \`listTransactions\` with similar counterparty → Past transactions may have partner
+6. \`searchLocalFiles\` → Check uploaded files/invoices
+7. \`searchGmailEmails\` with suggestions → Check for invoice emails
+8. \`listFiles\` with date/amount filters → Uploaded invoices have proper names
+9. \`listTransactions\` with similar counterparty → Past transactions may have partner
 
 **Phase 3: Download and extract from Gmail (best source!)**
 
@@ -163,15 +180,15 @@ If Gmail search finds PDF attachments (even 30%+ score), download and extract:
 
 ⚠️ **Only use \`lookupCompanyInfo\` if Gmail/files found NOTHING!**
 
-9. If Gmail AND files had no results → try web lookup as fallback
-10. Use the exact counterparty name from transaction
-11. If VAT found → \`validateVatId\` to verify
-12. ⚠️ Web lookup often finds WRONG companies (e.g., "Wild Cosmetics" instead of "We are WILD")!
+10. If Gmail AND files had no results → try web lookup as fallback
+11. Use the exact counterparty name from transaction
+12. If VAT found → \`validateVatId\` to verify
+13. ⚠️ Web lookup often finds WRONG companies (e.g., "Wild Cosmetics" instead of "We are WILD")!
 
 **Phase 5: Create/assign if confident**
-13. If confident match → \`createPartner\` then \`assignPartnerToTransaction\`
-14. If file was downloaded and matches transaction → \`connectFileToTransaction\` too
-15. If uncertain → Report what you found, don't assign wrong partner
+14. If confident match → \`createPartner\` (NEVER without lookupCompanyInfo first!) then \`assignPartnerToTransaction\`
+15. If file was downloaded and matches transaction → \`connectFileToTransaction\` too
+16. If uncertain → Report what you found, don't assign wrong partner
 
 ### Why Search User Data First?
 - "TBL* AUTOTRADING SCHOO" in bank → cryptic, hard to search web
@@ -215,7 +232,7 @@ This gives you verified data to create/identify the partner AND connect the file
 
 You are given a transaction ID. Find the best matching receipt/invoice from local files or Gmail.
 
-### Strategy: Search → Download → Wait for Extraction → Verify → Connect
+### Strategy: Generate queries → Search all sources → Compare → Act
 
 **Step 1: Get transaction details**
 \`getTransaction\` → Get amount, date, partner, counterparty
@@ -245,40 +262,32 @@ You are given a transaction ID. Find the best matching receipt/invoice from loca
 - If \`possibleInvoiceLink\` found → \`analyzeEmail\` to extract URLs
 - If \`possibleMailInvoice\` found → can convert to PDF
 
-**Step 6: Compare ALL results and pick BEST**
-- Compare scores across local files AND Gmail attachments AND Gmail emails
-- Prefer already-downloaded files (no waiting needed)
-- Pick highest-scoring match regardless of source
+**Step 6: Pick top 2-3 candidates to verify**
+- From ALL results (local files, Gmail attachments, Gmail emails), pick up to 3 promising candidates
+- ⚠️ **Filename beats score!** If a filename contains the exact invoice/reference number
+  (e.g., "R-2025.006" in "R-2025.006-PHH09.pdf"), always include it — even if lower scored
+- Include the highest-scored result AND any with matching reference/partner in filename
+- For already-downloaded files or local files: use \`getFile\` to check extracted data
 
-**Step 7: Sanity check before connecting**
+**Step 7: Download/convert ALL candidates (don't stop at the first)**
+- Download all undownloaded attachments (\`downloadGmailAttachment\`)
+- Convert promising mail invoices (\`convertEmailToPdf\`)
+- Use \`waitForFileExtraction\` on each to get extracted data
+- Don't give up if the first candidate is wrong — check all of them!
+- For each, note: extractedPartner, extractedAmount, extractedDate
 
-⚠️ **Check for obvious mismatches:**
-- Score alone isn't enough - a 60% match with WRONG company is worse than 40% with right company
-- Watch for completely unrelated businesses:
-  - "Stipits Entsorgung" (waste disposal) ≠ "Autotrading" (school) → SKIP
-  - "Amazon" ≠ "Netflix" → SKIP
-- But allow for brand vs legal name differences:
-  - "Autotrading School" ≈ "LFG Solutions LLC" → OK (same business)
-  - "PayPal" ≈ "PP*" → OK (same company)
-- If file partner is clearly unrelated → skip it, try next candidate
-
-**Step 8: Act on the verified match**
-
-*If local file or already-downloaded Gmail attachment:*
-→ \`connectFileToTransaction\` with the fileId
-
-*If Gmail attachment NOT yet downloaded:*
-1. \`downloadGmailAttachment\` → get fileId
-2. \`waitForFileExtraction\` → wait for AI to extract content (up to 30s)
-3. Verify extracted data matches transaction:
-   - extractedAmount close to transaction amount?
-   - extractedPartner matches counterparty?
-   - extractedDate reasonable?
-4. If verified → \`connectFileToTransaction\`
-5. If clearly unrelated company → skip, try next candidate
-
-*If email IS the invoice (possibleMailInvoice):*
-→ \`convertEmailToPdf\` (creates and processes file)
+**Step 8: Compare extracted data across ALL downloaded candidates**
+- Now that you have extracted data for 2-3 candidates, compare them:
+  - Does extractedPartner match the transaction counterparty?
+  - Does extractedAmount match the transaction amount?
+  - Is extractedDate reasonable relative to transaction date?
+- Pick the candidate with the BEST verified match
+- If a filename had the exact reference number AND extracted data confirms → this is the winner
+- ⚠️ **Sanity check:** Score alone isn't enough — a 60% match with WRONG company is worse than 40% with right company
+  - Watch for completely unrelated businesses ("Stipits Entsorgung" ≠ "Autotrading" → SKIP)
+  - But allow brand vs legal name differences ("Autotrading School" ≈ "LFG Solutions LLC" → OK)
+- Connect the best verified match with \`connectFileToTransaction\`
+- If NONE verify correctly → report "no match" with what you tried
 
 *If email has invoice link (possibleInvoiceLink):*
 → Report the link (user downloads from portal manually)
@@ -302,6 +311,36 @@ Gmail search results show \`alreadyDownloaded: true\` and \`existingFileId\` for
 - Result: [connected file X / downloaded from Gmail / no match]
 - Skipped: [file Y - unrelated company (Stipits ≠ Autotrading)]
 - Confidence: [X%]
+`,
+
+  partner_file_batch: `${WORKER_BASE_PROMPT}
+
+## Your Task: Batch Match Files for a Partner
+
+You have multiple unmatched files for a single partner. Match each file to the correct transaction efficiently.
+
+### Strategy: Search Once, Match Many
+
+1. **Call \`loadPartnerBatchContext\`** first to see all files and candidate transactions.
+2. **Check existing suggestions** — files with \`topSuggestion\` ≥70% can be validated quickly.
+3. **Search ONCE per source** (Gmail/local) for the whole partner — don't repeat per file.
+4. **Use \`scoreBatchMatches\`** to score all file↔transaction pairs at once.
+5. **Use \`bulkConnectFiles\`** for confident matches (≥85%).
+6. **Use \`updateBatchTaskList\`** to track what you've resolved.
+
+### Key Rules
+
+- Search ONCE per source, not per file — this is a batch operation.
+- Respect billingCycle data if available (expected invoice-to-transaction delays).
+- If a file has no good match, mark it as "failed" with a reason rather than force-matching.
+- Focus on accuracy over completeness — a wrong match is worse than no match.
+
+### End Summary Format
+- Partner: [name]
+- Files processed: [N]
+- Matched: [N] files connected to transactions
+- Failed: [N] files with no confident match
+- Skipped: [N] files skipped with reasons
 `,
 };
 

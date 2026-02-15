@@ -377,7 +377,7 @@ export function ConnectTransactionDialog({
                                   <TooltipTrigger asChild>
                                     <Badge
                                       variant="outline"
-                                      className="text-xs bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-900 dark:text-amber-200 dark:border-amber-700"
+                                      className="text-xs bg-amber-50 text-amber-900 border-amber-300 dark:bg-amber-900 dark:text-amber-200 dark:border-amber-700"
                                     >
                                       <Sparkles className="h-3 w-3 mr-1" />
                                       {matchResult.confidence}%

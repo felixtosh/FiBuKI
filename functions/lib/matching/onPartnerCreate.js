@@ -124,6 +124,14 @@ exports.onPartnerCreate = (0, firestore_1.onDocumentCreated)({
             .map((doc) => doc.data().globalPartnerId)
             .filter(Boolean));
         const filteredGlobalPartners = globalPartners.filter((partner) => !localizedGlobalIds.has(partner.id));
+        // Build partner name map for automationHistory entries
+        const partnerNameMap = new Map();
+        for (const p of userPartners) {
+            partnerNameMap.set(p.id, p.name);
+        }
+        for (const p of filteredGlobalPartners) {
+            partnerNameMap.set(p.id, p.name);
+        }
         // Process each unmatched transaction
         const batch = db.batch();
         let batchCount = 0;
@@ -184,6 +192,18 @@ exports.onPartnerCreate = (0, firestore_1.onDocumentCreated)({
                     updates.partnerMatchConfidence = topMatch.confidence;
                     updates.partnerMatchedBy = "auto";
                     autoMatched++;
+                    const assignedPartnerName = partnerNameMap.get(assignedPartnerId) || partnerNameMap.get(topMatch.partnerId) || null;
+                    updates.automationHistory = firestore_2.FieldValue.arrayUnion({
+                        type: "partner_assigned",
+                        ranAt: firestore_2.Timestamp.now(),
+                        status: "completed",
+                        actor: "auto",
+                        level: "outcome",
+                        forPartnerId: assignedPartnerId,
+                        partnerName: assignedPartnerName,
+                        confidence: topMatch.confidence,
+                        summary: `Partner "${assignedPartnerName || assignedPartnerId}" auto-assigned`,
+                    });
                 }
                 else {
                     suggestionsAdded++;

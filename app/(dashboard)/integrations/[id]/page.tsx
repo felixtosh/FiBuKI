@@ -234,17 +234,17 @@ export default function IntegrationDetailPage({ params }: IntegrationDetailPageP
                     Reconnect Required
                   </Badge>
                 ) : isPaused ? (
-                  <Badge variant="secondary" className="border-amber-500 text-amber-600">
+                  <Badge variant="warning">
                     <Pause className="h-3 w-3 mr-1" />
                     Paused
                   </Badge>
                 ) : isSyncingNow ? (
-                  <Badge variant="secondary" className="border-blue-500 text-blue-600">
+                  <Badge variant="info">
                     <Loader2 className="h-3 w-3 mr-1 animate-spin" />
                     Syncing
                   </Badge>
                 ) : (
-                  <Badge variant="secondary" className="border-green-500 text-green-600">
+                  <Badge variant="success">
                     <Check className="h-3 w-3 mr-1" />
                     Connected
                   </Badge>

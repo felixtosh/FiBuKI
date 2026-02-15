@@ -366,14 +366,20 @@
   function ensureOverlay() {
     if (document.getElementById(OVERLAY_ID)) return;
 
-    // Save original padding/box-sizing on documentElement so we can restore later
+    // Save original styles so we can restore later
     if (!window.__tsOriginalPadding) {
       window.__tsOriginalPadding = document.documentElement.style.padding || "";
       window.__tsOriginalBoxSizing = document.documentElement.style.boxSizing || "";
+      window.__tsOriginalBodyPadding = document.body.style.padding || "";
+      window.__tsOriginalBodyBoxSizing = document.body.style.boxSizing || "";
+      window.__tsOriginalBodyMargin = document.body.style.margin || "";
     }
     // Push page content inward so it's not hidden behind the 16px border
     document.documentElement.style.setProperty('padding', '16px', 'important');
     document.documentElement.style.setProperty('box-sizing', 'border-box', 'important');
+    document.body.style.setProperty('padding', '16px', 'important');
+    document.body.style.setProperty('box-sizing', 'border-box', 'important');
+    document.body.style.setProperty('margin', '0', 'important');
 
     // Inject animation styles for gradient border with hue shift and breathing
     var styleId = "ts-overlay-styles";
@@ -754,7 +760,7 @@
       if (el) el.remove();
     });
 
-    // Restore original padding on documentElement
+    // Restore original padding on documentElement and body
     if (window.__tsOriginalPadding !== undefined) {
       if (window.__tsOriginalPadding) {
         document.documentElement.style.padding = window.__tsOriginalPadding;
@@ -766,8 +772,26 @@
       } else {
         document.documentElement.style.removeProperty('box-sizing');
       }
+      if (window.__tsOriginalBodyPadding) {
+        document.body.style.padding = window.__tsOriginalBodyPadding;
+      } else {
+        document.body.style.removeProperty('padding');
+      }
+      if (window.__tsOriginalBodyBoxSizing) {
+        document.body.style.boxSizing = window.__tsOriginalBodyBoxSizing;
+      } else {
+        document.body.style.removeProperty('box-sizing');
+      }
+      if (window.__tsOriginalBodyMargin) {
+        document.body.style.margin = window.__tsOriginalBodyMargin;
+      } else {
+        document.body.style.removeProperty('margin');
+      }
       delete window.__tsOriginalPadding;
       delete window.__tsOriginalBoxSizing;
+      delete window.__tsOriginalBodyPadding;
+      delete window.__tsOriginalBodyBoxSizing;
+      delete window.__tsOriginalBodyMargin;
     }
   }
 
@@ -3234,6 +3258,112 @@
     };
   }
 
+  /**
+   * Capture the current page HTML with inlined styles for PDF conversion.
+   * Removes extension UI elements and inlines accessible CSSOM stylesheets.
+   */
+  function capturePageHtml() {
+    var clone = document.documentElement.cloneNode(true);
+
+    // Remove extension UI elements
+    var removeIds = [
+      LEARN_OVERLAY_ID,
+      LEARN_OVERLAY_ID + "-border",
+      LEARN_OVERLAY_ID + "-glow",
+      OVERLAY_ID,
+      OVERLAY_ID + "-border",
+      OVERLAY_ID + "-glow",
+    ];
+    removeIds.forEach(function (id) {
+      var el = clone.querySelector("#" + id);
+      if (el) el.remove();
+    });
+    // Remove injected style tags
+    var tsStyles = clone.querySelectorAll(
+      "[id^='ts-learn-'], [id^='taxstudio-']"
+    );
+    tsStyles.forEach(function (el) {
+      el.remove();
+    });
+
+    // Inline all accessible stylesheets from CSSOM
+    var head = clone.querySelector("head");
+    if (!head) {
+      head = document.createElement("head");
+      clone.insertBefore(head, clone.firstChild);
+    }
+    var inlinedIndices = [];
+    for (var i = 0; i < document.styleSheets.length; i++) {
+      try {
+        var sheet = document.styleSheets[i];
+        var rules = sheet.cssRules || sheet.rules;
+        if (!rules) continue;
+        var css = "";
+        for (var j = 0; j < rules.length; j++) {
+          css += rules[j].cssText + "\n";
+        }
+        var style = document.createElement("style");
+        style.textContent = css;
+        head.appendChild(style);
+        inlinedIndices.push(i);
+      } catch (e) {
+        // Cross-origin stylesheet — keep as <link>
+      }
+    }
+
+    // Remove original <link rel="stylesheet"> that were successfully inlined
+    var links = clone.querySelectorAll('link[rel="stylesheet"]');
+    for (var k = 0; k < links.length; k++) {
+      if (inlinedIndices.indexOf(k) !== -1) {
+        links[k].remove();
+      }
+    }
+
+    // Add <base> tag for relative URLs (images, etc.)
+    var base = document.createElement("base");
+    base.href = window.location.origin;
+    head.insertBefore(base, head.firstChild);
+
+    // Undo padding we added for the learn overlay border
+    var htmlEl = clone;
+    htmlEl.style.removeProperty("padding");
+    htmlEl.style.removeProperty("box-sizing");
+    var body = clone.querySelector("body");
+    if (body) {
+      body.style.removeProperty("padding");
+      body.style.removeProperty("box-sizing");
+      body.style.removeProperty("margin");
+    }
+
+    return "<!DOCTYPE html>" + clone.outerHTML;
+  }
+
+  /**
+   * Capture the current page as PDF via the background script and upload it.
+   * Calls back with true on success, false on failure.
+   */
+  function captureAndUploadPageAsPdf(callback) {
+    var html = capturePageHtml();
+    chrome.runtime.sendMessage(
+      {
+        type: "TS_CAPTURE_PAGE_AS_PDF",
+        html: html,
+        pageUrl: window.location.href,
+        pageTitle: document.title,
+        runId: learnRunId || replayRunId || currentRunId,
+      },
+      function (response) {
+        if (response && response.ok) {
+          learnPdfCount++;
+          updateLearnOverlayStatus();
+          if (callback) callback(true);
+        } else {
+          if (callback) callback(false);
+        }
+      }
+    );
+  }
+
   function recordLearnAction(actionType, extra) {
     if (!learnMode) return;
     var action = {
@@ -3263,14 +3393,20 @@
   function ensureLearnOverlay() {
     if (document.getElementById(LEARN_OVERLAY_ID)) return;
 
-    // Save original padding/box-sizing on documentElement so we can restore later
+    // Save original styles so we can restore later
     if (!window.__tsOriginalPadding) {
       window.__tsOriginalPadding = document.documentElement.style.padding || "";
       window.__tsOriginalBoxSizing = document.documentElement.style.boxSizing || "";
+      window.__tsOriginalBodyPadding = document.body.style.padding || "";
+      window.__tsOriginalBodyBoxSizing = document.body.style.boxSizing || "";
+      window.__tsOriginalBodyMargin = document.body.style.margin || "";
     }
     // Push page content inward so it's not hidden behind the 16px border
     document.documentElement.style.setProperty('padding', '16px', 'important');
     document.documentElement.style.setProperty('box-sizing', 'border-box', 'important');
+    document.body.style.setProperty('padding', '16px', 'important');
+    document.body.style.setProperty('box-sizing', 'border-box', 'important');
+    document.body.style.setProperty('margin', '0', 'important');
 
     // Reuse the same rainbow gradient border as pull mode
     var styleId = "ts-learn-overlay-styles";
@@ -3536,7 +3672,12 @@
     doneBtn.style.font = "700 11px/1 sans-serif";
     doneBtn.style.cursor = "pointer";
     doneBtn.addEventListener("click", function () {
-      finishLearnMode();
+      if (learnPdfCount > 0) {
+        finishLearnMode();
+        return;
+      }
+      // No file was captured — show checkpoint prompt
+      showNoFileCheckpoint(doneBtn);
     });
 
     btnRow.appendChild(markBtn);
@@ -3549,6 +3690,11 @@
     panel.appendChild(breadcrumbs);
     panel.appendChild(footer);
     document.body.appendChild(panel);
+
+    // Make panel draggable by header, snaps to nearest corner
+    if (window.__tsReplayEngine && window.__tsReplayEngine.makeDraggable) {
+      window.__tsReplayEngine.makeDraggable(panel, header);
+    }
   }
 
   function updateLearnOverlayStatus() {
@@ -3590,7 +3736,7 @@
     var style = document.getElementById("ts-learn-overlay-styles");
     if (style) style.remove();
 
-    // Restore original padding on documentElement
+    // Restore original padding on documentElement and body
     if (window.__tsOriginalPadding !== undefined) {
       if (window.__tsOriginalPadding) {
         document.documentElement.style.padding = window.__tsOriginalPadding;
@@ -3602,8 +3748,26 @@
       } else {
         document.documentElement.style.removeProperty('box-sizing');
       }
+      if (window.__tsOriginalBodyPadding) {
+        document.body.style.padding = window.__tsOriginalBodyPadding;
+      } else {
+        document.body.style.removeProperty('padding');
+      }
+      if (window.__tsOriginalBodyBoxSizing) {
+        document.body.style.boxSizing = window.__tsOriginalBodyBoxSizing;
+      } else {
+        document.body.style.removeProperty('box-sizing');
+      }
+      if (window.__tsOriginalBodyMargin) {
+        document.body.style.margin = window.__tsOriginalBodyMargin;
+      } else {
+        document.body.style.removeProperty('margin');
+      }
       delete window.__tsOriginalPadding;
       delete window.__tsOriginalBoxSizing;
+      delete window.__tsOriginalBodyPadding;
+      delete window.__tsOriginalBodyBoxSizing;
+      delete window.__tsOriginalBodyMargin;
     }
   }
 
@@ -3685,6 +3849,94 @@
       });
       learnLastUrl = currentUrl;
     }
+  }
+
+  /**
+   * Show a checkpoint prompt when the user clicks Done but no file was captured.
+   * Offers "Save this page as PDF" or "Skip — no file needed".
+   */
+  function showNoFileCheckpoint(doneBtn) {
+    var status = document.getElementById(LEARN_OVERLAY_ID + "-status");
+    if (status) {
+      status.textContent = "No file was downloaded. How should we get the invoice?";
+      status.style.color = "#fbbf24";
+    }
+
+    // Replace the footer buttons with checkpoint options
+    var footer = doneBtn.parentElement && doneBtn.parentElement.parentElement;
+    if (!footer) {
+      finishLearnMode();
+      return;
+    }
+    var btnRow = doneBtn.parentElement;
+    if (!btnRow) {
+      finishLearnMode();
+      return;
+    }
+
+    // Clear existing buttons
+    btnRow.innerHTML = "";
+
+    // "Save this page as PDF" button
+    var saveBtn = document.createElement("button");
+    saveBtn.textContent = "Save page as PDF";
+    saveBtn.style.padding = "5px 14px";
+    saveBtn.style.borderRadius = "6px";
+    saveBtn.style.border = "none";
+    saveBtn.style.background = "linear-gradient(135deg, #10b981, #06b6d4)";
+    saveBtn.style.color = "#fff";
+    saveBtn.style.font = "700 11px/1 sans-serif";
+    saveBtn.style.cursor = "pointer";
+    saveBtn.addEventListener("click", function () {
+      saveBtn.disabled = true;
+      saveBtn.textContent = "Converting...";
+      saveBtn.style.opacity = "0.6";
+      saveBtn.style.cursor = "default";
+
+      captureAndUploadPageAsPdf(function (success) {
+        if (success) {
+          recordLearnAction("capture_page_as_pdf", {
+            pageContext: {
+              title: document.title,
+              surroundingText: (document.body.innerText || "").slice(0, 500),
+            },
+          });
+          if (status) {
+            status.textContent = "Page captured as PDF!";
+            status.style.color = "#86efac";
+          }
+          setTimeout(function () {
+            finishLearnMode();
+          }, 500);
+        } else {
+          saveBtn.disabled = false;
+          saveBtn.textContent = "Save page as PDF";
+          saveBtn.style.opacity = "1";
+          saveBtn.style.cursor = "pointer";
+          if (status) {
+            status.textContent = "Conversion failed. Try again or skip.";
+            status.style.color = "#fca5a5";
+          }
+        }
+      });
+    });
+
+    // "Skip" button
+    var skipBtn = document.createElement("button");
+    skipBtn.textContent = "Skip";
+    skipBtn.style.padding = "5px 14px";
+    skipBtn.style.borderRadius = "6px";
+    skipBtn.style.border = "1px solid rgba(245, 158, 11, 0.4)";
+    skipBtn.style.background = "rgba(245, 158, 11, 0.15)";
+    skipBtn.style.color = "#fbbf24";
+    skipBtn.style.font = "600 11px/1 sans-serif";
+    skipBtn.style.cursor = "pointer";
+    skipBtn.addEventListener("click", function () {
+      finishLearnMode();
+    });
+
+    btnRow.appendChild(saveBtn);
+    btnRow.appendChild(skipBtn);
   }
 
   function finishLearnMode() {
@@ -4044,6 +4296,18 @@
       });
       replayStateMachine = null;
     }
+  });
+
+  // Handle TS_REPLAY_CAPTURE_PAGE from replay-engine (via postMessage)
+  window.addEventListener("message", function (event) {
+    if (event.source !== window) return;
+    var data = event.data || {};
+    if (data.type !== "TS_REPLAY_CAPTURE_PAGE") return;
+
+    console.log("[FiBuKI] Replay: capturing page as PDF");
+    captureAndUploadPageAsPdf(function (success) {
+      console.log("[FiBuKI] Replay: page capture " + (success ? "succeeded" : "failed"));
+    });
   });
 
   // Network hook is injected via background (MAIN world) to avoid page CSP.

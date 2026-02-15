@@ -82,76 +82,176 @@ async function convertToLangChainMessages(uiMessages: UIMessageInput[]) {
     }
 
     if (msg.role === "assistant") {
-      let textContent = "";
-      const toolCalls: Array<{ id: string; name: string; args: Record<string, unknown> }> = [];
-      const toolResults: Array<{ toolCallId: string; result: unknown }> = [];
+      // Extract a tool call + result from a part, handling all storage formats
+      const extractToolPart = (part: NonNullable<UIMessageInput["parts"]>[number]) => {
+        let toolCallId: string | undefined;
+        let toolName: string | undefined;
+        let args: Record<string, unknown> = {};
+        let toolResult: unknown;
+
+        if (part.type.startsWith("tool-")) {
+          // Streaming format: part.type = "tool-<toolName>"
+          toolName = part.type.replace("tool-", "");
+          toolCallId = part.toolCallId as string;
+          args = (part.args || part.input || {}) as Record<string, unknown>;
+          toolResult = part.result ?? part.output;
+        } else if (part.type === "tool" && part.toolCall) {
+          // Worker transcript format: full toolCall object embedded in part
+          const tc = part.toolCall;
+          toolCallId = tc.id;
+          toolName = tc.name;
+          args = tc.args || {};
+          toolResult = tc.result;
+        } else if (part.type === "tool" && part.toolCallId && part.toolName) {
+          // Stored format: toolCallId + toolName on part, args/result from toolInvocations
+          const ti = msg.toolInvocations?.find(t => t.toolCallId === part.toolCallId);
+          toolCallId = part.toolCallId;
+          toolName = part.toolName;
+          args = ti?.args || (part.args || part.input || {}) as Record<string, unknown>;
+          toolResult = ti?.result ?? part.result ?? part.output;
+        }
+
+        if (toolCallId && toolName) {
+          return { toolCallId, toolName, args, toolResult };
+        }
+        return null;
+      };
+
+      const isToolPart = (part: NonNullable<UIMessageInput["parts"]>[number]) =>
+        part.type.startsWith("tool-") ||
+        (part.type === "tool" && (part.toolCall || (part.toolCallId && part.toolName)));
 
       if (msg.parts) {
+        // Segment parts into multi-turn AIMessage → ToolMessage sequences.
+        // This preserves the original sequential tool-calling structure that
+        // was flattened when the streaming adapter merged multiple agent
+        // loop iterations into a single assistant UI message.
+        let pendingText = "";
+        let pendingToolCalls: Array<{ id: string; name: string; args: Record<string, unknown> }> = [];
+        let pendingToolResults: Array<{ toolCallId: string; result: unknown }> = [];
+
+        const flushTurn = () => {
+          if (pendingToolCalls.length > 0) {
+            // Emit AIMessage with accumulated text + tool calls
+            result.push(
+              new AIMessage({
+                content: pendingText,
+                tool_calls: pendingToolCalls,
+              })
+            );
+            // Emit ToolMessages for results
+            for (const tr of pendingToolResults) {
+              result.push(
+                new ToolMessage({
+                  tool_call_id: tr.toolCallId,
+                  content: typeof tr.result === "string" ? tr.result : JSON.stringify(tr.result),
+                })
+              );
+            }
+            pendingText = "";
+            pendingToolCalls = [];
+            pendingToolResults = [];
+          }
+          // Text-only content is NOT flushed here — it accumulates until
+          // a tool part arrives or we reach the end of parts
+        };
+
         for (const part of msg.parts) {
           if (part.type === "text" && part.text) {
-            textContent += part.text;
-          } else if (part.type.startsWith("tool-")) {
-            // Streaming format: part.type = "tool-<toolName>"
-            const toolName = part.type.replace("tool-", "");
-            const toolCallId = part.toolCallId as string;
-            const args = (part.args || part.input || {}) as Record<string, unknown>;
-            const toolResult = part.result ?? part.output;
-
-            toolCalls.push({ id: toolCallId, name: toolName, args });
-
-            if (toolResult !== undefined) {
-              toolResults.push({ toolCallId, result: toolResult });
+            // If we already have tool calls queued, this text starts a new turn
+            if (pendingToolCalls.length > 0) {
+              flushTurn();
             }
-          } else if (part.type === "tool" && part.toolCall) {
-            // Worker transcript format: full toolCall object embedded in part
-            const tc = part.toolCall;
-            toolCalls.push({ id: tc.id, name: tc.name, args: tc.args || {} });
-            if (tc.result !== undefined) {
-              toolResults.push({ toolCallId: tc.id, result: tc.result });
-            }
-          } else if (part.type === "tool" && part.toolCallId && part.toolName) {
-            // Stored format: toolCallId + toolName on part, args/result from toolInvocations
-            const ti = msg.toolInvocations?.find(t => t.toolCallId === part.toolCallId);
-            const args = ti?.args || (part.args || part.input || {}) as Record<string, unknown>;
-            const toolResult = ti?.result ?? part.result ?? part.output;
-
-            toolCalls.push({ id: part.toolCallId, name: part.toolName, args });
-
-            if (toolResult !== undefined) {
-              toolResults.push({ toolCallId: part.toolCallId, result: toolResult });
+            pendingText += part.text;
+          } else if (isToolPart(part)) {
+            const extracted = extractToolPart(part);
+            if (extracted) {
+              pendingToolCalls.push({
+                id: extracted.toolCallId,
+                name: extracted.toolName,
+                args: extracted.args,
+              });
+              if (extracted.toolResult !== undefined) {
+                pendingToolResults.push({
+                  toolCallId: extracted.toolCallId,
+                  result: extracted.toolResult,
+                });
+              }
             }
           }
+        }
+
+        // Flush remaining tool calls
+        if (pendingToolCalls.length > 0) {
+          flushTurn();
+        }
+
+        // Emit any trailing text as a standalone AIMessage (no tool calls)
+        if (pendingText) {
+          result.push(new AIMessage({ content: pendingText }));
         }
       } else if (msg.content) {
-        textContent = msg.content;
-      }
+        // No parts — legacy message format
+        const textContent = msg.content;
+        const toolCalls: Array<{ id: string; name: string; args: Record<string, unknown> }> = [];
+        const toolResults: Array<{ toolCallId: string; result: unknown }> = [];
 
-      // Fallback: if no tool calls found from parts, use toolInvocations directly
-      if (toolCalls.length === 0 && msg.toolInvocations) {
-        for (const ti of msg.toolInvocations) {
-          toolCalls.push({ id: ti.toolCallId, name: ti.toolName, args: ti.args || {} });
-          if (ti.result !== undefined) {
-            toolResults.push({ toolCallId: ti.toolCallId, result: ti.result });
+        if (msg.toolInvocations) {
+          for (const ti of msg.toolInvocations) {
+            toolCalls.push({ id: ti.toolCallId, name: ti.toolName, args: ti.args || {} });
+            if (ti.result !== undefined) {
+              toolResults.push({ toolCallId: ti.toolCallId, result: ti.result });
+            }
           }
         }
-      }
 
-      if (textContent || toolCalls.length > 0) {
-        result.push(
-          new AIMessage({
-            content: textContent,
-            tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
-          })
-        );
-      }
+        if (textContent || toolCalls.length > 0) {
+          result.push(
+            new AIMessage({
+              content: textContent,
+              tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+            })
+          );
+        }
 
-      for (const tr of toolResults) {
-        result.push(
-          new ToolMessage({
-            tool_call_id: tr.toolCallId,
-            content: typeof tr.result === "string" ? tr.result : JSON.stringify(tr.result),
-          })
-        );
+        for (const tr of toolResults) {
+          result.push(
+            new ToolMessage({
+              tool_call_id: tr.toolCallId,
+              content: typeof tr.result === "string" ? tr.result : JSON.stringify(tr.result),
+            })
+          );
+        }
+      } else {
+        // Fallback: use toolInvocations if available, otherwise empty
+        const toolCalls: Array<{ id: string; name: string; args: Record<string, unknown> }> = [];
+        const toolResults: Array<{ toolCallId: string; result: unknown }> = [];
+
+        if (msg.toolInvocations) {
+          for (const ti of msg.toolInvocations) {
+            toolCalls.push({ id: ti.toolCallId, name: ti.toolName, args: ti.args || {} });
+            if (ti.result !== undefined) {
+              toolResults.push({ toolCallId: ti.toolCallId, result: ti.result });
+            }
+          }
+        }
+
+        if (toolCalls.length > 0) {
+          result.push(
+            new AIMessage({
+              content: "",
+              tool_calls: toolCalls,
+            })
+          );
+          for (const tr of toolResults) {
+            result.push(
+              new ToolMessage({
+                tool_call_id: tr.toolCallId,
+                content: typeof tr.result === "string" ? tr.result : JSON.stringify(tr.result),
+              })
+            );
+          }
+        }
       }
       continue;
     }

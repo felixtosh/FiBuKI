@@ -81,22 +81,22 @@ function MatchSourceBadge({ matchedBy }: { matchedBy: MatchedBy }) {
     manual: {
       icon: <Hand className="h-3 w-3" />,
       label: "Manual",
-      className: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300",
+      className: "bg-green-50 text-green-900 border-green-300 dark:bg-green-900/30 dark:text-green-300 dark:border-green-700",
     },
     ai: {
       icon: <Bot className="h-3 w-3" />,
       label: "AI",
-      className: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300",
+      className: "bg-purple-50 text-purple-900 border-purple-300 dark:bg-purple-900/30 dark:text-purple-300 dark:border-purple-700",
     },
     auto: {
       icon: <Sparkles className="h-3 w-3" />,
       label: "Auto",
-      className: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300",
+      className: "bg-blue-50 text-blue-900 border-blue-300 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-700",
     },
     suggestion: {
       icon: <MousePointerClick className="h-3 w-3" />,
       label: "Click",
-      className: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
+      className: "bg-amber-50 text-amber-900 border-amber-300 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-700",
     },
   };
 
@@ -104,7 +104,7 @@ function MatchSourceBadge({ matchedBy }: { matchedBy: MatchedBy }) {
   if (!config) return null;
 
   return (
-    <span className={cn("inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium", config.className)}>
+    <span className={cn("inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border text-[10px] font-medium", config.className)}>
       {config.icon}
       {config.label}
     </span>
@@ -436,7 +436,7 @@ export function PartnerDetailPanel({
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b">
         <div className="flex items-center gap-3 min-w-0">
-          <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+          <div className="h-10 w-10 rounded-lg bg-muted flex items-center justify-center shrink-0">
             <Building2 className="h-5 w-5 text-primary" />
           </div>
           <div className="min-w-0">
@@ -557,7 +557,7 @@ export function PartnerDetailPanel({
                       {partner.ibans.map((iban, idx) => (
                         <code
                           key={idx}
-                          className="text-xs bg-green-100/50 dark:bg-green-900/30 px-1.5 py-0.5 rounded font-mono"
+                          className="text-xs bg-green-100 dark:bg-green-900/30 px-1.5 py-0.5 rounded font-mono"
                         >
                           {formatIban(iban)}
                         </code>
@@ -574,7 +574,7 @@ export function PartnerDetailPanel({
                     confidence={95}
                     variant="manual"
                   >
-                    <code className="text-xs bg-green-100/50 dark:bg-green-900/30 px-1.5 py-0.5 rounded font-mono">
+                    <code className="text-xs bg-green-100 dark:bg-green-900/30 px-1.5 py-0.5 rounded font-mono">
                       {partner.vatId}
                     </code>
                   </RuleCard>
@@ -607,7 +607,7 @@ export function PartnerDetailPanel({
                         .map((alias, idx) => (
                           <code
                             key={idx}
-                            className="text-xs bg-green-100/50 dark:bg-green-900/30 px-1.5 py-0.5 rounded font-mono"
+                            className="text-xs bg-green-100 dark:bg-green-900/30 px-1.5 py-0.5 rounded font-mono"
                           >
                             {alias}
                           </code>
@@ -627,7 +627,7 @@ export function PartnerDetailPanel({
                       {partner.learnedPatterns.slice(0, 3).map((pattern, idx) => (
                         <div key={idx} className="space-y-1">
                           <div className="flex items-center gap-2">
-                            <code className="text-xs bg-green-100/50 dark:bg-green-900/30 px-1.5 py-0.5 rounded font-mono flex-1 truncate">
+                            <code className="text-xs bg-green-100 dark:bg-green-900/30 px-1.5 py-0.5 rounded font-mono flex-1 truncate">
                               {pattern.pattern}
                             </code>
                             <Badge variant="outline" className="text-[10px]">
@@ -639,7 +639,7 @@ export function PartnerDetailPanel({
                               {pattern.excludePatterns.map((excludePattern, exIdx) => (
                                 <code
                                   key={exIdx}
-                                  className="text-xs bg-red-100/50 dark:bg-red-900/30 px-1.5 py-0.5 rounded font-mono line-through"
+                                  className="text-xs bg-red-100 dark:bg-red-900/30 px-1.5 py-0.5 rounded font-mono line-through"
                                 >
                                   {excludePattern}
                                 </code>
@@ -674,7 +674,7 @@ export function PartnerDetailPanel({
                           {rule.patterns.map((pattern, pIdx) => (
                             <code
                               key={pIdx}
-                              className="text-xs bg-green-100/50 dark:bg-green-900/30 px-1.5 py-0.5 rounded font-mono"
+                              className="text-xs bg-green-100 dark:bg-green-900/30 px-1.5 py-0.5 rounded font-mono"
                             >
                               {pattern}
                             </code>
@@ -682,7 +682,7 @@ export function PartnerDetailPanel({
                           {rule.excludePatterns && rule.excludePatterns.map((pattern, pIdx) => (
                             <code
                               key={`ex-${pIdx}`}
-                              className="text-xs bg-red-100/50 dark:bg-red-900/30 px-1.5 py-0.5 rounded font-mono line-through"
+                              className="text-xs bg-red-100 dark:bg-red-900/30 px-1.5 py-0.5 rounded font-mono line-through"
                             >
                               {pattern}
                             </code>
@@ -705,7 +705,7 @@ export function PartnerDetailPanel({
                       {partner.emailDomains.map((domain, idx) => (
                         <code
                           key={idx}
-                          className="text-xs bg-blue-100/50 dark:bg-blue-900/30 px-1.5 py-0.5 rounded font-mono"
+                          className="text-xs bg-blue-100 dark:bg-blue-900/30 px-1.5 py-0.5 rounded font-mono"
                         >
                           @{domain}
                         </code>
@@ -724,7 +724,7 @@ export function PartnerDetailPanel({
                     <div className="space-y-1">
                       {gmailFilePatterns.slice(0, 2).map((pattern, idx) => (
                         <div key={idx} className="flex items-center gap-1.5">
-                          <code className="text-xs bg-blue-100/50 dark:bg-blue-900/30 px-1.5 py-0.5 rounded font-mono flex-1 truncate">
+                          <code className="text-xs bg-blue-100 dark:bg-blue-900/30 px-1.5 py-0.5 rounded font-mono flex-1 truncate">
                             {pattern.pattern}
                           </code>
                           <Badge variant="outline" className="text-[10px]">

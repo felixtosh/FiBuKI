@@ -62,8 +62,8 @@ export function ReportReadinessCheck({ readiness, period }: ReportReadinessCheck
   return (
     <Card className={cn(
       isActuallyReady
-        ? "border-green-200 bg-green-50/50 dark:border-green-800 dark:bg-green-950/30"
-        : "border-amber-200 bg-amber-50/50 dark:border-amber-800 dark:bg-amber-950/30"
+        ? "border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-950/30"
+        : "border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30"
     )}>
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">

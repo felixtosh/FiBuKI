@@ -19,8 +19,8 @@
  * - Subject has invoice keyword: +15%
  * - Email text has invoice keyword: +10%
  * - Amount appears in email/filename: +20%
- * - Partner name in email: +10%
- * - Invoice reference in email/filename: +10%
+ * - Partner name in email/filename: +10%
+ * - Invoice pattern match in filename: +35% (or token fallback: +10%)
  * - Sender domain matches known domains: +20%
  * - Learned Gmail pattern: +10%
  * - Date multiplier: 0.25x - 1.0x based on distance
@@ -126,6 +126,18 @@ function extractTokens(text?: string | null): string[] {
 
 function containsAny(haystack: string, needles: string[]): boolean {
   return needles.some((needle) => haystack.includes(needle));
+}
+
+function extractInvoicePatterns(text: string): string[] {
+  if (!text) return [];
+  const patterns: string[] = [];
+  // Match invoice-style references like R-2025.006, INV2024-001, RE20240315
+  const invoicePattern = /[A-Za-z]{1,4}[-.]?\d{4,}[-.]?\d*/g;
+  patterns.push(...(text.match(invoicePattern) || []));
+  // Match long numeric sequences (6+ digits) like 202401150034
+  const numericPattern = /\d{6,}/g;
+  patterns.push(...(text.match(numericPattern) || []));
+  return Array.from(new Set(patterns.map(p => p.toLowerCase().replace(/[-.\s]/g, ""))));
 }
 
 function extractEmailDomain(email?: string | null): string | null {
@@ -332,19 +344,30 @@ export function scoreFileMatch(input: ScoreFileInput): ScoreFileResult {
     reasons.push("Amount appears in email or filename");
   }
 
-  // 6. Partner name appears in email (+10%)
-  if (partnerTokens.length > 0 && containsAny(combined, partnerTokens)) {
+  // 6. Partner name appears in email or filename (+10%)
+  if (partnerTokens.length > 0 && containsAny(combined + " " + filenameLower, partnerTokens)) {
     score += 0.1;
-    reasons.push("Partner name appears in email");
+    reasons.push("Partner name appears in email or filename");
   }
 
-  // 7. Invoice reference appears in email or filename (+10%)
-  if (
+  // 7. Invoice reference matching (cascading: exact pattern > tokens)
+  const txPatterns = extractInvoicePatterns(
+    [transactionName, transactionReference].filter(Boolean).join(" ")
+  );
+  const filePatterns = extractInvoicePatterns(fileName);
+  const hasInvoicePatternMatch = txPatterns.length > 0 && filePatterns.length > 0 &&
+    txPatterns.some(tp => tp.length >= 4 &&
+      filePatterns.some(fp => fp.includes(tp) || tp.includes(fp)));
+
+  if (hasInvoicePatternMatch) {
+    score += 0.35;
+    reasons.push("Invoice number pattern matches filename");
+  } else if (
     invoiceTokens.length > 0 &&
     containsAny(combined + " " + filenameLower, invoiceTokens)
   ) {
     score += 0.1;
-    reasons.push("Invoice reference in email or filename");
+    reasons.push("Invoice reference tokens in email or filename");
   }
 
   // 8. Sender domain matches known partner domains (+20%)

@@ -38,6 +38,49 @@ interface TransactionToolbarProps {
   totalCount?: number;
   /** Sum of amounts for filtered transactions (in cents) */
   filteredSum?: number;
+  /** Completion percentage (0-100) for the progress ring */
+  scorePercent?: number;
+}
+
+function ScoreRing({ percent }: { percent: number }) {
+  const radius = 8;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference - (percent / 100) * circumference;
+  const color =
+    percent >= 100
+      ? "text-yellow-500"
+      : percent >= 67
+        ? "text-green-500"
+        : percent >= 33
+          ? "text-amber-500"
+          : "text-red-500";
+
+  return (
+    <svg width="20" height="20" viewBox="0 0 20 20" className="flex-shrink-0">
+      <circle
+        cx="10"
+        cy="10"
+        r={radius}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.5"
+        className="text-muted/40"
+      />
+      <circle
+        cx="10"
+        cy="10"
+        r={radius}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.5"
+        strokeDasharray={circumference}
+        strokeDashoffset={offset}
+        strokeLinecap="round"
+        transform="rotate(-90 10 10)"
+        className={cn(color, "transition-[stroke-dashoffset] duration-500 ease-out")}
+      />
+    </svg>
+  );
 }
 
 export function TransactionToolbar({
@@ -50,6 +93,7 @@ export function TransactionToolbar({
   assignedCount,
   totalCount,
   filteredSum,
+  scorePercent,
 }: TransactionToolbarProps) {
   const [datePopoverOpen, setDatePopoverOpen] = useState(false);
   const [statusPopoverOpen, setStatusPopoverOpen] = useState(false);
@@ -548,6 +592,7 @@ export function TransactionToolbar({
       {showCounter && (
         <div className="flex flex-col items-end justify-center text-sm">
           <span className="flex items-center gap-1.5 text-muted-foreground">
+            {scorePercent !== undefined && <ScoreRing percent={scorePercent} />}
             <span className={cn(
               "tabular-nums font-medium text-foreground inline-block",
               counterBumping && "animate-counter-bump"

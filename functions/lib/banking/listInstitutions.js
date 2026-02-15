@@ -60,6 +60,7 @@ exports.listBankInstitutionsCallable = (0, createCallable_1.createCallable)({
         throw new createCallable_1.HttpsError("unavailable", "Failed to fetch banks from finAPI");
     }
     const banksData = (await banksResponse.json());
+    // Map all banks — don't deduplicate by name since different IDs may support different interfaces
     const institutions = banksData.banks.map((bank) => ({
         id: String(bank.id),
         name: bank.name,
@@ -69,6 +70,17 @@ exports.listBankInstitutionsCallable = (0, createCallable_1.createCallable)({
         transaction_total_days: "90", // finAPI default
         providerId: "finapi",
     }));
+    // Disambiguate duplicate names by appending BIC or bank ID
+    const nameCounts = new Map();
+    for (const inst of institutions) {
+        nameCounts.set(inst.name, (nameCounts.get(inst.name) || 0) + 1);
+    }
+    for (const inst of institutions) {
+        if ((nameCounts.get(inst.name) || 0) > 1) {
+            const suffix = inst.bic || `#${inst.id}`;
+            inst.name = `${inst.name} (${suffix})`;
+        }
+    }
     // Sort by name
     institutions.sort((a, b) => a.name.localeCompare(b.name));
     return {

@@ -91,9 +91,9 @@ export function findCandidateMatches(
 
 function getConfidenceColor(confidence: number) {
   if (confidence >= 90)
-    return "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400";
+    return "bg-green-50 text-green-900 border-green-300 dark:bg-green-900/30 dark:text-green-300";
   if (confidence >= 70)
-    return "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400";
+    return "bg-amber-50 text-amber-900 border-amber-300 dark:bg-amber-900/30 dark:text-amber-300";
   return "bg-muted text-foreground";
 }
 

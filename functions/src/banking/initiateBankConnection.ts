@@ -16,8 +16,9 @@ import { createCallable, HttpsError } from "../utils/createCallable";
 const FINAPI_CLIENT_ID = defineSecret("FINAPI_CLIENT_ID");
 const FINAPI_CLIENT_SECRET = defineSecret("FINAPI_CLIENT_SECRET");
 
-// finAPI base URL (sandbox for now)
+// finAPI base URLs (sandbox for now)
 const FINAPI_BASE_URL = "https://sandbox.finapi.io";
+const FINAPI_WEBFORM_URL = "https://webform-sandbox.finapi.io";
 
 interface InitiateBankConnectionRequest {
   institutionId: string;
@@ -64,7 +65,7 @@ export const initiateBankConnectionCallable = createCallable<
     timeoutSeconds: 60,
   },
   async (ctx, request) => {
-    const { institutionId, redirectUrl, maxHistoryDays, linkToSourceId, language } = request;
+    const { institutionId, redirectUrl, maxHistoryDays, linkToSourceId } = request;
 
     if (!institutionId) {
       throw new HttpsError("invalid-argument", "institutionId is required");
@@ -141,7 +142,7 @@ export const initiateBankConnectionCallable = createCallable<
     if (!userTokenRes.ok) {
       const err = await userTokenRes.text();
       console.error("[initiateBankConnection] User token error:", err);
-      throw new HttpsError("unavailable", "Failed to authenticate finAPI user");
+      throw new HttpsError("unavailable", `Failed to authenticate finAPI user: ${userTokenRes.status}`);
     }
 
     const userTokenData = await userTokenRes.json() as {
@@ -169,19 +170,18 @@ export const initiateBankConnectionCallable = createCallable<
       logo?: { url?: string };
     };
 
-    // 4. Create web form for bank connection
+    // 4. Create web form for bank connection (Web Form 2.0 API, camelCase fields)
     const isHttps = redirectUrl?.startsWith("https://");
     const webFormBody: Record<string, unknown> = {
       bank: { id: parseInt(institutionId, 10) },
       maxDaysForDownload: maxHistoryDays || 90,
-      language: language || "de",
     };
 
     if (isHttps && redirectUrl) {
       webFormBody.redirectUrl = redirectUrl;
     }
 
-    const webFormRes = await fetch(`${FINAPI_BASE_URL}/api/v2/webForms/bankConnectionImport`, {
+    const webFormRes = await fetch(`${FINAPI_WEBFORM_URL}/api/webForms/bankConnectionImport`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -192,19 +192,37 @@ export const initiateBankConnectionCallable = createCallable<
 
     if (!webFormRes.ok) {
       const err = await webFormRes.text();
-      console.error("[initiateBankConnection] Web form error:", err);
-      throw new HttpsError("unavailable", "Failed to create bank connection form");
+      console.error(`[initiateBankConnection] Web form error (HTTP ${webFormRes.status}), body sent:`, JSON.stringify(webFormBody), "response:", err);
+      let detail = "";
+      try {
+        const errJson = JSON.parse(err) as {
+          errors?: Array<{ message?: string; code?: string }>;
+          error?: string;
+          message?: string;
+        };
+        detail = errJson.errors?.[0]?.message || errJson.error || errJson.message || err.slice(0, 300);
+      } catch {
+        // JSON parse failed — use truncated raw text
+        detail = err.slice(0, 300);
+      }
+      throw new HttpsError(
+        "unavailable",
+        `Failed to create bank connection form (HTTP ${webFormRes.status})${detail ? `: ${detail}` : ""}`
+      );
     }
 
     const webForm = await webFormRes.json() as {
       id: string;
       url: string;
-      token: string;
+      expiresAt: string;
+      status: string;
     };
 
     // 5. Store connection in Firestore
     const now = Timestamp.now();
-    const expiresAt = new Date(Date.now() + 30 * 60 * 1000); // 30 min
+    const expiresAt = webForm.expiresAt
+      ? new Date(webForm.expiresAt)
+      : new Date(Date.now() + 30 * 60 * 1000);
 
     const connectionDoc = {
       providerId: "finapi",
@@ -222,7 +240,6 @@ export const initiateBankConnectionCallable = createCallable<
         userAccessToken: userToken,
         userRefreshToken: refreshToken,
         tokenExpiresAt: tokenExpiresAt.toISOString(),
-        webFormToken: webForm.token,
       },
       linkToSourceId: linkToSourceId || null,
       userId: ctx.userId,

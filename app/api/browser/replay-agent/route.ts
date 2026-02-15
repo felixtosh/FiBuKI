@@ -223,7 +223,7 @@ ${pageTypeInstructions}
 RESPONSE FORMAT:
 Return a JSON object with these fields:
 - "commands": Array of actions to execute. Each action has:
-  - "action": one of "navigate", "clickByText", "clickByAriaLabel", "clickBySelector", "type", "scrollTo", "wait"
+  - "action": one of "navigate", "clickByText", "clickByAriaLabel", "clickBySelector", "type", "scrollTo", "wait", "capturePageAsPdf"
   - For "navigate": include "url" (string)
   - For "clickByText": include "text" (string) and optionally "tagName" (string)
   - For "clickByAriaLabel": include "label" (string)
@@ -231,6 +231,7 @@ Return a JSON object with these fields:
   - For "type": include "selector" or "label" (string) and "value" (string)
   - For "scrollTo": include "y" (number)
   - For "wait": include "ms" (number)
+  - For "capturePageAsPdf": no additional parameters needed. Captures the current page HTML and converts it to PDF. Use this when the invoice is displayed as an HTML page with no PDF download available.
 - "reasoning": Brief explanation of your strategy (1-2 sentences)
 - "isDone": true if you believe the invoice has been downloaded or the download was triggered
 - "detectedInvoice": (optional) if you found the matching invoice row, include {"amount": "...", "date": "...", "downloadHint": "..."}
@@ -246,7 +247,7 @@ function getPageTypeInstructions(pageType: string): string {
     case "invoice_list":
       return "This is an INVOICE LIST page. Find the row matching the transaction amount and date from the DETECTED INVOICE ROWS above. Click its download button or navigate to its detail page.";
     case "invoice_detail":
-      return "This is an INVOICE DETAIL page. Look for download/PDF buttons to download this invoice. If the amount doesn't match the target, go back to the invoice list.";
+      return "This is an INVOICE DETAIL page. Look for download/PDF buttons to download this invoice. If the amount doesn't match the target, go back to the invoice list. If NO download buttons or PDF links are found, the invoice may be an HTML page — use capturePageAsPdf to save it.";
     case "download_area":
       return "This is a DOWNLOAD AREA with multiple download links. Find and click the PDF download matching the target invoice.";
     case "overview_dashboard":

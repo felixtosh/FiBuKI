@@ -11,6 +11,10 @@ import { WorkerConfig, WorkerType } from "@/types/worker";
  * Worker configurations by type
  */
 export const WORKER_CONFIGS: Record<WorkerType, WorkerConfig> = {
+  // Tool sets match the main chat agent's capabilities for each task type.
+  // See lib/chat/system-prompt.ts for the source-of-truth logic.
+  // Only partner_file_batch has specialized batch tools.
+
   file_matching: {
     type: "file_matching",
     name: "File Matcher",
@@ -32,6 +36,7 @@ export const WORKER_CONFIGS: Record<WorkerType, WorkerConfig> = {
       "listTransactions",
       "listFiles",
       "getFile",
+      "waitForFileExtraction",
     ],
     systemPromptKey: "file_matching",
     maxMessages: 20,
@@ -48,11 +53,14 @@ export const WORKER_CONFIGS: Record<WorkerType, WorkerConfig> = {
       "getTransaction",
       "listPartners",
       "getPartner",
-      // Search user's own data for clues (bank names are often cryptic)
-      "searchGmailEmails", // Emails have full company names, domains
-      "listFiles", // Invoices have proper company names
-      "getFile", // Get file details
-      "listTransactions", // Similar transactions may have partners
+      // Search tools (same as main chat agent)
+      "generateSearchSuggestions",
+      "searchLocalFiles",
+      "searchGmailAttachments",
+      "searchGmailEmails",
+      "listFiles",
+      "getFile",
+      "listTransactions",
       // Lookup tools (read-only, for web search)
       "lookupCompanyInfo",
       "validateVatId",
@@ -79,9 +87,11 @@ export const WORKER_CONFIGS: Record<WorkerType, WorkerConfig> = {
       "getFile",
       "listPartners",
       "getPartner",
-      // Search user's own data
-      "searchGmailEmails",
+      // Search tools (same as main chat agent)
+      "generateSearchSuggestions",
+      "searchLocalFiles",
       "searchGmailAttachments",
+      "searchGmailEmails",
       "listFiles",
       "listTransactions",
       // Lookup tools
@@ -90,6 +100,10 @@ export const WORKER_CONFIGS: Record<WorkerType, WorkerConfig> = {
       // Write tools
       "createPartner",
       "assignPartnerToFile",
+      // Download & connect if found during search
+      "downloadGmailAttachment",
+      "waitForFileExtraction",
+      "connectFileToTransaction",
     ],
     systemPromptKey: "file_partner_matching",
     maxMessages: 20,
@@ -102,9 +116,8 @@ export const WORKER_CONFIGS: Record<WorkerType, WorkerConfig> = {
     name: "Receipt Finder",
     description: "Searches for receipts/invoices for transactions",
     toolNames: [
-      // AI-generated search queries
-      "generateSearchSuggestions",
       // Search tools
+      "generateSearchSuggestions",
       "searchLocalFiles",
       "searchGmailAttachments",
       "searchGmailEmails",
@@ -122,7 +135,7 @@ export const WORKER_CONFIGS: Record<WorkerType, WorkerConfig> = {
     ],
     systemPromptKey: "receipt_search",
     maxMessages: 30,
-    maxToolCalls: 20, // Slightly higher - needs search, download, wait, verify cycles
+    maxToolCalls: 20,
     timeoutSeconds: 120,
   },
 

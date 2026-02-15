@@ -78,13 +78,14 @@ export function TransactionTable({
   );
 
   // Calculate assigned count and sum of amounts
-  const { assignedCount, totalCount, filteredSum } = useMemo(() => {
+  const { assignedCount, totalCount, filteredSum, scorePercent } = useMemo(() => {
     const total = filteredTransactions.length;
     const assigned = filteredTransactions.filter(
       (tx) => (tx.fileIds && tx.fileIds.length > 0) || tx.noReceiptCategoryId
     ).length;
     const sum = filteredTransactions.reduce((acc, tx) => acc + (tx.amount || 0), 0);
-    return { assignedCount: assigned, totalCount: total, filteredSum: sum };
+    const score = total > 0 ? Math.round((assigned / total) * 100) : 0;
+    return { assignedCount: assigned, totalCount: total, filteredSum: sum, scorePercent: score };
   }, [filteredTransactions]);
 
   // Scroll to and highlight a transaction by ID (uses virtualizer for off-screen items)
@@ -311,6 +312,7 @@ export function TransactionTable({
         assignedCount={assignedCount}
         totalCount={totalCount}
         filteredSum={filteredSum}
+        scorePercent={scorePercent}
       />
 
       {/* Scrollable table area */}

@@ -68,9 +68,9 @@ export function getConfidenceTier(confidence: number): "high" | "medium" | "low"
  * Get confidence tier color for UI
  */
 export function getConfidenceColor(confidence: number): string {
-  if (confidence >= 90) return "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200";
-  if (confidence >= 75) return "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200";
-  return "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200";
+  if (confidence >= 90) return "bg-green-50 text-green-900 border-green-300 dark:bg-green-900/30 dark:text-green-300";
+  if (confidence >= 75) return "bg-amber-50 text-amber-900 border-amber-300 dark:bg-amber-900/30 dark:text-amber-300";
+  return "bg-stone-50 text-stone-700 border-stone-300 dark:bg-stone-800 dark:text-stone-300";
 }
 
 /**

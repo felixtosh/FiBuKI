@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { AutoActionNotification, ToolCallSummary } from "@/types/notification";
 import { WorkerType } from "@/types/worker";
 import { Button } from "@/components/ui/button";
+import { ToolStepList } from "@/design-system/tool-results";
 import { useChat } from "./chat-provider";
 
 interface WorkerActivityCardProps {
@@ -122,66 +123,50 @@ export function WorkerActivityCard({ notification }: WorkerActivityCardProps) {
         <span>{formatTime(notification.createdAt)}</span>
       </div>
 
-      {/* Title and message */}
+      {/* Title + entity link */}
       <div className="text-sm">
         <p className="font-medium">{notification.title}</p>
-        {toolSummary.length > 0 ? (
-          <div className="flex flex-wrap gap-x-2 gap-y-0.5 mt-1">
-            {toolSummary.map((s, i) => (
-              <span
-                key={i}
-                className={
-                  s.status === "success"
-                    ? "text-green-600 dark:text-green-400"
-                    : s.status === "error"
-                    ? "text-red-500 dark:text-red-400"
-                    : "text-muted-foreground"
-                }
+        {(fileId || transactionId) && (
+          <div className="flex items-center gap-1 mt-0.5">
+            {fileId && fileName && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="w-fit max-w-full h-6 px-1.5 text-xs text-muted-foreground hover:text-foreground"
+                onClick={handleViewFile}
               >
-                {s.label}: {s.outcome}
-                {i < toolSummary.length - 1 && <span className="text-muted-foreground/50 ml-2">·</span>}
-              </span>
-            ))}
+                <ExternalLink className="h-3 w-3 mr-1 flex-shrink-0" />
+                <span className="truncate">{fileName}</span>
+              </Button>
+            )}
+            {transactionId && transactionName && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="w-fit max-w-full h-6 px-1.5 text-xs text-muted-foreground hover:text-foreground"
+                onClick={handleViewTransaction}
+              >
+                <ExternalLink className="h-3 w-3 mr-1 flex-shrink-0" />
+                <span className="truncate">{transactionName}</span>
+              </Button>
+            )}
           </div>
-        ) : (
-          <p className="text-muted-foreground mt-1">{notification.message}</p>
         )}
       </div>
 
-      {/* While running - show clickable link to file/transaction */}
-      {status === "running" && (fileId || transactionId) && (
-        <div className="flex items-center gap-2">
-          {fileId && fileName && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="w-fit h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
-              onClick={handleViewFile}
-            >
-              <ExternalLink className="h-3 w-3 mr-1" />
-              {fileName}
-            </Button>
-          )}
-          {transactionId && transactionName && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="w-fit h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
-              onClick={handleViewTransaction}
-            >
-              <ExternalLink className="h-3 w-3 mr-1" />
-              {transactionName}
-            </Button>
-          )}
-        </div>
+      {/* Tool steps */}
+      {toolSummary.length > 0 ? (
+        <ToolStepList steps={toolSummary} />
+      ) : (
+        <p className="text-xs text-muted-foreground">{notification.message}</p>
       )}
 
-      {/* View in chat button - shows when there's a linked session */}
-      {sessionId && status === "completed" && (
+      {/* View in chat */}
+      {sessionId && (
         <Button
           variant="ghost"
           size="sm"
-          className="w-fit h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+          className="w-fit h-6 px-1.5 text-xs text-muted-foreground hover:text-foreground"
           onClick={handleViewInChat}
         >
           <MessageSquare className="h-3 w-3 mr-1" />

@@ -1,5 +1,5 @@
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
-import { getFirestore, FieldValue } from "firebase-admin/firestore";
+import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
 import {
   matchTransaction,
   shouldAutoApply,
@@ -160,6 +160,15 @@ export const onPartnerCreate = onDocumentCreated(
         (partner) => !localizedGlobalIds.has(partner.id)
       );
 
+      // Build partner name map for automationHistory entries
+      const partnerNameMap = new Map<string, string>();
+      for (const p of userPartners) {
+        partnerNameMap.set(p.id, p.name);
+      }
+      for (const p of filteredGlobalPartners) {
+        partnerNameMap.set(p.id, p.name);
+      }
+
       // Process each unmatched transaction
       const batch = db.batch();
       let batchCount = 0;
@@ -230,6 +239,19 @@ export const onPartnerCreate = onDocumentCreated(
             updates.partnerMatchConfidence = topMatch.confidence;
             updates.partnerMatchedBy = "auto";
             autoMatched++;
+
+            const assignedPartnerName = partnerNameMap.get(assignedPartnerId) || partnerNameMap.get(topMatch.partnerId) || null;
+            updates.automationHistory = FieldValue.arrayUnion({
+              type: "partner_assigned",
+              ranAt: Timestamp.now(),
+              status: "completed",
+              actor: "auto",
+              level: "outcome",
+              forPartnerId: assignedPartnerId,
+              partnerName: assignedPartnerName,
+              confidence: topMatch.confidence,
+              summary: `Partner "${assignedPartnerName || assignedPartnerId}" auto-assigned`,
+            });
           } else {
             suggestionsAdded++;
           }

@@ -16,11 +16,11 @@ interface IntegrationCardProps {
   comingSoon?: boolean;
 }
 
-const badgeClasses: Record<string, string> = {
-  success: "border-green-500 text-green-600 dark:border-green-600 dark:text-green-400",
-  warning: "border-amber-500 text-amber-600 dark:border-amber-600 dark:text-amber-400",
-  destructive: "border-red-500 text-red-600 dark:border-red-600 dark:text-red-400",
-  muted: "",
+const badgeVariantMap: Record<string, "success" | "warning" | "destructive" | "muted"> = {
+  success: "success",
+  warning: "warning",
+  destructive: "destructive",
+  muted: "muted",
 };
 
 export function IntegrationCard({
@@ -55,8 +55,8 @@ export function IntegrationCard({
           <span className="text-sm font-medium">{name}</span>
           {badge && (
             <Badge
-              variant={badge.variant === "destructive" ? "destructive" : "secondary"}
-              className={cn("text-xs", badgeClasses[badge.variant])}
+              variant={badgeVariantMap[badge.variant]}
+              className="text-xs"
             >
               {badge.label}
             </Badge>

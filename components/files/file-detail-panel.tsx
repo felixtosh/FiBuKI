@@ -133,8 +133,9 @@ export function FileDetailPanel({
   const [isUpdatingExtractedFields, setIsUpdatingExtractedFields] = useState(false);
   const [isRematchingTransactions, setIsRematchingTransactions] = useState(false);
 
-  // Chat hook for agentic search
-  const { startFilePartnerSearchThread, startFileTransactionSearchThread, isLoading: isChatLoading } = useChat();
+  // Chat hook for agentic search (via workers)
+  const { startFilePartnerSearch, startFileTransactionSearch, activeWandTargets } = useChat();
+  const isWandActive = activeWandTargets.has(file.id);
 
   const ctx: OperationsContext = useMemo(
     () => ({ db, userId: userId ?? "" }),
@@ -550,11 +551,11 @@ export function FileDetailPanel({
                       variant="ghost"
                       size="icon"
                       className="h-6 w-6"
-                      onClick={() => startFilePartnerSearchThread(file.id)}
-                      disabled={isChatLoading}
+                      onClick={() => startFilePartnerSearch(file.id)}
+                      disabled={isWandActive}
                       title="Search for partner"
                     >
-                      {isChatLoading ? (
+                      {isWandActive ? (
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
                       ) : (
                         <Search className="h-3.5 w-3.5" />
@@ -668,7 +669,7 @@ export function FileDetailPanel({
               onTriggerRematch={handleTriggerTransactionRematch}
               isRematching={isRematchingTransactions}
               onAiSearch={() =>
-                startFileTransactionSearchThread(file.id, {
+                startFileTransactionSearch(file.id, {
                   fileName: file.fileName,
                   amount: file.extractedAmount ?? undefined,
                   currency: file.extractedCurrency ?? undefined,
@@ -676,7 +677,7 @@ export function FileDetailPanel({
                   partner: file.extractedPartner ?? undefined,
                 })
               }
-              isAiSearching={isChatLoading}
+              isAiSearching={isWandActive}
             />
           </div>
         </ScrollArea>

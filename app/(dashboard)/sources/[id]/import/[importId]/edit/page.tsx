@@ -136,7 +136,7 @@ export default function EditMappingPage({ params }: EditMappingPageProps) {
       <div className="flex-1 overflow-auto px-4 py-6">
         {/* Error display */}
         {state.error && (
-          <div className="mb-6 p-4 bg-destructive/10 border border-destructive/30 rounded-lg text-destructive flex items-center justify-between">
+          <div className="mb-6 p-4 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 rounded-lg text-destructive flex items-center justify-between">
             <span>{state.error}</span>
             <Button variant="ghost" size="sm" onClick={clearError}>
               Dismiss

@@ -312,7 +312,9 @@ Respond in JSON format:
 }
 
 /**
- * Validate that all required fields are mapped
+ * Validate that all required fields are mapped.
+ * Hard-requires: date + amount.
+ * Soft-requires: at least one of name OR partner must be mapped.
  */
 export function validateMappings(mappings: FieldMapping[]): {
   isValid: boolean;
@@ -322,11 +324,17 @@ export function validateMappings(mappings: FieldMapping[]): {
     mappings.filter((m) => m.targetField).map((m) => m.targetField)
   );
 
-  const requiredFields = TRANSACTION_FIELDS.filter((f) => f.required).map(
-    (f) => f.key
-  );
+  const missingFields: string[] = [];
 
-  const missingFields = requiredFields.filter((f) => !mappedFields.has(f));
+  // Hard-required: date and amount
+  if (!mappedFields.has("date")) missingFields.push("date");
+  if (!mappedFields.has("amount")) missingFields.push("amount");
+
+  // Soft-required: name OR partner (at least one)
+  const hasNameOrPartner = mappedFields.has("name") || mappedFields.has("partner");
+  if (!hasNameOrPartner) {
+    missingFields.push("description or partner");
+  }
 
   return {
     isValid: missingFields.length === 0,

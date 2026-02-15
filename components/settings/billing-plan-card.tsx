@@ -74,13 +74,13 @@ export function BillingPlanCard() {
         </div>
         <div className="flex items-center gap-2">
           {isFreePlanOverride && (
-            <Badge variant="outline" className="bg-green-100 text-green-700">
+            <Badge variant="outline" className="bg-green-50 text-green-900 border-green-300">
               <Gift className="h-3 w-3 mr-1" />
               Free Plan (Admin)
             </Badge>
           )}
           {isPlanTester && (
-            <Badge variant="outline" className="bg-blue-100 text-blue-700">
+            <Badge variant="outline" className="bg-blue-50 text-blue-900 border-blue-300">
               <TestTube className="h-3 w-3 mr-1" />
               Plan Tester Mode
             </Badge>

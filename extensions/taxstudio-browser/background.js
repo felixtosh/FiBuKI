@@ -862,6 +862,76 @@
     uploadBuffer(runId, buffer, filename, mimeType, sourceUrl);
   });
 
+  // TS_CAPTURE_PAGE_AS_PDF: Convert HTML page to PDF server-side, then upload
+  chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
+    if (!message || message.type !== "TS_CAPTURE_PAGE_AS_PDF") return false;
+    var runId = message.runId;
+    var html = message.html;
+    var pageUrl = message.pageUrl || "";
+    var pageTitle = message.pageTitle || "page";
+
+    console.log("[FiBuKI] TS_CAPTURE_PAGE_AS_PDF", runId, pageUrl.slice(0, 80));
+
+    // Get auth token from learnRuns, replayRuns, or runs
+    var token = null;
+    if (runId && learnRuns[runId] && learnRuns[runId].authToken) {
+      token = learnRuns[runId].authToken;
+    } else if (runId && replayRuns[runId] && replayRuns[runId].authToken) {
+      token = replayRuns[runId].authToken;
+    } else if (runId && runs[runId] && runs[runId].authToken) {
+      token = runs[runId].authToken;
+    }
+
+    if (!token) {
+      console.warn("[FiBuKI] TS_CAPTURE_PAGE_AS_PDF: no auth token for run", runId);
+      sendResponse({ ok: false, error: "No auth token" });
+      return false;
+    }
+
+    // Ensure runs entry exists for uploadBuffer
+    if (runId && !runs[runId]) {
+      if (learnRuns[runId]) {
+        runs[runId] = { tabId: learnRuns[runId].tabId, downloadTabIds: [], attemptedUrls: {}, openedDownloadUrls: {}, appTabId: learnRuns[runId].appTabId, foundCount: 0, downloadedCount: 0, urls: [], overlaySent: false, isLearnRun: true, authToken: token };
+      } else if (replayRuns[runId]) {
+        runs[runId] = { tabId: replayRuns[runId].tabId, downloadTabIds: [], attemptedUrls: {}, openedDownloadUrls: {}, appTabId: replayRuns[runId].appTabId, foundCount: 0, downloadedCount: 0, urls: [], overlaySent: false, isReplayRun: true, authToken: token };
+      }
+    }
+
+    var transactionId = null;
+    if (runId && learnRuns[runId]) transactionId = learnRuns[runId].transactionId;
+    else if (runId && replayRuns[runId]) transactionId = replayRuns[runId].transactionId;
+
+    fetch(getApiUrl("/api/browser/convert-html"), {
+      method: "POST",
+      headers: {
+        "Authorization": "Bearer " + token,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        html: html,
+        pageUrl: pageUrl,
+        pageTitle: pageTitle,
+      }),
+    })
+    .then(function (resp) {
+      if (!resp.ok) {
+        return resp.text().then(function (t) { throw new Error("Convert failed: " + resp.status + " " + t); });
+      }
+      return resp.arrayBuffer();
+    })
+    .then(function (pdfBuffer) {
+      var filename = (pageTitle || "page").replace(/[^a-zA-Z0-9]/g, "_").slice(0, 60) + ".pdf";
+      uploadBuffer(runId, new Uint8Array(pdfBuffer), filename, "application/pdf", pageUrl, transactionId);
+      sendResponse({ ok: true });
+    })
+    .catch(function (err) {
+      console.warn("[FiBuKI] TS_CAPTURE_PAGE_AS_PDF failed:", err);
+      sendResponse({ ok: false, error: err.message });
+    });
+
+    return true; // Keep channel open for async sendResponse
+  });
+
   chrome.runtime.onMessage.addListener(function (message) {
     if (!message || message.type !== "TS_DOWNLOAD_URLS") return;
     console.log("[FiBuKI] TS_DOWNLOAD_URLS", message.runId, (message.urls || []).length);

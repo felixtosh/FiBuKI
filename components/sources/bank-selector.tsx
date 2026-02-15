@@ -200,9 +200,9 @@ function BankCard({ institution, onClick, disabled }: BankCardProps) {
 
 function ProviderBadge({ providerId }: { providerId: string }) {
   const providerInfo: Record<string, { name: string; color: string; fullName: string }> = {
-    finapi: { name: "fA", color: "bg-orange-100 text-orange-700", fullName: "finAPI" },
-    truelayer: { name: "TL", color: "bg-blue-100 text-blue-700", fullName: "TrueLayer" },
-    plaid: { name: "PL", color: "bg-purple-100 text-purple-700", fullName: "Plaid" },
+    finapi: { name: "fA", color: "bg-orange-50 text-orange-900 border border-orange-300", fullName: "finAPI" },
+    truelayer: { name: "TL", color: "bg-blue-50 text-blue-900 border border-blue-300", fullName: "TrueLayer" },
+    plaid: { name: "PL", color: "bg-purple-50 text-purple-900 border border-purple-300", fullName: "Plaid" },
   };
 
   const info = providerInfo[providerId];

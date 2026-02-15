@@ -693,11 +693,21 @@ async function queueForPartnerBatch(userId, fileId, fileData, topConfidence) {
             // Continue if check fails
         }
     }
+    // Get partner name for the prompt
+    let partnerName = partnerId;
+    try {
+        const pDoc = await db.collection("partners").doc(partnerId).get();
+        if (pDoc.exists)
+            partnerName = pDoc.data().name || partnerId;
+    }
+    catch { /* use partnerId as fallback */ }
     // Create new batch request
     const ref = db.collection(`users/${userId}/workerRequests`).doc();
     await ref.set({
         id: ref.id,
         workerType: "partner_file_batch",
+        initialPrompt: `Batch match files for partner "${partnerName}" (${partnerId}). ` +
+            `File IDs: ${fileId}`,
         triggerContext: {
             fileIds: [fileId],
             partnerId,

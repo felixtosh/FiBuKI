@@ -655,17 +655,6 @@ function FilesContent() {
       <div {...getRootProps()} className="h-full overflow-hidden relative">
         <input {...getInputProps()} />
 
-      {/* Drag overlay */}
-      {isDragActive && (
-        <div className="absolute inset-0 z-50 bg-primary/10 border-2 border-dashed border-primary flex items-center justify-center pointer-events-none">
-          <div className="bg-background rounded-lg p-6 shadow-lg text-center">
-            <Upload className="h-12 w-12 mx-auto text-primary mb-2" />
-            <p className="text-lg font-medium">Drop files to upload</p>
-            <p className="text-sm text-muted-foreground">PDF, JPG, PNG, or WebP up to 10MB each</p>
-          </div>
-        </div>
-      )}
-
       {/* Upload FAB */}
       <Dialog open={isUploadDialogOpen} onOpenChange={setIsUploadDialogOpen}>
         <DialogTrigger asChild>
@@ -690,6 +679,17 @@ function FilesContent() {
         style={{ marginRight: (selectedFile || showBulkPanel) ? panelWidth : 0 }}
       >
         <div className="flex-1 overflow-hidden relative">
+          {/* Drag overlay — inside the margin-constrained area so it doesn't extend behind the detail panel */}
+          {isDragActive && (
+            <div className="absolute inset-0 z-40 bg-primary/10 border-2 border-dashed border-primary flex items-center justify-center pointer-events-none">
+              <div className="bg-background rounded-lg p-6 shadow-lg text-center">
+                <Upload className="h-12 w-12 mx-auto text-primary mb-2" />
+                <p className="text-lg font-medium">Drop files to upload</p>
+                <p className="text-sm text-muted-foreground">PDF, JPG, PNG, or WebP up to 10MB each</p>
+              </div>
+            </div>
+          )}
+
           <FileTable
             ref={tableRef}
             files={files}

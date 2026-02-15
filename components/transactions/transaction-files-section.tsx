@@ -324,9 +324,9 @@ function SuggestedFileRow({
               className={cn(
                 "text-xs px-1.5 py-0 cursor-help",
                 confidence >= 85
-                  ? "bg-green-100 text-green-800 border-green-300 dark:bg-green-900/50 dark:text-green-200 dark:border-green-700"
+                  ? "bg-green-50 text-green-900 border-green-300 dark:bg-green-900/30 dark:text-green-300"
                   : confidence >= 70
-                  ? "bg-yellow-100 text-yellow-800 border-yellow-300 dark:bg-yellow-900/50 dark:text-yellow-200 dark:border-yellow-700"
+                  ? "bg-amber-50 text-amber-900 border-amber-300 dark:bg-amber-900/30 dark:text-amber-300"
                   : "bg-muted text-muted-foreground border-border"
               )}
             >

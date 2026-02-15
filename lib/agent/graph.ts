@@ -246,7 +246,9 @@ function routeAfterTools(state: AgentState): "agent" | "respond" {
   const lastMessage = messages[messages.length - 1];
 
   // If the last message is a tool message, continue to agent
-  if (lastMessage instanceof ToolMessage) {
+  // Use both instanceof and structural check for robustness with deserialized messages
+  const msgType = lastMessage?._getType?.();
+  if (lastMessage instanceof ToolMessage || msgType === "tool") {
     console.log("[Router] After tools, routing back to agent");
     return "agent";
   }

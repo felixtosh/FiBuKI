@@ -138,7 +138,7 @@ export function NoReceiptCategoryPopover({
                           {suggestion && (
                             <Badge
                               variant="outline"
-                              className="text-xs px-1.5 py-0 h-5 bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-900/50 dark:text-amber-300 dark:border-amber-700"
+                              className="text-xs px-1.5 py-0 h-5 bg-amber-50 text-amber-900 border-amber-300 dark:bg-amber-900/50 dark:text-amber-300 dark:border-amber-700"
                             >
                               {Math.round(suggestion.confidence)}%
                             </Badge>

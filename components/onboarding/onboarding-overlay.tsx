@@ -53,6 +53,7 @@ export function OnboardingOverlay() {
       label={stepLabels[currentStep]}
       labelPosition="right"
       scrollIntoView={true}
+      dismissOnInteraction={currentStep === "set_identity"}
     />
   );
 }

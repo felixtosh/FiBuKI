@@ -362,7 +362,7 @@ function RecipeItem({
             onClick={() => onToggleAutoRun(!recipe.autoRun)}
             className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium transition-colors ${
               recipe.autoRun
-                ? "bg-green-100 text-green-700 hover:bg-green-200"
+                ? "bg-green-50 text-green-900 border border-green-300 hover:bg-green-100"
                 : "bg-muted text-muted-foreground hover:bg-muted/80"
             }`}
           >

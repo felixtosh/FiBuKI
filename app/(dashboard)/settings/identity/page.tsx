@@ -561,7 +561,7 @@ export default function IdentityPage() {
 
       {/* Sticky save bar */}
       {!userDataLoading && (
-        <div className="sticky bottom-0 -mx-8 px-8 py-3 mt-6 bg-background/95 backdrop-blur-sm border-t flex items-center gap-4">
+        <div className="sticky bottom-0 -mx-8 px-8 py-3 mt-6 bg-background border-t shadow-[0_-2px_8px_rgba(0,0,0,0.05)] flex items-center gap-4">
           <Button onClick={handleSave} disabled={saving || !hasChanges}>
             {saving ? (
               <Loader2 className="h-4 w-4 mr-2 animate-spin" />

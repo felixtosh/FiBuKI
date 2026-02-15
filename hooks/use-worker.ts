@@ -120,9 +120,97 @@ Amount: ${amountStr}${fileInfo.date ? ` dated ${fileInfo.date}` : ""}${fileInfo.
     [triggerWorker]
   );
 
+  /**
+   * Trigger a receipt search worker for a transaction
+   */
+  const triggerReceiptSearch = useCallback(
+    async (transactionId: string) => {
+      return triggerWorker({
+        workerType: "receipt_search",
+        initialPrompt: `Find receipt for transaction ${transactionId}`,
+        triggerContext: { transactionId },
+        triggeredBy: "user",
+      });
+    },
+    [triggerWorker]
+  );
+
+  /**
+   * Trigger a partner matching worker for a transaction
+   */
+  const triggerPartnerSearch = useCallback(
+    async (transactionId: string) => {
+      return triggerWorker({
+        workerType: "partner_matching",
+        initialPrompt: `Find partner for transaction ID: ${transactionId}`,
+        triggerContext: { transactionId },
+        triggeredBy: "user",
+      });
+    },
+    [triggerWorker]
+  );
+
+  /**
+   * Trigger a partner search worker for a file
+   */
+  const triggerFilePartnerSearch = useCallback(
+    async (fileId: string) => {
+      return triggerWorker({
+        workerType: "file_partner_matching",
+        initialPrompt: `Find partner for file ID: ${fileId}`,
+        triggerContext: { fileId },
+        triggeredBy: "user",
+      });
+    },
+    [triggerWorker]
+  );
+
+  /**
+   * Trigger a file-to-transaction matching worker
+   */
+  const triggerFileTransactionSearch = useCallback(
+    async (
+      fileId: string,
+      fileInfo?: {
+        fileName?: string;
+        amount?: number;
+        currency?: string;
+        date?: string;
+        partner?: string;
+      }
+    ) => {
+      // Build amount string with currency
+      const amountStr = fileInfo?.amount
+        ? `${(Math.abs(fileInfo.amount) / 100).toFixed(2)} ${fileInfo.currency || "EUR"}`
+        : "unknown amount";
+
+      // Add currency hint if non-EUR
+      const currencyHint =
+        fileInfo?.currency && fileInfo.currency !== "EUR"
+          ? `\nNote: File is in ${fileInfo.currency}. Search EUR transactions with ±15% amount range.`
+          : "";
+
+      const prompt = `Find matching transaction for file ID: ${fileId}
+File: "${fileInfo?.fileName || "Unknown"}"
+Amount: ${amountStr}${fileInfo?.date ? ` dated ${fileInfo.date}` : ""}${fileInfo?.partner ? ` from "${fileInfo.partner}"` : ""}${currencyHint}`;
+
+      return triggerWorker({
+        workerType: "file_matching",
+        initialPrompt: prompt,
+        triggerContext: { fileId },
+        triggeredBy: "user",
+      });
+    },
+    [triggerWorker]
+  );
+
   return {
     triggerWorker,
     triggerFileMatching,
+    triggerReceiptSearch,
+    triggerPartnerSearch,
+    triggerFilePartnerSearch,
+    triggerFileTransactionSearch,
     isTriggering,
   };
 }

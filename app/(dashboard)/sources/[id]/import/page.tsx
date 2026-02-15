@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useCallback, useEffect } from "react";
+import { use, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSources } from "@/hooks/use-sources";
 import { useImport, ImportStep } from "@/hooks/use-import";
@@ -9,6 +9,7 @@ import { CSVDropzone } from "@/components/import/csv-dropzone";
 import { MappingEditor } from "@/components/import/mapping-editor";
 import { ImportPreview } from "@/components/import/import-preview";
 import { ImportProgress } from "@/components/import/import-progress";
+import { ImportCelebration } from "@/components/import/import-celebration";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { CSVAnalysis } from "@/types/import";
@@ -71,6 +72,20 @@ export default function ImportPage({ params }: ImportPageProps) {
   };
 
   const effectiveStep = getEffectiveStep();
+
+  // First import celebration
+  const [showCelebration, setShowCelebration] = useState(false);
+  useEffect(() => {
+    if (effectiveStep === "complete" && !localStorage.getItem("fibuki_has_imported")) {
+      localStorage.setItem("fibuki_has_imported", "true");
+      setShowCelebration(true);
+    }
+  }, [effectiveStep]);
+
+  const handleDismissCelebration = useCallback(() => {
+    setShowCelebration(false);
+    router.push("/transactions");
+  }, [router]);
 
   // Navigation helpers - include importId in URL if we have one
   const navigateToStep = useCallback(
@@ -207,7 +222,7 @@ export default function ImportPage({ params }: ImportPageProps) {
       <div className="flex-1 overflow-auto px-4 py-6">
         {/* Error display */}
         {state.error && (
-          <div className="mb-6 p-4 bg-destructive/10 border border-destructive/30 rounded-lg text-destructive">
+          <div className="mb-6 p-4 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 rounded-lg text-destructive">
             {state.error}
           </div>
         )}
@@ -317,6 +332,16 @@ export default function ImportPage({ params }: ImportPageProps) {
         </Card>
       )}
       </div>
+
+      {/* First import celebration */}
+      <ImportCelebration
+        open={showCelebration}
+        onDismiss={handleDismissCelebration}
+        stats={{
+          imported: state.results?.imported ?? 0,
+          skipped: state.results?.skipped ?? 0,
+        }}
+      />
     </div>
   );
 }

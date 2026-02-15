@@ -490,9 +490,9 @@ export default function DesignSystemPage() {
               </ComponentGroup>
 
               <ComponentGroup title="Contextual Badges">
-                <Badge className="bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-200 border-0">Complete</Badge>
-                <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200 border-0">Pending</Badge>
-                <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-200 border-0">Processing</Badge>
+                <Badge className="bg-green-50 text-green-900 border-green-300 dark:bg-green-900/50 dark:text-green-200">Complete</Badge>
+                <Badge className="bg-amber-50 text-amber-900 border-amber-300 dark:bg-amber-900/50 dark:text-amber-200">Pending</Badge>
+                <Badge className="bg-blue-50 text-blue-900 border-blue-300 dark:bg-blue-900/50 dark:text-blue-200">Processing</Badge>
               </ComponentGroup>
 
               <CanonicalNote>

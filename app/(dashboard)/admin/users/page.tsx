@@ -78,10 +78,10 @@ interface UserInfo {
 }
 
 const PLAN_COLORS: Record<PlanId, string> = {
-  free: "bg-gray-100 text-gray-700",
-  starter: "bg-blue-100 text-blue-700",
-  business: "bg-purple-100 text-purple-700",
-  pro: "bg-amber-100 text-amber-700",
+  free: "bg-stone-50 text-stone-900 border-stone-300",
+  starter: "bg-blue-50 text-blue-900 border-blue-300",
+  business: "bg-purple-50 text-purple-900 border-purple-300",
+  pro: "bg-amber-50 text-amber-900 border-amber-300",
 };
 
 export default function AdminUsersPage() {
@@ -520,13 +520,13 @@ export default function AdminUsersPage() {
 
                         {/* Override badge */}
                         {user.adminOverride === "free_plan" && (
-                          <Badge variant="outline" className="bg-green-100 text-green-700">
+                          <Badge variant="outline" className="bg-green-50 text-green-900 border-green-300">
                             <Gift className="h-3 w-3 mr-1" />
                             Free Plan
                           </Badge>
                         )}
                         {user.adminOverride === "plan_tester" && (
-                          <Badge variant="outline" className="bg-blue-100 text-blue-700">
+                          <Badge variant="outline" className="bg-blue-50 text-blue-900 border-blue-300">
                             <TestTube className="h-3 w-3 mr-1" />
                             Tester
                           </Badge>

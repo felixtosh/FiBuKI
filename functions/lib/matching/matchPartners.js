@@ -185,6 +185,14 @@ exports.matchPartners = (0, https_1.onCall)({
         .map((partner) => partner.globalPartnerId)
         .filter(Boolean));
     const filteredGlobalPartners = globalPartners.filter((partner) => !localizedGlobalIds.has(partner.id));
+    // Build partner name map for automationHistory entries
+    const partnerNameMap = new Map();
+    for (const p of userPartners) {
+        partnerNameMap.set(p.id, p.name);
+    }
+    for (const p of filteredGlobalPartners) {
+        partnerNameMap.set(p.id, p.name);
+    }
     // Get transactions to match
     let transactionsSnapshot;
     if (!matchAll && transactionIds && transactionIds.length > 0) {
@@ -292,6 +300,18 @@ exports.matchPartners = (0, https_1.onCall)({
                 updates.partnerMatchConfidence = topMatch.confidence;
                 updates.partnerMatchedBy = "auto";
                 autoMatched++;
+                const partnerName = partnerNameMap.get(assignedPartnerId) || partnerNameMap.get(topMatch.partnerId) || null;
+                updates.automationHistory = firestore_1.FieldValue.arrayUnion({
+                    type: "partner_assigned",
+                    ranAt: firestore_1.Timestamp.now(),
+                    status: "completed",
+                    actor: "auto",
+                    level: "outcome",
+                    forPartnerId: assignedPartnerId,
+                    partnerName,
+                    confidence: topMatch.confidence,
+                    summary: `Partner "${partnerName || assignedPartnerId}" auto-assigned`,
+                });
                 // Track partner for file matching (only user partners can have files)
                 if (assignedPartnerType === "user") {
                     autoMatchedPartnerIds.add(assignedPartnerId);

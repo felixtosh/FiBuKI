@@ -24,6 +24,8 @@ interface HighlightPinProps {
   labelPosition?: LabelPositionType;
   /** Whether to scroll target into view */
   scrollIntoView?: boolean;
+  /** When true, dismiss the highlight when the user focuses any element inside the target */
+  dismissOnInteraction?: boolean;
 }
 
 interface TargetState {
@@ -106,9 +108,11 @@ export function HighlightPin({
   label,
   labelPosition = "right",
   scrollIntoView = true,
+  dismissOnInteraction = false,
 }: HighlightPinProps) {
   const [targets, setTargets] = useState<TargetState[]>([]);
   const [mounted, setMounted] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
   const observerRef = useRef<ResizeObserver | null>(null);
   const hasScrolledRef = useRef(false);
 
@@ -117,10 +121,28 @@ export function HighlightPin({
     return () => setMounted(false);
   }, []);
 
-  // Reset scroll flag when target changes
+  // Reset scroll flag and dismissed state when target changes
   useEffect(() => {
     hasScrolledRef.current = false;
+    setDismissed(false);
   }, [target]);
+
+  // Dismiss on focusin when dismissOnInteraction is enabled
+  useEffect(() => {
+    if (!dismissOnInteraction || !active || dismissed) return;
+
+    const handleFocusIn = () => {
+      setDismissed(true);
+    };
+
+    // Attach focusin to all matching elements
+    const elements = document.querySelectorAll(target);
+    elements.forEach((el) => el.addEventListener("focusin", handleFocusIn));
+
+    return () => {
+      elements.forEach((el) => el.removeEventListener("focusin", handleFocusIn));
+    };
+  }, [target, active, dismissOnInteraction, dismissed]);
 
   // Update all target positions and visibility
   const updateTargets = useCallback(() => {
@@ -202,7 +224,7 @@ export function HighlightPin({
   // Filter to only visible targets
   const visibleTargets = targets.filter((t) => t.isVisible);
 
-  if (!mounted || !active || visibleTargets.length === 0) return null;
+  if (!mounted || !active || dismissed || visibleTargets.length === 0) return null;
 
   // Calculate combined bounding box for all visible targets
   const combinedPosition: Position = visibleTargets.reduce(

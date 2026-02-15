@@ -3,7 +3,11 @@
 import { Suspense, useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { DataTableHandle } from "@/components/transactions/data-table";
 import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { httpsCallable } from "firebase/functions";
+import { useDropzone } from "react-dropzone";
+import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
+import { Upload, CheckCircle2 } from "lucide-react";
 import { TransactionTable } from "@/components/transactions/transaction-table";
 import { TransactionDetailPanel } from "@/components/transactions/transaction-detail-panel";
 import { ConnectFileOverlay } from "@/components/files/connect-file-overlay";
@@ -14,7 +18,9 @@ import { usePartners } from "@/hooks/use-partners";
 import { useGlobalPartners } from "@/hooks/use-global-partners";
 import { useFilteredTransactions } from "@/hooks/use-filtered-transactions";
 import { useTransactionFiles } from "@/hooks/use-files";
-import { functions } from "@/lib/firebase/config";
+import { functions, storage, db } from "@/lib/firebase/config";
+import { createFile, checkFileDuplicate, OperationsContext } from "@/lib/operations";
+import { useAuth } from "@/components/auth";
 import {
   parseFiltersFromUrl,
   saveFiltersToStorage,
@@ -30,6 +36,14 @@ const PANEL_WIDTH_KEY = "transactionDetailPanelWidth";
 const DEFAULT_PANEL_WIDTH = 480;
 const MIN_PANEL_WIDTH = 280;
 const MAX_PANEL_WIDTH = 700;
+
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+const ACCEPTED_TYPES = {
+  "image/jpeg": [".jpg", ".jpeg"],
+  "image/png": [".png"],
+  "image/webp": [".webp"],
+  "application/pdf": [".pdf"],
+};
 
 function TransactionTableFallback() {
   return (
@@ -358,6 +372,84 @@ function TransactionsContent() {
       });
   }, [loading, transactions, partners]);
 
+  // --- Global drag & drop (table area) ---
+  const { userId } = useAuth();
+  const [uploadSuccessMsg, setUploadSuccessMsg] = useState<string | null>(null);
+  const [globalUploading, setGlobalUploading] = useState(false);
+
+  const opsCtx: OperationsContext = useMemo(
+    () => ({ db, userId: userId ?? "" }),
+    [userId]
+  );
+
+  const handleGlobalDrop = useCallback(
+    async (acceptedFiles: File[]) => {
+      if (acceptedFiles.length === 0 || !userId) return;
+      const file = acceptedFiles[0];
+      setGlobalUploading(true);
+      try {
+        const buffer = await file.arrayBuffer();
+        const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
+        const contentHash = Array.from(new Uint8Array(hashBuffer))
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join("");
+
+        const existingFile = await checkFileDuplicate(opsCtx, contentHash);
+        if (existingFile) {
+          setUploadSuccessMsg("File already exists.");
+        } else {
+          const timestamp = Date.now();
+          const sanitizedName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
+          const storagePath = `files/${userId}/${timestamp}_${sanitizedName}`;
+          const storageRef = ref(storage, storagePath);
+          const uploadTask = uploadBytesResumable(storageRef, file);
+
+          await new Promise<void>((resolve, reject) => {
+            uploadTask.on("state_changed", null, reject, () => resolve());
+          });
+
+          const downloadUrl = await getDownloadURL(storageRef);
+          await createFile(opsCtx, {
+            fileName: file.name,
+            fileType: file.type,
+            fileSize: file.size,
+            storagePath,
+            downloadUrl,
+            contentHash,
+          });
+          setUploadSuccessMsg("File uploaded successfully.");
+        }
+      } catch (err) {
+        console.error("Global file upload failed:", err);
+        setUploadSuccessMsg(null);
+      } finally {
+        setGlobalUploading(false);
+      }
+    },
+    [opsCtx, userId]
+  );
+
+  // Auto-dismiss success banner
+  useEffect(() => {
+    if (!uploadSuccessMsg) return;
+    const timer = setTimeout(() => setUploadSuccessMsg(null), 4000);
+    return () => clearTimeout(timer);
+  }, [uploadSuccessMsg]);
+
+  const {
+    getRootProps: getGlobalRootProps,
+    getInputProps: getGlobalInputProps,
+    isDragActive: isGlobalDragActive,
+  } = useDropzone({
+    onDrop: handleGlobalDrop,
+    accept: ACCEPTED_TYPES,
+    maxSize: MAX_FILE_SIZE,
+    multiple: false,
+    noClick: true,
+    noKeyboard: true,
+    disabled: globalUploading,
+  });
+
   if (loading) {
     return <TransactionTableFallback />;
   }
@@ -383,11 +475,13 @@ function TransactionsContent() {
     <div className="h-full overflow-hidden">
       {/* Main content - adjusts margin when panel is open */}
       <div
+        {...getGlobalRootProps()}
         className="h-full transition-[margin] duration-200 ease-in-out"
         style={{ marginRight: selectedTransaction ? panelWidth : 0 }}
       >
-        {/* Relative container for overlay positioning */}
-        <div className="h-full relative">
+        <input {...getGlobalInputProps()} />
+        {/* Relative container for overlay positioning — overflow-hidden clips drag overlay to visible table area */}
+        <div className="h-full relative overflow-hidden">
           <TransactionTable
             tableRef={tableRef}
             onSelectTransaction={handleSelectTransaction}
@@ -407,6 +501,30 @@ function TransactionsContent() {
               connectedFileIds={connectedFileIds}
               transaction={selectedTransaction}
             />
+          )}
+
+          {/* Global drag overlay */}
+          {isGlobalDragActive && (
+            <div className="absolute inset-0 z-40 bg-primary/10 border-2 border-dashed border-primary flex items-center justify-center pointer-events-none">
+              <div className="bg-background rounded-lg p-6 shadow-lg text-center">
+                <Upload className="h-12 w-12 mx-auto text-primary mb-2" />
+                <p className="text-lg font-medium">Drop to upload receipt</p>
+                <p className="text-sm text-muted-foreground">PDF, JPG, PNG, or WebP up to 10MB</p>
+              </div>
+            </div>
+          )}
+
+          {/* Upload success banner */}
+          {uploadSuccessMsg && (
+            <div className="absolute bottom-4 left-4 right-4 z-40 bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-900 rounded-lg px-4 py-3 flex items-center gap-2 shadow-md animate-in slide-in-from-bottom-2 duration-200">
+              <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400 flex-shrink-0" />
+              <span className="text-sm text-green-800 dark:text-green-200 flex-1">
+                {uploadSuccessMsg}{" "}
+                <Link href="/files" className="underline font-medium hover:text-green-900 dark:hover:text-green-100">
+                  View in Files
+                </Link>
+              </span>
+            </div>
           )}
         </div>
       </div>

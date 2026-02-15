@@ -109,9 +109,9 @@ export function PartnerSearchList({
                           className={cn(
                             "text-xs px-1.5 py-0.5 rounded flex-shrink-0",
                             suggestion.confidence >= 90
-                              ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+                              ? "bg-green-50 text-green-900 dark:bg-green-900/30 dark:text-green-300"
                               : suggestion.confidence >= 75
-                              ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
+                              ? "bg-amber-50 text-amber-900 dark:bg-amber-900/30 dark:text-amber-300"
                               : "bg-muted text-muted-foreground"
                           )}
                         >

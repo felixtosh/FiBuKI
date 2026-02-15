@@ -282,12 +282,12 @@ export default function EmailInboundDetailPage() {
             <div className="flex items-center justify-between pt-2">
               <div className="flex items-center gap-2">
                 {isPaused ? (
-                  <Badge variant="secondary" className="text-xs border-amber-500 text-amber-600">
+                  <Badge variant="warning" className="text-xs">
                     <Pause className="h-3 w-3 mr-1" />
                     Paused
                   </Badge>
                 ) : (
-                  <Badge variant="secondary" className="text-xs">
+                  <Badge variant="success" className="text-xs">
                     <Check className="h-3 w-3 mr-1" />
                     Active
                   </Badge>

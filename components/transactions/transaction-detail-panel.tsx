@@ -135,8 +135,8 @@ export function TransactionDetailPanel({
   // Edit history expanded state
   const [showHistoryPanel, setShowHistoryPanel] = useState(false);
 
-  // Chat hook for agentic search
-  const { startSearchThread } = useChat();
+  // Chat hook for agentic search (receipt search via worker)
+  const { startReceiptSearch } = useChat();
 
   // Precision search hook (kept for status tracking)
   const {
@@ -145,10 +145,10 @@ export function TransactionDetailPanel({
     error: searchError,
   } = usePrecisionSearch({ transactionId: transaction.id });
 
-  // Agentic search trigger - opens chat with search prompt
+  // Agentic search trigger - runs receipt search worker
   const triggerSearch = useCallback(() => {
-    startSearchThread(transaction.id);
-  }, [startSearchThread, transaction.id]);
+    startReceiptSearch(transaction.id);
+  }, [startReceiptSearch, transaction.id]);
 
   // Operations context for file operations
   const ctx: OperationsContext = useMemo(

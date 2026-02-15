@@ -155,23 +155,26 @@ const sections = [
   { id: "overlays", label: "Overlays & Popovers" },
 ];
 
-// Color palette from globals.css
-const colorPalette = [
-  { name: "Background", var: "--color-background", value: "hsl(0 0% 100%)", className: "bg-background" },
-  { name: "Foreground", var: "--color-foreground", value: "hsl(20 15% 10%)", className: "bg-foreground" },
-  { name: "Card", var: "--color-card", value: "hsl(0 0% 100%)", className: "bg-card" },
-  { name: "Primary", var: "--color-primary", value: "hsl(20 20% 14%)", className: "bg-primary" },
-  { name: "Primary Foreground", var: "--color-primary-foreground", value: "hsl(30 25% 98%)", className: "bg-primary-foreground" },
-  { name: "Secondary", var: "--color-secondary", value: "hsl(28 18% 95%)", className: "bg-secondary" },
-  { name: "Muted", var: "--color-muted", value: "hsl(28 16% 95%)", className: "bg-muted" },
-  { name: "Muted Foreground", var: "--color-muted-foreground", value: "hsl(20 10% 40%)", className: "bg-muted-foreground" },
-  { name: "Accent", var: "--color-accent", value: "hsl(28 18% 95%)", className: "bg-accent" },
-  { name: "Destructive", var: "--color-destructive", value: "hsl(0 84.2% 60.2%)", className: "bg-destructive" },
-  { name: "Info", var: "--color-info", value: "hsl(45 93% 94%)", className: "bg-info" },
-  { name: "Info Foreground", var: "--color-info-foreground", value: "hsl(32 81% 29%)", className: "bg-info-foreground" },
-  { name: "Border", var: "--color-border", value: "hsl(24 18% 85%)", className: "bg-border" },
-  { name: "Input", var: "--color-input", value: "hsl(24 18% 92%)", className: "bg-input" },
-  { name: "Ring", var: "--color-ring", value: "hsl(20 20% 14%)", className: "bg-ring" },
+// Color palette from globals.css — grouped by purpose
+const coreColors = [
+  { name: "Background", var: "--color-background", className: "bg-background" },
+  { name: "Foreground", var: "--color-foreground", className: "bg-foreground" },
+  { name: "Primary", var: "--color-primary", className: "bg-primary" },
+  { name: "Primary FG", var: "--color-primary-foreground", className: "bg-primary-foreground" },
+  { name: "Secondary", var: "--color-secondary", className: "bg-secondary" },
+  { name: "Muted", var: "--color-muted", className: "bg-muted" },
+  { name: "Muted FG", var: "--color-muted-foreground", className: "bg-muted-foreground" },
+  { name: "Destructive", var: "--color-destructive", className: "bg-destructive" },
+  { name: "Border", var: "--color-border", className: "bg-border" },
+];
+const semanticColors = [
+  { name: "Complete Row", var: "--color-complete-row", className: "bg-complete-row" },
+  { name: "Complete Selected", var: "--color-complete-row-selected", className: "bg-complete-row-selected" },
+  { name: "Amount +", var: "--color-amount-positive", className: "bg-amount-positive" },
+  { name: "Amount −", var: "--color-amount-negative", className: "bg-amount-negative" },
+  { name: "Info", var: "--color-info", className: "bg-info" },
+  { name: "Info FG", var: "--color-info-foreground", className: "bg-info-foreground" },
+  { name: "Highlight", var: "--color-highlight", className: "bg-highlight" },
 ];
 
 function SectionHeader({ id, title }: { id: string; title: string }) {
@@ -288,46 +291,54 @@ export default function DesignSystemPage() {
           <div className="max-w-5xl mx-auto p-8 space-y-12">
             {/* ===== COLORS ===== */}
             <SectionHeader id="colors" title="Color Palette" />
-            <p className="text-muted-foreground mb-6">
-              All colors are defined as CSS variables using HSL values. This enables consistent theming and potential dark mode support.
-            </p>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-              {colorPalette.map((color) => (
-                <div key={color.var} className="space-y-2">
-                  <div
-                    className={cn(
-                      "h-16 rounded-lg border shadow-sm",
-                      color.className
-                    )}
-                  />
-                  <div>
-                    <p className="text-sm font-medium">{color.name}</p>
-                    <p className="text-xs text-muted-foreground font-mono">{color.var}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
 
-            {/* Semantic Colors */}
-            <ComponentGroup title="Semantic Color Usage">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="p-4 rounded-lg border bg-background">
-                  <span className="text-foreground">Default text on background</span>
-                </div>
-                <div className="p-4 rounded-lg bg-primary text-primary-foreground">
+            <ComponentGroup title="Core Theme">
+              <div className="grid grid-cols-3 md:grid-cols-5 lg:grid-cols-9 gap-3">
+                {coreColors.map((color) => (
+                  <div key={color.var} className="space-y-1.5">
+                    <div className={cn("h-12 rounded-lg border shadow-sm", color.className)} />
+                    <div>
+                      <p className="text-xs font-medium">{color.name}</p>
+                      <p className="text-[10px] text-muted-foreground font-mono truncate">{color.var.replace("--color-", "")}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </ComponentGroup>
+
+            <ComponentGroup title="Semantic Colors">
+              <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-3">
+                {semanticColors.map((color) => (
+                  <div key={color.var} className="space-y-1.5">
+                    <div className={cn("h-12 rounded-lg border shadow-sm", color.className)} />
+                    <div>
+                      <p className="text-xs font-medium">{color.name}</p>
+                      <p className="text-[10px] text-muted-foreground font-mono truncate">{color.var.replace("--color-", "")}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </ComponentGroup>
+
+            <ComponentGroup title="Usage Examples">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                <div className="p-3 rounded-lg bg-primary text-primary-foreground text-sm">
                   Primary: Actions, CTAs
                 </div>
-                <div className="p-4 rounded-lg bg-secondary text-secondary-foreground">
-                  Secondary: Alternative actions
+                <div className="p-3 rounded-lg bg-muted text-muted-foreground text-sm">
+                  Muted: Subtle backgrounds
                 </div>
-                <div className="p-4 rounded-lg bg-muted text-muted-foreground">
-                  Muted: Subtle backgrounds, disabled
+                <div className="p-3 rounded-lg bg-destructive text-destructive-foreground text-sm">
+                  Destructive: Errors, deletes
                 </div>
-                <div className="p-4 rounded-lg bg-destructive text-destructive-foreground">
-                  Destructive: Errors, delete actions
+                <div className="p-3 rounded-lg bg-complete-row text-foreground text-sm border">
+                  Complete: Transaction done
                 </div>
-                <div className="p-4 rounded-lg bg-info text-info-foreground border border-info-border">
-                  Info: Suggestions, notifications
+                <div className="p-3 rounded-lg bg-info text-info-foreground text-sm border border-info-border">
+                  Info: Tips, notifications
+                </div>
+                <div className="p-3 rounded-lg bg-highlight text-foreground text-sm border">
+                  Highlight: Search matches
                 </div>
               </div>
             </ComponentGroup>
@@ -450,6 +461,44 @@ export default function DesignSystemPage() {
               <ComponentRow label="Destructive">
                 <Badge variant="destructive">Destructive</Badge>
                 <Badge variant="destructive">Error</Badge>
+              </ComponentRow>
+              <ComponentRow label="Success">
+                <Badge variant="success">Connected</Badge>
+                <Badge variant="success">Active</Badge>
+                <Badge variant="success">95%</Badge>
+              </ComponentRow>
+              <ComponentRow label="Warning">
+                <Badge variant="warning">Paused</Badge>
+                <Badge variant="warning">Pending</Badge>
+                <Badge variant="warning">78%</Badge>
+              </ComponentRow>
+              <ComponentRow label="Info">
+                <Badge variant="info">Syncing</Badge>
+                <Badge variant="info">Processing</Badge>
+                <Badge variant="info">Auto</Badge>
+              </ComponentRow>
+              <ComponentRow label="Muted">
+                <Badge variant="muted">Draft</Badge>
+                <Badge variant="muted">Inactive</Badge>
+              </ComponentRow>
+            </ComponentGroup>
+
+            <ComponentGroup title="Score Badges (Confidence)">
+              <p className="text-sm text-muted-foreground mb-3">
+                Consistent score coloring: green (85%+), amber (50-84%), stone (&lt;50%).
+                <span className="block mt-1 text-xs text-muted-foreground/70">Used in: <code className="bg-muted px-1 py-0.5 rounded">classification-badges.tsx</code>, <code className="bg-muted px-1 py-0.5 rounded">rule-card.tsx</code>, <code className="bg-muted px-1 py-0.5 rounded">transaction-files-section.tsx</code></span>
+              </p>
+              <ComponentRow label="High (85%+)">
+                <Badge className="bg-green-50 text-green-900 border-green-300 dark:bg-green-900/30 dark:text-green-300 dark:border-green-700">95%</Badge>
+                <Badge className="bg-green-50 text-green-900 border-green-300 dark:bg-green-900/30 dark:text-green-300 dark:border-green-700">92%</Badge>
+              </ComponentRow>
+              <ComponentRow label="Medium (50-84%)">
+                <Badge className="bg-amber-50 text-amber-900 border-amber-300 dark:bg-amber-900/30 dark:text-amber-200 dark:border-amber-700">78%</Badge>
+                <Badge className="bg-amber-50 text-amber-900 border-amber-300 dark:bg-amber-900/30 dark:text-amber-200 dark:border-amber-700">54%</Badge>
+              </ComponentRow>
+              <ComponentRow label="Low (<50%)">
+                <Badge className="bg-stone-50 text-stone-700 border-stone-300 dark:bg-stone-800 dark:text-stone-300">32%</Badge>
+                <Badge className="bg-stone-50 text-stone-700 border-stone-300 dark:bg-stone-800 dark:text-stone-300">15%</Badge>
               </ComponentRow>
             </ComponentGroup>
 
@@ -925,7 +974,7 @@ export default function DesignSystemPage() {
                 </div>
                 <div className="p-3 border rounded flex items-center gap-4">
                   <span className="text-sm w-28 shrink-0">Completed</span>
-                  <div className="flex-1 h-12 border rounded bg-[#d9ffb2] dark:bg-green-950/20 flex items-center px-3 text-sm">bg-[#d9ffb2]</div>
+                  <div className="flex-1 h-12 border rounded bg-complete-row flex items-center px-3 text-sm">bg-complete-row</div>
                 </div>
                 <div className="p-3 border rounded flex items-center gap-4">
                   <span className="text-sm w-28 shrink-0">Highlight</span>
@@ -953,7 +1002,7 @@ export default function DesignSystemPage() {
                   </TableHeader>
                   <TableBody>
                     {/* Completed transaction (green background) */}
-                    <TableRow className="bg-[#d9ffb2] hover:bg-[#c9f59f] dark:bg-green-950/20">
+                    <TableRow className="bg-complete-row hover:bg-complete-row-selected">
                       <TableCell>
                         <div>
                           <p className="text-sm whitespace-nowrap">Jan 15, 2024</p>
@@ -1171,7 +1220,7 @@ export default function DesignSystemPage() {
                     <span className="text-sm font-medium tabular-nums text-foreground">€125,50</span>
                     <Badge
                       variant="outline"
-                      className="text-xs px-1.5 py-0 cursor-help bg-green-100 text-green-800 border-green-300 dark:bg-green-900/50 dark:text-green-200 dark:border-green-700"
+                      className="text-xs px-1.5 py-0 cursor-help bg-green-50 text-green-900 border-green-300 dark:bg-green-900/30 dark:text-green-300"
                     >
                       92%
                     </Badge>
@@ -1202,7 +1251,7 @@ export default function DesignSystemPage() {
                     <span className="text-sm font-medium tabular-nums text-foreground">€120,00</span>
                     <Badge
                       variant="outline"
-                      className="text-xs px-1.5 py-0 cursor-help bg-yellow-100 text-yellow-800 border-yellow-300 dark:bg-yellow-900/50 dark:text-yellow-200 dark:border-yellow-700"
+                      className="text-xs px-1.5 py-0 cursor-help bg-amber-50 text-amber-900 border-amber-300 dark:bg-amber-900/30 dark:text-amber-200 dark:border-amber-700"
                     >
                       75%
                     </Badge>
@@ -1409,7 +1458,7 @@ export default function DesignSystemPage() {
                           <p className="text-sm font-medium truncate">amazon_invoice_jan15.pdf</p>
                           <p className="text-xs text-muted-foreground">Amount: €125.50 · Jan 15, 2024</p>
                         </div>
-                        <Badge className="bg-green-100 text-green-700 hover:bg-green-100">95%</Badge>
+                        <Badge className="bg-green-50 text-green-900 border-green-300 hover:bg-green-100">95%</Badge>
                       </div>
 
                       {/* Medium confidence match */}
@@ -1421,7 +1470,7 @@ export default function DesignSystemPage() {
                           <p className="text-sm font-medium truncate">receipt_office_supplies.pdf</p>
                           <p className="text-xs text-muted-foreground">Amount: €127.00 · Jan 14, 2024</p>
                         </div>
-                        <Badge variant="secondary">78%</Badge>
+                        <Badge className="bg-amber-50 text-amber-900 border-amber-300 hover:bg-amber-50">78%</Badge>
                       </div>
 
                       {/* No match indicator */}
@@ -1470,7 +1519,7 @@ export default function DesignSystemPage() {
                       <div>
                         <div className="flex items-center gap-2">
                           <span className="font-medium">user@example.com</span>
-                          <Badge variant="secondary" className="text-xs border-green-500 text-green-600">
+                          <Badge variant="success" className="text-xs">
                             <Check className="h-3 w-3 mr-1" />
                             Connected
                           </Badge>
@@ -1505,7 +1554,7 @@ export default function DesignSystemPage() {
                       <div>
                         <div className="flex items-center gap-2">
                           <span className="font-medium">work@company.com</span>
-                          <Badge variant="secondary" className="text-xs border-blue-500 text-blue-600">
+                          <Badge variant="info" className="text-xs">
                             <Loader2 className="h-3 w-3 mr-1 animate-spin" />
                             Syncing
                           </Badge>
@@ -1533,7 +1582,7 @@ export default function DesignSystemPage() {
                       <div>
                         <div className="flex items-center gap-2">
                           <span className="font-medium">felix@i7v6.com</span>
-                          <Badge variant="secondary" className="text-xs border-amber-500 text-amber-600">
+                          <Badge variant="warning" className="text-xs">
                             <Pause className="h-3 w-3 mr-1" />
                             Paused
                           </Badge>
@@ -1595,7 +1644,7 @@ export default function DesignSystemPage() {
                       <div>
                         <div className="flex items-center gap-2">
                           <span className="font-medium">Chrome Extension</span>
-                          <Badge variant="secondary" className="text-xs border-green-500 text-green-600">
+                          <Badge variant="success" className="text-xs">
                             <Check className="h-3 w-3 mr-1" />
                             Installed
                           </Badge>
@@ -1622,7 +1671,7 @@ export default function DesignSystemPage() {
                       <div>
                         <div className="flex items-center gap-2">
                           <span className="font-medium">Chrome Extension</span>
-                          <Badge variant="secondary" className="text-xs border-blue-500 text-blue-600">
+                          <Badge variant="info" className="text-xs">
                             <Loader2 className="h-3 w-3 mr-1 animate-spin" />
                             Checking
                           </Badge>
@@ -1646,7 +1695,7 @@ export default function DesignSystemPage() {
                       <div>
                         <div className="flex items-center gap-2">
                           <span className="font-medium">Chrome Extension</span>
-                          <Badge variant="secondary" className="text-xs border-amber-500 text-amber-600">
+                          <Badge variant="warning" className="text-xs">
                             <AlertCircle className="h-3 w-3 mr-1" />
                             Not installed
                           </Badge>
@@ -1680,7 +1729,7 @@ export default function DesignSystemPage() {
                       <div>
                         <div className="flex items-center gap-2">
                           <code className="font-medium text-sm bg-muted px-2 py-1 rounded">abc123@inbound.fibuki.com</code>
-                          <Badge variant="secondary" className="text-xs border-green-500 text-green-600">
+                          <Badge variant="success" className="text-xs">
                             <Check className="h-3 w-3 mr-1" />
                             Active
                           </Badge>
@@ -1707,7 +1756,7 @@ export default function DesignSystemPage() {
                       <div>
                         <div className="flex items-center gap-2">
                           <code className="font-medium text-sm bg-muted px-2 py-1 rounded">xyz789@inbound.fibuki.com</code>
-                          <Badge variant="secondary" className="text-xs border-amber-500 text-amber-600">
+                          <Badge variant="warning" className="text-xs">
                             <Pause className="h-3 w-3 mr-1" />
                             Paused
                           </Badge>
@@ -1860,7 +1909,7 @@ export default function DesignSystemPage() {
               <div className="max-w-sm space-y-3">
                 <div className="border rounded-lg p-3">
                   <div className="flex items-start gap-3">
-                    <div className="bg-green-100 rounded-full p-1.5">
+                    <div className="bg-green-50 rounded-full p-1.5 border border-green-300">
                       <Check className="h-4 w-4 text-green-600" />
                     </div>
                     <div className="flex-1">
@@ -1961,12 +2010,12 @@ export default function DesignSystemPage() {
                         <div className="flex items-center gap-3 p-2 border rounded hover:bg-muted cursor-pointer">
                           <FileText className="h-4 w-4 text-muted-foreground" />
                           <span className="text-sm flex-1">invoice_001.pdf</span>
-                          <Badge variant="secondary">92%</Badge>
+                          <Badge className="bg-green-50 text-green-900 border-green-300">92%</Badge>
                         </div>
                         <div className="flex items-center gap-3 p-2 border rounded hover:bg-muted cursor-pointer">
                           <FileText className="h-4 w-4 text-muted-foreground" />
                           <span className="text-sm flex-1">receipt_amazon.pdf</span>
-                          <Badge variant="secondary">78%</Badge>
+                          <Badge className="bg-amber-50 text-amber-900 border-amber-300">78%</Badge>
                         </div>
                       </div>
                     </TabsContent>

@@ -23,28 +23,15 @@ export function RuleCard({
   confidence,
   children,
   className,
-  variant = "default",
 }: RuleCardProps) {
-  const borderColor = {
-    default: "border-border",
-    learned: "border-blue-200 dark:border-blue-800",
-    manual: "border-green-200 dark:border-green-800",
-  }[variant];
-
-  const bgColor = {
-    default: "bg-background",
-    learned: "bg-blue-50/50 dark:bg-blue-950/20",
-    manual: "bg-green-50/50 dark:bg-green-950/20",
-  }[variant];
-
   const confidenceBadge = confidence !== undefined && (
     <Badge
       variant="secondary"
       className={cn(
         "text-[10px] font-medium ml-auto",
-        confidence >= 90 && "bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300",
-        confidence >= 70 && confidence < 90 && "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/50 dark:text-yellow-300",
-        confidence < 70 && "bg-muted text-muted-foreground"
+        confidence >= 90 && "bg-green-50 text-green-900 border-green-300 dark:bg-green-900/30 dark:text-green-300",
+        confidence >= 70 && confidence < 90 && "bg-amber-50 text-amber-900 border-amber-300 dark:bg-amber-900/30 dark:text-amber-300",
+        confidence < 70 && "bg-stone-50 text-stone-700 border-stone-300 dark:bg-stone-800 dark:text-stone-300"
       )}
     >
       {confidence}%
@@ -54,9 +41,7 @@ export function RuleCard({
   return (
     <div
       className={cn(
-        "rounded-lg border p-3 transition-colors",
-        borderColor,
-        bgColor,
+        "rounded-lg border border-border bg-muted p-3 transition-colors",
         className
       )}
     >

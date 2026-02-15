@@ -3,6 +3,7 @@
 import { FieldMapping, FieldDefinition } from "@/types/import";
 import { MappingRow } from "./mapping-row";
 import { TRANSACTION_FIELDS } from "@/lib/import/field-definitions";
+import { validateMappings } from "@/lib/import/field-matcher";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { AlertCircle } from "lucide-react";
@@ -32,17 +33,15 @@ export function MappingEditor({
     mappings.filter((m) => m.targetField).map((m) => m.targetField)
   );
 
-  // Check for missing required fields
-  const requiredFields = fields.filter((f) => f.required);
-  const missingRequired = requiredFields.filter(
-    (f) => !mappedFields.has(f.key)
-  );
+  // Check for missing required fields using centralized validation
+  const validation = validateMappings(mappings);
+  const missingRequired = validation.missingFields;
 
   return (
     <div className="space-y-6">
       {/* Missing required fields warning */}
       {missingRequired.length > 0 && (
-        <div className="flex items-start gap-3 p-4 bg-destructive/10 border border-destructive/30 rounded-lg">
+        <div className="flex items-start gap-3 p-4 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 rounded-lg">
           <AlertCircle className="h-5 w-5 text-destructive mt-0.5" />
           <div>
             <p className="font-medium text-destructive">
@@ -50,7 +49,7 @@ export function MappingEditor({
             </p>
             <p className="text-sm text-muted-foreground mt-1">
               Please map the following fields:{" "}
-              {missingRequired.map((f) => f.label).join(", ")}
+              {missingRequired.join(", ")}
             </p>
           </div>
         </div>
@@ -66,6 +65,9 @@ export function MappingEditor({
               {mappings.length} mapped
             </Badge>
           </div>
+          <p className="text-sm text-muted-foreground">
+            Match your CSV columns to transaction fields. Green = matched. Only Date, Amount, and Description or Partner are required.
+          </p>
         </CardHeader>
         <CardContent className="flex-1 overflow-auto">
           <div className="space-y-2">

@@ -5,23 +5,42 @@ import { ToolCallSummary } from "@/types/notification";
  * Merged superset of labels used by worker route and chat provider
  */
 export const TOOL_LABELS: Record<string, string> = {
+  // Search tools
   searchLocalFiles: "Local files",
   searchGmailAttachments: "Gmail attachments",
   searchGmailMessages: "Gmail messages",
-  connectFileToTransaction: "Connect file",
-  downloadGmailAttachment: "Download attachment",
-  assignPartnerToTransaction: "Assign partner",
-  searchReceiptForTransaction: "Receipt search",
   searchGmailEmails: "Gmail emails",
+  searchReceiptForTransaction: "Receipt search",
+  // Batch search tools
+  searchGmailForPartner: "Gmail search",
+  searchLocalFilesForPartner: "Local files",
+  scoreBatchMatches: "Score matches",
+  // Action tools
+  connectFileToTransaction: "Connect file",
+  bulkConnectFiles: "Connect files",
+  downloadGmailAttachment: "Download attachment",
+  convertEmailToPdf: "Convert email",
+  assignPartnerToTransaction: "Assign partner",
+  assignPartnerToFile: "Assign partner",
+  createPartner: "Create partner",
+  // Lookup tools
+  lookupCompanyInfo: "Company lookup",
+  validateVatId: "VAT validation",
+  analyzeEmail: "Analyze email",
 };
 
-/** Tools to skip in summary (read-only / setup tools) */
+/** Tools to skip in summary (read-only / setup / context tools) */
 export const SKIP_TOOLS = new Set([
   "getTransaction",
+  "getFile",
+  "getPartner",
   "listFiles",
   "listTransactions",
-  "getPartner",
   "listPartners",
+  "waitForFileExtraction",
+  "generateSearchSuggestions",
+  "loadPartnerBatchContext",
+  "updateBatchTaskList",
 ]);
 
 /** Action tools that count as "actions performed" */

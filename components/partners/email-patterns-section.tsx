@@ -152,7 +152,7 @@ function EmailPatternCard({ pattern, onRemove, onTest, removing }: EmailPatternC
 function ConfidenceBadge({ confidence }: { confidence: number }) {
   if (confidence >= 80) {
     return (
-      <Badge variant="default" className="text-xs bg-green-100 text-green-800 hover:bg-green-100">
+      <Badge variant="default" className="text-xs bg-green-50 text-green-900 border-green-300 hover:bg-green-50">
         High confidence
       </Badge>
     );

@@ -110,6 +110,7 @@ export const listBankInstitutionsCallable = createCallable<
       }>;
     };
 
+    // Map all banks — don't deduplicate by name since different IDs may support different interfaces
     const institutions: Institution[] = banksData.banks.map((bank) => ({
       id: String(bank.id),
       name: bank.name,
@@ -119,6 +120,18 @@ export const listBankInstitutionsCallable = createCallable<
       transaction_total_days: "90", // finAPI default
       providerId: "finapi",
     }));
+
+    // Disambiguate duplicate names by appending BIC or bank ID
+    const nameCounts = new Map<string, number>();
+    for (const inst of institutions) {
+      nameCounts.set(inst.name, (nameCounts.get(inst.name) || 0) + 1);
+    }
+    for (const inst of institutions) {
+      if ((nameCounts.get(inst.name) || 0) > 1) {
+        const suffix = inst.bic || `#${inst.id}`;
+        inst.name = `${inst.name} (${suffix})`;
+      }
+    }
 
     // Sort by name
     institutions.sort((a, b) => a.name.localeCompare(b.name));

@@ -64,13 +64,13 @@ export function GlobalPartnerDetailPanel({
   const getSourceColor = (source: GlobalPartner["source"]) => {
     switch (source) {
       case "manual":
-        return "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400";
+        return "bg-blue-50 text-blue-900 border-blue-300 dark:bg-blue-900/30 dark:text-blue-300";
       case "user_promoted":
-        return "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400";
+        return "bg-purple-50 text-purple-900 border-purple-300 dark:bg-purple-900/30 dark:text-purple-300";
       case "external_registry":
-        return "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400";
+        return "bg-green-50 text-green-900 border-green-300 dark:bg-green-900/30 dark:text-green-300";
       case "preset":
-        return "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400";
+        return "bg-amber-50 text-amber-900 border-amber-300 dark:bg-amber-900/30 dark:text-amber-300";
       default:
         return "";
     }
@@ -283,9 +283,9 @@ export function GlobalPartnerDetailPanel({
                   variant="outline"
                   className={
                     partner.sourceDetails.confidence >= 90
-                      ? "bg-green-100 text-green-800"
+                      ? "bg-green-50 text-green-900 border-green-300"
                       : partner.sourceDetails.confidence >= 70
-                      ? "bg-yellow-100 text-yellow-800"
+                      ? "bg-amber-50 text-amber-900 border-amber-300"
                       : ""
                   }
                 >

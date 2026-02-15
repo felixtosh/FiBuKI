@@ -29,10 +29,10 @@ interface ScoreBadgeProps {
 }
 
 function getScoreColor(score: number) {
-  if (score >= 85) return "bg-green-100 text-green-800 border-green-300 dark:bg-green-900/50 dark:text-green-200";
-  if (score >= 70) return "bg-yellow-100 text-yellow-800 border-yellow-300 dark:bg-yellow-900/50 dark:text-yellow-200";
-  if (score >= 50) return "bg-yellow-100 text-yellow-800 border-yellow-300 dark:bg-yellow-900/50 dark:text-yellow-200";
-  return "bg-gray-100 text-gray-700 border-gray-300 dark:bg-gray-800 dark:text-gray-300";
+  if (score >= 85) return "bg-green-50 text-green-900 border-green-300 dark:bg-green-900/30 dark:text-green-300";
+  if (score >= 70) return "bg-amber-50 text-amber-900 border-amber-300 dark:bg-amber-900/30 dark:text-amber-300";
+  if (score >= 50) return "bg-amber-50 text-amber-900 border-amber-300 dark:bg-amber-900/30 dark:text-amber-300";
+  return "bg-stone-50 text-stone-700 border-stone-300 dark:bg-stone-800 dark:text-stone-300";
 }
 
 export function ScoreBadge({
@@ -92,7 +92,7 @@ export function ScoreLabelBadge({ label, size = "sm", className }: ScoreLabelBad
     <Badge
       variant="outline"
       className={cn(
-        "bg-green-100 text-green-700 border-green-300 dark:bg-green-900/50 dark:text-green-200",
+        "bg-green-50 text-green-900 border-green-300 dark:bg-green-900/30 dark:text-green-300",
         size === "sm" ? "text-[10px] py-0 h-4" : "text-xs py-0 h-5",
         className
       )}
@@ -118,7 +118,7 @@ export function RejectedBadge({ size = "sm", className }: RejectedBadgeProps) {
         <Badge
           variant="outline"
           className={cn(
-            "bg-orange-100 text-orange-700 border-orange-300 dark:bg-orange-900/50 dark:text-orange-200 cursor-help",
+            "bg-orange-50 text-orange-900 border-orange-300 dark:bg-orange-900/50 dark:text-orange-200 cursor-help",
             size === "sm" ? "text-[10px] py-0 h-4" : "text-xs py-0 h-5",
             className
           )}
@@ -149,19 +149,19 @@ const CLASSIFICATION_CONFIG = {
   receipt: {
     label: "Receipt",
     icon: FileText,
-    colors: "bg-purple-100 text-purple-700 border-purple-300 dark:bg-purple-900/50 dark:text-purple-200",
+    colors: "bg-purple-50 text-purple-900 border-purple-300 dark:bg-purple-900/30 dark:text-purple-300",
     tooltip: "Email body may be the invoice (order confirmation, receipt)",
   },
   link: {
     label: "Link",
     icon: Link2,
-    colors: "bg-blue-100 text-blue-700 border-blue-300 dark:bg-blue-900/50 dark:text-blue-200",
+    colors: "bg-blue-50 text-blue-900 border-blue-300 dark:bg-blue-900/30 dark:text-blue-300",
     tooltip: "May contain invoice download link",
   },
   pdf: {
     label: "PDF",
     icon: Paperclip,
-    colors: "bg-orange-100 text-orange-700 border-orange-300 dark:bg-orange-900/50 dark:text-orange-200",
+    colors: "bg-orange-50 text-orange-900 border-orange-300 dark:bg-orange-900/30 dark:text-orange-300",
     tooltip: "Has PDF attachment",
   },
 } as const;

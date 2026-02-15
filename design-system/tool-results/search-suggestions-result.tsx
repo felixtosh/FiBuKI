@@ -13,19 +13,19 @@ interface SearchSuggestionsResultProps {
 function getSuggestionTypeStyle(type: SearchSuggestion["type"]): string {
   switch (type) {
     case "invoice_number":
-      return "bg-green-100 text-green-700 border-green-300 dark:bg-green-900/50 dark:text-green-200";
+      return "bg-green-50 text-green-900 border-green-300 dark:bg-green-900/30 dark:text-green-300";
     case "company_name":
-      return "bg-blue-100 text-blue-700 border-blue-300 dark:bg-blue-900/50 dark:text-blue-200";
+      return "bg-blue-50 text-blue-900 border-blue-300 dark:bg-blue-900/30 dark:text-blue-300";
     case "email_domain":
-      return "bg-purple-100 text-purple-700 border-purple-300 dark:bg-purple-900/50 dark:text-purple-200";
+      return "bg-purple-50 text-purple-900 border-purple-300 dark:bg-purple-900/30 dark:text-purple-300";
     case "vat_id":
-      return "bg-orange-100 text-orange-700 border-orange-300 dark:bg-orange-900/50 dark:text-orange-200";
+      return "bg-orange-50 text-orange-900 border-orange-300 dark:bg-orange-900/30 dark:text-orange-300";
     case "iban":
-      return "bg-yellow-100 text-yellow-700 border-yellow-300 dark:bg-yellow-900/50 dark:text-yellow-200";
+      return "bg-amber-50 text-amber-900 border-amber-300 dark:bg-amber-900/30 dark:text-amber-300";
     case "pattern":
-      return "bg-gray-100 text-gray-700 border-gray-300 dark:bg-gray-800 dark:text-gray-300";
+      return "bg-stone-50 text-stone-700 border-stone-300 dark:bg-stone-800 dark:text-stone-300";
     default:
-      return "bg-gray-100 text-gray-700 border-gray-300 dark:bg-gray-800 dark:text-gray-300";
+      return "bg-stone-50 text-stone-700 border-stone-300 dark:bg-stone-800 dark:text-stone-300";
   }
 }
 

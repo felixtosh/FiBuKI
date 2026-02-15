@@ -46,8 +46,8 @@ export function MappingRow({
       className={cn(
         "flex items-center gap-3 p-3 rounded-lg border transition-colors",
         mapping.targetField
-          ? "bg-green-50/50 border-green-200 dark:bg-green-950/20 dark:border-green-900"
-          : "bg-muted/30 border-muted"
+          ? "bg-green-50 border-green-200 dark:bg-green-950/20 dark:border-green-900"
+          : "bg-muted/50 border-border"
       )}
     >
       {/* CSV Column */}

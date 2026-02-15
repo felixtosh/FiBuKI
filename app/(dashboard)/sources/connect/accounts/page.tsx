@@ -390,7 +390,7 @@ function AccountCard({ account, selection, existingSources, onUpdate }: AccountC
                 Already connected
               </span>
             ) : isMatched ? (
-              <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">
+              <span className="text-xs bg-green-50 text-green-900 border border-green-300 px-2 py-0.5 rounded-full">
                 IBAN Match
               </span>
             ) : null}

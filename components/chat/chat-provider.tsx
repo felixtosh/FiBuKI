@@ -4,15 +4,13 @@
 import { createContext, useContext, useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { useChat as useVercelChat } from "@ai-sdk/react";
-import { doc, setDoc, updateDoc, serverTimestamp } from "firebase/firestore";
-import { db } from "@/lib/firebase/config";
 import { ChatContextValue, ChatTab, SidebarMode, UIControlActions, ToolCall, ChatSession, ModelProvider, ChatMessage } from "@/types/chat";
-import { AutoActionNotification, ToolCallSummary } from "@/types/notification";
-import { TOOL_LABELS, SKIP_TOOLS, parseToolResult, cleanToolSummary, isActionTool } from "@/lib/tool-summary";
-import { requiresConfirmation, getConfirmationDetails } from "@/lib/chat/confirmation-config";
+import { AutoActionNotification } from "@/types/notification";
+import { requiresConfirmation } from "@/lib/chat/confirmation-config";
 import { useNotifications } from "@/hooks/use-notifications";
 import { useChatPersistence } from "@/hooks/use-chat-persistence";
 import { useChatSessions } from "@/hooks/use-chat-sessions";
+import { useWorker } from "@/hooks/use-worker";
 import { useAuth } from "@/components/auth";
 
 const ChatContext = createContext<ChatContextValue | null>(null);
@@ -41,6 +39,14 @@ export function ChatProvider({ children }: ChatProviderProps) {
   const searchParams = useSearchParams();
   const { user } = useAuth();
 
+  // Worker hook for wand button actions
+  const {
+    triggerReceiptSearch,
+    triggerPartnerSearch,
+    triggerFilePartnerSearch,
+    triggerFileTransactionSearch,
+  } = useWorker();
+
   // Read initial state from URL params
   const initialChatOpen = searchParams.get("chat") === "1";
 
@@ -52,14 +58,8 @@ export function ChatProvider({ children }: ChatProviderProps) {
   // Default to gemini (cheaper), fall back to anthropic if needed
   const [modelProvider, setModelProvider] = useState<ModelProvider>("gemini");
 
-  // Track active search notification for updating when complete
-  const activeSearchRef = useRef<{
-    notificationId: string;
-    sessionId: string;
-    transactionId?: string;
-    fileId?: string;
-    workerType: "file_matching" | "partner_matching";
-  } | null>(null);
+  // Track entity IDs with active wand searches (workers)
+  const [activeWandTargets, setActiveWandTargets] = useState<Set<string>>(new Set());
 
   // Keep searchParams in a ref to avoid dependency loops
   const searchParamsRef = useRef(searchParams);
@@ -105,7 +105,6 @@ export function ChatProvider({ children }: ChatProviderProps) {
     isLoading: isSessionLoading,
     saveMessage,
     switchSession,
-    createNewSession: createPersistenceSession,
   } = useChatPersistence();
 
   // Chat sessions hook (for history)
@@ -286,110 +285,6 @@ export function ChatProvider({ children }: ChatProviderProps) {
     lastSavedMessageCount.current = messages.length;
   }, [messages, isLoading, saveMessage]);
 
-  // Track previous isLoading state to detect completion
-  const wasLoadingRef = useRef(false);
-
-  // Update activity notification when search completes
-  useEffect(() => {
-    const wasLoading = wasLoadingRef.current;
-    wasLoadingRef.current = isLoading;
-
-    // Detect completion: was loading, now not loading, and we have an active search
-    if (wasLoading && !isLoading && activeSearchRef.current && user?.uid) {
-      const { notificationId, sessionId, transactionId } = activeSearchRef.current;
-
-      // Extract tool calls from streaming message parts
-      const assistantMessages = (messages as any[]).filter((m: any) => m.role === "assistant");
-
-      const toolSummaries: ToolCallSummary[] = [];
-      let actionsPerformed = 0;
-
-      for (const msg of assistantMessages) {
-        if (!msg.parts) continue;
-        for (const part of msg.parts) {
-          // Handle streaming format: part.type starts with "tool-"
-          let toolName: string | undefined;
-          let toolResult: unknown;
-
-          if (typeof part.type === "string" && part.type.startsWith("tool-")) {
-            toolName = part.type.replace("tool-", "");
-            // Get result from toolInvocations
-            if (msg.toolInvocations) {
-              const ti = msg.toolInvocations.find((t: any) => t.toolCallId === part.toolCallId);
-              toolResult = ti?.result;
-            }
-            if (toolResult === undefined) {
-              toolResult = part.result ?? part.output;
-            }
-          }
-
-          if (!toolName || SKIP_TOOLS.has(toolName)) continue;
-
-          const label = TOOL_LABELS[toolName] || toolName;
-          const parsed = parseToolResult(toolResult);
-          toolSummaries.push(cleanToolSummary(label, parsed));
-
-          // Count actions performed
-          if (parsed.status === "success" && isActionTool(toolName)) {
-            actionsPerformed++;
-          }
-        }
-      }
-
-      // Build title with transaction context
-      let title: string;
-      if (toolSummaries.length > 0) {
-        // Compact message from tool summaries
-        const searchParts = toolSummaries
-          .filter(s => s.label !== "Connect file" && s.label !== "Download attachment" && s.label !== "Assign partner")
-          .map(s => `${s.label}: ${s.outcome}`);
-        const actionParts = toolSummaries.filter(s =>
-          (s.label === "Connect file" || s.label === "Download attachment" || s.label === "Assign partner") && s.status === "success"
-        );
-        if (actionParts.length > 0) {
-          title = actionParts.length === 1 ? actionParts[0].outcome : `${actionParts.length} actions`;
-        } else if (searchParts.length > 0) {
-          title = "No match found";
-        } else {
-          title = "Search completed";
-        }
-      } else {
-        // Fallback: check text content for status
-        const lastContent = assistantMessages.length > 0
-          ? (typeof assistantMessages[assistantMessages.length - 1].content === "string" ? assistantMessages[assistantMessages.length - 1].content : "")
-          : "";
-        if (lastContent.includes("no good match") || lastContent.includes("couldn't find")) {
-          title = "No match found";
-        } else {
-          title = "Search completed";
-        }
-      }
-
-      // Compact message from tool summaries
-      const message = toolSummaries.length > 0
-        ? toolSummaries.map(s => `${s.label}: ${s.outcome}`).join(" · ")
-        : "Finished searching";
-
-      // Update the notification
-      const updateData: Record<string, unknown> = {
-        title,
-        message,
-        "context.workerStatus": "completed",
-        "context.sessionId": sessionId,
-        "context.actionsPerformed": actionsPerformed,
-      };
-      if (toolSummaries.length > 0) {
-        updateData["context.toolSummary"] = toolSummaries;
-      }
-
-      updateDoc(doc(db, `users/${user.uid}/notifications`, notificationId), updateData)
-        .catch((err) => console.error("Failed to update search notification:", err));
-
-      // Clear active search
-      activeSearchRef.current = null;
-    }
-  }, [isLoading, messages, user?.uid]);
-
   // UI Control Actions
   const uiActions: UIControlActions = useMemo(
     () => ({
@@ -550,203 +445,65 @@ export function ChatProvider({ children }: ChatProviderProps) {
     setIsSidebarOpen((prev) => !prev);
   }, []);
 
-  // Start a new search thread for a transaction
-  const startSearchThread = useCallback(
-    async (transactionId: string) => {
-      // Switch to chat mode and tab
-      setSidebarMode("chat");
-      setActiveTab("chat");
-
-      // Open sidebar if not open
-      if (!isSidebarOpen) {
-        setIsSidebarOpen(true);
-      }
-
-      // Create a NEW session for this search to avoid polluting current chat
-      let sessionId = "";
-      try {
-        sessionId = await createPersistenceSession(`Find receipt for transaction`);
-      } catch (err) {
-        console.error("Failed to create new session for search:", err);
-      }
-
-      // Create activity notification immediately (status: running)
-      if (user?.uid && sessionId) {
-        const notificationId = `search_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-        try {
-          await setDoc(doc(db, `users/${user.uid}/notifications`, notificationId), {
-            type: "worker_activity",
-            title: "Searching for receipt...",
-            message: "Looking through local files and Gmail",
-            createdAt: serverTimestamp(),
-            readAt: null,
-            context: {
-              workerType: "file_matching",
-              workerStatus: "running",
-              transactionId,
-              sessionId,
-            },
-          });
-
-          // Track this search so we can update when complete
-          activeSearchRef.current = {
-            notificationId,
-            sessionId,
-            transactionId,
-            workerType: "file_matching",
-          };
-        } catch (err) {
-          console.error("Failed to create search notification:", err);
-        }
-      }
-
-      // Simple prompt - the agent will use searchReceiptForTransaction to get all details
-      const prompt = `Find receipt for transaction ${transactionId}`;
-
-      // Clear previous messages and send the search prompt
-      setMessages([]);
-      // Reset saved message counter for new session
-      lastSavedMessageCount.current = 0;
-
-      // Use setTimeout to ensure state is updated, then use wrapped sendMessage (saves to Firestore)
-      setTimeout(() => {
-        sendMessage(prompt);
-      }, 100);
-    },
-    [isSidebarOpen, setMessages, sendMessage, createPersistenceSession, user?.uid]
-  );
-
-  // Start a new partner search thread for a transaction
-  const startPartnerSearchThread = useCallback(
-    async (transactionId: string) => {
-      // Switch to chat mode and tab
-      setSidebarMode("chat");
-      setActiveTab("chat");
-
-      // Open sidebar if not open
-      if (!isSidebarOpen) {
-        setIsSidebarOpen(true);
-      }
-
-      // Create a NEW session for this search to avoid polluting current chat
-      let sessionId = "";
-      try {
-        sessionId = await createPersistenceSession(`Find partner for transaction`);
-      } catch (err) {
-        console.error("Failed to create new session for partner search:", err);
-      }
-
-      // Create activity notification immediately (status: running)
-      if (user?.uid && sessionId) {
-        const notificationId = `partner_search_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-        try {
-          await setDoc(doc(db, `users/${user.uid}/notifications`, notificationId), {
-            type: "worker_activity",
-            title: "Searching for partner...",
-            message: "Looking up company information",
-            createdAt: serverTimestamp(),
-            readAt: null,
-            context: {
-              workerType: "partner_matching",
-              workerStatus: "running",
-              transactionId,
-              sessionId,
-            },
-          });
-
-          // Track this search so we can update when complete
-          activeSearchRef.current = {
-            notificationId,
-            sessionId,
-            transactionId,
-            workerType: "partner_matching",
-          };
-        } catch (err) {
-          console.error("Failed to create partner search notification:", err);
-        }
-      }
-
-      // Short prompt - system prompt has the detailed steps
-      const prompt = `Find partner for transaction ID: ${transactionId}`;
-
-      // Clear previous messages and send the search prompt
-      setMessages([]);
-      // Reset saved message counter for new session
-      lastSavedMessageCount.current = 0;
-
-      // Use setTimeout to ensure state is updated, then use wrapped sendMessage (saves to Firestore)
-      setTimeout(() => {
-        sendMessage(prompt);
-      }, 100);
-    },
-    [isSidebarOpen, setMessages, sendMessage, createPersistenceSession, user?.uid]
-  );
-
-  // Start a file partner search thread (find partner for a file based on extracted data)
-  const startFilePartnerSearchThread = useCallback(
-    async (fileId: string) => {
-      // Switch to chat mode and tab
-      setSidebarMode("chat");
-      setActiveTab("chat");
-
-      // Open sidebar if not open
-      if (!isSidebarOpen) {
-        setIsSidebarOpen(true);
-      }
-
-      // Create a NEW session for this search
-      let sessionId = "";
-      try {
-        sessionId = await createPersistenceSession(`Find partner for file`);
-      } catch (err) {
-        console.error("Failed to create new session for file partner search:", err);
-      }
-
-      // Create activity notification immediately (status: running)
-      if (user?.uid && sessionId) {
-        const notificationId = `file_partner_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-        try {
-          await setDoc(doc(db, `users/${user.uid}/notifications`, notificationId), {
-            type: "worker_activity",
-            title: "Searching for partner...",
-            message: "Looking up company from file data",
-            createdAt: serverTimestamp(),
-            readAt: null,
-            context: {
-              workerType: "partner_matching",
-              workerStatus: "running",
-              fileId,
-              sessionId,
-            },
-          });
-
-          activeSearchRef.current = {
-            notificationId,
-            sessionId,
-            fileId,
-            workerType: "partner_matching",
-          };
-        } catch (err) {
-          console.error("Failed to create file partner search notification:", err);
-        }
-      }
-
-      // Short prompt - system prompt has the detailed steps
-      const prompt = `Find partner for file ID: ${fileId}`;
-
-      setMessages([]);
-      lastSavedMessageCount.current = 0;
-
-      setTimeout(() => {
-        sendMessage(prompt);
-      }, 100);
-    },
-    [isSidebarOpen, setMessages, sendMessage, createPersistenceSession, user?.uid]
-  );
-
-  // Start a file transaction search thread (find transaction for a file)
-  const startFileTransactionSearchThread = useCallback(
+  // Helper: trigger a wand search via worker API
+  const triggerWandSearch = useCallback(
     async (
+      entityId: string,
+      triggerFn: () => Promise<unknown>
+    ) => {
+      // Add entity to active targets
+      setActiveWandTargets((prev) => new Set(prev).add(entityId));
+
+      // Open sidebar on notifications tab (worker progress is shown there)
+      setSidebarMode("chat");
+      setActiveTab("notifications");
+      if (!isSidebarOpen) {
+        setIsSidebarOpen(true);
+      }
+
+      try {
+        await triggerFn();
+      } catch (err) {
+        console.error("Worker trigger failed:", err);
+        // Remove from active targets on trigger failure (worker never started)
+        setActiveWandTargets((prev) => {
+          const next = new Set(prev);
+          next.delete(entityId);
+          return next;
+        });
+      }
+      // On success, worker creates its own notification; cleanup happens via notification listener below
+    },
+    [isSidebarOpen]
+  );
+
+  // Wand: receipt search for transaction
+  const startReceiptSearch = useCallback(
+    (transactionId: string) => {
+      triggerWandSearch(transactionId, () => triggerReceiptSearch(transactionId));
+    },
+    [triggerWandSearch, triggerReceiptSearch]
+  );
+
+  // Wand: partner search for transaction
+  const startPartnerSearch = useCallback(
+    (transactionId: string) => {
+      triggerWandSearch(transactionId, () => triggerPartnerSearch(transactionId));
+    },
+    [triggerWandSearch, triggerPartnerSearch]
+  );
+
+  // Wand: partner search for file
+  const startFilePartnerSearch = useCallback(
+    (fileId: string) => {
+      triggerWandSearch(fileId, () => triggerFilePartnerSearch(fileId));
+    },
+    [triggerWandSearch, triggerFilePartnerSearch]
+  );
+
+  // Wand: transaction search for file
+  const startFileTransactionSearch = useCallback(
+    (
       fileId: string,
       fileInfo?: {
         fileName?: string;
@@ -756,77 +513,31 @@ export function ChatProvider({ children }: ChatProviderProps) {
         partner?: string;
       }
     ) => {
-      // Switch to chat mode and tab
-      setSidebarMode("chat");
-      setActiveTab("chat");
-
-      // Open sidebar if not open
-      if (!isSidebarOpen) {
-        setIsSidebarOpen(true);
-      }
-
-      // Create a NEW session for this search
-      let sessionId = "";
-      try {
-        sessionId = await createPersistenceSession(`Find transaction for file`);
-      } catch (err) {
-        console.error("Failed to create new session for file transaction search:", err);
-      }
-
-      // Create activity notification immediately (status: running)
-      if (user?.uid && sessionId) {
-        const notificationId = `file_tx_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-        try {
-          await setDoc(doc(db, `users/${user.uid}/notifications`, notificationId), {
-            type: "worker_activity",
-            title: "Searching for transaction...",
-            message: fileInfo?.fileName
-              ? `Looking for transaction matching "${fileInfo.fileName}"`
-              : "Looking for matching transaction",
-            createdAt: serverTimestamp(),
-            readAt: null,
-            context: {
-              workerType: "file_matching",
-              workerStatus: "running",
-              fileId,
-              sessionId,
-            },
-          });
-
-          activeSearchRef.current = {
-            notificationId,
-            sessionId,
-            fileId,
-            workerType: "file_matching",
-          };
-        } catch (err) {
-          console.error("Failed to create file transaction search notification:", err);
-        }
-      }
-
-      // Build simple user prompt with just the facts
-      const amountEur = fileInfo?.amount ? Math.abs(fileInfo.amount) / 100 : 0;
-      const amountStr = fileInfo?.amount
-        ? `${amountEur.toFixed(2)} ${fileInfo.currency || "EUR"}`
-        : "unknown amount";
-
-      const prompt = `Find matching transaction for file ID: ${fileId}
-
-File: "${fileInfo?.fileName || "Unknown"}"
-Amount: ${amountStr}${fileInfo?.date ? `
-Date: ${fileInfo.date}` : ""}${fileInfo?.partner ? `
-Partner: ${fileInfo.partner}` : ""}`;
-
-      setMessages([]);
-      lastSavedMessageCount.current = 0;
-
-      // Use setTimeout to ensure state is updated, then use wrapped sendMessage (saves to Firestore)
-      setTimeout(() => {
-        sendMessage(prompt);
-      }, 100);
+      triggerWandSearch(fileId, () => triggerFileTransactionSearch(fileId, fileInfo));
     },
-    [isSidebarOpen, setMessages, sendMessage, createPersistenceSession, user?.uid]
+    [triggerWandSearch, triggerFileTransactionSearch]
   );
+
+  // Clean up activeWandTargets when worker notifications complete
+  useEffect(() => {
+    if (activeWandTargets.size === 0) return;
+
+    // Check notifications for completed workers matching our active targets
+    for (const notification of notifications) {
+      if (notification.type !== "worker_activity") continue;
+      const ctx = notification.context;
+      if (ctx.workerStatus !== "completed" && ctx.workerStatus !== "failed") continue;
+
+      const entityId = ctx.transactionId || ctx.fileId;
+      if (entityId && activeWandTargets.has(entityId)) {
+        setActiveWandTargets((prev) => {
+          const next = new Set(prev);
+          next.delete(entityId);
+          return next;
+        });
+      }
+    }
+  }, [notifications, activeWandTargets]);
 
   // Start conversation from a notification
   const startConversationFromNotification = useCallback(
@@ -1121,11 +832,12 @@ Partner: ${fileInfo.partner}` : ""}`;
       markNotificationRead,
       markAllNotificationsRead,
       startConversationFromNotification,
-      // Agentic search
-      startSearchThread,
-      startPartnerSearchThread,
-      startFilePartnerSearchThread,
-      startFileTransactionSearchThread,
+      // Agentic search (via workers)
+      startReceiptSearch,
+      startPartnerSearch,
+      startFilePartnerSearch,
+      startFileTransactionSearch,
+      activeWandTargets,
       // Sidebar mode
       sidebarMode,
       setSidebarMode,
@@ -1153,10 +865,11 @@ Partner: ${fileInfo.partner}` : ""}`;
       markNotificationRead,
       markAllNotificationsRead,
       startConversationFromNotification,
-      startSearchThread,
-      startPartnerSearchThread,
-      startFilePartnerSearchThread,
-      startFileTransactionSearchThread,
+      startReceiptSearch,
+      startPartnerSearch,
+      startFilePartnerSearch,
+      startFileTransactionSearch,
+      activeWandTargets,
       sidebarMode,
       sessions,
       currentSessionId,

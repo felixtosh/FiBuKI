@@ -589,14 +589,14 @@ function AutomationGraphView({
 
 function TriggerBadge({ trigger }: { trigger: AutomationTrigger }) {
   const typeLabels: Record<string, { color: string; label: string }> = {
-    document_create: { color: "bg-green-100 text-green-800", label: "On Create" },
-    document_update: { color: "bg-blue-100 text-blue-800", label: "On Update" },
-    document_delete: { color: "bg-red-100 text-red-800", label: "On Delete" },
-    callable: { color: "bg-purple-100 text-purple-800", label: "Callable" },
-    scheduled: { color: "bg-amber-100 text-amber-800", label: "Scheduled" },
+    document_create: { color: "bg-green-50 text-green-900 border-green-300", label: "On Create" },
+    document_update: { color: "bg-blue-50 text-blue-900 border-blue-300", label: "On Update" },
+    document_delete: { color: "bg-red-50 text-red-900 border-red-300", label: "On Delete" },
+    callable: { color: "bg-purple-50 text-purple-900 border-purple-300", label: "Callable" },
+    scheduled: { color: "bg-amber-50 text-amber-900 border-amber-300", label: "Scheduled" },
   };
 
-  const v = typeLabels[trigger.type] || { color: "bg-gray-100 text-gray-800", label: trigger.type };
+  const v = typeLabels[trigger.type] || { color: "bg-stone-50 text-stone-700 border-stone-300", label: trigger.type };
   return (
     <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${v.color}`}>
       {v.label}
@@ -640,7 +640,7 @@ function AutomationCard({ automation }: { automation: AutomationData }) {
                 <CategoryBadge category={automation.category} />
                 <TriggerBadge trigger={automation.trigger} />
                 {automation.aiPowered && (
-                  <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-violet-100 text-violet-800 inline-flex items-center gap-1">
+                  <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-violet-50 text-violet-900 border border-violet-300 inline-flex items-center gap-1">
                     <Sparkles className="h-3 w-3" />
                     AI
                   </span>

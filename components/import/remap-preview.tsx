@@ -56,9 +56,9 @@ export function RemapPreviewComponent({ preview }: RemapPreviewComponentProps) {
 
       {/* Warnings */}
       {preview.warnings.length > 0 && (
-        <Card className="border-yellow-500/50 bg-yellow-500/5">
+        <Card className="border-yellow-200 dark:border-yellow-900 bg-yellow-50 dark:bg-yellow-950/30">
           <CardHeader className="pb-2">
-            <CardTitle className="text-base flex items-center gap-2 text-yellow-600">
+            <CardTitle className="text-base flex items-center gap-2 text-yellow-600 dark:text-yellow-400">
               <AlertTriangle className="h-4 w-4" />
               Warnings
             </CardTitle>
@@ -77,7 +77,7 @@ export function RemapPreviewComponent({ preview }: RemapPreviewComponentProps) {
       {preview.totalChanges === 0 && (
         <Card>
           <CardContent className="pt-6 text-center">
-            <CheckCircle2 className="h-12 w-12 text-green-500 mx-auto mb-4" />
+            <CheckCircle2 className="h-12 w-12 text-green-600 dark:text-green-400 mx-auto mb-4" />
             <p className="font-medium">No changes detected</p>
             <p className="text-sm text-muted-foreground mt-1">
               The current mapping produces the same results as before.
@@ -125,7 +125,7 @@ export function RemapPreviewComponent({ preview }: RemapPreviewComponentProps) {
       <Card>
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
-            <CheckCircle2 className="h-4 w-4 text-green-500" />
+            <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
             Data That Will Be Preserved
           </CardTitle>
         </CardHeader>
@@ -198,7 +198,7 @@ function PreservedBadge({
   label: string;
 }) {
   return (
-    <div className="flex items-center gap-1.5 px-3 py-1.5 bg-green-500/10 text-green-600 rounded-full text-sm">
+    <div className="flex items-center gap-1.5 px-3 py-1.5 bg-green-50 dark:bg-green-950/30 text-green-600 dark:text-green-400 border border-green-200 dark:border-green-900 rounded-full text-sm">
       {icon}
       {label}
     </div>

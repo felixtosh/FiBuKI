@@ -19,6 +19,7 @@ import {
 import { SourceFormData, TransactionSource, AccountKind, CardBrand, BrokerName } from "@/types/source";
 import { isValidIban, normalizeIban, formatIban } from "@/lib/import/deduplication";
 import { Building2, CreditCard, TrendingUp } from "lucide-react";
+import { useSubscription } from "@/hooks/use-subscription";
 import { cn } from "@/lib/utils";
 
 interface AddSourceDialogProps {
@@ -46,6 +47,9 @@ const BROKERS: { value: BrokerName; label: string }[] = [
 ];
 
 export function AddSourceDialog({ open, onClose, onAdd, sources = [] }: AddSourceDialogProps) {
+  const { subscription } = useSubscription();
+  const hasInvestmentsAddon = subscription?.addons?.investments?.active ?? false;
+
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [ibanError, setIbanError] = useState<string | null>(null);
   const [formData, setFormData] = useState<{
@@ -177,7 +181,7 @@ export function AddSourceDialog({ open, onClose, onAdd, sources = [] }: AddSourc
             <label className="text-sm font-medium mb-2 block">
               Account Type *
             </label>
-            <div className="grid grid-cols-3 gap-2">
+            <div className={cn("grid gap-2", hasInvestmentsAddon ? "grid-cols-3" : "grid-cols-2")}>
               <button
                 type="button"
                 onClick={() => handleAccountKindChange("bank_account")}
@@ -204,19 +208,21 @@ export function AddSourceDialog({ open, onClose, onAdd, sources = [] }: AddSourc
                 <CreditCard className="h-5 w-5" />
                 <span className="font-medium">Credit Card</span>
               </button>
-              <button
-                type="button"
-                onClick={() => handleAccountKindChange("depot")}
-                className={cn(
-                  "flex items-center gap-2 p-3 rounded-lg border-2 transition-colors",
-                  formData.accountKind === "depot"
-                    ? "border-primary bg-primary/5"
-                    : "border-muted hover:border-muted-foreground/50"
-                )}
-              >
-                <TrendingUp className="h-5 w-5" />
-                <span className="font-medium">Depot</span>
-              </button>
+              {hasInvestmentsAddon && (
+                <button
+                  type="button"
+                  onClick={() => handleAccountKindChange("depot")}
+                  className={cn(
+                    "flex items-center gap-2 p-3 rounded-lg border-2 transition-colors",
+                    formData.accountKind === "depot"
+                      ? "border-primary bg-primary/5"
+                      : "border-muted hover:border-muted-foreground/50"
+                  )}
+                >
+                  <TrendingUp className="h-5 w-5" />
+                  <span className="font-medium">Depot</span>
+                </button>
+              )}
             </div>
           </div>
 

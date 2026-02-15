@@ -496,6 +496,14 @@ exports.onUserDataUpdate = (0, firestore_1.onDocumentUpdated)({
             updateData.extractedAddress = result.counterparty.address;
             updateData.extractedWebsite = result.counterparty.website;
         }
+        // If extractedPartner changed, reset partner matching so it re-runs
+        if (result.counterparty?.name !== currentPartner) {
+            updateData.partnerMatchComplete = false;
+            updateData.partnerId = null;
+            updateData.partnerMatchedBy = null;
+            updateData.partnerMatchConfidence = null;
+            updateData.partnerSuggestions = [];
+        }
         batch.update(fileDoc.ref, updateData);
         updatedCount++;
         batchCount++;

@@ -191,6 +191,14 @@ exports.onTransactionsImportedCompanyCheck = (0, firestore_1.onDocumentCreated)(
         .map((p) => p.globalPartnerId)
         .filter(Boolean));
     const filteredGlobalPartners = globalPartners.filter((p) => !localizedGlobalIds.has(p.id));
+    // Build partner name map for automationHistory entries
+    const partnerNameMap = new Map();
+    for (const p of userPartners) {
+        partnerNameMap.set(p.id, p.name);
+    }
+    for (const p of filteredGlobalPartners) {
+        partnerNameMap.set(p.id, p.name);
+    }
     // Fetch transactions from this import
     const transactionsSnapshot = await db
         .collection("transactions")
@@ -266,6 +274,18 @@ exports.onTransactionsImportedCompanyCheck = (0, firestore_1.onDocumentCreated)(
                 updates.partnerMatchConfidence = topMatch.confidence;
                 updates.partnerMatchedBy = "auto";
                 autoMatched++;
+                const partnerName = partnerNameMap.get(assignedPartnerId) || partnerNameMap.get(topMatch.partnerId) || null;
+                updates.automationHistory = firestore_2.FieldValue.arrayUnion({
+                    type: "partner_assigned",
+                    ranAt: firestore_2.Timestamp.now(),
+                    status: "completed",
+                    actor: "auto",
+                    level: "outcome",
+                    forPartnerId: assignedPartnerId,
+                    partnerName,
+                    confidence: topMatch.confidence,
+                    summary: `Partner "${partnerName || assignedPartnerId}" auto-assigned`,
+                });
             }
             else {
                 withSuggestions++;

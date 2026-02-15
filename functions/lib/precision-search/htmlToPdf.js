@@ -133,56 +133,65 @@ async function convertHtmlToPdf(html, metadata) {
     const browser = await getBrowser();
     const page = await browser.newPage();
     try {
-        // Build a complete HTML document with email header
-        const headerHtml = metadata
-            ? `
-      <div style="margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid #ddd;">
-        ${metadata.subject ? `<h2 style="margin: 0 0 8px 0; font-size: 18px; color: #333;">${escapeHtml(metadata.subject)}</h2>` : ""}
-        ${metadata.from ? `<p style="margin: 0 0 4px 0; font-size: 12px; color: #666;">From: ${escapeHtml(metadata.from)}</p>` : ""}
-        ${metadata.date && !isNaN(metadata.date.getTime()) ? `<p style="margin: 0; font-size: 12px; color: #666;">Date: ${metadata.date.toLocaleDateString("de-DE")}</p>` : ""}
-      </div>
-    `
-            : "";
-        const fullHtml = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <meta charset="UTF-8">
-          <style>
-            body {
-              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-              font-size: 14px;
-              line-height: 1.5;
-              color: #333;
-              max-width: 100%;
-              padding: 20px;
-              box-sizing: border-box;
-            }
-            table {
-              border-collapse: collapse;
-              width: 100%;
-            }
-            td, th {
-              padding: 8px;
-              text-align: left;
-            }
-            img {
-              max-width: 100%;
-              height: auto;
-            }
-          </style>
-        </head>
-        <body>
-          ${headerHtml}
-          ${html}
-        </body>
-      </html>
-    `;
+        // Detect if the input is already a complete HTML document (e.g. captured from browser extension)
+        const isFullDocument = /^\s*<!DOCTYPE\s+html/i.test(html) || /^\s*<html[\s>]/i.test(html);
+        let fullHtml;
+        if (isFullDocument) {
+            // Already a complete document — use as-is (e.g. page capture from browser extension)
+            fullHtml = html;
+        }
+        else {
+            // Build a complete HTML document with email header
+            const headerHtml = metadata
+                ? `
+        <div style="margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid #ddd;">
+          ${metadata.subject ? `<h2 style="margin: 0 0 8px 0; font-size: 18px; color: #333;">${escapeHtml(metadata.subject)}</h2>` : ""}
+          ${metadata.from ? `<p style="margin: 0 0 4px 0; font-size: 12px; color: #666;">From: ${escapeHtml(metadata.from)}</p>` : ""}
+          ${metadata.date && !isNaN(metadata.date.getTime()) ? `<p style="margin: 0; font-size: 12px; color: #666;">Date: ${metadata.date.toLocaleDateString("de-DE")}</p>` : ""}
+        </div>
+      `
+                : "";
+            fullHtml = `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta charset="UTF-8">
+            <style>
+              body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+                font-size: 14px;
+                line-height: 1.5;
+                color: #333;
+                max-width: 100%;
+                padding: 20px;
+                box-sizing: border-box;
+              }
+              table {
+                border-collapse: collapse;
+                width: 100%;
+              }
+              td, th {
+                padding: 8px;
+                text-align: left;
+              }
+              img {
+                max-width: 100%;
+                height: auto;
+              }
+            </style>
+          </head>
+          <body>
+            ${headerHtml}
+            ${html}
+          </body>
+        </html>
+      `;
+        }
         // Use 'domcontentloaded' instead of 'networkidle0' - don't wait for external images
         // Email HTML often has broken cid: references and tracking pixels that never load
         await page.setContent(fullHtml, {
             waitUntil: "domcontentloaded",
-            timeout: 10000,
+            timeout: 15000,
         });
         // Brief wait for any inline styles to apply
         await new Promise((resolve) => setTimeout(resolve, 500));
