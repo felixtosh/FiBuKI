@@ -109,6 +109,37 @@ interface UserData {
 }
 
 /**
+ * Normalize raw Firestore user data into the flat UserData interface.
+ * Handles both the new format (personalEntity + companies[]) and
+ * deprecated flat fields (vatIds, ibans, ownEmails).
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function normalizeUserData(raw: any): UserData {
+  const vatIds: string[] = [];
+  const ibans: string[] = [];
+
+  // New format: personalEntity
+  if (raw.personalEntity?.vatId) vatIds.push(raw.personalEntity.vatId);
+  if (raw.personalEntity?.ibans) ibans.push(...raw.personalEntity.ibans);
+
+  // New format: companies[]
+  for (const company of raw.companies || []) {
+    if (company.vatId) vatIds.push(company.vatId);
+    if (company.ibans) ibans.push(...company.ibans);
+  }
+
+  // Deprecated flat fields
+  vatIds.push(...(raw.vatIds || []));
+  ibans.push(...(raw.ibans || []));
+
+  return {
+    vatIds: [...new Set(vatIds)].filter(Boolean),
+    ibans: [...new Set(ibans)].filter(Boolean),
+    ownEmails: raw.ownEmails || [],
+  };
+}
+
+/**
  * Check if a VAT ID belongs to the user
  */
 function isUserVatId(vatId: string, userData: UserData | null): boolean {
@@ -926,7 +957,7 @@ export async function runPartnerMatching(
     db.collection("emailIntegrations").where("userId", "==", userId).where("isActive", "==", true).get(),
   ]);
 
-  const userData: UserData | null = userDataDoc.exists ? (userDataDoc.data() as UserData) : null;
+  const userData: UserData | null = userDataDoc.exists ? normalizeUserData(userDataDoc.data()) : null;
   const sourceIbans: string[] = sourcesSnapshot.docs
     .map((doc) => doc.data().iban as string | undefined)
     .filter((iban): iban is string => !!iban);
