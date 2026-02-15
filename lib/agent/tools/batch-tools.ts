@@ -22,6 +22,75 @@ async function getDb() {
 }
 
 // ============================================================================
+// Assignment Helpers
+// ============================================================================
+
+/**
+ * Hungarian algorithm (min-cost assignment) for square matrices.
+ * Returns an array where result[row] = assigned column.
+ */
+function hungarianMinCost(cost: number[][]): number[] {
+  const n = cost.length;
+  if (n === 0) return [];
+
+  const u = Array(n + 1).fill(0);
+  const v = Array(n + 1).fill(0);
+  const p = Array(n + 1).fill(0);
+  const way = Array(n + 1).fill(0);
+
+  for (let i = 1; i <= n; i++) {
+    p[0] = i;
+    let j0 = 0;
+    const minv = Array(n + 1).fill(Infinity);
+    const used = Array(n + 1).fill(false);
+
+    do {
+      used[j0] = true;
+      const i0 = p[j0];
+      let delta = Infinity;
+      let j1 = 0;
+
+      for (let j = 1; j <= n; j++) {
+        if (used[j]) continue;
+        const cur = cost[i0 - 1][j - 1] - u[i0] - v[j];
+        if (cur < minv[j]) {
+          minv[j] = cur;
+          way[j] = j0;
+        }
+        if (minv[j] < delta) {
+          delta = minv[j];
+          j1 = j;
+        }
+      }
+
+      for (let j = 0; j <= n; j++) {
+        if (used[j]) {
+          u[p[j]] += delta;
+          v[j] -= delta;
+        } else {
+          minv[j] -= delta;
+        }
+      }
+      j0 = j1;
+    } while (p[j0] !== 0);
+
+    do {
+      const j1 = way[j0];
+      p[j0] = p[j1];
+      j0 = j1;
+    } while (j0 !== 0);
+  }
+
+  const assignment = Array(n).fill(-1);
+  for (let j = 1; j <= n; j++) {
+    if (p[j] > 0) {
+      assignment[p[j] - 1] = j - 1;
+    }
+  }
+  return assignment;
+}
+
+// ============================================================================
 // Load Partner Batch Context
 // ============================================================================
 
@@ -321,23 +390,72 @@ export const scoreBatchMatchesTool = tool(
     // Sort by confidence descending
     results.sort((a, b) => b.confidence - a.confidence);
 
-    // Compute optimal greedy assignment (highest confidence first, no duplicates)
-    const assignedFiles = new Set<string>();
-    const assignedTransactions = new Set<string>();
-    const assignments = [];
+    // Compute globally optimal one-to-one assignment (max total confidence)
+    const fileIds = Array.from(new Set(results.map((r) => r.fileId)));
+    const txIds = Array.from(new Set(results.map((r) => r.transactionId)));
 
+    // Build dense score table (missing pairs treated as 0 confidence)
+    const scoreByPair = new Map<string, number>();
     for (const r of results) {
-      if (assignedFiles.has(r.fileId) || assignedTransactions.has(r.transactionId)) continue;
-      if (r.confidence < 50) continue; // Skip low confidence
-      assignedFiles.add(r.fileId);
-      assignedTransactions.add(r.transactionId);
-      assignments.push(r);
+      const key = `${r.fileId}::${r.transactionId}`;
+      const existing = scoreByPair.get(key) || 0;
+      if (r.confidence > existing) {
+        scoreByPair.set(key, r.confidence);
+      }
     }
+
+    const matrixSize = Math.max(fileIds.length, txIds.length);
+    const maxConfidence = results.length > 0
+      ? Math.max(...results.map((r) => r.confidence), 0)
+      : 0;
+
+    const cost: number[][] = Array.from({ length: matrixSize }, (_, row) =>
+      Array.from({ length: matrixSize }, (_, col) => {
+        if (row >= fileIds.length || col >= txIds.length) {
+          // Dummy file/transaction node, equivalent to "leave unmatched" with 0 confidence
+          return maxConfidence;
+        }
+        const score = scoreByPair.get(`${fileIds[row]}::${txIds[col]}`) || 0;
+        // Convert max-score objective to min-cost objective
+        return maxConfidence - score;
+      })
+    );
+
+    const rowToCol = hungarianMinCost(cost);
+    const assignments: Array<{
+      fileId: string;
+      transactionId: string;
+      confidence: number;
+      breakdown?: unknown;
+      error?: string;
+    }> = [];
+
+    for (let row = 0; row < rowToCol.length; row++) {
+      const col = rowToCol[row];
+      if (row >= fileIds.length || col < 0 || col >= txIds.length) continue;
+      const fileId = fileIds[row];
+      const transactionId = txIds[col];
+      const confidence = scoreByPair.get(`${fileId}::${transactionId}`) || 0;
+      if (confidence < 50) continue;
+
+      const full = results.find((r) => r.fileId === fileId && r.transactionId === transactionId);
+      assignments.push({
+        fileId,
+        transactionId,
+        confidence,
+        breakdown: full?.breakdown || null,
+        error: full?.error,
+      });
+    }
+
+    assignments.sort((a, b) => b.confidence - a.confidence);
 
     return {
       allScores: results,
       recommendedAssignments: assignments,
-      summary: `Scored ${pairs.length} pairs. ${assignments.length} recommended assignments (≥50% confidence).`,
+      summary:
+        `Scored ${pairs.length} pairs. ` +
+        `${assignments.length} recommended assignments (optimal one-to-one, ≥50% confidence).`,
     };
   },
   {

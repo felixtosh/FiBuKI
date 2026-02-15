@@ -11,9 +11,9 @@ import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { Timestamp, FieldValue } from "firebase-admin/firestore";
 import { HumanMessage } from "@langchain/core/messages";
-import { runWorkerGraph } from "@/lib/agent/worker-graph";
+import { streamWorkerGraph } from "@/lib/agent/worker-graph";
 import { getWorkerConfig } from "@/lib/agent/worker-configs";
-import { WorkerType, WorkerRunInput, WorkerMessage, WorkerRun } from "@/types/worker";
+import { WorkerType, WorkerMessage, WorkerRun, WorkerTriggerContext } from "@/types/worker";
 import { ToolCallSummary } from "@/types/notification";
 import { TOOL_LABELS, SKIP_TOOLS, parseToolResult, cleanToolSummary } from "@/lib/tool-summary";
 import { ModelProvider } from "@/lib/agent/model";
@@ -29,12 +29,267 @@ export const maxDuration = 120; // 2 minutes for worker execution
 interface WorkerRequest {
   workerType: WorkerType;
   initialPrompt: string;
-  triggerContext?: {
-    fileId?: string;
-    transactionId?: string;
-  };
+  triggerContext?: WorkerTriggerContext;
+  workerRequestId?: string;
   triggeredBy?: "auto" | "user";
   modelProvider?: ModelProvider;
+}
+
+interface PartnerBatchStateDoc {
+  userId: string;
+  partnerId: string;
+  status: "idle" | "pending" | "processing";
+  activeRequestId: string | null;
+  activeRunId: string | null;
+  queuedFileIds: string[];
+  inflightFileIds: string[];
+  rerunNeeded: boolean;
+  version: number;
+  lastCompletedAt: Timestamp | null;
+  nextEligibleAt: Timestamp | null;
+  failureCount: number;
+  lastSummary?: string | null;
+  lastError?: string | null;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+interface PartnerBatchClaimResult {
+  triggerContext: WorkerTriggerContext;
+}
+
+const PARTNER_BATCH_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
+const PARTNER_BATCH_FAILURE_BACKOFF_BASE_MS = 5 * 60 * 1000; // 5 minutes
+const PARTNER_BATCH_FAILURE_BACKOFF_MAX_MS = 6 * 60 * 60 * 1000; // 6 hours
+
+function normalizeStringArray(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  const deduped = new Set<string>();
+  for (const item of input) {
+    if (typeof item !== "string") continue;
+    const trimmed = item.trim();
+    if (trimmed) deduped.add(trimmed);
+  }
+  return Array.from(deduped);
+}
+
+function cleanTriggerContext(triggerContext?: WorkerTriggerContext): WorkerTriggerContext | undefined {
+  if (!triggerContext) return undefined;
+
+  const cleaned: WorkerTriggerContext = {};
+  if (triggerContext.fileId) cleaned.fileId = triggerContext.fileId;
+  if (triggerContext.transactionId) cleaned.transactionId = triggerContext.transactionId;
+  if (triggerContext.batchId) cleaned.batchId = triggerContext.batchId;
+  if (triggerContext.partnerId) cleaned.partnerId = triggerContext.partnerId;
+
+  const fileIds = normalizeStringArray(triggerContext.fileIds);
+  if (fileIds.length > 0) cleaned.fileIds = fileIds;
+
+  if (typeof triggerContext.topSuggestionConfidence === "number") {
+    cleaned.topSuggestionConfidence = triggerContext.topSuggestionConfidence;
+  }
+  if (typeof triggerContext.triggeredAfterRuleBasedMatch === "boolean") {
+    cleaned.triggeredAfterRuleBasedMatch = triggerContext.triggeredAfterRuleBasedMatch;
+  }
+
+  return Object.keys(cleaned).length > 0 ? cleaned : undefined;
+}
+
+function buildPartnerBatchPrompt(partnerId: string, fileIds: string[]): string {
+  const ids = normalizeStringArray(fileIds);
+  const preview = ids.slice(0, 20).join(", ");
+  const overflow = ids.length > 20 ? ` ... (+${ids.length - 20} more)` : "";
+  return `Batch match ${ids.length} files for partner ${partnerId}. File IDs: ${preview}${overflow}`;
+}
+
+async function claimPartnerBatchRun(
+  userId: string,
+  runId: string,
+  workerRequestId: string | undefined,
+  requestedTriggerContext: WorkerTriggerContext | undefined
+): Promise<PartnerBatchClaimResult> {
+  const requestedPartnerId = requestedTriggerContext?.partnerId;
+  if (!requestedPartnerId) {
+    throw new Error("partner_file_batch requires triggerContext.partnerId");
+  }
+
+  const stateRef = db.collection(`users/${userId}/partnerBatchStates`).doc(requestedPartnerId);
+  const requestsCol = db.collection(`users/${userId}/workerRequests`);
+  const requestedFileIds = normalizeStringArray(requestedTriggerContext?.fileIds);
+
+  let claimResult: PartnerBatchClaimResult | null = null;
+
+  await db.runTransaction(async (tx) => {
+    const now = Timestamp.now();
+    const stateSnap = await tx.get(stateRef);
+    const stateData = stateSnap.exists
+      ? (stateSnap.data() as Partial<PartnerBatchStateDoc>)
+      : null;
+
+    if (stateData?.status === "processing" && stateData.activeRunId && stateData.activeRunId !== runId) {
+      throw new Error(`Partner batch ${requestedPartnerId} is already processing`);
+    }
+
+    const queuedIds = normalizeStringArray(stateData?.queuedFileIds);
+    const currentInflight = normalizeStringArray(stateData?.inflightFileIds);
+    const inflightFileIds = queuedIds.length > 0
+      ? queuedIds
+      : (requestedFileIds.length > 0 ? requestedFileIds : currentInflight);
+
+    if (inflightFileIds.length === 0) {
+      throw new Error(`No fileIds available to process for partner ${requestedPartnerId}`);
+    }
+
+    const triggerContext: WorkerTriggerContext = {
+      ...(requestedTriggerContext || {}),
+      partnerId: requestedPartnerId,
+      fileIds: inflightFileIds,
+      fileId: requestedTriggerContext?.fileId || inflightFileIds[0],
+    };
+
+    const activeRequestId = workerRequestId || stateData?.activeRequestId || null;
+    if (activeRequestId) {
+      const requestRef = requestsCol.doc(activeRequestId);
+      const requestSnap = await tx.get(requestRef);
+      if (requestSnap.exists) {
+        tx.set(requestRef, {
+          triggerContext: cleanTriggerContext(triggerContext),
+          updatedAt: now,
+        }, { merge: true });
+      }
+    }
+
+    if (stateSnap.exists) {
+      tx.set(stateRef, {
+        status: "processing",
+        activeRequestId,
+        activeRunId: runId,
+        queuedFileIds: [],
+        inflightFileIds,
+        rerunNeeded: false,
+        updatedAt: now,
+        version: FieldValue.increment(1),
+      }, { merge: true });
+    } else {
+      tx.set(stateRef, {
+        userId,
+        partnerId: requestedPartnerId,
+        status: "processing",
+        activeRequestId,
+        activeRunId: runId,
+        queuedFileIds: [],
+        inflightFileIds,
+        rerunNeeded: false,
+        version: 1,
+        lastCompletedAt: null,
+        nextEligibleAt: null,
+        failureCount: 0,
+        createdAt: now,
+        updatedAt: now,
+      } satisfies PartnerBatchStateDoc);
+    }
+
+    claimResult = {
+      triggerContext,
+    };
+  });
+
+  if (!claimResult) {
+    throw new Error("Failed to claim partner batch run");
+  }
+
+  return claimResult;
+}
+
+async function finalizePartnerBatchRun(
+  userId: string,
+  partnerId: string,
+  runId: string,
+  summary: string | undefined,
+  error: string | undefined
+): Promise<void> {
+  const stateRef = db.collection(`users/${userId}/partnerBatchStates`).doc(partnerId);
+  const requestsCol = db.collection(`users/${userId}/workerRequests`);
+
+  await db.runTransaction(async (tx) => {
+    const now = Timestamp.now();
+    const stateSnap = await tx.get(stateRef);
+    if (!stateSnap.exists) return;
+
+    const stateData = stateSnap.data() as Partial<PartnerBatchStateDoc>;
+    if (stateData.activeRunId && stateData.activeRunId !== runId) {
+      return;
+    }
+
+    const queuedFileIds = normalizeStringArray(stateData.queuedFileIds);
+    const inflightFileIds = normalizeStringArray(stateData.inflightFileIds);
+    const needsRerun = Boolean(stateData.rerunNeeded) || queuedFileIds.length > 0;
+    const isFailure = Boolean(error);
+    const previousFailureCount = stateData.failureCount || 0;
+    const nextFailureCount = isFailure ? previousFailureCount + 1 : 0;
+
+    const waitMs = isFailure
+      ? Math.min(
+          PARTNER_BATCH_FAILURE_BACKOFF_MAX_MS,
+          PARTNER_BATCH_FAILURE_BACKOFF_BASE_MS * Math.pow(2, Math.max(0, nextFailureCount - 1))
+        )
+      : PARTNER_BATCH_COOLDOWN_MS;
+    const nextEligibleAt = Timestamp.fromMillis(now.toMillis() + waitMs);
+
+    if (needsRerun) {
+      const nextFileIds = queuedFileIds.length > 0 ? queuedFileIds : inflightFileIds;
+      const nextReqRef = requestsCol.doc();
+      tx.set(nextReqRef, {
+        id: nextReqRef.id,
+        workerType: "partner_file_batch",
+        initialPrompt: buildPartnerBatchPrompt(partnerId, nextFileIds),
+        triggerContext: cleanTriggerContext({
+          partnerId,
+          fileIds: nextFileIds,
+          fileId: nextFileIds[0],
+          triggeredAfterRuleBasedMatch: true,
+        }),
+        triggeredBy: "auto",
+        status: "pending",
+        notBeforeAt: nextEligibleAt,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      tx.set(stateRef, {
+        status: "pending",
+        activeRequestId: nextReqRef.id,
+        activeRunId: null,
+        queuedFileIds: nextFileIds,
+        inflightFileIds: [],
+        rerunNeeded: false,
+        lastCompletedAt: now,
+        nextEligibleAt,
+        failureCount: nextFailureCount,
+        lastSummary: summary || null,
+        lastError: error || null,
+        updatedAt: now,
+        version: FieldValue.increment(1),
+      }, { merge: true });
+      return;
+    }
+
+    tx.set(stateRef, {
+      status: "idle",
+      activeRequestId: null,
+      activeRunId: null,
+      queuedFileIds: [],
+      inflightFileIds: [],
+      rerunNeeded: false,
+      lastCompletedAt: now,
+      nextEligibleAt,
+      failureCount: nextFailureCount,
+      lastSummary: summary || null,
+      lastError: error || null,
+      updatedAt: now,
+      version: FieldValue.increment(1),
+    }, { merge: true });
+  });
 }
 
 // ============================================================================
@@ -86,9 +341,11 @@ function truncateLargeResults(value: unknown, maxSize = 50000): unknown {
  */
 function convertToWorkerMessages(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  messages: any[]
+  messages: any[],
+  options: { idPrefix?: string } = {}
 ): WorkerMessage[] {
   const result: WorkerMessage[] = [];
+  let fallbackIdCounter = 0;
 
   // First pass: collect all tool results by tool_call_id
   const toolResults = new Map<string, unknown>();
@@ -150,16 +407,21 @@ function convertToWorkerMessages(
     const toolCalls = Array.isArray(toolCallsRaw) ? toolCallsRaw : [];
     for (const tc of toolCalls) {
       const toolResult = toolResults.get(tc.id);
+      const hasResult = toolResults.has(tc.id);
+      const toolCall: Record<string, unknown> = {
+        id: tc.id,
+        name: tc.name,
+        args: truncateLargeResults(tc.args) as Record<string, unknown>,
+        status: "executed",
+        requiresConfirmation: false,
+      };
+      if (hasResult) {
+        toolCall.result = truncateLargeResults(toolResult);
+      }
+
       parts.push({
         type: "tool",
-        toolCall: {
-          id: tc.id,
-          name: tc.name,
-          args: truncateLargeResults(tc.args) as Record<string, unknown>,
-          result: truncateLargeResults(toolResult),
-          status: "executed",
-          requiresConfirmation: false,
-        },
+        toolCall,
       });
     }
 
@@ -168,8 +430,14 @@ function convertToWorkerMessages(
       continue;
     }
 
+    const rawId = typeof msg.id === "string"
+      ? msg.id
+      : "";
+    const sanitizedId = rawId.replace(/\//g, "_");
+    const messageId = sanitizedId || `${options.idPrefix || "worker_msg"}_${++fallbackIdCounter}`;
+
     result.push({
-      id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      id: messageId,
       role: role as "user" | "assistant" | "system",
       content,
       parts: parts.length > 0 ? parts : undefined,
@@ -178,6 +446,18 @@ function convertToWorkerMessages(
   }
 
   return result;
+}
+
+function isSessionPersistableMessage(msg: WorkerMessage): boolean {
+  if (!msg.parts || msg.parts.length === 0) return true;
+  for (const part of msg.parts) {
+    if (part.type !== "tool" || !("toolCall" in part)) continue;
+    const toolCall = part.toolCall as { result?: unknown };
+    if (!Object.prototype.hasOwnProperty.call(toolCall, "result")) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
@@ -277,6 +557,7 @@ async function createWorkerChatSession(
     role: "user",
     content: initialPrompt,
     createdAt: FieldValue.serverTimestamp(),
+    sequence: 1,
   });
 
   return sessionRef.id;
@@ -285,34 +566,53 @@ async function createWorkerChatSession(
 /**
  * Append worker transcript messages to an existing chat session.
  */
-async function appendTranscriptToSession(
+async function appendMessagesToSession(
   userId: string,
   sessionId: string,
-  transcript: WorkerMessage[]
+  entries: Array<{ message: WorkerMessage; sequence: number }>,
+  persistedMessageCount?: number
 ): Promise<void> {
+  if (entries.length === 0) return;
+
   const sessionRef = db.collection(`users/${userId}/chatSessions`).doc(sessionId);
+  const batch = db.batch();
   const messagesRef = sessionRef.collection("messages");
 
-  for (const msg of transcript) {
-    const cleanParts = msg.parts?.map(part => {
+  for (const { message, sequence } of entries) {
+    const cleanParts = message.parts?.map(part => {
       const clean: Record<string, unknown> = { type: part.type };
       if ("text" in part) clean.text = part.text;
       if ("toolCall" in part) clean.toolCall = part.toolCall;
       return clean;
     });
 
-    await messagesRef.add({
-      role: msg.role,
-      content: msg.content || "",
+    const messageRef = messagesRef.doc(message.id);
+    batch.set(messageRef, {
+      role: message.role,
+      content: message.content || "",
       parts: cleanParts,
       createdAt: FieldValue.serverTimestamp(),
+      sequence,
     });
   }
 
-  await sessionRef.update({
-    messageCount: transcript.length + 1,
+  const sessionUpdate: Record<string, unknown> = {
     updatedAt: FieldValue.serverTimestamp(),
-  });
+  };
+  if (typeof persistedMessageCount === "number") {
+    sessionUpdate.messageCount = persistedMessageCount + 1; // +1 for initial user prompt
+  }
+
+  const lastContent = [...entries]
+    .reverse()
+    .map((entry) => entry.message.content?.trim())
+    .find((content) => content);
+  if (lastContent) {
+    sessionUpdate.lastMessagePreview = lastContent.slice(0, 100);
+  }
+
+  batch.set(sessionRef, sessionUpdate, { merge: true });
+  await batch.commit();
 }
 
 /**
@@ -483,6 +783,7 @@ export async function POST(req: Request) {
       workerType,
       initialPrompt: rawPrompt,
       triggerContext,
+      workerRequestId,
       triggeredBy = "user",
       modelProvider = "gemini",
     } = body;
@@ -505,13 +806,29 @@ export async function POST(req: Request) {
     const runRef = db.collection(`users/${userId}/workerRuns`).doc();
     const runId = runRef.id;
 
-    // Build triggerContext, excluding undefined values (Firestore doesn't accept undefined)
-    const cleanTriggerContext: Record<string, string> = {};
-    if (triggerContext?.fileId) {
-      cleanTriggerContext.fileId = triggerContext.fileId;
-    }
-    if (triggerContext?.transactionId) {
-      cleanTriggerContext.transactionId = triggerContext.transactionId;
+    let effectiveTriggerContext = cleanTriggerContext(triggerContext);
+    let effectiveInitialPrompt = initialPrompt;
+
+    if (workerType === "partner_file_batch") {
+      if (!effectiveTriggerContext?.partnerId) {
+        return NextResponse.json(
+          { error: "partner_file_batch requires triggerContext.partnerId" },
+          { status: 400 }
+        );
+      }
+
+      const claim = await claimPartnerBatchRun(
+        userId,
+        runId,
+        workerRequestId,
+        effectiveTriggerContext
+      );
+
+      effectiveTriggerContext = cleanTriggerContext(claim.triggerContext);
+      effectiveInitialPrompt = buildPartnerBatchPrompt(
+        effectiveTriggerContext!.partnerId!,
+        effectiveTriggerContext!.fileIds || []
+      );
     }
 
     const initialRun: Partial<WorkerRun> = {
@@ -520,7 +837,7 @@ export async function POST(req: Request) {
       workerType,
       status: "running",
       triggeredBy,
-      triggerContext: Object.keys(cleanTriggerContext).length > 0 ? cleanTriggerContext : undefined,
+      triggerContext: effectiveTriggerContext,
       messages: [],
       createdAt: Timestamp.now(),
       startedAt: Timestamp.now(),
@@ -537,7 +854,7 @@ export async function POST(req: Request) {
     let sessionId: string | undefined;
     if (triggeredBy === "user") {
       try {
-        sessionId = await createWorkerChatSession(userId, workerType, initialPrompt);
+        sessionId = await createWorkerChatSession(userId, workerType, effectiveInitialPrompt);
       } catch (err) {
         console.error(`[Worker API] Failed to create upfront chat session:`, err);
       }
@@ -552,18 +869,62 @@ export async function POST(req: Request) {
     }
 
     try {
-      // Run the worker graph
-      const result = await runWorkerGraph({
-        messages: [new HumanMessage(initialPrompt)],
+      // Stream worker graph and persist transcript progress for user-triggered sessions.
+      // This enables "View in chat" to show in-flight progress, not just final results.
+      let latestGraphMessages: unknown[] = [new HumanMessage(effectiveInitialPrompt)];
+      let latestActionsPerformed: WorkerRun["actionsPerformed"] = [];
+      const persistedMessageIds = new Set<string>();
+
+      const persistReadySessionMessages = async (
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        allMessages: any[]
+      ) => {
+        if (!sessionId) return;
+        const transcriptSoFar = convertToWorkerMessages(allMessages, { idPrefix: runId });
+        const entriesToPersist = transcriptSoFar
+          .map((message, index) => ({ message, sequence: index + 2 }))
+          .filter(({ message }) => isSessionPersistableMessage(message))
+          .filter(({ message }) => !persistedMessageIds.has(message.id));
+
+        if (entriesToPersist.length === 0) return;
+
+        await appendMessagesToSession(
+          userId,
+          sessionId,
+          entriesToPersist,
+          persistedMessageIds.size + entriesToPersist.length
+        );
+        for (const { message } of entriesToPersist) {
+          persistedMessageIds.add(message.id);
+        }
+      };
+
+      for await (const chunk of streamWorkerGraph({
+        messages: [new HumanMessage(effectiveInitialPrompt)],
         userId,
         authHeader,
         workerType,
         runId,
         modelProvider,
-      });
+      }, { streamMode: "values" })) {
+        if (!Array.isArray(chunk) || chunk[0] !== "values") continue;
+        const state = chunk[1] as {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          messages?: any[];
+          actionsPerformed?: WorkerRun["actionsPerformed"];
+        };
 
-      // Convert messages to WorkerMessages
-      const transcript = convertToWorkerMessages(result.messages);
+        if (Array.isArray(state.messages)) {
+          latestGraphMessages = state.messages;
+          await persistReadySessionMessages(state.messages);
+        }
+        if (Array.isArray(state.actionsPerformed)) {
+          latestActionsPerformed = state.actionsPerformed;
+        }
+      }
+
+      // Convert final messages to WorkerMessages
+      const transcript = convertToWorkerMessages(latestGraphMessages as any[], { idPrefix: runId });
 
       // Extract summary from last assistant message
       const lastAssistantMsg = transcript
@@ -571,12 +932,26 @@ export async function POST(req: Request) {
         .pop();
       const summary = lastAssistantMsg?.content || undefined;
 
+      if (workerType === "partner_file_batch" && effectiveTriggerContext?.partnerId) {
+        try {
+          await finalizePartnerBatchRun(
+            userId,
+            effectiveTriggerContext.partnerId,
+            runId,
+            summary,
+            undefined
+          );
+        } catch (err) {
+          console.error("[Worker API] Failed to finalize partner batch state (success):", err);
+        }
+      }
+
       // Update WorkerRun with results
       const completedRun: Partial<WorkerRun> = {
         status: "completed",
         messages: transcript,
         summary,
-        actionsPerformed: result.actionsPerformed,
+        actionsPerformed: latestActionsPerformed,
         completedAt: Timestamp.now(),
       };
 
@@ -585,11 +960,26 @@ export async function POST(req: Request) {
       // Append transcript to existing session (user-triggered) or create new one (auto-triggered)
       if (transcript.length > 0) {
         try {
+          if (!sessionId) {
+            sessionId = await createWorkerChatSession(userId, workerType, effectiveInitialPrompt);
+          }
+
           if (sessionId) {
-            await appendTranscriptToSession(userId, sessionId, transcript);
-          } else {
-            sessionId = await createWorkerChatSession(userId, workerType, initialPrompt);
-            await appendTranscriptToSession(userId, sessionId, transcript);
+            const pendingEntries = transcript
+              .map((message, index) => ({ message, sequence: index + 2 }))
+              .filter(({ message }) => !persistedMessageIds.has(message.id));
+
+            if (pendingEntries.length > 0) {
+              await appendMessagesToSession(
+                userId,
+                sessionId,
+                pendingEntries,
+                persistedMessageIds.size + pendingEntries.length
+              );
+              for (const { message } of pendingEntries) {
+                persistedMessageIds.add(message.id);
+              }
+            }
           }
         } catch (err) {
           console.error(`[Worker API] Failed to save chat session transcript:`, err);
@@ -610,11 +1000,25 @@ export async function POST(req: Request) {
         runId,
         status: "completed",
         summary,
-        actionsPerformed: result.actionsPerformed,
+        actionsPerformed: latestActionsPerformed,
       });
     } catch (error) {
       // Update WorkerRun with error
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
+
+      if (workerType === "partner_file_batch" && effectiveTriggerContext?.partnerId) {
+        try {
+          await finalizePartnerBatchRun(
+            userId,
+            effectiveTriggerContext.partnerId,
+            runId,
+            undefined,
+            errorMessage
+          );
+        } catch (err) {
+          console.error("[Worker API] Failed to finalize partner batch state (failure):", err);
+        }
+      }
 
       const failedRun: Partial<WorkerRun> = {
         status: "failed",

@@ -69,9 +69,203 @@ const WorkerStateAnnotation = Annotation.Root({
     reducer: (prev, next) => [...(prev || []), ...(next || [])],
     default: () => [],
   }),
+  receiptSearchProgress: Annotation<ReceiptSearchProgress>({
+    reducer: (_, next) => next,
+    default: () => createInitialReceiptSearchProgress(),
+  }),
+  receiptSearchEnforcementCount: Annotation<number>({
+    reducer: (_, next) => next,
+    default: () => 0,
+  }),
 });
 
 type WorkerState = typeof WorkerStateAnnotation.State;
+
+interface ReceiptSearchProgress {
+  localSearchCalls: number;
+  gmailAttachmentQueries: string[];
+  gmailEmailQueries: string[];
+  gmailUnavailable: boolean;
+  sawEmailInvoiceSignal: boolean;
+  analyzeEmailCalls: number;
+  convertEmailCalls: number;
+  recommendedConvertCount: number;
+  pendingExtractionFileIds: string[];
+  completedExtractionFileIds: string[];
+  extractionWaitAttempts: Record<string, number>;
+  connectSuccessCount: number;
+  connectFailureCount: number;
+}
+
+interface ReceiptGateDecision {
+  canFinalize: boolean;
+  unmet: string[];
+}
+
+function createInitialReceiptSearchProgress(): ReceiptSearchProgress {
+  return {
+    localSearchCalls: 0,
+    gmailAttachmentQueries: [],
+    gmailEmailQueries: [],
+    gmailUnavailable: false,
+    sawEmailInvoiceSignal: false,
+    analyzeEmailCalls: 0,
+    convertEmailCalls: 0,
+    recommendedConvertCount: 0,
+    pendingExtractionFileIds: [],
+    completedExtractionFileIds: [],
+    extractionWaitAttempts: {},
+    connectSuccessCount: 0,
+    connectFailureCount: 0,
+  };
+}
+
+function normalizeQuery(query: unknown): string | null {
+  if (typeof query !== "string") {
+    return null;
+  }
+  const trimmed = query.trim().toLowerCase();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function addUniqueString(target: string[], value: string | null) {
+  if (!value) return;
+  if (!target.includes(value)) {
+    target.push(value);
+  }
+}
+
+function addUniqueStrings(target: string[], values: unknown) {
+  if (!Array.isArray(values)) return;
+  for (const value of values) {
+    addUniqueString(target, normalizeQuery(value));
+  }
+}
+
+function addPendingExtractionFileId(progress: ReceiptSearchProgress, fileId: unknown) {
+  if (typeof fileId !== "string" || fileId.length === 0) return;
+  if (!progress.pendingExtractionFileIds.includes(fileId)) {
+    progress.pendingExtractionFileIds.push(fileId);
+  }
+}
+
+function markExtractionCompleted(progress: ReceiptSearchProgress, fileId: unknown) {
+  if (typeof fileId !== "string" || fileId.length === 0) return;
+  if (!progress.completedExtractionFileIds.includes(fileId)) {
+    progress.completedExtractionFileIds.push(fileId);
+  }
+}
+
+function parseToolArgs(args: unknown): Record<string, unknown> {
+  if (typeof args === "string") {
+    try {
+      const parsed = JSON.parse(args);
+      return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : {};
+    } catch {
+      return {};
+    }
+  }
+  return args && typeof args === "object" ? args as Record<string, unknown> : {};
+}
+
+function parseToolResultContent(content: unknown): Record<string, unknown> {
+  if (typeof content === "string") {
+    try {
+      const parsed = JSON.parse(content);
+      return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : {};
+    } catch {
+      return {};
+    }
+  }
+  if (Array.isArray(content)) {
+    for (const part of content) {
+      if (typeof part === "string") {
+        try {
+          const parsed = JSON.parse(part);
+          if (parsed && typeof parsed === "object") {
+            return parsed as Record<string, unknown>;
+          }
+        } catch {
+          // Continue trying other parts
+        }
+      }
+      if (part && typeof part === "object" && "text" in part) {
+        const text = (part as { text?: unknown }).text;
+        if (typeof text === "string") {
+          try {
+            const parsed = JSON.parse(text);
+            if (parsed && typeof parsed === "object") {
+              return parsed as Record<string, unknown>;
+            }
+          } catch {
+            // Continue trying other parts
+          }
+        }
+      }
+    }
+  }
+  return content && typeof content === "object" ? content as Record<string, unknown> : {};
+}
+
+function getToolCalls(message: BaseMessage): Array<{ id?: string; name?: string; args?: unknown }> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const msgAny = message as any;
+  return msgAny?.tool_calls || msgAny?.additional_kwargs?.tool_calls || [];
+}
+
+function evaluateReceiptGate(state: WorkerState): ReceiptGateDecision {
+  if (state.workerType !== "receipt_search") {
+    return { canFinalize: true, unmet: [] };
+  }
+
+  const progress = (state.receiptSearchProgress || createInitialReceiptSearchProgress()) as ReceiptSearchProgress;
+
+  // Early-success bypass: once a connection succeeded, no need to keep searching.
+  if (progress.connectSuccessCount > 0) {
+    return { canFinalize: true, unmet: [] };
+  }
+
+  const unmet: string[] = [];
+
+  const localOk = progress.localSearchCalls >= 1;
+  if (!localOk) {
+    unmet.push("Run searchLocalFiles at least once.");
+  }
+
+  if (!progress.gmailUnavailable) {
+    if (progress.gmailAttachmentQueries.length < 2) {
+      unmet.push("Try at least 2 Gmail attachment queries.");
+    }
+    if (progress.gmailEmailQueries.length < 2) {
+      unmet.push("Try at least 2 Gmail email queries.");
+    }
+  }
+
+  if (progress.sawEmailInvoiceSignal && progress.analyzeEmailCalls < 1) {
+    unmet.push("Invoice-like emails were found; run analyzeEmail on top candidates.");
+  }
+
+  if (progress.recommendedConvertCount > 0 && progress.convertEmailCalls < 1) {
+    unmet.push("analyzeEmail recommended conversion; run convertEmailToPdf on at least one candidate.");
+  }
+
+  const unresolvedExtractionIds = progress.pendingExtractionFileIds.filter((fileId) => {
+    if (progress.completedExtractionFileIds.includes(fileId)) {
+      return false;
+    }
+    const attempts = progress.extractionWaitAttempts[fileId] || 0;
+    // Allow finalization after several timed-out waits to avoid hard deadlocks when extraction queue is delayed.
+    return attempts < 3;
+  });
+
+  if (unresolvedExtractionIds.length > 0) {
+    unmet.push(
+      `Wait for extraction before deciding (${unresolvedExtractionIds.length} file(s) still pending).`
+    );
+  }
+
+  return { canFinalize: unmet.length === 0, unmet };
+}
 
 // ============================================================================
 // Tool Filtering
@@ -144,6 +338,7 @@ async function agentNode(state: WorkerState): Promise<Partial<WorkerState>> {
       configurable: {
         userId: state.userId,
         authHeader: state.authHeader,
+        workerType: state.workerType,
       },
     });
   } catch (error) {
@@ -178,7 +373,7 @@ function createToolsNode(workerType: WorkerType) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     config?: any
   ): Promise<Partial<WorkerState>> {
-    const { userId, authHeader, toolCallCount } = state;
+    const { userId, authHeader, toolCallCount, workerType } = state;
 
     const toolConfig = {
       ...config,
@@ -186,6 +381,7 @@ function createToolsNode(workerType: WorkerType) {
         ...config?.configurable,
         userId,
         authHeader,
+        workerType,
       },
     };
 
@@ -195,9 +391,155 @@ function createToolsNode(workerType: WorkerType) {
       const newToolCalls = result.messages?.length || 0;
       const newToolCallCount = toolCallCount + newToolCalls;
       console.log(`[Worker:${workerType}] Tools executed: ${newToolCalls} calls (total: ${newToolCallCount})`);
+
+      let receiptSearchProgress = state.receiptSearchProgress || createInitialReceiptSearchProgress();
+      if (workerType === "receipt_search") {
+        receiptSearchProgress = {
+          ...receiptSearchProgress,
+          gmailAttachmentQueries: [...(receiptSearchProgress.gmailAttachmentQueries || [])],
+          gmailEmailQueries: [...(receiptSearchProgress.gmailEmailQueries || [])],
+          pendingExtractionFileIds: [...(receiptSearchProgress.pendingExtractionFileIds || [])],
+          completedExtractionFileIds: [...(receiptSearchProgress.completedExtractionFileIds || [])],
+          extractionWaitAttempts: { ...(receiptSearchProgress.extractionWaitAttempts || {}) },
+        };
+
+        const lastMessage = state.messages[state.messages.length - 1];
+        const toolCalls = lastMessage ? getToolCalls(lastMessage) : [];
+        const toolMessages = ((result.messages || []) as BaseMessage[])
+          .filter((m): m is ToolMessage => m instanceof ToolMessage);
+        const toolMessagesByCallId = new Map<string, ToolMessage>();
+        for (const toolMessage of toolMessages) {
+          const toolCallId = (toolMessage as unknown as { tool_call_id?: string }).tool_call_id;
+          if (toolCallId) {
+            toolMessagesByCallId.set(toolCallId, toolMessage);
+          }
+        }
+
+        let sequentialIndex = 0;
+        for (const toolCall of toolCalls) {
+          const toolName = toolCall.name || "";
+          const args = parseToolArgs(toolCall.args);
+          const toolMessage = toolCall.id ? toolMessagesByCallId.get(toolCall.id) : toolMessages[sequentialIndex];
+          const output = parseToolResultContent(toolMessage?.content);
+
+          if (toolName === "searchLocalFiles") {
+            receiptSearchProgress.localSearchCalls += 1;
+          }
+
+          if (toolName === "searchGmailAttachments") {
+            addUniqueStrings(receiptSearchProgress.gmailAttachmentQueries, output.queriesUsed);
+            addUniqueString(
+              receiptSearchProgress.gmailAttachmentQueries,
+              normalizeQuery(args.query)
+            );
+            const integrationCount = typeof output.integrationCount === "number"
+              ? output.integrationCount
+              : null;
+            if (output.gmailNotConnected === true || integrationCount === 0) {
+              receiptSearchProgress.gmailUnavailable = true;
+            }
+            const candidates = Array.isArray(output.candidates) ? output.candidates : [];
+            if (
+              candidates.some((candidate) => {
+                const classification = (candidate as { classification?: unknown }).classification;
+                if (!classification || typeof classification !== "object") return false;
+                const c = classification as { possibleMailInvoice?: unknown; possibleInvoiceLink?: unknown };
+                return c.possibleMailInvoice === true || c.possibleInvoiceLink === true;
+              })
+            ) {
+              receiptSearchProgress.sawEmailInvoiceSignal = true;
+            }
+          }
+
+          if (toolName === "searchGmailEmails") {
+            addUniqueString(
+              receiptSearchProgress.gmailEmailQueries,
+              normalizeQuery(output.query ?? args.query)
+            );
+            const integrationCount = typeof output.integrationCount === "number"
+              ? output.integrationCount
+              : null;
+            if (output.gmailNotConnected === true || integrationCount === 0) {
+              receiptSearchProgress.gmailUnavailable = true;
+            }
+            const emails = Array.isArray(output.emails) ? output.emails : [];
+            if (
+              emails.some((email) => {
+                const classification = (email as { classification?: unknown }).classification;
+                if (!classification || typeof classification !== "object") return false;
+                const c = classification as { possibleMailInvoice?: unknown; possibleInvoiceLink?: unknown };
+                return c.possibleMailInvoice === true || c.possibleInvoiceLink === true;
+              }) ||
+              (Array.isArray(output.recommendedAnalyzeCandidates) && output.recommendedAnalyzeCandidates.length > 0)
+            ) {
+              receiptSearchProgress.sawEmailInvoiceSignal = true;
+            }
+          }
+
+          if (toolName === "analyzeEmail") {
+            receiptSearchProgress.analyzeEmailCalls += 1;
+            if (output.hasInvoiceLink === true || output.isMailInvoice === true) {
+              receiptSearchProgress.sawEmailInvoiceSignal = true;
+            }
+            if (output.shouldConvertToPdf === true || output.recommendedAction === "convertEmailToPdf") {
+              receiptSearchProgress.recommendedConvertCount += 1;
+            }
+          }
+
+          if (toolName === "downloadGmailAttachment") {
+            if (Array.isArray(output.fileIdsNeedingExtraction)) {
+              for (const fileId of output.fileIdsNeedingExtraction) {
+                addPendingExtractionFileId(receiptSearchProgress, fileId);
+              }
+            }
+            const fallbackResults = Array.isArray(output.results) ? output.results : [];
+            for (const row of fallbackResults) {
+              const typedRow = row as { success?: unknown; fileId?: unknown; alreadyExists?: unknown };
+              if (typedRow.success === true && typedRow.alreadyExists !== true) {
+                addPendingExtractionFileId(receiptSearchProgress, typedRow.fileId);
+              }
+            }
+          }
+
+          if (toolName === "convertEmailToPdf") {
+            receiptSearchProgress.convertEmailCalls += 1;
+            if (output.success === true) {
+              addPendingExtractionFileId(receiptSearchProgress, output.fileId);
+            }
+          }
+
+          if (toolName === "waitForFileExtraction") {
+            const fileId = typeof args.fileId === "string"
+              ? args.fileId
+              : (typeof output.fileId === "string" ? output.fileId : null);
+            if (fileId) {
+              const attempts = receiptSearchProgress.extractionWaitAttempts[fileId] || 0;
+              receiptSearchProgress.extractionWaitAttempts[fileId] = attempts + 1;
+            }
+            const extractionComplete = output.extractionComplete === true;
+            const outputError = typeof output.error === "string" ? output.error : null;
+            const nonTimeoutTerminalError = outputError && outputError.toLowerCase() !== "timeout";
+            if (extractionComplete || nonTimeoutTerminalError) {
+              markExtractionCompleted(receiptSearchProgress, fileId);
+            }
+          }
+
+          if (toolName === "connectFileToTransaction") {
+            if (output.success === true) {
+              receiptSearchProgress.connectSuccessCount += 1;
+            } else if (output.error) {
+              receiptSearchProgress.connectFailureCount += 1;
+            }
+          }
+
+          sequentialIndex += 1;
+        }
+      }
+
       return {
         ...result,
         toolCallCount: newToolCallCount,
+        receiptSearchProgress,
       };
     } catch (error) {
       console.error(`[Worker:${workerType}] Tool execution error:`, error);
@@ -215,6 +557,27 @@ async function respondNode(state: WorkerState): Promise<Partial<WorkerState>> {
   };
 }
 
+async function enforceReceiptGatesNode(state: WorkerState): Promise<Partial<WorkerState>> {
+  if (state.workerType !== "receipt_search") {
+    return {};
+  }
+
+  const gate = evaluateReceiptGate(state);
+  if (gate.canFinalize) {
+    return {};
+  }
+
+  const reminder = `Receipt-search gate: Continue with tool calls before finalizing.
+Missing requirements:
+- ${gate.unmet.join("\n- ")}
+If you already have a perfect verified match, connect it; otherwise keep searching/validating.`;
+
+  return {
+    messages: [new SystemMessage(reminder)],
+    receiptSearchEnforcementCount: (state.receiptSearchEnforcementCount || 0) + 1,
+  };
+}
+
 // ============================================================================
 // Routing
 // ============================================================================
@@ -222,7 +585,7 @@ async function respondNode(state: WorkerState): Promise<Partial<WorkerState>> {
 /**
  * Route after agent node
  */
-function routeAfterAgent(state: WorkerState): "tools" | "respond" {
+function routeAfterAgent(state: WorkerState): "tools" | "respond" | "enforce" {
   const { messages, messageCount, toolCallCount, workerType } = state;
   const config = getWorkerConfig(workerType);
   const lastMessage = messages[messages.length - 1];
@@ -245,6 +608,15 @@ function routeAfterAgent(state: WorkerState): "tools" | "respond" {
   const toolCalls = msgAny?.tool_calls || msgAny?.additional_kwargs?.tool_calls || [];
 
   if (!toolCalls.length) {
+    if (workerType === "receipt_search") {
+      const gate = evaluateReceiptGate(state);
+      if (!gate.canFinalize && (state.receiptSearchEnforcementCount || 0) < 4) {
+        console.log(
+          `[Worker:${workerType}] Finalization blocked by receipt gates: ${gate.unmet.join(" | ")}`
+        );
+        return "enforce";
+      }
+    }
     return "respond";
   }
 
@@ -295,16 +667,19 @@ export function buildWorkerGraph(workerType: WorkerType) {
   const graph = new StateGraph(WorkerStateAnnotation)
     .addNode("agent", agentNode)
     .addNode("tools", toolsNode)
+    .addNode("enforce", enforceReceiptGatesNode)
     .addNode("respond", respondNode)
     .addEdge(START, "agent")
     .addConditionalEdges("agent", routeAfterAgent, {
       tools: "tools",
+      enforce: "enforce",
       respond: "respond",
     })
     .addConditionalEdges("tools", routeAfterTools, {
       agent: "agent",
       respond: "respond",
     })
+    .addEdge("enforce", "agent")
     .addEdge("respond", END);
 
   return graph.compile();
@@ -350,6 +725,8 @@ export async function runWorkerGraph(input: RunWorkerInput): Promise<RunWorkerOu
       toolCallCount: 0,
       shouldContinue: true,
       actionsPerformed: [],
+      receiptSearchProgress: createInitialReceiptSearchProgress(),
+      receiptSearchEnforcementCount: 0,
     },
     {
       recursionLimit,
@@ -365,10 +742,14 @@ export async function runWorkerGraph(input: RunWorkerInput): Promise<RunWorkerOu
 /**
  * Stream a worker graph execution
  */
-export async function* streamWorkerGraph(input: RunWorkerInput) {
+export async function* streamWorkerGraph(
+  input: RunWorkerInput,
+  options: { streamMode?: "messages" | "values" } = {}
+) {
   const graph = buildWorkerGraph(input.workerType);
   const config = getWorkerConfig(input.workerType);
   const recursionLimit = (config.maxMessages * 2) + 5;
+  const streamMode = options.streamMode || "messages";
 
   const stream = await graph.stream(
     {
@@ -382,9 +763,11 @@ export async function* streamWorkerGraph(input: RunWorkerInput) {
       toolCallCount: 0,
       shouldContinue: true,
       actionsPerformed: [],
+      receiptSearchProgress: createInitialReceiptSearchProgress(),
+      receiptSearchEnforcementCount: 0,
     },
     {
-      streamMode: "messages",
+      streamMode: [streamMode],
       recursionLimit,
     }
   );

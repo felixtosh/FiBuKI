@@ -113,6 +113,8 @@ export interface WorkerRunInput {
   initialPrompt: string;
   triggerContext?: WorkerTriggerContext;
   triggeredBy?: "auto" | "user";
+  /** Optional source workerRequest document ID (for queue/state coordination) */
+  workerRequestId?: string;
 }
 
 /**

@@ -3,8 +3,8 @@
  *
  * Listens to the workerRequests collection and processes pending requests
  * concurrently (up to MAX_CONCURRENT). Workers for the same partner never
- * run simultaneously. When a partner_file_batch completes, remaining
- * pending requests for that partner are cancelled.
+ * run simultaneously. Partner batch dedupe/reruns are managed by
+ * users/{userId}/partnerBatchStates.
  *
  * Scheduling logic is delegated to WorkerQueueScheduler (pure TS, testable).
  * This hook wires the scheduler to React state + Firestore.
@@ -37,14 +37,19 @@ interface WorkerRequest {
     fileId?: string;
     transactionId?: string;
     partnerId?: string;
+    fileIds?: string[];
+    topSuggestionConfidence?: number;
+    triggeredAfterRuleBasedMatch?: boolean;
   };
   triggeredBy: "auto" | "user";
-  status: "pending" | "processing" | "completed" | "failed";
+  status: "pending" | "processing" | "completed" | "failed" | "cancelled";
   createdAt: Timestamp;
+  notBeforeAt?: Timestamp;
   error?: string;
 }
 
 const MAX_CONCURRENT = 3;
+const DISPATCH_INTERVAL_MS = 15_000;
 
 interface UseWorkerQueueOptions {
   /** Enable queue processing (default: true) */
@@ -136,6 +141,7 @@ export function useWorkerQueue(options: UseWorkerQueueOptions = {}) {
           workerType: request.workerType,
           initialPrompt: request.initialPrompt,
           triggerContext: request.triggerContext,
+          workerRequestId: request.id,
           triggeredBy: request.triggeredBy,
           modelProvider: "gemini", // Use cheaper model for automated tasks
         }),
@@ -216,7 +222,7 @@ export function useWorkerQueue(options: UseWorkerQueueOptions = {}) {
       collection(db, `users/${user.uid}/workerRequests`),
       where("status", "==", "pending"),
       orderBy("createdAt", "asc"),
-      limit(10)
+      limit(100)
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -232,6 +238,18 @@ export function useWorkerQueue(options: UseWorkerQueueOptions = {}) {
 
     return () => unsubscribe();
   }, [user?.uid, enabled]);
+
+  // Future-dated requests may become eligible without a new snapshot event.
+  // Poll dispatch periodically so scheduler can pick newly due requests.
+  useEffect(() => {
+    if (!enabled || !user?.uid) return;
+
+    const intervalId = setInterval(() => {
+      schedulerRef.current?.dispatch();
+    }, DISPATCH_INTERVAL_MS);
+
+    return () => clearInterval(intervalId);
+  }, [enabled, user?.uid]);
 
   return {
     isProcessing,

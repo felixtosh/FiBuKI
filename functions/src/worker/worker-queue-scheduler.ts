@@ -3,8 +3,7 @@
  *
  * Manages a queue of worker requests with:
  * - Configurable max concurrency
- * - Partner-level locking (1 request per partner at a time)
- * - Batch cancellation (partner_file_batch completion cancels siblings)
+ * - Partner-level locking (prevents concurrent same-partner runs)
  * - Dedup + cancelled-id tracking
  */
 
@@ -12,6 +11,7 @@ export interface SchedulerRequest {
   id: string;
   workerType: string;
   triggerContext?: { partnerId?: string };
+  notBeforeAt?: { toMillis?: () => number; seconds?: number; nanoseconds?: number } | null;
 }
 
 export interface SchedulerCallbacks<T extends SchedulerRequest> {
@@ -41,12 +41,23 @@ export class WorkerQueueScheduler<T extends SchedulerRequest> {
 
   /** Add new requests to the queue (dedup by id, filter cancelled). */
   enqueue(requests: T[]): void {
-    const existingIds = new Set(this.queue.map((r) => r.id));
-    const newRequests = requests.filter(
-      (r) => !existingIds.has(r.id) && !this.cancelledIds.has(r.id)
-    );
-    if (newRequests.length > 0) {
-      this.queue.push(...newRequests);
+    let changed = false;
+    const existingIndexById = new Map(this.queue.map((r, idx) => [r.id, idx]));
+
+    for (const request of requests) {
+      if (this.cancelledIds.has(request.id)) continue;
+
+      const existingIndex = existingIndexById.get(request.id);
+      if (existingIndex === undefined) {
+        this.queue.push(request);
+        existingIndexById.set(request.id, this.queue.length - 1);
+      } else {
+        this.queue[existingIndex] = request;
+      }
+      changed = true;
+    }
+
+    if (changed) {
       this.notifyState();
     }
   }
@@ -111,11 +122,31 @@ export class WorkerQueueScheduler<T extends SchedulerRequest> {
   // --- Private ---
 
   private pickNextRequest(): { request: T; index: number } | null {
+    const nowMs = Date.now();
     for (let i = 0; i < this.queue.length; i++) {
-      const partnerId = this.queue[i].triggerContext?.partnerId;
-      if (!partnerId || !this.activePartnerIds.has(partnerId)) {
-        return { request: this.queue[i], index: i };
+      const request = this.queue[i];
+      const notBeforeMs = this.getNotBeforeMillis(request.notBeforeAt);
+      if (notBeforeMs !== null && notBeforeMs > nowMs) {
+        continue;
       }
+
+      const partnerId = request.triggerContext?.partnerId;
+      if (!partnerId || !this.activePartnerIds.has(partnerId)) {
+        return { request, index: i };
+      }
+    }
+    return null;
+  }
+
+  private getNotBeforeMillis(
+    notBeforeAt: SchedulerRequest["notBeforeAt"]
+  ): number | null {
+    if (!notBeforeAt) return null;
+    if (typeof notBeforeAt.toMillis === "function") {
+      return notBeforeAt.toMillis();
+    }
+    if (typeof notBeforeAt.seconds === "number") {
+      return notBeforeAt.seconds * 1000 + Math.floor((notBeforeAt.nanoseconds || 0) / 1_000_000);
     }
     return null;
   }
@@ -125,10 +156,8 @@ export class WorkerQueueScheduler<T extends SchedulerRequest> {
     if (partnerId) this.activePartnerIds.delete(partnerId);
     this.activeCount--;
 
-    // After a batch completes, cancel remaining pending workers for that partner
-    if (request.workerType === "partner_file_batch" && partnerId) {
-      this.cancelPendingForPartner(partnerId);
-    }
+    // Do not auto-cancel partner batch siblings here.
+    // partnerBatchStates state machine handles coalescing/reruns and decides what to run next.
 
     // Try to fill freed slot(s)
     this.dispatch();

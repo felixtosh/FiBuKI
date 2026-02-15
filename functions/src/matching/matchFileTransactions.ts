@@ -126,6 +126,27 @@ interface TransactionSuggestion {
   };
 }
 
+interface PartnerBatchStateDoc {
+  userId: string;
+  partnerId: string;
+  status: "idle" | "pending" | "processing";
+  activeRequestId: string | null;
+  activeRunId: string | null;
+  queuedFileIds: string[];
+  inflightFileIds: string[];
+  rerunNeeded: boolean;
+  version: number;
+  lastCompletedAt: Timestamp | null;
+  nextEligibleAt: Timestamp | null;
+  failureCount: number;
+  lastSummary?: string | null;
+  lastError?: string | null;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+const PARTNER_BATCH_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
+
 // === Transcript Builder ===
 
 /**
@@ -767,10 +788,13 @@ export async function runTransactionMatching(
     }
   }
 
-  // Queue agentic worker when rule-based matching didn't auto-connect
-  // Uses partner-batch approach when partner is known (efficient: 1 search for N files)
-  // Falls back to per-file worker when no partner is assigned
-  if (autoMatches.length === 0) {
+  // Queue agentic follow-up:
+  // - Partner batch: only on explicit "new successful match for this partner" signal
+  // - No partner: keep legacy per-file fallback only when no auto-match
+  const shouldQueuePartnerBatch = Boolean(fileData.partnerId) && newTransactionIds.length > 0;
+  const shouldQueueSingleFileWorker = !fileData.partnerId && autoMatches.length === 0;
+
+  if (shouldQueuePartnerBatch || shouldQueueSingleFileWorker) {
     // Check AI budget before queuing agentic workers (rule-based scoring above stays free)
     let isAdminUser = false;
     try {
@@ -787,7 +811,7 @@ export async function runTransactionMatching(
       const topSuggestionConfidence = suggestions[0]?.confidence || 0;
 
       try {
-        if (fileData.partnerId) {
+        if (shouldQueuePartnerBatch) {
           await queueForPartnerBatch(userId, fileId, fileData, topSuggestionConfidence);
         } else {
           await queueAgenticTransactionSearch(userId, fileId, fileData, topSuggestionConfidence);
@@ -799,10 +823,47 @@ export async function runTransactionMatching(
   }
 }
 
+function normalizeStringArray(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  const deduped = new Set<string>();
+  for (const item of input) {
+    if (typeof item !== "string") continue;
+    const trimmed = item.trim();
+    if (trimmed) deduped.add(trimmed);
+  }
+  return Array.from(deduped);
+}
+
+function buildPartnerBatchPrompt(partnerName: string, partnerId: string, fileIds: string[]): string {
+  const ids = normalizeStringArray(fileIds);
+  const preview = ids.slice(0, 20).join(", ");
+  const overflow = ids.length > 20 ? ` ... (+${ids.length - 20} more)` : "";
+  return `Batch match ${ids.length} files for partner "${partnerName}" (${partnerId}). File IDs: ${preview}${overflow}`;
+}
+
+function pickNotBeforeAt(
+  now: Timestamp,
+  currentNextEligibleAt: Timestamp | null | undefined
+): Timestamp {
+  if (currentNextEligibleAt && currentNextEligibleAt.toMillis() > now.toMillis()) {
+    return currentNextEligibleAt;
+  }
+  return Timestamp.fromMillis(now.toMillis() + PARTNER_BATCH_COOLDOWN_MS);
+}
+
+function maxTimestamp(
+  a: Timestamp | null | undefined,
+  b: Timestamp | null | undefined
+): Timestamp | null {
+  if (!a) return b || null;
+  if (!b) return a;
+  return a.toMillis() >= b.toMillis() ? a : b;
+}
+
 /**
  * Queue file into a partner-level batch worker request.
- * Multiple files for the same partner are batched into ONE worker run,
- * avoiding redundant Gmail/local searches.
+ * Multiple files for the same partner are coalesced into a single state machine:
+ * idle -> pending -> processing, with rerunNeeded for new arrivals during processing.
  */
 async function queueForPartnerBatch(
   userId: string,
@@ -830,82 +891,175 @@ async function queueForPartnerBatch(
     }
   }
 
-  // Check for existing pending batch for same partner
-  const existing = await db
-    .collection(`users/${userId}/workerRequests`)
-    .where("status", "==", "pending")
-    .where("triggerContext.partnerId", "==", partnerId)
-    .where("workerType", "==", "partner_file_batch")
-    .limit(1)
-    .get();
+  const partnerDoc = await db.collection("partners").doc(partnerId).get();
+  const partnerName = partnerDoc.exists ? (partnerDoc.data()!.name || partnerId) : partnerId;
 
-  if (!existing.empty) {
-    // Append to existing batch
-    await existing.docs[0].ref.update({
-      "triggerContext.fileIds": FieldValue.arrayUnion(fileId),
-      updatedAt: Timestamp.now(),
-    });
-    console.log(
-      `[TxMatch] Added file ${fileId} to existing batch ${existing.docs[0].id} for partner ${partnerId}`
-    );
-    return;
-  }
+  const stateRef = db.collection(`users/${userId}/partnerBatchStates`).doc(partnerId);
+  const requestsCol = db.collection(`users/${userId}/workerRequests`);
+  const now = Timestamp.now();
+  let action = "noop";
+  let requestId: string | null = null;
 
-  // Skip if recent batch ran for this partner and no data changed since
-  const twentyFourHoursAgo = Timestamp.fromMillis(Date.now() - 24 * 60 * 60 * 1000);
-  const recentRun = await db
-    .collection(`users/${userId}/workerRuns`)
-    .where("triggerContext.partnerId", "==", partnerId)
-    .where("workerType", "==", "partner_file_batch")
-    .where("completedAt", ">", twentyFourHoursAgo)
-    .limit(1)
-    .get();
+  await db.runTransaction(async (tx) => {
+    const stateTxnSnap = await tx.get(stateRef);
+    const state = stateTxnSnap.exists
+      ? (stateTxnSnap.data() as Partial<PartnerBatchStateDoc>)
+      : null;
+    const nextEligibleAt = pickNotBeforeAt(now, state?.nextEligibleAt);
 
-  if (!recentRun.empty) {
-    try {
-      const partnerDoc = await db.collection("partners").doc(partnerId).get();
-      const partnerUpdatedAt = partnerDoc.data()?.updatedAt?.toMillis?.() || 0;
-      const runCompletedAt = recentRun.docs[0].data().completedAt?.toMillis?.() || 0;
-      if (partnerUpdatedAt < runCompletedAt) {
-        console.log(
-          `[TxMatch] Skipping batch for partner ${partnerId}: ` +
-          `recent run completed at ${new Date(runCompletedAt).toISOString()}, no data changes`
-        );
-        return;
-      }
-    } catch {
-      // Continue if check fails
+    const queued = normalizeStringArray(state?.queuedFileIds);
+    const inflight = normalizeStringArray(state?.inflightFileIds);
+    const alreadyTracked = new Set([...queued, ...inflight]);
+    if (alreadyTracked.has(fileId)) {
+      action = "already_tracked";
+      return;
     }
-  }
 
-  // Get partner name for the prompt
-  let partnerName = partnerId;
-  try {
-    const pDoc = await db.collection("partners").doc(partnerId).get();
-    if (pDoc.exists) partnerName = pDoc.data()!.name || partnerId;
-  } catch { /* use partnerId as fallback */ }
+    const createRequest = (fileIds: string[], notBeforeAt: Timestamp): string => {
+      const reqRef = requestsCol.doc();
+      tx.set(reqRef, {
+        id: reqRef.id,
+        workerType: "partner_file_batch",
+        initialPrompt: buildPartnerBatchPrompt(partnerName, partnerId, fileIds),
+        triggerContext: {
+          fileIds,
+          fileId: fileIds[0],
+          partnerId,
+          topSuggestionConfidence: topConfidence,
+          triggeredAfterRuleBasedMatch: true,
+        },
+        triggeredBy: "auto",
+        status: "pending",
+        notBeforeAt,
+        createdAt: now,
+        updatedAt: now,
+      });
+      return reqRef.id;
+    };
 
-  // Create new batch request
-  const ref = db.collection(`users/${userId}/workerRequests`).doc();
-  await ref.set({
-    id: ref.id,
-    workerType: "partner_file_batch",
-    initialPrompt:
-      `Batch match files for partner "${partnerName}" (${partnerId}). ` +
-      `File IDs: ${fileId}`,
-    triggerContext: {
-      fileIds: [fileId],
+    if (!state) {
+      const initialFileIds = [fileId];
+      requestId = createRequest(initialFileIds, nextEligibleAt);
+      tx.set(stateRef, {
+        userId,
+        partnerId,
+        status: "pending",
+        activeRequestId: requestId,
+        activeRunId: null,
+        queuedFileIds: initialFileIds,
+        inflightFileIds: [],
+        rerunNeeded: false,
+        version: 1,
+        lastCompletedAt: null,
+        nextEligibleAt,
+        failureCount: 0,
+        createdAt: now,
+        updatedAt: now,
+      } satisfies PartnerBatchStateDoc);
+      action = "created_initial";
+      return;
+    }
+
+    if (state.status === "processing") {
+      tx.set(stateRef, {
+        queuedFileIds: FieldValue.arrayUnion(fileId),
+        rerunNeeded: true,
+        nextEligibleAt,
+        updatedAt: now,
+        version: FieldValue.increment(1),
+      }, { merge: true });
+      action = "queued_for_rerun";
+      return;
+    }
+
+    if (state.status === "pending") {
+      const nextQueued = Array.from(new Set([...queued, fileId]));
+      let nextStateEligibleAt = nextEligibleAt;
+      const activeRequestId = state.activeRequestId || null;
+      let activeRequestIsPending = false;
+      let activeRequestStatus: string | undefined;
+      let activeRequestNotBeforeAt: Timestamp | null = null;
+
+      if (activeRequestId) {
+        const reqSnap = await tx.get(requestsCol.doc(activeRequestId));
+        const reqData = reqSnap.exists ? reqSnap.data() : undefined;
+        activeRequestStatus = reqData?.status;
+        activeRequestIsPending = activeRequestStatus === "pending";
+        const maybeNotBefore = reqData?.notBeforeAt;
+        if (maybeNotBefore && typeof maybeNotBefore.toMillis === "function") {
+          activeRequestNotBeforeAt = maybeNotBefore as Timestamp;
+        }
+      }
+
+      if (activeRequestId && activeRequestIsPending) {
+        const requestNotBeforeAt = maxTimestamp(
+          maxTimestamp(activeRequestNotBeforeAt, state.nextEligibleAt),
+          nextEligibleAt
+        ) || nextEligibleAt;
+        nextStateEligibleAt = requestNotBeforeAt;
+        tx.update(requestsCol.doc(activeRequestId), {
+          initialPrompt: buildPartnerBatchPrompt(partnerName, partnerId, nextQueued),
+          "triggerContext.fileIds": nextQueued,
+          "triggerContext.fileId": nextQueued[0],
+          notBeforeAt: requestNotBeforeAt,
+          updatedAt: now,
+        });
+        requestId = activeRequestId;
+        action = "appended_pending";
+      } else if (activeRequestId && activeRequestStatus === "processing") {
+        // Request got claimed between snapshots; keep one active run and mark rerun.
+        tx.set(stateRef, {
+          status: "processing",
+          queuedFileIds: FieldValue.arrayUnion(fileId),
+          rerunNeeded: true,
+          nextEligibleAt,
+          updatedAt: now,
+          version: FieldValue.increment(1),
+        }, { merge: true });
+        requestId = activeRequestId;
+        action = "queued_while_processing";
+        return;
+      } else {
+        requestId = createRequest(nextQueued, nextEligibleAt);
+        action = "recreated_pending";
+      }
+
+      tx.set(stateRef, {
+        status: "pending",
+        activeRequestId: requestId,
+        activeRunId: null,
+        queuedFileIds: nextQueued,
+        inflightFileIds: [],
+        rerunNeeded: false,
+        nextEligibleAt: nextStateEligibleAt,
+        updatedAt: now,
+        version: FieldValue.increment(1),
+      }, { merge: true });
+      return;
+    }
+
+    const nextQueued = Array.from(new Set([...queued, fileId]));
+    requestId = createRequest(nextQueued, nextEligibleAt);
+    tx.set(stateRef, {
+      status: "pending",
+      activeRequestId: requestId,
+      activeRunId: null,
+      queuedFileIds: nextQueued,
+      inflightFileIds: [],
+      rerunNeeded: false,
+      nextEligibleAt,
+      updatedAt: now,
+      version: FieldValue.increment(1),
+      userId,
       partnerId,
-      topSuggestionConfidence: topConfidence,
-      triggeredAfterRuleBasedMatch: true,
-    },
-    triggeredBy: "auto",
-    status: "pending",
-    createdAt: Timestamp.now(),
+      createdAt: state.createdAt || now,
+    }, { merge: true });
+    action = "restarted_from_idle";
   });
 
   console.log(
-    `[TxMatch] Created partner batch request ${ref.id} for partner ${partnerId}, file ${fileId}`
+    `[TxMatch] Partner batch state update for ${partnerId}: ${action}` +
+      (requestId ? ` (request ${requestId})` : "")
   );
 }
 
