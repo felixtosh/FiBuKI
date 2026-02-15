@@ -113,6 +113,14 @@
       ]
     },
     {
+      "collectionGroup": "gmailSyncQueue",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "startedAt", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "inboundEmailAddresses",
       "queryScope": "COLLECTION",
       "fields": [
