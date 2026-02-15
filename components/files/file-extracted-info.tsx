@@ -6,7 +6,7 @@ import { RefreshCw, Search, Loader2, Pencil, X, Plus, Trash2 } from "lucide-reac
 import { ShowMoreButton } from "@/components/ui/show-more-button";
 import { TaxFile } from "@/types/file";
 import { InvoiceDirection } from "@/types/user-data";
-import { EditableExtractedFields, EditableAdditionalField } from "@/lib/operations";
+import { EditableExtractedFields } from "@/lib/operations";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -89,6 +89,7 @@ interface FileExtractedInfoProps {
 
 export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsing, onFieldClick, onDirectionChange, onUpdate, isUpdating }: FileExtractedInfoProps) {
   const [showMore, setShowMore] = useState(false);
+  const [showLineItems, setShowLineItems] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editedFields, setEditedFields] = useState<EditableExtractedFields>({
     date: "",
@@ -99,6 +100,7 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
     iban: "",
     address: "",
     additionalFields: [],
+    lineItems: [],
   });
 
   // Initialize edit fields from file data
@@ -106,6 +108,14 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
     const existingAdditional = (file.extractedAdditionalFields || []).map((f) => ({
       label: f.label,
       value: f.value,
+    }));
+    const existingLineItems = (file.extractedLineItems || []).map((item) => ({
+      description: item.description,
+      quantity: item.quantity != null ? item.quantity.toString() : "",
+      unitPrice: item.unitPrice != null ? (item.unitPrice / 100).toFixed(2) : "",
+      vatPercent: item.vatPercent != null ? item.vatPercent.toString() : "",
+      vatAmount: item.vatAmount != null ? (item.vatAmount / 100).toFixed(2) : "",
+      amount: (item.amount / 100).toFixed(2),
     }));
 
     const extractedDate = toDateSafe(file.extractedDate);
@@ -118,9 +128,11 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
       iban: file.extractedIban || "",
       address: file.extractedAddress || "",
       additionalFields: existingAdditional,
+      lineItems: existingLineItems,
     });
     setIsEditing(true);
     setShowMore(true); // Expand to show all fields when editing
+    setShowLineItems(true);
   };
 
   const cancelEditing = () => {
@@ -134,7 +146,7 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
     }
   };
 
-  const updateField = (field: keyof Omit<EditableExtractedFields, "additionalFields">) => (value: string) => {
+  const updateField = (field: keyof Omit<EditableExtractedFields, "additionalFields" | "lineItems">) => (value: string) => {
     setEditedFields((prev) => ({ ...prev, [field]: value }));
   };
 
@@ -161,6 +173,44 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
     }));
   };
 
+  const updateLineItemField = (
+    index: number,
+    key: "description" | "quantity" | "unitPrice" | "vatPercent" | "vatAmount" | "amount",
+    value: string
+  ) => {
+    setEditedFields((prev) => ({
+      ...prev,
+      lineItems: (prev.lineItems || []).map((item, i) =>
+        i === index ? { ...item, [key]: value } : item
+      ),
+    }));
+  };
+
+  const addLineItem = () => {
+    setEditedFields((prev) => ({
+      ...prev,
+      lineItems: [
+        ...(prev.lineItems || []),
+        {
+          description: "",
+          quantity: "",
+          unitPrice: "",
+          vatPercent: "",
+          vatAmount: "",
+          amount: "",
+        },
+      ],
+    }));
+    setShowLineItems(true);
+  };
+
+  const removeLineItem = (index: number) => {
+    setEditedFields((prev) => ({
+      ...prev,
+      lineItems: (prev.lineItems || []).filter((_, i) => i !== index),
+    }));
+  };
+
   const formatAmount = (amount: number | null | undefined, currency: string | null | undefined, direction?: string) => {
     if (amount == null) return "—";
     // Apply sign based on direction (incoming = expense/negative, outgoing = income/positive)
@@ -169,6 +219,14 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
       style: "currency",
       currency: currency || "EUR",
     }).format(signedAmount);
+  };
+
+  const formatDocumentAmount = (amount: number | null | undefined, currency: string | null | undefined) => {
+    if (amount == null) return "—";
+    return new Intl.NumberFormat("de-DE", {
+      style: "currency",
+      currency: currency || "EUR",
+    }).format(amount / 100);
   };
 
   // Format amount with EUR conversion - EUR is always primary display
@@ -234,9 +292,37 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
   // Get additional fields
   const additionalFields = file.extractedAdditionalFields || [];
   const hasAdditionalFields = additionalFields.length > 0;
+  const lineItems = file.extractedLineItems || [];
+  const hasLineItems = lineItems.length > 0;
+  const editedLineItems = editedFields.lineItems || [];
+  const hasEditableLineItems = isEditing && editedLineItems.length > 0;
 
   // Secondary fields (VAT ID, IBAN, Address) - shown in "Show more"
   const hasSecondaryFields = !!(file.extractedVatId || file.extractedIban || file.extractedAddress);
+
+  const vatTotal = file.extractedVatAmount != null
+    ? file.extractedVatAmount
+    : hasLineItems
+    ? lineItems.reduce((sum, item) => sum + item.vatAmount, 0)
+    : null;
+
+  const vatBreakdown = lineItems.reduce((acc, item) => {
+    const key = item.vatPercent == null ? "unknown" : item.vatPercent.toString();
+    const current = acc.get(key) || {
+      label: item.vatPercent == null ? "Rate n/a" : `${item.vatPercent}%`,
+      amount: 0,
+      rate: item.vatPercent,
+    };
+    current.amount += item.vatAmount;
+    acc.set(key, current);
+    return acc;
+  }, new Map<string, { label: string; amount: number; rate: number | null }>());
+
+  const vatBreakdownRows = Array.from(vatBreakdown.values()).sort((a, b) => {
+    if (a.rate == null) return 1;
+    if (b.rate == null) return -1;
+    return b.rate - a.rate;
+  });
 
   return (
     <div className="space-y-4">
@@ -333,7 +419,7 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
             searchText={getRawSearchText("amount")}
             isEditing={isEditing}
             editValue={editedFields.amount}
-            onEditChange={updateField("amount")}
+            onEditChange={hasEditableLineItems ? undefined : updateField("amount")}
             inputType="number"
             placeholder="Amount in EUR"
           >
@@ -385,12 +471,134 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
             searchText={getRawSearchText("vatPercent")}
             isEditing={isEditing}
             editValue={editedFields.vatPercent}
-            onEditChange={updateField("vatPercent")}
+            onEditChange={hasEditableLineItems ? undefined : updateField("vatPercent")}
             inputType="number"
             placeholder="VAT %"
           >
-            {file.extractedVatPercent != null ? `${file.extractedVatPercent}%` : "—"}
+            {hasLineItems ? (
+              file.extractedVatPercent != null ? (
+                <span className="tabular-nums">
+                  {file.extractedVatPercent}% ({formatDocumentAmount(vatTotal, file.extractedCurrency)})
+                </span>
+              ) : vatTotal != null ? (
+                <div className="space-y-1">
+                  <div className="tabular-nums">{formatDocumentAmount(vatTotal, file.extractedCurrency)}</div>
+                  {vatBreakdownRows.map((row) => (
+                    <div key={row.label} className="text-xs text-muted-foreground tabular-nums">
+                      {row.label}: {formatDocumentAmount(row.amount, file.extractedCurrency)}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                "—"
+              )
+            ) : file.extractedVatPercent != null ? (
+              `${file.extractedVatPercent}%`
+            ) : (
+              "—"
+            )}
           </FieldRow>
+
+          {(hasLineItems || isEditing) && (
+            <div className="space-y-2 pt-1">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">Line items</span>
+                {isEditing ? null : (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={() => setShowLineItems((prev) => !prev)}
+                  >
+                    {showLineItems ? "Hide items" : "Show items"}
+                  </Button>
+                )}
+              </div>
+
+              {isEditing ? (
+                <div className="space-y-2">
+                  {editedLineItems.map((item, index) => (
+                    <div key={index} className="rounded border p-2 space-y-2">
+                      <Input
+                        value={item.description}
+                        onChange={(e) => updateLineItemField(index, "description", e.target.value)}
+                        className="h-8 text-sm"
+                        placeholder="Description"
+                      />
+                      <div className="grid grid-cols-2 gap-2">
+                        <Input
+                          value={item.quantity}
+                          onChange={(e) => updateLineItemField(index, "quantity", e.target.value)}
+                          className="h-8 text-sm"
+                          placeholder="Qty"
+                        />
+                        <Input
+                          value={item.unitPrice}
+                          onChange={(e) => updateLineItemField(index, "unitPrice", e.target.value)}
+                          className="h-8 text-sm"
+                          placeholder="Unit price"
+                        />
+                        <Input
+                          value={item.vatPercent}
+                          onChange={(e) => updateLineItemField(index, "vatPercent", e.target.value)}
+                          className="h-8 text-sm"
+                          placeholder="VAT %"
+                        />
+                        <Input
+                          value={item.vatAmount}
+                          onChange={(e) => updateLineItemField(index, "vatAmount", e.target.value)}
+                          className="h-8 text-sm"
+                          placeholder="VAT amount"
+                        />
+                        <Input
+                          value={item.amount}
+                          onChange={(e) => updateLineItemField(index, "amount", e.target.value)}
+                          className="h-8 text-sm col-span-2"
+                          placeholder="Gross amount"
+                        />
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-muted-foreground hover:text-destructive"
+                        onClick={() => removeLineItem(index)}
+                      >
+                        <Trash2 className="h-4 w-4 mr-1" />
+                        Remove item
+                      </Button>
+                    </div>
+                  ))}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full"
+                    onClick={addLineItem}
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    Add line item
+                  </Button>
+                </div>
+              ) : (
+                showLineItems && (
+                  <div className="space-y-2">
+                    {lineItems.map((item, index) => (
+                      <div key={index} className="rounded border p-2">
+                        <div className="text-sm">{item.description || "—"}</div>
+                        <div className="text-xs text-muted-foreground flex flex-wrap gap-3 mt-1 tabular-nums">
+                          {item.quantity != null && <span>Qty: {item.quantity}</span>}
+                          {item.unitPrice != null && (
+                            <span>Unit: {formatDocumentAmount(item.unitPrice, file.extractedCurrency)}</span>
+                          )}
+                          <span>VAT: {item.vatPercent != null ? `${item.vatPercent}%` : "—"}</span>
+                          <span>Amount: {formatDocumentAmount(item.amount, file.extractedCurrency)}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )
+              )}
+            </div>
+          )}
 
           <FieldRow
             label="Partner"

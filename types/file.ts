@@ -35,6 +35,23 @@ export interface ExtractedEntityRaw {
 }
 
 /**
+ * A single extracted invoice line item.
+ * Monetary fields are stored in cents.
+ */
+export interface ExtractedLineItem {
+  description: string;
+  quantity?: number | null;
+  /** Net unit price before VAT (in cents) */
+  unitPrice?: number | null;
+  /** VAT rate for this item (0-100), null when unknown */
+  vatPercent: number | null;
+  /** VAT amount for this item (in cents) */
+  vatAmount: number;
+  /** Gross line amount including VAT (in cents) */
+  amount: number;
+}
+
+/**
  * Match sources for transaction matching - indicates which criteria contributed to a match
  */
 export type TransactionMatchSource =
@@ -184,6 +201,12 @@ export interface TaxFile {
 
   /** AI-extracted VAT percentage (0-100) */
   extractedVatPercent?: number | null;
+
+  /** AI-extracted total VAT amount in cents */
+  extractedVatAmount?: number | null;
+
+  /** AI-extracted line items */
+  extractedLineItems?: ExtractedLineItem[] | null;
 
   /** AI-extracted partner/company name */
   extractedPartner?: string | null;
@@ -510,6 +533,8 @@ export interface FileExtractionData {
   extractedAmount?: number | null;
   extractedCurrency?: string | null;
   extractedVatPercent?: number | null;
+  extractedVatAmount?: number | null;
+  extractedLineItems?: ExtractedLineItem[] | null;
   extractedPartner?: string | null;
   extractedVatId?: string | null;
   extractedIban?: string | null;

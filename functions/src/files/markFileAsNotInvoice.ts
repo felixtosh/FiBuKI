@@ -50,6 +50,8 @@ export const markFileAsNotInvoiceCallable = createCallable<
       extractedAmount: null,
       extractedCurrency: null,
       extractedVatPercent: null,
+      extractedVatAmount: null,
+      extractedLineItems: null,
       extractedPartner: null,
       extractedVatId: null,
       extractedIban: null,

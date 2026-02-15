@@ -14,11 +14,25 @@ export interface ExtractedEntity {
   website: string | null;
 }
 
+export interface ExtractedLineItem {
+  description: string;
+  quantity?: number | null;
+  /** Net unit price before VAT (in cents) */
+  unitPrice?: number | null;
+  /** VAT rate for this line item (0-100), null when unknown */
+  vatPercent: number | null;
+  /** VAT amount in cents */
+  vatAmount: number;
+  /** Gross amount including VAT in cents */
+  amount: number;
+}
+
 export interface ExtractedData {
   date: string | null; // ISO format YYYY-MM-DD
   amount: number | null; // cents
   currency: string | null;
   vatPercent: number | null;
+  lineItems?: ExtractedLineItem[] | null;
   partner: string | null;
   vatId: string | null; // VAT ID (e.g., ATU12345678, DE123456789)
   iban: string | null; // IBAN if visible

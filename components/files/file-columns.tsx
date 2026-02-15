@@ -154,6 +154,7 @@ export function getFileColumns(
         const amount = row.getValue("extractedAmount") as number | null | undefined;
         const currency = normalizeCurrency(row.original.extractedCurrency);
         const vatPercent = row.original.extractedVatPercent;
+        const vatAmount = row.original.extractedVatAmount;
         const invoiceDirection = row.original.invoiceDirection;
         const extractedDate = row.original.extractedDate;
 
@@ -200,11 +201,18 @@ export function getFileColumns(
             >
               {displayAmount}
             </p>
-            {vatPercent != null && (
+            {vatPercent != null ? (
               <p className="text-xs text-muted-foreground">
                 {vatPercent}% VAT
               </p>
-            )}
+            ) : vatAmount != null ? (
+              <p className="text-xs text-muted-foreground tabular-nums">
+                {new Intl.NumberFormat("de-DE", {
+                  style: "currency",
+                  currency,
+                }).format(Math.abs(vatAmount) / 100)} VAT
+              </p>
+            ) : null}
           </div>
         );
 

@@ -20,6 +20,7 @@ import {
   FileFilters,
   FileCreateData,
   FileExtractionData,
+  ExtractedLineItem,
   TransactionSuggestion,
 } from "@/types/file";
 import { Transaction } from "@/types/transaction";
@@ -416,6 +417,18 @@ export interface EditableAdditionalField {
   value: string;
 }
 
+export interface EditableLineItem {
+  description: string;
+  quantity: string;
+  /** Currency units (not cents) */
+  unitPrice: string;
+  vatPercent: string;
+  /** Currency units (not cents) */
+  vatAmount: string;
+  /** Currency units (not cents) */
+  amount: string;
+}
+
 /**
  * User-editable extracted fields (string-based for form inputs)
  */
@@ -428,6 +441,84 @@ export interface EditableExtractedFields {
   iban: string;
   address: string;
   additionalFields: EditableAdditionalField[]; // dynamic key-value pairs
+  lineItems?: EditableLineItem[]; // editable invoice line items
+}
+
+function parseNumberInput(value: string): number | null {
+  const normalized = value.trim().replace(",", ".");
+  if (!normalized) return null;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseCurrencyToCents(value: string): number | null {
+  const parsed = parseNumberInput(value);
+  return parsed === null ? null : Math.round(parsed * 100);
+}
+
+function normalizeEditableLineItems(lineItems: EditableLineItem[] | undefined): ExtractedLineItem[] {
+  if (!Array.isArray(lineItems)) {
+    return [];
+  }
+
+  return lineItems
+    .map((item, index): ExtractedLineItem | null => {
+      const amount = parseCurrencyToCents(item.amount);
+      if (amount === null) {
+        return null;
+      }
+
+      const quantity = parseNumberInput(item.quantity);
+      let unitPrice = parseCurrencyToCents(item.unitPrice);
+
+      const rawVatPercent = parseNumberInput(item.vatPercent);
+      const vatPercent = rawVatPercent !== null && rawVatPercent >= 0 && rawVatPercent <= 100
+        ? rawVatPercent
+        : null;
+
+      let vatAmount = parseCurrencyToCents(item.vatAmount);
+      if (vatAmount === null && vatPercent !== null) {
+        vatAmount = Math.round((amount * vatPercent) / (100 + vatPercent));
+      }
+      if (vatAmount === null) {
+        vatAmount = 0;
+      }
+
+      if (unitPrice === null && quantity && quantity !== 0) {
+        const netAmount = amount - vatAmount;
+        unitPrice = Math.round(netAmount / quantity);
+      }
+
+      return {
+        description: item.description.trim() || `Item ${index + 1}`,
+        quantity,
+        unitPrice,
+        vatPercent,
+        vatAmount,
+        amount,
+      };
+    })
+    .filter((item): item is ExtractedLineItem => item !== null);
+}
+
+function consolidateLineItems(lineItems: ExtractedLineItem[]): {
+  amount: number;
+  vatAmount: number;
+  vatPercent: number | null;
+} {
+  const amount = lineItems.reduce((sum, item) => sum + item.amount, 0);
+  const vatAmount = lineItems.reduce((sum, item) => sum + item.vatAmount, 0);
+
+  const firstRate = lineItems[0]?.vatPercent ?? null;
+  const hasSingleRate = firstRate !== null && lineItems.every((item) =>
+    item.vatPercent !== null && Math.abs(item.vatPercent - firstRate) < 0.0001
+  );
+
+  return {
+    amount,
+    vatAmount,
+    vatPercent: hasSingleRate ? firstRate : null,
+  };
 }
 
 /**
@@ -459,24 +550,40 @@ export async function updateFileExtractedFields(
     updates.extractedDate = null;
   }
 
-  // Amount: convert from currency units to cents
-  if (fields.amount) {
-    const amountNum = parseFloat(fields.amount);
-    if (!isNaN(amountNum)) {
-      updates.extractedAmount = Math.round(amountNum * 100);
-    }
-  } else {
-    updates.extractedAmount = null;
-  }
+  const normalizedLineItems = normalizeEditableLineItems(fields.lineItems);
+  const hasLineItems = fields.lineItems !== undefined && normalizedLineItems.length > 0;
 
-  // VAT percent: convert to number
-  if (fields.vatPercent) {
-    const vatNum = parseFloat(fields.vatPercent);
-    if (!isNaN(vatNum)) {
-      updates.extractedVatPercent = vatNum;
-    }
+  if (hasLineItems) {
+    const consolidated = consolidateLineItems(normalizedLineItems);
+    updates.extractedLineItems = normalizedLineItems;
+    updates.extractedAmount = consolidated.amount;
+    updates.extractedVatAmount = consolidated.vatAmount;
+    updates.extractedVatPercent = consolidated.vatPercent;
   } else {
-    updates.extractedVatPercent = null;
+    if (fields.lineItems !== undefined) {
+      updates.extractedLineItems = null;
+      updates.extractedVatAmount = null;
+    }
+
+    // Amount: convert from currency units to cents
+    if (fields.amount) {
+      const amountNum = parseNumberInput(fields.amount);
+      if (amountNum !== null) {
+        updates.extractedAmount = Math.round(amountNum * 100);
+      }
+    } else {
+      updates.extractedAmount = null;
+    }
+
+    // VAT percent: convert to number
+    if (fields.vatPercent) {
+      const vatNum = parseNumberInput(fields.vatPercent);
+      if (vatNum !== null) {
+        updates.extractedVatPercent = vatNum;
+      }
+    } else {
+      updates.extractedVatPercent = null;
+    }
   }
 
   // String fields: use value or null if empty
@@ -666,6 +773,8 @@ export async function markFileAsNotInvoice(
     extractedAmount: null,
     extractedCurrency: null,
     extractedVatPercent: null,
+    extractedVatAmount: null,
+    extractedLineItems: null,
     extractedPartner: null,
     extractedVatId: null,
     extractedIban: null,

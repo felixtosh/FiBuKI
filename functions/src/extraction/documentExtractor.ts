@@ -147,6 +147,7 @@ async function extractWithGemini(
           amount: null,
           currency: null,
           vatPercent: null,
+          lineItems: null,
           partner: null,
           vatId: null,
           iban: null,

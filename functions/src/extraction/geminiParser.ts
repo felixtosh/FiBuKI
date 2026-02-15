@@ -25,7 +25,7 @@ function getProjectId(): string {
 // Vertex AI location - match Firebase region to minimize latency
 const VERTEX_LOCATION = process.env.VERTEX_LOCATION || "europe-west1";
 
-import { ExtractedData } from "../types/extraction";
+import { ExtractedData, ExtractedLineItem } from "../types/extraction";
 
 /**
  * Bounding box extracted by Gemini for a field
@@ -95,6 +95,36 @@ function normalizeWebsite(website: string | null | undefined): string | null {
   if (!domain.includes(".")) return null;
 
   return domain || null;
+}
+
+function toFiniteNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().replace(",", ".");
+    if (!normalized) return null;
+    const parsed = Number(normalized);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function toCents(value: unknown): number | null {
+  const num = toFiniteNumber(value);
+  return num === null ? null : Math.round(num);
+}
+
+function normalizeVatPercent(vatPercent: unknown): number | null {
+  const vat = toFiniteNumber(vatPercent);
+  if (vat === null || vat < 0 || vat > 100) {
+    return null;
+  }
+  return vat;
 }
 
 /**
@@ -314,6 +344,64 @@ export interface ExtractedAdditionalField {
   rawValue?: string;
 }
 
+interface GeminiLineItem {
+  description?: string | null;
+  quantity?: number | string | null;
+  unitPrice?: number | string | null;
+  vatPercent?: number | string | null;
+  vatAmount?: number | string | null;
+  amount?: number | string | null;
+}
+
+function normalizeLineItems(lineItems: GeminiLineItem[] | null | undefined): ExtractedLineItem[] | null {
+  if (!Array.isArray(lineItems)) {
+    return null;
+  }
+
+  const normalizedItems = lineItems
+    .map((item, index): ExtractedLineItem | null => {
+      const amount = toCents(item?.amount);
+      if (amount === null) {
+        return null;
+      }
+
+      const description = typeof item?.description === "string"
+        ? item.description.trim()
+        : "";
+
+      const quantity = toFiniteNumber(item?.quantity);
+      const normalizedQuantity = quantity === null ? null : quantity;
+
+      let unitPrice = toCents(item?.unitPrice);
+      const vatPercent = normalizeVatPercent(item?.vatPercent);
+      let vatAmount = toCents(item?.vatAmount);
+
+      if (vatAmount === null && vatPercent !== null) {
+        vatAmount = Math.round((amount * vatPercent) / (100 + vatPercent));
+      }
+      if (vatAmount === null) {
+        vatAmount = 0;
+      }
+
+      if (unitPrice === null && normalizedQuantity && normalizedQuantity !== 0) {
+        const netAmount = amount - vatAmount;
+        unitPrice = Math.round(netAmount / normalizedQuantity);
+      }
+
+      return {
+        description: description || `Item ${index + 1}`,
+        quantity: normalizedQuantity,
+        unitPrice,
+        vatPercent,
+        vatAmount,
+        amount,
+      };
+    })
+    .filter((item): item is ExtractedLineItem => item !== null);
+
+  return normalizedItems.length > 0 ? normalizedItems : null;
+}
+
 export async function parseWithGemini(
   fileBuffer: Buffer,
   fileType: string,
@@ -357,6 +445,12 @@ CRITICAL RULES:
 2. If a field is not found, use null - NEVER make up values
 3. For each field, also return the EXACT text as it appears in the document (for search)
 
+LINE ITEM EXTRACTION (IMPORTANT):
+- Extract ALL line items from the document
+- If no itemization is visible, create exactly ONE line item for the total
+- Return all monetary amounts in cents
+- Use "vatPercent": null when the rate is not explicitly visible (do not guess)
+
 Input format: German (dates DD.MM.YYYY, amounts with comma like 123,45)
 Output: date as YYYY-MM-DD, amount in cents (123,45 → 12345)
 
@@ -398,6 +492,16 @@ JSON structure:
     "currency": "EUR",
     "vatPercent": 19,
     "vatPercent_raw": "19%",
+    "lineItems": [
+      {
+        "description": "USB-C Cable",
+        "quantity": 2,
+        "unitPrice": 999,
+        "vatPercent": 20,
+        "vatAmount": 333,
+        "amount": 1998
+      }
+    ],
     "confidence": 0.85,
 
     "issuer": {
@@ -483,6 +587,7 @@ JSON only, no markdown, no explanation.`;
   // Define expected response structure (classification removed - handled by classifyDocument)
   interface GeminiResponse {
     rawText?: string;
+    lineItems?: GeminiLineItem[] | null;
     extracted?: {
       date?: string | null;
       date_raw?: string | null;
@@ -491,6 +596,7 @@ JSON only, no markdown, no explanation.`;
       currency?: string | null;
       vatPercent?: number | null;
       vatPercent_raw?: string | null;
+      lineItems?: GeminiLineItem[] | null;
       confidence?: number;
       // New entity fields
       issuer?: GeminiEntity | null;
@@ -565,6 +671,7 @@ JSON only, no markdown, no explanation.`;
   const legacyIban = issuer?.iban || parsed.extracted?.iban || null;
   const legacyAddress = issuer?.address || parsed.extracted?.address || null;
   const legacyWebsite = issuer?.website || normalizeWebsite(parsed.extracted?.website);
+  const lineItems = normalizeLineItems(parsed.extracted?.lineItems || parsed.lineItems || null);
 
   // Classification is handled by classifyDocument, not here
   const extracted: ExtractedData = {
@@ -572,6 +679,7 @@ JSON only, no markdown, no explanation.`;
     amount: typeof parsed.extracted?.amount === "number" ? parsed.extracted.amount : null,
     currency: normalizeCurrency(parsed.extracted?.currency),
     vatPercent: typeof parsed.extracted?.vatPercent === "number" ? parsed.extracted.vatPercent : null,
+    lineItems,
     partner: legacyPartner,
     vatId: legacyVatId,
     iban: legacyIban,

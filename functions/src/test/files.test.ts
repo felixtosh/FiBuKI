@@ -73,6 +73,17 @@ describe("File Cloud Functions", () => {
         fileId,
         data: {
           extractedAmount: 199.99,
+          extractedVatAmount: 33.33,
+          extractedLineItems: [
+            {
+              description: "USB-C Cable",
+              quantity: 2,
+              unitPrice: 833,
+              vatPercent: 20,
+              vatAmount: 333,
+              amount: 1998,
+            },
+          ],
           extractedPartner: "Amazon",
           extractedDate: "2024-01-15T00:00:00.000Z",
         },
@@ -80,6 +91,8 @@ describe("File Cloud Functions", () => {
 
       const updated = store.getDoc("files", fileId);
       expect(updated?.extractedAmount).toBe(199.99);
+      expect(updated?.extractedVatAmount).toBe(33.33);
+      expect(updated?.extractedLineItems).toHaveLength(1);
       expect(updated?.extractedPartner).toBe("Amazon");
     });
 
@@ -260,6 +273,15 @@ describe("File Cloud Functions", () => {
       store.setDoc("files", fileId, createTestFile({
         userId,
         extractedAmount: 100,
+        extractedVatAmount: 20,
+        extractedLineItems: [
+          {
+            description: "Line item",
+            vatPercent: 20,
+            vatAmount: 20,
+            amount: 100,
+          },
+        ],
         extractedPartner: "Amazon",
         partnerId: "partner-123",
         partnerMatchedBy: "auto",
@@ -283,6 +305,8 @@ describe("File Cloud Functions", () => {
       expect(file?.isNotInvoice).toBe(true);
       expect(file?.notInvoiceReason).toBe("This is a bank statement");
       expect(file?.extractedAmount).toBeNull();
+      expect(file?.extractedVatAmount).toBeNull();
+      expect(file?.extractedLineItems).toBeNull();
       expect(file?.extractedPartner).toBeNull();
       // Partner should be cleared because it wasn't manual
       expect(file?.partnerId).toBeNull();

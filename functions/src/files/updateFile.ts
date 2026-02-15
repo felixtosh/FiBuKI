@@ -5,6 +5,7 @@
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { cancelPartnerWorkersForFile } from "../utils/cancelWorkers";
+import { ExtractedLineItem } from "../types/extraction";
 
 interface UpdateFileRequest {
   fileId: string;
@@ -26,6 +27,8 @@ interface UpdateFileRequest {
     extractedAmount?: number | null; // in cents
     extractedPartner?: string | null;
     extractedVatPercent?: number | null;
+    extractedVatAmount?: number | null; // in cents
+    extractedLineItems?: ExtractedLineItem[] | null;
     extractedVatId?: string | null;
     extractedIban?: string | null;
     extractedAddress?: string | null;

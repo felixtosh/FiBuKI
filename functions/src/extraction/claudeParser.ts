@@ -106,6 +106,7 @@ Example response:
       amount: typeof parsed.amount === "number" ? parsed.amount : null,
       currency: parsed.currency || null,
       vatPercent: typeof parsed.vatPercent === "number" ? parsed.vatPercent : null,
+      lineItems: null, // Legacy Claude parser does not extract line items
       partner: parsed.partner || null,
       vatId: parsed.vatId || null,
       iban: parsed.iban || null,

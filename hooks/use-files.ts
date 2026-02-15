@@ -165,6 +165,8 @@ export function useFiles(filters?: FileFilters) {
       if (data.extractedAmount !== undefined) updateData.extractedAmount = data.extractedAmount;
       if (data.extractedPartner !== undefined) updateData.extractedPartner = data.extractedPartner;
       if (data.extractedVatPercent !== undefined) updateData.extractedVatPercent = data.extractedVatPercent;
+      if (data.extractedVatAmount !== undefined) updateData.extractedVatAmount = data.extractedVatAmount;
+      if (data.extractedLineItems !== undefined) updateData.extractedLineItems = data.extractedLineItems;
       if (data.extractedVatId !== undefined) updateData.extractedVatId = data.extractedVatId;
       if (data.extractedIban !== undefined) updateData.extractedIban = data.extractedIban;
       if (data.extractedAddress !== undefined) updateData.extractedAddress = data.extractedAddress;
