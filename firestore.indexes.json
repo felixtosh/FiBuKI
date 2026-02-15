@@ -47,6 +47,15 @@
       "collectionGroup": "files",
       "queryScope": "COLLECTION",
       "fields": [
+        { "fieldPath": "integrationId", "order": "ASCENDING" },
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "isDeleted", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "files",
+      "queryScope": "COLLECTION",
+      "fields": [
         { "fieldPath": "userId", "order": "ASCENDING" },
         { "fieldPath": "gmailMessageId", "order": "ASCENDING" },
         { "fieldPath": "gmailAttachmentId", "order": "ASCENDING" }
