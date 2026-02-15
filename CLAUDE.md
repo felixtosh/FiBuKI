@@ -258,6 +258,23 @@ When modifying transaction-related types, also update the test data generator:
 - `/lib/` - Utilities and business logic
 - `/types/` - TypeScript interfaces
 
+## Chrome Extension Release Guardrails
+
+For any change affecting the browser extension or its publish workflow, follow:
+- `/extensions/taxstudio-browser/RELEASING.md`
+
+Non-negotiable checks before a GitHub release:
+- Bump `/extensions/taxstudio-browser/manifest.json` `version` (must increase each upload)
+- Keep workflow target path as `/extensions/taxstudio-browser`
+- Do not rename required GitHub secrets:
+  - `CWS_SERVICE_ACCOUNT_EMAIL`
+  - `CWS_SERVICE_ACCOUNT_KEY`
+  - `CWS_PUBLISHER_ID`
+  - `CWS_EXTENSION_ID`
+
+Release trigger:
+- Publishing a GitHub Release runs `.github/workflows/chrome-web-store-release.yml`
+
 ## Data Storage
 - Firebase Firestore for data persistence
 - Collections: `sources`, `transactions`, `receipts`, `files`, `partners`, `emailIntegrations`
