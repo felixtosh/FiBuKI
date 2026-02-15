@@ -314,9 +314,9 @@ async function getSyncDateRanges(
   const to = new Date(newestDate);
   to.setDate(to.getDate() + 7);
 
-  // Check what's already synced
-  const syncedFrom = integration.syncedDateFrom?.toDate();
-  const syncedTo = integration.syncedDateTo?.toDate();
+  // Check what's already synced (field is syncedDateRange.from/to, written by gmailSyncQueue.ts)
+  const syncedFrom = integration.syncedDateRange?.from?.toDate();
+  const syncedTo = integration.syncedDateRange?.to?.toDate();
 
   if (!syncedFrom || !syncedTo) {
     // Nothing synced yet

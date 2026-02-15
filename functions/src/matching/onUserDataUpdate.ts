@@ -679,6 +679,15 @@ export const onUserDataUpdate = onDocumentUpdated(
         updateData.extractedWebsite = result.counterparty.website;
       }
 
+      // If extractedPartner changed, reset partner matching so it re-runs
+      if (result.counterparty?.name !== currentPartner) {
+        updateData.partnerMatchComplete = false;
+        updateData.partnerId = null;
+        updateData.partnerMatchedBy = null;
+        updateData.partnerMatchConfidence = null;
+        updateData.partnerSuggestions = [];
+      }
+
       batch.update(fileDoc.ref, updateData);
       updatedCount++;
       batchCount++;

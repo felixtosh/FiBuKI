@@ -67,7 +67,9 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Clean up any stale queue items (paused items that should be restarted)
+    // Restart paused queue items by deleting and recreating them.
+    // This triggers onSyncQueueCreated for immediate processing
+    // (just updating status to "pending" wouldn't trigger any Cloud Function).
     const staleItemsQuery = await db
       .collection(SYNC_QUEUE_COLLECTION)
       .where("integrationId", "==", integrationId)
@@ -76,17 +78,33 @@ export async function POST(request: NextRequest) {
 
     let cleanedUp = 0;
     for (const doc of staleItemsQuery.docs) {
-      // Restart paused items instead of deleting
-      await doc.ref.update({
+      const data = doc.data();
+      // Delete the paused item and create a fresh one to trigger onSyncQueueCreated
+      await doc.ref.delete();
+      await db.collection(SYNC_QUEUE_COLLECTION).add({
+        userId: data.userId,
+        integrationId: data.integrationId,
+        type: data.type,
         status: "pending",
-        pausedAt: null,
-        updatedAt: Timestamp.now(),
+        dateFrom: data.dateFrom,
+        dateTo: data.dateTo,
+        // Clear nextPageToken — it's likely stale after pause; already-processed
+        // messages will be skipped via processedMessageIds
+        nextPageToken: null,
+        emailsProcessed: data.emailsProcessed || 0,
+        filesCreated: data.filesCreated || 0,
+        attachmentsSkipped: data.attachmentsSkipped || 0,
+        errors: data.errors || [],
+        retryCount: 0,
+        maxRetries: data.maxRetries || 3,
+        processedMessageIds: data.processedMessageIds || [],
+        createdAt: Timestamp.now(),
       });
       cleanedUp++;
     }
 
     if (cleanedUp > 0) {
-      console.log(`[Gmail Resume] Restarted ${cleanedUp} paused queue item(s)`);
+      console.log(`[Gmail Resume] Recreated ${cleanedUp} paused queue item(s) for immediate processing`);
       return NextResponse.json({
         success: true,
         message: `Sync resumed, restarting ${cleanedUp} paused sync(s)`,

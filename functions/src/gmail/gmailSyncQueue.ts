@@ -943,6 +943,19 @@ export const processGmailSyncQueue = onSchedule(
   async () => {
     console.log("[GmailSync] Starting queue processor...");
 
+    // Reset stale "processing" items (Cloud Function may have crashed/timed out)
+    const staleThreshold = Timestamp.fromDate(new Date(Date.now() - 10 * 60 * 1000));
+    const staleProcessing = await db
+      .collection("gmailSyncQueue")
+      .where("status", "==", "processing")
+      .where("startedAt", "<", staleThreshold)
+      .get();
+
+    for (const doc of staleProcessing.docs) {
+      console.log(`[GmailSync] Resetting stale processing item: ${doc.id}`);
+      await doc.ref.update({ status: "pending", startedAt: null });
+    }
+
     // Get oldest pending queue item
     const pendingSnapshot = await db
       .collection("gmailSyncQueue")

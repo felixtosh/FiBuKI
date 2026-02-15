@@ -242,9 +242,9 @@ function buildCompactMessage(summaries: ToolCallSummary[]): string {
 function formatAmount(amount: number, currency?: string): string {
   const curr = currency || "EUR";
   try {
-    return new Intl.NumberFormat("de-AT", { style: "currency", currency: curr }).format(Math.abs(amount));
+    return new Intl.NumberFormat("de-AT", { style: "currency", currency: curr }).format(Math.abs(amount) / 100);
   } catch {
-    return `${Math.abs(amount).toFixed(2)} ${curr}`;
+    return `${(Math.abs(amount) / 100).toFixed(2)} ${curr}`;
   }
 }
 

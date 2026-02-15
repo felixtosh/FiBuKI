@@ -431,6 +431,19 @@ export function serializeMessagesForSDK(
       return result;
     }
 
+    // Worker transcript format: parts contain full toolCall objects but no toolCalls array.
+    // Pass parts through so the chat-provider normalization (hasWorkerParts) can render them
+    // with proper GenUI tool result components instead of falling back to plain content text.
+    if (m.parts && m.parts.length > 0) {
+      const hasToolParts = m.parts.some((p) => {
+        const part = p as unknown as { type: string; toolCall?: unknown };
+        return part.type === "tool" && part.toolCall;
+      });
+      if (hasToolParts) {
+        return { ...base, parts: m.parts as Array<{ type: "text"; text: string } | { type: "tool"; toolCallId: string; toolName: string }> };
+      }
+    }
+
     return base;
   });
 }

@@ -153,21 +153,66 @@ export const searchGmailForPartnerTool = tool(
     if (!userId || !authHeader) return { error: "Auth not provided" };
 
     try {
-      const result = await callFirebaseFunction<
-        { query: string; maxResults: number },
-        { attachments?: unknown[]; totalCount?: number }
-      >(
-        "searchGmailAttachments",
-        {
+      const db = await getDb();
+
+      // Look up user's active Gmail integrations
+      const integrationsSnapshot = await db
+        .collection("emailIntegrations")
+        .where("userId", "==", userId)
+        .where("provider", "==", "gmail")
+        .where("isActive", "==", true)
+        .get();
+
+      if (integrationsSnapshot.empty) {
+        return {
+          error: "Gmail is not connected. Connect Gmail to search email attachments.",
+          results: [],
+          totalCount: 0,
           query: searchQuery,
-          maxResults: 20,
-        },
-        authHeader
-      );
+        };
+      }
+
+      const allMessages: Array<{
+        messageId: string;
+        subject: string;
+        from: string;
+        date: string;
+        snippet: string;
+        attachments: Array<{ filename: string; mimeType: string; size: number }>;
+      }> = [];
+
+      for (const integrationDoc of integrationsSnapshot.docs) {
+        const searchResponse = await callFirebaseFunction<
+          { integrationId: string; query: string; hasAttachments: boolean; expandThreads: boolean; limit: number },
+          { messages?: Array<{ messageId: string; subject: string; from: string; date: string; snippet: string; attachments?: Array<{ filename: string; mimeType: string; size: number }> }> }
+        >(
+          "searchGmailCallable",
+          {
+            integrationId: integrationDoc.id,
+            query: searchQuery,
+            hasAttachments: false,
+            expandThreads: true,
+            limit: 50,
+          },
+          authHeader
+        );
+
+        const messages = searchResponse?.messages || [];
+        for (const msg of messages) {
+          allMessages.push({
+            messageId: msg.messageId,
+            subject: msg.subject,
+            from: msg.from,
+            date: msg.date,
+            snippet: msg.snippet,
+            attachments: msg.attachments || [],
+          });
+        }
+      }
 
       return {
-        results: result?.attachments || [],
-        totalCount: result?.totalCount || 0,
+        results: allMessages,
+        totalCount: allMessages.length,
         query: searchQuery,
       };
     } catch (err) {
