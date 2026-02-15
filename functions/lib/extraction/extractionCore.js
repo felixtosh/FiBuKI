@@ -334,6 +334,27 @@ function normalizeExtractedLineItems(lineItems) {
     })
         .filter((item) => item !== null);
 }
+function isLikelyNonBillableLine(description) {
+    const normalized = description.trim().toLowerCase();
+    if (!normalized) {
+        return true;
+    }
+    const patterns = [
+        /^subtotal\b/,
+        /^total\b/,
+        /^total excluding tax\b/,
+        /^amount paid\b/,
+        /^payment history\b/,
+        /^vat\b/,
+        /^tax\b/,
+        /^first\s+\d+/,
+        /\band above\b/,
+        /^description\b/,
+        /^qty\b/,
+        /^unit price\b/,
+    ];
+    return patterns.some((pattern) => pattern.test(normalized));
+}
 function inferLineItemAmountsAreNet(lineItems) {
     let comparedItems = 0;
     let netInterpretationError = 0;
@@ -356,6 +377,25 @@ function inferLineItemAmountsAreNet(lineItems) {
         return false;
     }
     return netInterpretationError < grossInterpretationError;
+}
+function buildFallbackLineItem(extractedAmount, extractedVatPercent) {
+    const normalizedVatPercent = typeof extractedVatPercent === "number" &&
+        Number.isFinite(extractedVatPercent) &&
+        extractedVatPercent >= 0 &&
+        extractedVatPercent <= 100
+        ? extractedVatPercent
+        : null;
+    const vatAmount = normalizedVatPercent !== null && normalizedVatPercent > 0
+        ? Math.round((extractedAmount * normalizedVatPercent) / (100 + normalizedVatPercent))
+        : 0;
+    return {
+        description: "Invoice total",
+        quantity: 1,
+        unitPrice: extractedAmount - vatAmount,
+        vatPercent: normalizedVatPercent,
+        vatAmount,
+        amount: extractedAmount,
+    };
 }
 function consolidateLineItems(lineItems, extractedDocumentAmount) {
     const totalAmountFromItems = lineItems.reduce((sum, item) => sum + item.amount, 0);
@@ -383,6 +423,26 @@ function consolidateLineItems(lineItems, extractedDocumentAmount) {
         totalVatAmount,
         consolidatedVatPercent: hasSingleRate ? firstRate : null,
     };
+}
+function reconcileLineItemsWithDocumentTotal(lineItems, extractedAmount, extractedVatPercent) {
+    if (lineItems.length === 0) {
+        return [];
+    }
+    const filtered = lineItems.filter((item) => item.amount > 0 && !isLikelyNonBillableLine(item.description));
+    const candidateLineItems = filtered.length > 0 ? filtered : lineItems;
+    if (typeof extractedAmount !== "number" || !Number.isFinite(extractedAmount) || extractedAmount <= 0) {
+        return candidateLineItems;
+    }
+    const consolidated = consolidateLineItems(candidateLineItems, extractedAmount);
+    const mismatch = Math.abs(consolidated.totalAmount - extractedAmount);
+    const tolerance = Math.max(5, Math.round(extractedAmount * 0.005));
+    if (mismatch <= tolerance) {
+        return candidateLineItems;
+    }
+    console.warn(`[ExtractionCore] Line items mismatch document total by ${mismatch} cents ` +
+        `(lineItems=${consolidated.totalAmount}, extractedAmount=${extractedAmount}). ` +
+        `Falling back to single total line item.`);
+    return [buildFallbackLineItem(extractedAmount, extractedVatPercent)];
 }
 /**
  * Run extraction for a file and save results to Firestore.
@@ -590,8 +650,9 @@ async function runExtraction(fileId, fileData, options) {
         }
         const normalizedLineItems = normalizeExtractedLineItems(extracted.lineItems);
         if (normalizedLineItems.length > 0) {
-            const consolidated = consolidateLineItems(normalizedLineItems, extracted.amount);
-            updateData.extractedLineItems = normalizedLineItems;
+            const reconciledLineItems = reconcileLineItemsWithDocumentTotal(normalizedLineItems, extracted.amount, extracted.vatPercent);
+            const consolidated = consolidateLineItems(reconciledLineItems, extracted.amount);
+            updateData.extractedLineItems = reconciledLineItems;
             updateData.extractedAmount = consolidated.totalAmount;
             updateData.extractedVatAmount = consolidated.totalVatAmount;
             updateData.extractedVatPercent = consolidated.consolidatedVatPercent;

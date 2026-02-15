@@ -321,9 +321,14 @@ CRITICAL RULES:
 
 LINE ITEM EXTRACTION (IMPORTANT):
 - Extract ALL line items from the document
+- Only extract TOP-LEVEL billable rows from the main items table
+- Do NOT extract nested/tier rows, explanatory rows, gray helper rows, "First 1", "2 and above", etc.
+- Do NOT extract summary rows like Subtotal, Total, VAT, Amount paid, Payment history
 - If no itemization is visible, create exactly ONE line item for the total
 - Return all monetary amounts in cents
 - Use "vatPercent": null when the rate is not explicitly visible (do not guess)
+- Sanity check: line item totals must reconcile with the invoice total amount
+  (if they do not, fix the line item selection so they match)
 
 Input format: German (dates DD.MM.YYYY, amounts with comma like 123,45)
 Output: date as YYYY-MM-DD, amount in cents (123,45 → 12345)

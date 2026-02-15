@@ -397,6 +397,30 @@ function normalizeExtractedLineItems(
     .filter((item): item is ExtractedLineItem => item !== null);
 }
 
+function isLikelyNonBillableLine(description: string): boolean {
+  const normalized = description.trim().toLowerCase();
+  if (!normalized) {
+    return true;
+  }
+
+  const patterns: RegExp[] = [
+    /^subtotal\b/,
+    /^total\b/,
+    /^total excluding tax\b/,
+    /^amount paid\b/,
+    /^payment history\b/,
+    /^vat\b/,
+    /^tax\b/,
+    /^first\s+\d+/,
+    /\band above\b/,
+    /^description\b/,
+    /^qty\b/,
+    /^unit price\b/,
+  ];
+
+  return patterns.some((pattern) => pattern.test(normalized));
+}
+
 function inferLineItemAmountsAreNet(lineItems: ExtractedLineItem[]): boolean {
   let comparedItems = 0;
   let netInterpretationError = 0;
@@ -426,6 +450,31 @@ function inferLineItemAmountsAreNet(lineItems: ExtractedLineItem[]): boolean {
   }
 
   return netInterpretationError < grossInterpretationError;
+}
+
+function buildFallbackLineItem(
+  extractedAmount: number,
+  extractedVatPercent: number | null | undefined
+): ExtractedLineItem {
+  const normalizedVatPercent = typeof extractedVatPercent === "number" &&
+    Number.isFinite(extractedVatPercent) &&
+    extractedVatPercent >= 0 &&
+    extractedVatPercent <= 100
+    ? extractedVatPercent
+    : null;
+
+  const vatAmount = normalizedVatPercent !== null && normalizedVatPercent > 0
+    ? Math.round((extractedAmount * normalizedVatPercent) / (100 + normalizedVatPercent))
+    : 0;
+
+  return {
+    description: "Invoice total",
+    quantity: 1,
+    unitPrice: extractedAmount - vatAmount,
+    vatPercent: normalizedVatPercent,
+    vatAmount,
+    amount: extractedAmount,
+  };
 }
 
 function consolidateLineItems(
@@ -466,6 +515,41 @@ function consolidateLineItems(
     totalVatAmount,
     consolidatedVatPercent: hasSingleRate ? firstRate : null,
   };
+}
+
+function reconcileLineItemsWithDocumentTotal(
+  lineItems: ExtractedLineItem[],
+  extractedAmount: number | null | undefined,
+  extractedVatPercent: number | null | undefined
+): ExtractedLineItem[] {
+  if (lineItems.length === 0) {
+    return [];
+  }
+
+  const filtered = lineItems.filter((item) =>
+    item.amount > 0 && !isLikelyNonBillableLine(item.description)
+  );
+  const candidateLineItems = filtered.length > 0 ? filtered : lineItems;
+
+  if (typeof extractedAmount !== "number" || !Number.isFinite(extractedAmount) || extractedAmount <= 0) {
+    return candidateLineItems;
+  }
+
+  const consolidated = consolidateLineItems(candidateLineItems, extractedAmount);
+  const mismatch = Math.abs(consolidated.totalAmount - extractedAmount);
+  const tolerance = Math.max(5, Math.round(extractedAmount * 0.005));
+
+  if (mismatch <= tolerance) {
+    return candidateLineItems;
+  }
+
+  console.warn(
+    `[ExtractionCore] Line items mismatch document total by ${mismatch} cents ` +
+    `(lineItems=${consolidated.totalAmount}, extractedAmount=${extractedAmount}). ` +
+    `Falling back to single total line item.`
+  );
+
+  return [buildFallbackLineItem(extractedAmount, extractedVatPercent)];
 }
 
 /**
@@ -707,8 +791,13 @@ export async function runExtraction(
 
     const normalizedLineItems = normalizeExtractedLineItems(extracted.lineItems);
     if (normalizedLineItems.length > 0) {
-      const consolidated = consolidateLineItems(normalizedLineItems, extracted.amount);
-      updateData.extractedLineItems = normalizedLineItems;
+      const reconciledLineItems = reconcileLineItemsWithDocumentTotal(
+        normalizedLineItems,
+        extracted.amount,
+        extracted.vatPercent
+      );
+      const consolidated = consolidateLineItems(reconciledLineItems, extracted.amount);
+      updateData.extractedLineItems = reconciledLineItems;
       updateData.extractedAmount = consolidated.totalAmount;
       updateData.extractedVatAmount = consolidated.totalVatAmount;
       updateData.extractedVatPercent = consolidated.consolidatedVatPercent;
