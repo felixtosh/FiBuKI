@@ -11,6 +11,7 @@ import {
   Check,
   CheckCircle2,
   Clock,
+  Download,
   ExternalLink,
   FileCheck,
   FileText,
@@ -21,6 +22,7 @@ import {
   Plug,
   RefreshCw,
   Building2,
+  Wrench,
   XCircle,
   Zap,
 } from "lucide-react";
@@ -298,17 +300,17 @@ export default function BrowserIntegrationPage() {
                 <div className="flex items-center gap-2">
                   <h1 className="text-xl font-semibold">Browser Plugin</h1>
                   {extension.status === "checking" ? (
-                    <Badge variant="secondary" className="border-blue-500 text-blue-600">
+                    <Badge variant="info">
                       <Loader2 className="h-3 w-3 mr-1 animate-spin" />
                       Checking
                     </Badge>
                   ) : extensionInstalled ? (
-                    <Badge variant="secondary" className="border-green-500 text-green-600">
+                    <Badge variant="success">
                       <Check className="h-3 w-3 mr-1" />
                       Installed
                     </Badge>
                   ) : (
-                    <Badge variant="secondary" className="border-amber-500 text-amber-600">
+                    <Badge variant="warning">
                       <AlertCircle className="h-3 w-3 mr-1" />
                       Not installed
                     </Badge>
@@ -702,6 +704,58 @@ export default function BrowserIntegrationPage() {
                 </CardContent>
               </Card>
             )}
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Wrench className="h-4 w-4" />
+                  Developer Installation
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  Install the extension manually in Chrome Developer Mode to get the latest version.
+                </p>
+
+                <Button variant="outline" className="w-full" asChild>
+                  <a href="/api/browser/download-extension" download>
+                    <Download className="h-4 w-4 mr-2" />
+                    Download Extension (.zip)
+                  </a>
+                </Button>
+
+                <ol className="text-sm space-y-3 list-none">
+                  <li className="flex gap-2">
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted text-[11px] font-medium">1</span>
+                    <span>Click the button above to download the extension zip file</span>
+                  </li>
+                  <li className="flex gap-2">
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted text-[11px] font-medium">2</span>
+                    <span>Unzip the downloaded file — this creates a <code className="text-xs bg-muted px-1 py-0.5 rounded">taxstudio-browser</code> folder</span>
+                  </li>
+                  <li className="flex gap-2">
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted text-[11px] font-medium">3</span>
+                    <span>Open Chrome and navigate to <code className="text-xs bg-muted px-1 py-0.5 rounded">chrome://extensions</code></span>
+                  </li>
+                  <li className="flex gap-2">
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted text-[11px] font-medium">4</span>
+                    <span>Enable <strong>Developer mode</strong> using the toggle in the top-right corner</span>
+                  </li>
+                  <li className="flex gap-2">
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted text-[11px] font-medium">5</span>
+                    <span>Click <strong>Load unpacked</strong> and select the unzipped <code className="text-xs bg-muted px-1 py-0.5 rounded">taxstudio-browser</code> folder</span>
+                  </li>
+                  <li className="flex gap-2">
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted text-[11px] font-medium">6</span>
+                    <span>Return here and click <strong>Check connection</strong> to verify</span>
+                  </li>
+                </ol>
+
+                <p className="text-xs text-muted-foreground">
+                  To update, download again and click the reload icon on the extension card in <code className="bg-muted px-1 py-0.5 rounded">chrome://extensions</code>.
+                </p>
+              </CardContent>
+            </Card>
           </div>
         </div>
       </div>
