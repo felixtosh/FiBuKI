@@ -595,6 +595,153 @@ export const bulkAssignPartnerToTransactionsTool = tool(
 );
 
 // ============================================================================
+// Match Transaction Partners (rule-based + agentic fallback)
+// ============================================================================
+
+export const matchTransactionPartnersTool = tool(
+  async ({ transactionIds, matchAllUnassigned = false }, config) => {
+    const userId = config?.configurable?.userId;
+    const authHeader = config?.configurable?.authHeader;
+    if (!userId || !authHeader) {
+      return { error: "User ID or auth header not provided" };
+    }
+
+    const normalizedIds = Array.isArray(transactionIds)
+      ? Array.from(new Set(transactionIds.map((id) => id.trim()).filter(Boolean)))
+      : [];
+
+    if (!matchAllUnassigned && normalizedIds.length === 0) {
+      return { error: "Provide transactionIds or set matchAllUnassigned=true" };
+    }
+
+    if (normalizedIds.length > 250) {
+      return {
+        error: "Too many transaction IDs. Provide up to 250 IDs per call or use matchAllUnassigned.",
+      };
+    }
+
+    const db = await getDb();
+    let payload: { transactionIds?: string[]; matchAll?: boolean };
+    let precheck:
+      | {
+          requestedCount: number;
+          ownedCount: number;
+          eligibleCount: number;
+          alreadyMatchedCount: number;
+          skippedNoReceiptCategoryCount: number;
+          skippedQuotaExceededCount: number;
+        }
+      | null = null;
+
+    if (normalizedIds.length > 0) {
+      const docs = await Promise.all(
+        normalizedIds.map((id) => db.collection("transactions").doc(id).get())
+      );
+      const ownedDocs = docs.filter((doc) => doc.exists && doc.data()?.userId === userId);
+
+      const eligibleIds: string[] = [];
+      let alreadyMatchedCount = 0;
+      let skippedNoReceiptCategoryCount = 0;
+      let skippedQuotaExceededCount = 0;
+
+      for (const doc of ownedDocs) {
+        const data = doc.data()!;
+        if (data.partnerId) {
+          alreadyMatchedCount += 1;
+          continue;
+        }
+        if (data.noReceiptCategoryId) {
+          skippedNoReceiptCategoryCount += 1;
+          continue;
+        }
+        if (data.quotaExceeded) {
+          skippedQuotaExceededCount += 1;
+          continue;
+        }
+        eligibleIds.push(doc.id);
+      }
+
+      precheck = {
+        requestedCount: normalizedIds.length,
+        ownedCount: ownedDocs.length,
+        eligibleCount: eligibleIds.length,
+        alreadyMatchedCount,
+        skippedNoReceiptCategoryCount,
+        skippedQuotaExceededCount,
+      };
+
+      if (eligibleIds.length === 0) {
+        return {
+          success: true,
+          scope: "selected_transactions",
+          ...precheck,
+          processed: 0,
+          autoMatched: 0,
+          withSuggestions: 0,
+          unchangedCount: 0,
+          message:
+            alreadyMatchedCount > 0
+              ? `Already matched ${alreadyMatchedCount} selected transaction(s). No additional unmatched transactions were eligible.`
+              : "No eligible unmatched transactions in the selected set.",
+        };
+      }
+
+      payload = {
+        transactionIds: eligibleIds,
+        matchAll: false,
+      };
+    } else {
+      payload = {
+        matchAll: false,
+      };
+    }
+
+    const result = await callFirebaseFunction<
+      { transactionIds?: string[]; matchAll?: boolean },
+      { processed: number; autoMatched: number; withSuggestions: number }
+    >("matchPartners", payload, authHeader);
+
+    const actionableCount = (result.autoMatched || 0) + (result.withSuggestions || 0);
+    const unchangedCount = Math.max(0, (result.processed || 0) - actionableCount);
+
+    return {
+      success: true,
+      scope: normalizedIds.length > 0 ? "selected_transactions" : "all_unassigned",
+      ...(precheck ? precheck : {}),
+      processed: result.processed || 0,
+      autoMatched: result.autoMatched || 0,
+      withSuggestions: result.withSuggestions || 0,
+      unchangedCount,
+      message:
+        normalizedIds.length > 0 && precheck
+          ? `Processed ${result.processed || 0} unmatched transaction(s) from the selected set (${precheck.alreadyMatchedCount} already matched).`
+          : `Processed ${result.processed || 0} unassigned transaction(s) for partner matching.`,
+    };
+  },
+  {
+    name: "matchTransactionPartners",
+    description: `Run partner matching for transactions (rule-based + agentic fallback workers).
+
+Use this for "match transactions/invoices in a timeframe" flows:
+- First use listTransactions (date/search filters) to pick target IDs
+- Then call this tool with those transaction IDs
+
+If called with transactionIds, it returns how many were already matched vs eligible.
+If called with matchAllUnassigned=true, it processes all currently unassigned transactions.`,
+    schema: z.object({
+      transactionIds: z
+        .array(z.string())
+        .optional()
+        .describe("Specific transaction IDs to process (recommended for timeframe-based matching)"),
+      matchAllUnassigned: z
+        .boolean()
+        .optional()
+        .describe("Process all currently unassigned transactions"),
+    }),
+  }
+);
+
+// ============================================================================
 // Find or Create Partner (with AI lookup and VAT validation)
 // ============================================================================
 
@@ -821,6 +968,7 @@ export const WRITE_TOOLS = [
   assignPartnerToTransactionTool,
   assignPartnerToFileTool,
   bulkAssignPartnerToTransactionsTool,
+  matchTransactionPartnersTool,
   createPartnerTool,
   updatePartnerTool,
   findOrCreatePartnerTool,

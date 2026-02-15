@@ -6,7 +6,6 @@
 
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import { Timestamp } from "firebase-admin/firestore";
 
 // Lazy-load admin DB to avoid initialization at build time
 let _db: ReturnType<typeof import("@/lib/firebase/admin").getAdminDb> | null = null;
@@ -20,6 +19,14 @@ async function getDb() {
 
 function toFiniteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function toDateOrNull(value: unknown): Date | null {
+  if (value && typeof value === "object" && "toDate" in value && typeof (value as { toDate?: unknown }).toDate === "function") {
+    const maybeDate = (value as { toDate: () => unknown }).toDate();
+    return maybeDate instanceof Date ? maybeDate : null;
+  }
+  return value instanceof Date ? value : null;
 }
 
 function inferLineItemAmountsAreNet(
@@ -387,6 +394,232 @@ export const getSourceTool = tool(
     schema: z.object({
       sourceId: z.string().describe("The source/bank account ID"),
     }),
+  }
+);
+
+// ============================================================================
+// Get Queue Status
+// ============================================================================
+
+export const getQueueStatusTool = tool(
+  async (_, config) => {
+    const userId = config?.configurable?.userId;
+    if (!userId) {
+      return { error: "User ID not provided" };
+    }
+
+    const db = await getDb();
+
+    const [gmailSnapshot, precisionSnapshot, workerSnapshot, extractionSnapshot] = await Promise.all([
+      db
+        .collection("gmailSyncQueue")
+        .where("userId", "==", userId)
+        .limit(200)
+        .get(),
+      db
+        .collection("precisionSearchQueue")
+        .where("userId", "==", userId)
+        .limit(200)
+        .get(),
+      db
+        .collection(`users/${userId}/workerRequests`)
+        .limit(200)
+        .get(),
+      db
+        .collection("files")
+        .where("userId", "==", userId)
+        .limit(500)
+        .get(),
+    ]);
+
+    let gmailPending = 0;
+    let gmailProcessing = 0;
+    let gmailEmailsProcessed = 0;
+    let gmailFilesCreated = 0;
+    let gmailAttachmentsSkipped = 0;
+    let gmailOldestCreatedAt: Date | null = null;
+
+    for (const doc of gmailSnapshot.docs) {
+      const data = doc.data();
+      if (data.status !== "pending" && data.status !== "processing") {
+        continue;
+      }
+      if (data.status === "processing") gmailProcessing += 1;
+      if (data.status === "pending") gmailPending += 1;
+      gmailEmailsProcessed += data.emailsProcessed || 0;
+      gmailFilesCreated += data.filesCreated || 0;
+      gmailAttachmentsSkipped += data.attachmentsSkipped || 0;
+
+      const createdAt = toDateOrNull(data.createdAt);
+      if (createdAt && (!gmailOldestCreatedAt || createdAt < gmailOldestCreatedAt)) {
+        gmailOldestCreatedAt = createdAt;
+      }
+    }
+
+    let precisionPending = 0;
+    let precisionProcessing = 0;
+    let precisionTransactionsToProcess = 0;
+    let precisionTransactionsProcessed = 0;
+    let precisionTransactionsWithMatches = 0;
+    let precisionFilesConnected = 0;
+
+    for (const doc of precisionSnapshot.docs) {
+      const data = doc.data();
+      if (data.status !== "pending" && data.status !== "processing") {
+        continue;
+      }
+      if (data.status === "processing") precisionProcessing += 1;
+      if (data.status === "pending") precisionPending += 1;
+      precisionTransactionsToProcess += data.transactionsToProcess || 0;
+      precisionTransactionsProcessed += data.transactionsProcessed || 0;
+      precisionTransactionsWithMatches += data.transactionsWithMatches || 0;
+      precisionFilesConnected += data.totalFilesConnected || 0;
+    }
+
+    const precisionOutstandingTransactions = Math.max(
+      0,
+      precisionTransactionsToProcess - precisionTransactionsProcessed
+    );
+
+    const workerTypeStats = new Map<
+      string,
+      { total: number; pending: number; processing: number; running: number }
+    >();
+    let workerQueuedFileRefs = 0;
+    let workerQueuedTransactionRefs = 0;
+
+    for (const doc of workerSnapshot.docs) {
+      const data = doc.data();
+      if (data.status !== "pending" && data.status !== "processing" && data.status !== "running") {
+        continue;
+      }
+      const workerType = typeof data.workerType === "string" ? data.workerType : "unknown";
+      const status = typeof data.status === "string" ? data.status : "pending";
+      const stats = workerTypeStats.get(workerType) || {
+        total: 0,
+        pending: 0,
+        processing: 0,
+        running: 0,
+      };
+
+      stats.total += 1;
+      if (status === "pending") stats.pending += 1;
+      if (status === "processing") stats.processing += 1;
+      if (status === "running") stats.running += 1;
+      workerTypeStats.set(workerType, stats);
+
+      const triggerContext = (data.triggerContext || {}) as {
+        fileId?: string;
+        fileIds?: string[];
+        transactionId?: string;
+      };
+
+      if (Array.isArray(triggerContext.fileIds) && triggerContext.fileIds.length > 0) {
+        workerQueuedFileRefs += triggerContext.fileIds.length;
+      } else if (typeof triggerContext.fileId === "string" && triggerContext.fileId.trim()) {
+        workerQueuedFileRefs += 1;
+      }
+
+      if (typeof triggerContext.transactionId === "string" && triggerContext.transactionId.trim()) {
+        workerQueuedTransactionRefs += 1;
+      }
+    }
+
+    const filesAwaitingExtraction = extractionSnapshot.docs.filter((doc) => {
+      const data = doc.data();
+      return data.extractionComplete === false && !data.deletedAt && !data.extractionError;
+    }).length;
+    const gmailActiveItems = gmailPending + gmailProcessing;
+    const precisionActiveItems = precisionPending + precisionProcessing;
+    const workerActiveItems = Array.from(workerTypeStats.values()).reduce((sum, stats) => sum + stats.total, 0);
+    const filesQueuedForProcessing = filesAwaitingExtraction + workerQueuedFileRefs;
+    const transactionsQueuedForProcessing = precisionOutstandingTransactions + workerQueuedTransactionRefs;
+    const activeQueueItems = gmailActiveItems + precisionActiveItems + workerActiveItems;
+    const gmailImportRunning = gmailProcessing > 0;
+
+    let loadLevel: "idle" | "moderate" | "high" = "idle";
+    if (
+      gmailImportRunning ||
+      filesQueuedForProcessing >= 30 ||
+      transactionsQueuedForProcessing >= 30 ||
+      activeQueueItems >= 10
+    ) {
+      loadLevel = "high";
+    } else if (
+      activeQueueItems > 0 ||
+      filesQueuedForProcessing > 0 ||
+      transactionsQueuedForProcessing > 0
+    ) {
+      loadLevel = "moderate";
+    }
+
+    const workerByType = Array.from(workerTypeStats.entries())
+      .map(([workerType, stats]) => ({ workerType, ...stats }))
+      .sort((a, b) => b.total - a.total);
+
+    const summaryParts: string[] = [];
+    if (gmailImportRunning) {
+      summaryParts.push("Gmail import is currently running");
+    }
+    if (filesQueuedForProcessing > 0) {
+      summaryParts.push(`${filesQueuedForProcessing} file(s) are queued for processing`);
+    }
+    if (transactionsQueuedForProcessing > 0) {
+      summaryParts.push(`${transactionsQueuedForProcessing} transaction(s) are queued for processing`);
+    }
+
+    return {
+      checkedAt: new Date().toISOString(),
+      loadLevel,
+      isBusy: loadLevel === "high",
+      summary: summaryParts.length > 0
+        ? `${summaryParts.join(". ")}.`
+        : "All processing queues are currently idle.",
+      gmailSync: {
+        activeItems: gmailActiveItems,
+        pending: gmailPending,
+        processing: gmailProcessing,
+        gmailImportRunning,
+        emailsProcessed: gmailEmailsProcessed,
+        filesCreated: gmailFilesCreated,
+        attachmentsSkipped: gmailAttachmentsSkipped,
+        oldestCreatedAt: gmailOldestCreatedAt ? gmailOldestCreatedAt.toISOString() : null,
+      },
+      fileProcessing: {
+        filesAwaitingExtraction,
+        workerQueueFileRefs: workerQueuedFileRefs,
+        totalFilesQueued: filesQueuedForProcessing,
+      },
+      transactionProcessing: {
+        precisionQueueItems: precisionActiveItems,
+        precisionPending,
+        precisionProcessing,
+        precisionTransactionsToProcess,
+        precisionTransactionsProcessed,
+        precisionOutstandingTransactions,
+        precisionTransactionsWithMatches,
+        precisionFilesConnected,
+        workerQueueTransactionRefs: workerQueuedTransactionRefs,
+        totalTransactionsQueued: transactionsQueuedForProcessing,
+      },
+      workerQueue: {
+        activeItems: workerActiveItems,
+        byWorkerType: workerByType,
+      },
+    };
+  },
+  {
+    name: "getQueueStatus",
+    description: `Get live queue/load status for background processing.
+
+Use this before large matching actions to set expectations:
+- Is a Gmail import currently running?
+- How many files are queued for processing?
+- How many transactions are queued for processing?
+
+Returns aggregated queue counts across gmailSyncQueue, precisionSearchQueue,
+workerRequests, and files awaiting extraction.`,
+    schema: z.object({}),
   }
 );
 
@@ -1048,6 +1281,7 @@ export const READ_TOOLS = [
   getTransactionTool,
   listSourcesTool,
   getSourceTool,
+  getQueueStatusTool,
   getTransactionHistoryTool,
   listFilesTool,
   getFileTool,

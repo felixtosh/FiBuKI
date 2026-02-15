@@ -180,6 +180,32 @@ export const READ_TOOLS: ChatToolDefinition[] = [
       "Show files from last month",
     ],
   },
+  {
+    id: "getQueueStatus",
+    name: "Get Queue Status",
+    description:
+      "Get live background queue/load status. Shows whether Gmail import is running and how many files/transactions are queued for processing.",
+    category: "read",
+    requiresConfirmation: false,
+    inputSchema: {
+      required: [],
+      optional: [],
+    },
+    outputFields: [
+      "loadLevel",
+      "isBusy",
+      "summary",
+      "gmailSync",
+      "fileProcessing",
+      "transactionProcessing",
+      "workerQueue",
+    ],
+    examples: [
+      "Is anything still processing right now?",
+      "Why is matching taking so long?",
+      "Check queue load before running bulk matching",
+    ],
+  },
 ];
 
 // ============================================================================
@@ -283,6 +309,33 @@ export const WRITE_TOOLS: ChatToolDefinition[] = [
       "transaction",
     ],
     relatedTools: ["getTransactionHistory"],
+  },
+  {
+    id: "matchTransactionPartners",
+    name: "Match Transaction Partners",
+    description:
+      "Run partner matching for selected transactions (or all unassigned). Returns how many were already matched, processed, auto-matched, or left as suggestions.",
+    category: "write",
+    requiresConfirmation: false,
+    inputSchema: {
+      required: [],
+      optional: ["transactionIds", "matchAllUnassigned"],
+    },
+    outputFields: [
+      "scope",
+      "requestedCount",
+      "alreadyMatchedCount",
+      "processed",
+      "autoMatched",
+      "withSuggestions",
+      "unchangedCount",
+    ],
+    relatedTools: ["listTransactions", "getQueueStatus"],
+    examples: [
+      "Match partners for these 20 transactions",
+      "Run partner matching for all unmatched transactions",
+      "Match partners in this date range after selecting IDs",
+    ],
   },
 ];
 
