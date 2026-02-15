@@ -1,10 +1,32 @@
 "use client";
 
-import { Package, Link2, Sparkles, Eraser, Bot, Download, Upload, AlertCircle, CreditCard } from "lucide-react";
+import {
+  AlertCircle,
+  Bot,
+  CreditCard,
+  Download,
+  Eraser,
+  ExternalLink,
+  FileSearch,
+  Link2,
+  Loader2,
+  MessageSquare,
+  Package,
+  Receipt,
+  Sparkles,
+  Upload,
+} from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui/button";
+import { ToolStepList } from "@/design-system/tool-results";
 import { cn } from "@/lib/utils";
-import { AutoActionNotification, NotificationType } from "@/types/notification";
+import {
+  AutoActionNotification,
+  NotificationType,
+  ToolCallSummary,
+} from "@/types/notification";
+import { WorkerType } from "@/types/worker";
 import { useChat } from "./chat-provider";
-import { WorkerActivityCard } from "./worker-activity-card";
 
 interface NotificationCardProps {
   notification: AutoActionNotification;
@@ -46,12 +68,136 @@ const typeConfig: Record<
   },
 };
 
+const workerIcons: Record<WorkerType, { icon: typeof Bot }> = {
+  file_matching: {
+    icon: FileSearch,
+  },
+  partner_matching: {
+    icon: Bot,
+  },
+  file_partner_matching: {
+    icon: FileSearch,
+  },
+  receipt_search: {
+    icon: Receipt,
+  },
+  partner_file_batch: {
+    icon: FileSearch,
+  },
+};
+
+function formatTime(timestamp: { toDate: () => Date } | Date | null | undefined) {
+  if (!timestamp) return "Just now";
+  const date = "toDate" in timestamp ? timestamp.toDate() : timestamp;
+  const now = new Date();
+  const diff = now.getTime() - date.getTime();
+  const minutes = Math.floor(diff / 60000);
+  const hours = Math.floor(diff / 3600000);
+  const days = Math.floor(diff / 86400000);
+
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  if (hours < 24) return `${hours}h ago`;
+  if (days < 7) return `${days}d ago`;
+  return date.toLocaleDateString("de-DE", {
+    day: "2-digit",
+    month: "2-digit",
+  });
+}
+
 export function NotificationCard({
   notification,
 }: NotificationCardProps) {
-  // Route worker_activity to specialized card
+  const router = useRouter();
+  const { loadSession, setActiveTab, markNotificationRead } = useChat();
+
+  // Render worker activity with the same unified component
   if (notification.type === "worker_activity") {
-    return <WorkerActivityCard notification={notification} />;
+    const workerType = notification.context.workerType as WorkerType;
+    const workerConfig = workerType ? workerIcons[workerType] : null;
+    const Icon = workerConfig?.icon || Bot;
+    const sessionId = notification.context.sessionId;
+    const fileId = notification.context.fileId;
+    const fileName = notification.context.fileName;
+    const transactionId = notification.context.transactionId;
+    const transactionName = notification.context.transactionName;
+    const toolSummary = (notification.context.toolSummary || []) as ToolCallSummary[];
+    const status = notification.context.workerStatus;
+    const primaryLabel = fileName || transactionName || notification.title;
+    const summaryText = notification.message?.trim() || notification.title;
+    const isRunning = status === "running";
+    const iconColorClass =
+      status === "failed"
+        ? "text-red-500"
+        : status === "completed"
+          ? "text-green-500"
+          : "text-muted-foreground";
+    const hasEntityLink = Boolean(fileId || transactionId);
+
+    const handleViewInChat = async () => {
+      if (sessionId) {
+        await loadSession(sessionId);
+        setActiveTab("chat");
+        markNotificationRead(notification.id);
+      }
+    };
+
+    const handleOpenLinkedEntity = () => {
+      if (fileId) {
+        router.push(`/files?id=${fileId}`);
+        return;
+      }
+      if (transactionId) {
+        router.push(`/transactions?id=${transactionId}`);
+      }
+    };
+
+    return (
+      <div className="flex flex-col gap-1.5 pb-2 border-b border-muted/50">
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          {isRunning ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-500" />
+          ) : (
+            <Icon className={cn("h-3.5 w-3.5", iconColorClass)} />
+          )}
+          <span>{formatTime(notification.createdAt)}</span>
+        </div>
+
+        <div className="flex items-center gap-1.5 min-w-0">
+          <p className="text-sm font-medium min-w-0 flex-1 truncate" title={primaryLabel}>
+            {primaryLabel}
+          </p>
+          {hasEntityLink && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 text-muted-foreground hover:text-foreground flex-shrink-0"
+              onClick={handleOpenLinkedEntity}
+              title={fileId ? "Open file" : "Open transaction"}
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+            </Button>
+          )}
+          {sessionId && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 text-muted-foreground hover:text-foreground flex-shrink-0"
+              onClick={handleViewInChat}
+              title="View in chat"
+            >
+              <MessageSquare className="h-3.5 w-3.5" />
+            </Button>
+          )}
+        </div>
+
+        {toolSummary.length > 0 ? (
+          <ToolStepList steps={toolSummary} />
+        ) : (
+          <p className="text-xs text-muted-foreground">{summaryText}</p>
+        )}
+      </div>
+    );
   }
 
   const config = typeConfig[notification.type] ?? {
@@ -63,25 +209,6 @@ export function NotificationCard({
       ? "text-red-500"
       : "text-green-500";
   const summaryText = notification.message?.trim() || notification.title;
-
-  // Format timestamp
-  const formatTime = (timestamp: { toDate: () => Date } | Date) => {
-    const date = "toDate" in timestamp ? timestamp.toDate() : timestamp;
-    const now = new Date();
-    const diff = now.getTime() - date.getTime();
-    const minutes = Math.floor(diff / 60000);
-    const hours = Math.floor(diff / 3600000);
-    const days = Math.floor(diff / 86400000);
-
-    if (minutes < 1) return "Just now";
-    if (minutes < 60) return `${minutes}m ago`;
-    if (hours < 24) return `${hours}h ago`;
-    if (days < 7) return `${days}d ago`;
-    return date.toLocaleDateString("de-DE", {
-      day: "2-digit",
-      month: "2-digit",
-    });
-  };
 
   return (
     <div className="flex flex-col gap-1.5 pb-2 border-b border-muted/50">

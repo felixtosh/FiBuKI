@@ -23,6 +23,53 @@ const SIDEBAR_WIDTH_KEY = "chatSidebarWidth";
 const DEFAULT_SIDEBAR_WIDTH = 320; // w-80 = 20rem = 320px
 const MIN_SIDEBAR_WIDTH = 280;
 const MAX_SIDEBAR_WIDTH = 600;
+const CHAT_PARAM_KEY = "chat";
+const CHAT_TAB_PARAM_KEY = "chatTab";
+const CHAT_OPEN_FLAG = "1";
+
+type SearchParamsLike = {
+  get: (name: string) => string | null;
+  toString: () => string;
+};
+
+function normalizeUrlChatTab(tab: string | null): ChatTab | null {
+  if (!tab) return null;
+  if (tab === "chat" || tab === "history" || tab === "notifications") return tab;
+  if (tab === "events" || tab === "activity") return "notifications";
+  return null;
+}
+
+function getUrlTabValue(tab: ChatTab): string | null {
+  if (tab === "notifications") return "events";
+  if (tab === "history") return "history";
+  return null;
+}
+
+function getChatStateFromUrl(params: SearchParamsLike): {
+  isSidebarOpen: boolean;
+  activeTab: ChatTab;
+  sessionId: string | null;
+} {
+  const chatParam = params.get(CHAT_PARAM_KEY);
+  if (!chatParam) {
+    return {
+      isSidebarOpen: false,
+      activeTab: "notifications",
+      sessionId: null,
+    };
+  }
+
+  const tabFromChatParam = normalizeUrlChatTab(chatParam);
+  const tabFromTabParam = normalizeUrlChatTab(params.get(CHAT_TAB_PARAM_KEY));
+  const activeTab = tabFromTabParam || tabFromChatParam || "chat";
+  const sessionId = chatParam !== CHAT_OPEN_FLAG && !tabFromChatParam ? chatParam : null;
+
+  return {
+    isSidebarOpen: true,
+    activeTab,
+    sessionId,
+  };
+}
 
 export function useChat() {
   const context = useContext(ChatContext);
@@ -50,13 +97,13 @@ export function ChatProvider({ children }: ChatProviderProps) {
     triggerFileTransactionSearch,
   } = useWorker();
 
-  // Read initial state from URL params
-  const initialChatOpen = searchParams.get("chat") === "1";
+  // Read initial state from URL params once and keep subsequent URL sync in an effect.
+  const initialUrlChatStateRef = useRef(getChatStateFromUrl(searchParams));
 
-  const [isSidebarOpen, setIsSidebarOpen] = useState(initialChatOpen);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(initialUrlChatStateRef.current.isSidebarOpen);
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [pendingConfirmations, setPendingConfirmations] = useState<ToolCall[]>([]);
-  const [activeTab, setActiveTab] = useState<ChatTab>(initialChatOpen ? "chat" : "notifications");
+  const [activeTab, setActiveTab] = useState<ChatTab>(initialUrlChatStateRef.current.activeTab);
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>("chat");
   // Default to gemini (cheaper), fall back to anthropic if needed
   const [modelProvider, setModelProvider] = useState<ModelProvider>("gemini");
@@ -74,17 +121,48 @@ export function ChatProvider({ children }: ChatProviderProps) {
     searchParamsRef.current = searchParams;
   }, [searchParams]);
 
-  // Helper to update URL params without navigation (only handles chat open/close)
-  const updateUrlParams = useCallback((updates: { chat?: boolean }) => {
+  // Track session IDs requested from URL to avoid repeatedly loading the same session.
+  const lastUrlRequestedSessionRef = useRef<string | null>(initialUrlChatStateRef.current.sessionId);
+  // Track last pushed chat signature to avoid unnecessary history entries.
+  const lastChatStateSignatureRef = useRef<string | null>(null);
+  // Prevent state -> URL effect from overwriting URL-driven state updates (e.g., back/forward).
+  const isApplyingUrlStateRef = useRef(false);
+  // Distinguish browser back/forward from app navigation pushes.
+  const isPopStateNavigationRef = useRef(false);
+  const lastPathnameRef = useRef(pathname);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      isPopStateNavigationRef.current = true;
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+    };
+  }, []);
+
+  // Helper to sync URL params for sidebar open state, active tab, and selected chat session.
+  const updateUrlParams = useCallback((updates: {
+    isSidebarOpen: boolean;
+    activeTab: ChatTab;
+    sessionId: string | null;
+    historyMode: "push" | "replace";
+  }) => {
     const currentParams = searchParamsRef.current;
     const params = new URLSearchParams(currentParams.toString());
 
-    if (updates.chat !== undefined) {
-      if (updates.chat) {
-        params.set("chat", "1");
+    if (updates.isSidebarOpen) {
+      params.set(CHAT_PARAM_KEY, updates.sessionId || CHAT_OPEN_FLAG);
+
+      const tabValue = getUrlTabValue(updates.activeTab);
+      if (tabValue) {
+        params.set(CHAT_TAB_PARAM_KEY, tabValue);
       } else {
-        params.delete("chat");
+        params.delete(CHAT_TAB_PARAM_KEY);
       }
+    } else {
+      params.delete(CHAT_PARAM_KEY);
+      params.delete(CHAT_TAB_PARAM_KEY);
     }
 
     // Check if URL would actually change to avoid unnecessary navigation
@@ -95,6 +173,10 @@ export function ChatProvider({ children }: ChatProviderProps) {
     }
 
     const newUrl = newParamsString ? `${pathname}?${newParamsString}` : pathname;
+    if (updates.historyMode === "push") {
+      router.push(newUrl, { scroll: false });
+      return;
+    }
     router.replace(newUrl, { scroll: false });
   }, [pathname, router]);
 
@@ -687,16 +769,84 @@ export function ChatProvider({ children }: ChatProviderProps) {
     }
   }, []);
 
-  // Sync sidebar open/close state to URL params
+  // Sync URL -> sidebar state (supports reload + browser back/forward).
+  useEffect(() => {
+    const pathChanged = lastPathnameRef.current !== pathname;
+    lastPathnameRef.current = pathname;
+    const hasChatParam = searchParams.get(CHAT_PARAM_KEY) !== null;
+    const isPopStateNavigation = isPopStateNavigationRef.current;
+    isPopStateNavigationRef.current = false;
+
+    // Keep current sidebar state across app navigation even when links don't carry query params.
+    // Browser back/forward should still apply URL state.
+    if (pathChanged && isSidebarOpen && !hasChatParam && !isPopStateNavigation) {
+      return;
+    }
+
+    const urlChatState = getChatStateFromUrl(searchParams);
+    let appliedUrlState = false;
+
+    if (isSidebarOpen !== urlChatState.isSidebarOpen) {
+      setIsSidebarOpen(urlChatState.isSidebarOpen);
+      appliedUrlState = true;
+    }
+
+    if (activeTab !== urlChatState.activeTab) {
+      setActiveTab(urlChatState.activeTab);
+      appliedUrlState = true;
+    }
+
+    if (!urlChatState.isSidebarOpen || !urlChatState.sessionId) {
+      lastUrlRequestedSessionRef.current = null;
+      if (appliedUrlState) {
+        isApplyingUrlStateRef.current = true;
+      }
+      return;
+    }
+
+    if (urlChatState.sessionId !== currentSessionId && lastUrlRequestedSessionRef.current !== urlChatState.sessionId) {
+      lastUrlRequestedSessionRef.current = urlChatState.sessionId;
+      isApplyingUrlStateRef.current = true;
+      void loadSession(urlChatState.sessionId);
+      return;
+    }
+
+    if (urlChatState.sessionId === currentSessionId) {
+      lastUrlRequestedSessionRef.current = null;
+    }
+
+    if (appliedUrlState) {
+      isApplyingUrlStateRef.current = true;
+    }
+  }, [searchParams, pathname, isSidebarOpen, activeTab, currentSessionId, loadSession]);
+
+  // Sync sidebar state -> URL params (encodes tab + session and preserves history on state changes).
   const hasInitialized = useRef(false);
   useEffect(() => {
-    // Skip on initial render - we read from URL
-    if (hasInitialized.current) {
-      updateUrlParams({ chat: isSidebarOpen });
-    } else {
+    const stateSignature = `${isSidebarOpen}:${activeTab}:${currentSessionId || ""}`;
+    const previousSignature = lastChatStateSignatureRef.current;
+    const historyMode = previousSignature === null || previousSignature === stateSignature ? "replace" : "push";
+    lastChatStateSignatureRef.current = stateSignature;
+
+    // Skip writing URL on first render - initial state comes from URL.
+    if (!hasInitialized.current) {
       hasInitialized.current = true;
+      return;
     }
-  }, [isSidebarOpen, updateUrlParams]);
+
+    // URL-driven state changes already updated the URL; avoid overriding them.
+    if (isApplyingUrlStateRef.current) {
+      isApplyingUrlStateRef.current = false;
+      return;
+    }
+
+    updateUrlParams({
+      isSidebarOpen,
+      activeTab,
+      sessionId: currentSessionId,
+      historyMode,
+    });
+  }, [isSidebarOpen, activeTab, currentSessionId, updateUrlParams]);
 
   // Handler for setting sidebar width (with persistence)
   const handleSetSidebarWidth = useCallback((width: number) => {

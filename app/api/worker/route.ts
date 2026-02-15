@@ -412,7 +412,7 @@ function convertToWorkerMessages(
         id: tc.id,
         name: tc.name,
         args: truncateLargeResults(tc.args) as Record<string, unknown>,
-        status: "executed",
+        status: hasResult ? "executed" : "pending",
         requiresConfirmation: false,
       };
       if (hasResult) {
@@ -874,6 +874,7 @@ export async function POST(req: Request) {
       let latestGraphMessages: unknown[] = [new HumanMessage(effectiveInitialPrompt)];
       let latestActionsPerformed: WorkerRun["actionsPerformed"] = [];
       const persistedMessageIds = new Set<string>();
+      const persistedMessagePhase = new Map<string, "pending" | "completed">();
 
       const persistReadySessionMessages = async (
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -883,19 +884,34 @@ export async function POST(req: Request) {
         const transcriptSoFar = convertToWorkerMessages(allMessages, { idPrefix: runId });
         const entriesToPersist = transcriptSoFar
           .map((message, index) => ({ message, sequence: index + 2 }))
-          .filter(({ message }) => isSessionPersistableMessage(message))
-          .filter(({ message }) => !persistedMessageIds.has(message.id));
+          .filter(({ message }) => {
+            const nextPhase: "pending" | "completed" = isSessionPersistableMessage(message)
+              ? "completed"
+              : "pending";
+            const prevPhase = persistedMessagePhase.get(message.id);
+            // Persist first sighting and any transition (pending -> completed).
+            return prevPhase !== nextPhase;
+          });
 
         if (entriesToPersist.length === 0) return;
+
+        const uniqueMessageCount = new Set([
+          ...persistedMessageIds,
+          ...entriesToPersist.map(({ message }) => message.id),
+        ]).size;
 
         await appendMessagesToSession(
           userId,
           sessionId,
           entriesToPersist,
-          persistedMessageIds.size + entriesToPersist.length
+          uniqueMessageCount
         );
         for (const { message } of entriesToPersist) {
           persistedMessageIds.add(message.id);
+          persistedMessagePhase.set(
+            message.id,
+            isSessionPersistableMessage(message) ? "completed" : "pending"
+          );
         }
       };
 
@@ -967,17 +983,32 @@ export async function POST(req: Request) {
           if (sessionId) {
             const pendingEntries = transcript
               .map((message, index) => ({ message, sequence: index + 2 }))
-              .filter(({ message }) => !persistedMessageIds.has(message.id));
+              .filter(({ message }) => {
+                const nextPhase: "pending" | "completed" = isSessionPersistableMessage(message)
+                  ? "completed"
+                  : "pending";
+                const prevPhase = persistedMessagePhase.get(message.id);
+                return prevPhase !== nextPhase;
+              });
 
             if (pendingEntries.length > 0) {
+              const uniqueMessageCount = new Set([
+                ...persistedMessageIds,
+                ...pendingEntries.map(({ message }) => message.id),
+              ]).size;
+
               await appendMessagesToSession(
                 userId,
                 sessionId,
                 pendingEntries,
-                persistedMessageIds.size + pendingEntries.length
+                uniqueMessageCount
               );
               for (const { message } of pendingEntries) {
                 persistedMessageIds.add(message.id);
+                persistedMessagePhase.set(
+                  message.id,
+                  isSessionPersistableMessage(message) ? "completed" : "pending"
+                );
               }
             }
           }

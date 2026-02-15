@@ -32,7 +32,6 @@ import { UserPartner, PartnerFormData, ManualRemoval, ManualFileRemoval } from "
 import { Transaction } from "@/types/transaction";
 import { TaxFile } from "@/types/file";
 import { usePartners } from "@/hooks/use-partners";
-import { useEmailIntegrations } from "@/hooks/use-email-integrations";
 import { formatIban } from "@/lib/import/deduplication";
 import { useState, useEffect, useMemo, ReactNode } from "react";
 import { AddPartnerDialog } from "./add-partner-dialog";
@@ -121,6 +120,60 @@ interface FeedbackMessage {
   text: string;
 }
 
+interface ReceiptHintQuery {
+  query: string;
+  sourceType: "gmail" | "local" | "browser" | "unknown";
+  resultType: string | null;
+  usageCount: number;
+  integrationId: string | null;
+}
+
+interface ReceiptHintsData {
+  hasHints: boolean;
+  preferredSource: "gmail" | "local" | "browser" | "unknown" | null;
+  workingQueries: ReceiptHintQuery[];
+  emailDomains: string[];
+  filenameExamples: string[];
+  successfulConnections: number;
+  message: string;
+}
+
+const EMPTY_RECEIPT_HINTS: ReceiptHintsData = {
+  hasHints: false,
+  preferredSource: null,
+  workingQueries: [],
+  emailDomains: [],
+  filenameExamples: [],
+  successfulConnections: 0,
+  message: "No receipt search history for this partner yet.",
+};
+
+function extractDomain(emailOrValue: unknown): string | null {
+  if (typeof emailOrValue !== "string") return null;
+  const value = emailOrValue.trim().toLowerCase();
+  if (!value) return null;
+  const atIndex = value.lastIndexOf("@");
+  if (atIndex >= 0 && atIndex < value.length - 1) {
+    return value.slice(atIndex + 1);
+  }
+  return value.includes(".") ? value : null;
+}
+
+function normalizeHintSourceType(raw: unknown): "gmail" | "local" | "browser" | "unknown" {
+  const value = typeof raw === "string" ? raw.toLowerCase() : "";
+  if (value.startsWith("gmail")) return "gmail";
+  if (value === "local" || value === "upload" || value === "local_file") return "local";
+  if (value.startsWith("browser")) return "browser";
+  return "unknown";
+}
+
+function sourceTypeLabel(sourceType: ReceiptHintsData["preferredSource"]): string {
+  if (sourceType === "gmail") return "Gmail";
+  if (sourceType === "local") return "Local files";
+  if (sourceType === "browser") return "Browser";
+  return "Unknown";
+}
+
 // NOTE: SectionHeader, CollapsibleListSection, and ListItem are now imported
 // from @/components/ui/detail-panel-primitives for consistency across all panels
 
@@ -131,7 +184,6 @@ export function PartnerDetailPanel({
   const router = useRouter();
   const { userId } = useAuth();
   const { updatePartner, deletePartner } = usePartners();
-  const { integrations } = useEmailIntegrations();
   const { isPartnerMarkedAsMe, userData, save: saveUserData } = useUserData();
   const { categories: allCategories } = useNoReceiptCategories();
   const browserRecipesHook = useBrowserRecipes(partner.id);
@@ -144,26 +196,12 @@ export function PartnerDetailPanel({
   // Check if this partner is linked to identity settings
   const isIdentityLinked = !!partner.identitySourceField;
   const ctx = useMemo(() => ({ db, userId: userId ?? "" }), [userId]);
-
-  const integrationLabels = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const integration of integrations) {
-      map.set(
-        integration.id,
-        integration.displayName || integration.email || integration.provider
-      );
-    }
-    return map;
-  }, [integrations]);
-
-  const gmailFilePatterns = useMemo(() => {
-    return (partner.fileSourcePatterns || [])
-      .filter((pattern) => pattern.sourceType === "gmail")
-      .sort((a, b) => {
-        if (b.usageCount !== a.usageCount) return b.usageCount - a.usageCount;
-        return b.confidence - a.confidence;
-      });
-  }, [partner.fileSourcePatterns]);
+  const [receiptHints, setReceiptHints] = useState<ReceiptHintsData>(EMPTY_RECEIPT_HINTS);
+  const [isLoadingReceiptHints, setIsLoadingReceiptHints] = useState(true);
+  const gmailFilePatterns = useMemo(
+    () => receiptHints.workingQueries.filter((pattern) => pattern.sourceType === "gmail"),
+    [receiptHints.workingQueries]
+  );
 
   // Clear feedback after 4 seconds
   useEffect(() => {
@@ -289,6 +327,219 @@ export function PartnerDetailPanel({
       fetchFiles();
     }
   }, [partner.id, transactions, isLoadingTransactions, userId]);
+
+  // Build receipt hints from successful file-connection history for this partner.
+  useEffect(() => {
+    let cancelled = false;
+
+    async function fetchReceiptHints() {
+      if (!userId) {
+        if (!cancelled) {
+          setReceiptHints(EMPTY_RECEIPT_HINTS);
+          setIsLoadingReceiptHints(false);
+        }
+        return;
+      }
+
+      setIsLoadingReceiptHints(true);
+
+      try {
+        const txSnapshot = await getDocs(query(
+          collection(db, "transactions"),
+          where("userId", "==", userId),
+          where("partnerId", "==", partner.id),
+          limit(200)
+        ));
+
+        const transactionIds = txSnapshot.docs.map((doc) => doc.id);
+        const domainSet = new Set<string>((partner.emailDomains || []).map((d) => d.toLowerCase()));
+        const filenameSet = new Set<string>();
+        const sourceCounts = new Map<"gmail" | "local" | "browser" | "unknown", number>();
+        const queryMap = new Map<string, ReceiptHintQuery & { lastSeenAtMs: number }>();
+        let successfulConnections = 0;
+
+        if (transactionIds.length > 0) {
+          const connectionData: Array<{
+            fileId?: string;
+            userId?: string;
+            sourceType?: string;
+            searchPattern?: string;
+            resultType?: string;
+            gmailIntegrationId?: string;
+            gmailMessageFrom?: string;
+            createdAt?: { toMillis?: () => number };
+          }> = [];
+
+          for (let i = 0; i < transactionIds.length; i += 30) {
+            const txBatch = transactionIds.slice(i, i + 30);
+            if (txBatch.length === 0) continue;
+            const connectionSnapshot = await getDocs(query(
+              collection(db, "fileConnections"),
+              where("transactionId", "in", txBatch)
+            ));
+
+            for (const doc of connectionSnapshot.docs) {
+              const data = doc.data() as typeof connectionData[number];
+              if (data.userId === userId) {
+                connectionData.push(data);
+              }
+            }
+          }
+
+          successfulConnections = connectionData.length;
+
+          const fileIds = Array.from(
+            new Set(
+              connectionData
+                .map((c) => c.fileId)
+                .filter((id): id is string => typeof id === "string" && id.length > 0)
+            )
+          );
+
+          const fileMetaById = new Map<string, { fileName: string; sourceType: string | null }>();
+          for (let i = 0; i < fileIds.length; i += 30) {
+            const fileBatch = fileIds.slice(i, i + 30);
+            if (fileBatch.length === 0) continue;
+            const fileSnapshot = await getDocs(query(
+              collection(db, "files"),
+              where(documentId(), "in", fileBatch)
+            ));
+
+            for (const doc of fileSnapshot.docs) {
+              const data = doc.data() as { userId?: string; fileName?: string; sourceType?: string };
+              if (data.userId !== userId) continue;
+              fileMetaById.set(doc.id, {
+                fileName: data.fileName || "",
+                sourceType: data.sourceType || null,
+              });
+            }
+          }
+
+          for (const connection of connectionData) {
+            const fileMeta = connection.fileId ? fileMetaById.get(connection.fileId) : undefined;
+            let sourceType = normalizeHintSourceType(connection.sourceType || connection.resultType);
+            if (sourceType === "unknown" && fileMeta?.sourceType) {
+              sourceType = normalizeHintSourceType(fileMeta.sourceType);
+            }
+
+            sourceCounts.set(sourceType, (sourceCounts.get(sourceType) || 0) + 1);
+
+            const domain = extractDomain(connection.gmailMessageFrom);
+            if (domain) domainSet.add(domain);
+
+            if (fileMeta?.fileName) filenameSet.add(fileMeta.fileName);
+
+            const searchPattern = typeof connection.searchPattern === "string"
+              ? connection.searchPattern.trim()
+              : "";
+            if (!searchPattern) continue;
+
+            const integrationId = connection.gmailIntegrationId || null;
+            const resultType = connection.resultType || null;
+            const key = `${sourceType}|${searchPattern.toLowerCase()}|${integrationId || ""}|${resultType || ""}`;
+            const lastSeenAtMs = connection.createdAt?.toMillis?.() || 0;
+            const existing = queryMap.get(key);
+
+            if (existing) {
+              existing.usageCount += 1;
+              existing.lastSeenAtMs = Math.max(existing.lastSeenAtMs, lastSeenAtMs);
+            } else {
+              queryMap.set(key, {
+                query: searchPattern,
+                sourceType,
+                resultType,
+                usageCount: 1,
+                integrationId,
+                lastSeenAtMs,
+              });
+            }
+          }
+        }
+
+        if (queryMap.size === 0) {
+          const patternFallback = [...(partner.fileSourcePatterns || [])]
+            .sort((a, b) => (b.usageCount || 0) - (a.usageCount || 0))
+            .slice(0, 10);
+
+          for (const pattern of patternFallback) {
+            if (!pattern.pattern) continue;
+            const sourceType = normalizeHintSourceType(pattern.sourceType);
+            const resultType = pattern.resultType || null;
+            const integrationId = pattern.integrationId || null;
+            const key = `${sourceType}|${pattern.pattern.toLowerCase()}|${integrationId || ""}|${resultType || ""}`;
+            queryMap.set(key, {
+              query: pattern.pattern,
+              sourceType,
+              resultType,
+              usageCount: pattern.usageCount || 0,
+              integrationId,
+              lastSeenAtMs: pattern.lastUsedAt?.toMillis?.() || 0,
+            });
+          }
+        }
+
+        if (filenameSet.size === 0) {
+          for (const pattern of partner.fileSourcePatterns || []) {
+            for (const fileName of pattern.filenameExamples || []) {
+              filenameSet.add(fileName);
+            }
+          }
+        }
+
+        let preferredSource: ReceiptHintsData["preferredSource"] = null;
+        if (sourceCounts.size > 0) {
+          preferredSource = [...sourceCounts.entries()]
+            .sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+        } else {
+          preferredSource = queryMap.size > 0
+            ? [...queryMap.values()].sort((a, b) => b.usageCount - a.usageCount)[0]?.sourceType || null
+            : null;
+        }
+
+        const workingQueries = [...queryMap.values()]
+          .sort((a, b) => {
+            if (b.usageCount !== a.usageCount) return b.usageCount - a.usageCount;
+            return b.lastSeenAtMs - a.lastSeenAtMs;
+          })
+          .slice(0, 5)
+          .map(({ lastSeenAtMs: _lastSeenAtMs, ...queryData }) => queryData);
+
+        const emailDomains = Array.from(domainSet).slice(0, 5);
+        const filenameExamples = Array.from(filenameSet).slice(0, 5);
+        const hasHints = workingQueries.length > 0 || emailDomains.length > 0 || filenameExamples.length > 0;
+
+        const message = hasHints
+          ? `Based on ${successfulConnections} successful file connection${successfulConnections === 1 ? "" : "s"} for this partner`
+          : "No receipt search history for this partner yet.";
+
+        if (!cancelled) {
+          setReceiptHints({
+            hasHints,
+            preferredSource,
+            workingQueries,
+            emailDomains,
+            filenameExamples,
+            successfulConnections,
+            message,
+          });
+        }
+      } catch (error) {
+        console.error("Failed to fetch receipt hints:", error);
+        if (!cancelled) {
+          setReceiptHints(EMPTY_RECEIPT_HINTS);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingReceiptHints(false);
+        }
+      }
+    }
+
+    fetchReceiptHints();
+    return () => {
+      cancelled = true;
+    };
+  }, [partner.id, partner.emailDomains, partner.fileSourcePatterns, userId]);
 
   // Compute categories from transactions that have noReceiptCategoryId
   const connectedCategories = useMemo(() => {
