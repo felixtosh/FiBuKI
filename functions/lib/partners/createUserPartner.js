@@ -7,6 +7,59 @@ exports.createUserPartnerCallable = void 0;
 exports.createUserPartnerInternal = createUserPartnerInternal;
 const firestore_1 = require("firebase-admin/firestore");
 const createCallable_1 = require("../utils/createCallable");
+const LEGAL_SUFFIX_ONLY_ALIASES = new Set([
+    "llc",
+    "inc",
+    "incorporated",
+    "corp",
+    "corporation",
+    "ltd",
+    "limited",
+    "gmbh",
+    "ag",
+    "kg",
+    "ohg",
+    "og",
+    "mbh",
+    "co",
+    "sarl",
+    "sas",
+    "srl",
+    "spa",
+    "sl",
+    "bv",
+    "nv",
+]);
+function normalizeAliasInput(alias) {
+    return alias.replace(/\*/g, " ").replace(/\s+/g, " ").trim();
+}
+function isMeaningfulAlias(alias) {
+    const normalized = alias
+        .toLowerCase()
+        .replace(/[^a-z0-9äöüß\s]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    if (!normalized || normalized.length < 3)
+        return false;
+    if (LEGAL_SUFFIX_ONLY_ALIASES.has(normalized))
+        return false;
+    return /[a-z0-9]/i.test(normalized);
+}
+function sanitizeAliases(rawAliases = []) {
+    const seen = new Set();
+    const result = [];
+    for (const rawAlias of rawAliases) {
+        const cleaned = normalizeAliasInput(rawAlias);
+        if (!cleaned || !isMeaningfulAlias(cleaned))
+            continue;
+        const dedupeKey = cleaned.toLowerCase();
+        if (seen.has(dedupeKey))
+            continue;
+        seen.add(dedupeKey);
+        result.push(cleaned);
+    }
+    return result;
+}
 /**
  * Normalize IBAN by removing spaces and converting to uppercase
  */
@@ -36,7 +89,7 @@ async function createUserPartnerInternal(dbRef, userId, data, options) {
     const newPartner = {
         userId,
         name: data.name.trim(),
-        aliases: (data.aliases || []).map((a) => a.trim()).filter(Boolean),
+        aliases: sanitizeAliases(data.aliases || []),
         address: data.address || null,
         country: data.country || null,
         vatId: data.vatId?.toUpperCase().replace(/\s/g, "") || null,

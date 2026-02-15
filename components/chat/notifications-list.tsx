@@ -19,7 +19,7 @@ export function NotificationsList({
     <div className="flex flex-1 flex-col overflow-hidden">
       {/* Notifications list */}
       <ScrollArea className="flex-1 px-4">
-        <div className="space-y-3 py-4">
+        <div className="space-y-1.5 py-2">
           {notifications.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-8 text-center text-muted-foreground">
               <Bell className="mb-4 h-12 w-12 opacity-20" />

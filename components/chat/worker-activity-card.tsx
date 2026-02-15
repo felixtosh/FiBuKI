@@ -120,7 +120,7 @@ export function WorkerActivityCard({ notification }: WorkerActivityCardProps) {
   const hasEntityLink = Boolean(fileId || transactionId);
 
   return (
-    <div className="flex flex-col gap-2 max-w-[95%] pb-3 border-b border-muted/50">
+    <div className="flex flex-col gap-1.5 pb-2 border-b border-muted/50">
       {/* Header with single stateful icon and timestamp */}
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         {isRunning ? (
