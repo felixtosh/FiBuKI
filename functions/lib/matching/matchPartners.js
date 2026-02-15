@@ -126,6 +126,46 @@ async function queueAgenticPartnerSearch(userId, transactionId, transactionData,
     console.log(`[PartnerMatch] Queued agentic search for transaction ${transactionId} (worker request ${requestRef.id}, ` +
         `top suggestion: ${topSuggestionConfidence}%)`);
 }
+function normalizeSuggestions(raw) {
+    if (!Array.isArray(raw))
+        return [];
+    return raw
+        .map((item) => {
+        if (!item || typeof item !== "object")
+            return null;
+        const candidate = item;
+        if (typeof candidate.partnerId !== "string")
+            return null;
+        if (candidate.partnerType !== "global" && candidate.partnerType !== "user")
+            return null;
+        if (typeof candidate.confidence !== "number" || !Number.isFinite(candidate.confidence))
+            return null;
+        if (typeof candidate.source !== "string")
+            return null;
+        return {
+            partnerId: candidate.partnerId,
+            partnerType: candidate.partnerType,
+            confidence: candidate.confidence,
+            source: candidate.source,
+        };
+    })
+        .filter((item) => item !== null);
+}
+function suggestionsAreEqual(existing, next) {
+    if (existing.length !== next.length)
+        return false;
+    for (let i = 0; i < existing.length; i++) {
+        if (existing[i].partnerId !== next[i].partnerId)
+            return false;
+        if (existing[i].partnerType !== next[i].partnerType)
+            return false;
+        if (existing[i].confidence !== next[i].confidence)
+            return false;
+        if (existing[i].source !== next[i].source)
+            return false;
+    }
+    return true;
+}
 /**
  * Callable function to manually trigger partner matching
  * Can match specific transactions or all unmatched ones
@@ -257,7 +297,6 @@ exports.matchPartners = (0, https_1.onCall)({
         };
         const matches = (0, partner_matcher_1.matchTransaction)(transaction, userPartners, filteredGlobalPartners);
         processed++;
-        processedTransactionIds.push(txDoc.id);
         if (matches.length > 0) {
             // Filter out matches where user explicitly removed this transaction from the partner
             const filteredMatches = matches.filter((m) => {
@@ -273,16 +312,19 @@ exports.matchPartners = (0, https_1.onCall)({
                 continue;
             }
             const topMatch = filteredMatches[0];
+            const nextSuggestions = filteredMatches.map((m) => ({
+                partnerId: m.partnerId,
+                partnerType: m.partnerType,
+                confidence: m.confidence,
+                source: m.source,
+            }));
+            const existingSuggestions = normalizeSuggestions(txData.partnerSuggestions);
+            const suggestionsChanged = !suggestionsAreEqual(existingSuggestions, nextSuggestions);
             const updates = {
-                partnerSuggestions: filteredMatches.map((m) => ({
-                    partnerId: m.partnerId,
-                    partnerType: m.partnerType,
-                    confidence: m.confidence,
-                    source: m.source,
-                })),
                 updatedAt: firestore_1.FieldValue.serverTimestamp(),
             };
             if ((0, partner_matcher_1.shouldAutoApply)(topMatch.confidence)) {
+                updates.partnerSuggestions = nextSuggestions;
                 let assignedPartnerId = topMatch.partnerId;
                 let assignedPartnerType = topMatch.partnerType;
                 if (topMatch.partnerType === "global") {
@@ -318,6 +360,11 @@ exports.matchPartners = (0, https_1.onCall)({
                 }
             }
             else {
+                if (!suggestionsChanged) {
+                    // Already has the same suggestions: no-op for this run.
+                    continue;
+                }
+                updates.partnerSuggestions = nextSuggestions;
                 withSuggestions++;
                 // Track for potential agentic fallback - has suggestions but not confident enough
                 noAutoMatchTransactions.push({
@@ -327,6 +374,7 @@ exports.matchPartners = (0, https_1.onCall)({
                 });
             }
             batch.update(txDoc.ref, updates);
+            processedTransactionIds.push(txDoc.id);
             batchCount++;
             if (batchCount >= 500) {
                 await batch.commit();
@@ -338,7 +386,7 @@ exports.matchPartners = (0, https_1.onCall)({
     if (batchCount > 0) {
         await batch.commit();
     }
-    console.log(`Matching complete: ${processed} processed, ${autoMatched} auto-matched, ${withSuggestions} with suggestions`);
+    console.log(`Matching complete: ${processed} processed, ${autoMatched} auto-matched, ${withSuggestions} new/updated suggestions`);
     // Create notification if there were results
     if (autoMatched > 0 || withSuggestions > 0) {
         try {
@@ -346,10 +394,10 @@ exports.matchPartners = (0, https_1.onCall)({
                 type: "partner_matching",
                 title: autoMatched > 0
                     ? `Matched ${autoMatched} transaction${autoMatched !== 1 ? "s" : ""} automatically`
-                    : `Found suggestions for ${withSuggestions} transaction${withSuggestions !== 1 ? "s" : ""}`,
+                    : `Found new suggestions for ${withSuggestions} transaction${withSuggestions !== 1 ? "s" : ""}`,
                 message: autoMatched > 0
                     ? `I analyzed your transactions and automatically matched ${autoMatched} to known partners.${withSuggestions > 0 ? ` ${withSuggestions} more need your review.` : ""}`
-                    : `I found partner suggestions for ${withSuggestions} transaction${withSuggestions !== 1 ? "s" : ""}. Please review and confirm.`,
+                    : `I found new partner suggestions for ${withSuggestions} transaction${withSuggestions !== 1 ? "s" : ""}. Please review and confirm.`,
                 createdAt: firestore_1.FieldValue.serverTimestamp(),
                 readAt: null,
                 context: {

@@ -126,6 +126,58 @@ interface MatchPartnersResponse {
   withSuggestions: number;
 }
 
+interface StoredPartnerSuggestion {
+  partnerId: string;
+  partnerType: "global" | "user";
+  confidence: number;
+  source: string;
+}
+
+function normalizeSuggestions(raw: unknown): StoredPartnerSuggestion[] {
+  if (!Array.isArray(raw)) return [];
+
+  return raw
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+
+      const candidate = item as {
+        partnerId?: unknown;
+        partnerType?: unknown;
+        confidence?: unknown;
+        source?: unknown;
+      };
+
+      if (typeof candidate.partnerId !== "string") return null;
+      if (candidate.partnerType !== "global" && candidate.partnerType !== "user") return null;
+      if (typeof candidate.confidence !== "number" || !Number.isFinite(candidate.confidence)) return null;
+      if (typeof candidate.source !== "string") return null;
+
+      return {
+        partnerId: candidate.partnerId,
+        partnerType: candidate.partnerType,
+        confidence: candidate.confidence,
+        source: candidate.source,
+      };
+    })
+    .filter((item): item is StoredPartnerSuggestion => item !== null);
+}
+
+function suggestionsAreEqual(
+  existing: StoredPartnerSuggestion[],
+  next: StoredPartnerSuggestion[]
+): boolean {
+  if (existing.length !== next.length) return false;
+
+  for (let i = 0; i < existing.length; i++) {
+    if (existing[i].partnerId !== next[i].partnerId) return false;
+    if (existing[i].partnerType !== next[i].partnerType) return false;
+    if (existing[i].confidence !== next[i].confidence) return false;
+    if (existing[i].source !== next[i].source) return false;
+  }
+
+  return true;
+}
+
 /**
  * Callable function to manually trigger partner matching
  * Can match specific transactions or all unmatched ones
@@ -287,7 +339,6 @@ export const matchPartners = onCall<MatchPartnersRequest>(
 
       const matches = matchTransaction(transaction, userPartners, filteredGlobalPartners);
       processed++;
-      processedTransactionIds.push(txDoc.id);
 
       if (matches.length > 0) {
         // Filter out matches where user explicitly removed this transaction from the partner
@@ -306,17 +357,20 @@ export const matchPartners = onCall<MatchPartnersRequest>(
         }
 
         const topMatch = filteredMatches[0];
+        const nextSuggestions: StoredPartnerSuggestion[] = filteredMatches.map((m) => ({
+          partnerId: m.partnerId,
+          partnerType: m.partnerType,
+          confidence: m.confidence,
+          source: m.source,
+        }));
+        const existingSuggestions = normalizeSuggestions(txData.partnerSuggestions);
+        const suggestionsChanged = !suggestionsAreEqual(existingSuggestions, nextSuggestions);
         const updates: Record<string, unknown> = {
-          partnerSuggestions: filteredMatches.map((m) => ({
-            partnerId: m.partnerId,
-            partnerType: m.partnerType,
-            confidence: m.confidence,
-            source: m.source,
-          })),
           updatedAt: FieldValue.serverTimestamp(),
         };
 
         if (shouldAutoApply(topMatch.confidence)) {
+          updates.partnerSuggestions = nextSuggestions;
           let assignedPartnerId = topMatch.partnerId;
           let assignedPartnerType = topMatch.partnerType;
 
@@ -357,6 +411,12 @@ export const matchPartners = onCall<MatchPartnersRequest>(
             autoMatchedPartnerIds.add(assignedPartnerId);
           }
         } else {
+          if (!suggestionsChanged) {
+            // Already has the same suggestions: no-op for this run.
+            continue;
+          }
+
+          updates.partnerSuggestions = nextSuggestions;
           withSuggestions++;
           // Track for potential agentic fallback - has suggestions but not confident enough
           noAutoMatchTransactions.push({
@@ -367,6 +427,7 @@ export const matchPartners = onCall<MatchPartnersRequest>(
         }
 
         batch.update(txDoc.ref, updates);
+        processedTransactionIds.push(txDoc.id);
         batchCount++;
 
         if (batchCount >= 500) {
@@ -381,7 +442,7 @@ export const matchPartners = onCall<MatchPartnersRequest>(
       await batch.commit();
     }
 
-    console.log(`Matching complete: ${processed} processed, ${autoMatched} auto-matched, ${withSuggestions} with suggestions`);
+    console.log(`Matching complete: ${processed} processed, ${autoMatched} auto-matched, ${withSuggestions} new/updated suggestions`);
 
     // Create notification if there were results
     if (autoMatched > 0 || withSuggestions > 0) {
@@ -391,11 +452,11 @@ export const matchPartners = onCall<MatchPartnersRequest>(
           title:
             autoMatched > 0
               ? `Matched ${autoMatched} transaction${autoMatched !== 1 ? "s" : ""} automatically`
-              : `Found suggestions for ${withSuggestions} transaction${withSuggestions !== 1 ? "s" : ""}`,
+              : `Found new suggestions for ${withSuggestions} transaction${withSuggestions !== 1 ? "s" : ""}`,
           message:
             autoMatched > 0
               ? `I analyzed your transactions and automatically matched ${autoMatched} to known partners.${withSuggestions > 0 ? ` ${withSuggestions} more need your review.` : ""}`
-              : `I found partner suggestions for ${withSuggestions} transaction${withSuggestions !== 1 ? "s" : ""}. Please review and confirm.`,
+              : `I found new partner suggestions for ${withSuggestions} transaction${withSuggestions !== 1 ? "s" : ""}. Please review and confirm.`,
           createdAt: FieldValue.serverTimestamp(),
           readAt: null,
           context: {
