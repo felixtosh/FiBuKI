@@ -116,6 +116,8 @@ export const WORKER_CONFIGS: Record<WorkerType, WorkerConfig> = {
     name: "Receipt Finder",
     description: "Searches for receipts/invoices for transactions",
     toolNames: [
+      // Hint tool (reuse known-good patterns first)
+      "getPartnerReceiptHints",
       // Search tools
       "generateSearchSuggestions",
       "searchLocalFiles",

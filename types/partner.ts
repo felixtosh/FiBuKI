@@ -218,6 +218,9 @@ export interface FileSourcePattern {
   /** Transaction IDs where this pattern was used to find files */
   sourceTransactionIds: string[];
 
+  /** Example filenames this pattern successfully matched */
+  filenameExamples?: string[];
+
   /** When pattern was created */
   createdAt: Timestamp;
 

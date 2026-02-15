@@ -1429,6 +1429,122 @@ export const analyzeEmailTool = tool(
 );
 
 // ============================================================================
+// Get Partner Receipt Hints
+// ============================================================================
+
+interface ConnectFileRequest {
+  fileId: string;
+  transactionId: string;
+  connectionType?: "manual" | "auto_matched";
+  matchConfidence?: number | null;
+  sourceInfo?: {
+    sourceType?: string;
+    searchPattern?: string;
+    gmailIntegrationId?: string;
+    gmailMessageFrom?: string;
+    resultType?: string;
+  };
+}
+
+interface ConnectFileResponse {
+  success: boolean;
+  connectionId: string;
+  alreadyConnected: boolean;
+}
+
+export const getPartnerReceiptHintsTool = tool(
+  async ({ partnerId, transactionId }, config) => {
+    const userId = config?.configurable?.userId;
+    if (!userId) {
+      return { hasHints: false, message: "User ID not provided" };
+    }
+
+    const db = await getDb();
+
+    // Resolve partner from transaction if needed
+    let resolvedPartnerId = partnerId;
+    if (!resolvedPartnerId && transactionId) {
+      const txDoc = await db.collection("transactions").doc(transactionId).get();
+      if (!txDoc.exists || txDoc.data()?.userId !== userId) {
+        return { hasHints: false, message: "Transaction not found" };
+      }
+      resolvedPartnerId = txDoc.data()?.partnerId;
+    }
+
+    if (!resolvedPartnerId) {
+      return { hasHints: false, message: "No partner assigned - skip hints" };
+    }
+
+    const partnerDoc = await db.collection("partners").doc(resolvedPartnerId).get();
+    if (!partnerDoc.exists || partnerDoc.data()?.userId !== userId) {
+      return { hasHints: false, message: "Partner not found" };
+    }
+
+    const partner = partnerDoc.data()!;
+    const fileSourcePatterns: Array<{
+      sourceType?: string;
+      pattern?: string;
+      resultType?: string;
+      usageCount?: number;
+      integrationId?: string;
+      filenameExamples?: string[];
+    }> = partner.fileSourcePatterns || [];
+    const emailDomains: string[] = partner.emailDomains || [];
+    const billingCycle = partner.billingCycle || null;
+
+    const sortedPatterns = [...fileSourcePatterns].sort(
+      (a, b) => (b.usageCount || 0) - (a.usageCount || 0)
+    );
+
+    const preferredSource = sortedPatterns[0]?.sourceType || null;
+    const filenameExamples = Array.from(
+      new Set(sortedPatterns.flatMap((p) => p.filenameExamples || []))
+    ).slice(0, 5);
+
+    const workingQueries = sortedPatterns
+      .filter((p) => p.pattern)
+      .map((p) => ({
+        query: p.pattern as string,
+        sourceType: p.sourceType || "gmail",
+        resultType: p.resultType || null,
+        usageCount: p.usageCount || 0,
+        integrationId: p.integrationId || null,
+      }))
+      .slice(0, 5);
+
+    return {
+      hasHints: workingQueries.length > 0 || emailDomains.length > 0,
+      partnerName: partner.name || null,
+      preferredSource,
+      workingQueries,
+      emailDomains,
+      filenameExamples,
+      billingCycle: billingCycle ? {
+        frequencyDays: billingCycle.frequencyDays ?? null,
+        invoiceToTransactionDelay: billingCycle.invoiceToTransactionDelay ?? null,
+      } : null,
+      message:
+        workingQueries.length > 0
+          ? `Found ${workingQueries.length} working search pattern(s) for ${partner.name || "partner"}. Preferred source: ${preferredSource || "unknown"}`
+          : emailDomains.length > 0
+            ? `No search patterns yet, but known email domains: ${emailDomains.join(", ")}`
+            : "No receipt search history for this partner yet",
+    };
+  },
+  {
+    name: "getPartnerReceiptHints",
+    description: `Get receipt search hints for a partner based on past successful matches.
+Returns: what source worked before (Gmail/local/browser), which search queries found receipts,
+example filenames, known email domains, and billing cycle info.
+Call this FIRST in receipt search - if hints exist, use the known-good query instead of generating new ones.`,
+    schema: z.object({
+      partnerId: z.string().optional().describe("Partner ID (if known)"),
+      transactionId: z.string().optional().describe("Transaction ID (to look up partner)"),
+    }),
+  }
+);
+
+// ============================================================================
 // Connect File to Transaction
 // ============================================================================
 
@@ -1465,11 +1581,15 @@ function doNamesMatch(name1: string | null | undefined, name2: string | null | u
 }
 
 export const connectFileToTransactionTool = tool(
-  async ({ fileId, transactionId, confidence, skipValidation }, config) => {
+  async ({ fileId, transactionId, confidence, skipValidation, searchQuery, sourceType }, config) => {
     const userId = config?.configurable?.userId;
+    const authHeader = config?.configurable?.authHeader;
 
     if (!userId) {
       return { error: "User ID not provided" };
+    }
+    if (!authHeader) {
+      return { error: "Auth header not provided" };
     }
 
     const db = await getDb();
@@ -1572,47 +1692,61 @@ export const connectFileToTransactionTool = tool(
     if (!existingConnection.empty) {
       return {
         success: true,
+        connectionId: existingConnection.docs[0].id,
         alreadyConnected: true,
         message: `File "${file.fileName}" was already connected to this transaction.`,
       };
     }
 
-    // Create connection
-    const now = new Date();
-    const batch = db.batch();
+    const inferredSourceType = sourceType || (
+      file.sourceType === "gmail_html_invoice"
+        ? "gmail_email"
+        : file.sourceType === "gmail" || file.sourceType === "gmail_invoice_link"
+          ? "gmail_attachment"
+          : file.sourceType === "browser"
+            ? "browser"
+            : "local"
+    );
 
-    // 1. Create fileConnection document
-    const connectionRef = db.collection("fileConnections").doc();
-    batch.set(connectionRef, {
-      fileId,
-      transactionId,
-      userId,
-      connectionType: "manual",
-      matchConfidence: confidence || null,
-      sourceType: "agent_search",
-      createdAt: now,
-    });
+    const gmailMessageFrom = file.gmailSenderEmail || file.gmailMessageFrom || undefined;
+    const gmailIntegrationId = file.gmailIntegrationId || undefined;
+    const effectiveSearchPattern = searchQuery || file.sourceSearchPattern || undefined;
+    const effectiveResultType =
+      file.sourceResultType ||
+      (inferredSourceType === "gmail_email"
+        ? "gmail_html_invoice"
+        : inferredSourceType === "gmail_attachment"
+          ? "gmail_attachment"
+          : inferredSourceType === "browser"
+            ? "browser_invoice"
+            : "local_file");
 
-    // 2. Update file's transactionIds array
-    batch.update(fileDoc.ref, {
-      transactionIds: [...(file.transactionIds || []), transactionId],
-      updatedAt: now,
-    });
-
-    // 3. Update transaction's fileIds array and mark as complete
-    batch.update(txDoc.ref, {
-      fileIds: [...(tx.fileIds || []), fileId],
-      isComplete: true,
-      updatedAt: now,
-    });
-
-    await batch.commit();
+    const result = await callFirebaseFunction<ConnectFileRequest, ConnectFileResponse>(
+      "connectFileToTransaction",
+      {
+        fileId,
+        transactionId,
+        connectionType: "manual",
+        matchConfidence: confidence || null,
+        sourceInfo: {
+          sourceType: inferredSourceType,
+          searchPattern: effectiveSearchPattern,
+          gmailIntegrationId,
+          gmailMessageFrom,
+          resultType: effectiveResultType,
+        },
+      },
+      authHeader
+    );
 
     return {
       success: true,
-      connectionId: connectionRef.id,
+      connectionId: result.connectionId,
+      alreadyConnected: result.alreadyConnected,
       fileName: file.fileName,
-      message: `Connected "${file.fileName}" to transaction.`,
+      message: result.alreadyConnected
+        ? `File "${file.fileName}" was already connected to this transaction.`
+        : `Connected "${file.fileName}" to transaction.`,
     };
   },
   {
@@ -1631,6 +1765,14 @@ Only use skipValidation=true if you're certain the file belongs to this transact
       transactionId: z.string().describe("The transaction ID to connect to"),
       confidence: z.number().optional().describe("Match confidence score (0-100)"),
       skipValidation: z.boolean().optional().describe("Set to true to skip amount/partner validation (use with caution)"),
+      searchQuery: z
+        .string()
+        .optional()
+        .describe("The search query that found this file"),
+      sourceType: z
+        .string()
+        .optional()
+        .describe("How file was found: local, gmail_attachment, gmail_email, browser"),
     }),
   }
 );
@@ -1641,6 +1783,7 @@ Only use skipValidation=true if you're certain the file belongs to this transact
 
 export const SEARCH_TOOLS = [
   generateSearchSuggestionsTool,
+  getPartnerReceiptHintsTool,
   searchLocalFilesTool,
   connectFileToTransactionTool,
   searchGmailAttachmentsTool,

@@ -234,11 +234,19 @@ You are given a transaction ID. Find the best matching receipt/invoice from loca
 
 ### Strategy: Generate queries → Search all sources → Compare → Act
 
+**Step 0: Check partner receipt hints (skip if no partner)**
+\`getPartnerReceiptHints\` with the transactionId
+- If hints exist: USE known-good queries in Step 4 instead of generating new ones
+- If preferredSource is "gmail_attachment": prioritize Gmail attachment search
+- If filenameExamples exist: use them as hard clues (e.g., "R-YYYY.NNN-PHH09.pdf")
+- If no hints: proceed with Step 2
+
 **Step 1: Get transaction details**
 \`getTransaction\` → Get amount, date, partner, counterparty
 
-**Step 2: Generate smart search queries**
+**Step 2: Generate smart search queries (if no hints from Step 0)**
 \`generateSearchSuggestions\` → AI-generated search queries based on transaction data
+- Skip this if Step 0 returned working queries
 - Returns email domains, company name variants, invoice patterns
 - USE THESE for Gmail search!
 
@@ -246,7 +254,7 @@ You are given a transaction ID. Find the best matching receipt/invoice from loca
 \`searchLocalFiles\` → Check uploaded files matching transaction
 
 **Step 4: Search Gmail attachments (try 2-3 queries)**
-\`searchGmailAttachments\` with queries from step 2
+\`searchGmailAttachments\` with queries from Step 0 (preferred) or Step 2 fallback
 - Results include \`alreadyDownloaded\` flag and \`existingFileId\`
 - If already downloaded → use existingFileId directly (skip download)
 - **Try at least 2-3 different queries** from suggestions (not just one!)
@@ -287,6 +295,9 @@ You are given a transaction ID. Find the best matching receipt/invoice from loca
   - Watch for completely unrelated businesses ("Stipits Entsorgung" ≠ "Autotrading" → SKIP)
   - But allow brand vs legal name differences ("Autotrading School" ≈ "LFG Solutions LLC" → OK)
 - Connect the best verified match with \`connectFileToTransaction\`
+- When connecting, pass:
+  - \`searchQuery\`: the Gmail query or search term that found this file
+  - \`sourceType\`: "local", "gmail_attachment", "gmail_email", or "browser"
 - If NONE verify correctly → report "no match" with what you tried
 
 *If email has invoice link (possibleInvoiceLink):*
