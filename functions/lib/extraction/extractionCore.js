@@ -299,6 +299,91 @@ function determineCounterparty(issuer, recipient, userData, sourceIbans) {
         invoiceDirection: "unknown",
     };
 }
+function normalizeExtractedLineItems(lineItems) {
+    if (!Array.isArray(lineItems)) {
+        return [];
+    }
+    return lineItems
+        .map((item, index) => {
+        if (!item || typeof item.amount !== "number" || !Number.isFinite(item.amount)) {
+            return null;
+        }
+        const normalizedVatPercent = typeof item.vatPercent === "number" &&
+            Number.isFinite(item.vatPercent) &&
+            item.vatPercent >= 0 &&
+            item.vatPercent <= 100
+            ? item.vatPercent
+            : null;
+        const normalizedVatAmount = typeof item.vatAmount === "number" && Number.isFinite(item.vatAmount)
+            ? Math.round(item.vatAmount)
+            : 0;
+        const normalizedQuantity = typeof item.quantity === "number" && Number.isFinite(item.quantity)
+            ? item.quantity
+            : null;
+        const normalizedUnitPrice = typeof item.unitPrice === "number" && Number.isFinite(item.unitPrice)
+            ? Math.round(item.unitPrice)
+            : null;
+        return {
+            description: item.description?.trim() || `Item ${index + 1}`,
+            quantity: normalizedQuantity,
+            unitPrice: normalizedUnitPrice,
+            vatPercent: normalizedVatPercent,
+            vatAmount: normalizedVatAmount,
+            amount: Math.round(item.amount),
+        };
+    })
+        .filter((item) => item !== null);
+}
+function inferLineItemAmountsAreNet(lineItems) {
+    let comparedItems = 0;
+    let netInterpretationError = 0;
+    let grossInterpretationError = 0;
+    for (const item of lineItems) {
+        if (item.vatPercent === null ||
+            !Number.isFinite(item.vatPercent) ||
+            item.vatPercent <= 0 ||
+            !Number.isFinite(item.vatAmount)) {
+            continue;
+        }
+        const rate = item.vatPercent;
+        const expectedVatIfNet = Math.round((item.amount * rate) / 100);
+        const expectedVatIfGross = Math.round((item.amount * rate) / (100 + rate));
+        netInterpretationError += Math.abs(expectedVatIfNet - item.vatAmount);
+        grossInterpretationError += Math.abs(expectedVatIfGross - item.vatAmount);
+        comparedItems += 1;
+    }
+    if (comparedItems === 0) {
+        return false;
+    }
+    return netInterpretationError < grossInterpretationError;
+}
+function consolidateLineItems(lineItems, extractedDocumentAmount) {
+    const totalAmountFromItems = lineItems.reduce((sum, item) => sum + item.amount, 0);
+    const totalVatAmount = lineItems.reduce((sum, item) => sum + item.vatAmount, 0);
+    const totalAmountFromNetPlusVat = totalAmountFromItems + totalVatAmount;
+    const firstRate = lineItems[0]?.vatPercent ?? null;
+    const hasSingleRate = firstRate !== null && lineItems.every((item) => item.vatPercent !== null && Math.abs(item.vatPercent - firstRate) < 0.0001);
+    let totalAmount = totalAmountFromItems;
+    if (typeof extractedDocumentAmount === "number" && Number.isFinite(extractedDocumentAmount)) {
+        const distanceToAsIs = Math.abs(totalAmountFromItems - extractedDocumentAmount);
+        const distanceToNetPlusVat = Math.abs(totalAmountFromNetPlusVat - extractedDocumentAmount);
+        if (distanceToNetPlusVat < distanceToAsIs) {
+            totalAmount = totalAmountFromNetPlusVat;
+        }
+        else {
+            totalAmount = totalAmountFromItems;
+        }
+    }
+    else {
+        const amountsLookNet = totalVatAmount > 0 && inferLineItemAmountsAreNet(lineItems);
+        totalAmount = amountsLookNet ? totalAmountFromNetPlusVat : totalAmountFromItems;
+    }
+    return {
+        totalAmount,
+        totalVatAmount,
+        consolidatedVatPercent: hasSingleRate ? firstRate : null,
+    };
+}
 /**
  * Run extraction for a file and save results to Firestore.
  * This is the shared core logic used by both extractFileData and retryExtraction.
@@ -366,6 +451,8 @@ async function runExtraction(fileId, fileData, options) {
                 extractedAmount: null,
                 extractedCurrency: null,
                 extractedVatPercent: null,
+                extractedVatAmount: null,
+                extractedLineItems: null,
                 extractedPartner: null,
                 extractedVatId: null,
                 extractedIban: null,
@@ -476,6 +563,8 @@ async function runExtraction(fileId, fileData, options) {
         updateData.extractedAmount = null;
         updateData.extractedCurrency = null;
         updateData.extractedVatPercent = null;
+        updateData.extractedVatAmount = null;
+        updateData.extractedLineItems = null;
         updateData.extractedPartner = null;
         updateData.extractedVatId = null;
         updateData.extractedIban = null;
@@ -496,13 +585,21 @@ async function runExtraction(fileId, fileData, options) {
                 updateData.extractedDate = firestore_1.Timestamp.fromDate(date);
             }
         }
-        if (extracted.amount !== null) {
-            updateData.extractedAmount = extracted.amount;
-        }
         if (extracted.currency) {
             updateData.extractedCurrency = extracted.currency;
         }
-        if (extracted.vatPercent !== null) {
+        const normalizedLineItems = normalizeExtractedLineItems(extracted.lineItems);
+        if (normalizedLineItems.length > 0) {
+            const consolidated = consolidateLineItems(normalizedLineItems, extracted.amount);
+            updateData.extractedLineItems = normalizedLineItems;
+            updateData.extractedAmount = consolidated.totalAmount;
+            updateData.extractedVatAmount = consolidated.totalVatAmount;
+            updateData.extractedVatPercent = consolidated.consolidatedVatPercent;
+        }
+        else {
+            updateData.extractedLineItems = null;
+            updateData.extractedVatAmount = null;
+            updateData.extractedAmount = extracted.amount;
             updateData.extractedVatPercent = extracted.vatPercent;
         }
         // Use counterparty data if available, otherwise fall back to legacy extracted.partner

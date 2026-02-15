@@ -71,6 +71,32 @@ function normalizeWebsite(website) {
         return null;
     return domain || null;
 }
+function toFiniteNumber(value) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+        return value;
+    }
+    if (typeof value === "string") {
+        const normalized = value.trim().replace(",", ".");
+        if (!normalized)
+            return null;
+        const parsed = Number(normalized);
+        if (Number.isFinite(parsed)) {
+            return parsed;
+        }
+    }
+    return null;
+}
+function toCents(value) {
+    const num = toFiniteNumber(value);
+    return num === null ? null : Math.round(num);
+}
+function normalizeVatPercent(vatPercent) {
+    const vat = toFiniteNumber(vatPercent);
+    if (vat === null || vat < 0 || vat > 100) {
+        return null;
+    }
+    return vat;
+}
 /**
  * Attempt to repair malformed JSON from Gemini responses
  */
@@ -218,6 +244,50 @@ JSON only:`;
         return { isInvoice: true, reason: null, confidence: 0.5, usage };
     }
 }
+function normalizeLineItems(lineItems) {
+    if (!Array.isArray(lineItems)) {
+        return null;
+    }
+    const normalizedItems = lineItems
+        .map((item, index) => {
+        const amount = toCents(item?.amount);
+        if (amount === null) {
+            return null;
+        }
+        const description = typeof item?.description === "string"
+            ? item.description.trim()
+            : "";
+        const quantity = toFiniteNumber(item?.quantity);
+        const normalizedQuantity = quantity === null ? null : quantity;
+        let unitPrice = toCents(item?.unitPrice);
+        const vatPercent = normalizeVatPercent(item?.vatPercent);
+        let vatAmount = toCents(item?.vatAmount);
+        if (vatAmount === null && vatPercent !== null) {
+            vatAmount = Math.round((amount * vatPercent) / (100 + vatPercent));
+        }
+        if (vatAmount === null) {
+            vatAmount = 0;
+        }
+        if (unitPrice === null && normalizedQuantity && normalizedQuantity !== 0) {
+            const amountLooksNet = vatPercent !== null && vatPercent > 0
+                ? Math.abs(Math.round((amount * vatPercent) / 100) - vatAmount) <
+                    Math.abs(Math.round((amount * vatPercent) / (100 + vatPercent)) - vatAmount)
+                : false;
+            const netAmount = amountLooksNet ? amount : amount - vatAmount;
+            unitPrice = Math.round(netAmount / normalizedQuantity);
+        }
+        return {
+            description: description || `Item ${index + 1}`,
+            quantity: normalizedQuantity,
+            unitPrice,
+            vatPercent,
+            vatAmount,
+            amount,
+        };
+    })
+        .filter((item) => item !== null);
+    return normalizedItems.length > 0 ? normalizedItems : null;
+}
 async function parseWithGemini(fileBuffer, fileType, model = exports.DEFAULT_GEMINI_MODEL) {
     const projectId = getProjectId();
     const vertexAI = new vertexai_1.VertexAI({ project: projectId, location: VERTEX_LOCATION });
@@ -248,6 +318,12 @@ CRITICAL RULES:
 1. ONLY extract data that is ACTUALLY VISIBLE in the document
 2. If a field is not found, use null - NEVER make up values
 3. For each field, also return the EXACT text as it appears in the document (for search)
+
+LINE ITEM EXTRACTION (IMPORTANT):
+- Extract ALL line items from the document
+- If no itemization is visible, create exactly ONE line item for the total
+- Return all monetary amounts in cents
+- Use "vatPercent": null when the rate is not explicitly visible (do not guess)
 
 Input format: German (dates DD.MM.YYYY, amounts with comma like 123,45)
 Output: date as YYYY-MM-DD, amount in cents (123,45 → 12345)
@@ -290,6 +366,16 @@ JSON structure:
     "currency": "EUR",
     "vatPercent": 19,
     "vatPercent_raw": "19%",
+    "lineItems": [
+      {
+        "description": "USB-C Cable",
+        "quantity": 2,
+        "unitPrice": 999,
+        "vatPercent": 20,
+        "vatAmount": 333,
+        "amount": 1998
+      }
+    ],
     "confidence": 0.85,
 
     "issuer": {
@@ -405,12 +491,14 @@ JSON only, no markdown, no explanation.`;
     const legacyIban = issuer?.iban || parsed.extracted?.iban || null;
     const legacyAddress = issuer?.address || parsed.extracted?.address || null;
     const legacyWebsite = issuer?.website || normalizeWebsite(parsed.extracted?.website);
+    const lineItems = normalizeLineItems(parsed.extracted?.lineItems || parsed.lineItems || null);
     // Classification is handled by classifyDocument, not here
     const extracted = {
         date: parsed.extracted?.date || null,
         amount: typeof parsed.extracted?.amount === "number" ? parsed.extracted.amount : null,
         currency: normalizeCurrency(parsed.extracted?.currency),
         vatPercent: typeof parsed.extracted?.vatPercent === "number" ? parsed.extracted.vatPercent : null,
+        lineItems,
         partner: legacyPartner,
         vatId: legacyVatId,
         iban: legacyIban,

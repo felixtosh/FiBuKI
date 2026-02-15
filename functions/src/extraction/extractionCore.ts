@@ -397,18 +397,69 @@ function normalizeExtractedLineItems(
     .filter((item): item is ExtractedLineItem => item !== null);
 }
 
-function consolidateLineItems(lineItems: ExtractedLineItem[]): {
+function inferLineItemAmountsAreNet(lineItems: ExtractedLineItem[]): boolean {
+  let comparedItems = 0;
+  let netInterpretationError = 0;
+  let grossInterpretationError = 0;
+
+  for (const item of lineItems) {
+    if (
+      item.vatPercent === null ||
+      !Number.isFinite(item.vatPercent) ||
+      item.vatPercent <= 0 ||
+      !Number.isFinite(item.vatAmount)
+    ) {
+      continue;
+    }
+
+    const rate = item.vatPercent;
+    const expectedVatIfNet = Math.round((item.amount * rate) / 100);
+    const expectedVatIfGross = Math.round((item.amount * rate) / (100 + rate));
+
+    netInterpretationError += Math.abs(expectedVatIfNet - item.vatAmount);
+    grossInterpretationError += Math.abs(expectedVatIfGross - item.vatAmount);
+    comparedItems += 1;
+  }
+
+  if (comparedItems === 0) {
+    return false;
+  }
+
+  return netInterpretationError < grossInterpretationError;
+}
+
+function consolidateLineItems(
+  lineItems: ExtractedLineItem[],
+  extractedDocumentAmount?: number | null
+): {
   totalAmount: number;
   totalVatAmount: number;
   consolidatedVatPercent: number | null;
 } {
-  const totalAmount = lineItems.reduce((sum, item) => sum + item.amount, 0);
+  const totalAmountFromItems = lineItems.reduce((sum, item) => sum + item.amount, 0);
   const totalVatAmount = lineItems.reduce((sum, item) => sum + item.vatAmount, 0);
+  const totalAmountFromNetPlusVat = totalAmountFromItems + totalVatAmount;
 
   const firstRate = lineItems[0]?.vatPercent ?? null;
   const hasSingleRate = firstRate !== null && lineItems.every((item) =>
     item.vatPercent !== null && Math.abs(item.vatPercent - firstRate) < 0.0001
   );
+
+  let totalAmount = totalAmountFromItems;
+
+  if (typeof extractedDocumentAmount === "number" && Number.isFinite(extractedDocumentAmount)) {
+    const distanceToAsIs = Math.abs(totalAmountFromItems - extractedDocumentAmount);
+    const distanceToNetPlusVat = Math.abs(totalAmountFromNetPlusVat - extractedDocumentAmount);
+
+    if (distanceToNetPlusVat < distanceToAsIs) {
+      totalAmount = totalAmountFromNetPlusVat;
+    } else {
+      totalAmount = totalAmountFromItems;
+    }
+  } else {
+    const amountsLookNet = totalVatAmount > 0 && inferLineItemAmountsAreNet(lineItems);
+    totalAmount = amountsLookNet ? totalAmountFromNetPlusVat : totalAmountFromItems;
+  }
 
   return {
     totalAmount,
@@ -656,7 +707,7 @@ export async function runExtraction(
 
     const normalizedLineItems = normalizeExtractedLineItems(extracted.lineItems);
     if (normalizedLineItems.length > 0) {
-      const consolidated = consolidateLineItems(normalizedLineItems);
+      const consolidated = consolidateLineItems(normalizedLineItems, extracted.amount);
       updateData.extractedLineItems = normalizedLineItems;
       updateData.extractedAmount = consolidated.totalAmount;
       updateData.extractedVatAmount = consolidated.totalVatAmount;

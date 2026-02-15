@@ -87,6 +87,58 @@ interface FileExtractedInfoProps {
   isUpdating?: boolean;
 }
 
+function inferLineItemAmountsAreNet(lineItems: TaxFile["extractedLineItems"]): boolean {
+  if (!Array.isArray(lineItems) || lineItems.length === 0) {
+    return false;
+  }
+
+  let comparedItems = 0;
+  let netInterpretationError = 0;
+  let grossInterpretationError = 0;
+
+  for (const item of lineItems) {
+    if (
+      item.vatPercent == null ||
+      !Number.isFinite(item.vatPercent) ||
+      item.vatPercent <= 0 ||
+      !Number.isFinite(item.vatAmount)
+    ) {
+      continue;
+    }
+
+    const rate = item.vatPercent;
+    const expectedVatIfNet = Math.round((item.amount * rate) / 100);
+    const expectedVatIfGross = Math.round((item.amount * rate) / (100 + rate));
+
+    netInterpretationError += Math.abs(expectedVatIfNet - item.vatAmount);
+    grossInterpretationError += Math.abs(expectedVatIfGross - item.vatAmount);
+    comparedItems += 1;
+  }
+
+  if (comparedItems === 0) {
+    return false;
+  }
+
+  return netInterpretationError < grossInterpretationError;
+}
+
+function getEffectiveExtractedAmount(file: TaxFile): number | null {
+  const lineItems = file.extractedLineItems;
+  if (!Array.isArray(lineItems) || lineItems.length === 0) {
+    return file.extractedAmount ?? null;
+  }
+
+  const lineAmountSum = lineItems.reduce((sum, item) => sum + item.amount, 0);
+  const lineVatSum = lineItems.reduce((sum, item) => sum + item.vatAmount, 0);
+  const looksNet = lineVatSum > 0 && inferLineItemAmountsAreNet(lineItems);
+
+  if (looksNet) {
+    return lineAmountSum + lineVatSum;
+  }
+
+  return file.extractedAmount ?? lineAmountSum;
+}
+
 export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsing, onFieldClick, onDirectionChange, onUpdate, isUpdating }: FileExtractedInfoProps) {
   const [showMore, setShowMore] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -104,6 +156,7 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
 
   // Initialize edit fields from file data
   const startEditing = () => {
+    const effectiveAmount = getEffectiveExtractedAmount(file);
     const existingAdditional = (file.extractedAdditionalFields || []).map((f) => ({
       label: f.label,
       value: f.value,
@@ -120,7 +173,7 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
     const extractedDate = toDateSafe(file.extractedDate);
     setEditedFields({
       date: extractedDate ? format(extractedDate, "yyyy-MM-dd") : "",
-      amount: file.extractedAmount != null ? (file.extractedAmount / 100).toString() : "",
+      amount: effectiveAmount != null ? (effectiveAmount / 100).toString() : "",
       vatPercent: file.extractedVatPercent != null ? file.extractedVatPercent.toString() : "",
       partner: file.extractedPartner || "",
       vatId: file.extractedVatId || "",
@@ -293,6 +346,7 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
   const hasLineItems = lineItems.length > 0;
   const editedLineItems = editedFields.lineItems || [];
   const hasEditableLineItems = isEditing && editedLineItems.length > 0;
+  const effectiveAmount = getEffectiveExtractedAmount(file);
 
   // Secondary fields (VAT ID, IBAN, Address) - shown in "Show more"
   const hasSecondaryFields = !!(file.extractedVatId || file.extractedIban || file.extractedAddress);
@@ -422,7 +476,7 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
           >
             {(() => {
               const { display, isNegative, conversionInfo } = formatAmountWithConversion(
-                file.extractedAmount,
+                effectiveAmount,
                 file.extractedCurrency,
                 file.invoiceDirection,
                 toDateSafe(file.extractedDate) ?? undefined

@@ -522,7 +522,7 @@ export const searchLocalFilesTool = tool(
       filename: file.fileName,
       mimeType: file.fileType,
       // Pass file extracted data for accurate scoring
-      fileExtractedAmount: file.extractedAmount ?? null,
+      fileExtractedAmount: getFileAmountForValidation(file, tx.amount),
       fileExtractedDate: file.extractedDate?.toDate?.()?.toISOString() ?? null,
       fileExtractedPartner: file.extractedPartner ?? null,
     }));
@@ -586,6 +586,8 @@ export const searchLocalFilesTool = tool(
             if (!hasAmountSignal) continue;
           }
 
+          const candidateAmount = getFileAmountForValidation(file, tx.amount);
+
           candidates.push({
             id: key,
             sourceType: "local_file",
@@ -595,7 +597,7 @@ export const searchLocalFilesTool = tool(
             fileId: file.id,
             fileName: file.fileName,
             // Convert from cents to whole units for display
-            extractedAmount: file.extractedAmount != null ? file.extractedAmount / 100 : undefined,
+            extractedAmount: candidateAmount != null ? candidateAmount / 100 : undefined,
             extractedCurrency: file.extractedCurrency || "EUR",
             extractedDate: file.extractedDate?.toDate?.()?.toISOString() ?? undefined,
             extractedPartner: file.extractedPartner ?? undefined,
@@ -1580,6 +1582,55 @@ function doNamesMatch(name1: string | null | undefined, name2: string | null | u
   return matchingWords.length >= 1;
 }
 
+function toFiniteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function getFileAmountForValidation(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  file: any,
+  txAmount: number | null | undefined
+): number | null {
+  const extractedAmount = toFiniteNumber(file?.extractedAmount);
+  const extractedVatAmount = toFiniteNumber(file?.extractedVatAmount);
+
+  const lineItems = Array.isArray(file?.extractedLineItems) ? file.extractedLineItems : [];
+  const lineAmountSum = lineItems.reduce((sum: number, item: unknown) => {
+    const amount = toFiniteNumber((item as { amount?: unknown })?.amount);
+    return amount === null ? sum : sum + amount;
+  }, 0);
+  const lineVatSum = lineItems.reduce((sum: number, item: unknown) => {
+    const vatAmount = toFiniteNumber((item as { vatAmount?: unknown })?.vatAmount);
+    return vatAmount === null ? sum : sum + vatAmount;
+  }, 0);
+
+  const candidates: number[] = [];
+  if (extractedAmount !== null) {
+    candidates.push(extractedAmount);
+  }
+  if (lineItems.length > 0) {
+    candidates.push(lineAmountSum);
+    candidates.push(lineAmountSum + lineVatSum);
+  } else if (extractedAmount !== null && extractedVatAmount !== null) {
+    candidates.push(extractedAmount + extractedVatAmount);
+  }
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const uniqueCandidates = Array.from(new Set(candidates.map((value) => Math.round(value))));
+  const txAbs = txAmount != null ? Math.abs(txAmount) : null;
+
+  if (txAbs != null) {
+    return uniqueCandidates.reduce((best, candidate) =>
+      Math.abs(candidate - txAbs) < Math.abs(best - txAbs) ? candidate : best
+    );
+  }
+
+  return extractedAmount !== null ? extractedAmount : uniqueCandidates[0];
+}
+
 export const connectFileToTransactionTool = tool(
   async ({ fileId, transactionId, confidence, skipValidation, searchQuery, sourceType }, config) => {
     const userId = config?.configurable?.userId;
@@ -1618,7 +1669,7 @@ export const connectFileToTransactionTool = tool(
       const warnings: string[] = [];
 
       // 1. Amount validation - check if amounts are significantly different
-      const fileAmount = file.extractedAmount; // in cents
+      const fileAmount = getFileAmountForValidation(file, tx.amount); // in cents (best-effort gross)
       const txAmount = tx.amount; // in cents
 
       if (fileAmount != null && txAmount != null) {
@@ -1671,7 +1722,7 @@ export const connectFileToTransactionTool = tool(
           transactionId,
           fileName: file.fileName,
           extractedPartner: file.extractedPartner || null,
-          extractedAmount: file.extractedAmount != null ? file.extractedAmount / 100 : null,
+          extractedAmount: fileAmount != null ? fileAmount / 100 : null,
           extractedCurrency: file.extractedCurrency || "EUR",
           transactionName: tx.name,
           transactionAmount: tx.amount != null ? tx.amount / 100 : null,

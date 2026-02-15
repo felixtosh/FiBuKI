@@ -72,8 +72,8 @@ describe("File Cloud Functions", () => {
       await updateFileCallable(ctx as any, {
         fileId,
         data: {
-          extractedAmount: 199.99,
-          extractedVatAmount: 33.33,
+          extractedAmount: 1998,
+          extractedVatAmount: 333,
           extractedLineItems: [
             {
               description: "USB-C Cable",
@@ -90,10 +90,44 @@ describe("File Cloud Functions", () => {
       });
 
       const updated = store.getDoc("files", fileId);
-      expect(updated?.extractedAmount).toBe(199.99);
-      expect(updated?.extractedVatAmount).toBe(33.33);
+      expect(updated?.extractedAmount).toBe(1998);
+      expect(updated?.extractedVatAmount).toBe(333);
       expect(updated?.extractedLineItems).toHaveLength(1);
       expect(updated?.extractedPartner).toBe("Amazon");
+    });
+
+    it("should consolidate net line-item amounts to gross extractedAmount", async () => {
+      const userId = "user-123";
+      const fileId = "file-457";
+      store.setDoc("files", fileId, createTestFile({ userId }));
+
+      const ctx = {
+        userId,
+        db: createMockFirestore(),
+        request: { auth: { uid: userId }, data: {} },
+        logAIUsage: vi.fn(),
+      };
+
+      await updateFileCallable(ctx as any, {
+        fileId,
+        data: {
+          extractedLineItems: [
+            {
+              description: "Consulting",
+              quantity: 1,
+              unitPrice: 50000,
+              vatPercent: 20,
+              vatAmount: 10000,
+              amount: 50000,
+            },
+          ],
+        },
+      });
+
+      const updated = store.getDoc("files", fileId);
+      expect(updated?.extractedAmount).toBe(60000);
+      expect(updated?.extractedVatAmount).toBe(10000);
+      expect(updated?.extractedVatPercent).toBe(20);
     });
 
     it("should reject update for file owned by another user", async () => {

@@ -18,6 +18,68 @@ async function getDb() {
   return _db;
 }
 
+function toFiniteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function inferLineItemAmountsAreNet(
+  lineItems: Array<{ amount?: unknown; vatAmount?: unknown; vatPercent?: unknown }>
+): boolean {
+  let comparedItems = 0;
+  let netInterpretationError = 0;
+  let grossInterpretationError = 0;
+
+  for (const item of lineItems) {
+    const amount = toFiniteNumber(item.amount);
+    const vatAmount = toFiniteNumber(item.vatAmount);
+    const vatPercent = toFiniteNumber(item.vatPercent);
+    if (amount === null || vatAmount === null || vatPercent === null || vatPercent <= 0) {
+      continue;
+    }
+
+    const expectedVatIfNet = Math.round((amount * vatPercent) / 100);
+    const expectedVatIfGross = Math.round((amount * vatPercent) / (100 + vatPercent));
+
+    netInterpretationError += Math.abs(expectedVatIfNet - vatAmount);
+    grossInterpretationError += Math.abs(expectedVatIfGross - vatAmount);
+    comparedItems += 1;
+  }
+
+  if (comparedItems === 0) {
+    return false;
+  }
+
+  return netInterpretationError < grossInterpretationError;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function getEffectiveExtractedAmount(data: any): number | null {
+  const extractedAmount = toFiniteNumber(data?.extractedAmount);
+  const lineItems = Array.isArray(data?.extractedLineItems)
+    ? data.extractedLineItems as Array<{ amount?: unknown; vatAmount?: unknown; vatPercent?: unknown }>
+    : [];
+
+  if (lineItems.length === 0) {
+    return extractedAmount;
+  }
+
+  const amountFromItems = lineItems.reduce((sum, item) => {
+    const amount = toFiniteNumber(item.amount);
+    return amount === null ? sum : sum + amount;
+  }, 0);
+  const vatFromItems = lineItems.reduce((sum, item) => {
+    const vatAmount = toFiniteNumber(item.vatAmount);
+    return vatAmount === null ? sum : sum + vatAmount;
+  }, 0);
+
+  const amountsLookNet = vatFromItems > 0 && inferLineItemAmountsAreNet(lineItems);
+  if (amountsLookNet) {
+    return amountFromItems + vatFromItems;
+  }
+
+  return extractedAmount ?? amountFromItems;
+}
+
 // ============================================================================
 // List Transactions
 // ============================================================================
@@ -431,7 +493,7 @@ export const listFilesTool = tool(
       // Get extracted amount - apply sign based on invoiceDirection
       // incoming = expense = negative, outgoing = income = positive
       // Convert from cents to whole currency units
-      const rawAmount = data.extractedAmount || null;
+      const rawAmount = getEffectiveExtractedAmount(data);
       const signedAmountCents = rawAmount != null
         ? (data.invoiceDirection === "incoming" ? -rawAmount : rawAmount)
         : null;
@@ -551,7 +613,7 @@ export const getFileTool = tool(
     const uploadedAt = data.uploadedAt?.toDate?.();
 
     // Get amount with sign based on direction (convert from cents to whole units)
-    const rawAmount = data.extractedAmount || null;
+    const rawAmount = getEffectiveExtractedAmount(data);
     const signedAmountCents = rawAmount != null
       ? (data.invoiceDirection === "incoming" ? -rawAmount : rawAmount)
       : null;
@@ -644,7 +706,7 @@ export const waitForFileExtractionTool = tool(
         const uploadedAt = data.uploadedAt?.toDate?.();
 
         // Get amount with sign based on direction (convert from cents to whole units)
-        const rawAmount = data.extractedAmount || null;
+        const rawAmount = getEffectiveExtractedAmount(data);
         const signedAmountCents = rawAmount != null
           ? (data.invoiceDirection === "incoming" ? -rawAmount : rawAmount)
           : null;

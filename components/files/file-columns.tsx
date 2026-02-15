@@ -40,6 +40,58 @@ function normalizeCurrency(currency: string | null | undefined): string {
   return CURRENCY_SYMBOL_MAP[currency] || "EUR";
 }
 
+function inferLineItemAmountsAreNet(file: TaxFile): boolean {
+  const lineItems = file.extractedLineItems;
+  if (!Array.isArray(lineItems) || lineItems.length === 0) {
+    return false;
+  }
+
+  let comparedItems = 0;
+  let netInterpretationError = 0;
+  let grossInterpretationError = 0;
+
+  for (const item of lineItems) {
+    if (
+      item.vatPercent == null ||
+      !Number.isFinite(item.vatPercent) ||
+      item.vatPercent <= 0 ||
+      !Number.isFinite(item.vatAmount)
+    ) {
+      continue;
+    }
+
+    const rate = item.vatPercent;
+    const expectedVatIfNet = Math.round((item.amount * rate) / 100);
+    const expectedVatIfGross = Math.round((item.amount * rate) / (100 + rate));
+
+    netInterpretationError += Math.abs(expectedVatIfNet - item.vatAmount);
+    grossInterpretationError += Math.abs(expectedVatIfGross - item.vatAmount);
+    comparedItems += 1;
+  }
+
+  if (comparedItems === 0) {
+    return false;
+  }
+
+  return netInterpretationError < grossInterpretationError;
+}
+
+function getEffectiveExtractedAmount(file: TaxFile): number | null {
+  if (!Array.isArray(file.extractedLineItems) || file.extractedLineItems.length === 0) {
+    return file.extractedAmount ?? null;
+  }
+
+  const amountFromItems = file.extractedLineItems.reduce((sum, item) => sum + item.amount, 0);
+  const vatFromItems = file.extractedLineItems.reduce((sum, item) => sum + item.vatAmount, 0);
+  const looksNet = vatFromItems > 0 && inferLineItemAmountsAreNet(file);
+
+  if (looksNet) {
+    return amountFromItems + vatFromItems;
+  }
+
+  return file.extractedAmount ?? amountFromItems;
+}
+
 export function getFileColumns(
   userPartners: UserPartner[] = [],
   globalPartners: GlobalPartner[] = [],
@@ -146,12 +198,13 @@ export function getFileColumns(
       },
     },
     {
-      accessorKey: "extractedAmount",
+      id: "extractedAmount",
+      accessorFn: (row) => getEffectiveExtractedAmount(row),
       header: ({ column }) => (
         <SortableHeader column={column}>Amount</SortableHeader>
       ),
       cell: ({ row }) => {
-        const amount = row.getValue("extractedAmount") as number | null | undefined;
+        const amount = getEffectiveExtractedAmount(row.original);
         const currency = normalizeCurrency(row.original.extractedCurrency);
         const vatPercent = row.original.extractedVatPercent;
         const vatAmount = row.original.extractedVatAmount;

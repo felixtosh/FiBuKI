@@ -384,7 +384,11 @@ function normalizeLineItems(lineItems: GeminiLineItem[] | null | undefined): Ext
       }
 
       if (unitPrice === null && normalizedQuantity && normalizedQuantity !== 0) {
-        const netAmount = amount - vatAmount;
+        const amountLooksNet = vatPercent !== null && vatPercent > 0
+          ? Math.abs(Math.round((amount * vatPercent) / 100) - vatAmount) <
+            Math.abs(Math.round((amount * vatPercent) / (100 + vatPercent)) - vatAmount)
+          : false;
+        const netAmount = amountLooksNet ? amount : amount - vatAmount;
         unitPrice = Math.round(netAmount / normalizedQuantity);
       }
 

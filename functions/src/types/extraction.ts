@@ -23,7 +23,7 @@ export interface ExtractedLineItem {
   vatPercent: number | null;
   /** VAT amount in cents */
   vatAmount: number;
-  /** Gross amount including VAT in cents */
+  /** Line amount in cents (preferably gross; some extractions provide net) */
   amount: number;
 }
 

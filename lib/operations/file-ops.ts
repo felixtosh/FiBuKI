@@ -134,6 +134,39 @@ export function resolvePartnerConflict(
   return { winnerId: txPid!, source: "transaction", shouldSync: true };
 }
 
+function getEffectiveExtractedAmount(file: TaxFile): number | null {
+  const lineItems = file.extractedLineItems;
+  if (!Array.isArray(lineItems) || lineItems.length === 0) {
+    return file.extractedAmount ?? null;
+  }
+
+  const amountFromItems = lineItems.reduce((sum, item) => sum + item.amount, 0);
+  const vatFromItems = lineItems.reduce((sum, item) => sum + item.vatAmount, 0);
+  const amountsLookNet = vatFromItems > 0 && inferLineItemAmountsAreNet(lineItems);
+
+  if (amountsLookNet) {
+    return amountFromItems + vatFromItems;
+  }
+
+  return file.extractedAmount ?? amountFromItems;
+}
+
+function normalizeFileMonetaryFields(file: TaxFile): TaxFile {
+  const lineItems = file.extractedLineItems;
+  if (!Array.isArray(lineItems) || lineItems.length === 0) {
+    return file;
+  }
+
+  const vatFromItems = lineItems.reduce((sum, item) => sum + item.vatAmount, 0);
+  const effectiveAmount = getEffectiveExtractedAmount(file);
+
+  return {
+    ...file,
+    extractedAmount: effectiveAmount,
+    extractedVatAmount: file.extractedVatAmount ?? vatFromItems,
+  };
+}
+
 /**
  * List all files for the current user with optional filters
  */
@@ -156,7 +189,7 @@ export async function listFiles(
   let files = snapshot.docs.map((doc) => ({
     id: doc.id,
     ...doc.data(),
-  })) as TaxFile[];
+  }) as TaxFile).map((file) => normalizeFileMonetaryFields(file));
 
   // Filter out soft-deleted files by default (unless includeDeleted is true)
   if (!filters?.includeDeleted) {
@@ -238,7 +271,7 @@ export async function getFile(
     return null;
   }
 
-  return { id: snapshot.id, ...data } as TaxFile;
+  return normalizeFileMonetaryFields({ id: snapshot.id, ...data } as TaxFile);
 }
 
 /**
@@ -260,7 +293,7 @@ export async function checkFileDuplicate(
   }
 
   const doc = snapshot.docs[0];
-  return { id: doc.id, ...doc.data() } as TaxFile;
+  return normalizeFileMonetaryFields({ id: doc.id, ...doc.data() } as TaxFile);
 }
 
 /**
@@ -485,7 +518,11 @@ function normalizeEditableLineItems(lineItems: EditableLineItem[] | undefined): 
       }
 
       if (unitPrice === null && quantity && quantity !== 0) {
-        const netAmount = amount - vatAmount;
+        const amountLooksNet = vatPercent !== null && vatPercent > 0
+          ? Math.abs(Math.round((amount * vatPercent) / 100) - vatAmount) <
+            Math.abs(Math.round((amount * vatPercent) / (100 + vatPercent)) - vatAmount)
+          : false;
+        const netAmount = amountLooksNet ? amount : amount - vatAmount;
         unitPrice = Math.round(netAmount / quantity);
       }
 
@@ -501,18 +538,63 @@ function normalizeEditableLineItems(lineItems: EditableLineItem[] | undefined): 
     .filter((item): item is ExtractedLineItem => item !== null);
 }
 
-function consolidateLineItems(lineItems: ExtractedLineItem[]): {
+function inferLineItemAmountsAreNet(lineItems: ExtractedLineItem[]): boolean {
+  let comparedItems = 0;
+  let netInterpretationError = 0;
+  let grossInterpretationError = 0;
+
+  for (const item of lineItems) {
+    if (
+      item.vatPercent === null ||
+      !Number.isFinite(item.vatPercent) ||
+      item.vatPercent <= 0 ||
+      !Number.isFinite(item.vatAmount)
+    ) {
+      continue;
+    }
+
+    const rate = item.vatPercent;
+    const expectedVatIfNet = Math.round((item.amount * rate) / 100);
+    const expectedVatIfGross = Math.round((item.amount * rate) / (100 + rate));
+
+    netInterpretationError += Math.abs(expectedVatIfNet - item.vatAmount);
+    grossInterpretationError += Math.abs(expectedVatIfGross - item.vatAmount);
+    comparedItems += 1;
+  }
+
+  if (comparedItems === 0) {
+    return false;
+  }
+
+  return netInterpretationError < grossInterpretationError;
+}
+
+function consolidateLineItems(
+  lineItems: ExtractedLineItem[],
+  explicitDocumentAmount?: number | null
+): {
   amount: number;
   vatAmount: number;
   vatPercent: number | null;
 } {
-  const amount = lineItems.reduce((sum, item) => sum + item.amount, 0);
+  const amountFromItems = lineItems.reduce((sum, item) => sum + item.amount, 0);
   const vatAmount = lineItems.reduce((sum, item) => sum + item.vatAmount, 0);
+  const amountFromNetPlusVat = amountFromItems + vatAmount;
 
   const firstRate = lineItems[0]?.vatPercent ?? null;
   const hasSingleRate = firstRate !== null && lineItems.every((item) =>
     item.vatPercent !== null && Math.abs(item.vatPercent - firstRate) < 0.0001
   );
+
+  let amount = amountFromItems;
+  if (typeof explicitDocumentAmount === "number" && Number.isFinite(explicitDocumentAmount)) {
+    const distanceToAsIs = Math.abs(amountFromItems - explicitDocumentAmount);
+    const distanceToNetPlusVat = Math.abs(amountFromNetPlusVat - explicitDocumentAmount);
+    amount = distanceToNetPlusVat < distanceToAsIs ? amountFromNetPlusVat : amountFromItems;
+  } else {
+    const amountsLookNet = vatAmount > 0 && inferLineItemAmountsAreNet(lineItems);
+    amount = amountsLookNet ? amountFromNetPlusVat : amountFromItems;
+  }
 
   return {
     amount,
@@ -554,7 +636,8 @@ export async function updateFileExtractedFields(
   const hasLineItems = fields.lineItems !== undefined && normalizedLineItems.length > 0;
 
   if (hasLineItems) {
-    const consolidated = consolidateLineItems(normalizedLineItems);
+    const explicitAmount = parseCurrencyToCents(fields.amount);
+    const consolidated = consolidateLineItems(normalizedLineItems, explicitAmount);
     updates.extractedLineItems = normalizedLineItems;
     updates.extractedAmount = consolidated.amount;
     updates.extractedVatAmount = consolidated.vatAmount;
