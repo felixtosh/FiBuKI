@@ -1,20 +1,20 @@
 {
   "landing": {
     "hero": {
-      "title": "Your bookkeeping works while you sleep",
-      "subtitle": "FiBuKI learns from every action and handles your pre-accounting automatically – so you can focus on your business.",
+      "title": "Bank tools for AI-first companies",
+      "subtitle": "Connect your bank data to Claude, ChatGPT, and your own tools via MCP & API. Let AI handle matching, extraction, and bookkeeping.",
       "ctaLogin": "Go to Dashboard",
       "ctaGetStarted": "Get Started"
     },
     "toolPreviews": {
       "transactions": {
-        "title": "Manage Transactions"
+        "title": "Bank Data API"
       },
       "files": {
-        "title": "Auto-Connect Receipts"
+        "title": "AI Matching"
       },
       "integrations": {
-        "title": "Connect Integrations"
+        "title": "Integrations"
       }
     },
     "footer": {

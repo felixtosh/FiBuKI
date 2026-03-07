@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
  * Workers run as independent LangGraph agents with restricted toolsets.
  */
 
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { Timestamp, FieldValue } from "firebase-admin/firestore";
@@ -33,6 +33,18 @@ interface WorkerRequest {
   workerRequestId?: string;
   triggeredBy?: "auto" | "user";
   modelProvider?: ModelProvider;
+}
+
+interface WorkerExecutionResponse {
+  runId: string;
+  status: "running" | "completed" | "failed" | "blocked_for_reauth";
+  summary?: string;
+  actionsPerformed?: WorkerRun["actionsPerformed"];
+  error?: string;
+  errorCode?: string;
+  retryAfterMs?: number;
+  sessionId?: string;
+  deduped?: boolean;
 }
 
 interface PartnerBatchStateDoc {
@@ -62,6 +74,65 @@ const PARTNER_BATCH_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
 const PARTNER_BATCH_FAILURE_BACKOFF_BASE_MS = 5 * 60 * 1000; // 5 minutes
 const PARTNER_BATCH_FAILURE_BACKOFF_MAX_MS = 6 * 60 * 60 * 1000; // 6 hours
 const GMAIL_REAUTH_RETRY_DELAY_MS = 10 * 60 * 1000; // 10 minutes
+const WORKER_DEDUPE_WINDOW_MS = 30 * 60 * 1000; // 30 minutes
+const FIRESTORE_WRITE_RETRY_ATTEMPTS = 3;
+const FIRESTORE_WRITE_RETRY_BASE_DELAY_MS = 250;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getErrorCode(err: unknown): number | string | undefined {
+  if (!err || typeof err !== "object") return undefined;
+  const maybe = err as { code?: unknown };
+  return typeof maybe.code === "number" || typeof maybe.code === "string"
+    ? maybe.code
+    : undefined;
+}
+
+function isTransientFirestoreWriteError(err: unknown): boolean {
+  const code = getErrorCode(err);
+  const message = err instanceof Error ? err.message : String(err);
+  const upper = message.toUpperCase();
+
+  return (
+    code === 4 || // DEADLINE_EXCEEDED
+    code === 10 || // ABORTED
+    code === 14 || // UNAVAILABLE
+    code === "DEADLINE_EXCEEDED" ||
+    code === "ABORTED" ||
+    code === "UNAVAILABLE" ||
+    upper.includes("DEADLINE_EXCEEDED") ||
+    upper.includes("UNAVAILABLE")
+  );
+}
+
+async function withFirestoreWriteRetry<T>(
+  label: string,
+  fn: () => Promise<T>
+): Promise<T> {
+  let lastErr: unknown;
+
+  for (let attempt = 1; attempt <= FIRESTORE_WRITE_RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      const isTransient = isTransientFirestoreWriteError(err);
+      if (!isTransient || attempt === FIRESTORE_WRITE_RETRY_ATTEMPTS) {
+        throw err;
+      }
+      const delayMs = FIRESTORE_WRITE_RETRY_BASE_DELAY_MS * attempt;
+      console.warn(
+        `[Worker API] ${label} failed on attempt ${attempt}/${FIRESTORE_WRITE_RETRY_ATTEMPTS}; retrying in ${delayMs}ms`,
+        err
+      );
+      await sleep(delayMs);
+    }
+  }
+
+  throw lastErr instanceof Error ? lastErr : new Error(`${label} failed`);
+}
 
 function isGmailReauthErrorMessage(message?: string): boolean {
   if (!message) return false;
@@ -204,6 +275,65 @@ function cleanTriggerContext(triggerContext?: WorkerTriggerContext): WorkerTrigg
   }
 
   return Object.keys(cleaned).length > 0 ? cleaned : undefined;
+}
+
+function buildWorkerDedupeKey(
+  workerType: WorkerType,
+  triggerContext?: WorkerTriggerContext
+): string | undefined {
+  if (!triggerContext) return undefined;
+  if (triggerContext.transactionId) return `${workerType}:tx:${triggerContext.transactionId}`;
+  if (triggerContext.fileId) return `${workerType}:file:${triggerContext.fileId}`;
+  if (triggerContext.partnerId) return `${workerType}:partner:${triggerContext.partnerId}`;
+  return undefined;
+}
+
+function toMillis(value: unknown): number | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const maybe = value as { toMillis?: () => number };
+  if (typeof maybe.toMillis === "function") return maybe.toMillis();
+  return undefined;
+}
+
+async function findActiveRunByDedupeKey(
+  userId: string,
+  dedupeKey: string
+): Promise<{ runId: string; sessionId?: string } | null> {
+  const snap = await db
+    .collection(`users/${userId}/workerRuns`)
+    .where("dedupeKey", "==", dedupeKey)
+    .limit(10)
+    .get();
+
+  if (snap.empty) return null;
+
+  const nowMs = Date.now();
+  const candidates = snap.docs
+    .map((doc) => {
+      const data = doc.data() as Partial<WorkerRun>;
+      const startedAtMs = toMillis(data.startedAt);
+      const createdAtMs = toMillis(data.createdAt);
+      const freshnessMs = startedAtMs ?? createdAtMs ?? 0;
+      return {
+        runId: doc.id,
+        status: data.status,
+        sessionId: data.sessionId,
+        freshnessMs,
+      };
+    })
+    .filter(
+      (run) =>
+        run.status === "running" &&
+        nowMs - run.freshnessMs <= WORKER_DEDUPE_WINDOW_MS
+    )
+    .sort((a, b) => b.freshnessMs - a.freshnessMs);
+
+  if (candidates.length === 0) return null;
+  const latest = candidates[0];
+  return {
+    runId: latest.runId,
+    ...(latest.sessionId ? { sessionId: latest.sessionId } : {}),
+  };
 }
 
 function buildPartnerBatchPrompt(partnerId: string, fileIds: string[]): string {
@@ -685,45 +815,50 @@ async function appendMessagesToSession(
 ): Promise<void> {
   if (entries.length === 0) return;
 
-  const sessionRef = db.collection(`users/${userId}/chatSessions`).doc(sessionId);
-  const batch = db.batch();
-  const messagesRef = sessionRef.collection("messages");
+  await withFirestoreWriteRetry(
+    `appendMessagesToSession(${sessionId})`,
+    async () => {
+      const sessionRef = db.collection(`users/${userId}/chatSessions`).doc(sessionId);
+      const batch = db.batch();
+      const messagesRef = sessionRef.collection("messages");
 
-  for (const { message, sequence } of entries) {
-    const cleanParts = message.parts?.map(part => {
-      const clean: Record<string, unknown> = { type: part.type };
-      if ("text" in part) clean.text = part.text;
-      if ("toolCall" in part) clean.toolCall = part.toolCall;
-      return clean;
-    });
+      for (const { message, sequence } of entries) {
+        const cleanParts = message.parts?.map(part => {
+          const clean: Record<string, unknown> = { type: part.type };
+          if ("text" in part) clean.text = part.text;
+          if ("toolCall" in part) clean.toolCall = part.toolCall;
+          return clean;
+        });
 
-    const messageRef = messagesRef.doc(message.id);
-    batch.set(messageRef, {
-      role: message.role,
-      content: message.content || "",
-      parts: cleanParts,
-      createdAt: FieldValue.serverTimestamp(),
-      sequence,
-    });
-  }
+        const messageRef = messagesRef.doc(message.id);
+        batch.set(messageRef, {
+          role: message.role,
+          content: message.content || "",
+          parts: cleanParts,
+          createdAt: FieldValue.serverTimestamp(),
+          sequence,
+        });
+      }
 
-  const sessionUpdate: Record<string, unknown> = {
-    updatedAt: FieldValue.serverTimestamp(),
-  };
-  if (typeof persistedMessageCount === "number") {
-    sessionUpdate.messageCount = persistedMessageCount + 1; // +1 for initial user prompt
-  }
+      const sessionUpdate: Record<string, unknown> = {
+        updatedAt: FieldValue.serverTimestamp(),
+      };
+      if (typeof persistedMessageCount === "number") {
+        sessionUpdate.messageCount = persistedMessageCount + 1; // +1 for initial user prompt
+      }
 
-  const lastContent = [...entries]
-    .reverse()
-    .map((entry) => entry.message.content?.trim())
-    .find((content) => content);
-  if (lastContent) {
-    sessionUpdate.lastMessagePreview = lastContent.slice(0, 100);
-  }
+      const lastContent = [...entries]
+        .reverse()
+        .map((entry) => entry.message.content?.trim())
+        .find((content) => content);
+      if (lastContent) {
+        sessionUpdate.lastMessagePreview = lastContent.slice(0, 100);
+      }
 
-  batch.set(sessionRef, sessionUpdate, { merge: true });
-  await batch.commit();
+      batch.set(sessionRef, sessionUpdate, { merge: true });
+      await batch.commit();
+    }
+  );
 }
 
 /**
@@ -942,6 +1077,22 @@ export async function POST(req: Request) {
 
     let effectiveTriggerContext = cleanTriggerContext(triggerContext);
     let effectiveInitialPrompt = initialPrompt;
+    let dedupeKey = buildWorkerDedupeKey(workerType, effectiveTriggerContext);
+
+    if (dedupeKey) {
+      const activeDuplicate = await findActiveRunByDedupeKey(userId, dedupeKey);
+      if (activeDuplicate) {
+        console.log(
+          `[Worker API] Reusing active run ${activeDuplicate.runId} for dedupeKey=${dedupeKey}`
+        );
+        return NextResponse.json({
+          runId: activeDuplicate.runId,
+          status: "running",
+          ...(activeDuplicate.sessionId ? { sessionId: activeDuplicate.sessionId } : {}),
+          deduped: true,
+        } satisfies WorkerExecutionResponse);
+      }
+    }
 
     if (workerType === "partner_file_batch") {
       if (!effectiveTriggerContext?.partnerId) {
@@ -963,6 +1114,7 @@ export async function POST(req: Request) {
         effectiveTriggerContext!.partnerId!,
         effectiveTriggerContext!.fileIds || []
       );
+      dedupeKey = buildWorkerDedupeKey(workerType, effectiveTriggerContext);
     }
 
     const initialRun: Partial<WorkerRun> = {
@@ -972,6 +1124,7 @@ export async function POST(req: Request) {
       status: "running",
       triggeredBy,
       triggerContext: effectiveTriggerContext,
+      ...(dedupeKey ? { dedupeKey } : {}),
       messages: [],
       createdAt: Timestamp.now(),
       startedAt: Timestamp.now(),
@@ -989,6 +1142,7 @@ export async function POST(req: Request) {
     if (triggeredBy === "user") {
       try {
         sessionId = await createWorkerChatSession(userId, workerType, effectiveInitialPrompt);
+        await runRef.set({ sessionId }, { merge: true });
       } catch (err) {
         console.error(`[Worker API] Failed to create upfront chat session:`, err);
       }
@@ -1002,237 +1156,288 @@ export async function POST(req: Request) {
       console.error(`[Worker API] Failed to create starting notification:`, err);
     }
 
-    try {
-      // Stream worker graph and persist transcript progress for user-triggered sessions.
-      // This enables "View in chat" to show in-flight progress, not just final results.
-      let latestGraphMessages: unknown[] = [new HumanMessage(effectiveInitialPrompt)];
-      let latestActionsPerformed: WorkerRun["actionsPerformed"] = [];
-      const persistedMessageIds = new Set<string>();
-      const persistedMessagePhase = new Map<string, "pending" | "completed">();
+    const executeWorkerRun = async (): Promise<WorkerExecutionResponse> => {
+      try {
+        // Stream worker graph and persist transcript progress for user-triggered sessions.
+        // This enables "View in chat" to show in-flight progress, not just final results.
+        let latestGraphMessages: unknown[] = [new HumanMessage(effectiveInitialPrompt)];
+        let latestActionsPerformed: WorkerRun["actionsPerformed"] = [];
+        const persistedMessageIds = new Set<string>();
+        const persistedMessagePhase = new Map<string, "pending" | "completed">();
+        let incrementalSessionPersistenceEnabled = true;
 
-      const persistReadySessionMessages = async (
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        allMessages: any[]
-      ) => {
-        if (!sessionId) return;
-        const transcriptSoFar = convertToWorkerMessages(allMessages, { idPrefix: runId });
-        const entriesToPersist = transcriptSoFar
-          .map((message, index) => ({ message, sequence: index + 2 }))
-          .filter(({ message }) => {
-            const nextPhase: "pending" | "completed" = isSessionPersistableMessage(message)
-              ? "completed"
-              : "pending";
-            const prevPhase = persistedMessagePhase.get(message.id);
-            // Persist first sighting and any transition (pending -> completed).
-            return prevPhase !== nextPhase;
-          });
-
-        if (entriesToPersist.length === 0) return;
-
-        const uniqueMessageCount = new Set([
-          ...persistedMessageIds,
-          ...entriesToPersist.map(({ message }) => message.id),
-        ]).size;
-
-        await appendMessagesToSession(
-          userId,
-          sessionId,
-          entriesToPersist,
-          uniqueMessageCount
-        );
-        for (const { message } of entriesToPersist) {
-          persistedMessageIds.add(message.id);
-          persistedMessagePhase.set(
-            message.id,
-            isSessionPersistableMessage(message) ? "completed" : "pending"
-          );
-        }
-      };
-
-      for await (const chunk of streamWorkerGraph({
-        messages: [new HumanMessage(effectiveInitialPrompt)],
-        userId,
-        authHeader,
-        workerType,
-        runId,
-        modelProvider,
-      }, { streamMode: "values" })) {
-        if (!Array.isArray(chunk) || chunk[0] !== "values") continue;
-        const state = chunk[1] as {
+        const persistReadySessionMessages = async (
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          messages?: any[];
-          actionsPerformed?: WorkerRun["actionsPerformed"];
+          allMessages: any[]
+        ) => {
+          if (!sessionId) return;
+          const transcriptSoFar = convertToWorkerMessages(allMessages, { idPrefix: runId });
+          const entriesToPersist = transcriptSoFar
+            .map((message, index) => ({ message, sequence: index + 2 }))
+            .filter(({ message }) => {
+              const nextPhase: "pending" | "completed" = isSessionPersistableMessage(message)
+                ? "completed"
+                : "pending";
+              const prevPhase = persistedMessagePhase.get(message.id);
+              // Persist first sighting and any transition (pending -> completed).
+              return prevPhase !== nextPhase;
+            });
+
+          if (entriesToPersist.length === 0) return;
+
+          const uniqueMessageCount = new Set([
+            ...persistedMessageIds,
+            ...entriesToPersist.map(({ message }) => message.id),
+          ]).size;
+
+          await appendMessagesToSession(
+            userId,
+            sessionId,
+            entriesToPersist,
+            uniqueMessageCount
+          );
+          for (const { message } of entriesToPersist) {
+            persistedMessageIds.add(message.id);
+            persistedMessagePhase.set(
+              message.id,
+              isSessionPersistableMessage(message) ? "completed" : "pending"
+            );
+          }
         };
 
-        if (Array.isArray(state.messages)) {
-          latestGraphMessages = state.messages;
-          await persistReadySessionMessages(state.messages);
-        }
-        if (Array.isArray(state.actionsPerformed)) {
-          latestActionsPerformed = state.actionsPerformed;
-        }
-      }
+        for await (const chunk of streamWorkerGraph({
+          messages: [new HumanMessage(effectiveInitialPrompt)],
+          userId,
+          authHeader,
+          workerType,
+          runId,
+          modelProvider,
+        }, { streamMode: "values" })) {
+          if (!Array.isArray(chunk) || chunk[0] !== "values") continue;
+          const state = chunk[1] as {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            messages?: any[];
+            actionsPerformed?: WorkerRun["actionsPerformed"];
+          };
 
-      // Convert final messages to WorkerMessages
-      const transcript = convertToWorkerMessages(latestGraphMessages as any[], { idPrefix: runId });
-
-      // Extract summary from last assistant message
-      const lastAssistantMsg = transcript
-        .filter((m) => m.role === "assistant")
-        .pop();
-      const summary = lastAssistantMsg?.content || undefined;
-
-      if (workerType === "partner_file_batch" && effectiveTriggerContext?.partnerId) {
-        try {
-          await finalizePartnerBatchRun(
-            userId,
-            effectiveTriggerContext.partnerId,
-            runId,
-            summary,
-            undefined
-          );
-        } catch (err) {
-          console.error("[Worker API] Failed to finalize partner batch state (success):", err);
-        }
-      }
-
-      // Update WorkerRun with results
-      const completedRun: Partial<WorkerRun> = {
-        status: "completed",
-        messages: transcript,
-        summary,
-        actionsPerformed: latestActionsPerformed,
-        completedAt: Timestamp.now(),
-      };
-
-      await runRef.update(completedRun);
-
-      // Append transcript to existing session (user-triggered) or create new one (auto-triggered)
-      if (transcript.length > 0) {
-        try {
-          if (!sessionId) {
-            sessionId = await createWorkerChatSession(userId, workerType, effectiveInitialPrompt);
-          }
-
-          if (sessionId) {
-            const pendingEntries = transcript
-              .map((message, index) => ({ message, sequence: index + 2 }))
-              .filter(({ message }) => {
-                const nextPhase: "pending" | "completed" = isSessionPersistableMessage(message)
-                  ? "completed"
-                  : "pending";
-                const prevPhase = persistedMessagePhase.get(message.id);
-                return prevPhase !== nextPhase;
-              });
-
-            if (pendingEntries.length > 0) {
-              const uniqueMessageCount = new Set([
-                ...persistedMessageIds,
-                ...pendingEntries.map(({ message }) => message.id),
-              ]).size;
-
-              await appendMessagesToSession(
-                userId,
-                sessionId,
-                pendingEntries,
-                uniqueMessageCount
-              );
-              for (const { message } of pendingEntries) {
-                persistedMessageIds.add(message.id);
-                persistedMessagePhase.set(
-                  message.id,
-                  isSessionPersistableMessage(message) ? "completed" : "pending"
+          if (Array.isArray(state.messages)) {
+            latestGraphMessages = state.messages;
+            if (incrementalSessionPersistenceEnabled) {
+              try {
+                await persistReadySessionMessages(state.messages);
+              } catch (err) {
+                incrementalSessionPersistenceEnabled = false;
+                console.warn(
+                  `[Worker API] Disabling incremental session persistence for run ${runId} after write failure`,
+                  err
                 );
               }
             }
           }
-        } catch (err) {
-          console.error(`[Worker API] Failed to save chat session transcript:`, err);
+          if (Array.isArray(state.actionsPerformed)) {
+            latestActionsPerformed = state.actionsPerformed;
+          }
         }
-      }
 
-      // Update notification with success
-      if (notificationId) {
-        await updateWorkerNotification(userId, notificationId, {
-          ...initialRun,
-          ...completedRun,
-        }, sessionId);
-      }
+        // Convert final messages to WorkerMessages
+        const transcript = convertToWorkerMessages(latestGraphMessages as any[], { idPrefix: runId });
 
-      console.log(`[Worker API] ${workerType} worker completed: ${runId}`);
+        // Extract summary from last assistant message
+        const lastAssistantMsg = transcript
+          .filter((m) => m.role === "assistant")
+          .pop();
+        const summary = lastAssistantMsg?.content || undefined;
 
-      return NextResponse.json({
-        runId,
-        status: "completed",
-        summary,
-        actionsPerformed: latestActionsPerformed,
-      });
-    } catch (error) {
-      // Update WorkerRun with error
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      const isReauthError = isGmailReauthErrorMessage(errorMessage);
-      const errorCode = isReauthError ? "REAUTH_REQUIRED" : undefined;
-
-      if (workerType === "partner_file_batch" && effectiveTriggerContext?.partnerId) {
-        try {
-          await finalizePartnerBatchRun(
-            userId,
-            effectiveTriggerContext.partnerId,
-            runId,
-            undefined,
-            errorMessage
-          );
-        } catch (err) {
-          console.error("[Worker API] Failed to finalize partner batch state (failure):", err);
+        if (workerType === "partner_file_batch" && effectiveTriggerContext?.partnerId) {
+          try {
+            await finalizePartnerBatchRun(
+              userId,
+              effectiveTriggerContext.partnerId,
+              runId,
+              summary,
+              undefined
+            );
+          } catch (err) {
+            console.error("[Worker API] Failed to finalize partner batch state (success):", err);
+          }
         }
-      }
 
-      const failedRun: Partial<WorkerRun> = {
-        status: "failed",
-        error: errorMessage,
-        ...(errorCode ? { errorCode } : {}),
-        completedAt: Timestamp.now(),
-      };
+        // Update WorkerRun with results
+        const completedRun: Partial<WorkerRun> = {
+          status: "completed",
+          messages: transcript,
+          summary,
+          actionsPerformed: latestActionsPerformed,
+          completedAt: Timestamp.now(),
+        };
 
-      await runRef.update(failedRun);
+        await runRef.update(completedRun);
 
-      if (isReauthError) {
-        await requeueWorkerRequestForReauth(
-          userId,
-          workerRequestId,
-          "Paused: Gmail reconnection required. This worker will resume automatically after reconnect.",
-          GMAIL_REAUTH_RETRY_DELAY_MS
-        );
-        await createGmailReauthNotification(userId, []);
-      }
+        // Append transcript to existing session (user-triggered) or create new one (auto-triggered)
+        if (transcript.length > 0) {
+          try {
+            let createdSessionDuringCompletion = false;
+            if (!sessionId) {
+              sessionId = await createWorkerChatSession(userId, workerType, effectiveInitialPrompt);
+              createdSessionDuringCompletion = Boolean(sessionId);
+            }
 
-      // Update notification with failure
-      if (notificationId) {
-        await updateWorkerNotification(userId, notificationId, {
-          ...initialRun,
-          ...failedRun,
-        });
-      }
+            if (createdSessionDuringCompletion && sessionId) {
+              await runRef.set({ sessionId }, { merge: true });
+            }
 
-      console.error(`[Worker API] ${workerType} worker failed:`, error);
+            if (sessionId) {
+              const pendingEntries = transcript
+                .map((message, index) => ({ message, sequence: index + 2 }))
+                .filter(({ message }) => {
+                  const nextPhase: "pending" | "completed" = isSessionPersistableMessage(message)
+                    ? "completed"
+                    : "pending";
+                  const prevPhase = persistedMessagePhase.get(message.id);
+                  return prevPhase !== nextPhase;
+                });
 
-      if (isReauthError) {
-        return NextResponse.json({
+              if (pendingEntries.length > 0) {
+                const uniqueMessageCount = new Set([
+                  ...persistedMessageIds,
+                  ...pendingEntries.map(({ message }) => message.id),
+                ]).size;
+
+                await appendMessagesToSession(
+                  userId,
+                  sessionId,
+                  pendingEntries,
+                  uniqueMessageCount
+                );
+                for (const { message } of pendingEntries) {
+                  persistedMessageIds.add(message.id);
+                  persistedMessagePhase.set(
+                    message.id,
+                    isSessionPersistableMessage(message) ? "completed" : "pending"
+                  );
+                }
+              }
+            }
+          } catch (err) {
+            console.error(`[Worker API] Failed to save chat session transcript:`, err);
+          }
+        }
+
+        // Update notification with success
+        if (notificationId) {
+          try {
+            await updateWorkerNotification(userId, notificationId, {
+              ...initialRun,
+              ...completedRun,
+            }, sessionId);
+          } catch (err) {
+            console.error("[Worker API] Failed to update success notification:", err);
+          }
+        }
+
+        console.log(`[Worker API] ${workerType} worker completed: ${runId}`);
+
+        return {
           runId,
-          status: "blocked_for_reauth",
-          error: "Paused: Gmail reconnection required. This worker will resume automatically after reconnect.",
-          errorCode: "REAUTH_REQUIRED",
-          retryAfterMs: GMAIL_REAUTH_RETRY_DELAY_MS,
-        });
+          status: "completed",
+          summary,
+          actionsPerformed: latestActionsPerformed,
+          ...(sessionId ? { sessionId } : {}),
+        };
+      } catch (error) {
+        // Update WorkerRun with error
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        const isReauthError = isGmailReauthErrorMessage(errorMessage);
+        const errorCode = isReauthError ? "REAUTH_REQUIRED" : undefined;
+
+        if (workerType === "partner_file_batch" && effectiveTriggerContext?.partnerId) {
+          try {
+            await finalizePartnerBatchRun(
+              userId,
+              effectiveTriggerContext.partnerId,
+              runId,
+              undefined,
+              errorMessage
+            );
+          } catch (err) {
+            console.error("[Worker API] Failed to finalize partner batch state (failure):", err);
+          }
+        }
+
+        const failedRun: Partial<WorkerRun> = {
+          status: "failed",
+          error: errorMessage,
+          ...(errorCode ? { errorCode } : {}),
+          completedAt: Timestamp.now(),
+        };
+
+        try {
+          await runRef.update(failedRun);
+        } catch (err) {
+          console.error("[Worker API] Failed to persist failed run status:", err);
+        }
+
+        if (isReauthError) {
+          await requeueWorkerRequestForReauth(
+            userId,
+            workerRequestId,
+            "Paused: Gmail reconnection required. This worker will resume automatically after reconnect.",
+            GMAIL_REAUTH_RETRY_DELAY_MS
+          );
+          await createGmailReauthNotification(userId, []);
+        }
+
+        // Update notification with failure
+        if (notificationId) {
+          try {
+            await updateWorkerNotification(userId, notificationId, {
+              ...initialRun,
+              ...failedRun,
+            }, sessionId);
+          } catch (err) {
+            console.error("[Worker API] Failed to update failure notification:", err);
+          }
+        }
+
+        console.error(`[Worker API] ${workerType} worker failed:`, error);
+
+        if (isReauthError) {
+          return {
+            runId,
+            status: "blocked_for_reauth",
+            error: "Paused: Gmail reconnection required. This worker will resume automatically after reconnect.",
+            errorCode: "REAUTH_REQUIRED",
+            retryAfterMs: GMAIL_REAUTH_RETRY_DELAY_MS,
+            ...(sessionId ? { sessionId } : {}),
+          };
+        }
+
+        return {
+          runId,
+          status: "failed",
+          error: errorMessage,
+          ...(errorCode ? { errorCode } : {}),
+          ...(sessionId ? { sessionId } : {}),
+        };
       }
+    };
+
+    const shouldRespondImmediately = triggeredBy === "user" && !workerRequestId;
+    if (shouldRespondImmediately) {
+      after(async () => {
+        const result = await executeWorkerRun();
+        console.log(`[Worker API] Async worker finished ${runId} with status=${result.status}`);
+      });
 
       return NextResponse.json({
         runId,
-        status: "failed",
-        error: errorMessage,
-        ...(errorCode ? { errorCode } : {}),
-      });
+        status: "running",
+        ...(sessionId ? { sessionId } : {}),
+      } satisfies WorkerExecutionResponse);
     }
+
+    const result = await executeWorkerRun();
+    return NextResponse.json(result);
   } catch (error) {
     console.error("[Worker API] Request failed:", error);
     return NextResponse.json(

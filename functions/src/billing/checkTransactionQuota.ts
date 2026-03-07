@@ -3,7 +3,7 @@
  */
 
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
-import { PLANS } from "./config";
+import { PLANS, getTrialStatus } from "./config";
 import type { TransactionQuotaResult, PlanId } from "./config";
 
 export async function checkTransactionQuota(
@@ -68,6 +68,7 @@ export async function checkTransactionQuota(
 
 /**
  * Increment the transaction count after successful import.
+ * Also increments trialTransactionCount if user is on trial.
  */
 export async function incrementTransactionCount(
   userId: string,
@@ -79,20 +80,28 @@ export async function incrementTransactionCount(
 
   if (!subDoc.exists) return;
 
+  const sub = subDoc.data()!;
   const now = new Date();
   const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-  const countMonth = (subDoc.data()!.transactionCountMonth as string) || "";
+  const countMonth = (sub.transactionCountMonth as string) || "";
+
+  // Build the update
+  const update: Record<string, unknown> = {
+    updatedAt: FieldValue.serverTimestamp(),
+  };
 
   if (countMonth !== currentYearMonth) {
-    await subRef.update({
-      transactionCountCurrentMonth: count,
-      transactionCountMonth: currentYearMonth,
-      updatedAt: FieldValue.serverTimestamp(),
-    });
+    update.transactionCountCurrentMonth = count;
+    update.transactionCountMonth = currentYearMonth;
   } else {
-    await subRef.update({
-      transactionCountCurrentMonth: FieldValue.increment(count),
-      updatedAt: FieldValue.serverTimestamp(),
-    });
+    update.transactionCountCurrentMonth = FieldValue.increment(count);
   }
+
+  // Also increment trial transaction count if on trial
+  const trialStatus = getTrialStatus(sub);
+  if (trialStatus.isOnTrial) {
+    update.trialTransactionCount = FieldValue.increment(count);
+  }
+
+  await subRef.update(update);
 }

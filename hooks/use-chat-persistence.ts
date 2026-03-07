@@ -1,11 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { db } from "@/lib/firebase/config";
 import { ChatSession, ChatMessage } from "@/types/chat";
 import {
   OperationsContext,
-  getOrCreateActiveSession,
   getChatMessages,
   createChatSession,
   addChatMessage,
@@ -37,7 +36,13 @@ export function useChatPersistence() {
     [userId]
   );
 
-  // Load initial session on mount
+  // Keep current session in a ref so callbacks can reliably read latest value.
+  const currentSessionIdRef = useRef<string | null>(state.currentSessionId);
+  useEffect(() => {
+    currentSessionIdRef.current = state.currentSessionId;
+  }, [state.currentSessionId]);
+
+  // Load most recent session on mount (do not auto-create empty sessions).
   useEffect(() => {
     if (!userId) {
       setState({ currentSessionId: null, isLoading: false, sessions: [] });
@@ -46,10 +51,9 @@ export function useChatPersistence() {
 
     const loadInitialSession = async () => {
       try {
-        const sessionId = await getOrCreateActiveSession(ctx);
         const sessions = await listChatSessions(ctx, { limit: 10 });
         setState({
-          currentSessionId: sessionId,
+          currentSessionId: sessions[0]?.id ?? null,
           isLoading: false,
           sessions,
         });
@@ -85,29 +89,10 @@ export function useChatPersistence() {
     [loadSessionMessages]
   );
 
-  // Create a new session
-  const createNewSession = useCallback(
-    async (title?: string): Promise<string> => {
-      try {
-        const sessionId = await createChatSession(ctx, title);
-        const sessions = await listChatSessions(ctx, { limit: 10 });
-        setState({
-          currentSessionId: sessionId,
-          isLoading: false,
-          sessions,
-        });
-        return sessionId;
-      } catch (error) {
-        console.error("Failed to create session:", error);
-        throw error;
-      }
-    },
-    [ctx]
-  );
-
-  // Switch to a different session
+  // Switch to a different session (or null for a draft/new conversation)
   const switchSession = useCallback(
-    async (sessionId: string) => {
+    async (sessionId: string | null) => {
+      currentSessionIdRef.current = sessionId;
       setState((s) => ({
         ...s,
         currentSessionId: sessionId,
@@ -126,18 +111,25 @@ export function useChatPersistence() {
   // Save a message to the current session
   const saveMessage = useCallback(
     async (message: Omit<ChatMessage, "id" | "createdAt">) => {
-      if (!state.currentSessionId) {
-        console.warn("No active session to save message to");
-        return;
-      }
-
       try {
-        await addChatMessage(ctx, state.currentSessionId, message);
+        let sessionId = currentSessionIdRef.current;
+
+        // Lazily create a chat session on first message from a draft conversation.
+        if (!sessionId) {
+          sessionId = await createChatSession(ctx);
+          currentSessionIdRef.current = sessionId;
+          setState((s) => ({
+            ...s,
+            currentSessionId: sessionId,
+          }));
+        }
+
+        await addChatMessage(ctx, sessionId, message);
       } catch (error) {
         console.error("Failed to save message:", error);
       }
     },
-    [ctx, state.currentSessionId]
+    [ctx]
   );
 
   return {
@@ -146,7 +138,6 @@ export function useChatPersistence() {
     sessions: state.sessions,
     loadSessionMessages,
     getInitialMessages,
-    createNewSession,
     switchSession,
     saveMessage,
   };

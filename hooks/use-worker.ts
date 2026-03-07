@@ -28,11 +28,13 @@ interface TriggerWorkerOptions {
   triggeredBy?: "auto" | "user";
 }
 
-interface TriggerWorkerResult {
+export interface TriggerWorkerResult {
   runId: string;
   status: string;
   summary?: string;
   error?: string;
+  sessionId?: string;
+  deduped?: boolean;
 }
 
 /**

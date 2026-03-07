@@ -1,6 +1,13 @@
 import { Timestamp } from "firebase/firestore";
 
 /**
+ * Onboarding track determines which steps the user sees.
+ * - data_only: Bank data API/MCP users — minimal onboarding
+ * - full_service: AI bookkeeping users — full 6-step onboarding
+ */
+export type OnboardingTrack = "data_only" | "full_service";
+
+/**
  * Onboarding step identifiers
  */
 export type OnboardingStep =
@@ -18,6 +25,9 @@ export type OnboardingStep =
 export interface OnboardingState {
   /** Whether onboarding has been completed */
   isComplete: boolean;
+
+  /** Selected onboarding track (undefined = needs welcome page) */
+  track?: OnboardingTrack;
 
   /** Current step the user is on */
   currentStep: OnboardingStep;
@@ -134,4 +144,43 @@ export function getNextStep(step: OnboardingStep): OnboardingStep | null {
   const index = getStepIndex(step);
   const nextConfig = ONBOARDING_STEPS[index + 1];
   return nextConfig?.id ?? null;
+}
+
+// =============================================================================
+// Track-based step filtering
+// =============================================================================
+
+/** Steps for data_only track: just bank setup */
+export const DATA_ONLY_STEPS: OnboardingStep[] = [
+  "add_bank_account",
+  "import_transactions",
+];
+
+/** Steps for full_service track: all steps */
+export const FULL_SERVICE_STEPS: OnboardingStep[] = ONBOARDING_STEPS.map((s) => s.id);
+
+/**
+ * Get the onboarding steps for a given track.
+ */
+export function getStepsForTrack(
+  track: OnboardingTrack | undefined
+): OnboardingStepConfig[] {
+  if (track === "data_only") {
+    return ONBOARDING_STEPS.filter((s) => DATA_ONLY_STEPS.includes(s.id));
+  }
+  // full_service or undefined → all steps
+  return ONBOARDING_STEPS;
+}
+
+/**
+ * Get next step within a track
+ */
+export function getNextStepForTrack(
+  step: OnboardingStep,
+  track: OnboardingTrack | undefined
+): OnboardingStep | null {
+  const steps = getStepsForTrack(track);
+  const index = steps.findIndex((s) => s.id === step);
+  const next = steps[index + 1];
+  return next?.id ?? null;
 }

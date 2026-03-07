@@ -12,7 +12,8 @@ import { httpsCallable } from "firebase/functions";
 import { functions } from "@/lib/firebase/config";
 import { cn } from "@/lib/utils";
 
-const planOrder: PlanId[] = ["free", "starter", "business", "pro"];
+// Only show new tiers in comparison (hide free and legacy)
+const planOrder: PlanId[] = ["data", "smart", "pro"];
 
 export function BillingPlanComparison() {
   const { plan: currentPlan, isPlanTester, isFreePlanOverride } = useSubscription();
@@ -43,19 +44,22 @@ export function BillingPlanComparison() {
   // Hide plan comparison for free_plan override users
   if (isFreePlanOverride) return null;
 
+  // For plan ordering comparison, map legacy plans to new equivalents
+  const effectivePlan = currentPlan === "starter" ? "data" : currentPlan === "business" ? "smart" : currentPlan;
+
   return (
     <Card>
       <CardHeader>
         <CardTitle className="text-base">Plan Comparison</CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {planOrder.map((planId) => {
             const config = PLANS[planId];
-            const isCurrent = planId === currentPlan;
+            const isCurrent = planId === effectivePlan || planId === currentPlan;
             const isUpgrade = isPlanTester
-              ? planId !== currentPlan
-              : planOrder.indexOf(planId) > planOrder.indexOf(currentPlan);
+              ? planId !== effectivePlan
+              : planOrder.indexOf(planId) > planOrder.indexOf(effectivePlan as PlanId);
 
             return (
               <div
@@ -75,16 +79,12 @@ export function BillingPlanComparison() {
                     )}
                   </div>
                   <div className="mt-1">
-                    {config.monthlyPriceEur > 0 ? (
-                      <span className="text-xl font-bold">
-                        {config.monthlyPriceEur} EUR
-                        <span className="text-sm font-normal text-muted-foreground">
-                          /mo
-                        </span>
+                    <span className="text-xl font-bold">
+                      {config.monthlyPriceEur} EUR
+                      <span className="text-sm font-normal text-muted-foreground">
+                        /mo
                       </span>
-                    ) : (
-                      <span className="text-xl font-bold">Free</span>
-                    )}
+                    </span>
                   </div>
                 </div>
 

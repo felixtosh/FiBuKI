@@ -63,8 +63,14 @@ export function TransactionDetails({
   const matchedTransactionIds = useRef<Set<string>>(new Set());
 
   // Chat hook for agentic partner search
-  const { startPartnerSearch, activeWandTargets } = useChat();
-  const isWandActive = activeWandTargets.has(transaction.id);
+  const { startPartnerSearch, activeWandTargets, notifications } = useChat();
+  const hasRunningWorkerNotification = notifications.some(
+    (notification) =>
+      notification.type === "worker_activity" &&
+      notification.context.workerStatus === "running" &&
+      notification.context.transactionId === transaction.id
+  );
+  const isWandActive = activeWandTargets.has(transaction.id) || hasRunningWorkerNotification;
 
   // Get partner suggestions and assigned partner (all from server-side data)
   const suggestions = usePartnerSuggestions(transaction, userPartners, globalPartners);

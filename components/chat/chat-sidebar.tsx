@@ -14,6 +14,8 @@ import { ChatTabs } from "./chat-tabs";
 import { NotificationsList } from "./notifications-list";
 import { OnboardingSidebar } from "@/components/onboarding";
 import { ChatHistoryPanel } from "./chat-history-overlay";
+import { useFeatureGate } from "@/hooks/use-feature-gate";
+import { UpgradePromptDialog } from "@/components/billing/upgrade-prompt-dialog";
 import type { ChatTab } from "@/types/chat";
 
 const MIN_SIDEBAR_WIDTH = 280;
@@ -38,6 +40,8 @@ export function ChatSidebar() {
     currentSessionId,
   } = useChat();
 
+  const chatGate = useFeatureGate("chatAssistant");
+
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -49,6 +53,18 @@ export function ChatSidebar() {
   const [isAtBottom, setIsAtBottom] = useState(true);
   const userScrolledRef = useRef(false);
   const [gmailReconnected, setGmailReconnected] = useState(false);
+  const hasAssistantMessage = messages.some((message) => message.role === "assistant");
+  const isWaitingForWorkerFirstResponse =
+    !isLoading &&
+    !!currentSessionId &&
+    !hasAssistantMessage &&
+    notifications.some(
+      (notification) =>
+        notification.type === "worker_activity" &&
+        notification.context.sessionId === currentSessionId &&
+        notification.context.workerStatus === "running"
+    );
+  const showThinkingIndicator = isLoading || isWaitingForWorkerFirstResponse;
 
   // Keep currentWidthRef in sync with sidebarWidth
   useEffect(() => {
@@ -147,7 +163,7 @@ export function ChatSidebar() {
     if (!userScrolledRef.current) {
       scrollToBottom();
     }
-  }, [messages, pendingConfirmations, isLoading, scrollToBottom]);
+  }, [messages, pendingConfirmations, showThinkingIndicator, scrollToBottom]);
 
   // When switching to another chat session (e.g. "View in chat"), reset follow mode
   // and jump to the latest message so live worker progress starts from the bottom.
@@ -228,6 +244,13 @@ export function ChatSidebar() {
             <OnboardingSidebar />
           ) : (
             <>
+              {/* Upgrade dialog for gated chat */}
+              <UpgradePromptDialog
+                feature="chatAssistant"
+                open={chatGate.upgradeVisible}
+                onOpenChange={chatGate.hideUpgrade}
+              />
+
               {/* Header with Tabs */}
               <ChatTabs
                 activeTab={activeTab}
@@ -261,7 +284,22 @@ export function ChatSidebar() {
                   <div className="relative flex-1 overflow-hidden">
                     <ScrollArea className="h-full px-4" ref={scrollRef} viewportRef={viewportRef} onScroll={handleScroll}>
                       <div className="space-y-4 py-4">
-                        {messages.length === 0 ? (
+                        {!chatGate.allowed && messages.length === 0 ? (
+                          <div className="flex flex-col items-center justify-center py-8 text-center text-muted-foreground">
+                            <MessageSquare className="mb-4 h-12 w-12 opacity-20" />
+                            <p className="text-sm font-medium">Chat Assistant</p>
+                            <p className="mt-1 text-xs">
+                              Upgrade to Smart to use the AI chat assistant.
+                            </p>
+                            <Button
+                              size="sm"
+                              className="mt-3"
+                              onClick={chatGate.showUpgrade}
+                            >
+                              Upgrade
+                            </Button>
+                          </div>
+                        ) : messages.length === 0 ? (
                           <div className="flex flex-col items-center justify-center py-8 text-center text-muted-foreground">
                             <MessageSquare className="mb-4 h-12 w-12 opacity-20" />
                             <p className="text-sm">Start a conversation with your AI tax assistant.</p>
@@ -283,7 +321,7 @@ export function ChatSidebar() {
                           ))}
 
                         {/* Loading indicator */}
-                        {isLoading && (
+                        {showThinkingIndicator && (
                           <div className="flex items-center gap-2 text-muted-foreground">
                             <Loader2 className="h-4 w-4 animate-spin" />
                             <span className="text-sm">Thinking...</span>

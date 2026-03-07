@@ -12,6 +12,9 @@
   var WINDOW_NAME_PREFIX = "ts_pull_";
   var HASH_PREFIX = "ts_run=";
   var LOGIN_PROMPT_ID = "taxstudio-login-prompt";
+  var MASCOT_LAUNCHER_ID = "taxstudio-mascot-launcher";
+  var MASCOT_LAUNCHER_STYLE_ID = "taxstudio-mascot-launcher-style";
+  var MASCOT_CORNER_KEY = "ts_mascot_corner";
   var currentRunId = null;
   var lastMenuAnchor = null;
   var lastMenuOpenedAt = 0;
@@ -45,9 +48,14 @@
     items: [],
     limit: 4,
   };
+  var manualCaptureMode = false;
+  var lastManualInvoiceClickAt = 0;
   var seenNetworkUrls = {};
   var lastDataAttrCount = 0;
   var isTopFrame = window.top === window;
+  var mascotLauncherInterval = null;
+  var mascotCorner = "bottom_right";
+  var suppressLauncherClick = false;
 
   try {
     var existing = document.querySelector('meta[name="' + MARKER_NAME + '"]');
@@ -77,6 +85,19 @@
     console.log("[FiBuKI] Content script ready (IFRAME)", window.location.href, "name:", window.name);
   }
   chrome.runtime.sendMessage({ type: "TS_INJECT_HOOK" });
+  document.addEventListener("click", handleManualInvoiceClick, true);
+  if (isTopFrame) {
+    setTimeout(refreshMascotLauncher, 800);
+    setTimeout(refreshMascotLauncher, 2500);
+    if (mascotLauncherInterval) clearInterval(mascotLauncherInterval);
+    mascotLauncherInterval = setInterval(refreshMascotLauncher, 3000);
+    window.addEventListener("hashchange", function () {
+      setTimeout(refreshMascotLauncher, 300);
+    });
+    window.addEventListener("popstate", function () {
+      setTimeout(refreshMascotLauncher, 300);
+    });
+  }
 
   // Self-start for payments.google.com iframes that load/reload during an active pull
   if (!isTopFrame && window.location.origin.indexOf("payments.google.com") !== -1) {
@@ -103,8 +124,12 @@
         // Ask background if there's an active run for this tab
         chrome.runtime.sendMessage({ type: "TS_CHECK_ACTIVE_RUN" }, function (response) {
           if (response && response.runId && !currentRunId) {
-            console.log("[FiBuKI] Found active run, self-starting automation:", response.runId);
+            manualCaptureMode = !!response.manual;
+            console.log("[FiBuKI] Found active run, mode:", manualCaptureMode ? "manual" : "auto", response.runId);
             currentRunId = response.runId;
+            if (manualCaptureMode) {
+              return;
+            }
             clickGooglePaymentsRetryCount = 0; // Reset retry counter
             // IMPORTANT: Expand ALL cards FIRST, then do downloads
             // Cards must be expanded before any PDF links become visible
@@ -263,6 +288,9 @@
     var runId = currentRunId || learnRunId;
     console.log("[FiBuKI] TS_NETWORK_PDF handler: url:", data.url.slice(0, 80), "runId:", runId, "learnRunId:", learnRunId);
     if (!runId) return;
+    if (manualCaptureMode && !learnRunId && Date.now() - lastManualInvoiceClickAt > 8000) {
+      return;
+    }
     var url = data.url;
     if (seenNetworkUrls[url]) return;
     try {
@@ -755,6 +783,7 @@
   }
 
   function removePullOverlay() {
+    manualCaptureMode = false;
     [OVERLAY_ID, OVERLAY_ID + "-border", OVERLAY_ID + "-glow", LOGIN_PROMPT_ID].forEach(function(id) {
       var el = document.getElementById(id);
       if (el) el.remove();
@@ -792,6 +821,10 @@
       delete window.__tsOriginalBodyPadding;
       delete window.__tsOriginalBodyBoxSizing;
       delete window.__tsOriginalBodyMargin;
+    }
+
+    if (isTopFrame) {
+      setTimeout(refreshMascotLauncher, 250);
     }
   }
 
@@ -860,6 +893,297 @@
       clearInterval(loginCheckInterval);
       loginCheckInterval = null;
     }
+  }
+
+  function ensureMascotLauncherStyles() {
+    if (document.getElementById(MASCOT_LAUNCHER_STYLE_ID)) return;
+    var style = document.createElement("style");
+    style.id = MASCOT_LAUNCHER_STYLE_ID;
+    style.textContent =
+      "#" + MASCOT_LAUNCHER_ID + "{" +
+        "position:fixed;" +
+        "right:8px;" +
+        "bottom:-8px;" +
+        "width:36px;" +
+        "height:32px;" +
+        "padding:0;" +
+        "margin:0;" +
+        "border:none;" +
+        "background:transparent;" +
+        "cursor:pointer;" +
+        "z-index:2147483645;" +
+        "transition:transform .18s ease;" +
+      "}" +
+      "#" + MASCOT_LAUNCHER_ID + ":hover{" +
+        "transform:scale(1.05);" +
+      "}" +
+      "#" + MASCOT_LAUNCHER_ID + " img{" +
+        "width:100%;" +
+        "height:100%;" +
+        "object-fit:contain;" +
+        "filter:drop-shadow(0 -2px 8px rgba(2, 6, 23, .35));" +
+        "animation:ts-mascot-bob 2.8s ease-in-out infinite;" +
+        "user-select:none;" +
+        "-webkit-user-drag:none;" +
+      "}" +
+      "@keyframes ts-mascot-bob{" +
+        "0%,100%{transform:translateY(0)}" +
+        "50%{transform:translateY(-3px)}" +
+      "}";
+    (document.head || document.documentElement).appendChild(style);
+  }
+
+  function hideMascotLauncher() {
+    var launcher = document.getElementById(MASCOT_LAUNCHER_ID);
+    if (launcher) launcher.remove();
+  }
+
+  function applyMascotCorner(launcher, corner) {
+    if (!launcher) return;
+    launcher.style.left = "auto";
+    launcher.style.right = "auto";
+    launcher.style.top = "auto";
+    launcher.style.bottom = "auto";
+    if (corner === "top_left") {
+      launcher.style.left = "8px";
+      launcher.style.top = "8px";
+      return;
+    }
+    if (corner === "top_right") {
+      launcher.style.right = "8px";
+      launcher.style.top = "8px";
+      return;
+    }
+    if (corner === "bottom_left") {
+      launcher.style.left = "8px";
+      launcher.style.bottom = "-8px";
+      return;
+    }
+    launcher.style.right = "8px";
+    launcher.style.bottom = "-8px";
+  }
+
+  function loadMascotCorner(callback) {
+    try {
+      chrome.storage.local.get([MASCOT_CORNER_KEY], function (result) {
+        var value = result && result[MASCOT_CORNER_KEY];
+        if (value === "top_left" || value === "top_right" || value === "bottom_left" || value === "bottom_right") {
+          mascotCorner = value;
+        }
+        callback(mascotCorner);
+      });
+    } catch (err) {
+      callback(mascotCorner);
+    }
+  }
+
+  function saveMascotCorner(corner) {
+    mascotCorner = corner;
+    try {
+      var payload = {};
+      payload[MASCOT_CORNER_KEY] = corner;
+      chrome.storage.local.set(payload);
+    } catch (err) {}
+  }
+
+  function enableMascotDragging(launcher) {
+    if (!launcher) return;
+    var dragState = null;
+    launcher.addEventListener("mousedown", function (event) {
+      if (event.button !== 0) return;
+      dragState = {
+        startX: event.clientX,
+        startY: event.clientY,
+        dragged: false,
+      };
+      function onMove(moveEvent) {
+        if (!dragState) return;
+        var dx = moveEvent.clientX - dragState.startX;
+        var dy = moveEvent.clientY - dragState.startY;
+        if (!dragState.dragged && Math.sqrt(dx * dx + dy * dy) > 10) {
+          dragState.dragged = true;
+          launcher.style.transition = "none";
+        }
+        if (!dragState.dragged) return;
+        launcher.style.left = Math.max(0, moveEvent.clientX - 18) + "px";
+        launcher.style.top = Math.max(0, moveEvent.clientY - 16) + "px";
+        launcher.style.right = "auto";
+        launcher.style.bottom = "auto";
+      }
+      function onUp(upEvent) {
+        window.removeEventListener("mousemove", onMove, true);
+        window.removeEventListener("mouseup", onUp, true);
+        if (!dragState) return;
+        var wasDragged = dragState.dragged;
+        dragState = null;
+        if (!wasDragged) return;
+        launcher.style.transition = "transform .18s ease";
+        var horizontal = upEvent.clientX < window.innerWidth / 2 ? "left" : "right";
+        var vertical = upEvent.clientY < window.innerHeight / 2 ? "top" : "bottom";
+        var nextCorner = vertical + "_" + horizontal;
+        saveMascotCorner(nextCorner);
+        applyMascotCorner(launcher, nextCorner);
+        suppressLauncherClick = true;
+        setTimeout(function () {
+          suppressLauncherClick = false;
+        }, 180);
+      }
+      window.addEventListener("mousemove", onMove, true);
+      window.addEventListener("mouseup", onUp, true);
+    });
+  }
+
+  function requestManualCaptureStart(source) {
+    if (!isTopFrame) return;
+    if (learnMode || replayMode) return;
+    chrome.runtime.sendMessage(
+      {
+        type: "TS_START_MANUAL_CAPTURE",
+        source: source || "launcher_click",
+        appOrigin: window.location.origin,
+      },
+      function (response) {
+        var err = chrome.runtime.lastError;
+        if (err || !response || !response.ok) {
+          console.warn("[FiBuKI] Manual capture start failed:", err ? err.message : "no response");
+          return;
+        }
+        if (response.runId) {
+          currentRunId = response.runId;
+          manualCaptureMode = true;
+        }
+        hideMascotLauncher();
+      }
+    );
+  }
+
+  function pageLooksLikeInvoiceList() {
+    var href = (window.location.href || "").toLowerCase();
+    if (/invoice|billing|receipt|rechnung|facture|faktura|abrechnung|transactions|payments/.test(href)) {
+      return true;
+    }
+    if (document.querySelector("[data-download-url],[data-download],[data-file],[data-link]")) {
+      return true;
+    }
+    var nodes = document.querySelectorAll("a, button, [role='button'], [role='link']");
+    var max = Math.min(nodes.length, 180);
+    var invoiceSignals = 0;
+    var downloadSignals = 0;
+    for (var i = 0; i < max; i += 1) {
+      var el = nodes[i];
+      if (!el || el.hasAttribute("disabled")) continue;
+      var text = ((el.innerText || el.textContent || "").trim().slice(0, 160)).toLowerCase();
+      if (!text) continue;
+      if (/invoice|receipt|rechnung|facture|faktura|bill|beleg|abrechnung/.test(text)) {
+        invoiceSignals += 1;
+      }
+      if (/download|pdf/.test(text)) {
+        downloadSignals += 1;
+      }
+      if ((invoiceSignals >= 2 && downloadSignals >= 1) || invoiceSignals >= 4 || downloadSignals >= 5) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function refreshMascotLauncher() {
+    if (!isTopFrame) return;
+    if (document.hidden) return;
+    if (learnMode || replayMode || currentRunId) {
+      hideMascotLauncher();
+      return;
+    }
+    if (!pageLooksLikeInvoiceList()) {
+      hideMascotLauncher();
+      return;
+    }
+    if (document.getElementById(MASCOT_LAUNCHER_ID)) return;
+    ensureMascotLauncherStyles();
+    var launcher = document.createElement("button");
+    launcher.id = MASCOT_LAUNCHER_ID;
+    launcher.type = "button";
+    launcher.title = "download invoices directly to FiBuKI";
+    launcher.setAttribute("aria-label", "download invoices directly to FiBuKI");
+    var img = document.createElement("img");
+    img.alt = "FiBuKI";
+    img.src = chrome.runtime.getURL("icons/icon128.png");
+    launcher.appendChild(img);
+    enableMascotDragging(launcher);
+    launcher.addEventListener("click", function (event) {
+      if (suppressLauncherClick) return;
+      event.preventDefault();
+      event.stopPropagation();
+      requestManualCaptureStart("launcher_click");
+    });
+    document.documentElement.appendChild(launcher);
+    loadMascotCorner(function (corner) {
+      applyMascotCorner(launcher, corner);
+    });
+  }
+
+  function getManualCandidateUrlFromElement(target) {
+    if (!target || !target.getAttribute) return "";
+    var raw =
+      target.getAttribute("href") ||
+      target.getAttribute("data-download-url") ||
+      target.getAttribute("data-download") ||
+      target.getAttribute("data-url") ||
+      target.getAttribute("data-href") ||
+      target.getAttribute("data-file") ||
+      target.getAttribute("data-link") ||
+      "";
+    if (!raw) return "";
+    if (raw.indexOf("javascript:") === 0 || raw.indexOf("mailto:") === 0) return "";
+    try {
+      return new URL(raw, window.location.href).toString();
+    } catch (err) {
+      return "";
+    }
+  }
+
+  function handleManualInvoiceClick(event) {
+    if (!manualCaptureMode || !currentRunId) return;
+    if (pausedForLogin || learnMode || replayMode) return;
+    if (!event || event.button !== 0) return;
+    var target = event.target;
+    if (!target || !target.closest) return;
+    if (document.getElementById(OVERLAY_ID) && document.getElementById(OVERLAY_ID).contains(target)) return;
+    if (document.getElementById(MASCOT_LAUNCHER_ID) && document.getElementById(MASCOT_LAUNCHER_ID).contains(target)) return;
+
+    var clickable = target.closest("a[href],button,[role='button'],[role='link'],[data-download-url],[data-download],[data-url],[data-href],[data-file],[data-link]");
+    if (!clickable) return;
+
+    var text = (
+      (clickable.innerText || clickable.textContent || "") + " " +
+      (clickable.getAttribute("aria-label") || "") + " " +
+      (clickable.getAttribute("title") || "")
+    ).toLowerCase();
+    var candidateUrl = getManualCandidateUrlFromElement(clickable);
+    var isLikelyInvoiceAction =
+      /invoice|receipt|rechnung|facture|faktura|beleg|abrechnung|download|pdf/.test(text) ||
+      (candidateUrl ? looksLikeDownload(candidateUrl) : false);
+
+    if (!isLikelyInvoiceAction) return;
+
+    lastManualInvoiceClickAt = Date.now();
+    if (isTopFrame) {
+      setOverlayStatus("Invoice click captured. Waiting for file...");
+    }
+    if (!candidateUrl) return;
+    if (!seenNetworkUrls[candidateUrl]) {
+      seenNetworkUrls[candidateUrl] = true;
+      overlayState.items.push({ url: candidateUrl, label: guessLabel(candidateUrl) });
+      if (isTopFrame) {
+        renderOverlayList();
+      }
+    }
+    chrome.runtime.sendMessage({
+      type: "TS_DOWNLOAD_URLS",
+      runId: currentRunId,
+      urls: [candidateUrl],
+      pageOrigin: "",
+    });
   }
 
   function renderOverlayList() {
@@ -1337,9 +1661,11 @@
     if (!message || message.type !== "TS_SHOW_OVERLAY") return;
     // Don't show pull overlay when in replay or learn mode
     if (replayMode || learnMode) return;
+    manualCaptureMode = !!message.manual;
     var frameType = isTopFrame ? "TOP" : "IFRAME";
-    console.log("[FiBuKI] TS_SHOW_OVERLAY (" + frameType + ")", message.runId || "", window.location.origin);
+    console.log("[FiBuKI] TS_SHOW_OVERLAY (" + frameType + ")", message.runId || "", manualCaptureMode ? "manual" : "auto", window.location.origin);
     if (isTopFrame) {
+      hideMascotLauncher();
       ensureOverlay();
     }
     var incomingRunId = message.runId || null;
@@ -1350,15 +1676,30 @@
       seenNetworkUrls = {};
       pausedForLogin = false;
       clickGooglePaymentsRetryCount = 0;
-      // Store original URL for returning after login
-      originalPullUrl = window.location.href;
-      console.log("[FiBuKI] Original pull URL stored:", originalPullUrl);
+      if (!manualCaptureMode) {
+        // Store original URL for returning after login
+        originalPullUrl = window.location.href;
+        console.log("[FiBuKI] Original pull URL stored:", originalPullUrl);
+      }
     }
     if (isTopFrame) {
       console.log("[FiBuKI] Visible pull active:", currentRunId || "");
-      setOverlayStatus("Waiting for invoice buttons...");
-      // Start monitoring for login redirects
-      startLoginCheck();
+      setOverlayStatus(
+        manualCaptureMode
+          ? "Manual mode: click invoice downloads."
+          : "Waiting for invoice buttons..."
+      );
+      if (!manualCaptureMode) {
+        // Start monitoring for login redirects
+        startLoginCheck();
+      }
+    }
+    if (manualCaptureMode) {
+      stopLoginCheck();
+      if (isTopFrame) {
+        renderOverlayList();
+      }
+      return;
     }
     // Check if we're already on a login page
     if (isLoginPage()) {

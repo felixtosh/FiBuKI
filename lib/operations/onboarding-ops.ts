@@ -6,6 +6,8 @@ import {
   ONBOARDING_STEPS,
   getStepIndex,
   getNextStep,
+  getNextStepForTrack,
+  getStepsForTrack,
 } from "@/types/onboarding";
 
 const SETTINGS_COLLECTION = "settings";
@@ -86,8 +88,8 @@ export async function completeOnboardingStep(
   // Don't re-complete steps
   if (current.completedSteps[step]) return;
 
-  // Find next step
-  const nextStep = getNextStep(step);
+  // Find next step (track-aware)
+  const nextStep = getNextStepForTrack(step, current.track);
   const isLastStep = !nextStep;
 
   // Build update object
@@ -194,9 +196,10 @@ export async function skipOnboarding(
   const current = await getOnboardingState(ctx);
   if (!current) return;
 
-  // Mark all uncompleted steps as completed
+  // Mark all uncompleted steps as completed (track-aware)
+  const trackSteps = getStepsForTrack(current.track);
   const completedSteps = { ...current.completedSteps };
-  for (const step of ONBOARDING_STEPS) {
+  for (const step of trackSteps) {
     if (!completedSteps[step.id]) {
       completedSteps[step.id] = { completedAt: now };
     }
@@ -234,7 +237,7 @@ export async function skipOnboardingStep(
   // Don't skip already completed steps
   if (current.completedSteps[step]) return;
 
-  const nextStep = getNextStep(step);
+  const nextStep = getNextStepForTrack(step, current.track);
   const isLastStep = !nextStep;
 
   const updates: Record<string, unknown> = {
@@ -294,14 +297,17 @@ export function calculateProgress(state: OnboardingState | null): {
   total: number;
   percentage: number;
 } {
+  const trackSteps = getStepsForTrack(state?.track);
   if (!state) {
-    return { completed: 0, total: ONBOARDING_STEPS.length, percentage: 0 };
+    return { completed: 0, total: trackSteps.length, percentage: 0 };
   }
 
-  const completed = Object.keys(state.completedSteps).length;
+  const completed = trackSteps.filter(
+    (s) => !!state.completedSteps[s.id]
+  ).length;
   return {
     completed,
-    total: ONBOARDING_STEPS.length,
-    percentage: Math.round((completed / ONBOARDING_STEPS.length) * 100),
+    total: trackSteps.length,
+    percentage: Math.round((completed / trackSteps.length) * 100),
   };
 }

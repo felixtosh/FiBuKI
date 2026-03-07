@@ -3,128 +3,94 @@
 import { cn } from "@/lib/utils";
 import {
   FileCheck,
-  FileX,
   FileText,
-  Mail,
-  Check,
-  Paperclip,
-  Globe,
+  Bot,
+  ChevronRight,
 } from "lucide-react";
 
-type ToolType = "transactions" | "files" | "integrations";
+type ToolType = "api" | "files" | "integrations";
 
 interface ToolPreviewCardProps {
   type: ToolType;
   className?: string;
 }
 
-// Fake data for previews
-const FAKE_TRANSACTIONS = [
-  {
-    date: "15.01.2026",
-    name: "REWE Markt",
-    partner: "REWE Group",
-    amount: -4523,
-    hasReceipt: true,
-  },
-  {
-    date: "14.01.2026",
-    name: "Amazon.de",
-    partner: "Amazon EU",
-    amount: -12999,
-    hasReceipt: true,
-  },
-  {
-    date: "13.01.2026",
-    name: "Gehalt Januar",
-    partner: "Arbeitgeber GmbH",
-    amount: 350000,
-    hasReceipt: false,
-  },
-];
+// Fake data for API preview
+const FAKE_MCP_CALL = {
+  tool: "list_transactions",
+  params: '{ "limit": 3, "source": "raiffeisen" }',
+  result: [
+    { date: "2026-01-15", name: "REWE Markt", amount: "-45.23" },
+    { date: "2026-01-14", name: "Amazon.de", amount: "-129.99" },
+    { date: "2026-01-13", name: "Gehalt", amount: "+3,500.00" },
+  ],
+};
 
 const FAKE_FILES = [
   {
     name: "Rechnung_2026_001.pdf",
     partner: "REWE Group",
-    status: "connected",
+    status: "connected" as const,
+    confidence: 96,
   },
   {
     name: "Amazon_Invoice.pdf",
     partner: "Amazon EU",
-    status: "connected",
+    status: "connected" as const,
+    confidence: 92,
   },
   {
     name: "Telefonrechnung.pdf",
     partner: "Telekom",
-    status: "matching",
+    status: "matching" as const,
+    confidence: 78,
   },
 ];
 
-const FAKE_GMAIL = [
-  { filename: "Invoice_2026_01.pdf", score: 92 },
-  { filename: "Rechnung_Amazon.pdf", score: 85 },
-];
-
-const FAKE_BROWSER = [
-  { filename: "Bestellung_Download.pdf", score: 88 },
-  { filename: "Kaufbeleg_Online.pdf", score: 76 },
+const AI_SERVICES = [
+  { name: "Claude", sub: "via MCP" },
+  { name: "ChatGPT", sub: "via API" },
+  { name: "Claude Code", sub: "via MCP" },
+  { name: "OpenClaw", sub: "via MCP" },
 ];
 
 export function ToolPreviewCard({ type, className }: ToolPreviewCardProps) {
-  const formatAmount = (amount: number) => {
-    const euros = amount / 100;
-    return euros.toLocaleString("de-DE", { style: "currency", currency: "EUR" });
-  };
-
-  if (type === "transactions") {
+  if (type === "api") {
     return (
       <div
         className={cn(
-          "rounded-md border text-xs overflow-hidden bg-card shadow-lg",
+          "rounded-md border text-xs overflow-hidden bg-card shadow-lg font-mono",
           className
         )}
       >
-        <div className="bg-muted/50 grid grid-cols-[auto_1fr_auto_auto] gap-2 px-2 py-1.5 border-b">
-          <span className="font-medium text-muted-foreground w-[70px]">
-            Date
-          </span>
-          <span className="font-medium text-muted-foreground">Name</span>
-          <span className="font-medium text-muted-foreground text-right w-[80px]">
-            Amount
-          </span>
-          <span className="w-5"></span>
+        {/* Terminal header */}
+        <div className="bg-zinc-900 text-zinc-400 px-3 py-1.5 flex items-center gap-2 border-b border-zinc-700">
+          <div className="flex gap-1.5">
+            <div className="w-2.5 h-2.5 rounded-full bg-red-500/80" />
+            <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/80" />
+            <div className="w-2.5 h-2.5 rounded-full bg-green-500/80" />
+          </div>
+          <span className="text-[10px] text-zinc-500 ml-1">MCP Tool Call</span>
         </div>
-        <div className="divide-y divide-muted/50">
-          {FAKE_TRANSACTIONS.map((t, i) => (
-            <div
-              key={i}
-              className="grid grid-cols-[auto_1fr_auto_auto] gap-2 px-2 py-2 items-center"
-            >
-              <span className="text-muted-foreground w-[70px]">{t.date}</span>
-              <div className="min-w-0 overflow-hidden">
-                <span className="truncate block">{t.name}</span>
-                <span className="text-[10px] text-muted-foreground truncate block">
-                  {t.partner}
+        {/* Tool call */}
+        <div className="bg-zinc-950 text-zinc-300 px-3 py-2 space-y-1.5">
+          <div>
+            <span className="text-blue-400">{FAKE_MCP_CALL.tool}</span>
+            <span className="text-zinc-500">(</span>
+            <span className="text-emerald-400">{FAKE_MCP_CALL.params}</span>
+            <span className="text-zinc-500">)</span>
+          </div>
+          <div className="border-t border-zinc-800 pt-1.5">
+            {FAKE_MCP_CALL.result.map((r, i) => (
+              <div key={i} className="flex justify-between text-[10px] py-0.5">
+                <span className="text-zinc-500">{r.date}</span>
+                <span className="text-zinc-300 truncate mx-2 flex-1">{r.name}</span>
+                <span className={r.amount.startsWith("+") ? "text-emerald-400" : "text-red-400"}>
+                  {r.amount} EUR
                 </span>
               </div>
-              <span
-                className={cn(
-                  "text-right tabular-nums w-[80px]",
-                  t.amount < 0 ? "text-amount-negative" : "text-amount-positive"
-                )}
-              >
-                {formatAmount(t.amount)}
-              </span>
-              <div className="w-5 flex justify-center">
-                {t.hasReceipt ? (
-                  <FileCheck className="h-3.5 w-3.5 text-green-600" />
-                ) : (
-                  <FileX className="h-3.5 w-3.5 text-muted-foreground/50" />
-                )}
-              </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       </div>
     );
@@ -138,15 +104,16 @@ export function ToolPreviewCard({ type, className }: ToolPreviewCardProps) {
           className
         )}
       >
-        <div className="bg-muted/50 grid grid-cols-[1fr_auto] gap-2 px-2 py-1.5 border-b">
+        <div className="bg-muted/50 grid grid-cols-[1fr_auto_auto] gap-2 px-2 py-1.5 border-b">
           <span className="font-medium text-muted-foreground">Receipt</span>
+          <span className="font-medium text-muted-foreground">Score</span>
           <span className="font-medium text-muted-foreground">Status</span>
         </div>
         <div className="divide-y divide-muted/50">
           {FAKE_FILES.map((f, i) => (
             <div
               key={i}
-              className="grid grid-cols-[1fr_auto] gap-2 px-2 py-2 items-center"
+              className="grid grid-cols-[1fr_auto_auto] gap-2 px-2 py-2 items-center"
             >
               <div className="min-w-0 overflow-hidden flex items-center gap-2">
                 <FileText className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
@@ -157,6 +124,12 @@ export function ToolPreviewCard({ type, className }: ToolPreviewCardProps) {
                   </span>
                 </div>
               </div>
+              <span className={cn(
+                "text-[10px] tabular-nums font-medium",
+                f.confidence >= 90 ? "text-green-600" : f.confidence >= 80 ? "text-amber-600" : "text-muted-foreground"
+              )}>
+                {f.confidence}%
+              </span>
               <span
                 className={cn(
                   "text-[10px] px-1.5 py-0.5 rounded-full",
@@ -165,7 +138,11 @@ export function ToolPreviewCard({ type, className }: ToolPreviewCardProps) {
                     : "bg-amber-50 text-amber-900 border border-amber-300"
                 )}
               >
-                {f.status === "connected" ? "Connected" : "Matching..."}
+                {f.status === "connected" ? (
+                  <span className="flex items-center gap-0.5">
+                    <FileCheck className="h-2.5 w-2.5" /> Matched
+                  </span>
+                ) : "Matching..."}
               </span>
             </div>
           ))}
@@ -174,45 +151,23 @@ export function ToolPreviewCard({ type, className }: ToolPreviewCardProps) {
     );
   }
 
-  // Integrations type - overlapping Gmail and Browser cards
+  // Integrations type - AI service logos
   return (
-    <div className={cn("relative h-[160px]", className)}>
-      {/* Gmail card - back */}
-      <div className="absolute top-0 left-0 right-6 rounded-md border text-xs overflow-hidden bg-card shadow-lg">
-        <div className="bg-muted/50 px-3 py-1.5 flex items-center gap-2 border-b">
-          <Mail className="h-3.5 w-3.5 text-muted-foreground" />
-          <span className="font-medium text-sm">Gmail</span>
-        </div>
-        <div className="divide-y divide-muted/50">
-          {FAKE_GMAIL.map((e, i) => (
-            <div key={i} className="flex items-center gap-2 px-2.5 py-1.5">
-              <Paperclip className="h-3 w-3 text-muted-foreground shrink-0" />
-              <span className="text-xs truncate flex-1">{e.filename}</span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-50 text-green-900">
-                {e.score}%
-              </span>
-            </div>
-          ))}
-        </div>
+    <div className={cn("rounded-md border text-xs overflow-hidden bg-card shadow-lg", className)}>
+      <div className="bg-muted/50 px-3 py-1.5 border-b">
+        <span className="font-medium text-muted-foreground">Connected AI Services</span>
       </div>
-
-      {/* Browser card - front */}
-      <div className="absolute top-12 left-6 right-0 rounded-md border text-xs overflow-hidden bg-card shadow-xl">
-        <div className="bg-muted/50 px-3 py-1.5 flex items-center gap-2 border-b">
-          <Globe className="h-3.5 w-3.5 text-muted-foreground" />
-          <span className="font-medium text-sm">Browser Downloads</span>
-        </div>
-        <div className="divide-y divide-muted/50">
-          {FAKE_BROWSER.map((e, i) => (
-            <div key={i} className="flex items-center gap-2 px-2.5 py-1.5">
-              <FileText className="h-3 w-3 text-muted-foreground shrink-0" />
-              <span className="text-xs truncate flex-1">{e.filename}</span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-50 text-green-900">
-                {e.score}%
-              </span>
+      <div className="divide-y divide-muted/50">
+        {AI_SERVICES.map((s, i) => (
+          <div key={i} className="flex items-center gap-2 px-3 py-2">
+            <Bot className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <div className="flex-1 min-w-0">
+              <span className="text-xs font-medium">{s.name}</span>
+              <span className="text-[10px] text-muted-foreground ml-1.5">{s.sub}</span>
             </div>
-          ))}
-        </div>
+            <ChevronRight className="h-3 w-3 text-muted-foreground/50" />
+          </div>
+        ))}
       </div>
     </div>
   );

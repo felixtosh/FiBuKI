@@ -79,9 +79,12 @@ interface UserInfo {
 
 const PLAN_COLORS: Record<PlanId, string> = {
   free: "bg-stone-50 text-stone-900 border-stone-300",
-  starter: "bg-blue-50 text-blue-900 border-blue-300",
-  business: "bg-purple-50 text-purple-900 border-purple-300",
+  data: "bg-teal-50 text-teal-900 border-teal-300",
+  smart: "bg-purple-50 text-purple-900 border-purple-300",
   pro: "bg-amber-50 text-amber-900 border-amber-300",
+  // Legacy
+  starter: "bg-blue-50 text-blue-900 border-blue-300",
+  business: "bg-indigo-50 text-indigo-900 border-indigo-300",
 };
 
 export default function AdminUsersPage() {

@@ -1,20 +1,20 @@
 {
   "landing": {
     "hero": {
-      "title": "Deine Buchhaltung arbeitet, während du schläfst",
-      "subtitle": "FiBuKI lernt mit jeder Aktion dazu und erledigt deine Vorkontierung automatisch – damit du dich auf dein Geschäft konzentrieren kannst.",
+      "title": "Banking-Tools für AI-first Unternehmen",
+      "subtitle": "Verbinde deine Bankdaten mit Claude, ChatGPT und deinen eigenen Tools via MCP & API. Lass KI Zuordnung, Extraktion und Buchhaltung übernehmen.",
       "ctaLogin": "Zum Dashboard",
       "ctaGetStarted": "Loslegen"
     },
     "toolPreviews": {
       "transactions": {
-        "title": "Transaktionen verwalten"
+        "title": "Bank Daten API"
       },
       "files": {
-        "title": "Belege automatisch zuordnen"
+        "title": "AI Matching"
       },
       "integrations": {
-        "title": "Integrationen verbinden"
+        "title": "Integrationen"
       }
     },
     "footer": {

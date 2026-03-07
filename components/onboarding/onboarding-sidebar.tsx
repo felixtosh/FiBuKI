@@ -188,6 +188,7 @@ export function OnboardingSidebar() {
     loading,
     skipOnboarding,
     skipStep,
+    track,
   } = useOnboarding();
 
   const handleNavigate = (route: string) => {
@@ -208,9 +209,13 @@ export function OnboardingSidebar() {
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="p-4 border-b">
-        <h2 className="font-semibold text-lg">Getting Started</h2>
+        <h2 className="font-semibold text-lg">
+          {track === "data_only" ? "Set Up Bank Data" : "Getting Started"}
+        </h2>
         <p className="text-sm text-muted-foreground mt-1">
-          Complete these steps to set up your account
+          {track === "data_only"
+            ? "Connect your bank to start using the API"
+            : "Complete these steps to set up your account"}
         </p>
 
         {/* Progress bar */}

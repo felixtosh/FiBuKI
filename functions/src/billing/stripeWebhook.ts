@@ -186,9 +186,9 @@ async function handleCheckoutCompleted(
     return;
   }
 
-  const plan = (session.metadata?.plan || "starter") as PlanId;
+  const plan = (session.metadata?.plan || "data") as PlanId;
   const billingPeriod = (session.metadata?.billingPeriod || "monthly") as BillingPeriod;
-  const planConfig = PLANS[plan] || PLANS.starter;
+  const planConfig = PLANS[plan] || PLANS.data;
 
   const subscriptionId =
     typeof session.subscription === "string"
@@ -224,6 +224,8 @@ async function handleCheckoutCompleted(
       aiWarning100Sent: false,
       transactionCountCurrentMonth: 0,
       transactionCountMonth: yearMonth,
+      // Mark trial as expired on first paid checkout
+      trialExpired: true,
       updatedAt: FieldValue.serverTimestamp(),
     },
     { merge: true }
@@ -254,8 +256,8 @@ async function handleSubscriptionUpdated(
     return;
   }
 
-  const plan = (subscription.metadata?.plan || "starter") as PlanId;
-  const planConfig = PLANS[plan] || PLANS.starter;
+  const plan = (subscription.metadata?.plan || "data") as PlanId;
+  const planConfig = PLANS[plan] || PLANS.data;
 
   await db.collection("subscriptions").doc(userId).update({
     plan,

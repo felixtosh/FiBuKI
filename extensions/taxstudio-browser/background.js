@@ -33,6 +33,50 @@
 
   // Track URLs we've already started processing
   var processingUrls = {};
+  var PULL_CLEANUP_DELAY_MS = 15000;
+  var MANUAL_CAPTURE_MENU_ID = "ts_activate_invoice_downloads";
+
+  function isPullRun(run) {
+    return !!(run && !run.isLearnRun && !run.isReplayRun);
+  }
+
+  function isRunActiveForIntercept(run) {
+    return !!(run && !run.pausedForLogin && !run.completedAt);
+  }
+
+  function maybeCleanupPullRun(runId, reason) {
+    if (!runId || !runs[runId]) return;
+    var run = runs[runId];
+    if (!isPullRun(run)) return;
+    if (run.pausedForLogin) return;
+    if ((run.pendingDownloads || 0) > 0) return;
+    if ((run.inflightUploads || 0) > 0) return;
+    if (run.cleanupTimer) {
+      clearTimeout(run.cleanupTimer);
+      run.cleanupTimer = null;
+    }
+    console.log("[FiBuKI] Cleaning up pull run:", runId, reason || "ready");
+    cleanupRunRegistration(runId);
+  }
+
+  function markPullRunCompleted(runId, reason) {
+    if (!runId || !runs[runId]) return;
+    var run = runs[runId];
+    if (!isPullRun(run)) return;
+    if (!run.completedAt) {
+      run.completedAt = Date.now();
+      run.completedReason = reason || "completed";
+      if (run.cleanupTimer) {
+        clearTimeout(run.cleanupTimer);
+      }
+      run.cleanupTimer = setTimeout(function () {
+        if (!runs[runId]) return;
+        runs[runId].cleanupTimer = null;
+        maybeCleanupPullRun(runId, "delayed_cleanup");
+      }, PULL_CLEANUP_DELAY_MS);
+    }
+    maybeCleanupPullRun(runId, reason || run.completedReason || "completed");
+  }
 
   // Watch for new tabs being created with PDF URLs (fires earliest)
   if (chrome.webNavigation && chrome.webNavigation.onCreatedNavigationTarget) {
@@ -46,7 +90,7 @@
       if (!isPdfUrl) return;
 
       var activeRunIds = Object.keys(runs).filter(function(rid) {
-        return runs[rid] && !runs[rid].pausedForLogin;
+        return isRunActiveForIntercept(runs[rid]);
       });
 
       if (activeRunIds.length === 0) return;
@@ -79,7 +123,7 @@
       if (details.frameId !== 0) return; // Only main frame
 
       var activeRunIds = Object.keys(runs).filter(function(rid) {
-        return runs[rid] && !runs[rid].pausedForLogin;
+        return isRunActiveForIntercept(runs[rid]);
       });
 
       if (activeRunIds.length === 0) return;
@@ -111,7 +155,7 @@
 
       // Check for active run
       var activeRunIds = Object.keys(runs).filter(function(rid) {
-        return runs[rid] && !runs[rid].pausedForLogin;
+        return isRunActiveForIntercept(runs[rid]);
       });
 
       if (activeRunIds.length === 0) return;
@@ -221,6 +265,124 @@
     } catch (err) {
       // Ignore messaging errors
     }
+  }
+
+  function createPullRun(runId, appTabId, authToken, options) {
+    var opts = options || {};
+    runs[runId] = {
+      tabId: opts.tabId || null,
+      downloadTabIds: [],
+      attemptedUrls: {},
+      openedDownloadUrls: {},
+      appTabId: appTabId || null,
+      foundCount: 0,
+      downloadedCount: 0,
+      urls: [],
+      overlaySent: false,
+      authToken: authToken || null,
+      manualMode: !!opts.manualMode,
+    };
+  }
+
+  function startManualCaptureForTab(tabId, appTabId, reason) {
+    if (typeof tabId !== "number" || tabId < 0) return null;
+
+    var mappedRunId = activeTabRuns[tabId];
+    if (mappedRunId && runs[mappedRunId]) {
+      if (isRunActiveForIntercept(runs[mappedRunId]) || runs[mappedRunId].pausedForLogin) {
+        sendToTab(tabId, {
+          type: "TS_SHOW_OVERLAY",
+          runId: mappedRunId,
+          manual: true,
+          reason: reason || "manual_start",
+        });
+        return mappedRunId;
+      }
+      cleanupRunRegistration(mappedRunId);
+    }
+
+    var runId = "manual_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
+    createPullRun(runId, appTabId || tabId, null, {
+      tabId: tabId,
+      manualMode: true,
+    });
+    activeTabRuns[tabId] = runId;
+
+    sendToTab(tabId, {
+      type: "TS_SHOW_OVERLAY",
+      runId: runId,
+      manual: true,
+      reason: reason || "manual_start",
+    });
+    sendToTab(runs[runId].appTabId, {
+      type: "TS_PULL_EVENT",
+      runId: runId,
+      status: "running",
+      manual: true,
+    });
+    return runId;
+  }
+
+  function ensureManualCaptureMenu() {
+    if (!chrome.contextMenus) return;
+    function createMenu() {
+      try {
+        chrome.contextMenus.create(
+          {
+            id: MANUAL_CAPTURE_MENU_ID,
+            title: "Activate invoice downloads",
+            contexts: ["action"],
+          },
+          function () {
+            var createErr = chrome.runtime && chrome.runtime.lastError;
+            if (!createErr) return;
+            var createMsg = String(createErr.message || "");
+            if (createMsg.toLowerCase().indexOf("duplicate") !== -1) return;
+            console.warn("[FiBuKI] contextMenus.create failed:", createMsg);
+          }
+        );
+      } catch (err) {}
+    }
+    try {
+      chrome.contextMenus.remove(MANUAL_CAPTURE_MENU_ID, function () {
+        var removeErr = chrome.runtime && chrome.runtime.lastError;
+        if (removeErr) {
+          var removeMsg = String(removeErr.message || "");
+          if (removeMsg.indexOf("Cannot find menu item") === -1) {
+            console.warn("[FiBuKI] contextMenus.remove warning:", removeMsg);
+          }
+        }
+        createMenu();
+      });
+    } catch (err) {
+      createMenu();
+    }
+  }
+
+  if (chrome.action && chrome.action.onClicked) {
+    chrome.action.onClicked.addListener(function (tab) {
+      if (!tab || typeof tab.id !== "number") return;
+      startManualCaptureForTab(tab.id, tab.id, "action_click");
+    });
+  }
+
+  if (chrome.contextMenus) {
+    ensureManualCaptureMenu();
+    if (chrome.runtime && chrome.runtime.onInstalled) {
+      chrome.runtime.onInstalled.addListener(function () {
+        ensureManualCaptureMenu();
+      });
+    }
+    if (chrome.runtime && chrome.runtime.onStartup) {
+      chrome.runtime.onStartup.addListener(function () {
+        ensureManualCaptureMenu();
+      });
+    }
+    chrome.contextMenus.onClicked.addListener(function (info, tab) {
+      if (!info || info.menuItemId !== MANUAL_CAPTURE_MENU_ID) return;
+      if (!tab || typeof tab.id !== "number") return;
+      startManualCaptureForTab(tab.id, tab.id, "context_menu");
+    });
   }
 
   function queueDownloadUrls(runId, urls, pageOrigin) {
@@ -600,18 +762,7 @@
     var runId = message.runId;
     var url = message.url;
     if (!runId || !url) return;
-    runs[runId] = {
-      tabId: null,
-      downloadTabIds: [],
-      attemptedUrls: {},
-      openedDownloadUrls: {},
-      appTabId: sender.tab ? sender.tab.id : null,
-      foundCount: 0,
-      downloadedCount: 0,
-      urls: [],
-      overlaySent: false,
-      authToken: message.authToken || null,
-    };
+    createPullRun(runId, sender.tab ? sender.tab.id : null, message.authToken || null, {});
     setTimeout(function () {
       if (!runs[runId] || runs[runId].tabId) return;
       var openUrl = url;
@@ -630,6 +781,22 @@
         sendToTab(runs[runId].appTabId, { type: "TS_PULL_EVENT", runId: runId, status: "running" });
       });
     }, 1500);
+  });
+
+  chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
+    if (!message || message.type !== "TS_START_MANUAL_CAPTURE") return false;
+    if (message.appOrigin) setAppBaseUrl(message.appOrigin);
+    if (!sender.tab || typeof sender.tab.id !== "number") {
+      sendResponse({ ok: false, error: "No sender tab" });
+      return false;
+    }
+    var manualRunId = startManualCaptureForTab(
+      sender.tab.id,
+      sender.tab.id,
+      message.source || "content_click"
+    );
+    sendResponse({ ok: !!manualRunId, runId: manualRunId });
+    return false;
   });
 
   chrome.runtime.onMessage.addListener(function (message, sender) {
@@ -792,12 +959,12 @@
   chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
     if (!message || message.type !== "TS_CHECK_ACTIVE_RUN") return false;
     if (!sender.tab || typeof sender.tab.id !== "number") {
-      sendResponse({ runId: null });
+      sendResponse({ runId: null, manual: false });
       return false;
     }
     var runId = activeTabRuns[sender.tab.id] || null;
     console.log("[FiBuKI] TS_CHECK_ACTIVE_RUN tab", sender.tab.id, "->", runId);
-    sendResponse({ runId: runId });
+    sendResponse({ runId: runId, manual: !!(runId && runs[runId] && runs[runId].manualMode) });
     return false; // synchronous response
   });
 
@@ -957,6 +1124,9 @@
           status: "completed",
         });
       }
+      if (!runs[runId].manualMode) {
+        markPullRunCompleted(runId, "no_urls");
+      }
       return;
     }
     queueDownloadUrls(runId, urls, pageOrigin);
@@ -1088,7 +1258,7 @@
     if (!runId) {
       var allRunIds = Object.keys(runs);
       var activeRunIds = allRunIds.filter(function(rid) {
-        return runs[rid] && !runs[rid].pausedForLogin;
+        return isRunActiveForIntercept(runs[rid]);
       });
       console.log("[FiBuKI] Looking for active run. All runs:", allRunIds.length, "Active:", activeRunIds.length, activeRunIds);
       if (activeRunIds.length > 0) {
@@ -1127,19 +1297,8 @@
           runs[runId] = { tabId: replayRuns[replayRunId].tabId, downloadTabIds: [], attemptedUrls: {}, openedDownloadUrls: {}, appTabId: replayRuns[replayRunId].appTabId, foundCount: 0, downloadedCount: 0, urls: [], overlaySent: false, isReplayRun: true };
         }
       } else {
-        // Even without an active run, if it's a document from a billing site, try to capture it
-        var lowerUrl2 = (url || "").toLowerCase();
-        var isBillingDocument = (lowerUrl2.indexOf("payments.google.com") !== -1 ||
-                                 lowerUrl2.indexOf("admin.google.com") !== -1) &&
-                                (lowerUrl2.indexOf("/doc") !== -1 || lowerUrl2.indexOf("?doc=") !== -1);
-        if (isBillingDocument) {
-          console.log("[FiBuKI] No active run but capturing billing document anyway:", url.slice(0, 100));
-          runId = "orphan-" + Date.now();
-          runs[runId] = { tabId: null, downloadTabIds: [], attemptedUrls: {}, openedDownloadUrls: {}, appTabId: null, foundCount: 0, downloadedCount: 0, urls: [], overlaySent: false };
-        } else {
-          console.log("[FiBuKI] Download not captured - no active run and not a billing document");
-          return;
-        }
+        console.log("[FiBuKI] Download not captured - no active run");
+        return;
       }
     }
     if (!url) return;
@@ -1361,6 +1520,7 @@
   }
 
   function uploadBuffer(runId, buffer, filename, mimeType, sourceUrl, transactionId) {
+    var countedUpload = false;
     // Convert plain Array to Uint8Array (message passing serializes ArrayBuffer to Array)
     var binaryData;
     if (buffer instanceof ArrayBuffer) {
@@ -1397,6 +1557,10 @@
       var headers = {};
       if (token) {
         headers["Authorization"] = "Bearer " + token;
+      }
+      if (runs[runId]) {
+        runs[runId].inflightUploads = (runs[runId].inflightUploads || 0) + 1;
+        countedUpload = true;
       }
 
       console.log("[FiBuKI] Uploading to " + appBaseUrl + "/api/browser/upload..." + (token ? " (with auth)" : " (NO auth)"));
@@ -1457,9 +1621,19 @@
         })
         .catch(function (err) {
           console.warn("[FiBuKI] Upload error:", err);
+        })
+        .finally(function () {
+          if (countedUpload && runs[runId]) {
+            runs[runId].inflightUploads = Math.max(0, (runs[runId].inflightUploads || 1) - 1);
+          }
+          maybeCleanupPullRun(runId, "upload_complete");
         });
     } catch (err) {
       console.warn("[FiBuKI] Upload error:", err);
+      if (countedUpload && runs[runId]) {
+        runs[runId].inflightUploads = Math.max(0, (runs[runId].inflightUploads || 1) - 1);
+      }
+      maybeCleanupPullRun(runId, "upload_error");
     }
   }
 
@@ -1505,10 +1679,43 @@
   // Clean up runs[]/activeTabRuns[] entries for a replay or learn runId
   function cleanupRunRegistration(runId) {
     if (!runs[runId]) return;
+    if (runs[runId].cleanupTimer) {
+      clearTimeout(runs[runId].cleanupTimer);
+      runs[runId].cleanupTimer = null;
+    }
     if (runs[runId].tabId) delete activeTabRuns[runs[runId].tabId];
     (runs[runId].downloadTabIds || []).forEach(function(tid) { delete activeTabRuns[tid]; });
     delete runs[runId];
   }
+
+  // Clean up pull runs when their tabs close, so stale run state can't keep interception active.
+  chrome.tabs.onRemoved.addListener(function (tabId) {
+    var runId = findRunIdByTab(tabId);
+    if (!runId || !runs[runId]) return;
+    var run = runs[runId];
+    if (!isPullRun(run)) return;
+
+    if (run.tabId === tabId) {
+      delete activeTabRuns[tabId];
+      run.tabId = null;
+      if (Array.isArray(run.downloadTabIds)) {
+        run.downloadTabIds = run.downloadTabIds.filter(function (tid) {
+          return tid !== tabId;
+        });
+      }
+      markPullRunCompleted(runId, "tab_closed");
+      maybeCleanupPullRun(runId, "tab_closed");
+      return;
+    }
+
+    if (Array.isArray(run.downloadTabIds) && run.downloadTabIds.indexOf(tabId) !== -1) {
+      run.downloadTabIds = run.downloadTabIds.filter(function (tid) {
+        return tid !== tabId;
+      });
+      delete activeTabRuns[tabId];
+      maybeCleanupPullRun(runId, "child_tab_closed");
+    }
+  });
 
   // ============================================================================
   // LEARN MODE handlers

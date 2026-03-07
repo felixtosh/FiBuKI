@@ -1,11 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
 import { useAuth } from "@/components/auth";
-import type { Subscription } from "@/types/billing";
-import { PLANS } from "@/types/billing";
+import type { Subscription, PlanFeatureKey } from "@/types/billing";
+import {
+  PLANS,
+  hasFeature as hasFeatureFn,
+  TRIAL_DURATION_DAYS,
+  TRIAL_TRANSACTION_LIMIT,
+} from "@/types/billing";
 
 export function useSubscription() {
   const { user } = useAuth();
@@ -57,6 +62,48 @@ export function useSubscription() {
   const txLimit = planConfig.transactionLimit;
   const txUsagePercent = txLimit > 0 ? Math.min(100, (txCount / txLimit) * 100) : 0;
 
+  // Trial calculations
+  const trialExpired = subscription?.trialExpired ?? false;
+  const trialStartedAt = subscription?.trialStartedAt;
+  const trialTxCount = subscription?.trialTransactionCount ?? 0;
+
+  let isOnTrial = false;
+  let trialDaysRemaining = 0;
+  let trialTransactionsRemaining = 0;
+
+  if (!trialExpired && trialStartedAt) {
+    const startDate =
+      typeof trialStartedAt === "object" && "seconds" in trialStartedAt
+        ? new Date((trialStartedAt as { seconds: number }).seconds * 1000)
+        : new Date(trialStartedAt as unknown as string);
+    const daysSinceStart = Math.floor(
+      (Date.now() - startDate.getTime()) / (1000 * 60 * 60 * 24)
+    );
+    trialDaysRemaining = Math.max(0, TRIAL_DURATION_DAYS - daysSinceStart);
+    trialTransactionsRemaining = Math.max(0, TRIAL_TRANSACTION_LIMIT - trialTxCount);
+    isOnTrial = trialDaysRemaining > 0 && trialTransactionsRemaining > 0;
+  }
+
+  // Grandfathering
+  const grandfatheredUntilRaw = subscription?.grandfatheredUntil;
+  const grandfatheredUntil = grandfatheredUntilRaw
+    ? typeof grandfatheredUntilRaw === "object" && "seconds" in grandfatheredUntilRaw
+      ? new Date((grandfatheredUntilRaw as { seconds: number }).seconds * 1000)
+      : null
+    : null;
+
+  // Feature gating
+  const hasFeature = useCallback(
+    (feature: PlanFeatureKey): boolean => {
+      // On trial, grant smart-tier features
+      if (isOnTrial) {
+        return PLANS.smart.planFeatures[feature];
+      }
+      return hasFeatureFn(plan, feature, grandfatheredUntil);
+    },
+    [plan, isOnTrial, grandfatheredUntil]
+  );
+
   return {
     subscription,
     loading,
@@ -75,6 +122,13 @@ export function useSubscription() {
     txCount,
     txLimit,
     txUsagePercent,
+    // Trial
+    isOnTrial,
+    trialDaysRemaining,
+    trialTransactionsRemaining,
+    trialExpired,
+    // Feature gating
+    hasFeature,
     // Stripe
     hasStripeCustomer: !!subscription?.stripeCustomerId,
     isActive: subscription?.stripeSubscriptionStatus === "active",
@@ -86,5 +140,7 @@ export function useSubscription() {
     isPlanTester: subscription?.adminOverride === "plan_tester",
     // Automation mode
     automationMode: (subscription?.automationMode as "active" | "passive") ?? "active",
+    // Grandfathering
+    grandfatheredUntil,
   };
 }

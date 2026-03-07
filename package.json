@@ -12,6 +12,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "test:chat-url": "node --test tests/chat-url-state.test.mjs",
     "generate:mcp-automations": "node scripts/generate-mcp-automations.js"
   },
   "dependencies": {

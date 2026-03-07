@@ -282,6 +282,9 @@ export {
   deactivateInvestmentsAddonCallable as deactivateInvestmentsAddon,
 } from "./billing/investmentsAddon";
 
+// Onboarding operations
+export { setOnboardingTrackCallable as setOnboardingTrack } from "./onboarding/setOnboardingTrackCallable";
+
 // MCP HTTP API (for OpenClaw, Claude Desktop, ChatGPT, etc.)
 export { mcpApi, mcpToolsList, mcpSse } from "./mcp-api";
 export { openApiSpec, aiPluginManifest } from "./mcp-api/openapi";

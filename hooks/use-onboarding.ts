@@ -8,6 +8,9 @@ import {
   OnboardingStep,
   OnboardingStepConfig,
   ONBOARDING_STEPS,
+  getStepsForTrack,
+  getNextStepForTrack,
+  DATA_ONLY_STEPS,
 } from "@/types/onboarding";
 import {
   OperationsContext,
@@ -144,33 +147,37 @@ export function useOnboarding() {
 
     // Check each step and complete based on current conditions
     const syncStepsWithData = async () => {
-      // Step 0: Set identity (name/company)
-      if (!state.completedSteps.set_identity && hasIdentity) {
-        await completeOnboardingStep(ctx, "set_identity");
-        return;
-      }
+      const isDataOnly = state.track === "data_only";
 
-      // Step 1: Connect email (only check if step 0 is done, skip if user explicitly skipped)
-      // Note: inbound addresses are auto-created for every user, so only count Gmail OAuth
-      const hasEmailConnected = hasGmailIntegration;
-      const isEmailSkipped = !!state.skippedSteps?.connect_email;
-      if (state.completedSteps.set_identity && !isEmailSkipped) {
-        if (!state.completedSteps.connect_email && hasEmailConnected) {
-          await completeOnboardingStep(ctx, "connect_email");
+      // For data_only track, skip directly to bank steps
+      if (!isDataOnly) {
+        // Step 0: Set identity (name/company)
+        if (!state.completedSteps.set_identity && hasIdentity) {
+          await completeOnboardingStep(ctx, "set_identity");
           return;
         }
+
+        // Step 1: Connect email (only check if step 0 is done, skip if user explicitly skipped)
+        const hasEmailConnected = hasGmailIntegration;
+        const isEmailSkipped = !!state.skippedSteps?.connect_email;
+        if (state.completedSteps.set_identity && !isEmailSkipped) {
+          if (!state.completedSteps.connect_email && hasEmailConnected) {
+            await completeOnboardingStep(ctx, "connect_email");
+            return;
+          }
+        }
+
+        // Only proceed to bank steps if email step is done or skipped
+        if (!state.completedSteps.connect_email) return;
       }
 
-      // Step 2: Add bank account (only check if step 1 is done or skipped)
+      // Bank steps (shared by both tracks)
       const hasSources = sources.length > 0;
-      if (!state.completedSteps.connect_email) return;
       if (!state.completedSteps.add_bank_account && hasSources) {
-        // Complete if has sources
         await completeOnboardingStep(ctx, "add_bank_account", sources[0]?.id);
         return;
       }
 
-      // Step 2: Import transactions (only check if step 1 is done)
       const hasTransactions = transactions.length > 0;
       if (state.completedSteps.add_bank_account) {
         if (!state.completedSteps.import_transactions && hasTransactions) {
@@ -179,7 +186,10 @@ export function useOnboarding() {
         }
       }
 
-      // Step 3: Assign partner (only check if step 2 is done)
+      // For data_only, onboarding ends after import_transactions
+      if (isDataOnly) return;
+
+      // Full service: additional steps
       const transactionWithPartner = transactions.find((t) => t.partnerId);
       if (state.completedSteps.import_transactions) {
         if (!state.completedSteps.assign_partner && transactionWithPartner) {
@@ -188,7 +198,6 @@ export function useOnboarding() {
         }
       }
 
-      // Step 4: Attach file or no-receipt category (only check if step 3 is done)
       const transactionWithFileOrCategory = transactions.find(
         (t) =>
           (t.fileIds && t.fileIds.length > 0) ||
@@ -231,14 +240,33 @@ export function useOnboarding() {
       emailLoading
     );
 
+  // Track-filtered steps
+  const track = resolvedState?.track;
+  const filteredSteps = useMemo(
+    () => getStepsForTrack(track),
+    [track]
+  );
+
   // Get current step config
   const currentStepConfig = useMemo((): OnboardingStepConfig | null => {
     if (!resolvedState) return null;
-    return ONBOARDING_STEPS.find((s) => s.id === resolvedState.currentStep) || null;
-  }, [resolvedState]);
+    return filteredSteps.find((s) => s.id === resolvedState.currentStep) || null;
+  }, [resolvedState, filteredSteps]);
 
-  // Calculate progress
-  const progress = useMemo(() => calculateProgress(resolvedState), [resolvedState]);
+  // Calculate progress based on filtered steps
+  const progress = useMemo(() => {
+    if (!resolvedState) {
+      return { completed: 0, total: filteredSteps.length, percentage: 0 };
+    }
+    const completed = filteredSteps.filter(
+      (s) => !!resolvedState.completedSteps[s.id]
+    ).length;
+    return {
+      completed,
+      total: filteredSteps.length,
+      percentage: Math.round((completed / filteredSteps.length) * 100),
+    };
+  }, [resolvedState, filteredSteps]);
 
   // Check if a step is completed
   const isStepCompleted = useCallback(
@@ -297,6 +325,10 @@ export function useOnboarding() {
     loading: resolvedLoading,
     error,
 
+    // Track
+    track,
+    needsWelcome: resolvedState ? !resolvedState.track && !resolvedState.isComplete : false,
+
     // Derived state
     isOnboarding: resolvedState ? !resolvedState.isComplete : false,
     isComplete: resolvedState?.isComplete ?? false,
@@ -305,8 +337,8 @@ export function useOnboarding() {
     currentStep: resolvedState?.currentStep ?? null,
     currentStepConfig,
 
-    // Step info
-    steps: ONBOARDING_STEPS,
+    // Step info (filtered by track)
+    steps: filteredSteps,
     isStepCompleted,
     isStepSkipped,
     progress,

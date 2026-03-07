@@ -122,8 +122,8 @@ export function BillingPlanCard() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="free">Free</SelectItem>
-                <SelectItem value="starter">Starter</SelectItem>
-                <SelectItem value="business">Business</SelectItem>
+                <SelectItem value="data">Data</SelectItem>
+                <SelectItem value="smart">Smart</SelectItem>
                 <SelectItem value="pro">Pro</SelectItem>
               </SelectContent>
             </Select>

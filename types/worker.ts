@@ -83,6 +83,10 @@ export interface WorkerRun {
   userId: string;
   workerType: WorkerType;
   status: WorkerRunStatus;
+  /** Optional chat session linked to this run for UI "view in chat". */
+  sessionId?: string;
+  /** Optional dedupe key to suppress duplicate runs for same entity + worker type. */
+  dedupeKey?: string;
 
   // Trigger info
   triggeredBy: "auto" | "user";

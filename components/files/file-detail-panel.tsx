@@ -134,8 +134,14 @@ export function FileDetailPanel({
   const [isRematchingTransactions, setIsRematchingTransactions] = useState(false);
 
   // Chat hook for agentic search (via workers)
-  const { startFilePartnerSearch, startFileTransactionSearch, activeWandTargets } = useChat();
-  const isWandActive = activeWandTargets.has(file.id);
+  const { startFilePartnerSearch, startFileTransactionSearch, activeWandTargets, notifications } = useChat();
+  const hasRunningWorkerNotification = notifications.some(
+    (notification) =>
+      notification.type === "worker_activity" &&
+      notification.context.workerStatus === "running" &&
+      notification.context.fileId === file.id
+  );
+  const isWandActive = activeWandTargets.has(file.id) || hasRunningWorkerNotification;
 
   const ctx: OperationsContext = useMemo(
     () => ({ db, userId: userId ?? "" }),

@@ -152,9 +152,9 @@ async function handleCheckoutCompleted(db, session) {
         console.log(`[StripeWebhook] AI credits added: user=${userId} amount=${amountEur}`);
         return;
     }
-    const plan = (session.metadata?.plan || "starter");
+    const plan = (session.metadata?.plan || "data");
     const billingPeriod = (session.metadata?.billingPeriod || "monthly");
-    const planConfig = config_1.PLANS[plan] || config_1.PLANS.starter;
+    const planConfig = config_1.PLANS[plan] || config_1.PLANS.data;
     const subscriptionId = typeof session.subscription === "string"
         ? session.subscription
         : session.subscription?.id || null;
@@ -183,6 +183,8 @@ async function handleCheckoutCompleted(db, session) {
         aiWarning100Sent: false,
         transactionCountCurrentMonth: 0,
         transactionCountMonth: yearMonth,
+        // Mark trial as expired on first paid checkout
+        trialExpired: true,
         updatedAt: firestore_1.FieldValue.serverTimestamp(),
     }, { merge: true });
     // Clear quotaExceeded flags — user upgraded, previously limited transactions should be active
@@ -201,8 +203,8 @@ async function handleSubscriptionUpdated(db, subscription) {
         console.log(`[StripeWebhook] Skipping subscription update for user=${userId} (adminOverride=${subDoc.data()?.adminOverride})`);
         return;
     }
-    const plan = (subscription.metadata?.plan || "starter");
-    const planConfig = config_1.PLANS[plan] || config_1.PLANS.starter;
+    const plan = (subscription.metadata?.plan || "data");
+    const planConfig = config_1.PLANS[plan] || config_1.PLANS.data;
     await db.collection("subscriptions").doc(userId).update({
         plan,
         stripeSubscriptionStatus: subscription.status,

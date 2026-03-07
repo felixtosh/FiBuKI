@@ -111,7 +111,9 @@ export type CloudFunctionName =
   | "activateInvestmentsAddon"
   | "deactivateInvestmentsAddon"
   // Automation mode
-  | "updateAutomationMode";
+  | "updateAutomationMode"
+  // Onboarding
+  | "setOnboardingTrack";
 
 /**
  * Summary statistics for function calls (for dashboards).

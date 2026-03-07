@@ -136,7 +136,15 @@ export function TransactionDetailPanel({
   const [showHistoryPanel, setShowHistoryPanel] = useState(false);
 
   // Chat hook for agentic search (receipt search via worker)
-  const { startReceiptSearch } = useChat();
+  const { startReceiptSearch, activeWandTargets, notifications } = useChat();
+  const isReceiptSearchRunningFromNotification = notifications.some(
+    (notification) =>
+      notification.type === "worker_activity" &&
+      notification.context.workerStatus === "running" &&
+      notification.context.transactionId === transaction.id
+  );
+  const isReceiptSearchRunning =
+    activeWandTargets.has(transaction.id) || isReceiptSearchRunningFromNotification;
 
   // Precision search hook (kept for status tracking)
   const {
@@ -147,8 +155,9 @@ export function TransactionDetailPanel({
 
   // Agentic search trigger - runs receipt search worker
   const triggerSearch = useCallback(() => {
+    if (isReceiptSearchRunning) return;
     startReceiptSearch(transaction.id);
-  }, [startReceiptSearch, transaction.id]);
+  }, [startReceiptSearch, transaction.id, isReceiptSearchRunning]);
 
   // Operations context for file operations
   const ctx: OperationsContext = useMemo(
@@ -307,7 +316,7 @@ export function TransactionDetailPanel({
           <div>
             <TransactionFilesSection
               transaction={transaction}
-              isSearching={isSearching}
+              isSearching={isSearching || isReceiptSearchRunning}
               searchLabel={strategyLabel}
               onTriggerSearch={triggerSearch}
               onOpenConnectFile={onOpenConnectFile}
