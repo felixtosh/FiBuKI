@@ -1,0 +1,28 @@
+{
+  "name": "@fibukiapp/cli",
+  "version": "0.1.0",
+  "description": "FiBuKI CLI — authenticate and configure AI integrations",
+  "bin": {
+    "fibuki": "./bin/fibuki.mjs"
+  },
+  "type": "module",
+  "files": [
+    "bin/",
+    "lib/"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fibukiapp/fibuki"
+  },
+  "license": "MIT",
+  "keywords": [
+    "fibuki",
+    "tax",
+    "bookkeeping",
+    "mcp",
+    "cli"
+  ]
+}

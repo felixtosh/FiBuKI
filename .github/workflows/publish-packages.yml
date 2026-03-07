@@ -1,0 +1,121 @@
+name: Publish Packages (npm + ClawHub)
+
+# Triggered by GitHub Releases.
+#
+# Tag conventions:
+#   cli@0.1.0        → publishes @fibukiapp/cli to npm
+#   openclaw@0.1.0   → publishes @fibukiapp/openclaw-plugin to npm + ClawHub skill
+#   packages@0.1.0   → publishes ALL packages
+#
+# Manual dispatch also supported for ad-hoc publishes.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      publish_cli:
+        description: "Publish @fibukiapp/cli to npm"
+        type: boolean
+        default: false
+      publish_openclaw:
+        description: "Publish @fibukiapp/openclaw-plugin to npm + ClawHub"
+        type: boolean
+        default: false
+
+permissions:
+  id-token: write  # Required for npm trusted publishing (OIDC)
+  contents: read
+
+jobs:
+  # ──────────────────────────────────────────────────────────────
+  # @fibukiapp/cli → npm
+  # ──────────────────────────────────────────────────────────────
+  publish-cli:
+    name: "@fibukiapp/cli → npm"
+    runs-on: ubuntu-latest
+    if: >-
+      (github.event_name == 'release' &&
+        (startsWith(github.event.release.tag_name, 'cli@') ||
+         startsWith(github.event.release.tag_name, 'packages@')))
+      || (github.event_name == 'workflow_dispatch' && inputs.publish_cli)
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Extract version from tag
+        if: github.event_name == 'release'
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          VERSION="${TAG#*@}"
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+
+      - name: Set version in package.json
+        if: env.VERSION
+        working-directory: cli
+        run: npm version "$VERSION" --no-git-tag-version --allow-same-version
+
+      - name: Publish to npm
+        working-directory: cli
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # ──────────────────────────────────────────────────────────────
+  # @fibukiapp/openclaw-plugin → npm + ClawHub
+  # ──────────────────────────────────────────────────────────────
+  publish-openclaw:
+    name: "@fibukiapp/openclaw-plugin → npm + ClawHub"
+    runs-on: ubuntu-latest
+    if: >-
+      (github.event_name == 'release' &&
+        (startsWith(github.event.release.tag_name, 'openclaw@') ||
+         startsWith(github.event.release.tag_name, 'packages@')))
+      || (github.event_name == 'workflow_dispatch' && inputs.publish_openclaw)
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Extract version from tag
+        if: github.event_name == 'release'
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          VERSION="${TAG#*@}"
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+
+      - name: Set version in package.json
+        if: env.VERSION
+        working-directory: integrations/openclaw-plugin
+        run: npm version "$VERSION" --no-git-tag-version --allow-same-version
+
+      # ── npm publish ──
+      - name: Publish to npm
+        working-directory: integrations/openclaw-plugin
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # ── ClawHub publish ──
+      - name: Install ClawHub CLI
+        run: npm i -g clawhub
+
+      - name: Publish skill to ClawHub
+        working-directory: integrations/openclaw-plugin/skills/fibuki-guide
+        run: |
+          clawhub publish . \
+            --slug fibuki \
+            --name "FiBuKI Tax Studio" \
+            --version "${VERSION:-0.0.0}" \
+            --changelog "${{ github.event.release.body || 'Update' }}" \
+            --tags latest \
+            --no-input
+        env:
+          CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_TOKEN }}

@@ -2,11 +2,31 @@
  * OpenAPI Spec for ChatGPT Actions
  *
  * https://fibuki.com/api/openapi.json
+ *
+ * Tool list is auto-generated from functions/src/tools/definitions.ts
+ * via: npm run generate:tool-definitions
  */
 
 import { NextResponse } from "next/server";
+import { TOOL_DEFINITIONS } from "@/lib/data/generated-tool-definitions";
 
 export async function GET() {
+  const toolNames = TOOL_DEFINITIONS.map((t) => t.name);
+
+  const toolDescriptions: Record<string, string> = {};
+  for (const t of TOOL_DEFINITIONS) {
+    const required = t.inputSchema.required;
+    const props = t.inputSchema.properties;
+    const argParts: string[] = [];
+    for (const [key, schema] of Object.entries(props)) {
+      const s = schema as { type?: string; description?: string };
+      const isRequired = required?.includes(key);
+      argParts.push(`${key}${isRequired ? "" : "?"} (${s.type || "any"}${s.description ? ` — ${s.description}` : ""})`);
+    }
+    const argStr = argParts.length > 0 ? `. Args: ${argParts.join(", ")}` : "";
+    toolDescriptions[t.name] = `${t.description}${argStr}`;
+  }
+
   return NextResponse.json({
     openapi: "3.0.0",
     info: {
@@ -38,22 +58,7 @@ export async function GET() {
                   properties: {
                     tool: {
                       type: "string",
-                      enum: [
-                        "list_sources",
-                        "get_source",
-                        "list_transactions",
-                        "get_transaction",
-                        "update_transaction",
-                        "list_files",
-                        "get_file",
-                        "connect_file_to_transaction",
-                        "disconnect_file_from_transaction",
-                        "list_transactions_needing_files",
-                        "auto_connect_file_suggestions",
-                        "list_no_receipt_categories",
-                        "assign_no_receipt_category",
-                        "remove_no_receipt_category",
-                      ],
+                      enum: toolNames,
                       description: "The tool to execute",
                     },
                     arguments: {
@@ -124,35 +129,10 @@ export async function GET() {
           type: "http",
           scheme: "bearer",
           description:
-            "FiBuKI API key (starts with fk_). Generate at fibuki.com Settings > Integrations > AI Agents",
+            "FiBuKI API key (starts with fk_). Generate at fibuki.com Settings > Integrations > AI Agents, or run: npx @fibukiapp/cli auth",
         },
       },
     },
-    "x-tool-descriptions": {
-      list_sources: "List all bank accounts/sources for the user",
-      get_source: "Get details of a specific bank account. Args: sourceId (string)",
-      list_transactions:
-        "List transactions with filters. Args: sourceId?, dateFrom?, dateTo?, search?, isComplete? (boolean), limit? (number, max 100)",
-      get_transaction: "Get full transaction details. Args: transactionId (string)",
-      update_transaction:
-        "Update transaction description or status. Args: transactionId (string), description? (string), isComplete? (boolean)",
-      list_files:
-        "List uploaded files/receipts. Args: hasConnections? (boolean), hasSuggestions? (boolean), limit? (number)",
-      get_file: "Get file details including suggestions. Args: fileId (string)",
-      connect_file_to_transaction:
-        "Connect a file to a transaction (marks transaction complete). Args: fileId (string), transactionId (string)",
-      disconnect_file_from_transaction:
-        "Disconnect a file from a transaction. Args: fileId (string), transactionId (string)",
-      list_transactions_needing_files:
-        "Find transactions without receipts. Args: minAmount? (number, in cents), limit? (number)",
-      auto_connect_file_suggestions:
-        "Auto-connect files to transactions above confidence threshold. Args: fileId? (string), minConfidence? (number, 0-100, default 89)",
-      list_no_receipt_categories:
-        "List categories for transactions that don't need receipts (bank fees, payroll, etc.)",
-      assign_no_receipt_category:
-        "Assign a no-receipt category to a transaction. Args: transactionId (string), categoryId (string)",
-      remove_no_receipt_category:
-        "Remove a no-receipt category from a transaction. Args: transactionId (string)",
-    },
+    "x-tool-descriptions": toolDescriptions,
   });
 }

@@ -14,6 +14,9 @@ import {
   ExternalLink,
   Eye,
   EyeOff,
+  Terminal,
+  FileText,
+  BookOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -146,17 +149,45 @@ export function ApiKeysSection() {
             </div>
           )}
 
+          {/* Quick Setup */}
+          <div className="pt-4 border-t space-y-4">
+            <div className="text-sm font-medium">Quick Setup</div>
+            <div className="rounded-lg border bg-muted/30 p-4 space-y-3">
+              <div className="flex items-start gap-3">
+                <div className="h-8 w-8 rounded-md bg-emerald-100 flex items-center justify-center shrink-0 mt-0.5">
+                  <Terminal className="h-4 w-4 text-emerald-700" />
+                </div>
+                <div className="space-y-1.5 min-w-0">
+                  <div className="font-medium text-sm">CLI Authentication</div>
+                  <p className="text-xs text-muted-foreground">
+                    Create an API key from your terminal — no manual copy-paste needed.
+                    Opens your browser for approval, then saves the key automatically.
+                  </p>
+                  <CopyableCommand command="npx @fibukiapp/cli auth" />
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    <Badge variant="secondary" className="text-[10px] font-normal">
+                      --format mcp &nbsp;→ Claude Desktop config
+                    </Badge>
+                    <Badge variant="secondary" className="text-[10px] font-normal">
+                      --format env &nbsp;→ FIBUKI_API_KEY=fk_...
+                    </Badge>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* Integration Endpoints */}
           <div className="pt-4 border-t space-y-4">
             <div className="text-sm font-medium">Connect Your AI</div>
 
             {/* OpenClaw */}
             <IntegrationEndpoint
-              name="OpenClaw Plugin"
-              description="Install via npm and configure with your API key"
-              endpoint="npm install @fibukiapp/openclaw-plugin"
-              configExample={`{ "fibuki": { "config": { "apiKey": "fk_xxx" } } }`}
-              docsUrl="https://www.npmjs.com/package/@fibukiapp/openclaw-plugin"
+              name="OpenClaw Skill"
+              description="Install from ClawHub or npm — includes domain guide + all tools"
+              endpoint="clawhub install fibuki"
+              configExample={`# ClawHub (recommended)\nclawhub install fibuki\n\n# Or via npm plugin\nopenclaw plugins install @fibukiapp/openclaw-plugin\n\n# Then add your API key to ~/.openclaw/openclaw.json:\n{\n  "skills": {\n    "entries": {\n      "fibuki": {\n        "enabled": true,\n        "env": { "FIBUKI_API_KEY": "fk_xxx" }\n      }\n    }\n  }\n}`}
+              docsUrl="https://clawhub.ai"
             />
 
             {/* Claude MCP */}
@@ -164,7 +195,7 @@ export function ApiKeysSection() {
               name="Claude Desktop (MCP)"
               description="Add to your Claude Desktop MCP config"
               endpoint="https://fibuki.com/api/mcp/sse"
-              configExample={`{ "mcpServers": { "fibuki": { "url": "https://fibuki.com/api/mcp/sse", "headers": { "Authorization": "Bearer fk_xxx" } } } }`}
+              configExample={`{\n  "mcpServers": {\n    "fibuki": {\n      "url": "https://fibuki.com/api/mcp/sse",\n      "headers": {\n        "Authorization": "Bearer fk_xxx"\n      }\n    }\n  }\n}`}
               docsUrl="https://modelcontextprotocol.io/quickstart"
             />
 
@@ -182,8 +213,33 @@ export function ApiKeysSection() {
               name="REST API"
               description="Direct HTTP access for custom integrations"
               endpoint="https://fibuki.com/api/mcp"
-              configExample={`curl -X POST https://fibuki.com/api/mcp -H "Authorization: Bearer fk_xxx" -d '{"tool":"list_transactions"}'`}
+              configExample={`curl -X POST https://fibuki.com/api/mcp \\\n  -H "Authorization: Bearer fk_xxx" \\\n  -H "Content-Type: application/json" \\\n  -d '{"tool":"list_transactions","arguments":{"isComplete":false,"limit":5}}'`}
             />
+          </div>
+
+          {/* Resources */}
+          <div className="pt-4 border-t space-y-3">
+            <div className="text-sm font-medium">Resources</div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <ResourceLink
+                icon={<BookOpen className="h-4 w-4" />}
+                label="llm.txt"
+                description="Machine-readable API overview for AI agents"
+                href="https://fibuki.com/llm.txt"
+              />
+              <ResourceLink
+                icon={<FileText className="h-4 w-4" />}
+                label="OpenAPI Spec"
+                description="Full tool schema for GPT Actions"
+                href="https://fibuki.com/api/openapi.json"
+              />
+              <ResourceLink
+                icon={<Terminal className="h-4 w-4" />}
+                label="CLI on npm"
+                description="@fibukiapp/cli package"
+                href="https://www.npmjs.com/package/@fibukiapp/cli"
+              />
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -420,5 +476,56 @@ function IntegrationEndpoint({
         </div>
       )}
     </div>
+  );
+}
+
+function CopyableCommand({ command }: { command: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(command);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="flex gap-2">
+      <code className="flex-1 text-xs font-mono bg-background px-3 py-2 rounded border">
+        {command}
+      </code>
+      <Button variant="outline" size="sm" onClick={handleCopy} className="shrink-0">
+        {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+      </Button>
+    </div>
+  );
+}
+
+function ResourceLink({
+  icon,
+  label,
+  description,
+  href,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  description: string;
+  href: string;
+}) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="flex items-start gap-2.5 rounded-lg border bg-muted/30 p-3 hover:bg-muted/50 transition-colors"
+    >
+      <div className="text-muted-foreground mt-0.5 shrink-0">{icon}</div>
+      <div className="min-w-0">
+        <div className="text-sm font-medium flex items-center gap-1">
+          {label}
+          <ExternalLink className="h-3 w-3 text-muted-foreground" />
+        </div>
+        <div className="text-xs text-muted-foreground">{description}</div>
+      </div>
+    </a>
   );
 }
