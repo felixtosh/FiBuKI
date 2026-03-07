@@ -171,6 +171,11 @@ jobs:
       - name: Install ClawHub CLI
         run: npm i -g clawhub
 
+      - name: Authenticate to ClawHub
+        run: clawhub login --token "$CLAWHUB_TOKEN"
+        env:
+          CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_TOKEN }}
+
       - name: Publish skill to ClawHub
         working-directory: integrations/openclaw-plugin/skills/fibuki-guide
         run: |
