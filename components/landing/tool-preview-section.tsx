@@ -7,19 +7,25 @@ import Image from "next/image";
 
 const FLOATING_LOGOS = [
   {
-    src: "/logos/claude.svg",
+    src: "/logos/claude_logo.png",
     alt: "Claude",
-    className: "absolute -top-4 -right-4 animate-float-slow",
+    position: "absolute -top-4 -right-3 animate-float-slow",
+    width: 100,
+    height: 28,
   },
   {
-    src: "/logos/chatgpt.svg",
-    alt: "ChatGPT",
-    className: "absolute -bottom-3 -left-4 animate-float-medium",
+    src: "/logos/openai_logo.png",
+    alt: "OpenAI",
+    position: "absolute -bottom-4 -left-3 animate-float-medium",
+    width: 100,
+    height: 28,
   },
   {
-    src: "/logos/openclaw.svg",
+    src: "/logos/openclaw_logo.avif",
     alt: "OpenClaw",
-    className: "absolute top-1/2 -right-5 -translate-y-1/2 animate-float-fast",
+    position: "absolute top-1/2 -right-6 -translate-y-1/2 animate-float-fast",
+    width: 100,
+    height: 28,
   },
 ];
 
@@ -55,14 +61,16 @@ export function ToolPreviewSection() {
         <div className="relative">
           <ToolPreviewCard type="api" />
           {FLOATING_LOGOS.map((logo) => (
-            <div key={logo.alt} className={logo.className}>
-              <Image
-                src={logo.src}
-                alt={logo.alt}
-                width={36}
-                height={36}
-                className="rounded-lg shadow-md"
-              />
+            <div key={logo.alt} className={logo.position}>
+              <div className="bg-white rounded-lg border border-zinc-200 shadow-md px-2.5 py-1.5">
+                <Image
+                  src={logo.src}
+                  alt={logo.alt}
+                  width={logo.width}
+                  height={logo.height}
+                  className="h-5 w-auto"
+                />
+              </div>
             </div>
           ))}
         </div>
