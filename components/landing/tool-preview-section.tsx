@@ -41,7 +41,7 @@ function useDraggable() {
     if (!dragging.current || !ref.current) return;
     dragging.current = false;
     offset.current = { x: 0, y: 0 };
-    ref.current.style.transition = "transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)";
+    ref.current.style.transition = "transform 0.6s cubic-bezier(0.22, 1.8, 0.36, 1)";
     ref.current.style.transform = "translate(0px, 0px)";
     ref.current.style.cursor = "grab";
   }, []);
