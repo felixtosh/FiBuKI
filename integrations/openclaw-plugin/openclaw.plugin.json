@@ -1,0 +1,27 @@
+{
+  "id": "fibuki",
+  "name": "FiBuKI Tax Studio",
+  "description": "Manage bank transactions, receipts, and tax bookkeeping for Austrian/German small businesses. 25 tools for transactions, files, partners, and categories.",
+  "skills": ["skills/fibuki-guide"],
+  "channel": {
+    "docsPath": "/integrations/fibuki",
+    "blurb": "AI-powered tax bookkeeping for Austrian & German freelancers and small businesses"
+  },
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "apiKey": {
+        "type": "string",
+        "description": "Your FiBuKI API key. Generate at fibuki.com > Settings > Integrations > AI Agents, or run: npx @fibukiapp/cli auth"
+      }
+    },
+    "required": ["apiKey"]
+  },
+  "uiHints": {
+    "apiKey": {
+      "label": "API Key",
+      "placeholder": "fk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "sensitive": true
+    }
+  }
+}

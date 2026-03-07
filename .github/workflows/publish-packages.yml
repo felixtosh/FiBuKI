@@ -1,15 +1,18 @@
 name: Publish Packages (npm + ClawHub)
 
-# Triggered by GitHub Releases.
-#
-# Tag conventions:
-#   cli@0.1.0        → publishes @fibukiapp/cli to npm
-#   openclaw@0.1.0   → publishes @fibukiapp/openclaw-plugin to npm + ClawHub skill
-#   packages@0.1.0   → publishes ALL packages
-#
-# Manual dispatch also supported for ad-hoc publishes.
+# Triggers:
+#   1. Push to main with changes in cli/ or integrations/openclaw-plugin/
+#      → auto-publishes the changed package(s)
+#   2. GitHub Release with tag convention
+#      → cli@0.1.0 / openclaw@0.1.0 / packages@0.1.0
+#   3. Manual dispatch via Actions UI
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "cli/**"
+      - "integrations/openclaw-plugin/**"
   release:
     types: [published]
   workflow_dispatch:
@@ -29,16 +32,48 @@ permissions:
 
 jobs:
   # ──────────────────────────────────────────────────────────────
+  # Detect which packages changed (for push trigger)
+  # ──────────────────────────────────────────────────────────────
+  detect-changes:
+    name: Detect changed packages
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    outputs:
+      cli_changed: ${{ steps.changes.outputs.cli }}
+      openclaw_changed: ${{ steps.changes.outputs.openclaw }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check changed paths
+        id: changes
+        run: |
+          # Compare with previous commit
+          CLI_CHANGED=$(git diff --name-only HEAD~1 HEAD -- cli/ | wc -l | tr -d ' ')
+          OPENCLAW_CHANGED=$(git diff --name-only HEAD~1 HEAD -- integrations/openclaw-plugin/ | wc -l | tr -d ' ')
+
+          echo "cli=$( [ "$CLI_CHANGED" -gt 0 ] && echo true || echo false )" >> $GITHUB_OUTPUT
+          echo "openclaw=$( [ "$OPENCLAW_CHANGED" -gt 0 ] && echo true || echo false )" >> $GITHUB_OUTPUT
+
+          echo "CLI files changed: $CLI_CHANGED"
+          echo "OpenClaw files changed: $OPENCLAW_CHANGED"
+
+  # ──────────────────────────────────────────────────────────────
   # @fibukiapp/cli → npm
   # ──────────────────────────────────────────────────────────────
   publish-cli:
     name: "@fibukiapp/cli → npm"
     runs-on: ubuntu-latest
+    needs: [detect-changes]
     if: >-
-      (github.event_name == 'release' &&
-        (startsWith(github.event.release.tag_name, 'cli@') ||
-         startsWith(github.event.release.tag_name, 'packages@')))
-      || (github.event_name == 'workflow_dispatch' && inputs.publish_cli)
+      always() && (
+        (github.event_name == 'push' && needs.detect-changes.outputs.cli_changed == 'true')
+        || (github.event_name == 'release' &&
+            (startsWith(github.event.release.tag_name, 'cli@') ||
+             startsWith(github.event.release.tag_name, 'packages@')))
+        || (github.event_name == 'workflow_dispatch' && inputs.publish_cli)
+      )
     steps:
       - uses: actions/checkout@v4
 
@@ -59,6 +94,19 @@ jobs:
         working-directory: cli
         run: npm version "$VERSION" --no-git-tag-version --allow-same-version
 
+      - name: Bump patch for push-triggered publish
+        if: github.event_name == 'push'
+        working-directory: cli
+        run: |
+          CURRENT=$(node -p "require('./package.json').version")
+          # Check if this version already exists on npm
+          if npm view "@fibukiapp/cli@${CURRENT}" version 2>/dev/null; then
+            echo "Version ${CURRENT} exists, bumping patch..."
+            npm version patch --no-git-tag-version
+          else
+            echo "Version ${CURRENT} not yet published, using as-is."
+          fi
+
       - name: Publish to npm
         working-directory: cli
         run: npm publish --access public
@@ -71,11 +119,15 @@ jobs:
   publish-openclaw:
     name: "@fibukiapp/openclaw-plugin → npm + ClawHub"
     runs-on: ubuntu-latest
+    needs: [detect-changes]
     if: >-
-      (github.event_name == 'release' &&
-        (startsWith(github.event.release.tag_name, 'openclaw@') ||
-         startsWith(github.event.release.tag_name, 'packages@')))
-      || (github.event_name == 'workflow_dispatch' && inputs.publish_openclaw)
+      always() && (
+        (github.event_name == 'push' && needs.detect-changes.outputs.openclaw_changed == 'true')
+        || (github.event_name == 'release' &&
+            (startsWith(github.event.release.tag_name, 'openclaw@') ||
+             startsWith(github.event.release.tag_name, 'packages@')))
+        || (github.event_name == 'workflow_dispatch' && inputs.publish_openclaw)
+      )
     steps:
       - uses: actions/checkout@v4
 
@@ -95,6 +147,18 @@ jobs:
         if: env.VERSION
         working-directory: integrations/openclaw-plugin
         run: npm version "$VERSION" --no-git-tag-version --allow-same-version
+
+      - name: Bump patch for push-triggered publish
+        if: github.event_name == 'push'
+        working-directory: integrations/openclaw-plugin
+        run: |
+          CURRENT=$(node -p "require('./package.json').version")
+          if npm view "@fibukiapp/openclaw-plugin@${CURRENT}" version 2>/dev/null; then
+            echo "Version ${CURRENT} exists, bumping patch..."
+            npm version patch --no-git-tag-version
+          else
+            echo "Version ${CURRENT} not yet published, using as-is."
+          fi
 
       # ── npm publish ──
       - name: Publish to npm
@@ -110,11 +174,12 @@ jobs:
       - name: Publish skill to ClawHub
         working-directory: integrations/openclaw-plugin/skills/fibuki-guide
         run: |
+          VERSION="${VERSION:-$(node -p "require('../../package.json').version")}"
           clawhub publish . \
             --slug fibuki \
             --name "FiBuKI Tax Studio" \
-            --version "${VERSION:-0.0.0}" \
-            --changelog "${{ github.event.release.body || 'Update' }}" \
+            --version "${VERSION}" \
+            --changelog "${{ github.event.release.body || 'Auto-publish from main' }}" \
             --tags latest \
             --no-input
         env:

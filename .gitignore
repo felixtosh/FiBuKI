@@ -63,5 +63,4 @@ emulator-data/
 .firebaserc
 
 # Separate npm packages (published independently)
-/integrations/
 /mcp-server/
