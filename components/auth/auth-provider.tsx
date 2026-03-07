@@ -12,9 +12,9 @@ import {
   User,
   onAuthStateChanged,
   signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
   signInWithPopup,
   GoogleAuthProvider,
+  GithubAuthProvider,
   signOut as firebaseSignOut,
   sendPasswordResetEmail,
   MultiFactorError,
@@ -40,11 +40,12 @@ interface AuthContextValue {
   isAdmin: boolean;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string) => Promise<void>;
   signInWithGoogle: () => Promise<void>;
+  signInWithGitHub: () => Promise<void>;
   signOut: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
   refreshAdminStatus: () => Promise<void>;
+  accessRequested: boolean;
   // MFA challenge state (Firebase native TOTP)
   mfaRequired: boolean;
   mfaResolver: MultiFactorResolver | null;
@@ -59,6 +60,7 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 const googleProvider = new GoogleAuthProvider();
+const githubProvider = new GithubAuthProvider();
 
 const MFA_SESSION_KEY = "fibuki_mfa_verified";
 
@@ -68,6 +70,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [mfaRequired, setMfaRequired] = useState(false);
   const [mfaResolver, setMfaResolver] = useState<MultiFactorResolver | null>(null);
+  const [accessRequested, setAccessRequested] = useState(false);
   // Custom MFA state for passkey-only users
   const [customMfaRequired, setCustomMfaRequired] = useState(false);
   const [customMfaStatus, setCustomMfaStatus] = useState<MfaStatusResponse | null>(null);
@@ -192,79 +195,72 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Keep customMfaStatus for reference, it will be cleared on next login
   }, [setMfaVerifiedForSession]);
 
-  const signUp = useCallback(async (email: string, password: string) => {
-    // Validate registration against allowedEmails
-    const validateFn = httpsCallable<
-      { email: string },
-      { allowed: boolean; reason?: string }
-    >(functions, "validateRegistration");
+  const handleOAuthSignIn = useCallback(
+    async (
+      provider: GoogleAuthProvider | GithubAuthProvider,
+      providerName: "google" | "github"
+    ) => {
+      try {
+        const result = await signInWithPopup(auth, provider);
+        const email = result.user.email;
 
-    const result = await validateFn({ email: email.toLowerCase() });
+        // Check if this is a new user by comparing creation and last sign-in times
+        const isNewUser =
+          result.user.metadata.creationTime === result.user.metadata.lastSignInTime;
 
-    if (!result.data.allowed) {
-      throw new Error(
-        result.data.reason ||
-          "Registration not allowed. Please request an invite from an admin."
-      );
-    }
+        if (isNewUser && email) {
+          const validateFn = httpsCallable<
+            { email: string },
+            { allowed: boolean; reason?: string }
+          >(functions, "validateRegistration");
 
-    await createUserWithEmailAndPassword(auth, email, password);
+          const validation = await validateFn({ email: email.toLowerCase() });
 
-    // Mark invite as used after successful registration
-    try {
-      const markUsedFn = httpsCallable(functions, "markInviteUsed");
-      await markUsedFn({});
-    } catch (e) {
-      console.warn("Failed to mark invite as used:", e);
-    }
-  }, []);
+          if (!validation.data.allowed) {
+            // Submit access request before deleting the temp account
+            try {
+              const submitFn = httpsCallable(functions, "submitAccessRequest");
+              await submitFn({ provider: providerName });
+            } catch (e) {
+              console.warn("Failed to submit access request:", e);
+            }
 
-  const signInWithGoogle = useCallback(async () => {
-    try {
-      const result = await signInWithPopup(auth, googleProvider);
-      const email = result.user.email;
+            await result.user.delete();
+            setAccessRequested(true);
+            return; // Don't throw — UI reads accessRequested state
+          }
 
-      // For new users signing up with Google, validate against allowedEmails
-      // Check if this is a new user by checking metadata
-      const isNewUser =
-        result.user.metadata.creationTime === result.user.metadata.lastSignInTime;
-
-      if (isNewUser && email) {
-        const validateFn = httpsCallable<
-          { email: string },
-          { allowed: boolean; reason?: string }
-        >(functions, "validateRegistration");
-
-        const validation = await validateFn({ email: email.toLowerCase() });
-
-        if (!validation.data.allowed) {
-          // Delete the newly created account and throw error
-          await result.user.delete();
-          throw new Error(
-            "Registration not allowed. Please request an invite from an admin."
-          );
+          // Allowed user — mark invite as used
+          try {
+            const markUsedFn = httpsCallable(functions, "markInviteUsed");
+            await markUsedFn({});
+          } catch (e) {
+            console.warn("Failed to mark invite as used:", e);
+          }
         }
-
-        // Mark invite as used (Google sign-up doesn't go through email/password flow)
-        try {
-          const markUsedFn = httpsCallable(functions, "markInviteUsed");
-          await markUsedFn({});
-        } catch (e) {
-          console.warn("Failed to mark invite as used:", e);
+        // Firebase auth succeeded - onAuthStateChanged will handle MFA check
+      } catch (error) {
+        if (isMfaError(error)) {
+          const resolver = getMultiFactorResolver(auth, error);
+          setMfaResolver(resolver);
+          setMfaRequired(true);
+          return;
         }
+        throw error;
       }
-      // Firebase auth succeeded - onAuthStateChanged will handle MFA check
-    } catch (error) {
-      if (isMfaError(error)) {
-        // MFA is required - set up the resolver for the UI to handle
-        const resolver = getMultiFactorResolver(auth, error);
-        setMfaResolver(resolver);
-        setMfaRequired(true);
-        return;
-      }
-      throw error;
-    }
-  }, []);
+    },
+    []
+  );
+
+  const signInWithGoogle = useCallback(
+    () => handleOAuthSignIn(googleProvider, "google"),
+    [handleOAuthSignIn]
+  );
+
+  const signInWithGitHub = useCallback(
+    () => handleOAuthSignIn(githubProvider, "github"),
+    [handleOAuthSignIn]
+  );
 
   const signOut = useCallback(async () => {
     clearMfaVerifiedForSession();
@@ -281,11 +277,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     isAdmin,
     loading,
     signIn,
-    signUp,
     signInWithGoogle,
+    signInWithGitHub,
     signOut,
     resetPassword,
     refreshAdminStatus,
+    accessRequested,
     // MFA challenge state (Firebase native TOTP)
     mfaRequired,
     mfaResolver,

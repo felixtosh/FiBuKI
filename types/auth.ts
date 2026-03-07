@@ -18,6 +18,18 @@ export interface AllowedEmail {
   registeredUserId?: string; // their uid after registration
 }
 
+export interface AccessRequest {
+  id: string;
+  email: string;
+  displayName: string | null;
+  photoURL: string | null;
+  provider: "google" | "github";
+  requestedAt: Timestamp;
+  status: "pending" | "approved" | "dismissed";
+  resolvedAt?: Timestamp;
+  resolvedBy?: string; // admin userId
+}
+
 export interface UserRecord {
   id: string; // Firebase Auth UID
   email: string;

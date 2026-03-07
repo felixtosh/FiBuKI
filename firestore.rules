@@ -191,6 +191,11 @@ service cloud.firestore {
       allow read, write: if isAdmin() || isSuperAdmin();
     }
 
+    match /accessRequests/{docId} {
+      allow read: if isAdmin() || isSuperAdmin();
+      allow write: if false; // Cloud Functions only
+    }
+
     match /globalPartners/{docId} {
       // Everyone can read global partners, only admins can write
       allow read: if isAuthenticated();

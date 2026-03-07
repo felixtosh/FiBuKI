@@ -100,6 +100,7 @@ export {
   listAdmins,
 } from "./auth/setAdminClaim";
 export { validateRegistration, markInviteUsed } from "./auth/validateRegistration";
+export { submitAccessRequest, approveAccessRequest, dismissAccessRequest } from "./auth/accessRequests";
 export { migrateUserData, checkMigrationStatus } from "./auth/migrateUserData";
 
 // Export MFA functions

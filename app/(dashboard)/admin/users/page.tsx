@@ -15,6 +15,8 @@ import {
   Gift,
   TestTube,
   X,
+  UserCheck,
+  Ban,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -49,10 +51,12 @@ import {
   collection,
   query,
   orderBy,
+  where,
   onSnapshot,
 } from "firebase/firestore";
 import { addAllowedEmail, removeAllowedEmail } from "@/lib/operations";
-import { AllowedEmail } from "@/types/auth";
+import { AllowedEmail, AccessRequest } from "@/types/auth";
+import { callFunction } from "@/lib/firebase/callable";
 import { formatDistanceToNow } from "date-fns";
 import type { PlanId } from "@/types/billing";
 
@@ -92,14 +96,17 @@ export default function AdminUsersPage() {
   const [invites, setInvites] = useState<AllowedEmail[]>([]);
   const [admins, setAdmins] = useState<Admin[]>([]);
   const [allUsers, setAllUsers] = useState<UserInfo[]>([]);
+  const [accessRequests, setAccessRequests] = useState<AccessRequest[]>([]);
   const [loadingInvites, setLoadingInvites] = useState(true);
   const [loadingAdmins, setLoadingAdmins] = useState(true);
   const [loadingUsers, setLoadingUsers] = useState(true);
+  const [loadingRequests, setLoadingRequests] = useState(true);
   const [newEmail, setNewEmail] = useState("");
   const [inviting, setInviting] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
   const [togglingAdmin, setTogglingAdmin] = useState<string | null>(null);
   const [settingOverride, setSettingOverride] = useState<string | null>(null);
+  const [processingRequest, setProcessingRequest] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
@@ -115,6 +122,27 @@ export default function AdminUsersPage() {
       })) as AllowedEmail[];
       setInvites(data);
       setLoadingInvites(false);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Load pending access requests
+  useEffect(() => {
+    const requestsRef = collection(db, "accessRequests");
+    const q = query(
+      requestsRef,
+      where("status", "==", "pending"),
+      orderBy("requestedAt", "desc")
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      })) as AccessRequest[];
+      setAccessRequests(data);
+      setLoadingRequests(false);
     });
 
     return () => unsubscribe();
@@ -235,6 +263,34 @@ export default function AdminUsersPage() {
     }
   };
 
+  const handleApproveRequest = async (requestId: string) => {
+    setProcessingRequest(requestId);
+    setError("");
+    try {
+      await callFunction("approveAccessRequest", { requestId });
+      setSuccess("Access request approved");
+      setTimeout(() => setSuccess(""), 3000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to approve request");
+    } finally {
+      setProcessingRequest(null);
+    }
+  };
+
+  const handleDismissRequest = async (requestId: string) => {
+    setProcessingRequest(requestId);
+    setError("");
+    try {
+      await callFunction("dismissAccessRequest", { requestId });
+      setSuccess("Access request dismissed");
+      setTimeout(() => setSuccess(""), 3000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to dismiss request");
+    } finally {
+      setProcessingRequest(null);
+    }
+  };
+
   return (
     <ProtectedRoute requireAdmin>
       <div className="h-full overflow-auto p-6">
@@ -259,6 +315,110 @@ export default function AdminUsersPage() {
               <AlertDescription>{success}</AlertDescription>
             </Alert>
           )}
+
+          {/* Access Requests Card */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <UserCheck className="h-5 w-5" />
+                Access Requests
+                {accessRequests.length > 0 && (
+                  <Badge className="ml-1">{accessRequests.length}</Badge>
+                )}
+              </CardTitle>
+              <CardDescription>
+                Review and approve access requests from new users
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {loadingRequests ? (
+                <div className="space-y-2">
+                  <Skeleton className="h-12 w-full" />
+                  <Skeleton className="h-12 w-full" />
+                </div>
+              ) : accessRequests.length === 0 ? (
+                <div className="text-center py-6 text-muted-foreground">
+                  <UserCheck className="h-10 w-10 mx-auto mb-2 opacity-50" />
+                  <p>No pending access requests</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {accessRequests.map((req) => (
+                    <div
+                      key={req.id}
+                      className="flex items-center justify-between p-3 border rounded-lg"
+                    >
+                      <div className="flex items-center gap-3">
+                        {req.photoURL ? (
+                          <img
+                            src={req.photoURL}
+                            alt=""
+                            className="h-8 w-8 rounded-full"
+                          />
+                        ) : (
+                          <div className="h-8 w-8 rounded-full bg-muted flex items-center justify-center">
+                            <Users className="h-4 w-4 text-muted-foreground" />
+                          </div>
+                        )}
+                        <div>
+                          <p className="font-medium">
+                            {req.displayName || req.email}
+                          </p>
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                            {req.displayName && <span>{req.email}</span>}
+                            <Badge variant="outline" className="text-xs py-0">
+                              {req.provider === "github" ? "GitHub" : "Google"}
+                            </Badge>
+                            {req.requestedAt && (
+                              <span>
+                                {formatDistanceToNow(req.requestedAt.toDate(), {
+                                  addSuffix: true,
+                                })}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-green-700 hover:text-green-800"
+                          disabled={processingRequest === req.id}
+                          onClick={() => handleApproveRequest(req.id)}
+                        >
+                          {processingRequest === req.id ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <>
+                              <CheckCircle className="h-4 w-4 mr-1" />
+                              Approve
+                            </>
+                          )}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-destructive hover:text-destructive"
+                          disabled={processingRequest === req.id}
+                          onClick={() => handleDismissRequest(req.id)}
+                        >
+                          {processingRequest === req.id ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <>
+                              <Ban className="h-4 w-4 mr-1" />
+                              Dismiss
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
           {/* Invite Users Card */}
           <Card>

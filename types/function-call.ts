@@ -113,7 +113,11 @@ export type CloudFunctionName =
   // Automation mode
   | "updateAutomationMode"
   // Onboarding
-  | "setOnboardingTrack";
+  | "setOnboardingTrack"
+  // Access requests
+  | "submitAccessRequest"
+  | "approveAccessRequest"
+  | "dismissAccessRequest";
 
 /**
  * Summary statistics for function calls (for dashboards).
