@@ -9,23 +9,14 @@ const FLOATING_LOGOS = [
   {
     src: "/logos/claude_logo.png",
     alt: "Claude",
-    position: "absolute -top-6 left-1/4 animate-float-slow",
-    width: 100,
-    height: 28,
-  },
-  {
-    src: "/logos/openai_logo.png",
-    alt: "OpenAI",
-    position: "absolute -bottom-6 left-2 animate-float-medium",
-    width: 100,
-    height: 28,
   },
   {
     src: "/logos/openclaw_logo.avif",
     alt: "OpenClaw",
-    position: "absolute top-1/3 -right-12 animate-float-fast",
-    width: 100,
-    height: 28,
+  },
+  {
+    src: "/logos/openai_logo.png",
+    alt: "OpenAI",
   },
 ];
 
@@ -58,21 +49,32 @@ export function ToolPreviewSection() {
           <Terminal className="h-4 w-4" />
           <span>{t("integrations.title")}</span>
         </div>
-        <div className="relative">
+        <div>
           <ToolPreviewCard type="api" />
-          {FLOATING_LOGOS.map((logo) => (
-            <div key={logo.alt} className={logo.position}>
-              <div className="bg-white rounded-lg border border-zinc-200 shadow-md px-2.5 py-1.5">
-                <Image
-                  src={logo.src}
-                  alt={logo.alt}
-                  width={logo.width}
-                  height={logo.height}
-                  className="h-5 w-auto"
-                />
+          <div className="flex justify-between items-start mt-3 px-1">
+            {FLOATING_LOGOS.map((logo, i) => (
+              <div
+                key={logo.alt}
+                className={
+                  i === 0
+                    ? "animate-float-slow"
+                    : i === 1
+                      ? "animate-float-medium"
+                      : "animate-float-fast"
+                }
+              >
+                <div className="bg-white rounded-lg border border-zinc-200 shadow-md px-2 py-1">
+                  <Image
+                    src={logo.src}
+                    alt={logo.alt}
+                    width={80}
+                    height={22}
+                    className="h-4 w-auto"
+                  />
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       </div>
     </div>
