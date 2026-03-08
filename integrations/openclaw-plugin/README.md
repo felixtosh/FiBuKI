@@ -1,6 +1,6 @@
-# FiBuKI OpenClaw Plugin
+# European Bank Transaction Analyzer (FiBuKI OpenClaw Plugin)
 
-Give your AI agent access to European bank transactions via PSD2 Open Banking. 25 tools to browse accounts, search payments, auto-match receipts, categorize expenses, and manage business partners.
+Give your AI agent access to European bank transactions via PSD2 Open Banking. Uses FiBuKI.com connections to browse accounts, search payments, auto-match receipts to transactions, categorize expenses, and manage business partners. 25 tools.
 
 ## Installation
 

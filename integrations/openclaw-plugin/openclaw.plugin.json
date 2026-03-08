@@ -1,11 +1,11 @@
 {
   "id": "fibuki",
-  "name": "FiBuKI Tax Studio",
-  "description": "Access European bank transactions via PSD2 Open Banking. Browse accounts, search payments, auto-match receipts to transactions, categorize expenses, and manage partners. 25 tools for full bookkeeping control.",
+  "name": "European Bank Transaction Analyzer",
+  "description": "Analyze European bank transactions and match receipts via PSD2 Open Banking. Uses FiBuKI.com connections to browse accounts, search payments, auto-match invoices, categorize expenses, and manage partners. 25 tools.",
   "skills": ["skills/fibuki-guide"],
   "channel": {
     "docsPath": "/integrations/fibuki",
-    "blurb": "Access European bank payments via PSD2 Open Banking — search transactions, match receipts, categorize expenses"
+    "blurb": "Analyze European bank transactions via PSD2 Open Banking — match receipts, categorize expenses, track bookkeeping"
   },
   "configSchema": {
     "type": "object",
