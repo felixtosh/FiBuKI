@@ -16,140 +16,110 @@ metadata:
 
 # Bank Transactions Connector - Europe (PSD2)
 
-## Setup (Do This First)
+You connect to European bank transactions and receipt matching through FiBuKI.com.
 
-### Step 1: Create a FiBuKI Account
+## IMPORTANT: Before doing anything, check if FIBUKI_API_KEY is set.
 
-Go to **https://fibuki.com/clawhub-install** and create a free account. The free plan includes 50 transactions/month and full API access.
+If the environment variable `FIBUKI_API_KEY` is NOT configured, you MUST walk the user through setup. Do NOT skip this. Do NOT summarize capabilities. Guide them step by step:
 
-### Step 2: Get Your API Key
+**Tell the user:**
 
-**Option A — CLI (recommended):**
-```bash
-npx @fibukiapp/cli auth
+> To connect your bank transactions, I need to set up FiBuKI first. Here's what to do:
+>
+> **1. Create a free account** at https://fibuki.com/clawhub-install
+> (Free plan: 50 transactions/month, full API access)
+>
+> **2. Get your API key** — run this in your terminal:
+> ```
+> npx @fibukiapp/cli auth
+> ```
+> This opens your browser, you approve, and the key is saved automatically.
+>
+> Or get one manually at fibuki.com > Settings > Integrations > AI Agents.
+>
+> **3. Set the environment variable:**
+> ```
+> export FIBUKI_API_KEY="fk_your_key_here"
+> ```
+> Or add it to `~/.openclaw/openclaw.json`:
+> ```json
+> { "skills": { "entries": { "fibuki": { "enabled": true, "env": { "FIBUKI_API_KEY": "fk_your_key_here" } } } } }
+> ```
+>
+> **4. Restart OpenClaw** to load the tools.
+
+Then STOP and wait for the user to complete setup. Do not proceed until they confirm.
+
+If `FIBUKI_API_KEY` IS set, proceed normally with the tools below.
+
+---
+
+## API Access
+
+All tools are called via HTTP:
+
 ```
-Opens your browser, you approve, key is saved automatically.
-
-**Option B — Manual:**
-1. Go to **fibuki.com > Settings > Integrations > AI Agents**
-2. Click "Create API Key"
-3. Copy the key (starts with `fk_`)
-
-### Step 3: Configure the Environment Variable
-
-```bash
-export FIBUKI_API_KEY="fk_your_key_here"
+POST https://fibuki.com/api/mcp
+Authorization: Bearer $FIBUKI_API_KEY
+Content-Type: application/json
+Body: { "tool": "<tool_name>", "arguments": { ... } }
 ```
 
-Or add it to your OpenClaw config in `~/.openclaw/openclaw.json`:
-```json5
-{
-  "skills": {
-    "entries": {
-      "fibuki": {
-        "enabled": true,
-        "env": { "FIBUKI_API_KEY": "fk_your_key_here" }
-      }
-    }
-  }
-}
-```
-
-### Step 4: Restart OpenClaw
-
-Tools are loaded dynamically from the API when the plugin starts. Restart to pick up the new key.
+Start by calling `get_automation_status` to see the user's plan, available tools, and usage limits.
 
 ---
 
 ## What You Can Do
 
-Tools are loaded dynamically based on your plan. Use `get_automation_status` to check your current plan, available tools, and usage.
-
 ### All Plans (Free, Data, Smart, Pro)
 
-- **Browse bank accounts** — list and inspect connected PSD2 bank accounts and credit cards
-- **Search transactions** — filter by date, amount, partner, completion status, or free text
-- **Manage partners** — create, assign, and track vendors/suppliers across transactions
-- **Categorize expenses** — assign no-receipt categories (bank fees, payroll, transfers)
-- **Track completion** — find incomplete transactions and drive them to 100%
-- **Import transactions** — bulk-import transactions into a bank account
-- **Create & delete sources** — manage bank accounts programmatically
+- Browse bank accounts (`list_sources`, `get_source`, `create_source`, `delete_source`)
+- Search and filter transactions (`list_transactions`, `get_transaction`, `update_transaction`)
+- Find transactions needing receipts (`list_transactions_needing_files`)
+- Import transactions (`import_transactions`)
+- Manage partners (`list_partners`, `create_partner`, `assign_partner_to_transaction`, `remove_partner_from_transaction`)
+- Categorize expenses (`list_no_receipt_categories`, `assign_no_receipt_category`, `remove_no_receipt_category`)
+- Check plan and usage (`get_automation_status`)
 
 ### Smart & Pro Plans Only
 
-- **Upload files** — upload receipts/invoices from URL or base64 (requires `fileUpload` feature)
-- **AI matching** — auto-connect files to transactions above confidence threshold (requires `aiMatching` feature)
-- **Score matches** — score how well a file matches a transaction (requires `aiMatching` feature)
+- Upload receipts/invoices (`upload_file`) — requires `fileUpload` feature
+- AI auto-matching (`auto_connect_file_suggestions`) — requires `aiMatching` feature
+- Score file-transaction matches (`score_file_transaction_match`) — requires `aiMatching` feature
 
 ---
 
-## Core Data Model
+## Rules You Must Follow
 
-### Sources (Bank Accounts)
-- Represent bank accounts or credit cards
-- Transactions are imported from sources
-- Types: `bank_account`, `credit_card`
-
-### Transactions
-- Individual bank movements (debits/credits)
-- Have: date, amount (in cents!), name, partner
-- **Cannot be individually deleted** (accounting integrity)
-- **Complete** when they have a file attached OR a no-receipt category assigned
-
-### Files (Receipts/Invoices)
-- Uploaded PDFs or images
-- AI extracts: amount, date, VAT, partner name
-- System suggests matching transactions with confidence scores (0-100)
-- Many-to-many relationship with transactions
-
-### Partners
-- Companies or people the user transacts with (e.g., "Amazon", "REWE")
-- System auto-detects partners from transaction names
-
-### No-Receipt Categories
-- For transactions that legally don't need receipts: bank fees, interest, internal transfers, payroll, taxes
-- Assigning a category marks the transaction complete
-
----
-
-## Important Rules
-
-1. **Never delete individual transactions** — they must be deleted with their entire source
-2. **Amounts are in cents** — always divide by 100 for display (1050 = 10.50 EUR)
-3. **Negative amounts = expenses** — positive = income
-4. **Files can connect to multiple transactions** — many-to-many relationship
-5. **Trust transactionSuggestions** — server-side AI matching is accurate
-6. **High confidence = 85+** — safe to auto-connect suggestions above this threshold
-7. **Dates are ISO 8601** — `2024-01-15` for dates, `2024-01-15T10:30:00Z` for timestamps
+1. **Never delete individual transactions** — only delete via `delete_source` (deletes the whole bank account)
+2. **Amounts are in cents** — divide by 100 for display (1050 = 10.50 EUR)
+3. **Negative = expense, positive = income**
+4. **Files can connect to multiple transactions** (many-to-many)
+5. **Trust `transactionSuggestions`** — server-side AI scoring is reliable
+6. **Confidence 85+ is safe** to auto-connect
+7. **Dates are ISO 8601** — `2024-01-15`
 
 ---
 
 ## Common Workflows
 
-### Review Incomplete Transactions
-```
-list_transactions with isComplete=false
-```
+### Review incomplete transactions
+Call `list_transactions` with `isComplete: false`.
 
-### Match Files to Transactions
-```
-1. list_files with hasConnections=false (unmatched files)
-2. Look at transactionSuggestions on each file
-3. connect_file_to_transaction for good matches
-4. Or use auto_connect_file_suggestions for bulk matching
-```
+### Match receipts to transactions
+1. `list_files` with `hasConnections: false` to find unmatched files
+2. Check `transactionSuggestions` on each file for matches
+3. `connect_file_to_transaction` for good matches
+4. Or `auto_connect_file_suggestions` to bulk-connect above 89% confidence
 
-### Categorize No-Receipt Transactions
-```
-1. list_no_receipt_categories (get available categories)
-2. assign_no_receipt_category for bank fees, transfers, etc.
-```
+### Categorize no-receipt transactions
+1. `list_no_receipt_categories` to see available categories
+2. `assign_no_receipt_category` for bank fees, transfers, payroll, etc.
 
 ---
 
 ## Resources
 
-- **Machine-readable API docs:** https://fibuki.com/llm.txt
-- **OpenAPI spec:** https://fibuki.com/api/openapi.json
-- **MCP endpoint (Claude Desktop):** https://fibuki.com/api/mcp/sse
-- **CLI auth:** `npx @fibukiapp/cli auth`
+- Machine-readable docs: https://fibuki.com/llm.txt
+- OpenAPI spec: https://fibuki.com/api/openapi.json
+- MCP endpoint (Claude Desktop): https://fibuki.com/api/mcp/sse
