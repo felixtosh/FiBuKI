@@ -128,3 +128,4 @@ export default async function register(api: OpenClawApi) {
 // Export plugin metadata
 export const id = "fibuki";
 export const name = "FiBuKI Tax Studio";
+export const version = "0.1.9";
