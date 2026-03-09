@@ -8,15 +8,49 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.mcpSse = exports.mcpToolsList = exports.mcpApi = void 0;
 const https_1 = require("firebase-functions/v2/https");
+const firestore_1 = require("firebase-admin/firestore");
 const api_keys_1 = require("../api-keys");
 const handlers_1 = require("./handlers");
 const definitions_1 = require("../tools/definitions");
+const config_1 = require("../billing/config");
+const db = (0, firestore_1.getFirestore)();
 const CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Content-Type": "application/json",
 };
+async function checkRateLimit(userId, limits) {
+    const now = new Date();
+    const minuteWindow = now.toISOString().slice(0, 16); // "2026-03-09T17:42"
+    const hourWindow = now.toISOString().slice(0, 13); // "2026-03-09T17"
+    const docRef = db.collection("apiRateLimits").doc(userId);
+    return db.runTransaction(async (tx) => {
+        const doc = await tx.get(docRef);
+        const data = doc.data() || {};
+        // Reset counters when window changes
+        let minuteCount = data.minuteWindow === minuteWindow ? (data.minuteCount || 0) : 0;
+        let hourCount = data.hourWindow === hourWindow ? (data.hourCount || 0) : 0;
+        // Check limits
+        if (minuteCount >= limits.perMinute) {
+            return { allowed: false, retryAfter: 60 };
+        }
+        if (hourCount >= limits.perHour) {
+            return { allowed: false, retryAfter: 3600 };
+        }
+        // Increment counters
+        minuteCount++;
+        hourCount++;
+        tx.set(docRef, {
+            minuteCount,
+            minuteWindow,
+            hourCount,
+            hourWindow,
+            updatedAt: firestore_1.FieldValue.serverTimestamp(),
+        });
+        return { allowed: true };
+    });
+}
 /**
  * Main MCP API endpoint (REST)
  *
@@ -48,6 +82,20 @@ exports.mcpApi = (0, https_1.onRequest)({
     const validated = await (0, api_keys_1.validateApiKey)(apiKey);
     if (!validated) {
         res.status(401).json({ success: false, error: "Invalid or expired API key" });
+        return;
+    }
+    // Rate limiting
+    const subDoc = await db.collection("subscriptions").doc(validated.userId).get();
+    const planId = (subDoc.exists ? subDoc.data().plan : "free") || "free";
+    const plan = config_1.PLANS[planId] || config_1.PLANS.free;
+    const rateLimitResult = await checkRateLimit(validated.userId, plan.rateLimit);
+    if (!rateLimitResult.allowed) {
+        res.set("Retry-After", String(rateLimitResult.retryAfter));
+        res.status(429).json({
+            success: false,
+            error: `Rate limit exceeded. Retry after ${rateLimitResult.retryAfter} seconds.`,
+            retryAfter: rateLimitResult.retryAfter,
+        });
         return;
     }
     const body = req.body;

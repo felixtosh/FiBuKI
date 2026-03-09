@@ -1,7 +1,7 @@
 {
   "id": "fibuki",
   "name": "Bank Transactions Connector - Europe (PSD2)",
-  "description": "Connect to European bank accounts via PSD2 Open Banking. Browse transactions, match receipts to payments, categorize expenses, and manage business partners through FiBuKI.com. 25 tools.",
+  "description": "Connect to European bank accounts via PSD2 Open Banking. Browse transactions, match receipts to payments, categorize expenses, and manage business partners through FiBuKI.com.",
   "skills": ["skills/fibuki-guide"],
   "channel": {
     "docsPath": "/integrations/fibuki",

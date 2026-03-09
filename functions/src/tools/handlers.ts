@@ -13,13 +13,33 @@
 
 import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
-import { TOOL_NAMES } from "./definitions";
+import { TOOL_DEFINITIONS, TOOL_NAMES } from "./definitions";
 import type { ToolName } from "./definitions";
+import { PLANS } from "../billing/config";
+import type { PlanId, PlanFeatures } from "../billing/config";
 
 export { TOOL_NAMES };
 export type { ToolName };
 
 const db = getFirestore();
+
+/**
+ * Check if a tool requires a feature the user's plan doesn't have.
+ * Returns an error message if blocked, or null if allowed.
+ */
+async function checkToolFeatureGate(userId: string, tool: string): Promise<string | null> {
+  const toolDef = TOOL_DEFINITIONS.find((t) => t.name === tool);
+  if (!toolDef?.requiredFeature) return null;
+
+  const subDoc = await db.collection("subscriptions").doc(userId).get();
+  const planId: PlanId = (subDoc.exists ? subDoc.data()!.plan : "free") || "free";
+  const plan = PLANS[planId] || PLANS.free;
+
+  if (!plan.planFeatures[toolDef.requiredFeature]) {
+    return `Tool "${tool}" requires the "${toolDef.requiredFeature}" feature, which is not available on the ${plan.name} plan. Upgrade at https://fibuki.com/settings/billing`;
+  }
+  return null;
+}
 
 /**
  * Main tool dispatcher - routes tool calls to handlers
@@ -29,6 +49,12 @@ export async function handleTool(
   tool: string,
   args: Record<string, unknown> = {}
 ): Promise<unknown> {
+  // Check feature gate before executing
+  const gateError = await checkToolFeatureGate(userId, tool);
+  if (gateError) {
+    throw new Error(gateError);
+  }
+
   switch (tool) {
     // Sources
     case "list_sources":
@@ -958,13 +984,29 @@ export async function scoreFileTransactionMatch(userId: string, args: Record<str
 // Automation Status
 // ============================================================================
 
+/** Filter tools to those available for a given plan's features */
+function getAvailableTools(features: PlanFeatures) {
+  return TOOL_DEFINITIONS.filter((tool) => {
+    if (!tool.requiredFeature) return true;
+    return features[tool.requiredFeature];
+  });
+}
+
 export async function getAutomationStatus(userId: string) {
   const subDoc = await db.collection("subscriptions").doc(userId).get();
+
+  const planId: PlanId = (subDoc.exists ? subDoc.data()!.plan : "free") || "free";
+  const plan = PLANS[planId] || PLANS.free;
+  const features = plan.planFeatures;
+  const availableTools = getAvailableTools(features);
 
   if (!subDoc.exists) {
     return {
       automationMode: "active",
       plan: "free",
+      planFeatures: features,
+      availableTools,
+      rateLimit: plan.rateLimit,
       aiBudget: {
         fairUseLimitEur: 0.5,
         usageCurrentPeriodEur: 0,
@@ -978,6 +1020,9 @@ export async function getAutomationStatus(userId: string) {
   return {
     automationMode: sub.automationMode || "active",
     plan: sub.plan || "free",
+    planFeatures: features,
+    availableTools,
+    rateLimit: plan.rateLimit,
     aiBudget: {
       fairUseLimitEur: sub.aiFairUseLimitEur ?? 0.5,
       usageCurrentPeriodEur: sub.aiUsageCurrentPeriodEur ?? 0,

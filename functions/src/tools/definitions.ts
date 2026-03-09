@@ -8,6 +8,8 @@
  * - mcp-api/index.ts (REST API tool listing)
  */
 
+import type { PlanFeatureKey } from "../billing/config";
+
 export interface ToolDefinition {
   name: string;
   description: string;
@@ -16,6 +18,8 @@ export interface ToolDefinition {
     properties: Record<string, unknown>;
     required?: string[];
   };
+  /** If set, tool is only available when user's plan has this feature enabled */
+  requiredFeature?: PlanFeatureKey;
 }
 
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
@@ -199,6 +203,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "auto_connect_file_suggestions",
     description: "Auto-connect files to transactions above confidence threshold",
+    requiredFeature: "aiMatching",
     inputSchema: {
       type: "object",
       properties: {
@@ -210,6 +215,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "upload_file",
     description: "Upload a file from a URL or base64 data",
+    requiredFeature: "fileUpload",
     inputSchema: {
       type: "object",
       properties: {
@@ -224,6 +230,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "score_file_transaction_match",
     description: "Score how well a file matches a transaction (0-100 confidence)",
+    requiredFeature: "aiMatching",
     inputSchema: {
       type: "object",
       properties: {

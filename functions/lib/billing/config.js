@@ -59,7 +59,8 @@ exports.PLANS = {
             "50 transactions/month",
             "Bank data access",
         ],
-        planFeatures: { ...NO_AI_FEATURES, apiAccess: false, mcpAccess: false },
+        planFeatures: NO_AI_FEATURES,
+        rateLimit: { perMinute: 10, perHour: 100 },
     },
     data: {
         id: "data",
@@ -75,6 +76,7 @@ exports.PLANS = {
             "Unlimited bank accounts",
         ],
         planFeatures: NO_AI_FEATURES,
+        rateLimit: { perMinute: 60, perHour: 1000 },
     },
     smart: {
         id: "smart",
@@ -93,6 +95,7 @@ exports.PLANS = {
             "8.00 EUR AI budget",
         ],
         planFeatures: SMART_FEATURES,
+        rateLimit: { perMinute: 120, perHour: 5000 },
     },
     pro: {
         id: "pro",
@@ -109,6 +112,7 @@ exports.PLANS = {
             "Priority support",
         ],
         planFeatures: PRO_FEATURES,
+        rateLimit: { perMinute: 120, perHour: 5000 },
     },
     // Legacy tiers (migration only)
     starter: {
@@ -124,6 +128,7 @@ exports.PLANS = {
             "3.00 EUR AI budget",
         ],
         planFeatures: NO_AI_FEATURES,
+        rateLimit: { perMinute: 60, perHour: 1000 },
     },
     business: {
         id: "business",
@@ -138,6 +143,7 @@ exports.PLANS = {
             "8.00 EUR AI budget",
         ],
         planFeatures: SMART_FEATURES,
+        rateLimit: { perMinute: 120, perHour: 5000 },
     },
 };
 const STRIPE_PRICES_TEST = {

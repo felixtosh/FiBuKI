@@ -41,6 +41,11 @@ export interface PlanFeatures {
 
 export type PlanFeatureKey = keyof PlanFeatures;
 
+export interface RateLimitConfig {
+  perMinute: number;
+  perHour: number;
+}
+
 export interface PlanConfig {
   id: PlanId;
   name: string;
@@ -50,6 +55,7 @@ export interface PlanConfig {
   overageAllowed: boolean;
   features: string[];
   planFeatures: PlanFeatures;
+  rateLimit: RateLimitConfig;
 }
 
 export interface AIBudgetCheckResult {
@@ -118,7 +124,8 @@ export const PLANS: Record<PlanId, PlanConfig> = {
       "50 transactions/month",
       "Bank data access",
     ],
-    planFeatures: { ...NO_AI_FEATURES, apiAccess: false, mcpAccess: false },
+    planFeatures: NO_AI_FEATURES,
+    rateLimit: { perMinute: 10, perHour: 100 },
   },
   data: {
     id: "data",
@@ -134,6 +141,7 @@ export const PLANS: Record<PlanId, PlanConfig> = {
       "Unlimited bank accounts",
     ],
     planFeatures: NO_AI_FEATURES,
+    rateLimit: { perMinute: 60, perHour: 1000 },
   },
   smart: {
     id: "smart",
@@ -152,6 +160,7 @@ export const PLANS: Record<PlanId, PlanConfig> = {
       "8.00 EUR AI budget",
     ],
     planFeatures: SMART_FEATURES,
+    rateLimit: { perMinute: 120, perHour: 5000 },
   },
   pro: {
     id: "pro",
@@ -168,6 +177,7 @@ export const PLANS: Record<PlanId, PlanConfig> = {
       "Priority support",
     ],
     planFeatures: PRO_FEATURES,
+    rateLimit: { perMinute: 120, perHour: 5000 },
   },
   // Legacy tiers (migration only)
   starter: {
@@ -183,6 +193,7 @@ export const PLANS: Record<PlanId, PlanConfig> = {
       "3.00 EUR AI budget",
     ],
     planFeatures: NO_AI_FEATURES,
+    rateLimit: { perMinute: 60, perHour: 1000 },
   },
   business: {
     id: "business",
@@ -197,6 +208,7 @@ export const PLANS: Record<PlanId, PlanConfig> = {
       "8.00 EUR AI budget",
     ],
     planFeatures: SMART_FEATURES,
+    rateLimit: { perMinute: 120, perHour: 5000 },
   },
 };
 

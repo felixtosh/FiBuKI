@@ -6,9 +6,14 @@
  */
 
 import { onRequest } from "firebase-functions/v2/https";
+import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { validateApiKey } from "../api-keys";
 import { handleToolInternal } from "./handlers";
 import { TOOL_DEFINITIONS } from "../tools/definitions";
+import { PLANS } from "../billing/config";
+import type { PlanId, RateLimitConfig } from "../billing/config";
+
+const db = getFirestore();
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -20,6 +25,54 @@ const CORS_HEADERS = {
 interface McpRequest {
   tool: string;
   arguments: Record<string, unknown>;
+}
+
+// ============================================================================
+// Rate Limiting (Firestore-based sliding window)
+// ============================================================================
+
+interface RateLimitResult {
+  allowed: boolean;
+  retryAfter?: number;
+}
+
+async function checkRateLimit(userId: string, limits: RateLimitConfig): Promise<RateLimitResult> {
+  const now = new Date();
+  const minuteWindow = now.toISOString().slice(0, 16); // "2026-03-09T17:42"
+  const hourWindow = now.toISOString().slice(0, 13);   // "2026-03-09T17"
+
+  const docRef = db.collection("apiRateLimits").doc(userId);
+
+  return db.runTransaction(async (tx) => {
+    const doc = await tx.get(docRef);
+    const data = doc.data() || {};
+
+    // Reset counters when window changes
+    let minuteCount = data.minuteWindow === minuteWindow ? (data.minuteCount || 0) : 0;
+    let hourCount = data.hourWindow === hourWindow ? (data.hourCount || 0) : 0;
+
+    // Check limits
+    if (minuteCount >= limits.perMinute) {
+      return { allowed: false, retryAfter: 60 };
+    }
+    if (hourCount >= limits.perHour) {
+      return { allowed: false, retryAfter: 3600 };
+    }
+
+    // Increment counters
+    minuteCount++;
+    hourCount++;
+
+    tx.set(docRef, {
+      minuteCount,
+      minuteWindow,
+      hourCount,
+      hourWindow,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    return { allowed: true };
+  });
 }
 
 /**
@@ -59,6 +112,22 @@ export const mcpApi = onRequest(
     const validated = await validateApiKey(apiKey);
     if (!validated) {
       res.status(401).json({ success: false, error: "Invalid or expired API key" });
+      return;
+    }
+
+    // Rate limiting
+    const subDoc = await db.collection("subscriptions").doc(validated.userId).get();
+    const planId: PlanId = (subDoc.exists ? subDoc.data()!.plan : "free") || "free";
+    const plan = PLANS[planId] || PLANS.free;
+
+    const rateLimitResult = await checkRateLimit(validated.userId, plan.rateLimit);
+    if (!rateLimitResult.allowed) {
+      res.set("Retry-After", String(rateLimitResult.retryAfter));
+      res.status(429).json({
+        success: false,
+        error: `Rate limit exceeded. Retry after ${rateLimitResult.retryAfter} seconds.`,
+        retryAfter: rateLimitResult.retryAfter,
+      });
       return;
     }
 

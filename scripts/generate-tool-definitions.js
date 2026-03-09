@@ -38,6 +38,7 @@ function main() {
     "  name: string;",
     "  description: string;",
     '  inputSchema: { type: "object"; properties: Record<string, unknown>; required?: string[] };',
+    "  requiredFeature?: string;",
     "}",
     "",
     `export const TOOL_DEFINITIONS: ToolDefinition[] = ${JSON.stringify(TOOL_DEFINITIONS, null, 2)};`,

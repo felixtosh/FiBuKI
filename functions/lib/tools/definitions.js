@@ -189,6 +189,7 @@ exports.TOOL_DEFINITIONS = [
     {
         name: "auto_connect_file_suggestions",
         description: "Auto-connect files to transactions above confidence threshold",
+        requiredFeature: "aiMatching",
         inputSchema: {
             type: "object",
             properties: {
@@ -200,6 +201,7 @@ exports.TOOL_DEFINITIONS = [
     {
         name: "upload_file",
         description: "Upload a file from a URL or base64 data",
+        requiredFeature: "fileUpload",
         inputSchema: {
             type: "object",
             properties: {
@@ -214,6 +216,7 @@ exports.TOOL_DEFINITIONS = [
     {
         name: "score_file_transaction_match",
         description: "Score how well a file matches a transaction (0-100 confidence)",
+        requiredFeature: "aiMatching",
         inputSchema: {
             type: "object",
             properties: {

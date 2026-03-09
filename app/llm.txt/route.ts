@@ -19,7 +19,8 @@ export async function GET() {
       return `${key}${required.includes(key) ? "" : "?"}: ${s.type || "any"}`;
     });
     const sig = argParts.length > 0 ? `(${argParts.join(", ")})` : "()";
-    return `  - ${t.name}${sig}: ${t.description}`;
+    const featureTag = t.requiredFeature ? ` [requires: ${t.requiredFeature}]` : "";
+    return `  - ${t.name}${sig}: ${t.description}${featureTag}`;
   });
 
   const body = `# FiBuKI — AI-powered tax bookkeeping for Austrian/German small businesses

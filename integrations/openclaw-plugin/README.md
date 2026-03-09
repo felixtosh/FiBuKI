@@ -1,33 +1,16 @@
 # Bank Transactions Connector - Europe (PSD2)
 
-Connect your AI agent to European bank accounts via PSD2 Open Banking. Browse transactions, match receipts to payments, categorize expenses, and manage business partners through FiBuKI.com. 25 tools.
+Connect your AI agent to European bank accounts via PSD2 Open Banking. Browse transactions, match receipts to payments, categorize expenses, and manage business partners through FiBuKI.com.
 
-## Installation
+## Setup
 
-### From ClawHub (recommended)
+### 1. Create a FiBuKI Account
 
-```bash
-clawhub install fibuki
-```
+Go to **https://fibuki.com/clawhub-install** — the free plan includes 50 transactions/month and full API access.
 
-### From npm
+### 2. Get an API Key
 
-```bash
-openclaw plugins install @fibukiapp/openclaw-plugin
-```
-
-### Local development
-
-```bash
-cd integrations/openclaw-plugin
-openclaw plugins install -l .
-```
-
-## Configuration
-
-### 1. Get an API Key
-
-**Option A — CLI (zero friction):**
+**Option A — CLI (recommended):**
 ```bash
 npx @fibukiapp/cli auth
 ```
@@ -38,9 +21,21 @@ Opens your browser, you approve, key is saved automatically.
 2. Click "Create API Key"
 3. Copy the key (starts with `fk_`)
 
-### 2. Configure OpenClaw
+### 3. Install the Plugin
 
-**Option A — Environment variable** (works with ClawHub skills):
+**From ClawHub:**
+```bash
+clawhub install fibuki
+```
+
+**From npm:**
+```bash
+openclaw plugins install @fibukiapp/openclaw-plugin
+```
+
+### 4. Configure
+
+**Option A — Environment variable:**
 ```bash
 export FIBUKI_API_KEY="fk_your_key_here"
 ```
@@ -59,20 +54,40 @@ export FIBUKI_API_KEY="fk_your_key_here"
 }
 ```
 
-## What Claude Can Do
+### 5. Restart OpenClaw
 
-| Task | Tools Used |
-|------|------------|
+Tools are loaded dynamically from the API based on your plan.
+
+## What Your Agent Can Do
+
+### All Plans
+| Task | Examples |
+|------|---------|
 | **View bank accounts** | `list_sources`, `get_source` |
 | **Browse transactions** | `list_transactions`, `get_transaction` |
-| **Find incomplete work** | `list_transactions` (isComplete=false), `list_transactions_needing_files` |
-| **Match receipts** | `list_files`, `connect_file_to_transaction`, `auto_connect_file_suggestions` |
-| **Categorize transactions** | `list_no_receipt_categories`, `assign_no_receipt_category` |
-| **Manage partners** | `list_partners`, `create_partner`, `assign_partner_to_transaction` |
-| **Import data** | `import_transactions`, `upload_file` |
+| **Find incomplete work** | `list_transactions_needing_files` |
+| **Categorize transactions** | `assign_no_receipt_category` |
+| **Manage partners** | `create_partner`, `assign_partner_to_transaction` |
+| **Import data** | `import_transactions` |
+
+### Smart & Pro Plans
+| Task | Examples |
+|------|---------|
+| **Upload receipts** | `upload_file` |
+| **AI matching** | `auto_connect_file_suggestions`, `score_file_transaction_match` |
+
+## Rate Limits
+
+| Plan | Per minute | Per hour |
+|------|-----------|----------|
+| Free | 10 | 100 |
+| Data | 60 | 1,000 |
+| Smart | 120 | 5,000 |
+| Pro | 120 | 5,000 |
 
 ## Resources
 
+- **Landing page** — https://fibuki.com/clawhub-install
 - **llm.txt** — Machine-readable API overview: https://fibuki.com/llm.txt
 - **OpenAPI spec** — Full tool schema: https://fibuki.com/api/openapi.json
 - **MCP endpoint** — For Claude Desktop: https://fibuki.com/api/mcp/sse
@@ -86,6 +101,9 @@ export FIBUKI_API_KEY="fk_your_key_here"
 - Maximum 5 active keys per user
 - Optional expiry dates supported
 
-## Domain Context
+## Local Development
 
-The plugin includes a skill file (`skills/fibuki-guide/SKILL.md`) that gives the agent context about FiBuKI's data model, transaction completion logic, amount handling (cents, not euros!), and common workflows.
+```bash
+cd integrations/openclaw-plugin
+openclaw plugins install -l .
+```
