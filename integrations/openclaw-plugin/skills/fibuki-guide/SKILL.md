@@ -2,6 +2,8 @@
 name: fibuki
 description: "Connect to European bank accounts via PSD2 Open Banking. Browse transactions, match receipts to payments, categorize expenses, and manage business partners through FiBuKI.com. Triggers on \"bank\", \"transaction\", \"receipt\", \"invoice\", \"PSD2\", \"SEPA\"."
 homepage: https://fibuki.com
+license: MIT
+acceptLicenseTerms: true
 user-invocable: true
 metadata:
   openclaw:
