@@ -186,9 +186,9 @@ jobs:
         working-directory: integrations/openclaw-plugin/skills/fibuki-guide
         run: |
           VERSION="${VERSION:-$(node -p "require('../../package.json').version")}"
-          REGISTRY="$(clawhub config get registry 2>/dev/null || echo https://clawhub.com)"
 
           # Build multipart form with acceptLicenseTerms in payload
+          # (clawhub CLI v0.7.0 doesn't send this field, causing 'invalid value' errors)
           node -e "
           const fs = require('fs');
           const path = require('path');
@@ -219,14 +219,14 @@ jobs:
             form.append('files', new Blob([buf], { type: 'text/plain' }), f.rel);
           }
 
-          fetch('${REGISTRY}/api/v1/skills', {
+          fetch('https://clawhub.ai/api/v1/skills', {
             method: 'POST',
             headers: { Authorization: 'Bearer ' + process.env.CLAWHUB_TOKEN },
             body: form,
           }).then(async r => {
             const body = await r.text();
-            if (!r.ok) { console.error('ClawHub error:', r.status, body); process.exit(1); }
-            console.log('Published:', body);
+            if (!r.ok) { console.error('ClawHub publish failed:', r.status, body); process.exit(1); }
+            console.log('Published to ClawHub:', body);
           }).catch(e => { console.error(e); process.exit(1); });
           "
         env:
