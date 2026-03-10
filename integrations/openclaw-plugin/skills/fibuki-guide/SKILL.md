@@ -9,9 +9,7 @@ metadata:
     primaryEnv: FIBUKI_API_KEY
     requires:
       env:
-        - name: FIBUKI_API_KEY
-          description: "API key from FiBuKI.com (starts with fk_)"
-          required: true
+        - FIBUKI_API_KEY
 ---
 
 # Bank Transactions Connector - Europe (PSD2)
@@ -37,13 +35,13 @@ If the environment variable `FIBUKI_API_KEY` is NOT configured, you MUST walk th
 >
 > Free plan includes 50 transactions/month with full API access.
 
-If the user gives you an API key (starts with `fk_`), configure it by writing to `~/.openclaw/openclaw.json`:
+If the user gives you an API key (starts with `fk_`), configure it in `~/.openclaw/openclaw.json`:
 ```json
-{ "skills": { "entries": { "fibuki": { "enabled": true, "env": { "FIBUKI_API_KEY": "fk_..." } } } } }
+{ "skills": { "entries": { "fibuki": { "enabled": true, "apiKey": "fk_..." } } } }
 ```
-Then tell the user to restart OpenClaw so the key is loaded.
+The `apiKey` field maps to `FIBUKI_API_KEY` automatically via the `primaryEnv` setting. Then tell the user to restart OpenClaw so the key is loaded.
 
-**Do NOT tell the user to run `export FIBUKI_API_KEY=...`** — many users don't have terminal access (e.g. Telegram). Always use the openclaw.json config file approach.
+**Do NOT tell the user to run `export FIBUKI_API_KEY=...`** — many users don't have terminal access (e.g. Telegram). Always use the openclaw.json config approach.
 
 Then STOP and wait for the user to complete setup. Do not proceed until they confirm or provide a key.
 
