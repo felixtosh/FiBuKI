@@ -112,23 +112,34 @@ export default function AdminUsersPage() {
 
   // Load invites from Firestore
   useEffect(() => {
+    if (!isAdmin) return;
+
     const invitesRef = collection(db, "allowedEmails");
     const q = query(invitesRef, orderBy("addedAt", "desc"));
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      })) as AllowedEmail[];
-      setInvites(data);
-      setLoadingInvites(false);
-    });
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const data = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        })) as AllowedEmail[];
+        setInvites(data);
+        setLoadingInvites(false);
+      },
+      (err) => {
+        console.error("allowedEmails listener error:", err);
+        setLoadingInvites(false);
+      }
+    );
 
     return () => unsubscribe();
-  }, []);
+  }, [isAdmin]);
 
   // Load pending access requests
   useEffect(() => {
+    if (!isAdmin) return;
+
     const requestsRef = collection(db, "accessRequests");
     const q = query(
       requestsRef,
@@ -136,17 +147,24 @@ export default function AdminUsersPage() {
       orderBy("requestedAt", "desc")
     );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      })) as AccessRequest[];
-      setAccessRequests(data);
-      setLoadingRequests(false);
-    });
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const data = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        })) as AccessRequest[];
+        setAccessRequests(data);
+        setLoadingRequests(false);
+      },
+      (err) => {
+        console.error("accessRequests listener error:", err);
+        setLoadingRequests(false);
+      }
+    );
 
     return () => unsubscribe();
-  }, []);
+  }, [isAdmin]);
 
   // Load admins from Cloud Function
   const loadAdmins = useCallback(async () => {
