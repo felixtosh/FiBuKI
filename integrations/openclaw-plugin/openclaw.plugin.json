@@ -12,7 +12,7 @@
     "properties": {
       "apiKey": {
         "type": "string",
-        "description": "Your FiBuKI API key. Generate at fibuki.com > Settings > Integrations > AI Agents, or run: npx @fibukiapp/cli auth"
+        "description": "Your FiBuKI API key. Generate at fibuki.com > Settings > Integrations > AI Agents"
       }
     },
     "required": ["apiKey"]

@@ -18,32 +18,22 @@ You connect to European bank transactions and receipt matching through FiBuKI.co
 
 ## IMPORTANT: Before doing anything, check if FIBUKI_API_KEY is set.
 
-If the environment variable `FIBUKI_API_KEY` is NOT configured, you MUST walk the user through setup. Do NOT skip this. Do NOT summarize capabilities. Guide them step by step:
-
-**Tell the user:**
+If `FIBUKI_API_KEY` is NOT configured, guide the user through setup:
 
 > To connect your bank transactions, I need to set up FiBuKI first.
 >
-> **Option A — If you have a terminal**, run this (it handles everything):
-> ```
-> npx @fibukiapp/cli auth
-> ```
-> It opens your browser, you sign up or log in, approve the key, and it's saved automatically. Then restart OpenClaw to pick up the key.
->
-> **Option B — No terminal?** Go to https://fibuki.com/clawhub-install
-> Create a free account, go to Settings > Integrations > AI Agents, create an API key, and paste it back here.
+> 1. Go to **https://fibuki.com/clawhub-install**
+> 2. Create a free account (or log in)
+> 3. Go to **Settings > Integrations > AI Agents** and create an API key
+> 4. Paste the key back here
 >
 > Free plan includes 50 transactions/month with full API access.
 
-If the user gives you an API key (starts with `fk_`), configure it in `~/.openclaw/openclaw.json`:
-```json
-{ "skills": { "entries": { "fibuki": { "enabled": true, "apiKey": "fk_..." } } } }
-```
-The `apiKey` field maps to `FIBUKI_API_KEY` automatically via the `primaryEnv` setting. Then tell the user to restart OpenClaw so the key is loaded.
+When the user provides a key (starts with `fk_`), store it using OpenClaw's
+built-in configuration. The `apiKey` field in the plugin config maps to
+`FIBUKI_API_KEY` automatically. Tell the user to restart OpenClaw to load the key.
 
-**Do NOT tell the user to run `export FIBUKI_API_KEY=...`** — many users don't have terminal access (e.g. Telegram). Always use the openclaw.json config approach.
-
-Then STOP and wait for the user to complete setup. Do not proceed until they confirm or provide a key.
+Then STOP and wait for the user to confirm setup is complete.
 
 If `FIBUKI_API_KEY` IS set, proceed normally with the tools below.
 
