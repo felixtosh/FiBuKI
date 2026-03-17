@@ -87,7 +87,7 @@ export function CountryPageContent({ countryCode }: CountryPageContentProps) {
           <p className="text-lg text-muted-foreground">
             FiBuKI connects directly to your bank — no CSV uploads needed. Help
             us activate PSD2 bank connections in {meta?.name} by backing with
-            €10. Your payment becomes credit toward your first month.
+            €10. It covers your entire first month.
           </p>
         </div>
 
@@ -160,9 +160,9 @@ export function CountryPageContent({ countryCode }: CountryPageContentProps) {
             </div>
             <div className="space-y-2">
               <div className="text-2xl font-bold text-primary">3</div>
-              <h3 className="font-medium">€10 becomes credit</h3>
+              <h3 className="font-medium">First month free</h3>
               <p className="text-sm text-muted-foreground">
-                Your backing is applied to your first month&apos;s subscription
+                Your €10 covers the first month of your subscription
               </p>
             </div>
           </div>

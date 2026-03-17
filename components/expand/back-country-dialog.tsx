@@ -72,8 +72,7 @@ export function BackCountryDialog({
           </DialogTitle>
           <DialogDescription>
             Pay €10 to help activate PSD2 banking in {country?.name}. Your
-            payment will be applied as credit toward your first month once bank
-            connections go live.
+            €10 covers your entire first month once bank connections go live.
           </DialogDescription>
         </DialogHeader>
 

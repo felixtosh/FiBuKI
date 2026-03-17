@@ -91,7 +91,7 @@ export const backCountryCallable = createCallable<
             currency: "eur",
             product_data: {
               name: `Unlock PSD2 banking in ${countryData.countryName}`,
-              description: `€10 commitment to help activate PSD2 bank connections in ${countryData.countryName}. Applied as credit toward your first month.`,
+              description: `€10 commitment to help activate PSD2 bank connections in ${countryData.countryName}. Covers your entire first month.`,
             },
             unit_amount: BACKING_AMOUNT_CENTS,
           },

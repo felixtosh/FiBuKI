@@ -49,8 +49,7 @@ export function ExpandPageContent() {
             FiBuKI connects directly to your bank via PSD2 — no CSV uploads
             needed. Right now this works in Austria. Expanding to each new
             country requires a separate banking licence. Back your country with
-            €10 to help us get there. Your payment becomes credit toward your
-            first month.
+            €10 to help us get there — it covers your entire first month.
           </p>
           <div className="flex items-center justify-center gap-2 pt-2">
             <Badge variant="success">Austria — Live</Badge>
@@ -78,7 +77,7 @@ export function ExpandPageContent() {
             />
             <FaqItem
               question="What happens to my €10?"
-              answer="Your €10 reserves your spot. Once enough backers join and we activate the country's PSD2 banking connection, your €10 is applied as credit toward your first month's subscription."
+              answer="Your €10 reserves your spot. Once enough backers join and we activate the country's PSD2 banking connection, your €10 covers your first month's subscription — so your first month is essentially free."
             />
             <FaqItem
               question="When does my subscription start?"
