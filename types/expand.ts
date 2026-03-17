@@ -91,8 +91,9 @@ export interface ExpandableCountry {
   flag: string;
 }
 
-/** PSD2 countries available for expansion (excluding Austria which is live) */
+/** PSD2 countries for expansion + Austria (already live) */
 export const EXPANDABLE_COUNTRIES: ExpandableCountry[] = [
+  { code: "AT", name: "Austria", flag: "🇦🇹" },
   { code: "DE", name: "Germany", flag: "🇩🇪" },
   { code: "FR", name: "France", flag: "🇫🇷" },
   { code: "IT", name: "Italy", flag: "🇮🇹" },

@@ -7,6 +7,7 @@ import { createCallable, HttpsError } from "../utils/createCallable";
 import { FieldValue } from "firebase-admin/firestore";
 
 const COUNTRIES = [
+  { code: "AT", name: "Austria", active: true },
   { code: "DE", name: "Germany" },
   { code: "FR", name: "France" },
   { code: "IT", name: "Italy" },
@@ -55,14 +56,16 @@ export const seedCountryExpansionCallable = createCallable<
         continue;
       }
 
+      const isActive = "active" in country && country.active;
       await ref.set({
         countryCode: country.code,
         countryName: country.name,
-        status: "funding",
-        targetBackers: DEFAULT_TARGET_BACKERS,
+        status: isActive ? "active" : "funding",
+        targetBackers: isActive ? 0 : DEFAULT_TARGET_BACKERS,
         currentBackers: 0,
         totalCommitted: 0,
-        monthlyCost: MONTHLY_COST_CENTS,
+        monthlyCost: isActive ? 0 : MONTHLY_COST_CENTS,
+        ...(isActive ? { activatedAt: FieldValue.serverTimestamp() } : {}),
         createdAt: FieldValue.serverTimestamp(),
       });
 
