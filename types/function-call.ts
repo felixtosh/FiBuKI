@@ -117,7 +117,12 @@ export type CloudFunctionName =
   // Access requests
   | "submitAccessRequest"
   | "approveAccessRequest"
-  | "dismissAccessRequest";
+  | "dismissAccessRequest"
+  // Country expansion
+  | "backCountry"
+  | "activateCountry"
+  | "refundCountryBackers"
+  | "seedCountryExpansion";
 
 /**
  * Summary statistics for function calls (for dashboards).

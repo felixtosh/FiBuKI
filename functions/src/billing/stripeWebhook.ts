@@ -157,6 +157,12 @@ async function handleCheckoutCompleted(
     return;
   }
 
+  // Handle country backing payment
+  if (session.metadata?.type === "country_backing") {
+    await handleCountryBacking(db, session);
+    return;
+  }
+
   // Handle AI credits purchase
   if (session.metadata?.type === "ai_credits") {
     const rawAmount = session.metadata.amountEur;
@@ -369,4 +375,52 @@ async function handleInvoicePaymentFailed(
   });
 
   console.log(`[StripeWebhook] Invoice payment failed: user=${subQuery.docs[0].id}`);
+}
+
+// =============================================================================
+// Country Backing Handler
+// =============================================================================
+
+async function handleCountryBacking(
+  db: FirebaseFirestore.Firestore,
+  session: Stripe.Checkout.Session
+) {
+  const countryCode = session.metadata?.countryCode;
+  const email = session.metadata?.email;
+  const userId = session.metadata?.userId || undefined;
+
+  if (!countryCode || !email) {
+    console.error("[StripeWebhook] country_backing missing countryCode or email metadata");
+    return;
+  }
+
+  const paymentIntentId =
+    typeof session.payment_intent === "string"
+      ? session.payment_intent
+      : (session.payment_intent as Stripe.PaymentIntent | null)?.id;
+
+  if (!paymentIntentId) {
+    console.error("[StripeWebhook] country_backing missing payment_intent");
+    return;
+  }
+
+  // Create backer document
+  await db.collection("countryBackers").add({
+    countryCode,
+    email,
+    ...(userId ? { userId } : {}),
+    stripePaymentIntentId: paymentIntentId,
+    amount: session.amount_total || 1000,
+    status: "paid",
+    createdAt: FieldValue.serverTimestamp(),
+  });
+
+  // Increment counters on the country doc (atomic)
+  const countryRef = db.collection("countryExpansion").doc(countryCode);
+  await countryRef.update({
+    currentBackers: FieldValue.increment(1),
+    totalCommitted: FieldValue.increment(session.amount_total || 1000),
+  });
+
+  console.log(`[StripeWebhook] Country backing recorded: ${countryCode} by ${email}`);
 }

@@ -260,5 +260,17 @@ service cloud.firestore {
       allow read: if request.auth != null && request.auth.uid == userId;
       allow write: if false; // Cloud Functions only
     }
+
+    // Country expansion - public read (marketing page), Cloud Functions write only
+    match /countryExpansion/{countryCode} {
+      allow read: if true;
+      allow write: if false; // Cloud Functions only
+    }
+
+    // Country backers - admin read only, Cloud Functions write only
+    match /countryBackers/{docId} {
+      allow read: if isAdmin() || isSuperAdmin();
+      allow write: if false; // Cloud Functions only
+    }
   }
 }

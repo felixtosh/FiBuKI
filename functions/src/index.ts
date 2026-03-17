@@ -286,6 +286,14 @@ export {
 // Onboarding operations
 export { setOnboardingTrackCallable as setOnboardingTrack } from "./onboarding/setOnboardingTrackCallable";
 
+// Country expansion operations
+export {
+  backCountryCallable as backCountry,
+  activateCountryCallable as activateCountry,
+  refundCountryBackersCallable as refundCountryBackers,
+  seedCountryExpansionCallable as seedCountryExpansion,
+} from "./expand";
+
 // MCP HTTP API (for OpenClaw, Claude Desktop, ChatGPT, etc.)
 export { mcpApi, mcpToolsList, mcpSse } from "./mcp-api";
 export { openApiSpec, aiPluginManifest } from "./mcp-api/openapi";
