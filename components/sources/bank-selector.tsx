@@ -9,8 +9,8 @@ import { Building2, Search, Loader2, ArrowLeft } from "lucide-react";
 import { useInstitutions, filterInstitutions, Institution, BankingProvider } from "@/hooks/use-institutions";
 import { FINAPI_COUNTRY_OPTIONS } from "@/lib/banking/finapi-countries";
 
-/** Countries with active PSD2 banking connections */
-const LIVE_COUNTRIES = new Set(["AT"]);
+/** Countries with active PSD2 banking connections (none yet — all in funding) */
+const LIVE_COUNTRIES = new Set<string>([]);
 
 const COUNTRIES = FINAPI_COUNTRY_OPTIONS;
 

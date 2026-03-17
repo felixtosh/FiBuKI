@@ -7,20 +7,20 @@ import { createCallable, HttpsError } from "../utils/createCallable";
 import { FieldValue } from "firebase-admin/firestore";
 
 const COUNTRIES = [
-  { code: "AT", name: "Austria", active: true },
-  { code: "DE", name: "Germany" },
-  { code: "FR", name: "France" },
-  { code: "IT", name: "Italy" },
-  { code: "ES", name: "Spain" },
-  { code: "NL", name: "Netherlands" },
-  { code: "BE", name: "Belgium" },
-  { code: "PT", name: "Portugal" },
-  { code: "IE", name: "Ireland" },
-  { code: "FI", name: "Finland" },
-  { code: "LU", name: "Luxembourg" },
-  { code: "GR", name: "Greece" },
-  { code: "SK", name: "Slovakia" },
-  { code: "SI", name: "Slovenia" },
+  { code: "AT", name: "Austria", seedBackers: 3 },
+  { code: "DE", name: "Germany", seedBackers: 2 },
+  { code: "FR", name: "France", seedBackers: 1 },
+  { code: "IT", name: "Italy", seedBackers: 1 },
+  { code: "ES", name: "Spain", seedBackers: 2 },
+  { code: "NL", name: "Netherlands", seedBackers: 1 },
+  { code: "BE", name: "Belgium", seedBackers: 0 },
+  { code: "PT", name: "Portugal", seedBackers: 1 },
+  { code: "IE", name: "Ireland", seedBackers: 0 },
+  { code: "FI", name: "Finland", seedBackers: 0 },
+  { code: "LU", name: "Luxembourg", seedBackers: 0 },
+  { code: "GR", name: "Greece", seedBackers: 1 },
+  { code: "SK", name: "Slovakia", seedBackers: 0 },
+  { code: "SI", name: "Slovenia", seedBackers: 0 },
 ];
 
 const DEFAULT_TARGET_BACKERS = 30;
@@ -56,16 +56,14 @@ export const seedCountryExpansionCallable = createCallable<
         continue;
       }
 
-      const isActive = "active" in country && country.active;
       await ref.set({
         countryCode: country.code,
         countryName: country.name,
-        status: isActive ? "active" : "funding",
-        targetBackers: isActive ? 0 : DEFAULT_TARGET_BACKERS,
-        currentBackers: 0,
-        totalCommitted: 0,
-        monthlyCost: isActive ? 0 : MONTHLY_COST_CENTS,
-        ...(isActive ? { activatedAt: FieldValue.serverTimestamp() } : {}),
+        status: "funding",
+        targetBackers: DEFAULT_TARGET_BACKERS,
+        currentBackers: country.seedBackers,
+        totalCommitted: country.seedBackers * 1000,
+        monthlyCost: MONTHLY_COST_CENTS,
         createdAt: FieldValue.serverTimestamp(),
       });
 
