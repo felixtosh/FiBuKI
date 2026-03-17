@@ -25,15 +25,19 @@ export async function GET() {
 
   const body = `# FiBuKI — AI-powered tax bookkeeping for Austrian/German small businesses
 > https://fibuki.com
+> Also available at: https://fibuki.com/skill.md
 
 ## What FiBuKI does
 FiBuKI manages bank transactions, receipts/invoices, and tax categorization.
 Users import bank CSVs, upload or auto-import receipts (email, browser extension),
 and FiBuKI matches receipts to transactions using AI scoring.
 
+## Getting Started
+Setup guide: https://fibuki.com/clawhub-install
+
 ## Authentication
 All API requests require a Bearer token (API key starting with \`fk_\`).
-- Generate manually: fibuki.com → Settings → Integrations → AI Agents
+- Generate manually: fibuki.com → Settings → Integrations → API Keys
 - Generate via CLI: npx @fibukiapp/cli auth
 
 Header: \`Authorization: Bearer fk_...\`

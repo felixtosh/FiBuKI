@@ -11,6 +11,10 @@ import {
   Bot,
   FileArchive,
   FileText,
+  MessageSquare,
+  Code,
+  BookOpen,
+  Terminal,
 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useEmailIntegrations } from "@/hooks/use-email-integrations";
@@ -18,9 +22,10 @@ import { useBrowserExtensionStatus } from "@/hooks/use-browser-extension";
 import { useEmailInbound } from "@/hooks/use-email-inbound";
 import { useAuth } from "@/components/auth/auth-provider";
 import { useUserData } from "@/hooks/use-user-data";
-import { useApiKeys } from "@/hooks/use-api-keys";
 import { SettingsPageHeader } from "@/components/ui/settings-page-header";
 import { IntegrationCard } from "@/components/integrations/integration-card";
+import { ApiKeysInline } from "@/components/settings/api-keys-inline";
+import { ResourceLink } from "@/components/settings/api-key-primitives";
 
 interface AttentionItem {
   message: string;
@@ -33,8 +38,6 @@ function IntegrationsContent() {
   const { primaryAddress } = useEmailInbound();
   const { isAdmin } = useAuth();
   const { userData } = useUserData();
-  const { keys } = useApiKeys();
-
   const gmailIntegrations = integrations.filter((i) => i.provider === "gmail");
 
   // --- Derive status strings ---
@@ -96,19 +99,6 @@ function IntegrationsContent() {
         ? ({ label: "Invalid", variant: "destructive" as const })
         : ({ label: "Untested", variant: "warning" as const })
     : undefined;
-
-  const activeKeyCount = keys.length;
-  const apiKeysStatus =
-    activeKeyCount === 0
-      ? "No API keys"
-      : activeKeyCount === 1
-        ? "1 key active"
-        : `${activeKeyCount} keys active`;
-
-  const apiKeysBadge =
-    activeKeyCount > 0
-      ? ({ label: `${activeKeyCount} active`, variant: "success" as const })
-      : undefined;
 
   // --- Attention banner ---
   const attentionItems = useMemo(() => {
@@ -249,13 +239,57 @@ function IntegrationsContent() {
             Developer
           </h3>
           <div className="space-y-2">
+            <ApiKeysInline />
+
             <IntegrationCard
-              icon={<Bot className="h-4 w-4 text-violet-600 dark:text-violet-400" />}
-              iconBg="bg-violet-100 dark:bg-violet-900/40"
-              name="AI Agents"
-              status={apiKeysStatus}
-              badge={apiKeysBadge}
-              href="/integrations/api-keys"
+              icon={<Bot className="h-4 w-4 text-emerald-700 dark:text-emerald-400" />}
+              iconBg="bg-emerald-100 dark:bg-emerald-900/40"
+              name="OpenClaw Skill"
+              status="Install from ClawHub or npm"
+              href="/integrations/openclaw"
+            />
+            <IntegrationCard
+              icon={<MessageSquare className="h-4 w-4 text-orange-600 dark:text-orange-400" />}
+              iconBg="bg-orange-100 dark:bg-orange-900/40"
+              name="Claude Desktop (MCP)"
+              status="Model Context Protocol server"
+              href="/integrations/claude-mcp"
+            />
+            <IntegrationCard
+              icon={<Bot className="h-4 w-4 text-teal-600 dark:text-teal-400" />}
+              iconBg="bg-teal-100 dark:bg-teal-900/40"
+              name="ChatGPT Custom GPT"
+              status="Import OpenAPI spec in GPT builder"
+              href="/integrations/chatgpt"
+            />
+            <IntegrationCard
+              icon={<Code className="h-4 w-4 text-gray-600 dark:text-gray-400" />}
+              iconBg="bg-gray-100 dark:bg-gray-800/60"
+              name="REST API"
+              status="Direct HTTP access for custom integrations"
+              href="/integrations/rest-api"
+            />
+          </div>
+
+          {/* Resources */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-3">
+            <ResourceLink
+              icon={<BookOpen className="h-4 w-4" />}
+              label="llm.txt"
+              description="Machine-readable API overview"
+              href="https://fibuki.com/llm.txt"
+            />
+            <ResourceLink
+              icon={<FileText className="h-4 w-4" />}
+              label="OpenAPI Spec"
+              description="Full tool schema for GPT Actions"
+              href="https://fibuki.com/api/openapi.json"
+            />
+            <ResourceLink
+              icon={<Terminal className="h-4 w-4" />}
+              label="CLI on npm"
+              description="@fibukiapp/cli package"
+              href="https://www.npmjs.com/package/@fibukiapp/cli"
             />
           </div>
         </section>
