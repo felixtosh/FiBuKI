@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useAuth } from "@/components/auth";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,14 +15,29 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { AlertCircle, CheckCircle, Info, Loader2 } from "lucide-react";
+import { AlertCircle, CheckCircle, Info, Loader2, Gift } from "lucide-react";
 import { FibukiMascot } from "@/components/ui/fibuki-mascot";
 import { logoFont } from "@/app/fonts";
+import { callFunction } from "@/lib/firebase/callable";
 
 export default function RegisterPage() {
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isLogoJumping, setIsLogoJumping] = useState(false);
+  const [referralApplied, setReferralApplied] = useState(false);
+  const [hasReferral, setHasReferral] = useState(false);
+  const searchParams = useSearchParams();
+
+  // Store referral code from URL in localStorage for persistence across OAuth redirects
+  useEffect(() => {
+    const ref = searchParams.get("ref");
+    if (ref) {
+      localStorage.setItem("fibuki_referral_code", ref);
+      setHasReferral(true);
+    } else if (typeof window !== "undefined" && localStorage.getItem("fibuki_referral_code")) {
+      setHasReferral(true);
+    }
+  }, [searchParams]);
 
   const handleLogoClick = () => {
     if (isLogoJumping) return;
@@ -29,7 +45,28 @@ export default function RegisterPage() {
     setTimeout(() => setIsLogoJumping(false), 600);
   };
 
-  const { signInWithGoogle, signInWithGitHub, accessRequested } = useAuth();
+  const { user, signInWithGoogle, signInWithGitHub, accessRequested } = useAuth();
+
+  // After successful registration, apply referral code
+  useEffect(() => {
+    if (!user || referralApplied) return;
+    const ref = localStorage.getItem("fibuki_referral_code");
+    if (!ref) return;
+
+    callFunction<{ code: string }, { valid: boolean; referrerName?: string }>(
+      "applyReferralCode",
+      { code: ref }
+    )
+      .then((res) => {
+        if (res.valid) {
+          setReferralApplied(true);
+        }
+        localStorage.removeItem("fibuki_referral_code");
+      })
+      .catch(() => {
+        localStorage.removeItem("fibuki_referral_code");
+      });
+  }, [user, referralApplied]);
 
   const handleGoogleSignUp = async () => {
     setError("");
@@ -83,6 +120,24 @@ export default function RegisterPage() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        {hasReferral && !referralApplied && (
+          <Alert className="border-green-200 bg-green-50 text-green-900 dark:border-green-800 dark:bg-green-950/50 dark:text-green-300">
+            <Gift className="h-4 w-4 text-green-600 dark:text-green-400" />
+            <AlertDescription>
+              You&apos;ve been referred! Sign up to get <strong>€20 off</strong> your first yearly plan.
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {referralApplied && (
+          <Alert className="border-green-200 bg-green-50 text-green-900 dark:border-green-800 dark:bg-green-950/50 dark:text-green-300">
+            <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-400" />
+            <AlertDescription>
+              Referral discount applied! You&apos;ll get €20 off when you choose a yearly plan.
+            </AlertDescription>
+          </Alert>
+        )}
+
         {accessRequested ? (
           <Alert className="border-green-200 bg-green-50 text-green-900">
             <CheckCircle className="h-4 w-4 text-green-600" />

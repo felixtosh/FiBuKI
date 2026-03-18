@@ -75,6 +75,9 @@ export interface TransactionQuotaResult {
 export type AdminOverride = "free_plan" | "plan_tester" | null;
 export type AutomationMode = "active" | "passive";
 
+// Referral coupon ID in Stripe
+export const REFERRAL_COUPON_ID = "referral_20_off_yearly";
+
 /** User-facing billing rate: EUR per 100,000 total tokens */
 export const USER_TOKEN_RATE_PER_100K_EUR = 0.35;
 

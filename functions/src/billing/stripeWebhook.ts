@@ -351,6 +351,9 @@ async function handleInvoicePaymentSucceeded(
   });
 
   console.log(`[StripeWebhook] Invoice paid, counters reset: user=${subDoc.id}`);
+
+  // Credit referrer on the referred user's first paid invoice
+  await creditReferrer(db, _stripe, subDoc.id, subDoc.data());
 }
 
 async function handleInvoicePaymentFailed(
@@ -375,6 +378,74 @@ async function handleInvoicePaymentFailed(
   });
 
   console.log(`[StripeWebhook] Invoice payment failed: user=${subQuery.docs[0].id}`);
+}
+
+// =============================================================================
+// Referral Credit Handler
+// =============================================================================
+
+async function creditReferrer(
+  db: FirebaseFirestore.Firestore,
+  stripe: Stripe,
+  referredUserId: string,
+  subData: FirebaseFirestore.DocumentData | undefined
+) {
+  const referredBy = subData?.referredBy;
+  if (!referredBy) return;
+
+  try {
+    // Find the pending conversion for this referred user
+    const convQuery = await db
+      .collection("referralConversions")
+      .where("referredUserId", "==", referredUserId)
+      .where("status", "==", "pending")
+      .limit(1)
+      .get();
+
+    if (convQuery.empty) return;
+
+    const convDoc = convQuery.docs[0];
+    const conversion = convDoc.data();
+
+    // Get the referrer's subscription to find their Stripe customer ID
+    const referrerSub = await db
+      .collection("subscriptions")
+      .doc(conversion.referrerUserId)
+      .get();
+
+    const referrerCustomerId = referrerSub.data()?.stripeCustomerId;
+    if (!referrerCustomerId) {
+      console.warn(`[StripeWebhook] Referrer ${conversion.referrerUserId} has no Stripe customer`);
+      return;
+    }
+
+    // Determine credit amount: one month of the referrer's current plan
+    const referrerPlan = referrerSub.data()?.plan || "smart";
+    const planConfig = PLANS[referrerPlan as PlanId] || PLANS.smart;
+    const creditCents = Math.round(planConfig.monthlyPriceEur * 100);
+
+    // Apply negative balance (credit) to referrer's Stripe customer
+    await stripe.customers.createBalanceTransaction(referrerCustomerId, {
+      amount: -creditCents,
+      currency: "eur",
+      description: `Referral credit: ${conversion.referralCode}`,
+    });
+
+    // Update conversion status
+    await convDoc.ref.update({
+      status: "converted",
+      referrerCreditApplied: true,
+      convertedAt: FieldValue.serverTimestamp(),
+    });
+
+    console.log(
+      `[StripeWebhook] Referral credit applied: referrer=${conversion.referrerUserId} ` +
+      `amount=${creditCents}c code=${conversion.referralCode}`
+    );
+  } catch (err) {
+    console.error("[StripeWebhook] Failed to credit referrer:", err);
+    // Don't throw — referral credit failure shouldn't break the invoice handler
+  }
 }
 
 // =============================================================================

@@ -122,7 +122,13 @@ export type CloudFunctionName =
   | "backCountry"
   | "activateCountry"
   | "refundCountryBackers"
-  | "seedCountryExpansion";
+  | "seedCountryExpansion"
+  // Referral operations
+  | "getReferralCode"
+  | "applyReferralCode"
+  | "getReferralStats"
+  // Digest email preferences
+  | "updateDigestPreference";
 
 /**
  * Summary statistics for function calls (for dashboards).

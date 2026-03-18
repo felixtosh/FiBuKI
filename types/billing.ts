@@ -252,6 +252,10 @@ export interface Subscription {
   grandfatheredUntil?: Timestamp | null;
   // Automation mode
   automationMode?: "active" | "passive";
+  // Referral
+  referredBy?: string;
+  // Email preferences
+  digestEnabled?: boolean;
   // Admin overrides
   adminOverride?: "free_plan" | "plan_tester" | null;
   adminOverrideSetBy?: string | null;

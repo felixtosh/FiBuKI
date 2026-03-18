@@ -76,10 +76,66 @@ export const createCheckoutSessionCallable = createCallable<
       }
     }
 
+    // Check for referral discount (yearly plans only)
+    const discounts: Array<{ promotion_code: string }> = [];
+    if (billingPeriod === "yearly") {
+      const pendingConversion = await ctx.db
+        .collection("referralConversions")
+        .where("referredUserId", "==", ctx.userId)
+        .where("status", "==", "pending")
+        .limit(1)
+        .get();
+
+      if (!pendingConversion.empty) {
+        const conversion = pendingConversion.docs[0].data();
+        if (conversion.stripePromotionCodeId) {
+          discounts.push({ promotion_code: conversion.stripePromotionCodeId });
+        } else {
+          // Create a Stripe promotion code for this referral
+          try {
+            // Find or create the referral coupon
+            let couponId = "referral_20_off_yearly";
+            try {
+              await stripe.coupons.retrieve(couponId);
+            } catch {
+              // Create coupon if it doesn't exist
+              await stripe.coupons.create({
+                id: couponId,
+                amount_off: 2000,
+                currency: "eur",
+                duration: "once",
+                name: "Referral: €20 off first year",
+              });
+            }
+
+            const promoCode = await stripe.promotionCodes.create({
+              promotion: { type: "coupon", coupon: couponId },
+              max_redemptions: 1,
+              metadata: {
+                referralCode: conversion.referralCode,
+                referredUserId: ctx.userId,
+              },
+            });
+
+            // Store promotion code ID on conversion
+            await pendingConversion.docs[0].ref.update({
+              stripePromotionCodeId: promoCode.id,
+            });
+
+            discounts.push({ promotion_code: promoCode.id });
+          } catch (err) {
+            console.error("[createCheckoutSession] Failed to create referral promo code:", err);
+            // Continue without discount — don't block checkout
+          }
+        }
+      }
+    }
+
     const session = await stripe.checkout.sessions.create({
       customer: stripeCustomerId,
       mode: "subscription",
       line_items: [{ price: priceId, quantity: 1 }],
+      ...(discounts.length > 0 ? { discounts } : {}),
       success_url: successUrl,
       cancel_url: cancelUrl,
       metadata: {

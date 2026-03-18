@@ -57,6 +57,14 @@ export default function LoginPage() {
   const searchParams = useSearchParams();
   const redirect = searchParams.get("redirect");
 
+  // Store referral code from URL in localStorage for persistence across OAuth redirects
+  useEffect(() => {
+    const ref = searchParams.get("ref");
+    if (ref) {
+      localStorage.setItem("fibuki_referral_code", ref);
+    }
+  }, [searchParams]);
+
   // When Firebase MFA is required by the auth provider, trigger the MFA challenge handler
   useEffect(() => {
     if (mfaRequired && mfaResolver) {

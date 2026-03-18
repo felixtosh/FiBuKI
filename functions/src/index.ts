@@ -294,6 +294,20 @@ export {
   seedCountryExpansionCallable as seedCountryExpansion,
 } from "./expand";
 
+// Referral operations
+export {
+  getReferralCodeCallable as getReferralCode,
+  applyReferralCodeCallable as applyReferralCode,
+  getReferralStatsCallable as getReferralStats,
+} from "./referral";
+
+// Digest email operations
+export {
+  sendWeeklyDigest,
+  unsubscribeDigest,
+  updateDigestPreferenceCallable as updateDigestPreference,
+} from "./digest";
+
 // MCP HTTP API (for OpenClaw, Claude Desktop, ChatGPT, etc.)
 export { mcpApi, mcpToolsList, mcpSse } from "./mcp-api";
 export { openApiSpec, aiPluginManifest } from "./mcp-api/openapi";

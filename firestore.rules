@@ -272,5 +272,17 @@ service cloud.firestore {
       allow read: if isAdmin() || isSuperAdmin();
       allow write: if false; // Cloud Functions only
     }
+
+    // Referrals - public read (needed to validate codes), Cloud Functions write only
+    match /referrals/{code} {
+      allow read: if true;
+      allow write: if false; // Cloud Functions only
+    }
+
+    // Referral conversions - referrer can read their own, Cloud Functions write only
+    match /referralConversions/{docId} {
+      allow read: if isAuthenticated() && resource.data.referrerUserId == request.auth.uid;
+      allow write: if false; // Cloud Functions only
+    }
   }
 }
