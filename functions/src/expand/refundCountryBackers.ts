@@ -36,7 +36,7 @@ export const refundCountryBackersCallable = createCallable<
 
     // Admin check
     const isAdmin = ctx.request.auth?.token?.admin === true;
-    const isSuperAdmin = ctx.request.auth?.token?.email === "felix@i7v6.com";
+    const isSuperAdmin = ctx.request.auth?.token?.email === process.env.SUPER_ADMIN_EMAIL;
     if (!isAdmin && !isSuperAdmin) {
       throw new HttpsError("permission-denied", "Admin access required");
     }

@@ -48,7 +48,7 @@ export async function createChatModel(
 
   if (provider === "gemini") {
     const { ChatVertexAI } = await import("@langchain/google-vertexai");
-    const projectId = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT || "taxstudio-f12fb";
+    const projectId = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT || process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "taxstudio-f12fb";
     const model = new ChatVertexAI({
       model: MODEL_IDS.gemini,
       temperature,

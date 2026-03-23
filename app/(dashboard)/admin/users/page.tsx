@@ -901,7 +901,7 @@ export default function AdminUsersPage() {
           {/* Info */}
           <div className="text-sm text-muted-foreground">
             <p>
-              <strong>Super Admin:</strong> felix@i7v6.com has permanent admin access
+              <strong>Super Admin:</strong> The SUPER_ADMIN_EMAIL has permanent admin access
               and cannot be removed.
             </p>
           </div>

@@ -1,15 +1,16 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 
+const FIREBASE_PROJECT_ID = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || "taxstudio-f12fb";
 const CORS_ORIGINS = [
-  "https://fibuki.com",
-  "https://taxstudio-f12fb.firebaseapp.com",
-  "https://taxstudio-f12fb.web.app",
+  process.env.APP_URL || "https://fibuki.com",
+  `https://${FIREBASE_PROJECT_ID}.firebaseapp.com`,
+  `https://${FIREBASE_PROJECT_ID}.web.app`,
   "http://localhost:3000",
 ];
 
 const db = getFirestore();
-const MIGRATION_EMAIL = "felix@i7v6.com";
+const MIGRATION_EMAIL = process.env.SUPER_ADMIN_EMAIL || "";
 const OLD_USER_ID = "dev-user-123";
 
 /**
@@ -34,7 +35,7 @@ const COLLECTIONS_TO_MIGRATE = [
 
 /**
  * Callable function to migrate dev-user-123 data to the real user
- * Only callable by the designated migration user (felix@i7v6.com)
+ * Only callable by the designated migration user (SUPER_ADMIN_EMAIL)
  *
  * This is a one-time migration function that should be called after first login
  */

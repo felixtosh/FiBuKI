@@ -7,7 +7,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 
-const CF_URL = "https://europe-west1-taxstudio-f12fb.cloudfunctions.net/mcpApi";
+const CF_URL = process.env.NEXT_PUBLIC_FUNCTIONS_URL ? `${process.env.NEXT_PUBLIC_FUNCTIONS_URL}/mcpApi` : `https://europe-west1-${process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "taxstudio-f12fb"}.cloudfunctions.net/mcpApi`;
 
 export async function POST(request: NextRequest) {
   const authHeader = request.headers.get("authorization");

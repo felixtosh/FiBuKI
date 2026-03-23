@@ -1581,7 +1581,7 @@ export default function DesignSystemPage() {
                       </div>
                       <div>
                         <div className="flex items-center gap-2">
-                          <span className="font-medium">felix@i7v6.com</span>
+                          <span className="font-medium">admin@example.com</span>
                           <Badge variant="warning" className="text-xs">
                             <Pause className="h-3 w-3 mr-1" />
                             Paused

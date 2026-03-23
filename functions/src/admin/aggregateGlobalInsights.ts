@@ -41,7 +41,7 @@ export const aggregateGlobalInsightsCallable = createCallable<
     // Verify admin
     // Note: createCallable handles auth, but this is admin-only
     const userDoc = await ctx.db.collection("users").doc(ctx.userId).get();
-    const isAdmin = userDoc.data()?.admin === true || ctx.userId === "felix@i7v6.com";
+    const isAdmin = userDoc.data()?.admin === true || ctx.request.auth?.token?.email === process.env.SUPER_ADMIN_EMAIL;
     if (!isAdmin) {
       throw new HttpsError("permission-denied", "Admin only");
     }

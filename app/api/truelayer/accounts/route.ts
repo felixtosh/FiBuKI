@@ -19,11 +19,11 @@ import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
 // Initialize Firebase for server-side
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "AIzaSyDhxXMbHgaD1z9n0bkuVaSRmmiCrbNL-l4",
-  authDomain: "taxstudio-f12fb.firebaseapp.com",
-  projectId: "taxstudio-f12fb",
-  storageBucket: "taxstudio-f12fb.firebasestorage.app",
-  messagingSenderId: "534848611676",
-  appId: "1:534848611676:web:8a3d1ede57c65b7e884d99",
+  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || "taxstudio-f12fb.firebaseapp.com",
+  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "taxstudio-f12fb",
+  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || "taxstudio-f12fb.firebasestorage.app",
+  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || "534848611676",
+  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID || "1:534848611676:web:8a3d1ede57c65b7e884d99",
 };
 
 const appName = "truelayer-accounts";

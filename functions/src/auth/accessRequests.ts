@@ -4,6 +4,14 @@ import { sendInviteEmail } from "./sendInviteEmail";
 
 const db = getFirestore();
 
+const FIREBASE_PROJECT_ID = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || "taxstudio-f12fb";
+const CORS_ORIGINS = [
+  process.env.APP_URL || "https://fibuki.com",
+  `https://${FIREBASE_PROJECT_ID}.firebaseapp.com`,
+  `https://${FIREBASE_PROJECT_ID}.web.app`,
+  "http://localhost:3000",
+];
+
 /**
  * Submit an access request from an unapproved OAuth user.
  * Deduplicates by email — if a pending request already exists, updates its timestamp.
@@ -11,11 +19,7 @@ const db = getFirestore();
 export const submitAccessRequest = onCall(
   {
     region: "europe-west1",
-    cors: [
-      "https://fibuki.com",
-      "https://taxstudio-f12fb.firebaseapp.com",
-      "http://localhost:3000",
-    ],
+    cors: CORS_ORIGINS,
   },
   async (request) => {
     if (!request.auth) {
@@ -78,11 +82,7 @@ export const submitAccessRequest = onCall(
 export const approveAccessRequest = onCall(
   {
     region: "europe-west1",
-    cors: [
-      "https://fibuki.com",
-      "https://taxstudio-f12fb.firebaseapp.com",
-      "http://localhost:3000",
-    ],
+    cors: CORS_ORIGINS,
   },
   async (request) => {
     if (!request.auth) {
@@ -146,11 +146,7 @@ export const approveAccessRequest = onCall(
 export const dismissAccessRequest = onCall(
   {
     region: "europe-west1",
-    cors: [
-      "https://fibuki.com",
-      "https://taxstudio-f12fb.firebaseapp.com",
-      "http://localhost:3000",
-    ],
+    cors: CORS_ORIGINS,
   },
   async (request) => {
     if (!request.auth) {

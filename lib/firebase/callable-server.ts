@@ -26,7 +26,7 @@ function getProjectId(): string {
     process.env.GCLOUD_PROJECT ||
     process.env.GCP_PROJECT ||
     process.env.GOOGLE_CLOUD_PROJECT ||
-    "taxstudio-f12fb"
+    process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "taxstudio-f12fb"
   );
 }
 

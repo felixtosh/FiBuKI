@@ -13,12 +13,13 @@ import { PLANS, createDefaultSubscriptionData } from "../billing/config";
 import type { PlanId, AdminOverride } from "../billing/config";
 import { clearQuotaExceeded } from "../billing/clearQuotaExceeded";
 
-const SUPER_ADMIN_EMAIL = "felix@i7v6.com";
+const SUPER_ADMIN_EMAIL = process.env.SUPER_ADMIN_EMAIL || "";
 
+const FIREBASE_PROJECT_ID = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || "taxstudio-f12fb";
 const CORS_ORIGINS = [
-  "https://fibuki.com",
-  "https://taxstudio-f12fb.firebaseapp.com",
-  "https://taxstudio-f12fb.web.app",
+  process.env.APP_URL || "https://fibuki.com",
+  `https://${FIREBASE_PROJECT_ID}.firebaseapp.com`,
+  `https://${FIREBASE_PROJECT_ID}.web.app`,
   "http://localhost:3000",
 ];
 

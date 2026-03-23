@@ -330,7 +330,7 @@ Used for the main chat interface and LangGraph agent. Requires `ANTHROPIC_API_KE
 - Firebase Auth with email/password and Google Sign-In
 - Invite-only registration (admin must add email to `allowedEmails` collection)
 - Admin system uses Firebase custom claims (`admin: true`)
-- Super admin: `felix@i7v6.com` (hardcoded, auto-granted admin on first login)
+- Super admin: Set via `SUPER_ADMIN_EMAIL` env var (auto-granted admin on first login)
 - Auth context provided by `AuthProvider` in `/components/auth/`
 - Protected routes use `ProtectedRoute` component
 

@@ -7,7 +7,7 @@
  * Supports both production and Firebase emulator (detected via NODE_ENV=development).
  */
 
-const FIREBASE_PROJECT_ID = "taxstudio-f12fb";
+const FIREBASE_PROJECT_ID = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "taxstudio-f12fb";
 const FIREBASE_REGION = "europe-west1";
 
 // Use emulator in development mode (matching client-side config in lib/firebase/config.ts)

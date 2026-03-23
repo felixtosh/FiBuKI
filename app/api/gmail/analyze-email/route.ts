@@ -11,7 +11,7 @@ const TOKENS_COLLECTION = "emailTokens";
 const GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1";
 
 const GEMINI_MODEL = "gemini-2.0-flash-lite-001";
-const PROJECT_ID = "taxstudio-f12fb";
+const PROJECT_ID = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "taxstudio-f12fb";
 const VERTEX_LOCATION = process.env.VERTEX_LOCATION || "europe-west1";
 
 interface GmailMessagePart {

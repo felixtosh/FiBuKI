@@ -2,7 +2,15 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 
 const db = getFirestore();
-const SUPER_ADMIN_EMAIL = "felix@i7v6.com";
+const SUPER_ADMIN_EMAIL = process.env.SUPER_ADMIN_EMAIL || "";
+
+const FIREBASE_PROJECT_ID = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || "taxstudio-f12fb";
+const CORS_ORIGINS = [
+  process.env.APP_URL || "https://fibuki.com",
+  `https://${FIREBASE_PROJECT_ID}.firebaseapp.com`,
+  `https://${FIREBASE_PROJECT_ID}.web.app`,
+  "http://localhost:3000",
+];
 
 /**
  * Callable function to check if an email is allowed to register
@@ -13,11 +21,7 @@ const SUPER_ADMIN_EMAIL = "felix@i7v6.com";
 export const validateRegistration = onCall(
   {
     region: "europe-west1",
-    cors: [
-      "https://fibuki.com",
-      "https://taxstudio-f12fb.firebaseapp.com",
-      "http://localhost:3000",
-    ],
+    cors: CORS_ORIGINS,
   },
   async (request) => {
     const { email } = request.data;
@@ -102,11 +106,7 @@ export const validateRegistration = onCall(
 export const markInviteUsed = onCall(
   {
     region: "europe-west1",
-    cors: [
-      "https://fibuki.com",
-      "https://taxstudio-f12fb.firebaseapp.com",
-      "http://localhost:3000",
-    ],
+    cors: CORS_ORIGINS,
   },
   async (request) => {
     // This should only be called by authenticated users (just registered)

@@ -16,13 +16,14 @@ import type {
   AuthenticatorTransportFuture,
 } from "@simplewebauthn/server";
 
-const SUPER_ADMIN_EMAIL = "felix@i7v6.com";
+const SUPER_ADMIN_EMAIL = process.env.SUPER_ADMIN_EMAIL || "";
 const RP_NAME = "FiBuKI";
 
+const FIREBASE_PROJECT_ID = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || "taxstudio-f12fb";
 const CORS_ORIGINS = [
-  "https://fibuki.com",
-  "https://taxstudio-f12fb.firebaseapp.com",
-  "https://taxstudio-f12fb.web.app",
+  process.env.APP_URL || "https://fibuki.com",
+  `https://${FIREBASE_PROJECT_ID}.firebaseapp.com`,
+  `https://${FIREBASE_PROJECT_ID}.web.app`,
   "http://localhost:3000",
 ];
 
@@ -507,9 +508,10 @@ export const verifyPasskeyRegistration = onCall(
     const now = Timestamp.now();
 
     // Store the credential with RP ID for future authentication
-    const credentialIdBase64 = Buffer.from(registrationInfo.credential.id).toString(
-      "base64url"
-    );
+    // credential.id is already a base64url string in @simplewebauthn/server v10+
+    const credentialIdBase64 = typeof registrationInfo.credential.id === "string"
+      ? registrationInfo.credential.id
+      : Buffer.from(registrationInfo.credential.id).toString("base64url");
 
     await db.collection(getPasskeysPath(userId)).doc(credentialIdBase64).set({
       userId,
@@ -589,14 +591,13 @@ export const generatePasskeyAuthOptions = onCall(
       );
     }
 
-    const allowCredentials = matchingPasskeys.map((doc) => ({
-      id: doc.data().credentialId as string,
-      transports: doc.data().transports as AuthenticatorTransportFuture[],
-    }));
-
+    // Use discoverable credential flow (no allowCredentials).
+    // This lets the browser/OS query ALL authenticators (1Password, iCloud Keychain,
+    // security keys, etc.) for matching passkeys, instead of searching for specific
+    // credential IDs — which fails for third-party providers like 1Password that
+    // Chrome can't query directly by ID.
     const options = await generateAuthenticationOptions({
       rpID: config.rpId,
-      allowCredentials,
       userVerification: "preferred",
       timeout: 60000,
     });
@@ -659,17 +660,32 @@ export const verifyPasskeyAuth = onCall(
     const credentialId =
       (credential as AuthenticationResponseJSON).id ||
       (credential as AuthenticationResponseJSON).rawId;
-    const passkeyDoc = await db
+
+    // Try direct doc lookup first (fastest — works for correctly-stored passkeys)
+    let passkeyDoc = await db
       .collection(getPasskeysPath(userId))
       .doc(credentialId)
       .get();
 
+    // Fallback: lookup by double-encoded ID (handles passkeys stored before
+    // the base64url double-encoding bug was fixed — Buffer.from(base64urlString)
+    // was treating the string as UTF-8 bytes and re-encoding)
     if (!passkeyDoc.exists) {
+      const doubleEncoded = Buffer.from(credentialId).toString("base64url");
+      console.log(`Direct lookup miss, trying double-encoded: ${doubleEncoded.slice(0, 20)}...`);
+      passkeyDoc = await db
+        .collection(getPasskeysPath(userId))
+        .doc(doubleEncoded)
+        .get();
+    }
+
+    if (!passkeyDoc.exists) {
+      console.error(`Passkey not found for credentialId: ${credentialId.slice(0, 30)}...`);
       await db.collection("mfaAuditLogs").add({
         userId,
         action: "challenge_failed",
         method: "passkey",
-        metadata: { reason: "credential_not_found" },
+        metadata: { reason: "credential_not_found", credentialIdPrefix: credentialId.slice(0, 30) },
         timestamp: Timestamp.now(),
       });
       throw new HttpsError("not-found", "Passkey not found");
@@ -689,7 +705,9 @@ export const verifyPasskeyAuth = onCall(
         expectedOrigin,
         expectedRPID: rpId,
         credential: {
-          id: passkeyData.credentialId,
+          // Use the auth response credentialId (correctly encoded), not the
+          // potentially double-encoded stored value
+          id: credentialId,
           publicKey: Buffer.from(passkeyData.publicKey, "base64url"),
           counter: passkeyData.counter,
           transports: passkeyData.transports,

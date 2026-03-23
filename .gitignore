@@ -38,6 +38,7 @@ next-env.d.ts
 
 # Firebase
 .firebase/
+functions/lib/
 firebase-debug.log
 firestore-debug.log
 ui-debug.log
@@ -61,6 +62,12 @@ emulator-data/
 
 # Firebase RC
 .firebaserc
+
+# Screenshots
+Screenshot*.png
+
+# Internal planning docs
+PLAN-*.md
 
 # Separate npm packages (published independently)
 /mcp-server/

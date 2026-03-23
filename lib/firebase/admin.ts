@@ -9,6 +9,9 @@ import { initializeApp, getApps, cert, App } from "firebase-admin/app";
 import { getFirestore, Firestore } from "firebase-admin/firestore";
 import { getStorage, Storage } from "firebase-admin/storage";
 
+const PROJECT_ID = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "taxstudio-f12fb";
+const STORAGE_BUCKET = process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || "taxstudio-f12fb.firebasestorage.app";
+
 let _adminApp: App | null = null;
 let _adminDb: Firestore | null = null;
 let _adminStorage: Storage | null = null;
@@ -50,14 +53,12 @@ export function getAdminApp(): App {
     return _adminApp;
   }
 
-  const storageBucket = "taxstudio-f12fb.firebasestorage.app";
-
   // In development/emulator mode, we can initialize without credentials
   // In production, use service account from environment
   if (shouldUseEmulators()) {
     _adminApp = initializeApp({
-      projectId: "taxstudio-f12fb",
-      storageBucket,
+      projectId: PROJECT_ID,
+      storageBucket: STORAGE_BUCKET,
     });
   } else {
     // Production: use service account
@@ -77,8 +78,8 @@ export function getAdminApp(): App {
         const parsedCredential = JSON.parse(cleanedServiceAccount);
         _adminApp = initializeApp({
           credential: cert(parsedCredential),
-          projectId: "taxstudio-f12fb",
-          storageBucket,
+          projectId: PROJECT_ID,
+          storageBucket: STORAGE_BUCKET,
         });
       } catch (parseError) {
         console.error("[Firebase Admin] Failed to parse service account key:", parseError);
@@ -87,15 +88,15 @@ export function getAdminApp(): App {
         console.error("[Firebase Admin] Last 50 chars:", serviceAccount?.substring(serviceAccount.length - 50));
         // Fall back to application default credentials
         _adminApp = initializeApp({
-          projectId: "taxstudio-f12fb",
-          storageBucket,
+          projectId: PROJECT_ID,
+          storageBucket: STORAGE_BUCKET,
         });
       }
     } else {
       // Fallback for environments where application default credentials are available
       _adminApp = initializeApp({
-        projectId: "taxstudio-f12fb",
-        storageBucket,
+        projectId: PROJECT_ID,
+        storageBucket: STORAGE_BUCKET,
       });
     }
   }
