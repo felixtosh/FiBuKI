@@ -8,8 +8,4 @@ export function parseChatUrlState(params: {
   get: (name: string) => string | null;
 }): ParsedChatUrlState;
 
-export function buildNextChatUrl(
-  pathname: string,
-  currentParams: { toString: () => string },
-  nextState: { isSidebarOpen: boolean; sessionId: string | null }
-): string | null;
+export function consumeChatUrlParam(): void;

@@ -2,7 +2,7 @@
 "use client";
 
 import { createContext, useContext, useState, useCallback, useMemo, useEffect, useRef } from "react";
-import { useRouter, useSearchParams, usePathname } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useChat as useVercelChat } from "@ai-sdk/react";
 import { collection, onSnapshot, orderBy, query } from "firebase/firestore";
 import { ChatContextValue, ChatTab, SidebarMode, UIControlActions, ToolCall, ChatSession, ModelProvider, ChatMessage } from "@/types/chat";
@@ -15,7 +15,8 @@ import { useWorker } from "@/hooks/use-worker";
 import { useAuth } from "@/components/auth";
 import { db } from "@/lib/firebase/config";
 import { serializeMessagesForSDK } from "@/lib/operations";
-import { useChatUrlState } from "@/hooks/use-chat-url-state";
+import { useChatUrlCommand } from "@/hooks/use-chat-url-state";
+import { readPersistedChatState, persistSidebarOpen, persistActiveTab } from "@/lib/chat/chat-local-state";
 
 const ChatContext = createContext<ChatContextValue | null>(null);
 
@@ -57,13 +58,7 @@ interface ChatProviderProps {
 
 export function ChatProvider({ children }: ChatProviderProps) {
   const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
-  const { readUrlState, readNavigationContext, updateUrlState } = useChatUrlState({
-    pathname,
-    searchParams,
-    router,
-  });
+  const { initialCommand, consumeParam } = useChatUrlCommand();
   const { user } = useAuth();
 
   // Worker hook for wand button actions
@@ -74,16 +69,31 @@ export function ChatProvider({ children }: ChatProviderProps) {
     triggerFileTransactionSearch,
   } = useWorker();
 
-  // Read initial state from URL params once and keep subsequent URL sync in an effect.
-  const initialUrlChatStateRef = useRef(readUrlState());
+  // Resolve initial state: URL command overrides localStorage fallback.
+  const initialState = useRef(
+    initialCommand.hasChatParam
+      ? {
+          isSidebarOpen: initialCommand.isSidebarOpen,
+          activeTab: "chat" as ChatTab,
+          sessionId: initialCommand.sessionId,
+        }
+      : (() => {
+          const persisted = readPersistedChatState();
+          return {
+            isSidebarOpen: persisted.isSidebarOpen,
+            activeTab: persisted.activeTab,
+            sessionId: null as string | null,
+          };
+        })()
+  ).current;
 
-  const [isSidebarOpen, setIsSidebarOpen] = useState(initialUrlChatStateRef.current.isSidebarOpen);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(initialState.isSidebarOpen);
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [pendingConfirmations, setPendingConfirmations] = useState<ToolCall[]>([]);
-  const [activeTab, setActiveTabState] = useState<ChatTab>(initialUrlChatStateRef.current.isSidebarOpen ? "chat" : "notifications");
+  const [activeTab, setActiveTabState] = useState<ChatTab>(initialState.activeTab);
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>("chat");
   const [chatViewMode, setChatViewMode] = useState<ChatViewMode>(
-    initialUrlChatStateRef.current.isSidebarOpen ? "draft" : "closed"
+    initialState.isSidebarOpen ? "draft" : "closed"
   );
   // Default to gemini (cheaper), fall back to anthropic if needed
   const [modelProvider, setModelProvider] = useState<ModelProvider>("gemini");
@@ -95,18 +105,8 @@ export function ChatProvider({ children }: ChatProviderProps) {
   // Track already auto-opened session keys (entityId:sessionId) to avoid repeated loads.
   const openedWandSessionKeysRef = useRef<Set<string>>(new Set());
 
-  // Track session IDs requested from URL to avoid repeatedly loading the same session.
-  const lastUrlRequestedSessionRef = useRef<string | null>(initialUrlChatStateRef.current.sessionId);
   const currentSessionIdRef = useRef<string | null>(null);
   const loadSessionRequestIdRef = useRef(0);
-  // Track last URL-synced chat UI state to decide push vs replace.
-  const lastUrlSyncedStateRef = useRef<{
-    isSidebarOpen: boolean;
-    activeTab: ChatTab;
-    sessionId: string | null;
-  } | null>(null);
-  // Prevent state -> URL effect from overwriting URL-driven state updates (e.g., back/forward).
-  const isApplyingUrlStateRef = useRef(false);
 
   // Notifications hook
   const {
@@ -207,12 +207,11 @@ export function ChatProvider({ children }: ChatProviderProps) {
     debugChat("tab_change", { from: activeTab, to: tab, modeBefore: chatViewMode });
     setActiveTabState(tab);
 
-    // Leaving chat should reset visible conversation context and URL session binding.
+    // Leaving chat should reset visible conversation context.
     if (tab !== "chat") {
       setMessages([]);
       setPendingConfirmations([]);
       lastSavedMessageCount.current = 0;
-      lastUrlRequestedSessionRef.current = null;
     }
   }, [activeTab, chatViewMode, setMessages, debugChat]);
 
@@ -453,7 +452,6 @@ export function ChatProvider({ children }: ChatProviderProps) {
     setSidebarMode("chat");
     setChatViewMode("draft");
     lastSavedMessageCount.current = 0;
-    lastUrlRequestedSessionRef.current = null;
   }, [switchSession, setMessages, setActiveTab, debugChat]);
 
   // Load session - actually load messages from Firestore
@@ -592,7 +590,6 @@ export function ChatProvider({ children }: ChatProviderProps) {
       setMessages([]);
       setPendingConfirmations([]);
       lastSavedMessageCount.current = 0;
-      lastUrlRequestedSessionRef.current = null;
       setChatViewMode("loadingSession");
 
       try {
@@ -813,124 +810,41 @@ export function ChatProvider({ children }: ChatProviderProps) {
     }
   }, []);
 
-  // Sync URL -> sidebar state (supports reload + browser back/forward).
+  // One-shot: consume ?chat= URL param and load session if specified.
+  const mountConsumedRef = useRef(false);
   useEffect(() => {
-    const { pathnameChanged, isPopStateNavigation } = readNavigationContext();
-    const urlChatState = readUrlState();
+    if (mountConsumedRef.current) return;
+    mountConsumedRef.current = true;
 
-    // Ignore local state-only renders while URL has no chat state yet.
-    // This prevents "open sidebar" clicks from being immediately reverted before router updates search params.
-    if (!urlChatState.hasChatParam && !pathnameChanged && !isPopStateNavigation) {
-      return;
+    if (!initialCommand.hasChatParam) return;
+    consumeParam();
+
+    if (initialCommand.sessionId) {
+      debugChat("url_command_load_session", { sessionId: initialCommand.sessionId });
+      void loadSession(initialCommand.sessionId);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-    // Keep current sidebar state across app navigation even when links don't carry query params.
-    // Browser back/forward should still apply URL state.
-    if (pathnameChanged && isSidebarOpen && !urlChatState.hasChatParam && !isPopStateNavigation) {
-      return;
-    }
-
-    let appliedUrlState = false;
-
-    if (isSidebarOpen !== urlChatState.isSidebarOpen) {
-      debugChat("url_apply_sidebar_open", {
-        from: isSidebarOpen,
-        to: urlChatState.isSidebarOpen,
-        pathnameChanged,
-        isPopStateNavigation,
-      });
-      setIsSidebarOpen(urlChatState.isSidebarOpen);
-      appliedUrlState = true;
-    }
-
-    if (!urlChatState.isSidebarOpen || !urlChatState.sessionId) {
-      lastUrlRequestedSessionRef.current = null;
-      if (appliedUrlState) {
-        isApplyingUrlStateRef.current = true;
-      }
-      return;
-    }
-
-    if (urlChatState.sessionId !== currentSessionIdRef.current && lastUrlRequestedSessionRef.current !== urlChatState.sessionId) {
-      debugChat("url_apply_session", {
-        requestedSessionId: urlChatState.sessionId,
-        currentSessionId: currentSessionIdRef.current,
-      });
-      lastUrlRequestedSessionRef.current = urlChatState.sessionId;
-      isApplyingUrlStateRef.current = true;
-      void loadSession(urlChatState.sessionId);
-      return;
-    }
-
-    if (urlChatState.sessionId === currentSessionIdRef.current) {
-      lastUrlRequestedSessionRef.current = null;
-    }
-
-    if (appliedUrlState) {
-      isApplyingUrlStateRef.current = true;
-    }
-  }, [searchParams, pathname, loadSession, readNavigationContext, readUrlState, debugChat, isSidebarOpen]);
-
-  // Sync sidebar state -> URL params (encodes tab + session and preserves history on state changes).
-  const hasInitialized = useRef(false);
+  // Persist sidebar open/closed to localStorage (skip first render — already from localStorage/URL).
+  const isFirstSidebarRender = useRef(true);
   useEffect(() => {
-    const sessionIdForUrl =
-      isSidebarOpen && chatViewMode === "session" && messages.length > 0 ? currentSessionId : null;
-
-    const currentState = {
-      isSidebarOpen,
-      activeTab,
-      sessionId: sessionIdForUrl,
-    };
-
-    // Skip writing URL on first render - initial state comes from URL.
-    if (!hasInitialized.current) {
-      hasInitialized.current = true;
-      lastUrlSyncedStateRef.current = currentState;
+    if (isFirstSidebarRender.current) {
+      isFirstSidebarRender.current = false;
       return;
     }
+    persistSidebarOpen(isSidebarOpen);
+  }, [isSidebarOpen]);
 
-    // URL-driven state changes already updated the URL; avoid overriding them.
-    if (isApplyingUrlStateRef.current) {
-      isApplyingUrlStateRef.current = false;
-      lastUrlSyncedStateRef.current = currentState;
+  // Persist active tab to localStorage (skip first render).
+  const isFirstTabRender = useRef(true);
+  useEffect(() => {
+    if (isFirstTabRender.current) {
+      isFirstTabRender.current = false;
       return;
     }
-
-    // If URL requested a specific session and we're still loading/switching to it, don't overwrite URL.
-    const urlChatState = readUrlState();
-    if (
-      urlChatState.isSidebarOpen &&
-      urlChatState.sessionId &&
-      lastUrlRequestedSessionRef.current === urlChatState.sessionId &&
-      currentSessionId !== urlChatState.sessionId
-    ) {
-      lastUrlSyncedStateRef.current = currentState;
-      return;
-    }
-
-    const previousState = lastUrlSyncedStateRef.current;
-    const historyMode: "push" | "replace" =
-      previousState &&
-      (previousState.isSidebarOpen !== currentState.isSidebarOpen || previousState.activeTab !== currentState.activeTab)
-        ? "push"
-        : "replace";
-    lastUrlSyncedStateRef.current = currentState;
-
-    debugChat("state_sync_url", {
-      isSidebarOpen,
-      chatViewMode,
-      activeTab,
-      sessionIdForUrl,
-      historyMode,
-    });
-
-    updateUrlState({
-      isSidebarOpen,
-      sessionId: sessionIdForUrl,
-      historyMode,
-    });
-  }, [isSidebarOpen, activeTab, chatViewMode, currentSessionId, messages.length, updateUrlState, readUrlState, debugChat]);
+    persistActiveTab(activeTab);
+  }, [activeTab]);
 
   // Handler for setting sidebar width (with persistence)
   const handleSetSidebarWidth = useCallback((width: number) => {
