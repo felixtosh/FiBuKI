@@ -12,7 +12,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Receipt, Building2, Users, Settings, Activity, Globe, Files, Tag, Link2, User, LogOut, UserPlus, Palette, Shield, Zap, FileText, FlaskConical, Download, CreditCard, Mail } from "lucide-react";
+import { Receipt, Building2, Users, Settings, Activity, Globe, Files, Tag, Link2, User, LogOut, UserPlus, Palette, Shield, Zap, FileText, FlaskConical, Download, CreditCard, Mail, Bell } from "lucide-react";
+import { settingsNavItems } from "@/lib/config/settings-nav";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
 import Link from "next/link";
 import { FibukiMascot } from "@/components/ui/fibuki-mascot";
@@ -290,48 +291,14 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
                     </div>
                   )}
                 </DropdownMenuLabel>
-                <DropdownMenuItem asChild>
-                  <Link href="/settings/sign-in-security" className="flex items-center gap-2">
-                    <Shield className="h-4 w-4" />
-                    Sign-in & Security
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link href="/settings/identity" className="flex items-center gap-2">
-                    <User className="h-4 w-4" />
-                    Your Identity
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link href="/settings/billing" className="flex items-center gap-2">
-                    <CreditCard className="h-4 w-4" />
-                    Billing & Plan
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link href="/settings/usage" className="flex items-center gap-2">
-                    <Activity className="h-4 w-4" />
-                    Usage
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link href="/settings/categories" className="flex items-center gap-2">
-                    <Tag className="h-4 w-4" />
-                    Categories
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link href="/settings/integrations" className="flex items-center gap-2">
-                    <Link2 className="h-4 w-4" />
-                    Integrations
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link href="/settings/import-export" className="flex items-center gap-2">
-                    <Download className="h-4 w-4" />
-                    Import / Export
-                  </Link>
-                </DropdownMenuItem>
+                {settingsNavItems.map((item) => (
+                  <DropdownMenuItem key={item.href} asChild>
+                    <Link href={item.href} className="flex items-center gap-2">
+                      <item.icon className="h-4 w-4" />
+                      {item.label}
+                    </Link>
+                  </DropdownMenuItem>
+                ))}
 
                 {isAdmin && (
                   <>

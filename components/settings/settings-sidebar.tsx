@@ -2,19 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Shield, User, Tag, Link2, Activity, Download, CreditCard, Bell } from "lucide-react";
 import { cn } from "@/lib/utils";
-
-const settingsNavItems = [
-  { href: "/settings/sign-in-security", label: "Sign-in & Security", icon: Shield },
-  { href: "/settings/identity", label: "Your Identity", icon: User },
-  { href: "/settings/billing", label: "Billing & Plan", icon: CreditCard },
-  { href: "/settings/notifications", label: "Notifications", icon: Bell },
-  { href: "/settings/usage", label: "Usage", icon: Activity },
-  { href: "/settings/categories", label: "Categories", icon: Tag },
-  { href: "/settings/integrations", label: "Integrations", icon: Link2 },
-  { href: "/settings/import-export", label: "Import / Export", icon: Download },
-];
+import { settingsNavItems } from "@/lib/config/settings-nav";
 
 export function SettingsSidebar() {
   const pathname = usePathname();

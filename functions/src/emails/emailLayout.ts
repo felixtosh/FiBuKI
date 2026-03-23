@@ -29,7 +29,7 @@ export function wrapEmailHtml(
   <div style="max-width:560px;margin:0 auto;padding:40px 16px 32px;">
     <!-- Logo -->
     <div style="margin-bottom:32px;">
-      <img src="https://fibuki.com/email-image.png" alt="FiBuKI" style="height:40px;width:auto;" />
+      <img src="https://fibuki.com/email-image.png" alt="FiBuKI" style="height:20px;width:auto;" />
     </div>
 
     <!-- Content -->
