@@ -10,6 +10,7 @@ const stepLabels: Record<string, string> = {
   connect_email: "Connect your email",
   add_bank_account: "Start here",
   import_transactions: "Import your transactions",
+  test_integration: "Try an integration method",
   assign_partner: "Assign a partner",
   attach_file: "Drop a file here or connect a service",
 };
@@ -20,6 +21,7 @@ const stepRoutes: Record<string, string[]> = {
   connect_email: ["/integrations/gmail", "/integrations/email-inbound"],
   add_bank_account: ["/sources"],
   import_transactions: ["/sources"],
+  test_integration: ["/settings/integrations"],
   assign_partner: ["/transactions"],
   attach_file: ["/transactions"],
 };

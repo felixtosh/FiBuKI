@@ -15,6 +15,7 @@ export type OnboardingStep =
   | "connect_email"
   | "add_bank_account"
   | "import_transactions"
+  | "test_integration"
   | "assign_partner"
   | "attach_file";
 
@@ -113,6 +114,15 @@ export const ONBOARDING_STEPS: OnboardingStepConfig[] = [
     icon: "Upload",
   },
   {
+    id: "test_integration",
+    title: "Set up AI Connector",
+    description:
+      "Pick an integration method in the Developer section and test it with your bank data",
+    route: "/settings/integrations",
+    highlightTarget: '[data-onboarding="developer-section"]',
+    icon: "Plug",
+  },
+  {
     id: "assign_partner",
     title: "Assign a Partner",
     description: "Link a transaction to a vendor or customer",
@@ -150,14 +160,22 @@ export function getNextStep(step: OnboardingStep): OnboardingStep | null {
 // Track-based step filtering
 // =============================================================================
 
-/** Steps for data_only track: just bank setup */
+/** Steps for data_only track: bank setup + integration test */
 export const DATA_ONLY_STEPS: OnboardingStep[] = [
   "add_bank_account",
   "import_transactions",
+  "test_integration",
 ];
 
-/** Steps for full_service track: all steps */
-export const FULL_SERVICE_STEPS: OnboardingStep[] = ONBOARDING_STEPS.map((s) => s.id);
+/** Steps for full_service track: full onboarding (excludes data_only-specific steps) */
+export const FULL_SERVICE_STEPS: OnboardingStep[] = [
+  "set_identity",
+  "connect_email",
+  "add_bank_account",
+  "import_transactions",
+  "assign_partner",
+  "attach_file",
+];
 
 /**
  * Get the onboarding steps for a given track.
@@ -165,11 +183,8 @@ export const FULL_SERVICE_STEPS: OnboardingStep[] = ONBOARDING_STEPS.map((s) => 
 export function getStepsForTrack(
   track: OnboardingTrack | undefined
 ): OnboardingStepConfig[] {
-  if (track === "data_only") {
-    return ONBOARDING_STEPS.filter((s) => DATA_ONLY_STEPS.includes(s.id));
-  }
-  // full_service or undefined → all steps
-  return ONBOARDING_STEPS;
+  const stepIds = track === "data_only" ? DATA_ONLY_STEPS : FULL_SERVICE_STEPS;
+  return ONBOARDING_STEPS.filter((s) => stepIds.includes(s.id));
 }
 
 /**

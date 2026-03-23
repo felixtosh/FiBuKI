@@ -104,7 +104,7 @@ export function BillingPlanComparison() {
               <div
                 key={planId}
                 className={cn(
-                  "rounded-lg border p-4 space-y-3",
+                  "rounded-lg border p-4 space-y-3 flex flex-col",
                   isCurrent && "border-primary bg-primary/5"
                 )}
               >
@@ -167,7 +167,7 @@ export function BillingPlanComparison() {
                 {isUpgrade && (
                   <Button
                     size="sm"
-                    className="w-full"
+                    className="w-full mt-auto"
                     onClick={() => handleUpgrade(planId)}
                     disabled={loading !== null}
                   >

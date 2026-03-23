@@ -7,6 +7,7 @@ import {
   Tag,
   Link2,
   Download,
+  Gift,
   type LucideIcon,
 } from "lucide-react";
 
@@ -25,4 +26,5 @@ export const settingsNavItems: SettingsNavItem[] = [
   { href: "/settings/categories", label: "Categories", icon: Tag },
   { href: "/settings/integrations", label: "Integrations", icon: Link2 },
   { href: "/settings/import-export", label: "Import / Export", icon: Download },
+  { href: "/settings/referral", label: "Refer a Friend", icon: Gift },
 ];

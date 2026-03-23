@@ -11,6 +11,7 @@ import {
   Loader2,
   User,
   Mail,
+  Plug,
   SkipForward,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -28,6 +29,7 @@ const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
   FileCheck,
   User,
   Mail,
+  Plug,
 };
 
 interface StepItemProps {
@@ -163,6 +165,9 @@ function isUserInProgressOnStep(stepId: OnboardingStep, pathname: string): boole
     case "import_transactions":
       // User is on import page for any source
       return pathname.match(/^\/sources\/[^/]+\/import/) !== null;
+    case "test_integration":
+      // User is on integrations page or a specific integration sub-page
+      return pathname === "/settings/integrations" || pathname.startsWith("/integrations/");
     case "assign_partner":
       // User is on transactions page (assigning partner)
       return pathname === "/transactions";

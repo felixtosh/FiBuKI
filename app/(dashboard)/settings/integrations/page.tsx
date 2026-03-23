@@ -144,7 +144,6 @@ function IntegrationsContent() {
         <SettingsPageHeader
           title="Integrations"
           description="Connect external services to automatically find and match invoices"
-          className="mb-0"
         />
 
         {/* Attention banner */}
@@ -234,7 +233,7 @@ function IntegrationsContent() {
         </section>
 
         {/* Developer */}
-        <section>
+        <section data-onboarding="developer-section">
           <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-3">
             Developer
           </h3>

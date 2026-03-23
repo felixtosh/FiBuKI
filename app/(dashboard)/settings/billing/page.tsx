@@ -7,8 +7,6 @@ import { BillingCreditsSection } from "@/components/settings/billing-credits-sec
 import { BillingOverageSettings } from "@/components/settings/billing-overage-settings";
 import { BillingPlanComparison } from "@/components/settings/billing-plan-comparison";
 import { InvestmentsAddonCard } from "@/components/billing/investments-addon-card";
-import { SocialPromoCard } from "@/components/billing/social-promo-card";
-import { ReferralCard } from "@/components/billing/referral-card";
 import { useSubscription } from "@/hooks/use-subscription";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -40,8 +38,6 @@ export default function BillingPage() {
       <BillingOverageSettings />
       <BillingPlanComparison />
       <InvestmentsAddonCard subscription={subscription} />
-      <ReferralCard />
-      <SocialPromoCard />
     </div>
   );
 }

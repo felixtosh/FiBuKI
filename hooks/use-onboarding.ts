@@ -186,7 +186,7 @@ export function useOnboarding() {
         }
       }
 
-      // For data_only, onboarding ends after import_transactions
+      // test_integration step (data_only only): no auto-detection — user skips manually
       if (isDataOnly) return;
 
       // Full service: additional steps
