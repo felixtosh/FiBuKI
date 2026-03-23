@@ -93,7 +93,10 @@ export function ChatTabs({
           <Button
             variant="ghost"
             size="icon"
-            onClick={onClose}
+            onClick={(e) => {
+              e.stopPropagation();
+              onClose();
+            }}
             title="Close"
             className="h-8 w-8"
           >
