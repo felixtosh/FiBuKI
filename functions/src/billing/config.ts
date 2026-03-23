@@ -227,22 +227,21 @@ type StripePriceMap = Record<PlanId, Record<BillingPeriod, string | null>>;
 
 const STRIPE_PRICES_TEST: StripePriceMap = {
   free: { monthly: null, yearly: null },
-  // New tiers (set after creating Stripe products)
-  data: { monthly: null, yearly: null },
-  smart: { monthly: null, yearly: null },
+  data: {
+    monthly: "price_1TEIFnKIIWnfuvheBz9Rwmin",
+    yearly: "price_1TEIFoKIIWnfuvheNIOynGlq",
+  },
+  smart: {
+    monthly: "price_1TEIFrKIIWnfuvhesWCD2IO5",
+    yearly: "price_1TEIFtKIIWnfuvhei9XbEFOS",
+  },
   pro: {
-    monthly: "price_1SxutZK7O16U1uWZ4odK5F9a",
-    yearly: "price_1SxutaK7O16U1uWZuZalUuXf",
+    monthly: "price_1TEIFvKIIWnfuvheRXze1EDM",
+    yearly: "price_1TEIFxKIIWnfuvheHa3S2u8z",
   },
   // Legacy (still active for existing subscribers)
-  starter: {
-    monthly: "price_1SxutXK7O16U1uWZ4V9IBlkz",
-    yearly: "price_1SxutYK7O16U1uWZbhVsldZl",
-  },
-  business: {
-    monthly: "price_1SxutYK7O16U1uWZSmSrAk5K",
-    yearly: "price_1SxutZK7O16U1uWZtjbJ0L8O",
-  },
+  starter: { monthly: null, yearly: null },
+  business: { monthly: null, yearly: null },
 };
 
 const STRIPE_PRICES_LIVE: StripePriceMap = {
@@ -255,14 +254,13 @@ const STRIPE_PRICES_LIVE: StripePriceMap = {
 };
 
 const STRIPE_PRODUCTS_TEST = {
-  // New tiers
-  data: null as string | null, // Set after creating Stripe products
-  smart: null as string | null,
-  pro: "prod_TvmSLlqGa56ZiK",
-  aiCredits: "prod_TvmSY8TrGSA3Vx",
+  data: "prod_UCheXDjrex5XkH",
+  smart: "prod_UCheb17j8GKvhh",
+  pro: "prod_UChehSV5wMasGa",
+  aiCredits: "prod_UCheWbjlLldShS",
   // Legacy
-  starter: "prod_TvmSfAEEE6fxfl",
-  business: "prod_TvmSHZCCrRSrUc",
+  starter: null as string | null,
+  business: null as string | null,
 };
 
 const STRIPE_PRODUCTS_LIVE = {
