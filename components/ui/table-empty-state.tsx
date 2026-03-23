@@ -84,7 +84,7 @@ export function TableEmptyState({
         {/* Icon with float animation */}
         <div
           className={cn(
-            "relative text-muted-foreground/60 animate-in zoom-in-50 duration-500 animate-float-medium",
+            "relative text-muted-foreground animate-in zoom-in-50 duration-500 animate-float-medium",
             styles.icon
           )}
         >
