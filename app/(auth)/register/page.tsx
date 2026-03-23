@@ -169,7 +169,7 @@ export default function RegisterPage() {
           {openSeats ? "Open seats available! Sign in to claim yours." : "FiBuKI is invite-only. Sign in to request access."}
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="space-y-5">
         {pendingRedirect ? (
           <div className="flex flex-col items-center gap-3 py-8">
             <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -178,9 +178,9 @@ export default function RegisterPage() {
         ) : (
           <>
             {openSeats && (
-              <div className="space-y-2">
+              <div className="space-y-3">
                 <div className="flex items-center justify-between text-sm">
-                  <span className="flex items-center gap-1.5 font-medium text-green-700 dark:text-green-400">
+                  <span className="flex items-center gap-1.5 font-medium" style={{ color: "var(--color-amount-positive)" }}>
                     <Sparkles className="h-4 w-4" />
                     {openSeats.remaining} open seat{openSeats.remaining === 1 ? "" : "s"} available
                   </span>
@@ -190,8 +190,8 @@ export default function RegisterPage() {
                 </div>
                 <div className="h-2 rounded-full bg-muted overflow-hidden">
                   <div
-                    className="h-full rounded-full bg-green-500 transition-all duration-500"
-                    style={{ width: `${(openSeats.claimed / openSeats.total) * 100}%` }}
+                    className="h-full rounded-full transition-all duration-500"
+                    style={{ width: `${(openSeats.claimed / openSeats.total) * 100}%`, backgroundColor: "var(--color-amount-positive)" }}
                   />
                 </div>
               </div>
