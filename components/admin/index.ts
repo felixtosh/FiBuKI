@@ -5,3 +5,6 @@ export { CandidateDetailPanel } from "./candidate-detail-panel";
 export { UsageDashboard } from "./usage-dashboard";
 export { UsageChart } from "./usage-chart";
 export type { CandidateMatch } from "./admin-partners-columns";
+export { UserActionBar } from "./user-action-bar";
+export { getUserColumns, DEFAULT_USER_COLUMN_SIZES, PLAN_COLORS } from "./user-columns";
+export type { UserRow } from "./user-columns";
