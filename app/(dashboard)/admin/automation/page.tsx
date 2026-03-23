@@ -531,7 +531,7 @@ function AutomationGraphView({
           </div>
           <div className="flex gap-1 flex-wrap">
             {availableTriggers.map((trigger) => {
-              const config = triggerFilterConfig[trigger];
+              const config = triggerFilterConfig[trigger] || { label: trigger, icon: FolderOpen };
               const Icon = config.icon;
               const isActive = triggerFilter === trigger;
               const count = trigger === "all"
