@@ -44,7 +44,7 @@ export function BankSelector({
     const query = countrySearchQuery.trim().toLowerCase();
     if (!query) return COUNTRIES;
     return COUNTRIES.filter((country) =>
-      `${country.name} ${country.code} ${country.description || ""}`.toLowerCase().includes(query)
+      `${country.name} ${country.code}`.toLowerCase().includes(query)
     );
   }, [countrySearchQuery]);
 
@@ -99,11 +99,6 @@ export function BankSelector({
                     <span>
                       <span className="font-medium">{country.name}</span>
                       <span className="text-xs text-muted-foreground ml-2">({country.code})</span>
-                      {country.description && (
-                        <span className="text-xs text-muted-foreground ml-2">
-                          {country.description}
-                        </span>
-                      )}
                     </span>
                     {!isLive && (
                       <span className="text-xs text-muted-foreground shrink-0 ml-2">
