@@ -223,13 +223,15 @@ export default function RegisterPage() {
               </Alert>
             ) : (
               <>
-                <Alert>
-                  <Info className="h-4 w-4" />
-                  <AlertDescription>
-                    Sign in with Google or GitHub to request access. An admin will
-                    review your request.
-                  </AlertDescription>
-                </Alert>
+                {!openSeats && (
+                  <Alert>
+                    <Info className="h-4 w-4" />
+                    <AlertDescription>
+                      Sign in with Google or GitHub to request access. An admin will
+                      review your request.
+                    </AlertDescription>
+                  </Alert>
+                )}
 
                 {error && (
                   <Alert variant="destructive">
