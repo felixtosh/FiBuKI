@@ -8,7 +8,7 @@ import { getAuth, connectAuthEmulator, setPersistence, browserLocalPersistence }
 
 const firebaseConfig = {
   apiKey: "AIzaSyDhxXMbHgaD1z9n0bkuVaSRmmiCrbNL-l4",
-  authDomain: "taxstudio-f12fb.firebaseapp.com",
+  authDomain: "fibuki.com",
   projectId: "taxstudio-f12fb",
   storageBucket: "taxstudio-f12fb.firebasestorage.app",
   messagingSenderId: "534848611676",

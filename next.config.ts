@@ -17,6 +17,14 @@ const nextConfig: NextConfig = {
       },
     ];
   },
+  async rewrites() {
+    return [
+      {
+        source: "/__/auth/:path*",
+        destination: "https://taxstudio-f12fb.firebaseapp.com/__/auth/:path*",
+      },
+    ];
+  },
 };
 
 export default withNextIntl(nextConfig);
