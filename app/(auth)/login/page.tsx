@@ -166,8 +166,8 @@ export default function LoginPage() {
     <Card className="w-full max-w-md">
       <CardHeader className="space-y-1 text-center">
         <div className="flex justify-center mb-4">
-          <button
-            type="button"
+          <Link
+            href="/"
             onClick={handleLogoClick}
             className={cn(
               "flex items-center gap-2 logo-wrapper",
@@ -178,7 +178,7 @@ export default function LoginPage() {
             <span className={cn("font-bold text-2xl mascot-text", logoFont.className)}>
               FiBuKI
             </span>
-          </button>
+          </Link>
         </div>
         <CardTitle className="text-2xl">Sign in</CardTitle>
         <CardDescription>
