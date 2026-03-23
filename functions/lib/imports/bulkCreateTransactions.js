@@ -59,10 +59,12 @@ exports.bulkCreateTransactionsCallable = (0, createCallable_1.createCallable)({
             if (isNaN(date.getTime())) {
                 throw new createCallable_1.HttpsError("invalid-argument", `Invalid date for transaction: ${txData.date}`);
             }
+            // Normalize to UTC midnight — safety net for any timezone drift in the incoming ISO string
+            const utcMidnight = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
             const transactionDoc = {
                 userId: ctx.userId,
                 sourceId: txData.sourceId,
-                date: firestore_1.Timestamp.fromDate(date),
+                date: firestore_1.Timestamp.fromDate(utcMidnight),
                 amount: txData.amount,
                 currency: txData.currency,
                 name: txData.name,

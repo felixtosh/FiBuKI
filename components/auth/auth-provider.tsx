@@ -17,13 +17,13 @@ import {
   GoogleAuthProvider,
   GithubAuthProvider,
   signOut as firebaseSignOut,
-  sendPasswordResetEmail,
   MultiFactorError,
   MultiFactorResolver,
   getMultiFactorResolver,
 } from "firebase/auth";
 import { httpsCallable } from "firebase/functions";
 import { auth, functions } from "@/lib/firebase/config";
+import { callFunction } from "@/lib/firebase/callable";
 import { MfaStatusResponse, MfaMethod } from "@/types/mfa";
 
 // Check if an error is an MFA required error
@@ -277,7 +277,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [clearMfaVerifiedForSession]);
 
   const resetPassword = useCallback(async (email: string) => {
-    await sendPasswordResetEmail(auth, email);
+    await callFunction<{ email: string }, { success: boolean }>(
+      "sendPasswordReset",
+      { email }
+    );
   }, []);
 
   const value: AuthContextValue = {

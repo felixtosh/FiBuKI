@@ -47,7 +47,7 @@ const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY || "";
 const FROM_EMAIL = "noreply@fibuki.com";
 const FROM_NAME = "FiBuKI";
 const BATCH_SIZE = 10;
-const UNSUBSCRIBE_BASE_URL = "https://europe-west1-taxstudio-a57fc.cloudfunctions.net/unsubscribeDigest";
+const UNSUBSCRIBE_BASE_URL = "https://europe-west1-taxstudio-f12fb.cloudfunctions.net/unsubscribeDigest";
 exports.sendWeeklyDigest = (0, scheduler_1.onSchedule)({
     schedule: "0 8 * * 1", // Monday 8:00 UTC = 9:00 CET
     region: "europe-west1",

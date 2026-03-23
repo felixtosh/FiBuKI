@@ -18,9 +18,14 @@ import {
   buildBudgetWarningHtml,
   buildBudgetWarningText,
 } from "../billing/budgetWarningEmail";
+import {
+  buildPasswordResetSubject,
+  buildPasswordResetHtml,
+  buildPasswordResetText,
+} from "./passwordResetEmail";
 import { resolveMergeFields } from "../emails/resolveMergeFields";
 
-type EmailTemplate = "digest" | "budget_warning_90" | "budget_warning_100" | "invite";
+type EmailTemplate = "digest" | "budget_warning_90" | "budget_warning_100" | "invite" | "password_reset";
 
 interface SendTestEmailRequest {
   template: EmailTemplate;
@@ -82,6 +87,7 @@ export const sendTestEmailCallable = createCallable<
           percent: 90,
           usageEur: fields.usageEur ?? 4.5,
           limitEur: fields.limitEur ?? 5.0,
+          unsubscribeUrl: "https://fibuki.com/api/budget/unsubscribe?token=test",
         };
         subject = `[TEST] ${buildBudgetWarningSubject(90)}`;
         html = buildBudgetWarningHtml(data);
@@ -95,6 +101,7 @@ export const sendTestEmailCallable = createCallable<
           percent: 100,
           usageEur: fields.usageEur ?? 5.0,
           limitEur: fields.limitEur ?? 5.0,
+          unsubscribeUrl: "https://fibuki.com/api/budget/unsubscribe?token=test",
         };
         subject = `[TEST] ${buildBudgetWarningSubject(100)}`;
         html = buildBudgetWarningHtml(data);
@@ -107,6 +114,14 @@ export const sendTestEmailCallable = createCallable<
         html = buildInviteHtml(fields.name);
         text = buildInviteText(fields.name);
         break;
+
+      case "password_reset": {
+        const sampleLink = "https://fibuki.com/__/auth/action?mode=resetPassword&oobCode=TEST_CODE";
+        subject = `[TEST] ${buildPasswordResetSubject()}`;
+        html = buildPasswordResetHtml(sampleLink, fields.name);
+        text = buildPasswordResetText(sampleLink, fields.name);
+        break;
+      }
 
       default:
         throw new HttpsError("invalid-argument", "Unknown template");

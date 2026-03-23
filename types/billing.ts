@@ -256,6 +256,7 @@ export interface Subscription {
   referredBy?: string;
   // Email preferences
   digestEnabled?: boolean;
+  budgetWarningsEnabled?: boolean;
   // Admin overrides
   adminOverride?: "free_plan" | "plan_tester" | null;
   adminOverrideSetBy?: string | null;

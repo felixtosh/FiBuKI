@@ -77,6 +77,21 @@ const storage_1 = require("firebase-admin/storage");
 const definitions_1 = require("./definitions");
 Object.defineProperty(exports, "TOOL_NAMES", { enumerable: true, get: function () { return definitions_1.TOOL_NAMES; } });
 const config_1 = require("../billing/config");
+/**
+ * Convert a Firestore Timestamp to YYYY-MM-DD in Europe/Vienna timezone.
+ * Bank transactions are date-only — returning full ISO timestamps causes
+ * timezone confusion (e.g. Dec 1 CET → Nov 30 UTC).
+ */
+function toLocalDate(ts) {
+    if (!ts)
+        return null;
+    if (typeof ts === "string")
+        return ts;
+    const date = typeof ts.toDate === "function" ? ts.toDate() : null;
+    if (!date)
+        return null;
+    return new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Vienna" }).format(date);
+}
 const db = (0, firestore_1.getFirestore)();
 /**
  * Check if a tool requires a feature the user's plan doesn't have.
@@ -207,18 +222,16 @@ async function listTransactions(userId, args) {
         return {
             id: doc.id,
             ...data,
-            date: data.date?.toDate?.()?.toISOString() || data.date,
+            date: toLocalDate(data.date) || data.date,
             amountFormatted: `${((data.amount || 0) / 100).toFixed(2)} ${data.currency || "EUR"}`,
         };
     });
     // Client-side filters (for fields not indexed together)
     if (args.dateFrom) {
-        const from = new Date(args.dateFrom);
-        transactions = transactions.filter((t) => new Date(t.date) >= from);
+        transactions = transactions.filter((t) => t.date >= args.dateFrom);
     }
     if (args.dateTo) {
-        const to = new Date(args.dateTo);
-        transactions = transactions.filter((t) => new Date(t.date) <= to);
+        transactions = transactions.filter((t) => t.date <= args.dateTo);
     }
     if (args.search) {
         const search = args.search.toLowerCase();
@@ -239,7 +252,7 @@ async function getTransaction(userId, transactionId) {
     return {
         id: doc.id,
         ...data,
-        date: data.date?.toDate?.()?.toISOString() || data.date,
+        date: toLocalDate(data.date) || data.date,
         amountFormatted: `${((data.amount || 0) / 100).toFixed(2)} ${data.currency || "EUR"}`,
     };
 }
@@ -266,7 +279,10 @@ async function listTransactionsNeedingFiles(userId, args) {
     query = query.limit(500); // Fetch more to filter
     const snapshot = await query.get();
     let transactions = snapshot.docs
-        .map((doc) => ({ id: doc.id, ...doc.data() }))
+        .map((doc) => {
+        const data = doc.data();
+        return { id: doc.id, ...data, date: toLocalDate(data.date) || data.date };
+    })
         .filter((t) => (!t.fileIds || t.fileIds.length === 0) && !t.noReceiptCategoryId && !t.quotaExceeded);
     if (args.minAmount !== undefined) {
         const minAmount = args.minAmount;

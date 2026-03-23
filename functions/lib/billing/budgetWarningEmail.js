@@ -36,7 +36,13 @@ function buildBudgetWarningHtml(data) {
 </ul>`;
     }
     body += (0, emailLayout_1.emailButton)("Manage Budget", "https://fibuki.com/settings/billing");
-    return (0, emailLayout_1.wrapEmailHtml)(body);
+    const footerHtml = data.unsubscribeUrl
+        ? `<p style="color:#9ca3af;font-size:12px;margin:0;">
+        Sent by FiBuKI &middot; <a href="https://fibuki.com" style="color:#9ca3af;text-decoration:underline;">fibuki.com</a>
+        &middot; <a href="${data.unsubscribeUrl}" style="color:#9ca3af;text-decoration:underline;">Unsubscribe</a>
+      </p>`
+        : undefined;
+    return (0, emailLayout_1.wrapEmailHtml)(body, { footerHtml });
 }
 function buildBudgetWarningText(data) {
     const { name, percent, usageEur, limitEur } = data;

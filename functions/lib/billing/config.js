@@ -7,7 +7,7 @@
  * Keep both in sync when making changes.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.TRIAL_TRANSACTION_LIMIT = exports.TRIAL_DURATION_DAYS = exports.STRIPE_PRICE_IDS = exports.PLANS = exports.USER_TOKEN_RATE_PER_100K_EUR = void 0;
+exports.TRIAL_TRANSACTION_LIMIT = exports.TRIAL_DURATION_DAYS = exports.STRIPE_PRICE_IDS = exports.PLANS = exports.USER_TOKEN_RATE_PER_100K_EUR = exports.REFERRAL_COUPON_ID = void 0;
 exports.getStripeMode = getStripeMode;
 exports.getStripePrices = getStripePrices;
 exports.getStripeProducts = getStripeProducts;
@@ -15,6 +15,8 @@ exports.hasFeature = hasFeature;
 exports.getTrialStatus = getTrialStatus;
 exports.mapLegacyPlan = mapLegacyPlan;
 exports.createDefaultSubscriptionData = createDefaultSubscriptionData;
+// Referral coupon ID in Stripe
+exports.REFERRAL_COUPON_ID = "referral_20_off_yearly";
 /** User-facing billing rate: EUR per 100,000 total tokens */
 exports.USER_TOKEN_RATE_PER_100K_EUR = 0.35;
 // =============================================================================

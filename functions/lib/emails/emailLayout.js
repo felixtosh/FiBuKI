@@ -25,7 +25,7 @@ function wrapEmailHtml(body, opts) {
 <body style="margin:0;padding:0;font-family:${FONT_STACK};background:#ffffff;color:#1f2937;">
   <div style="max-width:560px;margin:0 auto;padding:40px 16px 32px;">
     <!-- Logo -->
-    <div style="text-align:center;margin-bottom:32px;">
+    <div style="margin-bottom:32px;">
       <img src="https://fibuki.com/FiBuKI_mascot_sml.png" width="40" height="40" alt="FiBuKI" style="display:inline-block;vertical-align:middle;" />
       <span style="display:inline-block;vertical-align:middle;margin-left:8px;font-size:18px;font-weight:700;color:#18181b;">FiBuKI</span>
     </div>
@@ -36,7 +36,7 @@ function wrapEmailHtml(body, opts) {
     </div>
 
     <!-- Footer -->
-    <div style="text-align:center;margin-top:32px;padding-top:20px;border-top:1px solid #e5e7eb;">
+    <div style="margin-top:32px;padding-top:20px;border-top:1px solid #e5e7eb;">
       ${footer}
     </div>
   </div>
@@ -47,7 +47,7 @@ function wrapEmailHtml(body, opts) {
  * Render a small dark CTA button.
  */
 function emailButton(label, href) {
-    return `<div style="text-align:center;margin:24px 0;">
+    return `<div style="margin:24px 0;">
   <a href="${href}" style="display:inline-block;background:#18181b;color:#ffffff;padding:8px 20px;border-radius:6px;text-decoration:none;font-weight:500;font-size:13px;">${label}</a>
 </div>`;
 }

@@ -5,24 +5,13 @@
 
 import { onRequest } from "firebase-functions/v2/https";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
-import { createHmac } from "crypto";
+import {
+  generateUnsubscribeToken,
+  verifyUnsubscribeToken,
+} from "../emails/unsubscribeTokens";
 
-const DIGEST_SECRET = process.env.DIGEST_HMAC_SECRET || "fibuki-digest-2026";
-
-export function generateUnsubscribeToken(userId: string): string {
-  return createHmac("sha256", DIGEST_SECRET).update(userId).digest("hex");
-}
-
-function verifyUnsubscribeToken(userId: string, token: string): boolean {
-  const expected = generateUnsubscribeToken(userId);
-  // Constant-time comparison
-  if (expected.length !== token.length) return false;
-  let result = 0;
-  for (let i = 0; i < expected.length; i++) {
-    result |= expected.charCodeAt(i) ^ token.charCodeAt(i);
-  }
-  return result === 0;
-}
+// Re-export for backward compat (sendWeeklyDigest imports this)
+export { generateUnsubscribeToken };
 
 export const unsubscribeDigest = onRequest(
   {
@@ -44,25 +33,22 @@ export const unsubscribeDigest = onRequest(
       return;
     }
 
-    if (!verifyUnsubscribeToken(uid, token)) {
+    // Accept both new scoped tokens and legacy unscoped tokens
+    const valid =
+      verifyUnsubscribeToken(uid, token, "digest") ||
+      verifyLegacyToken(uid, token);
+
+    if (!valid) {
       res.status(403).send("Invalid token");
       return;
     }
 
     const db = getFirestore();
 
-    try {
-      await db.collection("subscriptions").doc(uid).update({
-        digestEnabled: false,
-        updatedAt: FieldValue.serverTimestamp(),
-      });
-    } catch {
-      // Subscription doc may not exist yet — create with just the preference
-      await db.collection("subscriptions").doc(uid).set(
-        { digestEnabled: false, updatedAt: FieldValue.serverTimestamp() },
-        { merge: true }
-      );
-    }
+    await db.collection("subscriptions").doc(uid).set(
+      { digestEnabled: false, updatedAt: FieldValue.serverTimestamp() },
+      { merge: true }
+    );
 
     // Return a simple confirmation page
     res.status(200).send(`<!DOCTYPE html>
@@ -76,9 +62,24 @@ export const unsubscribeDigest = onRequest(
   <div style="text-align:center;max-width:400px;padding:32px;">
     <h1 style="font-size:24px;margin:0 0 12px;">Unsubscribed</h1>
     <p style="color:#6b7280;margin:0 0 24px;">You won&rsquo;t receive weekly digest emails from FiBuKI anymore.</p>
-    <p style="color:#9ca3af;font-size:14px;">You can re-enable digests anytime in <a href="https://fibuki.com/settings/billing" style="color:#2563eb;">Settings</a>.</p>
+    <p style="color:#9ca3af;font-size:14px;">You can re-enable digests anytime in <a href="https://fibuki.com/settings/notifications" style="color:#2563eb;">Settings</a>.</p>
   </div>
 </body>
 </html>`);
   }
 );
+
+/**
+ * Verify legacy unscoped tokens (generated before category-scoped tokens were introduced).
+ */
+function verifyLegacyToken(userId: string, token: string): boolean {
+  const { createHmac } = require("crypto");
+  const secret = process.env.DIGEST_HMAC_SECRET || "fibuki-digest-2026";
+  const expected = createHmac("sha256", secret).update(userId).digest("hex");
+  if (expected.length !== token.length) return false;
+  let result = 0;
+  for (let i = 0; i < expected.length; i++) {
+    result |= expected.charCodeAt(i) ^ token.charCodeAt(i);
+  }
+  return result === 0;
+}

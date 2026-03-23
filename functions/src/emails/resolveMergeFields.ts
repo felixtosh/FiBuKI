@@ -5,7 +5,7 @@
 
 import { getAuth } from "firebase-admin/auth";
 
-type EmailTemplate = "digest" | "budget_warning_90" | "budget_warning_100" | "invite";
+type EmailTemplate = "digest" | "budget_warning_90" | "budget_warning_100" | "invite" | "password_reset";
 
 export interface MergeFields {
   name: string;
@@ -50,6 +50,11 @@ const SAMPLE_FIELDS: Record<EmailTemplate, MergeFields> = {
     email: "jane@example.com",
     plan: "Free",
   },
+  password_reset: {
+    name: "Jane",
+    email: "jane@example.com",
+    plan: "Free",
+  },
 };
 
 export async function resolveMergeFields(
@@ -58,8 +63,11 @@ export async function resolveMergeFields(
   mergeFieldsEmail?: string
 ): Promise<MergeFields> {
   if (!mergeFieldsEmail) {
+    console.log(`[resolveMergeFields] No mergeFieldsEmail provided, using sample data for ${template}`);
     return SAMPLE_FIELDS[template];
   }
+
+  console.log(`[resolveMergeFields] Resolving for ${mergeFieldsEmail}, template=${template}`);
 
   try {
     const user = await getAuth().getUserByEmail(mergeFieldsEmail);

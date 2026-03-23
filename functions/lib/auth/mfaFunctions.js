@@ -389,7 +389,10 @@ exports.verifyPasskeyRegistration = (0, https_1.onCall)({ region: "europe-west1"
     const { registrationInfo } = verification;
     const now = firestore_1.Timestamp.now();
     // Store the credential with RP ID for future authentication
-    const credentialIdBase64 = Buffer.from(registrationInfo.credential.id).toString("base64url");
+    // credential.id is already a base64url string in @simplewebauthn/server v10+
+    const credentialIdBase64 = typeof registrationInfo.credential.id === "string"
+        ? registrationInfo.credential.id
+        : Buffer.from(registrationInfo.credential.id).toString("base64url");
     await db.collection(getPasskeysPath(userId)).doc(credentialIdBase64).set({
         userId,
         credentialId: credentialIdBase64,
@@ -444,13 +447,13 @@ exports.generatePasskeyAuthOptions = (0, https_1.onCall)({ region: "europe-west1
     if (matchingPasskeys.length === 0) {
         throw new https_1.HttpsError("failed-precondition", `No passkeys registered for this domain (${config.rpId}). Your passkeys may be registered for a different domain.`);
     }
-    const allowCredentials = matchingPasskeys.map((doc) => ({
-        id: doc.data().credentialId,
-        transports: doc.data().transports,
-    }));
+    // Use discoverable credential flow (no allowCredentials).
+    // This lets the browser/OS query ALL authenticators (1Password, iCloud Keychain,
+    // security keys, etc.) for matching passkeys, instead of searching for specific
+    // credential IDs — which fails for third-party providers like 1Password that
+    // Chrome can't query directly by ID.
     const options = await (0, server_1.generateAuthenticationOptions)({
         rpID: config.rpId,
-        allowCredentials,
         userVerification: "preferred",
         timeout: 60000,
     });
@@ -500,16 +503,29 @@ exports.verifyPasskeyAuth = (0, https_1.onCall)({ region: "europe-west1", cors: 
     // Get the passkey credential
     const credentialId = credential.id ||
         credential.rawId;
-    const passkeyDoc = await db
+    // Try direct doc lookup first (fastest — works for correctly-stored passkeys)
+    let passkeyDoc = await db
         .collection(getPasskeysPath(userId))
         .doc(credentialId)
         .get();
+    // Fallback: lookup by double-encoded ID (handles passkeys stored before
+    // the base64url double-encoding bug was fixed — Buffer.from(base64urlString)
+    // was treating the string as UTF-8 bytes and re-encoding)
     if (!passkeyDoc.exists) {
+        const doubleEncoded = Buffer.from(credentialId).toString("base64url");
+        console.log(`Direct lookup miss, trying double-encoded: ${doubleEncoded.slice(0, 20)}...`);
+        passkeyDoc = await db
+            .collection(getPasskeysPath(userId))
+            .doc(doubleEncoded)
+            .get();
+    }
+    if (!passkeyDoc.exists) {
+        console.error(`Passkey not found for credentialId: ${credentialId.slice(0, 30)}...`);
         await db.collection("mfaAuditLogs").add({
             userId,
             action: "challenge_failed",
             method: "passkey",
-            metadata: { reason: "credential_not_found" },
+            metadata: { reason: "credential_not_found", credentialIdPrefix: credentialId.slice(0, 30) },
             timestamp: firestore_1.Timestamp.now(),
         });
         throw new https_1.HttpsError("not-found", "Passkey not found");
@@ -526,7 +542,9 @@ exports.verifyPasskeyAuth = (0, https_1.onCall)({ region: "europe-west1", cors: 
             expectedOrigin,
             expectedRPID: rpId,
             credential: {
-                id: passkeyData.credentialId,
+                // Use the auth response credentialId (correctly encoded), not the
+                // potentially double-encoded stored value
+                id: credentialId,
                 publicKey: Buffer.from(passkeyData.publicKey, "base64url"),
                 counter: passkeyData.counter,
                 transports: passkeyData.transports,

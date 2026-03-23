@@ -5,12 +5,14 @@ const createCallable_1 = require("../utils/createCallable");
 const digestEmail_1 = require("../digest/digestEmail");
 const inviteEmail_1 = require("./inviteEmail");
 const budgetWarningEmail_1 = require("../billing/budgetWarningEmail");
+const passwordResetEmail_1 = require("./passwordResetEmail");
 const resolveMergeFields_1 = require("../emails/resolveMergeFields");
 const VALID_TEMPLATES = [
     "digest",
     "budget_warning_90",
     "budget_warning_100",
     "invite",
+    "password_reset",
 ];
 exports.previewEmailCallable = (0, createCallable_1.createCallable)({ name: "previewEmail" }, async (ctx, request) => {
     // Admin only
@@ -44,6 +46,7 @@ exports.previewEmailCallable = (0, createCallable_1.createCallable)({ name: "pre
                 percent: 90,
                 usageEur: fields.usageEur ?? 4.5,
                 limitEur: fields.limitEur ?? 5.0,
+                unsubscribeUrl: "https://fibuki.com/api/budget/unsubscribe?token=sample",
             };
             return {
                 subject: (0, budgetWarningEmail_1.buildBudgetWarningSubject)(90),
@@ -58,6 +61,7 @@ exports.previewEmailCallable = (0, createCallable_1.createCallable)({ name: "pre
                 percent: 100,
                 usageEur: fields.usageEur ?? 5.0,
                 limitEur: fields.limitEur ?? 5.0,
+                unsubscribeUrl: "https://fibuki.com/api/budget/unsubscribe?token=sample",
             };
             return {
                 subject: (0, budgetWarningEmail_1.buildBudgetWarningSubject)(100),
@@ -73,6 +77,15 @@ exports.previewEmailCallable = (0, createCallable_1.createCallable)({ name: "pre
                 text: (0, inviteEmail_1.buildInviteText)(fields.name),
                 mergeFields: fields,
             };
+        case "password_reset": {
+            const sampleLink = "https://fibuki.com/__/auth/action?mode=resetPassword&oobCode=SAMPLE_CODE";
+            return {
+                subject: (0, passwordResetEmail_1.buildPasswordResetSubject)(),
+                html: (0, passwordResetEmail_1.buildPasswordResetHtml)(sampleLink, fields.name),
+                text: (0, passwordResetEmail_1.buildPasswordResetText)(sampleLink, fields.name),
+                mergeFields: fields,
+            };
+        }
         default:
             throw new createCallable_1.HttpsError("invalid-argument", "Unknown template");
     }

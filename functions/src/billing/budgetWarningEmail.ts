@@ -10,6 +10,7 @@ interface BudgetWarningData {
   percent: number;
   usageEur: number;
   limitEur: number;
+  unsubscribeUrl?: string;
 }
 
 export function buildBudgetWarningSubject(percent: number): string {
@@ -43,7 +44,14 @@ export function buildBudgetWarningHtml(data: BudgetWarningData): string {
 
   body += emailButton("Manage Budget", "https://fibuki.com/settings/billing");
 
-  return wrapEmailHtml(body);
+  const footerHtml = data.unsubscribeUrl
+    ? `<p style="color:#9ca3af;font-size:12px;margin:0;">
+        Sent by FiBuKI &middot; <a href="https://fibuki.com" style="color:#9ca3af;text-decoration:underline;">fibuki.com</a>
+        &middot; <a href="${data.unsubscribeUrl}" style="color:#9ca3af;text-decoration:underline;">Unsubscribe</a>
+      </p>`
+    : undefined;
+
+  return wrapEmailHtml(body, { footerHtml });
 }
 
 export function buildBudgetWarningText(data: BudgetWarningData): string {

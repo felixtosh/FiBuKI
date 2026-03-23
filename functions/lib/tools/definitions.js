@@ -63,13 +63,13 @@ exports.TOOL_DEFINITIONS = [
     // =========================================================================
     {
         name: "list_transactions",
-        description: "List transactions with optional filters. Returns date, amount (cents), partner, completion status.",
+        description: "List transactions with optional filters. Dates are YYYY-MM-DD (local timezone). Amounts in cents.",
         inputSchema: {
             type: "object",
             properties: {
                 sourceId: { type: "string", description: "Filter by bank account ID" },
-                dateFrom: { type: "string", description: "Start date (ISO format)" },
-                dateTo: { type: "string", description: "End date (ISO format)" },
+                dateFrom: { type: "string", description: "Start date (YYYY-MM-DD)" },
+                dateTo: { type: "string", description: "End date (YYYY-MM-DD)" },
                 search: { type: "string", description: "Search in name, description, partner" },
                 isComplete: { type: "boolean", description: "Filter by completion status" },
                 limit: { type: "number", description: "Max results (default 50, max 100)" },

@@ -310,7 +310,14 @@ export {
   sendWeeklyDigest,
   unsubscribeDigest,
   updateDigestPreferenceCallable as updateDigestPreference,
+  updateEmailPreferenceCallable as updateEmailPreference,
 } from "./digest";
+
+// Budget warning unsubscribe
+export { unsubscribeBudgetWarnings } from "./billing/unsubscribeBudgetWarnings";
+
+// Custom password reset email
+export { sendPasswordResetCallable as sendPasswordReset } from "./auth/sendPasswordResetCallable";
 
 // MCP HTTP API (for OpenClaw, Claude Desktop, ChatGPT, etc.)
 export { mcpApi, mcpToolsList, mcpSse } from "./mcp-api";

@@ -14,9 +14,14 @@ import {
   buildBudgetWarningHtml,
   buildBudgetWarningText,
 } from "../billing/budgetWarningEmail";
+import {
+  buildPasswordResetSubject,
+  buildPasswordResetHtml,
+  buildPasswordResetText,
+} from "./passwordResetEmail";
 import { resolveMergeFields, MergeFields } from "../emails/resolveMergeFields";
 
-type EmailTemplate = "digest" | "budget_warning_90" | "budget_warning_100" | "invite";
+type EmailTemplate = "digest" | "budget_warning_90" | "budget_warning_100" | "invite" | "password_reset";
 
 interface PreviewEmailRequest {
   template: EmailTemplate;
@@ -35,6 +40,7 @@ const VALID_TEMPLATES: EmailTemplate[] = [
   "budget_warning_90",
   "budget_warning_100",
   "invite",
+  "password_reset",
 ];
 
 export const previewEmailCallable = createCallable<
@@ -82,6 +88,7 @@ export const previewEmailCallable = createCallable<
           percent: 90,
           usageEur: fields.usageEur ?? 4.5,
           limitEur: fields.limitEur ?? 5.0,
+          unsubscribeUrl: "https://fibuki.com/api/budget/unsubscribe?token=sample",
         };
         return {
           subject: buildBudgetWarningSubject(90),
@@ -97,6 +104,7 @@ export const previewEmailCallable = createCallable<
           percent: 100,
           usageEur: fields.usageEur ?? 5.0,
           limitEur: fields.limitEur ?? 5.0,
+          unsubscribeUrl: "https://fibuki.com/api/budget/unsubscribe?token=sample",
         };
         return {
           subject: buildBudgetWarningSubject(100),
@@ -113,6 +121,16 @@ export const previewEmailCallable = createCallable<
           text: buildInviteText(fields.name),
           mergeFields: fields,
         };
+
+      case "password_reset": {
+        const sampleLink = "https://fibuki.com/__/auth/action?mode=resetPassword&oobCode=SAMPLE_CODE";
+        return {
+          subject: buildPasswordResetSubject(),
+          html: buildPasswordResetHtml(sampleLink, fields.name),
+          text: buildPasswordResetText(sampleLink, fields.name),
+          mergeFields: fields,
+        };
+      }
 
       default:
         throw new HttpsError("invalid-argument", "Unknown template");

@@ -1,6 +1,7 @@
 "use strict";
 /**
  * Send AI budget warning emails via SendGrid.
+ * Respects budgetWarningsEnabled preference — always creates in-app notification.
  */
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -39,6 +40,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.sendUsageWarning = sendUsageWarning;
 const firestore_1 = require("firebase-admin/firestore");
 const budgetWarningEmail_1 = require("./budgetWarningEmail");
+const unsubscribeTokens_1 = require("../emails/unsubscribeTokens");
 const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY || "";
 const FROM_EMAIL = "noreply@fibuki.com";
 const FROM_NAME = "FiBuKI";
@@ -51,25 +53,9 @@ async function sendUsageWarning(userId, percent, usageEur, limitEur) {
         console.warn(`[UsageWarning] No email for user ${userId}`);
         return;
     }
-    if (!SENDGRID_API_KEY) {
-        console.warn("[UsageWarning] SENDGRID_API_KEY not configured, skipping email");
-        return;
-    }
-    const sgMail = (await Promise.resolve().then(() => __importStar(require("@sendgrid/mail")))).default;
-    sgMail.setApiKey(SENDGRID_API_KEY);
-    const name = user.displayName || undefined;
-    const subject = (0, budgetWarningEmail_1.buildBudgetWarningSubject)(percent);
-    const html = (0, budgetWarningEmail_1.buildBudgetWarningHtml)({ name, percent, usageEur, limitEur });
-    const text = (0, budgetWarningEmail_1.buildBudgetWarningText)({ name, percent, usageEur, limitEur });
-    await sgMail.send({
-        to: email,
-        from: { email: FROM_EMAIL, name: FROM_NAME },
-        subject,
-        text,
-        html,
-    });
-    // Also create an in-app notification
     const db = (0, firestore_1.getFirestore)();
+    const subject = (0, budgetWarningEmail_1.buildBudgetWarningSubject)(percent);
+    // Always create an in-app notification regardless of email preference
     await db.collection(`users/${userId}/notifications`).add({
         type: "billing_warning",
         title: subject,
@@ -78,6 +64,30 @@ async function sendUsageWarning(userId, percent, usageEur, limitEur) {
             : `90% of AI budget used (${usageEur.toFixed(2)}/${limitEur.toFixed(2)} EUR).`,
         createdAt: new Date(),
         readAt: null,
+    });
+    // Check email opt-out preference
+    const subDoc = await db.collection("subscriptions").doc(userId).get();
+    const subData = subDoc.data();
+    if (subData?.budgetWarningsEnabled === false) {
+        console.log(`[UsageWarning] User ${userId} has opted out of budget warning emails, skipping`);
+        return;
+    }
+    if (!SENDGRID_API_KEY) {
+        console.warn("[UsageWarning] SENDGRID_API_KEY not configured, skipping email");
+        return;
+    }
+    const sgMail = (await Promise.resolve().then(() => __importStar(require("@sendgrid/mail")))).default;
+    sgMail.setApiKey(SENDGRID_API_KEY);
+    const name = user.displayName || undefined;
+    const unsubscribeUrl = (0, unsubscribeTokens_1.buildUnsubscribeUrl)(userId, "budgetWarnings");
+    const html = (0, budgetWarningEmail_1.buildBudgetWarningHtml)({ name, percent, usageEur, limitEur, unsubscribeUrl });
+    const text = (0, budgetWarningEmail_1.buildBudgetWarningText)({ name, percent, usageEur, limitEur });
+    await sgMail.send({
+        to: email,
+        from: { email: FROM_EMAIL, name: FROM_NAME },
+        subject,
+        text,
+        html,
     });
     console.log(`[UsageWarning] Sent ${percent}% warning to ${email}`);
 }

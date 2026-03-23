@@ -15,7 +15,7 @@ const FROM_EMAIL = "noreply@fibuki.com";
 const FROM_NAME = "FiBuKI";
 const BATCH_SIZE = 10;
 const UNSUBSCRIBE_BASE_URL =
-  "https://europe-west1-taxstudio-a57fc.cloudfunctions.net/unsubscribeDigest";
+  "https://europe-west1-taxstudio-f12fb.cloudfunctions.net/unsubscribeDigest";
 
 export const sendWeeklyDigest = onSchedule(
   {

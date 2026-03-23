@@ -1,7 +1,7 @@
 "use client";
 
 import { SettingsPageHeader } from "@/components/ui/settings-page-header";
-import { DigestToggle } from "@/components/billing/digest-toggle";
+import { EmailPreferences } from "@/components/settings/email-preferences";
 import { useSubscription } from "@/hooks/use-subscription";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -16,6 +16,8 @@ export default function NotificationsPage() {
           description="Manage your email notification preferences"
         />
         <Skeleton className="h-32 w-full" />
+        <Skeleton className="h-32 w-full" />
+        <Skeleton className="h-32 w-full" />
       </div>
     );
   }
@@ -26,7 +28,7 @@ export default function NotificationsPage() {
         title="Notifications"
         description="Manage your email notification preferences"
       />
-      <DigestToggle subscription={subscription} />
+      <EmailPreferences subscription={subscription} />
     </div>
   );
 }

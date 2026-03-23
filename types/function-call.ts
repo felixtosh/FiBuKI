@@ -127,8 +127,11 @@ export type CloudFunctionName =
   | "getReferralCode"
   | "applyReferralCode"
   | "getReferralStats"
-  // Digest email preferences
+  // Digest / email preferences
   | "updateDigestPreference"
+  | "updateEmailPreference"
+  // Password reset
+  | "sendPasswordReset"
   // Open seats & invite emails
   | "setOpenSeats"
   | "sendInviteNotification"

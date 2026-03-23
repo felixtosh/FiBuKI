@@ -10,6 +10,7 @@ import {
   FileText,
   Send,
   User,
+  KeyRound,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,7 +25,7 @@ import { Input } from "@/components/ui/input";
 import { ProtectedRoute } from "@/components/auth";
 import { callFunction } from "@/lib/firebase/callable";
 
-type EmailTemplate = "digest" | "budget_warning_90" | "budget_warning_100" | "invite";
+type EmailTemplate = "digest" | "budget_warning_90" | "budget_warning_100" | "invite" | "password_reset";
 
 interface MergeFields {
   name: string;
@@ -74,6 +75,12 @@ const TEMPLATES: {
     label: "Invite",
     description: "Sent when a user is invited",
     icon: UserPlus,
+  },
+  {
+    id: "password_reset",
+    label: "Password Reset",
+    description: "Sent for password reset requests",
+    icon: KeyRound,
   },
 ];
 
@@ -168,7 +175,7 @@ export default function AdminEmailsPage() {
           </div>
 
           {/* Template selector */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
             {TEMPLATES.map((t) => (
               <button
                 key={t.id}

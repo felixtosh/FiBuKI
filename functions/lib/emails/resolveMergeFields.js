@@ -35,11 +35,18 @@ const SAMPLE_FIELDS = {
         email: "jane@example.com",
         plan: "Free",
     },
+    password_reset: {
+        name: "Jane",
+        email: "jane@example.com",
+        plan: "Free",
+    },
 };
 async function resolveMergeFields(db, template, mergeFieldsEmail) {
     if (!mergeFieldsEmail) {
+        console.log(`[resolveMergeFields] No mergeFieldsEmail provided, using sample data for ${template}`);
         return SAMPLE_FIELDS[template];
     }
+    console.log(`[resolveMergeFields] Resolving for ${mergeFieldsEmail}, template=${template}`);
     try {
         const user = await (0, auth_1.getAuth)().getUserByEmail(mergeFieldsEmail);
         const userId = user.uid;
