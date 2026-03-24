@@ -1,6 +1,9 @@
 import { createCallable, HttpsError } from "../utils/createCallable";
+import { defineSecret } from "firebase-functions/params";
 import { FieldValue, Firestore } from "firebase-admin/firestore";
 import { sendInviteEmail } from "./sendInviteEmail";
+
+const sendgridApiKey = defineSecret("SENDGRID_API_KEY");
 
 interface SetOpenSeatsRequest {
   totalSeats: number;
@@ -16,7 +19,7 @@ export const setOpenSeatsCallable = createCallable<
   SetOpenSeatsRequest,
   SetOpenSeatsResponse
 >(
-  { name: "setOpenSeats" },
+  { name: "setOpenSeats", secrets: [sendgridApiKey] },
   async (ctx, request) => {
     // Admin only
     if (!ctx.request.auth?.token.admin) {
@@ -39,31 +42,17 @@ export const setOpenSeatsCallable = createCallable<
       .get();
     const claimedSeats = usedInvites.data().count;
 
-    const result = await ctx.db.runTransaction(async (tx) => {
-      const doc = await tx.get(configRef);
+    const remainingSeats = Math.max(0, totalSeats - claimedSeats);
 
-      let remainingSeats: number;
-
-      if (doc.exists) {
-        const data = doc.data()!;
-        const oldTotal = data.totalSeats as number;
-        const oldRemaining = data.remainingSeats as number;
-        const consumed = oldTotal - oldRemaining;
-        remainingSeats = Math.max(0, totalSeats - consumed);
-      } else {
-        remainingSeats = totalSeats;
-      }
-
-      tx.set(configRef, {
-        totalSeats,
-        remainingSeats,
-        claimedSeats,
-        updatedAt: FieldValue.serverTimestamp(),
-        updatedBy: ctx.userId,
-      });
-
-      return { totalSeats, remainingSeats };
+    await configRef.set({
+      totalSeats,
+      remainingSeats,
+      claimedSeats,
+      updatedAt: FieldValue.serverTimestamp(),
+      updatedBy: ctx.userId,
     });
+
+    const result = { totalSeats, remainingSeats };
 
     // Auto-approve pending access requests if seats are available
     if (result.remainingSeats > 0) {
