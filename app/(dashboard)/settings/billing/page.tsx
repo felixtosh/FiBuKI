@@ -3,7 +3,6 @@
 import { SettingsPageHeader } from "@/components/ui/settings-page-header";
 import { BillingPlanComparison } from "@/components/settings/billing-plan-comparison";
 import { BillingUsageSection } from "@/components/settings/billing-usage-section";
-import { BillingCreditsSection } from "@/components/settings/billing-credits-section";
 import { BillingAddonsSection } from "@/components/settings/billing-addons-section";
 import { useSubscription } from "@/hooks/use-subscription";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -32,7 +31,6 @@ export default function BillingPage() {
       />
       <BillingPlanComparison />
       <BillingUsageSection />
-      <BillingCreditsSection />
       <BillingAddonsSection />
     </div>
   );
