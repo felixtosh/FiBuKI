@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { AlertTriangle, Loader2, CheckCircle } from "lucide-react";
+import { AlertTriangle, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,19 +16,14 @@ import {
 } from "@/components/ui/dialog";
 import { useAuth } from "@/components/auth";
 import { httpsCallable } from "firebase/functions";
-import { functions } from "@/lib/firebase/config";
+import { auth, functions } from "@/lib/firebase/config";
+import { signOut as firebaseSignOut } from "firebase/auth";
 
 const CONFIRMATION_PHRASE = "DELETE MY ACCOUNT";
 
 interface DeleteAccountDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-}
-
-interface ScheduleResponse {
-  success: boolean;
-  scheduledDeletionDate: string;
-  gracePeriodDays: number;
 }
 
 export function DeleteAccountDialog({
@@ -39,7 +34,6 @@ export function DeleteAccountDialog({
   const [confirmationInput, setConfirmationInput] = useState("");
   const [isScheduling, setIsScheduling] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<ScheduleResponse | null>(null);
 
   const isConfirmed = confirmationInput === CONFIRMATION_PHRASE;
 
@@ -47,7 +41,6 @@ export function DeleteAccountDialog({
     if (isScheduling) return;
     setConfirmationInput("");
     setError(null);
-    setSuccess(null);
     onOpenChange(false);
   };
 
@@ -59,12 +52,13 @@ export function DeleteAccountDialog({
 
     try {
       const scheduleDeletion = httpsCallable<
-        { confirmationPhrase: string },
-        ScheduleResponse
+        { confirmationPhrase: string }
       >(functions, "scheduleAccountDeletion");
 
-      const result = await scheduleDeletion({ confirmationPhrase: CONFIRMATION_PHRASE });
-      setSuccess(result.data);
+      await scheduleDeletion({ confirmationPhrase: CONFIRMATION_PHRASE });
+      // Sign out immediately and redirect to landing page
+      await firebaseSignOut(auth);
+      window.location.href = "https://fibuki.com";
     } catch (err) {
       console.error("Error scheduling deletion:", err);
       const errorMessage = err instanceof Error ? err.message : String(err);
@@ -85,55 +79,6 @@ export function DeleteAccountDialog({
     }
   };
 
-  const formatDate = (dateString: string) => {
-    return new Intl.DateTimeFormat(undefined, {
-      dateStyle: "long",
-    }).format(new Date(dateString));
-  };
-
-  // Success state
-  if (success) {
-    return (
-      <Dialog open={open} onOpenChange={handleClose}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-green-600">
-              <CheckCircle className="h-5 w-5" />
-              Deletion Scheduled
-            </DialogTitle>
-          </DialogHeader>
-
-          <div className="space-y-4 py-4">
-            <Alert>
-              <CheckCircle className="h-4 w-4" />
-              <AlertDescription>
-                Your account is scheduled for deletion on{" "}
-                <strong>{formatDate(success.scheduledDeletionDate)}</strong>.
-              </AlertDescription>
-            </Alert>
-
-            <p className="text-sm text-muted-foreground">
-              You have {success.gracePeriodDays} days to change your mind. During this time:
-            </p>
-
-            <ul className="text-sm text-muted-foreground space-y-1 ml-4">
-              <li>• You can continue using your account normally</li>
-              <li>• You can cancel the deletion at any time in Settings</li>
-              <li>• After {success.gracePeriodDays} days, all data will be permanently deleted</li>
-            </ul>
-          </div>
-
-          <DialogFooter>
-            <Button onClick={handleClose}>
-              Got it
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    );
-  }
-
-  // Confirmation state
   return (
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="sm:max-w-md">
