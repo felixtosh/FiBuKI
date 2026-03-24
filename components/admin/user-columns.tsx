@@ -32,7 +32,7 @@ export const PLAN_COLORS: Record<PlanId, string> = {
 export const DEFAULT_USER_COLUMN_SIZES: Record<string, number> = {
   user: 250,
   plan: 90,
-  override: 110,
+  perks: 110,
   role: 100,
   transactions: 90,
   joined: 100,
@@ -72,8 +72,8 @@ export function getUserColumns(): ColumnDef<UserRow>[] {
       },
     },
     {
-      id: "override",
-      header: "Override",
+      id: "perks",
+      header: "Perks",
       cell: ({ row }) => {
         const { adminOverride } = row.original;
         if (adminOverride === "free_plan") {
