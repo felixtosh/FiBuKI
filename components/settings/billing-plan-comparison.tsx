@@ -6,12 +6,13 @@ import { db } from "@/lib/firebase/config";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Check, Heart, Crown } from "lucide-react";
+import { Check, Heart, Crown, ExternalLink } from "lucide-react";
 import { PLANS, type PlanId } from "@/types/billing";
 import { useSubscription } from "@/hooks/use-subscription";
 import { useAuth } from "@/components/auth/auth-provider";
 import {
   createCheckoutSessionCallable,
+  createPortalSessionCallable,
   switchPlanCallable,
 } from "@/lib/firebase/callable";
 import { httpsCallable } from "firebase/functions";
@@ -43,6 +44,7 @@ export function BillingPlanComparison() {
   } = useSubscription();
   const { user } = useAuth();
   const [loading, setLoading] = useState<PlanId | null>(null);
+  const [portalLoading, setPortalLoading] = useState(false);
   const [userBackings, setUserBackings] = useState<{ countryCode: string }[]>(
     []
   );
@@ -87,6 +89,20 @@ export function BillingPlanComparison() {
   }, [userBackings]);
 
   const hasActiveSubscription = !!subscription?.stripeSubscriptionId;
+
+  const handleManageSubscription = async () => {
+    setPortalLoading(true);
+    try {
+      const result = await createPortalSessionCallable({
+        returnUrl: window.location.href,
+      });
+      window.location.href = result.portalUrl;
+    } catch (err) {
+      console.error("Failed to open billing portal:", err);
+    } finally {
+      setPortalLoading(false);
+    }
+  };
 
   const handlePlanAction = async (planId: PlanId) => {
     setLoading(planId);
@@ -141,8 +157,19 @@ export function BillingPlanComparison() {
 
   return (
     <Card>
-      <CardHeader>
+      <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle className="text-base">Plan Comparison</CardTitle>
+        {hasActiveSubscription && !isPlanTester && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleManageSubscription}
+            disabled={portalLoading}
+          >
+            <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
+            {portalLoading ? "Opening..." : "Manage Subscription"}
+          </Button>
+        )}
       </CardHeader>
       <CardContent className="space-y-6">
         {/* Main grid: Free | Data | Smart */}

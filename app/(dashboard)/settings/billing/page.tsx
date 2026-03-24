@@ -1,17 +1,15 @@
 "use client";
 
 import { SettingsPageHeader } from "@/components/ui/settings-page-header";
-import { BillingPlanCard } from "@/components/settings/billing-plan-card";
+import { BillingPlanComparison } from "@/components/settings/billing-plan-comparison";
 import { BillingUsageSection } from "@/components/settings/billing-usage-section";
 import { BillingCreditsSection } from "@/components/settings/billing-credits-section";
-import { BillingOverageSettings } from "@/components/settings/billing-overage-settings";
-import { BillingPlanComparison } from "@/components/settings/billing-plan-comparison";
-import { InvestmentsAddonCard } from "@/components/billing/investments-addon-card";
+import { BillingAddonsSection } from "@/components/settings/billing-addons-section";
 import { useSubscription } from "@/hooks/use-subscription";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export default function BillingPage() {
-  const { subscription, loading } = useSubscription();
+  const { loading } = useSubscription();
 
   if (loading) {
     return (
@@ -32,12 +30,10 @@ export default function BillingPage() {
         title="Billing & Plan"
         description="Manage your subscription, AI budget, and usage"
       />
-      <BillingPlanCard />
+      <BillingPlanComparison />
       <BillingUsageSection />
       <BillingCreditsSection />
-      <BillingOverageSettings />
-      <BillingPlanComparison />
-      <InvestmentsAddonCard subscription={subscription} />
+      <BillingAddonsSection />
     </div>
   );
 }

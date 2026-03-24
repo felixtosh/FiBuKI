@@ -34,7 +34,7 @@ export function BillingUsageSection() {
   } = useSubscription();
 
   return (
-    <div className="space-y-4">
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
       {/* AI Budget */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between pb-3">
