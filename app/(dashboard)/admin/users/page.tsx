@@ -118,6 +118,7 @@ export default function AdminUsersPage() {
   const [resendingInvite, setResendingInvite] = useState<string | null>(null);
   const [togglingAdmin, setTogglingAdmin] = useState<string | null>(null);
   const [settingOverride, setSettingOverride] = useState<string | null>(null);
+  const [deletingUser, setDeletingUser] = useState<string | null>(null);
   const [processingRequest, setProcessingRequest] = useState<string | null>(
     null
   );
@@ -512,6 +513,25 @@ export default function AdminUsersPage() {
       );
     } finally {
       setSettingOverride(null);
+    }
+  };
+
+  const handleDeleteUser = async (targetUid: string) => {
+    setDeletingUser(targetUid);
+    setError("");
+    try {
+      const adminDeleteUserFn = httpsCallable(functions, "adminDeleteUser");
+      await adminDeleteUserFn({ targetUid });
+      setSelectedUserId(null);
+      await loadAllUsers();
+      setSuccess("User account deleted");
+      setTimeout(() => setSuccess(""), 3000);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to delete user"
+      );
+    } finally {
+      setDeletingUser(null);
     }
   };
 
@@ -1196,10 +1216,12 @@ export default function AdminUsersPage() {
                 onSetOverride={(uid, override) =>
                   handleSetOverride(uid, override)
                 }
+                onDeleteUser={handleDeleteUser}
                 loading={
                   togglingAdmin === selectedUser.uid ||
                   settingOverride === selectedUser.uid
                 }
+                deletingUser={deletingUser === selectedUser.uid}
               />
             </div>
           </div>

@@ -12,6 +12,7 @@ import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { PLANS, createDefaultSubscriptionData } from "../billing/config";
 import type { PlanId, AdminOverride } from "../billing/config";
 import { clearQuotaExceeded } from "../billing/clearQuotaExceeded";
+import { deleteUserData } from "../user/deleteUserAccountCallable";
 
 const SUPER_ADMIN_EMAIL = process.env.SUPER_ADMIN_EMAIL || "";
 
@@ -243,5 +244,60 @@ export const switchTesterPlan = onCall(
 
     console.log(`[UserMgmt] Plan tester ${userId} switched to ${plan}`);
     return { success: true, plan };
+  }
+);
+
+// =============================================================================
+// adminDeleteUser
+// =============================================================================
+
+interface AdminDeleteUserRequest {
+  targetUid: string;
+}
+
+export const adminDeleteUser = onCall(
+  {
+    region: "europe-west1",
+    cors: CORS_ORIGINS,
+    memory: "1GiB",
+    timeoutSeconds: 540, // 9 minutes for large accounts
+  },
+  async (request) => {
+    assertAdmin(request);
+
+    const { targetUid } = request.data as AdminDeleteUserRequest;
+    if (!targetUid) {
+      throw new HttpsError("invalid-argument", "targetUid is required");
+    }
+
+    const callerUid = request.auth!.uid;
+
+    // Cannot delete yourself via admin endpoint
+    if (targetUid === callerUid) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Cannot delete your own account via admin endpoint. Use the self-service account deletion instead."
+      );
+    }
+
+    // Cannot delete super admin
+    const auth = getAuth();
+    const targetUser = await auth.getUser(targetUid).catch(() => null);
+    if (targetUser?.email === SUPER_ADMIN_EMAIL) {
+      throw new HttpsError(
+        "permission-denied",
+        "Cannot delete the super admin account"
+      );
+    }
+
+    const callerEmail = request.auth!.token.email || callerUid;
+    console.log(`[UserMgmt] Admin ${callerEmail} deleting user ${targetUid} (${targetUser?.email || "unknown"})`);
+
+    const db = getFirestore();
+    const result = await deleteUserData(db, targetUid, callerEmail);
+
+    console.log(`[UserMgmt] Admin deletion complete for ${targetUid}`);
+
+    return { success: true, ...result };
   }
 );

@@ -11,6 +11,7 @@ import {
   Receipt,
   Loader2,
   CreditCard,
+  Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -37,7 +38,9 @@ interface UserDetailPanelProps {
     uid: string,
     override: "free_plan" | "plan_tester" | null
   ) => Promise<void>;
+  onDeleteUser: (uid: string) => Promise<void>;
   loading: boolean;
+  deletingUser: boolean;
 }
 
 export function UserDetailPanel({
@@ -46,7 +49,9 @@ export function UserDetailPanel({
   onMakeAdmin,
   onRemoveAdmin,
   onSetOverride,
+  onDeleteUser,
   loading,
+  deletingUser,
 }: UserDetailPanelProps) {
   return (
     <div className="flex flex-col h-full">
@@ -291,6 +296,48 @@ export function UserDetailPanel({
                   onClick={() => onSetOverride(user.uid, null)}
                 >
                   Clear Perk
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        )}
+
+        {/* Delete user — hidden for super admins */}
+        {!user.isSuperAdmin && (
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button
+                variant="destructive"
+                className="w-full"
+                disabled={loading || deletingUser}
+              >
+                {deletingUser ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Trash2 className="h-4 w-4 mr-2" />
+                )}
+                Delete User
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete User Account?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This will permanently delete all data for{" "}
+                  <span className="font-medium text-foreground">
+                    {user.email || user.uid}
+                  </span>
+                  , including transactions, files, partners, and storage. This
+                  action cannot be undone.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={() => onDeleteUser(user.uid)}
+                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                >
+                  Delete User
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>

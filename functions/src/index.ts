@@ -44,6 +44,7 @@ export {
   listAllUsers,
   setUserOverride,
   switchTesterPlan,
+  adminDeleteUser,
 } from "./admin/userManagement";
 
 // Export import functions
