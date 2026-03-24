@@ -146,6 +146,8 @@ import type {
   AddAICreditsResponse,
   UpdateOverageSettingsRequest,
   UpdateOverageSettingsResponse,
+  SwitchPlanRequest,
+  SwitchPlanResponse,
 } from "@/types/billing";
 
 export const createCheckoutSessionCallable = createCallable<
@@ -167,3 +169,8 @@ export const updateOverageSettingsCallable = createCallable<
   UpdateOverageSettingsRequest,
   UpdateOverageSettingsResponse
 >("updateOverageSettings");
+
+export const switchPlanCallable = createCallable<
+  SwitchPlanRequest,
+  SwitchPlanResponse
+>("switchPlan");

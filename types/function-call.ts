@@ -95,6 +95,7 @@ export type CloudFunctionName =
   | "createPortalSession"
   | "addAICredits"
   | "updateOverageSettings"
+  | "switchPlan"
   // Browser recipe operations
   | "saveBrowserRecipe"
   | "updateBrowserRecipe"

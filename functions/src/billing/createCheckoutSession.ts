@@ -57,8 +57,11 @@ export const createCheckoutSessionCallable = createCallable<
     let stripeCustomerId = subDoc.data()?.stripeCustomerId as string | null;
 
     // Create Stripe customer if needed
+    const userEmail = ctx.request.auth?.token?.email || undefined;
+
     if (!stripeCustomerId) {
       const customer = await stripe.customers.create({
+        ...(userEmail ? { email: userEmail } : {}),
         metadata: { firebaseUserId: ctx.userId },
       });
       stripeCustomerId = customer.id;

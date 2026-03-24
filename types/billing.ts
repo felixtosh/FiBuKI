@@ -333,6 +333,14 @@ export interface UpdateOverageSettingsResponse {
   aiPaused: boolean;
 }
 
+export interface SwitchPlanRequest {
+  plan: PlanId;
+}
+
+export interface SwitchPlanResponse {
+  success: boolean;
+}
+
 // =============================================================================
 // Trial Constants
 // =============================================================================

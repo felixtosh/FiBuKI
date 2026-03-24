@@ -254,6 +254,7 @@ export {
   createPortalSessionCallable as createPortalSession,
   addAICreditsCallable as addAICredits,
   updateOverageSettingsCallable as updateOverageSettings,
+  switchPlanCallable as switchPlan,
   stripeWebhook,
 } from "./billing";
 export { updateAutomationModeCallable as updateAutomationMode } from "./billing/updateAutomationMode";
