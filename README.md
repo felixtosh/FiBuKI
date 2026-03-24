@@ -77,16 +77,13 @@ Frontend reads use realtime Firestore listeners (`onSnapshot`) in React hooks. W
 ### Setup
 
 ```bash
-# Clone the repository
-git clone https://github.com/YOUR_ORG/fibuki.git
+# Fork the repo on GitHub, then:
+git clone <your-fork-url>
 cd fibuki
 
-# Install dependencies
-npm install
-cd functions && npm install && cd ..
+# Install dependencies + create .env.local
+npm run setup
 
-# Configure environment
-cp .env.example .env.local
 # Fill in your Firebase config and API keys (see .env.example for details)
 
 # Start Firebase emulators + Next.js dev server
@@ -158,13 +155,7 @@ The Chrome extension lives in `extensions/taxstudio-browser/`. See [`extensions/
 
 ## Contributing
 
-Contributions are welcome! Please open an issue before starting work on large changes.
-
-A few things to know:
-
-- **All mutations go through Cloud Functions** — never write directly to Firestore from the frontend
-- **Type duplication** — `functions/tsconfig.json` has `rootDir: "src"`, so shared types must be duplicated between `types/` (frontend) and `functions/src/` (backend)
-- **Scoring is server-side only** — file/transaction matching logic lives exclusively in Cloud Functions
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines, architecture overview, and key rules.
 
 ## License
 

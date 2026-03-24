@@ -1,6 +1,9 @@
 import { initializeApp, getApps, FirebaseApp } from "firebase/app";
 import { getFirestore, connectFirestoreEmulator, Firestore } from "firebase/firestore";
 import { getStorage as getFirebaseStorage, connectStorageEmulator, FirebaseStorage } from "firebase/storage";
+import { validateEnv } from "../env-check";
+
+validateEnv();
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "AIzaSyDhxXMbHgaD1z9n0bkuVaSRmmiCrbNL-l4",
