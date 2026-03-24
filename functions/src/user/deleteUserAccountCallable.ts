@@ -281,6 +281,21 @@ export async function deleteUserData(
   await db.collection("users").doc(userId).delete();
   deletedCollections.push("users");
 
+  // === 3b. Reset allowedEmails invite so the email can re-register ===
+  console.log("[DeleteAccount] Resetting invite...");
+  const inviteSnap = await db
+    .collection("allowedEmails")
+    .where("registeredUserId", "==", userId)
+    .limit(1)
+    .get();
+  if (!inviteSnap.empty) {
+    await inviteSnap.docs[0].ref.update({
+      usedAt: FieldValue.delete(),
+      registeredUserId: FieldValue.delete(),
+    });
+    console.log(`[DeleteAccount] Reset invite ${inviteSnap.docs[0].id}`);
+  }
+
   // === 4. Anonymize analytics records (keep for billing/usage tracking) ===
   console.log("[DeleteAccount] Anonymizing analytics records...");
   const aiUsageAnonymized = await anonymizeCollection(db, "aiUsage", userId, anonymizedId);
