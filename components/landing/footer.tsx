@@ -11,6 +11,14 @@ export function LandingFooter() {
       <div className="max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-muted-foreground">
         <span className="text-xs">Infinity Vertigo GmbH</span>
         <div className="flex gap-6">
+          <a
+            href="https://github.com/felixtosh/TaxToolAT"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:text-foreground transition-colors"
+          >
+            {t("contribute")}
+          </a>
           <Link
             href="/terms"
             className="hover:text-foreground transition-colors"

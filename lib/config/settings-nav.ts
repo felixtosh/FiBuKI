@@ -8,6 +8,7 @@ import {
   Link2,
   Download,
   Gift,
+  LifeBuoy,
   type LucideIcon,
 } from "lucide-react";
 import type { PlanFeatureKey } from "@/types/billing";
@@ -17,6 +18,7 @@ export interface SettingsNavItem {
   label: string;
   icon: LucideIcon;
   feature?: PlanFeatureKey;
+  external?: boolean;
 }
 
 export const settingsNavItems: SettingsNavItem[] = [
@@ -29,4 +31,5 @@ export const settingsNavItems: SettingsNavItem[] = [
   { href: "/settings/integrations", label: "Integrations", icon: Link2, feature: "aiMatching" },
   { href: "/settings/import-export", label: "Import / Export", icon: Download },
   { href: "/settings/referral", label: "Refer a Friend", icon: Gift },
+  { href: "https://github.com/felixtosh/TaxToolAT", label: "Support", icon: LifeBuoy, external: true },
 ];
