@@ -93,7 +93,6 @@ export type CloudFunctionName =
   // Billing operations
   | "createCheckoutSession"
   | "createPortalSession"
-  | "addAICredits"
   | "updateOverageSettings"
   | "switchPlan"
   // Browser recipe operations

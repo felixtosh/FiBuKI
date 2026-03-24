@@ -142,8 +142,6 @@ import type {
   CreateCheckoutSessionResponse,
   CreatePortalSessionRequest,
   CreatePortalSessionResponse,
-  AddAICreditsRequest,
-  AddAICreditsResponse,
   UpdateOverageSettingsRequest,
   UpdateOverageSettingsResponse,
   SwitchPlanRequest,
@@ -159,11 +157,6 @@ export const createPortalSessionCallable = createCallable<
   CreatePortalSessionRequest,
   CreatePortalSessionResponse
 >("createPortalSession");
-
-export const addAICreditsCallable = createCallable<
-  AddAICreditsRequest,
-  AddAICreditsResponse
->("addAICredits");
 
 export const updateOverageSettingsCallable = createCallable<
   UpdateOverageSettingsRequest,
