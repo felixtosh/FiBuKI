@@ -9,11 +9,15 @@ export default function WelcomePage() {
   const { state, loading } = useOnboarding();
   const router = useRouter();
 
-  // If track is already set or onboarding is complete, redirect away
+  // If track is already set or onboarding is complete, redirect to first step
   useEffect(() => {
     if (loading) return;
-    if (state?.track || state?.isComplete) {
+    if (state?.isComplete) {
       router.replace("/transactions");
+    } else if (state?.track === "data_only") {
+      router.replace("/sources");
+    } else if (state?.track === "full_service") {
+      router.replace("/settings/identity");
     }
   }, [state, loading, router]);
 
