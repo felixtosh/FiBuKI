@@ -125,7 +125,7 @@ export const PLANS: Record<PlanId, PlanConfig> = {
       "200 transactions/month",
       "Bank data API & MCP access",
       "CSV/JSON export",
-      "Unlimited bank accounts",
+      "2 bank accounts",
     ],
     planFeatures: NO_AI_FEATURES,
     rateLimit: { perMinute: 60, perHour: 1000 },
