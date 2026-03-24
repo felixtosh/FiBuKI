@@ -148,6 +148,21 @@ export const markInviteUsed = onCall(
         { merge: true }
       );
 
+      // Auto-dismiss any stale pending access request for this email
+      // (e.g. from a prior failed registration attempt before invite was fixed)
+      const pendingRequests = await db
+        .collection("accessRequests")
+        .where("email", "==", normalizedEmail)
+        .where("status", "==", "pending")
+        .get();
+      for (const doc of pendingRequests.docs) {
+        await doc.ref.update({
+          status: "dismissed",
+          resolvedAt: FieldValue.serverTimestamp(),
+          resolvedBy: "system:registration",
+        });
+      }
+
       return { success: true };
     } catch (error) {
       console.error("Error marking invite used:", error);
