@@ -18,6 +18,7 @@ import {
   UserCheck,
   Ban,
   Ticket,
+  Send,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -114,6 +115,7 @@ export default function AdminUsersPage() {
   const [newEmail, setNewEmail] = useState("");
   const [inviting, setInviting] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
+  const [resendingInvite, setResendingInvite] = useState<string | null>(null);
   const [togglingAdmin, setTogglingAdmin] = useState<string | null>(null);
   const [settingOverride, setSettingOverride] = useState<string | null>(null);
   const [processingRequest, setProcessingRequest] = useState<string | null>(
@@ -409,6 +411,22 @@ export default function AdminUsersPage() {
       );
     } finally {
       setRemoving(null);
+    }
+  };
+
+  const handleResendInvite = async (email: string, inviteId: string) => {
+    setResendingInvite(inviteId);
+    setError("");
+    try {
+      await callFunction("sendInviteNotification", { email });
+      setSuccess(`Invite resent to ${email}`);
+      setTimeout(() => setSuccess(""), 3000);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to resend invite"
+      );
+    } finally {
+      setResendingInvite(null);
     }
   };
 
@@ -954,6 +972,26 @@ export default function AdminUsersPage() {
                                   <Clock className="h-3 w-3 mr-1" />
                                   Pending
                                 </Badge>
+                              )}
+                              {!invite.usedAt && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  title="Resend invite email"
+                                  disabled={resendingInvite === invite.id}
+                                  onClick={() =>
+                                    handleResendInvite(
+                                      invite.email,
+                                      invite.id
+                                    )
+                                  }
+                                >
+                                  {resendingInvite === invite.id ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <Send className="h-4 w-4" />
+                                  )}
+                                </Button>
                               )}
                               {!invite.usedAt && (
                                 <AlertDialog>
