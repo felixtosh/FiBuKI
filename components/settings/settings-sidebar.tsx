@@ -4,15 +4,21 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { settingsNavItems } from "@/lib/config/settings-nav";
+import { useSubscription } from "@/hooks/use-subscription";
 
 export function SettingsSidebar() {
   const pathname = usePathname();
+  const { hasFeature } = useSubscription();
+
+  const visibleItems = settingsNavItems.filter(
+    (item) => !item.feature || hasFeature(item.feature)
+  );
 
   return (
     <nav className="w-56 border-r bg-muted/30 p-4 shrink-0 overflow-y-auto">
       <h1 className="text-lg font-semibold mb-4">Settings</h1>
       <ul className="space-y-1">
-        {settingsNavItems.map((item) => {
+        {visibleItems.map((item) => {
           const Icon = item.icon;
           const isActive =
             pathname === item.href ||

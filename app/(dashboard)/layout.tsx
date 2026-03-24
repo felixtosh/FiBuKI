@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback, useLayoutEffect } from "react";
+import { useEffect, useState, useRef, useCallback, useLayoutEffect, useMemo } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -22,17 +22,19 @@ import { ChatProvider, ChatSidebar, useChat, WorkerQueueProcessor } from "@/comp
 import { ProtectedRoute, useAuth } from "@/components/auth";
 import { OnboardingOverlay, OnboardingCompletion } from "@/components/onboarding";
 import { useOnboarding } from "@/hooks/use-onboarding";
+import { useSubscription } from "@/hooks/use-subscription";
 import { BillingLimitBanner } from "@/components/billing/billing-limit-banner";
 import { logoFont } from "@/app/fonts";
+import type { PlanFeatureKey } from "@/types/billing";
 
 const NAV_COMPACT_BREAKPOINT = 635;
 
-const navItems = [
+const navItems: { href: string; label: string; icon: typeof Receipt; feature?: PlanFeatureKey }[] = [
   { href: "/transactions", label: "Transactions", icon: Receipt },
-  { href: "/files", label: "Files", icon: Files },
+  { href: "/files", label: "Files", icon: Files, feature: "fileUpload" },
   { href: "/sources", label: "Accounts", icon: Building2 },
-  { href: "/partners", label: "Partners", icon: Users },
-  { href: "/reports", label: "Reports", icon: FileText },
+  { href: "/partners", label: "Partners", icon: Users, feature: "partnerIntelligence" },
+  { href: "/reports", label: "Reports", icon: FileText, feature: "aiMatching" },
 ];
 
 /**
@@ -96,9 +98,25 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { isSidebarOpen, sidebarWidth } = useChat();
   const { user, isAdmin, signOut } = useAuth();
+  const { hasFeature, loading: subLoading } = useSubscription();
   const [isLogoJumping, setIsLogoJumping] = useState(false);
   const [isCompactNavigation, setIsCompactNavigation] = useState(false);
   const [hoveredNavItem, setHoveredNavItem] = useState<string | null>(null);
+
+  // Filter nav items based on plan features (show all while loading to prevent flash)
+  const visibleNavItems = useMemo(
+    () => subLoading
+      ? navItems
+      : navItems.filter((item) => !item.feature || hasFeature(item.feature)),
+    [hasFeature, subLoading]
+  );
+
+  const visibleSettingsItems = useMemo(
+    () => subLoading
+      ? settingsNavItems
+      : settingsNavItems.filter((item) => !item.feature || hasFeature(item.feature)),
+    [hasFeature, subLoading]
+  );
 
   // Sliding nav indicator
   const navContainerRef = useRef<HTMLDivElement>(null);
@@ -109,7 +127,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
     opacity: 0, left: 0, width: 0, height: 0, top: 0,
   });
 
-  const activeIndex = navItems.findIndex((item) => pathname.startsWith(item.href));
+  const activeIndex = visibleNavItems.findIndex((item) => pathname.startsWith(item.href));
 
   const updateIndicator = useCallback(() => {
     const el = activeIndex >= 0 ? navRefs.current[activeIndex] : null;
@@ -128,7 +146,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
     } else {
       setNavIndicatorStyle((prev) => ({ ...prev, opacity: 0 }));
     }
-  }, [activeIndex, isCompactNavigation]);
+  }, [activeIndex, isCompactNavigation, visibleNavItems.length]);
 
   // Compact nav when header navigation area gets too tight.
   useEffect(() => {
@@ -228,7 +246,8 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
                 style={navIndicatorStyle}
                 aria-hidden
               />
-              {navItems.map((item, i) => {
+              {(navRefs.current.length = visibleNavItems.length) && null}
+              {visibleNavItems.map((item, i) => {
                 const isActive = pathname.startsWith(item.href);
                 const link = (
                   <Link
@@ -291,7 +310,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
                     </div>
                   )}
                 </DropdownMenuLabel>
-                {settingsNavItems.map((item) => (
+                {visibleSettingsItems.map((item) => (
                   <DropdownMenuItem key={item.href} asChild>
                     <Link href={item.href} className="flex items-center gap-2">
                       <item.icon className="h-4 w-4" />

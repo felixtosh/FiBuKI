@@ -51,6 +51,7 @@ import { ReportReadinessCheck } from "@/components/reports/readiness-check";
 import { UVAPreview } from "@/components/reports/uva-preview";
 import { PeriodTimeline } from "@/components/reports/period-timeline";
 import { usePageTitle } from "@/hooks/use-page-title";
+import { SmartFeatureGuard } from "@/components/auth";
 
 const TAX_COUNTRIES: { value: TaxCountryCode; label: string; flag: string }[] = [
   { value: "AT", label: "Austria", flag: "🇦🇹" },
@@ -90,7 +91,7 @@ function getAvailableYears(): number[] {
   return years;
 }
 
-export default function ReportsPage() {
+function ReportsContent() {
   const { userId, user, isAdmin } = useAuth();
   const { userData, loading: userDataLoading } = useUserData();
 
@@ -878,5 +879,13 @@ export default function ReportsPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function ReportsPage() {
+  return (
+    <SmartFeatureGuard feature="aiMatching">
+      <ReportsContent />
+    </SmartFeatureGuard>
   );
 }

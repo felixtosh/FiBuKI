@@ -32,7 +32,7 @@ import {
 } from "@/components/ui/dialog";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { useAuth } from "@/components/auth";
+import { useAuth, SmartFeatureGuard } from "@/components/auth";
 import { usePageTitle } from "@/hooks/use-page-title";
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const ACCEPTED_TYPES = {
@@ -830,8 +830,10 @@ function FilesContent() {
 
 export default function FilesPage() {
   return (
-    <Suspense fallback={<FileTableFallback />}>
-      <FilesContent />
-    </Suspense>
+    <SmartFeatureGuard feature="fileUpload">
+      <Suspense fallback={<FileTableFallback />}>
+        <FilesContent />
+      </Suspense>
+    </SmartFeatureGuard>
   );
 }

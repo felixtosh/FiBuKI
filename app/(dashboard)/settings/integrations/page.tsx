@@ -21,6 +21,7 @@ import { useEmailIntegrations } from "@/hooks/use-email-integrations";
 import { useBrowserExtensionStatus } from "@/hooks/use-browser-extension";
 import { useEmailInbound } from "@/hooks/use-email-inbound";
 import { useAuth } from "@/components/auth/auth-provider";
+import { SmartFeatureGuard } from "@/components/auth";
 import { useUserData } from "@/hooks/use-user-data";
 import { SettingsPageHeader } from "@/components/ui/settings-page-header";
 import { IntegrationCard } from "@/components/integrations/integration-card";
@@ -307,8 +308,10 @@ function IntegrationsFallback() {
 
 export default function SettingsIntegrationsPage() {
   return (
-    <Suspense fallback={<IntegrationsFallback />}>
-      <IntegrationsContent />
-    </Suspense>
+    <SmartFeatureGuard feature="aiMatching">
+      <Suspense fallback={<IntegrationsFallback />}>
+        <IntegrationsContent />
+      </Suspense>
+    </SmartFeatureGuard>
   );
 }

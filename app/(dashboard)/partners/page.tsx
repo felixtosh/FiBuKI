@@ -10,6 +10,7 @@ import { UserPartner, PartnerFilters } from "@/types/partner";
 import { parsePartnerFiltersFromUrl, buildPartnerFilterUrl } from "@/lib/filters/partner-url-params";
 import { cn } from "@/lib/utils";
 import { usePageTitle } from "@/hooks/use-page-title";
+import { SmartFeatureGuard } from "@/components/auth";
 
 const PANEL_WIDTH_KEY = "partnerDetailPanelWidth";
 const DEFAULT_PANEL_WIDTH = 480;
@@ -206,8 +207,10 @@ function PartnersContent() {
 
 export default function PartnersPage() {
   return (
-    <Suspense fallback={<PartnerTableFallback />}>
-      <PartnersContent />
-    </Suspense>
+    <SmartFeatureGuard feature="partnerIntelligence">
+      <Suspense fallback={<PartnerTableFallback />}>
+        <PartnersContent />
+      </Suspense>
+    </SmartFeatureGuard>
   );
 }
