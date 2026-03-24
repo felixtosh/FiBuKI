@@ -41,7 +41,7 @@ export const createPortalSessionCallable = createCallable<
       );
     }
 
-    const stripe = new Stripe(stripeSecretKey.value());
+    const stripe = new Stripe(stripeSecretKey.value().trim());
 
     const session = await stripe.billingPortal.sessions.create({
       customer: stripeCustomerId,

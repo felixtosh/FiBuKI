@@ -38,7 +38,8 @@ export const addAICreditsCallable = createCallable<
       throw new HttpsError("invalid-argument", "successUrl and cancelUrl are required");
     }
 
-    const stripe = new Stripe(stripeSecretKey.value());
+    const stripeKey = stripeSecretKey.value().trim();
+    const stripe = new Stripe(stripeKey);
 
     // Get or create Stripe customer
     const subDoc = await ctx.db.collection("subscriptions").doc(ctx.userId).get();
@@ -56,7 +57,7 @@ export const addAICreditsCallable = createCallable<
     }
 
     // Create checkout session for one-time payment (use synced product)
-    const products = getStripeProducts(stripeSecretKey.value());
+    const products = getStripeProducts(stripeKey);
     const session = await stripe.checkout.sessions.create({
       customer: stripeCustomerId,
       mode: "payment",

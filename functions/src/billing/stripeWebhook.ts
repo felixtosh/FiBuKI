@@ -77,7 +77,7 @@ export const stripeWebhook = onRequest(
       return;
     }
 
-    const stripe = new Stripe(stripeSecretKey.value());
+    const stripe = new Stripe(stripeSecretKey.value().trim());
     const sig = req.headers["stripe-signature"];
 
     if (!sig) {

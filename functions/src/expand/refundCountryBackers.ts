@@ -59,7 +59,7 @@ export const refundCountryBackersCallable = createCallable<
       return { success: true, refundedCount: 0 };
     }
 
-    const stripe = new Stripe(stripeSecretKey.value());
+    const stripe = new Stripe(stripeSecretKey.value().trim());
     let refundedCount = 0;
 
     for (const backerDoc of backersSnap.docs) {

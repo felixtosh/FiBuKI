@@ -44,8 +44,9 @@ export const createCheckoutSessionCallable = createCallable<
       throw new HttpsError("invalid-argument", `Invalid plan: ${plan}`);
     }
 
-    const stripe = new Stripe(stripeSecretKey.value());
-    const prices = getStripePrices(stripeSecretKey.value());
+    const stripeKey = stripeSecretKey.value().trim();
+    const stripe = new Stripe(stripeKey);
+    const prices = getStripePrices(stripeKey);
     const priceId = prices[plan]?.[billingPeriod];
     if (!priceId) {
       throw new HttpsError("invalid-argument", `No price configured for ${plan}/${billingPeriod}`);
