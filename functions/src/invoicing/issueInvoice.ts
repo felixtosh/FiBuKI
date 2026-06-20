@@ -108,8 +108,10 @@ export async function performIssueInvoice(
   await storageFile.makePublic();
   const downloadUrl = `https://storage.googleapis.com/${bucket.name}/${storagePath}`;
 
-  // 4. Create the TaxFile record
-  const fileRef = db.collection("files").doc();
+  // 4. Update the TaxFile record. createInvoice already created a stub
+  // TaxFile (so the draft appears in the files list); we update it in place
+  // here with the real PDF + extracted data. Fall back to creating a new
+  // file if the stub is missing (legacy drafts created before this change).
   const recipientAddressLine = formatAddressOneLine(issuedInvoice.recipient.address);
 
   const extractedLineItems = issuedInvoice.lineItems.map((li) => ({
@@ -121,15 +123,13 @@ export async function performIssueInvoice(
     amount: Math.round(li.quantity * li.unitPrice * (1 + li.vatRate / 100)),
   }));
 
-  const fileData: Record<string, unknown> = {
-    userId,
+  const fileFields: Record<string, unknown> = {
     fileName: `Rechnung-${number}.pdf`,
     fileType: "application/pdf",
     fileSize: pdfBuffer.length,
     storagePath,
     downloadUrl,
     // Pipeline flags
-    extractionComplete: false, // flipped to true below so matchFilePartner fires
     classificationComplete: true,
     isNotInvoice: false,
     isFibukiGenerated: true,
@@ -158,26 +158,51 @@ export async function performIssueInvoice(
       iban: null,
       website: null,
     },
-    transactionIds: [],
-    uploadedAt: now,
-    createdAt: now,
-    updatedAt: now,
+    updatedAt: Timestamp.now(),
   };
 
   if (issuedInvoice.recipient.vatId) {
-    fileData.extractedVatId = issuedInvoice.recipient.vatId;
+    fileFields.extractedVatId = issuedInvoice.recipient.vatId;
   }
   if (recipientAddressLine) {
-    fileData.extractedAddress = recipientAddressLine;
+    fileFields.extractedAddress = recipientAddressLine;
   }
 
-  await fileRef.set(fileData);
+  let fileRef: FirebaseFirestore.DocumentReference;
+  if (current.fileId) {
+    fileRef = db.collection("files").doc(current.fileId);
+  } else {
+    fileRef = db.collection("files").doc();
+  }
+  const existing = await fileRef.get();
 
-  // 5. Flip extractionComplete -> true so matchFilePartner trigger fires
-  await fileRef.update({
-    extractionComplete: true,
-    updatedAt: Timestamp.now(),
-  });
+  if (existing.exists) {
+    // Stub TaxFile created at draft time — fill it in. extractionComplete is
+    // already true (set at stub creation), so we flip it false then true to
+    // trigger matchFilePartner.
+    await fileRef.update({
+      ...fileFields,
+      extractionComplete: false,
+    });
+    await fileRef.update({
+      extractionComplete: true,
+      updatedAt: Timestamp.now(),
+    });
+  } else {
+    // Legacy path: no stub exists. Create the file fresh.
+    await fileRef.set({
+      ...fileFields,
+      userId,
+      extractionComplete: false, // flipped to true below so matchFilePartner fires
+      transactionIds: [],
+      uploadedAt: now,
+      createdAt: now,
+    });
+    await fileRef.update({
+      extractionComplete: true,
+      updatedAt: Timestamp.now(),
+    });
+  }
 
   // 6. Update invoice with file backref + new status
   const invoiceUpdates: Record<string, unknown> = {

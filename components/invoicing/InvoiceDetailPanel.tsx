@@ -10,6 +10,7 @@ import {
 import {
   Check,
   Copy,
+  Eye,
   Loader2,
   RefreshCw,
   Send,
@@ -32,18 +33,18 @@ import {
   computeInvoiceTotals,
   parsePaymentTermsToDays,
 } from "@/types/invoice";
-import { InvoicePreview } from "./InvoicePreview";
 import { InvoiceStatusBadge } from "./InvoiceStatusBadge";
 import { InvoiceLineItemsTable } from "./InvoiceLineItemsTable";
 import {
-  InvoicePartnerPicker,
-  SelectedPartner,
-} from "./InvoicePartnerPicker";
+  InvoiceRecipientField,
+  SelectedRecipient,
+} from "./InvoiceRecipientField";
 import {
   InvoiceIssuerPicker,
   SelectedIssuer,
 } from "./InvoiceIssuerPicker";
 import { InvoiceShareLinkDialog } from "./InvoiceShareLinkDialog";
+import { InvoiceViewerOverlay } from "./InvoiceViewerOverlay";
 
 interface InvoiceDetailPanelProps {
   invoiceId: string;
@@ -91,7 +92,7 @@ function formatEur(cents: number): string {
 
 interface LocalForm {
   issuer: SelectedIssuer | null;
-  recipient: SelectedPartner | null;
+  recipient: SelectedRecipient | null;
   issueDate: string; // yyyy-MM-dd
   paymentTerms: string;
   dueDate: string; // yyyy-MM-dd
@@ -104,7 +105,7 @@ function invoiceToForm(invoice: Invoice): LocalForm {
     issuer: invoice.issuer
       ? { entityId: invoice.issuer.entityId, iban: invoice.issuer.iban }
       : null,
-    recipient: invoice.recipient
+    recipient: invoice.recipient?.partnerId
       ? {
           partnerId: invoice.recipient.partnerId,
           partnerType: invoice.recipient.partnerType,
@@ -126,6 +127,7 @@ export function InvoiceDetailPanel({
   const [form, setForm] = useState<LocalForm | null>(null);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const initRef = useRef(false);
 
   // Hydrate the local form from the invoice once it loads (and whenever the
@@ -141,6 +143,7 @@ export function InvoiceDetailPanel({
   useEffect(() => {
     initRef.current = false;
     setForm(null);
+    setPreviewOpen(false);
   }, [invoiceId]);
 
   const isDraft = invoice?.status === "draft";
@@ -272,13 +275,19 @@ export function InvoiceDetailPanel({
     doAction("duplicate", async () => {
       const res = await callFunction<
         { invoiceId: string },
-        { invoiceId: string }
+        { invoiceId: string; fileId?: string }
       >("duplicateInvoice", { invoiceId });
-      // Navigate to the new draft
+      // Navigate to the new draft via its file row so it highlights in the
+      // list. Falls back to ?invoiceId= for legacy responses without fileId.
       if (res.invoiceId && typeof window !== "undefined") {
         const params = new URLSearchParams(window.location.search);
-        params.set("invoiceId", res.invoiceId);
-        params.delete("id");
+        if (res.fileId) {
+          params.set("id", res.fileId);
+          params.delete("invoiceId");
+        } else {
+          params.set("invoiceId", res.invoiceId);
+          params.delete("id");
+        }
         window.history.pushState({}, "", `/files?${params.toString()}`);
       }
     });
@@ -312,6 +321,26 @@ export function InvoiceDetailPanel({
     );
   }
 
+  // For the InvoiceViewerOverlay we need a live snapshot of the invoice that
+  // reflects unsaved edits. The persisted Invoice has Timestamp fields, so we
+  // splice in the local form values without mutating the stored doc.
+  const livePreviewInvoice: Invoice = {
+    ...invoice,
+    lineItems: form.lineItems,
+    notes: form.notes,
+    ...computeInvoiceTotals(form.lineItems),
+  };
+
+  // Issued invoices: load the linked file's downloadUrl via the invoice.fileId.
+  // We don't have direct access to the TaxFile here, but the existing
+  // InvoiceViewerOverlay falls back to PDFViewer rendering when no downloadUrl
+  // is provided. For issued invoices, the parent (file detail panel) typically
+  // owns the file context; here we render live for drafts and load the
+  // persisted PDF via a known URL pattern when available. The overlay's
+  // isDraft check (status !== "draft" && downloadUrl) gates between the two.
+  // Issued invoices without an in-context downloadUrl still render live (same
+  // data, same template) so the user always gets a preview.
+
   return (
     <>
       <div className="h-full flex flex-col">
@@ -324,6 +353,17 @@ export function InvoiceDetailPanel({
             <InvoiceStatusBadge status={invoice.status} />
           </div>
           <div className="flex items-center gap-1">
+            {/* Preview button - always available */}
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setPreviewOpen(true)}
+              title="Vorschau"
+            >
+              <Eye className="h-3.5 w-3.5 mr-1.5" />
+              Vorschau
+            </Button>
+
             {/* Action buttons (status-aware) */}
             {invoice.status === "draft" && (
               <>
@@ -453,130 +493,120 @@ export function InvoiceDetailPanel({
           </div>
         </div>
 
-        {/* Body: editor (left) + preview (right) */}
-        <div className="flex-1 min-h-0 flex">
-          {/* Editor */}
-          <div className="w-1/2 min-w-0 border-r flex flex-col">
-            <ScrollArea className="flex-1">
-              <div className="p-4 space-y-4">
-                <InvoiceIssuerPicker
-                  value={form.issuer}
-                  onChange={(issuer) => updateForm({ issuer })}
+        {/* Body: single-column editor (preview is opened via the Vorschau button) */}
+        <ScrollArea className="flex-1">
+          <div className="p-4 space-y-4">
+            <InvoiceIssuerPicker
+              value={form.issuer}
+              onChange={(issuer) => updateForm({ issuer })}
+              disabled={disabled}
+            />
+
+            <InvoiceRecipientField
+              value={form.recipient}
+              onChange={(recipient) => updateForm({ recipient })}
+              disabled={disabled}
+            />
+
+            <Separator />
+
+            <div className="grid grid-cols-3 gap-2">
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">
+                  Rechnungsdatum
+                </Label>
+                <Input
+                  type="date"
+                  value={form.issueDate}
+                  onChange={(e) =>
+                    updateForm({ issueDate: e.target.value })
+                  }
                   disabled={disabled}
                 />
-
-                <InvoicePartnerPicker
-                  value={form.recipient}
-                  onChange={(recipient) => updateForm({ recipient })}
-                  disabled={disabled}
-                />
-
-                <Separator />
-
-                <div className="grid grid-cols-3 gap-2">
-                  <div className="space-y-1.5">
-                    <Label className="text-xs text-muted-foreground">
-                      Rechnungsdatum
-                    </Label>
-                    <Input
-                      type="date"
-                      value={form.issueDate}
-                      onChange={(e) =>
-                        updateForm({ issueDate: e.target.value })
-                      }
-                      disabled={disabled}
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs text-muted-foreground">
-                      Zahlungsfrist
-                    </Label>
-                    <Input
-                      value={form.paymentTerms}
-                      onChange={(e) =>
-                        updateForm({ paymentTerms: e.target.value })
-                      }
-                      disabled={disabled}
-                      placeholder={DEFAULT_PAYMENT_TERMS}
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs text-muted-foreground">
-                      Fällig am
-                    </Label>
-                    <Input
-                      type="date"
-                      value={form.dueDate}
-                      onChange={(e) =>
-                        updateForm({ dueDate: e.target.value })
-                      }
-                      disabled={disabled}
-                    />
-                  </div>
-                </div>
-
-                <Separator />
-
-                <div className="space-y-2">
-                  <Label className="text-xs text-muted-foreground">
-                    Positionen
-                  </Label>
-                  <InvoiceLineItemsTable
-                    lineItems={form.lineItems}
-                    onChange={(lineItems) => updateForm({ lineItems })}
-                    disabled={disabled}
-                  />
-                </div>
-
-                <div className="space-y-1 text-sm tabular-nums">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Netto</span>
-                    <span>{formatEur(liveTotals.subtotal)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">USt.</span>
-                    <span>{formatEur(liveTotals.vatAmount)}</span>
-                  </div>
-                  <div className="flex justify-between font-semibold border-t pt-1 mt-1">
-                    <span>Gesamt</span>
-                    <span>{formatEur(liveTotals.total)}</span>
-                  </div>
-                </div>
-
-                <Separator />
-
-                <div className="space-y-1.5">
-                  <Label className="text-xs text-muted-foreground">
-                    Notiz
-                  </Label>
-                  <textarea
-                    value={form.notes}
-                    onChange={(e) => updateForm({ notes: e.target.value })}
-                    disabled={disabled}
-                    rows={3}
-                    className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                    placeholder="Optionaler Hinweis am Ende der Rechnung…"
-                  />
-                </div>
-
-                {!isDraft && (
-                  <div className="text-xs text-muted-foreground bg-muted/40 border rounded-md p-2 flex items-start gap-2">
-                    <Check className="h-3.5 w-3.5 mt-0.5" />
-                    <span>
-                      Diese Rechnung ist nicht mehr editierbar. Dupliziere sie,
-                      um einen neuen Entwurf zu erstellen.
-                    </span>
-                  </div>
-                )}
               </div>
-            </ScrollArea>
-          </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">
+                  Zahlungsfrist
+                </Label>
+                <Input
+                  value={form.paymentTerms}
+                  onChange={(e) =>
+                    updateForm({ paymentTerms: e.target.value })
+                  }
+                  disabled={disabled}
+                  placeholder={DEFAULT_PAYMENT_TERMS}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">
+                  Fällig am
+                </Label>
+                <Input
+                  type="date"
+                  value={form.dueDate}
+                  onChange={(e) =>
+                    updateForm({ dueDate: e.target.value })
+                  }
+                  disabled={disabled}
+                />
+              </div>
+            </div>
 
-          {/* Preview */}
-          <div className="w-1/2 min-w-0 bg-muted/20">
-            <InvoicePreview invoice={invoice} />
+            <Separator />
+
+            <div className="space-y-2">
+              <Label className="text-xs text-muted-foreground">
+                Positionen
+              </Label>
+              <InvoiceLineItemsTable
+                lineItems={form.lineItems}
+                onChange={(lineItems) => updateForm({ lineItems })}
+                disabled={disabled}
+              />
+            </div>
+
+            <div className="space-y-1 text-sm tabular-nums">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Netto</span>
+                <span>{formatEur(liveTotals.subtotal)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">USt.</span>
+                <span>{formatEur(liveTotals.vatAmount)}</span>
+              </div>
+              <div className="flex justify-between font-semibold border-t pt-1 mt-1">
+                <span>Gesamt</span>
+                <span>{formatEur(liveTotals.total)}</span>
+              </div>
+            </div>
+
+            <Separator />
+
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">
+                Notiz
+              </Label>
+              <textarea
+                value={form.notes}
+                onChange={(e) => updateForm({ notes: e.target.value })}
+                disabled={disabled}
+                rows={3}
+                className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                placeholder="Optionaler Hinweis am Ende der Rechnung…"
+              />
+            </div>
+
+            {!isDraft && (
+              <div className="text-xs text-muted-foreground bg-muted/40 border rounded-md p-2 flex items-start gap-2">
+                <Check className="h-3.5 w-3.5 mt-0.5" />
+                <span>
+                  Diese Rechnung ist nicht mehr editierbar. Dupliziere sie,
+                  um einen neuen Entwurf zu erstellen.
+                </span>
+              </div>
+            )}
           </div>
-        </div>
+        </ScrollArea>
       </div>
 
       <InvoiceShareLinkDialog
@@ -584,6 +614,12 @@ export function InvoiceDetailPanel({
         onOpenChange={setShareOpen}
         invoiceId={invoiceId}
         existingToken={invoice.shareToken}
+      />
+
+      <InvoiceViewerOverlay
+        open={previewOpen}
+        onClose={() => setPreviewOpen(false)}
+        invoice={livePreviewInvoice}
       />
     </>
   );

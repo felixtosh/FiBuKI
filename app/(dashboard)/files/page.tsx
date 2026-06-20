@@ -550,16 +550,26 @@ function FilesContent() {
 
   // FAB: create an empty draft invoice and open the sidebar. Partner and
   // issuer are picked/created inline in the sidebar, not asked upfront.
+  //
+  // createInvoice also creates a stub TaxFile so the draft shows up as a row
+  // in the files list. We navigate to ?id={fileId} (the standard file detail
+  // URL) so the row is highlighted; FileDetailPanel forks to
+  // InvoiceDetailPanel automatically when file.invoiceId is set.
   const handleCreateInvoice = useCallback(async () => {
     if (creatingInvoice) return;
     setCreatingInvoice(true);
     try {
-      const res = await callFunction<Record<string, never>, { invoiceId: string }>(
-        "createInvoice",
-        {}
-      );
+      const res = await callFunction<
+        Record<string, never>,
+        { invoiceId: string; fileId?: string }
+      >("createInvoice", {});
       const params = new URLSearchParams();
-      params.set("invoiceId", res.invoiceId);
+      if (res.fileId) {
+        params.set("id", res.fileId);
+      } else {
+        // Legacy response without fileId — fall back to invoiceId routing.
+        params.set("invoiceId", res.invoiceId);
+      }
       router.push(`/files?${params.toString()}`, { scroll: false });
     } catch (err) {
       console.error("Failed to create invoice:", err);
@@ -688,11 +698,11 @@ function FilesContent() {
       <div {...getRootProps()} className="h-full overflow-hidden relative">
         <input {...getInputProps()} />
 
-      {/* Upload FAB */}
+      {/* Upload FAB — z-60 so it stays visible above the right-side detail panel (z-50) */}
       <Dialog open={isUploadDialogOpen} onOpenChange={setIsUploadDialogOpen}>
         <DialogTrigger asChild>
           <Button
-            className="fixed bottom-6 right-6 z-40 h-14 w-14 rounded-full shadow-lg"
+            className="fixed bottom-6 right-6 z-[60] h-14 w-14 rounded-full shadow-lg"
             size="icon"
           >
             <Upload className="h-6 w-6" />
@@ -709,7 +719,7 @@ function FilesContent() {
       {/* Create Invoice FAB: opens an empty draft directly in the sidebar */}
       <Button
         variant="secondary"
-        className="fixed bottom-24 right-6 z-40 h-14 w-14 rounded-full shadow-lg"
+        className="fixed bottom-24 right-6 z-[60] h-14 w-14 rounded-full shadow-lg"
         size="icon"
         title="Rechnung erstellen"
         onClick={handleCreateInvoice}

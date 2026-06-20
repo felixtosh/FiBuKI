@@ -66,6 +66,8 @@ export interface CreateInvoiceRequest {
 export interface CreateInvoiceResponse {
   success: boolean;
   invoiceId: string;
+  /** The stub TaxFile id created alongside the draft invoice. */
+  fileId: string;
 }
 
 function shortRandomId(): string {
@@ -158,6 +160,7 @@ export async function performCreateInvoice(
 
   const now = Timestamp.now();
   const docRef = db.collection("invoices").doc();
+  const fileRef = db.collection("files").doc();
 
   const invoiceData: Omit<Invoice, "id"> = {
     userId,
@@ -173,6 +176,7 @@ export async function performCreateInvoice(
     subtotal,
     vatAmount,
     total,
+    fileId: fileRef.id,
     createdAt: now,
     updatedAt: now,
   };
@@ -181,9 +185,40 @@ export async function performCreateInvoice(
     (invoiceData as Invoice).notes = request.notes;
   }
 
-  await docRef.set(invoiceData);
+  // Stub TaxFile so the draft invoice appears as a row in the files list.
+  // The PDF doesn't exist yet (storagePath/downloadUrl empty); issueInvoice
+  // updates this same doc in place once the PDF is rendered.
+  //
+  // extractionComplete=true + isFibukiGenerated=true short-circuits the
+  // extractFileData onCreate trigger (see functions/src/extraction/extractFileData.ts).
+  const fileData: Record<string, unknown> = {
+    userId,
+    fileName: "Rechnungsentwurf",
+    fileType: "application/pdf",
+    fileSize: 0,
+    storagePath: "",
+    downloadUrl: "",
+    extractionComplete: true,
+    classificationComplete: true,
+    isNotInvoice: false,
+    isFibukiGenerated: true,
+    invoiceId: docRef.id,
+    invoiceDirection: "outgoing",
+    matchedUserAccount: "issuer",
+    transactionIds: [],
+    uploadedAt: now,
+    createdAt: now,
+    updatedAt: now,
+  };
 
-  return { success: true, invoiceId: docRef.id };
+  // Set both docs in a single batch so the file row appears alongside the
+  // invoice doc atomically.
+  const batch = db.batch();
+  batch.set(docRef, invoiceData);
+  batch.set(fileRef, fileData);
+  await batch.commit();
+
+  return { success: true, invoiceId: docRef.id, fileId: fileRef.id };
 }
 
 export const createInvoiceCallable = createCallable<

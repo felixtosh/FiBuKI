@@ -1,3 +1,9 @@
+/**
+ * @deprecated Superseded by InvoiceRecipientField, which reuses the standard
+ * PartnerPill + AddPartnerDialog pattern from the file detail panel. Kept in
+ * the tree only so any external callers don't break; remove once nothing
+ * imports it.
+ */
 "use client";
 
 import { useMemo, useState } from "react";

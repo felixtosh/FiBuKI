@@ -15,6 +15,8 @@ export interface DuplicateInvoiceRequest {
 export interface DuplicateInvoiceResponse {
   success: boolean;
   invoiceId: string;
+  /** Stub TaxFile id created for the new draft. */
+  fileId: string;
 }
 
 function shortRandomId(): string {
@@ -54,6 +56,7 @@ export async function performDuplicateInvoice(
   const dueDate = addDaysToTimestamp(now, parsePaymentTermsToDays(src.paymentTerms));
 
   const newRef = db.collection("invoices").doc();
+  const newFileRef = db.collection("files").doc();
   const newData: Omit<Invoice, "id"> = {
     userId,
     number: `DRAFT-${shortRandomId()}`,
@@ -68,14 +71,39 @@ export async function performDuplicateInvoice(
     subtotal: src.subtotal,
     vatAmount: src.vatAmount,
     total: src.total,
+    fileId: newFileRef.id,
     createdAt: now,
     updatedAt: now,
   };
   if (src.notes) (newData as Invoice).notes = src.notes;
 
-  await newRef.set(newData);
+  // Stub TaxFile so the new draft appears in the files list.
+  const newFileData: Record<string, unknown> = {
+    userId,
+    fileName: "Rechnungsentwurf",
+    fileType: "application/pdf",
+    fileSize: 0,
+    storagePath: "",
+    downloadUrl: "",
+    extractionComplete: true,
+    classificationComplete: true,
+    isNotInvoice: false,
+    isFibukiGenerated: true,
+    invoiceId: newRef.id,
+    invoiceDirection: "outgoing",
+    matchedUserAccount: "issuer",
+    transactionIds: [],
+    uploadedAt: now,
+    createdAt: now,
+    updatedAt: now,
+  };
 
-  return { success: true, invoiceId: newRef.id };
+  const batch = db.batch();
+  batch.set(newRef, newData);
+  batch.set(newFileRef, newFileData);
+  await batch.commit();
+
+  return { success: true, invoiceId: newRef.id, fileId: newFileRef.id };
 }
 
 export const duplicateInvoiceCallable = createCallable<
