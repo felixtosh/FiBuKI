@@ -406,6 +406,73 @@
   container-type: inline-size;
 }
 
+/* Invoice line items: switch from stacked cards (narrow) to inline 5-col grid
+   (wide) once the detail panel is wide enough. Threshold 560px chosen against
+   the default 600px panel width minus editor padding (~40px). Stacked cards
+   are the default Tailwind classes in the component; the wide layout below
+   uses `display: contents` to let inner wrappers' children flow as direct
+   grid items. */
+@container (min-width: 560px) {
+  .invoice-line-items-header-wide {
+    display: grid !important;
+  }
+
+  .invoice-line-items-row {
+    border: 0 !important;
+    background: transparent !important;
+    padding: 0 !important;
+    display: grid !important;
+    grid-template-columns: 20px minmax(0, 1fr) 70px 110px 70px 110px 28px;
+    gap: 0.5rem !important;
+    align-items: center !important;
+  }
+
+  /* Clear vertical spacing leftover from the stacked layout. */
+  .invoice-line-items-row > * + * {
+    margin-top: 0 !important;
+  }
+
+  /* Hide labels in wide mode — column headers above the rows replace them. */
+  .invoice-line-items-label {
+    display: none !important;
+  }
+
+  /* Grip handle becomes visible and occupies column 1. */
+  .invoice-line-items-grip {
+    display: flex !important;
+  }
+
+  /* Description cell drops its Label child and uses just its <Input>. */
+  .invoice-line-items-cell-description {
+    grid-column: 2;
+  }
+
+  /* Numerics wrapper becomes a transparent container — its 3 input cells
+     flow into columns 3..5 of the parent grid. */
+  .invoice-line-items-numerics {
+    display: contents !important;
+  }
+
+  /* Footer wrapper becomes transparent so its label (hidden) + actions flow
+     into the grid. */
+  .invoice-line-items-footer {
+    display: contents !important;
+  }
+
+  .invoice-line-items-footer-actions {
+    display: contents !important;
+  }
+
+  .invoice-line-items-total {
+    text-align: right;
+    grid-column: 6;
+  }
+
+  .invoice-line-items-remove {
+    grid-column: 7;
+  }
+}
+
 /* FieldRow vertical layout when panel is narrow (<300px) */
 @container (max-width: 300px) {
   .field-row-responsive {

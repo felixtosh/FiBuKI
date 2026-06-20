@@ -177,6 +177,23 @@ function FilesContent() {
   const [viewerOpen, setViewerOpen] = useState(false);
   const [highlightText, setHighlightText] = useState<string | null>(null);
 
+  // Invoice preview source (lifted from InvoiceDetailPanel so the standard
+  // FileViewerOverlay can render over the file list area for invoices too).
+  const [invoicePreviewSource, setInvoicePreviewSource] = useState<{
+    downloadUrl: string;
+    fileName: string;
+    fileType: string;
+  } | null>(null);
+
+  // Close the invoice viewer whenever the invoice id changes or unmounts.
+  useEffect(() => {
+    setViewerOpen(false);
+  }, [invoiceIdParam]);
+
+  const toggleInvoiceViewer = useCallback(() => {
+    setViewerOpen((v) => !v);
+  }, []);
+
   // Connect transaction overlay - controlled via URL param
   const isConnectTransactionOpen = searchParams.get("connect") === "true";
 
@@ -371,6 +388,14 @@ function FilesContent() {
     if (!primarySelectedId || !files.length) return null;
     return files.find((f) => f.id === primarySelectedId) || null;
   }, [primarySelectedId, files]);
+
+  // Locate the file that backs the current invoice (if any) so we can pass
+  // its id down to InvoiceDetailPanel for issued-invoice preview rendering.
+  const invoiceFileId = useMemo(() => {
+    if (!invoiceIdParam) return null;
+    const match = files.find((f) => f.invoiceId === invoiceIdParam);
+    return match?.id ?? null;
+  }, [invoiceIdParam, files]);
 
   // Set page title
   usePageTitle("Files", selectedFile?.fileName);
@@ -772,17 +797,31 @@ function FilesContent() {
             onUploadClick={() => setIsUploadDialogOpen(true)}
           />
 
-          {/* File viewer overlay - positioned over table area only */}
-          {selectedFile && viewerOpen && (
+          {/* File viewer overlay - positioned over table area only.
+              Used for both regular files (via selectedFile) and invoices
+              (via invoicePreviewSource lifted from InvoiceDetailPanel). */}
+          {viewerOpen && (selectedFile || (invoiceIdParam && invoicePreviewSource)) && (
             <FileViewerOverlay
               open={viewerOpen}
               onClose={() => {
                 setViewerOpen(false);
                 setHighlightText(null);
               }}
-              downloadUrl={selectedFile.downloadUrl}
-              fileType={selectedFile.fileType}
-              fileName={selectedFile.fileName}
+              downloadUrl={
+                invoiceIdParam && invoicePreviewSource
+                  ? invoicePreviewSource.downloadUrl
+                  : selectedFile!.downloadUrl
+              }
+              fileType={
+                invoiceIdParam && invoicePreviewSource
+                  ? invoicePreviewSource.fileType
+                  : selectedFile!.fileType
+              }
+              fileName={
+                invoiceIdParam && invoicePreviewSource
+                  ? invoicePreviewSource.fileName
+                  : selectedFile!.fileName
+              }
               highlightText={highlightText}
             />
           )}
@@ -823,7 +862,11 @@ function FilesContent() {
           <div className="flex-1 overflow-hidden detail-panel-container">
             <InvoiceDetailPanel
               invoiceId={invoiceIdParam}
+              fileId={invoiceFileId}
               onClose={handleCloseInvoice}
+              onPreviewSourceChange={setInvoicePreviewSource}
+              viewerOpen={viewerOpen}
+              onToggleViewer={toggleInvoiceViewer}
             />
           </div>
         </div>

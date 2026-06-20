@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useUserData } from "@/hooks/use-user-data";
+import { useSources } from "@/hooks/use-sources";
 import { IdentityEntity } from "@/types/user-data";
 import { bicFromIban } from "@/lib/invoicing/bicLookup";
 
@@ -200,6 +201,7 @@ export function InvoiceIssuerPicker({
     updatePersonalEntity,
     updateCompany,
   } = useUserData();
+  const { sources } = useSources();
   const [showInlineForm, setShowInlineForm] = useState(false);
 
   // Show ALL entities (including those without an IBAN). When the user picks
@@ -213,26 +215,68 @@ export function InvoiceIssuerPicker({
     [userData]
   );
 
+  // Inferred IBANs from bank account sources. The identity settings UI shows
+  // these as read-only pills but they're NOT persisted into any entity. We
+  // still want to offer them as billing IBAN options on invoices, attached to
+  // the personal entity by default (since they belong to the user themselves
+  // - the user owns the bank account regardless of which legal entity issues
+  // the invoice).
+  const inferredIbansFromSources = useMemo(() => {
+    return sources
+      .filter((s) => s.iban && s.accountKind === "bank_account")
+      .map((s) => s.iban!.toUpperCase().replace(/\s/g, ""));
+  }, [sources]);
+
+  // Map each entity to its effective IBAN list (own + inferred for personal).
+  // For non-personal entities, inferred IBANs are NOT auto-attached because
+  // we don't know which company owns which account.
+  const ibansForEntity = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const e of entities) {
+      const own = e.ibans ?? [];
+      if (e.type === "person") {
+        // Merge inferred IBANs (dedup, own first)
+        const merged = [...own];
+        for (const inf of inferredIbansFromSources) {
+          if (!merged.includes(inf)) merged.push(inf);
+        }
+        map.set(e.id, merged);
+      } else {
+        map.set(e.id, own);
+      }
+    }
+    return map;
+  }, [entities, inferredIbansFromSources]);
+
+  // Entity with at least one IBAN available (own or inferred-for-personal).
+  const entitiesWithIban = useMemo(
+    () => entities.filter((e) => (ibansForEntity.get(e.id)?.length ?? 0) > 0),
+    [entities, ibansForEntity]
+  );
+
   const selectedEntity = useMemo(
     () => entities.find((e) => e.id === value?.entityId) ?? null,
     [entities, value?.entityId]
   );
 
-  // Auto-pick first entity when nothing selected yet. If it has IBANs we
-  // also pick the first IBAN; otherwise we leave iban blank and the sub-form
-  // prompts the user to add one.
+  // Auto-pick: prefer the first entity that has an IBAN available; fall back
+  // to the first entity if none has one (so we still surface the "add IBAN"
+  // sub-form for the most likely candidate).
   useEffect(() => {
     if (loading) return;
-    if (!value?.entityId && entities.length > 0) {
-      const first = entities[0];
-      onChange({ entityId: first.id, iban: first.ibans?.[0] ?? "" });
-    }
-  }, [loading, value?.entityId, entities, onChange]);
+    if (value?.entityId) return;
+    if (entities.length === 0) return;
+
+    const preferred = entitiesWithIban[0] ?? entities[0];
+    const ibans = ibansForEntity.get(preferred.id) ?? [];
+    onChange({ entityId: preferred.id, iban: ibans[0] ?? "" });
+  }, [loading, value?.entityId, entities, entitiesWithIban, ibansForEntity, onChange]);
 
   const handleEntityChange = (entityId: string) => {
     const e = entities.find((x) => x.id === entityId);
     if (!e) return;
-    onChange({ entityId: e.id, iban: e.ibans?.[0] ?? "" });
+    const ibans = ibansForEntity.get(e.id) ?? [];
+    onChange({ entityId: e.id, iban: ibans[0] ?? "" });
   };
 
   const handleIbanChange = (iban: string) => {
@@ -302,7 +346,16 @@ export function InvoiceIssuerPicker({
     );
   }
 
-  const hasIbans = (selectedEntity?.ibans?.length ?? 0) > 0;
+  const availableIbans = selectedEntity
+    ? ibansForEntity.get(selectedEntity.id) ?? []
+    : [];
+  const hasIbans = availableIbans.length > 0;
+
+  // Detect cross-entity IBANs we could offer as a fallback hint when the
+  // current entity has none.
+  const otherEntityWithIban = entitiesWithIban.find(
+    (e) => e.id !== selectedEntity?.id
+  );
 
   return (
     <div className="space-y-2">
@@ -317,12 +370,16 @@ export function InvoiceIssuerPicker({
             <SelectValue placeholder="Identität wählen" />
           </SelectTrigger>
           <SelectContent>
-            {entities.map((e) => (
-              <SelectItem key={e.id} value={e.id}>
-                {e.name}
-                {e.type === "company" ? " (Firma)" : ""}
-              </SelectItem>
-            ))}
+            {entities.map((e) => {
+              const ibanCount = ibansForEntity.get(e.id)?.length ?? 0;
+              return (
+                <SelectItem key={e.id} value={e.id}>
+                  {e.name}
+                  {e.type === "company" ? " (Firma)" : ""}
+                  {ibanCount === 0 ? " — keine IBAN" : ""}
+                </SelectItem>
+              );
+            })}
           </SelectContent>
         </Select>
       </div>
@@ -339,7 +396,7 @@ export function InvoiceIssuerPicker({
               <SelectValue placeholder="IBAN wählen" />
             </SelectTrigger>
             <SelectContent>
-              {selectedEntity.ibans.map((iban) => (
+              {availableIbans.map((iban) => (
                 <SelectItem key={iban} value={iban}>
                   {iban}
                 </SelectItem>
@@ -349,13 +406,25 @@ export function InvoiceIssuerPicker({
         </div>
       )}
 
-      {/* Selected entity has no IBAN yet → prompt to add one */}
+      {/* Selected entity has no IBAN yet → prompt to add one, plus hint if
+          another entity has IBANs the user might have intended. */}
       {selectedEntity && !hasIbans && !disabled && (
-        <InlineAddIbanForm
-          entityName={selectedEntity.name}
-          saving={saving}
-          onSave={appendIbanToSelectedEntity}
-        />
+        <>
+          {otherEntityWithIban && (
+            <button
+              type="button"
+              onClick={() => handleEntityChange(otherEntityWithIban.id)}
+              className="text-xs text-primary hover:underline text-left"
+            >
+              IBAN von „{otherEntityWithIban.name}" verwenden
+            </button>
+          )}
+          <InlineAddIbanForm
+            entityName={selectedEntity.name}
+            saving={saving}
+            onSave={appendIbanToSelectedEntity}
+          />
+        </>
       )}
 
       {selectedEntity && (

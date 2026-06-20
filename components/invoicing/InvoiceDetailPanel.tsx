@@ -10,7 +10,6 @@ import {
 import {
   Check,
   Copy,
-  Eye,
   Loader2,
   RefreshCw,
   Send,
@@ -19,12 +18,15 @@ import {
   X,
   XCircle,
 } from "lucide-react";
+import QRCode from "qrcode";
+import { doc, onSnapshot } from "firebase/firestore";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { callFunction } from "@/lib/firebase/callable";
+import { db } from "@/lib/firebase/config";
 import { useInvoice } from "@/hooks/use-invoice";
 import {
   DEFAULT_PAYMENT_TERMS,
@@ -33,6 +35,7 @@ import {
   computeInvoiceTotals,
   parsePaymentTermsToDays,
 } from "@/types/invoice";
+import { TaxFile } from "@/types/file";
 import { InvoiceStatusBadge } from "./InvoiceStatusBadge";
 import { InvoiceLineItemsTable } from "./InvoiceLineItemsTable";
 import {
@@ -44,13 +47,28 @@ import {
   SelectedIssuer,
 } from "./InvoiceIssuerPicker";
 import { InvoiceShareLinkDialog } from "./InvoiceShareLinkDialog";
-import { InvoiceViewerOverlay } from "./InvoiceViewerOverlay";
+import { InvoiceDocument } from "./InvoiceDocument";
+import { FilePreview } from "@/components/files/file-preview";
+import { buildEpcPayload } from "@/lib/invoicing/epcPayload";
 
 interface InvoiceDetailPanelProps {
   invoiceId: string;
   /** Optional file id (set once the invoice has been issued and the file exists). */
   fileId?: string | null;
   onClose: () => void;
+  /**
+   * Optional lift-up handler. When provided, the panel reports its current
+   * preview source (downloadUrl + fileName + fileType) so the page can render
+   * the standard `FileViewerOverlay` over the file list area. The panel still
+   * works without this (the parent simply won't be able to open the overlay).
+   */
+  onPreviewSourceChange?: (
+    source: { downloadUrl: string; fileName: string; fileType: string } | null
+  ) => void;
+  /** Whether the parent-rendered viewer is currently open (for thumbnail active state). */
+  viewerOpen?: boolean;
+  /** Toggles the parent-rendered viewer. */
+  onToggleViewer?: () => void;
 }
 
 // Convert Firestore Timestamp-ish to yyyy-MM-dd
@@ -121,13 +139,16 @@ function invoiceToForm(invoice: Invoice): LocalForm {
 
 export function InvoiceDetailPanel({
   invoiceId,
+  fileId,
   onClose,
+  onPreviewSourceChange,
+  viewerOpen = false,
+  onToggleViewer,
 }: InvoiceDetailPanelProps) {
   const { invoice, loading } = useInvoice(invoiceId);
   const [form, setForm] = useState<LocalForm | null>(null);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
-  const [previewOpen, setPreviewOpen] = useState(false);
   const initRef = useRef(false);
 
   // Hydrate the local form from the invoice once it loads (and whenever the
@@ -143,11 +164,37 @@ export function InvoiceDetailPanel({
   useEffect(() => {
     initRef.current = false;
     setForm(null);
-    setPreviewOpen(false);
   }, [invoiceId]);
 
   const isDraft = invoice?.status === "draft";
   const disabled = !isDraft;
+
+  // ---------------------------------------------------------------------
+  // Issued invoice: subscribe to the linked TaxFile so we can show its real
+  // downloadUrl in the preview / overlay.
+  // ---------------------------------------------------------------------
+  const [issuedFile, setIssuedFile] = useState<TaxFile | null>(null);
+  useEffect(() => {
+    if (!fileId) {
+      setIssuedFile(null);
+      return;
+    }
+    const unsub = onSnapshot(
+      doc(db, "files", fileId),
+      (snap) => {
+        if (snap.exists()) {
+          setIssuedFile({ id: snap.id, ...snap.data() } as TaxFile);
+        } else {
+          setIssuedFile(null);
+        }
+      },
+      (err) => {
+        console.error("InvoiceDetailPanel issuedFile snapshot error:", err);
+        setIssuedFile(null);
+      }
+    );
+    return () => unsub();
+  }, [fileId]);
 
   // Debounced auto-save to updateInvoice while the invoice is a draft
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -231,6 +278,146 @@ export function InvoiceDetailPanel({
     if (!form) return { subtotal: 0, vatAmount: 0, total: 0 };
     return computeInvoiceTotals(form.lineItems);
   }, [form]);
+
+  // ---------------------------------------------------------------------
+  // Live PDF preview (drafts only)
+  //
+  // We render the React-PDF document to a Blob, then create an object URL so
+  // it can be passed to <FilePreview> (thumbnail) and <FileViewerOverlay>
+  // (full overlay). The rendering is debounced ~300ms to avoid thrashing
+  // while the user is typing.
+  // ---------------------------------------------------------------------
+  const [draftBlobUrl, setDraftBlobUrl] = useState<string | null>(null);
+  const [draftRendering, setDraftRendering] = useState(false);
+  const previousBlobUrlRef = useRef<string | null>(null);
+  const renderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const livePreviewInvoice: Invoice | null = useMemo(() => {
+    if (!invoice || !form) return null;
+    return {
+      ...invoice,
+      lineItems: form.lineItems,
+      notes: form.notes,
+      ...computeInvoiceTotals(form.lineItems),
+    };
+  }, [invoice, form]);
+
+  useEffect(() => {
+    // Only generate live blob URLs for drafts
+    if (!isDraft || !livePreviewInvoice) {
+      return;
+    }
+
+    let cancelled = false;
+    if (renderTimerRef.current) clearTimeout(renderTimerRef.current);
+    setDraftRendering(true);
+
+    renderTimerRef.current = setTimeout(async () => {
+      try {
+        // Generate EPC QR if we have an IBAN
+        let qrDataUrl: string | undefined;
+        const iban = livePreviewInvoice.issuer?.iban;
+        if (iban) {
+          const epc = buildEpcPayload({
+            bic: livePreviewInvoice.issuer?.bic,
+            name: livePreviewInvoice.issuer?.name ?? "",
+            iban,
+            amountCents: livePreviewInvoice.total ?? 0,
+            remittance: livePreviewInvoice.number
+              ? `Rechnung ${livePreviewInvoice.number}`
+              : undefined,
+          });
+          try {
+            qrDataUrl = await QRCode.toDataURL(epc, { margin: 0, width: 256 });
+          } catch (err) {
+            console.warn("EPC QR generation failed:", err);
+          }
+        }
+
+        // Dynamic import to keep @react-pdf/renderer out of the initial bundle
+        const { pdf } = await import("@react-pdf/renderer");
+        const blob = await pdf(
+          <InvoiceDocument
+            invoice={livePreviewInvoice}
+            qrDataUrl={qrDataUrl}
+          />
+        ).toBlob();
+        if (cancelled) return;
+
+        const url = URL.createObjectURL(blob);
+        // Revoke the previous URL after we set the new one, so any consumers
+        // currently displaying the old URL aren't left with a dangling ref
+        // mid-frame.
+        const prev = previousBlobUrlRef.current;
+        previousBlobUrlRef.current = url;
+        setDraftBlobUrl(url);
+        setDraftRendering(false);
+        if (prev) {
+          // Small delay to let consumers swap to the new URL
+          setTimeout(() => URL.revokeObjectURL(prev), 0);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          console.error("Live invoice PDF render failed:", err);
+          setDraftRendering(false);
+        }
+      }
+    }, 300);
+
+    return () => {
+      cancelled = true;
+      if (renderTimerRef.current) clearTimeout(renderTimerRef.current);
+    };
+  }, [isDraft, livePreviewInvoice]);
+
+  // Cleanup blob URL on unmount
+  useEffect(() => {
+    return () => {
+      if (previousBlobUrlRef.current) {
+        URL.revokeObjectURL(previousBlobUrlRef.current);
+        previousBlobUrlRef.current = null;
+      }
+    };
+  }, []);
+
+  // ---------------------------------------------------------------------
+  // Active preview source — draft blob for drafts, issued file URL otherwise.
+  // ---------------------------------------------------------------------
+  const previewSource = useMemo(() => {
+    if (isDraft) {
+      if (!draftBlobUrl) return null;
+      const fileName = invoice?.number
+        ? `Rechnung-${invoice.number}.pdf`
+        : "Rechnungsentwurf.pdf";
+      return {
+        downloadUrl: draftBlobUrl,
+        fileName,
+        fileType: "application/pdf",
+      };
+    }
+    if (issuedFile && issuedFile.downloadUrl) {
+      return {
+        downloadUrl: issuedFile.downloadUrl,
+        fileName: issuedFile.fileName,
+        fileType: issuedFile.fileType || "application/pdf",
+      };
+    }
+    return null;
+  }, [isDraft, draftBlobUrl, invoice?.number, issuedFile]);
+
+  // Lift preview source up to the page so it can render the standard
+  // FileViewerOverlay over the file list area.
+  useEffect(() => {
+    onPreviewSourceChange?.(previewSource);
+  }, [onPreviewSourceChange, previewSource]);
+
+  // Clear the lifted state on unmount.
+  useEffect(() => {
+    return () => {
+      onPreviewSourceChange?.(null);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // -----------------------------------------------------------------
   // Action handlers
@@ -321,26 +508,6 @@ export function InvoiceDetailPanel({
     );
   }
 
-  // For the InvoiceViewerOverlay we need a live snapshot of the invoice that
-  // reflects unsaved edits. The persisted Invoice has Timestamp fields, so we
-  // splice in the local form values without mutating the stored doc.
-  const livePreviewInvoice: Invoice = {
-    ...invoice,
-    lineItems: form.lineItems,
-    notes: form.notes,
-    ...computeInvoiceTotals(form.lineItems),
-  };
-
-  // Issued invoices: load the linked file's downloadUrl via the invoice.fileId.
-  // We don't have direct access to the TaxFile here, but the existing
-  // InvoiceViewerOverlay falls back to PDFViewer rendering when no downloadUrl
-  // is provided. For issued invoices, the parent (file detail panel) typically
-  // owns the file context; here we render live for drafts and load the
-  // persisted PDF via a known URL pattern when available. The overlay's
-  // isDraft check (status !== "draft" && downloadUrl) gates between the two.
-  // Issued invoices without an in-context downloadUrl still render live (same
-  // data, same template) so the user always gets a preview.
-
   return (
     <>
       <div className="h-full flex flex-col">
@@ -353,17 +520,6 @@ export function InvoiceDetailPanel({
             <InvoiceStatusBadge status={invoice.status} />
           </div>
           <div className="flex items-center gap-1">
-            {/* Preview button - always available */}
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setPreviewOpen(true)}
-              title="Vorschau"
-            >
-              <Eye className="h-3.5 w-3.5 mr-1.5" />
-              Vorschau
-            </Button>
-
             {/* Action buttons (status-aware) */}
             {invoice.status === "draft" && (
               <>
@@ -493,9 +649,56 @@ export function InvoiceDetailPanel({
           </div>
         </div>
 
-        {/* Body: single-column editor (preview is opened via the Vorschau button) */}
+        {/* Body: single-column editor with embedded preview thumbnail */}
         <ScrollArea className="flex-1">
           <div className="p-4 space-y-4">
+            {/* Preview thumbnail row — mirrors file-detail-panel's layout */}
+            <div className="flex gap-4 file-preview-section">
+              <div className="w-1/4 flex-shrink-0 file-preview-thumb">
+                {previewSource ? (
+                  <>
+                    <FilePreview
+                      downloadUrl={previewSource.downloadUrl}
+                      fileType={previewSource.fileType}
+                      fileName={previewSource.fileName}
+                      onClick={onToggleViewer}
+                      active={viewerOpen}
+                    />
+                    <p className="text-xs text-muted-foreground text-center mt-1">
+                      {draftRendering
+                        ? "Aktualisiere…"
+                        : viewerOpen
+                          ? "Klicken zum Schließen"
+                          : "Klicken zum Öffnen"}
+                    </p>
+                  </>
+                ) : (
+                  <div className="aspect-[3/4] rounded-md border border-dashed bg-muted/30 flex flex-col items-center justify-center text-xs text-muted-foreground gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Vorschau wird erstellt…
+                  </div>
+                )}
+              </div>
+              <div className="flex-1 space-y-2 text-sm">
+                <div className="text-xs text-muted-foreground uppercase tracking-wider">
+                  {isDraft ? "Entwurf" : "Rechnung"}
+                </div>
+                <div className="text-base font-semibold truncate">
+                  {invoice.number || "(Entwurf)"}
+                </div>
+                {invoice.recipient?.name && (
+                  <div className="text-muted-foreground truncate">
+                    {invoice.recipient.name}
+                  </div>
+                )}
+                <div className="tabular-nums font-medium">
+                  {formatEur(liveTotals.total)}
+                </div>
+              </div>
+            </div>
+
+            <Separator />
+
             <InvoiceIssuerPicker
               value={form.issuer}
               onChange={(issuer) => updateForm({ issuer })}
@@ -614,12 +817,6 @@ export function InvoiceDetailPanel({
         onOpenChange={setShareOpen}
         invoiceId={invoiceId}
         existingToken={invoice.shareToken}
-      />
-
-      <InvoiceViewerOverlay
-        open={previewOpen}
-        onClose={() => setPreviewOpen(false)}
-        invoice={livePreviewInvoice}
       />
     </>
   );

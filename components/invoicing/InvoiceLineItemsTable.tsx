@@ -4,6 +4,7 @@ import { useCallback } from "react";
 import { GripVertical, Plus, Trash2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
 import { InvoiceLineItem, computeLineItemTotals, DEFAULT_VAT_RATE } from "@/types/invoice";
 import { cn } from "@/lib/utils";
 
@@ -30,6 +31,19 @@ function generateId(): string {
   return `li_${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
 }
 
+/**
+ * Line items editor. Uses container queries (the parent
+ * `.detail-panel-container` sets `container-type: inline-size`) to switch
+ * between a stacked card layout on narrow widths and an inline 5-column grid
+ * once the panel is wide enough. Threshold (~560px) chosen against the
+ * default 600px panel width minus editor padding.
+ *
+ * Layout strategy: the row markup is a stacked card by default. When the
+ * container is wide enough, a global CSS rule (`.invoice-line-items-row`
+ * inside `@container (min-width: 560px)`) flips the row into a CSS grid
+ * with `display: contents` on the inner wrappers — letting their children
+ * flow as direct grid items.
+ */
 export function InvoiceLineItemsTable({
   lineItems,
   onChange,
@@ -68,9 +82,15 @@ export function InvoiceLineItemsTable({
   }, [lineItems, onChange]);
 
   return (
-    <div className="space-y-2">
-      {/* Header */}
-      <div className="grid grid-cols-[20px_minmax(0,1fr)_70px_110px_70px_110px_28px] gap-2 text-xs font-medium text-muted-foreground px-1">
+    <div className="space-y-2 invoice-line-items">
+      {/* Header — only visible in wide (inline grid) mode (see globals.css). */}
+      <div
+        className={cn(
+          "hidden grid-cols-[20px_minmax(0,1fr)_70px_110px_70px_110px_28px] gap-2",
+          "text-xs font-medium text-muted-foreground px-1",
+          "invoice-line-items-header-wide"
+        )}
+      >
         <span />
         <span>Beschreibung</span>
         <span className="text-right">Menge</span>
@@ -80,8 +100,7 @@ export function InvoiceLineItemsTable({
         <span />
       </div>
 
-      {/* Rows */}
-      <div className="space-y-1">
+      <div className="space-y-2 invoice-line-items-rows">
         {lineItems.length === 0 ? (
           <div className="text-sm text-muted-foreground py-4 text-center border border-dashed rounded-md">
             Keine Positionen
@@ -89,104 +108,23 @@ export function InvoiceLineItemsTable({
         ) : (
           lineItems.map((item, index) => {
             const { netCents } = computeLineItemTotals(item);
-            // Display unit price as euros (with cents) - store as cents internally
             const unitEur =
               item.unitPrice === 0 ? "" : (item.unitPrice / 100).toString();
             return (
-              <div
+              <LineItemRow
                 key={item.id}
-                className={cn(
-                  "grid grid-cols-[20px_minmax(0,1fr)_70px_110px_70px_110px_28px] gap-2 items-center"
-                )}
-              >
-                <div
-                  className="text-muted-foreground flex items-center justify-center cursor-grab"
-                  aria-hidden
-                >
-                  <GripVertical className="h-4 w-4" />
-                </div>
-                <Input
-                  value={item.description}
-                  onChange={(e) =>
-                    updateItem(index, { description: e.target.value })
-                  }
-                  placeholder="Beschreibung"
-                  disabled={disabled}
-                  className="h-8"
-                />
-                <Input
-                  type="number"
-                  inputMode="decimal"
-                  value={item.quantity}
-                  min={0}
-                  step={1}
-                  onChange={(e) => {
-                    const v = parseFloat(e.target.value);
-                    updateItem(index, {
-                      quantity: Number.isFinite(v) ? v : 0,
-                    });
-                  }}
-                  disabled={disabled}
-                  className="h-8 text-right"
-                />
-                <Input
-                  type="number"
-                  inputMode="decimal"
-                  value={unitEur}
-                  step="0.01"
-                  min={0}
-                  onChange={(e) => {
-                    const raw = e.target.value;
-                    if (raw === "") {
-                      updateItem(index, { unitPrice: 0 });
-                      return;
-                    }
-                    const eur = parseFloat(raw);
-                    if (!Number.isFinite(eur)) return;
-                    updateItem(index, {
-                      unitPrice: Math.round(eur * 100),
-                    });
-                  }}
-                  disabled={disabled}
-                  className="h-8 text-right"
-                />
-                <Input
-                  type="number"
-                  inputMode="decimal"
-                  value={item.vatRate}
-                  step={1}
-                  min={0}
-                  max={100}
-                  onChange={(e) => {
-                    const v = parseFloat(e.target.value);
-                    updateItem(index, {
-                      vatRate: Number.isFinite(v) ? v : 0,
-                    });
-                  }}
-                  disabled={disabled}
-                  className="h-8 text-right"
-                />
-                <div className="text-right text-sm tabular-nums px-1">
-                  {formatEur(netCents)}
-                </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-7"
-                  onClick={() => removeItem(index)}
-                  disabled={disabled}
-                  title="Position entfernen"
-                >
-                  <Trash2 className="h-4 w-4 text-muted-foreground" />
-                </Button>
-              </div>
+                item={item}
+                unitEur={unitEur}
+                netCents={netCents}
+                disabled={disabled}
+                onUpdate={(patch) => updateItem(index, patch)}
+                onRemove={() => removeItem(index)}
+              />
             );
           })
         )}
       </div>
 
-      {/* Add row */}
       <div>
         <Button
           type="button"
@@ -198,6 +136,139 @@ export function InvoiceLineItemsTable({
           <Plus className="h-3.5 w-3.5 mr-1.5" />
           Position hinzufügen
         </Button>
+      </div>
+    </div>
+  );
+}
+
+interface LineItemRowProps {
+  item: InvoiceLineItem;
+  unitEur: string;
+  netCents: number;
+  disabled: boolean;
+  onUpdate: (patch: Partial<InvoiceLineItem>) => void;
+  onRemove: () => void;
+}
+
+function LineItemRow({
+  item,
+  unitEur,
+  netCents,
+  disabled,
+  onUpdate,
+  onRemove,
+}: LineItemRowProps) {
+  return (
+    <div className="rounded-md border bg-card/50 p-3 space-y-2 invoice-line-items-row">
+      {/* Grip handle (hidden in narrow / shown in wide). */}
+      <div
+        className="hidden text-muted-foreground items-center justify-center cursor-grab invoice-line-items-grip"
+        aria-hidden
+      >
+        <GripVertical className="h-4 w-4" />
+      </div>
+
+      {/* Description */}
+      <div className="invoice-line-items-cell invoice-line-items-cell-description">
+        <Label className="invoice-line-items-label text-xs text-muted-foreground">
+          Beschreibung
+        </Label>
+        <Input
+          value={item.description}
+          onChange={(e) => onUpdate({ description: e.target.value })}
+          placeholder="Beschreibung"
+          disabled={disabled}
+          className="h-8"
+        />
+      </div>
+
+      {/* Numerics: in narrow mode this is a 3-col grid; in wide mode each
+          cell flows directly into the parent grid via display:contents. */}
+      <div className="grid grid-cols-3 gap-2 invoice-line-items-numerics">
+        <div className="invoice-line-items-cell">
+          <Label className="invoice-line-items-label text-xs text-muted-foreground">
+            Menge
+          </Label>
+          <Input
+            type="number"
+            inputMode="decimal"
+            value={item.quantity}
+            min={0}
+            step={1}
+            onChange={(e) => {
+              const v = parseFloat(e.target.value);
+              onUpdate({ quantity: Number.isFinite(v) ? v : 0 });
+            }}
+            disabled={disabled}
+            className="h-8 text-right"
+          />
+        </div>
+        <div className="invoice-line-items-cell">
+          <Label className="invoice-line-items-label text-xs text-muted-foreground">
+            Einzelpreis (€)
+          </Label>
+          <Input
+            type="number"
+            inputMode="decimal"
+            value={unitEur}
+            step="0.01"
+            min={0}
+            onChange={(e) => {
+              const raw = e.target.value;
+              if (raw === "") {
+                onUpdate({ unitPrice: 0 });
+                return;
+              }
+              const eur = parseFloat(raw);
+              if (!Number.isFinite(eur)) return;
+              onUpdate({ unitPrice: Math.round(eur * 100) });
+            }}
+            disabled={disabled}
+            className="h-8 text-right"
+          />
+        </div>
+        <div className="invoice-line-items-cell">
+          <Label className="invoice-line-items-label text-xs text-muted-foreground">
+            USt. %
+          </Label>
+          <Input
+            type="number"
+            inputMode="decimal"
+            value={item.vatRate}
+            step={1}
+            min={0}
+            max={100}
+            onChange={(e) => {
+              const v = parseFloat(e.target.value);
+              onUpdate({ vatRate: Number.isFinite(v) ? v : 0 });
+            }}
+            disabled={disabled}
+            className="h-8 text-right"
+          />
+        </div>
+      </div>
+
+      {/* Footer: gesamt + remove (display:contents in wide mode). */}
+      <div className="flex items-center justify-between gap-2 invoice-line-items-footer">
+        <span className="text-xs text-muted-foreground invoice-line-items-label">
+          Gesamt
+        </span>
+        <div className="flex items-center gap-1 invoice-line-items-footer-actions">
+          <div className="text-sm tabular-nums px-1 invoice-line-items-total">
+            {formatEur(netCents)}
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-7 invoice-line-items-remove"
+            onClick={onRemove}
+            disabled={disabled}
+            title="Position entfernen"
+          >
+            <Trash2 className="h-4 w-4 text-muted-foreground" />
+          </Button>
+        </div>
       </div>
     </div>
   );
