@@ -24,6 +24,17 @@ import {
   pickIssuerEntity,
   pickIssuerIban,
 } from "./snapshots";
+import {
+  InvoiceIssuerSnapshot,
+  InvoiceRecipientSnapshot,
+} from "./types";
+
+function buildBlankIssuerSnapshot(): InvoiceIssuerSnapshot {
+  return { entityId: "", name: "", iban: "" };
+}
+async function buildBlankRecipientSnapshot(): Promise<InvoiceRecipientSnapshot> {
+  return { partnerId: "", partnerType: "user", name: "" };
+}
 
 export interface CreateInvoiceLineItemInput {
   id?: string;
@@ -34,8 +45,14 @@ export interface CreateInvoiceLineItemInput {
 }
 
 export interface CreateInvoiceRequest {
-  partnerId: string;
-  partnerType: "user" | "global";
+  /**
+   * Optional recipient. When omitted the invoice is created as a blank
+   * draft and the user fills in the partner in the sidebar. issueInvoice
+   * still validates that a real partner/issuer are set before generating
+   * the PDF.
+   */
+  partnerId?: string;
+  partnerType?: "user" | "global";
   issuerEntityId?: string;
   issuerIban?: string;
   /** ISO date string. Defaults to today. */
@@ -94,47 +111,41 @@ export async function performCreateInvoice(
   userId: string,
   request: CreateInvoiceRequest,
 ): Promise<CreateInvoiceResponse> {
-  if (!request?.partnerId) {
-    throw new HttpsError("invalid-argument", "partnerId is required");
-  }
-  if (request.partnerType !== "user" && request.partnerType !== "global") {
-    throw new HttpsError("invalid-argument", "partnerType must be 'user' or 'global'");
+  // Recipient: optional at draft time. Fill in via updateInvoice when the
+  // user picks/creates a partner in the sidebar. Placeholder snapshot keeps
+  // the Invoice schema non-nullable; issueInvoice validates real data is
+  // present before generating the PDF.
+  let recipient = await buildBlankRecipientSnapshot();
+  if (request.partnerId) {
+    const partnerType = request.partnerType ?? "user";
+    if (partnerType !== "user" && partnerType !== "global") {
+      throw new HttpsError("invalid-argument", "partnerType must be 'user' or 'global'");
+    }
+    const real = await buildRecipientSnapshot(db, request.partnerId, partnerType, userId);
+    if (!real) {
+      throw new HttpsError("not-found", "Partner not found or not accessible");
+    }
+    recipient = real;
   }
 
-  // Recipient snapshot
-  const recipient = await buildRecipientSnapshot(
-    db,
-    request.partnerId,
-    request.partnerType,
-    userId,
-  );
-  if (!recipient) {
-    throw new HttpsError("not-found", "Partner not found or not accessible");
-  }
-
-  // Issuer snapshot from user identity
+  // Issuer: optional at draft time. If the user already has an identity
+  // entity with an IBAN, snapshot it as a sensible default; otherwise leave
+  // it blank and let the sidebar prompt the user to fill it in.
+  let issuer = buildBlankIssuerSnapshot();
   const userData = await loadUserIdentity(db, userId);
   const entity = pickIssuerEntity(userData, request.issuerEntityId);
-  if (!entity) {
-    throw new HttpsError(
-      "failed-precondition",
-      "No identity entity configured. Add one in Settings before creating invoices.",
-    );
+  if (entity) {
+    if (request.issuerIban && !entity.ibans?.includes(request.issuerIban)) {
+      throw new HttpsError(
+        "invalid-argument",
+        "issuerIban does not belong to the selected entity",
+      );
+    }
+    const iban = pickIssuerIban(entity, request.issuerIban);
+    if (iban) {
+      issuer = buildIssuerSnapshot(entity, iban);
+    }
   }
-  const iban = pickIssuerIban(entity, request.issuerIban);
-  if (!iban) {
-    throw new HttpsError(
-      "failed-precondition",
-      "Selected identity has no IBAN configured.",
-    );
-  }
-  if (request.issuerIban && !entity.ibans?.includes(request.issuerIban)) {
-    throw new HttpsError(
-      "invalid-argument",
-      "issuerIban does not belong to the selected entity",
-    );
-  }
-  const issuer = buildIssuerSnapshot(entity, iban);
 
   // Dates
   const issueDate = parseIsoDateToTimestamp(request.issueDate);

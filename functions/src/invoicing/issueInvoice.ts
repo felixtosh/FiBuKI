@@ -73,6 +73,12 @@ export async function performIssueInvoice(
   if (!current.lineItems || current.lineItems.length === 0) {
     throw new HttpsError("failed-precondition", "Invoice must have at least one line item");
   }
+  if (!current.recipient?.partnerId || !current.recipient?.name) {
+    throw new HttpsError("failed-precondition", "Pick an invoice recipient first");
+  }
+  if (!current.issuer?.entityId || !current.issuer?.iban || !current.issuer?.name) {
+    throw new HttpsError("failed-precondition", "Pick a sender bank account first");
+  }
 
   // 1. Allocate the real invoice number
   const number = await allocateInvoiceNumber(db, userId);

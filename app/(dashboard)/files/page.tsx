@@ -36,10 +36,6 @@ import { useAuth, SmartFeatureGuard } from "@/components/auth";
 import { usePageTitle } from "@/hooks/use-page-title";
 import { callFunction } from "@/lib/firebase/callable";
 import { InvoiceDetailPanel } from "@/components/invoicing/InvoiceDetailPanel";
-import {
-  InvoicePartnerPicker,
-  SelectedPartner,
-} from "@/components/invoicing/InvoicePartnerPicker";
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const ACCEPTED_TYPES = {
   "image/jpeg": [".jpg", ".jpeg"],
@@ -135,9 +131,6 @@ function FilesContent() {
   }, [transactions]);
 
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
-  const [isInvoiceDialogOpen, setIsInvoiceDialogOpen] = useState(false);
-  const [invoiceRecipient, setInvoiceRecipient] =
-    useState<SelectedPartner | null>(null);
   const [creatingInvoice, setCreatingInvoice] = useState(false);
   const [panelWidth, setPanelWidth] = useState<number>(DEFAULT_PANEL_WIDTH);
   const [isResizing, setIsResizing] = useState(false);
@@ -555,20 +548,16 @@ function FilesContent() {
   }, [selectedFile, unmarkAsNotInvoice, ctx]);
 
 
+  // FAB: create an empty draft invoice and open the sidebar. Partner and
+  // issuer are picked/created inline in the sidebar, not asked upfront.
   const handleCreateInvoice = useCallback(async () => {
-    if (!invoiceRecipient || creatingInvoice) return;
+    if (creatingInvoice) return;
     setCreatingInvoice(true);
     try {
-      const res = await callFunction<
-        { partnerId: string; partnerType: "user" | "global" },
-        { invoiceId: string }
-      >("createInvoice", {
-        partnerId: invoiceRecipient.partnerId,
-        partnerType: invoiceRecipient.partnerType,
-      });
-      setIsInvoiceDialogOpen(false);
-      setInvoiceRecipient(null);
-      // Navigate to the new draft invoice
+      const res = await callFunction<Record<string, never>, { invoiceId: string }>(
+        "createInvoice",
+        {}
+      );
       const params = new URLSearchParams();
       params.set("invoiceId", res.invoiceId);
       router.push(`/files?${params.toString()}`, { scroll: false });
@@ -577,7 +566,7 @@ function FilesContent() {
     } finally {
       setCreatingInvoice(false);
     }
-  }, [invoiceRecipient, creatingInvoice, router]);
+  }, [creatingInvoice, router]);
 
   const handleCloseInvoice = useCallback(() => {
     const params = new URLSearchParams(searchParams.toString());
@@ -717,57 +706,21 @@ function FilesContent() {
         </DialogContent>
       </Dialog>
 
-      {/* Create Invoice FAB */}
-      <Dialog
-        open={isInvoiceDialogOpen}
-        onOpenChange={(open) => {
-          setIsInvoiceDialogOpen(open);
-          if (!open) setInvoiceRecipient(null);
-        }}
+      {/* Create Invoice FAB: opens an empty draft directly in the sidebar */}
+      <Button
+        variant="secondary"
+        className="fixed bottom-24 right-6 z-40 h-14 w-14 rounded-full shadow-lg"
+        size="icon"
+        title="Rechnung erstellen"
+        onClick={handleCreateInvoice}
+        disabled={creatingInvoice}
       >
-        <DialogTrigger asChild>
-          <Button
-            variant="secondary"
-            className="fixed bottom-24 right-6 z-40 h-14 w-14 rounded-full shadow-lg"
-            size="icon"
-            title="Rechnung erstellen"
-          >
-            <FileText className="h-6 w-6" />
-          </Button>
-        </DialogTrigger>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Rechnung erstellen</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Wähle den Empfänger, um einen neuen Rechnungsentwurf zu erstellen.
-            </p>
-            <InvoicePartnerPicker
-              value={invoiceRecipient}
-              onChange={setInvoiceRecipient}
-            />
-            <div className="flex justify-end gap-2">
-              <Button
-                variant="ghost"
-                onClick={() => setIsInvoiceDialogOpen(false)}
-                disabled={creatingInvoice}
-              >
-                Abbrechen
-              </Button>
-              <Button
-                onClick={handleCreateInvoice}
-                disabled={!invoiceRecipient || creatingInvoice}
-              >
-                {creatingInvoice && (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                )}
-                Entwurf anlegen
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+        {creatingInvoice ? (
+          <Loader2 className="h-6 w-6 animate-spin" />
+        ) : (
+          <FileText className="h-6 w-6" />
+        )}
+      </Button>
 
       {/* Main content */}
       <div
