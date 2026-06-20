@@ -32,7 +32,14 @@ export function useInvoice(invoiceId: string | null) {
         setLoading(false);
       },
       (err) => {
-        console.error("useInvoice snapshot error:", err);
+        // Permission-denied is expected when the invoice has just been
+        // deleted (e.g. abandon-cleanup on close): Firestore evaluates the
+        // owner rule against a null resource and denies. Treat as not-found
+        // rather than logging a scary error.
+        const code = (err as { code?: string }).code;
+        if (code !== "permission-denied") {
+          console.error("useInvoice snapshot error:", err);
+        }
         setInvoice(null);
         setLoading(false);
       }

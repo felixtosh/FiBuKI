@@ -154,8 +154,22 @@ export async function performCreateInvoice(
   const paymentTerms = request.paymentTerms || DEFAULT_PAYMENT_TERMS;
   const dueDate = addDaysToTimestamp(issueDate, parsePaymentTermsToDays(paymentTerms));
 
-  // Line items + totals
-  const lineItems = normalizeLineItems(request.lineItems);
+  // Line items + totals. Drafts always carry at least one empty row so the
+  // editor opens with an actionable line, and issueInvoice's
+  // "at least one line item" guard is satisfied the moment the user types
+  // a description.
+  let lineItems = normalizeLineItems(request.lineItems);
+  if (lineItems.length === 0) {
+    lineItems = [
+      {
+        id: genLineItemId(),
+        description: "",
+        quantity: 1,
+        unitPrice: 0,
+        vatRate: DEFAULT_VAT_RATE,
+      },
+    ];
+  }
   const { subtotal, vatAmount, total } = computeInvoiceTotals(lineItems);
 
   const now = Timestamp.now();

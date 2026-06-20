@@ -61,6 +61,20 @@ export function InvoiceLineItemsTable({
 
   const removeItem = useCallback(
     (index: number) => {
+      // Always keep at least one row — issueInvoice requires it, and an empty
+      // editor with no rows is a worse UX than one blank row.
+      if (lineItems.length <= 1) {
+        onChange([
+          {
+            id: lineItems[0]?.id ?? generateId(),
+            description: "",
+            quantity: 1,
+            unitPrice: 0,
+            vatRate: DEFAULT_VAT_RATE,
+          },
+        ]);
+        return;
+      }
       const next = lineItems.filter((_, i) => i !== index);
       onChange(next);
     },

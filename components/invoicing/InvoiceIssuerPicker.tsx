@@ -322,7 +322,21 @@ export function InvoiceIssuerPicker({
 
       {selectedEntity && hasIbans && (
         <div className="space-y-1.5">
-          <Label className="text-xs text-muted-foreground">IBAN</Label>
+          <div className="flex items-center justify-between gap-2">
+            <Label className="text-xs text-muted-foreground">IBAN</Label>
+            {!disabled && (
+              <Link
+                href="/accounts"
+                target="_blank"
+                rel="noopener"
+                className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground hover:underline"
+                title="Konten in neuem Tab bearbeiten"
+              >
+                <ExternalLink className="h-3 w-3" />
+                Bearbeiten
+              </Link>
+            )}
+          </div>
           <Select
             value={value?.iban ?? ""}
             onValueChange={handleIbanChange}

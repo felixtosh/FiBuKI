@@ -689,6 +689,8 @@ export function InvoiceDetailPanel({
               disabled={disabled}
             />
 
+            <Separator />
+
             <InvoiceRecipientField
               value={form.recipient}
               onChange={(recipient) => updateForm({ recipient })}
@@ -697,7 +699,11 @@ export function InvoiceDetailPanel({
 
             <Separator />
 
-            <div className="grid grid-cols-3 gap-2">
+            {/* "Zahlungsfrist" (the verbose payment-terms text) used to live
+                here, but it duplicates the explicit due date. Removed —
+                users who want custom payment-terms wording can use the
+                Notiz field below the line items. */}
+            <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1.5">
                 <Label className="text-xs text-muted-foreground">
                   Rechnungsdatum
@@ -709,19 +715,6 @@ export function InvoiceDetailPanel({
                     updateForm({ issueDate: e.target.value })
                   }
                   disabled={disabled}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs text-muted-foreground">
-                  Zahlungsfrist
-                </Label>
-                <Input
-                  value={form.paymentTerms}
-                  onChange={(e) =>
-                    updateForm({ paymentTerms: e.target.value })
-                  }
-                  disabled={disabled}
-                  placeholder={DEFAULT_PAYMENT_TERMS}
                 />
               </div>
               <div className="space-y-1.5">
