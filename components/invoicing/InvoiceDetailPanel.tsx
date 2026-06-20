@@ -14,7 +14,6 @@ import {
   RefreshCw,
   Send,
   Share2,
-  Trash2,
   X,
   XCircle,
 } from "lucide-react";
@@ -536,15 +535,6 @@ export function InvoiceDetailPanel({
       }
     });
 
-  const handleDelete = () =>
-    doAction("delete", async () => {
-      await callFunction<{ invoiceId: string }, { success: boolean }>(
-        "deleteInvoice",
-        { invoiceId }
-      );
-      onClose();
-    });
-
   const handleRegen = () =>
     doAction("regen", async () => {
       await callFunction<
@@ -568,7 +558,8 @@ export function InvoiceDetailPanel({
   return (
     <>
       <div className="h-full flex flex-col">
-        {/* Header */}
+        {/* Header — status + invoice number + close. All actions live in the
+            sticky footer below (mirrors partner-detail-panel). */}
         <div className="flex items-center justify-between gap-2 h-[53px] border-b px-4 flex-shrink-0">
           <div className="flex items-center gap-3 min-w-0">
             <h2 className="text-sm font-semibold truncate">
@@ -576,134 +567,15 @@ export function InvoiceDetailPanel({
             </h2>
             <InvoiceStatusBadge status={invoice.status} />
           </div>
-          <div className="flex items-center gap-1">
-            {/* Action buttons (status-aware) */}
-            {invoice.status === "draft" && (
-              <>
-                <Button
-                  size="sm"
-                  onClick={handleIssue}
-                  disabled={actionBusy !== null}
-                >
-                  {actionBusy === "issue" ? (
-                    <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-                  ) : (
-                    <Send className="h-3.5 w-3.5 mr-1.5" />
-                  )}
-                  Ausstellen
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={handleDuplicate}
-                  disabled={actionBusy !== null}
-                  title="Duplizieren"
-                >
-                  <Copy className="h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={handleDelete}
-                  disabled={actionBusy !== null}
-                  className="text-destructive hover:text-destructive"
-                  title="Löschen"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
-              </>
-            )}
-            {(invoice.status === "issued" || invoice.status === "sent") && (
-              <>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setShareOpen(true)}
-                  disabled={actionBusy !== null}
-                  title="Teilen"
-                >
-                  <Share2 className="h-3.5 w-3.5 mr-1.5" />
-                  Teilen
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={handleRegen}
-                  disabled={actionBusy !== null}
-                  title="PDF neu erzeugen"
-                >
-                  {actionBusy === "regen" ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <RefreshCw className="h-3.5 w-3.5" />
-                  )}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={handleDuplicate}
-                  disabled={actionBusy !== null}
-                  title="Duplizieren"
-                >
-                  <Copy className="h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={handleCancel}
-                  disabled={actionBusy !== null}
-                  className="text-destructive hover:text-destructive"
-                  title="Stornieren"
-                >
-                  <XCircle className="h-3.5 w-3.5" />
-                </Button>
-              </>
-            )}
-            {invoice.status === "paid" && (
-              <>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setShareOpen(true)}
-                  disabled={actionBusy !== null}
-                  title="Teilen"
-                >
-                  <Share2 className="h-3.5 w-3.5 mr-1.5" />
-                  Teilen
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={handleDuplicate}
-                  disabled={actionBusy !== null}
-                  title="Duplizieren"
-                >
-                  <Copy className="h-3.5 w-3.5" />
-                </Button>
-              </>
-            )}
-            {invoice.status === "cancelled" && (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={handleDuplicate}
-                disabled={actionBusy !== null}
-                title="Duplizieren"
-              >
-                <Copy className="h-3.5 w-3.5 mr-1.5" />
-                Duplizieren
-              </Button>
-            )}
-            <Button
-              size="icon"
-              variant="ghost"
-              onClick={onClose}
-              className="h-8 w-8"
-              title="Schließen"
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={onClose}
+            className="h-8 w-8"
+            title="Schließen"
+          >
+            <X className="h-4 w-4" />
+          </Button>
         </div>
 
         {/* Body: single-column editor with embedded preview thumbnail */}
@@ -867,6 +739,110 @@ export function InvoiceDetailPanel({
             )}
           </div>
         </ScrollArea>
+
+        {/* Sticky footer actions — mirrors the partner/file detail panel
+            pattern (`p-4 border-t` at the bottom of the column). Buttons
+            are status-aware. During draft we intentionally show only the
+            primary "Ausstellen" action: closing the sidebar auto-deletes
+            an empty draft (see phantom-cleanup effect above), so Löschen
+            is redundant, and Duplizieren of a half-filled draft is
+            confusing. */}
+        <div className="flex-shrink-0 border-t bg-background p-4 space-y-2">
+          {invoice.status === "draft" && (
+            <Button
+              className="w-full"
+              onClick={handleIssue}
+              disabled={actionBusy !== null}
+            >
+              {actionBusy === "issue" ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Send className="h-4 w-4 mr-2" />
+              )}
+              Ausstellen
+            </Button>
+          )}
+          {(invoice.status === "issued" || invoice.status === "sent") && (
+            <>
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={() => setShareOpen(true)}
+                disabled={actionBusy !== null}
+              >
+                <Share2 className="h-4 w-4 mr-2" />
+                Teilen
+              </Button>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={handleRegen}
+                  disabled={actionBusy !== null}
+                  title="PDF neu erzeugen"
+                >
+                  {actionBusy === "regen" ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                  )}
+                  PDF neu
+                </Button>
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={handleDuplicate}
+                  disabled={actionBusy !== null}
+                >
+                  <Copy className="h-4 w-4 mr-2" />
+                  Duplizieren
+                </Button>
+              </div>
+              <Button
+                variant="outline"
+                className="w-full text-destructive hover:text-destructive hover:bg-destructive/10"
+                onClick={handleCancel}
+                disabled={actionBusy !== null}
+              >
+                <XCircle className="h-4 w-4 mr-2" />
+                Stornieren
+              </Button>
+            </>
+          )}
+          {invoice.status === "paid" && (
+            <>
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={() => setShareOpen(true)}
+                disabled={actionBusy !== null}
+              >
+                <Share2 className="h-4 w-4 mr-2" />
+                Teilen
+              </Button>
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={handleDuplicate}
+                disabled={actionBusy !== null}
+              >
+                <Copy className="h-4 w-4 mr-2" />
+                Duplizieren
+              </Button>
+            </>
+          )}
+          {invoice.status === "cancelled" && (
+            <Button
+              variant="outline"
+              className="w-full"
+              onClick={handleDuplicate}
+              disabled={actionBusy !== null}
+            >
+              <Copy className="h-4 w-4 mr-2" />
+              Duplizieren
+            </Button>
+          )}
+        </div>
       </div>
 
       <InvoiceShareLinkDialog
