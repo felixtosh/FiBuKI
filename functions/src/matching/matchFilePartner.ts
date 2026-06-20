@@ -1070,6 +1070,30 @@ export async function runPartnerMatching(
         95, // VAT ID match confidence
         []
       );
+
+      // If a global partner exists with this VAT but the local isn't linked yet,
+      // backfill the link so the picker doesn't surface both copies. Self-heals
+      // partners promoted to global after the local was already created.
+      if (!existingUserPartner.globalPartnerId) {
+        const matchingGlobal = filteredGlobalPartners.find((p) => {
+          if (!p.vatId) return false;
+          const normalizedPartnerVat = p.vatId.toUpperCase().replace(/[^A-Z0-9]/g, "");
+          return normalizedPartnerVat === normalizedExtractedVat;
+        });
+        if (matchingGlobal) {
+          await getFirestore()
+            .collection("partners")
+            .doc(existingUserPartner.id)
+            .update({
+              globalPartnerId: matchingGlobal.id,
+              updatedAt: Timestamp.now(),
+            });
+          console.log(
+            `[PartnerMatch] Backfilled globalPartnerId on local partner ${existingUserPartner.id} -> ${matchingGlobal.id}`
+          );
+        }
+      }
+
       // Learn extracted name as alias and email domain (non-blocking)
       learnPartnerAlias(existingUserPartner.id, extractedPartner).catch(console.error);
       learnEmailDomainFromPartnerMatch(
