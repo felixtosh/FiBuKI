@@ -29,8 +29,9 @@ export async function transformTransactions(
     // Build partner name from merchant or description
     const partner = tx.merchant_name || null;
 
-    // Parse date
-    const txDate = new Date(tx.timestamp);
+    // Parse date and normalize to UTC midnight (date-only)
+    const txDateFull = new Date(tx.timestamp);
+    const txDate = new Date(Date.UTC(txDateFull.getUTCFullYear(), txDateFull.getUTCMonth(), txDateFull.getUTCDate()));
 
     // Reference for dedupe hash
     const reference = tx.meta?.provider_reference || tx.transaction_id;

@@ -39,6 +39,7 @@ const PLAN_RANK: Record<PlanId, number> = {
 export function BillingPlanComparison() {
   const {
     plan: currentPlan,
+    planConfig,
     subscription,
     isPlanTester,
     isFreePlanOverride,
@@ -143,8 +144,22 @@ export function BillingPlanComparison() {
     }
   };
 
-  // Hide plan comparison for free_plan override users
-  if (isFreePlanOverride) return null;
+  // Show a friendly card for admin-gifted users
+  if (isFreePlanOverride) {
+    return (
+      <Card>
+        <CardContent className="py-8 text-center space-y-2">
+          <div className="flex items-center justify-center gap-2">
+            <Heart className="h-5 w-5 text-green-600 fill-green-600" />
+            <h3 className="text-lg font-semibold">{planConfig.name} Plan</h3>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            Gifted by admin &mdash; enjoy testing!
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   // For plan ordering comparison, map legacy plans to new equivalents
   const effectivePlan =

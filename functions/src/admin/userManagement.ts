@@ -110,9 +110,9 @@ export const setUserOverride = onCall(
     if (override === "free_plan") {
       const data = subDoc.exists
         ? {
-            plan: "pro" as const,
+            plan: "smart" as const,
             stripeSubscriptionStatus: "active" as const,
-            aiFairUseLimitEur: PLANS.pro.aiFairUseLimitEur,
+            aiFairUseLimitEur: PLANS.smart.aiFairUseLimitEur,
             adminOverride: "free_plan" as const,
             adminOverrideSetBy: callerEmail,
             adminOverrideSetAt: now,
@@ -120,9 +120,9 @@ export const setUserOverride = onCall(
           }
         : {
             ...createDefaultSubscriptionData(targetUid),
-            plan: "pro" as const,
+            plan: "smart" as const,
             stripeSubscriptionStatus: "active" as const,
-            aiFairUseLimitEur: PLANS.pro.aiFairUseLimitEur,
+            aiFairUseLimitEur: PLANS.smart.aiFairUseLimitEur,
             adminOverride: "free_plan" as const,
             adminOverrideSetBy: callerEmail,
             adminOverrideSetAt: now,

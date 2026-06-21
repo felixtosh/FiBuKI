@@ -1,6 +1,9 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
+import { defineSecret } from "firebase-functions/params";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { sendInviteEmail } from "./sendInviteEmail";
+
+const resendApiKey = defineSecret("RESEND_API_KEY");
 
 const db = getFirestore();
 
@@ -83,6 +86,7 @@ export const approveAccessRequest = onCall(
   {
     region: "europe-west1",
     cors: CORS_ORIGINS,
+    secrets: [resendApiKey],
   },
   async (request) => {
     if (!request.auth) {

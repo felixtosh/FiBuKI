@@ -3,7 +3,7 @@ import { defineSecret } from "firebase-functions/params";
 import { FieldValue, Firestore } from "firebase-admin/firestore";
 import { sendInviteEmail } from "./sendInviteEmail";
 
-const sendgridApiKey = defineSecret("SENDGRID_API_KEY");
+const resendApiKey = defineSecret("RESEND_API_KEY");
 
 interface SetOpenSeatsRequest {
   totalSeats: number;
@@ -19,7 +19,7 @@ export const setOpenSeatsCallable = createCallable<
   SetOpenSeatsRequest,
   SetOpenSeatsResponse
 >(
-  { name: "setOpenSeats", secrets: [sendgridApiKey] },
+  { name: "setOpenSeats", secrets: [resendApiKey] },
   async (ctx, request) => {
     // Admin only
     if (!ctx.request.auth?.token.admin) {

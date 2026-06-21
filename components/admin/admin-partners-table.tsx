@@ -310,7 +310,7 @@ function AdminPartnersTableInner(
         </div>
 
         {/* Table */}
-        <div className="flex-1 overflow-hidden">
+        <div className="flex-1 flex flex-col overflow-hidden">
           <ResizableDataTable
             ref={tableRef}
             columns={columns}

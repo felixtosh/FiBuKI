@@ -126,10 +126,13 @@ export const bulkCreateTransactionsCallable = createCallable<
           );
         }
 
+        // Normalize to UTC midnight — safety net for any timezone drift in the incoming ISO string
+        const utcMidnight = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+
         const transactionDoc: Record<string, unknown> = {
           userId: ctx.userId,
           sourceId: txData.sourceId,
-          date: Timestamp.fromDate(date),
+          date: Timestamp.fromDate(utcMidnight),
           amount: txData.amount,
           currency: txData.currency,
           name: txData.name,

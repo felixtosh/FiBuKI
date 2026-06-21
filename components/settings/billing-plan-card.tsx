@@ -124,7 +124,6 @@ export function BillingPlanCard() {
                 <SelectItem value="free">Free</SelectItem>
                 <SelectItem value="data">Data</SelectItem>
                 <SelectItem value="smart">Smart</SelectItem>
-                <SelectItem value="pro">Pro</SelectItem>
               </SelectContent>
             </Select>
           </div>

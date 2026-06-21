@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Dialog,
   DialogContent,
@@ -52,6 +52,8 @@ export function MfaChallengeDialog({
   const [backupCode, setBackupCode] = useState("");
   const [showMethodSelector, setShowMethodSelector] = useState(false);
   const [localSelectedMethod, setLocalSelectedMethod] = useState<MfaChallengeMethod | null>(null);
+  const [passkeyAutoTriggered, setPasskeyAutoTriggered] = useState(false);
+  const autoTriggerRef = useRef(false);
 
   // Determine available methods - either from hook (Firebase MFA) or from mfaStatus prop (custom MFA)
   const availableMethods: MfaChallengeMethod[] = (() => {
@@ -87,16 +89,6 @@ export function MfaChallengeDialog({
     return availableMethods[0] || null;
   })();
 
-  const handleTotpSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      await verifyTotp(totpCode);
-      onSuccess();
-    } catch {
-      // Error is handled by the hook
-    }
-  };
-
   const handlePasskeyVerify = async () => {
     try {
       await verifyPasskey();
@@ -105,6 +97,38 @@ export function MfaChallengeDialog({
       // Error is handled by the hook, but we also need to ensure
       // the dialog stays open and user can retry or cancel
       console.log("[MfaChallengeDialog] Passkey verification failed:", err);
+    }
+  };
+
+  // Auto-trigger passkey verification when dialog opens with passkey selected
+  useEffect(() => {
+    if (
+      open &&
+      selectedMethod === "passkey" &&
+      !loading &&
+      !error &&
+      !autoTriggerRef.current &&
+      !showMethodSelector
+    ) {
+      autoTriggerRef.current = true;
+      setPasskeyAutoTriggered(true);
+      handlePasskeyVerify();
+    }
+    // Reset when dialog closes
+    if (!open) {
+      autoTriggerRef.current = false;
+      setPasskeyAutoTriggered(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, selectedMethod, loading, showMethodSelector]);
+
+  const handleTotpSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await verifyTotp(totpCode);
+      onSuccess();
+    } catch {
+      // Error is handled by the hook
     }
   };
 
@@ -225,7 +249,7 @@ export function MfaChallengeDialog({
         <DialogHeader>
           <DialogTitle>Two-Factor Authentication</DialogTitle>
           <DialogDescription>
-            Verify your identity to continue signing in
+            Verify your identity to continue
           </DialogDescription>
         </DialogHeader>
 
@@ -310,42 +334,64 @@ export function MfaChallengeDialog({
           <div className="space-y-4">
             <div className="text-center py-4">
               <div className="inline-flex p-4 rounded-full bg-muted mb-4">
-                <Fingerprint className="h-12 w-12 text-muted-foreground" />
+                {loading ? (
+                  <Loader2 className="h-12 w-12 text-muted-foreground animate-spin" />
+                ) : (
+                  <Fingerprint className="h-12 w-12 text-muted-foreground" />
+                )}
               </div>
-              <p className="text-sm text-muted-foreground mb-2">
-                Use your passkey to verify your identity
-              </p>
-              <p className="text-xs text-muted-foreground">
-                This may use Face ID, Touch ID, or your security key
-              </p>
+              {loading ? (
+                <p className="text-sm text-muted-foreground">
+                  Waiting for passkey approval&hellip;
+                </p>
+              ) : error ? (
+                <>
+                  <p className="text-sm text-muted-foreground mb-2">
+                    Verification failed. Please try again.
+                  </p>
+                </>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  Use your passkey to verify your identity
+                </p>
+              )}
             </div>
 
-            <div className="flex gap-2">
+            {/* Show action buttons only after an error or if not auto-triggering */}
+            {(error || !passkeyAutoTriggered || !loading) && !loading && (
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  onClick={handleCancel}
+                  className="flex-1"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={() => {
+                    autoTriggerRef.current = false;
+                    setPasskeyAutoTriggered(false);
+                    handlePasskeyVerify();
+                  }}
+                  className="flex-1"
+                >
+                  Try Again
+                </Button>
+              </div>
+            )}
+
+            {/* Show cancel only while loading */}
+            {loading && (
               <Button
                 variant="outline"
                 onClick={handleCancel}
-                disabled={loading}
-                className="flex-1"
+                className="w-full"
               >
                 Cancel
               </Button>
-              <Button
-                onClick={handlePasskeyVerify}
-                disabled={loading}
-                className="flex-1"
-              >
-                {loading ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Verifying...
-                  </>
-                ) : (
-                  "Use Passkey"
-                )}
-              </Button>
-            </div>
+            )}
 
-            {availableMethods.length > 1 && (
+            {availableMethods.length > 1 && !loading && (
               <Button
                 type="button"
                 variant="link"

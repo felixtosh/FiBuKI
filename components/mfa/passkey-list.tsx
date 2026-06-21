@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { formatDistanceToNow } from "date-fns";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,7 +14,10 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { usePasskeys } from "@/hooks/use-passkeys";
+import { useMfa } from "@/hooks/use-mfa";
+import { MfaChallengeDialog } from "@/components/mfa/mfa-challenge-dialog";
 import { PasskeyCredential } from "@/types/mfa";
+import type { MfaStatusResponse } from "@/types/mfa";
 import { Fingerprint, Key, Smartphone, Trash2, Loader2 } from "lucide-react";
 import { Timestamp } from "firebase/firestore";
 
@@ -24,7 +27,18 @@ interface PasskeyListProps {
 
 export function PasskeyList({ onAddPasskey }: PasskeyListProps) {
   const { passkeys, loading, deletePasskey, actionLoading } = usePasskeys();
+  const { getMfaStatus } = useMfa();
   const [deleteTarget, setDeleteTarget] = useState<PasskeyCredential | null>(null);
+  const [showMfaChallenge, setShowMfaChallenge] = useState(false);
+  const [mfaStatus, setMfaStatus] = useState<MfaStatusResponse | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<PasskeyCredential | null>(null);
+
+  // Fetch MFA status when needed for the challenge dialog
+  useEffect(() => {
+    if (showMfaChallenge && !mfaStatus) {
+      getMfaStatus().then(setMfaStatus).catch(console.error);
+    }
+  }, [showMfaChallenge, mfaStatus, getMfaStatus]);
 
   const getPasskeyIcon = (passkey: PasskeyCredential) => {
     const transports = passkey.transports || [];
@@ -54,16 +68,33 @@ export function PasskeyList({ onAddPasskey }: PasskeyListProps) {
     return formatDistanceToNow(date, { addSuffix: true });
   };
 
-  const handleDelete = async () => {
+  // Step 1: User confirms they want to delete → show MFA challenge
+  const handleConfirmDelete = () => {
     if (!deleteTarget) return;
+    setPendingDelete(deleteTarget);
+    setDeleteTarget(null);
+    setShowMfaChallenge(true);
+  };
+
+  // Step 2: MFA verified → actually delete the passkey
+  const handleMfaSuccess = async () => {
+    setShowMfaChallenge(false);
+    if (!pendingDelete) return;
 
     try {
-      await deletePasskey(deleteTarget.id);
+      await deletePasskey(pendingDelete.id);
     } catch (error) {
       console.error("Failed to delete passkey:", error);
     } finally {
-      setDeleteTarget(null);
+      setPendingDelete(null);
+      setMfaStatus(null);
     }
+  };
+
+  const handleMfaCancel = () => {
+    setShowMfaChallenge(false);
+    setPendingDelete(null);
+    setMfaStatus(null);
   };
 
   if (loading) {
@@ -139,22 +170,23 @@ export function PasskeyList({ onAddPasskey }: PasskeyListProps) {
           <AlertDialogFooter>
             <AlertDialogCancel disabled={actionLoading}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={handleDelete}
+              onClick={handleConfirmDelete}
               disabled={actionLoading}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              {actionLoading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Removing...
-                </>
-              ) : (
-                "Remove"
-              )}
+              Remove
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* MFA verification before deletion */}
+      <MfaChallengeDialog
+        open={showMfaChallenge}
+        onSuccess={handleMfaSuccess}
+        onCancel={handleMfaCancel}
+        mfaStatus={mfaStatus}
+      />
     </div>
   );
 }

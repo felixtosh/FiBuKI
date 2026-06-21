@@ -71,8 +71,7 @@ export function getTransactionColumns(
           return <span className="text-sm text-muted-foreground">—</span>;
         }
 
-        const timeStr = format(dateObj, "HH:mm");
-        const showTime = timeStr !== "00:00";
+        const showTime = dateObj.getUTCHours() !== 0 || dateObj.getUTCMinutes() !== 0;
         return (
           <div>
             <p className="text-sm whitespace-nowrap">
@@ -80,7 +79,7 @@ export function getTransactionColumns(
             </p>
             {showTime && (
               <p className="text-sm text-muted-foreground">
-                {timeStr}
+                {format(dateObj, "HH:mm")}
               </p>
             )}
           </div>

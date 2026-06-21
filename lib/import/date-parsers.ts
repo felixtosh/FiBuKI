@@ -97,7 +97,10 @@ export function parseDate(value: string, parserId: string): Date | null {
   const year = parsed.getFullYear();
   if (year < 1990 || year > 2100) return null;
 
-  return parsed;
+  // Normalize to UTC midnight — date-fns parse() creates dates in the browser's
+  // local timezone, so extract the local date components (which are correct) and
+  // reconstruct as UTC to avoid off-by-one errors in non-UTC timezones.
+  return new Date(Date.UTC(parsed.getFullYear(), parsed.getMonth(), parsed.getDate()));
 }
 
 /**

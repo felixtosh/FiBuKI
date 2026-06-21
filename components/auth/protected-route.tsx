@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "./auth-provider";
 import { MfaChallengeDialog } from "@/components/mfa";
 import { useMfaChallenge } from "@/hooks/use-mfa-challenge";
+import { FibukiMascot } from "@/components/ui/fibuki-mascot";
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -47,10 +48,12 @@ export function ProtectedRoute({
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-screen">
-        <div className="flex flex-col items-center gap-4">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-          <p className="text-sm text-muted-foreground">Loading...</p>
+      <div className="flex items-center justify-center h-screen bg-background">
+        <div className="flex flex-col items-center gap-3 animate-in fade-in duration-300">
+          <div className="animate-pulse">
+            <FibukiMascot size={48} forceFacingRight />
+          </div>
+          <p className="text-sm text-muted-foreground">One moment&hellip;</p>
         </div>
       </div>
     );
