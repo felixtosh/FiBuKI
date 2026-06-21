@@ -4,13 +4,14 @@
  */
 
 import { onSchedule } from "firebase-functions/v2/scheduler";
+import { defineSecret } from "firebase-functions/params";
 import { getFirestore } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
 import { buildDigestSubject, buildDigestHtml, buildDigestText } from "./digestEmail";
 import type { DigestStats } from "./digestEmail";
 import { generateUnsubscribeToken } from "./unsubscribeDigest";
 
-const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY || "";
+const resendApiKey = defineSecret("RESEND_API_KEY");
 const FROM_EMAIL = "noreply@fibuki.com";
 const FROM_NAME = "FiBuKI";
 const BATCH_SIZE = 10;
@@ -24,10 +25,12 @@ export const sendWeeklyDigest = onSchedule(
     timeZone: "UTC",
     timeoutSeconds: 540,
     memory: "512MiB",
+    secrets: [resendApiKey],
   },
   async () => {
-    if (!SENDGRID_API_KEY) {
-      console.warn("[WeeklyDigest] SENDGRID_API_KEY not configured, skipping");
+    const apiKey = resendApiKey.value();
+    if (!apiKey) {
+      console.warn("[WeeklyDigest] RESEND_API_KEY not configured, skipping");
       return;
     }
 
@@ -54,8 +57,8 @@ export const sendWeeklyDigest = onSchedule(
 
     console.log(`[WeeklyDigest] Processing ${eligibleDocs.length} users`);
 
-    const sgMail = (await import("@sendgrid/mail")).default;
-    sgMail.setApiKey(SENDGRID_API_KEY);
+    const { Resend } = await import("resend");
+    const resend = new Resend(apiKey);
 
     let sent = 0;
     let skipped = 0;
@@ -94,9 +97,9 @@ export const sendWeeklyDigest = onSchedule(
             const html = buildDigestHtml(stats, unsubscribeUrl, name);
             const text = buildDigestText(stats, unsubscribeUrl, name);
 
-            await sgMail.send({
+            await resend.emails.send({
               to: user.email,
-              from: { email: FROM_EMAIL, name: FROM_NAME },
+              from: `${FROM_NAME} <${FROM_EMAIL}>`,
               subject,
               html,
               text,

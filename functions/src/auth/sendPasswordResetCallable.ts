@@ -1,11 +1,12 @@
 /**
  * Custom password reset email callable.
- * Uses generatePasswordResetLink() + SendGrid to send a branded email.
+ * Uses generatePasswordResetLink() + Resend to send a branded email.
  * allowUnauthenticated: true — called from the login page.
  * Always returns { success: true } to prevent email enumeration.
  */
 
 import { createCallable } from "../utils/createCallable";
+import { defineSecret } from "firebase-functions/params";
 import { getAuth } from "firebase-admin/auth";
 import {
   buildPasswordResetSubject,
@@ -13,7 +14,7 @@ import {
   buildPasswordResetText,
 } from "./passwordResetEmail";
 
-const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY || "";
+const resendApiKey = defineSecret("RESEND_API_KEY");
 const FROM_EMAIL = "noreply@fibuki.com";
 const FROM_NAME = "FiBuKI";
 
@@ -29,7 +30,7 @@ export const sendPasswordResetCallable = createCallable<
   SendPasswordResetRequest,
   SendPasswordResetResponse
 >(
-  { name: "sendPasswordReset", allowUnauthenticated: true, skipUsageLogging: true },
+  { name: "sendPasswordReset", allowUnauthenticated: true, skipUsageLogging: true, secrets: [resendApiKey] },
   async (_ctx, request) => {
     const { email } = request;
 
@@ -43,8 +44,9 @@ export const sendPasswordResetCallable = createCallable<
         url: "https://fibuki.com/login",
       });
 
-      if (!SENDGRID_API_KEY) {
-        console.warn("[sendPasswordReset] SENDGRID_API_KEY not configured");
+      const apiKey = resendApiKey.value();
+      if (!apiKey) {
+        console.warn("[sendPasswordReset] RESEND_API_KEY not configured");
         return { success: true };
       }
 
@@ -57,12 +59,12 @@ export const sendPasswordResetCallable = createCallable<
         // User might not exist — that's fine, we still don't reveal it
       }
 
-      const sgMail = (await import("@sendgrid/mail")).default;
-      sgMail.setApiKey(SENDGRID_API_KEY);
+      const { Resend } = await import("resend");
+      const resend = new Resend(apiKey);
 
-      await sgMail.send({
+      await resend.emails.send({
         to: email,
-        from: { email: FROM_EMAIL, name: FROM_NAME },
+        from: `${FROM_NAME} <${FROM_EMAIL}>`,
         subject: buildPasswordResetSubject(),
         html: buildPasswordResetHtml(resetLink, name),
         text: buildPasswordResetText(resetLink, name),

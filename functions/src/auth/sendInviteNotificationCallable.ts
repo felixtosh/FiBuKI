@@ -1,5 +1,8 @@
 import { createCallable, HttpsError } from "../utils/createCallable";
+import { defineSecret } from "firebase-functions/params";
 import { sendInviteEmail } from "./sendInviteEmail";
+
+const resendApiKey = defineSecret("RESEND_API_KEY");
 
 interface SendInviteNotificationRequest {
   email: string;
@@ -13,7 +16,7 @@ export const sendInviteNotificationCallable = createCallable<
   SendInviteNotificationRequest,
   SendInviteNotificationResponse
 >(
-  { name: "sendInviteNotification" },
+  { name: "sendInviteNotification", secrets: [resendApiKey] },
   async (ctx, request) => {
     // Admin only
     if (!ctx.request.auth?.token.admin) {

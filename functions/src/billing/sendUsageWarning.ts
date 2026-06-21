@@ -1,5 +1,5 @@
 /**
- * Send AI budget warning emails via SendGrid.
+ * Send AI budget warning emails via Resend.
  * Respects budgetWarningsEnabled preference — always creates in-app notification.
  */
 
@@ -11,7 +11,6 @@ import {
 } from "./budgetWarningEmail";
 import { buildUnsubscribeUrl } from "../emails/unsubscribeTokens";
 
-const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY || "";
 const FROM_EMAIL = "noreply@fibuki.com";
 const FROM_NAME = "FiBuKI";
 
@@ -54,22 +53,23 @@ export async function sendUsageWarning(
     return;
   }
 
-  if (!SENDGRID_API_KEY) {
-    console.warn("[UsageWarning] SENDGRID_API_KEY not configured, skipping email");
+  const apiKey = process.env.RESEND_API_KEY || "";
+  if (!apiKey) {
+    console.warn("[UsageWarning] RESEND_API_KEY not configured, skipping email");
     return;
   }
 
-  const sgMail = (await import("@sendgrid/mail")).default;
-  sgMail.setApiKey(SENDGRID_API_KEY);
+  const { Resend } = await import("resend");
+  const resend = new Resend(apiKey);
 
   const name = user.displayName || undefined;
   const unsubscribeUrl = buildUnsubscribeUrl(userId, "budgetWarnings");
   const html = buildBudgetWarningHtml({ name, percent, usageEur, limitEur, unsubscribeUrl });
   const text = buildBudgetWarningText({ name, percent, usageEur, limitEur });
 
-  await sgMail.send({
+  await resend.emails.send({
     to: email,
-    from: { email: FROM_EMAIL, name: FROM_NAME },
+    from: `${FROM_NAME} <${FROM_EMAIL}>`,
     subject,
     text,
     html,

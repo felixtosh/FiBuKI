@@ -3,6 +3,7 @@
  */
 
 import { createCallable, HttpsError } from "../utils/createCallable";
+import { defineSecret } from "firebase-functions/params";
 import {
   buildDigestSubject,
   buildDigestHtml,
@@ -25,6 +26,8 @@ import {
 } from "./passwordResetEmail";
 import { resolveMergeFields } from "../emails/resolveMergeFields";
 
+const resendApiKey = defineSecret("RESEND_API_KEY");
+
 type EmailTemplate = "digest" | "budget_warning_90" | "budget_warning_100" | "invite" | "password_reset";
 
 interface SendTestEmailRequest {
@@ -37,7 +40,6 @@ interface SendTestEmailResponse {
   success: boolean;
 }
 
-const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY || "";
 const FROM_EMAIL = "noreply@fibuki.com";
 const FROM_NAME = "FiBuKI";
 
@@ -45,7 +47,7 @@ export const sendTestEmailCallable = createCallable<
   SendTestEmailRequest,
   SendTestEmailResponse
 >(
-  { name: "sendTestEmail" },
+  { name: "sendTestEmail", secrets: [resendApiKey] },
   async (ctx, request) => {
     if (!ctx.request.auth?.token.admin) {
       throw new HttpsError("permission-denied", "Admin only");
@@ -57,8 +59,9 @@ export const sendTestEmailCallable = createCallable<
       throw new HttpsError("invalid-argument", "Valid recipientEmail is required");
     }
 
-    if (!SENDGRID_API_KEY) {
-      throw new HttpsError("failed-precondition", "SENDGRID_API_KEY not configured");
+    const apiKey = resendApiKey.value();
+    if (!apiKey) {
+      throw new HttpsError("failed-precondition", "RESEND_API_KEY not configured");
     }
 
     const fields = await resolveMergeFields(ctx.db, template, mergeFieldsEmail);
@@ -127,12 +130,12 @@ export const sendTestEmailCallable = createCallable<
         throw new HttpsError("invalid-argument", "Unknown template");
     }
 
-    const sgMail = (await import("@sendgrid/mail")).default;
-    sgMail.setApiKey(SENDGRID_API_KEY);
+    const { Resend } = await import("resend");
+    const resend = new Resend(apiKey);
 
-    await sgMail.send({
+    await resend.emails.send({
       to: recipientEmail,
-      from: { email: FROM_EMAIL, name: FROM_NAME },
+      from: `${FROM_NAME} <${FROM_EMAIL}>`,
       subject,
       html,
       text,
