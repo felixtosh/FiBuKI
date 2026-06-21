@@ -21,7 +21,7 @@ export const MODELS = {
    * Larger Gemini. Use for company lookup (web search grounding), file-to-partner
    * matching, and other tasks needing deeper reasoning.
    */
-  geminiFlash: "gemini-2.0-flash-001",
+  geminiFlash: "gemini-2.5-flash",
 
   /** Main chat/agent reasoning model (Anthropic). */
   chatAgent: "claude-sonnet-4-20250514",
@@ -43,8 +43,9 @@ export const MODEL_PRICING: Record<string, { input: number; output: number }> = 
   "claude-3-haiku-20240307": { input: 0.25, output: 1.25 },
   // Gemini via Vertex AI
   "gemini-2.5-flash-lite": { input: 0.1, output: 0.4 },
-  "gemini-2.0-flash-001": { input: 0.1, output: 0.4 },
+  "gemini-2.5-flash": { input: 0.3, output: 2.5 },
   // Retired — kept for historical aiUsage record cost lookups
+  "gemini-2.0-flash-001": { input: 0.1, output: 0.4 },
   "gemini-2.0-flash-lite-001": { input: 0.075, output: 0.3 },
   "gemini-2.5-flash-preview-05-20": { input: 0.15, output: 0.6 },
 };

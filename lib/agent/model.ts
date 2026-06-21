@@ -3,7 +3,7 @@
  *
  * Provides flexible model selection between:
  * - Anthropic Claude (claude-sonnet-4)
- * - Google Gemini via Vertex AI (gemini-2.0-flash)
+ * - Google Gemini via Vertex AI (gemini-2.5-flash)
  *
  * NOTE: Uses dynamic imports to avoid loading API clients at build time.
  * This prevents "API key not found" errors during static site generation.
@@ -33,7 +33,7 @@ const VERTEX_LOCATION = process.env.VERTEX_LOCATION || "europe-west1";
 // Cost per 1M tokens (input/output) for usage tracking
 export const MODEL_COSTS = {
   anthropic: { input: 3, output: 15 }, // $3/$15 per 1M
-  gemini: { input: 0.075, output: 0.30 }, // $0.075/$0.30 per 1M (Flash pricing)
+  gemini: { input: 0.30, output: 2.50 }, // $0.30/$2.50 per 1M (Gemini 2.5 Flash pricing)
 } as const;
 
 /**
