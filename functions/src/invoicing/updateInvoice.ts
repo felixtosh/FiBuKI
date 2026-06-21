@@ -13,6 +13,7 @@ import {
   DEFAULT_VAT_RATE,
   Invoice,
   InvoiceLineItem,
+  composeInvoiceName,
   computeInvoiceTotals,
   parsePaymentTermsToDays,
 } from "./types";
@@ -242,6 +243,40 @@ export async function performUpdateInvoice(
     updates.subtotal = subtotal;
     updates.vatAmount = vatAmount;
     updates.total = total;
+  }
+
+  // For non-draft invoices, recompose `number` whenever namePrefix / numberSeq /
+  // issueDate change so the displayed invoice number stays in sync with the
+  // editable fields. Drafts keep their "DRAFT-..." placeholder until issued.
+  if (current.status !== "draft") {
+    const numberChanged =
+      patch.namePrefix !== undefined ||
+      patch.numberSeq !== undefined ||
+      patch.issueDate !== undefined ||
+      patch.partnerId !== undefined ||
+      patch.partnerType !== undefined;
+    if (numberChanged) {
+      const effectiveNamePrefix =
+        updates.namePrefix !== undefined
+          ? (updates.namePrefix as string | null) ?? undefined
+          : current.namePrefix;
+      const effectiveNumberSeq =
+        updates.numberSeq !== undefined
+          ? (updates.numberSeq as number)
+          : current.numberSeq;
+      const effectiveIssueDate = (updates.issueDate as Timestamp | undefined) ?? current.issueDate;
+      const effectiveRecipientName =
+        (updates.recipient as { name?: string } | undefined)?.name ??
+        current.recipient?.name;
+      if (typeof effectiveNumberSeq === "number" && effectiveNumberSeq >= 1) {
+        updates.number = composeInvoiceName({
+          namePrefix: effectiveNamePrefix ?? undefined,
+          recipientName: effectiveRecipientName,
+          year: effectiveIssueDate.toDate().getFullYear(),
+          numberSeq: effectiveNumberSeq,
+        });
+      }
+    }
   }
 
   updates.updatedAt = Timestamp.now();

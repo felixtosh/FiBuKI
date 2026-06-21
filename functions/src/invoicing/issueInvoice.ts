@@ -13,9 +13,10 @@ import { Timestamp } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import * as crypto from "crypto";
 import { createCallable, HttpsError } from "../utils/createCallable";
-import { Invoice, InvoicePartnerAddress, composeInvoiceName } from "./types";
+import { Invoice, composeInvoiceName } from "./types";
 import { allocateInvoiceNumber } from "./numberAllocator";
 import { renderInvoicePdf } from "./renderInvoicePdf";
+import { buildInvoiceFileFields } from "./buildInvoiceFileFields";
 
 export interface IssueInvoiceRequest {
   invoiceId: string;
@@ -29,16 +30,6 @@ export interface IssueInvoiceResponse {
   downloadUrl: string;
   shareUrl?: string;
   shareToken?: string;
-}
-
-function formatAddressOneLine(addr?: InvoicePartnerAddress): string | undefined {
-  if (!addr) return undefined;
-  const parts: string[] = [];
-  if (addr.street) parts.push(addr.street);
-  const postalCity = [addr.postalCode, addr.city].filter(Boolean).join(" ");
-  if (postalCity) parts.push(postalCity);
-  if (addr.country) parts.push(addr.country);
-  return parts.length > 0 ? parts.join(", ") : undefined;
 }
 
 function genShareToken(): string {
@@ -125,68 +116,11 @@ export async function performIssueInvoice(
   // TaxFile (so the draft appears in the files list); we update it in place
   // here with the real PDF + extracted data. Fall back to creating a new
   // file if the stub is missing (legacy drafts created before this change).
-  const recipientAddressLine = formatAddressOneLine(issuedInvoice.recipient.address);
-
-  const extractedLineItems = issuedInvoice.lineItems.map((li) => ({
-    description: li.description,
-    quantity: li.quantity,
-    unitPrice: li.unitPrice,
-    vatPercent: li.vatRate,
-    vatAmount: Math.round((li.quantity * li.unitPrice * li.vatRate) / 100),
-    amount: Math.round(li.quantity * li.unitPrice * (1 + li.vatRate / 100)),
-  }));
-
-  const uniqueVatRates = Array.from(
-    new Set(issuedInvoice.lineItems.map((li) => li.vatRate))
-  );
-  const singleVatRate = uniqueVatRates.length === 1 ? uniqueVatRates[0] : null;
-
-  const fileFields: Record<string, unknown> = {
-    // File name mirrors the composed invoice number, e.g. "INV-2026-0007.pdf".
-    fileName: `${number}.pdf`,
-    fileType: "application/pdf",
-    fileSize: pdfBuffer.length,
+  const fileFields = buildInvoiceFileFields(issuedInvoice, {
     storagePath,
     downloadUrl,
-    // Pipeline flags
-    classificationComplete: true,
-    isNotInvoice: false,
-    isFibukiGenerated: true,
-    invoiceId: invoiceRef.id,
-    invoiceDirection: "outgoing",
-    matchedUserAccount: "issuer",
-    // Extracted data pre-filled from the invoice
-    extractedDate: issuedInvoice.issueDate,
-    extractedAmount: issuedInvoice.total,
-    extractedCurrency: issuedInvoice.currency,
-    extractedVatAmount: issuedInvoice.vatAmount,
-    extractedVatPercent: singleVatRate,
-    extractedPartner: issuedInvoice.recipient.name,
-    extractedIban: issuedInvoice.issuer.iban,
-    extractedLineItems,
-    extractedIssuer: {
-      name: issuedInvoice.issuer.name,
-      vatId: issuedInvoice.issuer.vatId || null,
-      address: formatAddressOneLine(issuedInvoice.issuer.address) || null,
-      iban: issuedInvoice.issuer.iban,
-      website: null,
-    },
-    extractedRecipient: {
-      name: issuedInvoice.recipient.name,
-      vatId: issuedInvoice.recipient.vatId || null,
-      address: recipientAddressLine || null,
-      iban: null,
-      website: null,
-    },
-    updatedAt: Timestamp.now(),
-  };
-
-  if (issuedInvoice.recipient.vatId) {
-    fileFields.extractedVatId = issuedInvoice.recipient.vatId;
-  }
-  if (recipientAddressLine) {
-    fileFields.extractedAddress = recipientAddressLine;
-  }
+    fileSize: pdfBuffer.length,
+  });
 
   let fileRef: FirebaseFirestore.DocumentReference;
   if (current.fileId) {

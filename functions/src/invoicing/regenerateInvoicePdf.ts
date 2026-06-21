@@ -8,6 +8,7 @@ import { getStorage } from "firebase-admin/storage";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { Invoice } from "./types";
 import { renderInvoicePdf } from "./renderInvoicePdf";
+import { buildInvoiceFileFields } from "./buildInvoiceFileFields";
 
 export interface RegenerateInvoicePdfRequest {
   invoiceId: string;
@@ -62,15 +63,14 @@ export async function performRegenerateInvoicePdf(
   await storageFile.makePublic();
   const downloadUrl = `https://storage.googleapis.com/${bucket.name}/${storagePath}`;
 
-  const now = Timestamp.now();
-  await db.collection("files").doc(invoice.fileId).update({
+  const fileFields = buildInvoiceFileFields(invoice, {
     storagePath,
     downloadUrl,
     fileSize: buffer.length,
-    updatedAt: now,
   });
+  await db.collection("files").doc(invoice.fileId).update(fileFields);
 
-  await invoiceRef.update({ updatedAt: now });
+  await invoiceRef.update({ updatedAt: Timestamp.now() });
 
   return { success: true, fileId: invoice.fileId, downloadUrl };
 }
