@@ -2,7 +2,18 @@
 
 import { Card, CardContent } from "@/components/ui/card";
 import { FibukiMascot } from "@/components/ui/fibuki-mascot";
-import { Sparkles, Twitter, Linkedin, ArrowRight } from "lucide-react";
+// lucide-react v1 dropped the brand glyphs (Twitter → X rebrand, no
+// Linkedin export). Use the X glyph for the x.com link; inline SVG
+// fallback for LinkedIn.
+import { Sparkles, X as XGlyph, ArrowRight } from "lucide-react";
+
+function LinkedinGlyph({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden className={className}>
+      <path d="M20.45 20.45h-3.55v-5.57c0-1.33-.03-3.04-1.85-3.04-1.85 0-2.14 1.45-2.14 2.95v5.66h-3.55V9h3.41v1.56h.05a3.74 3.74 0 0 1 3.37-1.85c3.6 0 4.27 2.37 4.27 5.45v6.29zM5.34 7.43a2.06 2.06 0 1 1 0-4.13 2.06 2.06 0 0 1 0 4.13zM7.12 20.45H3.56V9h3.56v11.45zM22.22 0H1.77C.79 0 0 .77 0 1.72v20.56C0 23.23.79 24 1.77 24h20.45c.99 0 1.78-.77 1.78-1.72V1.72C24 .77 23.21 0 22.22 0z" />
+    </svg>
+  );
+}
 
 export function SocialPromoCard() {
   return (
@@ -39,7 +50,7 @@ export function SocialPromoCard() {
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1.5 rounded-full bg-foreground/5 px-3 py-1.5 text-xs font-medium text-foreground/80 hover:bg-foreground/10 transition-colors"
               >
-                <Twitter className="h-3.5 w-3.5" />
+                <XGlyph className="h-3.5 w-3.5" />
                 @fibukiapp
                 <ArrowRight className="h-3 w-3 opacity-50" />
               </a>
@@ -49,7 +60,7 @@ export function SocialPromoCard() {
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1.5 rounded-full bg-foreground/5 px-3 py-1.5 text-xs font-medium text-foreground/80 hover:bg-foreground/10 transition-colors"
               >
-                <Linkedin className="h-3.5 w-3.5" />
+                <LinkedinGlyph className="h-3.5 w-3.5" />
                 FiBuKI
                 <ArrowRight className="h-3 w-3 opacity-50" />
               </a>
