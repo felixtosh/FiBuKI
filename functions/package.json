@@ -20,7 +20,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.105.0",
     "@google-cloud/vertexai": "^1.12.0",
-    "@google-cloud/vision": "^4.3.0",
+    "@google-cloud/vision": "^5.3.7",
     "@react-pdf/renderer": "^4.5.1",
     "@sendgrid/mail": "^8.1.6",
     "@simplewebauthn/server": "^13.3.1",
