@@ -539,6 +539,16 @@ function FilesContent() {
 
   const handleSelectFile = useCallback(
     (file: TaxFile) => {
+      // Invoice files route via ?invoiceId= so the page-level InvoiceDetailPanel
+      // branch mounts (with viewer-toggle and preview-source lifting wired up).
+      // The FileDetailPanel fork to InvoiceDetailPanel does NOT lift those, so
+      // routing invoice files via ?id= leaves the thumbnail-toggle dead.
+      if (file.invoiceId) {
+        const params = new URLSearchParams();
+        params.set("invoiceId", file.invoiceId);
+        router.push(`/files?${params.toString()}`, { scroll: false });
+        return;
+      }
       const params = buildFileSearchParams(filters, searchValue, file.id);
       router.push(`/files?${params.toString()}`, { scroll: false });
     },

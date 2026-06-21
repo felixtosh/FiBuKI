@@ -136,6 +136,11 @@ export async function performIssueInvoice(
     amount: Math.round(li.quantity * li.unitPrice * (1 + li.vatRate / 100)),
   }));
 
+  const uniqueVatRates = Array.from(
+    new Set(issuedInvoice.lineItems.map((li) => li.vatRate))
+  );
+  const singleVatRate = uniqueVatRates.length === 1 ? uniqueVatRates[0] : null;
+
   const fileFields: Record<string, unknown> = {
     // File name mirrors the composed invoice number, e.g. "INV-2026-0007.pdf".
     fileName: `${number}.pdf`,
@@ -155,6 +160,7 @@ export async function performIssueInvoice(
     extractedAmount: issuedInvoice.total,
     extractedCurrency: issuedInvoice.currency,
     extractedVatAmount: issuedInvoice.vatAmount,
+    extractedVatPercent: singleVatRate,
     extractedPartner: issuedInvoice.recipient.name,
     extractedIban: issuedInvoice.issuer.iban,
     extractedLineItems,

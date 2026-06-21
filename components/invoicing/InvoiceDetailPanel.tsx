@@ -953,15 +953,12 @@ export function InvoiceDetailPanel({
                       onClick={onToggleViewer}
                       active={viewerOpen}
                     />
-                    <p
-                      className="text-xs text-muted-foreground text-center mt-1 mx-auto"
-                      style={{ minWidth: "13ch" }}
-                    >
+                    <p className="text-xs text-muted-foreground text-center mt-1">
                       {draftRendering
-                        ? "Aktualisiere…"
+                        ? "Updating…"
                         : viewerOpen
-                          ? "Klicken zum Schließen"
-                          : "Klicken zum Öffnen"}
+                          ? "Click to close"
+                          : "Click to view"}
                     </p>
                   </>
                 ) : (
@@ -1012,16 +1009,6 @@ export function InvoiceDetailPanel({
                     </span>
                     <span className="flex-1 text-right file-meta-value">
                       Invoice
-                    </span>
-                  </div>
-                  <div className="flex items-start gap-3 file-meta-row">
-                    <span className="text-muted-foreground w-16 shrink-0 file-meta-label">
-                      Amount
-                    </span>
-                    <span className="flex-1 text-right file-meta-value tabular-nums">
-                      {form.lineItems.length === 0 || liveTotals.total === 0
-                        ? "—"
-                        : formatEur(liveTotals.total)}
                     </span>
                   </div>
                 </div>
@@ -1313,56 +1300,58 @@ function ViewSections({
   return (
     <>
       {/* Information */}
-      <div className="space-y-2">
+      <div className="space-y-4">
         <h3 className="text-sm font-medium">Information</h3>
 
-        <FieldRow label="Document Date" labelWidth="w-28">
-          {issueDate ? format(issueDate, "MMM d, yyyy") : "—"}
-        </FieldRow>
-        <FieldRow label="Due date" labelWidth="w-28">
-          {dueDate ? format(dueDate, "MMM d, yyyy") : "—"}
-        </FieldRow>
-        <FieldRow label="Amount net" labelWidth="w-28">
-          <span className="tabular-nums">{formatEur(liveTotals.subtotal)}</span>
-        </FieldRow>
-        <FieldRow label="VAT amount" labelWidth="w-28">
-          <span className="tabular-nums">{formatEur(liveTotals.vatAmount)}</span>
-        </FieldRow>
-        <FieldRow label="Total gross" labelWidth="w-28">
-          <span className="tabular-nums font-medium">
-            {formatEur(liveTotals.total)}
-          </span>
-        </FieldRow>
+        <div className="space-y-2">
+          <FieldRow label="Document Date" labelWidth="w-28" className="py-0">
+            {issueDate ? format(issueDate, "MMM d, yyyy") : "—"}
+          </FieldRow>
+          <FieldRow label="Due date" labelWidth="w-28" className="py-0">
+            {dueDate ? format(dueDate, "MMM d, yyyy") : "—"}
+          </FieldRow>
+          <FieldRow label="Amount net" labelWidth="w-28" className="py-0">
+            <span className="tabular-nums">{formatEur(liveTotals.subtotal)}</span>
+          </FieldRow>
+          <FieldRow label="VAT amount" labelWidth="w-28" className="py-0">
+            <span className="tabular-nums">{formatEur(liveTotals.vatAmount)}</span>
+          </FieldRow>
+          <FieldRow label="Total gross" labelWidth="w-28" className="py-0">
+            <span className="tabular-nums font-medium">
+              {formatEur(liveTotals.total)}
+            </span>
+          </FieldRow>
 
-        <ShowMoreButton
-          expanded={showMore}
-          onToggle={onToggleShowMore}
-          className="pt-1"
-        />
+          <ShowMoreButton
+            expanded={showMore}
+            onToggle={onToggleShowMore}
+            className="pt-1"
+          />
 
-        {showMore && (
-          <div className="space-y-2 pt-1">
-            <FieldRow label="Invoice number" labelWidth="w-28">
-              <span className="font-mono">{invoice.number || "—"}</span>
-            </FieldRow>
-            <FieldRow label="Name prefix" labelWidth="w-28">
-              {form.namePrefix?.trim() || "—"}
-            </FieldRow>
-            <FieldRow label="Payment terms" labelWidth="w-28">
-              {invoice.paymentTerms || "—"}
-            </FieldRow>
-            <FieldRow label="Notes" labelWidth="w-28">
-              {form.notes?.trim() ? (
-                <span className="whitespace-pre-wrap">{form.notes}</span>
-              ) : (
-                "—"
-              )}
-            </FieldRow>
-            <FieldRow label="Line items" labelWidth="w-28">
-              {lineItemCount}
-            </FieldRow>
-          </div>
-        )}
+          {showMore && (
+            <div className="space-y-2 pt-1">
+              <FieldRow label="Invoice number" labelWidth="w-28" className="py-0">
+                <span className="font-mono">{invoice.number || "—"}</span>
+              </FieldRow>
+              <FieldRow label="Name prefix" labelWidth="w-28" className="py-0">
+                {form.namePrefix?.trim() || "—"}
+              </FieldRow>
+              <FieldRow label="Payment terms" labelWidth="w-28" className="py-0">
+                {invoice.paymentTerms || "—"}
+              </FieldRow>
+              <FieldRow label="Notes" labelWidth="w-28" className="py-0">
+                {form.notes?.trim() ? (
+                  <span className="whitespace-pre-wrap">{form.notes}</span>
+                ) : (
+                  "—"
+                )}
+              </FieldRow>
+              <FieldRow label="Line items" labelWidth="w-28" className="py-0">
+                {lineItemCount}
+              </FieldRow>
+            </div>
+          )}
+        </div>
       </div>
 
       <Separator />

@@ -2,7 +2,7 @@
 
 import { ColumnDef } from "@tanstack/react-table";
 import { format } from "date-fns";
-import { Upload, Mail, Loader2 } from "lucide-react";
+import { Upload, Mail, Loader2, FileText } from "lucide-react";
 import { TaxFile } from "@/types/file";
 import { UserPartner, GlobalPartner } from "@/types/partner";
 import { PipelineId } from "@/types/automation";
@@ -206,10 +206,20 @@ export function getFileColumns(
       cell: ({ row }) => {
         const amount = getEffectiveExtractedAmount(row.original);
         const currency = normalizeCurrency(row.original.extractedCurrency);
-        const vatPercent = row.original.extractedVatPercent;
         const vatAmount = row.original.extractedVatAmount;
         const invoiceDirection = row.original.invoiceDirection;
         const extractedDate = row.original.extractedDate;
+
+        // Derive VAT percent from absolute amount when not pre-set.
+        let vatPercent = row.original.extractedVatPercent;
+        if (
+          vatPercent == null &&
+          vatAmount != null &&
+          amount != null &&
+          amount - vatAmount > 0
+        ) {
+          vatPercent = Math.round((vatAmount / (amount - vatAmount)) * 100);
+        }
 
         if (amount == null) {
           return <span className="text-sm text-muted-foreground">—</span>;
@@ -257,13 +267,6 @@ export function getFileColumns(
             {vatPercent != null ? (
               <p className="text-xs text-muted-foreground">
                 {vatPercent}% VAT
-              </p>
-            ) : vatAmount != null ? (
-              <p className="text-xs text-muted-foreground tabular-nums">
-                {new Intl.NumberFormat("de-DE", {
-                  style: "currency",
-                  currency,
-                }).format(Math.abs(vatAmount) / 100)} VAT
               </p>
             ) : null}
           </div>
@@ -444,6 +447,15 @@ export function getFileColumns(
             <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
               <Mail className="h-3.5 w-3.5" />
               <span>Email</span>
+            </div>
+          );
+        }
+
+        if (sourceType === "fibuki_invoice" || row.original.invoiceId || row.original.isFibukiGenerated) {
+          return (
+            <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+              <FileText className="h-3.5 w-3.5" />
+              <span>Rechnungserstellung</span>
             </div>
           );
         }
