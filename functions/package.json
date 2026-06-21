@@ -54,7 +54,7 @@
     "@types/soap": "^0.21.0",
     "@types/unzipper": "^0.10.11",
     "typescript": "^5.3.0",
-    "vitest": "^3.2.4"
+    "vitest": "^4.1.9"
   },
   "private": true
 }
