@@ -536,26 +536,39 @@ export default function IdentityPage() {
                   <Plus className="h-4 w-4" />
                 </Button>
               </div>
-              {(inferredIbans.length > 0 || personalEntity.ibans.length > 0) && (
-                <div className="flex flex-wrap gap-1.5">
-                  {inferredIbans.map(({ iban, sourceName }) => (
-                    <Pill
-                      key={iban}
-                      label={iban}
-                      icon={Lock}
-                      className="font-mono"
-                    />
-                  ))}
-                  {personalEntity.ibans.map((iban) => (
-                    <Pill
-                      key={iban}
-                      label={iban}
-                      className="font-mono"
-                      onRemove={() => handleUpdatePersonal({ ibans: personalEntity.ibans.filter((i) => i !== iban) })}
-                    />
-                  ))}
-                </div>
-              )}
+              {(() => {
+                // Dedupe: if a manual IBAN is also present in inferredIbans
+                // (from a connected bank account in /sources), hide the
+                // manual pill and let the inferred (source-derived) pill be
+                // the only one shown. Avoids the duplicate-IBAN UI the user
+                // saw after adding a bank account whose IBAN they'd also
+                // typed manually.
+                const inferredSet = new Set(inferredIbans.map((i) => i.iban));
+                const manualOnly = personalEntity.ibans.filter(
+                  (iban) => !inferredSet.has(iban)
+                );
+                if (inferredIbans.length === 0 && manualOnly.length === 0) return null;
+                return (
+                  <div className="flex flex-wrap gap-1.5">
+                    {inferredIbans.map(({ iban }) => (
+                      <Pill
+                        key={iban}
+                        label={iban}
+                        icon={Lock}
+                        className="font-mono"
+                      />
+                    ))}
+                    {manualOnly.map((iban) => (
+                      <Pill
+                        key={iban}
+                        label={iban}
+                        className="font-mono"
+                        onRemove={() => handleUpdatePersonal({ ibans: personalEntity.ibans.filter((i) => i !== iban) })}
+                      />
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Address (shown on issued invoices) */}

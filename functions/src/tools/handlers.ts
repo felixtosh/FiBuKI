@@ -108,6 +108,11 @@ export async function handleTool(
     case "score_file_transaction_match":
       return scoreFileTransactionMatch(userId, args);
 
+    // Identity entities (the user's personal/company entities used as invoice
+    // sender). Returns id + name + vatId + ibans + address per entity.
+    case "list_identity_entities":
+      return listIdentityEntities(userId);
+
     // Partners
     case "list_partners":
       return listPartners(userId, args);
@@ -613,6 +618,28 @@ export async function removeNoReceiptCategory(userId: string, transactionId: str
 // ============================================================================
 // Partners
 // ============================================================================
+
+/**
+ * List the user's identity entities (personalEntity + companies[]). These
+ * are the parties an invoice can be issued FROM. Returned in a flat array
+ * with `type: "person" | "company"` so MCP callers can pick an entityId
+ * to pass as `issuerEntityId` in update_invoice.
+ */
+export async function listIdentityEntities(userId: string) {
+  const snap = await db.doc(`users/${userId}/settings/userData`).get();
+  if (!snap.exists) return { entities: [] };
+  const data = snap.data() || {};
+  const entities: Array<Record<string, unknown>> = [];
+  if (data.personalEntity && data.personalEntity.id) {
+    entities.push({ ...data.personalEntity, type: "person" });
+  }
+  if (Array.isArray(data.companies)) {
+    for (const c of data.companies) {
+      if (c && c.id) entities.push({ ...c, type: "company" });
+    }
+  }
+  return { entities };
+}
 
 export async function listPartners(userId: string, args: Record<string, unknown>) {
   const snapshot = await db

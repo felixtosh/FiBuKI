@@ -243,6 +243,15 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
 
   // =========================================================================
+  // Identity (the user's own entities — used as `issuer` on invoices)
+  // =========================================================================
+  {
+    name: "list_identity_entities",
+    description: "List the user's identity entities (personalEntity + companies). Each entry has id, name, type (person|company), optional vatId, ibans[], and optional address. Use the returned id as `issuerEntityId` in update_invoice / create_invoice.",
+    inputSchema: { type: "object", properties: {} },
+  },
+
+  // =========================================================================
   // Partners
   // =========================================================================
   {
