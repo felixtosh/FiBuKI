@@ -101,8 +101,13 @@ export const listTransactionsTool = tool(
       maxAmount,
       sourceId,
       partnerId,
-      categoryId,
+      hasPartner,
+      noReceiptCategoryId,
+      noReceiptCategoryTemplateId,
+      hasNoReceiptCategory,
       hasFile,
+      onlyIncome,
+      onlyExpenses,
       limit = 20,
     },
     config
@@ -126,8 +131,12 @@ export const listTransactionsTool = tool(
       query = query.where("partnerId", "==", partnerId);
     }
 
-    if (categoryId) {
-      query = query.where("categoryId", "==", categoryId);
+    if (noReceiptCategoryId) {
+      query = query.where("noReceiptCategoryId", "==", noReceiptCategoryId);
+    }
+
+    if (noReceiptCategoryTemplateId) {
+      query = query.where("noReceiptCategoryTemplateId", "==", noReceiptCategoryTemplateId);
     }
 
     if (hasFile !== undefined) {
@@ -136,9 +145,18 @@ export const listTransactionsTool = tool(
       }
     }
 
-    // When using client-side filters (search, date, amount), fetch more transactions
+    // When using client-side filters (search, date, amount, has*, onlyIncome/Expenses), fetch more transactions
     // This ensures filters find matches across all transactions
-    const hasClientSideFilters = search || startDate || endDate || minAmount !== undefined || maxAmount !== undefined;
+    const hasClientSideFilters =
+      search ||
+      startDate ||
+      endDate ||
+      minAmount !== undefined ||
+      maxAmount !== undefined ||
+      hasPartner !== undefined ||
+      hasNoReceiptCategory !== undefined ||
+      onlyIncome ||
+      onlyExpenses;
     const fetchLimit = hasClientSideFilters ? 500 : limit;
     const snapshot = await query.limit(fetchLimit).get();
 
@@ -189,7 +207,8 @@ export const listTransactionsTool = tool(
         partnerId: data.partnerId,
         sourceId: data.sourceId,
         fileIds: activeFileIds,
-        categoryId: data.categoryId,
+        noReceiptCategoryId: data.noReceiptCategoryId ?? null,
+        noReceiptCategoryTemplateId: data.noReceiptCategoryTemplateId ?? null,
         isComplete: data.isComplete || false,
       };
     });
@@ -225,30 +244,90 @@ export const listTransactionsTool = tool(
       filtered = filtered.filter((t) => Math.abs(t.amount) <= maxAmount * 100);
     }
 
+    if (hasPartner === true) {
+      filtered = filtered.filter((t) => !!t.partnerId);
+    } else if (hasPartner === false) {
+      filtered = filtered.filter((t) => !t.partnerId);
+    }
+
+    if (hasNoReceiptCategory === true) {
+      filtered = filtered.filter((t) => !!t.noReceiptCategoryId);
+    } else if (hasNoReceiptCategory === false) {
+      filtered = filtered.filter((t) => !t.noReceiptCategoryId);
+    }
+
+    if (onlyIncome) {
+      filtered = filtered.filter((t) => (t.amount || 0) > 0);
+    } else if (onlyExpenses) {
+      filtered = filtered.filter((t) => (t.amount || 0) < 0);
+    }
+
     // Apply limit to final results
     const totalMatches = filtered.length;
     const limitedResults = filtered.slice(0, limit);
+
+    // Aggregate counts so the agent can show grouped breakdowns without
+    // a second round-trip for exploratory queries.
+    const aggregates = filtered.reduce(
+      (acc, t) => {
+        if (t.partnerId) acc.withPartner++;
+        else acc.withoutPartner++;
+        if (t.fileIds.length > 0) acc.withFile++;
+        else acc.withoutFile++;
+        const tplId = t.noReceiptCategoryTemplateId;
+        if (tplId) acc.byNoReceiptCategoryTemplateId[tplId] = (acc.byNoReceiptCategoryTemplateId[tplId] || 0) + 1;
+        else acc.withoutNoReceiptCategory++;
+        return acc;
+      },
+      {
+        withPartner: 0,
+        withoutPartner: 0,
+        withFile: 0,
+        withoutFile: 0,
+        withoutNoReceiptCategory: 0,
+        byNoReceiptCategoryTemplateId: {} as Record<string, number>,
+      }
+    );
 
     return {
       transactions: limitedResults,
       total: totalMatches,
       hasMore: totalMatches > limit,
+      aggregates,
     };
   },
   {
     name: "listTransactions",
     description:
-      "List transactions with optional filters. Returns date, amount, partner, description, etc.",
+      "List transactions with optional filters. Use exploratory filters (search + hasPartner/hasNoReceiptCategory + onlyIncome/Expenses) to find transactions matching a fuzzy intent before acting. Returns transactions + aggregates (counts by partner/file/no-receipt-category presence).",
     schema: z.object({
       startDate: z.string().optional().describe("Start date (ISO format)"),
       endDate: z.string().optional().describe("End date (ISO format)"),
-      search: z.string().optional().describe("Search in name/description/partner"),
-      minAmount: z.number().optional().describe("Minimum amount in EUR"),
-      maxAmount: z.number().optional().describe("Maximum amount in EUR"),
+      search: z.string().optional().describe("Substring match across name, description, and partner fields"),
+      minAmount: z.number().optional().describe("Minimum absolute amount in EUR"),
+      maxAmount: z.number().optional().describe("Maximum absolute amount in EUR"),
       sourceId: z.string().optional().describe("Filter by bank account ID"),
-      partnerId: z.string().optional().describe("Filter by partner ID"),
-      categoryId: z.string().optional().describe("Filter by category ID"),
+      partnerId: z.string().optional().describe("Filter by partner ID (exact)"),
+      hasPartner: z.boolean().optional().describe("true = has any partner assigned; false = no partner yet"),
+      noReceiptCategoryId: z.string().optional().describe("Filter by a specific user no-receipt category ID"),
+      noReceiptCategoryTemplateId: z
+        .enum([
+          "bank-fees",
+          "interest",
+          "internal-transfers",
+          "payment-provider-settlements",
+          "taxes-government",
+          "payroll",
+          "private-personal",
+          "zero-value",
+          "receipt-lost",
+        ])
+        .optional()
+        .describe("Filter by no-receipt category template (use 'private-personal' for 'private' transactions)"),
+      hasNoReceiptCategory: z.boolean().optional().describe("true = has any no-receipt category set; false = none"),
       hasFile: z.boolean().optional().describe("Filter by file attachment status"),
+      onlyIncome: z.boolean().optional().describe("Only positive-amount transactions (income)"),
+      onlyExpenses: z.boolean().optional().describe("Only negative-amount transactions (expenses)"),
       limit: z.number().optional().describe("Max results (default 20)"),
     }),
   }
@@ -293,7 +372,8 @@ export const getTransactionTool = tool(
       partnerId: data.partnerId,
       sourceId: data.sourceId,
       fileIds: data.fileIds || [],
-      categoryId: data.categoryId,
+      noReceiptCategoryId: data.noReceiptCategoryId ?? null,
+      noReceiptCategoryTemplateId: data.noReceiptCategoryTemplateId ?? null,
       isComplete: data.isComplete || false,
       metadata: data.metadata || {},
     };
@@ -1273,6 +1353,53 @@ Use BEFORE creating a partner to verify the VAT is legitimate.`,
 );
 
 // ============================================================================
+// List No-Receipt Categories
+// ============================================================================
+
+export const listCategoriesTool = tool(
+  async (_args, config) => {
+    const userId = config?.configurable?.userId;
+    if (!userId) {
+      return { error: "User ID not provided" };
+    }
+
+    const db = await getDb();
+    const snapshot = await db
+      .collection("noReceiptCategories")
+      .where("userId", "==", userId)
+      .where("isActive", "==", true)
+      .get();
+
+    const categories = snapshot.docs.map((doc) => {
+      const data = doc.data();
+      return {
+        id: doc.id,
+        templateId: data.templateId,
+        name: data.name,
+        description: data.description ?? null,
+        transactionCount: data.transactionCount ?? 0,
+        matchedPartnerCount: (data.matchedPartnerIds || []).length,
+      };
+    });
+
+    categories.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+
+    return {
+      categories,
+      total: categories.length,
+      hint:
+        "These are the user's no-receipt categories (mark a transaction complete without a receipt). Use templateId 'private-personal' when the user says 'private'. Use the id (or templateId) with listTransactions / bulkUpdateTransactions.",
+    };
+  },
+  {
+    name: "listCategories",
+    description:
+      "List the user's no-receipt categories (e.g. 'Private/Personal', 'Bank Fees', 'Internal Transfers'). Returns id, templateId, name, and how many transactions use each. Call this whenever the user mentions a category by name so you can resolve it to an id.",
+    schema: z.object({}),
+  }
+);
+
+// ============================================================================
 // Export all read tools
 // ============================================================================
 
@@ -1288,6 +1415,7 @@ export const READ_TOOLS = [
   waitForFileExtractionTool,
   listPartnersTool,
   getPartnerTool,
+  listCategoriesTool,
   lookupCompanyInfoTool,
   validateVatIdTool,
 ];

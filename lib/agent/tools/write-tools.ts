@@ -958,6 +958,110 @@ Accepts company names (e.g., "Netflix") or website URLs (e.g., "wienerlinien.at"
 );
 
 // ============================================================================
+// Bulk Update Transactions (description / completion / partner / no-receipt category)
+// ============================================================================
+
+interface BulkUpdateTransactionsResponse {
+  success: number;
+  failed: number;
+  errors: Array<{ id: string; error: string }>;
+}
+
+export const bulkUpdateTransactionsTool = tool(
+  async (
+    {
+      transactionIds,
+      description,
+      isComplete,
+      partnerId,
+      noReceiptCategoryId,
+      noReceiptCategoryTemplateId,
+      clearNoReceiptCategory,
+    },
+    config
+  ) => {
+    const authHeader = config?.configurable?.authHeader;
+    if (!authHeader) {
+      return { error: "Auth header not provided" };
+    }
+    if (!transactionIds || transactionIds.length === 0) {
+      return { error: "No transaction IDs provided" };
+    }
+    if (transactionIds.length > 1000) {
+      return { error: "Cannot update more than 1000 transactions at once" };
+    }
+
+    const data: Record<string, unknown> = {};
+    if (description !== undefined) data.description = description;
+    if (isComplete !== undefined) data.isComplete = isComplete;
+    if (partnerId !== undefined) {
+      data.partnerId = partnerId;
+      data.partnerMatchedBy = "ai";
+    }
+    if (clearNoReceiptCategory) {
+      data.noReceiptCategoryId = null;
+      data.noReceiptCategoryTemplateId = null;
+    } else {
+      if (noReceiptCategoryId !== undefined) data.noReceiptCategoryId = noReceiptCategoryId;
+      if (noReceiptCategoryTemplateId !== undefined) data.noReceiptCategoryTemplateId = noReceiptCategoryTemplateId;
+      if (data.noReceiptCategoryId || data.noReceiptCategoryTemplateId) {
+        data.noReceiptCategoryMatchedBy = "manual";
+      }
+    }
+
+    if (Object.keys(data).length === 0) {
+      return { error: "No update fields provided" };
+    }
+
+    const result = await callFirebaseFunction<
+      { ids: string[]; data: typeof data },
+      BulkUpdateTransactionsResponse
+    >("bulkUpdateTransactions", { ids: transactionIds, data }, authHeader);
+
+    return {
+      success: true,
+      updatedCount: result.success,
+      failedCount: result.failed,
+      failed: result.failed > 0 ? result.errors : undefined,
+      message: `Updated ${result.success} transaction(s)${result.failed > 0 ? `, ${result.failed} failed` : ""}.`,
+    };
+  },
+  {
+    name: "bulkUpdateTransactions",
+    description:
+      "Bulk-update many transactions (description, completion, partner assignment, or no-receipt category). Use after listTransactions has shown the user the candidate rows and they have confirmed the change. Pass clearNoReceiptCategory=true to remove an existing category (e.g. flipping 'private' → needs receipt). Requires user confirmation.",
+    schema: z.object({
+      transactionIds: z.array(z.string()).min(1).describe("Transaction IDs to update (max 1000)"),
+      description: z.string().optional().describe("New description for all selected transactions"),
+      isComplete: z.boolean().optional().describe("Mark all as complete/incomplete"),
+      partnerId: z.string().optional().describe("Assign this partner to all selected transactions"),
+      noReceiptCategoryId: z
+        .string()
+        .optional()
+        .describe("Assign this user no-receipt category (use the id from listCategories)"),
+      noReceiptCategoryTemplateId: z
+        .enum([
+          "bank-fees",
+          "interest",
+          "internal-transfers",
+          "payment-provider-settlements",
+          "taxes-government",
+          "payroll",
+          "private-personal",
+          "zero-value",
+          "receipt-lost",
+        ])
+        .optional()
+        .describe("Optional: also set/update the template ID for clarity (kept in sync with the category id)"),
+      clearNoReceiptCategory: z
+        .boolean()
+        .optional()
+        .describe("Set true to remove the no-receipt category (e.g. flipping 'private' transactions back to 'needs receipt')"),
+    }),
+  }
+);
+
+// ============================================================================
 // Export all write tools
 // ============================================================================
 
@@ -968,6 +1072,7 @@ export const WRITE_TOOLS = [
   assignPartnerToTransactionTool,
   assignPartnerToFileTool,
   bulkAssignPartnerToTransactionsTool,
+  bulkUpdateTransactionsTool,
   matchTransactionPartnersTool,
   createPartnerTool,
   updatePartnerTool,

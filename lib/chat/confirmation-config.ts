@@ -9,6 +9,7 @@
  */
 export const TOOLS_REQUIRING_CONFIRMATION = [
   "updateTransaction",
+  "bulkUpdateTransactions",
   "createSource",
   "updateSource",
   "deleteSource",
@@ -60,6 +61,24 @@ export function getConfirmationDetails(
           isComplete: safeArgs.isComplete,
         }),
       };
+
+    case "bulkUpdateTransactions": {
+      const ids = Array.isArray(safeArgs.transactionIds) ? safeArgs.transactionIds : [];
+      return {
+        title: "Bulk Update Transactions",
+        description: `This will update ${ids.length} transaction(s) with the listed changes.`,
+        impact: ids.length > 50 ? "high" : "medium",
+        previewData: filterUndefined({
+          count: ids.length,
+          description: safeArgs.description,
+          isComplete: safeArgs.isComplete,
+          partnerId: safeArgs.partnerId,
+          noReceiptCategoryId: safeArgs.noReceiptCategoryId,
+          noReceiptCategoryTemplateId: safeArgs.noReceiptCategoryTemplateId,
+          clearNoReceiptCategory: safeArgs.clearNoReceiptCategory,
+        }),
+      };
+    }
 
     case "createSource":
       return {
