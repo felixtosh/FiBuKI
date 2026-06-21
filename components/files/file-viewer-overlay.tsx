@@ -41,6 +41,30 @@ export function FileViewerOverlay({
   const handleZoomOut = () => setZoom((z) => Math.max(z - 0.25, 0.5));
   const handleRotate = () => setRotation((r) => (r + 90) % 360);
 
+  // Cross-origin downloads ignore the <a download> attribute, so the browser
+  // just opens the PDF inline instead of saving it. Fetch the file ourselves
+  // and hand the blob to a same-origin object URL — the download attribute
+  // is honored for blob: URLs and the filename is preserved.
+  const handleDownload = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    try {
+      const res = await fetch(downloadUrl);
+      if (!res.ok) throw new Error(`fetch failed: ${res.status}`);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 0);
+    } catch (err) {
+      console.warn("Blob download failed, falling back to direct link:", err);
+      window.location.href = downloadUrl;
+    }
+  };
+
   // Reset state when file changes
   useEffect(() => {
     setZoom(1);
@@ -87,10 +111,13 @@ export function FileViewerOverlay({
       <div className="w-px h-6 bg-border mx-1" />
 
       {/* Download */}
-      <Button variant="ghost" size="icon" className="h-8 w-8" asChild>
-        <a href={downloadUrl} download={fileName}>
-          <Download className="h-4 w-4" />
-        </a>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-8 w-8"
+        onClick={handleDownload}
+      >
+        <Download className="h-4 w-4" />
       </Button>
 
       {/* Open in new tab */}
@@ -138,10 +165,8 @@ export function FileViewerOverlay({
           <div className="flex flex-col items-center gap-4 text-muted-foreground p-8">
             <FileText className="h-16 w-16" />
             <p className="text-sm">Preview not available</p>
-            <Button variant="outline" asChild>
-              <a href={downloadUrl} download={fileName}>
-                Download file
-              </a>
+            <Button variant="outline" onClick={handleDownload}>
+              Download file
             </Button>
           </div>
         )}

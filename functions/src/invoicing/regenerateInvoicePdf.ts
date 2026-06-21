@@ -58,10 +58,15 @@ export async function performRegenerateInvoicePdf(
   const storageFile = bucket.file(storagePath);
   await storageFile.save(buffer, {
     contentType: "application/pdf",
-    metadata: { cacheControl: "private, max-age=0, no-store" },
+    metadata: {
+      cacheControl: "private, max-age=0, no-store",
+      contentDisposition: `inline; filename="${invoice.number}.pdf"`,
+    },
   });
   await storageFile.makePublic();
-  const downloadUrl = `https://storage.googleapis.com/${bucket.name}/${storagePath}`;
+  // Append a version query param so iframe / browser caches don't keep
+  // serving the prior PDF bytes after regen.
+  const downloadUrl = `https://storage.googleapis.com/${bucket.name}/${storagePath}?v=${Date.now()}`;
 
   const fileFields = buildInvoiceFileFields(invoice, {
     storagePath,

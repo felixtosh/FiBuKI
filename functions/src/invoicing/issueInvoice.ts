@@ -107,10 +107,15 @@ export async function performIssueInvoice(
   const storageFile = bucket.file(storagePath);
   await storageFile.save(pdfBuffer, {
     contentType: "application/pdf",
-    metadata: { cacheControl: "private, max-age=0, no-store" },
+    metadata: {
+      cacheControl: "private, max-age=0, no-store",
+      contentDisposition: `inline; filename="${number}.pdf"`,
+    },
   });
   await storageFile.makePublic();
-  const downloadUrl = `https://storage.googleapis.com/${bucket.name}/${storagePath}`;
+  // Append a version query param so iframe / browser caches don't keep
+  // serving prior PDF bytes after regen.
+  const downloadUrl = `https://storage.googleapis.com/${bucket.name}/${storagePath}?v=${Date.now()}`;
 
   // 4. Update the TaxFile record. createInvoice already created a stub
   // TaxFile (so the draft appears in the files list); we update it in place
