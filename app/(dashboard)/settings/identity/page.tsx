@@ -125,6 +125,7 @@ export default function IdentityPage() {
           aliases: userData.personalEntity.aliases || [],
           vatId: userData.personalEntity.vatId || "",
           ibans: userData.personalEntity.ibans || [],
+          address: userData.personalEntity.address,
           partnerId: userData.personalEntity.partnerId,
         });
       } else if (userData.name) {
@@ -150,6 +151,7 @@ export default function IdentityPage() {
             aliases: c.aliases || [],
             vatId: c.vatId || "",
             ibans: c.ibans || [],
+            address: c.address,
             partnerId: c.partnerId,
           }))
         );
@@ -280,6 +282,7 @@ export default function IdentityPage() {
     if (JSON.stringify(personalEntity.aliases) !== JSON.stringify(originalPersonal.aliases || [])) return true;
     if ((personalEntity.vatId || "") !== (originalPersonal.vatId || "")) return true;
     if (JSON.stringify(personalEntity.ibans) !== JSON.stringify(originalPersonal.ibans || [])) return true;
+    if (JSON.stringify(personalEntity.address ?? null) !== JSON.stringify(userData.personalEntity?.address ?? null)) return true;
 
     // Check companies
     const originalCompanies = userData.companies || (userData.companyName ? [{
@@ -553,6 +556,57 @@ export default function IdentityPage() {
                   ))}
                 </div>
               )}
+            </div>
+
+            {/* Address (shown on issued invoices) */}
+            <div className="space-y-2">
+              <Label>Address</Label>
+              <p className="text-xs text-muted-foreground">
+                Appears as the sender block on your invoices.
+              </p>
+              <Input
+                placeholder="Street and number"
+                value={personalEntity.address?.street ?? ""}
+                onChange={(e) =>
+                  handleUpdatePersonal({
+                    address: { ...(personalEntity.address ?? {}), street: e.target.value },
+                  })
+                }
+              />
+              <div className="grid grid-cols-[1fr_2fr] gap-2">
+                <Input
+                  placeholder="Postal code"
+                  value={personalEntity.address?.postalCode ?? ""}
+                  onChange={(e) =>
+                    handleUpdatePersonal({
+                      address: { ...(personalEntity.address ?? {}), postalCode: e.target.value },
+                    })
+                  }
+                />
+                <Input
+                  placeholder="City"
+                  value={personalEntity.address?.city ?? ""}
+                  onChange={(e) =>
+                    handleUpdatePersonal({
+                      address: { ...(personalEntity.address ?? {}), city: e.target.value },
+                    })
+                  }
+                />
+              </div>
+              <Input
+                placeholder="Country (e.g., AT)"
+                value={personalEntity.address?.country ?? ""}
+                onChange={(e) =>
+                  handleUpdatePersonal({
+                    address: {
+                      ...(personalEntity.address ?? {}),
+                      country: e.target.value.toUpperCase().slice(0, 2),
+                    },
+                  })
+                }
+                className="font-mono uppercase"
+                maxLength={2}
+              />
             </div>
           </div>
 
