@@ -180,19 +180,45 @@ export async function performCreateInvoice(
   const issueYear = issueDate.toDate().getFullYear();
   let numberSeq = 1;
   try {
-    const yearStart = Timestamp.fromDate(new Date(issueYear, 0, 1));
-    const yearEnd = Timestamp.fromDate(new Date(issueYear + 1, 0, 1));
+    // Scan ALL of the user's invoices (no date filter) and look at both
+    // structured numberSeq AND the trailing 4-digit chunk of the legacy
+    // `number` field for the current year. Year filter was dropping older
+    // sequences when timezone math pushed issueDate across the boundary;
+    // doing it manually below keeps things consistent.
     const seqQuery = await db
       .collection("invoices")
       .where("userId", "==", userId)
-      .where("issueDate", ">=", yearStart)
-      .where("issueDate", "<", yearEnd)
       .get();
     let maxSeq = 0;
+    const yearRegex = new RegExp(`-${issueYear}-(\\d{1,6})$`);
     seqQuery.forEach((doc) => {
-      const data = doc.data() as { numberSeq?: number };
+      const data = doc.data() as {
+        numberSeq?: number;
+        number?: string;
+        issueDate?: { toDate: () => Date };
+      };
+      // Same-year guard: prefer the doc's stored issueDate year, fall back
+      // to parsing the year from the number string.
+      let docYear: number | null = null;
+      try {
+        docYear = data.issueDate?.toDate?.().getFullYear() ?? null;
+      } catch {
+        docYear = null;
+      }
+      if (docYear !== null && docYear !== issueYear) return;
+
       if (typeof data.numberSeq === "number" && data.numberSeq > maxSeq) {
         maxSeq = data.numberSeq;
+      }
+      // Legacy fallback: parse "{prefix}-{year}-{NNNN}" from data.number.
+      if (typeof data.number === "string") {
+        const m = data.number.match(yearRegex);
+        if (m) {
+          const legacySeq = parseInt(m[1], 10);
+          if (!Number.isNaN(legacySeq) && legacySeq > maxSeq) {
+            maxSeq = legacySeq;
+          }
+        }
       }
     });
     numberSeq = maxSeq + 1;
@@ -246,6 +272,7 @@ export async function performCreateInvoice(
     classificationComplete: true,
     isNotInvoice: false,
     isFibukiGenerated: true,
+    sourceType: "fibuki_invoice",
     invoiceId: docRef.id,
     invoiceDirection: "outgoing",
     matchedUserAccount: "issuer",

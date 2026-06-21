@@ -297,27 +297,36 @@ export function InvoiceIssuerPicker({
     <div className="space-y-2">
       <div className="space-y-1.5">
         <Label className="text-xs text-muted-foreground">Absender</Label>
-        <Select
-          value={value?.entityId ?? ""}
-          onValueChange={handleEntityChange}
-          disabled={disabled}
-        >
-          <SelectTrigger>
-            <SelectValue placeholder="Identität wählen" />
-          </SelectTrigger>
-          <SelectContent>
-            {entities.map((e) => {
-              const ibanCount = ibansForEntity.get(e.id)?.length ?? 0;
-              return (
-                <SelectItem key={e.id} value={e.id}>
-                  {e.name}
-                  {e.type === "company" ? " (Firma)" : ""}
-                  {ibanCount === 0 ? " — keine IBAN" : ""}
-                </SelectItem>
-              );
-            })}
-          </SelectContent>
-        </Select>
+        {entities.length === 1 ? (
+          // Single entity — render as static text. A dropdown with one option
+          // is just noise.
+          <div className="text-sm px-3 py-2 rounded-md border bg-muted/30">
+            {entities[0].name}
+            {entities[0].type === "company" ? " (Firma)" : ""}
+          </div>
+        ) : (
+          <Select
+            value={value?.entityId ?? ""}
+            onValueChange={handleEntityChange}
+            disabled={disabled}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Identität wählen" />
+            </SelectTrigger>
+            <SelectContent>
+              {entities.map((e) => {
+                const ibanCount = ibansForEntity.get(e.id)?.length ?? 0;
+                return (
+                  <SelectItem key={e.id} value={e.id}>
+                    {e.name}
+                    {e.type === "company" ? " (Firma)" : ""}
+                    {ibanCount === 0 ? " — keine IBAN" : ""}
+                  </SelectItem>
+                );
+              })}
+            </SelectContent>
+          </Select>
+        )}
       </div>
 
       {selectedEntity && hasIbans && (
@@ -326,7 +335,7 @@ export function InvoiceIssuerPicker({
             <Label className="text-xs text-muted-foreground">IBAN</Label>
             {!disabled && (
               <Link
-                href="/accounts"
+                href="/sources"
                 target="_blank"
                 rel="noopener"
                 className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground hover:underline"
@@ -398,19 +407,6 @@ export function InvoiceIssuerPicker({
         </div>
       )}
 
-      {/* Anything beyond appending an IBAN (new entity, address, VAT) routes
-          to /settings/identity — the picker stays a pure selector. */}
-      {!disabled && (
-        <div className="pt-1">
-          <Link
-            href="/settings/identity"
-            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground hover:underline"
-          >
-            <Settings className="h-3 w-3" />
-            Identität & Bankverbindungen verwalten
-          </Link>
-        </div>
-      )}
     </div>
   );
 }

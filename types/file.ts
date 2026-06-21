@@ -118,7 +118,7 @@ export interface TaxFile {
   // === Source Tracking ===
 
   /** How the file was added to FiBuKI (defaults to "upload" for legacy files) */
-  sourceType?: "upload" | "gmail" | "gmail_html_invoice" | "gmail_invoice_link" | "browser" | "email_inbound" | "email_inbound_body";
+  sourceType?: "upload" | "gmail" | "gmail_html_invoice" | "gmail_invoice_link" | "browser" | "email_inbound" | "email_inbound_body" | "fibuki_invoice";
 
   /** Search pattern/query that produced this file (when known) */
   sourceSearchPattern?: string;
@@ -506,7 +506,7 @@ export interface FileCreateData {
   contentHash?: string;
 
   // Source tracking
-  sourceType?: "upload" | "gmail" | "gmail_html_invoice" | "gmail_invoice_link" | "browser" | "email_inbound" | "email_inbound_body";
+  sourceType?: "upload" | "gmail" | "gmail_html_invoice" | "gmail_invoice_link" | "browser" | "email_inbound" | "email_inbound_body" | "fibuki_invoice";
   sourceSearchPattern?: string;
   sourceResultType?: FileSourceResultType;
   sourceUrl?: string;

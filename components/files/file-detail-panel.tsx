@@ -14,6 +14,7 @@ import {
   ExternalLink,
   Info,
   Search,
+  FileText,
 } from "lucide-react";
 import Link from "next/link";
 import { TaxFile, TransactionSuggestion } from "@/types/file";
@@ -180,6 +181,7 @@ function FileDetailPanelInner({
 
   const isGmailSource = file.sourceType?.startsWith("gmail");
   const isEmailInboundSource = file.sourceType?.startsWith("email_inbound");
+  const isFibukiInvoice = file.sourceType === "fibuki_invoice";
   const sourceResultLabel = useMemo(() => {
     switch (file.sourceResultType) {
       case "gmail_attachment":
@@ -441,6 +443,11 @@ function FileDetailPanelInner({
                           Email Forwarding
                           <ExternalLink className="h-3 w-3" />
                         </Link>
+                      ) : isFibukiInvoice ? (
+                        <span className="inline-flex items-center gap-1">
+                          <FileText className="h-3 w-3" />
+                          Rechnungserstellung
+                        </span>
                       ) : (
                         <span className="inline-flex items-center gap-1">
                           <Upload className="h-3 w-3" />

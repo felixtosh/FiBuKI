@@ -77,7 +77,7 @@ export interface InvoiceShare {
   lastAccessedAt?: Timestamp;
 }
 
-export const DEFAULT_PAYMENT_TERMS = "Payable within 40 days";
+export const DEFAULT_PAYMENT_TERMS = "Zahlbar innerhalb von 14 Tagen";
 export const DEFAULT_CURRENCY = "EUR";
 export const DEFAULT_VAT_RATE = 20;
 
@@ -132,5 +132,5 @@ export function parsePaymentTermsToDays(terms: string): number {
   if (match) return parseInt(match[1], 10);
   const matchDe = terms.match(/(\d+)\s*tag/i);
   if (matchDe) return parseInt(matchDe[1], 10);
-  return 40;
+  return 14;
 }

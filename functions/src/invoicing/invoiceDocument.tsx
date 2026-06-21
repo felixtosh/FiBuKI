@@ -306,9 +306,7 @@ export const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({
         {/* Footer (payment info + QR) */}
         <View style={styles.footer}>
           <View style={styles.paymentBlock}>
-            <Text style={styles.sectionLabel}>Zahlungsbedingungen</Text>
-            <Text>{invoice.paymentTerms}</Text>
-            <Text style={{ marginTop: 10 }}>Bitte überweisen Sie auf:</Text>
+            <Text style={styles.sectionLabel}>Bitte überweisen Sie auf:</Text>
             <Text>{invoice.issuer.name}</Text>
             <Text>IBAN: {invoice.issuer.iban}</Text>
             {invoice.issuer.bic ? <Text>BIC: {invoice.issuer.bic}</Text> : null}

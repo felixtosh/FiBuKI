@@ -131,6 +131,7 @@ export function InvoiceLineItemsTable({
                 unitEur={unitEur}
                 netCents={netCents}
                 disabled={disabled}
+                canRemove={lineItems.length > 1}
                 onUpdate={(patch) => updateItem(index, patch)}
                 onRemove={() => removeItem(index)}
               />
@@ -160,6 +161,8 @@ interface LineItemRowProps {
   unitEur: string;
   netCents: number;
   disabled: boolean;
+  /** When false the remove button is hidden (e.g. the only line item). */
+  canRemove: boolean;
   onUpdate: (patch: Partial<InvoiceLineItem>) => void;
   onRemove: () => void;
 }
@@ -169,6 +172,7 @@ function LineItemRow({
   unitEur,
   netCents,
   disabled,
+  canRemove,
   onUpdate,
   onRemove,
 }: LineItemRowProps) {
@@ -271,17 +275,19 @@ function LineItemRow({
           <div className="text-sm tabular-nums px-1 invoice-line-items-total">
             {formatEur(netCents)}
           </div>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-8 w-7 invoice-line-items-remove"
-            onClick={onRemove}
-            disabled={disabled}
-            title="Position entfernen"
-          >
-            <Trash2 className="h-4 w-4 text-muted-foreground" />
-          </Button>
+          {canRemove && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-7 invoice-line-items-remove"
+              onClick={onRemove}
+              disabled={disabled}
+              title="Position entfernen"
+            >
+              <Trash2 className="h-4 w-4 text-muted-foreground" />
+            </Button>
+          )}
         </div>
       </div>
     </div>
