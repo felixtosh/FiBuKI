@@ -121,6 +121,8 @@ export function FileDetailPanel(props: FileDetailPanelProps) {
         onNavigateNext={props.onNavigateNext}
         hasPrevious={props.hasPrevious}
         hasNext={props.hasNext}
+        onOpenConnectTransaction={props.onOpenConnectTransaction}
+        isConnectTransactionOpen={props.isConnectTransactionOpen}
       />
     );
   }

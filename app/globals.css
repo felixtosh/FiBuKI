@@ -473,6 +473,17 @@
   }
 }
 
+/* Invoice line items: stack the inner Menge/Preis/USt% numerics row into a
+   single column when the container gets too narrow (e.g. while the right-side
+   detail panel is squeezed in edit mode). Without this the inputs become
+   unusable. Threshold ~440px keeps stacked-card mode (which kicks in below
+   560px) usable down to the narrowest realistic detail-panel widths. */
+@container (max-width: 440px) {
+  .invoice-line-items-numerics {
+    grid-template-columns: 1fr !important;
+  }
+}
+
 /* FieldRow vertical layout when panel is narrow (<300px) */
 @container (max-width: 300px) {
   .field-row-responsive {

@@ -40,6 +40,12 @@ export interface UpdateInvoicePatch {
   /** ISO date string */
   issueDate?: string;
   paymentTerms?: string;
+  /**
+   * Explicit due date override (ISO string). When provided, replaces the
+   * auto-computed `issueDate + paymentTerms` value. Lets callers set a
+   * specific due date without lying about the payment-terms text.
+   */
+  dueDate?: string;
   currency?: string;
   lineItems?: UpdateInvoiceLineItemInput[];
   notes?: string | null;
@@ -211,7 +217,18 @@ export async function performUpdateInvoice(
 
   if (patch.paymentTerms !== undefined) updates.paymentTerms = patch.paymentTerms;
 
-  if (nextIssueDate || patch.paymentTerms !== undefined) {
+  // Explicit dueDate wins over the issueDate+paymentTerms recomputation.
+  // This lets callers set an arbitrary due date without having to fudge
+  // the payment-terms text just to make the arithmetic come out right.
+  const explicitDueDate = patch.dueDate
+    ? parseIsoDateToTimestamp(patch.dueDate)
+    : null;
+  if (patch.dueDate && !explicitDueDate) {
+    throw new HttpsError("invalid-argument", "dueDate is not a valid date");
+  }
+  if (explicitDueDate) {
+    updates.dueDate = explicitDueDate;
+  } else if (nextIssueDate || patch.paymentTerms !== undefined) {
     const baseDate = nextIssueDate || current.issueDate;
     const terms = patch.paymentTerms ?? current.paymentTerms;
     updates.dueDate = addDaysToTimestamp(baseDate, parsePaymentTermsToDays(terms));

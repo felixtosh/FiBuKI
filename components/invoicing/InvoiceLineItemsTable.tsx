@@ -108,7 +108,7 @@ export function InvoiceLineItemsTable({
         <span />
         <span>Beschreibung</span>
         <span className="text-right">Menge</span>
-        <span className="text-right">Einzelpreis (€)</span>
+        <span className="text-right">Preis (€)</span>
         <span className="text-right">USt. %</span>
         <span className="text-right">Gesamt</span>
         <span />
@@ -223,7 +223,7 @@ function LineItemRow({
         </div>
         <div className="invoice-line-items-cell">
           <Label className="invoice-line-items-label text-xs text-muted-foreground">
-            Einzelpreis (€)
+            Preis (€)
           </Label>
           <Input
             type="number"
@@ -266,14 +266,21 @@ function LineItemRow({
         </div>
       </div>
 
-      {/* Footer: gesamt + remove (display:contents in wide mode). */}
+      {/* Footer: gesamt + remove (display:contents in wide mode).
+          In narrow (stacked) mode we hide "Gesamt" entirely when qty ≤ 1
+          because it just duplicates Preis. In wide mode the column stays
+          visible for layout stability — the label class hides via CSS. */}
       <div className="flex items-center justify-between gap-2 invoice-line-items-footer">
-        <span className="text-xs text-muted-foreground invoice-line-items-label">
-          Gesamt
-        </span>
+        {item.quantity > 1 ? (
+          <span className="text-xs text-muted-foreground invoice-line-items-label">
+            Gesamt
+          </span>
+        ) : (
+          <span className="invoice-line-items-label" aria-hidden />
+        )}
         <div className="flex items-center gap-1 invoice-line-items-footer-actions">
           <div className="text-sm tabular-nums px-1 invoice-line-items-total">
-            {formatEur(netCents)}
+            {item.quantity > 1 ? formatEur(netCents) : ""}
           </div>
           {canRemove && (
             <Button
