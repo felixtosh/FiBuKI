@@ -29,9 +29,9 @@ function buildOverrideData(
       : createDefaultSubscriptionData(targetUid);
     return {
       ...base,
-      plan: "pro" as const,
+      plan: "smart" as const,
       stripeSubscriptionStatus: "active" as const,
-      aiFairUseLimitEur: PLANS.pro.aiFairUseLimitEur,
+      aiFairUseLimitEur: PLANS.smart.aiFairUseLimitEur,
       adminOverride: "free_plan" as const,
     };
   }
@@ -140,11 +140,11 @@ describe("admin overrides", () => {
   });
 
   describe("setUserOverride: free_plan", () => {
-    it("should set plan to pro with unlimited AI budget", () => {
+    it("should set plan to smart with full AI budget", () => {
       const data = buildOverrideData("user1", "free_plan");
-      expect(data.plan).toBe("pro");
+      expect(data.plan).toBe("smart");
       expect(data.stripeSubscriptionStatus).toBe("active");
-      expect(data.aiFairUseLimitEur).toBe(PLANS.pro.aiFairUseLimitEur);
+      expect(data.aiFairUseLimitEur).toBe(PLANS.smart.aiFairUseLimitEur);
       expect(data.adminOverride).toBe("free_plan");
     });
 
@@ -275,9 +275,9 @@ describe("switchTesterPlan", () => {
 });
 
 describe("plan-specific limits for testers", () => {
-  it("free tester should have 50 tx limit and 0.50 EUR AI budget", () => {
+  it("free tester should have 50 tx limit and 0 EUR AI budget", () => {
     expect(PLANS.free.transactionLimit).toBe(50);
-    expect(PLANS.free.aiFairUseLimitEur).toBe(0.5);
+    expect(PLANS.free.aiFairUseLimitEur).toBe(0);
     expect(PLANS.free.overageAllowed).toBe(false);
   });
 
@@ -292,8 +292,8 @@ describe("plan-specific limits for testers", () => {
     expect(PLANS.business.aiFairUseLimitEur).toBe(8.0);
   });
 
-  it("pro tester should have 500 tx limit and 20.00 EUR AI budget", () => {
-    expect(PLANS.pro.transactionLimit).toBe(500);
+  it("pro tester should have 1000 tx limit and 20.00 EUR AI budget", () => {
+    expect(PLANS.pro.transactionLimit).toBe(1000);
     expect(PLANS.pro.aiFairUseLimitEur).toBe(20.0);
   });
 });

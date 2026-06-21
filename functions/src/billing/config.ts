@@ -246,9 +246,18 @@ const STRIPE_PRICES_TEST: StripePriceMap = {
 
 const STRIPE_PRICES_LIVE: StripePriceMap = {
   free: { monthly: null, yearly: null },
-  data: { monthly: null, yearly: null }, // Set after live Stripe setup
-  smart: { monthly: null, yearly: null },
-  pro: { monthly: null, yearly: null },
+  data: {
+    monthly: "price_1TEV7ZKIIWnfuvheGdeDxixu",
+    yearly: "price_1TEV7aKIIWnfuvheELsdsK64",
+  },
+  smart: {
+    monthly: "price_1TEV7cKIIWnfuvhesSp2LXEZ",
+    yearly: "price_1TEV7fKIIWnfuvheBtjmhPmF",
+  },
+  pro: {
+    monthly: "price_1TEV7gKIIWnfuvhewA61dSJA",
+    yearly: "price_1TEV7jKIIWnfuvheFP7GNUuN",
+  },
   starter: { monthly: null, yearly: null },
   business: { monthly: null, yearly: null },
 };
@@ -264,10 +273,10 @@ const STRIPE_PRODUCTS_TEST = {
 };
 
 const STRIPE_PRODUCTS_LIVE = {
-  data: null as string | null, // Set after live Stripe setup
-  smart: null as string | null,
-  pro: null as string | null,
-  aiCredits: null as string | null,
+  data: "prod_UCux1WumJFI9g5",
+  smart: "prod_UCuxdYEQrRq9wH",
+  pro: "prod_UCuxQcDZVBESKV",
+  aiCredits: "prod_UCux5Pqor3STZT",
   starter: null as string | null,
   business: null as string | null,
 };
