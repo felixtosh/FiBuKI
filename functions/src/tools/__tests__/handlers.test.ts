@@ -12,15 +12,36 @@ import {
 } from "../../test/setup";
 
 // Mock firebase-admin/firestore
-vi.mock("firebase-admin/firestore", () => ({
-  getFirestore: () => createMockFirestore(),
-  FieldValue: {
-    serverTimestamp: () => new Date(),
-    arrayUnion: (...elements: unknown[]) => ({ elements, constructor: { name: "ArrayUnionTransform" } }),
-    arrayRemove: (...elements: unknown[]) => ({ elements, constructor: { name: "ArrayRemoveTransform" } }),
-    increment: (n: number) => n,
-  },
-}));
+vi.mock("firebase-admin/firestore", () => {
+  // Minimal Timestamp stand-in. The mock in-memory store compares values via
+  // toDate()/getTime(), so we only need fromDate/toDate/now.
+  class MockTimestamp {
+    constructor(private readonly date: Date) {}
+    static fromDate(d: Date) {
+      return new MockTimestamp(d);
+    }
+    static now() {
+      return new MockTimestamp(new Date());
+    }
+    toDate() {
+      return this.date;
+    }
+    valueOf() {
+      return this.date.getTime();
+    }
+  }
+
+  return {
+    getFirestore: () => createMockFirestore(),
+    FieldValue: {
+      serverTimestamp: () => new Date(),
+      arrayUnion: (...elements: unknown[]) => ({ elements, constructor: { name: "ArrayUnionTransform" } }),
+      arrayRemove: (...elements: unknown[]) => ({ elements, constructor: { name: "ArrayRemoveTransform" } }),
+      increment: (n: number) => n,
+    },
+    Timestamp: MockTimestamp,
+  };
+});
 
 // Import handlers after mocking
 const handlers = await import("../handlers");
@@ -98,7 +119,7 @@ describe("Tool Registry Handlers", () => {
 
       const result = await handlers.listTransactions(userId, {});
 
-      expect(result).toHaveLength(2);
+      expect(result.transactions).toHaveLength(2);
     });
 
     it("should filter by isComplete", async () => {
@@ -108,8 +129,8 @@ describe("Tool Registry Handlers", () => {
       const complete = await handlers.listTransactions(userId, { isComplete: true });
       const incomplete = await handlers.listTransactions(userId, { isComplete: false });
 
-      expect(complete).toHaveLength(1);
-      expect(incomplete).toHaveLength(1);
+      expect(complete.transactions).toHaveLength(1);
+      expect(incomplete.transactions).toHaveLength(1);
     });
 
     it("should filter by sourceId", async () => {
@@ -118,7 +139,7 @@ describe("Tool Registry Handlers", () => {
 
       const result = await handlers.listTransactions(userId, { sourceId: "src-a" });
 
-      expect(result).toHaveLength(1);
+      expect(result.transactions).toHaveLength(1);
     });
 
     it("should filter by search term", async () => {
@@ -127,8 +148,8 @@ describe("Tool Registry Handlers", () => {
 
       const result = await handlers.listTransactions(userId, { search: "amazon" });
 
-      expect(result).toHaveLength(1);
-      expect(result[0].name).toBe("Amazon Purchase");
+      expect(result.transactions).toHaveLength(1);
+      expect(result.transactions[0].name).toBe("Amazon Purchase");
     });
 
     it("should include formatted amount", async () => {
@@ -136,7 +157,7 @@ describe("Tool Registry Handlers", () => {
 
       const result = await handlers.listTransactions(userId, {});
 
-      expect(result[0].amountFormatted).toBe("-25.00 EUR");
+      expect(result.transactions[0].amountFormatted).toBe("-25.00 EUR");
     });
   });
 
@@ -568,8 +589,8 @@ describe("Tool Registry Handlers", () => {
 
       const result = await handlers.listTransactions(userId, { dateFrom: "2024-03-01" });
 
-      expect(result).toHaveLength(1);
-      expect(result[0].id).toBe("tx-new");
+      expect(result.transactions).toHaveLength(1);
+      expect(result.transactions[0].id).toBe("tx-new");
     });
 
     it("should filter by dateTo", async () => {
@@ -584,8 +605,8 @@ describe("Tool Registry Handlers", () => {
 
       const result = await handlers.listTransactions(userId, { dateTo: "2024-03-01" });
 
-      expect(result).toHaveLength(1);
-      expect(result[0].id).toBe("tx-old");
+      expect(result.transactions).toHaveLength(1);
+      expect(result.transactions[0].id).toBe("tx-old");
     });
 
     it("should filter by date range", async () => {
@@ -598,8 +619,8 @@ describe("Tool Registry Handlers", () => {
         dateTo: "2024-05-01",
       });
 
-      expect(result).toHaveLength(1);
-      expect(result[0].id).toBe("tx-2");
+      expect(result.transactions).toHaveLength(1);
+      expect(result.transactions[0].id).toBe("tx-2");
     });
   });
 
@@ -618,13 +639,14 @@ describe("Tool Registry Handlers", () => {
       const result = await handlers.listTransactions(userId, { limit: 3 });
 
       expect(result).toBeDefined();
-      expect(Array.isArray(result)).toBe(true);
+      expect(Array.isArray(result.transactions)).toBe(true);
     });
 
     it("listTransactions should cap limit at 100", async () => {
       const result = await handlers.listTransactions(userId, { limit: 200 });
       // Just verify it doesn't throw - limit is applied server-side
       expect(result).toBeDefined();
+      expect(Array.isArray(result.transactions)).toBe(true);
     });
 
     it("listFiles should accept limit parameter without error", async () => {
@@ -756,7 +778,7 @@ describe("Tool Registry Handlers", () => {
 
       const result = await handlers.listTransactions(userId, { search: "amazon" });
 
-      expect(result).toHaveLength(1);
+      expect(result.transactions).toHaveLength(1);
     });
 
     it("should search in partner field", async () => {
@@ -768,7 +790,7 @@ describe("Tool Registry Handlers", () => {
 
       const result = await handlers.listTransactions(userId, { search: "amazon" });
 
-      expect(result).toHaveLength(1);
+      expect(result.transactions).toHaveLength(1);
     });
 
     it("should be case insensitive", async () => {
@@ -779,7 +801,7 @@ describe("Tool Registry Handlers", () => {
 
       const result = await handlers.listTransactions(userId, { search: "amazon" });
 
-      expect(result).toHaveLength(1);
+      expect(result.transactions).toHaveLength(1);
     });
 
     it("should handle null fields gracefully", async () => {
@@ -793,7 +815,7 @@ describe("Tool Registry Handlers", () => {
       // Should not throw, just return no matches
       const result = await handlers.listTransactions(userId, { search: "test" });
 
-      expect(result).toHaveLength(0);
+      expect(result.transactions).toHaveLength(0);
     });
   });
 
@@ -960,9 +982,11 @@ describe("Tool Registry Handlers", () => {
       store.setDoc("transactions", "tx-1", createTestTransaction({ userId, isComplete: true }));
       store.setDoc("transactions", "tx-2", createTestTransaction({ userId, isComplete: false }));
 
-      const result = await handlers.handleTool(userId, "list_transactions", { isComplete: false });
+      const result = await handlers.handleTool(userId, "list_transactions", { isComplete: false }) as {
+        transactions: unknown[];
+      };
 
-      expect(result).toHaveLength(1);
+      expect(result.transactions).toHaveLength(1);
     });
 
     it("should handle all tool names", async () => {

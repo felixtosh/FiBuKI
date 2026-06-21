@@ -254,18 +254,39 @@ describe("checkAIBudget logic", () => {
   });
 
   describe("all plan tiers", () => {
-    it("should work for each plan with full budget", () => {
-      const planIds: PlanId[] = ["free", "starter", "business", "pro"];
+    it("should work for each AI-enabled plan with full budget", () => {
+      // Only plans with a non-zero fair-use budget can grant a fair-use grant.
+      // free + data are deliberately no-AI tiers (budget 0) — they fall through.
+      const planIds: PlanId[] = ["smart", "pro", "starter", "business"];
       for (const planId of planIds) {
+        const budget = PLANS[planId].aiFairUseLimitEur;
+        expect(budget).toBeGreaterThan(0);
+        const result = checkBudgetPure({
+          ...baseSub,
+          plan: planId,
+          aiFairUseLimitEur: budget,
+          aiUsageCurrentPeriodEur: 0,
+        });
+        expect(result.allowed).toBe(true);
+        expect(result.source).toBe("fair_use");
+        expect(result.remainingEur).toBe(budget);
+      }
+    });
+
+    it("should deny no-AI plans (free, data) when no credits or overage", () => {
+      // Plans with zero fair-use budget and no overage allowed should be denied.
+      const noAiPlans: PlanId[] = ["free", "data"];
+      for (const planId of noAiPlans) {
         const result = checkBudgetPure({
           ...baseSub,
           plan: planId,
           aiFairUseLimitEur: PLANS[planId].aiFairUseLimitEur,
           aiUsageCurrentPeriodEur: 0,
+          aiCreditsEur: 0,
+          aiOverageCapEur: 0,
         });
-        expect(result.allowed).toBe(true);
-        expect(result.source).toBe("fair_use");
-        expect(result.remainingEur).toBe(PLANS[planId].aiFairUseLimitEur);
+        expect(result.allowed).toBe(false);
+        expect(result.source).toBe("none");
       }
     });
   });

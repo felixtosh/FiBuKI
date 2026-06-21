@@ -159,6 +159,17 @@ export class InMemoryStore {
       let matches = true;
 
       if (filters) {
+        // Coerce Date | Timestamp | primitive to a comparable number for </<=/>/>= ops.
+        const toComparable = (v: unknown): number => {
+          if (v instanceof Date) return v.getTime();
+          if (v && typeof v === "object" && typeof (v as { toDate?: () => Date }).toDate === "function") {
+            return (v as { toDate: () => Date }).toDate().getTime();
+          }
+          if (typeof v === "number") return v;
+          if (typeof v === "string") return Date.parse(v) || 0;
+          return Number(v);
+        };
+
         for (const filter of filters) {
           const fieldValue = data[filter.field];
           switch (filter.op) {
@@ -169,13 +180,22 @@ export class InMemoryStore {
               if (fieldValue === filter.value) matches = false;
               break;
             case ">":
-              if (!((fieldValue as number) > (filter.value as number))) matches = false;
+              if (!(toComparable(fieldValue) > toComparable(filter.value))) matches = false;
+              break;
+            case ">=":
+              if (!(toComparable(fieldValue) >= toComparable(filter.value))) matches = false;
               break;
             case "<":
-              if (!((fieldValue as number) < (filter.value as number))) matches = false;
+              if (!(toComparable(fieldValue) < toComparable(filter.value))) matches = false;
+              break;
+            case "<=":
+              if (!(toComparable(fieldValue) <= toComparable(filter.value))) matches = false;
               break;
             case "array-contains":
               if (!Array.isArray(fieldValue) || !fieldValue.includes(filter.value)) matches = false;
+              break;
+            case "in":
+              if (!Array.isArray(filter.value) || !(filter.value as unknown[]).includes(fieldValue)) matches = false;
               break;
           }
         }
