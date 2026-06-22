@@ -64,7 +64,7 @@ interface SearchGmailResponse {
   totalEstimate?: number;
 }
 
-interface EmailTokenDocument {
+export interface EmailTokenDocument {
   accessToken: string;
   refreshToken: string;
   refreshTokenIv?: string;
@@ -682,4 +682,4 @@ export async function searchGmailDirect(
 
 // Re-export types and utilities for consumers
 export type { GmailMessageResult, GmailAttachment };
-export { buildGmailSearchQuery, isLikelyReceiptAttachment };
+export { buildGmailSearchQuery, isLikelyReceiptAttachment, tryRefreshToken };

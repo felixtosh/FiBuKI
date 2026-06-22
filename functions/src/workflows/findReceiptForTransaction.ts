@@ -1,0 +1,417 @@
+/**
+ * Find Receipt For Transaction — deterministic workflow.
+ *
+ * Encodes the "find a receipt and connect it" strategy as TypeScript instead
+ * of as a prompt recipe. The chat agent, MCP tools, and A2A connectors all
+ * invoke this single workflow so the secret-sauce strategy is identical
+ * across channels.
+ *
+ * Scope of this version:
+ *   - Pulls the transaction + checks short-circuits (already connected, no-receipt category)
+ *   - Searches local files owned by the user, scores each candidate
+ *   - Searches Gmail across the user's active integrations (if any), scores attachments
+ *     and detects email-as-invoice candidates
+ *   - Picks the best candidate; if it's a local file with a clear lead, auto-connects;
+ *     otherwise surfaces top candidates for review (so the chat agent / UI / MCP caller
+ *     can chain `downloadGmailAttachment` + `connectFileToTransaction` after user confirm)
+ *
+ * Dependency injection (searchGmail, connectFileToTransaction) keeps the workflow
+ * unit-testable and lets the same code run from a callable Cloud Function or from
+ * a worker context.
+ */
+
+import type { Firestore } from "firebase-admin/firestore";
+import {
+  scoreAttachmentMatch,
+  ScoreAttachmentInput,
+} from "../precision-search/scoreAttachmentMatch";
+
+export type FindReceiptStatus =
+  | "connected"
+  | "needs_review"
+  | "no_match"
+  | "skipped";
+
+export type FindReceiptSkipReason =
+  | "already_has_file"
+  | "has_no_receipt_category"
+  | "transaction_not_found";
+
+export type CandidateSource = "local_file" | "gmail_attachment" | "gmail_email";
+
+export interface FindReceiptCandidate {
+  source: CandidateSource;
+  score: number;
+  label: "Strong" | "Likely" | null;
+  reasons: string[];
+  /** Local file reference (source === "local_file") */
+  fileId?: string;
+  /** Gmail message reference (source === "gmail_*") */
+  messageId?: string;
+  /** Gmail attachment reference (source === "gmail_attachment") */
+  attachmentId?: string;
+  /** Gmail integration that owns the message */
+  integrationId?: string;
+  filename?: string;
+  emailSubject?: string;
+  emailFrom?: string;
+}
+
+export interface FindReceiptOptions {
+  transactionId: string;
+  userId: string;
+  /** Score at/above which a clear top local-file winner is auto-connected (default 70). */
+  autoConnectThreshold?: number;
+  /** Minimum score for a candidate to be surfaced at all (default 35). */
+  candidateFloor?: number;
+  /** Minimum lead the top candidate must have over the runner-up to auto-connect (default 10). */
+  clearLeadMargin?: number;
+  /** Max candidates returned in needs_review (default 3). */
+  maxCandidates?: number;
+}
+
+export interface FindReceiptResult {
+  status: FindReceiptStatus;
+  skipReason?: FindReceiptSkipReason;
+  /** Set when status === "connected" */
+  fileId?: string;
+  /** Score of the auto-connected file (status === "connected") */
+  confidence?: number;
+  /** Top candidates for review when status === "needs_review" */
+  candidates?: FindReceiptCandidate[];
+  /** How many of each source we actually evaluated */
+  sourcesChecked: {
+    localFiles: number;
+    gmailAttachments: number;
+    gmailEmails: number;
+  };
+}
+
+export interface SearchGmailArgs {
+  userId: string;
+  integrationIds: string[];
+  query: string;
+  dateFrom?: string;
+  dateTo?: string;
+  hasAttachments?: boolean;
+  limit?: number;
+}
+
+export interface GmailSearchMessage {
+  messageId: string;
+  threadId: string;
+  subject: string;
+  from: string;
+  date: string;
+  snippet: string;
+  bodyText: string | null;
+  integrationId: string;
+  attachments: Array<{
+    attachmentId: string;
+    filename: string;
+    mimeType: string;
+  }>;
+  classification?: {
+    hasPdfAttachment?: boolean;
+    possibleMailInvoice?: boolean;
+    possibleInvoiceLink?: boolean;
+    confidence?: number;
+  };
+}
+
+export interface ConnectFileArgs {
+  userId: string;
+  transactionId: string;
+  fileId: string;
+  matchConfidence: number;
+  connectionType: string;
+}
+
+export interface FindReceiptDeps {
+  db: Firestore;
+  searchGmail: (args: SearchGmailArgs) => Promise<{ messages: GmailSearchMessage[] }>;
+  connectFileToTransaction: (args: ConnectFileArgs) => Promise<{ fileId: string }>;
+}
+
+function toDate(value: unknown): Date | null {
+  if (!value) return null;
+  if (value instanceof Date) return value;
+  if (
+    typeof value === "object" &&
+    typeof (value as { toDate?: () => Date }).toDate === "function"
+  ) {
+    return (value as { toDate: () => Date }).toDate();
+  }
+  return null;
+}
+
+function emptySources(): FindReceiptResult["sourcesChecked"] {
+  return { localFiles: 0, gmailAttachments: 0, gmailEmails: 0 };
+}
+
+export async function findReceiptForTransaction(
+  options: FindReceiptOptions,
+  deps: FindReceiptDeps
+): Promise<FindReceiptResult> {
+  const { transactionId, userId } = options;
+  const autoConnectThreshold = options.autoConnectThreshold ?? 70;
+  const candidateFloor = options.candidateFloor ?? 35;
+  const clearLeadMargin = options.clearLeadMargin ?? 10;
+  const maxCandidates = options.maxCandidates ?? 3;
+  const { db, searchGmail, connectFileToTransaction } = deps;
+
+  // --- Transaction lookup + short-circuits ---
+  const txSnap = await db.collection("transactions").doc(transactionId).get();
+  if (!txSnap.exists) {
+    return {
+      status: "skipped",
+      skipReason: "transaction_not_found",
+      sourcesChecked: emptySources(),
+    };
+  }
+  const tx = txSnap.data()!;
+  if (tx.userId !== userId) {
+    return {
+      status: "skipped",
+      skipReason: "transaction_not_found",
+      sourcesChecked: emptySources(),
+    };
+  }
+  if (Array.isArray(tx.fileIds) && tx.fileIds.length > 0) {
+    return {
+      status: "skipped",
+      skipReason: "already_has_file",
+      sourcesChecked: emptySources(),
+    };
+  }
+  if (tx.noReceiptCategoryId) {
+    return {
+      status: "skipped",
+      skipReason: "has_no_receipt_category",
+      sourcesChecked: emptySources(),
+    };
+  }
+
+  // --- Transaction context for scoring ---
+  const transactionAmount =
+    typeof tx.amount === "number" ? (tx.amount as number) : null;
+  const transactionDate = toDate(tx.date);
+  const transactionName = (tx.name as string | null | undefined) ?? null;
+  const transactionPartner =
+    (tx.partner as string | null | undefined) ?? null;
+  const transactionPartnerId =
+    (tx.partnerId as string | null | undefined) ?? null;
+  const transactionReference =
+    (tx.reference as string | null | undefined) ?? null;
+
+  const baseScoringContext: Pick<
+    ScoreAttachmentInput,
+    | "transactionAmount"
+    | "transactionDate"
+    | "transactionName"
+    | "transactionReference"
+    | "transactionPartner"
+    | "transactionPartnerId"
+  > = {
+    transactionAmount,
+    transactionDate,
+    transactionName,
+    transactionReference,
+    transactionPartner,
+    transactionPartnerId,
+  };
+
+  // --- Score local files ---
+  const candidates: FindReceiptCandidate[] = [];
+  let localFileCount = 0;
+
+  const filesSnap = await db
+    .collection("files")
+    .where("userId", "==", userId)
+    .get();
+
+  for (const fileDoc of filesSnap.docs) {
+    const file = fileDoc.data();
+    if (file.deletedAt) continue;
+    const fileTxIds = Array.isArray(file.transactionIds)
+      ? (file.transactionIds as string[])
+      : [];
+    if (fileTxIds.includes(transactionId)) continue;
+    localFileCount++;
+
+    const result = scoreAttachmentMatch({
+      ...baseScoringContext,
+      filename: (file.fileName as string) ?? "",
+      mimeType: (file.fileType as string) ?? "application/pdf",
+      fileExtractedAmount:
+        typeof file.extractedAmount === "number"
+          ? (file.extractedAmount as number)
+          : null,
+      fileExtractedDate: toDate(file.extractedDate),
+      fileExtractedPartner:
+        (file.extractedPartner as string | null | undefined) ?? null,
+      filePartnerId: (file.partnerId as string | null | undefined) ?? null,
+    });
+
+    if (result.score >= candidateFloor) {
+      candidates.push({
+        source: "local_file",
+        score: result.score,
+        label: result.label,
+        reasons: result.reasons,
+        fileId: fileDoc.id,
+        filename: (file.fileName as string) ?? undefined,
+      });
+    }
+  }
+
+  // --- Score Gmail attachments + emails ---
+  let gmailAttachmentCount = 0;
+  let gmailEmailCount = 0;
+
+  const integrationsSnap = await db
+    .collection("emailIntegrations")
+    .where("userId", "==", userId)
+    .where("provider", "==", "gmail")
+    .where("isActive", "==", true)
+    .get();
+
+  const activeIntegrationIds = integrationsSnap.docs
+    .filter((d) => !d.data().needsReauth)
+    .map((d) => d.id);
+
+  if (activeIntegrationIds.length > 0) {
+    const query = (transactionPartner || transactionName || "").trim();
+    if (query) {
+      const dateFrom = transactionDate
+        ? new Date(transactionDate.getTime() - 180 * 24 * 3600_000).toISOString()
+        : undefined;
+      const dateTo = transactionDate
+        ? new Date(transactionDate.getTime() + 45 * 24 * 3600_000).toISOString()
+        : undefined;
+
+      const gmail = await searchGmail({
+        userId,
+        integrationIds: activeIntegrationIds,
+        query,
+        dateFrom,
+        dateTo,
+        hasAttachments: false,
+        limit: 30,
+      });
+
+      for (const message of gmail.messages) {
+        gmailEmailCount++;
+        const emailContext: Pick<
+          ScoreAttachmentInput,
+          | "emailSubject"
+          | "emailFrom"
+          | "emailSnippet"
+          | "emailBodyText"
+          | "emailDate"
+          | "integrationId"
+          | "classification"
+        > = {
+          emailSubject: message.subject,
+          emailFrom: message.from,
+          emailSnippet: message.snippet,
+          emailBodyText: message.bodyText,
+          emailDate: message.date ? new Date(message.date) : null,
+          integrationId: message.integrationId,
+          classification: message.classification ?? null,
+        };
+
+        for (const att of message.attachments) {
+          gmailAttachmentCount++;
+          const result = scoreAttachmentMatch({
+            ...baseScoringContext,
+            ...emailContext,
+            filename: att.filename,
+            mimeType: att.mimeType,
+          });
+          if (result.score >= candidateFloor) {
+            candidates.push({
+              source: "gmail_attachment",
+              score: result.score,
+              label: result.label,
+              reasons: result.reasons,
+              messageId: message.messageId,
+              attachmentId: att.attachmentId,
+              integrationId: message.integrationId,
+              filename: att.filename,
+              emailSubject: message.subject,
+              emailFrom: message.from,
+            });
+          }
+        }
+
+        // Email-as-invoice path: no PDF attachment but the email itself looks like an invoice.
+        if (
+          message.attachments.length === 0 &&
+          message.classification?.possibleMailInvoice
+        ) {
+          const result = scoreAttachmentMatch({
+            ...baseScoringContext,
+            ...emailContext,
+            filename: `${message.subject || "email"}.pdf`,
+            mimeType: "application/pdf",
+          });
+          if (result.score >= candidateFloor) {
+            candidates.push({
+              source: "gmail_email",
+              score: result.score,
+              label: result.label,
+              reasons: result.reasons,
+              messageId: message.messageId,
+              integrationId: message.integrationId,
+              emailSubject: message.subject,
+              emailFrom: message.from,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  candidates.sort((a, b) => b.score - a.score);
+
+  const sourcesChecked = {
+    localFiles: localFileCount,
+    gmailAttachments: gmailAttachmentCount,
+    gmailEmails: gmailEmailCount,
+  };
+
+  if (candidates.length === 0) {
+    return { status: "no_match", sourcesChecked };
+  }
+
+  const top = candidates[0];
+  const second = candidates[1];
+  const isClearWinner =
+    top.score >= autoConnectThreshold &&
+    (!second || top.score - second.score >= clearLeadMargin);
+
+  // Only local files are auto-connected. Gmail candidates require a download
+  // step (and async extraction verification) which the caller orchestrates.
+  if (isClearWinner && top.source === "local_file" && top.fileId) {
+    await connectFileToTransaction({
+      userId,
+      transactionId,
+      fileId: top.fileId,
+      matchConfidence: top.score,
+      connectionType: "agent_auto",
+    });
+    return {
+      status: "connected",
+      fileId: top.fileId,
+      confidence: top.score,
+      sourcesChecked,
+    };
+  }
+
+  return {
+    status: "needs_review",
+    candidates: candidates.slice(0, maxCandidates),
+    sourcesChecked,
+  };
+}

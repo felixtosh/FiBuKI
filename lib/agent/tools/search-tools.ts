@@ -1985,6 +1985,87 @@ Note: In receipt_search worker mode, skipValidation is ignored for safety.`,
 );
 
 // ============================================================================
+// Workflow Tool — findReceiptForTransaction
+// ============================================================================
+// Encodes the entire receipt-finding strategy (local + Gmail search, scoring,
+// auto-connect-if-clear-winner) as a single Cloud Function call. Prefer this
+// over composing generateSearchSuggestions/searchLocalFiles/searchGmail*/score
+// manually — the workflow runs the same logic deterministically in <2s and is
+// callable identically from chat, MCP, and external agents.
+
+interface FindReceiptCandidate {
+  source: "local_file" | "gmail_attachment" | "gmail_email";
+  score: number;
+  label: "Strong" | "Likely" | null;
+  reasons: string[];
+  fileId?: string;
+  messageId?: string;
+  attachmentId?: string;
+  integrationId?: string;
+  filename?: string;
+  emailSubject?: string;
+  emailFrom?: string;
+}
+
+interface FindReceiptResponse {
+  status: "connected" | "needs_review" | "no_match" | "skipped";
+  skipReason?: "already_has_file" | "has_no_receipt_category" | "transaction_not_found";
+  fileId?: string;
+  confidence?: number;
+  candidates?: FindReceiptCandidate[];
+  sourcesChecked: { localFiles: number; gmailAttachments: number; gmailEmails: number };
+}
+
+export const findReceiptForTransactionTool = tool(
+  async ({ transactionId }, config) => {
+    const authHeader = config?.configurable?.authHeader;
+    if (!authHeader) {
+      return { error: "Auth header not provided" };
+    }
+    const result = await callFirebaseFunction<
+      { transactionId: string },
+      FindReceiptResponse
+    >("findReceiptForTransaction", { transactionId }, authHeader);
+
+    // Add a nextStep hint so downstream models know what to do next without re-reading prose
+    let nextStep: string;
+    switch (result.status) {
+      case "connected":
+        nextStep = `Done — file ${result.fileId} attached at ${result.confidence}% confidence.`;
+        break;
+      case "needs_review":
+        nextStep =
+          "Show the top candidates to the user (or for the highest-scoring gmail_attachment, " +
+          "call downloadGmailAttachment with its messageId+attachmentId, then waitForFileExtraction, " +
+          "then connectFileToTransaction).";
+        break;
+      case "no_match":
+        nextStep = "Nothing scored high enough; tell the user no receipts found.";
+        break;
+      case "skipped":
+        nextStep =
+          result.skipReason === "already_has_file"
+            ? "Transaction already has a receipt; nothing to do."
+            : result.skipReason === "has_no_receipt_category"
+              ? "Transaction is marked complete via a no-receipt category."
+              : "Transaction not found.";
+        break;
+    }
+    return { ...result, nextStep };
+  },
+  {
+    name: "findReceiptForTransaction",
+    description:
+      "End-to-end receipt finder for a transaction. Searches local files + Gmail across all the user's integrations, scores every candidate, and auto-connects a clear local-file winner (≥70% score with ≥10pt lead). Otherwise returns top candidates for review. Single call replaces the older recipe of generateSearchSuggestions→searchLocalFiles→searchGmail*→analyzeEmail→score chain. transactionId MUST be a real database ID from listTransactions/getTransaction (not a placeholder).",
+    schema: z.object({
+      transactionId: z
+        .string()
+        .describe("The transaction ID — copy verbatim from a prior listTransactions/getTransaction result."),
+    }),
+  }
+);
+
+// ============================================================================
 // Export all search tools
 // ============================================================================
 
@@ -1996,4 +2077,5 @@ export const SEARCH_TOOLS = [
   searchGmailAttachmentsTool,
   searchGmailEmailsTool,
   analyzeEmailTool,
+  findReceiptForTransactionTool,
 ];

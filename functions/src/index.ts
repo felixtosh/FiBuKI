@@ -199,6 +199,9 @@ export {
 export { triggerFileMatchingWorkerCallable as triggerFileMatchingWorker } from "./workers/triggerFileMatchingWorker";
 export { runReceiptSearchForTransactionCallable as runReceiptSearchForTransaction } from "./workers/runReceiptSearchForTransaction";
 
+// Workflow callables (deterministic secret-sauce strategies, invocable from all four personas)
+export { findReceiptForTransactionCallable as findReceiptForTransaction } from "./workflows/findReceiptForTransactionCallable";
+
 // Report operations
 export {
   generateUvaXmlCallable as generateUvaXml,
