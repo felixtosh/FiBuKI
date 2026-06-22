@@ -39,12 +39,6 @@ export function FinanzOnlineIntegrationCard() {
   const { user, isAdmin } = useAuth();
   const { userData } = useUserData();
 
-  // Only show for admins while feature is being hardened
-  if (!isAdmin) {
-    return null;
-  }
-  const finanzonline = userData?.finanzonline;
-
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -56,6 +50,12 @@ export function FinanzOnlineIntegrationCard() {
   const [benutzerId, setBenutzerId] = useState("");
   const [pin, setPin] = useState("");
 
+  // Only show for admins while feature is being hardened
+  if (!isAdmin) {
+    return null;
+  }
+
+  const finanzonline = userData?.finanzonline;
   const isConfigured = finanzonline?.isConfigured;
   const connectionStatus = finanzonline?.connectionStatus;
 

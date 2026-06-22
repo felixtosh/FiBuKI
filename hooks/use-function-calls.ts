@@ -1,12 +1,29 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
-import { collection, query, orderBy, onSnapshot, where, limit, Timestamp } from "firebase/firestore";
+import { useMemo } from "react";
+import {
+  Timestamp,
+  collection,
+  limit,
+  orderBy,
+  query,
+  where,
+  type QueryDocumentSnapshot,
+} from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
-import { FunctionCallRecord, FunctionCallSummary, FunctionCallDailyStats } from "@/types/function-call";
+import {
+  FunctionCallRecord,
+  FunctionCallSummary,
+  FunctionCallDailyStats,
+} from "@/types/function-call";
+import { useFirestoreCollection } from "@/lib/firebase/use-firestore-collection";
 import { useAuth } from "@/components/auth";
 
 const MAX_RECORDS = 500;
+
+function mapFunctionCall(doc: QueryDocumentSnapshot): FunctionCallRecord {
+  return { id: doc.id, ...doc.data() } as FunctionCallRecord;
+}
 
 export interface FunctionCallStats {
   calls: number;
@@ -35,13 +52,8 @@ export function useFunctionCalls(options?: {
 }) {
   const { userId } = useAuth();
   const allUsers = options?.allUsers ?? false;
-  const [records, setRecords] = useState<FunctionCallRecord[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
-
   const dateRange = options?.dateRange || "30d";
 
-  // Calculate date filter
   const dateFrom = useMemo(() => {
     if (dateRange === "all") return undefined;
     const days = dateRange === "7d" ? 7 : 30;
@@ -51,75 +63,45 @@ export function useFunctionCalls(options?: {
     return d;
   }, [dateRange]);
 
-  // Real-time listener for function call records
-  useEffect(() => {
-    // For user-specific queries, require userId
-    if (!allUsers && !userId) {
-      setRecords([]);
-      setLoading(false);
-      return;
-    }
-
-    setLoading(true);
-
-    let q;
+  const q = useMemo(() => {
+    if (!allUsers && !userId) return null;
+    const fromTimestamp = dateFrom ? Timestamp.fromDate(dateFrom) : undefined;
 
     if (allUsers) {
-      // Admin view: all users
-      if (dateFrom) {
-        q = query(
-          collection(db, "functionCalls"),
-          where("createdAt", ">=", Timestamp.fromDate(dateFrom)),
-          orderBy("createdAt", "desc"),
-          limit(MAX_RECORDS)
-        );
-      } else {
-        q = query(
-          collection(db, "functionCalls"),
-          orderBy("createdAt", "desc"),
-          limit(MAX_RECORDS)
-        );
-      }
-    } else {
-      // User view: only their records
-      if (dateFrom) {
-        q = query(
-          collection(db, "functionCalls"),
-          where("userId", "==", userId),
-          where("createdAt", ">=", Timestamp.fromDate(dateFrom)),
-          orderBy("createdAt", "desc"),
-          limit(MAX_RECORDS)
-        );
-      } else {
-        q = query(
-          collection(db, "functionCalls"),
-          where("userId", "==", userId),
-          orderBy("createdAt", "desc"),
-          limit(MAX_RECORDS)
-        );
-      }
+      return fromTimestamp
+        ? query(
+            collection(db, "functionCalls"),
+            where("createdAt", ">=", fromTimestamp),
+            orderBy("createdAt", "desc"),
+            limit(MAX_RECORDS),
+          )
+        : query(
+            collection(db, "functionCalls"),
+            orderBy("createdAt", "desc"),
+            limit(MAX_RECORDS),
+          );
     }
 
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const data = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        })) as FunctionCallRecord[];
+    return fromTimestamp
+      ? query(
+          collection(db, "functionCalls"),
+          where("userId", "==", userId),
+          where("createdAt", ">=", fromTimestamp),
+          orderBy("createdAt", "desc"),
+          limit(MAX_RECORDS),
+        )
+      : query(
+          collection(db, "functionCalls"),
+          where("userId", "==", userId),
+          orderBy("createdAt", "desc"),
+          limit(MAX_RECORDS),
+        );
+  }, [allUsers, userId, dateFrom]);
 
-        setRecords(data);
-        setLoading(false);
-      },
-      (err) => {
-        console.error("Error fetching function calls:", err);
-        setError(err);
-        setLoading(false);
-      }
-    );
-
-    return () => unsubscribe();
-  }, [userId, dateFrom, allUsers]);
+  const { data: records, loading, error } = useFirestoreCollection(
+    q,
+    mapFunctionCall,
+  );
 
   // Calculate summary from records
   const summary: FunctionCallSummary = useMemo(() => {

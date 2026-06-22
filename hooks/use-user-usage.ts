@@ -1,20 +1,18 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useMemo } from "react";
 import {
   collection,
-  query,
-  orderBy,
-  onSnapshot,
-  where,
   limit,
+  orderBy,
+  query,
+  where,
+  type QueryDocumentSnapshot,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
-import {
-  AIUsageRecord,
-  AIFunction,
-} from "@/types/ai-usage";
+import { AIUsageRecord, AIFunction } from "@/types/ai-usage";
 import { USER_TOKEN_RATE_PER_100K_EUR } from "@/types/billing";
+import { useFirestoreCollection } from "@/lib/firebase/use-firestore-collection";
 import { useAuth } from "@/components/auth";
 
 const MAX_RECORDS = 500; // Fetch more records for historical aggregation
@@ -65,49 +63,27 @@ function formatFunctionName(fn: AIFunction): string {
   return names[fn] || fn;
 }
 
+function mapUsage(doc: QueryDocumentSnapshot): AIUsageRecord {
+  return { id: doc.id, ...doc.data() } as AIUsageRecord;
+}
+
 export function useUserUsage(): UserUsageData {
   const { userId } = useAuth();
-  const [records, setRecords] = useState<AIUsageRecord[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
 
-  // Real-time listener for usage records
-  useEffect(() => {
-    if (!userId) {
-      setRecords([]);
-      setLoading(false);
-      return;
-    }
+  const q = useMemo(
+    () =>
+      userId
+        ? query(
+            collection(db, "aiUsage"),
+            where("userId", "==", userId),
+            orderBy("createdAt", "desc"),
+            limit(MAX_RECORDS),
+          )
+        : null,
+    [userId],
+  );
 
-    setLoading(true);
-
-    const q = query(
-      collection(db, "aiUsage"),
-      where("userId", "==", userId),
-      orderBy("createdAt", "desc"),
-      limit(MAX_RECORDS)
-    );
-
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const data = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        })) as AIUsageRecord[];
-
-        setRecords(data);
-        setLoading(false);
-      },
-      (err) => {
-        console.error("Error fetching user usage:", err);
-        setError(err);
-        setLoading(false);
-      }
-    );
-
-    return () => unsubscribe();
-  }, [userId]);
+  const { data: records, loading, error } = useFirestoreCollection(q, mapUsage);
 
   // Aggregate by month
   const { currentMonth, monthlyHistory, totalTokens, totalCost } = useMemo(() => {

@@ -1,12 +1,12 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   collection,
+  orderBy,
   query,
   where,
-  orderBy,
-  onSnapshot,
+  type QueryDocumentSnapshot,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
 import {
@@ -16,13 +16,22 @@ import {
 import { useAuth } from "@/components/auth";
 import {
   createInboundEmailAddress,
-  updateInboundEmailAddress,
-  regenerateInboundEmailAddress,
   deleteInboundEmailAddress,
+  regenerateInboundEmailAddress,
+  updateInboundEmailAddress,
 } from "@/lib/operations";
+import { useFirestoreCollection } from "@/lib/firebase/use-firestore-collection";
 
 const ADDRESSES_COLLECTION = "inboundEmailAddresses";
 const LOGS_COLLECTION = "inboundEmailLogs";
+
+function mapAddress(doc: QueryDocumentSnapshot): InboundEmailAddress {
+  return { id: doc.id, ...doc.data() } as InboundEmailAddress;
+}
+
+function mapLog(doc: QueryDocumentSnapshot): InboundEmailLog {
+  return { id: doc.id, ...doc.data() } as InboundEmailLog;
+}
 
 export interface UseEmailInboundResult {
   /** List of inbound email addresses */
@@ -39,10 +48,12 @@ export interface UseEmailInboundResult {
       allowedDomains?: string[];
       dailyLimit?: number;
       isActive?: boolean;
-    }
+    },
   ) => Promise<void>;
   /** Regenerate email address (creates new, deactivates old) */
-  regenerateAddress: (addressId: string) => Promise<{ id: string; email: string }>;
+  regenerateAddress: (
+    addressId: string,
+  ) => Promise<{ id: string; email: string }>;
   /** Delete (deactivate) an inbound email address */
   deleteAddress: (addressId: string) => Promise<void>;
   /** Pause an inbound email address */
@@ -57,68 +68,46 @@ export interface UseEmailInboundResult {
 
 export function useEmailInbound(): UseEmailInboundResult {
   const { userId } = useAuth();
-  const [addresses, setAddresses] = useState<InboundEmailAddress[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const creatingRef = useRef(false);
 
-  // Get operations context
   const ctx = useMemo(() => {
     if (!userId) return null;
     return { db, userId };
   }, [userId]);
 
-  // Subscribe to inbound addresses and auto-create if none exist
+  const q = useMemo(
+    () =>
+      userId
+        ? query(
+            collection(db, ADDRESSES_COLLECTION),
+            where("userId", "==", userId),
+            orderBy("createdAt", "desc"),
+          )
+        : null,
+    [userId],
+  );
+
+  const { data: addresses, loading } = useFirestoreCollection(q, mapAddress);
+
+  // Auto-create an inbound address if none exist. This runs outside the
+  // subscription effect so the subscription itself stays setState-free.
   useEffect(() => {
-    if (!userId || !ctx) {
-      setAddresses([]);
-      setLoading(false);
-      return;
-    }
-
-    const q = query(
-      collection(db, ADDRESSES_COLLECTION),
-      where("userId", "==", userId),
-      orderBy("createdAt", "desc")
-    );
-
-    const unsubscribe = onSnapshot(
-      q,
-      async (snapshot) => {
-        const items = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        })) as InboundEmailAddress[];
-
-        setAddresses(items);
-        setLoading(false);
-        setError(null);
-
-        // Auto-create address if none exist
-        if (items.length === 0 && !creatingRef.current) {
-          creatingRef.current = true;
-          try {
-            console.log("[useEmailInbound] Auto-creating inbound email address");
-            await createInboundEmailAddress(ctx);
-          } catch (err) {
-            console.error("[useEmailInbound] Failed to auto-create address:", err);
-            setError(err instanceof Error ? err.message : "Failed to create address");
-          } finally {
-            creatingRef.current = false;
-          }
-        }
-      },
-      (err) => {
-        console.error("Error listening to inbound addresses:", err);
-        setError(err.message);
-        setLoading(false);
+    if (!ctx || loading || addresses.length > 0 || creatingRef.current) return;
+    creatingRef.current = true;
+    void (async () => {
+      try {
+        console.log("[useEmailInbound] Auto-creating inbound email address");
+        await createInboundEmailAddress(ctx);
+      } catch (err) {
+        console.error("[useEmailInbound] Failed to auto-create address:", err);
+        setError(err instanceof Error ? err.message : "Failed to create address");
+      } finally {
+        creatingRef.current = false;
       }
-    );
+    })();
+  }, [ctx, loading, addresses.length]);
 
-    return () => unsubscribe();
-  }, [userId, ctx]);
-
-  // Update an inbound email address
   const updateAddress = useCallback(
     async (
       addressId: string,
@@ -127,7 +116,7 @@ export function useEmailInbound(): UseEmailInboundResult {
         allowedDomains?: string[];
         dailyLimit?: number;
         isActive?: boolean;
-      }
+      },
     ) => {
       if (!ctx) throw new Error("Not authenticated");
       try {
@@ -135,15 +124,15 @@ export function useEmailInbound(): UseEmailInboundResult {
         await updateInboundEmailAddress(ctx, addressId, updates);
       } catch (err) {
         console.error("Failed to update inbound address:", err);
-        const message = err instanceof Error ? err.message : "Failed to update address";
+        const message =
+          err instanceof Error ? err.message : "Failed to update address";
         setError(message);
         throw err;
       }
     },
-    [ctx]
+    [ctx],
   );
 
-  // Regenerate email address
   const regenerateAddress = useCallback(
     async (addressId: string) => {
       if (!ctx) throw new Error("Not authenticated");
@@ -152,15 +141,15 @@ export function useEmailInbound(): UseEmailInboundResult {
         return await regenerateInboundEmailAddress(ctx, addressId);
       } catch (err) {
         console.error("Failed to regenerate inbound address:", err);
-        const message = err instanceof Error ? err.message : "Failed to regenerate address";
+        const message =
+          err instanceof Error ? err.message : "Failed to regenerate address";
         setError(message);
         throw err;
       }
     },
-    [ctx]
+    [ctx],
   );
 
-  // Delete (deactivate) an inbound email address
   const deleteAddress = useCallback(
     async (addressId: string) => {
       if (!ctx) throw new Error("Not authenticated");
@@ -169,40 +158,37 @@ export function useEmailInbound(): UseEmailInboundResult {
         await deleteInboundEmailAddress(ctx, addressId);
       } catch (err) {
         console.error("Failed to delete inbound address:", err);
-        const message = err instanceof Error ? err.message : "Failed to delete address";
+        const message =
+          err instanceof Error ? err.message : "Failed to delete address";
         setError(message);
         throw err;
       }
     },
-    [ctx]
+    [ctx],
   );
 
-  // Pause an inbound email address
   const pauseAddress = useCallback(
     async (addressId: string) => {
       await updateAddress(addressId, { isActive: false });
     },
-    [updateAddress]
+    [updateAddress],
   );
 
-  // Resume an inbound email address
   const resumeAddress = useCallback(
     async (addressId: string) => {
       await updateAddress(addressId, { isActive: true });
     },
-    [updateAddress]
+    [updateAddress],
   );
 
-  // Check if user has any active inbound address
   const hasInboundAddress = useMemo(
     () => addresses.some((a) => a.isActive),
-    [addresses]
+    [addresses],
   );
 
-  // Get the primary (first active) address, or first address if none active
   const primaryAddress = useMemo(
     () => addresses.find((a) => a.isActive) || addresses[0] || null,
-    [addresses]
+    [addresses],
   );
 
   return {
@@ -220,7 +206,7 @@ export function useEmailInbound(): UseEmailInboundResult {
 }
 
 /**
- * Hook to fetch logs for an inbound email address
+ * Hook to fetch logs for an inbound email address.
  */
 export interface UseInboundEmailLogsResult {
   logs: InboundEmailLog[];
@@ -229,57 +215,33 @@ export interface UseInboundEmailLogsResult {
   refresh: () => void;
 }
 
-export function useInboundEmailLogs(addressId: string | null): UseInboundEmailLogsResult {
+export function useInboundEmailLogs(
+  addressId: string | null,
+): UseInboundEmailLogsResult {
   const { userId } = useAuth();
-  const [logs, setLogs] = useState<InboundEmailLog[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [refreshTrigger, setRefreshTrigger] = useState(0);
 
-  useEffect(() => {
-    if (!addressId || !userId) {
-      setLogs([]);
-      setLoading(false);
-      return;
-    }
+  const q = useMemo(
+    () =>
+      addressId && userId
+        ? query(
+            collection(db, LOGS_COLLECTION),
+            where("userId", "==", userId),
+            where("inboundAddressId", "==", addressId),
+            orderBy("receivedAt", "desc"),
+          )
+        : null,
+    [addressId, userId],
+  );
 
-    // Subscribe to logs for this address
-    const q = query(
-      collection(db, LOGS_COLLECTION),
-      where("userId", "==", userId),
-      where("inboundAddressId", "==", addressId),
-      orderBy("receivedAt", "desc")
-    );
+  const { data: logs, loading, error } = useFirestoreCollection(q, mapLog);
 
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const items = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        })) as InboundEmailLog[];
-        setLogs(items);
-        setLoading(false);
-        setError(null);
-      },
-      (err) => {
-        console.error("Error listening to inbound email logs:", err);
-        setError(err.message);
-        setLoading(false);
-      }
-    );
-
-    return () => unsubscribe();
-  }, [addressId, userId, refreshTrigger]);
-
-  const refresh = useCallback(() => {
-    setRefreshTrigger((prev) => prev + 1);
-  }, []);
+  // No-op kept for API compatibility — onSnapshot already streams updates.
+  const refresh = useCallback(() => {}, []);
 
   return {
     logs,
     loading,
-    error,
+    error: error?.message ?? null,
     refresh,
   };
 }

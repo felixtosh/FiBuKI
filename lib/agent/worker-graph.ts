@@ -208,7 +208,7 @@ function parseToolResultContent(content: unknown): Record<string, unknown> {
 }
 
 function getToolCalls(message: BaseMessage): Array<{ id?: string; name?: string; args?: unknown }> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   const msgAny = message as any;
   return msgAny?.tool_calls || msgAny?.additional_kwargs?.tool_calls || [];
 }
@@ -370,7 +370,7 @@ function createToolsNode(workerType: WorkerType) {
 
   return async function toolsNode(
     state: WorkerState,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     config?: any
   ): Promise<Partial<WorkerState>> {
     const { userId, authHeader, toolCallCount, workerType } = state;
@@ -603,7 +603,7 @@ function routeAfterAgent(state: WorkerState): "tools" | "respond" | "enforce" {
   }
 
   // Check for tool calls
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   const msgAny = lastMessage as any;
   const toolCalls = msgAny?.tool_calls || msgAny?.additional_kwargs?.tool_calls || [];
 

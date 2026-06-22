@@ -110,7 +110,7 @@ export function ChatHistoryPanel({
             <div className="flex flex-col items-center justify-center py-8 text-center text-muted-foreground px-4">
               <MessageSquare className="mb-4 h-10 w-10 opacity-20" />
               {searchQuery ? (
-                <p className="text-sm">No conversations found matching "{searchQuery}"</p>
+                <p className="text-sm">No conversations found matching &ldquo;{searchQuery}&rdquo;</p>
               ) : (
                 <p className="text-sm">No conversation history yet</p>
               )}
@@ -173,7 +173,7 @@ export function ChatHistoryPanel({
           <AlertDialogHeader>
             <AlertDialogTitle>Delete conversation?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently delete "{sessionToDelete?.title}" and all its messages.
+              This will permanently delete &ldquo;{sessionToDelete?.title}&rdquo; and all its messages.
               This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>

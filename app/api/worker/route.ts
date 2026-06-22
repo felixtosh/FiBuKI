@@ -581,7 +581,7 @@ function truncateLargeResults(value: unknown, maxSize = 50000): unknown {
  * Properly matches tool calls with their results from ToolMessages
  */
 function convertToWorkerMessages(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   messages: any[],
   options: { idPrefix?: string } = {}
 ): WorkerMessage[] {
@@ -635,7 +635,7 @@ function convertToWorkerMessages(
     }
 
     // Build parts from tool calls (with results)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     const parts: any[] = [];
 
     // Add text part if present
@@ -1167,7 +1167,7 @@ export async function POST(req: Request) {
         let incrementalSessionPersistenceEnabled = true;
 
         const persistReadySessionMessages = async (
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
           allMessages: any[]
         ) => {
           if (!sessionId) return;
@@ -1215,7 +1215,7 @@ export async function POST(req: Request) {
         }, { streamMode: "values" })) {
           if (!Array.isArray(chunk) || chunk[0] !== "values") continue;
           const state = chunk[1] as {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
             messages?: any[];
             actionsPerformed?: WorkerRun["actionsPerformed"];
           };

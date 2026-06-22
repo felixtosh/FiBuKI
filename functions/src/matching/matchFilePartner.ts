@@ -114,7 +114,7 @@ interface UserData {
  * Handles both the new format (personalEntity + companies[]) and
  * deprecated flat fields (vatIds, ibans, ownEmails).
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+
 function normalizeUserData(raw: any): UserData {
   const vatIds: string[] = [];
   const ibans: string[] = [];

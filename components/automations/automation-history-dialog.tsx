@@ -439,17 +439,11 @@ export function AutomationHistoryDialog({
     }
   }, [open]);
 
-  if (!pipeline) return null;
-
-  const PipelineIcon = ICON_MAP[pipeline.icon] || Sparkles;
-  const selectedStep = pipeline.steps.find(s => s.id === selectedStepId);
-  const selectedResult = results.find(r => r.stepId === selectedStepId);
-  const selectedStrategies = selectedStepId
-    ? STEP_STRATEGY_MAP[selectedStepId] ?? []
-    : null;
-
   const filteredSearchHistory = React.useMemo(() => {
     if (pipelineId !== "find-file") return [];
+    const selectedStrategies = selectedStepId
+      ? STEP_STRATEGY_MAP[selectedStepId] ?? []
+      : null;
     if (selectedStrategies === null) {
       return searchHistory;
     }
@@ -485,7 +479,13 @@ export function AutomationHistoryDialog({
         };
       })
       .filter((entry): entry is SearchHistoryEntry => entry !== null);
-  }, [pipelineId, searchHistory, selectedStrategies]);
+  }, [pipelineId, searchHistory, selectedStepId]);
+
+  if (!pipeline) return null;
+
+  const PipelineIcon = ICON_MAP[pipeline.icon] || Sparkles;
+  const selectedStep = pipeline.steps.find(s => s.id === selectedStepId);
+  const selectedResult = results.find(r => r.stepId === selectedStepId);
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>

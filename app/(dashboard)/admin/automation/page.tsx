@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback, useEffect } from "react";
+import React, { useState, useMemo, useCallback, useEffect } from "react";
 import {
   ReactFlow,
   Background,
@@ -210,7 +210,6 @@ const entityConfig: Record<string, EntityConfig> = {
 // =============================================================================
 
 function AutomationNode({ data }: { data: AutomationData }) {
-  const Icon = getIcon(data.icon);
   const color = categoryColors[data.category];
 
   return (
@@ -229,7 +228,9 @@ function AutomationNode({ data }: { data: AutomationData }) {
           className="p-1.5 rounded-md"
           style={{ backgroundColor: `${color}20` }}
         >
-          <span style={{ color }}><Icon className="h-4 w-4" /></span>
+          <span style={{ color }}>
+            {React.createElement(getIcon(data.icon), { className: "h-4 w-4" })}
+          </span>
         </div>
         <div className="flex-1 min-w-0">
           <div className="font-medium text-sm truncate">{data.name}</div>
@@ -618,7 +619,6 @@ function CategoryBadge({ category }: { category: AutomationCategory }) {
 
 function AutomationCard({ automation }: { automation: AutomationData }) {
   const [isOpen, setIsOpen] = useState(false);
-  const Icon = getIcon(automation.icon);
 
   return (
     <Collapsible open={isOpen} onOpenChange={setIsOpen}>
@@ -629,10 +629,13 @@ function AutomationCard({ automation }: { automation: AutomationData }) {
               className="p-2 rounded-md shrink-0"
               style={{ backgroundColor: `${categoryColors[automation.category]}20` }}
             >
-              <Icon
-                className="h-5 w-5"
-                style={{ color: categoryColors[automation.category] }}
-              />
+              {React.createElement(
+                getIcon(automation.icon) as React.ElementType,
+                {
+                  className: "h-5 w-5",
+                  style: { color: categoryColors[automation.category] },
+                },
+              )}
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">

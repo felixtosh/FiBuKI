@@ -331,7 +331,7 @@ export async function POST(req: Request) {
   // Wrap stream to capture token usage while preserving the langgraph format
   // The graphStream with streamMode: ["messages"] yields tuples: ["messages", [messageChunk, metadata]]
   // We must yield the FULL tuple for toUIMessageStream to detect it as langgraph format
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   async function* trackUsage(): AsyncGenerator<any> {
     for await (const chunk of graphStream) {
       // Format: ["messages", [messageChunk, metadata]]
@@ -341,7 +341,7 @@ export async function POST(req: Request) {
         continue;
       }
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       const msgData = chunk[1] as [any, unknown];
       if (!Array.isArray(msgData)) {
         yield chunk;
@@ -351,7 +351,7 @@ export async function POST(req: Request) {
       const msgChunk = msgData[0];
       if (msgChunk) {
         // Extract usage metadata from kwargs (serialized LC format)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
         const chunkObj = msgChunk as any;
         const kwargs = chunkObj.kwargs || chunkObj;
         const usageMeta = kwargs.usage_metadata;

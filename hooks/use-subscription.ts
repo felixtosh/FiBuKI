@@ -1,8 +1,12 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
-import { doc, onSnapshot } from "firebase/firestore";
+import { useCallback, useMemo, useState } from "react";
+import {
+  doc,
+  type DocumentSnapshot,
+} from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
+import { useFirestoreDoc } from "@/lib/firebase/use-firestore-collection";
 import { useAuth } from "@/components/auth";
 import type { Subscription, PlanFeatureKey } from "@/types/billing";
 import {
@@ -12,100 +16,110 @@ import {
   TRIAL_TRANSACTION_LIMIT,
 } from "@/types/billing";
 
+function mapSubscription(snap: DocumentSnapshot): Subscription | null {
+  if (!snap.exists()) return null;
+  return { ...snap.data() } as Subscription;
+}
+
 export function useSubscription() {
   const { user } = useAuth();
-  const [subscription, setSubscription] = useState<Subscription | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
+  const uid = user?.uid;
 
-  useEffect(() => {
-    if (!user?.uid) {
-      setSubscription(null);
-      setLoading(false);
-      return;
-    }
+  const ref = useMemo(
+    () => (uid ? doc(db, "subscriptions", uid) : null),
+    [uid],
+  );
 
-    const unsubscribe = onSnapshot(
-      doc(db, "subscriptions", user.uid),
-      (snapshot) => {
-        if (snapshot.exists()) {
-          setSubscription({ ...snapshot.data() } as Subscription);
-        } else {
-          setSubscription(null);
-        }
-        setLoading(false);
-      },
-      (err) => {
-        console.error("[useSubscription] Error:", err);
-        setError(err);
-        setLoading(false);
-      }
-    );
+  const { data: subscription, loading, error } = useFirestoreDoc(
+    ref,
+    mapSubscription,
+  );
 
-    return unsubscribe;
-  }, [user?.uid]);
+  // Capture "now" once per mount; trial days remaining is derived deterministically
+  // from this fixed reference, avoiding impure Date.now() calls during render.
+  const [now] = useState(() => Date.now());
 
   const plan = subscription?.plan || "free";
   const planConfig = PLANS[plan];
 
   // AI usage calculations
   const aiUsage = subscription?.aiUsageCurrentPeriodEur ?? 0;
-  const aiLimit = subscription?.aiFairUseLimitEur ?? planConfig.aiFairUseLimitEur;
+  const aiLimit =
+    subscription?.aiFairUseLimitEur ?? planConfig.aiFairUseLimitEur;
   const aiCredits = subscription?.aiCreditsEur ?? 0;
   const aiOverageCap = subscription?.aiOverageCapEur ?? 0;
   const aiOverageUsed = subscription?.aiOverageCurrentPeriodEur ?? 0;
   const aiPaused = subscription?.aiPaused ?? false;
-  const aiUsagePercent = aiLimit > 0 ? Math.min(100, (aiUsage / aiLimit) * 100) : 0;
+  const aiUsagePercent =
+    aiLimit > 0 ? Math.min(100, (aiUsage / aiLimit) * 100) : 0;
 
   // Transaction usage calculations
   const txCount = subscription?.transactionCountCurrentMonth ?? 0;
   const txLimit = planConfig.transactionLimit;
-  const txUsagePercent = txLimit > 0 ? Math.min(100, (txCount / txLimit) * 100) : 0;
+  const txUsagePercent =
+    txLimit > 0 ? Math.min(100, (txCount / txLimit) * 100) : 0;
 
   // Trial calculations
   const trialExpired = subscription?.trialExpired ?? false;
   const trialStartedAt = subscription?.trialStartedAt;
   const trialTxCount = subscription?.trialTransactionCount ?? 0;
 
-  let isOnTrial = false;
-  let trialDaysRemaining = 0;
-  let trialTransactionsRemaining = 0;
-
-  if (!trialExpired && trialStartedAt) {
+  const {
+    isOnTrial,
+    trialDaysRemaining,
+    trialTransactionsRemaining,
+  } = useMemo(() => {
+    if (trialExpired || !trialStartedAt) {
+      return {
+        isOnTrial: false,
+        trialDaysRemaining: 0,
+        trialTransactionsRemaining: 0,
+      };
+    }
     const startDate =
       typeof trialStartedAt === "object" && "seconds" in trialStartedAt
         ? new Date((trialStartedAt as { seconds: number }).seconds * 1000)
         : new Date(trialStartedAt as unknown as string);
     const daysSinceStart = Math.floor(
-      (Date.now() - startDate.getTime()) / (1000 * 60 * 60 * 24)
+      (now - startDate.getTime()) / (1000 * 60 * 60 * 24),
     );
-    trialDaysRemaining = Math.max(0, TRIAL_DURATION_DAYS - daysSinceStart);
-    trialTransactionsRemaining = Math.max(0, TRIAL_TRANSACTION_LIMIT - trialTxCount);
-    isOnTrial = trialDaysRemaining > 0 && trialTransactionsRemaining > 0;
-  }
+    const daysRemaining = Math.max(0, TRIAL_DURATION_DAYS - daysSinceStart);
+    const txRemaining = Math.max(0, TRIAL_TRANSACTION_LIMIT - trialTxCount);
+    return {
+      isOnTrial: daysRemaining > 0 && txRemaining > 0,
+      trialDaysRemaining: daysRemaining,
+      trialTransactionsRemaining: txRemaining,
+    };
+  }, [trialExpired, trialStartedAt, trialTxCount, now]);
 
   // Grandfathering
   const grandfatheredUntilRaw = subscription?.grandfatheredUntil;
-  const grandfatheredUntil = grandfatheredUntilRaw
-    ? typeof grandfatheredUntilRaw === "object" && "seconds" in grandfatheredUntilRaw
-      ? new Date((grandfatheredUntilRaw as { seconds: number }).seconds * 1000)
-      : null
-    : null;
+  const grandfatheredUntil = useMemo(() => {
+    if (!grandfatheredUntilRaw) return null;
+    if (
+      typeof grandfatheredUntilRaw === "object" &&
+      "seconds" in grandfatheredUntilRaw
+    ) {
+      return new Date(
+        (grandfatheredUntilRaw as { seconds: number }).seconds * 1000,
+      );
+    }
+    return null;
+  }, [grandfatheredUntilRaw]);
 
-  // Feature gating
+  const bmdExportActive = subscription?.addons?.bmdExport?.active ?? false;
+
   const hasFeature = useCallback(
     (feature: PlanFeatureKey): boolean => {
-      // On trial, grant smart-tier features
       if (isOnTrial) {
         return PLANS.smart.planFeatures[feature];
       }
-      // Check if feature is enabled via addon
-      if (feature === "bmdExport" && subscription?.addons?.bmdExport?.active) {
+      if (feature === "bmdExport" && bmdExportActive) {
         return true;
       }
       return hasFeatureFn(plan, feature, grandfatheredUntil);
     },
-    [plan, isOnTrial, grandfatheredUntil, subscription?.addons?.bmdExport?.active]
+    [plan, isOnTrial, grandfatheredUntil, bmdExportActive],
   );
 
   return {
@@ -114,7 +128,6 @@ export function useSubscription() {
     error,
     plan,
     planConfig,
-    // AI budget
     aiUsage,
     aiLimit,
     aiCredits,
@@ -122,29 +135,23 @@ export function useSubscription() {
     aiOverageUsed,
     aiPaused,
     aiUsagePercent,
-    // Transaction quota
     txCount,
     txLimit,
     txUsagePercent,
-    // Trial
     isOnTrial,
     trialDaysRemaining,
     trialTransactionsRemaining,
     trialExpired,
-    // Feature gating
     hasFeature,
-    // Stripe
     hasStripeCustomer: !!subscription?.stripeCustomerId,
     isActive: subscription?.stripeSubscriptionStatus === "active",
     isPastDue: subscription?.stripeSubscriptionStatus === "past_due",
     cancelAtPeriodEnd: subscription?.cancelAtPeriodEnd ?? false,
-    // Admin overrides
     adminOverride: subscription?.adminOverride ?? null,
     isFreePlanOverride: subscription?.adminOverride === "free_plan",
     isPlanTester: subscription?.adminOverride === "plan_tester",
-    // Automation mode
-    automationMode: (subscription?.automationMode as "active" | "passive") ?? "active",
-    // Grandfathering
+    automationMode:
+      (subscription?.automationMode as "active" | "passive") ?? "active",
     grandfatheredUntil,
   };
 }

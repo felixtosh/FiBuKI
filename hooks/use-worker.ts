@@ -1,18 +1,23 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   collection,
-  query,
-  orderBy,
-  onSnapshot,
-  limit,
-  where,
   doc,
+  limit,
+  orderBy,
+  query,
+  where,
+  type DocumentSnapshot,
+  type QueryDocumentSnapshot,
 } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import { db } from "@/lib/firebase/config";
 import { useAuth } from "@/components/auth";
+import {
+  useFirestoreCollection,
+  useFirestoreDoc,
+} from "@/lib/firebase/use-firestore-collection";
 import {
   WorkerType,
   WorkerRun,
@@ -37,16 +42,22 @@ export interface TriggerWorkerResult {
   deduped?: boolean;
 }
 
+function mapWorkerRun(snap: QueryDocumentSnapshot): WorkerRun {
+  return { id: snap.id, ...snap.data() } as WorkerRun;
+}
+
+function mapWorkerRunDoc(snap: DocumentSnapshot): WorkerRun | null {
+  if (!snap.exists()) return null;
+  return { id: snap.id, ...snap.data() } as WorkerRun;
+}
+
 /**
- * Hook for triggering and monitoring worker runs
+ * Hook for triggering and monitoring worker runs.
  */
 export function useWorker() {
   const { userId } = useAuth();
   const [isTriggering, setIsTriggering] = useState(false);
 
-  /**
-   * Trigger a worker run via the API
-   */
   const triggerWorker = useCallback(
     async (options: TriggerWorkerOptions): Promise<TriggerWorkerResult> => {
       if (!userId) {
@@ -56,7 +67,6 @@ export function useWorker() {
       setIsTriggering(true);
 
       try {
-        // Get fresh ID token
         const auth = getAuth();
         const idToken = await auth.currentUser?.getIdToken();
 
@@ -79,12 +89,9 @@ export function useWorker() {
         setIsTriggering(false);
       }
     },
-    [userId]
+    [userId],
   );
 
-  /**
-   * Trigger a file matching worker with full file context
-   */
   const triggerFileMatching = useCallback(
     async (
       fileId: string,
@@ -94,23 +101,24 @@ export function useWorker() {
         currency?: string;
         date?: string;
         partner?: string;
-      }
+      },
     ) => {
-      // Build amount string with currency
       const amountStr = fileInfo.amount
-        ? `${(Math.abs(fileInfo.amount) / 100).toFixed(2)} ${fileInfo.currency || "EUR"}`
+        ? `${(Math.abs(fileInfo.amount) / 100).toFixed(2)} ${
+            fileInfo.currency || "EUR"
+          }`
         : "unknown amount";
 
-      // Add currency hint if non-EUR
       const currencyHint =
         fileInfo.currency && fileInfo.currency !== "EUR"
           ? `\nNote: File is in ${fileInfo.currency}. Search EUR transactions with ±15% amount range.`
           : "";
 
-      // Build context-rich prompt
       const prompt = `Find matching transaction for file ID: ${fileId}
 File: "${fileInfo.fileName || "Unknown"}"
-Amount: ${amountStr}${fileInfo.date ? ` dated ${fileInfo.date}` : ""}${fileInfo.partner ? ` from "${fileInfo.partner}"` : ""}${currencyHint}`;
+Amount: ${amountStr}${
+        fileInfo.date ? ` dated ${fileInfo.date}` : ""
+      }${fileInfo.partner ? ` from "${fileInfo.partner}"` : ""}${currencyHint}`;
 
       return triggerWorker({
         workerType: "file_matching",
@@ -119,12 +127,9 @@ Amount: ${amountStr}${fileInfo.date ? ` dated ${fileInfo.date}` : ""}${fileInfo.
         triggeredBy: "user",
       });
     },
-    [triggerWorker]
+    [triggerWorker],
   );
 
-  /**
-   * Trigger a receipt search worker for a transaction
-   */
   const triggerReceiptSearch = useCallback(
     async (transactionId: string) => {
       return triggerWorker({
@@ -134,12 +139,9 @@ Amount: ${amountStr}${fileInfo.date ? ` dated ${fileInfo.date}` : ""}${fileInfo.
         triggeredBy: "user",
       });
     },
-    [triggerWorker]
+    [triggerWorker],
   );
 
-  /**
-   * Trigger a partner matching worker for a transaction
-   */
   const triggerPartnerSearch = useCallback(
     async (transactionId: string) => {
       return triggerWorker({
@@ -149,12 +151,9 @@ Amount: ${amountStr}${fileInfo.date ? ` dated ${fileInfo.date}` : ""}${fileInfo.
         triggeredBy: "user",
       });
     },
-    [triggerWorker]
+    [triggerWorker],
   );
 
-  /**
-   * Trigger a partner search worker for a file
-   */
   const triggerFilePartnerSearch = useCallback(
     async (fileId: string) => {
       return triggerWorker({
@@ -164,12 +163,9 @@ Amount: ${amountStr}${fileInfo.date ? ` dated ${fileInfo.date}` : ""}${fileInfo.
         triggeredBy: "user",
       });
     },
-    [triggerWorker]
+    [triggerWorker],
   );
 
-  /**
-   * Trigger a file-to-transaction matching worker
-   */
   const triggerFileTransactionSearch = useCallback(
     async (
       fileId: string,
@@ -179,14 +175,14 @@ Amount: ${amountStr}${fileInfo.date ? ` dated ${fileInfo.date}` : ""}${fileInfo.
         currency?: string;
         date?: string;
         partner?: string;
-      }
+      },
     ) => {
-      // Build amount string with currency
       const amountStr = fileInfo?.amount
-        ? `${(Math.abs(fileInfo.amount) / 100).toFixed(2)} ${fileInfo.currency || "EUR"}`
+        ? `${(Math.abs(fileInfo.amount) / 100).toFixed(2)} ${
+            fileInfo.currency || "EUR"
+          }`
         : "unknown amount";
 
-      // Add currency hint if non-EUR
       const currencyHint =
         fileInfo?.currency && fileInfo.currency !== "EUR"
           ? `\nNote: File is in ${fileInfo.currency}. Search EUR transactions with ±15% amount range.`
@@ -194,7 +190,9 @@ Amount: ${amountStr}${fileInfo.date ? ` dated ${fileInfo.date}` : ""}${fileInfo.
 
       const prompt = `Find matching transaction for file ID: ${fileId}
 File: "${fileInfo?.fileName || "Unknown"}"
-Amount: ${amountStr}${fileInfo?.date ? ` dated ${fileInfo.date}` : ""}${fileInfo?.partner ? ` from "${fileInfo.partner}"` : ""}${currencyHint}`;
+Amount: ${amountStr}${
+        fileInfo?.date ? ` dated ${fileInfo.date}` : ""
+      }${fileInfo?.partner ? ` from "${fileInfo.partner}"` : ""}${currencyHint}`;
 
       return triggerWorker({
         workerType: "file_matching",
@@ -203,7 +201,7 @@ Amount: ${amountStr}${fileInfo?.date ? ` dated ${fileInfo.date}` : ""}${fileInfo
         triggeredBy: "user",
       });
     },
-    [triggerWorker]
+    [triggerWorker],
   );
 
   return {
@@ -218,156 +216,77 @@ Amount: ${amountStr}${fileInfo?.date ? ` dated ${fileInfo.date}` : ""}${fileInfo
 }
 
 /**
- * Hook for fetching a specific worker run
+ * Hook for fetching a specific worker run.
  */
 export function useWorkerRun(runId: string | null) {
   const { userId } = useAuth();
-  const [workerRun, setWorkerRun] = useState<WorkerRun | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
 
-  useEffect(() => {
-    if (!userId || !runId) {
-      setWorkerRun(null);
-      setLoading(false);
-      return;
-    }
+  const ref = useMemo(
+    () =>
+      userId && runId ? doc(db, `users/${userId}/workerRuns`, runId) : null,
+    [userId, runId],
+  );
 
-    setLoading(true);
-
-    const runRef = doc(db, `users/${userId}/workerRuns`, runId);
-
-    const unsubscribe = onSnapshot(
-      runRef,
-      (snapshot) => {
-        if (snapshot.exists()) {
-          setWorkerRun({
-            id: snapshot.id,
-            ...snapshot.data(),
-          } as WorkerRun);
-        } else {
-          setWorkerRun(null);
-        }
-        setLoading(false);
-      },
-      (err) => {
-        console.error("Error fetching worker run:", err);
-        setError(err);
-        setLoading(false);
-      }
-    );
-
-    return () => unsubscribe();
-  }, [userId, runId]);
+  const { data: workerRun, loading, error } = useFirestoreDoc(
+    ref,
+    mapWorkerRunDoc,
+  );
 
   return { workerRun, loading, error };
 }
 
 /**
- * Hook for listing recent worker runs
+ * Hook for listing recent worker runs.
  */
 export function useWorkerRuns(workerType?: WorkerType) {
   const { userId } = useAuth();
-  const [workerRuns, setWorkerRuns] = useState<WorkerRun[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
 
-  useEffect(() => {
-    if (!userId) {
-      setWorkerRuns([]);
-      setLoading(false);
-      return;
-    }
-
-    setLoading(true);
-
+  const q = useMemo(() => {
+    if (!userId) return null;
     const runsPath = `users/${userId}/workerRuns`;
-    let q = query(
-      collection(db, runsPath),
-      orderBy("createdAt", "desc"),
-      limit(MAX_WORKER_RUNS)
-    );
-
-    // Filter by worker type if specified
     if (workerType) {
-      q = query(
+      return query(
         collection(db, runsPath),
         where("workerType", "==", workerType),
         orderBy("createdAt", "desc"),
-        limit(MAX_WORKER_RUNS)
+        limit(MAX_WORKER_RUNS),
       );
     }
-
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const data = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        })) as WorkerRun[];
-
-        setWorkerRuns(data);
-        setLoading(false);
-      },
-      (err) => {
-        console.error("Error fetching worker runs:", err);
-        setError(err);
-        setLoading(false);
-      }
+    return query(
+      collection(db, runsPath),
+      orderBy("createdAt", "desc"),
+      limit(MAX_WORKER_RUNS),
     );
-
-    return () => unsubscribe();
   }, [userId, workerType]);
+
+  const { data: workerRuns, loading, error } = useFirestoreCollection(
+    q,
+    mapWorkerRun,
+  );
 
   return { workerRuns, loading, error };
 }
 
 /**
- * Hook for listing active (running) worker runs
+ * Hook for listing active (running) worker runs.
  */
 export function useActiveWorkerRuns() {
   const { userId } = useAuth();
-  const [activeRuns, setActiveRuns] = useState<WorkerRun[]>([]);
-  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    if (!userId) {
-      setActiveRuns([]);
-      setLoading(false);
-      return;
-    }
+  const q = useMemo(
+    () =>
+      userId
+        ? query(
+            collection(db, `users/${userId}/workerRuns`),
+            where("status", "in", ["pending", "running"]),
+            orderBy("createdAt", "desc"),
+            limit(10),
+          )
+        : null,
+    [userId],
+  );
 
-    setLoading(true);
-
-    const runsPath = `users/${userId}/workerRuns`;
-    const q = query(
-      collection(db, runsPath),
-      where("status", "in", ["pending", "running"]),
-      orderBy("createdAt", "desc"),
-      limit(10)
-    );
-
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const data = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        })) as WorkerRun[];
-
-        setActiveRuns(data);
-        setLoading(false);
-      },
-      (err) => {
-        // This query might fail if the index doesn't exist yet
-        console.error("Error fetching active worker runs:", err);
-        setActiveRuns([]);
-        setLoading(false);
-      }
-    );
-
-    return () => unsubscribe();
-  }, [userId]);
+  const { data: activeRuns, loading } = useFirestoreCollection(q, mapWorkerRun);
 
   return { activeRuns, loading };
 }

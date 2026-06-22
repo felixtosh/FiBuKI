@@ -13,7 +13,7 @@
  */
 export function isRecentlyUpdated(updatedAt: unknown, thresholdMs: number): boolean {
   if (!updatedAt) return false;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   const val = updatedAt as any;
   const ts = typeof val.toMillis === "function"
     ? val.toMillis()

@@ -141,7 +141,7 @@ function ConnectBankContent() {
   }, [user]);
 
   // Use existing finAPI connection accounts (skip web form)
-  const useExistingConnectionAccounts = useCallback((conn: FinapiConnection) => {
+  const loadExistingConnectionAccounts = useCallback((conn: FinapiConnection) => {
     // Convert finAPI accounts to BankAccount format
     const bankAccounts: BankAccount[] = conn.accounts.map(a => ({
       accountId: String(a.accountId),
@@ -352,7 +352,7 @@ function ConnectBankContent() {
               <Alert className="border-yellow-200 bg-yellow-50">
                 <AlertTriangle className="h-4 w-4 text-yellow-600" />
                 <AlertDescription className="text-yellow-800">
-                  finAPI reports a connection exists but we can't find it. This can happen with sandbox accounts.
+                  finAPI reports a connection exists but we can&apos;t find it. This can happen with sandbox accounts.
                   Try resetting your finAPI user to start fresh.
                 </AlertDescription>
               </Alert>
@@ -645,7 +645,7 @@ function ConnectBankContent() {
                           startConnection(institution);
                         } else {
                           // Use existing connection's accounts directly (skip web form)
-                          useExistingConnectionAccounts(conn);
+                          loadExistingConnectionAccounts(conn);
                         }
                       }}
                       disabled={isLoading || isDeleting}
@@ -739,7 +739,7 @@ function ConnectBankContent() {
               <CardTitle className="text-base text-yellow-800">Orphaned Bank Connections</CardTitle>
             </div>
             <CardDescription className="text-sm text-yellow-700">
-              These connections exist in finAPI but aren't linked to your account.
+              These connections exist in finAPI but aren&apos;t linked to your account.
               Delete them to reconnect fresh or use them to add accounts.
             </CardDescription>
           </CardHeader>

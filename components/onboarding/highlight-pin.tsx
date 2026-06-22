@@ -117,14 +117,14 @@ export function HighlightPin({
   const hasScrolledRef = useRef(false);
 
   useEffect(() => {
-    setMounted(true);
+    queueMicrotask(() => setMounted(true));
     return () => setMounted(false);
   }, []);
 
   // Reset scroll flag and dismissed state when target changes
   useEffect(() => {
     hasScrolledRef.current = false;
-    setDismissed(false);
+    queueMicrotask(() => setDismissed(false));
   }, [target]);
 
   // Dismiss on focusin when dismissOnInteraction is enabled
@@ -171,12 +171,12 @@ export function HighlightPin({
 
   useEffect(() => {
     if (!active || !mounted) {
-      setTargets([]);
+      queueMicrotask(() => setTargets([]));
       return;
     }
 
     // Initial update
-    updateTargets();
+    queueMicrotask(updateTargets);
 
     // Find first visible element and scroll to it
     if (scrollIntoView && !hasScrolledRef.current) {

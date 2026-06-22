@@ -1,9 +1,16 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, startTransition } from "react";
-import { collection, query, orderBy, onSnapshot, where } from "firebase/firestore";
+import { useCallback, useMemo } from "react";
+import {
+  collection,
+  orderBy,
+  query,
+  where,
+  type QueryDocumentSnapshot,
+} from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
 import { callFunction } from "@/lib/firebase/callable";
+import { useFirestoreCollection } from "@/lib/firebase/use-firestore-collection";
 import {
   TaxFile,
   FileFilters,
@@ -15,100 +22,80 @@ import { useAuth } from "@/components/auth";
 
 const FILES_COLLECTION = "files";
 
+function mapFile(doc: QueryDocumentSnapshot): TaxFile {
+  return { id: doc.id, ...doc.data() } as TaxFile;
+}
+
 export function useFiles(filters?: FileFilters) {
   const { userId } = useAuth();
-  // Store raw (unfiltered) files from Firestore
-  const [rawFiles, setRawFiles] = useState<TaxFile[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
 
-  // Realtime listener for files - only depends on userId, not filters
-  useEffect(() => {
-    if (!userId) {
-      setRawFiles([]);
-      setLoading(false);
-      return;
-    }
+  const q = useMemo(
+    () =>
+      userId
+        ? query(
+            collection(db, FILES_COLLECTION),
+            where("userId", "==", userId),
+            orderBy("uploadedAt", "desc"),
+          )
+        : null,
+    [userId],
+  );
 
-    setLoading(true);
+  const { data: rawFiles, loading, error } = useFirestoreCollection(q, mapFile);
 
-    const q = query(
-      collection(db, FILES_COLLECTION),
-      where("userId", "==", userId),
-      orderBy("uploadedAt", "desc")
-    );
-
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const data = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        })) as TaxFile[];
-
-        // Use startTransition to batch updates and prevent flicker
-        startTransition(() => {
-          setRawFiles(data);
-          setLoading(false);
-        });
-      },
-      (err) => {
-        console.error("Error fetching files:", err);
-        setError(err);
-        setLoading(false);
-      }
-    );
-
-    return () => unsubscribe();
-  }, [userId]);
+  const includeDeleted = filters?.includeDeleted;
+  const search = filters?.search;
+  const hasConnections = filters?.hasConnections;
+  const extractionComplete = filters?.extractionComplete;
+  const isNotInvoice = filters?.isNotInvoice;
+  const extractedDateFrom = filters?.extractedDateFrom;
+  const extractedDateTo = filters?.extractedDateTo;
+  const partnerIds = filters?.partnerIds;
+  const amountType = filters?.amountType;
 
   // Apply filters client-side via useMemo - no loading state change
   const files = useMemo(() => {
     let data = rawFiles;
 
-    // Filter out soft-deleted files by default
-    if (!filters?.includeDeleted) {
+    if (!includeDeleted) {
       data = data.filter((f) => !f.deletedAt);
     }
 
-    // Apply client-side filters
-    if (filters?.search) {
-      const searchLower = filters.search.toLowerCase();
+    if (search) {
+      const searchLower = search.toLowerCase();
       data = data.filter(
         (f) =>
           f.fileName.toLowerCase().includes(searchLower) ||
-          (f.extractedPartner?.toLowerCase() || "").includes(searchLower)
+          (f.extractedPartner?.toLowerCase() || "").includes(searchLower),
       );
     }
 
-    if (filters?.hasConnections !== undefined) {
+    if (hasConnections !== undefined) {
       data = data.filter((f) =>
-        filters.hasConnections
+        hasConnections
           ? f.transactionIds.length > 0
-          : f.transactionIds.length === 0
+          : f.transactionIds.length === 0,
       );
     }
 
-    if (filters?.extractionComplete !== undefined) {
-      data = data.filter((f) => f.extractionComplete === filters.extractionComplete);
+    if (extractionComplete !== undefined) {
+      data = data.filter((f) => f.extractionComplete === extractionComplete);
     }
 
-    // Filter by isNotInvoice status
-    if (filters?.isNotInvoice !== undefined) {
+    if (isNotInvoice !== undefined) {
       data = data.filter((f) =>
-        filters.isNotInvoice ? f.isNotInvoice === true : f.isNotInvoice !== true
+        isNotInvoice ? f.isNotInvoice === true : f.isNotInvoice !== true,
       );
     }
 
-    // Filter by extracted date range
-    if (filters?.extractedDateFrom || filters?.extractedDateTo) {
+    if (extractedDateFrom || extractedDateTo) {
       data = data.filter((f) => {
         if (!f.extractedDate) return false;
         const fileDate = f.extractedDate.toDate();
-        if (filters.extractedDateFrom && fileDate < filters.extractedDateFrom) return false;
-        if (filters.extractedDateTo) {
+        if (extractedDateFrom && fileDate < extractedDateFrom) return false;
+        if (extractedDateTo) {
           // Add 1 day to include the end date fully
-          const endDate = new Date(filters.extractedDateTo);
+          const endDate = new Date(extractedDateTo);
           endDate.setDate(endDate.getDate() + 1);
           if (fileDate >= endDate) return false;
         }
@@ -116,25 +103,33 @@ export function useFiles(filters?: FileFilters) {
       });
     }
 
-    // Filter by partner IDs
-    if (filters?.partnerIds && filters.partnerIds.length > 0) {
-      const partnerIdSet = new Set(filters.partnerIds);
+    if (partnerIds && partnerIds.length > 0) {
+      const partnerIdSet = new Set(partnerIds);
       data = data.filter((f) => f.partnerId && partnerIdSet.has(f.partnerId));
     }
 
-    // Filter by amount type (income/expense based on invoiceDirection)
-    if (filters?.amountType && filters.amountType !== "all") {
+    if (amountType && amountType !== "all") {
       data = data.filter((f) => {
         if (!f.invoiceDirection) return false;
-        // incoming = expense (we receive invoice), outgoing = income (we send invoice)
-        if (filters.amountType === "expense") return f.invoiceDirection === "incoming";
-        if (filters.amountType === "income") return f.invoiceDirection === "outgoing";
+        if (amountType === "expense") return f.invoiceDirection === "incoming";
+        if (amountType === "income") return f.invoiceDirection === "outgoing";
         return true;
       });
     }
 
     return data;
-  }, [rawFiles, filters?.search, filters?.hasConnections, filters?.extractionComplete, filters?.includeDeleted, filters?.isNotInvoice, filters?.extractedDateFrom, filters?.extractedDateTo, filters?.partnerIds, filters?.amountType]);
+  }, [
+    rawFiles,
+    includeDeleted,
+    search,
+    hasConnections,
+    extractionComplete,
+    isNotInvoice,
+    extractedDateFrom,
+    extractedDateTo,
+    partnerIds,
+    amountType,
+  ]);
 
   // Mutations call Cloud Functions
   const create = useCallback(
@@ -344,52 +339,26 @@ export interface FileConnectionSourceInfo {
  */
 export function useTransactionFiles(transactionId: string | null) {
   const { userId } = useAuth();
-  const [files, setFiles] = useState<TaxFile[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
 
-  useEffect(() => {
-    if (!transactionId || !userId) {
-      setFiles([]);
-      setLoading(false);
-      return;
-    }
+  const q = useMemo(
+    () =>
+      transactionId && userId
+        ? query(
+            collection(db, FILES_COLLECTION),
+            where("userId", "==", userId),
+            where("transactionIds", "array-contains", transactionId),
+          )
+        : null,
+    [transactionId, userId],
+  );
 
-    setLoading(true);
+  const { data: rawFiles, loading, error } = useFirestoreCollection(q, mapFile);
 
-    // Listen for changes to files that include this transaction
-    const q = query(
-      collection(db, FILES_COLLECTION),
-      where("userId", "==", userId),
-      where("transactionIds", "array-contains", transactionId)
-    );
-
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const data = snapshot.docs
-          .map((doc) => ({
-            id: doc.id,
-            ...doc.data(),
-          }) as TaxFile)
-          // Filter out deleted files (soft-deleted files still have transactionIds)
-          .filter((file) => !file.deletedAt);
-
-        // Use startTransition to batch updates and prevent flicker
-        startTransition(() => {
-          setFiles(data);
-          setLoading(false);
-        });
-      },
-      (err) => {
-        console.error("Error fetching transaction files:", err);
-        setError(err);
-        setLoading(false);
-      }
-    );
-
-    return () => unsubscribe();
-  }, [transactionId, userId]);
+  // Filter out deleted files (soft-deleted files still have transactionIds)
+  const files = useMemo(
+    () => rawFiles.filter((file) => !file.deletedAt),
+    [rawFiles],
+  );
 
   const connectFile = useCallback(
     async (fileId: string, sourceInfo?: FileConnectionSourceInfo): Promise<string> => {

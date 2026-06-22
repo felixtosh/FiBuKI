@@ -201,6 +201,85 @@ export function useBrowserReplayMode(): ReplayModeState {
     []
   );
 
+  const handleReplayComplete = useCallback(
+    async (replayResult: ReplayResult | undefined) => {
+      const params = replayParamsRef.current;
+
+      setResult(replayResult || null);
+      setIsReplaying(false);
+      setProgress(null);
+
+      if (params && replayResult) {
+        try {
+          await callFunction("updateBrowserRecipe", {
+            partnerId: params.partnerId,
+            recipeId: params.recipe.id,
+            lastReplayResult: {
+              status: replayResult.status,
+              tier: replayResult.tier,
+              durationMs: replayResult.durationMs,
+              transactionId: replayResult.transactionId,
+              agentIterations: replayResult.agentIterations,
+            },
+            incrementUseCount: true,
+          });
+        } catch (err) {
+          console.error("Failed to update recipe after replay:", err);
+        }
+      }
+
+      replayParamsRef.current = null;
+    },
+    [],
+  );
+
+  const handleReplayFailed = useCallback(
+    (replayResult: ReplayResult | undefined) => {
+      const failResult = replayResult || {
+        status: "failed_timeout" as const,
+        tier: 1 as const,
+        durationMs: 0,
+        transactionId: replayParamsRef.current?.transactionId || "",
+      };
+
+      setResult(failResult as ReplayResult);
+      setError(
+        "Replay failed: " +
+          (failResult.status === "failed_element"
+            ? "Could not find a page element"
+            : failResult.status === "failed_match"
+            ? "Could not find matching invoice"
+            : failResult.status === "failed_auth"
+            ? "Login timed out"
+            : failResult.status === "failed_download"
+            ? "Download not captured"
+            : "Replay timed out"),
+      );
+      setIsReplaying(false);
+      setProgress(null);
+
+      const params = replayParamsRef.current;
+      if (params) {
+        callFunction("updateBrowserRecipe", {
+          partnerId: params.partnerId,
+          recipeId: params.recipe.id,
+          lastReplayResult: {
+            status: failResult.status,
+            tier: failResult.tier,
+            failedAtStep: (failResult as ReplayResult).failedAtStep,
+            durationMs: failResult.durationMs,
+            transactionId: failResult.transactionId,
+          },
+        }).catch((err: unknown) => {
+          console.error("Failed to update recipe after replay failure:", err);
+        });
+      }
+
+      replayParamsRef.current = null;
+    },
+    [],
+  );
+
   // Listen for extension events via window.postMessage
   useEffect(() => {
     function handleMessage(event: MessageEvent) {
@@ -258,85 +337,7 @@ export function useBrowserReplayMode(): ReplayModeState {
 
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [handleTier2Needed]);
-
-  async function handleReplayComplete(
-    replayResult: ReplayResult | undefined
-  ) {
-    const params = replayParamsRef.current;
-
-    setResult(replayResult || null);
-    setIsReplaying(false);
-    setProgress(null);
-
-    // Update the recipe on the server with the replay result
-    if (params && replayResult) {
-      try {
-        await callFunction("updateBrowserRecipe", {
-          partnerId: params.partnerId,
-          recipeId: params.recipe.id,
-          lastReplayResult: {
-            status: replayResult.status,
-            tier: replayResult.tier,
-            durationMs: replayResult.durationMs,
-            transactionId: replayResult.transactionId,
-            agentIterations: replayResult.agentIterations,
-          },
-          incrementUseCount: true,
-        });
-      } catch (err) {
-        console.error("Failed to update recipe after replay:", err);
-      }
-    }
-
-    replayParamsRef.current = null;
-  }
-
-  function handleReplayFailed(replayResult: ReplayResult | undefined) {
-    const failResult = replayResult || {
-      status: "failed_timeout" as const,
-      tier: 1 as const,
-      durationMs: 0,
-      transactionId: replayParamsRef.current?.transactionId || "",
-    };
-
-    setResult(failResult as ReplayResult);
-    setError(
-      "Replay failed: " +
-        (failResult.status === "failed_element"
-          ? "Could not find a page element"
-          : failResult.status === "failed_match"
-          ? "Could not find matching invoice"
-          : failResult.status === "failed_auth"
-          ? "Login timed out"
-          : failResult.status === "failed_download"
-          ? "Download not captured"
-          : "Replay timed out")
-    );
-    setIsReplaying(false);
-    setProgress(null);
-
-    // Update recipe with failure
-    const params = replayParamsRef.current;
-    if (params) {
-      callFunction("updateBrowserRecipe", {
-        partnerId: params.partnerId,
-        recipeId: params.recipe.id,
-        lastReplayResult: {
-          status: failResult.status,
-          tier: failResult.tier,
-          failedAtStep: (failResult as ReplayResult).failedAtStep,
-          durationMs: failResult.durationMs,
-          transactionId: failResult.transactionId,
-        },
-      }).catch((err: unknown) => {
-        console.error("Failed to update recipe after replay failure:", err);
-      });
-    }
-
-    replayParamsRef.current = null;
-  }
+  }, [handleTier2Needed, handleReplayComplete, handleReplayFailed]);
 
   return {
     isReplaying,

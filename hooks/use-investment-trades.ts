@@ -1,55 +1,39 @@
 "use client";
 
-import { useState, useEffect, startTransition } from "react";
-import { collection, query, orderBy, onSnapshot, where } from "firebase/firestore";
+import { useMemo } from "react";
+import {
+  collection,
+  orderBy,
+  query,
+  where,
+  type QueryDocumentSnapshot,
+} from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
+import { useFirestoreCollection } from "@/lib/firebase/use-firestore-collection";
 import { InvestmentTrade } from "@/types/investment-trade";
 import { useAuth } from "@/components/auth";
 
+function mapTrade(doc: QueryDocumentSnapshot): InvestmentTrade {
+  return { id: doc.id, ...doc.data() } as InvestmentTrade;
+}
+
 export function useInvestmentTrades(sourceId: string | null) {
   const { userId } = useAuth();
-  const [trades, setTrades] = useState<InvestmentTrade[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
 
-  useEffect(() => {
-    if (!userId || !sourceId) {
-      setTrades([]);
-      setLoading(false);
-      return;
-    }
+  const q = useMemo(
+    () =>
+      userId && sourceId
+        ? query(
+            collection(db, "investmentTrades"),
+            where("userId", "==", userId),
+            where("sourceId", "==", sourceId),
+            orderBy("date", "desc"),
+          )
+        : null,
+    [userId, sourceId],
+  );
 
-    setLoading(true);
-
-    const q = query(
-      collection(db, "investmentTrades"),
-      where("userId", "==", userId),
-      where("sourceId", "==", sourceId),
-      orderBy("date", "desc")
-    );
-
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const data = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        })) as InvestmentTrade[];
-
-        startTransition(() => {
-          setTrades(data);
-          setLoading(false);
-        });
-      },
-      (err) => {
-        console.error("Error fetching investment trades:", err);
-        setError(err);
-        setLoading(false);
-      }
-    );
-
-    return () => unsubscribe();
-  }, [userId, sourceId]);
+  const { data: trades, loading, error } = useFirestoreCollection(q, mapTrade);
 
   return { trades, loading, error };
 }

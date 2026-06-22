@@ -122,12 +122,17 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
   const navContainerRef = useRef<HTMLDivElement>(null);
   const navRefs = useRef<(HTMLAnchorElement | null)[]>([]);
   const navRef = useRef<HTMLElement>(null);
-  const hasMeasured = useRef(false);
+  const [hasMeasured, setHasMeasured] = useState(false);
   const [navIndicatorStyle, setNavIndicatorStyle] = useState<React.CSSProperties>({
     opacity: 0, left: 0, width: 0, height: 0, top: 0,
   });
 
   const activeIndex = visibleNavItems.findIndex((item) => pathname.startsWith(item.href));
+
+  // Trim navRefs to match the current nav length (in an effect, not during render).
+  useEffect(() => {
+    navRefs.current.length = visibleNavItems.length;
+  }, [visibleNavItems.length]);
 
   const updateIndicator = useCallback(() => {
     const el = activeIndex >= 0 ? navRefs.current[activeIndex] : null;
@@ -142,7 +147,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
         top: elRect.top - navRect.top,
         opacity: 1,
       });
-      hasMeasured.current = true;
+      setHasMeasured(true);
     } else {
       setNavIndicatorStyle((prev) => ({ ...prev, opacity: 0 }));
     }
@@ -172,7 +177,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    setHoveredNavItem(null);
+    queueMicrotask(() => setHoveredNavItem(null));
   }, [pathname, isCompactNavigation]);
 
   // Update indicator on route change and sidebar resize
@@ -239,14 +244,13 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
               <div
                 className={cn(
                   "absolute pointer-events-none rounded-md bg-primary/8",
-                  hasMeasured.current
+                  hasMeasured
                     ? "transition-[left,width,opacity] duration-300 ease-out"
                     : "transition-none"
                 )}
                 style={navIndicatorStyle}
                 aria-hidden
               />
-              {(navRefs.current.length = visibleNavItems.length) && null}
               {visibleNavItems.map((item, i) => {
                 const isActive = pathname.startsWith(item.href);
                 const link = (

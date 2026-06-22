@@ -1,15 +1,16 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useMemo, useState } from "react";
 import {
   collection,
+  limit,
+  orderBy,
   query,
   where,
-  onSnapshot,
-  orderBy,
-  limit,
+  type QueryDocumentSnapshot,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
+import { useFirestoreCollection } from "@/lib/firebase/use-firestore-collection";
 import { useAuth } from "@/components/auth";
 
 export interface GmailSyncStatus {
@@ -21,123 +22,111 @@ export interface GmailSyncStatus {
   startedAt?: Date;
 }
 
+type GmailSyncQueueDoc = {
+  id: string;
+  data: Record<string, unknown>;
+};
+
+function mapQueueDoc(doc: QueryDocumentSnapshot): GmailSyncQueueDoc {
+  return { id: doc.id, data: doc.data() };
+}
+
+const STALE_THRESHOLD_MS = 10 * 60 * 1000;
+
 /**
- * Hook to monitor active Gmail sync status
- * Returns sync info when a sync is in progress
+ * Hook to monitor active Gmail sync status.
+ * Returns sync info when a sync is in progress.
  */
 export function useGmailSyncStatus(): GmailSyncStatus {
   const { userId } = useAuth();
-  const [status, setStatus] = useState<GmailSyncStatus>({ isActive: false });
 
-  useEffect(() => {
-    if (!userId) {
-      setStatus({ isActive: false });
-      return;
+  const q = useMemo(
+    () =>
+      userId
+        ? query(
+            collection(db, "gmailSyncQueue"),
+            where("userId", "==", userId),
+            where("status", "in", ["pending", "processing"]),
+            orderBy("createdAt", "desc"),
+            limit(1),
+          )
+        : null,
+    [userId],
+  );
+
+  const { data } = useFirestoreCollection(q, mapQueueDoc);
+  // Capture "now" once per mount to avoid impure Date.now() calls during render.
+  const [now] = useState(() => Date.now());
+
+  return useMemo<GmailSyncStatus>(() => {
+    if (data.length === 0) return { isActive: false };
+
+    const queue = data[0];
+    const queueData = queue.data as Record<string, unknown> & {
+      createdAt?: { toDate(): Date };
+      startedAt?: { toDate(): Date };
+      status?: string;
+      type?: "initial" | "scheduled" | "manual";
+      filesCreated?: number;
+      emailsProcessed?: number;
+    };
+
+    const createdAt = queueData.createdAt?.toDate();
+    const isStale =
+      createdAt &&
+      queueData.status === "pending" &&
+      now - createdAt.getTime() > STALE_THRESHOLD_MS;
+
+    if (isStale) {
+      console.log("[GmailSync] Found stale queue item, ignoring:", queue.id);
+      return { isActive: false };
     }
 
-    // Listen for processing queue items
-    const queueQuery = query(
-      collection(db, "gmailSyncQueue"),
-      where("userId", "==", userId),
-      where("status", "in", ["pending", "processing"]),
-      orderBy("createdAt", "desc"),
-      limit(1)
-    );
-
-    const unsubscribeQueue = onSnapshot(queueQuery, async (snapshot) => {
-      if (snapshot.empty) {
-        setStatus({ isActive: false });
-        return;
-      }
-
-      const queueDoc = snapshot.docs[0];
-      const queueData = queueDoc.data();
-
-      // Check if queue item is stale (created more than 10 minutes ago and still pending)
-      // This catches orphaned items that didn't get processed
-      const createdAt = queueData.createdAt?.toDate();
-      const isStale = createdAt &&
-        queueData.status === "pending" &&
-        Date.now() - createdAt.getTime() > 10 * 60 * 1000;
-
-      if (isStale) {
-        console.log("[GmailSync] Found stale queue item, ignoring:", queueDoc.id);
-        setStatus({ isActive: false });
-        return;
-      }
-
-      // Get integration email
-      let integrationEmail: string | undefined;
-      try {
-        const integrationId = queueData.integrationId;
-        // We'd need to fetch integration doc, but for simplicity use integrationId
-        // The email is stored in emailIntegrations collection
-        integrationEmail = undefined; // Will be filled by separate listener
-      } catch {
-        // Ignore
-      }
-
-      setStatus({
-        isActive: true,
-        integrationEmail,
-        filesCreated: queueData.filesCreated || 0,
-        emailsProcessed: queueData.emailsProcessed || 0,
-        type: queueData.type,
-        startedAt: queueData.startedAt?.toDate(),
-      });
-    });
-
-    return () => {
-      unsubscribeQueue();
+    return {
+      isActive: true,
+      filesCreated: queueData.filesCreated ?? 0,
+      emailsProcessed: queueData.emailsProcessed ?? 0,
+      type: queueData.type,
+      startedAt: queueData.startedAt?.toDate(),
     };
-  }, [userId]);
-
-  return status;
+  }, [data, now]);
 }
 
 /**
- * Hook to get sync status for a specific integration
+ * Hook to get sync status for a specific integration.
  */
 export function useIntegrationSyncStatus(integrationId: string | null): {
   isSyncing: boolean;
   filesCreated: number;
   emailsProcessed: number;
 } {
-  const [status, setStatus] = useState({
-    isSyncing: false,
-    filesCreated: 0,
-    emailsProcessed: 0,
-  });
+  const q = useMemo(
+    () =>
+      integrationId
+        ? query(
+            collection(db, "gmailSyncQueue"),
+            where("integrationId", "==", integrationId),
+            where("status", "in", ["pending", "processing"]),
+            limit(1),
+          )
+        : null,
+    [integrationId],
+  );
 
-  useEffect(() => {
-    if (!integrationId) {
-      setStatus({ isSyncing: false, filesCreated: 0, emailsProcessed: 0 });
-      return;
+  const { data } = useFirestoreCollection(q, mapQueueDoc);
+
+  return useMemo(() => {
+    if (data.length === 0) {
+      return { isSyncing: false, filesCreated: 0, emailsProcessed: 0 };
     }
-
-    const queueQuery = query(
-      collection(db, "gmailSyncQueue"),
-      where("integrationId", "==", integrationId),
-      where("status", "in", ["pending", "processing"]),
-      limit(1)
-    );
-
-    const unsubscribe = onSnapshot(queueQuery, (snapshot) => {
-      if (snapshot.empty) {
-        setStatus({ isSyncing: false, filesCreated: 0, emailsProcessed: 0 });
-        return;
-      }
-
-      const data = snapshot.docs[0].data();
-      setStatus({
-        isSyncing: true,
-        filesCreated: data.filesCreated || 0,
-        emailsProcessed: data.emailsProcessed || 0,
-      });
-    });
-
-    return () => unsubscribe();
-  }, [integrationId]);
-
-  return status;
+    const queueData = data[0].data as {
+      filesCreated?: number;
+      emailsProcessed?: number;
+    };
+    return {
+      isSyncing: true,
+      filesCreated: queueData.filesCreated ?? 0,
+      emailsProcessed: queueData.emailsProcessed ?? 0,
+    };
+  }, [data]);
 }

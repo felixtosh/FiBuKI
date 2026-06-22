@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { TransactionSource } from "@/types/source";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -27,6 +28,9 @@ interface SourceCardProps {
 }
 
 export function SourceCard({ source, onClick, onImportClick }: SourceCardProps) {
+  // Capture "now" once per mount so checks derived from time remain pure.
+  const [now] = useState(() => Date.now());
+
   // Check API connection status (TrueLayer or finAPI)
   const isApiConnected = source.type === "api" &&
     (source.apiConfig?.provider === "truelayer" ||
@@ -57,12 +61,12 @@ export function SourceCard({ source, onClick, onImportClick }: SourceCardProps) 
 
   // Check if re-auth is needed
   const needsReauth = isApiConnected && expiresAt
-    ? expiresAt < new Date()
+    ? expiresAt.getTime() < now
     : false;
 
   // Days until expiry
   const daysUntilExpiry = isApiConnected && expiresAt
-    ? Math.max(0, Math.floor((expiresAt.getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
+    ? Math.max(0, Math.floor((expiresAt.getTime() - now) / (1000 * 60 * 60 * 24)))
     : null;
 
   // Only show badge for warnings or CSV - not for normal connected state

@@ -1,16 +1,16 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import {
   collection,
   query,
   where,
-  onSnapshot,
-  orderBy,
+  type QueryDocumentSnapshot,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
 import { useAuth } from "@/components/auth";
 import { callFunction } from "@/lib/firebase/callable";
+import { useFirestoreCollection } from "@/lib/firebase/use-firestore-collection";
 import type { CardReconciliationGroup } from "@/types/card-reconciliation";
 
 interface UseReconciliationOptions {
@@ -22,23 +22,17 @@ interface UseReconciliationOptions {
   status?: "suggested" | "confirmed" | "rejected";
 }
 
+function mapGroup(doc: QueryDocumentSnapshot): CardReconciliationGroup {
+  return { id: doc.id, ...doc.data() } as CardReconciliationGroup;
+}
+
 export function useReconciliation(options: UseReconciliationOptions = {}) {
   const { user } = useAuth();
-  const [groups, setGroups] = useState<CardReconciliationGroup[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
+  const uid = user?.uid;
 
-  useEffect(() => {
-    if (!user?.uid) {
-      setGroups([]);
-      setLoading(false);
-      return;
-    }
-
-    const constraints = [
-      where("userId", "==", user.uid),
-    ];
-
+  const q = useMemo(() => {
+    if (!uid) return null;
+    const constraints = [where("userId", "==", uid)];
     if (options.cardSourceId) {
       constraints.push(where("cardSourceId", "==", options.cardSourceId));
     }
@@ -48,53 +42,35 @@ export function useReconciliation(options: UseReconciliationOptions = {}) {
     if (options.status) {
       constraints.push(where("status", "==", options.status));
     }
+    return query(collection(db, "cardReconciliationGroups"), ...constraints);
+  }, [uid, options.cardSourceId, options.bankSourceId, options.status]);
 
-    const q = query(
-      collection(db, "cardReconciliationGroups"),
-      ...constraints
-    );
+  const { data: rawGroups, loading, error } = useFirestoreCollection(
+    q,
+    mapGroup,
+  );
 
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const results: CardReconciliationGroup[] = [];
-        snapshot.forEach((doc) => {
-          results.push({ id: doc.id, ...doc.data() } as CardReconciliationGroup);
-        });
-        // Sort by confidence descending
-        results.sort((a, b) => b.confidence - a.confidence);
-        setGroups(results);
-        setLoading(false);
-      },
-      (err) => {
-        console.error("[useReconciliation] Error:", err);
-        setError(err);
-        setLoading(false);
-      }
-    );
-
-    return unsubscribe;
-  }, [user?.uid, options.cardSourceId, options.bankSourceId, options.status]);
+  // Sort by confidence descending
+  const groups = useMemo(
+    () => [...rawGroups].sort((a, b) => b.confidence - a.confidence),
+    [rawGroups],
+  );
 
   const confirmGroup = useCallback(
-    async (
-      groupId: string,
-      cardTransactionIds?: string[],
-      note?: string
-    ) => {
+    async (groupId: string, cardTransactionIds?: string[], note?: string) => {
       return callFunction<
         { groupId: string; cardTransactionIds?: string[]; note?: string },
         { success: boolean; reconciledCount: number }
       >("confirmReconciliation", { groupId, cardTransactionIds, note });
     },
-    []
+    [],
   );
 
   const rejectGroup = useCallback(async (groupId: string) => {
-    return callFunction<
-      { groupId: string },
-      { success: boolean }
-    >("rejectReconciliation", { groupId });
+    return callFunction<{ groupId: string }, { success: boolean }>(
+      "rejectReconciliation",
+      { groupId },
+    );
   }, []);
 
   return {

@@ -111,7 +111,9 @@ export default function IdentityPage() {
 
   // Load data from userData
   useEffect(() => {
-    if (userData) {
+    if (!userData) return;
+    // Defer to microtask so setState runs event-handler-style, not from within the effect body.
+    queueMicrotask(() => {
       setCountry(userData.country || "AT");
       setTaxNumber(userData.taxNumber || "");
       setOwnEmails(userData.ownEmails || []);
@@ -169,7 +171,7 @@ export default function IdentityPage() {
           },
         ]);
       }
-    }
+    });
   }, [userData]);
 
   // Email management

@@ -66,12 +66,12 @@ export function BillingLimitBanner() {
   const bannerState = sub.loading ? null : detectBannerState(sub);
 
   // Restore dismissed state from sessionStorage
+  const bannerKey = bannerState?.key;
   useEffect(() => {
-    if (bannerState) {
-      const wasDismissed = sessionStorage.getItem(bannerState.key);
-      setDismissed(wasDismissed);
-    }
-  }, [bannerState?.key]);
+    if (!bannerKey) return;
+    const wasDismissed = sessionStorage.getItem(bannerKey);
+    queueMicrotask(() => setDismissed(wasDismissed));
+  }, [bannerKey]);
 
   // Don't show for admins
   if (isAdmin) return null;

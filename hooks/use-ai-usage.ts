@@ -1,38 +1,39 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
-import { collection, query, orderBy, onSnapshot, where, limit, Timestamp } from "firebase/firestore";
-import { db } from "@/lib/firebase/config";
-import { AIUsageRecord, AIUsageSummary, AIUsageDailyStats, AIFunction, AI_MODEL_PRICING } from "@/types/ai-usage";
+import { useMemo } from "react";
 import {
-  OperationsContext,
-  getAIUsageSummary,
-  getAIUsageDailyStats,
-  getAIUsageByFunction,
-} from "@/lib/operations";
+  Timestamp,
+  collection,
+  limit,
+  orderBy,
+  query,
+  where,
+  type QueryDocumentSnapshot,
+} from "firebase/firestore";
+import { db } from "@/lib/firebase/config";
+import {
+  AIUsageRecord,
+  AIUsageSummary,
+  AIUsageDailyStats,
+  AIFunction,
+} from "@/types/ai-usage";
+import { useFirestoreCollection } from "@/lib/firebase/use-firestore-collection";
 import { useAuth } from "@/components/auth";
 
 const MAX_RECORDS = 500;
 
-export function useAIUsage(options?: { dateRange?: "7d" | "30d" | "all"; allUsers?: boolean }) {
+function mapRecord(doc: QueryDocumentSnapshot): AIUsageRecord {
+  return { id: doc.id, ...doc.data() } as AIUsageRecord;
+}
+
+export function useAIUsage(options?: {
+  dateRange?: "7d" | "30d" | "all";
+  allUsers?: boolean;
+}) {
   const { userId } = useAuth();
   const allUsers = options?.allUsers ?? false;
-  const [records, setRecords] = useState<AIUsageRecord[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
-
   const dateRange = options?.dateRange || "30d";
 
-  // Create operations context
-  const ctx: OperationsContext = useMemo(
-    () => ({
-      db,
-      userId: userId ?? "",
-    }),
-    [userId]
-  );
-
-  // Calculate date filter
   const dateFrom = useMemo(() => {
     if (dateRange === "all") return undefined;
     const days = dateRange === "7d" ? 7 : 30;
@@ -42,77 +43,43 @@ export function useAIUsage(options?: { dateRange?: "7d" | "30d" | "all"; allUser
     return d;
   }, [dateRange]);
 
-  // Real-time listener for recent usage records
-  useEffect(() => {
-    // For user-specific queries, require userId
-    if (!allUsers && !userId) {
-      setRecords([]);
-      setLoading(false);
-      return;
-    }
-
-    setLoading(true);
-
-    let q;
+  const q = useMemo(() => {
+    if (!allUsers && !userId) return null;
+    const fromTimestamp = dateFrom ? Timestamp.fromDate(dateFrom) : undefined;
 
     if (allUsers) {
-      // Admin view: all users
-      if (dateFrom) {
-        q = query(
-          collection(db, "aiUsage"),
-          where("createdAt", ">=", Timestamp.fromDate(dateFrom)),
-          orderBy("createdAt", "desc"),
-          limit(MAX_RECORDS)
-        );
-      } else {
-        q = query(
-          collection(db, "aiUsage"),
-          orderBy("createdAt", "desc"),
-          limit(MAX_RECORDS)
-        );
-      }
-    } else {
-      // User view: only their records
-      if (dateFrom) {
-        q = query(
-          collection(db, "aiUsage"),
-          where("userId", "==", userId),
-          where("createdAt", ">=", Timestamp.fromDate(dateFrom)),
-          orderBy("createdAt", "desc"),
-          limit(MAX_RECORDS)
-        );
-      } else {
-        q = query(
-          collection(db, "aiUsage"),
-          where("userId", "==", userId),
-          orderBy("createdAt", "desc"),
-          limit(MAX_RECORDS)
-        );
-      }
+      return fromTimestamp
+        ? query(
+            collection(db, "aiUsage"),
+            where("createdAt", ">=", fromTimestamp),
+            orderBy("createdAt", "desc"),
+            limit(MAX_RECORDS),
+          )
+        : query(
+            collection(db, "aiUsage"),
+            orderBy("createdAt", "desc"),
+            limit(MAX_RECORDS),
+          );
     }
 
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const data = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        })) as AIUsageRecord[];
+    return fromTimestamp
+      ? query(
+          collection(db, "aiUsage"),
+          where("userId", "==", userId),
+          where("createdAt", ">=", fromTimestamp),
+          orderBy("createdAt", "desc"),
+          limit(MAX_RECORDS),
+        )
+      : query(
+          collection(db, "aiUsage"),
+          where("userId", "==", userId),
+          orderBy("createdAt", "desc"),
+          limit(MAX_RECORDS),
+        );
+  }, [allUsers, userId, dateFrom]);
 
-        setRecords(data);
-        setLoading(false);
-      },
-      (err) => {
-        console.error("Error fetching AI usage:", err);
-        setError(err);
-        setLoading(false);
-      }
-    );
+  const { data: records, loading, error } = useFirestoreCollection(q, mapRecord);
 
-    return () => unsubscribe();
-  }, [userId, dateFrom, allUsers]);
-
-  // Calculate summary from records
   const summary: AIUsageSummary = useMemo(() => {
     const result: AIUsageSummary = {
       totalCalls: 0,
@@ -138,7 +105,6 @@ export function useAIUsage(options?: { dateRange?: "7d" | "30d" | "all"; allUser
       result.totalOutputTokens += record.outputTokens;
       result.totalCost += record.estimatedCost;
 
-      // By function
       const fn = record.function;
       if (result.byFunction[fn]) {
         result.byFunction[fn].calls++;
@@ -147,9 +113,13 @@ export function useAIUsage(options?: { dateRange?: "7d" | "30d" | "all"; allUser
         result.byFunction[fn].cost += record.estimatedCost;
       }
 
-      // By model
       if (!result.byModel[record.model]) {
-        result.byModel[record.model] = { calls: 0, inputTokens: 0, outputTokens: 0, cost: 0 };
+        result.byModel[record.model] = {
+          calls: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          cost: 0,
+        };
       }
       result.byModel[record.model].calls++;
       result.byModel[record.model].inputTokens += record.inputTokens;
@@ -160,12 +130,10 @@ export function useAIUsage(options?: { dateRange?: "7d" | "30d" | "all"; allUser
     return result;
   }, [records]);
 
-  // Calculate daily stats for charts
   const dailyStats: AIUsageDailyStats[] = useMemo(() => {
     const days = dateRange === "7d" ? 7 : 30;
     const dailyMap = new Map<string, AIUsageDailyStats>();
 
-    // Initialize all days
     for (let i = 0; i <= days; i++) {
       const d = new Date();
       d.setDate(d.getDate() - (days - i));
@@ -179,7 +147,6 @@ export function useAIUsage(options?: { dateRange?: "7d" | "30d" | "all"; allUser
       });
     }
 
-    // Aggregate records
     for (const record of records) {
       const dateStr = record.createdAt.toDate().toISOString().split("T")[0];
       const day = dailyMap.get(dateStr);
@@ -191,12 +158,18 @@ export function useAIUsage(options?: { dateRange?: "7d" | "30d" | "all"; allUser
       }
     }
 
-    return Array.from(dailyMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+    return Array.from(dailyMap.values()).sort((a, b) =>
+      a.date.localeCompare(b.date),
+    );
   }, [records, dateRange]);
 
-  // Get function breakdown for charts
   const functionBreakdown = useMemo(() => {
-    return (Object.entries(summary.byFunction) as [AIFunction, typeof summary.byFunction.chat][])
+    return (
+      Object.entries(summary.byFunction) as [
+        AIFunction,
+        typeof summary.byFunction.chat,
+      ][]
+    )
       .map(([fn, stats]) => ({
         function: fn,
         name: formatFunctionName(fn),
@@ -217,7 +190,6 @@ export function useAIUsage(options?: { dateRange?: "7d" | "30d" | "all"; allUser
   };
 }
 
-// Helper function
 function formatFunctionName(fn: AIFunction): string {
   const names: Record<AIFunction, string> = {
     chat: "Chat",

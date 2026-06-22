@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { parseChatUrlState, consumeChatUrlParam } from "@/lib/chat/chat-url-state";
 
@@ -11,20 +11,20 @@ export interface ChatUrlCommand {
 }
 
 /**
- * Reads the URL `?chat=` param once on first call (via ref guard) and provides
- * a consume function to silently strip it. No ongoing URL sync — state lives
- * in localStorage after the initial read.
+ * Reads the URL `?chat=` param once on first mount via lazy useState init,
+ * and provides a consume function to silently strip it. No ongoing URL sync —
+ * state lives in localStorage after the initial read.
  */
 export function useChatUrlCommand() {
   const searchParams = useSearchParams();
   const consumedRef = useRef(false);
 
-  // Parse on first render only — subsequent re-renders from searchParams changes
-  // won't matter because we consume the param immediately after reading.
-  const initialCommandRef = useRef<ChatUrlCommand | null>(null);
-  if (initialCommandRef.current === null) {
-    initialCommandRef.current = parseChatUrlState(searchParams);
-  }
+  // Lazy init captures the URL state exactly once. We intentionally do not
+  // refresh on subsequent searchParams changes since the param is consumed
+  // right after reading.
+  const [initialCommand] = useState<ChatUrlCommand>(() =>
+    parseChatUrlState(searchParams),
+  );
 
   const consumeParam = useCallback(() => {
     if (consumedRef.current) return;
@@ -33,7 +33,7 @@ export function useChatUrlCommand() {
   }, []);
 
   return {
-    initialCommand: initialCommandRef.current,
+    initialCommand,
     consumeParam,
   };
 }

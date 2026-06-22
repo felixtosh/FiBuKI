@@ -130,7 +130,7 @@ function shouldConfirm(state: AgentState): "tools" | "confirm" | "respond" {
   const lastMessage = messages[messages.length - 1];
 
   // Check for tool calls - handle both AIMessage instances and plain objects
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   const msgAny = lastMessage as any;
   const toolCalls = msgAny?.tool_calls || msgAny?.additional_kwargs?.tool_calls || [];
 
@@ -190,7 +190,7 @@ async function confirmationNode(state: AgentState): Promise<Partial<AgentState>>
 const rawToolsNode = new ToolNode(ALL_TOOLS);
 
 // Wrap tools node to pass config with userId
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+
 async function toolsNode(state: AgentState, config?: any): Promise<Partial<AgentState>> {
   const { userId, authHeader } = state;
   console.log("[Tools] Executing tools node with userId:", userId ? "present" : "missing");
@@ -359,7 +359,7 @@ export async function continueAfterConfirmation(
     const tool = ALL_TOOLS.find((t) => t.name === input.pendingToolCall.toolName);
     if (tool) {
       try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
         const result = await (tool as any).invoke(input.pendingToolCall.args, {
           configurable: {
             userId: input.userId,

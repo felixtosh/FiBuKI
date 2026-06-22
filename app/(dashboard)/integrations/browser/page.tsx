@@ -103,14 +103,13 @@ export default function BrowserIntegrationPage() {
     if (!raw) return;
     try {
       const parsed = JSON.parse(raw) as BrowserPullRecord[];
-      if (Array.isArray(parsed)) {
-        setHistory(
-          parsed.map((record) => ({
-            ...record,
-            startedAt: new Date(record.startedAt),
-          }))
-        );
-      }
+      if (!Array.isArray(parsed)) return;
+      const restored = parsed.map((record) => ({
+        ...record,
+        startedAt: new Date(record.startedAt),
+      }));
+      // Defer to microtask so setState runs event-handler-style, not from within the effect body.
+      queueMicrotask(() => setHistory(restored));
     } catch {
       // Ignore malformed cache
     }

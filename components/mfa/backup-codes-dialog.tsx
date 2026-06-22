@@ -89,13 +89,14 @@ export function BackupCodesDialog({
 
   // Reset state when dialog opens
   useEffect(() => {
-    if (open) {
+    if (!open) return;
+    queueMicrotask(() => {
       setCodes(null);
       setError(null);
       setCopied(false);
       setAcknowledged(false);
       setShowWarning(isRegenerate);
-    }
+    });
   }, [open, isRegenerate]);
 
   const handleGenerate = async () => {

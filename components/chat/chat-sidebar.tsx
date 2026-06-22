@@ -161,7 +161,7 @@ export function ChatSidebar() {
   // Only if user hasn't scrolled up
   useEffect(() => {
     if (!userScrolledRef.current) {
-      scrollToBottom();
+      queueMicrotask(() => scrollToBottom());
     }
   }, [messages, pendingConfirmations, showThinkingIndicator, scrollToBottom]);
 
@@ -170,10 +170,12 @@ export function ChatSidebar() {
   useEffect(() => {
     if (activeTab !== "chat") return;
     userScrolledRef.current = false;
-    setIsAtBottom(true);
-    setTimeout(() => {
-      scrollToBottom();
-    }, 0);
+    queueMicrotask(() => {
+      setIsAtBottom(true);
+      setTimeout(() => {
+        scrollToBottom();
+      }, 0);
+    });
   }, [currentSessionId, activeTab, scrollToBottom]);
 
   // Focus input when clicking on empty chat area (not when selecting text)
@@ -304,7 +306,7 @@ export function ChatSidebar() {
                             <MessageSquare className="mb-4 h-12 w-12 opacity-20" />
                             <p className="text-sm">Start a conversation with your AI tax assistant.</p>
                             <p className="mt-2 text-xs">
-                              Try: "Show me my recent transactions" or "Categorize all Amazon purchases"
+                              Try: &ldquo;Show me my recent transactions&rdquo; or &ldquo;Categorize all Amazon purchases&rdquo;
                             </p>
                           </div>
                         ) : (

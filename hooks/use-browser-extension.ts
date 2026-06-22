@@ -30,7 +30,7 @@ export function useBrowserExtensionStatus(): BrowserExtensionState {
     setStatus("checking");
     setLastCheckedAt(new Date());
     const marker = document.querySelector<HTMLMetaElement>(
-      `meta[name="${EXTENSION_MARKER}"]`
+      `meta[name="${EXTENSION_MARKER}"]`,
     );
     if (marker) {
       awaitingRef.current = false;
@@ -54,8 +54,13 @@ export function useBrowserExtensionStatus(): BrowserExtensionState {
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       if (event.source !== window) return;
-      const data = event.data as { type?: string; source?: string; version?: string };
-      if (!data || data.type !== EXTENSION_PONG || data.source !== EXTENSION_SOURCE) return;
+      const data = event.data as {
+        type?: string;
+        source?: string;
+        version?: string;
+      };
+      if (!data || data.type !== EXTENSION_PONG || data.source !== EXTENSION_SOURCE)
+        return;
       awaitingRef.current = false;
       if (timeoutRef.current) {
         window.clearTimeout(timeoutRef.current);
@@ -65,9 +70,14 @@ export function useBrowserExtensionStatus(): BrowserExtensionState {
     };
 
     window.addEventListener("message", handleMessage);
-    checkNow();
+
+    // Defer the initial check to the next microtask so the setState calls
+    // inside checkNow() are dispatched event-handler-style, not from within
+    // the effect body.
+    const initialCheckId = window.setTimeout(() => checkNow(), 0);
 
     return () => {
+      window.clearTimeout(initialCheckId);
       window.removeEventListener("message", handleMessage);
       if (timeoutRef.current) {
         window.clearTimeout(timeoutRef.current);

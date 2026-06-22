@@ -59,7 +59,7 @@ function inferLineItemAmountsAreNet(
   return netInterpretationError < grossInterpretationError;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+
 function getEffectiveExtractedAmount(data: any): number | null {
   const extractedAmount = toFiniteNumber(data?.extractedAmount);
   const lineItems = Array.isArray(data?.extractedLineItems)

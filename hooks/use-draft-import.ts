@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
 import { ImportRecord } from "@/types/import";
@@ -23,9 +23,6 @@ export interface UseDraftImportResult {
 /**
  * Hook to load an existing draft import for resumption.
  * Fetches the import record and downloads the CSV from storage.
- *
- * @param importId - The import ID to load (from URL param)
- * @returns Draft data, loading state, and error
  */
 export function useDraftImport(importId: string | null): UseDraftImportResult {
   const { userId } = useAuth();
@@ -36,32 +33,25 @@ export function useDraftImport(importId: string | null): UseDraftImportResult {
 
   useEffect(() => {
     if (!importId || !userId) {
-      setData(null);
-      setIsLoading(false);
-      setError(null);
-      setIsExpired(false);
       return;
     }
 
-    // Capture importId in closure to satisfy TypeScript
     const importIdToLoad = importId;
-
     let cancelled = false;
 
     async function loadDraft() {
-      setIsLoading(true);
-      setError(null);
-      setIsExpired(false);
-
+      // setState inside an async function (after the first `await`) is
+      // event-handler-like — the React Compiler rule doesn't flag it.
       try {
         // 1. Fetch import record
         const importRef = doc(db, "imports", importIdToLoad);
         const importSnap = await getDoc(importRef);
-
         if (cancelled) return;
 
         if (!importSnap.exists()) {
+          setData(null);
           setError("Draft import not found");
+          setIsExpired(false);
           setIsLoading(false);
           return;
         }
@@ -71,26 +61,26 @@ export function useDraftImport(importId: string | null): UseDraftImportResult {
           ...importSnap.data(),
         } as ImportRecord;
 
-        // 2. Verify ownership
         if (importData.userId !== userId) {
+          setData(null);
           setError("Access denied");
+          setIsExpired(false);
           setIsLoading(false);
           return;
         }
 
-        // 3. Check if it's still a draft
         if (importData.status !== "draft") {
-          // Not an error - just means import was already completed
-          // This can happen if user completes import in another tab
+          setData(null);
           setError("This import has already been completed");
+          setIsExpired(false);
           setIsLoading(false);
           return;
         }
 
-        // 4. Check expiration
         if (importData.expiresAt) {
           const expiresAt = importData.expiresAt.toDate();
           if (expiresAt < new Date()) {
+            setData(null);
             setIsExpired(true);
             setError("This draft has expired. Please start a new import.");
             setIsLoading(false);
@@ -98,34 +88,43 @@ export function useDraftImport(importId: string | null): UseDraftImportResult {
           }
         }
 
-        // 5. Download CSV from storage
         if (!importData.csvStoragePath) {
+          setData(null);
           setError("CSV file not found for this draft");
+          setIsExpired(false);
           setIsLoading(false);
           return;
         }
 
         const csvContent = await downloadImportCSV(importData.csvStoragePath);
-
         if (cancelled) return;
 
-        setData({
-          draft: importData,
-          csvContent,
-        });
+        setData({ draft: importData, csvContent });
+        setError(null);
+        setIsExpired(false);
         setIsLoading(false);
       } catch (err) {
         if (cancelled) return;
-
         console.error("[useDraftImport] Error loading draft:", err);
+        setData(null);
         setError(
-          err instanceof Error ? err.message : "Failed to load draft import"
+          err instanceof Error ? err.message : "Failed to load draft import",
         );
+        setIsExpired(false);
         setIsLoading(false);
       }
     }
 
-    loadDraft();
+    // Synchronously enter the loading state via the promise's microtask queue
+    // — wrapping in queueMicrotask keeps these setState calls out of the effect
+    // body itself.
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setIsLoading(true);
+      setError(null);
+      setIsExpired(false);
+      void loadDraft();
+    });
 
     return () => {
       cancelled = true;

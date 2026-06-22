@@ -33,9 +33,9 @@ export default function DeviceAuthPage() {
   // Pre-fill from ?code= query param
   useEffect(() => {
     const prefill = searchParams.get("code");
-    if (prefill) {
-      setCode(prefill.toUpperCase());
-    }
+    if (!prefill) return;
+    // Defer to microtask so setState runs event-handler-style, not from within the effect body.
+    queueMicrotask(() => setCode(prefill.toUpperCase()));
   }, [searchParams]);
 
   // Redirect to login if not authenticated

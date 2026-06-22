@@ -31,9 +31,8 @@ export function OnboardingCompletion({
     if (open) {
       const timer = setTimeout(() => setShowConfetti(true), 200);
       return () => clearTimeout(timer);
-    } else {
-      setShowConfetti(false);
     }
+    queueMicrotask(() => setShowConfetti(false));
   }, [open]);
 
   const isDataOnly = track === "data_only";

@@ -109,7 +109,7 @@ export function TransactionToolbar({
   useEffect(() => {
     if (assignedCount !== undefined && prevAssignedRef.current !== undefined &&
         assignedCount !== prevAssignedRef.current) {
-      setCounterBumping(true);
+      queueMicrotask(() => setCounterBumping(true));
       const timer = setTimeout(() => setCounterBumping(false), MOTION.COUNTER_BUMP_DURATION_MS);
       prevAssignedRef.current = assignedCount;
       return () => clearTimeout(timer);

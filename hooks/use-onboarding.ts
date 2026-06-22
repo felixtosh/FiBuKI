@@ -54,17 +54,29 @@ export function useOnboarding() {
     [userId]
   );
 
-  // Real-time listener for onboarding state
+  // Real-time listener for onboarding state. All initial state transitions
+  // are deferred via queueMicrotask so they happen event-handler-style rather
+  // than from within the effect body.
   useEffect(() => {
+    let cancelled = false;
+
     if (!userId) {
-      setState(null);
-      setLoading(false);
-      setIsServerStateReady(false);
-      return;
+      queueMicrotask(() => {
+        if (cancelled) return;
+        setState(null);
+        setLoading(false);
+        setIsServerStateReady(false);
+      });
+      return () => {
+        cancelled = true;
+      };
     }
 
-    setLoading(true);
-    setIsServerStateReady(false);
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setLoading(true);
+      setIsServerStateReady(false);
+    });
     hasInitializedFromMissingDoc.current = false;
 
     const docRef = doc(db, "users", userId, "settings", "onboarding");
@@ -72,7 +84,6 @@ export function useOnboarding() {
     const unsubscribe = onSnapshot(
       docRef,
       async (snapshot) => {
-        // Wait for server-backed snapshot before running initialization logic.
         if (!snapshot.metadata.fromCache) {
           setIsServerStateReady(true);
         }
@@ -89,8 +100,6 @@ export function useOnboarding() {
           return;
         }
 
-        // Cache-only misses can occur on reload before server data arrives.
-        // Never initialize from that state, otherwise existing onboarding can be reset.
         if (snapshot.metadata.fromCache) {
           return;
         }
@@ -100,7 +109,6 @@ export function useOnboarding() {
           return;
         }
 
-        // Initialize onboarding only after the server confirms the doc is missing.
         hasInitializedFromMissingDoc.current = true;
         try {
           const newState = await initializeOnboarding(ctx);
@@ -117,10 +125,13 @@ export function useOnboarding() {
         console.error("Error fetching onboarding state:", err);
         setError(err);
         setLoading(false);
-      }
+      },
     );
 
-    return () => unsubscribe();
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
   }, [userId, ctx]);
 
   // Auto-detect step completion based on existing data

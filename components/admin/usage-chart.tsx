@@ -50,6 +50,43 @@ const CHART_COLORS: Record<string, string> = {
   successCount: "var(--color-chart-2)",
 };
 
+type ChartDataKey = UsageChartProps["dataKey"];
+
+type RechartsTooltipPayload = {
+  payload?: { value?: number | string | ReadonlyArray<number | string> };
+};
+
+function ChartTooltip({
+  active,
+  payload,
+  label,
+  dataKey,
+}: {
+  active?: boolean;
+  payload?: ReadonlyArray<RechartsTooltipPayload["payload"]>;
+  label?: string | number;
+  dataKey: ChartDataKey;
+}) {
+  if (active && payload && payload.length) {
+    const raw = payload[0]?.value;
+    const value =
+      typeof raw === "number"
+        ? raw
+        : typeof raw === "string"
+        ? Number(raw)
+        : 0;
+    return (
+      <div className="bg-popover border rounded-md p-2 shadow-md">
+        <p className="text-sm font-medium">{label}</p>
+        <p className="text-sm text-muted-foreground">
+          {formatValue(value, dataKey)}
+        </p>
+      </div>
+    );
+  }
+  return null;
+}
+
 export function UsageChart({ data, type, dataKey }: UsageChartProps) {
   const color = CHART_COLORS[dataKey] || "var(--color-chart-1)";
 
@@ -58,27 +95,13 @@ export function UsageChart({ data, type, dataKey }: UsageChartProps) {
     label: formatDate(item.date),
   }));
 
-  const CustomTooltip = ({
-    active,
-    payload,
-    label,
-  }: {
-    active?: boolean;
-    payload?: Array<{ value: number }>;
-    label?: string;
-  }) => {
-    if (active && payload && payload.length) {
-      return (
-        <div className="bg-popover border rounded-md p-2 shadow-md">
-          <p className="text-sm font-medium">{label}</p>
-          <p className="text-sm text-muted-foreground">
-            {formatValue(payload[0].value, dataKey)}
-          </p>
-        </div>
-      );
-    }
-    return null;
-  };
+  // Recharts' Tooltip `content` prop accepts (props: TooltipContentProps) =>
+  // ReactNode. Cast to `any` here since recharts' generic type is awkward to
+  // match precisely without leaking generics throughout the file.
+
+  const renderTooltip = (props: any) => (
+    <ChartTooltip {...props} dataKey={dataKey} />
+  );
 
   if (type === "bar") {
     return (
@@ -95,7 +118,7 @@ export function UsageChart({ data, type, dataKey }: UsageChartProps) {
             className="text-muted-foreground"
             tickFormatter={(value) => formatValue(value, dataKey)}
           />
-          <Tooltip content={<CustomTooltip />} />
+          <Tooltip content={renderTooltip} />
           <Bar dataKey={dataKey} fill={color} radius={[4, 4, 0, 0]} />
         </BarChart>
       </ResponsiveContainer>
@@ -116,7 +139,7 @@ export function UsageChart({ data, type, dataKey }: UsageChartProps) {
           className="text-muted-foreground"
           tickFormatter={(value) => formatValue(value, dataKey)}
         />
-        <Tooltip content={<CustomTooltip />} />
+        <Tooltip content={renderTooltip} />
         <Line
           type="monotone"
           dataKey={dataKey}

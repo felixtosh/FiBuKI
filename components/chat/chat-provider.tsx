@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 import { createContext, useContext, useState, useCallback, useMemo, useEffect, useRef } from "react";
@@ -164,7 +163,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
 
   // Use Vercel AI SDK's useChat hook
   // Note: We don't rely on hook-level headers - we pass them explicitly per-request
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   const chatHook = (useVercelChat as any)({
     api: "/api/chat",
     onToolCall: ({ toolCall }: { toolCall: any }) => {

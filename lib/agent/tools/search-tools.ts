@@ -1675,7 +1675,7 @@ function toFiniteNumber(value: unknown): number | null {
 }
 
 function getFileAmountForValidation(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   file: any,
   txAmount: number | null | undefined
 ): number | null {

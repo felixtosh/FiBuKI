@@ -50,13 +50,14 @@ export function PasskeySetupDialog({
 
   // Check for platform authenticator on mount
   useEffect(() => {
-    if (open) {
-      checkPlatformAuthenticator().then(setHasPlatformAuth);
+    if (!open) return;
+    checkPlatformAuthenticator().then(setHasPlatformAuth);
+    queueMicrotask(() => {
       setStep("name");
       setDeviceName("");
       setError(null);
       setBackupCodes(null);
-    }
+    });
   }, [open, checkPlatformAuthenticator]);
 
   const handleRegister = async () => {

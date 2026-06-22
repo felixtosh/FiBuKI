@@ -33,31 +33,43 @@ export function SyncStatusCard({ sourceId, onReauth }: SyncStatusCardProps) {
 
   const statusColor = getSyncStatusColor(status);
 
-  const StatusIcon = () => {
-    if (isSyncing) return <Loader2 className="h-4 w-4 animate-spin" />;
-    if (status?.needsReauth) return <XCircle className="h-4 w-4 text-destructive" />;
-    if (status?.lastSyncError) return <AlertTriangle className="h-4 w-4 text-yellow-500" />;
-    if (status?.lastSyncAt) return <CheckCircle className="h-4 w-4 text-green-500" />;
-    return <Clock className="h-4 w-4 text-muted-foreground" />;
-  };
+  const statusIcon = isSyncing ? (
+    <Loader2 className="h-4 w-4 animate-spin" />
+  ) : status?.needsReauth ? (
+    <XCircle className="h-4 w-4 text-destructive" />
+  ) : status?.lastSyncError ? (
+    <AlertTriangle className="h-4 w-4 text-yellow-500" />
+  ) : status?.lastSyncAt ? (
+    <CheckCircle className="h-4 w-4 text-green-500" />
+  ) : (
+    <Clock className="h-4 w-4 text-muted-foreground" />
+  );
 
-  const getStatusBadge = () => {
-    if (isSyncing) return <Badge variant="secondary">Syncing...</Badge>;
-    if (status?.needsReauth) return <Badge variant="destructive">Reconnect Required</Badge>;
-    if (status?.lastSyncError) return <Badge variant="outline" className="border-yellow-500 text-yellow-600">Sync Error</Badge>;
-    if (status?.lastSyncAt) return <Badge variant="outline" className="border-green-500 text-green-600">Connected</Badge>;
-    return <Badge variant="secondary">Not Synced</Badge>;
-  };
+  const statusBadge = isSyncing ? (
+    <Badge variant="secondary">Syncing...</Badge>
+  ) : status?.needsReauth ? (
+    <Badge variant="destructive">Reconnect Required</Badge>
+  ) : status?.lastSyncError ? (
+    <Badge variant="outline" className="border-yellow-500 text-yellow-600">
+      Sync Error
+    </Badge>
+  ) : status?.lastSyncAt ? (
+    <Badge variant="outline" className="border-green-500 text-green-600">
+      Connected
+    </Badge>
+  ) : (
+    <Badge variant="secondary">Not Synced</Badge>
+  );
 
   return (
     <Card>
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <CardTitle className="text-base font-medium flex items-center gap-2">
-            <StatusIcon />
+            {statusIcon}
             Bank Sync Status
           </CardTitle>
-          {getStatusBadge()}
+          {statusBadge}
         </div>
       </CardHeader>
       <CardContent className="space-y-4">

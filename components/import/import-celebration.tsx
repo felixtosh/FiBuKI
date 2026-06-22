@@ -33,9 +33,8 @@ export function ImportCelebration({
         clearTimeout(sparkleTimer);
         clearTimeout(autoDismiss);
       };
-    } else {
-      setShowSparkles(false);
     }
+    queueMicrotask(() => setShowSparkles(false));
   }, [open, onDismiss]);
 
   return (

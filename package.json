@@ -11,7 +11,7 @@
     "dev:all": "concurrently \"npm run dev:emulators\" \"npm run dev\"",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint .",
     "test:chat-url": "node --test tests/chat-url-state.test.mjs",
     "setup": "bash scripts/setup.sh",
     "generate:mcp-automations": "node scripts/generate-mcp-automations.js",
@@ -91,7 +91,7 @@
     "@simplewebauthn/types": "^12.0.0",
     "concurrently": "^9.2.1",
     "dotenv-cli": "^11.0.0",
-    "eslint": "^10.5.0",
+    "eslint": "^9.39.2",
     "typescript": "^6.0.3"
   }
 }

@@ -78,7 +78,7 @@ async function getUserData(userId: string): Promise<UserData | null> {
       return null;
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     const raw = doc.data() as any;
 
     // Collect names from all sources

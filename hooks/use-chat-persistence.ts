@@ -44,26 +44,35 @@ export function useChatPersistence() {
 
   // Load most recent session on mount (do not auto-create empty sessions).
   useEffect(() => {
-    if (!userId) {
-      setState({ currentSessionId: null, isLoading: false, sessions: [] });
-      return;
-    }
+    let cancelled = false;
 
     const loadInitialSession = async () => {
+      if (!userId) {
+        if (!cancelled) {
+          setState({ currentSessionId: null, isLoading: false, sessions: [] });
+        }
+        return;
+      }
       try {
         const sessions = await listChatSessions(ctx, { limit: 10 });
+        if (cancelled) return;
         setState({
           currentSessionId: sessions[0]?.id ?? null,
           isLoading: false,
           sessions,
         });
       } catch (error) {
+        if (cancelled) return;
         console.error("Failed to load initial session:", error);
         setState((s) => ({ ...s, isLoading: false }));
       }
     };
 
-    loadInitialSession();
+    void loadInitialSession();
+
+    return () => {
+      cancelled = true;
+    };
   }, [ctx, userId]);
 
   // Load messages for a session

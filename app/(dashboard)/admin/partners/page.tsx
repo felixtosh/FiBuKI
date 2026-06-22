@@ -63,12 +63,11 @@ function AdminPartnersContent() {
   // Load panel width from localStorage
   useEffect(() => {
     const saved = localStorage.getItem(PANEL_WIDTH_KEY);
-    if (saved) {
-      const parsed = parseInt(saved, 10);
-      if (!isNaN(parsed) && parsed >= MIN_PANEL_WIDTH && parsed <= MAX_PANEL_WIDTH) {
-        setPanelWidth(parsed);
-      }
-    }
+    if (!saved) return;
+    const parsed = parseInt(saved, 10);
+    if (isNaN(parsed) || parsed < MIN_PANEL_WIDTH || parsed > MAX_PANEL_WIDTH) return;
+    // Defer to microtask so setState runs event-handler-style, not from within the effect body.
+    queueMicrotask(() => setPanelWidth(parsed));
   }, []);
 
   // Handle resize

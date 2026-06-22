@@ -30,7 +30,7 @@ export async function renderInvoicePdf(invoice: Invoice): Promise<Buffer> {
   // namespace. Our InvoiceDocument is wrapped in <Document>, so the runtime contract is met.
   // The generic is erased in CJS output, so we coerce through `any`.
   const element = React.createElement(InvoiceDocument, { invoice, qrDataUrl });
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   const buffer = (await renderToBuffer(element as any)) as unknown as Buffer;
   return buffer;
 }

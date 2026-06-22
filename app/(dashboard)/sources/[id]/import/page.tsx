@@ -76,10 +76,10 @@ export default function ImportPage({ params }: ImportPageProps) {
   // First import celebration
   const [showCelebration, setShowCelebration] = useState(false);
   useEffect(() => {
-    if (effectiveStep === "complete" && !localStorage.getItem("fibuki_has_imported")) {
-      localStorage.setItem("fibuki_has_imported", "true");
-      setShowCelebration(true);
-    }
+    if (effectiveStep !== "complete" || localStorage.getItem("fibuki_has_imported")) return;
+    localStorage.setItem("fibuki_has_imported", "true");
+    // Defer to microtask so setState runs event-handler-style, not from within the effect body.
+    queueMicrotask(() => setShowCelebration(true));
   }, [effectiveStep]);
 
   const handleDismissCelebration = useCallback(() => {

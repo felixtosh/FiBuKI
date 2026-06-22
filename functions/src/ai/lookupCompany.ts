@@ -196,7 +196,7 @@ async function searchByUrl(
   userId?: string
 ): Promise<CompanyInfo> {
   // Use model with Google Search grounding (snake_case for API)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   const googleSearchTool = { google_search: {} } as any;
   const modelName = MODELS.geminiFlash;
 
@@ -279,7 +279,7 @@ export async function searchByName(
   userId?: string
 ): Promise<CompanyInfo> {
   // Use model with Google Search grounding (snake_case for API)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   const googleSearchTool = { google_search: {} } as any;
   const modelName = MODELS.geminiFlash;
 
@@ -532,7 +532,7 @@ export async function queryViesApi(countryCode: string, vatNumber: string): Prom
   </soapenv:Body>
 </soapenv:Envelope>`;
 
-  
+
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
 

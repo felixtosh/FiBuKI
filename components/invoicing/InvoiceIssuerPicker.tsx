@@ -270,7 +270,7 @@ export function InvoiceIssuerPicker({
         <div className="text-sm font-medium">Absender fehlt</div>
         <p className="text-xs text-muted-foreground">
           Lege deine Firmen-/Personendaten in den Einstellungen unter
-          „Identität" an, dann kannst du Rechnungen ausstellen.
+          „Identität&ldquo; an, dann kannst du Rechnungen ausstellen.
         </p>
         <Button asChild size="sm" variant="outline">
           <Link href="/settings/identity">
@@ -375,7 +375,7 @@ export function InvoiceIssuerPicker({
               onClick={() => handleEntityChange(otherEntityWithIban.id)}
               className="text-xs text-primary hover:underline text-left"
             >
-              IBAN von „{otherEntityWithIban.name}" verwenden
+              IBAN von „{otherEntityWithIban.name}&ldquo; verwenden
             </button>
           )}
           <InlineAddIbanForm

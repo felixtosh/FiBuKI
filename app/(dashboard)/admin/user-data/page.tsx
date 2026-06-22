@@ -60,14 +60,16 @@ export default function AdminUserDataPage() {
 
   // Populate form when data loads
   useEffect(() => {
-    if (userData) {
+    if (!userData) return;
+    // Defer to microtask so setState runs event-handler-style, not from within the effect body.
+    queueMicrotask(() => {
       setName(userData.name || "");
       setCompanyName(userData.companyName || "");
       setAliases(userData.aliases || []);
       setVatIds(userData.vatIds || []);
       setIbans(userData.ibans || []);
       setOwnEmails(userData.ownEmails || []);
-    }
+    });
   }, [userData]);
 
   const handleAddAlias = () => {

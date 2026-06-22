@@ -1,76 +1,59 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import {
-  collection,
-  query,
-  orderBy,
-  onSnapshot,
-  doc,
-  setDoc,
   Timestamp,
+  collection,
+  doc,
+  orderBy,
+  query,
+  setDoc,
   where,
+  type QueryDocumentSnapshot,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
 import { ImportRecord } from "@/types/import";
 import { callFunction } from "@/lib/firebase/callable";
+import { useFirestoreCollection } from "@/lib/firebase/use-firestore-collection";
 import { useAuth } from "@/components/auth";
 
 const IMPORTS_COLLECTION = "imports";
 
+function mapImport(doc: QueryDocumentSnapshot): ImportRecord {
+  return { id: doc.id, ...doc.data() } as ImportRecord;
+}
+
 export function useImports(sourceId?: string) {
   const { userId } = useAuth();
-  const [allImports, setAllImports] = useState<ImportRecord[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
 
-  useEffect(() => {
-    if (!sourceId || !userId) {
-      setAllImports([]);
-      setLoading(false);
-      return;
-    }
+  const q = useMemo(
+    () =>
+      sourceId && userId
+        ? query(
+            collection(db, IMPORTS_COLLECTION),
+            where("sourceId", "==", sourceId),
+            where("userId", "==", userId),
+            orderBy("createdAt", "desc"),
+          )
+        : null,
+    [sourceId, userId],
+  );
 
-    setLoading(true);
+  const { data: allImports, loading, error } = useFirestoreCollection(
+    q,
+    mapImport,
+  );
 
-    const q = query(
-      collection(db, IMPORTS_COLLECTION),
-      where("sourceId", "==", sourceId),
-      where("userId", "==", userId),
-      orderBy("createdAt", "desc")
-    );
-
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const data = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        })) as ImportRecord[];
-
-        setAllImports(data);
-        setLoading(false);
-      },
-      (err) => {
-        console.error("Error fetching imports:", err);
-        setError(err);
-        setLoading(false);
-      }
-    );
-
-    return () => unsubscribe();
-  }, [sourceId, userId]);
-
-  // Separate completed imports from drafts
-  // Treat missing status as 'completed' for backwards compatibility
+  // Separate completed imports from drafts.
+  // Treat missing status as 'completed' for backwards compatibility.
   const imports = useMemo(
     () => allImports.filter((imp) => (imp.status ?? "completed") === "completed"),
-    [allImports]
+    [allImports],
   );
 
   const drafts = useMemo(
     () => allImports.filter((imp) => imp.status === "draft"),
-    [allImports]
+    [allImports],
   );
 
   /**
@@ -80,17 +63,17 @@ export function useImports(sourceId?: string) {
   const createImport = useCallback(
     async (
       importId: string,
-      data: Omit<ImportRecord, "id" | "createdAt" | "userId">
+      data: Omit<ImportRecord, "id" | "createdAt" | "userId">,
     ): Promise<void> => {
-      const docRef = doc(db, IMPORTS_COLLECTION, importId);
       if (!userId) return;
+      const docRef = doc(db, IMPORTS_COLLECTION, importId);
       await setDoc(docRef, {
         ...data,
         userId,
         createdAt: Timestamp.now(),
       });
     },
-    [userId]
+    [userId],
   );
 
   /**
@@ -116,7 +99,7 @@ export function useImports(sourceId?: string) {
     (importId: string): ImportRecord | undefined => {
       return allImports.find((imp) => imp.id === importId);
     },
-    [allImports]
+    [allImports],
   );
 
   return {
