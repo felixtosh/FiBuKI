@@ -1,8 +1,8 @@
-# 07 — SAST Remediation Report (Template)
+# 07 — SAST Remediation Report
 
 **Application:** FiBuKI
-**Status:** Template — populate after first SAST run
-**Last updated:** 2026-06-21
+**Status:** First scan complete — zero findings
+**Last updated:** 2026-06-22
 
 This report records static-analysis findings and the fixes applied. Re-run for each major release; keep the most recent scan's report here, archive previous scans in `archive/`.
 
@@ -10,14 +10,17 @@ This report records static-analysis findings and the fixes applied. Re-run for e
 
 | Field | Value |
 | --- | --- |
-| Tool | GitHub CodeQL (default queries: `security-extended`) |
+| Tool | GitHub CodeQL 2.25.6 |
+| Query packs | `security-extended`, `security-and-quality` (200 rules total) |
 | Alternative tools considered | Semgrep (`p/owasp-top-ten`, `p/javascript`), SonarCloud |
 | Repository scope | `/app`, `/components`, `/hooks`, `/lib`, `/functions/src` |
-| Languages | TypeScript, JavaScript |
-| Branch | `main` |
-| Run date | _TBD_ |
-| Commit | _TBD_ |
-| Scan ID / run URL | _TBD_ |
+| Languages | JavaScript, TypeScript |
+| Branch / ref | `refs/pull/29/merge` (CASA-prep branch merged into main) |
+| Run date | 2026-06-22 12:32 UTC |
+| Commit | `cfd8c0dda607db22ee91a73670f33975992ee5fc` |
+| Analysis ID | 1390779778 |
+| Run URL | https://github.com/felixtosh/FiBuKI/actions/runs/27952747236 |
+| SARIF ID | `6bfe6962-6e36-11f1-99ed-e8708e1499b0` |
 
 ## 2. Findings summary
 
@@ -28,23 +31,11 @@ This report records static-analysis findings and the fixes applied. Re-run for e
 | Medium | 0 | 0 | 0 | 0 |
 | Low | 0 | 0 | 0 | 0 |
 
+**Result: 0 alerts across 200 rules.** The codebase passed CodeQL's `security-extended` + `security-and-quality` query sets with no findings.
+
 ## 3. Findings detail
 
-> Populate one entry per finding. Delete this guidance once first scan is recorded.
-
-### 3.1 [FINDING-ID] — Short title
-
-| Field | Value |
-| --- | --- |
-| Rule | `js/sql-injection` (example) |
-| CWE | CWE-89 |
-| Severity | High |
-| File | `path/to/file.ts:42` |
-| Description | Brief description of what the analyzer flagged. |
-| Status | Fixed |
-| Fix commit | `abcdef0` |
-| Fix description | What the fix did. |
-| Verification | How the fix was verified (manual, regression test, re-scan). |
+No findings to record from this scan.
 
 ## 4. Accepted risks
 
@@ -55,6 +46,7 @@ This report records static-analysis findings and the fixes applied. Re-run for e
 
 | Date | Tool | Commit | Findings count | Notes |
 | --- | --- | --- | --- | --- |
+| 2026-06-22 | CodeQL 2.25.6 | `cfd8c0d` | 0 / 200 rules | First scan; analysis 1390779778; PR #29 merge ref |
 
 ## 6. CWE coverage map
 
@@ -86,6 +78,6 @@ docker run --rm -v "$PWD":/src returntocorp/semgrep \
 
 ## 8. Sign-off
 
-Findings remediated to a level acceptable for CASA Tier 2 submission. Open findings (if any) are tracked in §4 with compensating controls.
+First CodeQL scan against the CASA-prep branch reported zero findings across 200 rules from the `security-extended` and `security-and-quality` query packs. Subsequent scans run weekly + per-PR via `.github/workflows/codeql.yml`; any new findings will be triaged and recorded above.
 
-— Felix Häusler, _date_
+— Felix Häusler, 2026-06-22

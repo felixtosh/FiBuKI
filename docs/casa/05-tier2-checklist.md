@@ -2,7 +2,7 @@
 
 **Application:** FiBuKI
 **Framework:** OWASP ASVS v4.0 (CASA-mapped subset)
-**Last updated:** 2026-06-21
+**Last updated:** 2026-06-22
 
 Each section below maps to an ASVS v4.0 chapter, with FiBuKI's current status and evidence pointer. Status legend:
 
@@ -13,10 +13,10 @@ Each section below maps to an ASVS v4.0 chapter, with FiBuKI's current status an
 
 | Status | Count |
 | --- | --- |
-| MET | 98 |
+| MET | 105 |
 | PARTIAL | 6 |
 | N/A | 19 |
-| TODO | 11 (scan output + minor follow-ups) |
+| TODO | 4 (DAST run + HSTS preload submission + CSP runtime verify + App Hosting CORS audit) |
 
 ## V1 — Architecture, Design and Threat Modeling
 
@@ -159,19 +159,19 @@ Each section below maps to an ASVS v4.0 chapter, with FiBuKI's current status an
 ## Remediation queue
 
 1. ~~Add the missing response-security headers (V9.1, V14.4).~~ ✅ Done — `next.config.ts` now sets CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy.
-2. Verify the new CSP does not break OAuth popups, Firebase Auth IdP iframe, or App Check; tighten by removing `'unsafe-inline'`/`'unsafe-eval'` if not required at runtime.
-3. Submit `fibuki.com` to the HSTS preload list (https://hstspreload.org) once the header has been live for 2 weeks.
-4. Run OWASP ZAP baseline against staging; record findings in [08-dast-remediation-report.md](./08-dast-remediation-report.md).
-5. Run a SAST scan (Semgrep or GitHub CodeQL) and record findings in [07-sast-remediation-report.md](./07-sast-remediation-report.md).
-6. Confirm Firebase App Hosting does not serve `Access-Control-Allow-Origin: *` on static assets (orbis gotcha).
-7. `next/font/google` is in use — Next.js already self-hosts these at build time, so the orbis SRI gotcha does not apply. Document in §V14.3 of this checklist.
+2. ~~Run a SAST scan (CodeQL).~~ ✅ Done — 0 findings across 200 rules on 2026-06-22. Re-runs weekly + per-PR. See [07-sast-remediation-report.md](./07-sast-remediation-report.md).
+3. ~~Close all critical and high dependency CVEs.~~ ✅ Done — `npm audit fix` cleared 4 critical + 17 high. Remaining moderates documented in [dependency-audit-2026-06.md](./dependency-audit-2026-06.md).
+4. Verify the new CSP does not break OAuth popups, Firebase Auth IdP iframe, or App Check; tighten by removing `'unsafe-inline'`/`'unsafe-eval'` if not required at runtime.
+5. Submit `fibuki.com` to the HSTS preload list (https://hstspreload.org) once the header has been live for 2 weeks.
+6. Run OWASP ZAP baseline against prod; record findings in [08-dast-remediation-report.md](./08-dast-remediation-report.md). Requires PR #29 to land first so the workflow can be dispatched.
+7. Confirm Firebase App Hosting does not serve `Access-Control-Allow-Origin: *` on static assets (orbis gotcha) — verified during ZAP run.
 
 ## ASVS coverage statement
 
 Of the 134 ASVS v4.0 Level 1 requirements, FiBuKI maps:
-- 98 as MET with evidence in this repo,
+- 105 as MET with evidence in this repo,
 - 6 as PARTIAL pending documentation,
 - 19 as N/A with justification,
-- 11 as TODO (predominantly scan output and follow-ups).
+- 4 as TODO (DAST run, HSTS preload submission, CSP runtime verify, App Hosting CORS audit).
 
 The remediation queue above closes the TODOs within the planned Tier 2 submission window.
