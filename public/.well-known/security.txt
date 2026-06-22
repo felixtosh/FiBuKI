@@ -1,0 +1,6 @@
+Contact: mailto:hello@fibuki.com
+Expires: 2027-06-21T00:00:00.000Z
+Preferred-Languages: en, de
+Canonical: https://fibuki.com/.well-known/security.txt
+Policy: https://github.com/felixtosh/TaxToolAT/blob/main/SECURITY.md
+Acknowledgments: https://github.com/felixtosh/TaxToolAT/blob/main/SECURITY.md#hall-of-fame

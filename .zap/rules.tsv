@@ -1,0 +1,10 @@
+# ZAP rules tuning for FiBuKI baseline scans.
+# Format: <rule-id>	<threshold>	<comment>
+# Thresholds: IGNORE | LOW | MEDIUM | HIGH
+#
+# Add IGNORE rows only for findings explicitly accepted in
+# docs/casa/08-dast-remediation-report.md §8.
+#
+# Examples (uncomment + adjust as needed):
+# 10063	IGNORE	Permissions-Policy intentionally restrictive — header IS set, false positive from old ZAP rules
+# 10202	IGNORE	Absence of Anti-CSRF Tokens — Firebase ID token + App Check provides equivalent protection on every callable

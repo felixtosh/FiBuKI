@@ -1,0 +1,36 @@
+name: ZAP Baseline Scan
+
+# Runs OWASP ZAP baseline against the live site weekly + on demand.
+# Fails the workflow on FAIL findings only; WARN findings are reported in the artifact.
+# Re-run before each CASA submission to refresh evidence in docs/casa/08-dast-remediation-report.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Target URL to scan"
+        required: true
+        default: "https://fibuki.com"
+  schedule:
+    - cron: "0 5 * * 1"
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  baseline:
+    name: ZAP baseline (${{ github.event.inputs.target || 'https://fibuki.com' }})
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: OWASP ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.14.0
+        with:
+          target: ${{ github.event.inputs.target || 'https://fibuki.com' }}
+          rules_file_name: .zap/rules.tsv
+          fail_action: false
+          allow_issue_writing: true
+          artifact_name: zap-baseline-report
