@@ -12,6 +12,8 @@ import {
   Loader2,
   CreditCard,
   Trash2,
+  UserCog,
+  RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -39,8 +41,12 @@ interface UserDetailPanelProps {
     override: "free_plan" | "plan_tester" | null
   ) => Promise<void>;
   onDeleteUser: (uid: string) => Promise<void>;
+  onImpersonate: (uid: string) => Promise<void>;
+  onBulkRescan: (uid: string) => Promise<void>;
   loading: boolean;
   deletingUser: boolean;
+  impersonating: boolean;
+  bulkRescanning: boolean;
 }
 
 export function UserDetailPanel({
@@ -50,8 +56,12 @@ export function UserDetailPanel({
   onRemoveAdmin,
   onSetOverride,
   onDeleteUser,
+  onImpersonate,
+  onBulkRescan,
   loading,
   deletingUser,
+  impersonating,
+  bulkRescanning,
 }: UserDetailPanelProps) {
   return (
     <div className="flex flex-col h-full">
@@ -301,6 +311,38 @@ export function UserDetailPanel({
             </AlertDialogContent>
           </AlertDialog>
         )}
+
+        {/* Impersonate — hidden for super admins and other admins (not allowed by backend) */}
+        {!user.isSuperAdmin && !user.isAdmin && (
+          <Button
+            variant="outline"
+            className="w-full"
+            disabled={loading || impersonating}
+            onClick={() => onImpersonate(user.uid)}
+          >
+            {impersonating ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <UserCog className="h-4 w-4 mr-2" />
+            )}
+            Impersonate (opens new tab)
+          </Button>
+        )}
+
+        {/* Bulk rescan errored extractions */}
+        <Button
+          variant="outline"
+          className="w-full"
+          disabled={loading || bulkRescanning}
+          onClick={() => onBulkRescan(user.uid)}
+        >
+          {bulkRescanning ? (
+            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+          ) : (
+            <RefreshCw className="h-4 w-4 mr-2" />
+          )}
+          Rescan all errored files
+        </Button>
 
         {/* Delete user — hidden for super admins */}
         {!user.isSuperAdmin && (

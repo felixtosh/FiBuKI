@@ -24,12 +24,15 @@ export const functions = getFunctions(app, "europe-west1");
 export const auth = getAuth(app);
 setPersistence(auth, browserLocalPersistence);
 
-// Emulator configuration
+// Emulator configuration.
+// Use 127.0.0.1 instead of "localhost" — the Firebase emulators bind to IPv4
+// only, but macOS/Chrome resolve "localhost" to ::1 (IPv6) first, which
+// surfaces as auth/network-request-failed and "Could not reach Firestore".
 const EMULATOR_CONFIG = {
-  auth: { host: "localhost", port: 9099 },
-  firestore: { host: "localhost", port: 8080 },
-  storage: { host: "localhost", port: 9199 },
-  functions: { host: "localhost", port: 5001 },
+  auth: { host: "127.0.0.1", port: 9099 },
+  firestore: { host: "127.0.0.1", port: 8080 },
+  storage: { host: "127.0.0.1", port: 9199 },
+  functions: { host: "127.0.0.1", port: 5001 },
 };
 
 let emulatorsConnected = false;

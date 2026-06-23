@@ -253,11 +253,24 @@ export default function IdentityPage() {
   // Save handler
   const handleSave = async () => {
     setSaveSuccess(false);
+    // Mirror the top-level tax residence country onto the personal address so
+    // invoice sender snapshots (which copy entity.address) carry a country
+    // without needing a second selector in the form.
+    const hasAddressContent =
+      !!personalEntity.address?.street?.trim() ||
+      !!personalEntity.address?.postalCode?.trim() ||
+      !!personalEntity.address?.city?.trim();
+    const personalEntityToSave = hasAddressContent
+      ? {
+          ...personalEntity,
+          address: { ...(personalEntity.address ?? {}), country },
+        }
+      : personalEntity;
     await save({
       country,
       taxNumber: taxNumber || undefined,
       ownEmails,
-      personalEntity,
+      personalEntity: personalEntityToSave,
       companies,
     });
     setSaveSuccess(true);
@@ -577,7 +590,7 @@ export default function IdentityPage() {
             <div className="space-y-2">
               <Label>Address</Label>
               <p className="text-xs text-muted-foreground">
-                Appears as the sender block on your invoices.
+                Appears as the sender block on your invoices. Country comes from your tax residence above.
               </p>
               <Input
                 placeholder="Street and number"
@@ -608,20 +621,6 @@ export default function IdentityPage() {
                   }
                 />
               </div>
-              <Input
-                placeholder="Country (e.g., AT)"
-                value={personalEntity.address?.country ?? ""}
-                onChange={(e) =>
-                  handleUpdatePersonal({
-                    address: {
-                      ...(personalEntity.address ?? {}),
-                      country: e.target.value.toUpperCase().slice(0, 2),
-                    },
-                  })
-                }
-                className="font-mono uppercase"
-                maxLength={2}
-              />
             </div>
           </div>
 

@@ -46,6 +46,7 @@ export {
   switchTesterPlan,
   adminDeleteUser,
 } from "./admin/userManagement";
+export { impersonateUser } from "./admin/impersonateUser";
 
 // Export import functions
 export { matchColumns } from "./import/matchColumns";
@@ -53,6 +54,7 @@ export { matchColumns } from "./import/matchColumns";
 // Export file extraction functions
 export { extractFileData, extractFileDataOnUndelete } from "./extraction/extractFileData";
 export { retryFileExtraction } from "./extraction/retryExtraction";
+export { bulkRetryExtraction } from "./extraction/bulkRetryExtraction";
 
 // Export file-partner matching functions
 export { matchFilePartner } from "./matching/matchFilePartner";

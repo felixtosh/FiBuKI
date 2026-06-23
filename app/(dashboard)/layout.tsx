@@ -24,6 +24,7 @@ import { OnboardingOverlay, OnboardingCompletion } from "@/components/onboarding
 import { useOnboarding } from "@/hooks/use-onboarding";
 import { useSubscription } from "@/hooks/use-subscription";
 import { BillingLimitBanner } from "@/components/billing/billing-limit-banner";
+import { ImpersonationBanner } from "@/components/admin/impersonation-banner";
 import { logoFont } from "@/app/fonts";
 import type { PlanFeatureKey } from "@/types/billing";
 
@@ -220,6 +221,9 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
       className="h-screen bg-background transition-all duration-300 ease-in-out overflow-hidden flex flex-col"
       style={{ marginLeft: sidebarOffset }}
     >
+      {/* Impersonation banner (admin debugging) */}
+      <ImpersonationBanner />
+
       {/* Billing limit banner */}
       <BillingLimitBanner />
 

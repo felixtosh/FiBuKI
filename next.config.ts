@@ -3,6 +3,24 @@ import createNextIntlPlugin from "next-intl/plugin";
 
 const withNextIntl = createNextIntlPlugin("./i18n/request.ts");
 
+const IS_DEV = process.env.NODE_ENV !== "production";
+
+// In dev we need to talk to the Firebase emulators (auth:9099, firestore:8080,
+// storage:9199, functions:5001) and Next's HMR (ws://localhost:*) over plain
+// HTTP. Production keeps the strict allow-list for CASA Tier 2.
+const DEV_CONNECT_SRC = IS_DEV
+  ? [
+      "http://127.0.0.1:*",
+      "http://localhost:*",
+      "ws://127.0.0.1:*",
+      "ws://localhost:*",
+    ]
+  : [];
+
+const DEV_IMG_SRC = IS_DEV
+  ? ["http://127.0.0.1:*", "http://localhost:*"]
+  : [];
+
 const CSP_DIRECTIVES: Record<string, string[]> = {
   "default-src": ["'self'"],
   "base-uri": ["'self'"],
@@ -30,6 +48,7 @@ const CSP_DIRECTIVES: Record<string, string[]> = {
     "https://www.google.com",
     "https://www.gstatic.com",
     "https://asset.brandfetch.io",
+    ...DEV_IMG_SRC,
   ],
   "font-src": ["'self'", "data:"],
   "connect-src": [
@@ -51,14 +70,23 @@ const CSP_DIRECTIVES: Record<string, string[]> = {
     "https://*.plaid.com",
     "https://www.google.com",
     "https://www.gstatic.com",
+    ...DEV_CONNECT_SRC,
   ],
   "frame-src": [
     "'self'",
+    // PDF/file previews render fetched attachments as iframes from blob: URLs.
+    "blob:",
+    // Issued invoice PDFs are served from Firebase Storage signed URLs.
+    "https://firebasestorage.googleapis.com",
     "https://*.firebaseapp.com",
     "https://accounts.google.com",
     "https://www.google.com",
+    // Firebase Auth emulator injects an iframe for OAuth popup flows in dev.
+    ...(IS_DEV ? ["http://127.0.0.1:*", "http://localhost:*"] : []),
   ],
-  "upgrade-insecure-requests": [],
+  // `upgrade-insecure-requests` would rewrite http://127.0.0.1:* emulator URLs
+  // to https://, which the emulators don't serve. Only apply in production.
+  ...(IS_DEV ? {} : { "upgrade-insecure-requests": [] }),
 };
 
 const CSP = Object.entries(CSP_DIRECTIVES)
@@ -94,6 +122,10 @@ const nextConfig: NextConfig = {
     ];
   },
   async rewrites() {
+    // In dev the Firebase Auth emulator hosts its own /__/auth/ handler at
+    // 127.0.0.1:9099; forwarding to prod intercepts the OAuth callback and
+    // breaks sign-in via the emulator.
+    if (IS_DEV) return [];
     return [
       {
         source: "/__/auth/:path*",
