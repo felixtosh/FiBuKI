@@ -13,6 +13,7 @@ import {
   CreditCard,
   Trash2,
   UserCog,
+  RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -41,9 +42,11 @@ interface UserDetailPanelProps {
   ) => Promise<void>;
   onDeleteUser: (uid: string) => Promise<void>;
   onImpersonate: (uid: string) => Promise<void>;
+  onBulkRescan: (uid: string) => Promise<void>;
   loading: boolean;
   deletingUser: boolean;
   impersonating: boolean;
+  bulkRescanning: boolean;
 }
 
 export function UserDetailPanel({
@@ -54,9 +57,11 @@ export function UserDetailPanel({
   onSetOverride,
   onDeleteUser,
   onImpersonate,
+  onBulkRescan,
   loading,
   deletingUser,
   impersonating,
+  bulkRescanning,
 }: UserDetailPanelProps) {
   return (
     <div className="flex flex-col h-full">
@@ -323,6 +328,21 @@ export function UserDetailPanel({
             Impersonate (opens new tab)
           </Button>
         )}
+
+        {/* Bulk rescan errored extractions */}
+        <Button
+          variant="outline"
+          className="w-full"
+          disabled={loading || bulkRescanning}
+          onClick={() => onBulkRescan(user.uid)}
+        >
+          {bulkRescanning ? (
+            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+          ) : (
+            <RefreshCw className="h-4 w-4 mr-2" />
+          )}
+          Rescan all errored files
+        </Button>
 
         {/* Delete user — hidden for super admins */}
         {!user.isSuperAdmin && (

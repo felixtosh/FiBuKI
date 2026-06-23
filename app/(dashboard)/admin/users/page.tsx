@@ -120,6 +120,7 @@ export default function AdminUsersPage() {
   const [settingOverride, setSettingOverride] = useState<string | null>(null);
   const [deletingUser, setDeletingUser] = useState<string | null>(null);
   const [impersonatingUser, setImpersonatingUser] = useState<string | null>(null);
+  const [bulkRescanning, setBulkRescanning] = useState<string | null>(null);
   const [processingRequest, setProcessingRequest] = useState<string | null>(
     null
   );
@@ -533,6 +534,57 @@ export default function AdminUsersPage() {
       );
     } finally {
       setDeletingUser(null);
+    }
+  };
+
+  const handleBulkRescan = async (targetUid: string) => {
+    setBulkRescanning(targetUid);
+    setError("");
+    try {
+      const bulkRetryFn = httpsCallable<
+        { targetUid: string; maxFiles?: number },
+        {
+          processed: number;
+          succeeded: number;
+          failed: number;
+          hasMore: boolean;
+          sampleErrors: string[];
+        }
+      >(functions, "bulkRetryExtraction");
+
+      let totalProcessed = 0;
+      let totalSucceeded = 0;
+      let totalFailed = 0;
+      const allErrors: string[] = [];
+
+      // Poll until no more errored files remain (or 10 batches max).
+      for (let batch = 0; batch < 10; batch++) {
+        const result = await bulkRetryFn({ targetUid });
+        totalProcessed += result.data.processed;
+        totalSucceeded += result.data.succeeded;
+        totalFailed += result.data.failed;
+        allErrors.push(...result.data.sampleErrors);
+        if (!result.data.hasMore || result.data.processed === 0) break;
+      }
+
+      if (totalProcessed === 0) {
+        setSuccess("No errored files found for this user");
+      } else {
+        const errorSnippet =
+          totalFailed > 0 && allErrors.length > 0
+            ? ` (sample failure: ${allErrors[0].slice(0, 80)})`
+            : "";
+        setSuccess(
+          `Rescanned ${totalProcessed} file(s): ${totalSucceeded} succeeded, ${totalFailed} still failed${errorSnippet}`,
+        );
+      }
+      setTimeout(() => setSuccess(""), 8000);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to bulk-rescan files",
+      );
+    } finally {
+      setBulkRescanning(null);
     }
   };
 
@@ -1249,12 +1301,14 @@ export default function AdminUsersPage() {
                 }
                 onDeleteUser={handleDeleteUser}
                 onImpersonate={handleImpersonate}
+                onBulkRescan={handleBulkRescan}
                 loading={
                   togglingAdmin === selectedUser.uid ||
                   settingOverride === selectedUser.uid
                 }
                 deletingUser={deletingUser === selectedUser.uid}
                 impersonating={impersonatingUser === selectedUser.uid}
+                bulkRescanning={bulkRescanning === selectedUser.uid}
               />
             </div>
           </div>
