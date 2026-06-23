@@ -119,6 +119,7 @@ export default function AdminUsersPage() {
   const [togglingAdmin, setTogglingAdmin] = useState<string | null>(null);
   const [settingOverride, setSettingOverride] = useState<string | null>(null);
   const [deletingUser, setDeletingUser] = useState<string | null>(null);
+  const [impersonatingUser, setImpersonatingUser] = useState<string | null>(null);
   const [processingRequest, setProcessingRequest] = useState<string | null>(
     null
   );
@@ -532,6 +533,36 @@ export default function AdminUsersPage() {
       );
     } finally {
       setDeletingUser(null);
+    }
+  };
+
+  const handleImpersonate = async (targetUid: string) => {
+    setImpersonatingUser(targetUid);
+    setError("");
+    try {
+      const impersonateFn = httpsCallable<
+        { targetUid: string },
+        { token: string; targetEmail: string | null; adminEmail: string }
+      >(functions, "impersonateUser");
+      const result = await impersonateFn({ targetUid });
+      // Hand the token off to /impersonate via sessionStorage on the new tab.
+      // We use a one-shot key so the token never lands in URL/history.
+      const payload = JSON.stringify({
+        token: result.data.token,
+        targetEmail: result.data.targetEmail,
+        adminEmail: result.data.adminEmail,
+      });
+      // sessionStorage is per-tab; we need to pass via a different mechanism.
+      // Use the URL fragment (#) — not sent to server, not in history if we
+      // immediately replaceState after consuming.
+      const url = `/impersonate#${encodeURIComponent(payload)}`;
+      window.open(url, "_blank", "noopener");
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to impersonate user",
+      );
+    } finally {
+      setImpersonatingUser(null);
     }
   };
 
@@ -1217,11 +1248,13 @@ export default function AdminUsersPage() {
                   handleSetOverride(uid, override)
                 }
                 onDeleteUser={handleDeleteUser}
+                onImpersonate={handleImpersonate}
                 loading={
                   togglingAdmin === selectedUser.uid ||
                   settingOverride === selectedUser.uid
                 }
                 deletingUser={deletingUser === selectedUser.uid}
+                impersonating={impersonatingUser === selectedUser.uid}
               />
             </div>
           </div>

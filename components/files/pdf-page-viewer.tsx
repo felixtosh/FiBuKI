@@ -19,10 +19,16 @@ const Page = dynamic(
   { ssr: false }
 );
 
-// Configure PDF.js worker
+// Configure PDF.js worker — self-host instead of loading from unpkg.com so
+// the strict Content-Security-Policy doesn't block it. `new URL(..., import.meta.url)`
+// is the documented pdfjs-dist pattern for bundlers (Next.js / Turbopack
+// resolve this to a same-origin URL).
 if (typeof window !== "undefined") {
   import("react-pdf").then((mod) => {
-    mod.pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${mod.pdfjs.version}/build/pdf.worker.min.mjs`;
+    mod.pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+      "pdfjs-dist/build/pdf.worker.min.mjs",
+      import.meta.url,
+    ).toString();
   });
 }
 

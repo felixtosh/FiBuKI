@@ -46,6 +46,7 @@ export {
   switchTesterPlan,
   adminDeleteUser,
 } from "./admin/userManagement";
+export { impersonateUser } from "./admin/impersonateUser";
 
 // Export import functions
 export { matchColumns } from "./import/matchColumns";

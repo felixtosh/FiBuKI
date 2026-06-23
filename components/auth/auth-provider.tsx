@@ -12,8 +12,7 @@ import {
   User,
   onAuthStateChanged,
   signInWithEmailAndPassword,
-  signInWithRedirect,
-  getRedirectResult,
+  signInWithPopup,
   GoogleAuthProvider,
   GithubAuthProvider,
   OAuthProvider,
@@ -118,9 +117,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (firebaseUser) {
         // Get cached token first (no network call if valid)
-        // Only force refresh if we need fresh claims
-        const token = await firebaseUser.getIdTokenResult(false);
-        setIsAdmin(!!token.claims.admin);
+        // Only force refresh if we need fresh claims.
+        // Network may be unavailable during dev when emulators boot after the
+        // app — fall back to false rather than throwing an unhandled rejection.
+        try {
+          const token = await firebaseUser.getIdTokenResult(false);
+          setIsAdmin(!!token.claims.admin);
+        } catch (err) {
+          console.warn("[Auth] Failed to read ID token claims:", err);
+          setIsAdmin(false);
+        }
 
         // Set loading false immediately - don't block on MFA check
         setLoading(false);
@@ -209,121 +215,136 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Keep customMfaStatus for reference, it will be cleared on next login
   }, [setMfaVerifiedForSession]);
 
-  // Handle OAuth redirect result after page reloads
-  useEffect(() => {
-    getRedirectResult(auth)
-      .then(async (result) => {
-        if (!result) return;
+  // Process a successful OAuth sign-in result. Validates new-user enrollment,
+  // runs invite/access-request logic, completes any pending credential link.
+  const processOAuthResult = useCallback(
+    async (
+      result: { user: User } | null,
+      providerName: "google" | "github",
+    ) => {
+      if (!result) return;
 
-        // Check for pending link credential (account linking flow)
-        const pendingLinkData = sessionStorage.getItem(PENDING_LINK_KEY);
-        if (pendingLinkData) {
-          try {
-            const { providerId, accessToken, idToken } = JSON.parse(pendingLinkData);
-            let credential;
-            if (providerId === "github.com") {
-              credential = GithubAuthProvider.credential(accessToken);
-            } else if (providerId === "google.com") {
-              credential = GoogleAuthProvider.credential(idToken, accessToken);
-            }
-            if (credential) {
-              await linkWithCredential(result.user, credential);
-            }
-          } catch (linkError) {
-            console.warn("Failed to link credential:", linkError);
-          } finally {
-            sessionStorage.removeItem(PENDING_LINK_KEY);
-            setPendingLink(null);
-            setOauthError(null);
+      const pendingLinkData = sessionStorage.getItem(PENDING_LINK_KEY);
+      if (pendingLinkData) {
+        try {
+          const { providerId, accessToken, idToken } = JSON.parse(pendingLinkData);
+          let credential;
+          if (providerId === "github.com") {
+            credential = GithubAuthProvider.credential(accessToken);
+          } else if (providerId === "google.com") {
+            credential = GoogleAuthProvider.credential(idToken, accessToken);
           }
-          return;
+          if (credential) {
+            await linkWithCredential(result.user, credential);
+          }
+        } catch (linkError) {
+          console.warn("Failed to link credential:", linkError);
+        } finally {
+          sessionStorage.removeItem(PENDING_LINK_KEY);
+          setPendingLink(null);
+          setOauthError(null);
         }
+        return;
+      }
 
-        const providerName =
-          (sessionStorage.getItem("fibuki_oauth_provider") as "google" | "github") || "google";
-        sessionStorage.removeItem("fibuki_oauth_provider");
+      const email = result.user.email;
+      const isNewUser =
+        result.user.metadata.creationTime === result.user.metadata.lastSignInTime;
 
-        const email = result.user.email;
-        const isNewUser =
-          result.user.metadata.creationTime === result.user.metadata.lastSignInTime;
+      if (isNewUser && email) {
+        const validateFn = httpsCallable<
+          { email: string },
+          { allowed: boolean; reason?: string }
+        >(functions, "validateRegistration");
 
-        if (isNewUser && email) {
-          const validateFn = httpsCallable<
-            { email: string },
-            { allowed: boolean; reason?: string }
-          >(functions, "validateRegistration");
+        const validation = await validateFn({ email: email.toLowerCase() });
 
-          const validation = await validateFn({ email: email.toLowerCase() });
-
-          if (!validation.data.allowed) {
-            try {
-              const submitFn = httpsCallable(functions, "submitAccessRequest");
-              await submitFn({ provider: providerName });
-            } catch (e) {
-              console.warn("Failed to submit access request:", e);
-            }
-
-            await result.user.delete();
-            setAccessRequested(true);
-            return;
-          }
-
+        if (!validation.data.allowed) {
           try {
-            const markUsedFn = httpsCallable(functions, "markInviteUsed");
-            await markUsedFn({});
+            const submitFn = httpsCallable(functions, "submitAccessRequest");
+            await submitFn({ provider: providerName });
           } catch (e) {
-            console.warn("Failed to mark invite as used:", e);
+            console.warn("Failed to submit access request:", e);
           }
-        }
-      })
-      .catch((error) => {
-        if (isMfaError(error)) {
-          const resolver = getMultiFactorResolver(auth, error);
-          setMfaResolver(resolver);
-          setMfaRequired(true);
+
+          await result.user.delete();
+          setAccessRequested(true);
           return;
         }
-        console.error("OAuth redirect error:", error);
-        const code = (error as { code?: string })?.code;
-        if (code === "auth/account-exists-with-different-credential") {
-          // Extract and store the pending credential for linking after next sign-in
-          const credential = OAuthProvider.credentialFromError(error);
-          const email = (error as { customData?: { email?: string } })?.customData?.email;
-          const pendingProvider = credential?.providerId || "unknown";
 
-          if (credential && email) {
-            const linkData = {
-              providerId: credential.providerId,
-              accessToken: (credential as { accessToken?: string }).accessToken || null,
-              idToken: (credential as { idToken?: string }).idToken || null,
-            };
-            sessionStorage.setItem(PENDING_LINK_KEY, JSON.stringify(linkData));
-            setPendingLink({ email, pendingProvider });
-            setOauthError(
-              `This email is already registered with a different method. Sign in with your existing account to link ${
-                pendingProvider === "github.com" ? "GitHub" : "Google"
-              }.`
-            );
-          } else {
-            setOauthError(
-              "An account with this email already exists using a different sign-in method."
-            );
-          }
-        } else if (code) {
-          setOauthError(error.message || "OAuth sign-in failed. Please try again.");
+        try {
+          const markUsedFn = httpsCallable(functions, "markInviteUsed");
+          await markUsedFn({});
+        } catch (e) {
+          console.warn("Failed to mark invite as used:", e);
         }
-      });
+      }
+    },
+    [],
+  );
+
+  const handleOAuthError = useCallback((error: unknown) => {
+    if (isMfaError(error)) {
+      const resolver = getMultiFactorResolver(auth, error as Parameters<typeof getMultiFactorResolver>[1]);
+      setMfaResolver(resolver);
+      setMfaRequired(true);
+      return;
+    }
+    console.error("OAuth error:", error);
+    const code = (error as { code?: string })?.code;
+    if (code === "auth/account-exists-with-different-credential") {
+      const credential = OAuthProvider.credentialFromError(error as Parameters<typeof OAuthProvider.credentialFromError>[0]);
+      const email = (error as { customData?: { email?: string } })?.customData?.email;
+      const pendingProvider = credential?.providerId || "unknown";
+
+      if (credential && email) {
+        const linkData = {
+          providerId: credential.providerId,
+          accessToken: (credential as { accessToken?: string }).accessToken || null,
+          idToken: (credential as { idToken?: string }).idToken || null,
+        };
+        sessionStorage.setItem(PENDING_LINK_KEY, JSON.stringify(linkData));
+        setPendingLink({ email, pendingProvider });
+        setOauthError(
+          `This email is already registered with a different method. Sign in with your existing account to link ${
+            pendingProvider === "github.com" ? "GitHub" : "Google"
+          }.`,
+        );
+      } else {
+        setOauthError(
+          "An account with this email already exists using a different sign-in method.",
+        );
+      }
+    } else if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
+      // User dismissed the popup — not a real error
+      return;
+    } else if (code) {
+      setOauthError(
+        (error as { message?: string })?.message || "OAuth sign-in failed. Please try again.",
+      );
+    }
   }, []);
 
+  // Use signInWithPopup in both dev and prod:
+  // - Dev: Firebase Auth Emulator + signInWithRedirect can't complete the
+  //   apis.google.com iframe handshake against localhost.
+  // - Prod: since Chrome M115/Firefox 109/Safari 16.1 (June 2024) blocked
+  //   third-party cookies in cross-site iframes, signInWithRedirect needs a
+  //   custom authDomain or reverse proxy. Popup sidesteps that entirely.
+  //   See https://firebase.google.com/docs/auth/web/redirect-best-practices
   const handleOAuthSignIn = useCallback(
     async (
       provider: GoogleAuthProvider | GithubAuthProvider,
-      providerName: "google" | "github"
+      providerName: "google" | "github",
     ) => {
-      sessionStorage.setItem("fibuki_oauth_provider", providerName);
-      await signInWithRedirect(auth, provider);
+      try {
+        const result = await signInWithPopup(auth, provider);
+        await processOAuthResult(result, providerName);
+      } catch (error) {
+        handleOAuthError(error);
+      }
     },
-    []
+    [processOAuthResult, handleOAuthError],
   );
 
   const signInWithGoogle = useCallback(
