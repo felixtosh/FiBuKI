@@ -25,6 +25,10 @@ import {
   scoreAttachmentMatch,
   ScoreAttachmentInput,
 } from "../precision-search/scoreAttachmentMatch";
+import {
+  generateTypedSearchQueries,
+  QueryGenerationPartner,
+} from "../precision-search/generateSearchQueries";
 
 export type FindReceiptStatus =
   | "connected"
@@ -281,14 +285,11 @@ export async function findReceiptForTransaction(
     .map((d) => d.id);
 
   if (activeIntegrationIds.length > 0) {
-    // Build the Gmail query from the most-useful signal available:
-    // 1) Partner record (resolved from partnerId) — cleanest name + aliases
-    //    + website domain, e.g. "Google LLC" / from:google.com.
-    // 2) Legacy `tx.partner` string — set on older transactions.
-    // 3) Bank transaction name — last resort; usually a truncated, machine-
-    //    rendered line ("Google Cloud Sbcq95") that rarely matches any email.
-    let query = "";
-
+    // Build smart search queries via the same generator the UI/agent uses,
+    // so Gmail gets useful queries (invoice numbers, company names, sender
+    // domains) instead of raw bank-line text like "Google Cloud Sbcq95"
+    // that matches no real email.
+    let partnerForGenerator: QueryGenerationPartner | undefined;
     if (transactionPartnerId) {
       try {
         const partnerSnap = await db
@@ -297,25 +298,25 @@ export async function findReceiptForTransaction(
           .get();
         if (partnerSnap.exists) {
           const p = partnerSnap.data()!;
-          const partnerName = (p.name as string | undefined)?.trim();
-          const websiteRaw = (p.website as string | undefined) ?? "";
-          // Extract bare domain from "https://www.google.com/foo" → "google.com"
-          let domain = "";
+          let websiteHost: string | undefined;
           try {
-            const host = websiteRaw
-              ? new URL(websiteRaw).host.replace(/^www\./, "")
-              : "";
-            if (host) domain = host;
+            const raw = (p.website as string | undefined) ?? "";
+            if (raw) websiteHost = new URL(raw).host.replace(/^www\./, "");
           } catch {
-            // ignore malformed website URLs
+            // ignore malformed website URL
           }
-          if (partnerName && domain) {
-            query = `${partnerName} OR from:${domain}`;
-          } else if (partnerName) {
-            query = partnerName;
-          } else if (domain) {
-            query = `from:${domain}`;
-          }
+          partnerForGenerator = {
+            name: (p.name as string | undefined) ?? undefined,
+            emailDomains: (p.emailDomains as string[] | undefined) ?? undefined,
+            website: websiteHost,
+            ibans: (p.ibans as string[] | undefined) ?? undefined,
+            vatId: (p.vatId as string | undefined) ?? undefined,
+            aliases: (p.aliases as string[] | undefined) ?? undefined,
+            fileSourcePatterns:
+              (p.fileSourcePatterns as
+                | QueryGenerationPartner["fileSourcePatterns"]
+                | undefined) ?? undefined,
+          };
         }
       } catch (err) {
         console.warn(
@@ -325,11 +326,37 @@ export async function findReceiptForTransaction(
       }
     }
 
-    if (!query) {
-      query = (transactionPartner || transactionName || "").trim();
-    }
+    const suggestions = generateTypedSearchQueries(
+      {
+        name: transactionName ?? "",
+        partner: transactionPartner,
+        description: (tx.description as string | undefined) ?? undefined,
+        reference: transactionReference ?? undefined,
+      },
+      partnerForGenerator,
+      // Cap at 4 so we don't fan out too many Gmail calls. The generator
+      // sorts by score so we get the highest-signal ones (invoice numbers,
+      // company names, sender domains) first.
+      4,
+    );
 
-    if (query) {
+    // De-dupe and combine the top suggestions into one Gmail OR-query.
+    // (Gmail's search syntax supports OR natively; one call costs one
+    // rate-limit slot regardless of how many alternatives we OR together.)
+    const queryTerms = Array.from(
+      new Set(suggestions.map((s) => s.query).filter((q) => q.length >= 2)),
+    );
+
+    if (queryTerms.length > 0) {
+      // Wrap free-text terms in parens so multi-word strings ("netflix
+      // invoice") behave as a single OR clause. Gmail operator terms like
+      // `from:netflix.com` must NOT be wrapped — they'd be treated as
+      // literal text. Detect a colon → operator.
+      const formatted = queryTerms.map((q) =>
+        q.includes(":") ? q : q.includes(" ") ? `(${q})` : q,
+      );
+      const query = formatted.join(" OR ");
+
       const dateFrom = transactionDate
         ? new Date(transactionDate.getTime() - 180 * 24 * 3600_000).toISOString()
         : undefined;
