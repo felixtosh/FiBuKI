@@ -327,7 +327,9 @@ describe("findReceiptForTransaction", () => {
       expect.objectContaining({
         userId: "u1",
         integrationIds: ["int-1"],
-        query: expect.stringContaining("Netflix"),
+        // The workflow now builds a combined OR-query via the typed-suggestion
+        // generator, which lowercases terms — assert case-insensitively.
+        query: expect.stringMatching(/netflix/i),
       })
     );
     expect(result.sourcesChecked.gmailAttachments).toBe(1);
