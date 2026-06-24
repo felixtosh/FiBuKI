@@ -259,7 +259,26 @@ async function refreshAccessToken(
       return null;
     }
 
-    const tokens = await response.json() as { access_token: string; expires_in: number; refresh_token?: string };
+    const tokens = await response.json() as { access_token: string; expires_in: number; refresh_token?: string; scope?: string };
+
+    // Reject downgraded scope grants — once OAuth verification lapses, Google
+    // can issue refreshed tokens stripped of `gmail.readonly`. Flag for reauth
+    // instead of silently using a useless token.
+    const grantedScopes = new Set((tokens.scope || "").split(/\s+/).filter(Boolean));
+    if (!grantedScopes.has("https://www.googleapis.com/auth/gmail.readonly")) {
+      console.error(
+        "[GmailSync] Refreshed token missing gmail.readonly. Granted:",
+        tokens.scope,
+      );
+      await db.collection("emailIntegrations").doc(integrationId).update({
+        needsReauth: true,
+        lastError:
+          "Gmail access not granted — please reconnect and grant 'View your email' permission.",
+        updatedAt: Timestamp.now(),
+      });
+      return null;
+    }
+
     const expiresAt = Timestamp.fromDate(new Date(Date.now() + tokens.expires_in * 1000));
 
     // Re-encrypt the refresh token (use new one if provided, otherwise keep existing)
@@ -812,9 +831,26 @@ async function processQueueItem(
     console.error(`[GmailSync] Error processing queue item:`, error);
     const errorMsg = error instanceof Error ? error.message : "Unknown error";
 
+    // Detect Gmail "insufficient scopes" — happens when our OAuth verification
+    // for `gmail.readonly` lapses or the user's grant doesn't include it. Flag
+    // the integration so the UI prompts reconnect instead of silently failing.
+    const isInsufficientScope =
+      errorMsg.includes("insufficientPermissions") ||
+      errorMsg.includes("Request had insufficient authentication scopes");
+    if (isInsufficientScope) {
+      await db.collection("emailIntegrations").doc(queueItem.integrationId).update({
+        needsReauth: true,
+        lastError:
+          "Gmail access not granted — please reconnect and grant 'View your email' permission.",
+        lastSyncError: errorMsg.slice(0, 1000),
+        updatedAt: Timestamp.now(),
+      });
+    }
+
     // Check if this is a reauth error - pause instead of retry/fail
     // This allows auto-resume when Gmail is reconnected
-    const isReauthError = errorMsg.includes("needs re-authentication") ||
+    const isReauthError = isInsufficientScope ||
+      errorMsg.includes("needs re-authentication") ||
       errorMsg.includes("needsReauth") ||
       errorMsg.includes("token expired");
 

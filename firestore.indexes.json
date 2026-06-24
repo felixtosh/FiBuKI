@@ -9,6 +9,14 @@
       ]
     },
     {
+      "collectionGroup": "files",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "extractionError", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "bankingConnections",
       "queryScope": "COLLECTION",
       "fields": [
