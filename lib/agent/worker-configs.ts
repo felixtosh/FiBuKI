@@ -116,20 +116,21 @@ export const WORKER_CONFIGS: Record<WorkerType, WorkerConfig> = {
     name: "Receipt Finder",
     description: "Searches for receipts/invoices for transactions",
     toolNames: [
-      // Hint tool (reuse known-good patterns first)
+      // Primary one-shot workflow — does everything (search local + Gmail,
+      // score, auto-connect clear winners) in a single backend call.
+      "findReceiptForTransaction",
+      // Fallback primitives — only used when the workflow returns no_match
+      // and the agent wants to try a wider net (custom queries, deep email
+      // analysis, etc.).
       "getPartnerReceiptHints",
-      // Search tools
       "generateSearchSuggestions",
       "searchLocalFiles",
       "searchGmailAttachments",
       "searchGmailEmails",
       "analyzeEmail",
-      // Connection tool
       "connectFileToTransaction",
-      // Download tools
       "downloadGmailAttachment",
       "convertEmailToPdf",
-      // Read tools (for context)
       "getTransaction",
       "listFiles",
       "getFile",
