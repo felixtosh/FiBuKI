@@ -208,6 +208,36 @@ export async function findReceiptForTransaction(
   const transactionReference =
     (tx.reference as string | null | undefined) ?? null;
 
+  // Resolve partner record up front so scoring can use its name, emailDomains
+  // and learned patterns. Without these the scorer can only fuzzy-match the
+  // bank-line text against email senders — for a tx with empty `partner`
+  // string (older Firestore shape) it falls back to weak filename matching
+  // and undershoots dramatically (~50% vs the UI's manual flow that scores
+  // ~95% on the same files because it does pass partner data).
+  let partnerRecord: FirebaseFirestore.DocumentData | null = null;
+  if (transactionPartnerId) {
+    try {
+      const snap = await db
+        .collection("partners")
+        .doc(transactionPartnerId)
+        .get();
+      if (snap.exists) partnerRecord = snap.data() ?? null;
+    } catch (err) {
+      console.warn(
+        `[findReceiptForTransaction] failed to load partner ${transactionPartnerId}:`,
+        err,
+      );
+    }
+  }
+
+  const partnerName = (partnerRecord?.name as string | undefined) ?? null;
+  const partnerEmailDomains =
+    (partnerRecord?.emailDomains as string[] | undefined) ?? null;
+  const partnerFileSourcePatterns =
+    (partnerRecord?.fileSourcePatterns as
+      | Array<{ sourceType: string; integrationId?: string }>
+      | undefined) ?? null;
+
   const baseScoringContext: Pick<
     ScoreAttachmentInput,
     | "transactionAmount"
@@ -216,6 +246,9 @@ export async function findReceiptForTransaction(
     | "transactionReference"
     | "transactionPartner"
     | "transactionPartnerId"
+    | "partnerName"
+    | "partnerEmailDomains"
+    | "partnerFileSourcePatterns"
   > = {
     transactionAmount,
     transactionDate,
@@ -223,6 +256,9 @@ export async function findReceiptForTransaction(
     transactionReference,
     transactionPartner,
     transactionPartnerId,
+    partnerName,
+    partnerEmailDomains,
+    partnerFileSourcePatterns,
   };
 
   // --- Score local files ---
@@ -292,42 +328,31 @@ export async function findReceiptForTransaction(
     // Build smart search queries via the same generator the UI/agent uses,
     // so Gmail gets useful queries (invoice numbers, company names, sender
     // domains) instead of raw bank-line text like "Google Cloud Sbcq95"
-    // that matches no real email.
+    // that matches no real email. Reuses the partner record we already
+    // loaded above for scoring.
     let partnerForGenerator: QueryGenerationPartner | undefined;
-    if (transactionPartnerId) {
+    if (partnerRecord) {
+      let websiteHost: string | undefined;
       try {
-        const partnerSnap = await db
-          .collection("partners")
-          .doc(transactionPartnerId)
-          .get();
-        if (partnerSnap.exists) {
-          const p = partnerSnap.data()!;
-          let websiteHost: string | undefined;
-          try {
-            const raw = (p.website as string | undefined) ?? "";
-            if (raw) websiteHost = new URL(raw).host.replace(/^www\./, "");
-          } catch {
-            // ignore malformed website URL
-          }
-          partnerForGenerator = {
-            name: (p.name as string | undefined) ?? undefined,
-            emailDomains: (p.emailDomains as string[] | undefined) ?? undefined,
-            website: websiteHost,
-            ibans: (p.ibans as string[] | undefined) ?? undefined,
-            vatId: (p.vatId as string | undefined) ?? undefined,
-            aliases: (p.aliases as string[] | undefined) ?? undefined,
-            fileSourcePatterns:
-              (p.fileSourcePatterns as
-                | QueryGenerationPartner["fileSourcePatterns"]
-                | undefined) ?? undefined,
-          };
-        }
-      } catch (err) {
-        console.warn(
-          `[findReceiptForTransaction] failed to load partner ${transactionPartnerId}:`,
-          err,
-        );
+        const raw = (partnerRecord.website as string | undefined) ?? "";
+        if (raw) websiteHost = new URL(raw).host.replace(/^www\./, "");
+      } catch {
+        // ignore malformed website URL
       }
+      partnerForGenerator = {
+        name: (partnerRecord.name as string | undefined) ?? undefined,
+        emailDomains:
+          (partnerRecord.emailDomains as string[] | undefined) ?? undefined,
+        website: websiteHost,
+        ibans: (partnerRecord.ibans as string[] | undefined) ?? undefined,
+        vatId: (partnerRecord.vatId as string | undefined) ?? undefined,
+        aliases:
+          (partnerRecord.aliases as string[] | undefined) ?? undefined,
+        fileSourcePatterns:
+          (partnerRecord.fileSourcePatterns as
+            | QueryGenerationPartner["fileSourcePatterns"]
+            | undefined) ?? undefined,
+      };
     }
 
     const suggestions = generateTypedSearchQueries(
