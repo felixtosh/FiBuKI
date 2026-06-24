@@ -344,16 +344,35 @@ export async function findReceiptForTransaction(
       4,
     );
 
-    // De-dupe the top suggestions and fire ONE Gmail call per query in
-    // parallel. The previous OR-combined approach lost coverage: Gmail's
-    // relevance returns top N for the *combined* query, which for a broad
-    // term like "google" gets dominated by random matches and buries the
-    // actual invoice senders. Per-query gets top N per intent (one for
-    // `from:google.com`, one for `(google invoice)`, etc.), then merged
-    // by messageId — same approach the old wand recipe used (Step 4 +
-    // Step 5 of the receipt_search worker prompt before this workflow).
+    // If the partner has known-good past patterns (recorded on prior
+    // successful matches), use those FIRST. They're the cheapest hit:
+    // we already learned they work for this partner, no need to burn
+    // queries discovering them again. Sorted by usageCount so the most
+    // proven pattern goes first.
+    const learnedQueries: string[] = [];
+    if (partnerForGenerator?.fileSourcePatterns?.length) {
+      const sorted = [...partnerForGenerator.fileSourcePatterns]
+        .filter((p) => p.sourceType !== "local") // local = filename patterns, not Gmail queries
+        .sort((a, b) => {
+          if ((b.usageCount ?? 0) !== (a.usageCount ?? 0))
+            return (b.usageCount ?? 0) - (a.usageCount ?? 0);
+          return (b.confidence ?? 0) - (a.confidence ?? 0);
+        })
+        .slice(0, 3);
+      for (const p of sorted) {
+        if (p.pattern && p.pattern.length >= 2) learnedQueries.push(p.pattern);
+      }
+    }
+
+    // De-dupe: learned queries first (highest priority), then generator
+    // suggestions. Order matters — the search loop runs sequentially with
+    // an early-exit on coverage, so cheaper proven queries should come
+    // first.
     const queryTerms = Array.from(
-      new Set(suggestions.map((s) => s.query).filter((q) => q.length >= 2)),
+      new Set([
+        ...learnedQueries,
+        ...suggestions.map((s) => s.query).filter((q) => q.length >= 2),
+      ]),
     );
 
     if (queryTerms.length > 0) {
@@ -364,9 +383,19 @@ export async function findReceiptForTransaction(
         ? new Date(transactionDate.getTime() + 45 * 24 * 3600_000).toISOString()
         : undefined;
 
-      const perQueryResults = await Promise.all(
-        queryTerms.map((q) =>
-          searchGmail({
+      // Run queries sequentially. Gmail enforces a per-user concurrent
+      // request cap (~ a handful of in-flight calls); each searchGmailDirect
+      // already fans out internally (one fetch per matching message) so
+      // firing N queries in parallel multiplies that and reliably trips
+      // the 429 rateLimitExceeded. The old wand recipe was also sequential
+      // because each tool call ran one at a time through the LLM.
+      const merged = new Map<string, GmailSearchMessage>();
+      for (const q of queryTerms) {
+        // If we already have ample coverage, stop early — additional queries
+        // mostly return duplicates and waste rate-limit budget.
+        if (merged.size >= 50) break;
+        try {
+          const r = await searchGmail({
             userId,
             integrationIds: activeIntegrationIds,
             query: q,
@@ -374,22 +403,15 @@ export async function findReceiptForTransaction(
             dateTo,
             hasAttachments: false,
             limit: 30,
-          }).catch((err) => {
-            console.warn(
-              `[findReceiptForTransaction] Gmail query ${JSON.stringify(q)} failed:`,
-              err,
-            );
-            return { messages: [] };
-          }),
-        ),
-      );
-
-      // Merge messages by id so the same email surfaced by multiple queries
-      // is scored once. Preserve first occurrence.
-      const merged = new Map<string, (typeof perQueryResults)[number]["messages"][number]>();
-      for (const r of perQueryResults) {
-        for (const m of r.messages) {
-          if (!merged.has(m.messageId)) merged.set(m.messageId, m);
+          });
+          for (const m of r.messages) {
+            if (!merged.has(m.messageId)) merged.set(m.messageId, m);
+          }
+        } catch (err) {
+          console.warn(
+            `[findReceiptForTransaction] Gmail query ${JSON.stringify(q)} failed:`,
+            err,
+          );
         }
       }
       const gmail = { messages: Array.from(merged.values()) };
