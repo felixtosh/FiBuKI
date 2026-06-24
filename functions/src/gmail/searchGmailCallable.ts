@@ -321,7 +321,26 @@ async function tryRefreshToken(
       return null;
     }
 
-    const result = await response.json() as { access_token: string; expires_in: number; refresh_token?: string };
+    const result = await response.json() as { access_token: string; expires_in: number; refresh_token?: string; scope?: string };
+
+    // Reject downgraded scope grants — without gmail.readonly the integration
+    // cannot read messages, so flag for reauth rather than silently caching
+    // a token that will only fail with 403 on every Gmail call.
+    const grantedScopes = new Set((result.scope || "").split(/\s+/).filter(Boolean));
+    if (!grantedScopes.has("https://www.googleapis.com/auth/gmail.readonly")) {
+      console.error(
+        "[searchGmailCallable] Refreshed token missing gmail.readonly. Granted:",
+        result.scope,
+      );
+      await integrationRef.update({
+        needsReauth: true,
+        lastError:
+          "Gmail access not granted — please reconnect and grant 'View your email' permission.",
+        updatedAt: Timestamp.now(),
+      });
+      return null;
+    }
+
     const expiresAt = Timestamp.fromDate(new Date(Date.now() + result.expires_in * 1000));
 
     // Re-encrypt the refresh token for storage

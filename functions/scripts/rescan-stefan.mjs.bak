@@ -1,0 +1,110 @@
+import admin from 'firebase-admin';
+
+admin.initializeApp({ projectId: 'taxstudio-f12fb' });
+const auth = admin.auth();
+const db = admin.firestore();
+
+// Firebase Web API key — only used to exchange a custom token for an ID token
+// via the Identity Toolkit REST API. Lives in NEXT_PUBLIC_FIREBASE_API_KEY.
+const WEB_API_KEY = 'AIzaSyDhxXMbHgaD1z9n0bkuVaSRmmiCrbNL-l4';
+
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'felix@i7v6.com';
+const TARGET_EMAIL = process.argv[2] || 'stefan@houseofbandits.at';
+const CALLABLE_URL =
+  'https://europe-west1-taxstudio-f12fb.cloudfunctions.net/retryFileExtraction';
+
+async function mintIdToken(adminUid) {
+  const customToken = await auth.createCustomToken(adminUid, { admin: true });
+  const resp = await fetch(
+    `https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${WEB_API_KEY}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: customToken, returnSecureToken: true }),
+    },
+  );
+  if (!resp.ok) throw new Error(`signInWithCustomToken failed: ${resp.status} ${await resp.text()}`);
+  const { idToken } = await resp.json();
+  return idToken;
+}
+
+async function callRetry(idToken, fileId) {
+  const resp = await fetch(CALLABLE_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${idToken}`,
+    },
+    body: JSON.stringify({ data: { fileId } }),
+  });
+  const text = await resp.text();
+  if (!resp.ok) {
+    return { ok: false, status: resp.status, body: text.slice(0, 300) };
+  }
+  try {
+    const json = JSON.parse(text);
+    return { ok: true, body: json.result ?? json };
+  } catch {
+    return { ok: true, body: text.slice(0, 200) };
+  }
+}
+
+const adminUser = await auth.getUserByEmail(ADMIN_EMAIL);
+console.log(`Admin: ${adminUser.email} (${adminUser.uid})`);
+
+const targetUser = await auth.getUserByEmail(TARGET_EMAIL);
+console.log(`Target: ${targetUser.email} (${targetUser.uid})\n`);
+
+const idToken = await mintIdToken(adminUser.uid);
+console.log('ID token minted\n');
+
+// Get the errored files (no composite index needed — equality + in-memory filter)
+const allFiles = await db
+  .collection('files')
+  .where('userId', '==', targetUser.uid)
+  .get();
+const errored = allFiles.docs.filter((d) => d.data().extractionError != null);
+console.log(`Errored files: ${errored.length}\n`);
+
+const CONCURRENCY = 5;
+let succeeded = 0;
+let failed = 0;
+const failures = [];
+
+for (let i = 0; i < errored.length; i += CONCURRENCY) {
+  const wave = errored.slice(i, i + CONCURRENCY);
+  console.log(`Wave ${Math.floor(i / CONCURRENCY) + 1}/${Math.ceil(errored.length / CONCURRENCY)}: ${wave.length} files`);
+  const results = await Promise.allSettled(
+    wave.map(async (doc) => {
+      const fileId = doc.id;
+      const fileName = doc.data().fileName;
+      const result = await callRetry(idToken, fileId);
+      return { fileId, fileName, ...result };
+    }),
+  );
+  for (const r of results) {
+    if (r.status === 'fulfilled') {
+      const { fileId, fileName, ok, status, body } = r.value;
+      if (ok) {
+        succeeded++;
+        console.log(`  ✓ ${fileName} (${fileId})`);
+      } else {
+        failed++;
+        failures.push({ fileId, fileName, status, body });
+        console.log(`  ✗ ${fileName} (${fileId}) — HTTP ${status}: ${body.slice(0, 120)}`);
+      }
+    } else {
+      failed++;
+      console.log(`  ✗ ${r.reason}`);
+    }
+  }
+}
+
+console.log(`\n========================================`);
+console.log(`Total: ${errored.length}`);
+console.log(`Succeeded: ${succeeded}`);
+console.log(`Failed: ${failed}`);
+if (failures.length > 0) {
+  console.log(`\nFirst 3 failures:`);
+  console.log(JSON.stringify(failures.slice(0, 3), null, 2));
+}

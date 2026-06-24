@@ -169,6 +169,8 @@ function GmailAccountCard({
 }: GmailAccountCardProps) {
   const activeSync = useActiveSyncForIntegration(integration.id);
   const { stats, loading: statsLoading } = useIntegrationFileStats(integration.id);
+  // Capture "now" once per mount so derived staleness checks stay pure.
+  const [now] = useState(() => Date.now());
 
   const needsReauth = integration.needsReauth;
   const isPaused = integration.isPaused;
@@ -177,9 +179,23 @@ function GmailAccountCard({
   const lastSyncStatus = integration.lastSyncStatus;
   const initialSyncComplete = integration.initialSyncComplete;
   const initialSyncStartedAt = integration.initialSyncStartedAt?.toDate();
+  const lastSyncError = integration.lastSyncError;
 
-  const isSyncingNow = !isPaused && (activeSync.isActive || (!initialSyncComplete && initialSyncStartedAt));
-  const showReconnect = needsReauth;
+  // Detect an initial sync that's been "in progress" for >24h while carrying
+  // a sync error — that's not actually progressing, it's stuck. Treat the same
+  // as needsReauth so the user sees a Reconnect CTA instead of a forever-spin.
+  const STUCK_THRESHOLD_MS = 24 * 60 * 60 * 1000;
+  const isStuckInitialSync =
+    !initialSyncComplete &&
+    !!initialSyncStartedAt &&
+    !!lastSyncError &&
+    now - initialSyncStartedAt.getTime() > STUCK_THRESHOLD_MS;
+
+  const isSyncingNow =
+    !isPaused &&
+    !isStuckInitialSync &&
+    (activeSync.isActive || (!initialSyncComplete && initialSyncStartedAt));
+  const showReconnect = needsReauth || isStuckInitialSync;
   const isNewAndPaused = isPaused && !initialSyncComplete;
 
   return (

@@ -91,6 +91,22 @@ export async function GET(request: NextRequest) {
       return redirectWithParams(request, "/integrations/gmail", { error: "no_access_token" });
     }
 
+    // Google may grant fewer scopes than we requested (e.g. when our OAuth
+    // verification for `gmail.readonly` lapses, or when the user unchecks it
+    // on the consent screen). Without gmail.readonly the integration is
+    // useless, so refuse the connection and surface a clear error rather
+    // than silently storing a token that can only read userinfo.
+    const grantedScopes = new Set((tokens.scope || "").split(/\s+/).filter(Boolean));
+    if (!grantedScopes.has("https://www.googleapis.com/auth/gmail.readonly")) {
+      console.error(
+        "[Gmail OAuth] gmail.readonly NOT granted. Granted scopes:",
+        tokens.scope,
+      );
+      return redirectWithParams(request, "/integrations/gmail", {
+        error: "missing_gmail_scope",
+      });
+    }
+
     // Get user info
     const userInfoResponse = await fetch(GOOGLE_USERINFO_URL, {
       headers: { Authorization: `Bearer ${tokens.access_token}` },
