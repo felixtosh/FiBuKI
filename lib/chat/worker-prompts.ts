@@ -230,87 +230,54 @@ This gives you verified data to create/identify the partner AND connect the file
 
 ## Your Task: Find Receipt for Transaction
 
-You are given a transaction ID. Find the best matching receipt/invoice from local files or Gmail.
+You are given a transaction ID. Find the best matching receipt/invoice.
 
-### Strategy: Generate queries → Search all sources → Compare → Act
+### Step 1 — Try the workflow (one shot)
 
-**Step 0: Check partner receipt hints (skip if no partner)**
-\`getPartnerReceiptHints\` with the transactionId
-- If hints exist: USE known-good queries in Step 4 instead of generating new ones
-- If preferredSource is "gmail_attachment": prioritize Gmail attachment search
-- If filenameExamples exist: use them as hard clues (e.g., "R-YYYY.NNN-PHH09.pdf")
-- If no hints: proceed with Step 2
+**Always call \`findReceiptForTransaction({ transactionId })\` first.**
 
-**Step 1: Get transaction details**
-\`getTransaction\` → Get amount, date, partner, counterparty
+It searches local files + Gmail across all integrations, scores every
+candidate, and auto-connects a clear local-file winner (≥70% with ≥10pt lead)
+in a single backend call. Possible outcomes:
 
-**Step 2: Generate smart search queries (if no hints from Step 0)**
-\`generateSearchSuggestions\` → AI-generated search queries based on transaction data
-- Skip this if Step 0 returned working queries
-- Returns email domains, company name variants, invoice patterns
-- USE THESE for Gmail search!
+- \`status: "connected"\` → done. Report which file was attached at what
+  confidence. Nothing else to do.
+- \`status: "skipped"\` → \`skipReason\` says why (\`already_has_file\`,
+  \`has_no_receipt_category\`, \`transaction_not_found\`). Report and stop.
+- \`status: "needs_review"\` → \`candidates\` has the top 3 (each with
+  \`source\`, \`score\`, \`reasons\`, and the IDs you need to act on). For
+  each candidate, follow \`nextStep\`:
+  - \`source: "local_file"\` → \`connectFileToTransaction({ fileId, transactionId, sourceType: "local" })\`
+  - \`source: "gmail_attachment"\` → \`downloadGmailAttachment({ messageId, attachmentId, filename })\` → \`waitForFileExtraction(fileId)\` → verify extracted amount/partner/date → \`connectFileToTransaction({ ..., sourceType: "gmail_attachment", searchQuery: <the query that surfaced it> })\`
+  - \`source: "gmail_email"\` → \`convertEmailToPdf({ messageId })\` → \`waitForFileExtraction\` → verify → \`connectFileToTransaction({ ..., sourceType: "gmail_email" })\`
+  - Pick the candidate with the best verified match (partner + amount +
+    date). If extracted data clearly disagrees with the transaction, try
+    the next candidate.
+- \`status: "no_match"\` → fall through to Step 2 (wider net) only if you
+  think targeted queries might find something the workflow missed.
 
-**Step 3: Search local files FIRST**
-\`searchLocalFiles\` → Check uploaded files matching transaction
+### Step 2 — Wider net (fallback only)
 
-**Step 4: Search Gmail attachments (try 2-3 queries)**
-\`searchGmailAttachments\` with queries from Step 0 (preferred) or Step 2 fallback
-- Results include \`alreadyDownloaded\` flag and \`existingFileId\`
-- If already downloaded → use existingFileId directly (skip download)
-- **Try at least 2-3 different queries** from suggestions (not just one!)
-- Do NOT stop after the first strong score; continue until you verified top candidates by extracted data
+Only use this path if \`findReceiptForTransaction\` returned \`no_match\` AND
+you have a specific reason to believe a custom query would find something
+(e.g., the user mentioned a sender domain, or you have a known reference
+number pattern).
 
-**Step 5: Search Gmail emails (try 2-3 queries)**
-\`searchGmailEmails\` → Check for emails that ARE invoices (mail invoices)
-- **Try at least 2-3 different queries** - companies send from various addresses!
-- For EACH result batch, check classification flags:
-  - \`possibleMailInvoice: true\` → email body IS the invoice
-  - \`possibleInvoiceLink: true\` → email contains download link
-- If \`possibleMailInvoice\` OR \`possibleInvoiceLink\` is present on any likely email, you MUST run \`analyzeEmail\` on top 1-3 candidates
-- If \`analyzeEmail\` says \`isMailInvoice: true\` (or medium+ confidence), convert it using \`convertEmailToPdf\`
-- If \`analyzeEmail\` finds invoice links but no attachment candidate is better, convert the matching email to PDF as fallback evidence before reporting "no match"
-- Only report raw invoice links after you attempted analyze/convert flow
+Available primitives: \`getTransaction\`, \`getPartnerReceiptHints\`,
+\`generateSearchSuggestions\`, \`searchLocalFiles\`, \`searchGmailAttachments\`,
+\`searchGmailEmails\`, \`analyzeEmail\`, \`downloadGmailAttachment\`,
+\`convertEmailToPdf\`, \`waitForFileExtraction\`, \`getFile\`,
+\`connectFileToTransaction\`.
 
-**Step 6: Pick top 2-3 candidates to verify**
-- From ALL results (local files, Gmail attachments, Gmail emails), pick up to 3 promising candidates
-- ⚠️ **Filename beats score!** If a filename contains the exact invoice/reference number
-  (e.g., "R-2025.006" in "R-2025.006-PHH09.pdf"), always include it — even if lower scored
-- Include the highest-scored result AND any with matching reference/partner in filename
-- For already-downloaded files or local files: use \`getFile\` to check extracted data
-
-**Step 7: Download/convert ALL candidates (don't stop at the first)**
-- Download all undownloaded attachments (\`downloadGmailAttachment\`)
-- Convert promising mail invoices (\`convertEmailToPdf\`) after \`analyzeEmail\`
-- If no valid PDF attachment matches, convert the best matching invoice email (same sender/date window) to PDF before giving up
-- Use \`waitForFileExtraction\` on each to get extracted data
-- Don't give up if the first candidate is wrong — check all of them!
-- For each, note: extractedPartner, extractedAmount, extractedDate
-
-**Step 8: Compare extracted data across ALL downloaded candidates**
-- Now that you have extracted data for 2-3 candidates, compare them:
-  - Does extractedPartner match the transaction counterparty?
-  - Does extractedAmount match the transaction amount?
-  - Is extractedDate reasonable relative to transaction date?
-- Pick the candidate with the BEST verified match
-- If a filename had the exact reference number AND extracted data confirms → this is the winner
-- ⚠️ **Sanity check:** Score alone isn't enough — a 60% match with WRONG company is worse than 40% with right company
-  - Watch for completely unrelated businesses ("Stipits Entsorgung" ≠ "Autotrading" → SKIP)
-  - But allow brand vs legal name differences ("Autotrading School" ≈ "LFG Solutions LLC" → OK)
-- If amount/partner validation fails for a candidate, DO NOT force-connect with \`skipValidation\`; continue with other candidates
-- Connect the best verified match with \`connectFileToTransaction\`
-- When connecting, pass:
-  - \`searchQuery\`: the Gmail query or search term that found this file
-  - \`sourceType\`: "local", "gmail_attachment", "gmail_email", or "browser"
-- If NONE verify correctly → report "no match" with what you tried
-
-*If email has invoice link (possibleInvoiceLink):*
-→ First analyze with \`analyzeEmail\`; then try \`convertEmailToPdf\` for the best matching email before reporting the link as fallback.
+Do NOT manually run these for normal cases — the workflow already does it.
+Composing them yourself burns LLM round-trips for no benefit and is
+typically 5–10× slower than letting the workflow do its job.
 
 ### Score Interpretation
-- 70%+ Strong match - connect it (after partner verification!)
-- 50-70% Likely match - connect it (after partner verification!)
-- 35-50% Possible - connect if partner matches and no better option
-- <35% Weak - probably not a match
+- 70%+ Strong match — connect it (workflow auto-connects)
+- 50–70% Likely — connect it after partner verification
+- 35–50% Possible — connect only if partner matches and no better option
+- <35% Weak — probably not a match
 
 ### Already Downloaded Handling
 Gmail search results show \`alreadyDownloaded: true\` and \`existingFileId\` for attachments that were previously downloaded.
