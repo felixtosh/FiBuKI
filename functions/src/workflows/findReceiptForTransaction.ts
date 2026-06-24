@@ -281,7 +281,54 @@ export async function findReceiptForTransaction(
     .map((d) => d.id);
 
   if (activeIntegrationIds.length > 0) {
-    const query = (transactionPartner || transactionName || "").trim();
+    // Build the Gmail query from the most-useful signal available:
+    // 1) Partner record (resolved from partnerId) — cleanest name + aliases
+    //    + website domain, e.g. "Google LLC" / from:google.com.
+    // 2) Legacy `tx.partner` string — set on older transactions.
+    // 3) Bank transaction name — last resort; usually a truncated, machine-
+    //    rendered line ("Google Cloud Sbcq95") that rarely matches any email.
+    let query = "";
+
+    if (transactionPartnerId) {
+      try {
+        const partnerSnap = await db
+          .collection("partners")
+          .doc(transactionPartnerId)
+          .get();
+        if (partnerSnap.exists) {
+          const p = partnerSnap.data()!;
+          const partnerName = (p.name as string | undefined)?.trim();
+          const websiteRaw = (p.website as string | undefined) ?? "";
+          // Extract bare domain from "https://www.google.com/foo" → "google.com"
+          let domain = "";
+          try {
+            const host = websiteRaw
+              ? new URL(websiteRaw).host.replace(/^www\./, "")
+              : "";
+            if (host) domain = host;
+          } catch {
+            // ignore malformed website URLs
+          }
+          if (partnerName && domain) {
+            query = `${partnerName} OR from:${domain}`;
+          } else if (partnerName) {
+            query = partnerName;
+          } else if (domain) {
+            query = `from:${domain}`;
+          }
+        }
+      } catch (err) {
+        console.warn(
+          `[findReceiptForTransaction] failed to load partner ${transactionPartnerId}:`,
+          err,
+        );
+      }
+    }
+
+    if (!query) {
+      query = (transactionPartner || transactionName || "").trim();
+    }
+
     if (query) {
       const dateFrom = transactionDate
         ? new Date(transactionDate.getTime() - 180 * 24 * 3600_000).toISOString()
