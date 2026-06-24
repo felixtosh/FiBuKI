@@ -322,16 +322,19 @@ describe("findReceiptForTransaction", () => {
       { transactionId: "tx-1", userId: "u1" },
       deps
     );
-    expect(searchGmail).toHaveBeenCalledTimes(1);
-    expect(searchGmail).toHaveBeenCalledWith(
-      expect.objectContaining({
-        userId: "u1",
-        integrationIds: ["int-1"],
-        // The workflow now builds a combined OR-query via the typed-suggestion
-        // generator, which lowercases terms — assert case-insensitively.
-        query: expect.stringMatching(/netflix/i),
-      })
+    // Workflow now fires one Gmail call per typed-suggestion query in
+    // parallel (matches the old wand recipe). Assert at least one call
+    // included a netflix-containing query.
+    expect(searchGmail).toHaveBeenCalled();
+    expect(searchGmail.mock.calls.length).toBeGreaterThan(0);
+    const netflixCall = searchGmail.mock.calls.find(([args]) =>
+      typeof args?.query === "string" && /netflix/i.test(args.query),
     );
+    expect(netflixCall).toBeDefined();
+    expect(netflixCall![0]).toMatchObject({
+      userId: "u1",
+      integrationIds: ["int-1"],
+    });
     expect(result.sourcesChecked.gmailAttachments).toBe(1);
     // Gmail attachments do NOT auto-connect (we don't auto-download)
     expect(deps.connectFileToTransaction).not.toHaveBeenCalled();

@@ -344,23 +344,19 @@ export async function findReceiptForTransaction(
       4,
     );
 
-    // De-dupe and combine the top suggestions into one Gmail OR-query.
-    // (Gmail's search syntax supports OR natively; one call costs one
-    // rate-limit slot regardless of how many alternatives we OR together.)
+    // De-dupe the top suggestions and fire ONE Gmail call per query in
+    // parallel. The previous OR-combined approach lost coverage: Gmail's
+    // relevance returns top N for the *combined* query, which for a broad
+    // term like "google" gets dominated by random matches and buries the
+    // actual invoice senders. Per-query gets top N per intent (one for
+    // `from:google.com`, one for `(google invoice)`, etc.), then merged
+    // by messageId — same approach the old wand recipe used (Step 4 +
+    // Step 5 of the receipt_search worker prompt before this workflow).
     const queryTerms = Array.from(
       new Set(suggestions.map((s) => s.query).filter((q) => q.length >= 2)),
     );
 
     if (queryTerms.length > 0) {
-      // Wrap free-text terms in parens so multi-word strings ("netflix
-      // invoice") behave as a single OR clause. Gmail operator terms like
-      // `from:netflix.com` must NOT be wrapped — they'd be treated as
-      // literal text. Detect a colon → operator.
-      const formatted = queryTerms.map((q) =>
-        q.includes(":") ? q : q.includes(" ") ? `(${q})` : q,
-      );
-      const query = formatted.join(" OR ");
-
       const dateFrom = transactionDate
         ? new Date(transactionDate.getTime() - 180 * 24 * 3600_000).toISOString()
         : undefined;
@@ -368,15 +364,35 @@ export async function findReceiptForTransaction(
         ? new Date(transactionDate.getTime() + 45 * 24 * 3600_000).toISOString()
         : undefined;
 
-      const gmail = await searchGmail({
-        userId,
-        integrationIds: activeIntegrationIds,
-        query,
-        dateFrom,
-        dateTo,
-        hasAttachments: false,
-        limit: 30,
-      });
+      const perQueryResults = await Promise.all(
+        queryTerms.map((q) =>
+          searchGmail({
+            userId,
+            integrationIds: activeIntegrationIds,
+            query: q,
+            dateFrom,
+            dateTo,
+            hasAttachments: false,
+            limit: 30,
+          }).catch((err) => {
+            console.warn(
+              `[findReceiptForTransaction] Gmail query ${JSON.stringify(q)} failed:`,
+              err,
+            );
+            return { messages: [] };
+          }),
+        ),
+      );
+
+      // Merge messages by id so the same email surfaced by multiple queries
+      // is scored once. Preserve first occurrence.
+      const merged = new Map<string, (typeof perQueryResults)[number]["messages"][number]>();
+      for (const r of perQueryResults) {
+        for (const m of r.messages) {
+          if (!merged.has(m.messageId)) merged.set(m.messageId, m);
+        }
+      }
+      const gmail = { messages: Array.from(merged.values()) };
 
       for (const message of gmail.messages) {
         gmailEmailCount++;
