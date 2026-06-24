@@ -237,6 +237,10 @@ export async function findReceiptForTransaction(
   for (const fileDoc of filesSnap.docs) {
     const file = fileDoc.data();
     if (file.deletedAt) continue;
+    // Skip files the AI classifier already flagged as not-an-invoice — they
+    // have no extracted data to score against and surfacing them just makes
+    // the agent burn round-trips on getFile only to discard them.
+    if (file.isNotInvoice === true) continue;
     const fileTxIds = Array.isArray(file.transactionIds)
       ? (file.transactionIds as string[])
       : [];
