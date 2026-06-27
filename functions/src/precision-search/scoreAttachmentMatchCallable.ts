@@ -54,7 +54,7 @@ interface ScoreAttachmentRequest {
   } | null;
 }
 
-interface ScoreAttachmentResponse {
+export interface ScoreAttachmentResponse {
   scores: Array<{
     key: string;
     score: number;
@@ -64,8 +64,72 @@ interface ScoreAttachmentResponse {
 }
 
 /**
- * Score multiple attachments against a transaction
- * Batched for efficiency - score all attachments in one call
+ * Single source of truth for building a ScoreAttachmentInput from the
+ * (transaction, partner, attachment) triple and running the scorer.
+ *
+ * Both the UI callable (scoreAttachmentMatchCallable) and the
+ * findReceiptForTransaction workflow call this, guaranteeing the UI's
+ * file-connect overlay and the workflow's auto-find produce identical
+ * scores for the same data. If you add a new field that should influence
+ * scoring, add it here and both consumers pick it up automatically.
+ */
+export function scoreAttachments(
+  request: ScoreAttachmentRequest,
+): ScoreAttachmentResponse {
+  const { attachments, transaction, partner } = request;
+  const transactionDate = transaction?.date ? new Date(transaction.date) : null;
+
+  const scores = attachments.map((att) => {
+    const input: ScoreAttachmentInput = {
+      filename: att.filename,
+      mimeType: att.mimeType,
+      // Email context
+      emailSubject: att.emailSubject,
+      emailFrom: att.emailFrom,
+      emailSnippet: att.emailSnippet,
+      emailBodyText: att.emailBodyText,
+      emailDate: att.emailDate ? new Date(att.emailDate) : null,
+      integrationId: att.integrationId,
+      // File extracted data
+      fileExtractedAmount: att.fileExtractedAmount,
+      fileExtractedDate: att.fileExtractedDate
+        ? new Date(att.fileExtractedDate)
+        : null,
+      fileExtractedPartner: att.fileExtractedPartner,
+      // Transaction data
+      transactionAmount: transaction?.amount,
+      transactionDate,
+      transactionName: transaction?.name,
+      transactionReference: transaction?.reference,
+      // Use name as fallback for partner matching when no partner string is assigned
+      transactionPartner: transaction?.partner || transaction?.name,
+      // Partner data
+      partnerName: partner?.name,
+      partnerEmailDomains: partner?.emailDomains,
+      partnerFileSourcePatterns: partner?.fileSourcePatterns,
+      // Explicit partner IDs for connected partner matching
+      filePartnerId: att.filePartnerId,
+      transactionPartnerId: transaction?.partnerId,
+      // Email classification
+      classification: att.classification,
+    };
+
+    const result = scoreAttachmentMatch(input);
+
+    return {
+      key: att.key,
+      score: result.score,
+      label: result.label,
+      reasons: result.reasons,
+    };
+  });
+
+  return { scores };
+}
+
+/**
+ * Callable wrapper. Just auth-checks and delegates to scoreAttachments
+ * so the UI / workflow share one code path.
  */
 export const scoreAttachmentMatchCallable = onCall<
   ScoreAttachmentRequest,
@@ -79,58 +143,12 @@ export const scoreAttachmentMatchCallable = onCall<
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "Must be authenticated");
     }
-
-    const { attachments, transaction, partner } = request.data;
-
-    if (!attachments || !Array.isArray(attachments)) {
+    if (!request.data?.attachments || !Array.isArray(request.data.attachments)) {
       throw new HttpsError("invalid-argument", "Attachments array is required");
     }
-
-    const transactionDate = transaction?.date ? new Date(transaction.date) : null;
-
-    const scores = attachments.map((att) => {
-      const input: ScoreAttachmentInput = {
-        filename: att.filename,
-        mimeType: att.mimeType,
-        // Email context
-        emailSubject: att.emailSubject,
-        emailFrom: att.emailFrom,
-        emailSnippet: att.emailSnippet,
-        emailBodyText: att.emailBodyText,
-        emailDate: att.emailDate ? new Date(att.emailDate) : null,
-        integrationId: att.integrationId,
-        // File extracted data
-        fileExtractedAmount: att.fileExtractedAmount,
-        fileExtractedDate: att.fileExtractedDate ? new Date(att.fileExtractedDate) : null,
-        fileExtractedPartner: att.fileExtractedPartner,
-        // Transaction data
-        transactionAmount: transaction?.amount,
-        transactionDate,
-        transactionName: transaction?.name,
-        transactionReference: transaction?.reference,
-        // Use name as fallback for partner matching when no partner assigned
-        transactionPartner: transaction?.partner || transaction?.name,
-        // Partner data
-        partnerName: partner?.name,
-        partnerEmailDomains: partner?.emailDomains,
-        partnerFileSourcePatterns: partner?.fileSourcePatterns,
-        // Explicit partner IDs for connected partner matching
-        filePartnerId: att.filePartnerId,
-        transactionPartnerId: transaction?.partnerId,
-        // Email classification
-        classification: att.classification,
-      };
-
-      const result = scoreAttachmentMatch(input);
-
-      return {
-        key: att.key,
-        score: result.score,
-        label: result.label,
-        reasons: result.reasons,
-      };
-    });
-
-    return { scores };
-  }
+    return scoreAttachments(request.data);
+  },
 );
+
+// Re-export the request type so callers (UI, workflow) can build it.
+export type { ScoreAttachmentRequest };

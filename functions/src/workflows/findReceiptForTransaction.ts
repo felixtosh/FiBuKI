@@ -22,9 +22,9 @@
 
 import type { Firestore } from "firebase-admin/firestore";
 import {
-  scoreAttachmentMatch,
-  ScoreAttachmentInput,
-} from "../precision-search/scoreAttachmentMatch";
+  scoreAttachments,
+  type ScoreAttachmentRequest,
+} from "../precision-search/scoreAttachmentMatchCallable";
 import {
   generateTypedSearchQueries,
   QueryGenerationPartner,
@@ -238,28 +238,38 @@ export async function findReceiptForTransaction(
       | Array<{ sourceType: string; integrationId?: string }>
       | undefined) ?? null;
 
-  const baseScoringContext: Pick<
-    ScoreAttachmentInput,
-    | "transactionAmount"
-    | "transactionDate"
-    | "transactionName"
-    | "transactionReference"
-    | "transactionPartner"
-    | "transactionPartnerId"
-    | "partnerName"
-    | "partnerEmailDomains"
-    | "partnerFileSourcePatterns"
-  > = {
-    transactionAmount,
-    transactionDate,
-    transactionName,
-    transactionReference,
-    transactionPartner,
-    transactionPartnerId,
-    partnerName,
-    partnerEmailDomains,
-    partnerFileSourcePatterns,
+  // Build the (transaction, partner) halves of the score request once. Every
+  // candidate gets paired with these to produce a single-attachment
+  // ScoreAttachmentRequest dispatched through the shared scoreAttachments
+  // helper. This is the exact same code path the UI's file-connect overlay uses,
+  // so a given (tx, file) pair scores identically whether the agent or the
+  // user triggers it.
+  const transactionForRequest: ScoreAttachmentRequest["transaction"] = {
+    amount: transactionAmount,
+    date: transactionDate ? transactionDate.toISOString() : null,
+    name: transactionName,
+    reference: transactionReference,
+    partner: transactionPartner,
+    partnerId: transactionPartnerId,
   };
+  const partnerForRequest: ScoreAttachmentRequest["partner"] = partnerRecord
+    ? {
+        name: partnerName,
+        emailDomains: partnerEmailDomains,
+        fileSourcePatterns: partnerFileSourcePatterns,
+      }
+    : null;
+
+  function scoreOne(
+    attachment: ScoreAttachmentRequest["attachments"][number],
+  ) {
+    const { scores } = scoreAttachments({
+      attachments: [attachment],
+      transaction: transactionForRequest,
+      partner: partnerForRequest,
+    });
+    return scores[0];
+  }
 
   // --- Score local files ---
   const candidates: FindReceiptCandidate[] = [];
@@ -283,15 +293,18 @@ export async function findReceiptForTransaction(
     if (fileTxIds.includes(transactionId)) continue;
     localFileCount++;
 
-    const result = scoreAttachmentMatch({
-      ...baseScoringContext,
+    const fileExtractedDate = toDate(file.extractedDate);
+    const result = scoreOne({
+      key: fileDoc.id,
       filename: (file.fileName as string) ?? "",
       mimeType: (file.fileType as string) ?? "application/pdf",
       fileExtractedAmount:
         typeof file.extractedAmount === "number"
           ? (file.extractedAmount as number)
           : null,
-      fileExtractedDate: toDate(file.extractedDate),
+      fileExtractedDate: fileExtractedDate
+        ? fileExtractedDate.toISOString()
+        : null,
       fileExtractedPartner:
         (file.extractedPartner as string | null | undefined) ?? null,
       filePartnerId: (file.partnerId as string | null | undefined) ?? null,
@@ -443,29 +456,20 @@ export async function findReceiptForTransaction(
 
       for (const message of gmail.messages) {
         gmailEmailCount++;
-        const emailContext: Pick<
-          ScoreAttachmentInput,
-          | "emailSubject"
-          | "emailFrom"
-          | "emailSnippet"
-          | "emailBodyText"
-          | "emailDate"
-          | "integrationId"
-          | "classification"
-        > = {
+        const emailContext = {
           emailSubject: message.subject,
           emailFrom: message.from,
           emailSnippet: message.snippet,
           emailBodyText: message.bodyText,
-          emailDate: message.date ? new Date(message.date) : null,
+          emailDate: message.date || null,
           integrationId: message.integrationId,
           classification: message.classification ?? null,
         };
 
         for (const att of message.attachments) {
           gmailAttachmentCount++;
-          const result = scoreAttachmentMatch({
-            ...baseScoringContext,
+          const result = scoreOne({
+            key: `${message.messageId}:${att.attachmentId}`,
             ...emailContext,
             filename: att.filename,
             mimeType: att.mimeType,
@@ -491,8 +495,8 @@ export async function findReceiptForTransaction(
           message.attachments.length === 0 &&
           message.classification?.possibleMailInvoice
         ) {
-          const result = scoreAttachmentMatch({
-            ...baseScoringContext,
+          const result = scoreOne({
+            key: `${message.messageId}:email`,
             ...emailContext,
             filename: `${message.subject || "email"}.pdf`,
             mimeType: "application/pdf",
