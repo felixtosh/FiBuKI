@@ -2,7 +2,7 @@
 
 **Application:** FiBuKI
 **Framework:** OWASP ASVS v4.0 (CASA-mapped subset)
-**Last updated:** 2026-06-22
+**Last updated:** 2026-06-30
 
 Each section below maps to an ASVS v4.0 chapter, with FiBuKI's current status and evidence pointer. Status legend:
 
@@ -13,10 +13,10 @@ Each section below maps to an ASVS v4.0 chapter, with FiBuKI's current status an
 
 | Status | Count |
 | --- | --- |
-| MET | 105 |
+| MET | 108 |
 | PARTIAL | 6 |
 | N/A | 19 |
-| TODO | 4 (DAST run + HSTS preload submission + CSP runtime verify + App Hosting CORS audit) |
+| TODO | 1 (CSP runtime verify; HSTS preload submission ready to click) |
 
 ## V1 — Architecture, Design and Threat Modeling
 
@@ -152,8 +152,8 @@ Each section below maps to an ASVS v4.0 chapter, with FiBuKI's current status an
 | --- | --- | --- | --- |
 | 14.1 | Build | MET | CI in `.github/workflows/ci.yml` |
 | 14.2 | Dependency | MET | Lockfile + Dependabot |
-| 14.3 | Unintended security disclosure | TODO | Confirm no source maps in production; add to DAST run |
-| 14.4 | HTTP security headers | MET | CSP, HSTS (preload), X-Frame-Options DENY, X-Content-Type-Options nosniff, Referrer-Policy strict-origin-when-cross-origin, Permissions-Policy, COOP — all set in `next.config.ts` |
+| 14.3 | Unintended security disclosure | MET | Source maps confirmed 404 on prod (`/_next/static/chunks/*.js.map`); `poweredByHeader: false` removes the `X-Powered-By: Next.js` leak |
+| 14.4 | HTTP security headers | MET | CSP, HSTS (preload), X-Frame-Options DENY, X-Content-Type-Options nosniff, Referrer-Policy strict-origin-when-cross-origin, Permissions-Policy, COOP same-origin-allow-popups, CORP same-origin — all set in `next.config.ts` |
 | 14.5 | HTTP request header validation | MET | Next.js + Cloud Functions reject unknown methods |
 
 ## Remediation queue
@@ -161,10 +161,13 @@ Each section below maps to an ASVS v4.0 chapter, with FiBuKI's current status an
 1. ~~Add the missing response-security headers (V9.1, V14.4).~~ ✅ Done — `next.config.ts` now sets CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy.
 2. ~~Run a SAST scan (CodeQL).~~ ✅ Done — 0 findings across 200 rules on 2026-06-22. Re-runs weekly + per-PR. See [07-sast-remediation-report.md](./07-sast-remediation-report.md).
 3. ~~Close all critical and high dependency CVEs.~~ ✅ Done — `npm audit fix` cleared 4 critical + 17 high. Remaining moderates documented in [dependency-audit-2026-06.md](./dependency-audit-2026-06.md).
-4. Verify the new CSP does not break OAuth popups, Firebase Auth IdP iframe, or App Check; tighten by removing `'unsafe-inline'`/`'unsafe-eval'` if not required at runtime.
-5. Submit `fibuki.com` to the HSTS preload list (https://hstspreload.org) once the header has been live for 2 weeks.
-6. Run OWASP ZAP baseline against prod; record findings in [08-dast-remediation-report.md](./08-dast-remediation-report.md). Requires PR #29 to land first so the workflow can be dispatched.
-7. Confirm Firebase App Hosting does not serve `Access-Control-Allow-Origin: *` on static assets (orbis gotcha) — verified during ZAP run.
+4. Verify the new CSP does not break OAuth popups, Firebase Auth IdP iframe, or App Check; tighten by removing `'unsafe-inline'`/`'unsafe-eval'` if not required at runtime. **Open** — the 3 Medium findings from the 2026-06-29 ZAP run are all CSP relaxations; remediation requires a nonce-based middleware approach for Next 14 hydration.
+5. Submit `fibuki.com` to the HSTS preload list (https://hstspreload.org) — domain has been validated by the form; submission button is ready. Header has been live with preload directive for 2+ weeks. Subdomain audit confirms only `www.fibuki.com` exists (NXDOMAIN for app/staging/dev/api/admin/mail/mcp), so `includeSubDomains` is safe.
+6. ~~Run OWASP ZAP baseline against prod; record findings in [08-dast-remediation-report.md](./08-dast-remediation-report.md).~~ ✅ Done — first scan 2026-06-29 (scheduled). 0 High / 3 Medium / 4 Low. Findings recorded with remediation status. Re-runs weekly.
+7. ~~Confirm Firebase App Hosting does not serve `Access-Control-Allow-Origin: *` on static assets~~ ✅ Done — verified via curl on `/_next/static/chunks/*.js`: no `Access-Control-Allow-Origin` header at all, well within CASA expectations.
+8. ~~Source map disclosure (V14.3)~~ ✅ Done — `/_next/static/chunks/*.js.map` returns 404 on prod.
+9. ~~Remove `X-Powered-By: Next.js` leak~~ ✅ Done — `poweredByHeader: false` in `next.config.ts`.
+10. ~~Add `Cross-Origin-Resource-Policy: same-origin` to the global header set~~ ✅ Done — closes the systemic CORP-missing Low finding from ZAP.
 
 ## ASVS coverage statement
 

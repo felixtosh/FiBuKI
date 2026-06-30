@@ -1,8 +1,8 @@
-# 08 — DAST Remediation Report (Template)
+# 08 — DAST Remediation Report
 
 **Application:** FiBuKI
-**Status:** Template — populate after first DAST run
-**Last updated:** 2026-06-21
+**Status:** First DAST run complete (2026-06-29)
+**Last updated:** 2026-06-30
 
 This report records dynamic-scan findings against a live FiBuKI environment and the remediation evidence supplied for revalidation.
 
@@ -13,11 +13,12 @@ This report records dynamic-scan findings against a live FiBuKI environment and 
 | Primary tool | OWASP ZAP (baseline + active scan) |
 | Secondary tool | Fluid Attacks CLI |
 | Auxiliary checks | Qualys SSL Labs, securityheaders.com, mozilla/observatory |
-| Target | `https://staging.fibuki.com` (mirrors prod, no real user data) |
-| Scan scope | All public routes + authenticated user routes (using test user) |
-| Auth method | Session cookie / Firebase ID token injected via ZAP authentication script |
-| Run date | _TBD_ |
-| Commit at scan time | _TBD_ |
+| Target | `https://fibuki.com` (production) |
+| Scan scope | Baseline (unauthenticated) — `/`, `/robots.txt`, `/sitemap.xml`, public marketing routes |
+| Auth method | None (baseline scan) |
+| Run date | 2026-06-29 06:33 UTC (scheduled) |
+| Workflow run | https://github.com/felixtosh/FiBuKI/actions/runs/28353237092 |
+| Commit at scan time | `0b83c483` (CASA: record CodeQL scan result) |
 
 ## 2. How to reproduce
 
@@ -68,42 +69,98 @@ https://securityheaders.com/?q=fibuki.com — re-run before submission; expect *
 
 ## 3. Findings summary
 
-| Severity | Open | Fixed | Accepted | False positive |
-| --- | --- | --- | --- | --- |
-| Critical | 0 | 0 | 0 | 0 |
-| High | 0 | 0 | 0 | 0 |
-| Medium | 0 | 0 | 0 | 0 |
-| Low | 0 | 0 | 0 | 0 |
+ZAP baseline scan 2026-06-29 against `https://fibuki.com`:
+
+| Severity | Open | Accepted | Total |
+| --- | --- | --- | --- |
+| Critical | 0 | 0 | 0 |
+| High | 0 | 0 | 0 |
+| Medium | 3 | 0 | 3 |
+| Low | 4 | 0 | 4 |
+| Informational | 0 | 4 | 4 |
 
 ## 4. Findings detail
 
-> One subsection per finding.
-
-### 4.1 [example] Missing Content-Security-Policy header
+### 4.1 CSP: script-src `'unsafe-eval'`
 
 | Field | Value |
 | --- | --- |
 | Tool | OWASP ZAP baseline |
-| CWE | CWE-693 |
+| ZAP rule | 10055 |
 | Severity | Medium |
-| Endpoint | `/` (all routes) |
-| Description | No `Content-Security-Policy` header was returned. |
-| Status | Fixed |
-| Fix commit | `_TBD_` |
-| Fix | Added CSP in `next.config.ts` with allow-list for Stripe, Google Identity, Firebase, fonts (self-hosted). |
-| Verification | Re-ran ZAP baseline; finding cleared. Screenshot in `evidence/csp-after.png`. |
+| Endpoint | `/`, `/robots.txt`, `/sitemap.xml` (3 instances) |
+| Description | `script-src` includes `'unsafe-eval'`, which lets script use `eval`-family APIs and weakens CSP's XSS defenses. |
+| Status | Open (CSP runtime verification pending — see CASA checklist item 4) |
+| Root cause | Initial CSP shipped with `'unsafe-eval'` to avoid breaking Next.js dev / production runtime. Confirm whether Next 14 + our deps actually require it; remove if not. |
+| Verification plan | Exercise prod (OAuth popup, file upload, PDF preview, chat agent) with a tightened CSP in staging; remove `'unsafe-eval'` from `next.config.ts` if no console violations. Re-run ZAP. |
 
-### 4.2 [example] HSTS not enforced
+### 4.2 CSP: script-src `'unsafe-inline'`
 
 | Field | Value |
 | --- | --- |
-| Tool | securityheaders.com |
+| Tool | OWASP ZAP baseline |
+| ZAP rule | 10055 |
 | Severity | Medium |
-| Description | `Strict-Transport-Security` header missing. |
-| Status | Fixed |
-| Fix commit | `_TBD_` |
-| Fix | `next.config.ts` adds `Strict-Transport-Security: max-age=63072000; includeSubDomains; preload`. |
-| Verification | securityheaders.com grade went from D to A. |
+| Endpoint | `/`, `/robots.txt`, `/sitemap.xml` (3 instances) |
+| Description | `script-src` includes `'unsafe-inline'`. Inline scripts cannot be CSP-validated. |
+| Status | Open |
+| Root cause | Next 14 inlines a hydration bootstrap; removal usually requires the nonce-based CSP middleware path. |
+| Verification plan | Migrate to nonce-based CSP via Next middleware; verify hydration still works; re-run ZAP. Tracked separately from the immediate CASA submission since it requires app-wide code change. |
+
+### 4.3 CSP: style-src `'unsafe-inline'`
+
+| Field | Value |
+| --- | --- |
+| Tool | OWASP ZAP baseline |
+| ZAP rule | 10055 |
+| Severity | Medium |
+| Endpoint | `/`, `/robots.txt`, `/sitemap.xml` (3 instances) |
+| Description | `style-src` includes `'unsafe-inline'`. |
+| Status | Open |
+| Root cause | Required by Tailwind v4 CSS-in-JS / Radix UI inline styles and Next.js critical-CSS inlining. |
+| Verification plan | Same nonce-based approach as 4.2; bundled together. |
+
+### 4.4 Cross-Origin-Embedder-Policy header missing
+
+| Field | Value |
+| --- | --- |
+| Tool | OWASP ZAP baseline |
+| Severity | Low |
+| Endpoint | `/`, `/robots.txt` (2 instances) |
+| Description | No `Cross-Origin-Embedder-Policy` (COEP) header. |
+| Status | Accepted risk |
+| Reason | Setting `COEP: require-corp` would break the Google OAuth popup, Firebase Auth iframe, and external image hosts (`*.googleusercontent.com`, `asset.brandfetch.io`) that don't serve CORP headers. CASA Tier 2 doesn't require COEP. |
+
+### 4.5 Cross-Origin-Opener-Policy header missing (some pages)
+
+| Field | Value |
+| --- | --- |
+| Tool | OWASP ZAP baseline |
+| Severity | Low |
+| Endpoint | 2 instances (likely `/robots.txt`, `/sitemap.xml` which return plain text without the layout headers) |
+| Description | `Cross-Origin-Opener-Policy` is only set on HTML routes via `next.config.ts`. Plain-text public files miss it. |
+| Status | Open (low priority) |
+| Verification plan | Extend the COOP header to apply to all routes in `next.config.ts`. |
+
+### 4.6 Cross-Origin-Resource-Policy header missing
+
+| Field | Value |
+| --- | --- |
+| Tool | OWASP ZAP baseline |
+| Severity | Low (systemic) |
+| Description | No `Cross-Origin-Resource-Policy` (CORP) header on any response. |
+| Status | Open (low priority) |
+| Verification plan | Add `Cross-Origin-Resource-Policy: same-origin` to the global header set in `next.config.ts`. Keep `same-site` for resources that need to be embeddable (none currently). |
+
+### 4.7 `X-Powered-By: Next.js` information leak
+
+| Field | Value |
+| --- | --- |
+| Tool | OWASP ZAP baseline |
+| Severity | Low (systemic) |
+| Description | Response header advertises the framework + version. |
+| Status | Open (trivial fix) |
+| Verification plan | Set `poweredByHeader: false` in `next.config.ts`. |
 
 ## 5. Headers checklist
 
