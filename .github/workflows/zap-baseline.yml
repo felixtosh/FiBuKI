@@ -27,7 +27,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: OWASP ZAP Baseline Scan
-        uses: zaproxy/action-baseline@v0.14.0
+        uses: zaproxy/action-baseline@v0.15.0
         with:
           target: ${{ github.event.inputs.target || 'https://fibuki.com' }}
           rules_file_name: .zap/rules.tsv
