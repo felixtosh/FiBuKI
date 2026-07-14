@@ -167,17 +167,12 @@ interface QueueReceiptSearchResult {
 }
 
 /**
- * Create a minimal service token for server-to-server auth
- * The Next.js auth helper decodes without verification, so this works
- */
-function createServiceToken(userId: string): string {
-  const header = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" })).toString("base64url");
-  const payload = Buffer.from(JSON.stringify({ user_id: userId, sub: userId, iat: Date.now() })).toString("base64url");
-  return `${header}.${payload}.`;
-}
-
-/**
  * Call the worker API directly (server-to-server)
+ *
+ * Authenticated with the shared internal secret (INTERNAL_API_SECRET), not a
+ * forged token. The Next.js auth helper verifies Firebase ID tokens now, so a
+ * self-minted JWT would (correctly) be rejected. When INTERNAL_API_SECRET is
+ * unset the call fails auth and the caller falls back to document-based queuing.
  */
 async function callWorkerApiDirectly(
   userId: string,
@@ -187,17 +182,23 @@ async function callWorkerApiDirectly(
 ): Promise<{ runId: string; status: string; summary?: string } | null> {
   const appUrl = getAppUrl();
 
-  try {
-    // Create a service token with the user ID
-    const serviceToken = createServiceToken(userId);
+  const internalSecret = process.env.INTERNAL_API_SECRET;
+  if (!internalSecret) {
+    console.warn(
+      "[QueueReceiptSearch] INTERNAL_API_SECRET not set; skipping direct worker call, falling back to queue"
+    );
+    return null;
+  }
 
-    // Call the worker API
+  try {
+    // Call the worker API (server-to-server, authenticated via internal secret)
     console.log(`[QueueReceiptSearch] Calling worker API at ${appUrl}/api/worker`);
     const response = await fetch(`${appUrl}/api/worker`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${serviceToken}`,
+        "X-Internal-Secret": internalSecret,
+        "X-Internal-User-Id": userId,
       },
       body: JSON.stringify({
         workerType,
