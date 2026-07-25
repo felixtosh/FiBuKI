@@ -220,6 +220,88 @@ interface ProcessQueueOptions {
   encryptionKey: string;
 }
 
+/**
+ * Select and construct the MailProvider for a queue item, forking on the
+ * integration's `provider`. Extracted verbatim from processQueueItem so the
+ * two legs — the self-host IMAP path and the cloud Gmail/OAuth path — can be
+ * covered in isolation (see gmailSyncQueue-provider-fork.test.ts).
+ *
+ * - imap: decrypt the stored app-password and hand the connection config to the
+ *   provider. No OAuth, no refresh; the token doc carries no expiresAt.
+ * - gmail/OAuth: refresh the access token if it is expired or expiring within
+ *   five minutes; on refresh failure mark the integration needsReauth and throw.
+ */
+export async function resolveMailProvider(
+  providerName: string,
+  integrationData: FirebaseFirestore.DocumentData | undefined,
+  tokenData: FirebaseFirestore.DocumentData,
+  integrationId: string,
+  options: ProcessQueueOptions
+): Promise<MailProvider> {
+  if (providerName === "imap") {
+    // IMAP has one long-lived app-password (no refresh). Decrypt and hand the
+    // connection config to the provider. Gmail's expiry/refresh dance below is
+    // skipped entirely — the token doc has no expiresAt for IMAP.
+    const t = tokenData as { secret?: string; secretIv?: string };
+    if (!t.secret || !t.secretIv) {
+      throw new Error("IMAP integration is missing its stored app-password");
+    }
+    const host = integrationData?.imapHost as string | undefined;
+    const user = integrationData?.email as string | undefined;
+    if (!host || !user) {
+      throw new Error("IMAP integration is missing host or username");
+    }
+    const password = decrypt(t.secret, t.secretIv, options.encryptionKey);
+    return makeProvider("imap", {
+      imap: {
+        host,
+        port: (integrationData?.imapPort as number) ?? 993,
+        secure: integrationData?.imapSecure !== false,
+        allowSelfSigned: Boolean(integrationData?.imapAllowSelfSigned),
+        mailbox: (integrationData?.imapMailbox as string) || "INBOX",
+        keywordPrefilter: integrationData?.imapKeywordPrefilter !== false,
+        user,
+        password,
+      },
+    });
+  }
+
+  let token = tokenData as EmailTokenDocument;
+
+  // Check if token is expired or about to expire (within 5 minutes)
+  const tokenExpiresAt = token.expiresAt.toDate();
+  const fiveMinutesFromNow = new Date(Date.now() + 5 * 60 * 1000);
+
+  if (tokenExpiresAt < fiveMinutesFromNow) {
+    console.log(`[GmailSync] Token expired or expiring soon, attempting refresh...`);
+
+    // Try to refresh the token using secrets
+    const refreshedToken = await refreshAccessToken(
+      integrationId,
+      token.refreshToken,
+      token.refreshTokenIv,
+      options.clientId,
+      options.clientSecret,
+      options.encryptionKey
+    );
+
+    if (refreshedToken) {
+      console.log(`[GmailSync] Token refreshed successfully`);
+      token = { ...token, accessToken: refreshedToken.accessToken, expiresAt: refreshedToken.expiresAt };
+    } else {
+      // Refresh failed - mark integration as needing reauth
+      await db.collection("emailIntegrations").doc(integrationId).update({
+        needsReauth: true,
+        lastError: "Access token expired and refresh failed",
+        updatedAt: Timestamp.now(),
+      });
+      throw new Error("Access token expired and refresh failed - needs re-authentication");
+    }
+  }
+
+  return makeProvider(providerName, { accessToken: token.accessToken });
+}
+
 async function processQueueItem(
   queueItem: GmailSyncQueueItem,
   options: ProcessQueueOptions
@@ -241,70 +323,14 @@ async function processQueueItem(
     throw new Error("Email token not found");
   }
 
-  let provider: MailProvider;
+  const provider = await resolveMailProvider(
+    providerName,
+    integrationData,
+    tokenDoc.data() as FirebaseFirestore.DocumentData,
+    queueItem.integrationId,
+    options
+  );
 
-  if (providerName === "imap") {
-    // IMAP has one long-lived app-password (no refresh). Decrypt and hand the
-    // connection config to the provider. Gmail's expiry/refresh dance below is
-    // skipped entirely — the token doc has no expiresAt for IMAP.
-    const t = tokenDoc.data() as { secret?: string; secretIv?: string };
-    if (!t.secret || !t.secretIv) {
-      throw new Error("IMAP integration is missing its stored app-password");
-    }
-    const host = integrationData?.imapHost as string | undefined;
-    const user = integrationData?.email as string | undefined;
-    if (!host || !user) {
-      throw new Error("IMAP integration is missing host or username");
-    }
-    const password = decrypt(t.secret, t.secretIv, options.encryptionKey);
-    provider = makeProvider("imap", {
-      imap: {
-        host,
-        port: (integrationData?.imapPort as number) ?? 993,
-        secure: integrationData?.imapSecure !== false,
-        allowSelfSigned: Boolean(integrationData?.imapAllowSelfSigned),
-        mailbox: (integrationData?.imapMailbox as string) || "INBOX",
-        keywordPrefilter: integrationData?.imapKeywordPrefilter !== false,
-        user,
-        password,
-      },
-    });
-  } else {
-    let tokenData = tokenDoc.data() as EmailTokenDocument;
-
-    // Check if token is expired or about to expire (within 5 minutes)
-    const tokenExpiresAt = tokenData.expiresAt.toDate();
-    const fiveMinutesFromNow = new Date(Date.now() + 5 * 60 * 1000);
-
-    if (tokenExpiresAt < fiveMinutesFromNow) {
-      console.log(`[GmailSync] Token expired or expiring soon, attempting refresh...`);
-
-      // Try to refresh the token using secrets
-      const refreshedToken = await refreshAccessToken(
-        queueItem.integrationId,
-        tokenData.refreshToken,
-        tokenData.refreshTokenIv,
-        options.clientId,
-        options.clientSecret,
-        options.encryptionKey
-      );
-
-      if (refreshedToken) {
-        console.log(`[GmailSync] Token refreshed successfully`);
-        tokenData = { ...tokenData, accessToken: refreshedToken.accessToken, expiresAt: refreshedToken.expiresAt };
-      } else {
-        // Refresh failed - mark integration as needing reauth
-        await db.collection("emailIntegrations").doc(queueItem.integrationId).update({
-          needsReauth: true,
-          lastError: "Access token expired and refresh failed",
-          updatedAt: Timestamp.now(),
-        });
-        throw new Error("Access token expired and refresh failed - needs re-authentication");
-      }
-    }
-
-    provider = makeProvider(providerName, { accessToken: tokenData.accessToken });
-  }
   const dateFrom = queueItem.dateFrom.toDate();
   const dateTo = queueItem.dateTo.toDate();
 
