@@ -23,6 +23,7 @@ import { MfaChallengeDialog } from "@/components/mfa";
 import { useMfaChallenge } from "@/hooks/use-mfa-challenge";
 import { usePasskeys } from "@/hooks/use-passkeys";
 import { githubSignInEnabled } from "@/lib/auth/social-providers";
+import { consumeSocialAccessRequest } from "@/lib/auth/social-access-request";
 import { logoFont } from "@/app/fonts";
 
 export default function LoginPage() {
@@ -31,6 +32,14 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isLogoJumping, setIsLogoJumping] = useState(false);
+  // Self-host: a non-invited Google sign-in bounces back here via the auth
+  // client's errorCallbackURL. The host has already recorded the request; show
+  // the same banner the Firebase build shows via `accessRequested`. No-op in
+  // the Firebase build (the marker never appears there).
+  const [socialAccessRequested, setSocialAccessRequested] = useState(false);
+  useEffect(() => {
+    if (consumeSocialAccessRequest()) setSocialAccessRequested(true);
+  }, []);
 
   const handleLogoClick = () => {
     if (isLogoJumping) return;
@@ -177,7 +186,7 @@ export default function LoginPage() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        {accessRequested && (
+        {(accessRequested || socialAccessRequested) && (
           <Alert className="border-green-200 bg-green-50 text-green-900">
             <CheckCircle className="h-4 w-4 text-green-600" />
             <AlertDescription>

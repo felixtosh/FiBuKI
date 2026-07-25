@@ -34,7 +34,7 @@ import { bearer } from "better-auth/plugins/bearer";
 import { jwt } from "better-auth/plugins/jwt";
 import { organization } from "better-auth/plugins/organization";
 import { createLocalJWKSet, jwtVerify } from "jose";
-import { getFirestore, getSqlClient } from "./firestore-shim";
+import { getFirestore, getSqlClient, FieldValue } from "./firestore-shim";
 import { getTenantId } from "./db/tenant";
 import type { TokenVerifier } from "./host";
 
@@ -408,6 +408,56 @@ async function assertInvited(email: string): Promise<void> {
 }
 
 /**
+ * Record an access request from a non-invited social sign-in — the self-host
+ * equivalent of the Firebase build's `submitAccessRequest` callable.
+ *
+ * The Firebase flow lets Google auto-create the user (so it is authenticated),
+ * the callable records the request from that auth context, then the client
+ * deletes the user. Here the invite gate blocks creation outright, so there is
+ * never an authenticated caller to run a callable — we record it server-side,
+ * straight from the create hook, before throwing to block the account.
+ *
+ * Same collection and shape the admin UI already listens on (`accessRequests`,
+ * dedupe by (email, pending)); the client data-policy forbids client creates,
+ * so this server-side write is the only path in. Self-host social sign-in is
+ * Google-only, so the provider is always "google".
+ */
+async function recordAccessRequest(user: {
+  email: string;
+  name?: string | null;
+  image?: string | null;
+}): Promise<void> {
+  const email = user.email.trim().toLowerCase();
+  const displayName = user.name ?? null;
+  const photoURL = user.image ?? null;
+  const db = getFirestore();
+  const existing = await db
+    .collection("accessRequests")
+    .where("email", "==", email)
+    .where("status", "==", "pending")
+    .limit(1)
+    .get();
+  if (!existing.empty) {
+    // Refresh the existing pending request rather than pile up duplicates.
+    await existing.docs[0].ref.update({
+      requestedAt: FieldValue.serverTimestamp(),
+      displayName,
+      photoURL,
+      provider: "google",
+    });
+    return;
+  }
+  await db.collection("accessRequests").doc().set({
+    email,
+    displayName,
+    photoURL,
+    provider: "google",
+    requestedAt: FieldValue.serverTimestamp(),
+    status: "pending",
+  });
+}
+
+/**
  * Google social provider (decision 2026-07-21, docs/decisions.md): BYO
  * OAuth client via env — "same features, bring your own OAuth". Absent env
  * simply leaves the provider unregistered; email/password keeps working.
@@ -439,7 +489,21 @@ function buildAuth() {
       user: {
         create: {
           before: async (user) => {
-            await assertInvited(user.email);
+            try {
+              await assertInvited(user.email);
+            } catch (err) {
+              // A non-invited account creation. provisionUser gates earlier
+              // (it calls assertInvited before the create fires), so in
+              // practice this branch only trips for a social sign-in — Google
+              // auto-creating a stranger on first login. Parity with the
+              // Firebase build: record an access request an admin can act on,
+              // then block the account. A recording failure must never mask
+              // the invite block, so it is best-effort.
+              await recordAccessRequest(user).catch((e) =>
+                console.error("selfhost auth: failed to record access request", e),
+              );
+              throw err;
+            }
             return { data: user };
           },
         },

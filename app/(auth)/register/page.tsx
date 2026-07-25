@@ -20,6 +20,7 @@ import { FibukiMascot } from "@/components/ui/fibuki-mascot";
 import { logoFont } from "@/app/fonts";
 import { callFunction } from "@/lib/firebase/callable";
 import { githubSignInEnabled } from "@/lib/auth/social-providers";
+import { consumeSocialAccessRequest } from "@/lib/auth/social-access-request";
 import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
 
@@ -34,8 +35,16 @@ export default function RegisterPage() {
   const [referralApplied, setReferralApplied] = useState(false);
   const [hasReferral, setHasReferral] = useState(false);
   const [openSeats, setOpenSeats] = useState<{ total: number; remaining: number; claimed: number } | null>(null);
+  // Self-host: a non-invited Google sign-in bounces back here via the auth
+  // client's errorCallbackURL (the host already recorded the request). Show the
+  // same banner the Firebase build shows via `accessRequested`; no-op there.
+  const [socialAccessRequested, setSocialAccessRequested] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
+
+  useEffect(() => {
+    if (consumeSocialAccessRequest()) setSocialAccessRequested(true);
+  }, []);
 
   // Listen for open seats config (public read, no auth needed)
   useEffect(() => {
@@ -215,7 +224,7 @@ export default function RegisterPage() {
               </Alert>
             )}
 
-            {accessRequested ? (
+            {accessRequested || socialAccessRequested ? (
               <Alert className="border-green-200 bg-green-50 text-green-900">
                 <CheckCircle className="h-4 w-4 text-green-600" />
                 <AlertDescription>
