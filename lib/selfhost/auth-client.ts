@@ -718,10 +718,6 @@ async function maybeCompleteSocialCallback(): Promise<void> {
   if (typeof window === "undefined") return;
   const params = new URLSearchParams(window.location.search);
   if (!params.get(SOCIAL_MARKER)) return;
-  // Strip the marker first — a reload must not retry the pickup.
-  params.delete(SOCIAL_MARKER);
-  const clean = window.location.pathname + (params.toString() ? `?${params.toString()}` : "");
-  window.history.replaceState({}, "", clean);
   try {
     const base = authApiBase();
     const res = await fetch(`${base}/get-session`, { credentials: "include" });
@@ -735,6 +731,19 @@ async function maybeCompleteSocialCallback(): Promise<void> {
     adoptSession(sessionToken, await mintJwt(base, sessionToken));
   } catch {
     /* not signed in — the login screen renders normally */
+  } finally {
+    // Strip the marker only AFTER the pickup attempt settles — matching the
+    // OIDC path (maybeCompleteCallback), which clears its params in a finally
+    // too. Stripping it up front opened a gap: a reload while the async
+    // get-session / JWT mint was still in flight would find no marker, skip
+    // the pickup entirely, and strand a live server session on the login
+    // screen (forcing a needless re-login). The pickup is an idempotent GET,
+    // so surviving one extra attempt on a mid-flight reload is harmless; a
+    // spent marker must still be cleared so a later manual reload doesn't
+    // repeat it.
+    params.delete(SOCIAL_MARKER);
+    const clean = window.location.pathname + (params.toString() ? `?${params.toString()}` : "");
+    window.history.replaceState({}, "", clean);
   }
 }
 

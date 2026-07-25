@@ -490,3 +490,110 @@ describe("selfhost auth-client — firebase/auth surface (W1 spec)", () => {
     });
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* Google social callback pickup (built-in mode)                       */
+/*                                                                     */
+/* The host's Better Auth callback set a session cookie and redirected  */
+/* back to the app with ?fibuki_social=1; module-init picks that up,    */
+/* swaps the cookie session for the bearer-token world, and clears the  */
+/* marker. Regression net for the mid-pickup-reload strand.             */
+/* ------------------------------------------------------------------ */
+
+describe("selfhost auth-client — Google social callback pickup (built-in mode)", () => {
+  const API = "https://app.selfhost.test/api";
+  const AUTH_BASE = `${API}/__auth`;
+
+  /**
+   * Load the client as if the browser just returned from the Google flow:
+   * the social marker is already on the URL and the API base is configured,
+   * so module-init's fire-and-forget maybeCompleteSocialCallback runs the real
+   * pickup against `fetchImpl` (a stubbed host serving get-session + token).
+   */
+  async function loadAfterSocialReturn(
+    fetchImpl: typeof fetch,
+    onReplaceState: (url?: string) => void,
+  ): Promise<AuthClient> {
+    vi.resetModules();
+    fakeWindow = installWindow();
+    fakeWindow.location.pathname = "/login";
+    fakeWindow.location.search = "?fibuki_social=1";
+    fakeWindow.location.href = "https://app.selfhost.test/login?fibuki_social=1";
+    fakeWindow.history.replaceState = (_data, _unused, url) => onReplaceState(url);
+    for (const k of [
+      "NEXT_PUBLIC_FIBUKI_DEV_UID",
+      "NEXT_PUBLIC_FIBUKI_DEV_ADMIN",
+      "NEXT_PUBLIC_OIDC_ISSUER",
+      "NEXT_PUBLIC_OIDC_CLIENT_ID",
+    ]) {
+      delete process.env[k];
+    }
+    process.env.NEXT_PUBLIC_FIBUKI_API_URL = API;
+    vi.stubGlobal("fetch", fetchImpl);
+    return import("../../../lib/selfhost/auth-client");
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete process.env.NEXT_PUBLIC_FIBUKI_API_URL;
+  });
+
+  it("picks up the server session, adopts it, then strips the spent marker", async () => {
+    const replaced: Array<string | undefined> = [];
+    const idToken = makeJwt({ sub: UID, email: "stefan@example.test", exp: IN_AN_HOUR() });
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === `${AUTH_BASE}/get-session`) {
+        return new Response(JSON.stringify({ session: { token: "sess-abc" } }), { status: 200 });
+      }
+      if (url === `${AUTH_BASE}/token`) {
+        return new Response(JSON.stringify({ token: idToken }), { status: 200 });
+      }
+      return new Response("not found", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const c = await loadAfterSocialReturn(fetchImpl, (url) => replaced.push(url));
+    for (let i = 0; i < 6; i++) await tick();
+
+    expect(c.getAuth().currentUser?.uid).toBe(UID);
+    // Marker cleared once the pickup landed — back to a clean /login, no query.
+    expect(replaced).toContain("/login");
+  });
+
+  it("keeps the marker until the pickup settles — a mid-pickup reload can retry (regression)", async () => {
+    // The bug: the marker was stripped up front, before the async
+    // get-session / JWT mint. A reload during that window found no marker,
+    // skipped the pickup, and stranded a live server session on the login
+    // screen. Pin the fix: nothing is stripped while the pickup is in flight.
+    let releaseSession!: () => void;
+    const gate = new Promise<void>((r) => (releaseSession = r));
+    const replaced: Array<string | undefined> = [];
+    const idToken = makeJwt({ sub: UID, exp: IN_AN_HOUR() });
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === `${AUTH_BASE}/get-session`) {
+        await gate; // stall the pickup mid-flight
+        return new Response(JSON.stringify({ session: { token: "sess-xyz" } }), { status: 200 });
+      }
+      if (url === `${AUTH_BASE}/token`) {
+        return new Response(JSON.stringify({ token: idToken }), { status: 200 });
+      }
+      return new Response("not found", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const c = await loadAfterSocialReturn(fetchImpl, (url) => replaced.push(url));
+    for (let i = 0; i < 4; i++) await tick();
+
+    // Pickup is parked on the stalled get-session: the marker must NOT have
+    // been touched yet (pre-fix code would already have stripped it here).
+    expect(replaced).toHaveLength(0);
+    expect(c.getAuth().currentUser).toBeNull();
+
+    releaseSession();
+    for (let i = 0; i < 6; i++) await tick();
+
+    // Now the session is adopted AND the spent marker is finally cleared.
+    expect(c.getAuth().currentUser?.uid).toBe(UID);
+    expect(replaced).toContain("/login");
+  });
+});
