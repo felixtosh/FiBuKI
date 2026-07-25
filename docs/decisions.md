@@ -20,6 +20,23 @@ scope, process, product rules, external commitments.
 
 ---
 
+## 2026-07-25 — Non-invited social sign-in: full access-request parity
+
+**Decided by:** Stefan (in-session choice; implemented in PR #34)
+
+A non-invited Google sign-in under self-host must reach the **same outcome as
+the cloud build** — record an access request an admin can act on, and show the
+"access request submitted" banner — not just silently fail. Chosen over the
+lighter "client-only message, no server record" option.
+
+Context: the Firebase `submitAccessRequest` callable needs an authenticated
+caller (Firebase auto-creates the OAuth user, records, then deletes it). The
+self-host invite gate blocks creation outright, so there is never an
+authenticated caller. Parity therefore requires the **host** to write the
+`accessRequests` record from the `user.create.before` hook (the client
+data-policy forbids client creates). This keeps the "self-host and cloud ship
+the same features" rule intact rather than accepting an admin-visibility gap.
+
 ## 2026-07-21 — W1 Better Auth: implementation decisions (spec accepted)
 
 **Decided by:** Stefan (checkboxes in
