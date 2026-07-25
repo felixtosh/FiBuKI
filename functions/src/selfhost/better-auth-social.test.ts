@@ -103,6 +103,15 @@ async function allowEmail(email: string): Promise<void> {
   await getFirestore().collection("allowedEmails").add({ email, createdAt: new Date() });
 }
 
+async function pendingAccessRequests(email: string): Promise<Array<Record<string, unknown>>> {
+  const snap = await getFirestore()
+    .collection("accessRequests")
+    .where("email", "==", email.toLowerCase())
+    .where("status", "==", "pending")
+    .get();
+  return snap.docs.map((d) => d.data());
+}
+
 describe("Google social sign-in — provider wiring + invite gate on the auto-create path", () => {
   it("registers google with the right client_id and redirect_uri when env is set", async () => {
     const auth = await createSelfhostAuth();
@@ -140,6 +149,31 @@ describe("Google social sign-in — provider wiring + invite gate on the auto-cr
     const res = await auth.handler(socialSignIn({ idToken: { token: await mintGoogleIdToken(email) } }));
     expect(res.status).toBe(401); // OAUTH_LINK_ERROR — hook threw
     expect(await countUsers(email)).toBe(0);
+  });
+
+  it("records a pending access request for the non-invited sign-in (admin can act)", async () => {
+    // Firebase parity: the invite gate blocks the account, but the attempt is
+    // not a silent dead end — the create hook records an access request the
+    // admin UI already listens on, the self-host equivalent of the Firebase
+    // build's submitAccessRequest. A second attempt dedupes onto it.
+    stubGoogleJwks();
+    const auth = await createSelfhostAuth();
+    const email = uniqueEmail("stranger-req");
+
+    const res = await auth.handler(socialSignIn({ idToken: { token: await mintGoogleIdToken(email) } }));
+    expect(res.status).toBe(401);
+    expect(await countUsers(email)).toBe(0);
+
+    const reqs = await pendingAccessRequests(email);
+    expect(reqs).toHaveLength(1);
+    expect(reqs[0].provider).toBe("google");
+    expect(reqs[0].status).toBe("pending");
+    expect(reqs[0].email).toBe(email.toLowerCase());
+
+    // A second rejected attempt must not pile up a duplicate request.
+    const res2 = await auth.handler(socialSignIn({ idToken: { token: await mintGoogleIdToken(email) } }));
+    expect(res2.status).toBe(401);
+    expect(await pendingAccessRequests(email)).toHaveLength(1);
   });
 
   it("auto-creates an invited Google user and issues a JWKS-verifiable JWT", async () => {

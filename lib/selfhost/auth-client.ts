@@ -706,6 +706,15 @@ async function maybeCompleteCallback(): Promise<boolean> {
 const SOCIAL_MARKER = "fibuki_social";
 
 /**
+ * Query param marking a return down the ERROR path of that flow — set as our
+ * `errorCallbackURL` so a rejected sign-in (chiefly the invite gate blocking a
+ * non-invited stranger) bounces back to the app with a marker the login /
+ * register page turns into an "access request submitted" banner, instead of a
+ * silent dead end. See lib/auth/social-access-request.ts.
+ */
+const SOCIAL_ERROR_MARKER = "fibuki_social_error";
+
+/**
  * Complete a Google social sign-in (built-in mode). The Better Auth callback
  * on the API host set a session COOKIE there and redirected back to us with
  * the marker param; pick the session up and swap it for the bearer-token
@@ -976,10 +985,19 @@ export async function signInWithPopup(_authArg: unknown, provider: unknown): Pro
   const base = authApiBase();
   const cb = new URL(window.location.href);
   cb.searchParams.set(SOCIAL_MARKER, "1");
+  // Where Better Auth sends the browser if the callback fails (e.g. the
+  // invite gate rejects a non-invited stranger). Better Auth appends its own
+  // ?error=…; our marker rides alongside so the app can surface the outcome.
+  const errCb = new URL(window.location.href);
+  errCb.searchParams.set(SOCIAL_ERROR_MARKER, "access_denied");
   const res = await fetch(`${base}/sign-in/social`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ provider: "google", callbackURL: cb.toString() }),
+    body: JSON.stringify({
+      provider: "google",
+      callbackURL: cb.toString(),
+      errorCallbackURL: errCb.toString(),
+    }),
   });
   if (!res.ok) {
     throw new AuthError(
