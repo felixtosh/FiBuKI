@@ -25,6 +25,13 @@ export function consumeSocialAccessRequest(): boolean {
   const params = new URLSearchParams(window.location.search);
   if (!params.has(SOCIAL_ERROR_PARAM)) return false;
   params.delete(SOCIAL_ERROR_PARAM);
+  // Better Auth appends its own ?error=/&error_description= to our
+  // errorCallbackURL (see redirectOnError). We already surface the outcome as
+  // the banner, so clear those too rather than leave a confusing "error=…" in
+  // the user's URL bar. Safe to strip unconditionally here — we only reach
+  // this point on our own marked error return.
+  params.delete("error");
+  params.delete("error_description");
   const query = params.toString();
   window.history.replaceState({}, "", window.location.pathname + (query ? `?${query}` : ""));
   return true;

@@ -44,6 +44,16 @@ describe("consumeSocialAccessRequest", () => {
     expect(replaced).toEqual(["/login?ref=xyz"]);
   });
 
+  it("also strips Better Auth's appended error / error_description", () => {
+    // redirectOnError tacks these onto our errorCallbackURL; the banner already
+    // conveys the outcome, so they shouldn't linger in the URL bar.
+    const replaced = installWindow(
+      "?fibuki_social_error=access_denied&error=access_denied&error_description=blocked&ref=xyz",
+    );
+    expect(consumeSocialAccessRequest()).toBe(true);
+    expect(replaced).toEqual(["/login?ref=xyz"]);
+  });
+
   it("is a no-op during SSR (no window)", () => {
     expect(consumeSocialAccessRequest()).toBe(false);
   });
