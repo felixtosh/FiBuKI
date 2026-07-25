@@ -166,6 +166,12 @@ const nextConfig: NextConfig = {
   // imapflow is a Node-only IMAP client used by /api/mail/imap/connect; keep it
   // out of the bundle so its dynamic requires resolve at runtime.
   serverExternalPackages: ["imapflow"],
+  // Surface the backend choice to the client bundle so the shared UI can gate
+  // self-host-only differences (e.g. hiding the GitHub button, which the
+  // self-host auth client can't service). FIBUKI_BACKEND itself is server-only;
+  // this is the NEXT_PUBLIC_* mirror the browser reads. Absent (undefined) in a
+  // normal Firebase build. See lib/auth/social-providers.ts.
+  ...(IS_SELFHOST ? { env: { NEXT_PUBLIC_FIBUKI_BACKEND: "selfhost" } } : {}),
   // Turbopack (Next 16 default for dev + build): exact-specifier aliases.
   ...(IS_SELFHOST
     ? { turbopack: { resolveAlias: SELFHOST_ALIASES_TURBO } }
