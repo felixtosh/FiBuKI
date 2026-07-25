@@ -200,6 +200,45 @@ describe("Better Auth server acceptance — server core + auth-shim over the rea
     expect(users.map((u) => u.uid)).toContain(uid);
   });
 
+  it("auth-shim listUsers pages via pageToken — every user once, no dupes, terminates", async () => {
+    // A tenant larger than one page: the exporter (migrate-export.exportUsers)
+    // loops on pageToken, so the shim must both honor an incoming token and
+    // hand back the next one. Keyset pagination must not drop or duplicate a
+    // row at a page boundary.
+    const auth = await loadAuth();
+    const mine: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      const email = uniqueEmail(`paged-${i}`);
+      await allowEmail(email);
+      const { uid } = await auth.provisionUser({ email, password: "pagination test pw" });
+      mine.push(uid);
+    }
+
+    const seen: string[] = [];
+    let token: string | undefined;
+    let pages = 0;
+    do {
+      const res = await getAdminAuth().listUsers(2, token);
+      expect(res.users.length).toBeLessThanOrEqual(2); // page size respected
+      seen.push(...res.users.map((u) => u.uid));
+      token = res.pageToken;
+      expect(++pages).toBeLessThan(1000); // guard a non-terminating loop
+    } while (token);
+
+    // The shared-tenant sweep contains other tests' users too; assert on ours.
+    for (const uid of mine) {
+      expect(seen.filter((u) => u === uid)).toHaveLength(1);
+    }
+    expect(new Set(seen).size).toBe(seen.length); // nothing duplicated anywhere
+  });
+
+  it("auth-shim listUsers rejects a malformed pageToken (firebase parity)", async () => {
+    await loadAuth();
+    await expect(getAdminAuth().listUsers(2, "not-a-real-token")).rejects.toMatchObject({
+      code: "auth/invalid-page-token",
+    });
+  });
+
   it("auth-shim verifyIdToken accepts a live session token", async () => {
     const auth = await loadAuth();
     const email = uniqueEmail("verify");

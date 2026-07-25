@@ -14,7 +14,8 @@
 
 import { getSqlClient } from "./firestore-shim";
 import { getTenantId } from "./db/tenant";
-import { createSelfhostAuth, RESERVED_CLAIMS, type SelfhostAuth } from "./better-auth";
+import { createSelfhostAuth, RESERVED_CLAIMS } from "./better-auth";
+import { memoizeAsync } from "./memoize-async";
 
 export interface UserRecord {
   uid: string;
@@ -52,13 +53,41 @@ async function runSql(sql: string, params: unknown[]): Promise<{ rows: Row[] }> 
  * One shared SelfhostAuth per process for token verification. Lazy: most
  * shim consumers only do user lookups and never pay the Better Auth boot.
  */
-let authPromise: Promise<SelfhostAuth> | null = null;
-function selfhostAuth(): Promise<SelfhostAuth> {
-  return (authPromise ??= createSelfhostAuth());
-}
+const selfhostAuth = memoizeAsync(createSelfhostAuth);
 
 function iso(v: unknown): string {
   return (v instanceof Date ? v : new Date(String(v))).toISOString();
+}
+
+interface PageCursor {
+  createdAt: string; // ISO 8601 — the previous page's last-row createdAt
+  id: string; // tiebreaker within an identical createdAt
+}
+
+/** Opaque continuation token: base64url(JSON) of the (createdAt, id) cursor. */
+function encodePageToken(cursor: PageCursor): string {
+  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+}
+
+function decodePageToken(token: string | undefined): PageCursor | null {
+  if (!token) return null;
+  try {
+    const parsed: unknown = JSON.parse(Buffer.from(token, "base64url").toString("utf8"));
+    if (
+      parsed !== null &&
+      typeof parsed === "object" &&
+      typeof (parsed as PageCursor).createdAt === "string" &&
+      typeof (parsed as PageCursor).id === "string"
+    ) {
+      return { createdAt: (parsed as PageCursor).createdAt, id: (parsed as PageCursor).id };
+    }
+  } catch {
+    // fall through to the invalid-token error below
+  }
+  throw new AuthShimError(
+    "auth/invalid-page-token",
+    "selfhost auth: listUsers received a malformed pageToken",
+  );
 }
 
 function parseStoredClaims(raw: unknown): Record<string, unknown> {
@@ -119,12 +148,48 @@ class AuthShim {
     return toUserRecord(res.rows[0]);
   }
 
-  async listUsers(maxResults = 1000): Promise<{ users: UserRecord[] }> {
+  /**
+   * firebase-admin parity: page through users with an opaque `pageToken`,
+   * returning the next token while more remain. The exporter
+   * (migrate-export.ts `exportUsers`) loops on this token, so without it a
+   * tenant with more than `maxResults` users would silently truncate at the
+   * first page. Keyset pagination on the stable (createdAt, id) ordering —
+   * preferred over OFFSET so a concurrent insert can't shift the window and
+   * drop or duplicate a row across pages.
+   */
+  async listUsers(
+    maxResults = 1000,
+    pageToken?: string,
+  ): Promise<{ users: UserRecord[]; pageToken?: string }> {
+    const limit = Math.floor(maxResults);
+    const cursor = decodePageToken(pageToken);
+    const params: unknown[] = [getTenantId()];
+    let keyset = "";
+    if (cursor) {
+      params.push(cursor.createdAt, cursor.id);
+      keyset =
+        ` AND (u."createdAt" > $2::timestamptz` +
+        ` OR (u."createdAt" = $2::timestamptz AND u.id > $3))`;
+    }
+    // Fetch one extra row to learn whether a further page exists.
+    params.push(limit + 1);
     const res = await runSql(
-      `${USER_SELECT} WHERE u.tenant_id = $1 ORDER BY u."createdAt", u.id LIMIT $2`,
-      [getTenantId(), Math.floor(maxResults)],
+      `${USER_SELECT} WHERE u.tenant_id = $1${keyset}
+         ORDER BY u."createdAt", u.id LIMIT $${params.length}`,
+      params,
     );
-    return { users: res.rows.map(toUserRecord) };
+    const hasMore = res.rows.length > limit;
+    const page = hasMore ? res.rows.slice(0, limit) : res.rows;
+    const out: { users: UserRecord[]; pageToken?: string } = {
+      users: page.map(toUserRecord),
+    };
+    // A next token only when there's both a further page AND a last row to
+    // anchor the cursor on (page is non-empty for any sane maxResults >= 1).
+    if (hasMore && page.length > 0) {
+      const last = page[page.length - 1];
+      out.pageToken = encodePageToken({ createdAt: iso(last.createdAt), id: String(last.id) });
+    }
+    return out;
   }
 
   /**

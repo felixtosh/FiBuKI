@@ -135,6 +135,33 @@ describe("migrate-export — exportDump against the existing shims", () => {
     expect(plainLine?.email).toBe(plainEmail);
     expect(plainLine?.admin).toBeUndefined();
   });
+
+  it("follows pageToken across multiple listUsers pages (no user left behind)", async () => {
+    // A tenant larger than one page: exportUsers must follow pageToken until
+    // it's exhausted, or users past the first page silently vanish from the
+    // dump. Drive the loop with a paging mock; the real shim's token
+    // generation is covered in better-auth.test.ts.
+    const calls: (string | undefined)[] = [];
+    const page1 = [
+      { uid: "xp-pg-u1", email: "xp-pg-u1@example.test", providerData: [{ providerId: "password" }] },
+      { uid: "xp-pg-u2", email: "xp-pg-u2@example.test", providerData: [{ providerId: "google.com" }] },
+    ];
+    const page2 = [{ uid: "xp-pg-u3", email: "xp-pg-u3@example.test", providerData: [] }];
+    const auth = {
+      listUsers: async (_max?: number, pageToken?: string) => {
+        calls.push(pageToken);
+        return pageToken ? { users: page2 } : { users: page1, pageToken: "PAGE-2" };
+      },
+    };
+
+    const dir = await makeDumpDir();
+    const manifest = await exportDump({ dir, auth });
+
+    expect(calls).toEqual([undefined, "PAGE-2"]); // first page, then followed the token
+    expect(manifest.users?.count).toBe(3);
+    const lines = await readNdjson(dir, manifest.users!.file);
+    expect(lines.map((l) => l.uid).sort()).toEqual(["xp-pg-u1", "xp-pg-u2", "xp-pg-u3"]);
+  });
 });
 
 describe("migrate-export — storage", () => {

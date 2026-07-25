@@ -34,7 +34,8 @@ import { decodeWire, encodeWire } from "./wire-values";
 import { getFirestore } from "./firestore-shim";
 import { getStorage } from "./storage-shim";
 import { getAuth } from "./auth-shim";
-import { createSelfhostAuth, type SelfhostAuth } from "./better-auth";
+import { createSelfhostAuth } from "./better-auth";
+import { memoizeAsync } from "./memoize-async";
 
 export interface ImportReport {
   dryRun: boolean;
@@ -50,11 +51,10 @@ export interface VerifyReport {
   storage: { expected: number; missing: string[]; checksumFailures: string[] };
 }
 
-/** One shared SelfhostAuth per process — provisionUser only, boot paid once. */
-let authPromise: Promise<SelfhostAuth> | null = null;
-function selfhostAuth(): Promise<SelfhostAuth> {
-  return (authPromise ??= createSelfhostAuth());
-}
+/** One shared SelfhostAuth per process — provisionUser only, boot paid once.
+ *  A failed boot is not cached (see memoizeAsync): a transient failure can
+ *  recover on a retry instead of poisoning the singleton. */
+const selfhostAuth = memoizeAsync(createSelfhostAuth);
 
 // ---------------------------------------------------------------------------
 // Dump IO
