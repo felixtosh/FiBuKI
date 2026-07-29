@@ -93,6 +93,21 @@ services:
       # OAuth redirect base for Google sign-in.
       FIBUKI_AUTH_SECRET: ${FIBUKI_AUTH_SECRET:-}
       FIBUKI_AUTH_ISSUER: ${FIBUKI_AUTH_ISSUER:-}
+      # Google social sign-in. better-auth.ts socialProviders() returns undefined
+      # unless BOTH are present, and the sign-in button then 403s with no other
+      # signal. The redirect URI to register at Google is
+      # ${FIBUKI_AUTH_ISSUER}/__auth/callback/google
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      # Trusted server-to-server path in lib/auth/get-server-user.ts, used by
+      # runReceiptSearchForTransaction. Ignored unless >= 16 chars.
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-}
+      # Signs digest unsubscribe tokens (emails/unsubscribeTokens.ts).
+      DIGEST_HMAC_SECRET: ${DIGEST_HMAC_SECRET:-}
+      # Base URL used to build links in outbound mail and admin flows.
+      APP_URL: ${APP_URL:-}
+      # Auto-grants admin on first login (see CLAUDE.md).
+      SUPER_ADMIN_EMAIL: ${SUPER_ADMIN_EMAIL:-}
       # OIDC_JWKS_URI lets the verifier fetch keys from a directly-reachable URL
       # (e.g. the IdP on the same network) while OIDC_ISSUER stays the public,
       # browser-facing issuer that tokens are minted with. Leave blank to discover.

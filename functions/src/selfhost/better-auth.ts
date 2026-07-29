@@ -471,6 +471,33 @@ function socialProviders() {
   return { google: { clientId, clientSecret } };
 }
 
+/**
+ * Origins Better Auth will accept a post-sign-in callbackURL for.
+ *
+ * Better Auth trusts only its own baseURL by default. The documented deploy
+ * shape puts the web app and the API on SEPARATE hostnames (deploy/selfhost:
+ * new.fibuki.com and new-api.fibuki.com), because the api's CORS layer expects
+ * a split origin — so every social sign-in callback points at an origin that is
+ * not the baseURL, and Better Auth rejects it with
+ * 403 INVALID_CALLBACK_URL. That presents as "Google sign-in unavailable" with
+ * no other signal.
+ *
+ * FIBUKI_WEB_ORIGIN already carries the web origin(s) for the CORS layer
+ * (host.ts), so reuse it rather than adding a second source of truth. Same
+ * comma-separated form. The issuer is always trusted implicitly by Better Auth;
+ * including it is harmless and makes single-origin deploys explicit.
+ */
+function trustedOrigins(issuer: string): string[] {
+  const web = (process.env.FIBUKI_WEB_ORIGIN || "")
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean)
+    // "*" is a valid CORS value but meaningless (and unsafe) as a callback
+    // allowlist, so drop it rather than trusting every origin.
+    .filter((o) => o !== "*");
+  return Array.from(new Set([issuer, ...web]));
+}
+
 function buildAuth() {
   const issuer = issuerUrl();
   return betterAuth({
@@ -479,6 +506,7 @@ function buildAuth() {
     secret: resolveSecret(),
     database: selfhostAdapter,
     telemetry: { enabled: false },
+    trustedOrigins: trustedOrigins(issuer),
     emailAndPassword: {
       enabled: true,
       // Invite-only product: accounts exist only via provisionUser.
