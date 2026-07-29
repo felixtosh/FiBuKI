@@ -29,7 +29,7 @@
     "archiver": "^7.0.1",
     "busboy": "^1.6.0",
     "cologne-phonetic": "^1.1.1",
-    "firebase-admin": "^13.10.0",
+    "firebase-admin": "^14.0.0",
     "firebase-functions": "^7.2.5",
     "mailparser": "^3.9.11",
     "otplib": "^13.4.1",
