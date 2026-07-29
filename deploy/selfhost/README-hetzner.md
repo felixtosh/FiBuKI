@@ -155,6 +155,39 @@ Confirm nothing else is exposed. Only 22, 80, 443 should answer:
 nmap -Pn -p 22,80,443,3000,5432,8788,9000,9001 new.fibuki.com
 ```
 
+## 6b. Prove mail works, before you need it
+
+Mail is on the critical path: the importer creates migrated users **passwordless**,
+so a password-reset email is the only way anyone gets in. Discovering it is broken
+after a write freeze is the wrong time.
+
+**Hetzner Cloud blocks outbound ports 25 and 465.** Port 465 fails with a bare
+`ETIMEDOUT` on `CONN`, which looks like bad credentials but is not. Measured from
+the `nbg1` host on 2026-07-29:
+
+| Port | Reachable |
+|---|---|
+| 25 | no |
+| 465 | no |
+| 587 | yes |
+| 2465 | yes (Resend, implicit TLS) |
+| 2587 | yes (Resend, STARTTLS) |
+
+The env template therefore uses **2465** with `FIBUKI_SMTP_SECURE=true`. If you
+switch to 587, set `FIBUKI_SMTP_SECURE=false` — 587 is STARTTLS, not implicit TLS.
+
+To smoke-test, call `sendEmail` from the shim inside the api container. A `true`
+return means the SMTP transaction was accepted:
+
+```bash
+CID=$(docker compose ps -q fibuki-api)
+docker cp smoke-mail.ts "$CID":/app/smoke-mail.ts
+docker compose exec -T fibuki-api \
+  npx vite-node --config vitest.selfhost.config.ts smoke-mail.ts
+```
+
+(`vite-node` has no `-e` flag, so this needs a real file inside `/app`.)
+
 ## 7. Prove PDFs work
 
 This is the fix most likely to still be wrong, and the cutover runbook would only

@@ -102,13 +102,66 @@ DCO is the lightest and the most commonly reached for, and it does **not** solve
 this problem. If the point is preserving your ability to change the license, it
 has to be a CLA drafted for that, or a CAA.
 
+## Felix's stated intent (2026-07-29), and the trap in it
+
+> "I want everyone to use it non-commercial and locally, and for us we can
+> relicense and do whatever with the code."
+
+Two goals. The second is clean. The first, taken literally, defeats the product.
+
+### "Non-commercial" excludes the target market
+
+FiBuKI is pre-accounting for Austrian one-person businesses. An EPU self-hosting
+it to keep their own books **is** commercial use under any ordinary reading of a
+non-commercial clause. A license like PolyForm Noncommercial would therefore
+prohibit exactly the users [`who-is-this-for.md`](who-is-this-for.md) is written
+for, and would contradict the standing rule that self-host and cloud ship the same
+features and differ only in effort and infrastructure.
+
+The intent behind the sentence is almost certainly **non-compete**, not
+non-commercial: nobody else runs FiBuKI *as a service*, while any business may run
+it for itself.
+
+| License | EPU self-hosts for their business | Competitor runs it as a service | Note |
+|---|---|---|---|
+| PolyForm Noncommercial | **No** | No | Matches the words, blocks the users |
+| **BSL 1.1** | Yes, via additional-use grant | No, for N years | HashiCorp/Sentry pattern; converts to open later |
+| **FSL** | Yes | No, for 2 years | Simpler BSL; converts to Apache/MIT |
+
+**BSL 1.1 or FSL** matches the actual intent. Both preserve the self-host promise
+and remove the competing-service outcome. Note both are source-available, not open
+source, which forecloses OSI-badge and some procurement conversations. That is the
+real cost and it is worth taking deliberately.
+
+### "For us" needs defining before anything is drafted
+
+Whether the right instrument is a CLA or a founder IP assignment depends on an
+unanswered question: **is FiBuKI Felix-owned with Stefan contributing, or jointly
+owned?**
+
+- *Felix-owned:* Stefan signs a CLA or CAA granting Felix relicensing rights.
+- *Jointly owned / a company:* the IP belongs in **the entity**, and Felix and
+  Stefan both assign to it. This is the standard startup arrangement and is far
+  cleaner than one founder personally holding the copyright while the other has
+  granted them permission.
+
+Given Stefan has contributed 139 commits across 238 files, including the entire
+self-host stack, the entity route is likely the honest description of the
+relationship. Settle this first: it determines what gets signed.
+
 ## Recommended sequence
 
-1. **Ask Stefan for a one-page CAA covering past and future contributions**, before
-   #64 merges. Between two friends, pre-merge, this is a five-minute ask. It stops
-   being one once the code is in and the contributor list grows.
-2. **Decide the license separately, and before the repo goes public.** The default
-   answer for this product shape is AGPL or BSL rather than MIT.
+0. **Decide whether FiBuKI is Felix-owned or jointly owned.** Everything else
+   branches on it, and it is a conversation with Stefan rather than a drafting
+   exercise.
+1. **Get contributor terms signed before #64 merges** — a CAA if Felix-owned,
+   mutual assignment to the entity if jointly owned. Between two friends, pre-merge,
+   this is a five-minute ask. It stops being one once the code is in and the
+   contributor list grows.
+2. **Move off MIT before the repo goes public.** Per the intent section above, the
+   match is **BSL 1.1 or FSL** — not a non-commercial license, which would block
+   Austrian EPUs (the target market), and not MIT, which permits a competing hosted
+   FiBuKI.
 3. **Update the copyright line.** `FiBuKI Contributors` already reads as shared
    ownership. If a CAA lands, make it reflect reality.
 4. **Have a lawyer review both**, given there is live billing code.
