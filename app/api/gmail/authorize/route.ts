@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
+import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
 
 /**
  * Gmail OAuth 2.0 scopes
@@ -17,34 +18,39 @@ const GMAIL_SCOPES = [
 const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 
 /**
- * GET /api/gmail/authorize
- * Initiate OAuth 2.0 authorization code flow
- * Redirects user to Google consent screen
+ * POST /api/gmail/authorize
+ * Initiate OAuth 2.0 authorization code flow.
+ *
+ * SECURITY: the user id is derived from the verified Firebase ID token
+ * (Authorization: Bearer ...), never from a client-supplied parameter. Callers
+ * must be authenticated. Returns the Google consent URL as JSON for the client
+ * to navigate to, and sets the httpOnly cookies (CSRF state, verified user id,
+ * optional returnTo) that the callback consumes.
  */
-export async function GET(request: NextRequest) {
-  const clientId = process.env.GOOGLE_CLIENT_ID;
-  const redirectUri = process.env.GOOGLE_OAUTH_REDIRECT_URI || "http://localhost:3000/api/gmail/callback";
-  const returnTo = request.nextUrl.searchParams.get("returnTo");
-  const userId = request.nextUrl.searchParams.get("userId");
-
-  if (!userId) {
-    return NextResponse.json(
-      { error: "Missing userId parameter" },
-      { status: 400 }
-    );
+export async function POST(request: NextRequest) {
+  let userId: string;
+  try {
+    userId = await getServerUserIdWithFallback(request);
+  } catch {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const clientId = process.env.GOOGLE_CLIENT_ID;
   if (!clientId) {
     return NextResponse.json(
       { error: "Google OAuth is not configured. Missing GOOGLE_CLIENT_ID." },
       { status: 500 }
     );
   }
+  const redirectUri =
+    process.env.GOOGLE_OAUTH_REDIRECT_URI ||
+    "http://localhost:3000/api/gmail/callback";
+
+  const body = await request.json().catch(() => ({}));
+  const returnTo = typeof body?.returnTo === "string" ? body.returnTo : null;
 
   // Generate state parameter for CSRF protection
   const state = crypto.randomBytes(32).toString("hex");
-
-  // Store state in a cookie for verification in callback
   const stateExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
   // Build authorization URL
@@ -60,36 +66,22 @@ export async function GET(request: NextRequest) {
 
   const authUrl = `${GOOGLE_AUTH_URL}?${params.toString()}`;
 
-  // Create response with redirect
-  const response = NextResponse.redirect(authUrl);
+  const response = NextResponse.json({ url: authUrl });
 
-  // Set state cookie for CSRF verification
-  response.cookies.set("gmail_oauth_state", state, {
+  const cookieBase = {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
+    sameSite: "lax" as const,
     expires: stateExpiry,
     path: "/",
-  });
+  };
 
+  // CSRF state, verified user id, and optional return path for the callback.
+  response.cookies.set("gmail_oauth_state", state, cookieBase);
+  response.cookies.set("gmail_oauth_user_id", userId, cookieBase);
   if (returnTo && returnTo.startsWith("/") && !returnTo.startsWith("//")) {
-    response.cookies.set("gmail_oauth_return_to", returnTo, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      expires: stateExpiry,
-      path: "/",
-    });
+    response.cookies.set("gmail_oauth_return_to", returnTo, cookieBase);
   }
-
-  // Store user ID for callback to associate integration with correct user
-  response.cookies.set("gmail_oauth_user_id", userId, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    expires: stateExpiry,
-    path: "/",
-  });
 
   return response;
 }

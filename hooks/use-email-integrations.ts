@@ -86,9 +86,19 @@ export function useEmailIntegrations(): UseEmailIntegrationsResult {
     }
     try {
       setError(null);
-      // Redirect to OAuth authorization endpoint with userId
-      // The callback will handle token exchange and redirect back to /integrations
-      window.location.href = `/api/gmail/authorize?userId=${encodeURIComponent(userId)}`;
+      // Start OAuth via an authenticated call. The server derives the user from
+      // the verified token and returns the Google consent URL to navigate to.
+      const res = await fetchWithAuth("/api/gmail/authorize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to start Gmail authorization");
+      }
+      const { url } = await res.json();
+      window.location.href = url;
     } catch (err) {
       console.error("Failed to connect Gmail:", err);
       const message = err instanceof Error ? err.message : "Failed to connect Gmail";
@@ -132,12 +142,18 @@ export function useEmailIntegrations(): UseEmailIntegrationsResult {
         throw new Error("Integration not found");
       }
 
-      const params = new URLSearchParams({ userId });
-      if (returnTo) {
-        params.set("returnTo", returnTo);
+      // Reconnect via an authenticated call; user derived from verified token.
+      const res = await fetchWithAuth("/api/gmail/authorize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(returnTo ? { returnTo } : {}),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to start Gmail authorization");
       }
-      // Redirect to OAuth flow - callback will update existing integration
-      window.location.href = `/api/gmail/authorize?${params.toString()}`;
+      const { url } = await res.json();
+      window.location.href = url;
     },
     [integrations, userId]
   );
