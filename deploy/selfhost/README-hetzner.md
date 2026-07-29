@@ -1,5 +1,26 @@
 # Standing up new.fibuki.com on Hetzner
 
+## Current deployment
+
+| | |
+|---|---|
+| Host | `fibuki-selfhost`, `cpx32` (4 vCPU / 8 GB / 160 GB), `nbg1` Nuremberg |
+| Ingress | Caddy only. Let's Encrypt certs for both names, auto-renewing |
+| Auth | Built-in Better Auth, endpoints at `/__auth` |
+| Inventory | 112 callables, 8 request functions, 12 scheduled jobs, 50 excluded |
+| Backups | Hetzner server snapshots on. **`backup.sh` not yet installed as cron** |
+
+`cpx32` rather than the `cx33` this document's provisioner defaults to: the whole
+CX and CAX lines were out of capacity in every EU location. `cx33` is ~EUR 8.49/mo
+against `cpx32`'s ~35.49, so it is worth revisiting when capacity returns. That
+means a rebuild rather than a rescale, since Hetzner cannot shrink a 160 GB disk
+to `cx33`'s 80 GB.
+
+**Outstanding before migration:** `FIBUKI_SMTP_PASS` is still a placeholder, so
+there is no outbound mail. That gates the cutover, because the importer creates
+migrated users passwordless and they recover via a password-reset email.
+
+
 Concrete deploy for the stack in [`README.md`](README.md). Read
 [`../../docs/w4-cutover-runbook.md`](../../docs/w4-cutover-runbook.md) first: this
 covers steps 1 and 7 of it (target infrastructure, and the smoke test), not the
