@@ -192,6 +192,46 @@ Back to [`w4-cutover-runbook.md`](../../docs/w4-cutover-runbook.md) from step 2.
 The export runs on **your** machine (the one with the Firebase service account),
 never here.
 
+### Stop the cron host before importing
+
+**`verify` cannot pass against a stack whose cron is running.** The API hosts 12
+schedules, and `processGmailSyncQueue` / `processPrecisionSearchQueue` fire every
+five minutes. They pick up freshly imported queue documents and do exactly what
+they are supposed to: mutate them, delete finished ones, stamp
+`emailIntegrations`. `verify` then compares the dump against data the system has
+already moved on from and reports mismatches that are not import errors.
+
+Observed on the first real run: `emailIntegrations` 2 mismatched,
+`gmailSyncQueue` 1 mismatched, `precisionSearchQueue` 1 missing — all of it the
+cron host doing its job.
+
+So bring the stack up with cron disabled for the migration window:
+
+```bash
+# In .env for the duration of the migration:
+FIBUKI_NO_CRON=1
+
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env up -d
+# import, then verify, and only once verify exits 0:
+#   remove FIBUKI_NO_CRON and `up -d` again to resume the schedules.
+```
+
+The API logs `FIBUKI_NO_CRON set — N scheduled jobs NOT started` at boot, so it is
+easy to confirm. Re-running the import afterwards is safe regardless: it is
+idempotent.
+
+### Do not `down -v` to reset the data
+
+`down -v` removes **every** volume in the project, `caddy-data` included, and that
+holds the ACME account plus both issued certificates. Caddy then re-requests them,
+which counts against Let's Encrypt's duplicate-certificate limit (5 per week per
+identical name set). To wipe only the application data:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml down
+docker volume rm selfhost_fibuki-pgdata selfhost_fibuki-miniodata
+```
+
 ## Accepted regressions
 
 Per the phase-2 decision, not bugs: realtime is polling rather than

@@ -2079,31 +2079,54 @@ async function processQueueItem(queueItem: PrecisionSearchQueueItem): Promise<{
     // For manual/gmail_sync, create new queue item (triggers immediate processing)
     // For scheduled, just update and let cron handle it
     if (queueItem.triggeredBy === "scheduled") {
+      // lastProcessedTransactionId is spread conditionally for the same reason as
+      // in the continuation below: it is still undefined when the budget runs out
+      // before any transaction completes, and Firestore rejects an explicit
+      // undefined. (`startedAt: null` is fine — null is a legal value.)
       await db.collection("precisionSearchQueue").doc(queueItem.id).update({
         status: "pending",
         startedAt: null,
         transactionsProcessed,
         transactionsWithMatches,
         totalFilesConnected,
-        lastProcessedTransactionId,
+        ...(lastProcessedTransactionId !== undefined && {
+          lastProcessedTransactionId,
+        }),
         errors,
       });
       console.log(`[PrecisionSearch] Saved progress (${transactionsProcessed} processed), cron will continue`);
     } else {
       // Delete old and create new to trigger onDocumentCreated
+      //
+      // The four optional fields are spread conditionally rather than assigned:
+      // Firestore rejects an explicit `undefined` value unless
+      // ignoreUndefinedProperties is enabled, and this app never enables it
+      // (pinned by test/firestore-parity.test.ts). Assigning them directly threw
+      // "Cannot use \"undefined\" as a Firestore value" for any queue item that
+      // needed a continuation without them — an all_incomplete scope has no
+      // transactionId, and a manual run has no gmailSyncQueueId — which killed
+      // the whole queue processor, not just that item.
       const continuationData = {
         userId: queueItem.userId,
         scope: queueItem.scope,
-        transactionId: queueItem.transactionId,
+        ...(queueItem.transactionId !== undefined && {
+          transactionId: queueItem.transactionId,
+        }),
         triggeredBy: queueItem.triggeredBy,
-        triggeredByAuthor: queueItem.triggeredByAuthor,
-        gmailSyncQueueId: queueItem.gmailSyncQueueId,
+        ...(queueItem.triggeredByAuthor !== undefined && {
+          triggeredByAuthor: queueItem.triggeredByAuthor,
+        }),
+        ...(queueItem.gmailSyncQueueId !== undefined && {
+          gmailSyncQueueId: queueItem.gmailSyncQueueId,
+        }),
         status: "pending" as const,
         transactionsToProcess: queueItem.transactionsToProcess,
         transactionsProcessed,
         transactionsWithMatches,
         totalFilesConnected,
-        lastProcessedTransactionId,
+        ...(lastProcessedTransactionId !== undefined && {
+          lastProcessedTransactionId,
+        }),
         strategies: queueItem.strategies,
         currentStrategyIndex: 0,
         errors,

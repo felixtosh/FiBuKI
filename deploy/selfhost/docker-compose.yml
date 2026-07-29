@@ -60,6 +60,13 @@ services:
       # Pool ceiling (firestore-shim.ts). Unset falls back to 25; node-postgres'
       # own default of 10 saturates first under concurrent pollers.
       POSTGRES_MAX_CONNECTIONS: ${POSTGRES_MAX_CONNECTIONS:-25}
+      # Set to 1 for the migration window. The cron host would otherwise start
+      # working freshly imported queue documents — mutating and deleting them —
+      # before `verify` can compare them against the dump, which reports as
+      # mismatches that are not import errors. Also the switch for running extra
+      # API replicas: exactly one instance may own the schedules, and there is no
+      # advisory lock enforcing that.
+      FIBUKI_NO_CRON: ${FIBUKI_NO_CRON:-}
       # storage-shim -> MinIO (blobstore-s3.ts)
       FIBUKI_STORAGE: s3
       FIBUKI_S3_ENDPOINT: minio
