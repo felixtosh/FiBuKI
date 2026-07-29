@@ -83,8 +83,14 @@ services:
       FIBUKI_SMTP_USER: ${FIBUKI_SMTP_USER}
       FIBUKI_SMTP_PASS: ${FIBUKI_SMTP_PASS}
       FIBUKI_SMTP_FROM_NAME: ${FIBUKI_SMTP_FROM_NAME}
+    # Loopback-only publish. On a public host a bare "8788:8788" binds 0.0.0.0
+    # AND Docker writes its own iptables rules, which bypass ufw/firewalld — the
+    # API would be reachable over plain HTTP from the internet. TLS termination
+    # and the only public listener belong to Caddy (docker-compose.prod.yml);
+    # Caddy reaches this service over the compose network, not via the host.
+    # This bind exists for on-box debugging (curl 127.0.0.1:8788/healthz).
     ports:
-      - "8788:8788"
+      - "127.0.0.1:8788:8788"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:8788/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 10s
@@ -113,8 +119,10 @@ services:
     environment:
       PORT: "3000"
       NODE_ENV: production
+    # Loopback-only — see the note on fibuki-api's ports. Public ingress is
+    # Caddy only (docker-compose.prod.yml).
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3000/').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
       interval: 10s

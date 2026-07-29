@@ -89,7 +89,14 @@ async function makeClient(): Promise<SqlClient> {
   const url = process.env.DATABASE_URL;
   if (url) {
     const { Pool } = await import("pg");
-    const pool = new Pool({ connectionString: url });
+    // node-postgres defaults to max:10. Every onSnapshot in the client is a poll
+    // (lib/selfhost/firestore-client.ts), so steady-state read traffic scales
+    // with visible tabs x live listeners, and each `tx` below holds a connection
+    // for the whole transaction. At ~10 concurrent users that default is the
+    // first thing to saturate, and it presents as latency rather than an error.
+    // Keep POSTGRES_MAX_CONNECTIONS <= Postgres' own max_connections (100 default).
+    const max = Number(process.env.POSTGRES_MAX_CONNECTIONS) || 25;
+    const pool = new Pool({ connectionString: url, max });
     // Surface pool-level errors instead of crashing the process on an idle-client drop.
     pool.on("error", (err) => {
       console.error("fibuki firestore-shim: postgres pool error:", err.message);
