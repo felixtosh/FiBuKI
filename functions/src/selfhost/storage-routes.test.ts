@@ -74,7 +74,7 @@ describe("storage-routes + storage-client", () => {
     expect(gotU8).toEqual(u8);
   });
 
-  it("getDownloadURL returns a /__storage/download/... URL with ?token=, and a raw fetch streams the bytes", async () => {
+  it("getDownloadURL returns a TOKEN-FREE /__storage/download/... URL, streamable with a bearer header", async () => {
     const storage = getStorage();
     const r = ref(storage, "receipts/u1/dl.txt");
     const payload = Buffer.from("download me", "utf-8");
@@ -82,9 +82,20 @@ describe("storage-routes + storage-client", () => {
 
     const url = await getDownloadURL(r);
     expect(url).toContain("/__storage/download/receipts/u1/dl.txt");
-    expect(url).toContain("token=");
+    // Security property, pinned deliberately: every caller of getDownloadURL
+    // persists its result into a Firestore document, so a token in the URL would
+    // be a bearer credential written to the database and copied into every
+    // backup. It would also expire, breaking a stored URL about an hour after
+    // upload. Rendering uses an Authorization header instead
+    // (hooks/use-file-object-url.ts).
+    expect(url).not.toContain("token=");
 
-    const res = await fetch(url);
+    // Unauthenticated fetch must be refused...
+    const anon = await fetch(url);
+    expect(anon.status).toBe(401);
+
+    // ...and the header is what grants access.
+    const res = await fetch(url, { headers: { authorization: `Bearer ${GOOD_TOKEN}` } });
     expect(res.ok).toBe(true);
     expect(await res.text()).toBe("download me");
   });
@@ -115,7 +126,7 @@ describe("storage-routes + storage-client", () => {
     expect(task.snapshot.state).toBe("success");
 
     const url = await getDownloadURL(task.snapshot.ref);
-    const res = await fetch(url);
+    const res = await fetch(url, { headers: { authorization: `Bearer ${GOOD_TOKEN}` } });
     expect(res.ok).toBe(true);
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(payload);
   });

@@ -813,6 +813,13 @@ export class Query {
       // first; the stable orderBy sorts below then take precedence.
       const lastDir = this.orders[this.orders.length - 1].dir;
       rows.sort((a, b) => (lastDir === "desc" ? -1 : 1) * cmp(a.id, b.id));
+    } else {
+      // No orderBy still means ascending __name__ in Firestore. Postgres promises
+      // nothing without ORDER BY, so pin it here as well as in the SQL
+      // (db/pushdown.ts): this path also serves the JSONB bridge and any query the
+      // pushdown declined, and the two must agree or pagination and the
+      // onSnapshot poll-hash disagree between collections.
+      rows.sort((a, b) => cmp(a.id, b.id));
     }
     for (const o of [...this.orders].reverse()) {
       rows.sort(

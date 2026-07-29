@@ -170,6 +170,21 @@ export function compileFlatQuery(
     const lastDir = orders[orders.length - 1].dir;
     parts.push(`id COLLATE "C" ${lastDir === "desc" ? "DESC" : "ASC"}`);
     orderSql = ` ORDER BY ${parts.join(", ")}`;
+  } else if (orders.length === 0) {
+    // A query with NO orderBy still has a defined order in Firestore: ascending
+    // __name__ (document id). Postgres promises nothing without ORDER BY, so the
+    // same query could return rows in a different sequence between executions —
+    // after a plan change, VACUUM, or enough heap churn.
+    //
+    // Two consequences, neither loud. Any UI that renders an unordered query is
+    // nondeterministic; and onSnapshot's polling emulation hashes the serialised
+    // response (lib/selfhost/firestore-client.ts), so a pure order change looks
+    // like a data change and fires a spurious re-render on every poll.
+    //
+    // Measured stable in practice today, because Postgres happens to pick a
+    // primary-key index scan — which is exactly why this needs pinning rather than
+    // leaving to chance.
+    orderSql = ' ORDER BY id COLLATE "C" ASC';
   }
 
   // Keyset cursor: rows strictly past the cursor position in sort order.
