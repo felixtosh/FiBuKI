@@ -10,6 +10,7 @@ import {
   FileText,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useFileObjectUrl } from "@/hooks/use-file-object-url";
 import { ContentOverlay } from "@/components/ui/content-overlay";
 import { PdfPageViewer } from "./pdf-page-viewer";
 
@@ -37,6 +38,12 @@ export function FileViewerOverlay({
   const isPdf = fileType === "application/pdf";
   const isImage = fileType.startsWith("image/");
 
+  // Stored url -> renderable url. On the self-host stack the stored value needs
+  // an Authorization header, so it cannot be an <img>/<iframe> src or a plain
+  // fetch. Firebase urls pass through untouched. See hooks/use-file-object-url.ts.
+  const resolved = useFileObjectUrl(downloadUrl);
+  const srcUrl = resolved.url;
+
   const handleZoomIn = () => setZoom((z) => Math.min(z + 0.25, 3));
   const handleZoomOut = () => setZoom((z) => Math.max(z - 0.25, 0.5));
   const handleRotate = () => setRotation((r) => (r + 90) % 360);
@@ -48,7 +55,7 @@ export function FileViewerOverlay({
   const handleDownload = async (e: React.MouseEvent) => {
     e.preventDefault();
     try {
-      const res = await fetch(downloadUrl);
+      const res = await fetch(srcUrl ?? downloadUrl);
       if (!res.ok) throw new Error(`fetch failed: ${res.status}`);
       const blob = await res.blob();
       const blobUrl = URL.createObjectURL(blob);
@@ -61,7 +68,7 @@ export function FileViewerOverlay({
       setTimeout(() => URL.revokeObjectURL(blobUrl), 0);
     } catch (err) {
       console.warn("Blob download failed, falling back to direct link:", err);
-      window.location.href = downloadUrl;
+      window.location.href = srcUrl ?? downloadUrl;
     }
   };
 
@@ -122,7 +129,7 @@ export function FileViewerOverlay({
 
       {/* Open in new tab */}
       <Button variant="ghost" size="icon" className="h-8 w-8" asChild>
-        <a href={downloadUrl} target="_blank" rel="noopener noreferrer">
+        <a href={srcUrl ?? undefined} target="_blank" rel="noopener noreferrer">
           <ExternalLink className="h-4 w-4" />
         </a>
       </Button>
@@ -139,7 +146,7 @@ export function FileViewerOverlay({
       <div className="h-full bg-muted/30">
         {isPdf ? (
           <PdfPageViewer
-            url={downloadUrl}
+            url={srcUrl ?? ""}
             scale={zoom}
             rotation={rotation}
             highlightText={highlightText}
@@ -155,7 +162,7 @@ export function FileViewerOverlay({
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={downloadUrl}
+                src={srcUrl ?? undefined}
                 alt={fileName}
                 className="max-w-full max-h-[calc(100vh-200px)] object-contain rounded-lg shadow-lg"
               />
