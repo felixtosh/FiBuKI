@@ -18,7 +18,8 @@
     "selfhost:api": "vite-node --config vitest.selfhost.config.ts src/selfhost/server.ts",
     "selfhost:import": "vite-node --config vitest.selfhost.config.ts src/selfhost/migrate-cli-run.ts import",
     "selfhost:verify": "vite-node --config vitest.selfhost.config.ts src/selfhost/migrate-cli-run.ts verify",
-    "selfhost:export": "vite-node scripts/export-firebase-dump.ts"
+    "selfhost:export": "vite-node scripts/export-firebase-dump.ts",
+    "selfhost:rewrite-urls": "vite-node --config vitest.selfhost.config.ts scripts/rewrite-download-urls.ts"
   },
   "engines": {
     "node": "22"
