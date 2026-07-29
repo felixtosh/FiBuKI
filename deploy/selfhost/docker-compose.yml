@@ -117,6 +117,13 @@ services:
       # "cloud" mounts everything. Defaults to selfhost.
       FIBUKI_TIER: ${FIBUKI_TIER:-selfhost}
       FIBUKI_AI_PROVIDER: ${FIBUKI_AI_PROVIDER:-gemini}
+      # Read by extraction/geminiParser.ts getProjectId(), which throws
+      # "Could not determine Google Cloud project ID" before it ever constructs a
+      # client. The adapter ignores project and location entirely — this only has
+      # to be non-empty. Kept as the real project id so that flipping back to
+      # genuine Vertex AI needs no further change.
+      GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-taxstudio-f12fb}
+      VERTEX_LOCATION: ${VERTEX_LOCATION:-europe-west1}
       FIBUKI_GEMINI_API_KEY: ${FIBUKI_GEMINI_API_KEY:-}
       FIBUKI_ANTHROPIC_API_KEY: ${FIBUKI_ANTHROPIC_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
