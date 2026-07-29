@@ -993,6 +993,13 @@ export async function signInWithPopup(_authArg: unknown, provider: unknown): Pro
   const res = await fetch(`${base}/sign-in/social`, {
     method: "POST",
     headers: { "content-type": "application/json" },
+    // credentials: "include" is REQUIRED, not defensive. Better Auth returns a
+    // state cookie on this response and matches it on the provider callback.
+    // Cross-origin (fibuki-web on one host, fibuki-api on another) the browser
+    // discards that Set-Cookie without it, and the callback then fails with
+    // "State mismatch: State not persisted correctly" — which surfaces as the
+    // errorCallbackURL below, i.e. as a fake access-request message.
+    credentials: "include",
     body: JSON.stringify({
       provider: "google",
       callbackURL: cb.toString(),

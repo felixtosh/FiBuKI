@@ -116,9 +116,20 @@ export function createHost(
   const app = express();
 
   // CORS: fibuki-web may be served from a different origin than fibuki-api.
-  // Auth is a Bearer token (never a cookie), so we never set
-  // Access-Control-Allow-Credentials and `*` is a safe default. Mounted before
-  // every route so preflights to callables and the data/blob planes all pass.
+  //
+  // The DATA plane authenticates with a Bearer token and needs no cookies. The
+  // AUTH plane does not: Better Auth's OAuth flow sets a state cookie on the
+  // /__auth/sign-in/social response and expects it back on the provider
+  // callback. Cross-origin, a browser discards that Set-Cookie unless the
+  // response carries Access-Control-Allow-Credentials: true — so without it the
+  // state is written to auth_verifications, never held by the browser, and the
+  // callback fails with "State mismatch: State not persisted correctly". The
+  // client then shows the errorCallbackURL, which the login page renders as an
+  // access-request message, so the real cause is invisible.
+  //
+  // Credentials are enabled ONLY when origins are explicitly configured. The
+  // spec forbids `*` with credentials, and reflecting an arbitrary origin while
+  // allowing cookies would be a genuine vulnerability rather than a nuisance.
   const corsCfg =
     options.corsOrigins ??
     (process.env.FIBUKI_WEB_ORIGIN
@@ -126,6 +137,7 @@ export function createHost(
       : "*");
   const allowAnyOrigin = corsCfg === "*";
   const allowedOrigins = allowAnyOrigin ? null : new Set(corsCfg);
+  const allowCredentials = !allowAnyOrigin;
   app.use((req: Request, res: Response, next: NextFunction) => {
     const origin = req.headers.origin;
     if (origin) {
@@ -142,6 +154,11 @@ export function createHost(
       // must allow it or the browser blocks the PUT.
       res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, x-fibuki-custom");
       res.setHeader("Access-Control-Max-Age", "600");
+      if (allowCredentials) {
+        // Required for the Better Auth cookie flow above. Safe here because the
+        // origin was matched exactly against an explicit allowlist, never `*`.
+        res.setHeader("Access-Control-Allow-Credentials", "true");
+      }
     }
     if (req.method === "OPTIONS") {
       // Preflight — answer here whether or not the origin was allowed (a
