@@ -265,6 +265,38 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml down
 docker volume rm selfhost_fibuki-pgdata selfhost_fibuki-miniodata
 ```
 
+## Known gap: public invoice sharing is non-functional
+
+`/i/<token>` returns **HTTP 500** on this stack, for any token, valid or not.
+Verified against a real migrated share token on 2026-07-29.
+
+Cause is structural, not a bug to patch. `app/(public)/i/[token]/page.tsx` is a
+server component that reads `invoiceShares` and `invoices` through `getAdminDb()`,
+i.e. `firebase-admin`. Two things make that impossible here:
+
+- `next.config.ts` aliases only the **client** SDKs (`firebase/app`,
+  `firebase/firestore`, `firebase/storage`, `firebase/functions`, `firebase/auth`).
+  `firebase-admin/*` is deliberately not aliased.
+- `fibuki-web` receives only `PORT` and `NODE_ENV` — no `DATABASE_URL`, no Firebase
+  credentials. It is not part of the self-host data plane by design.
+
+So the page cannot reach any datastore. This is the same category as the Gmail
+OAuth routes under `app/api/gmail/*`.
+
+**A fix is a feature port, roughly three pieces:**
+
+1. A public request function on `fibuki-api` (which does have DB access), e.g.
+   `GET /__share/:token`, validating the share (exists, not revoked, invoice not
+   cancelled) and returning the invoice payload.
+2. Rewriting the public page to fetch that instead of using the Admin SDK.
+3. A share-scoped object route for the PDF. **The object path must be derived from
+   the share record, never taken from the URL** — otherwise a share token becomes a
+   read-any-object capability. The existing `/__storage/download/*` route cannot be
+   reused, since it authenticates a *user* token.
+
+Until then, treat public sharing as unavailable on self-host. It does not block a
+signed-in user from viewing or downloading their own files, which works.
+
 ## Accepted regressions
 
 Per the phase-2 decision, not bugs: realtime is polling rather than
