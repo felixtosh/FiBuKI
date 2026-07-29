@@ -1,0 +1,178 @@
+# Standing up new.fibuki.com on Hetzner
+
+Concrete deploy for the stack in [`README.md`](README.md). Read
+[`../../docs/w4-cutover-runbook.md`](../../docs/w4-cutover-runbook.md) first: this
+covers steps 1 and 7 of it (target infrastructure, and the smoke test), not the
+data migration in between.
+
+Nothing here touches production `fibuki.com`. The new stack lives on its own
+subdomain until a DNS flip promotes it, which is the whole point of the subdomain
+isolation decision.
+
+## What you need before starting
+
+| | |
+|---|---|
+| Hetzner project API token | Console > Security > API Tokens, **Read & Write**. `hcloud` has no OAuth flow. |
+| DNS control for `fibuki.com` | Currently GoDaddy (`ns23`/`ns24.domaincontrol.com`). |
+| An SSH keypair | `ssh-keygen -t ed25519 -C fibuki-deploy` if you don't have one. |
+| A GPG key for backups | `backup.sh` refuses to write unencrypted dumps of customer data. |
+
+## 1. Authenticate hcloud
+
+```bash
+hcloud context create fibuki     # paste the token when prompted
+hcloud context active
+```
+
+## 2. Provision
+
+```bash
+cd deploy/selfhost
+DRY_RUN=1 ./provision-hetzner.sh   # read the plan first
+./provision-hetzner.sh
+```
+
+Creates a `cx32` in `fsn1` (Falkenstein), a Cloud Firewall allowing only
+**22, 80, 443, icmp**, hardened SSH (no password auth), Docker, `fail2ban`,
+unattended security upgrades, and Hetzner server backups.
+
+8 GB is the floor, not headroom: Chromium sits around 400 MB resident plus 50 to
+100 MB per concurrent PDF page, on top of Postgres, MinIO, Next, and the API.
+
+The firewall is the real boundary. Docker publishes ports by writing iptables
+rules that sit ahead of `ufw`, so a host firewall cannot be relied on to contain a
+published container port. The Cloud Firewall runs outside the host.
+
+## 3. DNS (before first boot)
+
+Both names must resolve **before** you bring the stack up, or Caddy's ACME
+challenge fails and backs off with a retry delay.
+
+```
+new.fibuki.com       A     <server-ipv4>
+new-api.fibuki.com   A     <server-ipv4>
+new.fibuki.com       AAAA  <server-ipv6>
+new-api.fibuki.com   AAAA  <server-ipv6>
+```
+
+Confirm from off-box, not just locally:
+
+```bash
+dig +short new.fibuki.com new-api.fibuki.com
+```
+
+## 4. Ship the code
+
+The box builds from source, so it needs the repo at the selfhost branch. It does
+**not** need Firebase credentials and must never have them: that is why the
+migration is split into two programs.
+
+```bash
+IP=$(hcloud server ip fibuki-selfhost)
+ssh root@$IP 'mkdir -p /opt/fibuki'
+# From a clone at the selfhost branch:
+rsync -az --delete \
+  --exclude node_modules --exclude .next --exclude .git \
+  ./ root@$IP:/opt/fibuki/
+```
+
+## 5. Configure
+
+```bash
+ssh root@$IP
+cd /opt/fibuki/deploy/selfhost
+cp .env.newfibuki.example .env
+chmod 600 .env
+# Fill every CHANGE_ME:  openssl rand -base64 36
+vi .env
+```
+
+Two things that are easy to get wrong:
+
+- **Leave `OIDC_ISSUER` unset.** `server.ts` checks it first and, if set, leaves
+  the built-in auth unmounted. The importer preserves Firebase uids while the OIDC
+  verifier derives uid from the IdP's `sub`, so OIDC would make migrated data
+  import cleanly and read as empty.
+- **Never set `FIBUKI_DEV_UID`.** It authenticates every bearer token as one user.
+
+## 6. Bring it up
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+  --env-file .env up -d --build
+docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
+```
+
+First build takes a while (two Node images, one with Chromium).
+
+Verify, on the box:
+
+```bash
+curl -fsS http://127.0.0.1:8788/healthz    # ~112 callables / 12 scheduled jobs
+```
+
+And from outside:
+
+```bash
+curl -fsSI https://new.fibuki.com | head -1
+curl -fsS  https://new-api.fibuki.com/healthz    # expect 404 — masked on purpose
+```
+
+Confirm nothing else is exposed. Only 22, 80, 443 should answer:
+
+```bash
+nmap -Pn -p 22,80,443,3000,5432,8788,9000,9001 new.fibuki.com
+```
+
+## 7. Prove PDFs work
+
+This is the fix most likely to still be wrong, and the cutover runbook would only
+catch it after you have already frozen writes. Exercise a path that reaches
+`htmlToPdf` (a receipt conversion, or a UVA report) and confirm:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+  logs fibuki-api | grep -i chrom
+```
+
+## 8. Backups, before any real data
+
+```bash
+apt-get install -y gnupg rclone
+# Import/create the key that GPG_RECIPIENT names, then:
+install -d -m 700 /var/backups/fibuki
+cat >/etc/cron.d/fibuki-backup <<'EOF'
+GPG_RECIPIENT=you@fibuki.com
+OFFSITE_CMD=rclone copy --to-remote storagebox:fibuki/
+10 3 * * * root /opt/fibuki/deploy/selfhost/backup.sh >> /var/log/fibuki-backup.log 2>&1
+EOF
+```
+
+Then run both by hand once and do not proceed until the second one passes:
+
+```bash
+GPG_RECIPIENT=you@fibuki.com /opt/fibuki/deploy/selfhost/backup.sh
+/opt/fibuki/deploy/selfhost/restore-test.sh
+```
+
+## 9. Then, and only then, migrate
+
+Back to [`w4-cutover-runbook.md`](../../docs/w4-cutover-runbook.md) from step 2.
+The export runs on **your** machine (the one with the Firebase service account),
+never here.
+
+## Accepted regressions
+
+Per the phase-2 decision, not bugs: realtime is polling rather than
+`onSnapshot`, and trigger delivery is in-process with the orphan-cron as the
+crash-recovery net.
+
+## Scaling, when you get there
+
+The API is a single Node process with no clustering, so a bigger instance buys
+little. `FIBUKI_NO_CRON=1` lets you run additional replicas safely, but exactly
+one instance may run the schedules: there is no advisory lock or leader election,
+so two unguarded instances fire all 12 jobs twice. The trigger bus is in-process,
+so heavy trigger and PDF work cannot be isolated onto a dedicated worker until
+pg-boss lands in Phase 3.
