@@ -21,7 +21,7 @@ export default defineConfig({
       { find: "firebase-admin/storage", replacement: shim("storage-shim.ts") },
       { find: "firebase-functions/v2/scheduler", replacement: shim("scheduler-shim.ts") },
       { find: "firebase-functions/params", replacement: shim("params-shim.ts") },
-      { find: "@google-cloud/vertexai", replacement: shim("vertexai-stub.ts") },
+      { find: "@google-cloud/vertexai", replacement: shim("vertexai-adapter.ts") },
       // The central mailer is app code imported by relative path, so the
       // swap matches the module suffix instead of a bare specifier. The
       // pattern spans the whole specifier — regex aliases are applied via

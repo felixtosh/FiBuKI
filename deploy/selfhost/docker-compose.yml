@@ -108,6 +108,16 @@ services:
       APP_URL: ${APP_URL:-}
       # Auto-grants admin on first login (see CLAUDE.md).
       SUPER_ADMIN_EMAIL: ${SUPER_ADMIN_EMAIL:-}
+      # AI routing (selfhost/ai/config.ts). @google-cloud/vertexai is aliased to
+      # vertexai-adapter.ts, so Gemini runs on an API key and needs no GCP service
+      # account. Per-model overrides (FIBUKI_AI_ROUTE_*) pass through via the
+      # env_file below, since their names are not fixed.
+      FIBUKI_AI_PROVIDER: ${FIBUKI_AI_PROVIDER:-gemini}
+      FIBUKI_GEMINI_API_KEY: ${FIBUKI_GEMINI_API_KEY:-}
+      FIBUKI_ANTHROPIC_API_KEY: ${FIBUKI_ANTHROPIC_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      FIBUKI_AI_BASE_URL: ${FIBUKI_AI_BASE_URL:-}
+      FIBUKI_AI_API_KEY: ${FIBUKI_AI_API_KEY:-}
       # OIDC_JWKS_URI lets the verifier fetch keys from a directly-reachable URL
       # (e.g. the IdP on the same network) while OIDC_ISSUER stays the public,
       # browser-facing issuer that tokens are minted with. Leave blank to discover.
@@ -126,6 +136,12 @@ services:
       FIBUKI_SMTP_PASS: ${FIBUKI_SMTP_PASS}
       FIBUKI_SMTP_FROM: ${FIBUKI_SMTP_FROM:-}
       FIBUKI_SMTP_FROM_NAME: ${FIBUKI_SMTP_FROM_NAME}
+    # Also load .env wholesale, which is what carries the FIBUKI_AI_ROUTE_<model>
+    # overrides — their names depend on the model ids being routed, so they cannot
+    # be enumerated in `environment` above. Explicit `environment` entries win over
+    # env_file, so the mappings above remain authoritative.
+    env_file:
+      - .env
     # Loopback-only publish. On a public host a bare "8788:8788" binds 0.0.0.0
     # AND Docker writes its own iptables rules, which bypass ufw/firewalld — the
     # API would be reachable over plain HTTP from the internet. TLS termination
