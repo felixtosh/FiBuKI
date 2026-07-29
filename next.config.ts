@@ -100,6 +100,17 @@ const CSP_DIRECTIVES: Record<string, string[]> = {
   "font-src": ["'self'", "data:"],
   "connect-src": [
     "'self'",
+    // PdfPageViewer (pdf.js) reads the document over XHR, and on the self-host
+    // stack that document is a blob: URL — the file is fetched with an
+    // Authorization header and handed to the viewer as a blob rather than as a
+    // tokenised URL (hooks/use-file-object-url.ts). `'self'` does NOT cover the
+    // blob: scheme, so without this the full-screen preview is blocked while the
+    // iframe thumbnail still works, because frame-src already allows blob:.
+    //
+    // Low risk: a blob: URL is origin-bound, unguessable, and created by this page,
+    // so this permits reading our own buffers and cannot reach an external host.
+    // Same reasoning already applied to img-src, worker-src and frame-src.
+    "blob:",
     "https://*.googleapis.com",
     "https://*.cloudfunctions.net",
     "https://*.firebaseio.com",
