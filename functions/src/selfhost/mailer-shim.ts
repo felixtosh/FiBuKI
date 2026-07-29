@@ -11,10 +11,17 @@
  *   FIBUKI_SMTP_USER     auth mailbox (required)
  *   FIBUKI_SMTP_PASS     (required)
  *   FIBUKI_SMTP_FROM_NAME  display name, default "FiBuKI"
+ *   FIBUKI_SMTP_FROM     envelope/From address, default FIBUKI_SMTP_USER
  *
- * The From/envelope address is always FIBUKI_SMTP_USER — Migadu rejects
- * mail whose envelope-from doesn't match the authenticated mailbox, so the
- * shim aligns them by construction instead of offering a separate from env.
+ * From defaults to FIBUKI_SMTP_USER because mailbox providers (Migadu among
+ * them) reject mail whose envelope-from does not match the authenticated
+ * mailbox, and aligning them by construction is the right default.
+ *
+ * FIBUKI_SMTP_FROM exists for API-relay providers, where the SMTP username is a
+ * fixed literal rather than an address: Resend authenticates as user "resend"
+ * with the API key as the password, and SendGrid as "apikey". Pinning From to
+ * the username there yields "FiBuKI <resend>", which is not a deliverable
+ * address. Leave it unset for a mailbox provider.
  */
 
 import type { Transporter } from "nodemailer";
@@ -71,12 +78,15 @@ export async function sendEmail(options: SendEmailOptions): Promise<boolean> {
   }
 
   const user = process.env.FIBUKI_SMTP_USER || "selfhost@invalid";
+  // Defaults to the authenticated mailbox (envelope alignment); override only
+  // for API-relay providers whose username is not an address. See header.
+  const fromAddress = process.env.FIBUKI_SMTP_FROM?.trim() || user;
   const fromName = process.env.FIBUKI_SMTP_FROM_NAME || "FiBuKI";
   const transport = await getTransport();
 
   try {
     await transport.sendMail({
-      from: `${fromName} <${user}>`,
+      from: `${fromName} <${fromAddress}>`,
       to: options.to,
       subject: options.subject,
       html: options.html,

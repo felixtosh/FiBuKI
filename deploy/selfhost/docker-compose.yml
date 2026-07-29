@@ -93,12 +93,16 @@ services:
       OIDC_JWKS_URI: ${OIDC_JWKS_URI:-}
       OIDC_AUDIENCE: ${OIDC_AUDIENCE:-}
       OIDC_ADMIN_GROUP: ${OIDC_ADMIN_GROUP:-}
-      # mailer-shim (Migadu SMTP; From pinned to FIBUKI_SMTP_USER)
+      # mailer-shim. Works with any SMTP server. FIBUKI_SMTP_FROM defaults to
+      # FIBUKI_SMTP_USER (mailbox providers require envelope alignment); set it
+      # explicitly for API relays like Resend, whose username is a literal
+      # rather than an address.
       FIBUKI_SMTP_HOST: ${FIBUKI_SMTP_HOST}
       FIBUKI_SMTP_PORT: ${FIBUKI_SMTP_PORT}
       FIBUKI_SMTP_SECURE: ${FIBUKI_SMTP_SECURE}
       FIBUKI_SMTP_USER: ${FIBUKI_SMTP_USER}
       FIBUKI_SMTP_PASS: ${FIBUKI_SMTP_PASS}
+      FIBUKI_SMTP_FROM: ${FIBUKI_SMTP_FROM:-}
       FIBUKI_SMTP_FROM_NAME: ${FIBUKI_SMTP_FROM_NAME}
     # Loopback-only publish. On a public host a bare "8788:8788" binds 0.0.0.0
     # AND Docker writes its own iptables rules, which bypass ufw/firewalld — the

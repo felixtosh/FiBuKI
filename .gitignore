@@ -78,3 +78,8 @@ PLAN-*.md
 # Separate npm packages (published independently)
 /mcp-server/
 .gstack/
+
+# Migration dumps contain real customer data — never commit one.
+# The runbook uses ./fibuki-dump; ignore it wherever it lands.
+fibuki-dump/
+**/fibuki-dump/
