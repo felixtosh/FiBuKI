@@ -464,11 +464,35 @@ async function recordAccessRequest(user: {
  * The OAuth redirect URI to register at Google is
  * `${FIBUKI_AUTH_ISSUER}/__auth/callback/google`.
  */
+/**
+ * BYO-OAuth social providers, each registered only when BOTH halves of its
+ * credential pair are present — a half-configured provider would render a button
+ * that can only produce an error.
+ *
+ * GitHub is here because it was reachable on the Firebase build but not on
+ * self-host, which left any GitHub-only account with no way in at all (one such
+ * account exists in the migrated data) and contradicted the rule that both tiers
+ * ship the same features.
+ *
+ * Redirect URIs to register, where <issuer> is FIBUKI_AUTH_ISSUER:
+ *   <issuer>/__auth/callback/google
+ *   <issuer>/__auth/callback/github
+ */
 function socialProviders() {
-  const clientId = process.env.GOOGLE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  if (!clientId || !clientSecret) return undefined;
-  return { google: { clientId, clientSecret } };
+  const providers: Record<string, { clientId: string; clientSecret: string }> = {};
+
+  const pairs = [
+    ["google", process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET],
+    ["github", process.env.GITHUB_CLIENT_ID, process.env.GITHUB_CLIENT_SECRET],
+  ] as const;
+
+  for (const [name, clientId, clientSecret] of pairs) {
+    if (clientId && clientSecret) providers[name] = { clientId, clientSecret };
+  }
+
+  // Better Auth treats an empty object and undefined differently; keep undefined
+  // so nothing is mounted when nothing is configured.
+  return Object.keys(providers).length > 0 ? providers : undefined;
 }
 
 /**

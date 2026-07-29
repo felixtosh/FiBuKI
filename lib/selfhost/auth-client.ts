@@ -975,11 +975,26 @@ export async function signInWithPopup(_authArg: unknown, provider: unknown): Pro
   if (typeof window === "undefined") {
     throw new AuthError("auth/operation-not-supported-in-this-environment", "Login requires a browser.");
   }
+  // Firebase providerId -> Better Auth provider slug. Both are BYO-OAuth: the host
+  // registers a provider only when its client id and secret are present
+  // (better-auth.ts socialProviders), so an unconfigured one 4xxs rather than
+  // half-working.
+  //
+  // GitHub was previously rejected outright here, which left any GitHub-only
+  // account with NO way to sign in on a self-host deployment — one such account
+  // exists in the migrated data. That contradicts the standing rule that self-host
+  // and cloud ship the same features.
+  const PROVIDER_SLUGS: Record<string, string> = {
+    "google.com": "google",
+    "github.com": "github",
+  };
   const providerId = (provider as { providerId?: string } | null)?.providerId;
-  if (providerId !== "google.com") {
+  const providerSlug = providerId ? PROVIDER_SLUGS[providerId] : undefined;
+  if (!providerSlug) {
     throw new AuthError(
       "auth/operation-not-allowed",
-      `Provider "${providerId ?? "unknown"}" is not enabled in the self-host build (Google only).`,
+      `Provider "${providerId ?? "unknown"}" is not supported in the self-host build ` +
+        `(supported: ${Object.keys(PROVIDER_SLUGS).join(", ")}).`,
     );
   }
   const base = authApiBase();
@@ -1001,7 +1016,7 @@ export async function signInWithPopup(_authArg: unknown, provider: unknown): Pro
     // errorCallbackURL below, i.e. as a fake access-request message.
     credentials: "include",
     body: JSON.stringify({
-      provider: "google",
+      provider: providerSlug,
       callbackURL: cb.toString(),
       errorCallbackURL: errCb.toString(),
     }),
@@ -1009,7 +1024,7 @@ export async function signInWithPopup(_authArg: unknown, provider: unknown): Pro
   if (!res.ok) {
     throw new AuthError(
       "auth/operation-not-allowed",
-      `Google sign-in unavailable (${res.status}) — are GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET set on the host?`,
+      `${providerSlug} sign-in unavailable (${res.status}) — is the ${providerSlug.toUpperCase()}_CLIENT_ID / ${providerSlug.toUpperCase()}_CLIENT_SECRET pair set on the host?`,
     );
   }
   const body = (await res.json()) as { url?: string };

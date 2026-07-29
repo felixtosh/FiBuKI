@@ -1,13 +1,19 @@
 /**
  * Which social sign-in providers this build actually supports.
  *
- * The shared login / register UI renders one button per social provider, but
- * the self-host build only wires **Google**: `lib/selfhost/auth-client.ts`
- * `signInWithPopup` rejects every non-Google provider outright, so the GitHub
- * button is a dead control there — it can only ever surface an error. Gate the
- * UI on this instead of shipping a button that cannot work.
+ * The shared login / register UI renders one button per social provider. Shipping a
+ * button that cannot work is worse than shipping none, so the UI gates on these.
  *
- * The Firebase build supports both, so both helpers return `true` there.
+ * Both providers now work on both tiers. The self-host host registers a provider
+ * only when both halves of its OAuth credential pair are set
+ * (functions/src/selfhost/better-auth.ts `socialProviders`), and the client shim
+ * accepts either (lib/selfhost/auth-client.ts `signInWithPopup`).
+ *
+ * GitHub used to be hidden under self-host because the shim rejected every
+ * non-Google provider outright. That left any GitHub-only account with NO route in
+ * — one such account exists in the migrated production data — and contradicted the
+ * rule that self-host and cloud ship the same features, differing only in effort
+ * and infrastructure.
  */
 
 /**
@@ -23,7 +29,17 @@ export function isSelfhostBuild(): boolean {
   return process.env.NEXT_PUBLIC_FIBUKI_BACKEND === "selfhost";
 }
 
-/** GitHub social sign-in is available (Firebase build only, not self-host). */
+/**
+ * GitHub social sign-in is available.
+ *
+ * Always on the Firebase build. On self-host it depends on whether the operator
+ * configured GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET on the host, which the browser
+ * cannot see — so the web build is told explicitly via
+ * NEXT_PUBLIC_GITHUB_SIGNIN_ENABLED (a compose build arg, since NEXT_PUBLIC_* are
+ * inlined at build time). Defaults to off, so an operator without a GitHub OAuth
+ * app still gets no dead button.
+ */
 export function githubSignInEnabled(): boolean {
-  return !isSelfhostBuild();
+  if (!isSelfhostBuild()) return true;
+  return process.env.NEXT_PUBLIC_GITHUB_SIGNIN_ENABLED === "true";
 }

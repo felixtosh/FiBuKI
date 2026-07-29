@@ -99,6 +99,10 @@ services:
       # ${FIBUKI_AUTH_ISSUER}/__auth/callback/google
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      # GitHub social sign-in. Registered only when BOTH are set. Redirect URI:
+      # ${FIBUKI_AUTH_ISSUER}/__auth/callback/github
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
       # Trusted server-to-server path in lib/auth/get-server-user.ts, used by
       # runReceiptSearchForTransaction. Ignored unless >= 16 chars.
       INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-}
@@ -108,14 +112,14 @@ services:
       APP_URL: ${APP_URL:-}
       # Auto-grants admin on first login (see CLAUDE.md).
       SUPER_ADMIN_EMAIL: ${SUPER_ADMIN_EMAIL:-}
-      # AI routing (selfhost/ai/config.ts). @google-cloud/vertexai is aliased to
-      # vertexai-adapter.ts, so Gemini runs on an API key and needs no GCP service
-      # account. Per-model overrides (FIBUKI_AI_ROUTE_*) pass through via the
-      # env_file below, since their names are not fixed.
       # Which exclusion profile the host mounts (selfhost/manifest.ts).
       # "selfhost" drops Stripe billing, country crowdfunding and referrals;
       # "cloud" mounts everything. Defaults to selfhost.
       FIBUKI_TIER: ${FIBUKI_TIER:-selfhost}
+      # AI routing (selfhost/ai/config.ts). @google-cloud/vertexai is aliased to
+      # vertexai-adapter.ts, so Gemini runs on an API key and needs no GCP service
+      # account. Per-model overrides (FIBUKI_AI_ROUTE_*) pass through via the
+      # env_file below, since their names are not fixed.
       FIBUKI_AI_PROVIDER: ${FIBUKI_AI_PROVIDER:-gemini}
       # Read by extraction/geminiParser.ts getProjectId(), which throws
       # "Could not determine Google Cloud project ID" before it ever constructs a
@@ -182,6 +186,10 @@ services:
         NEXT_PUBLIC_OIDC_ADMIN_GROUP: ${NEXT_PUBLIC_OIDC_ADMIN_GROUP}
         NEXT_PUBLIC_OIDC_REDIRECT_URI: ${NEXT_PUBLIC_OIDC_REDIRECT_URI}
         NEXT_PUBLIC_FIBUKI_POLL_MS: ${NEXT_PUBLIC_FIBUKI_POLL_MS}
+        # Whether to render the GitHub sign-in button. The browser cannot see
+        # whether GITHUB_CLIENT_ID/SECRET are set on the api, so it is told here.
+        # Must match, or the button appears and then 4xxs.
+        NEXT_PUBLIC_GITHUB_SIGNIN_ENABLED: ${NEXT_PUBLIC_GITHUB_SIGNIN_ENABLED:-false}
     restart: unless-stopped
     depends_on:
       fibuki-api:
