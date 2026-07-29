@@ -42,7 +42,7 @@ jobs:
       cli_changed: ${{ steps.changes.outputs.cli }}
       openclaw_changed: ${{ steps.changes.outputs.openclaw }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 2
 
@@ -75,7 +75,7 @@ jobs:
         || (github.event_name == 'workflow_dispatch' && inputs.publish_cli)
       )
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v6
         with:
@@ -131,7 +131,7 @@ jobs:
         || (github.event_name == 'workflow_dispatch' && inputs.publish_openclaw)
       )
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v6
         with:
