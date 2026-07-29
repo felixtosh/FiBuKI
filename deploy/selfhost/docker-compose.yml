@@ -112,6 +112,10 @@ services:
       # vertexai-adapter.ts, so Gemini runs on an API key and needs no GCP service
       # account. Per-model overrides (FIBUKI_AI_ROUTE_*) pass through via the
       # env_file below, since their names are not fixed.
+      # Which exclusion profile the host mounts (selfhost/manifest.ts).
+      # "selfhost" drops Stripe billing, country crowdfunding and referrals;
+      # "cloud" mounts everything. Defaults to selfhost.
+      FIBUKI_TIER: ${FIBUKI_TIER:-selfhost}
       FIBUKI_AI_PROVIDER: ${FIBUKI_AI_PROVIDER:-gemini}
       FIBUKI_GEMINI_API_KEY: ${FIBUKI_GEMINI_API_KEY:-}
       FIBUKI_ANTHROPIC_API_KEY: ${FIBUKI_ANTHROPIC_API_KEY:-}

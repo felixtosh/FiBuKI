@@ -86,9 +86,21 @@ describe("selfhost HTTP host: barrel mounting", () => {
     for (const name of EXCLUDED_EXPORTS) {
       expect(mounted.has(name), `${name} must not be mounted`).toBe(false);
     }
-    // Every manifest entry actually exists in the barrel (guards typos and
-    // upstream renames): it was counted as excluded, or it never mounted.
-    expect(inventory.excluded.length).toBeGreaterThan(40);
+    // Every manifest entry must correspond to a REAL barrel export, so that a
+    // typo or an upstream rename cannot silently stop excluding something. A
+    // name the host never saw is absent from inventory.excluded.
+    //
+    // Asserted as a subset rather than a count: the manifest is tier-aware
+    // (FIBUKI_TIER), so any fixed number encodes one tier's total and breaks the
+    // moment the split changes — which is what a bare `> 40` did.
+    const excluded = new Set(inventory.excluded);
+    for (const name of EXCLUDED_EXPORTS) {
+      expect(
+        excluded.has(name),
+        `${name} is in the exclusion manifest but is not a barrel export — ` +
+          `typo, or renamed upstream`,
+      ).toBe(true);
+    }
   });
 
   it("serves /healthz with the inventory counts", async () => {
