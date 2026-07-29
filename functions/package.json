@@ -56,5 +56,10 @@
     "typescript": "^6.0.3",
     "vitest": "^4.1.9"
   },
-  "private": true
+  "private": true,
+  "overrides": {
+    "gaxios": "^7.3.0",
+    "gcp-metadata": "^8.1.4",
+    "zip-stream": "^7.0.5"
+  }
 }
