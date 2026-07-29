@@ -116,8 +116,24 @@ packages:
   - gnupg
   - git
   - fail2ban
+  # fail2ban's systemd backend (see jail.local below) needs this binding, and
+  # without it the service starts, prints "Server ready", then exits 255.
+  - python3-systemd
   - unattended-upgrades
 write_files:
+  - path: /etc/fail2ban/jail.local
+    content: |
+      [DEFAULT]
+      # Debian 12 logs sshd to the journal and ships no /var/log/auth.log, which
+      # the stock sshd jail reads — fail2ban otherwise refuses to start with
+      # "Have not found any log file for sshd jail".
+      backend = systemd
+      bantime = 1h
+      findtime = 10m
+      maxretry = 5
+
+      [sshd]
+      enabled = true
   - path: /etc/ssh/sshd_config.d/99-fibuki.conf
     content: |
       PasswordAuthentication no
