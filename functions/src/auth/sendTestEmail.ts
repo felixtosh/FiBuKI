@@ -25,6 +25,7 @@ import {
   buildPasswordResetText,
 } from "./passwordResetEmail";
 import { resolveMergeFields } from "../emails/resolveMergeFields";
+import { isMailerConfigured, sendEmail } from "../utils/mailer";
 
 const resendApiKey = defineSecret("RESEND_API_KEY");
 
@@ -39,9 +40,6 @@ interface SendTestEmailRequest {
 interface SendTestEmailResponse {
   success: boolean;
 }
-
-const FROM_EMAIL = "noreply@fibuki.com";
-const FROM_NAME = "FiBuKI";
 
 export const sendTestEmailCallable = createCallable<
   SendTestEmailRequest,
@@ -59,8 +57,7 @@ export const sendTestEmailCallable = createCallable<
       throw new HttpsError("invalid-argument", "Valid recipientEmail is required");
     }
 
-    const apiKey = resendApiKey.value();
-    if (!apiKey) {
+    if (!isMailerConfigured()) {
       throw new HttpsError("failed-precondition", "RESEND_API_KEY not configured");
     }
 
@@ -130,12 +127,8 @@ export const sendTestEmailCallable = createCallable<
         throw new HttpsError("invalid-argument", "Unknown template");
     }
 
-    const { Resend } = await import("resend");
-    const resend = new Resend(apiKey);
-
-    await resend.emails.send({
+    await sendEmail({
       to: recipientEmail,
-      from: `${FROM_NAME} <${FROM_EMAIL}>`,
       subject,
       html,
       text,

@@ -1,5 +1,5 @@
 /**
- * Send AI budget warning emails via Resend.
+ * Send AI budget warning emails via the central mailer.
  * Respects budgetWarningsEnabled preference — always creates in-app notification.
  */
 
@@ -10,9 +10,7 @@ import {
   buildBudgetWarningText,
 } from "./budgetWarningEmail";
 import { buildUnsubscribeUrl } from "../emails/unsubscribeTokens";
-
-const FROM_EMAIL = "noreply@fibuki.com";
-const FROM_NAME = "FiBuKI";
+import { sendEmail } from "../utils/mailer";
 
 export async function sendUsageWarning(
   userId: string,
@@ -53,27 +51,12 @@ export async function sendUsageWarning(
     return;
   }
 
-  const apiKey = process.env.RESEND_API_KEY || "";
-  if (!apiKey) {
-    console.warn("[UsageWarning] RESEND_API_KEY not configured, skipping email");
-    return;
-  }
-
-  const { Resend } = await import("resend");
-  const resend = new Resend(apiKey);
-
   const name = user.displayName || undefined;
   const unsubscribeUrl = buildUnsubscribeUrl(userId, "budgetWarnings");
   const html = buildBudgetWarningHtml({ name, percent, usageEur, limitEur, unsubscribeUrl });
   const text = buildBudgetWarningText({ name, percent, usageEur, limitEur });
 
-  await resend.emails.send({
-    to: email,
-    from: `${FROM_NAME} <${FROM_EMAIL}>`,
-    subject,
-    text,
-    html,
-  });
-
-  console.log(`[UsageWarning] Sent ${percent}% warning to ${email}`);
+  if (await sendEmail({ to: email, subject, text, html })) {
+    console.log(`[UsageWarning] Sent ${percent}% warning to ${email}`);
+  }
 }

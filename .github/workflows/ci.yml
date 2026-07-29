@@ -41,3 +41,112 @@ jobs:
       - run: npm ci
       - run: npx tsc --noEmit
       - run: npm test
+
+  functions-selfhost:
+    name: Self-host suite (PGlite + in-memory storage)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: functions
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+      - run: npm ci
+      - run: npm run test:selfhost
+
+  functions-selfhost-compose:
+    name: Self-host suite (real Postgres + real S3)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+      - name: Start Postgres + MinIO (compose)
+        run: docker compose -f deploy/selfhost/docker-compose.ci.yml up -d --wait
+      - run: npm ci
+        working-directory: functions
+      # Same suite as functions-selfhost, pointed at the compose services.
+      # Sequential (--no-file-parallelism): every worker would share the one
+      # Postgres `docs` table, unlike the per-process PGlite default.
+      - run: npm run test:selfhost -- --no-file-parallelism
+        working-directory: functions
+        env:
+          DATABASE_URL: postgres://fibuki:fibuki-ci@localhost:5433/fibuki_ci
+          # Real Postgres → better-auth.ts requires a real secret (JWKS
+          # private keys are encrypted with it; the library's dev default is
+          # refused whenever DATABASE_URL is set).
+          FIBUKI_AUTH_SECRET: fibuki-ci-auth-secret-not-for-production
+          FIBUKI_STORAGE: s3
+          FIBUKI_S3_ENDPOINT: localhost
+          FIBUKI_S3_PORT: "9000"
+          FIBUKI_S3_SSL: "false"
+          FIBUKI_S3_ACCESS_KEY: fibuki-ci
+          FIBUKI_S3_SECRET_KEY: fibuki-ci-secret
+          FIBUKI_STORAGE_BUCKET: fibuki-ci
+      - name: Compose logs on failure
+        if: failure()
+        run: docker compose -f deploy/selfhost/docker-compose.ci.yml logs
+
+  api-auth-smoke:
+    name: App API routes (auth smoke)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      # The suite imports the real Next route handlers from the repo root,
+      # so it needs BOTH dependency trees (root: next/firebase-admin; the
+      # runner itself lives in functions/). See vitest.api-smoke.config.ts.
+      - run: npm ci
+      - run: npm ci
+        working-directory: functions
+      - run: npx vitest run --config vitest.api-smoke.config.ts
+        working-directory: functions
+
+  extension:
+    name: Extension (jest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: extensions/taxstudio-browser
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: extensions/taxstudio-browser/package-lock.json
+      - run: npm ci
+      - run: npm test
+
+  firestore-parity:
+    name: Firestore parity (firebase-admin vs shim)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+      - run: npm ci
+        working-directory: functions
+      # emulators:exec exports FIRESTORE_EMULATOR_HOST, which un-skips the
+      # firebase-admin half of the parity suite; the shim half always runs.
+      - name: Run parity suite against the Firestore emulator
+        run: >
+          npx -y firebase-tools@14 emulators:exec --only firestore --project demo-fibuki
+          "cd functions && npx vitest run src/test/firestore-parity.test.ts"

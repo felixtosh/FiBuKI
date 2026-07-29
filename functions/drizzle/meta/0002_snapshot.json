@@ -1,0 +1,828 @@
+{
+  "id": "068ebdc9-1d7b-475c-bd85-d8d7e1ae313c",
+  "prevId": "7beaf0e8-bb5e-4670-8a80-5d8684854bfb",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.docs": {
+      "name": "docs",
+      "schema": "",
+      "columns": {
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "path": {
+          "name": "path",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "collection_path": {
+          "name": "collection_path",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "data": {
+          "name": "data",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "docs_tenant_collection_idx": {
+          "name": "docs_tenant_collection_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "collection_path",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "docs_tenant_id_tenants_id_fk": {
+          "name": "docs_tenant_id_tenants_id_fk",
+          "tableFrom": "docs",
+          "tableTo": "tenants",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "docs_tenant_id_path_pk": {
+          "name": "docs_tenant_id_path_pk",
+          "columns": [
+            "tenant_id",
+            "path"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.files": {
+      "name": "files",
+      "schema": "",
+      "columns": {
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "data": {
+          "name": "data",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "CASE WHEN jsonb_typeof(\"data\"->'userId') = 'string' THEN \"data\"->'userId' #>> '{}' END",
+            "type": "stored"
+          }
+        },
+        "partner_id": {
+          "name": "partner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "CASE WHEN jsonb_typeof(\"data\"->'partnerId') = 'string' THEN \"data\"->'partnerId' #>> '{}' END",
+            "type": "stored"
+          }
+        },
+        "partner_matched_by": {
+          "name": "partner_matched_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "CASE WHEN jsonb_typeof(\"data\"->'partnerMatchedBy') = 'string' THEN \"data\"->'partnerMatchedBy' #>> '{}' END",
+            "type": "stored"
+          }
+        },
+        "content_hash": {
+          "name": "content_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "CASE WHEN jsonb_typeof(\"data\"->'contentHash') = 'string' THEN \"data\"->'contentHash' #>> '{}' END",
+            "type": "stored"
+          }
+        },
+        "source_type": {
+          "name": "source_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "CASE WHEN jsonb_typeof(\"data\"->'sourceType') = 'string' THEN \"data\"->'sourceType' #>> '{}' END",
+            "type": "stored"
+          }
+        },
+        "gmail_message_id": {
+          "name": "gmail_message_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "CASE WHEN jsonb_typeof(\"data\"->'gmailMessageId') = 'string' THEN \"data\"->'gmailMessageId' #>> '{}' END",
+            "type": "stored"
+          }
+        },
+        "gmail_attachment_id": {
+          "name": "gmail_attachment_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "CASE WHEN jsonb_typeof(\"data\"->'gmailAttachmentId') = 'string' THEN \"data\"->'gmailAttachmentId' #>> '{}' END",
+            "type": "stored"
+          }
+        },
+        "extraction_error": {
+          "name": "extraction_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "CASE WHEN jsonb_typeof(\"data\"->'extractionError') = 'string' THEN \"data\"->'extractionError' #>> '{}' END",
+            "type": "stored"
+          }
+        },
+        "extraction_complete": {
+          "name": "extraction_complete",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "CASE WHEN jsonb_typeof(\"data\"->'extractionComplete') = 'boolean' THEN (\"data\"->'extractionComplete' #>> '{}')::boolean END",
+            "type": "stored"
+          }
+        },
+        "partner_match_complete": {
+          "name": "partner_match_complete",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "CASE WHEN jsonb_typeof(\"data\"->'partnerMatchComplete') = 'boolean' THEN (\"data\"->'partnerMatchComplete' #>> '{}')::boolean END",
+            "type": "stored"
+          }
+        },
+        "transaction_match_complete": {
+          "name": "transaction_match_complete",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "CASE WHEN jsonb_typeof(\"data\"->'transactionMatchComplete') = 'boolean' THEN (\"data\"->'transactionMatchComplete' #>> '{}')::boolean END",
+            "type": "stored"
+          }
+        },
+        "extracted_date": {
+          "name": "extracted_date",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "CASE WHEN \"data\"->'extractedDate' ? '__fbts__' THEN to_timestamp((\"data\"->'extractedDate'->'__fbts__'->>'s')::double precision + (\"data\"->'extractedDate'->'__fbts__'->>'n')::double precision / 1e9) END",
+            "type": "stored"
+          }
+        },
+        "uploaded_at": {
+          "name": "uploaded_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "CASE WHEN \"data\"->'uploadedAt' ? '__fbts__' THEN to_timestamp((\"data\"->'uploadedAt'->'__fbts__'->>'s')::double precision + (\"data\"->'uploadedAt'->'__fbts__'->>'n')::double precision / 1e9) END",
+            "type": "stored"
+          }
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "CASE WHEN \"data\"->'updatedAt' ? '__fbts__' THEN to_timestamp((\"data\"->'updatedAt'->'__fbts__'->>'s')::double precision + (\"data\"->'updatedAt'->'__fbts__'->>'n')::double precision / 1e9) END",
+            "type": "stored"
+          }
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "CASE WHEN \"data\"->'createdAt' ? '__fbts__' THEN to_timestamp((\"data\"->'createdAt'->'__fbts__'->>'s')::double precision + (\"data\"->'createdAt'->'__fbts__'->>'n')::double precision / 1e9) END",
+            "type": "stored"
+          }
+        }
+      },
+      "indexes": {
+        "files_tenant_id_user_id_uploaded_at_idx": {
+          "name": "files_tenant_id_user_id_uploaded_at_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "uploaded_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "files_tenant_id_user_id_content_hash_idx": {
+          "name": "files_tenant_id_user_id_content_hash_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "content_hash",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "files_tenant_id_user_id_gmail_message_id_idx": {
+          "name": "files_tenant_id_user_id_gmail_message_id_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "gmail_message_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "files_tenant_id_partner_id_idx": {
+          "name": "files_tenant_id_partner_id_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "partner_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "files_tenant_id_tenants_id_fk": {
+          "name": "files_tenant_id_tenants_id_fk",
+          "tableFrom": "files",
+          "tableTo": "tenants",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "files_tenant_id_id_pk": {
+          "name": "files_tenant_id_id_pk",
+          "columns": [
+            "tenant_id",
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.sources": {
+      "name": "sources",
+      "schema": "",
+      "columns": {
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "data": {
+          "name": "data",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "CASE WHEN jsonb_typeof(\"data\"->'userId') = 'string' THEN \"data\"->'userId' #>> '{}' END",
+            "type": "stored"
+          }
+        },
+        "is_active": {
+          "name": "is_active",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "CASE WHEN jsonb_typeof(\"data\"->'isActive') = 'boolean' THEN (\"data\"->'isActive' #>> '{}')::boolean END",
+            "type": "stored"
+          }
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "CASE WHEN jsonb_typeof(\"data\"->'name') = 'string' THEN \"data\"->'name' #>> '{}' END",
+            "type": "stored"
+          }
+        },
+        "linked_source_id": {
+          "name": "linked_source_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "CASE WHEN jsonb_typeof(\"data\"->'linkedSourceId') = 'string' THEN \"data\"->'linkedSourceId' #>> '{}' END",
+            "type": "stored"
+          }
+        },
+        "api_config_account_id": {
+          "name": "api_config_account_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "CASE WHEN jsonb_typeof(\"data\"->'apiConfig'->'accountId') = 'string' THEN \"data\"->'apiConfig'->'accountId' #>> '{}' END",
+            "type": "stored"
+          }
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "CASE WHEN \"data\"->'createdAt' ? '__fbts__' THEN to_timestamp((\"data\"->'createdAt'->'__fbts__'->>'s')::double precision + (\"data\"->'createdAt'->'__fbts__'->>'n')::double precision / 1e9) END",
+            "type": "stored"
+          }
+        }
+      },
+      "indexes": {
+        "sources_tenant_id_user_id_idx": {
+          "name": "sources_tenant_id_user_id_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "sources_tenant_id_tenants_id_fk": {
+          "name": "sources_tenant_id_tenants_id_fk",
+          "tableFrom": "sources",
+          "tableTo": "tenants",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "sources_tenant_id_id_pk": {
+          "name": "sources_tenant_id_id_pk",
+          "columns": [
+            "tenant_id",
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.tenants": {
+      "name": "tenants",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.transactions": {
+      "name": "transactions",
+      "schema": "",
+      "columns": {
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "data": {
+          "name": "data",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "CASE WHEN jsonb_typeof(\"data\"->'userId') = 'string' THEN \"data\"->'userId' #>> '{}' END",
+            "type": "stored"
+          }
+        },
+        "partner_id": {
+          "name": "partner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "CASE WHEN jsonb_typeof(\"data\"->'partnerId') = 'string' THEN \"data\"->'partnerId' #>> '{}' END",
+            "type": "stored"
+          }
+        },
+        "source_id": {
+          "name": "source_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "CASE WHEN jsonb_typeof(\"data\"->'sourceId') = 'string' THEN \"data\"->'sourceId' #>> '{}' END",
+            "type": "stored"
+          }
+        },
+        "no_receipt_category_id": {
+          "name": "no_receipt_category_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "CASE WHEN jsonb_typeof(\"data\"->'noReceiptCategoryId') = 'string' THEN \"data\"->'noReceiptCategoryId' #>> '{}' END",
+            "type": "stored"
+          }
+        },
+        "import_job_id": {
+          "name": "import_job_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "CASE WHEN jsonb_typeof(\"data\"->'importJobId') = 'string' THEN \"data\"->'importJobId' #>> '{}' END",
+            "type": "stored"
+          }
+        },
+        "dedupe_hash": {
+          "name": "dedupe_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "CASE WHEN jsonb_typeof(\"data\"->'dedupeHash') = 'string' THEN \"data\"->'dedupeHash' #>> '{}' END",
+            "type": "stored"
+          }
+        },
+        "partner_matched_by": {
+          "name": "partner_matched_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "CASE WHEN jsonb_typeof(\"data\"->'partnerMatchedBy') = 'string' THEN \"data\"->'partnerMatchedBy' #>> '{}' END",
+            "type": "stored"
+          }
+        },
+        "no_receipt_category_matched_by": {
+          "name": "no_receipt_category_matched_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "CASE WHEN jsonb_typeof(\"data\"->'noReceiptCategoryMatchedBy') = 'string' THEN \"data\"->'noReceiptCategoryMatchedBy' #>> '{}' END",
+            "type": "stored"
+          }
+        },
+        "is_complete": {
+          "name": "is_complete",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "CASE WHEN jsonb_typeof(\"data\"->'isComplete') = 'boolean' THEN (\"data\"->'isComplete' #>> '{}')::boolean END",
+            "type": "stored"
+          }
+        },
+        "quota_exceeded": {
+          "name": "quota_exceeded",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "CASE WHEN jsonb_typeof(\"data\"->'quotaExceeded') = 'boolean' THEN (\"data\"->'quotaExceeded' #>> '{}')::boolean END",
+            "type": "stored"
+          }
+        },
+        "date": {
+          "name": "date",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "CASE WHEN \"data\"->'date' ? '__fbts__' THEN to_timestamp((\"data\"->'date'->'__fbts__'->>'s')::double precision + (\"data\"->'date'->'__fbts__'->>'n')::double precision / 1e9) END",
+            "type": "stored"
+          }
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "CASE WHEN \"data\"->'createdAt' ? '__fbts__' THEN to_timestamp((\"data\"->'createdAt'->'__fbts__'->>'s')::double precision + (\"data\"->'createdAt'->'__fbts__'->>'n')::double precision / 1e9) END",
+            "type": "stored"
+          }
+        }
+      },
+      "indexes": {
+        "transactions_tenant_id_user_id_date_idx": {
+          "name": "transactions_tenant_id_user_id_date_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "date",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "transactions_tenant_id_user_id_dedupe_hash_idx": {
+          "name": "transactions_tenant_id_user_id_dedupe_hash_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "dedupe_hash",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "transactions_tenant_id_source_id_idx": {
+          "name": "transactions_tenant_id_source_id_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "source_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "transactions_tenant_id_tenants_id_fk": {
+          "name": "transactions_tenant_id_tenants_id_fk",
+          "tableFrom": "transactions",
+          "tableTo": "tenants",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "transactions_tenant_id_id_pk": {
+          "name": "transactions_tenant_id_id_pk",
+          "columns": [
+            "tenant_id",
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

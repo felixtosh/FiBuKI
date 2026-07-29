@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
+import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { PlaidClient, PlaidEnvironment } from "@/lib/plaid/client";
 
 // EU countries supported
@@ -54,6 +54,8 @@ export async function POST(request: NextRequest) {
       expiration: response.expiration,
     });
   } catch (error) {
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
     console.error("[Plaid Link Token] Error:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to create link token" },

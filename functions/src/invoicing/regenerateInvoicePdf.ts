@@ -4,6 +4,7 @@
  */
 
 import { Timestamp } from "firebase-admin/firestore";
+import { buildStorageObjectUrl } from "../utils/buildDownloadUrl";
 import { getStorage } from "firebase-admin/storage";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { Invoice } from "./types";
@@ -66,7 +67,7 @@ export async function performRegenerateInvoicePdf(
   await storageFile.makePublic();
   // Append a version query param so iframe / browser caches don't keep
   // serving the prior PDF bytes after regen.
-  const downloadUrl = `https://storage.googleapis.com/${bucket.name}/${storagePath}?v=${Date.now()}`;
+  const downloadUrl = buildStorageObjectUrl(bucket.name, storagePath, { cacheBust: true });
 
   const fileFields = buildInvoiceFileFields(invoice, {
     storagePath,

@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { getServerUserIdWithFallback, isServerUserAdmin } from "@/lib/auth/get-server-user";
+import { getServerUserIdWithFallback, isServerUserAdmin, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { callCloudFunction, setAuthToken } from "@/lib/firebase/callable-server";
 import {
   CleanupOrphanedTransactionsRequest,
@@ -48,6 +48,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(result);
   } catch (error) {
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
     console.error("[Cleanup] Error:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Cleanup failed" },
@@ -79,6 +81,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(result);
   } catch (error) {
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
     console.error("[Cleanup] Error:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to check orphans" },

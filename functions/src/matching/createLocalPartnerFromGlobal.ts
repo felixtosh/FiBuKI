@@ -64,7 +64,10 @@ export async function createLocalPartnerFromGlobal(
         partnerData.billingCycle = {
           frequencyDays: freqDays,
           frequencyConfidence: Math.min(50, insights.contributingUsers * 10), // Low initial confidence
-          invoiceToTransactionDelay: insights.typicalInvoiceDelay ?? undefined,
+          // Omitted when unknown — Firestore rejects undefined values.
+          ...(insights.typicalInvoiceDelay != null
+            ? { invoiceToTransactionDelay: insights.typicalInvoiceDelay }
+            : {}),
           sampleSize: 0, // No local data yet
           updatedAt: Timestamp.now(),
         };

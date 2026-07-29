@@ -40,6 +40,7 @@ function IntegrationsContent() {
   const { isAdmin } = useAuth();
   const { userData } = useUserData();
   const gmailIntegrations = integrations.filter((i) => i.provider === "gmail");
+  const imapIntegrations = integrations.filter((i) => i.provider === "imap");
 
   // --- Derive status strings ---
   const extensionStatus =
@@ -69,6 +70,24 @@ function IntegrationsContent() {
   const gmailBadge = gmailNeedsAttention
     ? ({ label: "Action needed", variant: "destructive" as const })
     : gmailIntegrations.length > 0
+      ? ({ label: "Connected", variant: "success" as const })
+      : undefined;
+
+  const imapStatus = gmailLoading
+    ? "Loading..."
+    : imapIntegrations.length === 0
+      ? "Connect any IMAP mailbox"
+      : imapIntegrations.length === 1
+        ? "1 mailbox"
+        : `${imapIntegrations.length} mailboxes`;
+
+  const imapNeedsAttention = imapIntegrations.some(
+    (i) => i.needsReauth || i.lastSyncStatus === "failed"
+  );
+
+  const imapBadge = imapNeedsAttention
+    ? ({ label: "Action needed", variant: "destructive" as const })
+    : imapIntegrations.length > 0
       ? ({ label: "Connected", variant: "success" as const })
       : undefined;
 
@@ -186,6 +205,14 @@ function IntegrationsContent() {
               status={gmailStatus}
               badge={gmailBadge}
               href="/integrations/gmail"
+            />
+            <IntegrationCard
+              icon={<Mail className="h-4 w-4 text-teal-600 dark:text-teal-400" />}
+              iconBg="bg-teal-100 dark:bg-teal-900/40"
+              name="IMAP Mailbox"
+              status={imapStatus}
+              badge={imapBadge}
+              href="/integrations/imap"
             />
             <IntegrationCard
               icon={<Inbox className="h-4 w-4 text-purple-600 dark:text-purple-400" />}

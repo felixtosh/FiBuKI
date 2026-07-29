@@ -9,26 +9,38 @@
  * Zero dependencies — uses only Node 18+ built-ins.
  */
 
-import { writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { writeFileSync, mkdirSync, existsSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { exec } from "node:child_process";
+import { spawn } from "node:child_process";
 
 /**
  * Open a URL in the default browser (platform-aware).
+ * Only http(s) URLs are accepted, and the command is spawned without a
+ * shell so the URL is never interpreted by one.
  */
 function openBrowser(url) {
-  const platform = process.platform;
-  const cmd =
-    platform === "darwin" ? "open" :
-    platform === "win32" ? "start" :
-    "xdg-open";
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return; // Not a URL — user can open it manually
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    return;
+  }
 
-  exec(`${cmd} "${url}"`, (err) => {
-    if (err) {
-      // Silently fail — user can open the URL manually
-    }
+  const platform = process.platform;
+  const [cmd, args] =
+    platform === "darwin" ? ["open", [parsed.href]] :
+    platform === "win32" ? ["rundll32", ["url.dll,FileProtocolHandler", parsed.href]] :
+    ["xdg-open", [parsed.href]];
+
+  const child = spawn(cmd, args, { stdio: "ignore", detached: true });
+  child.on("error", () => {
+    // Silently fail — user can open the URL manually
   });
+  child.unref();
 }
 
 /**
@@ -148,7 +160,13 @@ function outputResult({ format, apiKey, keyName, baseUrl }) {
   }
 
   const config = { apiKey, keyName };
-  writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n", "utf-8");
+  // The file holds an API key — keep it readable by the owner only.
+  writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n", {
+    encoding: "utf-8",
+    mode: 0o600,
+  });
+  // mode above only applies on creation — tighten pre-existing files too
+  chmodSync(configPath, 0o600);
 
   console.log(`  Saved to ${configPath}\n`);
 }

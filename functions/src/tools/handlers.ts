@@ -12,6 +12,7 @@
  */
 
 import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
+import { buildDownloadUrl } from "../utils/buildDownloadUrl";
 import { getStorage } from "firebase-admin/storage";
 import { randomUUID } from "crypto";
 import { TOOL_DEFINITIONS, TOOL_NAMES } from "./definitions";
@@ -1052,11 +1053,7 @@ export async function uploadFile(userId: string, args: Record<string, unknown>) 
     },
   });
 
-  const encodedPath = encodeURIComponent(storagePath);
-  const storageEmulatorHost = process.env.FIREBASE_STORAGE_EMULATOR_HOST;
-  const downloadUrl = storageEmulatorHost
-    ? `http://${storageEmulatorHost}/v0/b/${bucket.name}/o/${encodedPath}?alt=media&token=${downloadToken}`
-    : `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodedPath}?alt=media&token=${downloadToken}`;
+  const downloadUrl = buildDownloadUrl(bucket.name, storagePath, downloadToken);
 
   // Create file record in Firestore
   const now = FieldValue.serverTimestamp();

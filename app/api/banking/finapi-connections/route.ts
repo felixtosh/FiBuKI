@@ -13,7 +13,7 @@ export const dynamic = "force-dynamic";
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
+import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { FinapiClient, FinapiEnvironment } from "@/lib/finapi/client";
 import { callCloudFunction, setAuthToken } from "@/lib/firebase/callable-server";
@@ -23,6 +23,12 @@ import {
   DeleteBankingConnectionRequest,
   DeleteBankingConnectionResponse,
 } from "@/types/banking-sync";
+
+// Strip CR/LF so request-derived values cannot forge log lines
+function sanitizeForLog(value: unknown): string {
+  const raw = value instanceof Error ? value.stack || value.message : String(value);
+  return raw.replace(/\n|\r/g, "");
+}
 
 interface FinapiAccountInfo {
   accountId: number;
@@ -302,6 +308,8 @@ export async function GET(request: NextRequest) {
       tokenExpired: tokenRefreshFailed,
     });
   } catch (error) {
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
     console.error("[finAPI Connections] Error:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to fetch connections" },
@@ -327,7 +335,9 @@ export async function DELETE(request: NextRequest) {
     const body = await request.json();
     const { bankConnectionId } = body;
 
-    if (!bankConnectionId) {
+    // finAPI connection ids are numeric — reject anything else so the value
+    // can't smuggle path segments into the finAPI request URL
+    if (typeof bankConnectionId !== "number" || !Number.isInteger(bankConnectionId)) {
       return NextResponse.json(
         { error: "bankConnectionId is required" },
         { status: 400 }
@@ -430,9 +440,9 @@ export async function DELETE(request: NextRequest) {
     // Delete the connection from finAPI
     try {
       await client.deleteBankConnection(bankConnectionId, userToken);
-      console.log(`[finAPI Connections] Deleted bank connection ${bankConnectionId}`);
+      console.log(`[finAPI Connections] Deleted bank connection ${sanitizeForLog(bankConnectionId)}`);
     } catch (err) {
-      console.error(`[finAPI Connections] Failed to delete connection ${bankConnectionId}:`, err);
+      console.error("[finAPI Connections] Failed to delete connection %s:", sanitizeForLog(bankConnectionId), sanitizeForLog(err));
       return NextResponse.json(
         { error: err instanceof Error ? err.message : "Failed to delete connection from finAPI" },
         { status: 500 }
@@ -441,6 +451,8 @@ export async function DELETE(request: NextRequest) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
     console.error("[finAPI Connections] Delete error:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to delete connection" },
@@ -490,14 +502,14 @@ export async function PATCH(request: NextRequest) {
     // The finAPI user ID is based on our Firebase user ID
     const finapiUserId = `fb_${userId}`;
 
-    console.log(`[finAPI Connections] Deleting finAPI user: ${finapiUserId}`);
+    console.log(`[finAPI Connections] Deleting finAPI user: ${sanitizeForLog(finapiUserId)}`);
 
     try {
       await client.deleteUser(finapiUserId);
-      console.log(`[finAPI Connections] Successfully deleted finAPI user: ${finapiUserId}`);
+      console.log(`[finAPI Connections] Successfully deleted finAPI user: ${sanitizeForLog(finapiUserId)}`);
     } catch (err) {
       // User might not exist, that's OK
-      console.warn(`[finAPI Connections] Failed to delete finAPI user (might not exist):`, err);
+      console.warn(`[finAPI Connections] Failed to delete finAPI user (might not exist):`, sanitizeForLog(err));
     }
 
     // Clean up any bankingConnections for this user via callable
@@ -523,6 +535,8 @@ export async function PATCH(request: NextRequest) {
       message: "finAPI user reset. You can now connect your bank fresh."
     });
   } catch (error) {
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
     console.error("[finAPI Connections] Reset error:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to reset finAPI user" },

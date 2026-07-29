@@ -1,0 +1,58 @@
+# Caddy — the ONLY public listener on the box.
+#
+# Two hostnames, per deploy/selfhost/README.md: the api's CORS layer
+# (FIBUKI_WEB_ORIGIN) expects a split origin, so web and api are separate names
+# rather than a path prefix. Caddy provisions and renews Let's Encrypt certs
+# automatically for both.
+#
+# Upstreams are compose service names on the internal network. The containers
+# publish only to 127.0.0.1, so nothing but Caddy is reachable from outside.
+
+{$FIBUKI_WEB_HOST} {
+	encode zstd gzip
+
+	# HSTS. Only safe because Caddy redirects :80 -> :443 for both names.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	reverse_proxy fibuki-web:3000
+
+	log {
+		output file /var/log/caddy/web.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+	}
+}
+
+{$FIBUKI_API_HOST} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		-Server
+	}
+
+	# /healthz is public by design (compose healthcheck + uptime probes) but it
+	# reports the callable inventory, so keep it off the public name.
+	@healthz path /healthz
+	respond @healthz 404
+
+	reverse_proxy fibuki-api:8788 {
+		# The API streams file downloads (/__storage/download); don't buffer.
+		flush_interval -1
+	}
+
+	log {
+		output file /var/log/caddy/api.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+	}
+}

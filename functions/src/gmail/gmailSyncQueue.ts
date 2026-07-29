@@ -1,10 +1,12 @@
 import { onSchedule } from "firebase-functions/v2/scheduler";
+import { buildDownloadUrl } from "../utils/buildDownloadUrl";
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import { defineSecret } from "firebase-functions/params";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import * as crypto from "crypto";
 import { encrypt, decrypt } from "../utils/encryption";
+import { makeProvider, MailMessage, MailProvider } from "../mail";
 
 // Define secrets for Google OAuth - set via Firebase CLI:
 // firebase functions:secrets:set GOOGLE_CLIENT_ID
@@ -21,36 +23,8 @@ const storage = getStorage();
 // Constants
 // ============================================================================
 
-const MAX_EMAILS_PER_BATCH = 50;
 const PROCESSING_TIMEOUT_MS = 270000; // 4.5 minutes (leave buffer for 5 min function timeout)
-const REQUEST_DELAY_MS = 200; // 1000 / GMAIL_REQUESTS_PER_SECOND
 const PAUSE_CHECK_INTERVAL = 5;
-
-// Invoice search keywords
-const INVOICE_KEYWORDS = [
-  // German
-  "Rechnung",
-  "Beleg",
-  "Quittung",
-  "Faktura",
-  "Zahlungsbeleg",
-  "Kaufbeleg",
-  "Zahlungsbestätigung",
-  // English
-  "Invoice",
-  "Receipt",
-  "Bill",
-  "Payment confirmation",
-  "Order confirmation",
-];
-
-// MIME types for invoices
-const INVOICE_MIME_TYPES = [
-  "application/pdf",
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-];
 
 // ============================================================================
 // Types
@@ -85,99 +59,14 @@ interface EmailTokenDocument {
   expiresAt: Timestamp;
 }
 
-interface GmailMessage {
-  id: string;
-  threadId: string;
-  internalDate: string;
-  payload: {
-    headers: Array<{ name: string; value: string }>;
-    parts?: GmailPart[];
-    body?: { attachmentId?: string; size?: number; data?: string };
-    mimeType: string;
-  };
-}
-
-interface GmailPart {
-  partId: string;
-  mimeType: string;
-  filename: string;
-  body: { attachmentId?: string; size?: number; data?: string };
-  parts?: GmailPart[];
-}
-
-interface GmailAttachment {
-  attachmentId: string;
-  filename: string;
-  mimeType: string;
-  size: number;
-}
-
 // ============================================================================
 // Helper Functions
 // ============================================================================
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function formatGmailDate(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}/${month}/${day}`;
-}
-
-function buildInvoiceSearchQuery(dateFrom: Date, dateTo: Date): string {
-  const keywordQuery = `(${INVOICE_KEYWORDS.map((k) => `"${k}"`).join(" OR ")})`;
-  const nextDay = new Date(dateTo);
-  nextDay.setDate(nextDay.getDate() + 1);
-
-  return `${keywordQuery} has:attachment filename:pdf after:${formatGmailDate(dateFrom)} before:${formatGmailDate(nextDay)}`;
-}
 
 function extractEmailDomain(email: string): string {
   const atIndex = email.lastIndexOf("@");
   if (atIndex === -1) return email.toLowerCase();
   return email.substring(atIndex + 1).toLowerCase();
-}
-
-function extractHeader(message: GmailMessage, headerName: string): string | null {
-  const header = message.payload.headers.find(
-    (h) => h.name.toLowerCase() === headerName.toLowerCase()
-  );
-  return header?.value || null;
-}
-
-function extractAttachments(message: GmailMessage): GmailAttachment[] {
-  const attachments: GmailAttachment[] = [];
-
-  function processPartsRecursively(parts: GmailPart[] | undefined): void {
-    if (!parts) return;
-
-    for (const part of parts) {
-      // Check if this part is an invoice-type attachment
-      if (
-        part.body?.attachmentId &&
-        part.filename &&
-        INVOICE_MIME_TYPES.includes(part.mimeType)
-      ) {
-        attachments.push({
-          attachmentId: part.body.attachmentId,
-          filename: part.filename,
-          mimeType: part.mimeType,
-          size: part.body.size || 0,
-        });
-      }
-
-      // Recurse into nested parts
-      if (part.parts) {
-        processPartsRecursively(part.parts);
-      }
-    }
-  }
-
-  processPartsRecursively(message.payload.parts);
-  return attachments;
 }
 
 async function sha256(data: Buffer): Promise<string> {
@@ -322,101 +211,6 @@ async function refreshAccessToken(
 }
 
 // ============================================================================
-// Gmail API Client
-// ============================================================================
-
-class GmailApiClient {
-  private accessToken: string;
-  private lastRequestTime = 0;
-
-  constructor(accessToken: string) {
-    this.accessToken = accessToken;
-  }
-
-  private async waitForRateLimit(): Promise<void> {
-    const now = Date.now();
-    const elapsed = now - this.lastRequestTime;
-    if (elapsed < REQUEST_DELAY_MS) {
-      await sleep(REQUEST_DELAY_MS - elapsed + Math.random() * 50);
-    }
-    this.lastRequestTime = Date.now();
-  }
-
-  async searchMessages(
-    query: string,
-    pageToken?: string
-  ): Promise<{ messages: Array<{ id: string }>; nextPageToken?: string }> {
-    await this.waitForRateLimit();
-
-    const params = new URLSearchParams({
-      q: query,
-      maxResults: String(MAX_EMAILS_PER_BATCH),
-    });
-    if (pageToken) {
-      params.set("pageToken", pageToken);
-    }
-
-    const response = await fetch(
-      `https://gmail.googleapis.com/gmail/v1/users/me/messages?${params}`,
-      {
-        headers: { Authorization: `Bearer ${this.accessToken}` },
-      }
-    );
-
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Gmail search failed: ${response.status} - ${error}`);
-    }
-
-    const data = await response.json();
-    return {
-      messages: data.messages || [],
-      nextPageToken: data.nextPageToken,
-    };
-  }
-
-  async getMessage(messageId: string): Promise<GmailMessage> {
-    await this.waitForRateLimit();
-
-    const response = await fetch(
-      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}?format=full`,
-      {
-        headers: { Authorization: `Bearer ${this.accessToken}` },
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error(`Gmail get message failed: ${response.status}`);
-    }
-
-    return response.json();
-  }
-
-  async getAttachment(
-    messageId: string,
-    attachmentId: string
-  ): Promise<Buffer> {
-    await this.waitForRateLimit();
-
-    const response = await fetch(
-      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}/attachments/${attachmentId}`,
-      {
-        headers: { Authorization: `Bearer ${this.accessToken}` },
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error(`Gmail get attachment failed: ${response.status}`);
-    }
-
-    const data = await response.json();
-    // Gmail returns base64url-encoded data
-    const base64 = data.data.replace(/-/g, "+").replace(/_/g, "/");
-    return Buffer.from(base64, "base64");
-  }
-}
-
-// ============================================================================
 // Queue Processor
 // ============================================================================
 
@@ -424,6 +218,88 @@ interface ProcessQueueOptions {
   clientId: string;
   clientSecret: string;
   encryptionKey: string;
+}
+
+/**
+ * Select and construct the MailProvider for a queue item, forking on the
+ * integration's `provider`. Extracted verbatim from processQueueItem so the
+ * two legs — the self-host IMAP path and the cloud Gmail/OAuth path — can be
+ * covered in isolation (see gmailSyncQueue-provider-fork.test.ts).
+ *
+ * - imap: decrypt the stored app-password and hand the connection config to the
+ *   provider. No OAuth, no refresh; the token doc carries no expiresAt.
+ * - gmail/OAuth: refresh the access token if it is expired or expiring within
+ *   five minutes; on refresh failure mark the integration needsReauth and throw.
+ */
+export async function resolveMailProvider(
+  providerName: string,
+  integrationData: FirebaseFirestore.DocumentData | undefined,
+  tokenData: FirebaseFirestore.DocumentData,
+  integrationId: string,
+  options: ProcessQueueOptions
+): Promise<MailProvider> {
+  if (providerName === "imap") {
+    // IMAP has one long-lived app-password (no refresh). Decrypt and hand the
+    // connection config to the provider. Gmail's expiry/refresh dance below is
+    // skipped entirely — the token doc has no expiresAt for IMAP.
+    const t = tokenData as { secret?: string; secretIv?: string };
+    if (!t.secret || !t.secretIv) {
+      throw new Error("IMAP integration is missing its stored app-password");
+    }
+    const host = integrationData?.imapHost as string | undefined;
+    const user = integrationData?.email as string | undefined;
+    if (!host || !user) {
+      throw new Error("IMAP integration is missing host or username");
+    }
+    const password = decrypt(t.secret, t.secretIv, options.encryptionKey);
+    return makeProvider("imap", {
+      imap: {
+        host,
+        port: (integrationData?.imapPort as number) ?? 993,
+        secure: integrationData?.imapSecure !== false,
+        allowSelfSigned: Boolean(integrationData?.imapAllowSelfSigned),
+        mailbox: (integrationData?.imapMailbox as string) || "INBOX",
+        keywordPrefilter: integrationData?.imapKeywordPrefilter !== false,
+        user,
+        password,
+      },
+    });
+  }
+
+  let token = tokenData as EmailTokenDocument;
+
+  // Check if token is expired or about to expire (within 5 minutes)
+  const tokenExpiresAt = token.expiresAt.toDate();
+  const fiveMinutesFromNow = new Date(Date.now() + 5 * 60 * 1000);
+
+  if (tokenExpiresAt < fiveMinutesFromNow) {
+    console.log(`[GmailSync] Token expired or expiring soon, attempting refresh...`);
+
+    // Try to refresh the token using secrets
+    const refreshedToken = await refreshAccessToken(
+      integrationId,
+      token.refreshToken,
+      token.refreshTokenIv,
+      options.clientId,
+      options.clientSecret,
+      options.encryptionKey
+    );
+
+    if (refreshedToken) {
+      console.log(`[GmailSync] Token refreshed successfully`);
+      token = { ...token, accessToken: refreshedToken.accessToken, expiresAt: refreshedToken.expiresAt };
+    } else {
+      // Refresh failed - mark integration as needing reauth
+      await db.collection("emailIntegrations").doc(integrationId).update({
+        needsReauth: true,
+        lastError: "Access token expired and refresh failed",
+        updatedAt: Timestamp.now(),
+      });
+      throw new Error("Access token expired and refresh failed - needs re-authentication");
+    }
+  }
+
+  return makeProvider(providerName, { accessToken: token.accessToken });
 }
 
 async function processQueueItem(
@@ -439,51 +315,24 @@ async function processQueueItem(
   const integrationEmail = integrationDoc.exists ? (integrationData?.email as string) : undefined;
   const integrationPaused = Boolean(integrationData?.isPaused);
 
-  // Get access token
+  const providerName = (integrationData?.provider as string) ?? "gmail";
+
+  // Get stored credentials (Gmail OAuth tokens, or an IMAP app-password)
   const tokenDoc = await db.collection("emailTokens").doc(queueItem.integrationId).get();
   if (!tokenDoc.exists) {
     throw new Error("Email token not found");
   }
 
-  let tokenData = tokenDoc.data() as EmailTokenDocument;
+  const provider = await resolveMailProvider(
+    providerName,
+    integrationData,
+    tokenDoc.data() as FirebaseFirestore.DocumentData,
+    queueItem.integrationId,
+    options
+  );
 
-  // Check if token is expired or about to expire (within 5 minutes)
-  const tokenExpiresAt = tokenData.expiresAt.toDate();
-  const fiveMinutesFromNow = new Date(Date.now() + 5 * 60 * 1000);
-
-  if (tokenExpiresAt < fiveMinutesFromNow) {
-    console.log(`[GmailSync] Token expired or expiring soon, attempting refresh...`);
-
-    // Try to refresh the token using secrets
-    const refreshedToken = await refreshAccessToken(
-      queueItem.integrationId,
-      tokenData.refreshToken,
-      tokenData.refreshTokenIv,
-      options.clientId,
-      options.clientSecret,
-      options.encryptionKey
-    );
-
-    if (refreshedToken) {
-      console.log(`[GmailSync] Token refreshed successfully`);
-      tokenData = { ...tokenData, accessToken: refreshedToken.accessToken, expiresAt: refreshedToken.expiresAt };
-    } else {
-      // Refresh failed - mark integration as needing reauth
-      await db.collection("emailIntegrations").doc(queueItem.integrationId).update({
-        needsReauth: true,
-        lastError: "Access token expired and refresh failed",
-        updatedAt: Timestamp.now(),
-      });
-      throw new Error("Access token expired and refresh failed - needs re-authentication");
-    }
-  }
-
-  const client = new GmailApiClient(tokenData.accessToken);
   const dateFrom = queueItem.dateFrom.toDate();
   const dateTo = queueItem.dateTo.toDate();
-  const query = buildInvoiceSearchQuery(dateFrom, dateTo);
-
-  console.log(`[GmailSync] Search query: ${query}`);
 
   let emailsProcessed = queueItem.emailsProcessed;
   let filesCreated = queueItem.filesCreated;
@@ -527,7 +376,7 @@ async function processQueueItem(
     }
 
     // Search for messages
-    const searchResult = await client.searchMessages(query, nextPageToken);
+    const searchResult = await provider.search({ dateFrom, dateTo, pageToken: nextPageToken });
     const messageIds = searchResult.messages;
     nextPageToken = searchResult.nextPageToken;
 
@@ -557,25 +406,25 @@ async function processQueueItem(
       }
 
       try {
-        const message = await client.getMessage(messageId);
+        const message: MailMessage = await provider.getMessage({ id: messageId });
         emailsProcessed++;
         processedMessageIds.add(messageId);
 
-        const attachments = extractAttachments(message);
+        const attachments = message.attachments;
         if (attachments.length === 0) {
           continue;
         }
 
         // Extract email metadata
-        const from = extractHeader(message, "From") || "";
-        const subject = extractHeader(message, "Subject") || "";
-        const emailDate = new Date(parseInt(message.internalDate, 10));
+        const from = message.from;
+        const subject = message.subject;
+        const emailDate = message.date;
 
         // Parse sender email
         const emailMatch = from.match(/<([^>]+)>/) || [null, from];
         const senderEmail = emailMatch[1] || from;
         const senderDomain = extractEmailDomain(senderEmail);
-        const senderName = from.replace(/<[^>]+>/, "").trim().replace(/"/g, "");
+        const senderName = from.split("<")[0].trim().replace(/"/g, "");
 
         for (const attachment of attachments) {
           // Check deduplication (including soft-deleted files to prevent re-import)
@@ -595,7 +444,7 @@ async function processQueueItem(
 
           try {
             // Download attachment
-            const attachmentData = await client.getAttachment(messageId, attachment.attachmentId);
+            const attachmentData = await provider.getAttachment(message, attachment);
             const contentHash = await sha256(attachmentData);
 
             // Check content hash deduplication
@@ -647,17 +496,7 @@ async function processQueueItem(
             }
 
             // Generate download URL with token (works for both emulator and production)
-            let downloadUrl: string;
-            const storageEmulatorHost = process.env.FIREBASE_STORAGE_EMULATOR_HOST;
-            const encodedPath = encodeURIComponent(storagePath);
-
-            if (storageEmulatorHost) {
-              // Emulator URL format with token for inline preview
-              downloadUrl = `http://${storageEmulatorHost}/v0/b/${bucket.name}/o/${encodedPath}?alt=media&token=${downloadToken}`;
-            } else {
-              // Production: use token-based URL
-              downloadUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodedPath}?alt=media&token=${downloadToken}`;
-            }
+            const downloadUrl = buildDownloadUrl(bucket.name, storagePath, downloadToken);
 
             // Create file document
             const now = Timestamp.now();
@@ -956,6 +795,8 @@ async function processQueueItem(
         durationSeconds,
       });
     }
+  } finally {
+    await provider.close();
   }
 }
 

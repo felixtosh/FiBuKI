@@ -3,6 +3,20 @@ import { callFunction } from "@/lib/firebase/callable";
 import { RecordedAction } from "@/types/partner";
 import { auth } from "@/lib/firebase/config";
 
+/**
+ * Strict host check: parses the URL and compares the hostname, so
+ * "evil.com/accounts.google.com" never matches.
+ */
+function hostMatches(url: string, host: string): boolean {
+  if (!url) return false;
+  try {
+    const h = new URL(url).hostname.toLowerCase();
+    return h === host || h.endsWith("." + host);
+  } catch {
+    return false;
+  }
+}
+
 export interface LearnModeState {
   /** Whether learn mode is currently active */
   isLearning: boolean;
@@ -194,7 +208,7 @@ export function useBrowserLearnMode(): LearnModeState {
         /[/\-_.]anmeld/i.test(url) ||
         url.includes("/auth") ||
         url.includes("/oauth") ||
-        url.includes("accounts.google.com")
+        hostMatches(a.url || "", "accounts.google.com")
       );
     });
 

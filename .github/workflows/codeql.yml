@@ -31,7 +31,10 @@ jobs:
         uses: github/codeql-action/init@v3
         with:
           languages: ${{ matrix.language }}
-          queries: security-extended,security-and-quality
+          # security-extended only: security-and-quality added ~166 quality-only
+          # alerts (unused locals etc.) on ported code with zero security value.
+          # security-extended keeps every security query plus the extended set.
+          queries: security-extended
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3

@@ -1,0 +1,163 @@
+# FiBuKI self-host stack (work item 7). Runs the ported backend (fibuki-api,
+# the selfhost host over the Firestore/storage/trigger/cron shims) + the Next
+# frontend (fibuki-web, FIBUKI_BACKEND=selfhost alias build) against a real
+# Postgres (Firestore-shim JSONB store) and MinIO (storage-shim S3 backend).
+#
+# Values come from ./.env (copy .env.example). Data lives in named volumes
+# (fibuki-pgdata / fibuki-miniodata) — container-uid owned.
+#
+# Build + run:  docker compose --env-file .env up -d --build
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - fibuki-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${FIBUKI_S3_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${FIBUKI_S3_SECRET_KEY}
+    volumes:
+      - fibuki-miniodata:/data
+    # The storage shim (blobstore-s3.ts) creates the bucket on first use and
+    # retries transient outages, so a hard healthcheck gate isn't required; a
+    # readiness probe is still useful for `docker compose ps`.
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  fibuki-api:
+    build:
+      context: ../..
+      dockerfile: deploy/selfhost/api.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    environment:
+      PORT: "8788"
+      # Firestore-shim -> real Postgres (firestore-shim.ts DATABASE_URL branch)
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      # Pool ceiling (firestore-shim.ts). Unset falls back to 25; node-postgres'
+      # own default of 10 saturates first under concurrent pollers.
+      POSTGRES_MAX_CONNECTIONS: ${POSTGRES_MAX_CONNECTIONS:-25}
+      # Set to 1 for the migration window. The cron host would otherwise start
+      # working freshly imported queue documents — mutating and deleting them —
+      # before `verify` can compare them against the dump, which reports as
+      # mismatches that are not import errors. Also the switch for running extra
+      # API replicas: exactly one instance may own the schedules, and there is no
+      # advisory lock enforcing that.
+      FIBUKI_NO_CRON: ${FIBUKI_NO_CRON:-}
+      # storage-shim -> MinIO (blobstore-s3.ts)
+      FIBUKI_STORAGE: s3
+      FIBUKI_S3_ENDPOINT: minio
+      FIBUKI_S3_PORT: "9000"
+      FIBUKI_S3_SSL: "false"
+      FIBUKI_S3_ACCESS_KEY: ${FIBUKI_S3_ACCESS_KEY}
+      FIBUKI_S3_SECRET_KEY: ${FIBUKI_S3_SECRET_KEY}
+      FIBUKI_STORAGE_BUCKET: ${FIBUKI_STORAGE_BUCKET}
+      # download-URL base (buildDownloadUrl-shim.ts) + CORS allowlist (host.ts)
+      FIBUKI_PUBLIC_URL: ${FIBUKI_PUBLIC_URL}
+      FIBUKI_WEB_ORIGIN: ${FIBUKI_WEB_ORIGIN}
+      # Auth. server.ts resolves in strict precedence: FIBUKI_DEV_UID (dev only),
+      # then OIDC_ISSUER (external IdP, built-in auth stays UNMOUNTED), then the
+      # built-in Better Auth.
+      #
+      # Leaving OIDC_ISSUER empty selects Better Auth, which is what a migrated
+      # deployment needs: the importer preserves Firebase uids while the OIDC
+      # verifier derives uid from the IdP's `sub`, so under OIDC migrated data
+      # would import cleanly and read as empty.
+      #
+      # FIBUKI_AUTH_SECRET is REQUIRED whenever DATABASE_URL is set —
+      # createSelfhostAuth refuses to boot without it, because the JWKS private
+      # keys are encrypted at rest with it. FIBUKI_AUTH_ISSUER doubles as the
+      # OAuth redirect base for Google sign-in.
+      FIBUKI_AUTH_SECRET: ${FIBUKI_AUTH_SECRET:-}
+      FIBUKI_AUTH_ISSUER: ${FIBUKI_AUTH_ISSUER:-}
+      # OIDC_JWKS_URI lets the verifier fetch keys from a directly-reachable URL
+      # (e.g. the IdP on the same network) while OIDC_ISSUER stays the public,
+      # browser-facing issuer that tokens are minted with. Leave blank to discover.
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_JWKS_URI: ${OIDC_JWKS_URI:-}
+      OIDC_AUDIENCE: ${OIDC_AUDIENCE:-}
+      OIDC_ADMIN_GROUP: ${OIDC_ADMIN_GROUP:-}
+      # mailer-shim. Works with any SMTP server. FIBUKI_SMTP_FROM defaults to
+      # FIBUKI_SMTP_USER (mailbox providers require envelope alignment); set it
+      # explicitly for API relays like Resend, whose username is a literal
+      # rather than an address.
+      FIBUKI_SMTP_HOST: ${FIBUKI_SMTP_HOST}
+      FIBUKI_SMTP_PORT: ${FIBUKI_SMTP_PORT}
+      FIBUKI_SMTP_SECURE: ${FIBUKI_SMTP_SECURE}
+      FIBUKI_SMTP_USER: ${FIBUKI_SMTP_USER}
+      FIBUKI_SMTP_PASS: ${FIBUKI_SMTP_PASS}
+      FIBUKI_SMTP_FROM: ${FIBUKI_SMTP_FROM:-}
+      FIBUKI_SMTP_FROM_NAME: ${FIBUKI_SMTP_FROM_NAME}
+    # Loopback-only publish. On a public host a bare "8788:8788" binds 0.0.0.0
+    # AND Docker writes its own iptables rules, which bypass ufw/firewalld — the
+    # API would be reachable over plain HTTP from the internet. TLS termination
+    # and the only public listener belong to Caddy (docker-compose.prod.yml);
+    # Caddy reaches this service over the compose network, not via the host.
+    # This bind exists for on-box debugging (curl 127.0.0.1:8788/healthz).
+    ports:
+      - "127.0.0.1:8788:8788"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8788/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  fibuki-web:
+    build:
+      context: ../..
+      dockerfile: deploy/selfhost/web.Dockerfile
+      args:
+        # NEXT_PUBLIC_* must be present at BUILD time — Next inlines them into
+        # the client bundle and next.config extends the CSP from them.
+        NEXT_PUBLIC_FIBUKI_API_URL: ${NEXT_PUBLIC_FIBUKI_API_URL}
+        NEXT_PUBLIC_OIDC_ISSUER: ${NEXT_PUBLIC_OIDC_ISSUER}
+        NEXT_PUBLIC_OIDC_CLIENT_ID: ${NEXT_PUBLIC_OIDC_CLIENT_ID}
+        NEXT_PUBLIC_OIDC_SCOPE: ${NEXT_PUBLIC_OIDC_SCOPE}
+        NEXT_PUBLIC_OIDC_ADMIN_GROUP: ${NEXT_PUBLIC_OIDC_ADMIN_GROUP}
+        NEXT_PUBLIC_OIDC_REDIRECT_URI: ${NEXT_PUBLIC_OIDC_REDIRECT_URI}
+        NEXT_PUBLIC_FIBUKI_POLL_MS: ${NEXT_PUBLIC_FIBUKI_POLL_MS}
+    restart: unless-stopped
+    depends_on:
+      fibuki-api:
+        condition: service_started
+    environment:
+      PORT: "3000"
+      NODE_ENV: production
+    # Loopback-only — see the note on fibuki-api's ports. Public ingress is
+    # Caddy only (docker-compose.prod.yml).
+    ports:
+      - "127.0.0.1:3000:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+volumes:
+  fibuki-pgdata:
+  fibuki-miniodata:

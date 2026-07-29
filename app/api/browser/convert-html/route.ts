@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 import { NextRequest } from "next/server";
-import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
+import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { callFirebaseFunction } from "@/lib/api/firebase-callable";
 
 interface ConvertHtmlToPdfResponse {
@@ -70,6 +70,8 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
     console.error("[convert-html] Error:", error);
     return new Response(
       JSON.stringify({

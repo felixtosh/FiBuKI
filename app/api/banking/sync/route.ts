@@ -17,7 +17,7 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase/admin";
-import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
+import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { callCloudFunction, setAuthToken } from "@/lib/firebase/callable-server";
 import {
   SyncBankTransactionsRequest,
@@ -61,6 +61,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(result);
   } catch (error) {
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
     console.error("[Banking Sync] Error:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to sync transactions" },
@@ -128,6 +130,8 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
     console.error("[Banking Sync] Error getting status:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to get sync status" },

@@ -2,12 +2,18 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { Timestamp } from "firebase-admin/firestore";
-import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
+import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 
 const db = getAdminDb();
 const INTEGRATIONS_COLLECTION = "emailIntegrations";
 const SYNC_QUEUE_COLLECTION = "gmailSyncQueue";
 const SYNC_HISTORY_COLLECTION = "gmailSyncHistory";
+
+// Strip CR/LF so request-derived values cannot forge log lines
+function sanitizeForLog(value: unknown): string {
+  const raw = value instanceof Error ? value.stack || value.message : String(value);
+  return raw.replace(/\n|\r/g, "");
+}
 
 /**
  * POST /api/gmail/pause
@@ -128,7 +134,7 @@ export async function POST(request: NextRequest) {
       });
 
       console.log(
-        `[Gmail Pause] Created history record for paused sync: ${integrationId}`
+        `[Gmail Pause] Created history record for paused sync: ${sanitizeForLog(integrationId)}`
       );
     }
 
@@ -155,6 +161,8 @@ export async function POST(request: NextRequest) {
         : null,
     });
   } catch (error) {
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
     console.error("[Gmail Pause] Error:", error);
     return NextResponse.json(
       { error: "Failed to pause sync" },

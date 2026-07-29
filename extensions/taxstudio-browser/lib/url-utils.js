@@ -4,6 +4,23 @@
  */
 
 /**
+ * Strict host check: parses the URL and compares the hostname, so
+ * "evil.com/payments.google.com" never matches.
+ * @param {string} url - The URL to check
+ * @param {string} host - Hostname to match (also matches subdomains)
+ * @returns {boolean}
+ */
+function hostMatches(url, host) {
+  if (!url) return false;
+  try {
+    var h = new URL(String(url)).hostname.toLowerCase();
+    return h === host || h.endsWith("." + host);
+  } catch (err) {
+    return false;
+  }
+}
+
+/**
  * Check if a URL looks like it could be a PDF download
  * @param {string} url - The URL to check
  * @returns {boolean}
@@ -13,7 +30,7 @@ function shouldTrackRequest(url) {
   var lowerUrl = String(url).toLowerCase();
 
   // Check for Google Payments PDF URLs
-  if (lowerUrl.indexOf("payments.google.com") !== -1) {
+  if (hostMatches(url, "payments.google.com")) {
     if (lowerUrl.indexOf("apis-secure/doc") !== -1) return true;
   }
 
@@ -128,6 +145,7 @@ function isSameOrigin(url, pageOrigin) {
 // Export for testing and use
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
+    hostMatches,
     shouldTrackRequest,
     isLoginChallenge,
     isLoginPage,

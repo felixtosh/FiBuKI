@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "FiBuKI Browser Plugin (Dev)",
-  "version": "0.0.1",
+  "version": "0.0.3",
   "description": "Development build for FiBuKI invoice pulls.",
   "host_permissions": ["<all_urls>"],
   "permissions": ["tabs", "scripting", "downloads", "storage", "webRequest", "webNavigation", "notifications", "contextMenus"],

@@ -135,7 +135,7 @@ export class TrueLayerClient {
   async getAccount(accessToken: string, accountId: string): Promise<TrueLayerAccount> {
     const response = await this.request<TrueLayerAccount>(
       accessToken,
-      `/data/v1/accounts/${accountId}`
+      `/data/v1/accounts/${encodeURIComponent(accountId)}`
     );
     return response.results[0];
   }
@@ -149,7 +149,7 @@ export class TrueLayerClient {
     from?: string,
     to?: string
   ): Promise<TrueLayerTransaction[]> {
-    let path = `/data/v1/accounts/${accountId}/transactions`;
+    let path = `/data/v1/accounts/${encodeURIComponent(accountId)}/transactions`;
     const params = new URLSearchParams();
 
     if (from) params.set("from", from);
@@ -172,7 +172,7 @@ export class TrueLayerClient {
   ): Promise<TrueLayerTransaction[]> {
     const response = await this.request<TrueLayerTransaction>(
       accessToken,
-      `/data/v1/accounts/${accountId}/transactions/pending`
+      `/data/v1/accounts/${encodeURIComponent(accountId)}/transactions/pending`
     );
     return response.results;
   }
@@ -188,7 +188,7 @@ export class TrueLayerClient {
       current: number;
       available: number;
       currency: string;
-    }>(accessToken, `/data/v1/accounts/${accountId}/balance`);
+    }>(accessToken, `/data/v1/accounts/${encodeURIComponent(accountId)}/balance`);
     return response.results[0];
   }
 

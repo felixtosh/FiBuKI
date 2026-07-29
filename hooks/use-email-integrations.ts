@@ -15,6 +15,17 @@ import { fetchWithAuth } from "@/lib/api/fetch-with-auth";
 
 const INTEGRATIONS_COLLECTION = "emailIntegrations";
 
+export interface ImapConnectParams {
+  host: string;
+  port: number;
+  secure: boolean;
+  user: string;
+  password: string;
+  mailbox?: string;
+  allowSelfSigned?: boolean;
+  keywordPrefilter?: boolean;
+}
+
 export interface UseEmailIntegrationsResult {
   /** List of connected email integrations */
   integrations: EmailIntegration[];
@@ -24,6 +35,8 @@ export interface UseEmailIntegrationsResult {
   error: string | null;
   /** Connect a new Gmail account */
   connectGmail: () => Promise<void>;
+  /** Connect a mailbox over IMAP (verifies + persists server-side) */
+  connectImap: (params: ImapConnectParams) => Promise<void>;
   /** Disconnect an integration */
   disconnect: (integrationId: string) => Promise<void>;
   /** Refresh an integration (reconnect OAuth) */
@@ -102,6 +115,30 @@ export function useEmailIntegrations(): UseEmailIntegrationsResult {
     } catch (err) {
       console.error("Failed to connect Gmail:", err);
       const message = err instanceof Error ? err.message : "Failed to connect Gmail";
+      setError(message);
+      throw err;
+    }
+  }, [userId]);
+
+  // Connect a mailbox over IMAP. The route verifies with a live login before
+  // persisting, so a rejected promise means the mailbox was NOT connected.
+  const connectImap = useCallback(async (params: ImapConnectParams) => {
+    if (!userId) {
+      setError("You must be logged in to connect a mailbox");
+      throw new Error("Not authenticated");
+    }
+    try {
+      setError(null);
+      const response = await fetchWithAuth("/api/mail/imap/connect", {
+        method: "POST",
+        body: JSON.stringify(params),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to connect mailbox");
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to connect mailbox";
       setError(message);
       throw err;
     }
@@ -213,6 +250,7 @@ export function useEmailIntegrations(): UseEmailIntegrationsResult {
     loading,
     error,
     connectGmail,
+    connectImap,
     disconnect,
     refresh,
     pauseSync,

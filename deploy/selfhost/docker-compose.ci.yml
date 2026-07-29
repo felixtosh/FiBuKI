@@ -1,0 +1,39 @@
+# CI slice of the self-host stack: just the real backing services (Postgres +
+# MinIO), same images as docker-compose.yml, with fixed throwaway credentials
+# and host-published ports so the selfhost vitest suite on the runner can hit
+# them (firestore-shim DATABASE_URL branch / blobstore-s3.ts).
+#
+#   docker compose -f deploy/selfhost/docker-compose.ci.yml up -d --wait
+#
+# Postgres publishes on 5433 to stay clear of the runner's preinstalled
+# PostgreSQL; MinIO uses its stock 9000.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: fibuki
+      POSTGRES_PASSWORD: fibuki-ci
+      POSTGRES_DB: fibuki_ci
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fibuki -d fibuki_ci"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  minio:
+    image: minio/minio:latest
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: fibuki-ci
+      MINIO_ROOT_PASSWORD: fibuki-ci-secret
+    ports:
+      - "9000:9000"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s

@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getServerDb } from "@/lib/firebase/config-server";
-import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
+import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import {
   getInboundEmailAddress,
   updateInboundEmailAddress,
@@ -40,6 +40,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       stats,
     });
   } catch (error) {
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
     console.error("[email-inbound] Error getting address:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to get address" },
@@ -77,6 +79,8 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       address: updatedAddress,
     });
   } catch (error) {
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
     console.error("[email-inbound] Error updating address:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to update address" },
@@ -99,6 +103,8 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
     console.error("[email-inbound] Error deleting address:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to delete address" },

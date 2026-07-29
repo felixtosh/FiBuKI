@@ -3,6 +3,7 @@
  */
 
 const {
+  hostMatches,
   shouldTrackRequest,
   isLoginChallenge,
   isLoginPage,
@@ -12,6 +13,53 @@ const {
 } = require("../lib/url-utils");
 
 describe("URL Utils", () => {
+  describe("hostMatches", () => {
+    it("matches exact hostname", () => {
+      expect(
+        hostMatches("https://payments.google.com/doc", "payments.google.com")
+      ).toBe(true);
+    });
+
+    it("matches subdomains", () => {
+      expect(
+        hostMatches("https://eu.payments.google.com/doc", "payments.google.com")
+      ).toBe(true);
+    });
+
+    it("rejects the hostname embedded in path or query", () => {
+      expect(
+        hostMatches(
+          "https://evil.com/payments.google.com",
+          "payments.google.com"
+        )
+      ).toBe(false);
+      expect(
+        hostMatches(
+          "https://evil.com/?next=payments.google.com",
+          "payments.google.com"
+        )
+      ).toBe(false);
+    });
+
+    it("rejects lookalike hostnames", () => {
+      expect(
+        hostMatches(
+          "https://payments.google.com.evil.com/doc",
+          "payments.google.com"
+        )
+      ).toBe(false);
+      expect(
+        hostMatches("https://notpayments.google.com/doc", "payments.google.com")
+      ).toBe(false);
+    });
+
+    it("returns false for unparseable or empty input", () => {
+      expect(hostMatches("not a url", "payments.google.com")).toBe(false);
+      expect(hostMatches("", "payments.google.com")).toBe(false);
+      expect(hostMatches(null, "payments.google.com")).toBe(false);
+    });
+  });
+
   describe("shouldTrackRequest", () => {
     it("returns true for Google Payments PDF URLs", () => {
       expect(
@@ -33,6 +81,14 @@ describe("URL Utils", () => {
     it("returns false for non-PDF URLs", () => {
       expect(shouldTrackRequest("https://example.com/page")).toBe(false);
       expect(shouldTrackRequest("https://google.com/search")).toBe(false);
+    });
+
+    it("does not treat payments.google.com in the path as the host", () => {
+      expect(
+        shouldTrackRequest(
+          "https://evil.com/payments.google.com/apis-secure/doc/123"
+        )
+      ).toBe(false);
     });
 
     it("returns false for empty/null URLs", () => {

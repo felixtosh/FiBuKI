@@ -197,14 +197,18 @@ export async function analyzeEmailForInvoice(
   // Use text body if available, otherwise strip HTML
   let bodyContent = emailContent.textBody || "";
   if (!bodyContent && emailContent.htmlBody) {
-    // Simple HTML stripping - extract text and links
-    bodyContent = emailContent.htmlBody
-      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
-      .replace(/<[^>]+>/g, " ")
-      .replace(/\s+/g, " ")
-      .trim()
-      .substring(0, 5000); // Limit content length
+    // Simple HTML stripping - strip tags until stable so split tags
+    // (e.g. <scr<b>ipt>) cannot survive one pass
+    bodyContent = emailContent.htmlBody;
+    let previous;
+    do {
+      previous = bodyContent;
+      bodyContent = bodyContent
+        .replace(/<style\b[^>]*>[\s\S]*?<\/style[^>]*>/gi, " ")
+        .replace(/<script\b[^>]*>[\s\S]*?<\/script[^>]*>/gi, " ")
+        .replace(/<[^>]*>/g, " ");
+    } while (bodyContent !== previous);
+    bodyContent = bodyContent.replace(/\s+/g, " ").trim().substring(0, 5000); // Limit content length
   }
 
   const prompt = `Analyze this email for invoice-related content.

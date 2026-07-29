@@ -10,6 +10,7 @@
  */
 
 import { Timestamp } from "firebase-admin/firestore";
+import { buildStorageObjectUrl } from "../utils/buildDownloadUrl";
 import { getStorage } from "firebase-admin/storage";
 import * as crypto from "crypto";
 import { createCallable, HttpsError } from "../utils/createCallable";
@@ -115,7 +116,7 @@ export async function performIssueInvoice(
   await storageFile.makePublic();
   // Append a version query param so iframe / browser caches don't keep
   // serving prior PDF bytes after regen.
-  const downloadUrl = `https://storage.googleapis.com/${bucket.name}/${storagePath}?v=${Date.now()}`;
+  const downloadUrl = buildStorageObjectUrl(bucket.name, storagePath, { cacheBust: true });
 
   // 4. Update the TaxFile record. createInvoice already created a stub
   // TaxFile (so the draft appears in the files list); we update it in place

@@ -6,8 +6,19 @@ ctx.log("Dev extractor loaded", ctx.url);
 
 var snapshot = ctx.getPageSnapshot();
 
+// Strict host check: parses the URL and compares the hostname
+function hostMatches(url, host) {
+  if (!url) return false;
+  try {
+    var h = new URL(String(url)).hostname.toLowerCase();
+    return h === host || h.endsWith("." + host);
+  } catch (e) {
+    return false;
+  }
+}
+
 // Google Admin billing page detection
-if (ctx.url.includes("admin.google.com") && ctx.url.includes("billing")) {
+if (hostMatches(ctx.url, "admin.google.com") && ctx.url.includes("billing")) {
   ctx.log("Google Admin billing page detected");
 
   // Log collected data

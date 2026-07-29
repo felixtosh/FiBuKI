@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { FieldValue } from "firebase-admin/firestore";
-import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
+import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { FinapiClient, FinapiEnvironment } from "@/lib/finapi/client";
 
 interface RouteParams {
@@ -103,6 +103,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       deletedTransactions,
     });
   } catch (error) {
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
     console.error("[Source Disconnect] Error:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to disconnect" },

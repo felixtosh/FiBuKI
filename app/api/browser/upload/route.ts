@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { Timestamp } from "firebase-admin/firestore";
 import { createHash, randomUUID } from "crypto";
 import { getAdminDb, getAdminBucket, getFirebaseStorageDownloadUrl } from "@/lib/firebase/admin";
-import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
+import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 
 const db = getAdminDb();
 const FILES_COLLECTION = "files";
@@ -138,6 +138,8 @@ export async function POST(request: NextRequest) {
       downloadUrl,
     });
   } catch (error) {
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
     console.error("Browser upload failed:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Upload failed" },

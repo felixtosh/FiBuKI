@@ -1509,7 +1509,7 @@
     /[/\-_.]signin/i, /[/\-_.]sign-in/i,
     /[/\-_.]anmeld/i, /[/\-_.]einloggen/i,
     /\/auth\//i, /\/authenticate/i, /\/oauth\//i, /\/sso\//i,
-    /accounts\.google\.com/i, /login\.microsoftonline\.com/i,
+    /^https?:\/\/accounts\.google\.com\//i, /^https?:\/\/login\.microsoftonline\.com\//i,
   ];
 
   function isAuthPage(url) {

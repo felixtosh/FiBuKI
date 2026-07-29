@@ -8,8 +8,7 @@ export const dynamic = "force-dynamic";
  * - Vercel AI SDK compatible response format
  */
 
-import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
-import { SYSTEM_PROMPT } from "@/lib/chat/system-prompt";
+import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { Timestamp } from "firebase-admin/firestore";
 
@@ -25,13 +24,19 @@ const db = getAdminDb();
 
 export const maxDuration = 60;
 
+// Strip CR/LF so request-derived values cannot forge log lines
+function sanitizeForLog(value: unknown): string {
+  const raw = value instanceof Error ? value.stack || value.message : String(value);
+  return raw.replace(/\n|\r/g, "");
+}
+
 // ============================================================================
 // Message Conversion
 // ============================================================================
 
 interface UIMessageInput {
   id: string;
-  role: "user" | "assistant" | "system";
+  role: "user" | "assistant";
   content?: string;
   parts?: Array<{
     type: string;
@@ -63,8 +68,8 @@ interface UIMessageInput {
  * Convert UI messages to LangChain message format
  */
 async function convertToLangChainMessages(uiMessages: UIMessageInput[]) {
-  const { HumanMessage, AIMessage, SystemMessage, ToolMessage } = await getLangChainMessages();
-  const result: InstanceType<typeof HumanMessage | typeof AIMessage | typeof SystemMessage | typeof ToolMessage>[] = [];
+  const { HumanMessage, AIMessage, ToolMessage } = await getLangChainMessages();
+  const result: InstanceType<typeof HumanMessage | typeof AIMessage | typeof ToolMessage>[] = [];
 
   for (const msg of uiMessages) {
     if (msg.role === "user") {
@@ -256,9 +261,9 @@ async function convertToLangChainMessages(uiMessages: UIMessageInput[]) {
       continue;
     }
 
-    if (msg.role === "system" && msg.content) {
-      result.push(new SystemMessage(msg.content));
-    }
+    // Any other role (including "system") is intentionally dropped — the agent
+    // graph owns the system prompt; a client-sent system message must not be
+    // able to replace it (CodeQL js/system-prompt-injection).
   }
 
   return result;
@@ -277,25 +282,26 @@ export async function POST(req: Request) {
   const { buildAgentGraph } = await getAgentGraph();
   const { getModelId, calculateCost } = await getAgentModel();
   const { createLangfuseHandler, flushLangfuse } = await getLangfuse();
-  const { SystemMessage } = await getLangChainMessages();
 
   const authHeader = req.headers.get("Authorization") || "";
-  const userId = await getServerUserIdWithFallback(req);
+  let userId: string;
+  try {
+    userId = await getServerUserIdWithFallback(req);
+  } catch (error) {
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
+    throw error;
+  }
   const { messages: rawMessages, modelProvider: requestedProvider } = await req.json();
 
   // Determine model provider (default to anthropic for tool-call reliability; gemini opt-in)
   const modelProvider: "anthropic" | "gemini" = requestedProvider || "anthropic";
 
-  console.log(`[Chat API] Starting LangGraph agent with ${modelProvider}, ${rawMessages.length} messages`);
+  console.log(`[Chat API] Starting LangGraph agent with ${sanitizeForLog(modelProvider)}, ${sanitizeForLog(rawMessages.length)} messages`);
 
-  // Convert messages to LangChain format
+  // Convert messages to LangChain format. The agent graph owns the system
+  // prompt (agentNode strips foreign SystemMessages and prepends its own).
   const messages = await convertToLangChainMessages(rawMessages);
-
-  // Add system message if not present
-  const hasSystemMessage = messages.some((m) => m instanceof SystemMessage);
-  if (!hasSystemMessage) {
-    messages.unshift(new SystemMessage(SYSTEM_PROMPT));
-  }
 
   // Create Langfuse handler for tracing
   const langfuseHandler = createLangfuseHandler({

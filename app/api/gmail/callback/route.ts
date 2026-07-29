@@ -12,6 +12,12 @@ const FILES_COLLECTION = "files";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo";
 
+// Strip CR/LF so request-derived values cannot forge log lines
+function sanitizeForLog(value: unknown): string {
+  const raw = value instanceof Error ? value.stack || value.message : String(value);
+  return raw.replace(/\n|\r/g, "");
+}
+
 interface GoogleTokenResponse {
   access_token: string;
   refresh_token?: string;
@@ -40,7 +46,7 @@ export async function GET(request: NextRequest) {
 
   // Handle errors from Google
   if (error) {
-    console.error("OAuth error from Google:", error);
+    console.error("OAuth error from Google:", sanitizeForLog(error));
     return redirectWithParams(request, "/integrations/gmail", { error });
   }
 

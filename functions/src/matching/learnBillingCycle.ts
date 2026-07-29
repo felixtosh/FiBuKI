@@ -147,8 +147,11 @@ export const learnBillingCycleCallable = createCallable<
       frequencyConfidence,
       typicalDayOfMonth,
       dayVariance,
-      invoiceToTransactionDelay,
-      delayVariance,
+      // Omitted entirely when unlearned (<3 delays): Firestore rejects
+      // undefined values, and ignoreUndefinedProperties is never enabled.
+      ...(invoiceToTransactionDelay !== undefined
+        ? { invoiceToTransactionDelay, delayVariance }
+        : {}),
       sampleSize: txSnapshot.size,
       updatedAt: Timestamp.now(),
     };

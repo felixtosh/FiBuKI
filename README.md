@@ -4,6 +4,9 @@
 
 FiBuKI automates the tedious parts of accounting: importing bank transactions, scanning receipts, matching invoices to payments, and preparing tax reports — so you can focus on your business.
 
+📄 **[Who FiBuKI is for](docs/who-is-this-for.md)** — the audience, the scope, and
+what FiBuKI deliberately isn't.
+
 ## Features
 
 - **Bank Transaction Import** — CSV upload or direct bank connections via TrueLayer / finAPI / Plaid

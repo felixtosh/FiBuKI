@@ -11,7 +11,7 @@ import {
   where,
 } from "firebase/firestore";
 import { getServerDb } from "@/lib/firebase/config-server";
-import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
+import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 
 const db = getServerDb();
 const DEBUG_LOGS_COLLECTION = "browser_debug_logs";
@@ -92,6 +92,8 @@ export async function POST(request: NextRequest) {
       { headers: corsHeaders }
     );
   } catch (error) {
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
     console.error("Browser debug log failed:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Log failed" },
@@ -144,6 +146,8 @@ export async function GET(request: NextRequest) {
       { headers: corsHeaders }
     );
   } catch (error) {
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
     console.error("Browser debug log GET failed:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Fetch failed" },

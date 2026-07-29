@@ -3,6 +3,37 @@
 ## Project Overview
 FiBuKI - A tax/accounting tool for managing bank transactions, receipts, and categorization.
 
+**Read these before proposing features, schema changes, or roadmap items:**
+
+- **[`docs/who-is-this-for.md`](docs/who-is-this-for.md)** — who FiBuKI is for and what
+  it is not. FiBuKI is **pre-accounting for Austrian one-person businesses (EPUs)**.
+  Austria only. The Steuerberater is a gatekeeper, not a buyer — we do not build a
+  practice-management product. Self-host and cloud ship the **same features**; the
+  split is effort and infrastructure, never capability. Check proposals against this
+  page first.
+- **[`docs/rewrite-goals.md`](docs/rewrite-goals.md)** — the Firebase → Postgres
+  rebuild: goals, stack, phases, and constraints. Core rules: **port, never
+  regenerate domain logic**; **self-host is multi-tenant with one tenant**; **we own
+  the API layer** (the client never touches the DB). Tests come before any port work.
+- **[`docs/claude-practices.md`](docs/claude-practices.md)** — how to drive this repo:
+  host safety, bounded output, model routing, small sessions + handoffs, spec→`/goal`.
+
+## Host safety (enforced)
+
+**Never run a full `vitest`, a project-wide `tsc`, or `next build` on a small host.**
+Each spawns per-CPU workers with their own V8 heaps and OOM-freezes a 4 GiB box hard
+enough to need a reset. `.claude/hooks/guard-memory.sh` blocks these shapes via a
+`PreToolUse` hook when `MemTotal < 8 GiB` or `MemAvailable < 4 GiB`; on a normal
+workstation it never fires. Use the scoped forms instead:
+
+```bash
+npx vitest run <one-file> --pool=forks --maxWorkers=1
+npx tsc --noEmit --max-old-space-size=900 <explicit files>
+```
+
+Full suites belong on CT 999. Also: **no parallel sub-agents on the audit box** —
+fan-out is what OOMs it. Details in [`docs/claude-practices.md`](docs/claude-practices.md).
+
 ## Architecture: Cloud Functions Pattern
 
 **IMPORTANT**: All data mutations go through Cloud Functions. This ensures:
