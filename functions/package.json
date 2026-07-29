@@ -35,7 +35,7 @@
     "otplib": "^13.4.1",
     "pdf-lib": "^1.17.1",
     "pdf-parse": "^2.4.5",
-    "pdf-to-png-converter": "^3.3.0",
+    "pdf-to-png-converter": "^4.1.1",
     "puppeteer-core": "^24.36.1",
     "qrcode": "^1.5.4",
     "react": "^18.3.1",
