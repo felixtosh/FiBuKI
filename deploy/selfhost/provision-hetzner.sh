@@ -17,13 +17,22 @@
 set -euo pipefail
 
 NAME="${NAME:-fibuki-selfhost}"
-SIZE="${SIZE:-cx32}"        # 4 vCPU / 8 GB — 8 GB is the floor because Chromium
-                            # sits ~400 MB resident plus ~50-100 MB per PDF page.
+# cx33: 4 vCPU x86 / 8 GB / 80 GB, ~EUR 8.49/mo gross in fsn1 — the cheapest 8 GB
+# type Hetzner offers. 8 GB is the floor, not headroom: Chromium sits ~400 MB
+# resident plus ~50-100 MB per concurrent PDF page, on top of Postgres, MinIO,
+# Next and the API.
+#
+# x86 rather than ARM for two independent reasons: @sparticuz/chromium ships an
+# x86_64-only binary (we sidestep that with Debian's Chromium in api.Dockerfile,
+# so arm64 would build), but as of this writing cax21 is ~EUR 10.49 against
+# cx33's ~8.49 — ARM is no longer the cheaper option here, so there is nothing
+# to trade off. Re-check with `hcloud server-type list` before changing.
+SIZE="${SIZE:-cx33}"
 LOCATION="${LOCATION:-fsn1}" # Falkenstein, DE. EU requirement. nbg1 also fine.
 IMAGE="${IMAGE:-debian-12}"
 FW="${FW:-fibuki-selfhost-fw}"
 SSH_KEY_NAME="${SSH_KEY_NAME:-fibuki-deploy}"
-SSH_PUB="${SSH_PUB:-$HOME/.ssh/id_ed25519.pub}"
+SSH_PUB="${SSH_PUB:-$HOME/.ssh/fibuki_deploy.pub}"
 DRY_RUN="${DRY_RUN:-}"
 
 run() {
@@ -152,7 +161,12 @@ if [[ -n "$DRY_RUN" ]]; then
 fi
 
 IP4="$(hcloud server ip "$NAME")"
-IP6="$(hcloud server describe "$NAME" -o format='{{.PublicNet.IPv6.IP}}' 2>/dev/null || true)"
+# The API returns the assigned /64 NETWORK in PublicNet.IPv6.IP (e.g.
+# 2a01:4f8:1c16:9b30::), not a host address. Hetzner routes the whole block, and
+# ::1 is the conventional host address to use — publishing the bare network in an
+# AAAA record would not answer.
+IP6_NET="$(hcloud server describe "$NAME" -o format='{{.PublicNet.IPv6.IP}}' 2>/dev/null || true)"
+IP6="${IP6_NET:+${IP6_NET%::}::1}"
 
 # Hetzner's own snapshot/backup add-on. ~20% of instance cost, and it is the
 # cheapest possible rollback for the whole box. Separate from the Postgres dumps
