@@ -101,9 +101,24 @@ docker volume create "$SCRATCH_VOL" >/dev/null
 if docker run --rm -v "$SCRATCH_VOL":/data -v "$TMPD":/b:ro alpine:3 \
      tar xzf /b/minio-data.tar.gz -C /data 2>/dev/null; then
   OBJS="$(docker run --rm -v "$SCRATCH_VOL":/data:ro alpine:3 \
-           sh -c 'find /data -type f ! -path "*/.minio.sys/*" | wc -l')"
+           sh -c 'find /data -type f ! -path "*/.minio.sys/*" | wc -l' | tr -d ' ')"
   log "minio objects restored: $OBJS"
-  [[ "$OBJS" -gt 0 ]] || { log "minio archive extracted but contains no objects"; FAIL=1; }
+  [[ "${OBJS:-0}" -gt 0 ]] || { log "minio archive extracted but contains no objects"; FAIL=1; }
+
+  # Cross-check against what the backup recorded. Catches an archive that is
+  # internally valid but was taken against the wrong (or an empty) volume — the
+  # failure mode that a bytes-only check cannot see.
+  EXPECTED="$(sed -n 's/^minio_objects=//p' "$SRC/manifest.txt" 2>/dev/null)"
+  if [[ -n "$EXPECTED" ]]; then
+    if [[ "$OBJS" -ne "$EXPECTED" ]]; then
+      log "object count mismatch: archive has $OBJS, manifest recorded $EXPECTED"
+      FAIL=1
+    else
+      log "object count matches the manifest ($EXPECTED)"
+    fi
+  else
+    log "note: manifest has no minio_objects line (backup predates that field)"
+  fi
 else
   log "minio archive failed to extract"; FAIL=1
 fi

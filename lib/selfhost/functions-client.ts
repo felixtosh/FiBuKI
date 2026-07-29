@@ -80,7 +80,12 @@ async function post(name: string, data: unknown): Promise<any> {
       "content-type": "application/json",
       ...(token ? { authorization: `Bearer ${token}` } : {}),
     },
-    body: JSON.stringify({ data }),
+    // `data ?? null`, not `data`: JSON.stringify drops keys whose value is
+    // undefined, so a callable invoked with no argument — getMfaStatus() and
+    // friends — serialised to "{}" and the host rejected it with
+    // "Request body must be JSON of shape { data: ... }". Sending an explicit
+    // null keeps the key present, which is what the Firebase client SDK does.
+    body: JSON.stringify({ data: data ?? null }),
   });
   if (!res.ok) {
     let message = res.statusText;

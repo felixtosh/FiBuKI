@@ -216,6 +216,14 @@ export function createHost(
           const auth: AuthData | undefined = verified;
 
           const body: unknown = req.body;
+          // The envelope is required on purpose — see the "rejects bodies without
+          // a data envelope" test. Keeping it strict is what surfaced a real
+          // client bug: functions-client.ts built the body with
+          // JSON.stringify({ data }), and stringify drops undefined-valued keys,
+          // so every argument-less callable (getMfaStatus, listAdmins) sent "{}"
+          // and 400'd. Fixed on the client by sending an explicit null. Relaxing
+          // it here would also downgrade a malformed body from a clear 400 to
+          // whatever 500 the handler happens to throw.
           if (typeof body !== "object" || body === null || !("data" in body)) {
             sendError(res, "invalid-argument", "Request body must be JSON of shape { data: ... }.");
             return;

@@ -56,15 +56,32 @@ log "postgres: $(du -h "$DEST/postgres.dump" | cut -f1)"
 # --- MinIO objects -----------------------------------------------------------
 # Tar the data volume rather than using `mc mirror`: it needs no credentials and
 # captures MinIO's on-disk layout verbatim, which is what a volume restore wants.
+#
+# The volume name MUST be discovered, not assumed. Compose prefixes volumes with
+# the project name (selfhost_fibuki-miniodata), and `docker run -v` silently
+# CREATES an empty volume for a name that does not exist — so a hardcoded
+# "fibuki-miniodata" produces a valid, well-formed, empty archive. That is the
+# worst possible failure: a backup that looks fine and restores nothing.
+log "resolving the minio data volume"
+MINIO_VOL="$(docker inspect "$(compose ps -q minio)" \
+  --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' 2>/dev/null)"
+[[ -n "$MINIO_VOL" ]] || die "could not resolve the minio /data volume — is the stack up?"
+docker volume inspect "$MINIO_VOL" >/dev/null 2>&1 || die "volume $MINIO_VOL does not exist"
+log "minio volume: $MINIO_VOL"
+
 log "archiving minio objects"
 docker run --rm \
-  -v fibuki-miniodata:/data:ro \
+  -v "$MINIO_VOL":/data:ro \
   -v "$DEST":/backup \
   alpine:3 \
   tar czf /backup/minio-data.tar.gz -C /data .
 
-[[ -s "$DEST/minio-data.tar.gz" ]] || die "minio archive is empty"
-log "minio: $(du -h "$DEST/minio-data.tar.gz" | cut -f1)"
+# Count real objects, not archive bytes. An empty tar.gz is ~45 bytes and passes
+# any `-s` test, which is exactly how the hardcoded-name bug above went unnoticed.
+OBJ_COUNT="$(docker run --rm -v "$MINIO_VOL":/data:ro alpine:3 \
+  sh -c 'find /data -type f ! -path "*/.minio.sys/*" | wc -l' | tr -d ' ')"
+log "minio: $(du -h "$DEST/minio-data.tar.gz" | cut -f1), $OBJ_COUNT objects"
+[[ "${OBJ_COUNT:-0}" -gt 0 ]] || die "minio volume $MINIO_VOL holds no objects — refusing to record this as a backup"
 
 # --- Manifest ----------------------------------------------------------------
 # Checksums so restore-test.sh can prove the artefacts are the ones it verified.
@@ -73,6 +90,8 @@ cat > "$DEST/manifest.txt" <<EOF
 created_utc=$TS
 host=$(hostname)
 postgres_db=$PGDB
+minio_volume=$MINIO_VOL
+minio_objects=$OBJ_COUNT
 images=$(compose images --quiet | tr '\n' ' ')
 EOF
 
