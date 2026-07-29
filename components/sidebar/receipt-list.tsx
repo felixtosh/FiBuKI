@@ -8,6 +8,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FileImage, FileText, Download, ExternalLink } from "lucide-react";
+import { useFileObjectUrl } from "@/hooks/use-file-object-url";
 
 interface ReceiptListProps {
   receiptIds: string[];
@@ -18,6 +19,10 @@ function ReceiptPreview({ receiptId }: { receiptId: string }) {
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [loading, setLoading] = useState(true);
   const [imageError, setImageError] = useState(false);
+  // Stored url -> renderable/downloadable url. On the self-host stack it needs an
+  // Authorization header, so it cannot be an <img> src or an <a href> directly.
+  // See hooks/use-file-object-url.ts.
+  const fileUrl = useFileObjectUrl(receipt?.downloadUrl).url;
 
   useEffect(() => {
     const unsubscribe = onSnapshot(doc(db, "receipts", receiptId), (snapshot) => {
@@ -62,7 +67,7 @@ function ReceiptPreview({ receiptId }: { receiptId: string }) {
         <div className="relative h-12 w-12 rounded overflow-hidden bg-muted flex items-center justify-center flex-shrink-0">
           {isImage && !imageError ? (
             <img
-              src={receipt.downloadUrl}
+              src={fileUrl ?? undefined}
               alt={receipt.fileName}
               className="h-full w-full object-cover"
               onError={() => setImageError(true)}
@@ -86,7 +91,7 @@ function ReceiptPreview({ receiptId }: { receiptId: string }) {
         <div className="flex items-center gap-1">
           <Button variant="ghost" size="icon" className="h-8 w-8" asChild>
             <a
-              href={receipt.downloadUrl}
+              href={fileUrl ?? undefined}
               target="_blank"
               rel="noopener noreferrer"
             >
@@ -94,7 +99,7 @@ function ReceiptPreview({ receiptId }: { receiptId: string }) {
             </a>
           </Button>
           <Button variant="ghost" size="icon" className="h-8 w-8" asChild>
-            <a href={receipt.downloadUrl} download={receipt.fileName}>
+            <a href={fileUrl ?? undefined} download={receipt.fileName}>
               <Download className="h-4 w-4" />
             </a>
           </Button>

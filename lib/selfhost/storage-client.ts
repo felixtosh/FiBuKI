@@ -492,16 +492,28 @@ export function uploadBytesResumable(ref: StorageReference, data: UploadData, me
 /* ------------------------------------------------------------------ */
 
 /**
- * Returns `<apiUrl>/__storage/download/<path>?token=<bearer>` — the token is
- * embedded in the query string (not just an Authorization header) so the URL
- * is directly usable as an <img>/<iframe> `src` attribute. Single-user
- * divergence from real Firebase Storage download tokens (module banner).
+ * Returns a token-FREE `<apiUrl>/__storage/download/<path>`.
+ *
+ * It used to append `?token=<bearer>` so the URL could be an <img>/<iframe> src
+ * directly. That was wrong here for two reasons, one security and one functional:
+ *
+ *  - Every caller of this function feeds the result straight into a Firestore
+ *    document (files/page.tsx, file-upload-zone, use-file-upload,
+ *    transaction-detail-panel, csv-storage-ops). So a user's bearer token was being
+ *    PERSISTED in the database, readable by anything that can read the file doc,
+ *    and shipped off-box in every backup and export.
+ *  - Bearer tokens expire. A stored URL therefore stopped working roughly an hour
+ *    after upload, so a freshly uploaded file's own preview broke by itself.
+ *
+ * Rendering no longer needs a token in the URL: hooks/use-file-object-url.ts
+ * fetches with an Authorization header and hands the viewer a blob: URL, which
+ * keeps the credential out of the database, out of `Referer`, and out of logs.
+ * The download route still accepts `?token=` for anything that genuinely cannot
+ * send a header.
  */
 export async function getDownloadURL(ref: StorageReference): Promise<string> {
   const t = transport();
-  const token = await t.getToken();
-  const url = `${t.apiUrl}${downloadPath(ref)}`;
-  return token ? `${url}?token=${encodeURIComponent(token)}` : url;
+  return `${t.apiUrl}${downloadPath(ref)}`;
 }
 
 export async function getBytes(ref: StorageReference): Promise<ArrayBuffer> {

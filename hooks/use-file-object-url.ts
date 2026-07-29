@@ -42,17 +42,42 @@ import { auth } from "@/lib/firebase/config";
  */
 
 /**
- * A URL the browser can load without us attaching credentials: a Firebase Storage
- * URL, an explicitly tokenised URL, or an already-local blob/data URL.
+ * A URL the browser can load without us attaching credentials.
+ *
+ * Firebase Storage download tokens are durable — they live on the object until
+ * revoked — so those URLs are genuinely self-authenticating and pass through.
+ * Local blob:/data: URLs need nothing.
+ *
+ * A self-host `?token=` URL is deliberately NOT trusted, even though the download
+ * route accepts one. Those carried a bearer token, which expires within the hour,
+ * so trusting them meant a stored URL silently stopped working and the preview
+ * failed with a 401. Re-fetching with a fresh header always works, so any such URL
+ * is treated as needing credentials and the stale token is stripped before the
+ * request. (getDownloadURL no longer mints these, but migrated and previously
+ * stored documents still hold them.)
  */
 function isSelfAuthenticating(url: string): boolean {
   return (
     url.includes("firebasestorage.googleapis.com") ||
     url.includes("storage.googleapis.com") ||
-    /[?&]token=/.test(url) ||
     url.startsWith("blob:") ||
     url.startsWith("data:")
   );
+}
+
+/**
+ * Drop a stale `?token=` before re-requesting with a live Authorization header.
+ * Leaving it on would make the host verify an expired credential and 401 rather
+ * than fall through to the header.
+ */
+function stripStaleToken(url: string): string {
+  try {
+    const u = new URL(url, window.location.origin);
+    u.searchParams.delete("token");
+    return u.toString();
+  } catch {
+    return url;
+  }
 }
 
 export interface FileObjectUrl {
@@ -88,7 +113,7 @@ export function useFileObjectUrl(
     void (async () => {
       try {
         const token = auth.currentUser ? await auth.currentUser.getIdToken() : null;
-        const res = await fetch(downloadUrl, {
+        const res = await fetch(stripStaleToken(downloadUrl), {
           headers: token ? { authorization: `Bearer ${token}` } : {},
         });
         if (!res.ok) {

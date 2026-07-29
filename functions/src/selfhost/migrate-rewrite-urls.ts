@@ -35,7 +35,25 @@
 
 import { getFirestore } from "firebase-admin/firestore";
 
-const FIREBASE_STORAGE_HOST = "firebasestorage.googleapis.com";
+/**
+ * Google serves the same object under TWO host shapes, and the app writes both:
+ *
+ *   firebasestorage.googleapis.com/v0/b/<bucket>/o/<pct-encoded-path>?alt=media&token=…
+ *     from buildDownloadUrl — path is percent-encoded as a WHOLE ('/' becomes %2F)
+ *   storage.googleapis.com/<bucket>/<path>
+ *     from buildStorageObjectUrl — path is a plain, unencoded suffix
+ *
+ * Matching only the first missed 18 of 539 file documents on the first run. Both
+ * must be handled or the leftovers break the moment Firebase is decommissioned.
+ */
+const FIREBASE_STORAGE_HOSTS = [
+  "firebasestorage.googleapis.com",
+  "storage.googleapis.com",
+] as const;
+
+function isFirebaseStorageUrl(url: string): boolean {
+  return FIREBASE_STORAGE_HOSTS.some((h) => url.includes(h));
+}
 
 /** Per-segment encode, preserving `/` — mirrors buildDownloadUrl-shim.ts. */
 function encodePath(storagePath: string): string {
@@ -51,20 +69,34 @@ function hostDownloadUrl(storagePath: string): string {
 }
 
 /**
- * Recover the object path from a Firebase Storage media URL.
+ * Recover the object path from either Firebase Storage URL shape.
  *
- * Used only when a document has no `storagePath` of its own. The `/o/<path>`
- * segment is percent-encoded as a WHOLE (Firebase encodes `/` as `%2F`), so a
- * single decodeURIComponent recovers it.
+ * Only needed when a document has no `storagePath` of its own — every file
+ * document in the first real migration had one, so this is a fallback.
  */
 export function pathFromFirebaseUrl(url: string): string | null {
-  const m = /\/o\/([^?]+)/.exec(url);
-  if (!m) return null;
-  try {
-    return decodeURIComponent(m[1]);
-  } catch {
-    return null;
+  // firebasestorage.googleapis.com/v0/b/<bucket>/o/<pct-encoded>?alt=media
+  const viaO = /\/o\/([^?]+)/.exec(url);
+  if (viaO) {
+    try {
+      return decodeURIComponent(viaO[1]);
+    } catch {
+      return null;
+    }
   }
+
+  // storage.googleapis.com/<bucket>/<path> — strip host and bucket, keep the rest.
+  // Segments are individually encoded here, not wholesale, so decode per segment.
+  const viaGcs = /storage\.googleapis\.com\/[^/]+\/(.+)$/.exec(url.split("?")[0]);
+  if (viaGcs) {
+    try {
+      return viaGcs[1].split("/").map(decodeURIComponent).join("/");
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
 }
 
 export interface RewriteReport {
@@ -116,7 +148,7 @@ export async function rewriteDownloadUrls(
     for (const doc of snap.docs) {
       const data = doc.data() as Record<string, unknown>;
       const url = data[target.field];
-      if (typeof url !== "string" || !url.includes(FIREBASE_STORAGE_HOST)) {
+      if (typeof url !== "string" || !isFirebaseStorageUrl(url)) {
         continue; // already self-host, or no URL — idempotent by construction
       }
       report.candidates++;
