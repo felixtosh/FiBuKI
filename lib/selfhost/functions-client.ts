@@ -17,7 +17,14 @@
  * from firestore-client.ts rather than imported, since the two shims alias
  * to different upstream modules (firebase/functions vs firebase/firestore)
  * at build time and must not create a cross-dependency between them.
+ *
+ * The one shared dependency is ./poll-bus, which imports nothing and therefore
+ * creates no edge between the two swaps. It exists so a successful callable can
+ * pull every active onSnapshot poller forward instead of leaving the user to wait
+ * out a poll interval.
  */
+
+import { pokePollers } from "./poll-bus";
 
 /* ------------------------------------------------------------------ */
 /* Transport                                                           */
@@ -159,6 +166,16 @@ export function httpsCallable<Req = unknown, Res = unknown>(
 ): HttpsCallable<Req, Res> {
   return async (data: Req): Promise<HttpsCallableResult<Res>> => {
     const r = await post(name, data);
+    // Every mutation in this app goes through a callable (the Cloud Functions
+    // pattern in CLAUDE.md), so this is the main path by which data changes. Poke
+    // the pollers rather than letting the user wait out a poll interval to see
+    // their own action land — the interval is currently 5s, which reads as the app
+    // being broken rather than eventually-consistent. See poll-bus.ts.
+    //
+    // Fired for reads too: a callable's name does not say whether it mutates, and
+    // a redundant refetch is far cheaper than a missed one. Each poller drops a
+    // poke that arrives while its own request is in flight.
+    pokePollers();
     return { data: r.result };
   };
 }

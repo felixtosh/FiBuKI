@@ -21,6 +21,8 @@
  * GeoPoint. Any of those would throw rather than silently misbehave.
  */
 
+import { pokePollers, registerPoller } from "./poll-bus";
+
 /* ------------------------------------------------------------------ */
 /* Transport                                                           */
 /* ------------------------------------------------------------------ */
@@ -99,7 +101,16 @@ async function post(route: "query" | "get" | "write", body: unknown): Promise<an
       : CODE_BY_HTTP[res.status] ?? "unknown";
     throw new FirestoreError(code, message);
   }
-  return res.json();
+  const json = await res.json();
+  // A successful write means every active listener is now stale, and we know it at
+  // this exact moment — better information than any timer has. Poked here rather
+  // than at the six write entry points (addDoc / setDoc / updateDoc / deleteDoc /
+  // batch commit / runTransaction), since all of them funnel through this route.
+  //
+  // Without it, a user's own action takes up to a full poll interval to appear,
+  // which reads as the app being broken rather than merely eventually-consistent.
+  if (route === "write") pokePollers();
+  return json;
 }
 
 /* ------------------------------------------------------------------ */
@@ -685,9 +696,13 @@ export function onSnapshot(
     if (typeof document !== "undefined" && !document.hidden) void tick();
   };
   if (typeof document !== "undefined") document.addEventListener("visibilitychange", onVisibility);
+  // Let a successful write pull this listener forward, instead of making the user
+  // wait out the interval to see their own action land. See poll-bus.ts.
+  const unregister = registerPoller(() => void tick());
 
   return () => {
     stopped = true;
+    unregister();
     clearInterval(timer);
     if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVisibility);
   };
