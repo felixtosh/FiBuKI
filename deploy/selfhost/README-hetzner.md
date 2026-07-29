@@ -71,11 +71,20 @@ migration is split into two programs.
 ```bash
 IP=$(hcloud server ip fibuki-selfhost)
 ssh root@$IP 'mkdir -p /opt/fibuki'
-# From a clone at the selfhost branch:
+# From a clone at the selfhost branch. Order matters: --include for the templates
+# must precede the --exclude that would otherwise swallow them, and a bare
+# `--exclude '.env*'` takes the examples with it.
 rsync -az --delete \
-  --exclude node_modules --exclude .next --exclude .git \
+  --exclude node_modules --exclude .next --exclude .git --exclude .DS_Store \
+  --include '.env*.example' --exclude '.env*' \
+  --exclude 'fibuki-dump' \
+  -e "ssh -i ~/.ssh/fibuki_deploy" \
   ./ root@$IP:/opt/fibuki/
 ```
+
+Excluding real `.env` files is not optional: a local one would overwrite the
+server's, and it would carry your development secrets onto a rented box. The
+`fibuki-dump` exclude matters later, during the migration.
 
 ## 5. Configure
 
