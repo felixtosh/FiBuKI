@@ -49,6 +49,7 @@
 import { __setFirestoreClientToken } from "./firestore-client";
 import { __setStorageClientToken } from "./storage-client";
 import { __setFunctionsClientToken } from "./functions-client";
+import { startChangeStream, type ChangeStreamClient } from "./change-stream-client";
 
 /* ------------------------------------------------------------------ */
 /* Config                                                              */
@@ -464,6 +465,13 @@ const _auth: Auth & { currentUser: User | null } = {
 const _listeners = new Set<AuthStateListener>();
 
 function notify(): void {
+  // Follow the session with the realtime stream. This is the one place every auth
+  // transition passes through — sign-in, sign-out, token refresh and restore-on-load
+  // — so hooking here avoids a stream that outlives its token or never starts after
+  // a page reload. Both calls are idempotent.
+  if (_auth.currentUser) ensureChangeStream();
+  else stopChangeStream();
+
   for (const cb of _listeners) {
     try {
       cb(_auth.currentUser);
@@ -810,6 +818,35 @@ const getToken = async (): Promise<string | null> => {
 __setFirestoreClientToken(getToken);
 __setStorageClientToken(getToken);
 __setFunctionsClientToken(getToken);
+
+/**
+ * Realtime change stream, started once a user is signed in and stopped on sign-out.
+ *
+ * Lives here because this module already owns the token lifecycle, and the stream
+ * needs a bearer token that stays valid. Browser-only: there is no stream to hold
+ * during SSR, and opening one per render would leak connections.
+ *
+ * Purely additive — if it never connects, onSnapshot keeps polling exactly as
+ * before. See change-stream-client.ts.
+ */
+let _changeStream: ChangeStreamClient | null = null;
+
+function stopChangeStream(): void {
+  _changeStream?.stop();
+  _changeStream = null;
+}
+
+function ensureChangeStream(): void {
+  if (typeof window === "undefined") return; // no streams during SSR
+  if (_changeStream || DEV_UID) return;
+  const apiUrl =
+    (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_FIBUKI_API_URL) || "";
+  if (!apiUrl) return; // same-origin/unconfigured deployments simply keep polling
+  _changeStream = startChangeStream({
+    apiUrl: apiUrl.replace(/\/$/, ""),
+    getToken,
+  });
+}
 
 let _initialized = false;
 
