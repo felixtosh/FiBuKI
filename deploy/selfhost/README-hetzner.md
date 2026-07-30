@@ -265,6 +265,58 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml down
 docker volume rm selfhost_fibuki-pgdata selfhost_fibuki-miniodata
 ```
 
+## Decision: the API keeps the hostname `new-api.fibuki.com`, permanently
+
+Decided 2026-07-30. At cutover **only the web host changes** — `new.fibuki.com`
+becomes `fibuki.com` — and the API name stays as it is forever, despite the "new"
+reading oddly later.
+
+The reason is that a rename is not just a DNS record. These are pinned to the API
+hostname today:
+
+| Pinned to `new-api.fibuki.com` | Count / where |
+| --- | --- |
+| `files.downloadUrl` | **539 rows** in Postgres |
+| other collections (bmdExports) | 3 rows |
+| `FIBUKI_PUBLIC_URL`, `FIBUKI_AUTH_ISSUER`, `FIBUKI_API_HOST` | `.env` |
+| `NEXT_PUBLIC_FIBUKI_API_URL` | **baked into the web bundle at build time** |
+| Better Auth Google redirect | `…/__auth/callback/google`, registered at Google |
+| Stripe webhook endpoint | `…/stripeWebhook`, whose `whsec_` is PER-ENDPOINT |
+| TLS certificate | Caddy |
+
+Renaming would need a data rewrite, a web rebuild, a re-registered Google redirect
+URI and a **second Stripe endpoint with a different signing secret** — each a step
+that can be missed halfway through a cutover, and the Stripe one fails silently by
+simply never reconciling a subscription.
+
+Keeping the name makes the cutover a strictly smaller operation, and in particular
+means **no `selfhost:rewrite-urls` pass is required** — the 539 download URLs already
+point somewhere that will still be correct.
+
+If it is ever renamed, do it BEFORE registering the Stripe webhook and before real
+users arrive: at that point it costs one idempotent rewrite pass on data nobody
+depends on.
+
+### What the cutover therefore has to change
+
+Only things carrying the WEB host:
+
+```
+FIBUKI_WEB_HOST=fibuki.com
+FIBUKI_WEB_ORIGIN=https://fibuki.com      # also feeds Better Auth trustedOrigins
+APP_URL=https://fibuki.com
+NEXT_PUBLIC_APP_URL=https://fibuki.com    # build arg -> requires a web rebuild
+GOOGLE_OAUTH_REDIRECT_URI=https://fibuki.com/api/gmail/callback
+TRUELAYER_REDIRECT_URL=https://fibuki.com/api/truelayer/callback
+```
+
+Plus, outside the box: the `fibuki.com` A/AAAA records, and **re-registering the
+Gmail OAuth redirect** at Google — that one lives on the web host, unlike the Better
+Auth sign-in callback which lives on the API host and does not move.
+
+`fibuki-web` must be rebuilt, not merely restarted: every `NEXT_PUBLIC_*` is inlined
+at build time, so a runtime change to them is silently ignored.
+
 ## Known gap: public invoice sharing is non-functional
 
 `/i/<token>` returns **HTTP 500** on this stack, for any token, valid or not.
