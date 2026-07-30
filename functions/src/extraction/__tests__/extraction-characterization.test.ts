@@ -16,6 +16,10 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { PDFDocument, StandardFonts } from "pdf-lib";
+// The extractor reports whichever model the geminiLite ROLE names. Pinning the
+// literal here made a deliberate registry swap look like a regression; pinning the
+// role keeps the real invariant — "extraction bills against geminiLite" — intact.
+import { MODELS } from "../../utils/models";
 
 // ---------------------------------------------------------------------------
 // Model/network boundary mocks
@@ -104,7 +108,7 @@ describe("characterization: geminiParser.parseWithGemini", () => {
 
     expect(res.rawText).toBe("RAW TEXT");
     expect(res.boundingBoxes).toEqual([]);
-    expect(res.usage).toEqual({ inputTokens: 42, outputTokens: 7, model: "gemini-2.5-flash-lite" });
+    expect(res.usage).toEqual({ inputTokens: 42, outputTokens: 7, model: MODELS.geminiLite });
     expect(res.extracted).toEqual({
       date: "2024-01-31",
       amount: 12345,
@@ -397,7 +401,7 @@ describe("characterization: geminiParser.classifyDocument", () => {
     // characterization: reason is passed through even when it IS an invoice
     expect(res.reason).toBe("looks fine");
     expect(res.confidence).toBe(0.92);
-    expect(res.usage).toEqual({ inputTokens: 42, outputTokens: 7, model: "gemini-2.5-flash-lite" });
+    expect(res.usage).toEqual({ inputTokens: 42, outputTokens: 7, model: MODELS.geminiLite });
   });
 
   it('treats the string "true" as NOT an invoice (strict === true check)', async () => {
@@ -415,7 +419,7 @@ describe("characterization: geminiParser.classifyDocument", () => {
       isInvoice: true,
       reason: null,
       confidence: 0.5,
-      usage: { inputTokens: 42, outputTokens: 7, model: "gemini-2.5-flash-lite" },
+      usage: { inputTokens: 42, outputTokens: 7, model: MODELS.geminiLite },
     });
   });
 
@@ -615,7 +619,7 @@ describe("characterization: documentExtractor", () => {
     expect(res.notInvoiceReason).toBeNull();
     expect(res.text).toBe("Hello invoice");
     expect(res.blocks).toEqual([]);
-    expect(res.usage).toEqual({ inputTokens: 42, outputTokens: 7, model: "gemini-2.5-flash-lite" });
+    expect(res.usage).toEqual({ inputTokens: 42, outputTokens: 7, model: MODELS.geminiLite });
   });
 
   it("gemini: missing rawText is replaced by generated display text with comma-decimal amount", async () => {

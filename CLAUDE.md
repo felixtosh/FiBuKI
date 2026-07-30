@@ -316,12 +316,30 @@ Release trigger:
 
 ### Model Selection by Use Case
 
-| Use Case | Model | Reason |
-|----------|-------|--------|
-| CSV column matching | `gemini-2.0-flash-lite-001` | Fast, cheap, good enough for structured mapping |
-| Document extraction | `gemini-2.0-flash-lite-001` | Native PDF/image support via Vertex AI |
-| Partner matching | `gemini-2.0-flash-lite-001` | Simple text matching task |
-| Chat/Agent | Anthropic Claude | Complex reasoning, multi-step tasks |
+**Never inline a model id at a callsite.** Use the roles in
+`functions/src/utils/models.ts` (backend) / `types/ai-usage.ts` (frontend). Those two
+files are hand-duplicated because `functions/tsconfig.json` pins `rootDir: "src"`;
+`functions/src/utils/models.sync.test.ts` fails the build if they drift, because the
+silent failure mode is mis-billing, not a crash.
+
+| Use Case | Role | Model | Reason |
+|----------|------|-------|--------|
+| CSV column matching | `geminiLite` | `gemini-3.1-flash-lite` | Cheapest callable model; no thinking tokens on structured prompts |
+| Document extraction | `geminiLite` | `gemini-3.1-flash-lite` | Native PDF/image support |
+| Partner matching / company lookup | `geminiFlash` | `gemini-3.5-flash-lite` | Priced identically to the 2.5-flash it replaces |
+| Chat/Agent (cloud) | `chatAgent` | Anthropic Claude | Complex reasoning, multi-step tasks |
+| Chat/Agent (self-host) | `FIBUKI_CHAT_MODEL` | `gemini-3.6-flash` | Runs in fibuki-web via API key, not Vertex |
+
+Google **retires model ids for new API-key consumers while Vertex keeps serving
+them** — `gemini-2.5-flash` returns 404 on a current key but works on Vertex. So a
+model that works in the Firebase build can be dead in the self-host build. Verify
+against the API a deployment actually uses, not against the model list (which still
+advertises retired ids).
+
+Self-host can re-route any model without a code change:
+`FIBUKI_AI_ROUTE_<model_with_underscores>=<provider>:<model>`. Note that cost
+accounting keys on the model the CALLSITE requested, so a route override prices the
+call at the original model's rate.
 
 ### Gemini via Vertex AI (Cloud Functions)
 

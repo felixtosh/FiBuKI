@@ -16,6 +16,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { MODELS } from "../utils/models";
 
 const vertexCtor = vi.fn();
 const genaiCtor = vi.fn();
@@ -95,7 +96,7 @@ describe("chat agent Gemini client selection", () => {
     process.env.FIBUKI_GEMINI_API_KEY = "k";
     await build();
     const { model } = genaiCtor.mock.calls[0][0] as { model: string };
-    expect(model).toBe("gemini-2.5-flash");
+    expect(model).toBe(MODELS.geminiFlash);
   });
 
   it("still builds Vertex with no API key — the Firebase build must not change", async () => {
@@ -104,7 +105,7 @@ describe("chat agent Gemini client selection", () => {
     expect(model.__client).toBe("vertex");
     expect(genaiCtor).not.toHaveBeenCalled();
     expect(vertexCtor).toHaveBeenCalledWith(
-      expect.objectContaining({ model: "gemini-2.5-flash" }),
+      expect.objectContaining({ model: MODELS.geminiFlash }),
     );
   });
 });

@@ -20,6 +20,7 @@
  */
 
 import { describe, it, expect, beforeEach, beforeAll, vi } from "vitest";
+import { MODELS } from "../utils/models";
 import { getFirestore, Timestamp, __resetFirestoreShim } from "./firestore-shim";
 import { drainTriggers, __resetTriggerShim } from "./trigger-shim";
 import { getStorage } from "./storage-shim";
@@ -155,7 +156,7 @@ describe("characterization: runExtraction classification phase", () => {
     const usage = await db.collection("aiUsage").where("userId", "==", USER).get();
     expect(usage.size).toBe(1);
     expect(usage.docs[0].data().function).toBe("classification");
-    expect(usage.docs[0].data().model).toBe("gemini-2.5-flash-lite");
+    expect(usage.docs[0].data().model).toBe(MODELS.geminiLite);
     expect(usage.docs[0].data().inputTokens).toBe(11);
     expect(usage.docs[0].data().outputTokens).toBe(7);
   });
