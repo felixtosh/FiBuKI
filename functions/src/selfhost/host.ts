@@ -27,6 +27,8 @@ import { HttpsError } from "./https-shim";
 import { EXCLUDED_EXPORTS } from "./manifest";
 import { createDataPlane } from "./data-plane";
 import { createStorageRoutes } from "./storage-routes";
+import { createChangeStream, changeStreamAuth, makePgListener, type StreamAuth } from "./change-stream";
+import { getTenantId } from "./db/tenant";
 import { makeRateLimiter } from "./rate-limit";
 
 export type TokenVerifier = (token: string) => Promise<AuthData | null>;
@@ -290,6 +292,25 @@ export function createHost(
   // frontend storage shim. "__storage" can't collide with barrel exports for
   // the same reason "__data" can't (see above).
   app.use("/__storage", createStorageRoutes(options.verifyToken, { jsonLimit: options.jsonLimit }));
+
+  // Realtime change stream (SSE), fed by Postgres LISTEN. Turns onSnapshot's
+  // polling into push for changes made by ANY process — a worker finishing
+  // extraction, the cron host draining a queue, another replica — which the
+  // client-side write poke (lib/selfhost/poll-bus.ts) cannot cover because it only
+  // knows about writes this browser made.
+  //
+  // Mounted under /__data so it shares that prefix's collision guarantee, and
+  // deliberately OUTSIDE the rate limiter: a long-lived stream is one request that
+  // stays open, and counting it would exhaust a client's budget for holding a
+  // connection rather than for making traffic.
+  const changeStream = createChangeStream({
+    authOf: (req) => {
+      const auth = (req as Request & { fibukiAuth?: StreamAuth }).fibukiAuth;
+      return auth ? { uid: auth.uid, tenant: getTenantId() } : null;
+    },
+    listen: makePgListener,
+  });
+  app.use("/__data", changeStreamAuth(options.verifyToken), changeStream.router);
 
   app.get("/healthz", (_req, res) => {
     res.json({

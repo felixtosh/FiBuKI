@@ -16,6 +16,7 @@
 import { PGlite } from "@electric-sql/pglite";
 import { FieldValue, Timestamp } from "@google-cloud/firestore";
 import { emitChange } from "./bus";
+import { notifyChange } from "./change-notify";
 import { FLATTENED, FlatSpec } from "./db/collections";
 import { runMigrations } from "./db/migrate";
 import { compileFlatQuery, CursorSpec } from "./db/pushdown";
@@ -488,29 +489,47 @@ async function rawPut(
   const spec = flatSpecFor(collectionPath);
   const path = `${collectionPath}/${id}`;
   const json = JSON.stringify(encodeValue(data));
-  await withTenant((q) =>
-    spec
-      ? q(
-          `INSERT INTO ${spec.table} (tenant_id, id, data) VALUES ($1, $2, $3::jsonb)
+  await withTenant(async (q) => {
+    if (spec) {
+      await q(
+        `INSERT INTO ${spec.table} (tenant_id, id, data) VALUES ($1, $2, $3::jsonb)
            ON CONFLICT (tenant_id, id) DO UPDATE SET data = EXCLUDED.data`,
-          [getTenantId(), id, json],
-        )
-      : q(
-          `INSERT INTO docs (tenant_id, path, collection_path, id, data) VALUES ($1, $2, $3, $4, $5::jsonb)
+        [getTenantId(), id, json],
+      );
+    } else {
+      await q(
+        `INSERT INTO docs (tenant_id, path, collection_path, id, data) VALUES ($1, $2, $3, $4, $5::jsonb)
            ON CONFLICT (tenant_id, path) DO UPDATE SET data = EXCLUDED.data`,
-          [getTenantId(), path, collectionPath, id, json],
-        ),
-  );
+        [getTenantId(), path, collectionPath, id, json],
+      );
+    }
+    // Issued on the SAME connection as the write, so Postgres queues it and
+    // delivers only on commit — a rolled-back write notifies nobody.
+    await notifyChange(q, {
+      tenant: getTenantId(),
+      collection: collectionPath,
+      id,
+      op: "w",
+    });
+  });
 }
 
 async function rawDelete(path: string): Promise<void> {
   const segs = path.split("/");
   const spec = segs.length === 2 ? flatSpecFor(segs[0]) : undefined;
-  await withTenant((q) =>
-    spec
-      ? q(`DELETE FROM ${spec.table} WHERE tenant_id = $1 AND id = $2`, [getTenantId(), segs[1]])
-      : q(`DELETE FROM docs WHERE tenant_id = $1 AND path = $2`, [getTenantId(), path]),
-  );
+  await withTenant(async (q) => {
+    if (spec) {
+      await q(`DELETE FROM ${spec.table} WHERE tenant_id = $1 AND id = $2`, [getTenantId(), segs[1]]);
+    } else {
+      await q(`DELETE FROM docs WHERE tenant_id = $1 AND path = $2`, [getTenantId(), path]);
+    }
+    await notifyChange(q, {
+      tenant: getTenantId(),
+      collection: segs.slice(0, -1).join("/"),
+      id: segs[segs.length - 1],
+      op: "d",
+    });
+  });
 }
 
 async function writeDoc(
