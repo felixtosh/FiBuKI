@@ -112,6 +112,37 @@ services:
       APP_URL: ${APP_URL:-}
       # Auto-grants admin on first login (see CLAUDE.md).
       SUPER_ADMIN_EMAIL: ${SUPER_ADMIN_EMAIL:-}
+      # --- Production integration credentials -------------------------------
+      # Declared on fibuki-api ONLY, never on fibuki-web. That is not incidental:
+      # next.config.ts aliases only the CLIENT firebase SDKs, so fibuki-web would use
+      # the REAL firebase-admin with a service-account key and start reading and
+      # writing LIVE production Firestore — while every other request path uses the
+      # migrated Postgres copy. That split brain is worse than either option alone.
+      # On fibuki-api, firebase-admin/firestore|auth|storage are aliased to the shims,
+      # so the key is loaded but never used to reach Google.
+      FIREBASE_SERVICE_ACCOUNT_KEY: ${FIREBASE_SERVICE_ACCOUNT_KEY:-}
+      # Stripe. NOTE the key from production is sk_live_: a checkout here creates a
+      # REAL subscription and charges a REAL card, while the resulting record lands in
+      # this box's copy of the data rather than live production.
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      # Per-ENDPOINT signing secret. Production's value will NOT validate a webhook
+      # delivered to new-api.fibuki.com — that needs its own endpoint registered in
+      # the Stripe dashboard, which issues a different whsec_.
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      # Decrypts users' stored Gmail OAuth tokens. With this present and cron enabled,
+      # the box can read the mailboxes of every migrated user.
+      GMAIL_TOKEN_ENCRYPTION_KEY: ${GMAIL_TOKEN_ENCRYPTION_KEY:-}
+      # FinanzOnline: deliberately absent. Production's stored value is an unevaluated
+      # $(...) shell substitution rather than a key, so it is guessable. Nothing is
+      # encrypted under it yet (0 stored credentials); rotate it before anything is.
+      FINANZONLINE_ENCRYPTION_KEY: ${FINANZONLINE_ENCRYPTION_KEY:-}
+      FINAPI_CLIENT_ID: ${FINAPI_CLIENT_ID:-}
+      FINAPI_CLIENT_SECRET: ${FINAPI_CLIENT_SECRET:-}
+      FINAPI_ENVIRONMENT: ${FINAPI_ENVIRONMENT:-sandbox}
+      # Callback bases point at THIS host, not production — otherwise an OAuth round
+      # trip started here would complete against fibuki.com.
+      GOOGLE_OAUTH_REDIRECT_URI: ${GOOGLE_OAUTH_REDIRECT_URI:-}
+      TRUELAYER_REDIRECT_URL: ${TRUELAYER_REDIRECT_URL:-}
       # Which exclusion profile the host mounts (selfhost/manifest.ts).
       # "selfhost" drops Stripe billing, country crowdfunding and referrals;
       # "cloud" mounts everything. Defaults to selfhost.

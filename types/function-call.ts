@@ -95,6 +95,7 @@ export type CloudFunctionName =
   | "createPortalSession"
   | "updateOverageSettings"
   | "switchPlan"
+  | "getPlanPricing"
   // Browser recipe operations
   | "saveBrowserRecipe"
   | "updateBrowserRecipe"

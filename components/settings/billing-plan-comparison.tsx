@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Check, Heart, ExternalLink, Calendar } from "lucide-react";
 import { format } from "date-fns";
 import { PLANS, type PlanId } from "@/types/billing";
+import { usePlanPricing, formatMinor } from "@/hooks/use-plan-pricing";
 import { useSubscription } from "@/hooks/use-subscription";
 import { useAuth } from "@/components/auth/auth-provider";
 import {
@@ -45,6 +46,10 @@ export function BillingPlanComparison() {
     isFreePlanOverride,
   } = useSubscription();
   const { user } = useAuth();
+  // Prices from Stripe, so the displayed figure is the billed figure.
+  // See hooks/use-plan-pricing.ts.
+  const pricing = usePlanPricing();
+
   const [loading, setLoading] = useState<PlanId | null>(null);
   const [portalLoading, setPortalLoading] = useState(false);
   const [userBackings, setUserBackings] = useState<{ countryCode: string }[]>(
@@ -224,9 +229,14 @@ export function BillingPlanComparison() {
                   )}
                   <div className="mt-1">
                     <span className="text-xl font-bold">
+                      {/* From Stripe, which is what actually charges the card.
+                          formatMinor works in minor units so money never goes
+                          through float arithmetic. Falls back to the plan config
+                          only when Stripe and its cache are both unavailable. */}
                       {config.monthlyPriceEur === 0
                         ? "Free"
-                        : `${config.monthlyPriceEur} EUR`}
+                        : formatMinor(pricing.plans[planId]?.monthly) ??
+                          `${config.monthlyPriceEur} EUR`}
                       {config.monthlyPriceEur > 0 && (
                         <span className="text-sm font-normal text-muted-foreground">
                           /mo
@@ -235,20 +245,26 @@ export function BillingPlanComparison() {
                     </span>
                   </div>
                   {isCurrent && config.monthlyPriceEur > 0 && (() => {
+                    // Active addons are LISTED but no longer priced. Their
+                    // activation callables (bmdExportAddon.ts and siblings) carry
+                    // "TODO: integrate Stripe subscription item for billing" and make
+                    // no Stripe calls at all, so nothing is charged for them and no
+                    // Stripe price object exists. This previously rendered
+                    // "+ Priority Support: 50 EUR" and folded it into a total,
+                    // stating a charge that never happened. Restore the amounts once
+                    // the addons are genuinely billed.
                     const addons = subscription?.addons;
-                    const addonLines: { label: string; price: number }[] = [];
-                    if (addons?.bmdExport?.active) addonLines.push({ label: "BMD Export", price: 5 });
-                    if (addons?.investments?.active) addonLines.push({ label: "Investments", price: 5 });
-                    if (addons?.prioritySupport?.active) addonLines.push({ label: "Priority Support", price: 50 });
-                    if (addonLines.length === 0) return null;
-                    const total = config.monthlyPriceEur + addonLines.reduce((s, a) => s + a.price, 0);
+                    const active: string[] = [];
+                    if (addons?.bmdExport?.active) active.push("BMD Export");
+                    if (addons?.investments?.active) active.push("Investments");
+                    if (addons?.prioritySupport?.active) active.push("Priority Support");
+                    if (active.length === 0) return null;
                     return (
                       <div className="text-xs text-muted-foreground space-y-0.5 mt-1">
-                        <div>Base: {config.monthlyPriceEur} EUR</div>
-                        {addonLines.map((a) => (
-                          <div key={a.label}>+ {a.label}: {a.price} EUR</div>
+                        <div>Included add-ons:</div>
+                        {active.map((label) => (
+                          <div key={label}>+ {label}</div>
                         ))}
-                        <div className="font-medium text-foreground">= {total} EUR/mo</div>
                       </div>
                     );
                   })()}

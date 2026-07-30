@@ -278,6 +278,7 @@ export {
   addAICreditsCallable as addAICredits,
   updateOverageSettingsCallable as updateOverageSettings,
   switchPlanCallable as switchPlan,
+  getPlanPricingCallable as getPlanPricing,
   stripeWebhook,
 } from "./billing";
 export { updateAutomationModeCallable as updateAutomationMode } from "./billing/updateAutomationMode";

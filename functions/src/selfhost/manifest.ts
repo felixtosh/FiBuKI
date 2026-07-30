@@ -37,6 +37,10 @@ export type Tier = "selfhost" | "cloud";
 const BILLING = [
   "createCheckoutSession",
   "createPortalSession",
+  // Reads plan prices from Stripe. A self-host install has no Stripe account, so
+  // this could only ever fall back to the config constants — and it is the pricing
+  // page's data source, which a self-host install does not present.
+  "getPlanPricing",
   "addAICredits",
   "updateOverageSettings",
   "switchPlan",
