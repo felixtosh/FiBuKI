@@ -22,6 +22,16 @@ const SELFHOST_SHIMS: Record<string, string> = {
   "firebase/storage": "storage-client.ts",
   "firebase/functions": "functions-client.ts",
   "firebase/auth": "auth-client.ts",
+  // SERVER-side auth for the ~45 routes under app/api. Not a client SDK, but the
+  // same problem: the upstream helper verifies a FIREBASE ID token (RS256, via
+  // firebase-admin), while a self-host deployment's tokens come from Better Auth and
+  // are signed EdDSA. firebase-admin rejects them outright —
+  //   "incorrect algorithm. Expected RS256 but got EdDSA"
+  // — so every server-authenticated route answered 401. Aliasing here fixes all of
+  // them at once and keeps Firebase code out of a Firebase-free build, rather than
+  // branching inside the helper. Same technique the API build already uses for
+  // utils/mailer and utils/buildDownloadUrl.
+  "@/lib/auth/get-server-user": "get-server-user-shim.ts",
 };
 // Webpack resolves aliases to absolute filesystem paths.
 const SELFHOST_ALIASES: Record<string, string> = Object.fromEntries(
