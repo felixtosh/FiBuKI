@@ -59,7 +59,6 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.4.0",
-    "eslint-config-next": "^16.2.9",
     "firebase": "^12.15.0",
     "firebase-admin": "^13.7.0",
     "imapflow": "^1.4.7",
@@ -67,11 +66,11 @@
     "langfuse": "^3.38.20",
     "langfuse-langchain": "^3.38.20",
     "lucide-react": "^1.21.0",
-    "next": "^16.2.9",
+    "next": "^16.2.11",
     "next-intl": "^4.13.0",
     "next-themes": "^0.4.6",
     "pdf-lib": "^1.17.1",
-    "postcss": "^8.5.8",
+    "postcss": "^8.5.25",
     "puppeteer": "^24.40.0",
     "qrcode": "^1.5.4",
     "qrcode.react": "^4.2.0",
@@ -93,6 +92,11 @@
     "concurrently": "^9.2.1",
     "dotenv-cli": "^11.0.0",
     "eslint": "^9.39.2",
+    "eslint-config-next": "^16.2.9",
     "typescript": "^6.0.3"
+  },
+  "overrides": {
+    "sharp": "^0.35.3",
+    "postcss": "^8.5.25"
   }
 }
