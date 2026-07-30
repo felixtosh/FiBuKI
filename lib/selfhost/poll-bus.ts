@@ -65,3 +65,31 @@ export function pokePollers(): void {
 export function __pollerCount(): number {
   return pollers.size;
 }
+
+/* ------------------------------------------------------------------ */
+/* Stream health                                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Whether the realtime SSE stream is currently delivering.
+ *
+ * Polling exists to catch changes the client was never told about. While the
+ * stream is up it IS being told, so the timer becomes a safety net rather than the
+ * primary mechanism and can run far slower — a straight reduction in idle request
+ * volume, which at 5s and ~8 live listeners per tab was the bulk of the app's
+ * traffic.
+ *
+ * Defaults to false so a deployment with no stream (same-origin, unconfigured, or
+ * a database without LISTEN) keeps today's responsive polling. The safety net is
+ * never removed entirely: a stream can be up and still miss an event, and a slow
+ * poll converges where no poll would not.
+ */
+let streamHealthy = false;
+
+export function setStreamHealthy(healthy: boolean): void {
+  streamHealthy = healthy;
+}
+
+export function isStreamHealthy(): boolean {
+  return streamHealthy;
+}

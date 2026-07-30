@@ -22,7 +22,7 @@
  * before this file existed.
  */
 
-import { pokePollers } from "./poll-bus";
+import { pokePollers, setStreamHealthy } from "./poll-bus";
 
 /** Reconnect backoff, capped. Jittered to avoid a thundering herd after an outage. */
 const BACKOFF_MS = [1_000, 2_000, 5_000, 10_000, 30_000];
@@ -78,6 +78,9 @@ export function startChangeStream(
 
     open = true;
     attempt = 0; // a successful connect resets the backoff ladder
+    // Tell the pollers push is live so they drop to a slow safety net. The moment
+    // this flips back the next poll cycle returns to the configured interval.
+    setStreamHealthy(true);
     setState("open");
 
     const reader = res.body.getReader();
@@ -121,6 +124,9 @@ export function startChangeStream(
         /* fall through to backoff; polling is still carrying the app */
       }
       open = false;
+      // Back to responsive polling immediately — a dropped stream must not leave
+      // the app on a 60s safety net.
+      setStreamHealthy(false);
       if (stopped) break;
       setState("retrying");
       const wait = backoffFor(attempt++);
@@ -136,6 +142,7 @@ export function startChangeStream(
   return {
     stop() {
       stopped = true;
+      setStreamHealthy(false);
       if (retryTimer) clearTimeout(retryTimer);
       controller?.abort();
       open = false;

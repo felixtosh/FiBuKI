@@ -8,7 +8,7 @@
  * "a write causes a refetch far sooner than the interval would".
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
 import express from "express";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
@@ -20,6 +20,8 @@ import {
   pokePollers,
   registerPoller,
   __pollerCount,
+  setStreamHealthy,
+  isStreamHealthy,
 } from "../../../lib/selfhost/poll-bus";
 import {
   __configureFirestoreClient,
@@ -71,6 +73,32 @@ describe("poll bus: unit", () => {
 
     off1();
     off2();
+  });
+});
+
+describe("poll bus: stream health gates the poll interval", () => {
+  afterEach(() => setStreamHealthy(false));
+
+  it("defaults to unhealthy, so a deployment with no stream keeps fast polling", () => {
+    expect(isStreamHealthy()).toBe(false);
+  });
+
+  it("tracks the stream state both ways", () => {
+    setStreamHealthy(true);
+    expect(isStreamHealthy()).toBe(true);
+    setStreamHealthy(false);
+    expect(isStreamHealthy()).toBe(false);
+  });
+
+  it("a listener still refetches while the stream is healthy", async () => {
+    // The safety net is slowed, never removed: a stream can be up and still miss an
+    // event, so the poker must keep working regardless of health.
+    setStreamHealthy(true);
+    const fn = vi.fn();
+    const off = registerPoller(fn);
+    pokePollers();
+    expect(fn).toHaveBeenCalledTimes(1);
+    off();
   });
 });
 

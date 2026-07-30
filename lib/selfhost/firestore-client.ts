@@ -21,7 +21,7 @@
  * GeoPoint. Any of those would throw rather than silently misbehave.
  */
 
-import { pokePollers, registerPoller } from "./poll-bus";
+import { pokePollers, registerPoller, isStreamHealthy } from "./poll-bus";
 
 /* ------------------------------------------------------------------ */
 /* Transport                                                           */
@@ -637,6 +637,26 @@ function pollMs(): number {
 }
 
 /**
+ * Interval to use right now.
+ *
+ * While the realtime stream is delivering, the timer is a safety net rather than
+ * the mechanism, so it backs off hard — that removes most idle traffic, which at a
+ * few seconds times ~8 live listeners per tab was the bulk of it. The moment the
+ * stream drops, this returns to the configured interval on the very next cycle,
+ * which is why the timer below re-reads it each time instead of capturing it once.
+ *
+ * Never returns Infinity: a stream can be up and still miss an event, and a slow
+ * poll converges where no poll would not.
+ */
+const STREAM_HEALTHY_POLL_MS = 60_000;
+
+function effectivePollMs(): number {
+  const configured = pollMs();
+  // Respect a deployment that deliberately polls slower than the safety net.
+  return isStreamHealthy() ? Math.max(configured, STREAM_HEALTHY_POLL_MS) : configured;
+}
+
+/**
  * onSnapshot(target, onNext, onError?) — polling emulation. Fires on the
  * initial load and whenever the serialized response changes. Pauses while
  * the tab is hidden (document.hidden), resumes on visibilitychange. Errors
@@ -650,7 +670,6 @@ export function onSnapshot(
 ): Unsubscribe {
   const { next, error } = normalizeObserver(onNextOrObserver, onError);
   const isDoc = target instanceof DocumentReference;
-  const interval = pollMs();
 
   let stopped = false;
   let lastHash: string | null = null;
@@ -691,19 +710,31 @@ export function onSnapshot(
   }
 
   void tick();
-  const timer = setInterval(() => void tick(), interval);
+  // Self-scheduling rather than setInterval, so the interval is re-read every cycle
+  // and a stream going up or down takes effect immediately instead of at the next
+  // subscribe. Also guarantees a full gap BETWEEN ticks rather than between starts,
+  // so a slow request can never stack up behind itself.
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const schedule = (): void => {
+    if (stopped) return;
+    timer = setTimeout(() => {
+      void tick().finally(schedule);
+    }, effectivePollMs());
+  };
+  schedule();
+
   const onVisibility = (): void => {
     if (typeof document !== "undefined" && !document.hidden) void tick();
   };
   if (typeof document !== "undefined") document.addEventListener("visibilitychange", onVisibility);
-  // Let a successful write pull this listener forward, instead of making the user
-  // wait out the interval to see their own action land. See poll-bus.ts.
+  // Let a successful write, or a realtime change frame, pull this listener forward
+  // instead of making the user wait out the interval. See poll-bus.ts.
   const unregister = registerPoller(() => void tick());
 
   return () => {
     stopped = true;
     unregister();
-    clearInterval(timer);
+    if (timer) clearTimeout(timer);
     if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVisibility);
   };
 }
