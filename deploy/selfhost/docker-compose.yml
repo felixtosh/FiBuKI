@@ -228,6 +228,24 @@ services:
     environment:
       PORT: "3000"
       NODE_ENV: production
+      # The sidebar chat agent runs SERVER-SIDE in this container (app/api/chat),
+      # not on fibuki-api, so it needs its own model credentials — without these it
+      # reached the agent and then died on
+      #   "Could not load the default credentials"
+      # because lib/agent/model.ts falls back to Vertex AI, which resolves Google
+      # Application Default Credentials that no non-GCP host has.
+      #
+      # An API key selects the credential-free Generative Language path instead,
+      # the same trade the api-side adapter makes (functions/src/selfhost/ai).
+      # Both providers are passed so either chat model works; each is optional and
+      # the agent reports a clean error for whichever is missing.
+      FIBUKI_GEMINI_API_KEY: ${FIBUKI_GEMINI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # types/ai-usage.ts pins Vertex-era model ids, and some are retired for new
+      # API-key consumers — "gemini-2.5-flash" answers 404 "not found for API
+      # version v1beta". Override without editing the shared registry, which the
+      # Firebase build still uses successfully against Vertex.
+      FIBUKI_CHAT_MODEL: ${FIBUKI_CHAT_MODEL:-}
     # Loopback-only — see the note on fibuki-api's ports. Public ingress is
     # Caddy only (docker-compose.prod.yml).
     ports:
