@@ -32,6 +32,13 @@ export default defineConfig({
       // build emits host /__storage/download URLs instead of googleapis.com,
       // so backend-written download links resolve. See buildDownloadUrl-shim.ts.
       { find: /^.*\/utils\/buildDownloadUrl$/, replacement: shim("buildDownloadUrl-shim.ts") },
+      // Mirrors next.config.ts: server-side document IO for the web container.
+      // Must be listed BEFORE the generic "@/" rule below, which would otherwise
+      // resolve this to the real firebase-admin module and defeat the swap.
+      {
+        find: "@/lib/firebase/admin",
+        replacement: path.resolve(__dirname, "../lib/selfhost/admin-shim.ts"),
+      },
       // Frontend code under test (the app/api routes and lib/ modules that the
       // self-host build re-points) uses Next's "@/" root alias. tsconfig defines it
       // for the app build; vitest resolves independently, so it needs saying here

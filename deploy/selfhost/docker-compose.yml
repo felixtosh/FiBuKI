@@ -113,11 +113,19 @@ services:
       # Auto-grants admin on first login (see CLAUDE.md).
       SUPER_ADMIN_EMAIL: ${SUPER_ADMIN_EMAIL:-}
       # --- Production integration credentials -------------------------------
-      # Declared on fibuki-api ONLY, never on fibuki-web. That is not incidental:
-      # next.config.ts aliases only the CLIENT firebase SDKs, so fibuki-web would use
-      # the REAL firebase-admin with a service-account key and start reading and
-      # writing LIVE production Firestore — while every other request path uses the
-      # migrated Postgres copy. That split brain is worse than either option alone.
+      # Declared on fibuki-api ONLY, never on fibuki-web.
+      #
+      # This used to be load-bearing: next.config.ts aliased only the CLIENT firebase
+      # SDKs, so fibuki-web given a service-account key would have used the REAL
+      # firebase-admin and started reading and writing LIVE production Firestore,
+      # while every other request path used the migrated Postgres copy — a split
+      # brain worse than either option alone.
+      #
+      # next.config.ts now also aliases "@/lib/firebase/admin" to
+      # lib/selfhost/admin-shim.ts, so that path no longer reaches Google even if the
+      # key were present. Kept off fibuki-web anyway: the alias is the guarantee, and
+      # withholding the credential is the backstop for the day someone adds a module
+      # that imports firebase-admin directly rather than through that helper.
       # On fibuki-api, firebase-admin/firestore|auth|storage are aliased to the shims,
       # so the key is loaded but never used to reach Google.
       FIREBASE_SERVICE_ACCOUNT_KEY: ${FIREBASE_SERVICE_ACCOUNT_KEY:-}
@@ -225,6 +233,10 @@ services:
     depends_on:
       fibuki-api:
         condition: service_started
+      # This container now does its own document IO (see DATABASE_URL below), so it
+      # needs Postgres up, not just the api.
+      postgres:
+        condition: service_healthy
     environment:
       PORT: "3000"
       NODE_ENV: production
@@ -246,6 +258,25 @@ services:
       # version v1beta". Override without editing the shared registry, which the
       # Firebase build still uses successfully against Vertex.
       FIBUKI_CHAT_MODEL: ${FIBUKI_CHAT_MODEL:-}
+      # Server-side document IO. ~35 modules in this container call getAdminDb()
+      # — the chat agent's tools, the public invoice share page, precision search,
+      # the worker endpoint, Gmail, the auth routes — and off GCP the Firebase Admin
+      # SDK cannot authenticate at all. next.config.ts aliases that module to
+      # lib/selfhost/admin-shim.ts, which reuses the API's Postgres-backed shim so
+      # both containers resolve documents through identical code.
+      #
+      # This is the same connection string fibuki-api uses, and deliberately so:
+      # RLS still scopes every read by app.tenant_id, and the shim opens each
+      # transaction with SET LOCAL ROLE fibuki_app rather than the owner. The
+      # BROWSER still never reaches Postgres — these are server-only modules.
+      DATABASE_URL: ${DATABASE_URL}
+      FIBUKI_TENANT_ID: ${FIBUKI_TENANT_ID:-}
+      # Both containers must mint byte-identical /__storage/download links, since
+      # one handler resolves whichever wrote them.
+      FIBUKI_PUBLIC_URL: ${FIBUKI_PUBLIC_URL:-}
+      # Pool ceiling per container. Both share Postgres' max_connections, so this
+      # is now split two ways rather than owned by fibuki-api alone.
+      POSTGRES_MAX_CONNECTIONS: ${WEB_POSTGRES_MAX_CONNECTIONS:-10}
     # Loopback-only — see the note on fibuki-api's ports. Public ingress is
     # Caddy only (docker-compose.prod.yml).
     ports:

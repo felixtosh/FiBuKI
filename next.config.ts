@@ -32,6 +32,21 @@ const SELFHOST_SHIMS: Record<string, string> = {
   // branching inside the helper. Same technique the API build already uses for
   // utils/mailer and utils/buildDownloadUrl.
   "@/lib/auth/get-server-user": "get-server-user-shim.ts",
+  // SERVER-side document IO. Same class of problem as the auth helper above, one
+  // layer deeper: `lib/firebase/admin.ts` boots the Firebase Admin SDK, which
+  // authenticates with Google Application Default Credentials. Off GCP there are
+  // none, so all ~35 modules calling getAdminDb() died with
+  //   Could not load the default credentials
+  // — the chat agent's tools, the public invoice share page, precision search, the
+  // worker endpoint, Gmail and the auth routes. One alias, all of them.
+  "@/lib/firebase/admin": "admin-shim.ts",
+  // ~20 modules import Timestamp/FieldValue straight from this specifier instead of
+  // going through the helper above. They need no credentials, so it "works"
+  // unaliased — but the shim's serialiser does `instanceof Timestamp` against its
+  // own copy of @google-cloud/firestore, and a second nested copy would make
+  // timestamps round-trip as opaque objects. Aliasing makes the web build resolve
+  // what the api build and the test profile already resolve.
+  "firebase-admin/firestore": "firestore-admin-shim.ts",
 };
 // Webpack resolves aliases to absolute filesystem paths.
 const SELFHOST_ALIASES: Record<string, string> = Object.fromEntries(

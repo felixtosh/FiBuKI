@@ -13,7 +13,6 @@
  * Firestore backend applies transforms.
  */
 
-import { PGlite } from "@electric-sql/pglite";
 import { FieldValue, Timestamp } from "@google-cloud/firestore";
 import { emitChange } from "./bus";
 import { notifyChange } from "./change-notify";
@@ -137,6 +136,13 @@ async function makeClient(): Promise<SqlClient> {
       },
     };
   }
+  // Imported HERE, not at module scope, for the same reason `pg` is above: this is
+  // the tests/local-dev backend, and PGlite is a dev-only dependency carrying a WASM
+  // Postgres build. A static import forces every consumer to resolve it — including
+  // the Next.js web build, which imports this shim for server-side document IO and
+  // has no reason to ship an embedded database. Production sets DATABASE_URL and
+  // returns above, so this line never runs there.
+  const { PGlite } = await import("@electric-sql/pglite");
   const pg = new PGlite(); // in-memory; no DATABASE_URL configured
   const q: QueryFn = async <R>(sql: string, params?: unknown[]) => {
     const res = await pg.query<Record<string, unknown>>(sql, params as unknown[]);
