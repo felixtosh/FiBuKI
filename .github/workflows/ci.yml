@@ -54,7 +54,17 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: functions/package-lock.json
+          cache-dependency-path: |
+            package-lock.json
+            functions/package-lock.json
+      # BOTH dependency trees. vitest.selfhost.config.ts aliases "@/" to the repo
+      # root and the suite exercises REAL app code (lib/selfhost/*, lib/agent/*),
+      # so it needs the root's deps — jose, next, @langchain/* — as well as
+      # functions'. Without this the tests fail at module resolution with errors
+      # that look like logic bugs ("engine is not a constructor") rather than a
+      # missing install.
+      - run: npm ci
+        working-directory: .
       - run: npm ci
       - run: npm run test:selfhost
 
@@ -67,9 +77,13 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: functions/package-lock.json
+          cache-dependency-path: |
+            package-lock.json
+            functions/package-lock.json
       - name: Start Postgres + MinIO (compose)
         run: docker compose -f deploy/selfhost/docker-compose.ci.yml up -d --wait
+      # Root deps too — see the note on the PGlite job above.
+      - run: npm ci
       - run: npm ci
         working-directory: functions
       # Same suite as functions-selfhost, pointed at the compose services.
