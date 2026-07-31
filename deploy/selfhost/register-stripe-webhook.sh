@@ -62,7 +62,22 @@ else
 fi
 echo "Stored STRIPE_WEBHOOK_SECRET in $ENV_FILE (${SECRET:0:12}...)"
 
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d fibuki-api
+# --force-recreate is REQUIRED. A plain `up -d` left the container Running with the
+# PREVIOUS secret still in its environment, so every real delivery would have failed
+# signature verification with the new endpoint looking correctly configured. Verified
+# by comparing .env against `docker exec printenv` and finding them different.
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --force-recreate fibuki-api
+
+# Prove the process actually has it, rather than trusting the restart.
+sleep 5
+LIVE="$(docker exec selfhost-fibuki-api-1 printenv STRIPE_WEBHOOK_SECRET 2>/dev/null || true)"
+if [[ "$LIVE" != "$SECRET" ]]; then
+  echo "WARNING: container secret still does not match .env — deliveries will 400."
+  echo "  .env:      ${SECRET:0:14}..."
+  echo "  container: ${LIVE:0:14}..."
+  exit 1
+fi
+echo "Verified: the running api has the new signing secret."
 
 cat <<EOF
 
