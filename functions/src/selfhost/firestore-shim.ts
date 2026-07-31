@@ -153,7 +153,15 @@ async function makeClient(): Promise<SqlClient> {
   // the Next.js web build, which imports this shim for server-side document IO and
   // has no reason to ship an embedded database. Production sets DATABASE_URL and
   // returns above, so this line never runs there.
-  const { PGlite } = await import("@electric-sql/pglite");
+  // The ignore comments are load-bearing for the WEB build. Bundlers resolve
+  // dynamic imports statically, so without them Turbopack fails the build with
+  // "Module not found: Can't resolve '@electric-sql/pglite'" — a dev-only
+  // dependency that fibuki-web has no reason to ship, and whose code path cannot
+  // run there anyway (DATABASE_URL is always set, and the guard above enforces
+  // it). Left resolvable at RUNTIME for tests and local dev, which do use it.
+  const { PGlite } = await import(
+    /* webpackIgnore: true */ /* turbopackIgnore: true */ "@electric-sql/pglite"
+  );
   const pg = new PGlite(); // in-memory; no DATABASE_URL configured
   const q: QueryFn = async <R>(sql: string, params?: unknown[]) => {
     const res = await pg.query<Record<string, unknown>>(sql, params as unknown[]);

@@ -201,7 +201,10 @@ const SECURITY_HEADERS = [
 const nextConfig: NextConfig = {
   // imapflow is a Node-only IMAP client used by /api/mail/imap/connect; keep it
   // out of the bundle so its dynamic requires resolve at runtime.
-  serverExternalPackages: ["imapflow"],
+  // Node-only server packages: kept out of the bundle so their native/dynamic
+  // requires resolve at runtime. minio and pg arrive with the self-host document
+  // and blob IO shims (lib/selfhost/admin-shim.ts).
+  serverExternalPackages: ["imapflow", "minio", "pg"],
   // Surface the backend choice to the client bundle so the shared UI can gate
   // self-host-only differences (e.g. hiding the GitHub button, which the
   // self-host auth client can't service). FIBUKI_BACKEND itself is server-only;
