@@ -229,6 +229,13 @@ services:
         # whether GITHUB_CLIENT_ID/SECRET are set on the api, so it is told here.
         # Must match, or the button appears and then 4xxs.
         NEXT_PUBLIC_GITHUB_SIGNIN_ENABLED: ${NEXT_PUBLIC_GITHUB_SIGNIN_ENABLED:-false}
+        # Read by app/api/truelayer/callback, app/api/banking/connect and the agent's
+        # download tools to build absolute links. Next inlines NEXT_PUBLIC_* at BUILD
+        # time, so omitting it here left it undefined and every one of those call
+        # sites silently fell back to http://localhost:3000 — links that resolve to
+        # nothing for a user. Must be the PUBLIC web origin, and must be rebuilt when
+        # that origin changes (e.g. new.fibuki.com -> fibuki.com).
+        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL}
     restart: unless-stopped
     depends_on:
       fibuki-api:
@@ -258,6 +265,9 @@ services:
       # version v1beta". Override without editing the shared registry, which the
       # Firebase build still uses successfully against Vertex.
       FIBUKI_CHAT_MODEL: ${FIBUKI_CHAT_MODEL:-}
+      # Also at runtime: server-side reads in route handlers resolve it here, and
+      # keeping both in step avoids a stale baked-in value outliving an origin change.
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL}
       # Server-side document IO. ~35 modules in this container call getAdminDb()
       # — the chat agent's tools, the public invoice share page, precision search,
       # the worker endpoint, Gmail, the auth routes — and off GCP the Firebase Admin
