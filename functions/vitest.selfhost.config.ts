@@ -47,15 +47,6 @@ export default defineConfig({
     ],
   },
   test: {
-    // archiver must be loaded by Node's own CJS loader, not transformed by Vite.
-    // It resolves its "zip" format module through an internal require, and under
-    // Vite's SSR transform that lookup can yield a namespace object instead of the
-    // constructor, so archiver("zip") dies with "engine is not a constructor" —
-    // which surfaces as a BMD export failure rather than anything mentioning
-    // archiver. It reproduces only on a clean `npm ci` (CI), not against a
-    // developer's existing node_modules, which is what made it look flaky.
-    // Externalising matches how production loads it.
-    server: { deps: { external: [/archiver/, /zip-stream/, /compress-commons/] } },
     include: ["src/selfhost/**/*.test.ts"],
     testTimeout: 30000,
     hookTimeout: 30000,
