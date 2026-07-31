@@ -269,7 +269,12 @@ services:
       # RLS still scopes every read by app.tenant_id, and the shim opens each
       # transaction with SET LOCAL ROLE fibuki_app rather than the owner. The
       # BROWSER still never reaches Postgres — these are server-only modules.
-      DATABASE_URL: ${DATABASE_URL}
+      # Built from the parts exactly as fibuki-api does above. There is no
+      # top-level DATABASE_URL in .env, and ${DATABASE_URL} would resolve to an
+      # empty string — which the shim reads as "no database configured" and
+      # answers with an in-memory PGlite. That fails SILENTLY: the container
+      # boots healthy and serves an empty dataset.
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       FIBUKI_TENANT_ID: ${FIBUKI_TENANT_ID:-}
       # Both containers must mint byte-identical /__storage/download links, since
       # one handler resolves whichever wrote them.

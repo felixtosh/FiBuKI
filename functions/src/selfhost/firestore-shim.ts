@@ -87,6 +87,17 @@ let pgPromise: Promise<SqlClient> | null = null;
  */
 async function makeClient(): Promise<SqlClient> {
   const url = process.env.DATABASE_URL;
+  if (!url && process.env.NODE_ENV === "production") {
+    // The fallback below is an in-memory database. In production that is not a
+    // degraded mode, it is a data-loss-shaped illusion: the process boots, reports
+    // healthy, serves an EMPTY dataset and accepts writes that vanish on restart.
+    // A missing/typo'd DATABASE_URL is the likely cause and is trivially fixable —
+    // but only if it is visible, so refuse to start instead.
+    throw new Error(
+      "fibuki firestore-shim: DATABASE_URL is required in production. Refusing to " +
+        "fall back to the in-memory database, which would silently serve empty data.",
+    );
+  }
   if (url) {
     const { Pool } = await import("pg");
     // node-postgres defaults to max:10. Every onSnapshot in the client is a poll
