@@ -145,8 +145,20 @@ export const listTransactionsTool = tool(
       }
     }
 
-    // When using client-side filters (search, date, amount, has*, onlyIncome/Expenses), fetch more transactions
-    // This ensures filters find matches across all transactions
+    // Filters below run IN MEMORY, over whatever this query returns, because
+    // Firestore cannot do substring search. So the fetch limit is a SCAN WINDOW, not
+    // a page size: anything outside it is invisible to the filter and reports as
+    // "no matches" rather than "not scanned".
+    //
+    // That is not hypothetical. On a real account of 13,844 transactions, 631 mention
+    // Amazon and none fall in the newest 500, so search:"amazon" answered
+    // {transactions: [], total: 0} — which the agent then relayed as "you have no
+    // Amazon spend". A wrong answer delivered with total confidence is worse than an
+    // error, and the previous comment here asserted the opposite ("ensures filters
+    // find matches across all transactions").
+    //
+    // Widened, and truncation is now REPORTED (see scanTruncated below) so an empty
+    // result can never be mistaken for an authoritative one.
     const hasClientSideFilters =
       search ||
       startDate ||
@@ -157,7 +169,10 @@ export const listTransactionsTool = tool(
       hasNoReceiptCategory !== undefined ||
       onlyIncome ||
       onlyExpenses;
-    const fetchLimit = hasClientSideFilters ? 500 : limit;
+    // 5000 covers a typical single-user account outright while staying a bounded
+    // read. Beyond that the honest move is to say so, not to scan unboundedly.
+    const SCAN_WINDOW = 5000;
+    const fetchLimit = hasClientSideFilters ? SCAN_WINDOW : limit;
     const snapshot = await query.limit(fetchLimit).get();
 
     // Collect all fileIds to check for soft-deleted files
@@ -289,11 +304,26 @@ export const listTransactionsTool = tool(
       }
     );
 
+    // A full window means the scan may have stopped short of the whole account, so
+    // callers (the model included) must not read total:0 as "none exist".
+    const scanTruncated = hasClientSideFilters && snapshot.size >= fetchLimit;
+
     return {
       transactions: limitedResults,
       total: totalMatches,
       hasMore: totalMatches > limit,
       aggregates,
+      ...(scanTruncated
+        ? {
+            scanTruncated: true,
+            scanned: snapshot.size,
+            note:
+              `Filters were applied to the ${snapshot.size} most recent transactions ` +
+              `only, so this is NOT a complete answer. Narrow the range with ` +
+              `startDate/endDate, or filter server-side with sourceId/partnerId, ` +
+              `and say the result is partial rather than reporting it as a total.`,
+          }
+        : {}),
     };
   },
   {
@@ -303,7 +333,7 @@ export const listTransactionsTool = tool(
     schema: z.object({
       startDate: z.string().optional().describe("Start date (ISO format)"),
       endDate: z.string().optional().describe("End date (ISO format)"),
-      search: z.string().optional().describe("Substring match across name, description, and partner fields"),
+      search: z.string().optional().describe("Substring match across name, description, and partner fields. Applied in memory to a bounded window of recent transactions, so check scanTruncated in the response before treating an empty result as 'none exist'."),
       minAmount: z.number().optional().describe("Minimum absolute amount in EUR"),
       maxAmount: z.number().optional().describe("Maximum absolute amount in EUR"),
       sourceId: z.string().optional().describe("Filter by bank account ID"),
