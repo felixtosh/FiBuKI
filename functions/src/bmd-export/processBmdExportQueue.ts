@@ -9,6 +9,7 @@ import {
   FirestoreEvent,
   QueryDocumentSnapshot,
 } from "firebase-functions/v2/firestore";
+import { buildDownloadUrl } from "../utils/buildDownloadUrl";
 import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import * as crypto from "crypto";
@@ -316,15 +317,7 @@ async function processBmdExport(
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + BMD_EXPORT_EXPIRY_DAYS);
 
-    const encodedPath = encodeURIComponent(storagePath);
-    const storageEmulatorHost = process.env.FIREBASE_STORAGE_EMULATOR_HOST;
-    let downloadUrl: string;
-
-    if (storageEmulatorHost) {
-      downloadUrl = `http://${storageEmulatorHost}/v0/b/${bucket.name}/o/${encodedPath}?alt=media&token=${downloadToken}`;
-    } else {
-      downloadUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodedPath}?alt=media&token=${downloadToken}`;
-    }
+    const downloadUrl = buildDownloadUrl(bucket.name, storagePath, downloadToken);
 
     // Mark as completed
     await exportRef.update({

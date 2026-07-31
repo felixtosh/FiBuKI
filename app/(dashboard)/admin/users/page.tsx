@@ -1050,11 +1050,19 @@ export default function AdminUsersPage() {
                               <div>
                                 <p className="font-medium">{invite.email}</p>
                                 <p className="text-xs text-muted-foreground">
-                                  Invited{" "}
-                                  {formatDistanceToNow(
-                                    invite.addedAt.toDate(),
-                                    { addSuffix: true }
-                                  )}
+                                  {/* addedAt is optional in practice: 5 of 21
+                                      allowedEmails documents in the production data
+                                      have no such field, including the original
+                                      admin's, so the unguarded .toDate() below threw
+                                      and took the whole page down. The sibling
+                                      access-request block already guards its
+                                      timestamp the same way. */}
+                                  {invite.addedAt
+                                    ? `Invited ${formatDistanceToNow(
+                                        invite.addedAt.toDate(),
+                                        { addSuffix: true }
+                                      )}`
+                                    : "Invited"}
                                 </p>
                               </div>
                             </div>

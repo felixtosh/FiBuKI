@@ -11,6 +11,7 @@
  */
 
 import { onSchedule } from "firebase-functions/v2/scheduler";
+import { buildDownloadUrl } from "../utils/buildDownloadUrl";
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import { getFirestore, Timestamp, FieldValue } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
@@ -628,7 +629,7 @@ async function createFileFromAttachment(
   const emailMatch = from.match(/<([^>]+)>/) || [null, from];
   const senderEmail = emailMatch[1] || from;
   const senderDomain = extractEmailDomain(senderEmail);
-  const senderName = from.replace(/<[^>]+>/, "").trim().replace(/"/g, "");
+  const senderName = from.split("<")[0].trim().replace(/"/g, "");
 
   // Upload to Storage (matching UI's gmail/attachment route.ts pattern)
   const timestamp = Date.now();
@@ -673,15 +674,7 @@ async function createFileFromAttachment(
   });
 
   // Generate download URL
-  let downloadUrl: string;
-  const storageEmulatorHost = process.env.FIREBASE_STORAGE_EMULATOR_HOST;
-  const encodedPath = encodeURIComponent(storagePath);
-
-  if (storageEmulatorHost) {
-    downloadUrl = `http://${storageEmulatorHost}/v0/b/${bucket.name}/o/${encodedPath}?alt=media&token=${downloadToken}`;
-  } else {
-    downloadUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodedPath}?alt=media&token=${downloadToken}`;
-  }
+  const downloadUrl = buildDownloadUrl(bucket.name, storagePath, downloadToken);
 
   // Create file document
   const now = Timestamp.now();
@@ -778,7 +771,7 @@ async function createFileFromHtmlPdf(
   const emailMatch = from.match(/<([^>]+)>/) || [null, from];
   const senderEmail = emailMatch[1] || from;
   const senderDomain = extractEmailDomain(senderEmail);
-  const senderName = from.replace(/<[^>]+>/, "").trim().replace(/"/g, "");
+  const senderName = from.split("<")[0].trim().replace(/"/g, "");
 
   // Upload to Storage (matching UI's gmail/attachment route.ts pattern)
   const timestamp = Date.now();
@@ -806,15 +799,7 @@ async function createFileFromHtmlPdf(
   });
 
   // Generate download URL
-  let downloadUrl: string;
-  const storageEmulatorHost = process.env.FIREBASE_STORAGE_EMULATOR_HOST;
-  const encodedPath = encodeURIComponent(storagePath);
-
-  if (storageEmulatorHost) {
-    downloadUrl = `http://${storageEmulatorHost}/v0/b/${bucket.name}/o/${encodedPath}?alt=media&token=${downloadToken}`;
-  } else {
-    downloadUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodedPath}?alt=media&token=${downloadToken}`;
-  }
+  const downloadUrl = buildDownloadUrl(bucket.name, storagePath, downloadToken);
 
   // Create file document
   const now = Timestamp.now();
@@ -2094,31 +2079,54 @@ async function processQueueItem(queueItem: PrecisionSearchQueueItem): Promise<{
     // For manual/gmail_sync, create new queue item (triggers immediate processing)
     // For scheduled, just update and let cron handle it
     if (queueItem.triggeredBy === "scheduled") {
+      // lastProcessedTransactionId is spread conditionally for the same reason as
+      // in the continuation below: it is still undefined when the budget runs out
+      // before any transaction completes, and Firestore rejects an explicit
+      // undefined. (`startedAt: null` is fine — null is a legal value.)
       await db.collection("precisionSearchQueue").doc(queueItem.id).update({
         status: "pending",
         startedAt: null,
         transactionsProcessed,
         transactionsWithMatches,
         totalFilesConnected,
-        lastProcessedTransactionId,
+        ...(lastProcessedTransactionId !== undefined && {
+          lastProcessedTransactionId,
+        }),
         errors,
       });
       console.log(`[PrecisionSearch] Saved progress (${transactionsProcessed} processed), cron will continue`);
     } else {
       // Delete old and create new to trigger onDocumentCreated
+      //
+      // The four optional fields are spread conditionally rather than assigned:
+      // Firestore rejects an explicit `undefined` value unless
+      // ignoreUndefinedProperties is enabled, and this app never enables it
+      // (pinned by test/firestore-parity.test.ts). Assigning them directly threw
+      // "Cannot use \"undefined\" as a Firestore value" for any queue item that
+      // needed a continuation without them — an all_incomplete scope has no
+      // transactionId, and a manual run has no gmailSyncQueueId — which killed
+      // the whole queue processor, not just that item.
       const continuationData = {
         userId: queueItem.userId,
         scope: queueItem.scope,
-        transactionId: queueItem.transactionId,
+        ...(queueItem.transactionId !== undefined && {
+          transactionId: queueItem.transactionId,
+        }),
         triggeredBy: queueItem.triggeredBy,
-        triggeredByAuthor: queueItem.triggeredByAuthor,
-        gmailSyncQueueId: queueItem.gmailSyncQueueId,
+        ...(queueItem.triggeredByAuthor !== undefined && {
+          triggeredByAuthor: queueItem.triggeredByAuthor,
+        }),
+        ...(queueItem.gmailSyncQueueId !== undefined && {
+          gmailSyncQueueId: queueItem.gmailSyncQueueId,
+        }),
         status: "pending" as const,
         transactionsToProcess: queueItem.transactionsToProcess,
         transactionsProcessed,
         transactionsWithMatches,
         totalFilesConnected,
-        lastProcessedTransactionId,
+        ...(lastProcessedTransactionId !== undefined && {
+          lastProcessedTransactionId,
+        }),
         strategies: queueItem.strategies,
         currentStrategyIndex: 0,
         errors,

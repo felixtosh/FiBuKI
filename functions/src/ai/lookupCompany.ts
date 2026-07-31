@@ -102,13 +102,18 @@ async function fetchPageContent(url: string): Promise<string | null> {
     if (!response.ok) return null;
 
     const html = await response.text();
-    // Basic HTML to text conversion - strip tags
-    const text = html
-      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
-      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-      .replace(/<[^>]+>/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
+    // Basic HTML to text conversion - strip tags until stable so split tags
+    // (e.g. <scr<b>ipt>) cannot survive one pass
+    let text = html;
+    let previous;
+    do {
+      previous = text;
+      text = text
+        .replace(/<script\b[^>]*>[\s\S]*?<\/script[^>]*>/gi, " ")
+        .replace(/<style\b[^>]*>[\s\S]*?<\/style[^>]*>/gi, " ")
+        .replace(/<[^>]*>/g, " ");
+    } while (text !== previous);
+    text = text.replace(/\s+/g, " ").trim();
 
     return text.slice(0, 15000);
   } catch {

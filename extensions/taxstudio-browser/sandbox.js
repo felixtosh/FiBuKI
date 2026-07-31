@@ -2,6 +2,8 @@
 // Receives scripts via postMessage, executes them, returns commands
 
 window.addEventListener("message", function (event) {
+  // Only the embedding frame (the content script's window) may submit scripts.
+  if (event.source !== window.parent) return;
   if (!event.data || event.data.type !== "TS_SANDBOX_EXEC") return;
 
   var script = event.data.script || "";

@@ -1,11 +1,9 @@
 /**
- * Send invite notification email via Resend.
+ * Send invite notification email via the central mailer.
  */
 
 import { buildInviteSubject, buildInviteHtml, buildInviteText } from "./inviteEmail";
-
-const FROM_EMAIL = "noreply@fibuki.com";
-const FROM_NAME = "FiBuKI";
+import { sendEmail } from "../utils/mailer";
 
 export async function sendInviteEmail(email: string): Promise<void> {
   if (!email) {
@@ -13,22 +11,14 @@ export async function sendInviteEmail(email: string): Promise<void> {
     return;
   }
 
-  const apiKey = process.env.RESEND_API_KEY || "";
-  if (!apiKey) {
-    console.warn("[InviteEmail] RESEND_API_KEY not configured, skipping email");
-    return;
-  }
-
-  const { Resend } = await import("resend");
-  const resend = new Resend(apiKey);
-
-  await resend.emails.send({
+  const sent = await sendEmail({
     to: email,
-    from: `${FROM_NAME} <${FROM_EMAIL}>`,
     subject: buildInviteSubject(),
     text: buildInviteText(),
     html: buildInviteHtml(),
   });
 
-  console.log(`[InviteEmail] Sent invite to ${email}`);
+  if (sent) {
+    console.log(`[InviteEmail] Sent invite to ${email}`);
+  }
 }

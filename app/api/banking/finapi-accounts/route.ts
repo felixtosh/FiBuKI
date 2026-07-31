@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
+import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { FinapiClient, FinapiEnvironment } from "@/lib/finapi/client";
 import { callCloudFunction, callCloudFunctionBackground, setAuthToken } from "@/lib/firebase/callable-server";
@@ -19,6 +19,12 @@ import {
   CreateApiSourceResponse,
   SyncBankTransactionsRequest,
 } from "@/types/banking-sync";
+
+// Strip CR/LF so request-derived values cannot forge log lines
+function sanitizeForLog(value: unknown): string {
+  const raw = value instanceof Error ? value.stack || value.message : String(value);
+  return raw.replace(/\n|\r/g, "");
+}
 
 /**
  * POST /api/banking/finapi-accounts
@@ -183,7 +189,7 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    console.log(`[finAPI Accounts] Created source ${sourceResult.sourceId} for account ${accountId}`);
+    console.log(`[finAPI Accounts] Created source ${sanitizeForLog(sourceResult.sourceId)} for account ${sanitizeForLog(accountId)}`);
 
     // Trigger initial sync via Cloud Function in background
     if (syncFromYear) {
@@ -204,6 +210,8 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
     console.error("[finAPI Accounts] Error:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to create account" },

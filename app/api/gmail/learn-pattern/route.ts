@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { Timestamp } from "firebase-admin/firestore";
-import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
+import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 
 const db = getAdminDb();
 const INTEGRATIONS_COLLECTION = "emailIntegrations";
@@ -75,6 +75,8 @@ export async function POST(request: NextRequest) {
       message: "Pattern learned successfully",
     });
   } catch (error) {
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
     console.error("Error learning email pattern:", error);
 
     // Don't fail the request for pattern learning issues

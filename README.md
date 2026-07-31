@@ -4,6 +4,9 @@
 
 FiBuKI automates the tedious parts of accounting: importing bank transactions, scanning receipts, matching invoices to payments, and preparing tax reports — so you can focus on your business.
 
+📄 **[Who FiBuKI is for](docs/who-is-this-for.md)** — the audience, the scope, and
+what FiBuKI deliberately isn't.
+
 ## Features
 
 - **Bank Transaction Import** — CSV upload or direct bank connections via TrueLayer / finAPI / Plaid
@@ -159,4 +162,18 @@ Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines
 
 ## License
 
-[MIT](LICENSE)
+[GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0-only).
+
+You may run, study, modify and share FiBuKI freely, including commercially. The
+condition is reciprocity: if you distribute a modified version, or **run one as a
+network service that other people use**, those users must be able to obtain your
+modified source under the same licence. That network clause is the difference between
+AGPL and GPL, and it is the reason it was chosen here — self-hosting is a first-class
+way to use this project, and it should not be a way to fork it away from everyone else.
+
+Running an unmodified instance for yourself, your business or your clients carries no
+obligation to publish anything.
+
+Contributors sign a CLA assigning rights to Infinity Vertigo GmbH (Austrian law, with a
+`Werknutzungsrecht` grant where copyright itself is not assignable), so the project can
+be relicensed as a whole if that is ever needed. See [`docs/licensing/`](docs/licensing/).

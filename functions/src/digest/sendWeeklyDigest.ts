@@ -10,10 +10,9 @@ import { getAuth } from "firebase-admin/auth";
 import { buildDigestSubject, buildDigestHtml, buildDigestText } from "./digestEmail";
 import type { DigestStats } from "./digestEmail";
 import { generateUnsubscribeToken } from "./unsubscribeDigest";
+import { isMailerConfigured, sendEmail } from "../utils/mailer";
 
 const resendApiKey = defineSecret("RESEND_API_KEY");
-const FROM_EMAIL = "noreply@fibuki.com";
-const FROM_NAME = "FiBuKI";
 const BATCH_SIZE = 10;
 const UNSUBSCRIBE_BASE_URL =
   "https://europe-west1-taxstudio-f12fb.cloudfunctions.net/unsubscribeDigest";
@@ -28,8 +27,7 @@ export const sendWeeklyDigest = onSchedule(
     secrets: [resendApiKey],
   },
   async () => {
-    const apiKey = resendApiKey.value();
-    if (!apiKey) {
+    if (!isMailerConfigured()) {
       console.warn("[WeeklyDigest] RESEND_API_KEY not configured, skipping");
       return;
     }
@@ -56,9 +54,6 @@ export const sendWeeklyDigest = onSchedule(
     );
 
     console.log(`[WeeklyDigest] Processing ${eligibleDocs.length} users`);
-
-    const { Resend } = await import("resend");
-    const resend = new Resend(apiKey);
 
     let sent = 0;
     let skipped = 0;
@@ -97,9 +92,8 @@ export const sendWeeklyDigest = onSchedule(
             const html = buildDigestHtml(stats, unsubscribeUrl, name);
             const text = buildDigestText(stats, unsubscribeUrl, name);
 
-            await resend.emails.send({
+            await sendEmail({
               to: user.email,
-              from: `${FROM_NAME} <${FROM_EMAIL}>`,
               subject,
               html,
               text,

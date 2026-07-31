@@ -30,16 +30,38 @@ async function getBrowser(): Promise<Browser> {
     return browserLaunchPromise;
   }
 
+  // An explicit path wins outright — this is how the selfhost container supplies
+  // Debian's Chromium (FIBUKI_CHROME_PATH=/usr/bin/chromium, set in
+  // deploy/selfhost/api.Dockerfile). @sparticuz/chromium is a serverless
+  // artifact: its bundled binary is x86_64-only and expects Cloud Functions'
+  // shared libraries, so it cannot be the selfhost path.
+  const explicitChrome = process.env.FIBUKI_CHROME_PATH?.trim();
+
   // Check if running in emulator - use local Chrome instead of @sparticuz/chromium
   const isEmulator = process.env.FUNCTIONS_EMULATOR === "true";
 
-  if (isEmulator) {
+  if (explicitChrome) {
+    browserLaunchPromise = puppeteer.launch({
+      executablePath: explicitChrome,
+      headless: true,
+      // --no-sandbox: the container is already the isolation boundary and it runs
+      // without CAP_SYS_ADMIN, so Chromium's own sandbox cannot initialise.
+      // --disable-dev-shm-usage: Docker caps /dev/shm at 64 MB by default, which
+      // Chromium overruns and then crashes on larger documents.
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+      ],
+    });
+  } else if (isEmulator) {
     // In emulator, try to use local Chrome/Chromium
     // Common paths for Chrome on different platforms
     const localChromePaths = [
       "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", // macOS
       "/usr/bin/google-chrome", // Linux
-      "/usr/bin/chromium-browser", // Linux Chromium
+      "/usr/bin/chromium", // Debian/Ubuntu (bookworm ships this path)
+      "/usr/bin/chromium-browser", // Older Debian/Ubuntu
       "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe", // Windows
     ];
 

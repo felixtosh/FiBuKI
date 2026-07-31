@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
-import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
+import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { callFirebaseFunction } from "@/lib/api/firebase-callable";
 
 /**
@@ -42,6 +42,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(response);
   } catch (error) {
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
     console.error("[API] finanzonline/credentials POST error:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Internal server error" },
@@ -74,6 +76,8 @@ export async function DELETE(request: NextRequest) {
 
     return NextResponse.json(response);
   } catch (error) {
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
     console.error("[API] finanzonline/credentials DELETE error:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Internal server error" },

@@ -3,7 +3,8 @@
  *
  * Provides flexible model selection between:
  * - Anthropic Claude (claude-sonnet-4)
- * - Google Gemini via Vertex AI (gemini-2.5-flash)
+ * - Google Gemini, via EITHER Vertex AI (ADC) or the Generative Language API
+ *   (plain API key) — see createChatModel for how that is chosen
  *
  * NOTE: Uses dynamic imports to avoid loading API clients at build time.
  * This prevents "API key not found" errors during static site generation.
@@ -48,6 +49,27 @@ export async function createChatModel(
   const { provider, temperature = 0 } = config;
 
   if (provider === "gemini") {
+    // An API key means the Generative Language API, which needs NO Google Cloud
+    // credentials. Vertex AI resolves Application Default Credentials, which a
+    // deployment outside GCP does not have — it failed here with
+    // "Could not load the default credentials" and took every chat turn with it.
+    // Same reasoning as functions/src/selfhost/vertexai-adapter.ts: Gemini itself
+    // does not require gcloud, only Vertex does.
+    const apiKey = process.env.FIBUKI_GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+    if (apiKey) {
+      const { ChatGoogleGenerativeAI } = await import("@langchain/google-genai");
+      const model = new ChatGoogleGenerativeAI({
+        // The registry ids are Vertex-era and some are retired for new API-key
+        // consumers (the API answers 404 "no longer available to new users"), so
+        // allow an override without touching the shared registry, which the
+        // Firebase build still uses against Vertex.
+        model: process.env.FIBUKI_CHAT_MODEL || MODEL_IDS.gemini,
+        temperature,
+        apiKey,
+      });
+      return model.bindTools(tools) as unknown as BaseChatModel;
+    }
+
     const { ChatVertexAI } = await import("@langchain/google-vertexai");
     const projectId = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT || process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "taxstudio-f12fb";
     const model = new ChatVertexAI({

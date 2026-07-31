@@ -4,7 +4,7 @@ import { initializeApp, getApps } from "firebase/app";
 import { getFirestore, connectFirestoreEmulator, collection, addDoc, Timestamp } from "firebase/firestore";
 import { getTrueLayerClient } from "@/lib/truelayer";
 import { TrueLayerConnection } from "@/types/truelayer";
-import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
+import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 
 // Initialize Firebase for server-side
 const firebaseConfig = {
@@ -117,6 +117,8 @@ export async function POST(request: NextRequest) {
       new URL(`/sources/connect/accounts?${params.toString()}`, baseUrl)
     );
   } catch (err) {
+    const unauthorized = unauthorizedResponse(err);
+    if (unauthorized) return unauthorized;
     console.error("Error handling TrueLayer callback:", err);
     const message = encodeURIComponent(
       err instanceof Error ? err.message : "An unexpected error occurred"

@@ -26,6 +26,7 @@
     "@google-cloud/vertexai": "^1.12.0",
     "@langchain/anthropic": "^1.5.0",
     "@langchain/core": "^1.2.0",
+    "@langchain/google-genai": "^2.2.0",
     "@langchain/google-vertexai": "^2.2.0",
     "@langchain/langgraph": "^1.4.4",
     "@radix-ui/react-alert-dialog": "^1.1.17",
@@ -61,14 +62,18 @@
     "date-fns": "^4.4.0",
     "firebase": "^12.15.0",
     "firebase-admin": "^13.7.0",
+    "imapflow": "^1.4.7",
+    "jose": "^4.15.9",
     "jszip": "^3.10.1",
     "langfuse": "^3.38.20",
     "langfuse-langchain": "^3.38.20",
     "lucide-react": "^1.21.0",
+    "minio": "^8.0.7",
     "next": "^16.2.11",
     "next-intl": "^4.13.0",
     "next-themes": "^0.4.6",
     "pdf-lib": "^1.17.1",
+    "pg": "^8.22.0",
     "postcss": "^8.5.25",
     "puppeteer": "^24.40.0",
     "qrcode": "^1.5.4",
@@ -87,7 +92,9 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.4",
     "@simplewebauthn/types": "^12.0.0",
+    "@types/pg": "^8.20.0",
     "concurrently": "^9.2.1",
     "dotenv-cli": "^11.0.0",
     "eslint": "^9.39.2",
@@ -97,5 +104,6 @@
   "overrides": {
     "sharp": "^0.35.3",
     "postcss": "^8.5.25"
-  }
+  },
+  "license": "AGPL-3.0-only"
 }

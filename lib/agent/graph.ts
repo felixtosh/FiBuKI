@@ -92,11 +92,12 @@ async function agentNode(state: AgentState): Promise<Partial<AgentState>> {
   // Get the model for this provider
   const model = await getModel(modelProvider);
 
-  // Add system message if not present
-  const hasSystemMessage = messages.some((m) => m instanceof SystemMessage);
-  const messagesWithSystem = hasSystemMessage
-    ? messages
-    : [new SystemMessage(SYSTEM_PROMPT), ...messages];
+  // The graph owns the system prompt: drop any SystemMessage that arrived in
+  // state (client-injected or stale) and always prepend our own.
+  const messagesWithSystem = [
+    new SystemMessage(SYSTEM_PROMPT),
+    ...messages.filter((m) => !(m instanceof SystemMessage)),
+  ];
 
   // Debug: log message types
   console.log(`[Agent] Using ${modelProvider} model`);

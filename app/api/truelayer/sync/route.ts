@@ -18,7 +18,7 @@ import { getTrueLayerClient } from "@/lib/truelayer";
 import { TrueLayerConnection, TrueLayerApiConfig } from "@/types/truelayer";
 import { TransactionSource } from "@/types/source";
 import { generateDedupeHash } from "@/lib/import/deduplication";
-import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
+import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 
 // Initialize Firebase for server-side
 const firebaseConfig = {
@@ -235,6 +235,8 @@ export async function POST(request: NextRequest) {
       total: transactions.length,
     });
   } catch (error) {
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
     console.error("Error syncing transactions:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to sync transactions" },

@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
-import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
+import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { VertexAI } from "@google-cloud/vertexai";
 import { MODELS } from "@/types/ai-usage";
 import { GmailResolutionError, resolveGmailIntegration } from "@/lib/gmail/resolve-integration";
@@ -72,7 +72,7 @@ export async function POST(request: NextRequest) {
 
     // Fetch the message
     const messageResponse = await fetch(
-      `${GMAIL_API_BASE}/users/me/messages/${messageId}?format=full`,
+      `${GMAIL_API_BASE}/users/me/messages/${encodeURIComponent(messageId)}?format=full`,
       {
         headers: {
           Authorization: `Bearer ${ctx.accessToken}`,
@@ -123,6 +123,8 @@ export async function POST(request: NextRequest) {
       ...analysis,
     });
   } catch (error) {
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
     console.error("[analyze-email] Error:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to analyze email" },
@@ -199,12 +201,17 @@ async function analyzeEmailWithGemini(
   // Use text body if available, otherwise strip HTML
   let bodyContent = emailContent.textBody || "";
   if (!bodyContent && emailContent.htmlBody) {
-    bodyContent = emailContent.htmlBody
-      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
-      .replace(/<[^>]+>/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
+    // Strip tags until stable so split tags (e.g. <scr<b>ipt>) cannot survive one pass
+    bodyContent = emailContent.htmlBody;
+    let previous;
+    do {
+      previous = bodyContent;
+      bodyContent = bodyContent
+        .replace(/<style\b[^>]*>[\s\S]*?<\/style[^>]*>/gi, " ")
+        .replace(/<script\b[^>]*>[\s\S]*?<\/script[^>]*>/gi, " ")
+        .replace(/<[^>]*>/g, " ");
+    } while (bodyContent !== previous);
+    bodyContent = bodyContent.replace(/\s+/g, " ").trim();
   }
   bodyContent = bodyContent.substring(0, 3000);
 

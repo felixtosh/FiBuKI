@@ -3,7 +3,7 @@ import { Timestamp } from "firebase/firestore";
 /**
  * Supported email providers
  */
-export type EmailProvider = "gmail" | "outlook" | "icloud";
+export type EmailProvider = "gmail" | "outlook" | "icloud" | "imap";
 
 /**
  * Email integration document stored in Firestore
@@ -45,6 +45,21 @@ export interface EmailIntegration {
 
   /** Last error message if any */
   lastError?: string;
+
+  // === IMAP config (provider === "imap" only) ===
+
+  /** IMAP server hostname */
+  imapHost?: string;
+  /** IMAP server port (default 993) */
+  imapPort?: number;
+  /** Implicit TLS */
+  imapSecure?: boolean;
+  /** Accept a self-signed server cert (internal hosts only) */
+  imapAllowSelfSigned?: boolean;
+  /** Narrow the server-side search with invoice keywords before mimetype filter */
+  imapKeywordPrefilter?: boolean;
+  /** Mailbox to read (default INBOX) */
+  imapMailbox?: string;
 
   createdAt: Timestamp;
   updatedAt: Timestamp;

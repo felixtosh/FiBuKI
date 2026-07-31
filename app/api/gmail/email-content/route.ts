@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { Timestamp } from "firebase-admin/firestore";
-import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
+import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { GmailClient } from "@/lib/email-providers/gmail-client";
 
 const db = getAdminDb();
@@ -126,6 +126,8 @@ export async function POST(request: NextRequest) {
       textBody: content.textBody,
     });
   } catch (error) {
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
     console.error("Error fetching email content:", error);
 
     if (error instanceof Error) {

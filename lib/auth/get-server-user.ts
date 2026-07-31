@@ -1,18 +1,58 @@
 /**
  * Server-side authentication helpers
  *
- * Verifies Firebase ID tokens (RS256 signature, expiry, issuer, audience)
- * via the Admin SDK before trusting any identity claim.
+ * Verifies Firebase ID tokens (RS256 signature, expiry, issuer, audience) via
+ * the Admin SDK before trusting any identity claim. In dev the Admin app is
+ * pointed at the Auth emulator (lib/firebase/admin.ts sets
+ * FIREBASE_AUTH_EMULATOR_HOST at module load), so emulator tokens verify too.
  *
  * SECURITY: never decode-without-verify a JWT for authorization. A decoded-only
  * token lets any caller forge `{ user_id: <any> }` / `{ admin: true }` and act
  * as any user. All user identity here must come from `verifyIdToken`, or from a
  * trusted server-to-server call authenticated with the shared internal secret.
+ *
+ * Self-host builds never route auth through these helpers: the browser talks to
+ * fibuki-api directly, and the Next API routes are not part of the self-host
+ * data plane.
  */
 
+import { NextResponse } from "next/server";
 import { getAuth, type DecodedIdToken } from "firebase-admin/auth";
 import { getAdminApp } from "@/lib/firebase/admin";
 import { timingSafeEqual } from "crypto";
+
+/**
+ * Thrown by getServerUserIdWithFallback for a missing/invalid token so route
+ * catch blocks can answer 401 instead of a generic 500 (W1 decision 2026-07-21,
+ * docs/decisions.md: 401 shaping approved).
+ */
+export class UnauthorizedError extends Error {
+  constructor() {
+    super("Unauthorized: Missing or invalid Authorization header");
+    this.name = "UnauthorizedError";
+  }
+}
+
+/**
+ * The one 401 shape every route answers with — returns the response for an
+ * UnauthorizedError and null for anything else, so a route catch can open with:
+ *
+ *   const unauthorized = unauthorizedResponse(error);
+ *   if (unauthorized) return unauthorized;
+ *
+ * Never includes internal error text (two routes used to echo it).
+ */
+export function unauthorizedResponse(error: unknown): NextResponse | null {
+  return error instanceof UnauthorizedError
+    ? NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    : null;
+}
+
+// Strip CR/LF so request-derived values cannot forge log lines
+function sanitizeForLog(value: unknown): string {
+  const raw = value instanceof Error ? value.stack || value.message : String(value);
+  return raw.replace(/\n|\r/g, "");
+}
 
 /**
  * Trusted server-to-server path.
@@ -64,7 +104,7 @@ async function verifyBearerToken(
   try {
     return await getAuth(getAdminApp()).verifyIdToken(token);
   } catch (e) {
-    console.warn("[Auth] Token verification failed:", (e as Error)?.message);
+    console.warn("[Auth] Token verification failed:", sanitizeForLog(e));
     return null;
   }
 }
@@ -73,7 +113,7 @@ async function verifyBearerToken(
  * Get the authenticated user's ID from a request.
  * Accepts either a valid, signature-verified Firebase ID token, or a trusted
  * server-to-server call carrying the shared internal secret.
- * Throws if neither is present/valid.
+ * Throws UnauthorizedError if neither is present/valid.
  *
  * (Name kept for backwards compatibility with existing call sites; there is
  * no longer any unverified fallback.)
@@ -91,7 +131,7 @@ export async function getServerUserIdWithFallback(
     return decoded.uid;
   }
 
-  throw new Error("Unauthorized: Missing or invalid Authorization header");
+  throw new UnauthorizedError();
 }
 
 /**

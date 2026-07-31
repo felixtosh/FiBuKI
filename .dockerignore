@@ -1,0 +1,27 @@
+# Build-context trim for the selfhost images (deploy/selfhost/*.Dockerfile).
+# node_modules are reinstalled with `npm ci` in-image, so never copy host copies.
+node_modules
+functions/node_modules
+**/node_modules
+
+# Build outputs / caches
+.next
+functions/lib
+coverage
+functions/coverage
+*.tsbuildinfo
+
+# VCS + local
+.git
+.gitignore
+.github
+
+# Secrets / local env — never bake into an image
+.env
+.env.*
+!.env.example
+deploy/selfhost/.env
+
+# Editor / OS cruft
+.DS_Store
+*.log

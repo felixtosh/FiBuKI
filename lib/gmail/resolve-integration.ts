@@ -125,7 +125,7 @@ export async function resolveIntegrationByMessageId(
     }
 
     const res = await fetch(
-      `${GMAIL_API_BASE}/users/me/messages/${messageId}?format=metadata&metadataHeaders=Message-ID`,
+      `${GMAIL_API_BASE}/users/me/messages/${encodeURIComponent(messageId)}?format=metadata&metadataHeaders=Message-ID`,
       { headers: { Authorization: `Bearer ${ctx.accessToken}` } }
     );
     if (res.ok) return ctx;

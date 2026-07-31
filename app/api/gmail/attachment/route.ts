@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminDb, getAdminBucket, getFirebaseStorageDownloadUrl } from "@/lib/firebase/admin";
 import { Timestamp, FieldValue } from "firebase-admin/firestore";
-import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
+import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { GmailClient } from "@/lib/email-providers/gmail-client";
 import { createHash, randomUUID } from "crypto";
 import { GmailResolutionError, resolveGmailIntegration } from "@/lib/gmail/resolve-integration";
@@ -11,6 +11,12 @@ const db = getAdminDb();
 
 const FILES_COLLECTION = "files";
 const TRANSACTIONS_COLLECTION = "transactions";
+
+// Strip CR/LF so request-derived values cannot forge log lines
+function sanitizeForLog(value: unknown): string {
+  const raw = value instanceof Error ? value.stack || value.message : String(value);
+  return raw.replace(/\n|\r/g, "");
+}
 
 function normalizeMimeType(mimeType: string, filename: string): string {
   if (
@@ -24,11 +30,16 @@ function normalizeMimeType(mimeType: string, filename: string): string {
 
 function parseFromHeader(fromValue?: string | null): { email?: string; name?: string } {
   if (!fromValue) return {};
-  const match = fromValue.match(/(?:"?([^"]*)"?\s)?<?([^<>@\s]+@[^<>]+\.[^<>]+)>?/);
-  if (!match) return {};
-  const name = match[1]?.trim();
-  const email = match[2]?.trim();
-  return { email, name };
+  // Cap length: a legitimate From header is far below 1 KB, and the cap bounds regex time
+  const header = fromValue.slice(0, 1024);
+  const angle = header.match(/<([^<>]*)>/);
+  const candidate = (angle ? angle[1] : header).trim();
+  const emailMatch = candidate.match(/[^<>@\s"]+@[^<>@\s".]+(?:\.[^<>@\s".]+)+/);
+  if (!emailMatch) return {};
+  const name = angle
+    ? header.slice(0, angle.index).replace(/"/g, "").trim() || undefined
+    : undefined;
+  return { email: emailMatch[0], name };
 }
 
 function extractDomain(email?: string | null): string | null {
@@ -109,7 +120,9 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
-    console.error("Error downloading attachment:", error);
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
+    console.error("Error downloading attachment:", sanitizeForLog(error));
 
     if (error instanceof Error && error.message === "AUTH_EXPIRED") {
       return NextResponse.json(
@@ -375,7 +388,9 @@ export async function POST(request: NextRequest) {
       connectedToTransaction: !!transactionId,
     });
   } catch (error) {
-    console.error("Error saving attachment:", error);
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
+    console.error("Error saving attachment:", sanitizeForLog(error));
 
     if (error instanceof Error && error.message === "AUTH_EXPIRED") {
       return NextResponse.json(

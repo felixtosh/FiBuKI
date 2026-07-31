@@ -175,8 +175,48 @@ function extractJsonFromResponse(text: string): string | null {
  * Extract only the first page of a PDF to reduce processing costs.
  * Returns the original buffer if extraction fails or file is not a PDF.
  */
+/**
+ * Determine the MIME type from the file's actual bytes, falling back to whatever
+ * the caller declared.
+ *
+ * Declared as `fileType: string` throughout this module, but it is `undefined` at
+ * runtime for any file document written without one — 18 of 539 in the production
+ * data, every one of them a PDF. `fileType.startsWith("image/")` then threw
+ * "Cannot read properties of undefined (reading 'startsWith')" and killed
+ * extraction for that file. It is a plain TypeError, so it fails identically on
+ * Firebase; the type annotation simply hid it.
+ *
+ * Sniffing rather than null-guarding, because the bytes are more trustworthy than
+ * the metadata: this also corrects a document whose stored fileType is wrong, which
+ * a guard would faithfully pass through.
+ */
+export function sniffMimeType(buffer: Buffer, declared?: string): string {
+  if (buffer.length >= 12) {
+    if (buffer.subarray(0, 5).toString("latin1") === "%PDF-") return "application/pdf";
+    if (buffer[0] === 0x89 && buffer.subarray(1, 4).toString("latin1") === "PNG")
+      return "image/png";
+    if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff)
+      return "image/jpeg";
+    if (buffer.subarray(0, 4).toString("latin1") === "GIF8") return "image/gif";
+    if (
+      buffer.subarray(0, 4).toString("latin1") === "RIFF" &&
+      buffer.subarray(8, 12).toString("latin1") === "WEBP"
+    )
+      return "image/webp";
+  }
+
+  // Unrecognised bytes: trust a declared type that Gemini can actually accept,
+  // otherwise assume JPEG, which is what this module defaulted to before.
+  const d = typeof declared === "string" ? declared.trim() : "";
+  if (d === "application/pdf" || d.startsWith("image/")) return d;
+  return "image/jpeg";
+}
+
 async function extractFirstPage(fileBuffer: Buffer, fileType: string): Promise<Buffer> {
-  if (fileType !== "application/pdf") {
+  // Sniffed, not compared against the declared type: a PDF with a missing or wrong
+  // fileType would otherwise skip first-page extraction and send every page to the
+  // model.
+  if (sniffMimeType(fileBuffer, fileType) !== "application/pdf") {
     return fileBuffer;
   }
 
@@ -227,15 +267,9 @@ export async function classifyDocument(
   // Extract first page only for classification
   const classifyBuffer = await extractFirstPage(fileBuffer, fileType);
 
-  // Determine MIME type
-  let mimeType: string;
-  if (fileType === "application/pdf") {
-    mimeType = "application/pdf";
-  } else if (fileType.startsWith("image/")) {
-    mimeType = fileType;
-  } else {
-    mimeType = "image/jpeg";
-  }
+  // Sniffed from the bytes — fileType is `undefined` at runtime for documents
+  // stored without one, which used to throw here. See sniffMimeType.
+  const mimeType = sniffMimeType(classifyBuffer, fileType);
 
   const filePart: Part = {
     inlineData: {
@@ -418,16 +452,8 @@ export async function parseWithGemini(
   const vertexAI = new VertexAI({ project: projectId, location: VERTEX_LOCATION });
   const geminiModel = vertexAI.getGenerativeModel({ model });
 
-  // Determine MIME type
-  let mimeType: string;
-  if (fileType === "application/pdf") {
-    mimeType = "application/pdf";
-  } else if (fileType.startsWith("image/")) {
-    mimeType = fileType;
-  } else {
-    // Fallback for common image types
-    mimeType = "image/jpeg";
-  }
+  // Sniffed from the bytes — see sniffMimeType.
+  const mimeType = sniffMimeType(fileBuffer, fileType);
 
   // Create the file part for Gemini
   const filePart: Part = {

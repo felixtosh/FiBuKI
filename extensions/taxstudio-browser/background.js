@@ -21,6 +21,21 @@
     return appBaseUrl + path;
   }
 
+  // Strict host check: parses the URL and compares the hostname, so
+  // "evil.com/payments.google.com" never matches. blob: URLs are checked
+  // against their inner origin (new URL gives them an empty hostname).
+  function hostMatches(url, host) {
+    if (!url) return false;
+    var u = String(url);
+    if (u.indexOf("blob:") === 0) u = u.slice(5);
+    try {
+      var h = new URL(u).hostname.toLowerCase();
+      return h === host || h.endsWith("." + host);
+    } catch (e) {
+      return false;
+    }
+  }
+
   var DEBUG_LOG_URL = null; // computed dynamically via getApiUrl
 
   // Learn mode state
@@ -84,7 +99,7 @@
       var url = details.url || "";
       var lowerUrl = url.toLowerCase();
 
-      var isPdfUrl = lowerUrl.indexOf("payments.google.com") !== -1 &&
+      var isPdfUrl = hostMatches(url, "payments.google.com") &&
                      (lowerUrl.indexOf("apis-secure/doc") !== -1 || lowerUrl.indexOf("?doc=") !== -1);
 
       if (!isPdfUrl) return;
@@ -116,7 +131,7 @@
       var url = details.url || "";
       var lowerUrl = url.toLowerCase();
 
-      var isPdfUrl = lowerUrl.indexOf("payments.google.com") !== -1 &&
+      var isPdfUrl = hostMatches(url, "payments.google.com") &&
                      (lowerUrl.indexOf("apis-secure/doc") !== -1 || lowerUrl.indexOf("?doc=") !== -1);
 
       if (!isPdfUrl) return;
@@ -148,7 +163,7 @@
       var lowerUrl = url.toLowerCase();
 
       // Check if this is a PDF download URL from Google Payments
-      var isPdfUrl = lowerUrl.indexOf("payments.google.com") !== -1 &&
+      var isPdfUrl = hostMatches(url, "payments.google.com") &&
                      (lowerUrl.indexOf("apis-secure/doc") !== -1 || lowerUrl.indexOf("?doc=") !== -1);
 
       if (!isPdfUrl) return;
@@ -550,7 +565,7 @@
   function shouldTrackRequest(url) {
     if (!url) return false;
     var lowerUrl = String(url).toLowerCase();
-    if (lowerUrl.indexOf("payments.google.com") === -1) return false;
+    if (!hostMatches(url, "payments.google.com")) return false;
     if (lowerUrl.indexOf("/payments/apis-secure/doc/") !== -1) return true;
     if (lowerUrl.indexOf("doc=") !== -1) return true;
     return false;
@@ -1274,7 +1289,7 @@
                         lowerUrl.indexOf("/download") !== -1 ||
                         lowerUrl.indexOf("?doc=") !== -1;
         // Also capture if it's from payments.google.com during a pull
-        var isPaymentsDownload = lowerUrl.indexOf("payments.google.com") !== -1;
+        var isPaymentsDownload = hostMatches(url, "payments.google.com");
         if (isDocLike || isPaymentsDownload) {
           runId = activeRunIds[0]; // Use first active run
           console.log("[FiBuKI] Download matched to active run:", runId, "isDoc:", isDocLike, "isPayments:", isPaymentsDownload);
@@ -1494,7 +1509,7 @@
   function openFallbackTab(runId, url) {
     if (!runId || !runs[runId] || !url) return;
     var lowerUrl = String(url).toLowerCase();
-    if (lowerUrl.indexOf("doc=") === -1 && lowerUrl.indexOf("payments.google.com") === -1) {
+    if (lowerUrl.indexOf("doc=") === -1 && !hostMatches(url, "payments.google.com")) {
       return;
     }
     var opened = runs[runId].openedDownloadUrls || {};

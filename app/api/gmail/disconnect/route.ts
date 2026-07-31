@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { Timestamp } from "firebase-admin/firestore";
-import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
+import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 
 const db = getAdminDb();
 const INTEGRATIONS_COLLECTION = "emailIntegrations";
@@ -122,6 +122,8 @@ export async function DELETE(request: NextRequest) {
       filesPreserved: fileResult.skipped,
     });
   } catch (error) {
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
     console.error("Error disconnecting Gmail:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to disconnect Gmail" },

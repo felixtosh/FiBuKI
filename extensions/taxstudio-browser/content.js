@@ -31,6 +31,41 @@
   var DEV_EXTRACTOR_WINDOW_MS = 60 * 1000;
   var clickGooglePaymentsRetryCount = 0;
 
+  // Strict host check: parses the value as a URL (or bare hostname) and
+  // compares the hostname, so "evil.com/payments.google.com" never matches.
+  function hostMatches(value, host) {
+    if (!value) return false;
+    var h = "";
+    try {
+      h = new URL(String(value)).hostname;
+    } catch (e) {
+      try {
+        h = new URL("https://" + String(value)).hostname;
+      } catch (e2) {
+        return false;
+      }
+    }
+    h = h.toLowerCase();
+    return h === host || h.endsWith("." + host);
+  }
+
+  function locationHostMatches(host) {
+    var h = String(window.location.hostname || "").toLowerCase();
+    return h === host || h.endsWith("." + host);
+  }
+
+  function urlParamsReferenceHost(url, host) {
+    try {
+      var found = false;
+      new URL(url).searchParams.forEach(function (value) {
+        if (!found && hostMatches(value, host)) found = true;
+      });
+      return found;
+    } catch (e) {
+      return false;
+    }
+  }
+
   // Learn mode state
   var LEARN_OVERLAY_ID = "taxstudio-learn-overlay";
   var learnMode = false;
@@ -100,20 +135,19 @@
   }
 
   // Self-start for payments.google.com iframes that load/reload during an active pull
-  if (!isTopFrame && window.location.origin.indexOf("payments.google.com") !== -1) {
+  if (!isTopFrame && locationHostMatches("payments.google.com")) {
     // Check if this iframe is embedded in admin.google.com billing page
     var isEmbeddedInBilling = false;
     try {
       var hostOrigin = new URLSearchParams(window.location.search).get("hostOrigin");
       if (hostOrigin) {
         var decoded = atob(hostOrigin);
-        isEmbeddedInBilling = decoded.indexOf("admin.google.com") !== -1;
+        isEmbeddedInBilling = hostMatches(decoded, "admin.google.com");
       }
     } catch (e) {}
     if (!isEmbeddedInBilling) {
       try {
-        isEmbeddedInBilling = window.location.href.indexOf("admin.google.com") !== -1 ||
-                              window.location.search.indexOf("admin.google.com") !== -1;
+        isEmbeddedInBilling = urlParamsReferenceHost(window.location.href, "admin.google.com");
       } catch (e) {}
     }
 
@@ -661,12 +695,12 @@
     /\/authenticate/i,
     /\/oauth\//i,
     /\/sso\//i,
-    /accounts\.google\.com\/.*ServiceLogin/i,
-    /accounts\.google\.com\/.*signin/i,
-    /accounts\.google\.com\/.*identifier/i,
-    /accounts\.google\.com\/.*challenge/i,
-    /login\.microsoftonline\.com/i,
-    /auth0\.com\/.*login/i,
+    /^https?:\/\/accounts\.google\.com\/.*ServiceLogin/i,
+    /^https?:\/\/accounts\.google\.com\/.*signin/i,
+    /^https?:\/\/accounts\.google\.com\/.*identifier/i,
+    /^https?:\/\/accounts\.google\.com\/.*challenge/i,
+    /^https?:\/\/login\.microsoftonline\.com\//i,
+    /^https?:\/\/([^/?#]+\.)?auth0\.com\/.*login/i,
     /\/saml\//i,
   ];
 
@@ -1134,9 +1168,10 @@
       target.getAttribute("data-link") ||
       "";
     if (!raw) return "";
-    if (raw.indexOf("javascript:") === 0 || raw.indexOf("mailto:") === 0) return "";
     try {
-      return new URL(raw, window.location.href).toString();
+      var parsed = new URL(raw, window.location.href);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+      return parsed.toString();
     } catch (err) {
       return "";
     }
@@ -1324,6 +1359,10 @@
   window.addEventListener("message", function (event) {
     if (!event.data) return;
 
+    // Only accept messages from our own sandbox iframe — the page and other
+    // frames can post to this window too.
+    if (!sandboxFrame || event.source !== sandboxFrame.contentWindow) return;
+
     // Sandbox ready signal
     if (event.data.type === "TS_SANDBOX_READY") {
       sandboxReady = true;
@@ -1334,9 +1373,14 @@
 
     // Sandbox execution result
     if (event.data.type === "TS_SANDBOX_RESULT") {
-      var cb = sandboxCallbacks[event.data.requestId];
-      if (cb) {
-        delete sandboxCallbacks[event.data.requestId];
+      var requestId = event.data.requestId;
+      // requestIds are numbers we assigned — anything else can't be a key we own
+      if (typeof requestId !== "number") return;
+      var cb = Object.prototype.hasOwnProperty.call(sandboxCallbacks, requestId)
+        ? sandboxCallbacks[requestId]
+        : null;
+      if (typeof cb === "function") {
+        delete sandboxCallbacks[requestId];
         cb(event.data);
       }
     }
@@ -1846,7 +1890,7 @@
     var baseOrigin = window.location.origin;
 
     // Log all clickable elements in payments.google.com iframe for debugging
-    if (!isTopFrame && window.location.origin.indexOf("payments.google.com") !== -1) {
+    if (!isTopFrame && locationHostMatches("payments.google.com")) {
       var clickables = document.querySelectorAll('[role="button"], [jsaction], button, a[href]');
       console.log("[FiBuKI] Payments iframe clickables:", clickables.length);
       Array.prototype.slice.call(clickables).slice(0, 10).forEach(function (el, i) {
@@ -1863,15 +1907,15 @@
     links.forEach(function (link) {
       var href = link.getAttribute("href") || "";
       var text = link.textContent || "";
-      var absolute = "";
+      var parsedLink;
       try {
-        absolute = new URL(href, window.location.href).toString();
+        parsedLink = new URL(href, window.location.href);
       } catch (err) {
         return;
       }
-      if (absolute.indexOf("javascript:") === 0) return;
-      if (absolute.indexOf("mailto:") === 0) return;
-      if (new URL(absolute).origin !== baseOrigin) return;
+      if (parsedLink.protocol !== "http:" && parsedLink.protocol !== "https:") return;
+      if (parsedLink.origin !== baseOrigin) return;
+      var absolute = parsedLink.toString();
 
       var isPdfLink = absolute.toLowerCase().indexOf(".pdf") !== -1;
       if (isPdfLink || (keywordRe.test(absolute) && absolute.toLowerCase().indexOf("pdf") !== -1)) {
@@ -1937,7 +1981,7 @@
   function scanDataAttributeDownloads() {
     if (pausedForLogin) return;
     // SKIP clicking for payments.google.com - clickGooglePaymentsDownloadButtons handles this
-    if (window.location.origin.indexOf("payments.google.com") === -1) {
+    if (!locationHostMatches("payments.google.com")) {
       clickMenuDownloadTriggers();
     }
     var candidates = findDataAttributeDownloads();
@@ -1968,7 +2012,7 @@
         });
       }
       // SKIP clicking for payments.google.com - clickGooglePaymentsDownloadButtons handles this
-      if (window.location.origin.indexOf("payments.google.com") === -1) {
+      if (!locationHostMatches("payments.google.com")) {
         clickDataDownloadElements();
       }
     }
@@ -2185,7 +2229,7 @@
     if (!currentRunId) return;
     if (pausedForLogin) return;
     // SKIP for payments.google.com - clickGooglePaymentsDownloadButtons handles this
-    if (window.location.origin.indexOf("payments.google.com") !== -1) {
+    if (locationHostMatches("payments.google.com")) {
       console.log("[FiBuKI] triggerInvoiceClicks SKIPPED for payments.google.com");
       return;
     }
@@ -2236,7 +2280,7 @@
   function clickGooglePaymentsDownloadButtons() {
     if (isTopFrame) return;
     if (pausedForLogin) return;
-    if (window.location.origin.indexOf("payments.google.com") === -1) return;
+    if (!locationHostMatches("payments.google.com")) return;
 
     // First, check if there are unexpanded cards that need expanding
     var datePattern = /(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d+\s*[–-]\s*\d+,?\s*\d{4}/i;
@@ -2456,7 +2500,7 @@
   function clickGooglePaymentsMenuDownload() {
     if (isTopFrame) return;
     if (pausedForLogin) return;
-    if (window.location.origin.indexOf("payments.google.com") === -1) return;
+    if (!locationHostMatches("payments.google.com")) return;
 
     // Look for menu items with "Download" text
     var menuItems = Array.prototype.slice.call(
@@ -2556,7 +2600,7 @@
   function expandGooglePaymentsCards() {
     if (isTopFrame) return;
     if (pausedForLogin) return;
-    if (window.location.origin.indexOf("payments.google.com") === -1) return;
+    if (!locationHostMatches("payments.google.com")) return;
 
     // Date pattern: "Nov 1 – 30, 2025" or "Dec 1-31, 2025" (no ^ anchor - can be anywhere in text)
     var datePattern = /(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d+\s*[–-]\s*\d+,?\s*\d{4}/i;
@@ -2781,7 +2825,7 @@
   function clickGooglePaymentsAllTime() {
     if (isTopFrame) return;
     if (pausedForLogin) return;
-    if (window.location.origin.indexOf("payments.google.com") === -1) return;
+    if (!locationHostMatches("payments.google.com")) return;
 
     // Look for date range selector - usually a button/dropdown with text like "Last 3 months", "This month", etc.
     var dateSelectors = Array.prototype.slice.call(
@@ -2857,7 +2901,7 @@
   function clickGooglePaymentsAllTimeOption() {
     if (isTopFrame) return;
     if (pausedForLogin) return;
-    if (window.location.origin.indexOf("payments.google.com") === -1) return;
+    if (!locationHostMatches("payments.google.com")) return;
 
     // Look for "All time" menu item - search ALL visible elements with that text
     var allElements = Array.prototype.slice.call(
@@ -2910,7 +2954,7 @@
   function clickGooglePaymentsLoadMore() {
     if (isTopFrame) return;
     if (pausedForLogin) return;
-    if (window.location.origin.indexOf("payments.google.com") === -1) return;
+    if (!locationHostMatches("payments.google.com")) return;
 
     // Look for "Load more", "Show more", pagination buttons
     var loadMoreBtns = Array.prototype.slice.call(
@@ -2942,7 +2986,7 @@
   function triggerPdfMenuDownloads() {
     if (pausedForLogin) return;
     // SKIP for payments.google.com - clickGooglePaymentsDownloadButtons handles this
-    if (window.location.origin.indexOf("payments.google.com") !== -1) {
+    if (locationHostMatches("payments.google.com")) {
       console.log("[FiBuKI] triggerPdfMenuDownloads SKIPPED for payments.google.com");
       return;
     }
@@ -2998,12 +3042,12 @@
 
   function scanAndClickMenuItems() {
     // SKIP for payments.google.com - clickGooglePaymentsDownloadButtons handles this
-    if (window.location.origin.indexOf("payments.google.com") !== -1) {
+    if (locationHostMatches("payments.google.com")) {
       console.log("[FiBuKI] scanAndClickMenuItems SKIPPED for payments.google.com");
       return 0;
     }
     // SKIP for ogs.google.com - Google apps widget, not relevant
-    if (window.location.origin.indexOf("ogs.google.com") !== -1) {
+    if (locationHostMatches("ogs.google.com")) {
       return 0;
     }
     // Broader search for Google's menu patterns

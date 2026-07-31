@@ -171,7 +171,7 @@ export class GmailClient implements EmailProviderClient {
       const thread = await this.gmailFetch<{
         id: string;
         messages: GmailMessage[];
-      }>(`/threads/${threadId}?format=full`);
+      }>(`/threads/${encodeURIComponent(threadId)}?format=full`);
 
       return thread.messages.map((msg) => this.parseMessage(msg));
     } catch (error) {
@@ -186,7 +186,7 @@ export class GmailClient implements EmailProviderClient {
   private async getMessage(messageId: string): Promise<EmailMessage | null> {
     try {
       const message = await this.gmailFetch<GmailMessage>(
-        `/messages/${messageId}?format=full`
+        `/messages/${encodeURIComponent(messageId)}?format=full`
       );
 
       return this.parseMessage(message);
@@ -480,7 +480,7 @@ export class GmailClient implements EmailProviderClient {
     textBody?: string;
   }> {
     const message = await this.gmailFetch<GmailMessage>(
-      `/messages/${messageId}?format=full`
+      `/messages/${encodeURIComponent(messageId)}?format=full`
     );
 
     let htmlBody: string | undefined;

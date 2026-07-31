@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
  */
 
 import { NextResponse, after } from "next/server";
-import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
+import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { Timestamp, FieldValue } from "firebase-admin/firestore";
 import { HumanMessage } from "@langchain/core/messages";
@@ -21,6 +21,12 @@ import { ModelProvider } from "@/lib/agent/model";
 const db = getAdminDb();
 
 export const maxDuration = 120; // 2 minutes for worker execution
+
+// Strip CR/LF so request-derived values cannot forge log lines
+function sanitizeForLog(value: unknown): string {
+  const raw = value instanceof Error ? value.stack || value.message : String(value);
+  return raw.replace(/\n|\r/g, "");
+}
 
 // ============================================================================
 // Types
@@ -1069,7 +1075,7 @@ export async function POST(req: Request) {
       }
     }
 
-    console.log(`[Worker API] Starting ${workerType} worker for user ${userId}`);
+    console.log(`[Worker API] Starting ${sanitizeForLog(workerType)} worker for user ${sanitizeForLog(userId)}`);
 
     // Create WorkerRun document
     const runRef = db.collection(`users/${userId}/workerRuns`).doc();
@@ -1083,7 +1089,7 @@ export async function POST(req: Request) {
       const activeDuplicate = await findActiveRunByDedupeKey(userId, dedupeKey);
       if (activeDuplicate) {
         console.log(
-          `[Worker API] Reusing active run ${activeDuplicate.runId} for dedupeKey=${dedupeKey}`
+          `[Worker API] Reusing active run ${sanitizeForLog(activeDuplicate.runId)} for dedupeKey=${sanitizeForLog(dedupeKey)}`
         );
         return NextResponse.json({
           runId: activeDuplicate.runId,
@@ -1144,7 +1150,7 @@ export async function POST(req: Request) {
         sessionId = await createWorkerChatSession(userId, workerType, effectiveInitialPrompt);
         await runRef.set({ sessionId }, { merge: true });
       } catch (err) {
-        console.error(`[Worker API] Failed to create upfront chat session:`, err);
+        console.error(`[Worker API] Failed to create upfront chat session:`, sanitizeForLog(err));
       }
     }
 
@@ -1153,7 +1159,7 @@ export async function POST(req: Request) {
     try {
       notificationId = await createStartingNotification(userId, initialRun, sessionId);
     } catch (err) {
-      console.error(`[Worker API] Failed to create starting notification:`, err);
+      console.error(`[Worker API] Failed to create starting notification:`, sanitizeForLog(err));
     }
 
     const executeWorkerRun = async (): Promise<WorkerExecutionResponse> => {
@@ -1319,7 +1325,7 @@ export async function POST(req: Request) {
               }
             }
           } catch (err) {
-            console.error(`[Worker API] Failed to save chat session transcript:`, err);
+            console.error(`[Worker API] Failed to save chat session transcript:`, sanitizeForLog(err));
           }
         }
 
@@ -1335,7 +1341,7 @@ export async function POST(req: Request) {
           }
         }
 
-        console.log(`[Worker API] ${workerType} worker completed: ${runId}`);
+        console.log(`[Worker API] ${sanitizeForLog(workerType)} worker completed: ${sanitizeForLog(runId)}`);
 
         return {
           runId,
@@ -1399,7 +1405,7 @@ export async function POST(req: Request) {
           }
         }
 
-        console.error(`[Worker API] ${workerType} worker failed:`, error);
+        console.error("[Worker API] %s worker failed:", sanitizeForLog(workerType), sanitizeForLog(error));
 
         if (isReauthError) {
           return {
@@ -1439,7 +1445,9 @@ export async function POST(req: Request) {
     const result = await executeWorkerRun();
     return NextResponse.json(result);
   } catch (error) {
-    console.error("[Worker API] Request failed:", error);
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
+    console.error("[Worker API] Request failed:", sanitizeForLog(error));
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Request failed" },
       { status: 500 }
@@ -1477,6 +1485,8 @@ export async function GET(req: Request) {
 
     return NextResponse.json(runDoc.data());
   } catch (error) {
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
     console.error("[Worker API] GET failed:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Request failed" },

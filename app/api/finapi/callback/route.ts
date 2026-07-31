@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
+import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { FinapiClient, FinapiEnvironment } from "@/lib/finapi/client";
 import { Timestamp } from "firebase-admin/firestore";
@@ -125,6 +125,12 @@ export async function GET(request: NextRequest) {
       );
     }
   } catch (error) {
+    if (unauthorizedResponse(error)) {
+      // A BROWSER lands on this route from the finAPI web form — the
+      // route's own (previously dead) intent is redirect-to-login, not the
+      // JSON 401 the fetch-style API routes answer.
+      return NextResponse.redirect(new URL("/login", request.url));
+    }
     console.error("[finAPI Callback] Error:", error);
     return NextResponse.redirect(
       new URL(

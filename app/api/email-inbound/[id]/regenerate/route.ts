@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getServerDb } from "@/lib/firebase/config-server";
-import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
+import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { regenerateInboundEmailAddress } from "@/lib/operations";
 
 const db = getServerDb();
@@ -28,6 +28,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       email: result.email,
     });
   } catch (error) {
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
     console.error("[email-inbound] Error regenerating address:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to regenerate address" },

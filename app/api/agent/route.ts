@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
+import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 
 // Dynamic imports to avoid build-time analysis issues with LangChain
 const getLangChainMessages = async () => import("@langchain/core/messages");
@@ -22,7 +22,7 @@ const getLangfuse = async () => import("@/lib/agent/langfuse");
 // ============================================================================
 
 interface MessageInput {
-  role: "user" | "assistant" | "system" | "tool";
+  role: "user" | "assistant" | "tool";
   content: string;
   tool_calls?: Array<{
     id: string;
@@ -50,9 +50,12 @@ interface RequestBody {
 // ============================================================================
 
 async function convertMessages(messages: MessageInput[]) {
-  const { HumanMessage, AIMessage, SystemMessage, ToolMessage } = await getLangChainMessages();
+  const { HumanMessage, AIMessage, ToolMessage } = await getLangChainMessages();
 
-  return messages.map((msg) => {
+  // role:"system" is not accepted input, but bodies are unvalidated JSON — keep
+  // the runtime drop so a client-sent system message can never replace the
+  // graph's own SYSTEM_PROMPT (CodeQL js/system-prompt-injection).
+  return messages.filter((msg) => (msg.role as string) !== "system").map((msg) => {
     switch (msg.role) {
       case "user":
         return new HumanMessage(msg.content);
@@ -68,8 +71,6 @@ async function convertMessages(messages: MessageInput[]) {
           });
         }
         return new AIMessage(msg.content);
-      case "system":
-        return new SystemMessage(msg.content);
       case "tool":
         return new ToolMessage({
           content: msg.content,
@@ -84,7 +85,8 @@ async function convertMessages(messages: MessageInput[]) {
 async function serializeMessages(messages: unknown[]) {
   const { HumanMessage, AIMessage, SystemMessage, ToolMessage } = await getLangChainMessages();
 
-  return messages.map((msg) => {
+  // System messages never leave the server (and are dropped on ingest anyway)
+  return messages.filter((msg) => !(msg instanceof SystemMessage)).map((msg) => {
     if (msg instanceof HumanMessage) {
       return { role: "user", content: msg.content };
     }
@@ -102,9 +104,6 @@ async function serializeMessages(messages: unknown[]) {
         content: msg.content,
         ...(toolCalls?.length ? { tool_calls: toolCalls } : {}),
       };
-    }
-    if (msg instanceof SystemMessage) {
-      return { role: "system", content: msg.content };
     }
     if (msg instanceof ToolMessage) {
       return {
@@ -180,6 +179,8 @@ export async function POST(request: NextRequest) {
       pendingConfirmation: result.pendingConfirmation,
     });
   } catch (error) {
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
     console.error("[Agent API] Error:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Internal server error" },

@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300; // 5 min — tests run sequentially against /api/chat
 
 import { NextRequest, NextResponse } from "next/server";
-import { getServerUserIdWithFallback, isServerUserAdmin } from "@/lib/auth/get-server-user";
+import { getServerUserIdWithFallback, isServerUserAdmin, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { runChatTests } from "@/lib/testing/chat-test-runner";
 
 export async function POST(request: NextRequest) {
@@ -43,6 +43,8 @@ export async function POST(request: NextRequest) {
       completedAt: result.completedAt.toISOString(),
     });
   } catch (error) {
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
     console.error("[AdminTests] Error:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Test run failed" },

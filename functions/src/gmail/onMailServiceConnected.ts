@@ -56,6 +56,9 @@ export const onMailServiceConnected = onDocumentCreated(
         case "gmail":
           await setupGmailIntegration(event, data, integrationId, userId);
           break;
+        case "imap":
+          await setupImapIntegration(event, data, integrationId, userId);
+          break;
         // Future providers can be added here:
         // case "outlook":
         //   await setupOutlookIntegration(event, data, integrationId, userId);
@@ -141,6 +144,73 @@ async function setupGmailIntegration(
     userId,
     type: "mail_service_connected",
     title: "Gmail Connected",
+    message: `${data.email} connected. Syncing recent invoices now.`,
+    read: false,
+    createdAt: now,
+  });
+}
+
+/**
+ * IMAP-specific integration setup.
+ *
+ * Same time-bounded initial sync as Gmail (the queue worker and item shape are
+ * provider-neutral); only the connect notification differs. The mailbox was
+ * already verified by the connect route before this document was written.
+ */
+async function setupImapIntegration(
+  event: Parameters<Parameters<typeof onDocumentCreated>[1]>[0],
+  data: EmailIntegration,
+  integrationId: string,
+  userId: string
+): Promise<void> {
+  const dateRange = await getTransactionDateRange(userId);
+
+  let dateFrom: Date;
+  let dateTo: Date;
+
+  if (dateRange) {
+    dateFrom = new Date(dateRange.minDate);
+    dateFrom.setDate(dateFrom.getDate() - 7);
+    dateTo = new Date(dateRange.maxDate);
+    dateTo.setDate(dateTo.getDate() + 7);
+  } else {
+    dateTo = new Date();
+    dateFrom = new Date();
+    dateFrom.setDate(dateFrom.getDate() - 90);
+  }
+
+  console.log(`[MailService] IMAP date range: ${dateFrom.toISOString()} to ${dateTo.toISOString()}`);
+
+  const now = Timestamp.now();
+  await event.data?.ref.update({
+    initialSyncStartedAt: now,
+    isPaused: false,
+    updatedAt: now,
+  });
+
+  await db.collection("gmailSyncQueue").add({
+    userId,
+    integrationId,
+    type: "initial",
+    status: "pending",
+    dateFrom: Timestamp.fromDate(dateFrom),
+    dateTo: Timestamp.fromDate(dateTo),
+    emailsProcessed: 0,
+    filesCreated: 0,
+    attachmentsSkipped: 0,
+    errors: [],
+    retryCount: 0,
+    maxRetries: 3,
+    processedMessageIds: [],
+    createdAt: now,
+  });
+
+  console.log(`[MailService] IMAP integration auto-started: ${data.email}`);
+
+  await db.collection("notifications").add({
+    userId,
+    type: "mail_service_connected",
+    title: "Mailbox Connected",
     message: `${data.email} connected. Syncing recent invoices now.`,
     read: false,
     createdAt: now,

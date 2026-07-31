@@ -1,10 +1,16 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase/admin";
-import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
+import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { Timestamp } from "firebase-admin/firestore";
 
 const db = getAdminDb();
+
+// Strip CR/LF so request-derived values cannot forge log lines
+function sanitizeForLog(value: unknown): string {
+  const raw = value instanceof Error ? value.stack || value.message : String(value);
+  return raw.replace(/\n|\r/g, "");
+}
 
 const DEFAULT_STRATEGIES = [
   "partner_files",
@@ -90,8 +96,8 @@ export async function POST(request: NextRequest) {
     const docRef = await db.collection("precisionSearchQueue").add(queueItem);
 
     console.log(
-      `[PrecisionSearch API] Queued ${scope} search: ${docRef.id}`,
-      transactionId ? `for tx ${transactionId}` : ""
+      `[PrecisionSearch API] Queued ${sanitizeForLog(scope)} search: ${docRef.id}`,
+      transactionId ? `for tx ${sanitizeForLog(transactionId)}` : ""
     );
 
     return NextResponse.json({
@@ -99,6 +105,8 @@ export async function POST(request: NextRequest) {
       queueId: docRef.id,
     });
   } catch (error) {
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
     console.error("[PrecisionSearch API] Error triggering search:", error);
     return NextResponse.json(
       { error: "Failed to trigger precision search" },

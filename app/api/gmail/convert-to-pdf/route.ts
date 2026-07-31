@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminDb, getAdminBucket, getFirebaseStorageDownloadUrl } from "@/lib/firebase/admin";
 import { Timestamp, FieldValue } from "firebase-admin/firestore";
-import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
+import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { createHash, randomUUID } from "crypto";
 import { callFirebaseFunction } from "@/lib/api/firebase-callable";
 import { GmailResolutionError, resolveGmailIntegration } from "@/lib/gmail/resolve-integration";
@@ -21,11 +21,16 @@ const GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1";
 
 function parseFromHeader(fromValue?: string | null): { email?: string; name?: string } {
   if (!fromValue) return {};
-  const match = fromValue.match(/(?:"?([^"]*)"?\s)?<?([^<>@\s]+@[^<>]+\.[^<>]+)>?/);
-  if (!match) return {};
-  const name = match[1]?.trim();
-  const email = match[2]?.trim();
-  return { email, name };
+  // Cap length: a legitimate From header is far below 1 KB, and the cap bounds regex time
+  const header = fromValue.slice(0, 1024);
+  const angle = header.match(/<([^<>]*)>/);
+  const candidate = (angle ? angle[1] : header).trim();
+  const emailMatch = candidate.match(/[^<>@\s"]+@[^<>@\s".]+(?:\.[^<>@\s".]+)+/);
+  if (!emailMatch) return {};
+  const name = angle
+    ? header.slice(0, angle.index).replace(/"/g, "").trim() || undefined
+    : undefined;
+  return { email: emailMatch[0], name };
 }
 
 function extractDomain(email?: string | null): string | null {
@@ -99,7 +104,7 @@ export async function POST(request: NextRequest) {
 
     // Fetch the message
     const messageResponse = await fetch(
-      `${GMAIL_API_BASE}/users/me/messages/${messageId}?format=full`,
+      `${GMAIL_API_BASE}/users/me/messages/${encodeURIComponent(messageId)}?format=full`,
       {
         headers: {
           Authorization: `Bearer ${ctx.accessToken}`,
@@ -248,6 +253,8 @@ export async function POST(request: NextRequest) {
       connectedToTransaction: !!transactionId,
     });
   } catch (error) {
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
     console.error("[convert-to-pdf] Error:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to convert email to PDF" },

@@ -14,7 +14,7 @@ import {
 import { getTrueLayerClient, getAccountIban } from "@/lib/truelayer";
 import { TrueLayerConnection, TrueLayerApiConfig } from "@/types/truelayer";
 import { normalizeIban } from "@/lib/import/deduplication";
-import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
+import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 
 // Initialize Firebase for server-side
 const firebaseConfig = {
@@ -25,6 +25,12 @@ const firebaseConfig = {
   messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || "534848611676",
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID || "1:534848611676:web:8a3d1ede57c65b7e884d99",
 };
+
+// Strip CR/LF so request-derived values cannot forge log lines
+function sanitizeForLog(value: unknown): string {
+  const raw = value instanceof Error ? value.stack || value.message : String(value);
+  return raw.replace(/\n|\r/g, "");
+}
 
 const appName = "truelayer-accounts";
 const app = getApps().find(a => a.name === appName) || initializeApp(firebaseConfig, appName);
@@ -101,6 +107,8 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
     console.error("Error fetching accounts:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to fetch accounts" },
@@ -237,6 +245,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ sourceId: docRef.id, linked: false });
   } catch (error) {
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
     console.error("[TrueLayer Accounts POST] Error creating/linking source:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to create/link source" },
@@ -271,7 +281,7 @@ async function triggerInitialSync(
     );
 
     if (transactions.length === 0) {
-      console.log(`No transactions to import for source ${sourceId}`);
+      console.log(`No transactions to import for source ${sanitizeForLog(sourceId)}`);
       return;
     }
 
@@ -319,7 +329,7 @@ async function triggerInitialSync(
       updatedAt: nowTs,
     });
 
-    console.log(`Imported ${transactions.length} transactions for source ${sourceId}`);
+    console.log(`Imported ${transactions.length} transactions for source ${sanitizeForLog(sourceId)}`);
   } catch (error) {
     console.error("Initial sync error:", error);
   }

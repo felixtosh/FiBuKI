@@ -1,0 +1,308 @@
+# FiBuKI self-host stack (work item 7). Runs the ported backend (fibuki-api,
+# the selfhost host over the Firestore/storage/trigger/cron shims) + the Next
+# frontend (fibuki-web, FIBUKI_BACKEND=selfhost alias build) against a real
+# Postgres (Firestore-shim JSONB store) and MinIO (storage-shim S3 backend).
+#
+# Values come from ./.env (copy .env.example). Data lives in named volumes
+# (fibuki-pgdata / fibuki-miniodata) — container-uid owned.
+#
+# Build + run:  docker compose --env-file .env up -d --build
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - fibuki-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${FIBUKI_S3_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${FIBUKI_S3_SECRET_KEY}
+    volumes:
+      - fibuki-miniodata:/data
+    # The storage shim (blobstore-s3.ts) creates the bucket on first use and
+    # retries transient outages, so a hard healthcheck gate isn't required; a
+    # readiness probe is still useful for `docker compose ps`.
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  fibuki-api:
+    build:
+      context: ../..
+      dockerfile: deploy/selfhost/api.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    environment:
+      PORT: "8788"
+      # Firestore-shim -> real Postgres (firestore-shim.ts DATABASE_URL branch)
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      # Pool ceiling (firestore-shim.ts). Unset falls back to 25; node-postgres'
+      # own default of 10 saturates first under concurrent pollers.
+      POSTGRES_MAX_CONNECTIONS: ${POSTGRES_MAX_CONNECTIONS:-25}
+      # Set to 1 for the migration window. The cron host would otherwise start
+      # working freshly imported queue documents — mutating and deleting them —
+      # before `verify` can compare them against the dump, which reports as
+      # mismatches that are not import errors. Also the switch for running extra
+      # API replicas: exactly one instance may own the schedules, and there is no
+      # advisory lock enforcing that.
+      FIBUKI_NO_CRON: ${FIBUKI_NO_CRON:-}
+      # storage-shim -> MinIO (blobstore-s3.ts)
+      FIBUKI_STORAGE: s3
+      FIBUKI_S3_ENDPOINT: minio
+      FIBUKI_S3_PORT: "9000"
+      FIBUKI_S3_SSL: "false"
+      FIBUKI_S3_ACCESS_KEY: ${FIBUKI_S3_ACCESS_KEY}
+      FIBUKI_S3_SECRET_KEY: ${FIBUKI_S3_SECRET_KEY}
+      FIBUKI_STORAGE_BUCKET: ${FIBUKI_STORAGE_BUCKET}
+      # download-URL base (buildDownloadUrl-shim.ts) + CORS allowlist (host.ts)
+      FIBUKI_PUBLIC_URL: ${FIBUKI_PUBLIC_URL}
+      FIBUKI_WEB_ORIGIN: ${FIBUKI_WEB_ORIGIN}
+      # Auth. server.ts resolves in strict precedence: FIBUKI_DEV_UID (dev only),
+      # then OIDC_ISSUER (external IdP, built-in auth stays UNMOUNTED), then the
+      # built-in Better Auth.
+      #
+      # Leaving OIDC_ISSUER empty selects Better Auth, which is what a migrated
+      # deployment needs: the importer preserves Firebase uids while the OIDC
+      # verifier derives uid from the IdP's `sub`, so under OIDC migrated data
+      # would import cleanly and read as empty.
+      #
+      # FIBUKI_AUTH_SECRET is REQUIRED whenever DATABASE_URL is set —
+      # createSelfhostAuth refuses to boot without it, because the JWKS private
+      # keys are encrypted at rest with it. FIBUKI_AUTH_ISSUER doubles as the
+      # OAuth redirect base for Google sign-in.
+      FIBUKI_AUTH_SECRET: ${FIBUKI_AUTH_SECRET:-}
+      FIBUKI_AUTH_ISSUER: ${FIBUKI_AUTH_ISSUER:-}
+      # Google social sign-in. better-auth.ts socialProviders() returns undefined
+      # unless BOTH are present, and the sign-in button then 403s with no other
+      # signal. The redirect URI to register at Google is
+      # ${FIBUKI_AUTH_ISSUER}/__auth/callback/google
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      # GitHub social sign-in. Registered only when BOTH are set. Redirect URI:
+      # ${FIBUKI_AUTH_ISSUER}/__auth/callback/github
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      # Trusted server-to-server path in lib/auth/get-server-user.ts, used by
+      # runReceiptSearchForTransaction. Ignored unless >= 16 chars.
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-}
+      # Signs digest unsubscribe tokens (emails/unsubscribeTokens.ts).
+      DIGEST_HMAC_SECRET: ${DIGEST_HMAC_SECRET:-}
+      # Base URL used to build links in outbound mail and admin flows.
+      APP_URL: ${APP_URL:-}
+      # Auto-grants admin on first login (see CLAUDE.md).
+      SUPER_ADMIN_EMAIL: ${SUPER_ADMIN_EMAIL:-}
+      # --- Production integration credentials -------------------------------
+      # Declared on fibuki-api ONLY, never on fibuki-web.
+      #
+      # This used to be load-bearing: next.config.ts aliased only the CLIENT firebase
+      # SDKs, so fibuki-web given a service-account key would have used the REAL
+      # firebase-admin and started reading and writing LIVE production Firestore,
+      # while every other request path used the migrated Postgres copy — a split
+      # brain worse than either option alone.
+      #
+      # next.config.ts now also aliases "@/lib/firebase/admin" to
+      # lib/selfhost/admin-shim.ts, so that path no longer reaches Google even if the
+      # key were present. Kept off fibuki-web anyway: the alias is the guarantee, and
+      # withholding the credential is the backstop for the day someone adds a module
+      # that imports firebase-admin directly rather than through that helper.
+      # On fibuki-api, firebase-admin/firestore|auth|storage are aliased to the shims,
+      # so the key is loaded but never used to reach Google.
+      FIREBASE_SERVICE_ACCOUNT_KEY: ${FIREBASE_SERVICE_ACCOUNT_KEY:-}
+      # Stripe. NOTE the key from production is sk_live_: a checkout here creates a
+      # REAL subscription and charges a REAL card, while the resulting record lands in
+      # this box's copy of the data rather than live production.
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      # Per-ENDPOINT signing secret. Production's value will NOT validate a webhook
+      # delivered to new-api.fibuki.com — that needs its own endpoint registered in
+      # the Stripe dashboard, which issues a different whsec_.
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      # Decrypts users' stored Gmail OAuth tokens. With this present and cron enabled,
+      # the box can read the mailboxes of every migrated user.
+      GMAIL_TOKEN_ENCRYPTION_KEY: ${GMAIL_TOKEN_ENCRYPTION_KEY:-}
+      # FinanzOnline: deliberately absent. Production's stored value is an unevaluated
+      # $(...) shell substitution rather than a key, so it is guessable. Nothing is
+      # encrypted under it yet (0 stored credentials); rotate it before anything is.
+      FINANZONLINE_ENCRYPTION_KEY: ${FINANZONLINE_ENCRYPTION_KEY:-}
+      FINAPI_CLIENT_ID: ${FINAPI_CLIENT_ID:-}
+      FINAPI_CLIENT_SECRET: ${FINAPI_CLIENT_SECRET:-}
+      FINAPI_ENVIRONMENT: ${FINAPI_ENVIRONMENT:-sandbox}
+      # Callback bases point at THIS host, not production — otherwise an OAuth round
+      # trip started here would complete against fibuki.com.
+      GOOGLE_OAUTH_REDIRECT_URI: ${GOOGLE_OAUTH_REDIRECT_URI:-}
+      TRUELAYER_REDIRECT_URL: ${TRUELAYER_REDIRECT_URL:-}
+      # Which exclusion profile the host mounts (selfhost/manifest.ts).
+      # "selfhost" drops Stripe billing, country crowdfunding and referrals;
+      # "cloud" mounts everything. Defaults to selfhost.
+      FIBUKI_TIER: ${FIBUKI_TIER:-selfhost}
+      # AI routing (selfhost/ai/config.ts). @google-cloud/vertexai is aliased to
+      # vertexai-adapter.ts, so Gemini runs on an API key and needs no GCP service
+      # account. Per-model overrides (FIBUKI_AI_ROUTE_*) pass through via the
+      # env_file below, since their names are not fixed.
+      FIBUKI_AI_PROVIDER: ${FIBUKI_AI_PROVIDER:-gemini}
+      # Read by extraction/geminiParser.ts getProjectId(), which throws
+      # "Could not determine Google Cloud project ID" before it ever constructs a
+      # client. The adapter ignores project and location entirely — this only has
+      # to be non-empty. Kept as the real project id so that flipping back to
+      # genuine Vertex AI needs no further change.
+      GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-taxstudio-f12fb}
+      VERTEX_LOCATION: ${VERTEX_LOCATION:-europe-west1}
+      FIBUKI_GEMINI_API_KEY: ${FIBUKI_GEMINI_API_KEY:-}
+      FIBUKI_ANTHROPIC_API_KEY: ${FIBUKI_ANTHROPIC_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      FIBUKI_AI_BASE_URL: ${FIBUKI_AI_BASE_URL:-}
+      FIBUKI_AI_API_KEY: ${FIBUKI_AI_API_KEY:-}
+      # OIDC_JWKS_URI lets the verifier fetch keys from a directly-reachable URL
+      # (e.g. the IdP on the same network) while OIDC_ISSUER stays the public,
+      # browser-facing issuer that tokens are minted with. Leave blank to discover.
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_JWKS_URI: ${OIDC_JWKS_URI:-}
+      OIDC_AUDIENCE: ${OIDC_AUDIENCE:-}
+      OIDC_ADMIN_GROUP: ${OIDC_ADMIN_GROUP:-}
+      # mailer-shim. Works with any SMTP server. FIBUKI_SMTP_FROM defaults to
+      # FIBUKI_SMTP_USER (mailbox providers require envelope alignment); set it
+      # explicitly for API relays like Resend, whose username is a literal
+      # rather than an address.
+      FIBUKI_SMTP_HOST: ${FIBUKI_SMTP_HOST}
+      FIBUKI_SMTP_PORT: ${FIBUKI_SMTP_PORT}
+      FIBUKI_SMTP_SECURE: ${FIBUKI_SMTP_SECURE}
+      FIBUKI_SMTP_USER: ${FIBUKI_SMTP_USER}
+      FIBUKI_SMTP_PASS: ${FIBUKI_SMTP_PASS}
+      FIBUKI_SMTP_FROM: ${FIBUKI_SMTP_FROM:-}
+      FIBUKI_SMTP_FROM_NAME: ${FIBUKI_SMTP_FROM_NAME}
+    # Also load .env wholesale, which is what carries the FIBUKI_AI_ROUTE_<model>
+    # overrides — their names depend on the model ids being routed, so they cannot
+    # be enumerated in `environment` above. Explicit `environment` entries win over
+    # env_file, so the mappings above remain authoritative.
+    env_file:
+      - .env
+    # Loopback-only publish. On a public host a bare "8788:8788" binds 0.0.0.0
+    # AND Docker writes its own iptables rules, which bypass ufw/firewalld — the
+    # API would be reachable over plain HTTP from the internet. TLS termination
+    # and the only public listener belong to Caddy (docker-compose.prod.yml);
+    # Caddy reaches this service over the compose network, not via the host.
+    # This bind exists for on-box debugging (curl 127.0.0.1:8788/healthz).
+    ports:
+      - "127.0.0.1:8788:8788"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8788/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  fibuki-web:
+    build:
+      context: ../..
+      dockerfile: deploy/selfhost/web.Dockerfile
+      args:
+        # NEXT_PUBLIC_* must be present at BUILD time — Next inlines them into
+        # the client bundle and next.config extends the CSP from them.
+        NEXT_PUBLIC_FIBUKI_API_URL: ${NEXT_PUBLIC_FIBUKI_API_URL}
+        NEXT_PUBLIC_OIDC_ISSUER: ${NEXT_PUBLIC_OIDC_ISSUER}
+        NEXT_PUBLIC_OIDC_CLIENT_ID: ${NEXT_PUBLIC_OIDC_CLIENT_ID}
+        NEXT_PUBLIC_OIDC_SCOPE: ${NEXT_PUBLIC_OIDC_SCOPE}
+        NEXT_PUBLIC_OIDC_ADMIN_GROUP: ${NEXT_PUBLIC_OIDC_ADMIN_GROUP}
+        NEXT_PUBLIC_OIDC_REDIRECT_URI: ${NEXT_PUBLIC_OIDC_REDIRECT_URI}
+        NEXT_PUBLIC_FIBUKI_POLL_MS: ${NEXT_PUBLIC_FIBUKI_POLL_MS}
+        # Whether to render the GitHub sign-in button. The browser cannot see
+        # whether GITHUB_CLIENT_ID/SECRET are set on the api, so it is told here.
+        # Must match, or the button appears and then 4xxs.
+        NEXT_PUBLIC_GITHUB_SIGNIN_ENABLED: ${NEXT_PUBLIC_GITHUB_SIGNIN_ENABLED:-false}
+        # Read by app/api/truelayer/callback, app/api/banking/connect and the agent's
+        # download tools to build absolute links. Next inlines NEXT_PUBLIC_* at BUILD
+        # time, so omitting it here left it undefined and every one of those call
+        # sites silently fell back to http://localhost:3000 — links that resolve to
+        # nothing for a user. Must be the PUBLIC web origin, and must be rebuilt when
+        # that origin changes (e.g. new.fibuki.com -> fibuki.com).
+        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL}
+    restart: unless-stopped
+    depends_on:
+      fibuki-api:
+        condition: service_started
+      # This container now does its own document IO (see DATABASE_URL below), so it
+      # needs Postgres up, not just the api.
+      postgres:
+        condition: service_healthy
+    environment:
+      PORT: "3000"
+      NODE_ENV: production
+      # The sidebar chat agent runs SERVER-SIDE in this container (app/api/chat),
+      # not on fibuki-api, so it needs its own model credentials — without these it
+      # reached the agent and then died on
+      #   "Could not load the default credentials"
+      # because lib/agent/model.ts falls back to Vertex AI, which resolves Google
+      # Application Default Credentials that no non-GCP host has.
+      #
+      # An API key selects the credential-free Generative Language path instead,
+      # the same trade the api-side adapter makes (functions/src/selfhost/ai).
+      # Both providers are passed so either chat model works; each is optional and
+      # the agent reports a clean error for whichever is missing.
+      FIBUKI_GEMINI_API_KEY: ${FIBUKI_GEMINI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # types/ai-usage.ts pins Vertex-era model ids, and some are retired for new
+      # API-key consumers — "gemini-2.5-flash" answers 404 "not found for API
+      # version v1beta". Override without editing the shared registry, which the
+      # Firebase build still uses successfully against Vertex.
+      FIBUKI_CHAT_MODEL: ${FIBUKI_CHAT_MODEL:-}
+      # Also at runtime: server-side reads in route handlers resolve it here, and
+      # keeping both in step avoids a stale baked-in value outliving an origin change.
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL}
+      # Server-side document IO. ~35 modules in this container call getAdminDb()
+      # — the chat agent's tools, the public invoice share page, precision search,
+      # the worker endpoint, Gmail, the auth routes — and off GCP the Firebase Admin
+      # SDK cannot authenticate at all. next.config.ts aliases that module to
+      # lib/selfhost/admin-shim.ts, which reuses the API's Postgres-backed shim so
+      # both containers resolve documents through identical code.
+      #
+      # This is the same connection string fibuki-api uses, and deliberately so:
+      # RLS still scopes every read by app.tenant_id, and the shim opens each
+      # transaction with SET LOCAL ROLE fibuki_app rather than the owner. The
+      # BROWSER still never reaches Postgres — these are server-only modules.
+      # Built from the parts exactly as fibuki-api does above. There is no
+      # top-level DATABASE_URL in .env, and ${DATABASE_URL} would resolve to an
+      # empty string — which the shim reads as "no database configured" and
+      # answers with an in-memory PGlite. That fails SILENTLY: the container
+      # boots healthy and serves an empty dataset.
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      FIBUKI_TENANT_ID: ${FIBUKI_TENANT_ID:-}
+      # Both containers must mint byte-identical /__storage/download links, since
+      # one handler resolves whichever wrote them.
+      FIBUKI_PUBLIC_URL: ${FIBUKI_PUBLIC_URL:-}
+      # Pool ceiling per container. Both share Postgres' max_connections, so this
+      # is now split two ways rather than owned by fibuki-api alone.
+      POSTGRES_MAX_CONNECTIONS: ${WEB_POSTGRES_MAX_CONNECTIONS:-10}
+    # Loopback-only — see the note on fibuki-api's ports. Public ingress is
+    # Caddy only (docker-compose.prod.yml).
+    ports:
+      - "127.0.0.1:3000:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+volumes:
+  fibuki-pgdata:
+  fibuki-miniodata:

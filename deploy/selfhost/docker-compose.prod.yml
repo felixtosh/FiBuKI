@@ -1,0 +1,53 @@
+# Production overlay — adds public TLS ingress. Use TOGETHER with the base file:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+#     --env-file .env up -d --build
+#
+# The base file publishes fibuki-web / fibuki-api on 127.0.0.1 only. This overlay
+# adds the single service that listens on the public interface (Caddy, :80/:443)
+# and terminates TLS for both hostnames.
+#
+# Defence in depth: also apply the Hetzner Cloud Firewall from
+# provision-hetzner.sh. It sits outside the host, so unlike ufw it is not
+# bypassed by Docker's iptables rules.
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      fibuki-web:
+        condition: service_started
+      fibuki-api:
+        condition: service_started
+    environment:
+      # Bare hostnames (no scheme) — Caddy derives the cert names from these.
+      FIBUKI_WEB_HOST: ${FIBUKI_WEB_HOST}
+      FIBUKI_API_HOST: ${FIBUKI_API_HOST}
+      # Former web hostnames, 308'd to the canonical one after a domain move. Both
+      # MUST be passed even though only the Caddyfile reads them: an unset var makes
+      # the redirect site block fall back to its placeholder, and the old hostname is
+      # then served by nothing at all — TLS handshake failure rather than a redirect.
+      # The default keeps a fresh deployment, which has no old name, from claiming a
+      # certificate for a hostname it does not own.
+      FIBUKI_WEB_REDIRECT_HOSTS: ${FIBUKI_WEB_REDIRECT_HOSTS:-localhost.invalid}
+      FIBUKI_WEB_CANONICAL_HOST: ${FIBUKI_WEB_CANONICAL_HOST:-${FIBUKI_WEB_HOST}}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data # certs + ACME account. Losing this re-issues certs.
+      - caddy-config:/config
+      - caddy-logs:/var/log/caddy
+    healthcheck:
+      test: ["CMD", "caddy", "validate", "--config", "/etc/caddy/Caddyfile"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  caddy-data:
+  caddy-config:
+  caddy-logs:

@@ -3,6 +3,7 @@
 import { FileText, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
+import { useFileObjectUrl } from "@/hooks/use-file-object-url";
 
 interface FilePreviewProps {
   downloadUrl: string;
@@ -39,6 +40,16 @@ export function FilePreview({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
+  // The `downloadUrl` prop is the STORED url, which on the self-host stack needs
+  // an Authorization header and so cannot be an iframe/img src directly. Resolved
+  // here rather than at each of the ~9 call sites, so every caller is fixed at
+  // once and the prop contract stays "the url on the document". Firebase URLs pass
+  // through untouched. See hooks/use-file-object-url.ts.
+  const resolved = useFileObjectUrl(downloadUrl);
+  const srcUrl = resolved.url;
+  const isLoading = loading || resolved.loading;
+  const hasError = error || resolved.error !== null;
+
   if (fullSize) {
     return (
       <div
@@ -49,20 +60,23 @@ export function FilePreview({
         )}
         onClick={onClick}
       >
-        {loading && !error && (
+        {isLoading && !hasError && (
           <div className="absolute inset-0 flex items-center justify-center bg-muted/50">
             <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
           </div>
         )}
-        {error ? (
+        {hasError ? (
           <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground">
             <FileText className="h-12 w-12 mb-2" />
             <p className="text-sm">Failed to load preview</p>
             <p className="text-xs">{fileName}</p>
           </div>
-        ) : isPdf ? (
+        ) : isPdf && srcUrl ? (
+          // Guarded on srcUrl: a template literal over a null would render the
+          // string "null#toolbar=0..." and the viewer would report a load failure
+          // for what is only a not-yet-resolved url.
           <iframe
-            src={`${downloadUrl}#toolbar=0&navpanes=0&view=FitH`}
+            src={`${srcUrl}#toolbar=0&navpanes=0&view=FitH`}
             className="w-full h-full border-0"
             title={fileName}
             onLoad={() => setLoading(false)}
@@ -71,7 +85,7 @@ export function FilePreview({
         ) : isImage ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={downloadUrl}
+            src={srcUrl ?? undefined}
             alt={fileName}
             className="w-full h-full object-contain"
             onLoad={() => setLoading(false)}
@@ -124,19 +138,28 @@ export function FilePreview({
       )}
       onClick={onClick}
     >
-      {isPdf ? (
+      {isPdf && srcUrl ? (
         <div className="aspect-[3/4] flex items-center justify-center bg-background">
           <iframe
-            src={`${downloadUrl}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`}
+            src={`${srcUrl}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`}
             className="w-full h-full border-0 pointer-events-none"
             title={fileName}
           />
+        </div>
+      ) : isPdf ? (
+        // Resolving, or failed — show the placeholder rather than a broken frame.
+        <div className="aspect-[3/4] flex items-center justify-center bg-background text-muted-foreground">
+          {isLoading && !hasError ? (
+            <Loader2 className="h-6 w-6 animate-spin" />
+          ) : (
+            <FileText className="h-8 w-8" />
+          )}
         </div>
       ) : isImage ? (
         <div className="aspect-[3/4] flex items-center justify-center">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={downloadUrl}
+            src={srcUrl ?? undefined}
             alt={fileName}
             className="w-full h-full object-cover"
           />
