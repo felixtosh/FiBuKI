@@ -339,6 +339,31 @@ export async function POST(req: Request) {
   // We must yield the FULL tuple for toUIMessageStream to detect it as langgraph format
 
   async function* trackUsage(): AsyncGenerator<any> {
+    // The try/catch is the point of this wrapper as much as the usage tracking is.
+    //
+    // Anything thrown while iterating the graph — a model call that fails, a tool
+    // that rejects, a recursion limit — happens AFTER the response headers are
+    // already on the wire, so it cannot become an HTTP error. Without a handler the
+    // generator simply stops: the client sees the assistant's opening sentence and
+    // then silence, and the server logs NOTHING. That is precisely how a broken tool
+    // loop presented ("Let me check your Amazon transactions..." then nothing), and
+    // the absence of any log is what made it hard to place.
+    //
+    // Rethrowing preserves the existing behaviour for the caller; the log is what
+    // turns a silent stall into something diagnosable.
+    try {
+      yield* streamChunks();
+    } catch (error) {
+      console.error(
+        "[Chat API] Stream failed mid-response — the client will see a truncated " +
+          "answer with no error:",
+        error instanceof Error ? (error.stack ?? error.message) : String(error),
+      );
+      throw error;
+    }
+  }
+
+  async function* streamChunks(): AsyncGenerator<any> {
     for await (const chunk of graphStream) {
       // Format: ["messages", [messageChunk, metadata]]
       if (!Array.isArray(chunk) || chunk[0] !== "messages") {
