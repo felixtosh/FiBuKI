@@ -8,6 +8,19 @@
 # Upstreams are compose service names on the internal network. The containers
 # publish only to 127.0.0.1, so nothing but Caddy is reachable from outside.
 
+# Former web hostnames. These REDIRECT rather than serve.
+#
+# Serving the app on a second name looks like a friendly fallback and is not: the
+# api's CORS layer allows exactly one web origin (FIBUKI_WEB_ORIGIN), so the old
+# name would render the app and then fail every data call, which reads to a user as
+# "the site is broken" rather than "use the new address". A 308 also keeps one
+# canonical origin, so sessions and bookmarks converge instead of splitting.
+#
+# Empty by default; set FIBUKI_WEB_REDIRECT_HOSTS after a domain move.
+{$FIBUKI_WEB_REDIRECT_HOSTS:localhost.invalid} {
+	redir https://{$FIBUKI_WEB_CANONICAL_HOST}{uri} 308
+}
+
 {$FIBUKI_WEB_HOST} {
 	encode zstd gzip
 

@@ -48,9 +48,6 @@ cp "$ENV_FILE" "$ENV_FILE.bak-$(date +%s)"
 # Auth issuer, its JWKS and the Google sign-in callback URL stable. Changing it
 # would invalidate every live session and require re-registering the OAuth client.
 #
-# Both hosts stay in FIBUKI_WEB_HOST so new.fibuki.com keeps working through the
-# DNS propagation window and afterwards as a fallback. Caddy accepts a
-# comma-separated site address list.
 set_env() {
   local key="$1" val="$2"
   if grep -q "^${key}=" "$ENV_FILE"; then
@@ -63,7 +60,12 @@ set_env() {
 }
 
 echo "Rewriting origins to https://${TARGET}"
-set_env FIBUKI_WEB_HOST          "${TARGET}, ${KEEP}"
+# The old name REDIRECTS, it does not serve. Serving it would render the app on an
+# origin the api's CORS layer rejects, so every data call fails and it looks broken
+# rather than moved.
+set_env FIBUKI_WEB_HOST            "${TARGET}"
+set_env FIBUKI_WEB_CANONICAL_HOST  "${TARGET}"
+set_env FIBUKI_WEB_REDIRECT_HOSTS  "${KEEP}"
 set_env FIBUKI_WEB_ORIGIN        "https://${TARGET}"
 set_env APP_URL                  "https://${TARGET}"
 set_env NEXT_PUBLIC_APP_URL      "https://${TARGET}"
@@ -100,6 +102,6 @@ for i in $(seq 1 30); do
   sleep 10
 done
 
-echo "  https://${KEEP} -> $(curl -s -o /dev/null -w '%{http_code}' "https://${KEEP}/")"
+echo "  https://${KEEP} -> $(curl -s -o /dev/null -w '%{http_code}' "https://${KEEP}/") (expect 308 to ${TARGET})"
 echo
 echo "Done. Firebase App Hosting is untouched and remains the rollback."
