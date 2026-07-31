@@ -104,5 +104,6 @@
   "overrides": {
     "sharp": "^0.35.3",
     "postcss": "^8.5.25"
-  }
+  },
+  "license": "AGPL-3.0-only"
 }
