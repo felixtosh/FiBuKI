@@ -34,6 +34,39 @@ npx tsc --noEmit --max-old-space-size=900 <explicit files>
 Full suites belong on CT 999. Also: **no parallel sub-agents on the audit box** —
 fan-out is what OOMs it. Details in [`docs/claude-practices.md`](docs/claude-practices.md).
 
+## The two axes: BACKEND vs TIER
+
+These are independent, and conflating them is the single most common confusion in
+this repo. "selfhost" names a **backend**, not an audience.
+
+| Variable | Chooses | Values |
+|---|---|---|
+| `FIBUKI_BACKEND` | which data layer | `selfhost` = Postgres + MinIO via the shims. Nothing sets anything else any more. |
+| `FIBUKI_TIER` | which features mount | `cloud` = billing/referrals/crowdfunding on (6 excluded). `selfhost` = commercial features off (27 excluded). |
+
+So fibuki.com runs `BACKEND=selfhost, TIER=cloud`. A community self-hoster runs
+`BACKEND=selfhost, TIER=selfhost`. **Same code, same runtime**, different feature
+set — which is what [`docs/who-is-this-for.md`](docs/who-is-this-for.md) means by
+"self-host and cloud ship the same features; the split is effort and
+infrastructure, never capability".
+
+### Firebase is not a running backend
+
+As of the 2026-07-31 cutover, Firebase runs **nowhere** — not for us, not for
+self-hosters. App Hosting is deleted and fibuki.com serves from the compose stack.
+
+But ~341 source files still `import` Firebase, and that is deliberate rather than
+leftover. The shims work by **aliasing module specifiers at build time**
+(`firebase/firestore` → `lib/selfhost/firestore-client.ts`, `@/lib/firebase/admin` →
+`lib/selfhost/admin-shim.ts`, see `next.config.ts`). The imports are the seam; they
+never execute as Firebase. Removing them would mean rewriting the application, which
+is precisely what "port, never regenerate" exists to avoid. `lib/firebase/admin.ts`
+looks like dead code for the same reason — it is the alias *target*.
+
+What IS dead: `firebase.json`, `.firebaserc`, `apphosting.yaml`, `firestore.rules`,
+`firestore.indexes.json`, `storage.rules`. They describe a deployment target that no
+longer exists.
+
 ## Architecture: Cloud Functions Pattern
 
 **IMPORTANT**: All data mutations go through Cloud Functions. This ensures:
