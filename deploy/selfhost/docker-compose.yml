@@ -8,6 +8,19 @@
 #
 # Build + run:  docker compose --env-file .env up -d --build
 
+# Pinned so volume identity does NOT depend on this directory's name.
+#
+# Compose derives the project name from the containing directory unless told
+# otherwise, and prefixes every volume with it — the live data is in
+# selfhost_fibuki-pgdata / selfhost_fibuki-miniodata. Renaming the directory would
+# therefore make compose look for volumes that do not exist, create empty ones, and
+# bring the stack up against an EMPTY DATABASE. Nothing would be lost, but it would
+# present as total data loss on a live site.
+#
+# Changing this value has the same effect. Don't, unless you are also migrating the
+# volumes deliberately.
+name: selfhost
+
 services:
   postgres:
     image: postgres:16-alpine
