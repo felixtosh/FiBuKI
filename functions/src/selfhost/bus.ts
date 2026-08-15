@@ -21,9 +21,33 @@ type Listener = (change: DocChange) => Promise<void>;
 const queue: DocChange[] = [];
 const listeners: Listener[] = [];
 let draining = false;
+let autoDrain = false;
+
+/**
+ * Production mode: schedule a drain after every emit. Nothing else drains the
+ * queue in a deployed host — tests drive drainChanges() explicitly, but a
+ * server that never drains delivers NO trigger at all: extraction, matching
+ * cascades and invoicing hooks all queue in memory forever. The selfhost
+ * server enables this at boot; tests leave it off and keep deterministic
+ * manual drains.
+ */
+export function enableAutoDrain(): void {
+  autoDrain = true;
+}
 
 export function emitChange(change: DocChange): void {
   queue.push(change);
+  if (autoDrain && !draining) {
+    // setImmediate, not inline: the write that emitted this change should
+    // commit and answer its caller before handlers run, like Firestore's
+    // async trigger delivery. drainChanges() is re-entrancy-guarded and
+    // loops until quiet, so overlapping schedules collapse to no-ops.
+    setImmediate(() => {
+      void drainChanges().catch((err) => {
+        console.error("selfhost bus: auto-drain failed:", err);
+      });
+    });
+  }
 }
 
 export function onChange(listener: Listener): void {
