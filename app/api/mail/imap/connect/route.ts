@@ -26,8 +26,26 @@ interface ConnectBody {
  * whether the host, the TLS cert, or the credentials are wrong.
  */
 function classifyImapError(error: unknown): { code: string; message: string } {
-  const msg = error instanceof Error ? error.message : String(error);
-  const authCode = (error as { authenticationFailed?: boolean })?.authenticationFailed;
+  // imapflow reports a server NO/BAD as the bare message "Command failed" and
+  // puts the useful part on the error object (responseText, serverResponseCode,
+  // mailboxMissing). Fold those in so the regexes below see the real reason and
+  // the fallback surfaces the server's own words instead of "Command failed".
+  const e = (error ?? {}) as {
+    responseText?: string;
+    serverResponseCode?: string;
+    mailboxMissing?: boolean;
+    authenticationFailed?: boolean;
+  };
+  const base = error instanceof Error ? error.message : String(error);
+  const msg = [base, e.serverResponseCode, e.responseText].filter(Boolean).join(" ");
+  const authCode = e.authenticationFailed;
+  if (e.mailboxMissing) {
+    const detail = e.responseText ? ` (${e.responseText})` : "";
+    return {
+      code: "mailbox_not_found",
+      message: `Mailbox not found on the server${detail}. Use the folder name, e.g. INBOX, not the email address.`,
+    };
+  }
   if (authCode || /AUTHENTICATIONFAILED|invalid credentials|auth/i.test(msg)) {
     return { code: "auth_failed", message: "Authentication failed. Check the username and app-password." };
   }
