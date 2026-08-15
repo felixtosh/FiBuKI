@@ -1,6 +1,6 @@
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
-import { PLANS, USER_TOKEN_RATE_PER_100K_EUR } from "../billing/config";
-import type { PlanId } from "../billing/config";
+import { USER_TOKEN_RATE_PER_100K_EUR } from "../billing/config";
+import { resolveBudgetFields } from "../billing/checkAIBudget";
 import { MODEL_PRICING, PRICING_FALLBACK_MODEL } from "./models";
 
 type AIFunction =
@@ -121,12 +121,10 @@ async function accumulateBudget(
     }
 
     const sub = subDoc.data()!;
-    const fairUseLimit = sub.aiFairUseLimitEur as number;
-    const currentUsage = sub.aiUsageCurrentPeriodEur as number;
-    const overageCap = sub.aiOverageCapEur as number;
-    const currentOverage = sub.aiOverageCurrentPeriodEur as number;
-    const plan = (sub.plan || "free") as PlanId;
-    const overageAllowed = PLANS[plan]?.overageAllowed ?? false;
+    // Missing/invalid budget fields read as the plan's defaults, never as NaN —
+    // NaN comparisons are all false and would land in the "paused" branch below.
+    const { fairUseLimit, currentUsage, overageCap, currentOverage, overageAllowed } =
+      resolveBudgetFields(sub);
 
     const fairUseRemaining = fairUseLimit - currentUsage;
 
