@@ -276,6 +276,21 @@ services:
       # container is on the compose network, so its service URL is the right
       # default; override only if the proxies must reach fibuki-api elsewhere.
       NEXT_PUBLIC_FUNCTIONS_URL: ${NEXT_PUBLIC_FUNCTIONS_URL:-http://fibuki-api:8788}
+      # The ~45 routes under app/api verify the browser's bearer token SERVER-SIDE
+      # in this container (lib/selfhost/get-server-user-shim.ts) and must reach
+      # the same verdict as fibuki-api. These select the mode exactly as they do
+      # for the api above: OIDC_ISSUER set → verify against the IdP (keys from
+      # OIDC_JWKS_URI, or discovery), unset → Better Auth's JWKS on fibuki-api,
+      # fetched via NEXT_PUBLIC_FUNCTIONS_URL when set (the compose service URL)
+      # so the fetch never depends on this container reaching its own public
+      # hostname. Without these the shim assumed built-in auth and dialled the
+      # PUBLIC api hostname for a /__auth/jwks that an OIDC deployment does not
+      # serve — every route 401'd, logging only "Token verification failed:
+      # request timed out".
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_JWKS_URI: ${OIDC_JWKS_URI:-}
+      OIDC_AUDIENCE: ${OIDC_AUDIENCE:-}
+      OIDC_ADMIN_GROUP: ${OIDC_ADMIN_GROUP:-}
       # Server-side document IO. ~35 modules in this container call getAdminDb()
       # — the chat agent's tools, the public invoice share page, precision search,
       # the worker endpoint, Gmail, the auth routes — and off GCP the Firebase Admin
