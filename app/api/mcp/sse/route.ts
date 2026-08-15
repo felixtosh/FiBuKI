@@ -6,10 +6,15 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { resolveFunctionsUrl, FUNCTIONS_URL_UNSET_ERROR } from "../functions-url";
 
-const CF_URL = process.env.NEXT_PUBLIC_FUNCTIONS_URL ? `${process.env.NEXT_PUBLIC_FUNCTIONS_URL}/mcpSse` : `https://europe-west1-${process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "taxstudio-f12fb"}.cloudfunctions.net/mcpSse`;
+const CF_URL = resolveFunctionsUrl("mcpSse");
 
 export async function POST(request: NextRequest) {
+  if (!CF_URL) {
+    return NextResponse.json({ error: FUNCTIONS_URL_UNSET_ERROR }, { status: 500 });
+  }
+
   const authHeader = request.headers.get("authorization");
 
   if (!authHeader) {
@@ -36,6 +41,10 @@ export async function POST(request: NextRequest) {
 }
 
 export async function GET(request: NextRequest) {
+  if (!CF_URL) {
+    return NextResponse.json({ error: FUNCTIONS_URL_UNSET_ERROR }, { status: 500 });
+  }
+
   const authHeader = request.headers.get("authorization");
 
   if (!authHeader) {

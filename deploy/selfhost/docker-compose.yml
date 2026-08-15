@@ -268,6 +268,14 @@ services:
       # Also at runtime: server-side reads in route handlers resolve it here, and
       # keeping both in step avoids a stale baked-in value outliving an origin change.
       NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL}
+      # The /api/mcp and /api/mcp/sse route handlers proxy to the functions host
+      # SERVER-SIDE, so this resolves at runtime, not build time. Unset, those
+      # routes fell back to the SaaS production Cloud Functions and forwarded
+      # every request — API key included — off-box, whose answer ("Invalid or
+      # expired API key") was indistinguishable from a local auth bug. The api
+      # container is on the compose network, so its service URL is the right
+      # default; override only if the proxies must reach fibuki-api elsewhere.
+      NEXT_PUBLIC_FUNCTIONS_URL: ${NEXT_PUBLIC_FUNCTIONS_URL:-http://fibuki-api:8788}
       # Server-side document IO. ~35 modules in this container call getAdminDb()
       # — the chat agent's tools, the public invoice share page, precision search,
       # the worker endpoint, Gmail, the auth routes — and off GCP the Firebase Admin
