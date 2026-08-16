@@ -158,13 +158,14 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   // =========================================================================
   {
     name: "list_files",
-    description: "List uploaded files (receipts/invoices) with match suggestions",
+    description: "List uploaded files (receipts/invoices) with match suggestions. Returns { files, nextCursor, count }. `count` is the size of this page, not a total — page with nextCursor until it comes back null to see every file.",
     inputSchema: {
       type: "object",
       properties: {
         hasConnections: { type: "boolean", description: "true = matched, false = unmatched" },
         hasSuggestions: { type: "boolean", description: "Filter by suggestion availability" },
-        limit: { type: "number", description: "Max results (default 50)" },
+        limit: { type: "number", description: "Max results per page (default 50, max 500)" },
+        cursor: { type: "string", description: "nextCursor from the previous response to fetch the next page" },
       },
     },
   },

@@ -85,6 +85,7 @@ export interface MockCollectionRef {
 export interface MockQuery {
   where: (field: string, op: string, value: unknown) => MockQuery;
   orderBy: (field: string, direction?: string) => MockQuery;
+  startAfter: (snapshot: { id: string }) => MockQuery;
   limit: (n: number) => MockQuery;
   get: () => Promise<MockQuerySnapshot>;
 }
@@ -217,6 +218,29 @@ export const store = new InMemoryStore();
 // Create Mock Firestore
 // ============================================================================
 
+/**
+ * Compare two field values for orderBy. Dates and Timestamp-likes compare by
+ * epoch millis; anything missing sorts last.
+ */
+function compareOrderValues(a: unknown, b: unknown): number {
+  const norm = (v: unknown): number | string | null => {
+    if (v === undefined || v === null) return null;
+    if (v instanceof Date) return v.getTime();
+    if (typeof v === "object" && typeof (v as { toDate?: () => Date }).toDate === "function") {
+      return (v as { toDate: () => Date }).toDate().getTime();
+    }
+    if (typeof v === "number" || typeof v === "string") return v;
+    return String(v);
+  };
+
+  const av = norm(a);
+  const bv = norm(b);
+  if (av === null && bv === null) return 0;
+  if (av === null) return 1;
+  if (bv === null) return -1;
+  return av < bv ? -1 : av > bv ? 1 : 0;
+}
+
 export function createMockFirestore(): MockFirestore {
   const createDocRef = (collection: string, id: string): MockDocRef => ({
     id,
@@ -244,14 +268,55 @@ export function createMockFirestore(): MockFirestore {
     },
   });
 
-  const createQuery = (collection: string, filters: Array<{ field: string; op: string; value: unknown }> = []): MockQuery => ({
+  // orderBy / startAfter / limit are honoured, not ignored: a handler that
+  // pages or caps its reads has to be testable, and a limit the mock drops on
+  // the floor turns a pagination test into a test that cannot fail.
+  // Simplification vs real Firestore: documents missing the ordered field are
+  // sorted last instead of being excluded from the result.
+  const createQuery = (
+    collection: string,
+    filters: Array<{ field: string; op: string; value: unknown }> = [],
+    order?: { field: string; direction: "asc" | "desc" },
+    cursorId?: string,
+    limitN?: number
+  ): MockQuery => ({
     where: (field: string, op: string, value: unknown) => {
-      return createQuery(collection, [...filters, { field, op, value }]);
+      return createQuery(collection, [...filters, { field, op, value }], order, cursorId, limitN);
     },
-    orderBy: () => createQuery(collection, filters),
-    limit: () => createQuery(collection, filters),
+    orderBy: (field: string, direction?: string) =>
+      createQuery(collection, filters, { field, direction: direction === "desc" ? "desc" : "asc" }, cursorId, limitN),
+    startAfter: (snapshot: { id: string }) => createQuery(collection, filters, order, snapshot?.id, limitN),
+    limit: (n: number) => createQuery(collection, filters, order, cursorId, n),
     get: async () => {
-      const results = store.queryDocs(collection, filters);
+      let results = store.queryDocs(collection, filters);
+
+      if (order) {
+        const { field, direction } = order;
+        const sign = direction === "desc" ? -1 : 1;
+        results = [...results].sort((a, b) => {
+          const av = a.data[field];
+          const bv = b.data[field];
+          const aMissing = av === undefined || av === null;
+          const bMissing = bv === undefined || bv === null;
+          // Missing sorts last in both directions (real Firestore would drop
+          // these rows entirely).
+          if (aMissing !== bMissing) return aMissing ? 1 : -1;
+
+          const cmp = aMissing ? 0 : compareOrderValues(av, bv);
+          // Firestore breaks ties on __name__ in the same direction, which is
+          // what keeps startAfter pages stable across equal timestamps.
+          if (cmp !== 0) return sign * cmp;
+          return sign * (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+        });
+      }
+
+      if (cursorId !== undefined) {
+        const idx = results.findIndex((r) => r.id === cursorId);
+        if (idx >= 0) results = results.slice(idx + 1);
+      }
+
+      if (limitN !== undefined) results = results.slice(0, limitN);
+
       return {
         empty: results.length === 0,
         size: results.length,

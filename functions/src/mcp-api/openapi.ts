@@ -194,12 +194,12 @@ const OPENAPI_SPEC = {
     list_sources: "List all bank accounts/sources for the user",
     get_source: "Get details of a specific bank account. Args: sourceId (string)",
     list_transactions:
-      "List transactions with filters. Args: sourceId?, dateFrom?, dateTo?, search?, isComplete? (boolean), limit? (number, max 100)",
+      "List transactions with filters. Returns { transactions, nextCursor, count }. Args: sourceId?, dateFrom?, dateTo?, search?, isComplete? (boolean), limit? (number, max 500), cursor? (string, nextCursor from the previous page)",
     get_transaction: "Get full transaction details. Args: transactionId (string)",
     update_transaction:
       "Update transaction description or status. Args: transactionId (string), description? (string), isComplete? (boolean)",
     list_files:
-      "List uploaded files/receipts. Args: hasConnections? (boolean), hasSuggestions? (boolean), limit? (number)",
+      "List uploaded files/receipts. Returns { files, nextCursor, count } — count is this page, not a total. Args: hasConnections? (boolean), hasSuggestions? (boolean), limit? (number, max 500), cursor? (string, nextCursor from the previous page)",
     get_file: "Get file details including suggestions. Args: fileId (string)",
     connect_file_to_transaction:
       "Connect a file to a transaction (marks transaction complete). Args: fileId (string), transactionId (string)",

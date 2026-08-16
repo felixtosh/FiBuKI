@@ -332,15 +332,34 @@ export async function listTransactionsNeedingFiles(userId: string, args: Record<
 // ============================================================================
 
 export async function listFiles(userId: string, args: Record<string, unknown>) {
-  let query = db.collection("files").where("userId", "==", userId).orderBy("uploadedAt", "desc");
+  let query: FirebaseFirestore.Query = db
+    .collection("files")
+    .where("userId", "==", userId)
+    .orderBy("uploadedAt", "desc");
 
-  const limit = Math.min((args.limit as number) || 50, 100);
-  query = query.limit(limit);
+  // Cursor pagination: cursor is the last document id from the previous page.
+  if (args.cursor) {
+    const cursorSnap = await db.collection("files").doc(args.cursor as string).get();
+    if (cursorSnap.exists && cursorSnap.data()?.userId === userId) {
+      query = query.startAfter(cursorSnap);
+    }
+  }
+
+  // deletedAt / isNotInvoice (and hasConnections / hasSuggestions) can't be
+  // pushed into the query: the fields are absent on most documents and
+  // Firestore has no "field missing" predicate. They are applied in memory,
+  // so the read deliberately overfetches — a page is built from up to
+  // `scanLimit` documents. Rows past that are reached via `nextCursor`, not
+  // silently dropped, and the returned `count` is the page size, never a
+  // count of the account.
+  const requestedLimit = Math.min(Math.max((args.limit as number) || 50, 1), 500);
+  const scanLimit = Math.min(requestedLimit * 5, 1000);
+  query = query.limit(scanLimit);
 
   const snapshot = await query.get();
-  let files = snapshot.docs
-    .map((doc) => ({ id: doc.id, ...doc.data() }))
-    .filter((f: Record<string, unknown>) => !f.deletedAt && !f.isNotInvoice);
+  const scanned = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as Record<string, unknown>);
+
+  let files = scanned.filter((f: Record<string, unknown>) => !f.deletedAt && !f.isNotInvoice);
 
   if (args.hasConnections !== undefined) {
     files = files.filter((f: Record<string, unknown>) =>
@@ -358,7 +377,21 @@ export async function listFiles(userId: string, args: Record<string, unknown>) {
     );
   }
 
-  return files;
+  // The page ends either at the requested limit or at the end of the scan.
+  // The cursor is the last document actually consumed, so the next page
+  // resumes exactly where this one stopped — rows filtered out in memory are
+  // skipped, rows that simply didn't fit are not.
+  const page = files.slice(0, requestedLimit);
+  const truncated = files.length > requestedLimit;
+  const hasMore = truncated || scanned.length === scanLimit;
+
+  const nextCursor = !hasMore
+    ? null
+    : truncated
+      ? (page[page.length - 1].id as string)
+      : ((scanned[scanned.length - 1]?.id as string) ?? null);
+
+  return { files: page, nextCursor, count: page.length };
 }
 
 export async function getFile(userId: string, fileId: string) {

@@ -250,7 +250,9 @@ describe("Tool Registry Handlers", () => {
 
       const result = await handlers.listFiles(userId, {});
 
-      expect(result).toHaveLength(2);
+      expect(result.files).toHaveLength(2);
+      expect(result.count).toBe(2);
+      expect(result.nextCursor).toBeNull();
     });
 
     it("should exclude deleted files", async () => {
@@ -259,7 +261,7 @@ describe("Tool Registry Handlers", () => {
 
       const result = await handlers.listFiles(userId, {});
 
-      expect(result).toHaveLength(1);
+      expect(result.files).toHaveLength(1);
     });
 
     it("should filter by hasConnections", async () => {
@@ -269,8 +271,113 @@ describe("Tool Registry Handlers", () => {
       const connected = await handlers.listFiles(userId, { hasConnections: true });
       const unconnected = await handlers.listFiles(userId, { hasConnections: false });
 
-      expect(connected).toHaveLength(1);
-      expect(unconnected).toHaveLength(1);
+      expect(connected.files).toHaveLength(1);
+      expect(unconnected.files).toHaveLength(1);
+    });
+  });
+
+  describe("listFiles - paging and the limit", () => {
+    // Seed n files, newest first by uploadedAt so page order is deterministic.
+    const seedFiles = (n: number, overridesFor: (i: number) => Record<string, unknown> = () => ({})) => {
+      for (let i = 0; i < n; i++) {
+        store.setDoc(
+          "files",
+          `f-${String(i).padStart(3, "0")}`,
+          createTestFile({
+            userId,
+            uploadedAt: new Date(Date.UTC(2026, 0, 1) + (n - i) * 60_000),
+            ...overridesFor(i),
+          })
+        );
+      }
+    };
+
+    it("honours a limit above 100 instead of silently clamping to it", async () => {
+      seedFiles(120);
+
+      const result = await handlers.listFiles(userId, { limit: 200 });
+
+      expect(result.count).toBe(120);
+      expect(result.files).toHaveLength(120);
+    });
+
+    it("caps the page at 500 for an absurd limit, and says there is more", async () => {
+      seedFiles(600);
+
+      const result = await handlers.listFiles(userId, { limit: 10_000 });
+
+      expect(result.count).toBe(500);
+      expect(result.nextCursor).not.toBeNull();
+    });
+
+    it("fills the page past deleted rows instead of letting them consume slots", async () => {
+      // The 60 newest are deleted, live ones sit behind them. The pre-fix
+      // handler fetched `limit` rows and filtered after, so it returned 0.
+      seedFiles(120, (i) => (i < 60 ? { deletedAt: new Date() } : {}));
+
+      const result = await handlers.listFiles(userId, { limit: 20 });
+
+      expect(result.count).toBe(20);
+      expect(result.files.every((f) => !(f as Record<string, unknown>).deletedAt)).toBe(true);
+    });
+
+    it("excludes isNotInvoice rows the same way", async () => {
+      seedFiles(30, (i) => (i < 20 ? { isNotInvoice: true } : {}));
+
+      const result = await handlers.listFiles(userId, { limit: 10 });
+
+      expect(result.count).toBe(10);
+      expect(result.files.every((f) => !(f as Record<string, unknown>).isNotInvoice)).toBe(true);
+    });
+
+    it("pages to exhaustion via nextCursor, no duplicates, no gaps", async () => {
+      seedFiles(25);
+
+      const seen: string[] = [];
+      let cursor: string | null | undefined = undefined;
+      let guard = 0;
+
+      do {
+        const page: Awaited<ReturnType<typeof handlers.listFiles>> = await handlers.listFiles(userId, {
+          limit: 7,
+          ...(cursor ? { cursor } : {}),
+        });
+        seen.push(...page.files.map((f) => (f as Record<string, unknown>).id as string));
+        cursor = page.nextCursor;
+      } while (cursor && ++guard < 20);
+
+      expect(seen).toHaveLength(25);
+      expect(new Set(seen).size).toBe(25);
+    });
+
+    it("keeps paging when a whole scan window is filtered away", async () => {
+      // 60 deleted rows in front of 5 live ones, page size 5 -> scan window 25,
+      // so the first two pages are empty but must still hand back a cursor.
+      seedFiles(65, (i) => (i < 60 ? { deletedAt: new Date() } : {}));
+
+      const seen: string[] = [];
+      let cursor: string | null | undefined = undefined;
+      let guard = 0;
+
+      do {
+        const page: Awaited<ReturnType<typeof handlers.listFiles>> = await handlers.listFiles(userId, {
+          limit: 5,
+          ...(cursor ? { cursor } : {}),
+        });
+        seen.push(...page.files.map((f) => (f as Record<string, unknown>).id as string));
+        cursor = page.nextCursor;
+      } while (cursor && ++guard < 30);
+
+      expect(seen).toHaveLength(5);
+    });
+
+    it("ignores a cursor belonging to another user", async () => {
+      seedFiles(3);
+      store.setDoc("files", "f-other", createTestFile({ userId: otherUserId }));
+
+      const result = await handlers.listFiles(userId, { cursor: "f-other" });
+
+      expect(result.count).toBe(3);
     });
   });
 
@@ -655,7 +762,7 @@ describe("Tool Registry Handlers", () => {
       const result = await handlers.listFiles(userId, { limit: 5 });
 
       expect(result).toBeDefined();
-      expect(Array.isArray(result)).toBe(true);
+      expect(Array.isArray(result.files)).toBe(true);
     });
 
     it("listTransactionsNeedingFiles should apply limit after filtering", async () => {
@@ -836,8 +943,8 @@ describe("Tool Registry Handlers", () => {
 
       const result = await handlers.listFiles(userId, { hasSuggestions: true });
 
-      expect(result).toHaveLength(1);
-      expect(result[0].id).toBe("f-1");
+      expect(result.files).toHaveLength(1);
+      expect(result.files[0].id).toBe("f-1");
     });
 
     it("should filter by hasSuggestions false", async () => {
@@ -852,8 +959,8 @@ describe("Tool Registry Handlers", () => {
 
       const result = await handlers.listFiles(userId, { hasSuggestions: false });
 
-      expect(result).toHaveLength(1);
-      expect(result[0].id).toBe("f-2");
+      expect(result.files).toHaveLength(1);
+      expect(result.files[0].id).toBe("f-2");
     });
 
     it("should exclude isNotInvoice files", async () => {
@@ -862,8 +969,8 @@ describe("Tool Registry Handlers", () => {
 
       const result = await handlers.listFiles(userId, {});
 
-      expect(result).toHaveLength(1);
-      expect(result[0].id).toBe("f-1");
+      expect(result.files).toHaveLength(1);
+      expect(result.files[0].id).toBe("f-1");
     });
 
     it("should combine multiple filters", async () => {
@@ -888,8 +995,8 @@ describe("Tool Registry Handlers", () => {
         hasSuggestions: true,
       });
 
-      expect(result).toHaveLength(1);
-      expect(result[0].id).toBe("f-1");
+      expect(result.files).toHaveLength(1);
+      expect(result.files[0].id).toBe("f-1");
     });
   });
 
