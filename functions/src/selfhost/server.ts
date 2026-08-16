@@ -20,6 +20,7 @@
  */
 
 import { enableAutoDrain } from "./bus";
+import { startTriggerQueueDrain } from "./trigger-queue-drain";
 import { createCronHost } from "./cron-host";
 import { resweepPendingExtractions } from "./extraction-resweep";
 import { createHost, type TokenVerifier } from "./host";
@@ -104,8 +105,16 @@ async function main() {
     }
   }
 
+  // Cross-process trigger delivery. fibuki-web writes through the same shim but
+  // has no trigger registry and nothing draining its bus, so its changes land in
+  // `trigger_events` and are dispatched here. Without this, every trigger whose
+  // originating write comes from `app/api/**` stays dead — silently, which is
+  // how it went unnoticed until the mailbox-connect sync never queued.
+  const triggerQueue = startTriggerQueueDrain({ log: (m) => console.log(m) });
+
   for (const signal of ["SIGTERM", "SIGINT"] as const) {
     process.on(signal, () => {
+      triggerQueue.stop();
       void cron.stop().finally(() => process.exit(0));
     });
   }

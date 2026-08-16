@@ -15,6 +15,7 @@
 
 import { FieldValue, Timestamp } from "@google-cloud/firestore";
 import { emitChange } from "./bus";
+import { enqueueTriggerEvent, usesDurableTriggerQueue } from "./trigger-queue";
 import { notifyChange } from "./change-notify";
 import { FLATTENED, FlatSpec } from "./db/collections";
 import { runMigrations } from "./db/migrate";
@@ -256,6 +257,9 @@ export async function __resetFirestoreShim(): Promise<void> {
   await withTenant(async (q) => {
     await q(`DELETE FROM docs`);
     for (const spec of Object.values(FLATTENED)) await q(`DELETE FROM ${spec.table}`);
+    // Undelivered trigger events are per-test state too: leaving them behind
+    // lets one case's queued write fire inside the next case's drain.
+    await q(`DELETE FROM trigger_events`);
   });
 }
 
@@ -289,6 +293,16 @@ function encodeValue(v: unknown): unknown {
     return out;
   }
   return v;
+}
+
+/**
+ * The `docs.data` codec, exported for `trigger-queue-drain.ts`: a queued
+ * trigger event stores wire-encoded documents, and the snapshot pair handed to
+ * a handler must decode through exactly this path or a Timestamp arrives as a
+ * `{ __fbts__: ... }` bag and every `.toDate()` in a handler throws.
+ */
+export function __decodeDocValue(v: unknown): unknown {
+  return decodeValue(v);
 }
 
 function decodeValue(v: unknown): unknown {
@@ -510,6 +524,7 @@ async function rawPut(
   collectionPath: string,
   id: string,
   data: Record<string, unknown>,
+  before: Record<string, unknown> | undefined,
 ): Promise<void> {
   const spec = flatSpecFor(collectionPath);
   const path = `${collectionPath}/${id}`;
@@ -536,10 +551,25 @@ async function rawPut(
       id,
       op: "w",
     });
+    // Same transaction, same reason: a process that does not dispatch triggers
+    // itself must hand the change to one that does, and must not do so for a
+    // write that then rolls back.
+    if (usesDurableTriggerQueue()) {
+      await enqueueTriggerEvent(q, getTenantId(), {
+        collectionPath,
+        id,
+        path,
+        before: encodeValue(before),
+        after: encodeValue(data),
+      });
+    }
   });
 }
 
-async function rawDelete(path: string): Promise<void> {
+async function rawDelete(
+  path: string,
+  before: Record<string, unknown> | undefined,
+): Promise<void> {
   const segs = path.split("/");
   const spec = segs.length === 2 ? flatSpecFor(segs[0]) : undefined;
   await withTenant(async (q) => {
@@ -554,6 +584,15 @@ async function rawDelete(path: string): Promise<void> {
       id: segs[segs.length - 1],
       op: "d",
     });
+    if (usesDurableTriggerQueue()) {
+      await enqueueTriggerEvent(q, getTenantId(), {
+        collectionPath: segs.slice(0, -1).join("/"),
+        id: segs[segs.length - 1],
+        path,
+        before: encodeValue(before),
+        after: undefined,
+      });
+    }
   });
 }
 
@@ -565,11 +604,19 @@ async function writeDoc(
   const path = `${collectionPath}/${id}`;
   const before = await rawGet(path);
   if (next === undefined) {
-    await rawDelete(path);
+    await rawDelete(path, before);
   } else {
-    await rawPut(collectionPath, id, next);
+    await rawPut(collectionPath, id, next, before);
   }
-  emitChange({ collectionPath, id, path, before, after: next });
+  // Two delivery paths, never both, chosen by whether THIS process dispatches
+  // triggers. fibuki-api emits in-process (cheap, and handler cascades stay in
+  // memory where the drain's loop guard can see them). Everyone else has
+  // already appended to trigger_events inside the write's transaction above;
+  // emitting here as well would queue a change onto a bus with no listeners,
+  // which is exactly the silent drop this replaces.
+  if (!usesDurableTriggerQueue()) {
+    emitChange({ collectionPath, id, path, before, after: next });
+  }
 }
 
 // ---------------------------------------------------------------------------

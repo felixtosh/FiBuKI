@@ -22,9 +22,11 @@
 
 import { sql } from "drizzle-orm";
 import {
+  bigserial,
   boolean,
   doublePrecision,
   index,
+  integer,
   jsonb,
   pgTable,
   primaryKey,
@@ -275,4 +277,46 @@ export const authJwks = pgTable(
     expiresAt: timestamp("expiresAt", { withTimezone: true }),
   },
   (t) => [primaryKey({ columns: [t.tenant_id, t.id] })],
+);
+
+/**
+ * Cross-process trigger delivery (selfhost/trigger-queue.ts).
+ *
+ * The in-process bus (selfhost/bus.ts) cannot cross a container boundary, so a
+ * write made by fibuki-web used to emit onto a bus with no listeners and no
+ * drain — every trigger whose originating write came from `app/api/**` was
+ * silently dead in deployment. Writers that do not dispatch triggers themselves
+ * append the change here instead, in the SAME transaction as the write, and the
+ * dispatching process (fibuki-api) drains it.
+ *
+ * `before`/`after` hold wire-encoded documents (selfhost/wire-values.ts), the
+ * same codec as `docs.data`, so a queued event reconstructs the exact snapshot
+ * pair the trigger shim would have built in-process. SQL NULL means "no
+ * document on that side": NULL before = create, NULL after = delete.
+ *
+ * Rows are deleted once dispatched. `claimed_at` is the in-flight marker — a
+ * process that dies mid-handler leaves its row claimed, and the reclaim sweep
+ * puts it back after CLAIM_TIMEOUT_MS. `attempts` bounds that retry so a poison
+ * event cannot spin forever.
+ */
+export const triggerEvents = pgTable(
+  "trigger_events",
+  {
+    seq: bigserial("seq", { mode: "number" }).primaryKey(),
+    tenant_id: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id),
+    collection_path: text("collection_path").notNull(),
+    doc_id: text("doc_id").notNull(),
+    path: text("path").notNull(),
+    before: jsonb("before"),
+    after: jsonb("after"),
+    created_at: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    claimed_at: timestamp("claimed_at", { withTimezone: true }),
+    attempts: integer("attempts").notNull().default(0),
+  },
+  (t) => [
+    // The drain's hot path: unclaimed rows for this tenant in sequence order.
+    index("trigger_events_pending_idx").on(t.tenant_id, t.claimed_at, t.seq),
+  ],
 );

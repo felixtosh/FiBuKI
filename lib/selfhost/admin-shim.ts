@@ -44,6 +44,24 @@
 
 import { getFirestore } from "../../functions/src/selfhost/firestore-shim";
 import { getStorage } from "../../functions/src/selfhost/storage-shim";
+import { useDurableTriggerQueue } from "../../functions/src/selfhost/trigger-queue";
+
+/**
+ * Trigger delivery for this container.
+ *
+ * Firestore triggers are dispatched by an in-process bus that only fibuki-api
+ * drains. This module is loaded in fibuki-web and nowhere else, which makes it
+ * the one unambiguous place to say "writes from this process cannot be
+ * dispatched locally". Before this, they emitted onto a bus with no listeners:
+ * every trigger whose originating write came from a web route silently never
+ * ran, and the same call site worked correctly from fibuki-api and under test.
+ *
+ * Now those writes append to `trigger_events` in the same transaction, and
+ * fibuki-api's drain (functions/src/selfhost/trigger-queue-drain.ts) delivers
+ * them. Module scope on purpose — it must be true before the first write, and
+ * every route reaches document IO through getAdminDb() below.
+ */
+useDurableTriggerQueue();
 
 /**
  * The Firestore-shaped handle, backed by Postgres.
