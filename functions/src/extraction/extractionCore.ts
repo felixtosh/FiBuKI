@@ -453,30 +453,6 @@ function inferLineItemAmountsAreNet(lineItems: ExtractedLineItem[]): boolean {
   return netInterpretationError < grossInterpretationError;
 }
 
-function buildFallbackLineItem(
-  extractedAmount: number,
-  extractedVatPercent: number | null | undefined
-): ExtractedLineItem {
-  const normalizedVatPercent = typeof extractedVatPercent === "number" &&
-    Number.isFinite(extractedVatPercent) &&
-    extractedVatPercent >= 0 &&
-    extractedVatPercent <= 100
-    ? extractedVatPercent
-    : null;
-
-  const vatAmount = normalizedVatPercent !== null && normalizedVatPercent > 0
-    ? Math.round((extractedAmount * normalizedVatPercent) / (100 + normalizedVatPercent))
-    : 0;
-
-  return {
-    description: "Invoice total",
-    quantity: 1,
-    unitPrice: extractedAmount - vatAmount,
-    vatPercent: normalizedVatPercent,
-    vatAmount,
-    amount: extractedAmount,
-  };
-}
 
 function consolidateLineItems(
   lineItems: ExtractedLineItem[],
@@ -518,13 +494,12 @@ function consolidateLineItems(
   };
 }
 
-function reconcileLineItemsWithDocumentTotal(
+export function reconcileLineItemsWithDocumentTotal(
   lineItems: ExtractedLineItem[],
-  extractedAmount: number | null | undefined,
-  extractedVatPercent: number | null | undefined
-): ExtractedLineItem[] {
+  extractedAmount: number | null | undefined
+): { lineItems: ExtractedLineItem[]; unreconciled: boolean } {
   if (lineItems.length === 0) {
-    return [];
+    return { lineItems: [], unreconciled: false };
   }
 
   const filtered = lineItems.filter((item) =>
@@ -533,7 +508,7 @@ function reconcileLineItemsWithDocumentTotal(
   const candidateLineItems = filtered.length > 0 ? filtered : lineItems;
 
   if (typeof extractedAmount !== "number" || !Number.isFinite(extractedAmount) || extractedAmount <= 0) {
-    return candidateLineItems;
+    return { lineItems: candidateLineItems, unreconciled: false };
   }
 
   const consolidated = consolidateLineItems(candidateLineItems, extractedAmount);
@@ -541,16 +516,22 @@ function reconcileLineItemsWithDocumentTotal(
   const tolerance = Math.max(5, Math.round(extractedAmount * 0.005));
 
   if (mismatch <= tolerance) {
-    return candidateLineItems;
+    return { lineItems: candidateLineItems, unreconciled: false };
   }
 
+  // Fork #64 (spec §6): keep the extracted items and flag the file instead
+  // of destroying them with a single document-rate fallback line — the old
+  // behavior collapsed exactly the multi-rate receipts the UVA calculation
+  // needs. Downstream, an unreconciled file is never trusted for VAT
+  // derivation (review bucket), but a human can repair one line instead of
+  // re-keying the whole receipt.
   console.warn(
     `[ExtractionCore] Line items mismatch document total by ${mismatch} cents ` +
     `(lineItems=${consolidated.totalAmount}, extractedAmount=${extractedAmount}). ` +
-    `Falling back to single total line item.`
+    `Keeping items and flagging lineItemsUnreconciled.`
   );
 
-  return [buildFallbackLineItem(extractedAmount, extractedVatPercent)];
+  return { lineItems: candidateLineItems, unreconciled: true };
 }
 
 /**
@@ -792,18 +773,28 @@ export async function runExtraction(
 
     const normalizedLineItems = normalizeExtractedLineItems(extracted.lineItems);
     if (normalizedLineItems.length > 0) {
-      const reconciledLineItems = reconcileLineItemsWithDocumentTotal(
+      const reconciled = reconcileLineItemsWithDocumentTotal(
         normalizedLineItems,
-        extracted.amount,
-        extracted.vatPercent
+        extracted.amount
       );
-      const consolidated = consolidateLineItems(reconciledLineItems, extracted.amount);
-      updateData.extractedLineItems = reconciledLineItems;
-      updateData.extractedAmount = consolidated.totalAmount;
-      updateData.extractedVatAmount = consolidated.totalVatAmount;
-      updateData.extractedVatPercent = consolidated.consolidatedVatPercent;
+      updateData.extractedLineItems = reconciled.lineItems;
+      updateData.lineItemsUnreconciled = reconciled.unreconciled;
+      if (reconciled.unreconciled) {
+        // The item sum contradicts the document total — keep the document's
+        // own top-level extraction and let the flagged items wait for a
+        // human repair (fork #64, spec §6).
+        updateData.extractedAmount = extracted.amount;
+        updateData.extractedVatAmount = null;
+        updateData.extractedVatPercent = extracted.vatPercent;
+      } else {
+        const consolidated = consolidateLineItems(reconciled.lineItems, extracted.amount);
+        updateData.extractedAmount = consolidated.totalAmount;
+        updateData.extractedVatAmount = consolidated.totalVatAmount;
+        updateData.extractedVatPercent = consolidated.consolidatedVatPercent;
+      }
     } else {
       updateData.extractedLineItems = null;
+      updateData.lineItemsUnreconciled = false;
       updateData.extractedVatAmount = null;
       updateData.extractedAmount = extracted.amount;
       updateData.extractedVatPercent = extracted.vatPercent;

@@ -454,7 +454,7 @@ describe("characterization: runExtraction extraction + counterparty", () => {
 // ===========================================================================
 
 describe("characterization: runExtraction line-item reconciliation", () => {
-  it("line items that badly mismatch the document total collapse into one 'Invoice total' item", async () => {
+  it("line items that badly mismatch the document total are KEPT and flagged (fork #64)", async () => {
     const fileData = await seedFile("f-mismatch");
     q({
       extracted: {
@@ -467,13 +467,16 @@ describe("characterization: runExtraction line-item reconciliation", () => {
     await runExtraction("f-mismatch", fileData, { skipClassification: true });
 
     const doc = await fileDoc("f-mismatch");
-    // 5798 (net+VAT view) vs 11900 → mismatch 6102 > tolerance 60 → fallback:
-    // gross 11900 @19% → VAT round(11900*19/119) = 1900, unit price 10000
+    // 5798 (net+VAT view) vs 11900 → mismatch 6102 > tolerance 60. The old
+    // behavior destroyed the items with one document-rate fallback line;
+    // now they survive for human repair, the file is flagged, and the
+    // top-level keeps the document's own extraction (spec §6).
     expect(doc.extractedLineItems).toEqual([
-      { description: "Invoice total", quantity: 1, unitPrice: 10000, vatPercent: 19, vatAmount: 1900, amount: 11900 },
+      { description: "Teilposten", quantity: null, unitPrice: null, vatPercent: 19, vatAmount: 798, amount: 5000 },
     ]);
+    expect(doc.lineItemsUnreconciled).toBe(true);
     expect(doc.extractedAmount).toBe(11900);
-    expect(doc.extractedVatAmount).toBe(1900);
+    expect(doc.extractedVatAmount).toBeNull();
     expect(doc.extractedVatPercent).toBe(19);
   });
 

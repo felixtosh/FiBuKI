@@ -209,6 +209,7 @@ export { findReceiptForTransactionCallable as findReceiptForTransaction } from "
 export {
   generateUvaXmlCallable as generateUvaXml,
   generateUvaPdfCallable as generateUvaPdf,
+  calculateUvaCallable as calculateUva,
 } from "./reports";
 
 // Automation registry (for admin page)

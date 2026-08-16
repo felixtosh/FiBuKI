@@ -15,6 +15,18 @@ export type NoReceiptCategoryId =
   | "receipt-lost";
 
 /**
+ * How the UVA calculation treats transactions in this category (fork #64):
+ * - exempt-class: zero input VAT by law (bank fees, payroll, taxes) — R9
+ * - documented-elsewhere: outside the report's scope (transfers, private)
+ * - needs-receipt: stays on the receipt-chasing worklist (Eigenbeleg
+ *   never creates a VAT deduction)
+ */
+export type CategoryVatTreatment =
+  | "exempt-class"
+  | "documented-elsewhere"
+  | "needs-receipt";
+
+/**
  * Template definition for no-receipt categories (hardcoded)
  */
 export interface NoReceiptCategoryTemplate {
@@ -24,6 +36,8 @@ export interface NoReceiptCategoryTemplate {
   helperText: string;
   /** Whether this category requires additional confirmation/info (e.g., receipt-lost) */
   requiresConfirmation?: boolean;
+  /** UVA treatment; copied onto user categories at initialization */
+  vatTreatment?: CategoryVatTreatment;
 }
 
 /**
@@ -92,6 +106,9 @@ export interface UserNoReceiptCategory {
    * Capped at 50 entries.
    */
   manualRemovals?: CategoryManualRemoval[];
+
+  /** UVA treatment (from template, can be customized) — fork #64 */
+  vatTreatment?: CategoryVatTreatment;
 
   /** Transaction count using this category */
   transactionCount: number;

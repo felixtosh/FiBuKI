@@ -54,7 +54,10 @@ interface UVAReportData {
 
 interface ExportRequest {
   format: "pdf" | "xml";
-  report: UVAReportData;
+  /** PDF export: corrected figures in the legacy render shape */
+  report?: UVAReportData;
+  /** XML export: per-Kennzahl figures from the calculation module (fork #64) */
+  kennzahlen?: Record<string, number>;
   period: ReportPeriod;
   taxNumber?: string;
   companyName?: string;
@@ -94,19 +97,12 @@ export async function POST(request: NextRequest) {
     const authToken = authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : undefined;
 
     const body: ExportRequest = await request.json();
-    const { format, report, period, taxNumber, companyName } = body;
+    const { format, report, kennzahlen, period, taxNumber, companyName } = body;
 
     // Validate required fields
     if (!format || !["pdf", "xml"].includes(format)) {
       return NextResponse.json(
         { error: "format must be 'pdf' or 'xml'" },
-        { status: 400 }
-      );
-    }
-
-    if (!report) {
-      return NextResponse.json(
-        { error: "report data is required" },
         { status: 400 }
       );
     }
@@ -127,12 +123,19 @@ export async function POST(request: NextRequest) {
         );
       }
 
+      if (!kennzahlen) {
+        return NextResponse.json(
+          { error: "kennzahlen record is required for XML export" },
+          { status: 400 }
+        );
+      }
+
       const response = await callFirebaseFunction<
-        { report: UVAReportData; period: ReportPeriod; taxNumber: string },
+        { kennzahlen: Record<string, number>; period: ReportPeriod; taxNumber: string },
         XmlExportResponse
       >(
         "generateUvaXml",
-        { report, period, taxNumber },
+        { kennzahlen, period, taxNumber },
         authToken
       );
 
@@ -144,6 +147,13 @@ export async function POST(request: NextRequest) {
       });
     } else {
       // PDF export
+      if (!report) {
+        return NextResponse.json(
+          { error: "report data is required" },
+          { status: 400 }
+        );
+      }
+
       const response = await callFirebaseFunction<
         { report: UVAReportData; period: ReportPeriod; companyName?: string; taxNumber?: string },
         PdfExportResponse

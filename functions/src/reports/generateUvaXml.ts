@@ -1,8 +1,17 @@
 /**
  * Cloud Function: Generate UVA XML for FinanzOnline
  *
- * Generates XML file in BMF (Austrian Ministry of Finance) format
- * for electronic submission of Umsatzsteuervoranmeldung (VAT advance return).
+ * Renders the per-Kennzahl figure record produced by the UVA calculation
+ * module (functions/src/uva) into the BMF U30 XML envelope.
+ *
+ * QUARANTINE NOTE (spec §4, fork #64): no public XSD for the FinanzOnline
+ * U30 upload exists, so the envelope element names below are unverified.
+ * The authoritative deliverable is the per-KZ figure sheet entered
+ * manually; this XML is best-effort until a schema is obtained. The KZ
+ * codes themselves ARE verified against the official U30 form 2026 — the
+ * renderer emits exactly the codes the calculation produced and invents
+ * none (the old hand-mapping had 12 of 16 codes wrong, including a
+ * 10%/13% swap and a fabricated KZ096).
  */
 
 import { createCallable, HttpsError } from "../utils/createCallable";
@@ -13,36 +22,11 @@ export interface ReportPeriod {
   type: "monthly" | "quarterly";
 }
 
-export interface UVAReportData {
-  taxableRevenue: {
-    rate20Net: number;
-    rate20Vat: number;
-    rate10Net: number;
-    rate10Vat: number;
-    rate13Net: number;
-    rate13Vat: number;
-  };
-  exemptRevenue: {
-    exports: number;
-    euDeliveries: number;
-    other: number;
-  };
-  euAcquisitions: {
-    netAmount: number;
-    vatAmount: number;
-  };
-  inputVat: {
-    standard: number;
-    euAcquisitions: number;
-    imports: number;
-  };
-  totalVatPayable: number;
-  totalInputVat: number;
-  vatBalance: number;
-}
+/** Kennzahl code → value in cents, as produced by calculateUva. */
+export type UvaKennzahlValues = Record<string, number>;
 
 interface GenerateUvaXmlRequest {
-  report: UVAReportData;
+  kennzahlen: UvaKennzahlValues;
   period: ReportPeriod;
   taxNumber: string; // FASTNR - 9 digits
 }
@@ -87,20 +71,11 @@ function getPeriodRange(period: ReportPeriod): { from: string; to: string } {
 }
 
 /**
- * Generate XML element with optional value (skip if empty)
- */
-function xmlElement(tag: string, value: string | number): string {
-  const strValue = typeof value === "number" ? formatAmount(value) : value;
-  if (!strValue) return "";
-  return `      <${tag}>${strValue}</${tag}>\n`;
-}
-
-/**
- * Generate UVA XML in FinanzOnline format
- * Exported for use by submitUvaToFinanzOnline callable
+ * Generate UVA XML in FinanzOnline format from the per-KZ figure record.
+ * Exported for use by submitUvaToFinanzOnline callable.
  */
 export function generateUvaXml(
-  report: UVAReportData,
+  kennzahlen: UvaKennzahlValues,
   period: ReportPeriod,
   taxNumber: string
 ): string {
@@ -109,39 +84,14 @@ export function generateUvaXml(
   const timeStr = now.toTimeString().split(" ")[0]; // HH:MM:SS
   const periodRange = getPeriodRange(period);
 
-  // Build U30 section with KZ codes
+  // One element per Kennzahl the calculation emitted, in code order.
+  // Zero values are omitted (the form leaves empty fields blank).
   let u30Content = "";
-
-  // Revenue at 20%
-  u30Content += xmlElement("KZ000", report.taxableRevenue.rate20Net);
-  u30Content += xmlElement("KZ001", report.taxableRevenue.rate20Vat);
-
-  // Revenue at 10%
-  u30Content += xmlElement("KZ006", report.taxableRevenue.rate10Net);
-  u30Content += xmlElement("KZ007", report.taxableRevenue.rate10Vat);
-
-  // Revenue at 13%
-  u30Content += xmlElement("KZ029", report.taxableRevenue.rate13Net);
-  u30Content += xmlElement("KZ008", report.taxableRevenue.rate13Vat);
-
-  // Exempt revenue
-  u30Content += xmlElement("KZ011", report.exemptRevenue.exports);
-  u30Content += xmlElement("KZ017", report.exemptRevenue.euDeliveries);
-  u30Content += xmlElement("KZ019", report.exemptRevenue.other);
-
-  // EU acquisitions
-  u30Content += xmlElement("KZ070", report.euAcquisitions.netAmount);
-  u30Content += xmlElement("KZ071", report.euAcquisitions.vatAmount);
-
-  // Input VAT
-  u30Content += xmlElement("KZ060", report.inputVat.standard);
-  u30Content += xmlElement("KZ061", report.inputVat.euAcquisitions);
-  u30Content += xmlElement("KZ083", report.inputVat.imports);
-
-  // Totals
-  u30Content += xmlElement("KZ095", report.totalVatPayable);
-  u30Content += xmlElement("KZ090", report.totalInputVat);
-  u30Content += xmlElement("KZ096", report.vatBalance);
+  for (const code of Object.keys(kennzahlen).sort()) {
+    const value = formatAmount(kennzahlen[code]);
+    if (!value) continue;
+    u30Content += `      <KZ${code}>${value}</KZ${code}>\n`;
+  }
 
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <ERKLAERUNGS_UEBERMITTLUNG xmlns="http://www.bmf.gv.at/erklaerung/uebermittlung">
@@ -176,7 +126,7 @@ export const generateUvaXmlCallable = createCallable<
 >(
   { name: "generateUvaXml" },
   async (_ctx, request) => {
-    const { report, period, taxNumber } = request;
+    const { kennzahlen, period, taxNumber } = request;
 
     // Validate tax number
     if (!taxNumber || !/^\d{9}$/.test(taxNumber)) {
@@ -186,8 +136,8 @@ export const generateUvaXmlCallable = createCallable<
       );
     }
 
-    if (!report) {
-      throw new HttpsError("invalid-argument", "Report data is required");
+    if (!kennzahlen || typeof kennzahlen !== "object") {
+      throw new HttpsError("invalid-argument", "kennzahlen record is required");
     }
 
     if (!period) {
@@ -195,7 +145,7 @@ export const generateUvaXmlCallable = createCallable<
     }
 
     // Generate XML
-    const xml = generateUvaXml(report, period, taxNumber);
+    const xml = generateUvaXml(kennzahlen, period, taxNumber);
 
     // Generate filename
     const periodStr =
