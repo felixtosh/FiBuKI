@@ -20,6 +20,7 @@ export interface TransactionRecord {
   id: string;
   date: TimestampLike;
   amount: number;
+  currency?: string | null;
   partner?: string | null;
   vatRate?: number | null;
   isReverseCharge?: boolean | null;
@@ -32,6 +33,7 @@ export interface TransactionRecord {
 export interface FileRecord {
   id: string;
   extractedAmount?: number | null;
+  extractedCurrency?: string | null;
   extractedVatAmount?: number | null;
   extractedVatPercent?: number | null;
   extractedLineItems?: Array<{
@@ -97,6 +99,7 @@ export function toViennaCalendarDay(date: TimestampLike): string {
 export function toUvaFile(f: FileRecord): UvaFile {
   return {
     id: f.id,
+    currency: f.extractedCurrency ?? null,
     totalGross: f.extractedAmount ?? null,
     vatAmount: f.extractedVatAmount ?? null,
     vatPercent: f.extractedVatPercent ?? null,
@@ -211,6 +214,7 @@ export function buildUvaTransaction(
     id: tx.id,
     date: toViennaCalendarDay(tx.date),
     amount: tx.amount,
+    currency: tx.currency ?? null,
     partnerName: tx.partner ?? null,
     vatRateOverride: tx.vatRate ?? null,
     noReceiptCategory,

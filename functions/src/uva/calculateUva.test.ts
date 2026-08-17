@@ -529,6 +529,150 @@ describe("amount reconciliation", () => {
 // Step 3 — manual override
 // ---------------------------------------------------------------------------
 
+describe("foreign-currency documents (fork #87)", () => {
+  // Live shape: Invoice-SJJFNBF4-0004.pdf USD 36.00 incl. USD 6.00 VAT (20%),
+  // paid as EUR 31.32 (0.87 EUR/USD). Before #87 the USD figures were read
+  // as EUR and the pair reconciled as a "partial payment" of 3132/3600.
+  const usdFile = {
+    id: "f-usd",
+    currency: "USD",
+    totalGross: 3600,
+    vatAmount: 600,
+    vatPercent: 20,
+  };
+
+  it("converts a single foreign-currency file at the effective rate actually paid", () => {
+    const r = run([
+      { id: "t-usd", date: "2026-02-10", amount: -3132, currency: "EUR", files: [usdFile] },
+    ]);
+    // 600 USD-cents * (3132/3600) = 522 EUR-cents of input VAT, not 600 and not 516
+    expect(r.unresolved).toHaveLength(0);
+    expect(r.totalInputVat).toBe(522);
+    // net + vat = gross = bank
+    expect(kz(r, "060")).toBe(522);
+  });
+
+  it("treats a missing transaction currency as EUR", () => {
+    const r = run([{ id: "t-usd", date: "2026-02-10", amount: -3132, files: [usdFile] }]);
+    expect(r.totalInputVat).toBe(522);
+  });
+
+  it("converts printed rate groups and line items too", () => {
+    const r = run([
+      {
+        id: "t-usd-rg",
+        date: "2026-02-10",
+        amount: -3132,
+        files: [
+          {
+            id: "f-usd-rg",
+            currency: "USD",
+            totalGross: 3600,
+            rateGroups: [{ rate: 20, net: 3000, vat: 600, gross: 3600 }],
+          },
+        ],
+      },
+    ]);
+    expect(r.unresolved).toHaveLength(0);
+    expect(r.totalInputVat).toBe(522);
+    expect(r.kennzahlen["060"].contributions["rate-groups"]).toBe(1);
+  });
+
+  it("does not convert when the implied rate is not a plausible FX rate (partial payment shape)", () => {
+    // USD 120 invoice, EUR 50 paid: 0.417 EUR/USD is no exchange rate — surface it
+    const r = run([
+      {
+        id: "t-usd-partial",
+        date: "2026-02-10",
+        amount: -5000,
+        files: [{ ...usdFile, totalGross: 12000, vatAmount: 2000 }],
+      },
+    ]);
+    expect(r.totalInputVat).toBe(0);
+    expect(r.unresolved).toEqual([
+      expect.objectContaining({ transactionId: "t-usd-partial", reason: "foreign-currency" }),
+    ]);
+    expect(r.unresolved[0].foregoneVat).toBe(Math.round((5000 * 20) / 120));
+  });
+
+  it("does not convert when several files are connected and any is foreign", () => {
+    const r = run([
+      {
+        id: "t-two",
+        date: "2026-02-10",
+        amount: -4332,
+        files: [usdFile, { id: "f-eur", totalGross: 1200, vatAmount: 200, vatPercent: 20 }],
+      },
+    ]);
+    expect(r.totalInputVat).toBe(0);
+    expect(r.unresolved[0]).toMatchObject({ transactionId: "t-two", reason: "foreign-currency" });
+  });
+
+  it("a bank line that is not in EUR cannot feed the EUR report in any lane", () => {
+    const r = run([
+      { id: "t-usd-acct", date: "2026-02-10", amount: -3600, currency: "USD", files: [usdFile] },
+      { id: "t-usd-income", date: "2026-02-11", amount: 5000, currency: "USD" },
+    ]);
+    expect(r.totalInputVat).toBe(0);
+    expect(r.totalOutputVat).toBe(0);
+    expect(r.unresolved.map((u) => [u.transactionId, u.reason])).toEqual([
+      ["t-usd-acct", "foreign-currency"],
+      ["t-usd-income", "foreign-currency"],
+    ]);
+  });
+
+  it("does not convert an unknown currency", () => {
+    const r = run([
+      { id: "t-xyz", date: "2026-02-10", amount: -3132, files: [{ ...usdFile, currency: "XYZ" }] },
+    ]);
+    expect(r.totalInputVat).toBe(0);
+    expect(r.unresolved[0].reason).toBe("foreign-currency");
+  });
+
+  it("a foreign-currency file without a document total cannot derive a rate", () => {
+    const r = run([
+      {
+        id: "t-nogross",
+        date: "2026-02-10",
+        amount: -3132,
+        files: [{ id: "f-ng", currency: "USD", vatAmount: 600, vatPercent: 20 }],
+      },
+    ]);
+    expect(r.totalInputVat).toBe(0);
+    expect(r.unresolved[0].reason).toBe("foreign-currency");
+  });
+
+  it("a foreign-currency file with no VAT data still reports no-vat-data", () => {
+    const r = run([
+      {
+        id: "t-novat",
+        date: "2026-02-10",
+        amount: -3132,
+        files: [{ id: "f-nv", currency: "USD", totalGross: 3600 }],
+      },
+    ]);
+    expect(r.unresolved[0].reason).toBe("no-vat-data");
+  });
+
+  it("the D2 foreign-VAT lane still fires on a converted document", () => {
+    // GBP invoice with 20% UK VAT and a GB UID: 20 is a valid AT rate, so this
+    // stays deductible-looking today (D2 only catches invalid rates); assert
+    // the conversion does not change that classification path.
+    const r = run([
+      {
+        id: "t-gbp",
+        date: "2026-02-10",
+        amount: -11700,
+        files: [
+          { id: "f-gbp", currency: "GBP", totalGross: 10000, vatAmount: 1900, vatPercent: 19, supplierVatId: "GB123456789" },
+        ],
+      },
+    ]);
+    expect(r.unresolved[0].reason).toBe("foreign-or-invalid-rate");
+    expect(r.foreignVat[0]).toMatchObject({ transactionId: "t-gbp", rate: 19, refundCandidate: true });
+  });
+});
+
 describe("step 3: manual vatRate override", () => {
   it("applies the override when no file resolves", () => {
     const r = run([

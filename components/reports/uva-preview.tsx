@@ -77,6 +77,7 @@ const REASON_LABELS: Record<string, string> = {
   "no-vat-data": "Receipt has no VAT data",
   "foreign-or-invalid-rate": "Foreign or invalid VAT rate",
   "amount-mismatch": "Bank amount ≠ invoice total",
+  "foreign-currency": "Foreign-currency receipt — no usable exchange rate",
   "needs-receipt": "Receipt lost — needs documentation",
 };
 

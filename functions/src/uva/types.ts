@@ -33,6 +33,13 @@ export interface UvaLineItem {
 /** A connected file, adapted from the files collection record. */
 export interface UvaFile {
   id: string;
+  /**
+   * Document currency (extractedCurrency), ISO code; null/undefined = EUR.
+   * A file whose currency differs from the transaction's is converted at the
+   * effective rate actually paid (bank / totalGross) before derivation, and
+   * only when that rate is a plausible FX rate for the pair (fork #87).
+   */
+  currency?: string | null;
   /** Document total in cents (extractedAmount) */
   totalGross?: number | null;
   /** Top-level extracted VAT amount in cents (extractedVatAmount) */
@@ -117,6 +124,8 @@ export interface UvaTransaction {
   date: string;
   /** Signed cents: negative = expense, positive = income */
   amount: number;
+  /** Bank-line currency, ISO code; null/undefined = EUR. */
+  currency?: string | null;
   partnerName?: string | null;
   /** Restaurant-class partner enables tip-delta classification (R5). */
   partnerClass?: "restaurant" | null;
@@ -163,6 +172,14 @@ export type UnresolvedReason =
   | "no-vat-data"
   | "foreign-or-invalid-rate"
   | "amount-mismatch"
+  /**
+   * The document is in another currency than the bank line and no effective
+   * rate could be derived: several files on one payment, no document total,
+   * an unknown currency, or an implied rate that is not a plausible FX rate
+   * (fork #87). The document figures are NOT used — they would be read in
+   * the wrong unit.
+   */
+  | "foreign-currency"
   | "needs-receipt";
 
 /** The pre-filing human checklist (spec §5). */

@@ -21,6 +21,7 @@ import {
   ratesValidInPeriod,
   ratesValidOn,
 } from "./rateSet";
+import { assessImpliedFx, isSameCurrency } from "../fx/fxPlausibility";
 import type {
   DerivationStep,
   KennzahlFigure,
@@ -125,6 +126,13 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
   for (const tx of transactions) {
     const isIncome = tx.amount > 0;
     const bank = Math.abs(tx.amount);
+
+    // The report is in EUR; a bank line in another currency cannot feed a
+    // Kennzahl in any lane (fork #87). Surface it rather than add raw cents.
+    if (!isSameCurrency(tx.currency, "EUR")) {
+      markUnresolved(tx, "foreign-currency", null);
+      continue;
+    }
 
     // --- D3: foreign regimes, each in its own bucket, never mixed --------
     if (tx.foreignRegime) {
@@ -279,9 +287,30 @@ function deriveRateGroups(
     return { ok: true, step: "invoice", groups: tx.invoiceRateGroups };
   }
 
-  const files = tx.files ?? [];
+  let files = tx.files ?? [];
 
   if (files.length > 0) {
+    // Foreign-currency documents (fork #87): the document figures are in
+    // another unit than the bank line, so they must never be read as-is.
+    // With exactly one file the bank line IS the payment: bank / totalGross
+    // is the effective rate actually paid on the payment date, and the whole
+    // document is rescaled by it. Known limitation: § 20 Abs 6 UStG points
+    // at the BMF monthly / ECB rate, and the card issuer's markup (1-3%) is
+    // inside the effective rate, so the claim runs slightly high; without an
+    // FX feed this is the best rate the data holds and the delta is
+    // bounded by the plausibility band. Anything else — several files, no
+    // total, an unknown currency, or an implied rate that is not a plausible
+    // FX rate (a partial payment in disguise) — is surfaced instead of
+    // guessed.
+    const foreign = files.filter((f) => !isSameCurrency(f.currency, tx.currency));
+    if (foreign.length > 0) {
+      const converted = files.length === 1 ? convertToBankCurrency(files[0], tx) : null;
+      if (!converted) {
+        return { ok: false, reason: "foreign-currency", foregoneVat: guessVat20(bank) };
+      }
+      files = [converted];
+    }
+
     // The extraction fix (§6) flags unreconciled line items instead of
     // destroying them — such a file is never trusted here. Since §6 item 3
     // a file can also carry the receipt's own printed per-rate VAT summary,
@@ -391,6 +420,37 @@ function deriveRateGroups(
   }
 
   return { ok: false, reason: "no-file", foregoneVat: guessVat20(bank) };
+}
+
+/**
+ * Rescale a foreign-currency document into the bank line's currency at the
+ * effective rate bank / totalGross. Returns null when no plausible rate can
+ * be derived. Per group, vat and gross are rounded independently and net is
+ * the difference, so net + vat === gross survives the conversion.
+ */
+function convertToBankCurrency(f: UvaFile, tx: UvaTransaction): UvaFile | null {
+  const gross = f.totalGross ?? 0;
+  if (gross <= 0) return null;
+  const fx = assessImpliedFx(gross, f.currency, tx.amount, tx.currency);
+  if (!fx.band || fx.impliedRate === null) return null;
+  const r = fx.impliedRate;
+  const cents = (c: number) => Math.round(c * r);
+  return {
+    ...f,
+    currency: tx.currency ?? null,
+    totalGross: cents(gross),
+    vatAmount: f.vatAmount != null ? cents(f.vatAmount) : f.vatAmount,
+    lineItems: f.lineItems
+      ? f.lineItems.map((li) => ({ ...li, amount: cents(li.amount), vatAmount: cents(li.vatAmount) }))
+      : f.lineItems,
+    rateGroups: f.rateGroups
+      ? f.rateGroups.map((g) => {
+          const vat = cents(g.vat);
+          const gr = cents(g.gross);
+          return { rate: g.rate, vat, gross: gr, net: gr - vat };
+        })
+      : f.rateGroups,
+  };
 }
 
 function scaleAnchored(cents: number, prior: number, fraction: number): number {
