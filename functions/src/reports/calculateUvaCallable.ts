@@ -11,6 +11,7 @@ import { Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { calculateUva, RECONCILE_TOLERANCE_CENTS } from "../uva/calculateUva";
 import { periodBoundaries } from "../uva/rateSet";
+import { dayStartUtc, dayEndExclusiveUtc } from "../uva/dateWindow";
 import {
   buildUvaTransactions,
   type CategoryRecord,
@@ -57,10 +58,17 @@ export const calculateUvaCallable = createCallable<
     const bounds = periodBoundaries(period);
     // Dates are stored as UTC-midnight of the Vienna calendar day, so the
     // period window is a pure-UTC comparison (spec §7 — no host timezone).
-    const start = Timestamp.fromDate(new Date(`${bounds.start}T00:00:00Z`));
-    const endExclusive = Timestamp.fromDate(
-      new Date(new Date(`${bounds.end}T00:00:00Z`).getTime() + 24 * 3600 * 1000)
-    );
+    const startDate = dayStartUtc(bounds.start);
+    const endExclusiveDate = dayEndExclusiveUtc(bounds.end);
+    if (!startDate || !endExclusiveDate) {
+      // An out-of-range period number (quarter 5, month 13) reaches this far:
+      // periodBoundaries does the month arithmetic without bounding it, and
+      // emits a day that does not exist. Answer invalid-argument rather than
+      // throwing a TypeError out of the window math.
+      throw new HttpsError("invalid-argument", "A valid period is required");
+    }
+    const start = Timestamp.fromDate(startDate);
+    const endExclusive = Timestamp.fromDate(endExclusiveDate);
 
     const txSnapshot = await ctx.db
       .collection("transactions")
