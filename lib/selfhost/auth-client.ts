@@ -74,9 +74,22 @@ const OIDC_SCOPE = or(process.env.NEXT_PUBLIC_OIDC_SCOPE, "openid profile email 
 const OIDC_ADMIN_GROUP = or(process.env.NEXT_PUBLIC_OIDC_ADMIN_GROUP, "fibuki-admin");
 /** Seconds before `exp` at which a token is treated as stale and refreshed. */
 const TOKEN_SKEW_S = 30;
+/**
+ * Extra staleness, drawn once per module instance — so once per tab.
+ *
+ * With one fixed threshold every open tab crosses the staleness line in the
+ * same instant and they all refresh at once. The cross-tab lock in the token
+ * refresh section is what makes a collision safe; this jitter is what keeps it
+ * rare. Bounded below TOKEN_SKEW_S, so the worst case is refreshing just under
+ * 60s early, well inside any usable id_token lifetime (fork #73).
+ */
+const TOKEN_SKEW_JITTER_S = Math.floor(Math.random() * TOKEN_SKEW_S);
+const TOKEN_SKEW_MS = (TOKEN_SKEW_S + TOKEN_SKEW_JITTER_S) * 1000;
 
 const TOKENS_KEY = "fibuki.oidc.tokens";
 const PKCE_KEY = "fibuki.oidc.pkce";
+/** Fallback cross-tab refresh lease, used only where Web Locks is unavailable. */
+const REFRESH_LEASE_KEY = "fibuki.oidc.refresh-lease";
 
 const OIDC_REDIRECT_URI = or(process.env.NEXT_PUBLIC_OIDC_REDIRECT_URI);
 
@@ -189,6 +202,13 @@ interface StoredTokens {
   session_token?: string;
   /** ms epoch at which id_token expires (from its `exp`). */
   expires_at: number;
+  /**
+   * True once the provider has been observed replacing `refresh_token` on a
+   * refresh — i.e. it rotates. Rotated tokens are single-use, so from then on
+   * a response that omits a replacement is an error rather than a licence to
+   * re-present the consumed one (fork #73).
+   */
+  rotates?: boolean;
 }
 
 function loadTokens(): StoredTokens | null {
@@ -217,6 +237,11 @@ function clearTokens(): void {
   } catch {
     /* ignore */
   }
+}
+
+/** Single answer to "does this set need refreshing?" — jittered per tab. */
+function isStale(t: StoredTokens): boolean {
+  return Date.now() >= t.expires_at - TOKEN_SKEW_MS;
 }
 
 function tokensToExpiry(idToken: string, expiresInS?: number): number {
@@ -502,6 +527,114 @@ function setUserFromTokens(tokens: StoredTokens | null): void {
 }
 
 /* ------------------------------------------------------------------ */
+/* Cross-tab refresh lock                                              */
+/*                                                                     */
+/* TOKENS_KEY lives in localStorage, so it is shared by every tab on   */
+/* the origin, and a rotating refresh_token is single-use. Two tabs    */
+/* refreshing at once therefore replay one token, the provider revokes */
+/* it, and the loser used to sign everyone out (fork #73). Mutual      */
+/* exclusion has to be origin-wide, which is exactly Web Locks.        */
+/* ------------------------------------------------------------------ */
+
+const REFRESH_LOCK_NAME = "fibuki-oidc-refresh";
+
+/** The one method of navigator.locks we use. */
+interface LockManagerLike {
+  request<T>(name: string, cb: () => Promise<T>): Promise<T>;
+}
+
+/**
+ * Web Locks is optional at runtime — absent in a non-secure context, on older
+ * browsers, and under SSR — while the DOM lib types `navigator` as always
+ * present. Reach it through globalThis so the feature test is real rather than
+ * a types-only reassurance.
+ */
+function lockManager(): LockManagerLike | null {
+  const nav = (globalThis as { navigator?: { locks?: unknown } }).navigator;
+  const locks = nav?.locks as LockManagerLike | undefined;
+  return typeof locks?.request === "function" ? locks : null;
+}
+
+/* Lease fallback tuning. Where Web Locks is unavailable a localStorage lease
+ * stands in: claim it, pause, re-read to confirm nobody overwrote the claim in
+ * the same instant.
+ *
+ * The lease is best-effort by construction — localStorage has no compare-and-set,
+ * so a sufficiently unlucky interleaving can still let two tabs through. That is
+ * why it is not the only defence: the re-read inside the critical section skips
+ * the network call entirely once a peer has stored a token, and the failure path
+ * in refreshTokens adopts a peer's set instead of signing out. */
+const LEASE_TTL_MS = 10_000; // a crashed holder's lease becomes stealable
+const LEASE_CONFIRM_MS = 40; // write-then-re-read settle window
+const LEASE_POLL_MS = 120;
+const LEASE_MAX_WAIT_MS = 5_000;
+
+interface RefreshLease {
+  owner: string;
+  at: number;
+}
+
+/** Identifies this tab's lease claims. One per module instance. */
+const LEASE_OWNER = `${Date.now().toString(36)}.${Math.random().toString(36).slice(2, 10)}`;
+
+const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+function readLease(): RefreshLease | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(REFRESH_LEASE_KEY);
+    return raw ? (JSON.parse(raw) as RefreshLease) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeLease(lease: RefreshLease | null): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (lease) window.localStorage.setItem(REFRESH_LEASE_KEY, JSON.stringify(lease));
+    else window.localStorage.removeItem(REFRESH_LEASE_KEY);
+  } catch {
+    /* private-mode / quota — non-fatal, we just lose the cross-tab guard */
+  }
+}
+
+/** One claim attempt: free (or abandoned) lease → claim, settle, confirm ours. */
+async function claimLease(): Promise<boolean> {
+  const held = readLease();
+  if (held && Date.now() - held.at < LEASE_TTL_MS) return false;
+  const mine: RefreshLease = { owner: LEASE_OWNER, at: Date.now() };
+  writeLease(mine);
+  await delay(LEASE_CONFIRM_MS);
+  const after = readLease();
+  return after?.owner === mine.owner && after.at === mine.at;
+}
+
+async function withLeaseLock<T>(fn: () => Promise<T>): Promise<T> {
+  const deadline = Date.now() + LEASE_MAX_WAIT_MS;
+  while (Date.now() < deadline) {
+    if (await claimLease()) {
+      try {
+        return await fn();
+      } finally {
+        if (readLease()?.owner === LEASE_OWNER) writeLease(null);
+      }
+    }
+    await delay(LEASE_POLL_MS);
+  }
+  // Never acquired. Run unlocked rather than failing the caller: `fn` re-reads
+  // storage first, so if the holder did land a token we return it with no
+  // network call. Worst case is the pre-fix behavior, never worse.
+  return fn();
+}
+
+/** Serialise `fn` across every tab on this origin. */
+function withRefreshLock<T>(fn: () => Promise<T>): Promise<T> {
+  const locks = lockManager();
+  return locks ? locks.request(REFRESH_LOCK_NAME, fn) : withLeaseLock(fn);
+}
+
+/* ------------------------------------------------------------------ */
 /* Token refresh                                                       */
 /* ------------------------------------------------------------------ */
 
@@ -514,14 +647,39 @@ async function freshIdToken(force: boolean): Promise<string> {
   const tokens = loadTokens();
   if (!tokens) throw new AuthError("auth/user-token-expired", "Not signed in.");
 
-  const stale = Date.now() >= tokens.expires_at - TOKEN_SKEW_S * 1000;
-  if (!force && !stale) return tokens.id_token;
+  if (!force && !isStale(tokens)) return tokens.id_token;
 
+  // Dedupe within this tab; refreshUnderLock dedupes across tabs.
   if (_refreshInFlight) return _refreshInFlight;
-  _refreshInFlight = refreshTokens(tokens).finally(() => {
+  _refreshInFlight = refreshUnderLock(force, tokens.id_token).finally(() => {
     _refreshInFlight = null;
   });
   return _refreshInFlight;
+}
+
+/**
+ * Refresh inside the origin-wide lock, re-reading localStorage once we hold it.
+ *
+ * The re-read is the actual fix: a tab that queued behind a peer finds the
+ * peer's fresh token already stored and makes no network call at all, so the
+ * consumed refresh_token is never replayed.
+ */
+async function refreshUnderLock(force: boolean, startedWith: string): Promise<string> {
+  return withRefreshLock(async () => {
+    const current = loadTokens();
+    if (!current) throw new AuthError("auth/user-token-expired", "Not signed in.");
+
+    // A different id_token means a peer refreshed while we waited. That token
+    // is newer than the one the caller was holding, so it satisfies a forced
+    // refresh too; without it, only staleness can skip the network call.
+    const peerRefreshed = current.id_token !== startedWith;
+    if (!isStale(current) && (peerRefreshed || !force)) {
+      setUserFromTokens(current);
+      notify();
+      return current.id_token;
+    }
+    return refreshTokens(current);
+  });
 }
 
 /** Built-in mode refresh: re-mint the JWT from the Better Auth session. */
@@ -560,7 +718,13 @@ async function refreshViaSession(tokens: StoredTokens): Promise<string> {
   return next.id_token;
 }
 
-async function refreshTokens(tokens: StoredTokens): Promise<string> {
+/**
+ * OIDC refresh-token grant. Runs inside the cross-tab lock (refreshUnderLock).
+ *
+ * `attempt` bounds the recovery in the failure path below to a single retry, so
+ * a genuinely revoked session still reaches the sign-out branch.
+ */
+async function refreshTokens(tokens: StoredTokens, attempt = 0): Promise<string> {
   if (tokens.session_token) return refreshViaSession(tokens);
   if (!tokens.refresh_token) {
     // No refresh token (offline_access not granted) — fall back to the
@@ -579,8 +743,23 @@ async function refreshTokens(tokens: StoredTokens): Promise<string> {
     }),
   });
   if (!res.ok) {
-    // Refresh failed (revoked / expired session) — sign out cleanly so the UI
-    // shows the login screen rather than looping on a dead token.
+    // A lost rotation race and a revoked session look identical from here, and
+    // signing out on the former destroys a live one — the token set another tab
+    // just wrote. Re-read before deciding (fork #73).
+    const current = loadTokens();
+    const superseded = !!current && current.refresh_token !== tokens.refresh_token;
+    if (current && superseded && !isStale(current)) {
+      // A peer won the race and stored a usable set: adopt it, no sign-out.
+      setUserFromTokens(current);
+      notify();
+      return current.id_token;
+    }
+    if (current && superseded && attempt === 0) {
+      // Superseded but itself stale — retry once with the replacement token.
+      return refreshTokens(current, attempt + 1);
+    }
+    // Nothing usable left: sign out cleanly so the UI shows the login screen
+    // rather than looping on a dead token.
     clearTokens();
     _auth.currentUser = null;
     notify();
@@ -595,12 +774,26 @@ async function refreshTokens(tokens: StoredTokens): Promise<string> {
   if (!body.id_token) {
     throw new AuthError("auth/internal-error", "Token refresh response had no id_token.");
   }
+  // RFC 6749 §6 makes refresh_token optional in the response, and a provider
+  // that never rotates expects the old one to be reused. A provider that DOES
+  // rotate has consumed it, so reusing it guarantees the next refresh replays a
+  // revoked token. Track which kind we are talking to instead of assuming.
+  const rotated = !!body.refresh_token && body.refresh_token !== tokens.refresh_token;
+  const rotates = tokens.rotates === true || rotated;
+  if (!body.refresh_token && rotates) {
+    // Leave the stored set alone: the host will 401 and the app re-authenticates,
+    // which beats replaying a consumed token and tripping suspicious_request.
+    throw new AuthError(
+      "auth/internal-error",
+      "Token refresh response omitted a replacement refresh_token on a rotating provider.",
+    );
+  }
   const next: StoredTokens = {
     id_token: body.id_token,
     access_token: body.access_token,
-    // Rotated refresh tokens replace the old one; otherwise keep it.
     refresh_token: body.refresh_token ?? tokens.refresh_token,
     expires_at: tokensToExpiry(body.id_token, body.expires_in),
+    ...(rotates ? { rotates: true } : {}),
   };
   saveTokens(next);
   setUserFromTokens(next);

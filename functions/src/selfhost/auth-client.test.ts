@@ -597,3 +597,274 @@ describe("selfhost auth-client — Google social callback pickup (built-in mode)
     expect(replaced).toContain("/login");
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* OIDC refresh: cross-tab serialisation (fork #73)                    */
+/*                                                                     */
+/* The bug: `_refreshInFlight` is module-scoped, so it dedupes within  */
+/* one tab while the refresh_token it protects lives in localStorage,  */
+/* shared by every tab. Two tabs replayed one single-use rotating      */
+/* token, the provider revoked it, and the loser's clearTokens() threw */
+/* away the session the winner had just stored — signing every tab out.*/
+/*                                                                     */
+/* "Two tabs" here = two module instances over ONE fake window, which  */
+/* is exactly the real asymmetry: module state is per-tab, localStorage*/
+/* is per-origin. The Node env has no navigator.locks, so these tests  */
+/* exercise the localStorage-lease fallback; the last test pins that   */
+/* Web Locks is preferred when the browser has it.                     */
+/* ------------------------------------------------------------------ */
+
+describe("selfhost auth-client — OIDC refresh serialisation (fork #73)", () => {
+  const ISSUER = "https://id.selfhost.test/application/o/fibuki";
+  const TOKEN_ENDPOINT = `${ISSUER}/token/`;
+  const TOKENS_KEY = "fibuki.oidc.tokens";
+
+  const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+  function discoveryResponse(): Response {
+    return new Response(
+      JSON.stringify({
+        authorization_endpoint: `${ISSUER}/authorize/`,
+        token_endpoint: TOKEN_ENDPOINT,
+      }),
+      { status: 200 },
+    );
+  }
+
+  /** Install one window + issuer-mode env, and route all fetches at `fetchImpl`. */
+  function installOidcEnv(fetchImpl: typeof fetch): FakeWindow {
+    const w = installWindow();
+    for (const k of [
+      "NEXT_PUBLIC_FIBUKI_DEV_UID",
+      "NEXT_PUBLIC_FIBUKI_DEV_ADMIN",
+      "NEXT_PUBLIC_FIBUKI_API_URL",
+    ]) {
+      delete process.env[k];
+    }
+    process.env.NEXT_PUBLIC_OIDC_ISSUER = ISSUER;
+    process.env.NEXT_PUBLIC_OIDC_CLIENT_ID = "fibuki-selfhost";
+    vi.stubGlobal("fetch", fetchImpl);
+    return w;
+  }
+
+  /** Seed the shared token set every "tab" restores from on load. */
+  function seedTokens(w: FakeWindow, t: Record<string, unknown>): void {
+    w.localStorage.setItem(TOKENS_KEY, JSON.stringify(t));
+  }
+
+  function readStored(w: FakeWindow): Record<string, unknown> | null {
+    const raw = w.localStorage.getItem(TOKENS_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
+  }
+
+  /** A fresh module instance over the already-installed window — one "tab". */
+  async function openTab(): Promise<AuthClient> {
+    vi.resetModules();
+    return import("../../../lib/selfhost/auth-client");
+  }
+
+  /** A set well inside the staleness window (jitter tops out at 60s). */
+  const staleSet = (refresh: string, extra: Record<string, unknown> = {}) => ({
+    id_token: makeJwt({ sub: UID, email: "stefan@example.test", exp: Math.floor(Date.now() / 1000) + 5 }),
+    refresh_token: refresh,
+    expires_at: Date.now() + 5_000,
+    ...extra,
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete process.env.NEXT_PUBLIC_OIDC_ISSUER;
+    delete process.env.NEXT_PUBLIC_OIDC_CLIENT_ID;
+  });
+
+  it("two tabs refreshing at once spend the refresh_token exactly once", async () => {
+    const spent: string[] = [];
+    let release!: () => void;
+    const winnerHeld = new Promise<void>((r) => (release = r));
+    const rotatedIdToken = makeJwt({ sub: UID, email: "stefan@example.test", exp: IN_AN_HOUR() });
+
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/.well-known/openid-configuration")) return discoveryResponse();
+      if (url === TOKEN_ENDPOINT) {
+        spent.push(new URLSearchParams(String(init?.body)).get("refresh_token") ?? "");
+        await winnerHeld; // hold the winner inside the lock so the peer must queue
+        return new Response(
+          JSON.stringify({ id_token: rotatedIdToken, refresh_token: "rt-2", expires_in: 3600 }),
+          { status: 200 },
+        );
+      }
+      return new Response("unexpected", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const w = installOidcEnv(fetchImpl);
+    seedTokens(w, staleSet("rt-1"));
+
+    const tabA = await openTab();
+    const tabB = await openTab();
+    await tick();
+
+    const pA = tabA.getAuth().currentUser!.getIdToken();
+    const pB = tabB.getAuth().currentUser!.getIdToken();
+
+    // One tab wins the lock and reaches the network; the other is parked on it.
+    while (spent.length === 0) await sleep(10);
+    await sleep(300);
+    expect(spent).toEqual(["rt-1"]);
+
+    release();
+    const [a, b] = await Promise.all([pA, pB]);
+
+    // Pre-fix, the loser POSTed "rt-1" a second time, got "Revoked refresh token
+    // was used", and cleared the shared token set.
+    expect(spent).toEqual(["rt-1"]);
+    expect(a).toBe(rotatedIdToken);
+    expect(b).toBe(rotatedIdToken);
+    expect(readStored(w)).toMatchObject({ refresh_token: "rt-2", rotates: true });
+  });
+
+  it("adopts a peer's newer token set instead of signing out on a lost race", async () => {
+    const peerIdToken = makeJwt({ sub: UID, email: "stefan@example.test", exp: IN_AN_HOUR() });
+    let w!: FakeWindow;
+
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/.well-known/openid-configuration")) return discoveryResponse();
+      if (url === TOKEN_ENDPOINT) {
+        // The peer won while we were in flight: it rotated the token and stored
+        // a good set. Our copy is now the revoked one.
+        seedTokens(w, {
+          id_token: peerIdToken,
+          refresh_token: "rt-2",
+          expires_at: Date.now() + 3_600_000,
+          rotates: true,
+        });
+        return new Response(JSON.stringify({ error: "invalid_grant" }), { status: 400 });
+      }
+      return new Response("unexpected", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    w = installOidcEnv(fetchImpl);
+    seedTokens(w, staleSet("rt-1", { rotates: true }));
+
+    const tab = await openTab();
+    await tick();
+
+    await expect(tab.getAuth().currentUser!.getIdToken()).resolves.toBe(peerIdToken);
+    // Still signed in, and the winner's set survived — this is the whole bug.
+    expect(tab.getAuth().currentUser?.uid).toBe(UID);
+    expect(readStored(w)).toMatchObject({ refresh_token: "rt-2" });
+  });
+
+  it("still signs out when a refresh fails and nothing newer is stored", async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/.well-known/openid-configuration")) return discoveryResponse();
+      if (url === TOKEN_ENDPOINT) {
+        return new Response(JSON.stringify({ error: "invalid_grant" }), { status: 400 });
+      }
+      return new Response("unexpected", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const w = installOidcEnv(fetchImpl);
+    seedTokens(w, staleSet("rt-1"));
+
+    const tab = await openTab();
+    await tick();
+
+    await expect(tab.getAuth().currentUser!.getIdToken()).rejects.toMatchObject({
+      code: "auth/user-token-expired",
+    });
+    expect(tab.getAuth().currentUser).toBeNull();
+    expect(readStored(w)).toBeNull();
+  });
+
+  it("refuses to re-present a consumed refresh_token when the provider rotates", async () => {
+    const nextIdToken = makeJwt({ sub: UID, email: "stefan@example.test", exp: IN_AN_HOUR() });
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/.well-known/openid-configuration")) return discoveryResponse();
+      if (url === TOKEN_ENDPOINT) {
+        // Rotating provider, yet no replacement in the body. Writing "rt-1"
+        // back would guarantee the NEXT refresh replays a revoked token.
+        return new Response(JSON.stringify({ id_token: nextIdToken, expires_in: 3600 }), {
+          status: 200,
+        });
+      }
+      return new Response("unexpected", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const w = installOidcEnv(fetchImpl);
+    seedTokens(w, staleSet("rt-1", { rotates: true }));
+
+    const tab = await openTab();
+    await tick();
+
+    await expect(tab.getAuth().currentUser!.getIdToken()).rejects.toMatchObject({
+      code: "auth/internal-error",
+    });
+    // The stored set is left untouched: the host 401s and the app re-authenticates,
+    // which beats replaying a consumed token.
+    expect(readStored(w)).toMatchObject({ refresh_token: "rt-1", rotates: true });
+  });
+
+  it("keeps reusing the refresh_token on a provider that never rotates", async () => {
+    const nextIdToken = makeJwt({ sub: UID, email: "stefan@example.test", exp: IN_AN_HOUR() });
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/.well-known/openid-configuration")) return discoveryResponse();
+      if (url === TOKEN_ENDPOINT) {
+        // RFC 6749 §6: refresh_token is optional in the response, and a
+        // non-rotating provider expects the client to keep the one it has.
+        return new Response(JSON.stringify({ id_token: nextIdToken, expires_in: 3600 }), {
+          status: 200,
+        });
+      }
+      return new Response("unexpected", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const w = installOidcEnv(fetchImpl);
+    seedTokens(w, staleSet("rt-1"));
+
+    const tab = await openTab();
+    await tick();
+
+    await expect(tab.getAuth().currentUser!.getIdToken()).resolves.toBe(nextIdToken);
+    const stored = readStored(w);
+    expect(stored).toMatchObject({ refresh_token: "rt-1" });
+    expect(stored?.rotates).toBeUndefined();
+  });
+
+  it("serialises through navigator.locks when the browser provides it", async () => {
+    const nextIdToken = makeJwt({ sub: UID, email: "stefan@example.test", exp: IN_AN_HOUR() });
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/.well-known/openid-configuration")) return discoveryResponse();
+      if (url === TOKEN_ENDPOINT) {
+        return new Response(
+          JSON.stringify({ id_token: nextIdToken, refresh_token: "rt-2", expires_in: 3600 }),
+          { status: 200 },
+        );
+      }
+      return new Response("unexpected", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const w = installOidcEnv(fetchImpl);
+    const inside: string[] = [];
+    const request = vi.fn(async (name: string, cb: () => Promise<unknown>) => {
+      inside.push(name);
+      return cb();
+    });
+    vi.stubGlobal("navigator", { locks: { request } });
+    seedTokens(w, staleSet("rt-1"));
+
+    const tab = await openTab();
+    await tick();
+
+    await expect(tab.getAuth().currentUser!.getIdToken()).resolves.toBe(nextIdToken);
+    // Exactly one lock, held around the refresh — not the lease fallback.
+    expect(inside).toEqual(["fibuki-oidc-refresh"]);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(readStored(w)).toMatchObject({ refresh_token: "rt-2", rotates: true });
+  });
+});
