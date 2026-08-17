@@ -373,6 +373,7 @@ describe("scoreTransaction", () => {
     expect(result.breakdown).toHaveProperty("iban");
     expect(result.breakdown).toHaveProperty("reference");
     expect(result.breakdown).toHaveProperty("hint");
+    expect(result.breakdown).toHaveProperty("hardFacts");
   });
 
   it("includes preview data", () => {
@@ -451,6 +452,122 @@ describe("scoreTransaction", () => {
       });
 
       expect(resultWith.confidence).toBeGreaterThan(resultWithout.confidence);
+    });
+  });
+
+  // Fork #78: exact amount + exact date used to cap at 65 (< 85), so
+  // auto-connect depended on partner identity rather than the hard facts.
+  describe("hard-facts combination bonus (fork #78)", () => {
+    // No partner signal on either side: only amount + date can score.
+    const noPartnerFile: FileMatchingData = {
+      ...baseFileData,
+      partnerId: null,
+      extractedPartner: null,
+    };
+    const noPartnerTx: TransactionData = {
+      ...baseTxData,
+      partnerId: undefined,
+      partner: undefined,
+      name: "AMAZON* NI42Y4HY4",
+    };
+
+    it("exact amount + same day clears the auto-match threshold on its own", () => {
+      const result = scoreTransaction(noPartnerFile, noPartnerTx);
+      // 40 (amount) + 25 (date) + 20 (bonus) = 85
+      expect(result.breakdown.hardFacts).toBe(SCORING_CONFIG.HARD_FACTS_BONUS_SAME_DAY);
+      expect(result.confidence).toBe(85);
+      expect(result.confidence).toBeGreaterThanOrEqual(SCORING_CONFIG.AUTO_MATCH_THRESHOLD);
+      expect(result.matchSources).not.toContain("partner");
+    });
+
+    it("exact amount within 3 days is a strong suggestion but not an auto-match", () => {
+      const result = scoreTransaction(
+        { ...noPartnerFile, extractedDate: ts("2024-06-14") },
+        noPartnerTx
+      );
+      // 40 + 22 + 15 = 77
+      expect(result.breakdown.hardFacts).toBe(SCORING_CONFIG.HARD_FACTS_BONUS_CLOSE);
+      expect(result.confidence).toBe(77);
+      expect(result.confidence).toBeLessThan(SCORING_CONFIG.AUTO_MATCH_THRESHOLD);
+    });
+
+    it("exact amount within 3 days plus a weak partner text match auto-matches", () => {
+      // The live case from #78: Amazon Business EU vs "AMAZON* ..." scored 74
+      // (40 + 22 + 12) and was left for manual review.
+      const result = scoreTransaction(
+        {
+          ...noPartnerFile,
+          extractedDate: ts("2024-06-14"),
+          extractedPartner: "Amazon Business EU",
+        },
+        noPartnerTx
+      );
+      expect(result.breakdown.partner).toBe(12);
+      // 40 + 22 + 12 + 15 = 89
+      expect(result.confidence).toBe(89);
+      expect(result.confidence).toBeGreaterThanOrEqual(SCORING_CONFIG.AUTO_MATCH_THRESHOLD);
+    });
+
+    it("no bonus when the amount is only close (within 1%)", () => {
+      const result = scoreTransaction(
+        { ...noPartnerFile, extractedAmount: 10050 },
+        noPartnerTx
+      );
+      // 38 + 25 = 63
+      expect(result.breakdown.hardFacts).toBe(0);
+      expect(result.confidence).toBe(63);
+    });
+
+    it("no bonus when the exact amount is in a different currency", () => {
+      const result = scoreTransaction(
+        { ...noPartnerFile, extractedCurrency: "USD" },
+        noPartnerTx
+      );
+      // 20 (halved) + 25 = 45
+      expect(result.matchSources).toContain("amount_exact");
+      expect(result.breakdown.hardFacts).toBe(0);
+      expect(result.confidence).toBe(45);
+    });
+
+    it("no bonus when the date is more than 3 days off", () => {
+      const result = scoreTransaction(
+        { ...noPartnerFile, extractedDate: ts("2024-06-10") },
+        noPartnerTx
+      );
+      // 40 + 15 = 55
+      expect(result.breakdown.hardFacts).toBe(0);
+      expect(result.confidence).toBe(55);
+    });
+
+    it("bonus is decided on the raw date score, before the partner date boost", () => {
+      // Partner ID match (25) boosts date 25 -> 37; the bonus must still be the
+      // same-day one, and the total caps at 100.
+      const result = scoreTransaction(baseFileData, baseTxData);
+      expect(result.breakdown.date).toBe(37);
+      expect(result.breakdown.hardFacts).toBe(SCORING_CONFIG.HARD_FACTS_BONUS_SAME_DAY);
+      expect(result.confidence).toBe(100);
+    });
+
+    it("a learned billing-cycle delay counts as an exact date", () => {
+      // Invoice Jun 1, debit Jun 15, learned delay 14 +/- 3 -> date 25 -> bonus 20
+      const result = scoreTransaction(
+        { ...noPartnerFile, extractedDate: ts("2024-06-01") },
+        noPartnerTx,
+        undefined,
+        { billingCycle: { invoiceToTransactionDelay: 14, delayVariance: 3 } }
+      );
+      expect(result.breakdown.hardFacts).toBe(SCORING_CONFIG.HARD_FACTS_BONUS_SAME_DAY);
+      expect(result.confidence).toBe(85);
+    });
+
+    it("bonus is not scaled by per-partner weights", () => {
+      // amountWeight 0.5 halves the amount to 20; the bonus still applies but
+      // 20 + 25 + 20 = 65 stays below the threshold.
+      const result = scoreTransaction(noPartnerFile, noPartnerTx, undefined, {
+        weights: { amountWeight: 0.5, dateWeight: 1, partnerWeight: 1 },
+      });
+      expect(result.breakdown.hardFacts).toBe(SCORING_CONFIG.HARD_FACTS_BONUS_SAME_DAY);
+      expect(result.confidence).toBe(65);
     });
   });
 
