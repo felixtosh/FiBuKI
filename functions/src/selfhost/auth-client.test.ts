@@ -756,6 +756,37 @@ describe("selfhost auth-client — OIDC refresh serialisation (fork #73)", () =>
     expect(readStored(w)).toMatchObject({ refresh_token: "rt-2" });
   });
 
+  it("adopts a peer's set on a transient failure even when the token never rotated", async () => {
+    // Non-rotating provider: refresh_token stays "rt-1", so only the id_token
+    // distinguishes the peer's newer set. A 503 must not clear it.
+    const peerIdToken = makeJwt({ sub: UID, email: "stefan@example.test", exp: IN_AN_HOUR() });
+    let w!: FakeWindow;
+
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/.well-known/openid-configuration")) return discoveryResponse();
+      if (url === TOKEN_ENDPOINT) {
+        seedTokens(w, {
+          id_token: peerIdToken,
+          refresh_token: "rt-1",
+          expires_at: Date.now() + 3_600_000,
+        });
+        return new Response("upstream unavailable", { status: 503 });
+      }
+      return new Response("unexpected", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    w = installOidcEnv(fetchImpl);
+    seedTokens(w, staleSet("rt-1"));
+
+    const tab = await openTab();
+    await tick();
+
+    await expect(tab.getAuth().currentUser!.getIdToken()).resolves.toBe(peerIdToken);
+    expect(tab.getAuth().currentUser?.uid).toBe(UID);
+    expect(readStored(w)).toMatchObject({ id_token: peerIdToken, refresh_token: "rt-1" });
+  });
+
   it("still signs out when a refresh fails and nothing newer is stored", async () => {
     const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);

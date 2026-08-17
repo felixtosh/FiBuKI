@@ -747,15 +747,22 @@ async function refreshTokens(tokens: StoredTokens, attempt = 0): Promise<string>
     // signing out on the former destroys a live one — the token set another tab
     // just wrote. Re-read before deciding (fork #73).
     const current = loadTokens();
-    const superseded = !!current && current.refresh_token !== tokens.refresh_token;
+    // Any difference counts, not just a rotated refresh_token: a provider that
+    // does not rotate still leaves a peer's newer id_token in storage, and
+    // clearing it over a transient 5xx is the same destructive mistake.
+    const superseded =
+      !!current &&
+      (current.id_token !== tokens.id_token || current.refresh_token !== tokens.refresh_token);
     if (current && superseded && !isStale(current)) {
       // A peer won the race and stored a usable set: adopt it, no sign-out.
       setUserFromTokens(current);
       notify();
       return current.id_token;
     }
-    if (current && superseded && attempt === 0) {
+    if (current && superseded && attempt === 0 && current.refresh_token !== tokens.refresh_token) {
       // Superseded but itself stale — retry once with the replacement token.
+      // Only worth it if the token actually changed; otherwise we would just
+      // repeat the same failed request.
       return refreshTokens(current, attempt + 1);
     }
     // Nothing usable left: sign out cleanly so the UI shows the login screen
