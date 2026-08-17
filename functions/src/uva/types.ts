@@ -42,11 +42,26 @@ export interface UvaFile {
   /** Surviving extracted line items (extractedLineItems) */
   lineItems?: UvaLineItem[] | null;
   /**
+   * The document's own printed per-rate VAT summary block
+   * (extractedRateGroups), validated on ingest (spec §6 item 3). When
+   * present it outranks the line items: one transcribed subtotal per rate
+   * beats a sum of N itemised rows, and §11 makes it sufficient alone.
+   */
+  rateGroups?: RateGroup[] | null;
+  /**
    * Set by the extraction fix (spec §6) when line items failed document-total
-   * reconciliation. Such a file is never trusted for derivation — the
-   * transaction goes to the review bucket as amount-mismatch.
+   * reconciliation. Such a file is never trusted for LINE-ITEM derivation —
+   * absent a printed rate-group block, the transaction goes to the review
+   * bucket as amount-mismatch.
    */
   lineItemsUnreconciled?: boolean;
+  /**
+   * Spec §6 item 2: the rates whose printed group the line items failed to
+   * reproduce, when the damage could be localised. Informational here —
+   * derivation prefers `rateGroups` outright — but it is what tells a human
+   * which line to repair.
+   */
+  lineItemsUnreconciledRates?: number[] | null;
   /** Supplier VAT ID (extractedIssuer.vatId ?? extractedVatId), e.g. ATU…, DE… */
   supplierVatId?: string | null;
 }
@@ -131,6 +146,8 @@ export interface UvaTransaction {
 }
 
 export type DerivationStep =
+  /** The document's own printed per-rate VAT summary block (spec §6 item 3) */
+  | "rate-groups"
   | "line-items"
   | "top-level"
   | "override"

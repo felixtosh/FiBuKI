@@ -52,6 +52,22 @@ export interface ExtractedLineItem {
 }
 
 /**
+ * One row of the document's own printed VAT summary block (fork #67).
+ * Read off the receipt, never derived from line items.
+ * Monetary fields are stored in cents.
+ */
+export interface ExtractedRateGroup {
+  /** VAT rate for this group (0-100) */
+  rate: number;
+  /** Net (excl. VAT) subtotal, cents */
+  net: number;
+  /** VAT amount, cents */
+  vat: number;
+  /** Gross (incl. VAT) subtotal, cents */
+  gross: number;
+}
+
+/**
  * Match sources for transaction matching - indicates which criteria contributed to a match
  */
 export type TransactionMatchSource =
@@ -209,11 +225,28 @@ export interface TaxFile {
   extractedLineItems?: ExtractedLineItem[] | null;
 
   /**
+   * The document's own printed per-rate VAT summary block (fork #67),
+   * validated on ingest: each row is internally consistent and the rows
+   * sum to the document total. Absent when the document prints no such
+   * block or the printed figures did not validate — never back-filled by
+   * summing line items, so its presence means "the receipt said so".
+   */
+  extractedRateGroups?: ExtractedRateGroup[] | null;
+
+  /**
    * Set when the extracted line items failed reconciliation against the
    * document total (fork #64): the items are kept for human repair but
    * must not be trusted for VAT derivation.
    */
   lineItemsUnreconciled?: boolean;
+
+  /**
+   * Fork #67: which VAT rates actually failed reconciliation, when the
+   * printed rate groups let us localise the damage. OCR noise usually
+   * hits one group; the untouched groups stay usable. Empty/absent while
+   * `lineItemsUnreconciled` is true means the whole document is suspect.
+   */
+  lineItemsUnreconciledRates?: number[] | null;
 
   /** AI-extracted partner/company name */
   extractedPartner?: string | null;
@@ -555,7 +588,9 @@ export interface FileExtractionData {
   extractedVatPercent?: number | null;
   extractedVatAmount?: number | null;
   extractedLineItems?: ExtractedLineItem[] | null;
+  extractedRateGroups?: ExtractedRateGroup[] | null;
   lineItemsUnreconciled?: boolean;
+  lineItemsUnreconciledRates?: number[] | null;
   extractedPartner?: string | null;
   extractedVatId?: string | null;
   extractedIban?: string | null;

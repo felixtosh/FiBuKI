@@ -27,12 +27,35 @@ export interface ExtractedLineItem {
   amount: number;
 }
 
+/**
+ * One row of the document's own printed VAT summary block (fork #67,
+ * spec §6 item 3) — "20% MwSt. 45,00 / 9,00 / 54,00", the per-rate
+ * subtotals most Austrian §11 receipts carry.
+ *
+ * These are READ OFF the document, never computed from line items: a
+ * single printed subtotal is far more OCR-robust than the sum of N
+ * itemised rows, and §11 makes the per-rate totals the legally
+ * sufficient record on their own.
+ */
+export interface ExtractedRateGroup {
+  /** VAT rate 0-100 */
+  rate: number;
+  /** Net (excl. VAT) subtotal for this rate, cents */
+  net: number;
+  /** VAT amount for this rate, cents */
+  vat: number;
+  /** Gross (incl. VAT) subtotal for this rate, cents */
+  gross: number;
+}
+
 export interface ExtractedData {
   date: string | null; // ISO format YYYY-MM-DD
   amount: number | null; // cents
   currency: string | null;
   vatPercent: number | null;
   lineItems?: ExtractedLineItem[] | null;
+  /** Printed per-rate VAT summary block, when the document shows one */
+  rateGroups?: ExtractedRateGroup[] | null;
   partner: string | null;
   vatId: string | null; // VAT ID (e.g., ATU12345678, DE123456789)
   iban: string | null; // IBAN if visible

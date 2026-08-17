@@ -115,6 +115,7 @@ describe("characterization: geminiParser.parseWithGemini", () => {
       currency: "EUR",
       vatPercent: null,
       lineItems: null,
+      rateGroups: null,
       partner: null,
       vatId: null,
       iban: null,
@@ -303,6 +304,42 @@ describe("characterization: geminiParser.parseWithGemini", () => {
     expect(res.extracted.lineItems).toEqual([
       { description: "top", quantity: null, unitPrice: null, vatPercent: null, vatAmount: 0, amount: 100 },
     ]);
+  });
+
+  it("rateGroups: completes a missing column from the printed rate (#67)", async () => {
+    q({ extracted: { rateGroups: [{ rate: 20, gross: 1200 }, { rate: 10, net: 1000 }] } });
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.rateGroups).toEqual([
+      { rate: 20, net: 1000, vat: 200, gross: 1200 },
+      { rate: 10, net: 1000, vat: 100, gross: 1100 },
+    ]);
+  });
+
+  it("rateGroups: one unreadable ROW drops the whole block (#67)", async () => {
+    // A half-kept summary block would still read downstream as "the receipt
+    // said so" — so the block is all-or-nothing.
+    q({ extracted: { rateGroups: [{ rate: 20, gross: 1200 }, { rate: null, gross: 500 }] } });
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.rateGroups).toBeNull();
+  });
+
+  it("rateGroups: a rate printed twice is merged into one group (#67)", async () => {
+    q({
+      extracted: {
+        rateGroups: [
+          { rate: 20, net: 1000, vat: 200, gross: 1200 },
+          { rate: 20, net: 500, vat: 100, gross: 600 },
+        ],
+      },
+    });
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.rateGroups).toEqual([{ rate: 20, net: 1500, vat: 300, gross: 1800 }]);
+  });
+
+  it("rateGroups: accepted at the response top level as a fallback (#67)", async () => {
+    q({ rawText: "", rateGroups: [{ rate: 10, net: 1000, vat: 100, gross: 1100 }] });
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.rateGroups).toEqual([{ rate: 10, net: 1000, vat: 100, gross: 1100 }]);
   });
 
   it("repairs trailing commas in malformed JSON", async () => {

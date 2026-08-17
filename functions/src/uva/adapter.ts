@@ -40,7 +40,14 @@ export interface FileRecord {
     vatAmount: number;
     amount: number;
   }> | null;
+  extractedRateGroups?: Array<{
+    rate: number;
+    net: number;
+    vat: number;
+    gross: number;
+  }> | null;
   lineItemsUnreconciled?: boolean;
+  lineItemsUnreconciledRates?: number[] | null;
   extractedVatId?: string | null;
   extractedIssuer?: { vatId?: string | null } | null;
 }
@@ -94,7 +101,9 @@ export function toUvaFile(f: FileRecord): UvaFile {
     vatAmount: f.extractedVatAmount ?? null,
     vatPercent: f.extractedVatPercent ?? null,
     lineItems: f.extractedLineItems ?? null,
+    rateGroups: f.extractedRateGroups ?? null,
     lineItemsUnreconciled: f.lineItemsUnreconciled ?? false,
+    lineItemsUnreconciledRates: f.lineItemsUnreconciledRates ?? null,
     supplierVatId: f.extractedIssuer?.vatId ?? f.extractedVatId ?? null,
   };
 }
