@@ -170,6 +170,12 @@ services:
       FIBUKI_GEMINI_API_KEY: ${FIBUKI_GEMINI_API_KEY:-}
       FIBUKI_ANTHROPIC_API_KEY: ${FIBUKI_ANTHROPIC_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Redirect the Anthropic origin at a gateway or egress proxy. An ORIGIN,
+      # not an endpoint: "/v1/messages" is appended, matching the official SDK's
+      # ANTHROPIC_BASE_URL. Unlike FIBUKI_AI_BASE_URL below, which is an
+      # OpenAI-shaped root that already carries "/v1".
+      FIBUKI_ANTHROPIC_BASE_URL: ${FIBUKI_ANTHROPIC_BASE_URL:-}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
       FIBUKI_AI_BASE_URL: ${FIBUKI_AI_BASE_URL:-}
       FIBUKI_AI_API_KEY: ${FIBUKI_AI_API_KEY:-}
       # OIDC_JWKS_URI lets the verifier fetch keys from a directly-reachable URL
@@ -260,6 +266,10 @@ services:
       # the agent reports a clean error for whichever is missing.
       FIBUKI_GEMINI_API_KEY: ${FIBUKI_GEMINI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # The sidebar chat dials Anthropic from THIS container, so a gateway has to
+      # be declared on both services or half the traffic still leaves directly.
+      FIBUKI_ANTHROPIC_BASE_URL: ${FIBUKI_ANTHROPIC_BASE_URL:-}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
       # types/ai-usage.ts pins Vertex-era model ids, and some are retired for new
       # API-key consumers — "gemini-2.5-flash" answers 404 "not found for API
       # version v1beta". Override without editing the shared registry, which the
