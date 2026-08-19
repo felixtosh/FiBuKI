@@ -273,9 +273,37 @@ function isTimestampLike(v: unknown): v is Timestamp {
   return v instanceof Timestamp;
 }
 
+/**
+ * Characters JSON allows and a Postgres `jsonb` string cannot hold: U+0000,
+ * which has no representation in `text`, and an unpaired surrogate, which is
+ * not a character at all. Postgres refuses the whole value with `unsupported
+ * Unicode escape sequence`, so one bad byte costs the entire document rather
+ * than itself — and the error names Unicode, not the field, which sends triage
+ * at the AI provider instead of the persistence layer (fork #138).
+ *
+ * Both arrive here from real documents: a PDF text layer carrying a NUL, or a
+ * multi-byte character truncated mid-pair by an upstream buffer.
+ */
+const PG_ILLEGAL_IN_JSONB =
+  /\u0000|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+/**
+ * Drop what Postgres cannot store, keep everything else byte for byte. NUL is
+ * removed outright; a lone surrogate becomes U+FFFD, the replacement character,
+ * because it stands for a character that was there and did not survive.
+ */
+function sanitizeForJsonb(s: string): string {
+  if (!PG_ILLEGAL_IN_JSONB.test(s)) return s;
+  return s
+    .replace(/\u0000/g, "")
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, "\uFFFD")
+    .replace(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "\uFFFD");
+}
+
 function encodeValue(v: unknown): unknown {
   if (v === undefined) return undefined;
   if (v === null) return null;
+  if (typeof v === "string") return sanitizeForJsonb(v);
   if (isTimestampLike(v)) return { [TS_MARKER]: { s: v.seconds, n: v.nanoseconds } };
   if (v instanceof Date) {
     const ts = Timestamp.fromDate(v);
@@ -288,7 +316,8 @@ function encodeValue(v: unknown): unknown {
       // Sink guard (writes reject these upfront; literal comparisons on purpose)
       if (k === "__proto__" || k === "constructor" || k === "prototype") continue;
       const enc = encodeValue(val);
-      if (enc !== undefined) out[k] = enc;
+      // A key is a jsonb string too, and Postgres rejects it on the same terms.
+      if (enc !== undefined) out[sanitizeForJsonb(k)] = enc;
     }
     return out;
   }
