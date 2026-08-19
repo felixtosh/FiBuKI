@@ -202,14 +202,22 @@ services:
     # env_file, so the mappings above remain authoritative.
     env_file:
       - .env
-    # Loopback-only publish. On a public host a bare "8788:8788" binds 0.0.0.0
-    # AND Docker writes its own iptables rules, which bypass ufw/firewalld — the
-    # API would be reachable over plain HTTP from the internet. TLS termination
-    # and the only public listener belong to Caddy (docker-compose.prod.yml);
-    # Caddy reaches this service over the compose network, not via the host.
-    # This bind exists for on-box debugging (curl 127.0.0.1:8788/healthz).
+    # Loopback-only publish by default. On a public host a bare "8788:8788" binds
+    # 0.0.0.0 AND Docker writes its own iptables rules, which bypass ufw/firewalld
+    # — the API would be reachable over plain HTTP from the internet. TLS
+    # termination and the only public listener belong to Caddy
+    # (docker-compose.prod.yml); Caddy reaches this service over the compose
+    # network, not via the host. This bind exists for on-box debugging
+    # (curl 127.0.0.1:8788/healthz).
+    #
+    # FIBUKI_BIND_ADDR exists for the one topology loopback cannot serve: a
+    # reverse proxy on a DIFFERENT host, which sees 502 while every container is
+    # healthy and localhost answers 200. Widen it to a private interface address
+    # (e.g. 10.0.0.5), never to 0.0.0.0 — the iptables bypass above means a
+    # host firewall will NOT save you, so the reachable set is exactly whoever
+    # can route to the address you name.
     ports:
-      - "127.0.0.1:8788:8788"
+      - "${FIBUKI_BIND_ADDR:-127.0.0.1}:8788:8788"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:8788/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 10s
@@ -325,10 +333,11 @@ services:
       # Pool ceiling per container. Both share Postgres' max_connections, so this
       # is now split two ways rather than owned by fibuki-api alone.
       POSTGRES_MAX_CONNECTIONS: ${WEB_POSTGRES_MAX_CONNECTIONS:-10}
-    # Loopback-only — see the note on fibuki-api's ports. Public ingress is
-    # Caddy only (docker-compose.prod.yml).
+    # Loopback-only by default, and FIBUKI_BIND_ADDR widens both services
+    # together — see the note on fibuki-api's ports for why 0.0.0.0 is the wrong
+    # value. Public ingress is Caddy only (docker-compose.prod.yml).
     ports:
-      - "127.0.0.1:3000:3000"
+      - "${FIBUKI_BIND_ADDR:-127.0.0.1}:3000:3000"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3000/').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
       interval: 10s
