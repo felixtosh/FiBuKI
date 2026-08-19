@@ -682,6 +682,42 @@ async function refreshUnderLock(force: boolean, startedWith: string): Promise<st
   });
 }
 
+/**
+ * The OAuth error code in a refused token response, if it carries one.
+ *
+ * RFC 6749 §5.2 puts it in a JSON body. A reverse proxy that answers instead
+ * of the provider sends HTML or nothing, which is exactly the case this has to
+ * survive, so an unparseable body is `null` rather than an exception.
+ */
+async function oauthErrorCode(res: Response): Promise<string | null> {
+  try {
+    const body = (await res.clone().json()) as { error?: unknown };
+    return typeof body.error === "string" ? body.error : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Does a failed refresh actually say the session is gone? (fork #77)
+ *
+ * Only a refusal from the provider itself does. `invalid_grant` is the RFC
+ * 6749 §5.2 code for a refresh token that is revoked, expired or already
+ * spent, and it arrives as a 4xx. A 5xx from the provider, a 502 from the
+ * reverse proxy in front of it, a 503 while it restarts, a 408 or a 429 say
+ * nothing about the session — and clearing tokens on one of those signs out a
+ * user whose session is perfectly alive.
+ *
+ * `temporarily_unavailable` and `server_error` are the two §5.2 codes that
+ * describe the provider rather than the grant, so they stay on the keep side
+ * even when they arrive with a 4xx status.
+ */
+async function isSessionRefused(res: Response): Promise<boolean> {
+  if (res.status >= 500 || res.status === 408 || res.status === 429) return false;
+  const code = await oauthErrorCode(res);
+  return code !== "temporarily_unavailable" && code !== "server_error";
+}
+
 /** Built-in mode refresh: re-mint the JWT from the Better Auth session. */
 async function refreshViaSession(tokens: StoredTokens): Promise<string> {
   let base: string;
@@ -696,6 +732,15 @@ async function refreshViaSession(tokens: StoredTokens): Promise<string> {
     headers: { authorization: `Bearer ${tokens.session_token}` },
   });
   if (!res.ok) {
+    if (!(await isSessionRefused(res))) {
+      // The backend, or something in front of it, is having a moment. Keep the
+      // session: the next call retries, and nothing is lost but this attempt
+      // (fork #77).
+      throw new AuthError(
+        "auth/network-request-failed",
+        `Session refresh failed transiently (${res.status}).`,
+      );
+    }
     // Session revoked or expired — sign out cleanly so the UI shows the
     // login screen rather than looping on a dead token.
     clearTokens();
@@ -764,6 +809,15 @@ async function refreshTokens(tokens: StoredTokens, attempt = 0): Promise<string>
       // Only worth it if the token actually changed; otherwise we would just
       // repeat the same failed request.
       return refreshTokens(current, attempt + 1);
+    }
+    if (!(await isSessionRefused(res))) {
+      // Nothing here proves the session is dead — a 502 from the proxy in
+      // front of the provider, a 503 while it restarts. Keep the tokens and
+      // fail this attempt only; the next call retries (fork #77).
+      throw new AuthError(
+        "auth/network-request-failed",
+        `Token refresh failed transiently (${res.status}).`,
+      );
     }
     // Nothing usable left: sign out cleanly so the UI shows the login screen
     // rather than looping on a dead token.

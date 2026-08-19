@@ -810,6 +810,80 @@ describe("selfhost auth-client — OIDC refresh serialisation (fork #73)", () =>
     expect(readStored(w)).toBeNull();
   });
 
+  it("#77: a 503 from the provider keeps the session instead of signing out", async () => {
+    // Authentik restarting, or the proxy in front of it answering for it. The
+    // refresh_token is untouched and the session is alive; the pre-fix code
+    // cleared storage and dropped the user on the login screen.
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/.well-known/openid-configuration")) return discoveryResponse();
+      if (url === TOKEN_ENDPOINT) return new Response("service unavailable", { status: 503 });
+      return new Response("unexpected", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const w = installOidcEnv(fetchImpl);
+    seedTokens(w, staleSet("rt-1"));
+
+    const tab = await openTab();
+    await tick();
+
+    await expect(tab.getAuth().currentUser!.getIdToken()).rejects.toMatchObject({
+      code: "auth/network-request-failed",
+    });
+    expect(tab.getAuth().currentUser?.uid).toBe(UID);
+    expect(readStored(w)).toMatchObject({ refresh_token: "rt-1" });
+  });
+
+  it("#77: a 502 with an HTML body from the proxy keeps the session", async () => {
+    // Nothing parseable comes back, so the OAuth error code is unknowable —
+    // and an unknowable reason is not proof that the session was revoked.
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/.well-known/openid-configuration")) return discoveryResponse();
+      if (url === TOKEN_ENDPOINT) {
+        return new Response("<html><body>502 Bad Gateway</body></html>", {
+          status: 502,
+          headers: { "content-type": "text/html" },
+        });
+      }
+      return new Response("unexpected", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const w = installOidcEnv(fetchImpl);
+    seedTokens(w, staleSet("rt-1"));
+
+    const tab = await openTab();
+    await tick();
+
+    await expect(tab.getAuth().currentUser!.getIdToken()).rejects.toMatchObject({
+      code: "auth/network-request-failed",
+    });
+    expect(tab.getAuth().currentUser?.uid).toBe(UID);
+    expect(readStored(w)).toMatchObject({ refresh_token: "rt-1" });
+  });
+
+  it("#77: a 400 temporarily_unavailable is the provider talking, not the grant", async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/.well-known/openid-configuration")) return discoveryResponse();
+      if (url === TOKEN_ENDPOINT) {
+        return new Response(JSON.stringify({ error: "temporarily_unavailable" }), { status: 400 });
+      }
+      return new Response("unexpected", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const w = installOidcEnv(fetchImpl);
+    seedTokens(w, staleSet("rt-1"));
+
+    const tab = await openTab();
+    await tick();
+
+    await expect(tab.getAuth().currentUser!.getIdToken()).rejects.toMatchObject({
+      code: "auth/network-request-failed",
+    });
+    expect(readStored(w)).toMatchObject({ refresh_token: "rt-1" });
+  });
+
   it("refuses to re-present a consumed refresh_token when the provider rotates", async () => {
     const nextIdToken = makeJwt({ sub: UID, email: "stefan@example.test", exp: IN_AN_HOUR() });
     const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
