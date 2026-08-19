@@ -131,6 +131,59 @@ describe("storage-routes + storage-client", () => {
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(payload);
   });
 
+  it("#135: a throwing progress listener does not fail a delivered upload", async () => {
+    // The bytes are in the store and the server returned 2xx. A consumer
+    // callback that throws — an unmounted component, a formatting TypeError —
+    // used to land in the upload's own catch and be reported as
+    // storage/unknown, with `await task` rejecting on a successful upload.
+    const storage = getStorage();
+    const r = ref(storage, "receipts/u1/throwing-listener.bin");
+    const payload = Buffer.from("delivered");
+
+    const task = uploadBytesResumable(r, payload);
+    let completed = false;
+    let errored: unknown = null;
+
+    task.on(
+      "state_changed",
+      () => {
+        throw new TypeError("listener blew up");
+      },
+      (err) => {
+        errored = err;
+      },
+      () => {
+        completed = true;
+      },
+    );
+
+    const snapshot = await task;
+
+    expect(snapshot.state).toBe("success");
+    expect(errored).toBeNull();
+    // A later listener still runs — one bad callback does not swallow the rest.
+    expect(completed).toBe(true);
+    // And the bytes really are there.
+    expect(Buffer.from(await getBytes(r))).toEqual(payload);
+  });
+
+  it("#135: a throwing complete listener does not un-resolve the task", async () => {
+    const storage = getStorage();
+    const r = ref(storage, "receipts/u1/throwing-complete.bin");
+
+    const task = uploadBytesResumable(r, Buffer.from("also delivered"));
+    let errored: unknown = null;
+    task.on("state_changed", undefined, (err) => {
+      errored = err;
+    }, () => {
+      throw new Error("complete handler blew up");
+    });
+
+    await expect(task).resolves.toMatchObject({ state: "success" });
+    expect(errored).toBeNull();
+    expect(task.snapshot.state).toBe("success");
+  });
+
   it("deleteObject then getBytes rejects with storage/object-not-found", async () => {
     const storage = getStorage();
     const r = ref(storage, "receipts/u1/todelete.bin");
