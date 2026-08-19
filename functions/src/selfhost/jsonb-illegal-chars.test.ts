@@ -44,6 +44,26 @@ describe("jsonb string sanitising", () => {
     expect(data.keyname).toBe("plain");
   });
 
+  it("a key that sanitises into __proto__ is dropped, not stored", async () => {
+    // The sink guard tests the key that is actually written, so a NUL inside
+    // the name cannot carry it past three literal comparisons and land back on
+    // "__proto__" at the point of assignment.
+    //
+    // This pins the outcome, not the ordering: with the old ordering the
+    // polluted object was the encoder's own temporary, which never escapes and
+    // is serialised by own-property enumeration, so the stored record looked
+    // identical. That is why the reorder is worth doing anyway — the guard
+    // should not depend on a downstream detail for its correctness.
+    const ref = getFirestore().collection("nultest").doc("proto");
+    await ref.set({ [`__proto__${NUL}`]: { polluted: true }, keep: 1 });
+    const data = (await ref.get()).data() as Record<string, unknown>;
+    expect(data.keep).toBe(1);
+    // Dropped, not stored under a cleaned-up name, and no prototype touched.
+    expect(Object.prototype.hasOwnProperty.call(data, "__proto__")).toBe(false);
+    expect(Object.getPrototypeOf(data)).toBe(Object.prototype);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
   it("an unpaired surrogate becomes U+FFFD rather than aborting the write", async () => {
     const ref = getFirestore().collection("nultest").doc("c");
     // A multi-byte character truncated mid-pair by an upstream buffer.

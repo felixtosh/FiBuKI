@@ -312,12 +312,16 @@ function encodeValue(v: unknown): unknown {
   if (Array.isArray(v)) return v.map((x) => encodeValue(x));
   if (typeof v === "object") {
     const out: Record<string, unknown> = {};
-    for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+    for (const [rawKey, val] of Object.entries(v as Record<string, unknown>)) {
+      // A key is a jsonb string too, and Postgres rejects it on the same terms.
+      // Sanitise BEFORE the guard, never after: "__proto__\u0000" would pass a
+      // literal comparison and then sanitise back into "__proto__", which is
+      // the exact key the guard exists to stop.
+      const k = sanitizeForJsonb(rawKey);
       // Sink guard (writes reject these upfront; literal comparisons on purpose)
       if (k === "__proto__" || k === "constructor" || k === "prototype") continue;
       const enc = encodeValue(val);
-      // A key is a jsonb string too, and Postgres rejects it on the same terms.
-      if (enc !== undefined) out[sanitizeForJsonb(k)] = enc;
+      if (enc !== undefined) out[k] = enc;
     }
     return out;
   }
