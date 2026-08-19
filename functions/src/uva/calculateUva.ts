@@ -192,7 +192,13 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
       continue;
     }
     if (treatment === "needs-receipt") {
-      markUnresolved(tx, "needs-receipt", guessVat20(bank));
+      // The gate is direction-aware (fork #129). An Eigenbeleg is a self-issued
+      // voucher, so an EXPENSE claims no Vorsteuer (R9) and only earns a place
+      // on the chasing list. INCOME is the understating direction: a sale whose
+      // receipt was lost still owes output VAT, so it takes the same defaulted
+      // lane step 4 uses instead of dropping out of the report entirely.
+      if (isIncome) defaultIncomeAt20(tx, bank, "needs-receipt");
+      else markUnresolved(tx, "needs-receipt", guessVat20(bank));
       continue;
     }
 
@@ -209,20 +215,7 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
 
     // --- Step 4: unresolved bucket (D1 asymmetry) -------------------------
     if (isIncome) {
-      // Understating output VAT is the worse error: default 20%, flagged.
-      const net = Math.round((bank * 100) / 120);
-      const vat = bank - net;
-      applyGroups(
-        tx,
-        {
-          ok: true,
-          step: "defaulted-20",
-          groups: [{ rate: 20, net, vat, gross: bank }],
-          foreignVat: [],
-        },
-        true
-      );
-      markUnresolved(tx, derivation.reason, null, vat);
+      defaultIncomeAt20(tx, bank, derivation.reason);
     } else {
       markUnresolved(tx, derivation.reason, derivation.foregoneVat);
     }
@@ -239,6 +232,33 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
   return result;
 
   // --- helpers bound to the accumulator state ----------------------------
+
+  /**
+   * The D1 asymmetry: income whose VAT cannot be derived still books 20%,
+   * flagged in the unresolved bucket, because understating output VAT is the
+   * worse error. `foregoneVat` stays null — it names input VAT the operator
+   * could still recover with a receipt, which is not what an unremitted output
+   * liability is.
+   */
+  function defaultIncomeAt20(
+    tx: UvaTransaction,
+    bank: number,
+    reason: UnresolvedReason
+  ) {
+    const net = Math.round((bank * 100) / 120);
+    const vat = bank - net;
+    applyGroups(
+      tx,
+      {
+        ok: true,
+        step: "defaulted-20",
+        groups: [{ rate: 20, net, vat, gross: bank }],
+        foreignVat: [],
+      },
+      true
+    );
+    markUnresolved(tx, reason, null, vat);
+  }
 
   function applyGroups(tx: UvaTransaction, d: Derivation, income: boolean) {
     if (income) {

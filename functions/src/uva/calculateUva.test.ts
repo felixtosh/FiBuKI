@@ -137,6 +137,34 @@ describe("step 0: zero-VAT classes", () => {
     expect(r.totalInputVat).toBe(0);
     expect(r.unresolved).toHaveLength(1);
     expect(r.unresolved[0].reason).toBe("needs-receipt");
+    expect(r.unresolved[0].foregoneVat).toBe(500);
+  });
+
+  it("#129: a needs-receipt INCOME line still books 20% output VAT", () => {
+    // The class gate is direction-aware. For an expense an Eigenbeleg claims
+    // nothing (the test above); for income the same silence would drop a sale
+    // out of the report, which is the understating direction. It defaults to
+    // 20% and stays flagged, exactly as an underivable sale does at step 4.
+    const r = run([
+      {
+        id: "t-lost-income",
+        date: "2026-02-01",
+        amount: 11000,
+        noReceiptCategory: {
+          id: "c2",
+          templateId: "receipt-lost",
+          vatTreatment: "needs-receipt",
+        },
+      },
+    ]);
+    expect(r.totalOutputVat).toBe(1833);
+    expect(kz(r, "000")).toBe(9167);
+    expect(kz(r, "022")).toBe(9167);
+    expect(r.unresolved).toHaveLength(1);
+    expect(r.unresolved[0].reason).toBe("needs-receipt");
+    // Output VAT owed, not input VAT a receipt could still recover.
+    expect(r.unresolved[0].defaultedOutputVat).toBe(1833);
+    expect(r.unresolved[0].foregoneVat).toBeNull();
   });
 
   it("categories without vatTreatment fall through to step 4", () => {

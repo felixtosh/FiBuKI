@@ -519,18 +519,18 @@ describe("bmd characterization: generateBuchungenCsv no-receipt categories", () 
     // characterization: preserves current behavior — the category symbol
     // "ER" (Eingangsrechnung) is used even for INCOME receipt-lost rows.
     //
-    // #66: the explicit vatRate 10 no longer survives. The class gate runs
-    // BEFORE the override lane in spec §3, so needs-receipt wins, matching
-    // calculateUva, which leaves this transaction unresolved and contributes
-    // nothing. Worth noting that for INCOME this means output VAT of zero,
-    // which is the understating direction — a UVA-side question, not a BMD one.
+    // #66: the explicit vatRate 10 does not survive. The class gate runs BEFORE
+    // the override lane in spec §3, so needs-receipt wins over the typed rate.
+    // #129: for INCOME that gate no longer books zero — a sale whose receipt
+    // was lost still owes output VAT, so it defaults to 20% (110,00 gross =
+    // 18,33 tax) like every other underivable sale, in step with calculateUva.
     const csv = generateBuchungenCsv(
       [catTx("receipt-lost", 11000, { name: "Found money", vatRate: 10 })],
       new Map(),
       new Map(),
     );
     expect(csv.split("\n")[1]).toBe(
-      "0;4000;;2026000001;20260315;20260315;110,00;2;0,00;0;Eigenbeleg: Found money;;ER;",
+      "0;4000;;2026000001;20260315;20260315;110,00;2;18,33;20;Eigenbeleg: Found money;;ER;",
     );
   });
 

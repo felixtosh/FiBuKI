@@ -91,6 +91,12 @@ export function deriveTransactionVat(tx: UvaTransaction): TransactionVat {
     return { kind: "no-vat", why: treatment };
   }
   if (treatment === "needs-receipt") {
+    // The gate is direction-aware (fork #129). An Eigenbeleg is a self-issued
+    // voucher, so an EXPENSE claims no Vorsteuer and only earns a place on the
+    // chasing list. INCOME is the understating direction: a sale whose receipt
+    // was lost still owes output VAT, so it takes the same defaulted-20 lane an
+    // underivable sale takes below instead of dropping out at zero.
+    if (tx.amount > 0) return defaultedIncomeAt20(tx.amount, []);
     return {
       kind: "unresolved",
       reason: "needs-receipt",
@@ -112,22 +118,27 @@ export function deriveTransactionVat(tx: UvaTransaction): TransactionVat {
   // Income keeps the D1 asymmetry that calculateUva applies: understating
   // output VAT is the worse error, so an undocumented sale still books 20%.
   // An undocumented purchase claims nothing.
-  if (tx.amount > 0) {
-    const bank = tx.amount;
-    const net = Math.round((bank * 100) / 120);
-    return {
-      kind: "groups",
-      step: "defaulted-20",
-      groups: [{ rate: 20, net, vat: bank - net, gross: bank }],
-      foreignVat: derivation.foreignVat,
-    };
-  }
+  if (tx.amount > 0) return defaultedIncomeAt20(tx.amount, derivation.foreignVat);
 
   return {
     kind: "unresolved",
     reason: derivation.reason,
     foregoneVat: derivation.foregoneVat,
     foreignVat: derivation.foreignVat,
+  };
+}
+
+/**
+ * The D1 asymmetry as a booking outcome: income that cannot be derived books
+ * 20% anyway, because understating output VAT is the worse error.
+ */
+function defaultedIncomeAt20(bank: number, foreignVat: ForeignVatEntry[]): TransactionVat {
+  const net = Math.round((bank * 100) / 120);
+  return {
+    kind: "groups",
+    step: "defaulted-20",
+    groups: [{ rate: 20, net, vat: bank - net, gross: bank }],
+    foreignVat,
   };
 }
 
