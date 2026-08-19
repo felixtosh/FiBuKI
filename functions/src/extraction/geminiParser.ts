@@ -548,9 +548,18 @@ LINE ITEM EXTRACTION (IMPORTANT):
 - Do NOT extract summary rows like Subtotal, Total, VAT, Amount paid, Payment history
 - If no itemization is visible, create exactly ONE line item for the total
 - Return all monetary amounts in cents
-- Use "vatPercent": null when the rate is not explicitly visible (do not guess)
-- Sanity check: line item totals must reconcile with the invoice total amount
-  (if they do not, fix the line item selection so they match)
+- Set "vatPercent" on every row the document's rate applies to. The rate counts
+  as visible whether it is printed on the row itself, in the per-rate summary
+  block, or as a single line near the total ("zzgl. 20% USt", "+ 20% MwSt")
+- Use "vatPercent": null only when the document prints no rate at all anywhere
+  (do not guess a rate that is not on the page)
+- Copy "amount" exactly as the row prints it, net or gross, and say which by
+  filling "vatAmount" for every row that has a rate: on a NET row (an invoice
+  that lists net rows and adds VAT once at the bottom) "vatAmount" is the VAT
+  ON TOP of "amount"; on a GROSS row it is the VAT ALREADY INSIDE "amount"
+- Sanity check: the rows must reconcile with the invoice total amount, either
+  as they stand (gross rows) or once their VAT is added (net rows). If neither
+  works, fix the line item selection so one of them does
 
 VAT SUMMARY BLOCK ("rateGroups", IMPORTANT):
 - Most Austrian/German receipts print a per-rate VAT summary near the total, e.g.

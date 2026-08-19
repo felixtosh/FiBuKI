@@ -18,6 +18,7 @@ import { MODELS } from "../utils/models";
 const db = getFirestore();
 
 import { ExtractedEntity, ExtractedLineItem, ExtractedRateGroup } from "../types/extraction";
+import { applyVatDowngradeGuard } from "./vatSourceGuard";
 
 /**
  * User data for invoice direction detection and counterparty determination
@@ -601,10 +602,102 @@ export interface ReconciliationResult {
   rateGroups: ExtractedRateGroup[] | null;
 }
 
+/**
+ * Convert NET line items to the gross form every consumer of
+ * `extractedLineItems` assumes (fork #137).
+ *
+ * A row's `amount` is read as gross throughout: UVA derivation builds a rate
+ * group as `gross = amount`, `net = amount - vatAmount`, and the file view
+ * shows the row as billed. Documents that itemise net and add VAT once at the
+ * bottom — every outgoing invoice does — therefore have to be converted here,
+ * or the file either loses its VAT entirely (rows with no rate at all) or
+ * silently reports a net figure as gross (rows that carry their own VAT).
+ *
+ * Nothing is invented. Three shapes are accepted, each proved by arithmetic the
+ * document itself printed:
+ *
+ *  1. every row carries its own VAT, and net + VAT is what hits the document
+ *     total while the raw sum does not;
+ *  2. every row carries a rate but the VAT read off it was the gross reading,
+ *     so re-reading it as VAT on top of a net row is what closes;
+ *  3. no row carries a rate at all, the document states a single top-level
+ *     rate, and grossing the rows up at exactly that rate hits the total.
+ *
+ * A mixed bag (some rows rated, some not) is a structural disagreement rather
+ * than a net/gross reading, and is left to the caller to flag. So is any case
+ * where none of the three closes: this returns null and the document goes down
+ * the ordinary reconciliation path unchanged.
+ *
+ * The rounding residual (at most a few cents, since the gate is the tolerance)
+ * lands on the largest row, so the converted rows sum to the document total
+ * exactly rather than to within a cent of it.
+ */
+function grossUpNetLineItems(
+  lineItems: ExtractedLineItem[],
+  extractedAmount: number,
+  documentVatPercent: number | null | undefined
+): ExtractedLineItem[] | null {
+  const netSum = lineItems.reduce((sum, item) => sum + item.amount, 0);
+  if (netSum <= 0 || netSum >= extractedAmount) {
+    return null;
+  }
+
+  const allRated = lineItems.every((item) => item.vatPercent !== null);
+  const noneRated = lineItems.every((item) => item.vatPercent === null && item.vatAmount === 0);
+
+  // Candidate readings of "the VAT that sits on top of these rows", tried in
+  // order of how much of it the document actually stated.
+  const candidates: Array<{ vats: number[]; fallbackRate: number | null }> = [];
+  if (allRated) {
+    candidates.push({ vats: lineItems.map((item) => item.vatAmount), fallbackRate: null });
+    candidates.push({
+      vats: lineItems.map((item) => Math.round((item.amount * (item.vatPercent as number)) / 100)),
+      fallbackRate: null,
+    });
+  } else if (
+    noneRated &&
+    typeof documentVatPercent === "number" &&
+    Number.isFinite(documentVatPercent) &&
+    documentVatPercent > 0
+  ) {
+    candidates.push({
+      vats: lineItems.map((item) => Math.round((item.amount * documentVatPercent) / 100)),
+      fallbackRate: documentVatPercent,
+    });
+  }
+
+  let largest = 0;
+  for (let i = 1; i < lineItems.length; i++) {
+    if (lineItems[i].amount > lineItems[largest].amount) {
+      largest = i;
+    }
+  }
+
+  for (const candidate of candidates) {
+    const vats = [...candidate.vats];
+    const vatSum = vats.reduce((sum, vat) => sum + vat, 0);
+    if (vatSum <= 0) continue;
+    if (Math.abs(netSum + vatSum - extractedAmount) > amountTolerance(extractedAmount)) continue;
+
+    vats[largest] += extractedAmount - (netSum + vatSum);
+    if (vats.some((vat) => vat < 0)) continue;
+
+    return lineItems.map((item, i) => ({
+      ...item,
+      vatPercent: item.vatPercent ?? candidate.fallbackRate,
+      vatAmount: vats[i],
+      amount: item.amount + vats[i],
+    }));
+  }
+
+  return null;
+}
+
 export function reconcileLineItemsWithDocumentTotal(
   lineItems: ExtractedLineItem[],
   extractedAmount: number | null | undefined,
-  rateGroups?: ExtractedRateGroup[] | null
+  rateGroups?: ExtractedRateGroup[] | null,
+  documentVatPercent?: number | null
 ): ReconciliationResult {
   const validatedGroups = validateRateGroups(rateGroups, extractedAmount);
 
@@ -624,6 +717,31 @@ export function reconcileLineItemsWithDocumentTotal(
       unreconciledRates: [],
       rateGroups: validatedGroups,
     };
+  }
+
+  // Fork #137: the rows may be NET on a document whose total is gross. That
+  // is not an extraction error — it is what an outgoing invoice prints — but
+  // the rows have to be converted before anything downstream reads them.
+  // Only attempted when the raw sum genuinely disagrees with the total, so a
+  // document that already itemises gross is never touched.
+  const rawSum = candidateLineItems.reduce((sum, item) => sum + item.amount, 0);
+  if (
+    Math.abs(rawSum - extractedAmount) > amountTolerance(extractedAmount) &&
+    (!validatedGroups || validatedGroups.length === 0)
+  ) {
+    const grossedUp = grossUpNetLineItems(candidateLineItems, extractedAmount, documentVatPercent);
+    if (grossedUp) {
+      console.log(
+        `[ExtractionCore] Line items were net (sum ${rawSum} against document total ` +
+        `${extractedAmount}); converted to gross at the document's own rate.`
+      );
+      return {
+        lineItems: grossedUp,
+        unreconciled: false,
+        unreconciledRates: [],
+        rateGroups: null,
+      };
+    }
   }
 
   const consolidated = consolidateLineItems(candidateLineItems, extractedAmount);
@@ -819,6 +937,8 @@ export async function runExtraction(
         extractedRateGroups: null,
         lineItemsUnreconciled: false,
         lineItemsUnreconciledRates: null,
+        vatSourceDowngraded: false,
+        vatFieldsPreserved: false,
         extractedPartner: null,
         extractedVatId: null,
         extractedIban: null,
@@ -947,6 +1067,8 @@ export async function runExtraction(
     updateData.extractedRateGroups = null;
     updateData.lineItemsUnreconciled = false;
     updateData.lineItemsUnreconciledRates = null;
+    updateData.vatSourceDowngraded = false;
+    updateData.vatFieldsPreserved = false;
     updateData.extractedPartner = null;
     updateData.extractedVatId = null;
     updateData.extractedIban = null;
@@ -981,7 +1103,8 @@ export async function runExtraction(
       const reconciled = reconcileLineItemsWithDocumentTotal(
         normalizedLineItems,
         extracted.amount,
-        extracted.rateGroups
+        extracted.rateGroups,
+        extracted.vatPercent
       );
       updateData.extractedLineItems = reconciled.lineItems;
       updateData.extractedRateGroups = reconciled.rateGroups;
@@ -1106,6 +1229,21 @@ export async function runExtraction(
       updateData.extractedAdditionalFields = result.additionalFields;
       console.log(`[+${Date.now() - t0}ms] Stored ${result.additionalFields.length} additional fields`);
     }
+  }
+
+  // Fork #137: never let a weaker pass overwrite a stronger record's VAT.
+  // Re-extraction is destructive by default, and a pass that comes back with
+  // no derivable VAT source used to replace one that had it, silently and
+  // invisibly.
+  const vatGuard = applyVatDowngradeGuard(fileData, updateData);
+  if (vatGuard.downgraded) {
+    console.warn(
+      `[ExtractionCore] VAT evidence downgraded ${vatGuard.from} -> ${vatGuard.to} for ${fileId}. ` +
+      (vatGuard.preserved
+        ? "Kept the previous VAT fields; the rest of the extraction was written."
+        : "Document total moved too, so the previous VAT fields do not describe this reading — " +
+          "wrote the weaker record and flagged it for review.")
+    );
   }
 
   // Save to Firestore

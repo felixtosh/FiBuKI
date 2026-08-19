@@ -248,6 +248,22 @@ export interface TaxFile {
    */
   lineItemsUnreconciledRates?: number[] | null;
 
+  /**
+   * Fork #137: this file's last re-extraction read the document's VAT worse
+   * than the record it replaced. Re-extraction is destructive, so without
+   * this the loss leaves no trace at all in the record afterwards.
+   */
+  vatSourceDowngraded?: boolean;
+
+  /**
+   * Fork #137: the downgrade above was refused — the previous VAT fields are
+   * still the ones stored, while the rest of the newer extraction was
+   * written. False alongside `vatSourceDowngraded` means the document total
+   * moved as well, so the older VAT fields described a different reading and
+   * could not be carried forward; that file needs a human.
+   */
+  vatFieldsPreserved?: boolean;
+
   /** AI-extracted partner/company name */
   extractedPartner?: string | null;
 
@@ -591,6 +607,8 @@ export interface FileExtractionData {
   extractedRateGroups?: ExtractedRateGroup[] | null;
   lineItemsUnreconciled?: boolean;
   lineItemsUnreconciledRates?: number[] | null;
+  vatSourceDowngraded?: boolean;
+  vatFieldsPreserved?: boolean;
   extractedPartner?: string | null;
   extractedVatId?: string | null;
   extractedIban?: string | null;
