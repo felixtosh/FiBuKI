@@ -1,29 +1,28 @@
 /**
  * Dismiss a transaction suggestion from a file
  * Removes the suggestion from the file's transactionSuggestions array
+ *
+ * The field-writes live in dismissSuggestionOps, shared with the MCP tool of
+ * the same name, so a pair rejected by a click and a pair rejected by an agent
+ * land in the same state.
  */
 
-import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
-
-interface TransactionSuggestion {
-  transactionId: string;
-  confidence: number;
-  matchSources: Array<{
-    type: string;
-    weight: number;
-    details?: string;
-  }>;
-  suggestedAt: FirebaseFirestore.Timestamp;
-}
+import {
+  buildDismissSuggestionUpdates,
+  checkDismissalReason,
+  type DismissibleFileState,
+} from "./dismissSuggestionOps";
 
 interface DismissTransactionSuggestionRequest {
   fileId: string;
   transactionId: string;
+  reason?: string;
 }
 
 interface DismissTransactionSuggestionResponse {
   success: boolean;
+  dismissedConfidence: number | null;
 }
 
 export const dismissTransactionSuggestionCallable = createCallable<
@@ -32,7 +31,7 @@ export const dismissTransactionSuggestionCallable = createCallable<
 >(
   { name: "dismissTransactionSuggestion" },
   async (ctx, request) => {
-    const { fileId, transactionId } = request;
+    const { fileId, transactionId, reason } = request;
 
     if (!fileId) {
       throw new HttpsError("invalid-argument", "fileId is required");
@@ -40,53 +39,43 @@ export const dismissTransactionSuggestionCallable = createCallable<
     if (!transactionId) {
       throw new HttpsError("invalid-argument", "transactionId is required");
     }
+    const reasonProblem = checkDismissalReason(reason);
+    if (reasonProblem) {
+      throw new HttpsError("invalid-argument", reasonProblem);
+    }
 
     const fileRef = ctx.db.collection("files").doc(fileId);
-    const fileSnap = await fileRef.get();
 
-    if (!fileSnap.exists) {
-      throw new HttpsError("not-found", "File not found");
-    }
+    // Read and write in one transaction: the builder rewrites whole arrays, so
+    // two dismissals racing on the same file would otherwise lose one.
+    const { dismissedConfidence, alreadyDismissed } = await ctx.db.runTransaction(async (tx) => {
+      const fileSnap = await tx.get(fileRef);
 
-    const fileData = fileSnap.data()!;
-    if (fileData.userId !== ctx.userId) {
-      throw new HttpsError("permission-denied", "Access denied");
-    }
+      if (!fileSnap.exists) {
+        throw new HttpsError("not-found", "File not found");
+      }
 
-    // Filter out the dismissed suggestion and capture its confidence
-    const currentSuggestions = (fileData.transactionSuggestions || []) as TransactionSuggestion[];
-    const dismissedSuggestion = currentSuggestions.find(
-      (s) => s.transactionId === transactionId
-    );
-    const updatedSuggestions = currentSuggestions.filter(
-      (s) => s.transactionId !== transactionId
-    );
+      const fileData = fileSnap.data()!;
+      if (fileData.userId !== ctx.userId) {
+        throw new HttpsError("permission-denied", "Access denied");
+      }
 
-    // Track dismissed suggestions to prevent them from being re-suggested
-    // Write both legacy (string[]) and new (object[]) formats
-    const dismissedSuggestions = (fileData.dismissedTransactionIds || []) as string[];
-    if (!dismissedSuggestions.includes(transactionId)) {
-      dismissedSuggestions.push(transactionId);
-    }
-
-    const updateData: Record<string, unknown> = {
-      transactionSuggestions: updatedSuggestions,
-      dismissedTransactionIds: dismissedSuggestions,
-      dismissedTransactions: FieldValue.arrayUnion({
+      const outcome = buildDismissSuggestionUpdates(
+        fileData as DismissibleFileState,
         transactionId,
-        dismissedAt: Timestamp.now(),
-        confidence: dismissedSuggestion?.confidence ?? null,
-      }),
-      updatedAt: FieldValue.serverTimestamp(),
-    };
+        reason
+      );
 
-    await fileRef.update(updateData);
+      tx.update(fileRef, outcome.updates);
+      return outcome;
+    });
 
     console.log(`[dismissTransactionSuggestion] Dismissed suggestion for file ${fileId}`, {
       userId: ctx.userId,
       transactionId,
+      alreadyDismissed,
     });
 
-    return { success: true };
+    return { success: true, dismissedConfidence };
   }
 );

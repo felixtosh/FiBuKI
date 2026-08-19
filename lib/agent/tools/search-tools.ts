@@ -8,6 +8,11 @@ import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { classifyEmail } from "@/lib/email-providers/interface";
 import { callFirebaseFunction } from "@/lib/api/firebase-callable";
+// The one reader of a file's dismissal fields (fork #94), imported rather than
+// re-derived here — a fourth hand-rolled reader of the same two fields is how
+// the enforcement drifts apart again. Dependency-free pure logic; the relative
+// path across the package boundary mirrors lib/selfhost/firestore-admin-shim.
+import { readDismissedTransactionIds } from "../../../functions/src/matching/dismissedTransactions";
 
 // Lazy-load admin DB to avoid initialization at build time
 let _db: ReturnType<typeof import("@/lib/firebase/admin").getAdminDb> | null = null;
@@ -17,6 +22,43 @@ async function getDb() {
     _db = getAdminDb();
   }
   return _db;
+}
+
+/**
+ * Which of these files currently reject this transaction (fork #101).
+ *
+ * Dismissal lives on the file document, so a caller holding only ids has to
+ * read them. searchLocalFiles does not use this — it already holds every file
+ * document and filters in memory. This is for the paths that hold an id and
+ * nothing else: Gmail attachments matched to an already-downloaded file, and
+ * the connect tools.
+ *
+ * A `dismissedTransactionIds array-contains` query would answer this in one
+ * round trip, but it would also be a fourth place that assumes the legacy array
+ * is the authoritative shape. Reading the documents and asking
+ * readDismissedTransactionIds keeps one reader for both stored shapes; the id
+ * lists here are short (candidates already downloaded, or one pair).
+ */
+async function dismissedFileIdsFor(
+  db: Awaited<ReturnType<typeof getDb>>,
+  fileIds: string[],
+  transactionId: string
+): Promise<Set<string>> {
+  const unique = [...new Set(fileIds.filter(Boolean))];
+  if (unique.length === 0) return new Set<string>();
+
+  const snaps = await Promise.all(
+    unique.map((id) => db.collection("files").doc(id).get())
+  );
+
+  const dismissed = new Set<string>();
+  for (const snap of snaps) {
+    if (!snap.exists) continue;
+    if (readDismissedTransactionIds(snap.data()).has(transactionId)) {
+      dismissed.add(snap.id);
+    }
+  }
+  return dismissed;
 }
 
 // Server-side attachment scoring types (matches scoreAttachmentMatchCallable)
@@ -482,12 +524,25 @@ export const searchLocalFilesTool = tool(
     }
 
     // Filter to eligible files (PDFs and images, not soft-deleted)
-    const eligibleFiles: EligibleFile[] = filesSnapshot.docs
+    const typeEligibleFiles: EligibleFile[] = filesSnapshot.docs
       .map((doc) => ({ id: doc.id, ...doc.data() } as EligibleFile))
       .filter((file) => {
         if (file.deletedAt) return false;
         return file.fileType === "application/pdf" || file.fileType?.startsWith("image/");
       });
+
+    // Drop files that have rejected THIS transaction (fork #101). Offering a
+    // dismissed pair back to the agent is how a rejection gets undone one step
+    // later: the agent has no other way to know the pair was refused, and the
+    // scorer will happily rank it first again. Dropped before scoring rather
+    // than after, so a dismissed pair does not occupy a candidate slot.
+    //
+    // Per-file, not per-transaction: dismissal lives on the file document,
+    // unlike the transaction's `rejectedFileIds` this tool already reads.
+    const eligibleFiles: EligibleFile[] = typeEligibleFiles.filter(
+      (file) => !readDismissedTransactionIds(file).has(transactionId)
+    );
+    const dismissedForThisTransaction = typeEligibleFiles.length - eligibleFiles.length;
 
     if (eligibleFiles.length === 0) {
       // Build hint if partner prefers no-receipt
@@ -508,9 +563,15 @@ export const searchLocalFilesTool = tool(
         },
         partnerContext,
         resolutionHint,
-        summary: resolutionHint
-          ? `No uploaded files available. ${resolutionHint}`
-          : "No uploaded files available to search",
+        dismissedForThisTransaction,
+        // Says which of the two "nothing to offer" cases this is. Without it an
+        // agent reads "no files" and re-uploads or re-searches for a document
+        // that is already here and was deliberately refused.
+        summary: dismissedForThisTransaction > 0
+          ? `No uploaded files available to search — ${dismissedForThisTransaction} were previously rejected for this transaction and are not offered again.${resolutionHint ? ` ${resolutionHint}` : ""}`
+          : resolutionHint
+            ? `No uploaded files available. ${resolutionHint}`
+            : "No uploaded files available to search",
         candidates: [],
         totalFound: 0,
       };
@@ -649,12 +710,16 @@ export const searchLocalFilesTool = tool(
       },
       partnerContext,
       resolutionHint,
+      dismissedForThisTransaction,
       summary:
-        candidates.length > 0
+        (candidates.length > 0
           ? `Found ${candidates.length} files. Top match: "${topCandidates[0]?.fileName}" (${topCandidates[0]?.score}%)`
           : resolutionHint
             ? `No matching files found. ${resolutionHint}`
-            : "No matching files found",
+            : "No matching files found") +
+        (dismissedForThisTransaction > 0
+          ? ` ${dismissedForThisTransaction} file${dismissedForThisTransaction === 1 ? " was" : "s were"} previously rejected for this transaction and ${dismissedForThisTransaction === 1 ? "is" : "are"} not offered.`
+          : ""),
       candidates: topCandidates.map((c) => ({
         ...c,
         scoreDetails: `${c.score}% - ${c.scoreReasons?.join(", ") || "no reasons"}`,
@@ -1038,19 +1103,40 @@ export const searchGmailAttachmentsTool = tool(
       return true;
     });
 
-    const topCandidates = dedupedCandidates.slice(0, 15);
-    const alreadyDownloadedCount = dedupedCandidates.filter((c) => c.alreadyDownloaded).length;
+    // Drop candidates whose already-downloaded file has rejected this
+    // transaction (fork #101). Only those can be dismissed: an attachment that
+    // is not a file yet has no document to carry the rejection. Without this,
+    // the pair a human refused comes straight back as a Gmail candidate and is
+    // connected by id on the next turn.
+    const dismissedExistingFileIds = await dismissedFileIdsFor(
+      db,
+      dedupedCandidates
+        .map((c) => c.existingFileId)
+        .filter((id): id is string => Boolean(id)),
+      transactionId
+    );
+    const offerableCandidates = dedupedCandidates.filter(
+      (c) => !(c.existingFileId && dismissedExistingFileIds.has(c.existingFileId))
+    );
+    const dismissedForThisTransaction =
+      dedupedCandidates.length - offerableCandidates.length;
+
+    const topCandidates = offerableCandidates.slice(0, 15);
+    const alreadyDownloadedCount = offerableCandidates.filter((c) => c.alreadyDownloaded).length;
 
     // Build summary
     let summary: string;
-    if (dedupedCandidates.length > 0) {
+    if (offerableCandidates.length > 0) {
       const topInfo = `Top: "${topCandidates[0]?.attachmentFilename || topCandidates[0]?.emailSubject}" (${topCandidates[0]?.score}%)`;
       const downloadedInfo = alreadyDownloadedCount > 0
         ? ` (${alreadyDownloadedCount} already downloaded)`
         : "";
-      summary = `Searched "${searchQueries.join('", "')}" - Found ${dedupedCandidates.length} attachments${downloadedInfo}. ${topInfo}`;
+      summary = `Searched "${searchQueries.join('", "')}" - Found ${offerableCandidates.length} attachments${downloadedInfo}. ${topInfo}`;
     } else {
       summary = `Searched "${searchQueries.join('", "')}" - No attachments found`;
+    }
+    if (dismissedForThisTransaction > 0) {
+      summary += ` ${dismissedForThisTransaction} already-downloaded attachment${dismissedForThisTransaction === 1 ? " was" : "s were"} previously rejected for this transaction and ${dismissedForThisTransaction === 1 ? "is" : "are"} not offered.`;
     }
 
     return {
@@ -1077,7 +1163,8 @@ export const searchGmailAttachmentsTool = tool(
         ...c,
         scoreDetails: `${c.score}% - ${c.scoreReasons?.join(", ") || "no reasons"}`,
       })),
-      totalFound: dedupedCandidates.length,
+      totalFound: offerableCandidates.length,
+      dismissedForThisTransaction,
       alreadyDownloadedCount,
       integrationCount: integrationsSnapshot.size,
       integrationsNeedingReauth: integrationsNeedingReauth.length > 0 ? integrationsNeedingReauth : undefined,
@@ -1740,7 +1827,7 @@ function getAbsoluteDateDiffDays(date1: Date | null, date2: Date | null): number
 }
 
 export const connectFileToTransactionTool = tool(
-  async ({ fileId, transactionId, confidence, skipValidation, searchQuery, sourceType }, config) => {
+  async ({ fileId, transactionId, confidence, skipValidation, searchQuery, sourceType, overrideDismissal }, config) => {
     const userId = config?.configurable?.userId;
     const authHeader = config?.configurable?.authHeader;
     const workerType = config?.configurable?.workerType as string | undefined;
@@ -1773,6 +1860,36 @@ export const connectFileToTransactionTool = tool(
     const file = fileDoc.data()!;
     const tx = txDoc.data()!;
     const rejectedFileIds = new Set<string>(tx.rejectedFileIds || []);
+
+    // === GATE: this pair was rejected on the file side (fork #101) ===
+    //
+    // Deliberately ahead of, and outside, the validation block below. That
+    // block is skippable with skipValidation, which the batch workers pass
+    // routinely, and a gate that the caller most likely to trip it can turn off
+    // is not a gate. Overriding a rejection takes saying so: overrideDismissal,
+    // which mirrors the UI's own escape hatch (an explicit search, which #94
+    // left unfiltered on purpose).
+    //
+    // The transaction-side twin of this check, rejectedFileIds, stays a warning
+    // inside the validation block. It is not being promoted here: this PR is
+    // about the file-side list #94 made enforceable, and changing the other
+    // one's severity is a separate decision.
+    //
+    // No extra read: the file document is already in hand.
+    if (!overrideDismissal && readDismissedTransactionIds(file).has(transactionId)) {
+      return {
+        error: "PAIR_REJECTED",
+        fileId,
+        transactionId,
+        fileName: file.fileName,
+        transactionName: tx.name,
+        message:
+          `File "${file.fileName}" was rejected for this transaction and is not eligible to be connected. ` +
+          `Do not retry this pair — pick a different file, or leave the transaction unmatched. ` +
+          `If connecting it is genuinely intended, undo the rejection first (undismiss_transaction_suggestion), ` +
+          `or call this tool again with overrideDismissal=true.`,
+      };
+    }
 
     const isReceiptSearchWorker = workerType === "receipt_search";
     const effectiveSkipValidation = isReceiptSearchWorker ? false : Boolean(skipValidation);
@@ -1966,12 +2083,20 @@ IMPORTANT: This tool validates that the file matches the transaction before conn
 
 If validation fails, the connection is blocked. Review the warnings before proceeding.
 Only use skipValidation=true if you're certain the file belongs to this transaction despite the mismatch.
-Note: In receipt_search worker mode, skipValidation is ignored for safety.`,
+Note: In receipt_search worker mode, skipValidation is ignored for safety.
+
+Separately, a pair the file has previously rejected is refused outright with error PAIR_REJECTED. skipValidation does NOT lift that. Treat it as final: choose a different file, or leave the transaction unmatched.`,
     schema: z.object({
       fileId: z.string().describe("The file ID from searchLocalFiles results"),
       transactionId: z.string().describe("The transaction ID to connect to"),
       confidence: z.number().optional().describe("Match confidence score (0-100)"),
       skipValidation: z.boolean().optional().describe("Set to true to skip amount/partner validation (use with caution)"),
+      overrideDismissal: z
+        .boolean()
+        .optional()
+        .describe(
+          "Connect even though this pair was previously rejected. Only when a human has explicitly asked for this exact pair — never to retry your own PAIR_REJECTED error."
+        ),
       searchQuery: z
         .string()
         .optional()

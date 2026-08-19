@@ -13,6 +13,7 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { MODELS } from "../utils/models";
+import { readDismissedTransactionIds } from "./dismissedTransactions";
 
 const db = getFirestore();
 
@@ -461,8 +462,14 @@ export async function matchFilesForPartnerInternal(
 
   for (const fileDoc of unconnectedFiles) {
     const fileData = fileDoc.data();
+    // Pairs the user already rejected on this file. This matcher auto-connects
+    // at AUTO_MATCH_THRESHOLD, so without the check a dismissal is undone the
+    // next time a partner assignment or a learned pattern runs the sweep.
+    const dismissedIds = readDismissedTransactionIds(fileData);
 
     for (const txDoc of unfiledTransactions) {
+      if (dismissedIds.has(txDoc.id)) continue;
+
       const txData = txDoc.data();
 
       const { score, matchReasons } = scoreFileForTransaction(

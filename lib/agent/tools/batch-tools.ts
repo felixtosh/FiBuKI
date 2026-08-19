@@ -10,6 +10,9 @@ import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { Timestamp, FieldValue } from "firebase-admin/firestore";
 import { callFirebaseFunction } from "@/lib/api/firebase-callable";
+// See the note on the same import in search-tools: one reader of the dismissal
+// fields, not a per-call-site re-derivation.
+import { readDismissedTransactionIds } from "../../../functions/src/matching/dismissedTransactions";
 
 // Lazy-load admin DB to avoid initialization at build time
 let _db: ReturnType<typeof import("@/lib/firebase/admin").getAdminDb> | null = null;
@@ -19,6 +22,47 @@ async function getDb() {
     _db = getAdminDb();
   }
   return _db;
+}
+
+/** Key for one file-to-transaction pair, matching scoreBatchMatches' score table. */
+function pairKey(fileId: string, transactionId: string): string {
+  return `${fileId}::${transactionId}`;
+}
+
+/**
+ * Which of these pairs the file side currently rejects (fork #101).
+ *
+ * The partner batch is the path #94 could not reach: `queueForPartnerBatch`
+ * aggregates many files into one prompt, so a per-file exclusion list does not
+ * fit the prompt shape and the steer has to be a gate in the tools instead.
+ *
+ * One read per distinct file, not per pair — the batcher scores N files against
+ * M transactions, so the pair list is the product while the file list is not.
+ */
+async function dismissedPairsAmong(
+  pairs: Array<{ fileId: string; transactionId: string }>
+): Promise<Set<string>> {
+  const fileIds = [...new Set(pairs.map((p) => p.fileId).filter(Boolean))];
+  if (fileIds.length === 0) return new Set<string>();
+
+  const db = await getDb();
+  const snaps = await Promise.all(
+    fileIds.map((id) => db.collection("files").doc(id).get())
+  );
+
+  const dismissedByFile = new Map<string, Set<string>>();
+  for (const snap of snaps) {
+    if (!snap.exists) continue;
+    dismissedByFile.set(snap.id, readDismissedTransactionIds(snap.data()));
+  }
+
+  const dismissed = new Set<string>();
+  for (const pair of pairs) {
+    if (dismissedByFile.get(pair.fileId)?.has(pair.transactionId)) {
+      dismissed.add(pairKey(pair.fileId, pair.transactionId));
+    }
+  }
+  return dismissed;
 }
 
 // ============================================================================
@@ -501,9 +545,18 @@ export const scoreBatchMatchesTool = tool(
     const authHeader = config?.configurable?.authHeader;
     if (!authHeader) return { error: "Auth not provided" };
 
+    // Drop pairs the file side has rejected before spending a scoring call on
+    // them (fork #101). A dismissed pair that reaches the matrix is worse than
+    // wasted work: the Hungarian assignment can hand it the optimal slot, and
+    // it arrives at bulkConnectFiles as a recommendation.
+    const dismissedPairs = await dismissedPairsAmong(pairs);
+    const scorablePairs = pairs.filter(
+      (p) => !dismissedPairs.has(pairKey(p.fileId, p.transactionId))
+    );
+
     // Score each pair via the server-side scoring callable
     const results = [];
-    for (const pair of pairs) {
+    for (const pair of scorablePairs) {
       try {
         const result = await callFirebaseFunction<
           { fileId: string; transactionId: string },
@@ -598,9 +651,13 @@ export const scoreBatchMatchesTool = tool(
     return {
       allScores: results,
       recommendedAssignments: assignments,
+      dismissedPairsSkipped: dismissedPairs.size,
       summary:
-        `Scored ${pairs.length} pairs. ` +
-        `${assignments.length} recommended assignments (optimal one-to-one, ≥50% confidence).`,
+        `Scored ${scorablePairs.length} pairs. ` +
+        `${assignments.length} recommended assignments (optimal one-to-one, ≥50% confidence).` +
+        (dismissedPairs.size > 0
+          ? ` ${dismissedPairs.size} pair${dismissedPairs.size === 1 ? " was" : "s were"} previously rejected and ${dismissedPairs.size === 1 ? "was" : "were"} not scored — do not propose ${dismissedPairs.size === 1 ? "it" : "them"} again.`
+          : ""),
     };
   },
   {
@@ -635,9 +692,27 @@ export const bulkConnectFilesTool = tool(
         ) === index;
       });
 
+    // The last gate before the write (fork #101). scoreBatchMatches already
+    // drops dismissed pairs, but this tool takes whatever list the model hands
+    // it — including one assembled from an earlier turn, or from a search
+    // result that predates the rejection. A gate that only exists upstream of
+    // the model is a suggestion.
+    const dismissedPairs = await dismissedPairsAmong(dedupedConnections);
+
     const results = [];
     let reassignedConnections = 0;
     for (const conn of dedupedConnections) {
+      if (dismissedPairs.has(pairKey(conn.fileId, conn.transactionId))) {
+        results.push({
+          fileId: conn.fileId,
+          transactionId: conn.transactionId,
+          success: false,
+          error:
+            "PAIR_REJECTED: this file was rejected for this transaction. Do not retry it. " +
+            "Undo the rejection first (undismiss_transaction_suggestion) if connecting it is genuinely intended.",
+        });
+        continue;
+      }
       try {
         const result = await callFirebaseFunction<
           {
@@ -680,17 +755,21 @@ export const bulkConnectFilesTool = tool(
     const successCount = results.filter((r) => r.success).length;
     return {
       results,
+      dismissedPairsRefused: dismissedPairs.size,
       summary:
         `Connected ${successCount}/${dedupedConnections.length} file-transaction pairs` +
         (reassignedConnections > 0
           ? ` and reassigned ${reassignedConnections} prior auto match${reassignedConnections === 1 ? "" : "es"}.`
-          : "."),
+          : ".") +
+        (dismissedPairs.size > 0
+          ? ` ${dismissedPairs.size} pair${dismissedPairs.size === 1 ? " was" : "s were"} refused as previously rejected — do not retry ${dismissedPairs.size === 1 ? "it" : "them"}.`
+          : ""),
     };
   },
   {
     name: "bulkConnectFiles",
     description:
-      "Batch connect multiple file-transaction pairs. Each connection is created via the standard connectFileToTransaction callable.",
+      "Batch connect multiple file-transaction pairs. Each connection is created via the standard connectFileToTransaction callable. A pair the file has previously rejected is refused with PAIR_REJECTED and is not retryable.",
     schema: z.object({
       connections: z.array(
         z.object({

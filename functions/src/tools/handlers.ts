@@ -20,6 +20,13 @@ import {
   ExtractionCorrectionError,
   FileExtractionCorrection,
 } from "../files/extractionCorrectionOps";
+import {
+  buildDismissSuggestionUpdates,
+  buildUndismissSuggestionUpdates,
+  checkDismissalReason,
+  isTransactionDismissedForFile,
+  type DismissibleFileState,
+} from "../files/dismissSuggestionOps";
 import { getStorage } from "firebase-admin/storage";
 import { randomUUID } from "crypto";
 import { TOOL_DEFINITIONS, TOOL_NAMES } from "./definitions";
@@ -135,6 +142,10 @@ export async function handleTool(
       return unmarkFileAsNotInvoice(userId, args);
     case "update_file_extraction":
       return updateFileExtraction(userId, args);
+    case "dismiss_transaction_suggestion":
+      return dismissTransactionSuggestion(userId, args);
+    case "undismiss_transaction_suggestion":
+      return undismissTransactionSuggestion(userId, args);
 
     // Identity entities (the user's personal/company entities used as invoice
     // sender). Returns id + name + vatId + ibans + address per entity.
@@ -463,6 +474,26 @@ export async function connectFileToTransaction(userId: string, args: Record<stri
     throw new Error("Cannot connect files to over-quota transactions via API");
   }
 
+  // A rejected pair does not reconnect (fork #101). This handler backs both
+  // connect_file_to_transaction and the best-suggestion loop in
+  // auto_connect_file_suggestions, so the check belongs here rather than at
+  // either caller.
+  //
+  // Unlike the chat tool, there is no override argument on the MCP surface: an
+  // external caller that means it can lift the rejection first with
+  // undismiss_transaction_suggestion, which leaves a record of having done so.
+  if (
+    isTransactionDismissedForFile(
+      fileDoc.data() as DismissibleFileState,
+      transactionId as string
+    )
+  ) {
+    throw new Error(
+      "PAIR_REJECTED: this file was rejected for this transaction. " +
+        "Use undismiss_transaction_suggestion first if connecting it is genuinely intended."
+    );
+  }
+
   const batch = db.batch();
   const now = FieldValue.serverTimestamp();
 
@@ -667,6 +698,114 @@ export async function unmarkFileAsNotInvoice(userId: string, args: Record<string
   });
 
   return { success: true, fileId, isNotInvoice: false };
+}
+
+/**
+ * Read the file, build the dismissal updates and write them in one Firestore
+ * transaction. The builders rewrite whole arrays, so a plain read-then-update
+ * would drop one of two rejections racing on the same file — and an agent sweep
+ * is exactly the caller that issues them back to back.
+ *
+ * A missing file and another user's file are refused separately: an agent
+ * working a list needs to tell "this id is stale" from "this id is not mine",
+ * and the callable draws the same distinction.
+ */
+async function applyDismissalUpdate<T extends { updates: Record<string, unknown> }>(
+  userId: string,
+  args: Record<string, unknown>,
+  build: (fileData: DismissibleFileState, transactionId: string) => T
+): Promise<T & { fileId: string; transactionId: string }> {
+  const fileId = args.fileId as string;
+  const transactionId = args.transactionId as string;
+
+  if (!fileId) {
+    throw new Error("fileId is required");
+  }
+  if (!transactionId) {
+    throw new Error("transactionId is required");
+  }
+
+  const fileRef = db.collection("files").doc(fileId);
+
+  const outcome = await db.runTransaction(async (tx) => {
+    const fileSnap = await tx.get(fileRef);
+
+    if (!fileSnap.exists) {
+      throw new Error("File not found");
+    }
+    if (fileSnap.data()?.userId !== userId) {
+      throw new Error("Access denied");
+    }
+
+    const built = build(fileSnap.data() as DismissibleFileState, transactionId);
+    // An undo of a pair that was never dismissed builds nothing, and Firestore
+    // refuses an empty update — so there is no write at all, not even updatedAt.
+    if (Object.keys(built.updates).length > 0) {
+      tx.update(fileRef, built.updates);
+    }
+    return built;
+  });
+
+  return { ...outcome, fileId, transactionId };
+}
+
+/**
+ * Reject a proposed file-to-transaction pair — the tool-surface twin of the
+ * dismissTransactionSuggestion callable, writing the identical field set via
+ * the shared builder in files/dismissSuggestionOps.
+ *
+ * Rejecting a pair that is not currently suggested succeeds and reports a null
+ * confidence, so a sweep that re-runs over its own work list is a no-op rather
+ * than a pile of duplicate rejection records.
+ */
+export async function dismissTransactionSuggestion(userId: string, args: Record<string, unknown>) {
+  const reasonProblem = checkDismissalReason(args.reason);
+  if (reasonProblem) {
+    throw new Error(reasonProblem);
+  }
+  const reason = args.reason as string | undefined;
+
+  const { fileId, transactionId, dismissedConfidence, alreadyDismissed } =
+    await applyDismissalUpdate(userId, args, (fileData, txId) =>
+      buildDismissSuggestionUpdates(fileData, txId, reason)
+    );
+
+  console.log(`[dismissTransactionSuggestion] Dismissed suggestion for file ${fileId}`, {
+    userId,
+    transactionId,
+    alreadyDismissed,
+    via: "tools",
+  });
+
+  return { success: true, fileId, transactionId, dismissedConfidence };
+}
+
+/**
+ * Undo a rejection — the tool-surface twin of the undismissTransactionSuggestion
+ * callable, writing the identical field set via the shared builder.
+ *
+ * Clears the blacklist so transaction matching may propose the pair again; it
+ * does not put the suggestion back, because the match sources that justified it
+ * were not kept. The rejection itself stays on the file as history.
+ */
+export async function undismissTransactionSuggestion(
+  userId: string,
+  args: Record<string, unknown>
+) {
+  const { fileId, transactionId, wasDismissed } = await applyDismissalUpdate(
+    userId,
+    args,
+    buildUndismissSuggestionUpdates
+  );
+
+  console.log(`[undismissTransactionSuggestion] Restored suggestion for file ${fileId}`, {
+    userId,
+    transactionId,
+    wasDismissed,
+    via: "tools",
+  });
+
+  return { success: true, fileId, transactionId, wasDismissed };
 }
 
 export async function autoConnectFileSuggestions(userId: string, args: Record<string, unknown>) {

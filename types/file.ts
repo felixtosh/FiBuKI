@@ -316,6 +316,11 @@ export interface TaxFile {
     dismissedAt: Timestamp;
     /** Confidence of the suggestion that was dismissed */
     confidence?: number | null;
+    /**
+     * Why the pair was rejected, when the caller gave a reason. Absent on every
+     * record written before fork #93 added the field.
+     */
+    reason?: string | null;
   }>;
 
   // === Partner Matching ===
