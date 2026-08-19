@@ -13,6 +13,13 @@
 
 import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { buildDownloadUrl } from "../utils/buildDownloadUrl";
+import { dayStartUtc, dayEndExclusiveUtc } from "../uva/dateWindow";
+import { buildMarkNotInvoiceUpdates, buildUnmarkNotInvoiceUpdates } from "../files/notInvoiceOps";
+import {
+  buildExtractionCorrection,
+  ExtractionCorrectionError,
+  FileExtractionCorrection,
+} from "../files/extractionCorrectionOps";
 import { getStorage } from "firebase-admin/storage";
 import { randomUUID } from "crypto";
 import { TOOL_DEFINITIONS, TOOL_NAMES } from "./definitions";
@@ -21,16 +28,30 @@ import { PLANS } from "../billing/config";
 import type { PlanId, PlanFeatures } from "../billing/config";
 
 /**
- * Convert a Firestore Timestamp to YYYY-MM-DD in Europe/Vienna timezone.
+ * Convert a Firestore Timestamp to the YYYY-MM-DD calendar day it stands for.
  * Bank transactions are date-only — returning full ISO timestamps causes
  * timezone confusion (e.g. Dec 1 CET → Nov 30 UTC).
+ *
+ * The stored convention is UTC midnight of the Vienna calendar day, so the
+ * day is read in UTC: that is the same convention the date-range filter and
+ * the UVA report use. Rendering in Europe/Vienna instead agrees for every row
+ * written to the convention, and disagrees with the window that selected the
+ * row for anything written with a real time of day (the bank sync paths), so
+ * a row could come back from a June query reporting a July date.
  */
-function toLocalDate(ts: Timestamp | { toDate?: () => Date } | string | null | undefined): string | null {
+function toLocalDate(
+  ts: Timestamp | Date | { toDate?: () => Date } | string | null | undefined
+): string | null {
   if (!ts) return null;
   if (typeof ts === "string") return ts;
-  const date = typeof (ts as Timestamp).toDate === "function" ? (ts as Timestamp).toDate() : null;
-  if (!date) return null;
-  return new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Vienna" }).format(date);
+  const date =
+    ts instanceof Date
+      ? ts
+      : typeof (ts as Timestamp).toDate === "function"
+        ? (ts as Timestamp).toDate()
+        : null;
+  if (!date || isNaN(date.getTime())) return null;
+  return date.toISOString().slice(0, 10);
 }
 
 export { TOOL_NAMES };
@@ -108,6 +129,12 @@ export async function handleTool(
       return uploadFile(userId, args);
     case "score_file_transaction_match":
       return scoreFileTransactionMatch(userId, args);
+    case "mark_file_as_not_invoice":
+      return markFileAsNotInvoice(userId, args);
+    case "unmark_file_as_not_invoice":
+      return unmarkFileAsNotInvoice(userId, args);
+    case "update_file_extraction":
+      return updateFileExtraction(userId, args);
 
     // Identity entities (the user's personal/company entities used as invoice
     // sender). Returns id + name + vatId + ibans + address per entity.
@@ -203,20 +230,26 @@ export async function listTransactions(userId: string, args: Record<string, unkn
   }
 
   // Date range pushed into the query so filters apply BEFORE the limit.
-  // Dates come in as YYYY-MM-DD (Europe/Vienna). Use local midnight for from,
-  // next-day midnight for to (inclusive end-of-day).
+  // Dates come in as YYYY-MM-DD calendar days and are stored as UTC midnight
+  // of that day, so the window is pure-UTC (fork #65 — a Vienna offset
+  // boundary misfiles rows that carry a real booking time).
+  //
+  // A malformed boundary is rejected, not dropped: silently widening the
+  // window returns the newest transactions of all time, which reads to a
+  // caller as "the period is empty of anything older".
   if (args.dateFrom) {
-    const fromDate = new Date(`${args.dateFrom as string}T00:00:00+01:00`);
-    if (!isNaN(fromDate.getTime())) {
-      query = query.where("date", ">=", Timestamp.fromDate(fromDate));
+    const fromDate = dayStartUtc(args.dateFrom as string);
+    if (!fromDate) {
+      throw new Error(`dateFrom must be a calendar day as YYYY-MM-DD, got "${args.dateFrom}"`);
     }
+    query = query.where("date", ">=", Timestamp.fromDate(fromDate));
   }
   if (args.dateTo) {
-    const toDate = new Date(`${args.dateTo as string}T00:00:00+01:00`);
-    if (!isNaN(toDate.getTime())) {
-      toDate.setDate(toDate.getDate() + 1);
-      query = query.where("date", "<", Timestamp.fromDate(toDate));
+    const toExclusive = dayEndExclusiveUtc(args.dateTo as string);
+    if (!toExclusive) {
+      throw new Error(`dateTo must be a calendar day as YYYY-MM-DD, got "${args.dateTo}"`);
     }
+    query = query.where("date", "<", Timestamp.fromDate(toExclusive));
   }
 
   query = query.orderBy("date", "desc");
@@ -303,28 +336,61 @@ export async function updateTransaction(userId: string, args: Record<string, unk
 }
 
 export async function listTransactionsNeedingFiles(userId: string, args: Record<string, unknown>) {
-  let query = db.collection("transactions").where("userId", "==", userId).orderBy("date", "desc");
+  let query: FirebaseFirestore.Query = db
+    .collection("transactions")
+    .where("userId", "==", userId)
+    .orderBy("date", "desc");
 
-  const limit = Math.min((args.limit as number) || 50, 100);
-  query = query.limit(500); // Fetch more to filter
+  // Cursor pagination: cursor is the last document id from the previous page.
+  if (args.cursor) {
+    const cursorSnap = await db.collection("transactions").doc(args.cursor as string).get();
+    if (cursorSnap.exists && cursorSnap.data()?.userId === userId) {
+      query = query.startAfter(cursorSnap);
+    }
+  }
+
+  // "needs a receipt" is three absent-field tests (fileIds empty,
+  // noReceiptCategoryId unset, quotaExceeded unset) and Firestore has no
+  // "field missing" predicate, so the filtering happens in memory and the read
+  // deliberately overfetches — a page is built from up to `scanLimit`
+  // documents. Rows past that are reached via `nextCursor`, not silently
+  // dropped, and the returned `count` is the page size, never a count of what
+  // the account still owes receipts for.
+  const requestedLimit = Math.min(Math.max((args.limit as number) || 50, 1), 500);
+  const scanLimit = Math.min(requestedLimit * 5, 1000);
+  query = query.limit(scanLimit);
 
   const snapshot = await query.get();
-  let transactions = snapshot.docs
-    .map((doc) => {
-      const data = doc.data();
-      return { id: doc.id, ...data, date: toLocalDate(data.date) || data.date } as Record<string, unknown>;
-    })
-    .filter(
-      (t) =>
-        (!(t.fileIds as string[]) || (t.fileIds as string[]).length === 0) && !t.noReceiptCategoryId && !t.quotaExceeded
-    );
+  const scanned = snapshot.docs.map((doc) => {
+    const data = doc.data();
+    return { id: doc.id, ...data, date: toLocalDate(data.date) || data.date } as Record<string, unknown>;
+  });
+
+  let transactions = scanned.filter(
+    (t) =>
+      (!(t.fileIds as string[]) || (t.fileIds as string[]).length === 0) && !t.noReceiptCategoryId && !t.quotaExceeded
+  );
 
   if (args.minAmount !== undefined) {
     const minAmount = args.minAmount as number;
     transactions = transactions.filter((t) => Math.abs((t.amount as number) || 0) >= minAmount);
   }
 
-  return transactions.slice(0, limit);
+  // The page ends either at the requested limit or at the end of the scan.
+  // The cursor is the last document actually consumed, so the next page
+  // resumes exactly where this one stopped — rows filtered out in memory are
+  // skipped, rows that simply didn't fit are not.
+  const page = transactions.slice(0, requestedLimit);
+  const truncated = transactions.length > requestedLimit;
+  const hasMore = truncated || scanned.length === scanLimit;
+
+  const nextCursor = !hasMore
+    ? null
+    : truncated
+      ? (page[page.length - 1].id as string)
+      : ((scanned[scanned.length - 1]?.id as string) ?? null);
+
+  return { transactions: page, nextCursor, count: page.length };
 }
 
 // ============================================================================
@@ -455,6 +521,148 @@ export async function disconnectFileFromTransaction(userId: string, args: Record
 
   await batch.commit();
   return { success: true, fileId, transactionId };
+}
+
+/**
+ * Flag a file as not an invoice — the tool-surface twin of the
+ * markFileAsNotInvoice callable, writing the identical field set via the
+ * shared builder in files/notInvoiceOps.
+ *
+ * Refuses while the file is still connected to a transaction. The callable has
+ * no such guard because the UI shows the connection right next to the button;
+ * an agent working from a list does not, and a flagged-but-connected file is a
+ * transaction whose receipt has silently become a non-receipt.
+ */
+/**
+ * Correct a file's extracted record by hand (fork #147).
+ *
+ * The shape rules live in `buildExtractionCorrection` so they can be tested
+ * without a database; this owns ownership, the write, and the reply.
+ */
+export async function updateFileExtraction(userId: string, args: Record<string, unknown>) {
+  const fileId = args.fileId as string;
+  if (!fileId) {
+    throw new Error("fileId is required");
+  }
+
+  const fileRef = db.collection("files").doc(fileId);
+  const fileSnap = await fileRef.get();
+
+  if (!fileSnap.exists || fileSnap.data()?.userId !== userId) {
+    throw new Error("File not found");
+  }
+
+  // Read the keys off `args` rather than spreading it: a caller passing an
+  // unknown key must not reach the update, and "absent" has to stay distinct
+  // from "null" all the way down.
+  const fields: FileExtractionCorrection = {};
+  for (const key of ["amount", "vatAmount", "vatPercent", "date", "lineItems"] as const) {
+    if (args[key] !== undefined) {
+      (fields as Record<string, unknown>)[key] = args[key];
+    }
+  }
+
+  let built;
+  try {
+    built = buildExtractionCorrection(fields);
+  } catch (error) {
+    if (error instanceof ExtractionCorrectionError) {
+      throw new Error(error.message);
+    }
+    throw error;
+  }
+
+  await fileRef.update(built.updates);
+
+  const after = (await fileRef.get()).data() ?? {};
+  console.log(`[updateFileExtraction] Corrected file ${fileId}`, {
+    userId,
+    changed: built.changed,
+  });
+
+  return {
+    success: true,
+    fileId,
+    changed: built.changed,
+    file: {
+      fileName: after.fileName ?? null,
+      extractedAmount: after.extractedAmount ?? null,
+      extractedVatAmount: after.extractedVatAmount ?? null,
+      extractedVatPercent: after.extractedVatPercent ?? null,
+      lineItemsUnreconciled: after.lineItemsUnreconciled ?? false,
+      extractedRateGroups: after.extractedRateGroups ?? null,
+    },
+  };
+}
+
+export async function markFileAsNotInvoice(userId: string, args: Record<string, unknown>) {
+  const fileId = args.fileId as string;
+  if (!fileId) {
+    throw new Error("fileId is required");
+  }
+
+  const fileRef = db.collection("files").doc(fileId);
+  const fileSnap = await fileRef.get();
+
+  if (!fileSnap.exists || fileSnap.data()?.userId !== userId) {
+    throw new Error("File not found");
+  }
+
+  const fileData = fileSnap.data()!;
+
+  const connectedTo = (fileData.transactionIds as string[] | undefined) ?? [];
+  if (connectedTo.length > 0) {
+    throw new Error(
+      `File is connected to ${connectedTo.length} transaction(s) — disconnect it first ` +
+        `(disconnect_file_from_transaction) before marking it as not an invoice`
+    );
+  }
+
+  await fileRef.update(buildMarkNotInvoiceUpdates(fileData, args.reason as string | undefined));
+
+  console.log(`[markFileAsNotInvoice] Marked file ${fileId} as not invoice`, {
+    userId,
+    reason: (args.reason as string) || "Marked by user",
+    via: "tools",
+  });
+
+  return { success: true, fileId, isNotInvoice: true };
+}
+
+/**
+ * Restore a file as an invoice. Re-opens extraction, which is what recovers the
+ * extracted fields that marking cleared — so the pair is reversible.
+ */
+export async function unmarkFileAsNotInvoice(userId: string, args: Record<string, unknown>) {
+  const fileId = args.fileId as string;
+  if (!fileId) {
+    throw new Error("fileId is required");
+  }
+
+  const fileRef = db.collection("files").doc(fileId);
+  const fileSnap = await fileRef.get();
+
+  if (!fileSnap.exists || fileSnap.data()?.userId !== userId) {
+    throw new Error("File not found");
+  }
+
+  const fileData = fileSnap.data()!;
+
+  // Manual connections outrank a re-run of transaction matching.
+  const manualConnections = await db
+    .collection("fileConnections")
+    .where("fileId", "==", fileId)
+    .where("connectionType", "==", "manual")
+    .get();
+
+  await fileRef.update(buildUnmarkNotInvoiceUpdates(fileData, !manualConnections.empty));
+
+  console.log(`[unmarkFileAsNotInvoice] Unmarked file ${fileId} as invoice`, {
+    userId,
+    via: "tools",
+  });
+
+  return { success: true, fileId, isNotInvoice: false };
 }
 
 export async function autoConnectFileSuggestions(userId: string, args: Record<string, unknown>) {
@@ -959,11 +1167,17 @@ export async function importTransactions(userId: string, args: Record<string, un
       if (isNaN(dateObj.getTime())) {
         throw new Error(`Invalid date: ${txData.date}`);
       }
+      // Store the convention the rest of the system reads: UTC midnight of the
+      // calendar day. A date carrying a time of day would otherwise sit an
+      // hour outside the period windows that select it.
+      const dateAtUtcMidnight = new Date(
+        Date.UTC(dateObj.getUTCFullYear(), dateObj.getUTCMonth(), dateObj.getUTCDate())
+      );
 
       const transactionDoc: Record<string, unknown> = {
         userId,
         sourceId: txData.sourceId,
-        date: AdminTimestamp.fromDate(dateObj),
+        date: AdminTimestamp.fromDate(dateAtUtcMidnight),
         amount: txData.amount,
         currency: txData.currency,
         name: txData.name,
