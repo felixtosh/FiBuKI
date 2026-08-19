@@ -8,7 +8,11 @@ import { callFunction } from "@/lib/firebase/callable";
 import { Transaction } from "@/types/transaction";
 import { FieldMapping, CSVAnalysis, AmountFormatConfig, ImportRecord } from "@/types/import";
 import { TransactionSource } from "@/types/source";
-import { parseDate } from "@/lib/import/date-parsers";
+import {
+  parseDate,
+  findDateColumnConflict,
+  getDateParserName,
+} from "@/lib/import/date-parsers";
 import { parseAmount, getAmountParserConfig } from "@/lib/import/amount-parsers";
 import {
   generateDedupeHash,
@@ -374,6 +378,18 @@ export function useImport(
     const amountMapping = state.mappings.find((m) => m.targetField === "amount");
     const balanceMapping = state.mappings.find((m) => m.targetField === "balance");
 
+    // No format on the date column means detection could not settle DD/MM vs
+    // MM/DD from the data (#70) and the user has not picked. Falling back to a
+    // default here reads every row with a format nobody chose, so ask instead.
+    if (dateMapping && !dateMapping.format) {
+      setState((s) => ({
+        ...s,
+        error: `Select the date format for column "${dateMapping.csvColumn}" before importing.`,
+        transientStep: null,
+      }));
+      return;
+    }
+
     const dateFormat = dateMapping?.format || "de";
     const amountFormat = amountMapping?.format || "de";
     const balanceFormat = balanceMapping?.format || amountFormat;
@@ -412,6 +428,40 @@ export function useImport(
       }
       const { rows: allRows } = parseCSV(text, state.analysis.options);
       rows = allRows;
+    }
+
+    // The whole date column is only in hand here — analysis parses 50 rows, and
+    // whether a slash column is DD/MM or MM/DD is settled by the first day
+    // above 12 anywhere in it. Importing against the opposite order files every
+    // ambiguous row under the wrong month, silently (#70), so stop instead.
+    if (dateMapping) {
+      const dateColumn = rows
+        .map((row) => row[dateMapping.csvColumn])
+        .filter((value): value is string => Boolean(value));
+      const conflict = findDateColumnConflict(dateColumn, dateFormat);
+
+      if (conflict) {
+        const offending = conflict.offendingValue ? ` (for example "${conflict.offendingValue}")` : "";
+        const detail =
+          conflict.evidence === "conflict"
+            ? `Some rows${offending} put the day first and others put the month first, ` +
+              `so no single format reads the column correctly. Correct those rows and import again.`
+            : conflict.suggestedParserId
+              ? `The column${offending} reads as ` +
+                `${getDateParserName(conflict.suggestedParserId)}. Select that format and import again.`
+              : `The column${offending} puts the ` +
+                `${conflict.evidence === "day-first" ? "day" : "month"} first, ` +
+                `which none of the available date formats matches.`;
+
+        setState((s) => ({
+          ...s,
+          error:
+            `The date column does not match the selected format ` +
+            `(${getDateParserName(dateFormat)}). ${detail}`,
+          transientStep: null,
+        }));
+        return;
+      }
     }
 
     // Build mapping lookup
