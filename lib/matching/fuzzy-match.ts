@@ -258,6 +258,11 @@ export function normalizeCompanyName(name: string): string {
   return normalized;
 }
 
+/** Cologne codes shorter than this are collisions, not phonetic matches. */
+export const MIN_PHONETIC_CODE_LENGTH = 3;
+/** Equal Cologne codes must also share this much spelling (Levenshtein ratio). */
+export const MIN_PHONETIC_SPELLING_SIMILARITY = 50;
+
 /**
  * Calculate company name similarity (using normalized names)
  * Uses phonetic matching (Cologne Phonetics) for better German name matching.
@@ -271,9 +276,18 @@ export function calculateCompanyNameSimilarity(name1: string, name2: string): nu
 
   // Phonetic match (Cologne Phonetics) - "Müller" matches "Mueller" matches "MULLER"
   // Applied to all names, not just German (works reasonably for other languages too)
+  // Guarded against hash collisions: Cologne drops vowels and has 8 digits, so
+  // "uber"/"bayer"/"porr" all code to "17" and "esim me"/"s immo" to "86".
+  // Mirrors functions/src/utils/partner-matcher.ts (fork #71).
   const phonetic1 = colognePhonetic(normalized1);
   const phonetic2 = colognePhonetic(normalized2);
-  if (phonetic1 && phonetic2 && phonetic1.length >= 2 && phonetic1 === phonetic2) {
+  if (
+    phonetic1 &&
+    phonetic2 &&
+    phonetic1 === phonetic2 &&
+    phonetic1.length >= MIN_PHONETIC_CODE_LENGTH &&
+    calculateSimilarity(normalized1, normalized2) >= MIN_PHONETIC_SPELLING_SIMILARITY
+  ) {
     return 92; // Strong phonetic match
   }
 

@@ -409,6 +409,109 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       required: ["transactionId"],
     },
   },
+  {
+    name: "partner_rematch_report",
+    description:
+      "READ-ONLY. Re-runs the current partner matcher over transactions that ALREADY have a partner " +
+      "assigned and returns only the cases where its answer differs from what is stored: a different " +
+      "partner would be applied, or nothing would be applied because no candidate reaches the " +
+      "auto-apply threshold. Writes nothing — no assignment is changed and no false positive is " +
+      "recorded. Use it to review assignments made before a matcher fix; partner matching itself skips " +
+      "any transaction that already has a partner, so those are never re-scored on their own. " +
+      "Counts cover every evaluated transaction; `rows` is capped by `limit` and sets `truncated`.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        minConfidence: {
+          type: "number",
+          description: "Only stored assignments with confidence >= this value",
+        },
+        maxConfidence: {
+          type: "number",
+          description: "Only stored assignments with confidence <= this value",
+        },
+        assignedBefore: {
+          type: "string",
+          description:
+            "ISO 8601 instant — only assignments recorded before it. Transactions whose " +
+            "automationHistory has no partner_assigned entry are kept (they are older, not newer).",
+        },
+        matchedBy: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Which partnerMatchedBy values to review. Default [\"auto\",\"ai\"]; pass [\"manual\"] " +
+            "only to inspect human assignments, which should never be mechanically re-matched.",
+        },
+        includeAgreements: {
+          type: "boolean",
+          description:
+            "Also return transactions where the matcher agrees (default false, disagreements only)",
+        },
+        limit: {
+          type: "number",
+          description: "Max rows to return (default 50, max 500)",
+        },
+      },
+    },
+  },
+
+  {
+    name: "rematch_assigned_partners",
+    description:
+      "Re-run the current partner matcher over transactions that already have an AUTO-assigned " +
+      "partner, whole account, and write the corrected answer WITHOUT recording a false positive — " +
+      "unlike remove_partner_from_transaction, which blacklists the pair forever. Defaults to a dry " +
+      "run: pass dryRun=false to write. Reassigns where the matcher now picks a different partner and " +
+      "keeps where it agrees; an assignment it no longer reproduces is reported but left alone unless " +
+      "clearUnconfirmed=true. Never touches manual, suggestion or ai assignments. Review with " +
+      "partner_rematch_report first.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        dryRun: {
+          type: "boolean",
+          description:
+            "Default true — plan only, nothing written. Pass false to apply the plan.",
+        },
+        clearUnconfirmed: {
+          type: "boolean",
+          description:
+            "Default false — an assignment the matcher no longer reproduces is reported as " +
+            "skip_clear_disabled and left in place, so the run applies only the reassignments it can " +
+            "prove. Pass true to also clear those, which is a much larger write set.",
+        },
+        minConfidence: {
+          type: "number",
+          description: "Only stored assignments with confidence >= this value",
+        },
+        maxConfidence: {
+          type: "number",
+          description: "Only stored assignments with confidence <= this value",
+        },
+        assignedBefore: {
+          type: "string",
+          description:
+            "ISO 8601 instant — only assignments recorded before it (e.g. the deploy time of a " +
+            "matcher fix). Transactions with no recorded assignment time are kept.",
+        },
+        maxWrites: {
+          type: "number",
+          description:
+            "Refuse to apply if the plan exceeds this many writes (default 1000). The run aborts " +
+            "before writing anything rather than applying half a plan.",
+        },
+        includeKept: {
+          type: "boolean",
+          description: "Include untouched (agreeing) transactions in rows (default false)",
+        },
+        limit: {
+          type: "number",
+          description: "Max rows to return (default 100, max 1000). Counts cover the whole plan.",
+        },
+      },
+    },
+  },
 
   // =========================================================================
   // Categories
