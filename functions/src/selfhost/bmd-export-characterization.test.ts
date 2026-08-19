@@ -271,10 +271,12 @@ describe("bmd characterization: generateBuchungenCsv standard path", () => {
     );
     const lines = csv.split("\n");
     expect(lines[0]).toBe(BUCHUNGEN_HEADER);
-    // belegdat comes from the file's extractedDate, betrag is unsigned,
-    // default VAT 20% computed from gross (12000 * 20/120 = 2000).
+    // belegdat comes from the file's extractedDate, betrag is unsigned.
+    // #66: the file carries no extraction fields, so the VAT ladder resolves
+    // nothing and the row books 0% — it used to assert 20% (2000 cents) on the
+    // strength of a filename.
     expect(lines[1]).toBe(
-      "0;200001;7000;2026000001;20260315;20260310;120,00;1;20,00;20;Hetzner Online GmbH;rechnung-42.pdf;ER;DE812871812",
+      "0;200001;7000;2026000001;20260315;20260310;120,00;1;0,00;0;Hetzner Online GmbH;rechnung-42.pdf;ER;DE812871812",
     );
   });
 
@@ -308,19 +310,24 @@ describe("bmd characterization: generateBuchungenCsv standard path", () => {
     expect(rows[4].split(";")[10]).toBe("");
   });
 
-  it("rounds VAT half-up from the gross amount", () => {
-    // 999 * 20 / 120 = 166.5 → Math.round → 167 cents
+  it("#66: an undocumented expense books no VAT instead of a 20% guess", () => {
+    // Was 999 * 20/120 = 167 cents, asserted with no receipt behind it.
     const csv = generateBuchungenCsv([tx({ amount: -999 })], new Map(), new Map());
-    expect(csv.split("\n")[1].split(";")[8]).toBe("1,67");
+    expect(csv.split("\n")[1].split(";")[8]).toBe("0,00");
+    expect(csv.split("\n")[1].split(";")[9]).toBe("0");
   });
 
-  it("honors explicit vatRate and vatAmount, including vatAmount 0", () => {
+  it("honors an explicit vatRate, and a vatAmount only alongside one", () => {
     const rows = generateBuchungenCsv(
       [
         tx({ id: "a", amount: -11000, vatRate: 10 }), // round(11000*10/110) = 1000
-        tx({ id: "b", amount: -11000, vatAmount: 1234 }),
+        tx({ id: "b", amount: -11000, vatRate: 20, vatAmount: 1234 }),
         tx({ id: "c", amount: -11000, vatRate: 0 }),
-        tx({ id: "d", amount: -11000, vatAmount: 0 }), // ?? keeps the explicit 0
+        // #66: a bare vatAmount no longer implies a 20% rate. Nothing in the
+        // app writes transaction.vatAmount today, so this combination is
+        // theoretical, and inferring a rate from an amount is the guess the
+        // issue is about.
+        tx({ id: "d", amount: -11000, vatAmount: 1234 }),
       ],
       new Map(),
       new Map(),
@@ -328,15 +335,17 @@ describe("bmd characterization: generateBuchungenCsv standard path", () => {
     expect(rows[1]).toContain(";110,00;1;10,00;10;");
     expect(rows[2]).toContain(";110,00;1;12,34;20;");
     expect(rows[3]).toContain(";110,00;1;0,00;0;");
-    expect(rows[4]).toContain(";110,00;1;0,00;20;");
+    expect(rows[4]).toContain(";110,00;1;0,00;0;");
   });
 
   it("treats amount 0 as income (bucod 2, AR, Debitor fallback)", () => {
     // characterization: preserves current behavior — `amount < 0` decides
     // expense, so a zero-amount booking exports as income/AR/300001.
+    // #66: mwst is 0 rather than 20 — the income 20% default applies to a real
+    // undocumented sale, and a zero-amount line has no VAT to state either way.
     const csv = generateBuchungenCsv([tx({ amount: 0, name: "Zero" })], new Map(), new Map());
     expect(csv.split("\n")[1]).toBe(
-      "0;300001;4000;2026000001;20260315;20260315;0,00;2;0,00;20;Zero;;AR;",
+      "0;300001;4000;2026000001;20260315;20260315;0,00;2;0,00;0;Zero;;AR;",
     );
   });
 
@@ -495,24 +504,33 @@ describe("bmd characterization: generateBuchungenCsv no-receipt categories", () 
     );
   });
 
-  it("receipt-lost keeps VAT (default 20%) unlike all other categories", () => {
+  it("#66: receipt-lost now books 0% like every other category", () => {
+    // An Eigenbeleg is a self-issued voucher and never creates a deduction
+    // (spec §3 step 0, treatment "needs-receipt"), which is why the UVA leaves
+    // it unresolved. Booking 20% here put input VAT in the BMD trail that the
+    // filed UVA refuses to claim — the divergence #66 was filed about.
     const csv = generateBuchungenCsv([catTx("receipt-lost", -6000, { name: "Lost" })], new Map(), new Map());
     expect(csv.split("\n")[1]).toBe(
-      "0;7000;;2026000001;20260315;20260315;60,00;1;10,00;20;Eigenbeleg: Lost;;ER;",
+      "0;7000;;2026000001;20260315;20260315;60,00;1;0,00;0;Eigenbeleg: Lost;;ER;",
     );
   });
 
   it("receipt-lost income uses Sachkonto 4000 but keeps the ER symbol", () => {
     // characterization: preserves current behavior — the category symbol
-    // "ER" (Eingangsrechnung) is used even for INCOME receipt-lost rows;
-    // vatRate 10 is honored: round(11000*10/110) = 1000.
+    // "ER" (Eingangsrechnung) is used even for INCOME receipt-lost rows.
+    //
+    // #66: the explicit vatRate 10 no longer survives. The class gate runs
+    // BEFORE the override lane in spec §3, so needs-receipt wins, matching
+    // calculateUva, which leaves this transaction unresolved and contributes
+    // nothing. Worth noting that for INCOME this means output VAT of zero,
+    // which is the understating direction — a UVA-side question, not a BMD one.
     const csv = generateBuchungenCsv(
       [catTx("receipt-lost", 11000, { name: "Found money", vatRate: 10 })],
       new Map(),
       new Map(),
     );
     expect(csv.split("\n")[1]).toBe(
-      "0;4000;;2026000001;20260315;20260315;110,00;2;10,00;10;Eigenbeleg: Found money;;ER;",
+      "0;4000;;2026000001;20260315;20260315;110,00;2;0,00;0;Eigenbeleg: Found money;;ER;",
     );
   });
 
@@ -536,16 +554,17 @@ describe("bmd characterization: generateBuchungenCsv no-receipt categories", () 
 
   it("a categorized transaction WITH files takes the standard path instead", () => {
     // characterization: files win over the no-receipt category — the row
-    // gets a Personenkonto, gkto 7000 and default 20% VAT, not the
-    // category Sachkonto with 0%.
+    // gets a Personenkonto and gkto 7000, not the category Sachkonto.
     const files = new Map<string, FileForExport>([["f1", { id: "f1", fileName: "beleg.pdf" }]]);
     const csv = generateBuchungenCsv(
       [catTx("bank-fees", -1050, { name: "Fee with receipt", fileIds: ["f1"] })],
       files,
       new Map(),
     );
+    // #66: the standard path is still taken (Personenkonto, gkto 7000), but the
+    // attached file carries no extraction, so VAT resolves to 0 rather than 20%.
     expect(csv.split("\n")[1]).toBe(
-      "0;200001;7000;2026000001;20260315;20260315;10,50;1;1,75;20;Fee with receipt;beleg.pdf;ER;",
+      "0;200001;7000;2026000001;20260315;20260315;10,50;1;0,00;0;Fee with receipt;beleg.pdf;ER;",
     );
   });
 
@@ -556,7 +575,7 @@ describe("bmd characterization: generateBuchungenCsv no-receipt categories", () 
       new Map(),
     );
     expect(csv.split("\n")[1]).toBe(
-      "0;200001;7000;2026000001;20260315;20260315;10,00;1;1,67;20;Odd;;ER;",
+      "0;200001;7000;2026000001;20260315;20260315;10,00;1;0,00;0;Odd;;ER;",
     );
   });
 
@@ -573,6 +592,107 @@ describe("bmd characterization: generateBuchungenCsv no-receipt categories", () 
 /* ------------------------------------------------------------------ */
 /* 5. generateFileMapping                                              */
 /* ------------------------------------------------------------------ */
+
+/* ------------------------------------------------------------------ */
+/* 1b. VAT read off the receipts (fork #66) — NOT characterization      */
+/* ------------------------------------------------------------------ */
+
+describe("bmd #66: VAT is derived from the connected documents", () => {
+  const file = (over: Partial<FileForExport>): FileForExport => ({
+    id: "f1",
+    fileName: "beleg.pdf",
+    ...over,
+  });
+
+  it("reads a document's top-level extraction instead of guessing", () => {
+    const files = new Map([["f1", file({ extractedAmount: 12000, extractedVatAmount: 2000, extractedVatPercent: 20 })]]);
+    const row = generateBuchungenCsv([tx({ amount: -12000, fileIds: ["f1"] })], files, new Map())
+      .split("\n")[1]
+      .split(";");
+    expect(row[8]).toBe("20,00");
+    expect(row[9]).toBe("20");
+  });
+
+  it("reads a rate that is not 20, which the old default could never produce", () => {
+    const files = new Map([["f1", file({ extractedAmount: 11000, extractedVatAmount: 1000, extractedVatPercent: 10 })]]);
+    const row = generateBuchungenCsv([tx({ amount: -11000, fileIds: ["f1"] })], files, new Map())
+      .split("\n")[1]
+      .split(";");
+    expect(row[8]).toBe("10,00");
+    expect(row[9]).toBe("10");
+  });
+
+  it("splits a mixed-rate receipt into one row per rate under ONE Belegnummer", () => {
+    const files = new Map([
+      [
+        "f1",
+        file({
+          extractedAmount: 3300,
+          extractedRateGroups: [
+            { rate: 20, net: 1000, vat: 200, gross: 1200 },
+            { rate: 10, net: 1909, vat: 191, gross: 2100 },
+          ],
+        }),
+      ],
+    ]);
+    const rows = generateBuchungenCsv([tx({ amount: -3300, fileIds: ["f1"] })], files, new Map()).split("\n");
+    expect(rows).toHaveLength(3); // header + two booking rows
+    const a = rows[1].split(";");
+    const b = rows[2].split(";");
+    expect([a[9], b[9]]).toEqual([20, 10].map(String));
+    expect([a[8], b[8]]).toEqual(["2,00", "1,91"]);
+    // Same document, so the same Belegnummer — the counter advances per
+    // transaction, not per row, which keeps generateFileMapping in step.
+    expect(a[3]).toBe(b[3]);
+    expect(a[3]).toBe("2026000001");
+    // And the split still books the whole payment.
+    expect(Number(a[6].replace(",", ".")) + Number(b[6].replace(",", "."))).toBeCloseTo(33.0, 2);
+  });
+
+  it("books the full payment on a partial payment, using the document's rate mix", () => {
+    // Bank paid 60,00 against a 120,00 invoice: the UVA claims half the VAT,
+    // but the booking still has to book the 60,00 that actually moved.
+    const files = new Map([["f1", file({ extractedAmount: 12000, extractedVatAmount: 2000, extractedVatPercent: 20 })]]);
+    const row = generateBuchungenCsv([tx({ amount: -6000, fileIds: ["f1"] })], files, new Map())
+      .split("\n")[1]
+      .split(";");
+    expect(row[6]).toBe("60,00");
+    expect(row[8]).toBe("10,00");
+    expect(row[9]).toBe("20");
+  });
+
+  it("refuses a document whose line items did not reconcile", () => {
+    const files = new Map([
+      ["f1", file({ extractedAmount: 12000, extractedVatPercent: 20, extractedVatAmount: 2000, lineItemsUnreconciled: true })],
+    ]);
+    const row = generateBuchungenCsv([tx({ amount: -12000, fileIds: ["f1"] })], files, new Map())
+      .split("\n")[1]
+      .split(";");
+    expect(row[8]).toBe("0,00");
+    expect(row[9]).toBe("0");
+  });
+
+  it("books no VAT on a reverse-charge purchase, where the supplier charged none", () => {
+    const files = new Map([["f1", file({ extractedAmount: 10000, extractedVatId: "IE6388047V" })]]);
+    const row = generateBuchungenCsv(
+      [tx({ amount: -10000, fileIds: ["f1"], isReverseCharge: true })],
+      files,
+      new Map(),
+    )
+      .split("\n")[1]
+      .split(";");
+    expect(row[8]).toBe("0,00");
+    expect(row[9]).toBe("0");
+  });
+
+  it("keeps the 20% default for undocumented INCOME, where understating is worse", () => {
+    const row = generateBuchungenCsv([tx({ amount: 250000 })], new Map(), new Map())
+      .split("\n")[1]
+      .split(";");
+    expect(row[8]).toBe("416,67");
+    expect(row[9]).toBe("20");
+  });
+});
 
 describe("bmd characterization: generateFileMapping", () => {
   it("advances the counter for every transaction but maps only those with files", () => {
@@ -705,11 +825,17 @@ describe("bmd characterization: processBmdExportOnCreate end-to-end", () => {
     });
 
     // Receipt file doc + blob (umlaut name pins the ZIP-entry sanitizer).
+    // #66: the extraction fields are what the VAT ladder reads, and seeding
+    // them here is what makes this chain prove the export reaches Firestore for
+    // its VAT rather than assuming a rate. 120,00 gross at 20% = 20,00.
     await db.collection("files").doc("f1").set({
       userId: USER,
       fileName: "Rechnung März.pdf",
       extractedDate: T("2026-03-10T12:00:00Z"),
       storagePath: "users/stefan-test/files/f1.pdf",
+      extractedAmount: 12000,
+      extractedVatAmount: 2000,
+      extractedVatPercent: 20,
     });
     await getStorage().bucket().file("users/stefan-test/files/f1.pdf").save(Buffer.from("PDFDATA"));
 
@@ -885,10 +1011,12 @@ describe("bmd characterization: processBmdExportOnCreate end-to-end", () => {
     expect(personen.slice(1)).toBe(PERSONEN_HEADER); // header only, no rows
 
     const buchungen = (await zip.entry("buchungen.csv")).slice(1).split("\n");
-    // Standard path (no templateId): default 20% VAT, round(5000*20/120)=833.
+    // Standard path (no templateId). #66: no file behind it, so no VAT is
+    // asserted — this used to book round(5000*20/120)=833 cents of input VAT
+    // against a payment with nothing documenting it.
     expect(buchungen).toEqual([
       BUCHUNGEN_HEADER,
-      "0;200001;7000;2026000001;20260315;20260315;50,00;1;8,33;20;Ghost payment;;ER;",
+      "0;200001;7000;2026000001;20260315;20260315;50,00;1;0,00;0;Ghost payment;;ER;",
     ]);
   });
 

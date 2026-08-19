@@ -10,6 +10,9 @@ import {
   KREDITOR_ACCOUNT_BASE,
   DEBITOR_ACCOUNT_BASE,
 } from "../types/bmd-export";
+import { buildUvaTransaction, type CategoryRecord, type FileRecord } from "../uva/adapter";
+import { deriveTransactionVat } from "../uva/transactionVat";
+import type { RateGroup } from "../uva/types";
 
 /**
  * Maps no-receipt category templateIds to BMD Sachkonten.
@@ -181,17 +184,125 @@ export interface TransactionForExport {
   vatRate?: number;
   vatAmount?: number; // in cents
   vatId?: string;
+  currency?: string | null;
+  /** Manual reverse-charge flag / veto, read by the D3 classifier. */
+  isReverseCharge?: boolean | null;
   noReceiptCategoryId?: string | null;
   noReceiptCategoryTemplateId?: string | null;
 }
 
 /**
- * File data for export
+ * File data for export.
+ *
+ * Beyond the fields the CSV itself prints, this carries the extraction fields
+ * the VAT ladder reads (`FileRecord`, fork #66). They are optional: a caller
+ * that omits them gets a transaction whose VAT is unresolvable, which books at
+ * 0% rather than at a fabricated 20%.
  */
-export interface FileForExport {
+export interface FileForExport extends Omit<FileRecord, "id"> {
   id: string;
   fileName: string;
   extractedDate?: Timestamp;
+}
+
+
+/**
+ * Book rows for one transaction, one per VAT rate on the document (fork #66).
+ *
+ * Two invariants the split must not break:
+ *
+ *  - The rows' `betrag` sums to the bank amount exactly. The derivation may
+ *    return groups totalling LESS than the payment (a partial payment claims
+ *    proportionally), but the booking still books the whole payment — so the
+ *    document's rate MIX is applied to the full bank amount, which is what a
+ *    bookkeeper does with an instalment. When the document reconciles, which is
+ *    the ordinary case, the scaling is a no-op.
+ *  - Rounding remainders land on the last row, so cents never go missing.
+ *
+ * `steuer` is recomputed from each row's own gross at its own rate rather than
+ * copied from the group, because the group's figure belongs to the claimed
+ * portion, not to the booked one.
+ */
+function splitByRate(
+  bankGross: number,
+  groups: RateGroup[]
+): Array<{ rate: number; gross: number; vat: number }> {
+  const totalGross = groups.reduce((sum, g) => sum + g.gross, 0);
+  if (groups.length === 0 || totalGross <= 0) {
+    return [{ rate: 0, gross: bankGross, vat: 0 }];
+  }
+  const rows: Array<{ rate: number; gross: number; vat: number }> = [];
+  let assigned = 0;
+  groups.forEach((g, i) => {
+    const gross =
+      i === groups.length - 1
+        ? bankGross - assigned
+        : Math.round((bankGross * g.gross) / totalGross);
+    assigned += gross;
+    rows.push({
+      rate: g.rate,
+      gross,
+      vat: Math.round((gross * g.rate) / (100 + g.rate)),
+    });
+  });
+  return rows;
+}
+
+/**
+ * The VAT rows for one transaction, read off the connected receipts.
+ *
+ * Runs the same ladder as the UVA report (`deriveTransactionVat`), so the two
+ * trails cannot state different VAT for the same transaction — the divergence
+ * fork #66 was filed about. Anything the ladder cannot resolve books at 0%: an
+ * export must never assert input VAT that no document supports, and the old
+ * `?? 20` asserted it on every undocumented line.
+ *
+ * One carve-out. A manually entered `vatAmount` is used verbatim when the user
+ * also fixed the rate, because a typed amount is a stated fact rather than a
+ * derivation, and the override lane has no way to express "this exact figure".
+ */
+function vatRowsFor(
+  tx: TransactionForExport,
+  files: Map<string, FileForExport>
+): Array<{ rate: number; gross: number; vat: number }> {
+  const bankGross = Math.abs(tx.amount);
+
+  if (tx.vatRate != null && tx.vatAmount != null) {
+    return [{ rate: tx.vatRate, gross: bankGross, vat: tx.vatAmount }];
+  }
+
+  const filesById = new Map<string, FileRecord>();
+  for (const fid of tx.fileIds ?? []) {
+    const f = files.get(fid);
+    if (f) filesById.set(fid, f as FileRecord);
+  }
+  const categoriesById = new Map<string, CategoryRecord>();
+  if (tx.noReceiptCategoryId) {
+    categoriesById.set(tx.noReceiptCategoryId, {
+      id: tx.noReceiptCategoryId,
+      templateId: tx.noReceiptCategoryTemplateId ?? null,
+    });
+  }
+
+  const uvaTx = buildUvaTransaction(
+    {
+      id: tx.id,
+      date: tx.date,
+      amount: tx.amount,
+      currency: tx.currency ?? null,
+      partner: tx.partnerName ?? tx.partner ?? null,
+      vatRate: tx.vatRate ?? null,
+      isReverseCharge: tx.isReverseCharge ?? null,
+      noReceiptCategoryId: tx.noReceiptCategoryId ?? null,
+      noReceiptCategoryTemplateId: tx.noReceiptCategoryTemplateId ?? null,
+      fileIds: tx.fileIds,
+    },
+    { filesById, categoriesById }
+  );
+
+  const derived = deriveTransactionVat(uvaTx);
+  if (derived.kind === "groups") return splitByRate(bankGross, derived.groups);
+  return [{ rate: 0, gross: bankGross, vat: 0 }];
 }
 
 /**
@@ -258,38 +369,38 @@ export function generateBuchungenCsv(
         .join(", ")
         .substring(0, 50) || "";
 
-    let row: BmdBuchungRow;
+    // VAT comes off the receipts, via the same ladder the UVA report runs
+    // (fork #66). A document carrying more than one rate produces more than one
+    // booking row, all under this transaction's single Belegnummer — which is
+    // how a split-rate receipt is booked, and why the counter advances per
+    // transaction rather than per row.
+    const vatRows = vatRowsFor(tx, files);
 
     if (isCategoryTransaction && !hasFiles) {
       // --- No-receipt category path ---
       const sachkonto = (isExpense ? categoryMapping.expense : categoryMapping.income)
         || (isExpense ? "7000" : "4000"); // fallback
 
-      // VAT: 0% for all categories except receipt-lost (keeps tx vatRate)
-      const isReceiptLost = templateId === "receipt-lost";
-      const vatRate = isReceiptLost ? (tx.vatRate ?? 20) : 0;
-      const vatAmount = isReceiptLost
-        ? (tx.vatAmount ?? Math.round((Math.abs(tx.amount) * vatRate) / (100 + vatRate)))
-        : 0;
-
       const text = `${categoryMapping.name}: ${displayName}`.substring(0, 75);
 
-      row = {
-        satzart: 0,
-        konto: sachkonto,
-        gkto: "", // empty — BMD assigns bank side on import
-        belegnr,
-        buchdat: formatBmdDate(tx.date),
-        belegdat: formatBmdDate(belegdat),
-        betrag: formatBmdAmount(tx.amount),
-        bucod: isExpense ? 1 : 2,
-        steuer: formatBmdAmount(vatAmount),
-        mwst: vatRate,
-        text,
-        extbelegnr,
-        symbol: categoryMapping.symbol || (isExpense ? "ER" : "AR"),
-        uidnr: (tx.vatId || "").substring(0, 20),
-      };
+      for (const v of vatRows) {
+        rows.push({
+          satzart: 0,
+          konto: sachkonto,
+          gkto: "", // empty — BMD assigns bank side on import
+          belegnr,
+          buchdat: formatBmdDate(tx.date),
+          belegdat: formatBmdDate(belegdat),
+          betrag: formatBmdAmount(v.gross),
+          bucod: isExpense ? 1 : 2,
+          steuer: formatBmdAmount(v.vat),
+          mwst: v.rate,
+          text,
+          extbelegnr,
+          symbol: categoryMapping.symbol || (isExpense ? "ER" : "AR"),
+          uidnr: (tx.vatId || "").substring(0, 20),
+        });
+      }
     } else {
       // --- Standard transaction path (has files, or no category) ---
       const personenkonto = tx.partnerId
@@ -300,30 +411,25 @@ export function generateBuchungenCsv(
 
       const contraAccount = isExpense ? "7000" : "4000";
 
-      const vatRate = tx.vatRate ?? 20;
-      const vatAmount =
-        tx.vatAmount ??
-        Math.round((Math.abs(tx.amount) * vatRate) / (100 + vatRate));
-
-      row = {
-        satzart: 0,
-        konto: personenkonto,
-        gkto: contraAccount,
-        belegnr,
-        buchdat: formatBmdDate(tx.date),
-        belegdat: formatBmdDate(belegdat),
-        betrag: formatBmdAmount(tx.amount),
-        bucod: isExpense ? 1 : 2,
-        steuer: formatBmdAmount(vatAmount),
-        mwst: vatRate,
-        text: displayName.substring(0, 75),
-        extbelegnr,
-        symbol: isExpense ? "ER" : "AR",
-        uidnr: (tx.vatId || "").substring(0, 20),
-      };
+      for (const v of vatRows) {
+        rows.push({
+          satzart: 0,
+          konto: personenkonto,
+          gkto: contraAccount,
+          belegnr,
+          buchdat: formatBmdDate(tx.date),
+          belegdat: formatBmdDate(belegdat),
+          betrag: formatBmdAmount(v.gross),
+          bucod: isExpense ? 1 : 2,
+          steuer: formatBmdAmount(v.vat),
+          mwst: v.rate,
+          text: displayName.substring(0, 75),
+          extbelegnr,
+          symbol: isExpense ? "ER" : "AR",
+          uidnr: (tx.vatId || "").substring(0, 20),
+        });
+      }
     }
-
-    rows.push(row);
   }
 
   const csvRows = rows.map((row) =>
