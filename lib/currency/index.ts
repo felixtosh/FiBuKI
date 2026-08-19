@@ -1,1 +1,7 @@
-export { convertCurrency, getAvailableCurrencies, type ConversionResult } from "./converter";
+export {
+  convertCurrency,
+  getAvailableCurrencies,
+  getLatestRateMonth,
+  MAX_RATE_SUBSTITUTION_MONTHS,
+  type ConversionResult,
+} from "./converter";

@@ -8,10 +8,20 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { convertCurrency } from "@/lib/currency";
+import {
+  comparableAmount,
+  type BankOriginalAmount,
+} from "@/functions/src/fx/bankOriginalAmount";
 
 interface AmountInfo {
   amount: number;
   currency: string;
+  /**
+   * For a transaction: what the bank says it charged before settling (#112).
+   * When this is in the other side's currency the two can be compared with no
+   * conversion at all, which is both exact and what the matcher does.
+   */
+  original?: BankOriginalAmount | null;
 }
 
 interface AmountMatchDisplayProps {
@@ -33,6 +43,11 @@ interface AmountMatchDisplayProps {
   isExtracting?: boolean;
   /** Additional class names */
   className?: string;
+  /**
+   * Bank-stated original amount for the PRIMARY entity, when the primary is a
+   * transaction (countType "file"). Same purpose as AmountInfo.original (#112).
+   */
+  primaryOriginal?: BankOriginalAmount | null;
 }
 
 /**
@@ -49,23 +64,49 @@ export function AmountMatchDisplay({
   targetCurrency,
   isExtracting,
   className,
+  primaryOriginal,
 }: AmountMatchDisplayProps) {
   const Icon = FileText;
 
   // Determine the currency to display the difference in
   // For file lists (countType="tx"), prefer transaction currency (from secondary amounts)
   // For transaction lists (countType="file"), use transaction currency (primary)
-  const displayCurrency = targetCurrency ||
+  const conversionCurrency = targetCurrency ||
     (countType === "tx" && secondaryAmounts.length > 0 ? secondaryAmounts[0].currency : primaryCurrency);
+
+  // #112: before converting anything, look for a currency in which BOTH sides
+  // can be read straight off the data. A bank row that settled a USD charge in
+  // EUR usually still states the USD figure it charged, so a USD document and
+  // that row can be compared exactly, in USD, with no rate involved. This is
+  // the same primitive the matcher scores on (comparableAmount), which is what
+  // stops the pill and the scorer reaching different verdicts on one pair.
+  const rateFree = (() => {
+    if (primaryAmount == null || secondaryAmounts.length === 0) return null;
+    const candidates = [primaryCurrency, ...secondaryAmounts.map(a => a.currency)];
+    for (const candidate of candidates) {
+      const primary = comparableAmount(primaryAmount, primaryCurrency, primaryOriginal, candidate);
+      if (primary == null) continue;
+      const secondaries = secondaryAmounts.map(a =>
+        comparableAmount(a.amount, a.currency, a.original, candidate)
+      );
+      if (secondaries.some(v => v == null)) continue;
+      return { currency: candidate, primary, total: (secondaries as number[]).reduce((s, v) => s + v, 0) };
+    }
+    return null;
+  })();
+
+  const displayCurrency = rateFree?.currency ?? conversionCurrency;
 
   // Get unique secondary currencies
   const secondaryCurrencies = [...new Set(secondaryAmounts.map(a => a.currency))];
 
-  // Check for currency mismatch (between primary and any secondary)
-  const hasCurrencyMismatch = secondaryCurrencies.some(c => c !== primaryCurrency);
+  // Check for currency mismatch (between primary and any secondary). A pair
+  // bridged by the bank's own original amount is NOT a mismatch to the reader:
+  // there is one currency in which both figures are exact.
+  const hasCurrencyMismatch = !rateFree && secondaryCurrencies.some(c => c !== primaryCurrency);
 
   // Check if display currency differs from primary (need to convert primary)
-  const needsPrimaryConversion = displayCurrency !== primaryCurrency;
+  const needsPrimaryConversion = !rateFree && displayCurrency !== primaryCurrency;
 
   // Icon with optional count badge
   const IconWithBadge = (
@@ -117,10 +158,14 @@ export function AmountMatchDisplay({
   // Convert all secondary amounts to display currency and sum them
   let convertedTotal = 0;
   let conversionRate: number | null = null;
+  // The month the rate came from. The table is monthly and a missing month
+  // borrows from up to three earlier, so this is not always the payment month
+  // — showing it is the only way a substitution is visible to the user.
+  let conversionRateDate: string | null = null;
   let conversionFailed = false;
   let wasConverted = false;
 
-  for (const secondary of secondaryAmounts) {
+  for (const secondary of rateFree ? [] : secondaryAmounts) {
     if (secondary.currency === displayCurrency) {
       convertedTotal += Math.abs(secondary.amount);
     } else if (conversionDate) {
@@ -134,6 +179,7 @@ export function AmountMatchDisplay({
       if (conversion) {
         convertedTotal += conversion.amount;
         conversionRate = conversion.rate;
+        conversionRateDate = conversion.rateDate;
         wasConverted = true;
       } else {
         conversionFailed = true;
@@ -150,9 +196,15 @@ export function AmountMatchDisplay({
   const isMatched = openAmount !== null && Math.abs(openAmount) < 100; // Within 1 EUR/USD tolerance
   const anyConversion = wasConverted || primaryWasConverted;
 
-  // For same currency case (no conversions needed)
-  const secondaryTotal = secondaryAmounts.reduce((sum, a) => sum + Math.abs(a.amount), 0);
-  const primaryAbsolute = primaryAmount != null ? Math.abs(primaryAmount) : null;
+  // For same currency case (no conversions needed). When the bank's own
+  // original amount bridged the pair (#112) those are the figures to compare —
+  // both already in displayCurrency, both exact.
+  const secondaryTotal = rateFree
+    ? rateFree.total
+    : secondaryAmounts.reduce((sum, a) => sum + Math.abs(a.amount), 0);
+  const primaryAbsolute = rateFree
+    ? rateFree.primary
+    : primaryAmount != null ? Math.abs(primaryAmount) : null;
   const normalOpenAmount = !hasCurrencyMismatch && !needsPrimaryConversion && primaryAbsolute != null
     ? primaryAbsolute - secondaryTotal
     : null;
@@ -259,6 +311,7 @@ export function AmountMatchDisplay({
           {conversionRate !== null && (
             <p className="text-xs text-muted-foreground">
               Rate: 1 {secondaryCurrencies[0]} = {conversionRate.toFixed(4)} {displayCurrency}
+              {conversionRateDate && conversionRateDate !== "n/a" && ` (${conversionRateDate})`}
             </p>
           )}
         </TooltipContent>

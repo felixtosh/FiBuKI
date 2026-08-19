@@ -1,6 +1,7 @@
 import { VertexAI, Part } from "@google-cloud/vertexai";
 import { PDFDocument } from "pdf-lib";
 import { MODELS } from "../utils/models";
+import { normalizeCurrency } from "../fx/currencyNormalization";
 
 // Model options for comparison (fastest to most accurate)
 // gemini-2.5-flash-lite: Fastest, lowest cost
@@ -31,22 +32,6 @@ export interface GeminiBoundingBox {
   value: string;
   vertices: Array<{ x: number; y: number }>;
   pageIndex: number;
-}
-
-// Normalize currency symbols to ISO codes
-const CURRENCY_MAP: Record<string, string> = {
-  "€": "EUR",
-  "$": "USD",
-  "£": "GBP",
-  "¥": "JPY",
-  "CHF": "CHF",
-  "Fr.": "CHF",
-};
-
-function normalizeCurrency(currency: string | null | undefined): string | null {
-  if (!currency) return null;
-  if (/^[A-Z]{3}$/.test(currency)) return currency;
-  return CURRENCY_MAP[currency] || "EUR";
 }
 
 /**

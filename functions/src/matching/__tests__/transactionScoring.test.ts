@@ -242,10 +242,55 @@ describe("calculateAmountScore", () => {
     expect(result.score).toBe(40);
   });
 
-  it("applies 50% penalty for currency mismatch", () => {
-    const result = calculateAmountScore(1000, 1000, "USD", "EUR");
-    expect(result.score).toBe(20); // 40 * 0.5
+  // Fork #87: a currency-mismatched pair is scored on FX plausibility, not on
+  // the raw numbers — USD 24.00 and EUR 20.86 never agree numerically.
+  it("currency mismatch: a plausible FX ratio scores 30 as amount_close", () => {
+    const result = calculateAmountScore(2400, 2086, "USD", "EUR"); // 0.869 EUR/USD
     expect(result.currencyMismatch).toBe(true);
+    expect(result.score).toBe(30);
+    expect(result.source).toBe("amount_close");
+  });
+
+  it("currency mismatch: a loosely plausible ratio scores 20", () => {
+    const result = calculateAmountScore(10000, 9500, "USD", "EUR"); // 0.95, ~8% off anchor
+    expect(result.currencyMismatch).toBe(true);
+    expect(result.score).toBe(20);
+    expect(result.source).toBe("amount_close");
+  });
+
+  it("currency mismatch: a numerically equal amount is NOT an exact match", () => {
+    // USD 10.00 vs EUR 10.00 — the old code reported amount_exact (halved to
+    // 20). 1:1 is inside the loose FX band (2022 parity), so it still scores
+    // 20, but as amount_close: it can never earn the hard-facts bonus.
+    const result = calculateAmountScore(1000, 1000, "USD", "EUR");
+    expect(result.currencyMismatch).toBe(true);
+    expect(result.score).toBe(20);
+    expect(result.source).toBe("amount_close");
+  });
+
+  it("currency mismatch: a ratio outside the loose band scores 0", () => {
+    const result = calculateAmountScore(1000, 1100, "USD", "EUR"); // 1.10 EUR/USD
+    expect(result.score).toBe(0);
+    expect(result.source).toBeNull();
+  });
+
+  it("currency mismatch: an implausible ratio scores 0", () => {
+    const result = calculateAmountScore(12000, 5000, "USD", "EUR"); // partial payment shape
+    expect(result.score).toBe(0);
+    expect(result.source).toBeNull();
+  });
+
+  it("currency mismatch: unknown currency falls back to the halved numeric ladder", () => {
+    // no anchor for XYZ — often a garbled tag on a EUR document
+    expect(calculateAmountScore(1000, 880, "XYZ", "EUR").score).toBe(0);
+    const exact = calculateAmountScore(1000, 1000, "XYZ", "EUR");
+    expect(exact.currencyMismatch).toBe(true);
+    expect(exact.score).toBe(20);
+    expect(exact.source).toBe("amount_exact");
+  });
+
+  it("currency mismatch: a legacy '$' tag scores like USD", () => {
+    expect(calculateAmountScore(2400, 2086, "$", "EUR").score).toBe(30);
   });
 
   it("treats null/undefined currency as EUR", () => {
@@ -518,15 +563,17 @@ describe("scoreTransaction", () => {
       expect(result.confidence).toBe(63);
     });
 
-    it("no bonus when the exact amount is in a different currency", () => {
+    it("no bonus when the amount is a plausible FX match in another currency", () => {
+      // USD 113.64 ≈ EUR 100.00 at 0.88: FX-plausible (30) but never "exact"
       const result = scoreTransaction(
-        { ...noPartnerFile, extractedCurrency: "USD" },
+        { ...noPartnerFile, extractedAmount: 11364, extractedCurrency: "USD" },
         noPartnerTx
       );
-      // 20 (halved) + 25 = 45
-      expect(result.matchSources).toContain("amount_exact");
+      // 30 + 25 = 55
+      expect(result.matchSources).toContain("amount_close");
+      expect(result.matchSources).not.toContain("amount_exact");
       expect(result.breakdown.hardFacts).toBe(0);
-      expect(result.confidence).toBe(45);
+      expect(result.confidence).toBe(55);
     });
 
     it("no bonus when the date is more than 3 days off", () => {
@@ -568,6 +615,53 @@ describe("scoreTransaction", () => {
       });
       expect(result.breakdown.hardFacts).toBe(SCORING_CONFIG.HARD_FACTS_BONUS_SAME_DAY);
       expect(result.confidence).toBe(65);
+    });
+  });
+
+  describe("foreign-currency subscriptions (fork #87)", () => {
+    // Live pair: paperless-ap-1108.pdf OpenAI USD 24.00 2026-04-02 vs
+    // "OPENAI *CHATGPT SUBSCR" EUR 20.86 2026-04-03. Scored 58
+    // (date_close 33 + partner 25) with zero amount points before #87.
+    const usdFile: FileMatchingData = {
+      extractedAmount: 2400,
+      extractedCurrency: "USD",
+      extractedDate: ts("2026-04-02"),
+      extractedPartner: "OpenAI",
+      partnerId: "p-openai",
+    };
+    const eurTx: TransactionData = {
+      id: "tx-openai",
+      amount: -2086,
+      currency: "EUR",
+      date: ts("2026-04-03"),
+      name: "OPENAI *CHATGPT SUBSCR",
+      partnerId: "p-openai",
+    };
+
+    it("plausible FX + partner + next-day date auto-matches", () => {
+      const result = scoreTransaction(usdFile, eurTx);
+      // 30 (fx amount) + 33 (22 boosted by partner) + 25 (partner id) = 88
+      expect(result.breakdown.amount).toBe(30);
+      expect(result.confidence).toBe(88);
+      expect(result.confidence).toBeGreaterThanOrEqual(SCORING_CONFIG.AUTO_MATCH_THRESHOLD);
+      expect(result.matchSources).toContain("amount_close");
+    });
+
+    it("plausible FX + date alone stays a suggestion, never an auto-match", () => {
+      const result = scoreTransaction(
+        { ...usdFile, extractedPartner: null, partnerId: null },
+        { ...eurTx, partnerId: undefined, name: "CARD PAYMENT" }
+      );
+      // 30 + 22 = 52
+      expect(result.confidence).toBe(52);
+      expect(result.confidence).toBeLessThan(SCORING_CONFIG.AUTO_MATCH_THRESHOLD);
+      expect(result.breakdown.hardFacts).toBe(0);
+    });
+
+    it("same partner but implausible FX ratio scores like before (no amount points)", () => {
+      const result = scoreTransaction(usdFile, { ...eurTx, amount: -6000 });
+      expect(result.breakdown.amount).toBe(0);
+      expect(result.confidence).toBe(58);
     });
   });
 
