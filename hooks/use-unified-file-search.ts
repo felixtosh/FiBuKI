@@ -10,6 +10,7 @@ import { useFiles } from "./use-files";
 import { useEmailIntegrations } from "./use-email-integrations";
 import { fetchWithAuth } from "@/lib/api/fetch-with-auth";
 import { useAuth } from "@/components/auth";
+import { toDateSafe } from "@/lib/utils";
 
 /**
  * Transaction info for smart search/ranking
@@ -98,7 +99,7 @@ function fileToResult(file: TaxFile): Omit<UnifiedSearchResult, "score" | "match
     id: `local-${file.id}`,
     type: "local",
     filename: file.fileName,
-    date: file.extractedDate?.toDate(),
+    date: toDateSafe(file.extractedDate) ?? undefined,
     amount: file.extractedAmount ?? undefined,
     currency: file.extractedCurrency ?? undefined,
     partner: file.extractedPartner ?? undefined,
@@ -277,7 +278,7 @@ export function useUnifiedFileSearch(
             filename: file.fileName,
             mimeType: file.fileType,
             fileExtractedAmount: file.extractedAmount ?? null,
-            fileExtractedDate: file.extractedDate?.toDate().toISOString() ?? null,
+            fileExtractedDate: toDateSafe(file.extractedDate)?.toISOString() ?? null,
             fileExtractedPartner: file.extractedPartner ?? null,
             filePartnerId: file.partnerId ?? null,
             // Include Gmail metadata if the file came from Gmail

@@ -523,7 +523,7 @@ export function InvoiceDetailPanel({
       year:
         Number.isInteger(year) && year !== undefined && year > 0
           ? year
-          : invoice.issueDate?.toDate().getFullYear(),
+          : toDateSafe(invoice.issueDate)?.getFullYear(),
       numberSeq:
         Number.isInteger(parsedSeq) && parsedSeq >= 1
           ? parsedSeq

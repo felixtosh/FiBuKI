@@ -14,7 +14,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
+import { cn, toDateSafe } from "@/lib/utils";
 import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
 import { convertCurrency } from "@/lib/currency";
@@ -152,7 +152,7 @@ interface TransactionRowProps {
 }
 
 function TransactionRow({ transaction, fileCurrency, onRemove, disabled }: TransactionRowProps) {
-  const txDate = transaction.date?.toDate();
+  const txDate = toDateSafe(transaction.date);
   const hasCurrencyMismatch = transaction.currency !== fileCurrency;
 
   // Convert to file currency using transaction/payment date
@@ -245,7 +245,7 @@ function DifferenceLine({ fileAmount, fileCurrency, transactions }: DifferenceLi
   let txConversionFailed = false;
 
   for (const tx of transactions) {
-    const txDate = tx.date?.toDate();
+    const txDate = toDateSafe(tx.date);
     if (tx.currency === targetCurrency) {
       transactionsSum += Math.abs(tx.amount);
     } else if (txDate) {
