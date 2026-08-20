@@ -30,6 +30,7 @@ export interface FilesDataTableHandle {
 
 // Default column sizes for files table
 const DEFAULT_FILE_COLUMN_SIZES: Record<string, number> = {
+  select: 36,
   extractedDate: 110,
   extractedAmount: 90,
   extractedVatPercent: 55,
