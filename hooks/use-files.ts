@@ -11,6 +11,7 @@ import {
 import { db } from "@/lib/firebase/config";
 import { callFunction } from "@/lib/firebase/callable";
 import { useFirestoreCollection } from "@/lib/firebase/use-firestore-collection";
+import { applyFileFilters } from "@/lib/filters/apply-file-filters";
 import {
   TaxFile,
   FileFilters,
@@ -54,82 +55,32 @@ export function useFiles(filters?: FileFilters) {
   const amountType = filters?.amountType;
 
   // Apply filters client-side via useMemo - no loading state change
-  const files = useMemo(() => {
-    let data = rawFiles;
-
-    if (!includeDeleted) {
-      data = data.filter((f) => !f.deletedAt);
-    }
-
-    if (search) {
-      const searchLower = search.toLowerCase();
-      data = data.filter(
-        (f) =>
-          f.fileName.toLowerCase().includes(searchLower) ||
-          (f.extractedPartner?.toLowerCase() || "").includes(searchLower),
-      );
-    }
-
-    if (hasConnections !== undefined) {
-      data = data.filter((f) =>
-        hasConnections
-          ? f.transactionIds.length > 0
-          : f.transactionIds.length === 0,
-      );
-    }
-
-    if (extractionComplete !== undefined) {
-      data = data.filter((f) => f.extractionComplete === extractionComplete);
-    }
-
-    if (isNotInvoice !== undefined) {
-      data = data.filter((f) =>
-        isNotInvoice ? f.isNotInvoice === true : f.isNotInvoice !== true,
-      );
-    }
-
-    if (extractedDateFrom || extractedDateTo) {
-      data = data.filter((f) => {
-        if (!f.extractedDate) return false;
-        const fileDate = f.extractedDate.toDate();
-        if (extractedDateFrom && fileDate < extractedDateFrom) return false;
-        if (extractedDateTo) {
-          // Add 1 day to include the end date fully
-          const endDate = new Date(extractedDateTo);
-          endDate.setDate(endDate.getDate() + 1);
-          if (fileDate >= endDate) return false;
-        }
-        return true;
-      });
-    }
-
-    if (partnerIds && partnerIds.length > 0) {
-      const partnerIdSet = new Set(partnerIds);
-      data = data.filter((f) => f.partnerId && partnerIdSet.has(f.partnerId));
-    }
-
-    if (amountType && amountType !== "all") {
-      data = data.filter((f) => {
-        if (!f.invoiceDirection) return false;
-        if (amountType === "expense") return f.invoiceDirection === "incoming";
-        if (amountType === "income") return f.invoiceDirection === "outgoing";
-        return true;
-      });
-    }
-
-    return data;
-  }, [
-    rawFiles,
-    includeDeleted,
-    search,
-    hasConnections,
-    extractionComplete,
-    isNotInvoice,
-    extractedDateFrom,
-    extractedDateTo,
-    partnerIds,
-    amountType,
-  ]);
+  const { rows: files, invoiceCount } = useMemo(
+    () =>
+      applyFileFilters(rawFiles, {
+        includeDeleted,
+        search,
+        hasConnections,
+        extractionComplete,
+        isNotInvoice,
+        extractedDateFrom,
+        extractedDateTo,
+        partnerIds,
+        amountType,
+      }),
+    [
+      rawFiles,
+      includeDeleted,
+      search,
+      hasConnections,
+      extractionComplete,
+      isNotInvoice,
+      extractedDateFrom,
+      extractedDateTo,
+      partnerIds,
+      amountType,
+    ],
+  );
 
   // Mutations call Cloud Functions
   const create = useCallback(
@@ -294,6 +245,7 @@ export function useFiles(filters?: FileFilters) {
   return {
     files,
     allFilesCount,
+    invoiceCount,
     loading,
     error,
     create,

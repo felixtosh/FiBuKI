@@ -21,6 +21,8 @@ interface FileTableProps {
   files: TaxFile[];
   /** Total count of all files before filtering (for empty state logic) */
   allFilesCount?: number;
+  /** Count of displayed files that are not marked as not-invoice (for the toolbar counter) */
+  invoiceCount?: number;
   /** Loading state - when true, empty states are not shown to prevent flicker */
   loading?: boolean;
   onSelectFile: (file: TaxFile) => void;
@@ -45,6 +47,7 @@ export const FileTable = forwardRef<FilesDataTableHandle, FileTableProps>(
     {
       files,
       allFilesCount,
+      invoiceCount,
       loading,
       onSelectFile,
       selectedFileId,
@@ -71,13 +74,14 @@ export const FileTable = forwardRef<FilesDataTableHandle, FileTableProps>(
     );
 
     // Calculate connected count (files connected to at least one transaction)
-    const { connectedCount, totalCount } = useMemo(() => {
-      const total = files.length;
-      const connected = files.filter(
-        (file) => file.transactionIds && file.transactionIds.length > 0
-      ).length;
-      return { connectedCount: connected, totalCount: total };
-    }, [files]);
+    const connectedCount = useMemo(
+      () =>
+        files.filter((file) => file.transactionIds && file.transactionIds.length > 0)
+          .length,
+      [files]
+    );
+    // Toolbar total counts invoices only; not-invoice files never inflate it.
+    const totalCount = invoiceCount ?? files.filter((f) => !f.isNotInvoice).length;
 
     // Determine which empty state to show
     const totalUnfilteredCount = allFilesCount ?? files.length;
