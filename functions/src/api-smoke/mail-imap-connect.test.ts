@@ -49,11 +49,12 @@ vi.mock("@/lib/auth/get-server-user", async (importActual) => {
   };
 });
 
-// A client whose connect() throws whatever the test staged.
+// A client whose connect() throws whatever the test staged, and succeeds when
+// nothing is staged.
 vi.mock("imapflow", () => ({
   ImapFlow: class {
     async connect(): Promise<void> {
-      throw h.box.connectError;
+      if (h.box.connectError) throw h.box.connectError;
     }
     async getMailboxLock(): Promise<{ release: () => void }> {
       return { release: () => {} };
@@ -146,5 +147,32 @@ describe("POST /api/mail/imap/connect — classified verify failures", () => {
     );
     const integrations = await store.collection("emailIntegrations").get();
     expect(integrations.docs.length).toBe(0);
+  });
+});
+
+describe("POST /api/mail/imap/connect — a connected mailbox starts clean", () => {
+  // Reconnecting a broken mailbox is disconnect-then-connect (a second active
+  // row for the same mailbox is refused), so the fixed app-password lands as a
+  // fresh integration. It must not carry the previous failure's state: a user
+  // who has just fixed their password should not be looking at an "action
+  // needed" badge until the next nightly sync clears it. (#178)
+  it("writes no classified error and no reauth flag", async () => {
+    const key = "0".repeat(64);
+    const previous = process.env.GMAIL_TOKEN_ENCRYPTION_KEY;
+    process.env.GMAIL_TOKEN_ENCRYPTION_KEY = key;
+    try {
+      const { POST } = await import("@/app/api/mail/imap/connect/route");
+      const res = await POST(connectRequest());
+      expect(res.status).toBe(200);
+
+      const integrations = await store.collection("emailIntegrations").get();
+      expect(integrations.docs.length).toBe(1);
+      const data = integrations.docs[0].data() as Record<string, unknown>;
+      expect(data.lastSyncErrorCode).toBeNull();
+      expect(data.needsReauth).toBe(false);
+    } finally {
+      if (previous === undefined) delete process.env.GMAIL_TOKEN_ENCRYPTION_KEY;
+      else process.env.GMAIL_TOKEN_ENCRYPTION_KEY = previous;
+    }
   });
 });

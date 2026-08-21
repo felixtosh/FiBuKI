@@ -146,6 +146,12 @@ export async function POST(request: NextRequest) {
       isActive: true,
       needsReauth: false,
       lastError: null,
+      // Reconnecting a broken mailbox is disconnect-then-connect (the duplicate
+      // check refuses a second active row for the same mailbox), so a fixed
+      // app-password arrives here as a fresh document. State it rather than
+      // leaving the field absent: the row reads "no classified error", not
+      // "unknown", the moment the mailbox is connected again.
+      lastSyncErrorCode: null,
       // IMAP connection config (read by the sync worker's makeProvider).
       imapHost: host,
       imapPort: port,

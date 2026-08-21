@@ -1,4 +1,8 @@
 import { Timestamp } from "firebase/firestore";
+// Type-only, so the app never pulls functions/ runtime code into its bundle.
+// One definition of the five codes, shared by the worker that writes them and
+// the UI that branches on them.
+import type { ImapErrorCode } from "@/functions/src/mail/imap/classify-error";
 
 /**
  * Supported email providers
@@ -74,6 +78,13 @@ export interface EmailIntegration {
 
   /** Error message from last sync */
   lastSyncError?: string;
+
+  /**
+   * Classified cause of the last IMAP sync failure, written by the sync worker
+   * and cleared by a successful sync. Null/absent means no classified error.
+   * Gmail failures are not classified — the field stays absent for them.
+   */
+  lastSyncErrorCode?: ImapErrorCode | null;
 
   /** Number of files pulled in last sync */
   lastSyncFileCount?: number;

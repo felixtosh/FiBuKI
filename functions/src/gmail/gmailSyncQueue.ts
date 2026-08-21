@@ -6,7 +6,7 @@ import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import * as crypto from "crypto";
 import { encrypt, decrypt } from "../utils/encryption";
-import { makeProvider, MailMessage, MailProvider } from "../mail";
+import { makeProvider, MailMessage, MailProvider, classifyImapError, ImapErrorCode } from "../mail";
 
 // Define secrets for Google OAuth - set via Firebase CLI:
 // firebase functions:secrets:set GOOGLE_CLIENT_ID
@@ -302,7 +302,24 @@ export async function resolveMailProvider(
   return makeProvider(providerName, { accessToken: token.accessToken });
 }
 
-async function processQueueItem(
+/**
+ * IMAP failures that cannot resolve without the user reconnecting. Retrying
+ * them means three rejected logins per sync against a server that may
+ * rate-limit or lock the account, so the item is failed on the first attempt.
+ */
+const FATAL_IMAP_ERROR_CODES: ReadonlySet<ImapErrorCode> = new Set([
+  "auth_failed",
+  "mailbox_not_found",
+]);
+
+/**
+ * Run one queue item end to end: resolve the provider, walk the messages,
+ * write the files, and settle the item plus its integration.
+ *
+ * Exported for the self-host shim test seam — the failure path (IMAP error
+ * classification and retry suppression) has no other way in.
+ */
+export async function processQueueItem(
   queueItem: GmailSyncQueueItem,
   options: ProcessQueueOptions
 ): Promise<void> {
@@ -637,6 +654,12 @@ async function processQueueItem(
         lastSyncFileCount: filesCreated,
         initialSyncComplete: true,
         syncedDateRange: newSyncedRange,
+        // A working sync resolves whatever the last failure was. Only IMAP:
+        // Gmail's needsReauth participates in the OAuth pause/resume flow and
+        // is not this path's to clear.
+        ...(providerName === "imap"
+          ? { lastSyncErrorCode: null, needsReauth: false }
+          : {}),
         updatedAt: completedAt,
       });
 
@@ -686,6 +709,23 @@ async function processQueueItem(
       });
     }
 
+    // Classify an IMAP failure into the same five outcomes the connect route
+    // reports, and persist the code so the mailbox row can say what is wrong
+    // instead of showing raw library text. Gmail keeps the OAuth-string
+    // handling above and is not classified here.
+    let imapErrorCode: ImapErrorCode | null = null;
+    if (providerName === "imap") {
+      imapErrorCode = classifyImapError(error).code;
+      await db.collection("emailIntegrations").doc(queueItem.integrationId).update({
+        lastSyncErrorCode: imapErrorCode,
+        // A rejected login is genuinely a credential problem, so it lights the
+        // existing "action needed" badge. An unreachable server is not.
+        ...(imapErrorCode === "auth_failed" ? { needsReauth: true } : {}),
+        updatedAt: Timestamp.now(),
+      });
+    }
+    const isFatalImapError = imapErrorCode !== null && FATAL_IMAP_ERROR_CODES.has(imapErrorCode);
+
     // Check if this is a reauth error - pause instead of retry/fail
     // This allows auto-resume when Gmail is reconnected
     const isReauthError = isInsufficientScope ||
@@ -708,8 +748,9 @@ async function processQueueItem(
       return;
     }
 
-    // Check if we should retry (for non-reauth errors)
-    if (queueItem.retryCount < queueItem.maxRetries) {
+    // Check if we should retry (for non-reauth errors). A fatal IMAP failure
+    // skips straight to failed: no reconnection, no amount of retrying fixes it.
+    if (!isFatalImapError && queueItem.retryCount < queueItem.maxRetries) {
       if (queueItem.type === "scheduled") {
         // Scheduled syncs: update and let cron retry
         await db.collection("gmailSyncQueue").doc(queueItem.id).update({
