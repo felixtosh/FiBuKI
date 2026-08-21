@@ -471,8 +471,12 @@ export async function runTransactionMatching(
         ].filter(Boolean);
         console.log(`[TxMatch] Partner aliases: [${partnerAliases.map(a => `"${a}"`).join(", ")}]`);
 
-        // Read billing cycle and scoring weights for enhanced scoring
-        const bc = partnerData.billingCycle;
+        // Read billing cycle and scoring weights for enhanced scoring.
+        // yazzbert/FiBuKI-selfhost#165: billingCycle is now {learned,
+        // declared, effective}; band-aware scoring lands in #168 — for now
+        // this reads the first effective recurrence, same as the old
+        // single-cycle behavior.
+        const bc = partnerData.billingCycle?.effective?.[0];
         const sw = partnerData.scoringWeights;
         if (bc || sw) {
           scoringOptions = {};

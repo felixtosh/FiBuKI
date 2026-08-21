@@ -926,10 +926,21 @@ export interface ReplayResult {
 // ============================================================================
 
 /**
- * Learned billing cycle for a partner.
- * Computed from intervals between consecutive transactions.
+ * A recurrence is keyed by its billed-currency amount so one partner can
+ * carry more than one cadence (e.g. a weekly API charge and a monthly
+ * subscription). Absent on a partner with only one recurrence.
  */
-export interface BillingCycle {
+export interface BillingCycleBand {
+  amountBand?: number;
+}
+
+/** What Fibuki expects to see per charge of a recurrence. */
+export type BillingDocumentExpectation = "invoice" | "no-receipt-category" | "nothing";
+
+/**
+ * Billing cycle Fibuki detected on its own from transaction date intervals.
+ */
+export interface LearnedBillingCycle extends BillingCycleBand {
   /** Average interval in days between transactions (e.g., 30, 90, 365) */
   frequencyDays: number;
 
@@ -951,8 +962,41 @@ export interface BillingCycle {
   /** Number of transactions used to compute this cycle */
   sampleSize: number;
 
-  /** When this was last computed */
-  updatedAt: Timestamp;
+  /** When this recurrence was last learned */
+  learnedAt: Timestamp;
+}
+
+/** Billing cycle declared by hand for a recurrence. Wins over the learned one. */
+export interface DeclaredBillingCycle extends BillingCycleBand {
+  frequencyDays: number;
+  expectedAmountMin?: number;
+  expectedAmountMax?: number;
+  currency?: string;
+  documentExpectation?: BillingDocumentExpectation;
+}
+
+/** The view matching, search and the MCP act on: declared resolved over learned. */
+export interface EffectiveBillingCycle extends BillingCycleBand {
+  source: "declared" | "learned";
+  frequencyDays: number;
+  frequencyConfidence?: number;
+  typicalDayOfMonth?: number;
+  dayVariance?: number;
+  invoiceToTransactionDelay?: number;
+  delayVariance?: number;
+  documentExpectation?: BillingDocumentExpectation;
+}
+
+/**
+ * A partner's billing cycle: what Fibuki learned, what was declared by hand,
+ * and the effective view resolving one over the other. One entry per
+ * recurrence (amount band); a partner with a single recurrence has arrays
+ * of length 1 with `amountBand` unset.
+ */
+export interface BillingCycle {
+  learned?: LearnedBillingCycle[];
+  declared?: DeclaredBillingCycle[];
+  effective?: EffectiveBillingCycle[];
 }
 
 // ============================================================================
