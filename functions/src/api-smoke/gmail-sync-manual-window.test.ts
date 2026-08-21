@@ -20,7 +20,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { NextRequest } from "next/server";
-import { FakeFirestore } from "./fake-firestore";
+import { FakeFirestore, FakeDocRef } from "./fake-firestore";
 import { MANUAL_SYNC_WINDOW_DAYS } from "../mail/constants";
 
 // The sync route binds `getAdminDb()` once at module import, so every test must
@@ -324,5 +324,37 @@ describe("POST /api/gmail/sync — manual-press throttle", () => {
     // throttle reads.
     const second = await callSync({ integrationId: INTEGRATION, force: true });
     expect(second.status).toBe(429);
+  });
+
+  it("closes the race: a stamp landing between the cheap check and the enqueue transaction still blocks the press", async () => {
+    // The cheap check (line ~99) and the atomic re-check inside the enqueue
+    // transaction both read the integration doc via the same ref. Simulate a
+    // second press's stamp landing in that gap by injecting it on the SECOND
+    // read of this integration doc — the transaction's, not the cheap check's.
+    seed(fullySynced());
+
+    const originalGet = FakeDocRef.prototype.get;
+    let integrationReads = 0;
+    const spy = vi.spyOn(FakeDocRef.prototype, "get").mockImplementation(async function (
+      this: FakeDocRef
+    ) {
+      if (this.collectionName === "emailIntegrations" && this.id === INTEGRATION) {
+        integrationReads++;
+        if (integrationReads === 2) {
+          seed(fullySynced({ lastManualSyncAt: new Date() }));
+        }
+      }
+      return originalGet.call(this);
+    });
+
+    try {
+      const res = await callSync({ integrationId: INTEGRATION, force: true });
+
+      expect(res.status).toBe(429);
+      expect(await res.json()).toMatchObject({ code: "RATE_LIMITED" });
+      expect(await queuedRanges()).toHaveLength(0);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

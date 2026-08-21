@@ -11,6 +11,9 @@ const INTEGRATIONS_COLLECTION = "emailIntegrations";
 const SYNC_QUEUE_COLLECTION = "gmailSyncQueue";
 const TRANSACTIONS_COLLECTION = "transactions";
 
+/** Thrown inside the enqueue transaction when a concurrent press won the race. */
+class ManualSyncRateLimitedError extends Error {}
+
 /** A span of mail to fetch, inclusive at both ends. */
 interface DateRange {
   from: Date;
@@ -168,39 +171,65 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Create queue items for each range
+    // Create queue items for each range, stamping the throttle in the same
+    // transaction as the check. The plain check above (line ~99) is only a
+    // cheap short-circuit; two concurrent presses can both pass it before
+    // either writes. Re-reading lastManualSyncAt here and stamping it in the
+    // same transaction closes that window — a second press's transaction
+    // sees the first press's fresh stamp and is rejected.
     const now = Timestamp.now();
     const queueIds: string[] = [];
 
-    // Stamp the press BEFORE enqueueing. This is a press limiter, so it has to
-    // be written by the route: a sync that hangs or dies would never write a
-    // completion timestamp, and the throttle would silently never engage.
-    await integrationRef.update({ lastManualSyncAt: now, updatedAt: now });
+    try {
+      await db.runTransaction(async (tx) => {
+        const freshSnap = await tx.get(integrationRef);
+        const freshLastManualSyncAt = toDateSafe(freshSnap.data()?.lastManualSyncAt);
+        if (freshLastManualSyncAt && freshLastManualSyncAt > fiveMinutesAgo) {
+          throw new ManualSyncRateLimitedError();
+        }
 
-    for (const gap of rangesToSync) {
-      const queueRef = await db.collection(SYNC_QUEUE_COLLECTION).add({
-        userId,
-        integrationId,
-        type: "manual",
-        status: "pending",
-        dateFrom: Timestamp.fromDate(gap.from),
-        dateTo: Timestamp.fromDate(gap.to),
-        emailsProcessed: 0,
-        filesCreated: 0,
-        attachmentsSkipped: 0,
-        errors: [],
-        retryCount: 0,
-        maxRetries: 3,
-        processedMessageIds: [],
-        createdAt: now,
+        tx.update(integrationRef, { lastManualSyncAt: now, updatedAt: now });
+
+        for (const gap of rangesToSync) {
+          const queueRef = db.collection(SYNC_QUEUE_COLLECTION).doc();
+          tx.set(queueRef, {
+            userId,
+            integrationId,
+            type: "manual",
+            status: "pending",
+            dateFrom: Timestamp.fromDate(gap.from),
+            dateTo: Timestamp.fromDate(gap.to),
+            emailsProcessed: 0,
+            filesCreated: 0,
+            attachmentsSkipped: 0,
+            errors: [],
+            retryCount: 0,
+            maxRetries: 3,
+            processedMessageIds: [],
+            createdAt: now,
+          });
+          queueIds.push(queueRef.id);
+        }
       });
-      queueIds.push(queueRef.id);
+    } catch (error) {
+      if (error instanceof ManualSyncRateLimitedError) {
+        return NextResponse.json(
+          {
+            error: "Please wait at least 5 minutes between syncs",
+            code: "RATE_LIMITED",
+          },
+          { status: 429 }
+        );
+      }
+      throw error;
+    }
 
+    rangesToSync.forEach((gap, i) => {
       console.log(
-        `[Gmail Sync] Queued manual sync for ${integration.email}: ${queueRef.id} ` +
+        `[Gmail Sync] Queued manual sync for ${integration.email}: ${queueIds[i]} ` +
         `(${gap.from.toISOString()} - ${gap.to.toISOString()})`
       );
-    }
+    });
 
     return NextResponse.json({
       success: true,
