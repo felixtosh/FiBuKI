@@ -265,6 +265,10 @@ export function calculateAmountScore(
 export interface BillingCycleHint {
   invoiceToTransactionDelay?: number;
   delayVariance?: number;
+  /** Days between charges of this recurrence — enables the period-penalty below. */
+  frequencyDays?: number;
+  /** Tolerance in days around a whole-period boundary; falls back to delayVariance. */
+  dayVariance?: number;
 }
 
 export function calculateDateScore(
@@ -288,6 +292,26 @@ export function calculateDateScore(
       (txDate.getTime() - fileDate.getTime()) / (1000 * 60 * 60 * 24)
     );
     const delayDiff = Math.abs(actualDelay - expectedDelay);
+
+    // Checked before the near/close bands below, not after: for a short
+    // frequency (e.g. weekly, 7d) with a loose delayVariance (e.g. 5d),
+    // variance*2 (10) can exceed frequencyDays (7), so a same-amount
+    // candidate exactly one period away would otherwise land in the "close"
+    // band by raw delay proximity alone. This is the INCW9PTA bug: a
+    // same-amount receipt from a neighbouring period must lose here, not
+    // fall through to a proximity check that can't tell periods apart.
+    if (billingCycle.frequencyDays) {
+      const periodsAway = Math.round(delayDiff / billingCycle.frequencyDays);
+      if (periodsAway >= 1) {
+        const periodVariance = billingCycle.dayVariance ?? variance;
+        const distanceFromPeriod = Math.abs(
+          delayDiff - periodsAway * billingCycle.frequencyDays
+        );
+        if (distanceFromPeriod <= periodVariance) {
+          return { score: 0, source: null };
+        }
+      }
+    }
 
     if (delayDiff <= variance) return { score: 25, source: "date_exact" };
     if (delayDiff <= variance * 2) return { score: 22, source: "date_close" };

@@ -34,6 +34,7 @@ import {
 } from "./transactionScoring";
 import { readDismissedTransactionIds } from "./dismissedTransactions";
 import { isFileRejected } from "./rejectedFiles";
+import { selectEffectiveCycleForAmount, ResolvedEffectiveCycle } from "./billingCycle";
 import { AutomationMeta } from "../automation/types";
 import { checkAIBudget } from "../billing/checkAIBudget";
 import { isPassiveMode } from "../utils/checkAutomationMode";
@@ -456,9 +457,13 @@ export async function runTransactionMatching(
     return;
   }
 
-  // Fetch partner aliases, billing cycle, and scoring weights if file has an assigned partner
+  // Fetch partner aliases, billing cycle bands, and scoring weights if file has an assigned partner.
+  // Band selection happens per candidate transaction below (each charge can belong to a
+  // different recurrence band, e.g. a weekly API charge vs. a monthly subscription), not once
+  // here — a single upfront band would silently mis-score every candidate outside band 0.
   let partnerAliases: string[] = [];
-  let scoringOptions: ScoringOptions | undefined;
+  let effectiveCycles: ResolvedEffectiveCycle[] = [];
+  let baseWeights: ScoringOptions["weights"] | undefined;
   if (fileData.partnerId) {
     try {
       const partnerDoc = await db.collection("partners").doc(fileData.partnerId).get();
@@ -471,30 +476,19 @@ export async function runTransactionMatching(
         ].filter(Boolean);
         console.log(`[TxMatch] Partner aliases: [${partnerAliases.map(a => `"${a}"`).join(", ")}]`);
 
-        // Read billing cycle and scoring weights for enhanced scoring.
-        // yazzbert/FiBuKI-selfhost#165: billingCycle is now {learned,
-        // declared, effective}; band-aware scoring lands in #168 — for now
-        // this reads the first effective recurrence, same as the old
-        // single-cycle behavior.
-        const bc = partnerData.billingCycle?.effective?.[0];
+        effectiveCycles = partnerData.billingCycle?.effective ?? [];
+        if (effectiveCycles.length > 0) {
+          console.log(`[TxMatch] Partner has ${effectiveCycles.length} billing-cycle band(s)`);
+        }
+
         const sw = partnerData.scoringWeights;
-        if (bc || sw) {
-          scoringOptions = {};
-          if (bc) {
-            scoringOptions.billingCycle = {
-              invoiceToTransactionDelay: bc.invoiceToTransactionDelay,
-              delayVariance: bc.delayVariance,
-            };
-            console.log(`[TxMatch] Using billing cycle: delay=${bc.invoiceToTransactionDelay}d ±${bc.delayVariance}d`);
-          }
-          if (sw) {
-            scoringOptions.weights = {
-              amountWeight: sw.amountWeight,
-              dateWeight: sw.dateWeight,
-              partnerWeight: sw.partnerWeight,
-            };
-            console.log(`[TxMatch] Using scoring weights: amt=${sw.amountWeight} date=${sw.dateWeight} partner=${sw.partnerWeight}`);
-          }
+        if (sw) {
+          baseWeights = {
+            amountWeight: sw.amountWeight,
+            dateWeight: sw.dateWeight,
+            partnerWeight: sw.partnerWeight,
+          };
+          console.log(`[TxMatch] Using scoring weights: amt=${sw.amountWeight} date=${sw.dateWeight} partner=${sw.partnerWeight}`);
         }
       }
     } catch (error) {
@@ -536,10 +530,27 @@ export async function runTransactionMatching(
       `${rejectedCount} rejected this file, ${dismissedCount} dismissed by this file)`
   );
 
-  // Score each transaction
+  // Score each transaction — the billing-cycle band is selected per transaction, since which
+  // recurrence a charge belongs to depends on that transaction's amount, not the file's.
   const allScores = eligibleTransactions
     .map((doc) => {
       const txData = doc.data();
+
+      const band = selectEffectiveCycleForAmount(effectiveCycles, txData.amount);
+      let scoringOptions: ScoringOptions | undefined;
+      if (band || baseWeights) {
+        scoringOptions = {};
+        if (band) {
+          scoringOptions.billingCycle = {
+            invoiceToTransactionDelay: band.invoiceToTransactionDelay,
+            delayVariance: band.delayVariance,
+            frequencyDays: band.frequencyDays,
+            dayVariance: band.dayVariance,
+          };
+        }
+        if (baseWeights) scoringOptions.weights = baseWeights;
+      }
+
       return scoreTransaction(
         {
           extractedAmount: fileData.extractedAmount,

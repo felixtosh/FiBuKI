@@ -14,6 +14,7 @@ import {
   type BillingCycleTransaction,
   type DerivedBillingCycle,
 } from "./billingCycle";
+import { rescoreFileConnectionsForPartner } from "./rescoreFileConnections";
 
 const db = getFirestore();
 
@@ -94,6 +95,28 @@ export const learnBillingCycleCallable = createCallable<
     console.log(
       `[BillingCycle] Partner ${partnerId}: ${learned.length} band(s) learned, ` +
       `sample=${txSnapshot.size}`
+    );
+
+    // Re-score already-connected files now that the cycle changed, so a
+    // same-amount recurring document that was mis-attached to the wrong
+    // charge (yazzbert/FiBuKI-selfhost#168) ranks correctly without
+    // disturbing which files are actually connected. Awaited: callers of
+    // this callable expect the re-score to have already happened by the
+    // time it returns, not to race a background write.
+    const partnerData = partnerSnap.data()!;
+    const partnerAliases = [partnerData.name, ...(partnerData.aliases || [])].filter(Boolean);
+    const sw = partnerData.scoringWeights;
+    const weights = sw
+      ? { amountWeight: sw.amountWeight, dateWeight: sw.dateWeight, partnerWeight: sw.partnerWeight }
+      : undefined;
+    await rescoreFileConnectionsForPartner(
+      ctx.db,
+      ctx.userId,
+      partnerId,
+      txSnapshot.docs,
+      effective,
+      weights,
+      partnerAliases
     );
 
     // Today's callers (worker chat, agent tools) expect one flat cycle back.

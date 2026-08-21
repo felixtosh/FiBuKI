@@ -196,6 +196,161 @@ describe("calculateDateScore", () => {
       expect(result.score).toBe(25);
     });
   });
+
+  // === Frequency / whole-period penalty (yazzbert/FiBuKI-selfhost#168) ===
+
+  describe("with frequency penalty", () => {
+    it("still gives 25 for an exact delay match when frequency is present", () => {
+      const billingCycle: BillingCycleHint = {
+        invoiceToTransactionDelay: 14,
+        delayVariance: 3,
+        frequencyDays: 30,
+      };
+
+      const result = calculateDateScore(
+        new Date("2024-12-01"),
+        new Date("2024-12-15"),
+        billingCycle
+      );
+      expect(result.score).toBe(25);
+      expect(result.source).toBe("date_exact");
+    });
+
+    it("still gives 25 for a delay within variance when frequency is present", () => {
+      const billingCycle: BillingCycleHint = {
+        invoiceToTransactionDelay: 1,
+        delayVariance: 2,
+        frequencyDays: 7,
+      };
+
+      // actual delay = 3, expected = 1, diff = 2 <= variance(2) — not a period boundary
+      const result = calculateDateScore(
+        new Date("2024-06-01"),
+        new Date("2024-06-04"),
+        billingCycle
+      );
+      expect(result.score).toBe(25);
+    });
+
+    it("penalises a candidate one whole period away from the expected delay", () => {
+      const billingCycle: BillingCycleHint = {
+        invoiceToTransactionDelay: 1,
+        delayVariance: 2,
+        frequencyDays: 7,
+      };
+
+      // actual delay = 8 (1 + one week), expected = 1, diff = 7 = exactly one period
+      const result = calculateDateScore(
+        new Date("2024-06-01"),
+        new Date("2024-06-09"),
+        billingCycle
+      );
+      expect(result.score).toBe(0);
+      expect(result.source).toBeNull();
+    });
+
+    it("penalises a candidate two whole periods away from the expected delay", () => {
+      const billingCycle: BillingCycleHint = {
+        invoiceToTransactionDelay: 1,
+        delayVariance: 2,
+        frequencyDays: 7,
+      };
+
+      // actual delay = 15 (1 + two weeks), diff = 14 = exactly two periods
+      const result = calculateDateScore(
+        new Date("2024-06-01"),
+        new Date("2024-06-16"),
+        billingCycle
+      );
+      expect(result.score).toBe(0);
+    });
+
+    it("penalises a period-boundary candidate even when it would otherwise fall inside 2x variance", () => {
+      // The bug this guards: a loose delayVariance (5) makes variance*2 (10)
+      // exceed a short weekly frequency (7), so a candidate exactly one
+      // period away would land in the "close" band (22) by the old
+      // delay-only check order. The period check must run first.
+      const billingCycle: BillingCycleHint = {
+        invoiceToTransactionDelay: 1,
+        delayVariance: 5,
+        frequencyDays: 7,
+      };
+
+      // actual delay = 8, expected = 1, diff = 7 — one period away, and
+      // 7 <= variance*2 (10), so the old code would have scored this 22.
+      const result = calculateDateScore(
+        new Date("2024-06-01"),
+        new Date("2024-06-09"),
+        billingCycle
+      );
+      expect(result.score).toBe(0);
+    });
+
+    it("does not penalise mid-period proximity (not a whole period away)", () => {
+      const billingCycle: BillingCycleHint = {
+        invoiceToTransactionDelay: 1,
+        delayVariance: 1,
+        frequencyDays: 7,
+      };
+
+      // actual delay = 4, diff = 3 — closer to 0 periods than 1, and outside
+      // variance/2x-variance, so it falls through to standard proximity.
+      const result = calculateDateScore(
+        new Date("2024-06-01"),
+        new Date("2024-06-05"),
+        billingCycle
+      );
+      expect(result.score).not.toBe(0);
+    });
+
+    it("has no effect when frequencyDays is present but invoiceToTransactionDelay is not", () => {
+      const billingCycle: BillingCycleHint = {
+        delayVariance: 3,
+        frequencyDays: 7,
+        // No invoiceToTransactionDelay — the period check requires it to
+        // compute an expected invoice date, so it must not fire.
+      };
+
+      // 14 day diff → standard scoring → 8, same as with no billing cycle at all.
+      const result = calculateDateScore(
+        new Date("2024-06-01"),
+        new Date("2024-06-15"),
+        billingCycle
+      );
+      expect(result.score).toBe(8);
+    });
+
+    it("acceptance case (Invoice-INCW9PTA-0011): a same-amount weekly receipt ranks highest on exactly one of four connected transactions", () => {
+      // Real-world shape from yazzbert/FiBuKI-selfhost#164: a 38.25 weekly
+      // charge was connected to four transactions dated 2026-06-29, 07-05,
+      // 07-06, 07-06. Amount and partner scores are identical across all
+      // four (same amount, same partner), so the date score alone must
+      // produce a unique winner once the billing cycle is known.
+      const billingCycle: BillingCycleHint = {
+        invoiceToTransactionDelay: 3,
+        delayVariance: 0,
+        frequencyDays: 7,
+        dayVariance: 2,
+      };
+      const fileDate = new Date("2026-07-02"); // invoice extracted date
+
+      const t1PreviousPeriod = calculateDateScore(fileDate, new Date("2026-06-29"), billingCycle);
+      const t2ExpectedCharge = calculateDateScore(fileDate, new Date("2026-07-05"), billingCycle);
+      const t3NextDay = calculateDateScore(fileDate, new Date("2026-07-06"), billingCycle);
+      const t4NextDayDuplicate = calculateDateScore(fileDate, new Date("2026-07-06"), billingCycle);
+
+      expect(t2ExpectedCharge.score).toBe(25);
+      expect(t1PreviousPeriod.score).toBe(0); // one whole period before — penalised
+      expect(t3NextDay.score).toBeLessThan(t2ExpectedCharge.score);
+      expect(t4NextDayDuplicate.score).toBeLessThan(t2ExpectedCharge.score);
+
+      const scores = [t1PreviousPeriod, t2ExpectedCharge, t3NextDay, t4NextDayDuplicate].map(
+        (r) => r.score
+      );
+      const winners = scores.filter((s) => s === Math.max(...scores));
+      expect(winners).toHaveLength(1);
+    });
+  });
 });
 
 // ============================================================================
