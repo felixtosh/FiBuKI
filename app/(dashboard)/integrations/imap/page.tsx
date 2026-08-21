@@ -9,6 +9,7 @@ import {
   Check,
   AlertCircle,
   Trash2,
+  Download,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,6 +25,7 @@ import {
 } from "@/components/ui/card";
 import { useEmailIntegrations } from "@/hooks/use-email-integrations";
 import { usePageTitle } from "@/hooks/use-page-title";
+import { fetchWithAuth } from "@/lib/api/fetch-with-auth";
 
 export default function ImapIntegrationPage() {
   const router = useRouter();
@@ -45,6 +47,15 @@ export default function ImapIntegrationPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
+
+  // Pull-New-Files state, per mailbox. This page has no toast surface, so the
+  // outcome is reported in an inline alert under the row, like the connect
+  // form above does.
+  const [pulling, setPulling] = useState<string | null>(null);
+  const [syncQueued, setSyncQueued] = useState<Record<string, boolean>>({});
+  const [pullResult, setPullResult] = useState<
+    Record<string, { ok: boolean; text: string }>
+  >({});
 
   const handleConnect = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -71,6 +82,67 @@ export default function ImapIntegrationPage() {
       setFormError(err instanceof Error ? err.message : "Failed to connect mailbox");
     } finally {
       setConnecting(false);
+    }
+  };
+
+  /**
+   * Queue an immediate sync for one mailbox.
+   *
+   * `force` makes the endpoint cover a trailing window on top of any detected
+   * gap; without it a mailbox whose synced range already runs to now — the
+   * normal state after a nightly sync — answers "already up to date" and the
+   * press does nothing.
+   */
+  const handlePullFiles = async (id: string) => {
+    setPulling(id);
+    setPullResult((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+
+    try {
+      const response = await fetchWithAuth("/api/gmail/sync", {
+        method: "POST",
+        body: JSON.stringify({ integrationId: id, force: true }),
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        // A sync that is already running is not a failure — it is the outcome
+        // the user wanted, just already under way.
+        if (data.code === "SYNC_IN_PROGRESS" || data.code === "INITIAL_SYNC_PENDING") {
+          setSyncQueued((prev) => ({ ...prev, [id]: true }));
+          setPullResult((prev) => ({
+            ...prev,
+            [id]: { ok: true, text: "A sync is already running for this mailbox." },
+          }));
+          return;
+        }
+        setPullResult((prev) => ({
+          ...prev,
+          [id]: { ok: false, text: data.error || "Failed to start sync" },
+        }));
+        return;
+      }
+
+      setSyncQueued((prev) => ({ ...prev, [id]: true }));
+      setPullResult((prev) => ({
+        ...prev,
+        [id]: {
+          ok: true,
+          text: data.alreadySynced
+            ? "Already up to date."
+            : "Fetching new mail now. New invoices appear in Files.",
+        },
+      }));
+    } catch {
+      setPullResult((prev) => ({
+        ...prev,
+        [id]: { ok: false, text: "Failed to start sync" },
+      }));
+    } finally {
+      setPulling(null);
     }
   };
 
@@ -112,32 +184,64 @@ export default function ImapIntegrationPage() {
         {/* Connected mailboxes */}
         {!loading && imapIntegrations.length > 0 && (
           <div className="space-y-2">
-            {imapIntegrations.map((i) => (
-              <div
-                key={i.id}
-                className="flex items-center justify-between rounded-lg border p-3"
-              >
-                <div className="min-w-0">
-                  <div className="font-medium truncate">{i.email}</div>
-                  <div className="text-xs text-muted-foreground truncate">
-                    {i.imapHost}:{i.imapPort} · {i.imapMailbox || "INBOX"}
+            {imapIntegrations.map((i) => {
+              const result = pullResult[i.id];
+              const syncing = pulling === i.id;
+              return (
+                <div key={i.id} className="space-y-2">
+                  <div className="flex items-center justify-between rounded-lg border p-3">
+                    <div className="min-w-0">
+                      <div className="font-medium truncate">{i.email}</div>
+                      <div className="text-xs text-muted-foreground truncate">
+                        {i.imapHost}:{i.imapPort} · {i.imapMailbox || "INBOX"}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {/* Hidden while paused, matching the Gmail integration. */}
+                      {!i.isPaused && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handlePullFiles(i.id)}
+                          disabled={syncing || Boolean(syncQueued[i.id])}
+                        >
+                          {syncing ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Download className="h-4 w-4" />
+                          )}
+                          <span className="ml-2">Pull New Files</span>
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleDisconnect(i.id)}
+                        disabled={removing === i.id}
+                        aria-label="Disconnect mailbox"
+                      >
+                        {removing === i.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        )}
+                      </Button>
+                    </div>
                   </div>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => handleDisconnect(i.id)}
-                  disabled={removing === i.id}
-                  aria-label="Disconnect mailbox"
-                >
-                  {removing === i.id ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Trash2 className="h-4 w-4 text-destructive" />
+
+                  {result && (
+                    <Alert variant={result.ok ? "default" : "destructive"}>
+                      {result.ok ? (
+                        <Check className="h-4 w-4" />
+                      ) : (
+                        <AlertCircle className="h-4 w-4" />
+                      )}
+                      <AlertDescription>{result.text}</AlertDescription>
+                    </Alert>
                   )}
-                </Button>
-              </div>
-            ))}
+                </div>
+              );
+            })}
           </div>
         )}
 

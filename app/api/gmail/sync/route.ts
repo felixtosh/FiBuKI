@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { Timestamp } from "firebase-admin/firestore";
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
+import { toDateSafe } from "@/lib/utils";
+import { MANUAL_SYNC_WINDOW_DAYS } from "@/functions/src/mail/constants";
 
 const db = getAdminDb();
 const INTEGRATIONS_COLLECTION = "emailIntegrations";
@@ -15,13 +17,24 @@ const TRANSACTIONS_COLLECTION = "transactions";
  *
  * Body: {
  *   integrationId: string;
+ *   force?: boolean;   // also sync a trailing window, not just detected gaps
  * }
+ *
+ * `force` exists because gap detection alone reports "already up to date"
+ * whenever the synced range already runs to now — which is the normal state
+ * right after a nightly sync, and therefore the normal state when a human
+ * presses the button. With the flag set the trailing MANUAL_SYNC_WINDOW_DAYS
+ * are queued *in addition to* any real gap. The Gmail button does not send it,
+ * so Gmail keeps pure gap-fill behaviour.
  */
 export async function POST(request: NextRequest) {
   try {
     const userId = await getServerUserIdWithFallback(request);
     const body = await request.json();
-    const { integrationId } = body;
+    const { integrationId, force } = body as {
+      integrationId?: string;
+      force?: boolean;
+    };
 
     if (!integrationId) {
       return NextResponse.json(
@@ -70,12 +83,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check for rate limiting (max 1 manual sync per 5 minutes per integration)
+    // Rate limiting: max 1 *manual press* per 5 minutes per integration.
+    //
+    // Keyed on lastManualSyncAt, not lastSyncAt: the latter is written by the
+    // worker on any completed sync, so a nightly run would otherwise consume
+    // the user's throttle for a job they did not initiate.
     const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
-    if (
-      integration.lastSyncAt &&
-      integration.lastSyncAt.toDate() > fiveMinutesAgo
-    ) {
+    const lastManualSyncAt = toDateSafe(integration.lastManualSyncAt);
+    if (lastManualSyncAt && lastManualSyncAt > fiveMinutesAgo) {
       return NextResponse.json(
         {
           error: "Please wait at least 5 minutes between syncs",
@@ -132,7 +147,13 @@ export async function POST(request: NextRequest) {
     // Get date range from transactions
     const gapsToSync = await getSyncDateRanges(userId, integrationId, integration);
 
-    if (gapsToSync.length === 0) {
+    // A forced press always covers the trailing window as well, merged with the
+    // gaps so an overlapping pair does not become two queue items.
+    const rangesToSync = force
+      ? mergeDateRanges([...gapsToSync, manualSyncWindow()])
+      : gapsToSync;
+
+    if (rangesToSync.length === 0) {
       // No gaps - already fully synced for current transaction range
       return NextResponse.json({
         success: true,
@@ -141,11 +162,16 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Create queue items for each gap
+    // Create queue items for each range
     const now = Timestamp.now();
     const queueIds: string[] = [];
 
-    for (const gap of gapsToSync) {
+    // Stamp the press BEFORE enqueueing. This is a press limiter, so it has to
+    // be written by the route: a sync that hangs or dies would never write a
+    // completion timestamp, and the throttle would silently never engage.
+    await integrationRef.update({ lastManualSyncAt: now, updatedAt: now });
+
+    for (const gap of rangesToSync) {
       const queueRef = await db.collection(SYNC_QUEUE_COLLECTION).add({
         userId,
         integrationId,
@@ -172,7 +198,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: `Sync started for ${gapsToSync.length} date range(s)`,
+      message: `Sync started for ${rangesToSync.length} date range(s)`,
       queueIds,
     });
   } catch (error) {
@@ -339,4 +365,37 @@ async function getSyncDateRanges(
   }
 
   return gaps;
+}
+
+/**
+ * The trailing window a forced press covers, ending now.
+ */
+function manualSyncWindow(): { from: Date; to: Date } {
+  const to = new Date();
+  const from = new Date(to.getTime() - MANUAL_SYNC_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  return { from, to };
+}
+
+/**
+ * Collapse overlapping or touching ranges into the fewest that cover the same
+ * span, so a forced window that already sits inside a detected gap does not
+ * queue the same mail twice.
+ *
+ * Ranges built by getSyncDateRanges are separated by exactly 1ms at their
+ * seams, so anything within 1ms counts as touching.
+ */
+function mergeDateRanges(ranges: { from: Date; to: Date }[]): { from: Date; to: Date }[] {
+  const sorted = [...ranges].sort((a, b) => a.from.getTime() - b.from.getTime());
+  const merged: { from: Date; to: Date }[] = [];
+
+  for (const range of sorted) {
+    const last = merged[merged.length - 1];
+    if (last && range.from.getTime() <= last.to.getTime() + 1) {
+      if (range.to > last.to) last.to = new Date(range.to);
+    } else {
+      merged.push({ from: new Date(range.from), to: new Date(range.to) });
+    }
+  }
+
+  return merged;
 }

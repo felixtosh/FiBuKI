@@ -43,3 +43,16 @@ export const INVOICE_MIME_TYPES = [
   "image/png",
   "image/webp",
 ];
+
+/**
+ * Trailing window a *manually pressed* sync always re-scans, on top of any
+ * gap the range detection finds.
+ *
+ * Three days rather than a week because attachment de-duplication happens by
+ * content hash *after* download: a wider window re-downloads every attachment
+ * in it on every press. The button's job is "mail that arrived in the last few
+ * hours", so three days is generous slack, not a backfill. Re-scanning is
+ * otherwise safe — the worker only ever expands an integration's synced range,
+ * never contracts it.
+ */
+export const MANUAL_SYNC_WINDOW_DAYS = 3;
