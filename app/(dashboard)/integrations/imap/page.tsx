@@ -52,7 +52,6 @@ export default function ImapIntegrationPage() {
   // outcome is reported in an inline alert under the row, like the connect
   // form above does.
   const [pulling, setPulling] = useState<string | null>(null);
-  const [syncQueued, setSyncQueued] = useState<Record<string, boolean>>({});
   const [pullResult, setPullResult] = useState<
     Record<string, { ok: boolean; text: string }>
   >({});
@@ -92,6 +91,14 @@ export default function ImapIntegrationPage() {
    * gap; without it a mailbox whose synced range already runs to now — the
    * normal state after a nightly sync — answers "already up to date" and the
    * press does nothing.
+   *
+   * The button is only disabled for the duration of the request itself. Whether
+   * a sync is *already running* is not knowable from this page yet — the row
+   * subscribes to emailIntegrations, not to the sync queue — so that guard is
+   * the endpoint's: a running sync answers SYNC_IN_PROGRESS and a second press
+   * inside five minutes answers RATE_LIMITED, both reported in the alert below
+   * the row. Issue #179 adds the live signal, and with it a locally
+   * disabled button.
    */
   const handlePullFiles = async (id: string) => {
     setPulling(id);
@@ -112,7 +119,6 @@ export default function ImapIntegrationPage() {
         // A sync that is already running is not a failure — it is the outcome
         // the user wanted, just already under way.
         if (data.code === "SYNC_IN_PROGRESS" || data.code === "INITIAL_SYNC_PENDING") {
-          setSyncQueued((prev) => ({ ...prev, [id]: true }));
           setPullResult((prev) => ({
             ...prev,
             [id]: { ok: true, text: "A sync is already running for this mailbox." },
@@ -126,15 +132,9 @@ export default function ImapIntegrationPage() {
         return;
       }
 
-      setSyncQueued((prev) => ({ ...prev, [id]: true }));
       setPullResult((prev) => ({
         ...prev,
-        [id]: {
-          ok: true,
-          text: data.alreadySynced
-            ? "Already up to date."
-            : "Fetching new mail now. New invoices appear in Files.",
-        },
+        [id]: { ok: true, text: "Fetching new mail now. New invoices appear in Files." },
       }));
     } catch {
       setPullResult((prev) => ({
@@ -203,7 +203,7 @@ export default function ImapIntegrationPage() {
                           variant="outline"
                           size="sm"
                           onClick={() => handlePullFiles(i.id)}
-                          disabled={syncing || Boolean(syncQueued[i.id])}
+                          disabled={syncing}
                         >
                           {syncing ? (
                             <Loader2 className="h-4 w-4 animate-spin" />

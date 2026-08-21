@@ -11,6 +11,12 @@ const INTEGRATIONS_COLLECTION = "emailIntegrations";
 const SYNC_QUEUE_COLLECTION = "gmailSyncQueue";
 const TRANSACTIONS_COLLECTION = "transactions";
 
+/** A span of mail to fetch, inclusive at both ends. */
+interface DateRange {
+  from: Date;
+  to: Date;
+}
+
 /**
  * POST /api/gmail/sync
  * Manually trigger a sync for a Gmail integration
@@ -307,7 +313,7 @@ async function getSyncDateRanges(
   userId: string,
   integrationId: string,
   integration: FirebaseFirestore.DocumentData
-): Promise<{ from: Date; to: Date }[]> {
+): Promise<DateRange[]> {
   // Get transaction date range
   const transactionsQuery = await db
     .collection(TRANSACTIONS_COLLECTION)
@@ -354,7 +360,7 @@ async function getSyncDateRanges(
   }
 
   // Find gaps
-  const gaps: { from: Date; to: Date }[] = [];
+  const gaps: DateRange[] = [];
 
   if (from < syncedFrom) {
     gaps.push({ from, to: new Date(syncedFrom.getTime() - 1) });
@@ -370,7 +376,7 @@ async function getSyncDateRanges(
 /**
  * The trailing window a forced press covers, ending now.
  */
-function manualSyncWindow(): { from: Date; to: Date } {
+function manualSyncWindow(): DateRange {
   const to = new Date();
   const from = new Date(to.getTime() - MANUAL_SYNC_WINDOW_DAYS * 24 * 60 * 60 * 1000);
   return { from, to };
@@ -384,9 +390,9 @@ function manualSyncWindow(): { from: Date; to: Date } {
  * Ranges built by getSyncDateRanges are separated by exactly 1ms at their
  * seams, so anything within 1ms counts as touching.
  */
-function mergeDateRanges(ranges: { from: Date; to: Date }[]): { from: Date; to: Date }[] {
+function mergeDateRanges(ranges: DateRange[]): DateRange[] {
   const sorted = [...ranges].sort((a, b) => a.from.getTime() - b.from.getTime());
-  const merged: { from: Date; to: Date }[] = [];
+  const merged: DateRange[] = [];
 
   for (const range of sorted) {
     const last = merged[merged.length - 1];
