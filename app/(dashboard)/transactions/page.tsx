@@ -18,6 +18,7 @@ import { usePartners } from "@/hooks/use-partners";
 import { useGlobalPartners } from "@/hooks/use-global-partners";
 import { useFilteredTransactions } from "@/hooks/use-filtered-transactions";
 import { useTransactionFiles } from "@/hooks/use-files";
+import { getNeighbourRowId } from "@/lib/navigation/row-neighbour";
 import { functions, storage, db } from "@/lib/firebase/config";
 import { createFile, checkFileDuplicate, OperationsContext } from "@/lib/operations";
 import { useAuth } from "@/components/auth";
@@ -166,14 +167,22 @@ function TransactionsContent() {
   // Get filtered transactions
   const filteredTransactions = useFilteredTransactions(transactions, filters, searchValue);
 
-  // Find current index in filtered list for navigation
-  const currentIndex = useMemo(() => {
-    if (!selectedId) return -1;
-    return filteredTransactions.findIndex((t) => t.id === selectedId);
-  }, [selectedId, filteredTransactions]);
+  // The order the table paints: filters and search fold into the rows it is
+  // given, the sort column and direction are its own state, so it reports them
+  // back here. Prev/next walks this list, falling back to the filtered order
+  // until the table has reported (first paint, or behind the loading skeleton).
+  const [tableOrderedIds, setTableOrderedIds] = useState<string[]>([]);
+  const orderedTransactionIds = useMemo(
+    () =>
+      tableOrderedIds.length
+        ? tableOrderedIds
+        : filteredTransactions.map((t) => t.id),
+    [tableOrderedIds, filteredTransactions]
+  );
 
-  const hasPrevious = currentIndex > 0;
-  const hasNext = currentIndex >= 0 && currentIndex < filteredTransactions.length - 1;
+  const hasPrevious =
+    getNeighbourRowId(orderedTransactionIds, selectedId, -1) !== null;
+  const hasNext = getNeighbourRowId(orderedTransactionIds, selectedId, 1) !== null;
 
   // Find selected transaction
   const selectedTransaction = useMemo(() => {
@@ -310,21 +319,25 @@ function TransactionsContent() {
     [selectedTransaction, updateTransaction]
   );
 
-  // Navigate to previous transaction
-  const handleNavigatePrevious = useCallback(() => {
-    if (currentIndex > 0) {
-      const prevTransaction = filteredTransactions[currentIndex - 1];
-      handleSelectTransaction(prevTransaction, { keepConnect: true });
-    }
-  }, [currentIndex, filteredTransactions, handleSelectTransaction]);
+  // Step through the displayed order (-1 previous, 1 next)
+  const navigateTransactionBy = useCallback(
+    (step: number) => {
+      const targetId = getNeighbourRowId(orderedTransactionIds, selectedId, step);
+      const target = targetId ? transactions.find((t) => t.id === targetId) : undefined;
+      if (target) handleSelectTransaction(target, { keepConnect: true });
+    },
+    [orderedTransactionIds, selectedId, transactions, handleSelectTransaction]
+  );
 
-  // Navigate to next transaction
-  const handleNavigateNext = useCallback(() => {
-    if (currentIndex >= 0 && currentIndex < filteredTransactions.length - 1) {
-      const nextTransaction = filteredTransactions[currentIndex + 1];
-      handleSelectTransaction(nextTransaction, { keepConnect: true });
-    }
-  }, [currentIndex, filteredTransactions, handleSelectTransaction]);
+  const handleNavigatePrevious = useCallback(
+    () => navigateTransactionBy(-1),
+    [navigateTransactionBy]
+  );
+
+  const handleNavigateNext = useCallback(
+    () => navigateTransactionBy(1),
+    [navigateTransactionBy]
+  );
 
   // Trigger backend matching when patterns change or on initial load
   useEffect(() => {
@@ -490,6 +503,7 @@ function TransactionsContent() {
             onSearchChange={handleSearchChange}
             userPartners={partners}
             globalPartners={globalPartners}
+            onDisplayedOrderChange={setTableOrderedIds}
           />
 
           {/* Connect file overlay - positioned over table area */}

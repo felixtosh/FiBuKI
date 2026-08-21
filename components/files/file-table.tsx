@@ -42,6 +42,8 @@ interface FileTableProps {
   enableMultiSelect?: boolean;
   selectedRowIds?: Set<string>;
   onSelectionChange?: (selectedIds: Set<string>) => void;
+  /** Callback with the row ids in displayed order (filtered rows, active sort) */
+  onDisplayedOrderChange?: (orderedIds: string[]) => void;
   /** Checkbox column: toggling a single row's checkbox (independent of modifier-click) */
   onToggleFileSelection?: (fileId: string, checked: boolean) => void;
   /** Checkbox column: toggling the header select-all checkbox */
@@ -83,6 +85,7 @@ export const FileTable = forwardRef<FilesDataTableHandle, FileTableProps>(
       enableMultiSelect,
       selectedRowIds,
       onSelectionChange,
+      onDisplayedOrderChange,
       onToggleFileSelection,
       onToggleSelectAll,
       selectAllState = "unchecked",
@@ -239,6 +242,7 @@ export const FileTable = forwardRef<FilesDataTableHandle, FileTableProps>(
             enableMultiSelect={enableMultiSelect}
             selectedRowIds={selectedRowIds}
             onSelectionChange={onSelectionChange}
+            onDisplayedOrderChange={onDisplayedOrderChange}
             emptyState={emptyState}
             searchingFileIds={runningFileIds}
           />

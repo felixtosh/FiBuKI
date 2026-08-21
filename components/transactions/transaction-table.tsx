@@ -29,6 +29,8 @@ interface TransactionTableProps {
   userPartners?: UserPartner[];
   globalPartners?: GlobalPartner[];
   tableRef?: React.RefObject<DataTableHandle | null>;
+  /** Callback with the row ids in displayed order (filtered rows, active sort) */
+  onDisplayedOrderChange?: (orderedIds: string[]) => void;
 }
 
 export function TransactionTable({
@@ -39,6 +41,7 @@ export function TransactionTable({
   userPartners = [],
   globalPartners = [],
   tableRef: externalTableRef,
+  onDisplayedOrderChange,
 }: TransactionTableProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -325,6 +328,7 @@ export function TransactionTable({
             onRowClick={handleRowClick}
             selectedRowId={selectedTransactionId}
             emptyState={emptyState}
+            onDisplayedOrderChange={onDisplayedOrderChange}
             searchingTransactionIds={searchingTransactions}
           />
         </TooltipProvider>

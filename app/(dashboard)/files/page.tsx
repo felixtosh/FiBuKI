@@ -24,6 +24,7 @@ import { useGlobalPartners } from "@/hooks/use-global-partners";
 import { useTransactions } from "@/hooks/use-transactions";
 import { TaxFile, FileFilters } from "@/types/file";
 import { parseFileFiltersFromUrl, buildFileSearchParams } from "@/lib/filters/file-url-params";
+import { getNeighbourRowId } from "@/lib/navigation/row-neighbour";
 import {
   toggleFileCheckbox,
   toggleSelectAll,
@@ -182,6 +183,17 @@ function FilesContent() {
   const showBulkActionBar = additionalSelectedIds.size > 0;
 
   const displayedFileIds = useMemo(() => files.map((f) => f.id), [files]);
+
+  // The order the table paints: the page's filters and search fold into `files`,
+  // the sort column and direction are the table's own state, so it reports them
+  // back here. Prev/next walks this list. Until the table has reported (first
+  // paint, or while it is behind the loading skeleton) fall back to the hook's
+  // array order so navigation is never dead.
+  const [tableOrderedFileIds, setTableOrderedFileIds] = useState<string[]>([]);
+  const orderedFileIds = useMemo(
+    () => (tableOrderedFileIds.length ? tableOrderedFileIds : displayedFileIds),
+    [tableOrderedFileIds, displayedFileIds]
+  );
 
   const selectAllState = useMemo(
     () => getSelectAllCheckedState({ displayedFileIds, selectedIds: allSelectedIds }),
@@ -445,16 +457,12 @@ function FilesContent() {
   }, [invoiceIdParam, files]);
 
   // Invoices are also rows in the files list (each issued invoice has a
-  // backing TaxFile). Find the index of the invoice's file so up/down
-  // navigation can move through the same list the user sees.
-  const invoiceFileIndex = useMemo(() => {
-    if (!invoiceFileId) return -1;
-    return files.findIndex((f) => f.id === invoiceFileId);
-  }, [invoiceFileId, files]);
-
-  const invoiceHasPrevious = invoiceFileIndex > 0;
+  // backing TaxFile), so invoice navigation walks the same displayed order as
+  // the file panel.
+  const invoiceHasPrevious =
+    getNeighbourRowId(orderedFileIds, invoiceFileId, -1) !== null;
   const invoiceHasNext =
-    invoiceFileIndex >= 0 && invoiceFileIndex < files.length - 1;
+    getNeighbourRowId(orderedFileIds, invoiceFileId, 1) !== null;
 
   // Set page title
   usePageTitle("Files", selectedFile?.fileName);
@@ -473,14 +481,10 @@ function FilesContent() {
     [ctx, selectedFile, closeConnectTransactionOverlay]
   );
 
-  // Find current index for navigation
-  const currentIndex = useMemo(() => {
-    if (!primarySelectedId) return -1;
-    return files.findIndex((f) => f.id === primarySelectedId);
-  }, [primarySelectedId, files]);
-
-  const hasPrevious = currentIndex > 0;
-  const hasNext = currentIndex >= 0 && currentIndex < files.length - 1;
+  const hasPrevious =
+    getNeighbourRowId(orderedFileIds, primarySelectedId, -1) !== null;
+  const hasNext =
+    getNeighbourRowId(orderedFileIds, primarySelectedId, 1) !== null;
 
   // Note: We intentionally do NOT close the viewer when navigating between files
   // The viewer should stay open so users can browse through files quickly
@@ -575,7 +579,9 @@ function FilesContent() {
       // The FileDetailPanel fork to InvoiceDetailPanel does NOT lift those, so
       // routing invoice files via ?id= leaves the thumbnail-toggle dead.
       if (file.invoiceId) {
-        const params = new URLSearchParams();
+        // Keep filters and search on the URL: they define the list prev/next
+        // walks, so landing on an invoice row must not widen it.
+        const params = buildFileSearchParams(filters, searchValue, null);
         params.set("invoiceId", file.invoiceId);
         router.push(`/files?${params.toString()}`, { scroll: false });
         return;
@@ -623,17 +629,19 @@ function FilesContent() {
     }
   }, [displayedFileIds, primarySelectedId, additionalSelectedIds, handleCloseDetail]);
 
-  const handleNavigatePrevious = useCallback(() => {
-    if (currentIndex > 0) {
-      handleSelectFile(files[currentIndex - 1]);
-    }
-  }, [currentIndex, files, handleSelectFile]);
+  // Step through the displayed order (-1 previous, 1 next)
+  const navigateFileBy = useCallback(
+    (step: number) => {
+      const targetId = getNeighbourRowId(orderedFileIds, primarySelectedId, step);
+      const target = targetId ? files.find((f) => f.id === targetId) : undefined;
+      if (target) handleSelectFile(target);
+    },
+    [orderedFileIds, primarySelectedId, files, handleSelectFile]
+  );
 
-  const handleNavigateNext = useCallback(() => {
-    if (currentIndex >= 0 && currentIndex < files.length - 1) {
-      handleSelectFile(files[currentIndex + 1]);
-    }
-  }, [currentIndex, files, handleSelectFile]);
+  const handleNavigatePrevious = useCallback(() => navigateFileBy(-1), [navigateFileBy]);
+
+  const handleNavigateNext = useCallback(() => navigateFileBy(1), [navigateFileBy]);
 
   // Navigate from the invoice panel through the files list. When the
   // destination row backs another invoice, route via ?invoiceId= so the
@@ -641,28 +649,38 @@ function FilesContent() {
   // regular files, route via ?id= so they get the standard file panel.
   const navigateInvoiceTo = useCallback(
     (target: TaxFile) => {
-      const params = new URLSearchParams();
+      // Filters and search stay on the URL for the same reason as above.
+      const params = buildFileSearchParams(
+        filters,
+        searchValue,
+        target.invoiceId ? null : target.id
+      );
       if (target.invoiceId) {
         params.set("invoiceId", target.invoiceId);
-      } else {
-        params.set("id", target.id);
       }
       router.push(`/files?${params.toString()}`, { scroll: false });
     },
-    [router]
+    [router, filters, searchValue]
   );
 
-  const handleInvoiceNavigatePrevious = useCallback(() => {
-    if (invoiceFileIndex > 0) {
-      navigateInvoiceTo(files[invoiceFileIndex - 1]);
-    }
-  }, [invoiceFileIndex, files, navigateInvoiceTo]);
+  const navigateInvoiceBy = useCallback(
+    (step: number) => {
+      const targetId = getNeighbourRowId(orderedFileIds, invoiceFileId, step);
+      const target = targetId ? files.find((f) => f.id === targetId) : undefined;
+      if (target) navigateInvoiceTo(target);
+    },
+    [orderedFileIds, invoiceFileId, files, navigateInvoiceTo]
+  );
 
-  const handleInvoiceNavigateNext = useCallback(() => {
-    if (invoiceFileIndex >= 0 && invoiceFileIndex < files.length - 1) {
-      navigateInvoiceTo(files[invoiceFileIndex + 1]);
-    }
-  }, [invoiceFileIndex, files, navigateInvoiceTo]);
+  const handleInvoiceNavigatePrevious = useCallback(
+    () => navigateInvoiceBy(-1),
+    [navigateInvoiceBy]
+  );
+
+  const handleInvoiceNavigateNext = useCallback(
+    () => navigateInvoiceBy(1),
+    [navigateInvoiceBy]
+  );
 
   const handleDelete = useCallback(async () => {
     if (!selectedFile) return;
@@ -985,7 +1003,10 @@ function FilesContent() {
             invoiceCount={invoiceCount}
             loading={loading}
             onSelectFile={handleSelectFile}
-            selectedFileId={primarySelectedId}
+            // While the invoice panel is open there is no ?id=, so hand the
+            // invoice's backing row over instead: it gets the primary highlight
+            // and the auto-scroll that any other navigated-to row gets.
+            selectedFileId={primarySelectedId ?? invoiceFileId}
             searchValue={searchValue}
             onSearchChange={handleSearchChange}
             filters={filters}
@@ -996,6 +1017,7 @@ function FilesContent() {
             enableMultiSelect={true}
             selectedRowIds={allSelectedIds}
             onSelectionChange={handleSelectionChange}
+            onDisplayedOrderChange={setTableOrderedFileIds}
             onToggleFileSelection={handleFileCheckboxChange}
             onToggleSelectAll={handleToggleSelectAll}
             selectAllState={selectAllState}
