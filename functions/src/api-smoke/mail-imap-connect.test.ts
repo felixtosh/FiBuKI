@@ -98,10 +98,12 @@ async function connectWith(
 
 describe("POST /api/mail/imap/connect — classified verify failures", () => {
   it("a rejected login answers 400 auth_failed", async () => {
+    // Shape observed live against Migadu on 2026-08-21 (see
+    // functions/src/mail/imap/classify-error.live.test.ts): bare "Command
+    // failed" message, the reason on the error object, no serverResponseCode.
     const error = Object.assign(new Error("Command failed"), {
       authenticationFailed: true,
-      serverResponseCode: "AUTHENTICATIONFAILED",
-      responseText: "Invalid credentials",
+      responseText: "Authentication failed",
     });
     const res = await connectWith(error);
     expect(res.status).toBe(400);

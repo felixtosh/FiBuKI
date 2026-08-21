@@ -144,9 +144,12 @@ describe("processQueueItem — IMAP failures", () => {
   it("classifies a rejected login, flags reauth, and does not retry", async () => {
     await seedIntegration();
     const item = await seedQueueItem();
+    // Shape observed live against Migadu on 2026-08-21: the message is the bare
+    // "Command failed", the useful part rides on the error object, and there is
+    // NO serverResponseCode. See classify-error.live.test.ts.
     h.box.searchError = imapError("Command failed", {
       authenticationFailed: true,
-      serverResponseCode: "AUTHENTICATIONFAILED",
+      responseText: "Authentication failed",
     });
 
     await processQueueItem(item, OPTIONS);
