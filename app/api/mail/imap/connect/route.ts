@@ -6,6 +6,7 @@ import { Timestamp } from "firebase-admin/firestore";
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { encrypt, getEncryptionKey } from "@/lib/crypto/encryption";
 import { startImapInitialSync } from "@/functions/src/gmail/startImapInitialSync";
+import { classifyImapError } from "@/functions/src/mail/imap/classify-error";
 
 const db = getAdminDb();
 const INTEGRATIONS_COLLECTION = "emailIntegrations";
@@ -32,46 +33,6 @@ interface ConnectBody {
   mailbox?: string;
   allowSelfSigned?: boolean;
   keywordPrefilter?: boolean;
-}
-
-/**
- * Classify an imapflow connection failure so the UI can be specific about
- * whether the host, the TLS cert, or the credentials are wrong.
- */
-function classifyImapError(error: unknown): { code: string; message: string } {
-  // imapflow reports a server NO/BAD as the bare message "Command failed" and
-  // puts the useful part on the error object (responseText, serverResponseCode,
-  // mailboxMissing). Fold those in so the regexes below see the real reason and
-  // the fallback surfaces the server's own words instead of "Command failed".
-  const e = (error ?? {}) as {
-    responseText?: string;
-    serverResponseCode?: string;
-    mailboxMissing?: boolean;
-    authenticationFailed?: boolean;
-  };
-  const base = error instanceof Error ? error.message : String(error);
-  const msg = [base, e.serverResponseCode, e.responseText].filter(Boolean).join(" ");
-  const authCode = e.authenticationFailed;
-  if (e.mailboxMissing) {
-    const detail = e.responseText ? ` (${e.responseText})` : "";
-    return {
-      code: "mailbox_not_found",
-      message: `Mailbox not found on the server${detail}. Use the folder name, e.g. INBOX, not the email address.`,
-    };
-  }
-  if (authCode || /AUTHENTICATIONFAILED|invalid credentials|auth/i.test(msg)) {
-    return { code: "auth_failed", message: "Authentication failed. Check the username and app-password." };
-  }
-  if (/self.signed|certificate|SSL|TLS|DEPTH_ZERO/i.test(msg)) {
-    return { code: "tls_failed", message: "TLS/certificate error. For an internal server, enable 'allow self-signed'." };
-  }
-  if (/ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ETIMEDOUT|ECONNRESET|getaddrinfo/i.test(msg)) {
-    return { code: "unreachable", message: "Could not reach the mail server. Check host and port." };
-  }
-  if (/Mailbox|NONEXISTENT|does not exist/i.test(msg)) {
-    return { code: "mailbox_not_found", message: "Mailbox not found on the server." };
-  }
-  return { code: "connect_failed", message: msg };
 }
 
 /**
