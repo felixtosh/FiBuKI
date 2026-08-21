@@ -1,13 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { formatDistanceToNow } from "date-fns";
 import {
   Mail,
   ArrowLeft,
   Loader2,
   Check,
   AlertCircle,
+  Info,
   Trash2,
   Download,
 } from "lucide-react";
@@ -24,8 +26,20 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { useEmailIntegrations } from "@/hooks/use-email-integrations";
+import { useActiveSyncForIntegration } from "@/hooks/use-integration-details";
 import { usePageTitle } from "@/hooks/use-page-title";
 import { fetchWithAuth } from "@/lib/api/fetch-with-auth";
+import { toDateSafe } from "@/lib/utils";
+import { EmailIntegration } from "@/types/email-integration";
+// Value import, not type-only: classify-error.ts has zero dependencies of its
+// own (no imapflow, no firebase-admin), so this stays a few literals in the
+// client bundle rather than pulling in functions/ runtime code. If that file
+// ever grows a real dependency, these two constants should move to a
+// dependency-free module of their own rather than keep importing from here.
+import {
+  FATAL_IMAP_ERROR_CODES,
+  IMAP_ERROR_MESSAGES,
+} from "@/functions/src/mail/imap/classify-error";
 
 export default function ImapIntegrationPage() {
   const router = useRouter();
@@ -48,6 +62,18 @@ export default function ImapIntegrationPage() {
   const [success, setSuccess] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
 
+  // Set by "Fix & reconnect" on a broken mailbox row: the connect form doubles
+  // as the reconnect form (an in-place reconnect is not available — the
+  // duplicate check refuses a second active row for the same mailbox). The
+  // broken integration is disconnected only at submit time, not on click —
+  // clicking "Fix & reconnect" must not delete the mailbox before the user
+  // has entered a working password and actually confirmed the fix.
+  const [reconnectTarget, setReconnectTarget] = useState<{
+    id: string;
+    email: string;
+  } | null>(null);
+  const connectFormRef = useRef<HTMLDivElement>(null);
+
   // Pull-New-Files state, per mailbox. This page has no toast surface, so the
   // outcome is reported in an inline alert under the row, like the connect
   // form above does.
@@ -62,6 +88,15 @@ export default function ImapIntegrationPage() {
     setSuccess(false);
     setConnecting(true);
     try {
+      // Reconnecting a broken mailbox: the duplicate check refuses a second
+      // active row for the same mailbox, so the old one is disconnected here,
+      // right before the new credentials are verified — not back when the
+      // user clicked "Fix & reconnect". If disconnect succeeds but the new
+      // login then fails, the mailbox is gone; that trade-off only exists once
+      // the user has actually submitted a password, never on a stray click.
+      if (reconnectTarget) {
+        await disconnect(reconnectTarget.id);
+      }
       await connectImap({
         host: host.trim(),
         port: Number(port) || 993,
@@ -73,6 +108,7 @@ export default function ImapIntegrationPage() {
         keywordPrefilter,
       });
       setSuccess(true);
+      setReconnectTarget(null);
       setPassword("");
       setHost("");
       setUser("");
@@ -92,13 +128,12 @@ export default function ImapIntegrationPage() {
    * normal state after a nightly sync — answers "already up to date" and the
    * press does nothing.
    *
-   * The button is only disabled for the duration of the request itself. Whether
-   * a sync is *already running* is not knowable from this page yet — the row
-   * subscribes to emailIntegrations, not to the sync queue — so that guard is
-   * the endpoint's: a running sync answers SYNC_IN_PROGRESS and a second press
-   * inside five minutes answers RATE_LIMITED, both reported in the alert below
-   * the row. Issue #179 adds the live signal, and with it a locally
-   * disabled button.
+   * The row disables the button itself for an active sync and for a fatal
+   * classified error (auth_failed, mailbox_not_found — see
+   * FATAL_IMAP_ERROR_CODES); anything else the endpoint still guards: a
+   * running sync it doesn't know about yet answers SYNC_IN_PROGRESS and a
+   * second press inside five minutes answers RATE_LIMITED, both reported in
+   * the alert below the row.
    */
   const handlePullFiles = async (id: string) => {
     setPulling(id);
@@ -157,6 +192,30 @@ export default function ImapIntegrationPage() {
     }
   };
 
+  /**
+   * "Fix & reconnect" on a broken mailbox row. There is no in-place reconnect
+   * — the connect route refuses a second active row for the same mailbox — so
+   * this carries its settings (host, port, mailbox, ...) into the connect
+   * form below, leaving only the password for the user to re-enter. The old
+   * integration is disconnected in handleConnect, at submit time, not here:
+   * a click that deletes the mailbox before a new password is even typed is
+   * one accidental tap away from data loss.
+   */
+  const handleReconnect = (integration: EmailIntegration) => {
+    setHost(integration.imapHost || "");
+    setPort(String(integration.imapPort || 993));
+    setSecure(integration.imapSecure ?? true);
+    setUser(integration.email || "");
+    setPassword("");
+    setMailbox(integration.imapMailbox || "INBOX");
+    setAllowSelfSigned(integration.imapAllowSelfSigned ?? false);
+    setKeywordPrefilter(integration.imapKeywordPrefilter ?? true);
+    setFormError(null);
+    setSuccess(false);
+    setReconnectTarget({ id: integration.id, email: integration.email });
+    connectFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
   return (
     <div className="h-full overflow-auto">
       <div className="max-w-2xl mx-auto p-6 space-y-6">
@@ -184,69 +243,23 @@ export default function ImapIntegrationPage() {
         {/* Connected mailboxes */}
         {!loading && imapIntegrations.length > 0 && (
           <div className="space-y-2">
-            {imapIntegrations.map((i) => {
-              const result = pullResult[i.id];
-              const syncing = pulling === i.id;
-              return (
-                <div key={i.id} className="space-y-2">
-                  <div className="flex items-center justify-between rounded-lg border p-3">
-                    <div className="min-w-0">
-                      <div className="font-medium truncate">{i.email}</div>
-                      <div className="text-xs text-muted-foreground truncate">
-                        {i.imapHost}:{i.imapPort} · {i.imapMailbox || "INBOX"}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {/* Hidden while paused, matching the Gmail integration. */}
-                      {!i.isPaused && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handlePullFiles(i.id)}
-                          disabled={syncing}
-                        >
-                          {syncing ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Download className="h-4 w-4" />
-                          )}
-                          <span className="ml-2">Pull New Files</span>
-                        </Button>
-                      )}
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => handleDisconnect(i.id)}
-                        disabled={removing === i.id}
-                        aria-label="Disconnect mailbox"
-                      >
-                        {removing === i.id ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        )}
-                      </Button>
-                    </div>
-                  </div>
-
-                  {result && (
-                    <Alert variant={result.ok ? "default" : "destructive"}>
-                      {result.ok ? (
-                        <Check className="h-4 w-4" />
-                      ) : (
-                        <AlertCircle className="h-4 w-4" />
-                      )}
-                      <AlertDescription>{result.text}</AlertDescription>
-                    </Alert>
-                  )}
-                </div>
-              );
-            })}
+            {imapIntegrations.map((i) => (
+              <ImapMailboxRow
+                key={i.id}
+                integration={i}
+                pulling={pulling === i.id}
+                removing={removing === i.id}
+                result={pullResult[i.id]}
+                onPull={handlePullFiles}
+                onDisconnect={handleDisconnect}
+                onReconnect={handleReconnect}
+              />
+            ))}
           </div>
         )}
 
         {/* Connect form */}
-        <Card>
+        <Card ref={connectFormRef}>
           <CardHeader>
             <CardTitle>Connect a mailbox</CardTitle>
             <CardDescription>
@@ -256,6 +269,16 @@ export default function ImapIntegrationPage() {
           </CardHeader>
           <CardContent>
             <form onSubmit={handleConnect} className="space-y-4">
+              {reconnectTarget && !success && (
+                <Alert>
+                  <Info className="h-4 w-4" />
+                  <AlertTitle>Reconnecting {reconnectTarget.email}</AlertTitle>
+                  <AlertDescription>
+                    Settings carried over — enter the new app-password and submit.
+                    The broken mailbox is disconnected only once this succeeds.
+                  </AlertDescription>
+                </Alert>
+              )}
               {success && (
                 <Alert>
                   <Check className="h-4 w-4" />
@@ -372,6 +395,128 @@ export default function ImapIntegrationPage() {
           </CardContent>
         </Card>
       </div>
+    </div>
+  );
+}
+
+interface ImapMailboxRowProps {
+  integration: EmailIntegration;
+  pulling: boolean;
+  removing: boolean;
+  result?: { ok: boolean; text: string };
+  onPull: (id: string) => void;
+  onDisconnect: (id: string) => void;
+  onReconnect: (integration: EmailIntegration) => void;
+}
+
+function ImapMailboxRow({
+  integration,
+  pulling,
+  removing,
+  result,
+  onPull,
+  onDisconnect,
+  onReconnect,
+}: ImapMailboxRowProps) {
+  // Own hook call per row (not inside the parent's .map()), matching the
+  // pattern GmailAccountCard uses for the same reason.
+  const activeSync = useActiveSyncForIntegration(integration.id);
+  const lastSyncAt = toDateSafe(integration.lastSyncAt);
+
+  const errorCode = integration.lastSyncErrorCode;
+  const errorMessage = errorCode ? IMAP_ERROR_MESSAGES[errorCode] : null;
+  // Disable rather than hide: an auth or missing-mailbox failure cannot
+  // resolve without reconnecting, so a press there is a promise the system
+  // cannot keep. Every other outcome (unreachable, TLS, generic) stays
+  // pressable — retrying is the correct response to those.
+  const isFatalError = !!errorCode && FATAL_IMAP_ERROR_CODES.has(errorCode);
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between rounded-lg border p-3">
+        <div className="min-w-0">
+          <div className="font-medium truncate">{integration.email}</div>
+          <div className="text-xs text-muted-foreground truncate">
+            {integration.imapHost}:{integration.imapPort} ·{" "}
+            {integration.imapMailbox || "INBOX"}
+          </div>
+          <div className="text-xs mt-1">
+            {activeSync.isActive ? (
+              <span className="flex items-center gap-1.5 text-blue-600 dark:text-blue-400">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Syncing...
+                {activeSync.filesCreated > 0 && ` (${activeSync.filesCreated} files)`}
+              </span>
+            ) : lastSyncAt ? (
+              <span className="text-muted-foreground">
+                Last synced {formatDistanceToNow(lastSyncAt, { addSuffix: true })}
+              </span>
+            ) : (
+              <span className="text-muted-foreground">Not synced yet</span>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {/* Hidden while paused or an active sync is running; disabled (not
+              hidden) for a fatal classified error, matching the Gmail integration. */}
+          {!integration.isPaused && !activeSync.isActive && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onPull(integration.id)}
+              disabled={pulling || isFatalError}
+              title={isFatalError ? errorMessage ?? undefined : undefined}
+            >
+              {pulling ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4" />
+              )}
+              <span className="ml-2">Pull New Files</span>
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => onDisconnect(integration.id)}
+            disabled={removing}
+            aria-label="Disconnect mailbox"
+          >
+            {removing ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Trash2 className="h-4 w-4 text-destructive" />
+            )}
+          </Button>
+        </div>
+      </div>
+
+      {errorMessage && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription className="flex items-center justify-between gap-3">
+            <span>{errorMessage}</span>
+            {isFatalError && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="shrink-0"
+                onClick={() => onReconnect(integration)}
+                disabled={removing}
+              >
+                Fix &amp; reconnect
+              </Button>
+            )}
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {result && (
+        <Alert variant={result.ok ? "default" : "destructive"}>
+          {result.ok ? <Check className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
+          <AlertDescription>{result.text}</AlertDescription>
+        </Alert>
+      )}
     </div>
   );
 }

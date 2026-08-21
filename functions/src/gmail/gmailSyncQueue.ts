@@ -6,7 +6,14 @@ import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import * as crypto from "crypto";
 import { encrypt, decrypt } from "../utils/encryption";
-import { makeProvider, MailMessage, MailProvider, classifyImapError, ImapErrorCode } from "../mail";
+import {
+  makeProvider,
+  MailMessage,
+  MailProvider,
+  classifyImapError,
+  ImapErrorCode,
+  FATAL_IMAP_ERROR_CODES,
+} from "../mail";
 
 // Define secrets for Google OAuth - set via Firebase CLI:
 // firebase functions:secrets:set GOOGLE_CLIENT_ID
@@ -301,16 +308,6 @@ export async function resolveMailProvider(
 
   return makeProvider(providerName, { accessToken: token.accessToken });
 }
-
-/**
- * IMAP failures that cannot resolve without the user reconnecting. Retrying
- * them means three rejected logins per sync against a server that may
- * rate-limit or lock the account, so the item is failed on the first attempt.
- */
-const FATAL_IMAP_ERROR_CODES: ReadonlySet<ImapErrorCode> = new Set([
-  "auth_failed",
-  "mailbox_not_found",
-]);
 
 /**
  * Run one queue item end to end: resolve the provider, walk the messages,
