@@ -320,33 +320,37 @@ describe("calculateDateScore", () => {
       expect(result.score).toBe(8);
     });
 
-    it("acceptance case (Invoice-INCW9PTA-0011): a same-amount weekly receipt ranks highest on exactly one of four connected transactions", () => {
-      // Real-world shape from yazzbert/FiBuKI-selfhost#164: a 38.25 weekly
-      // charge was connected to four transactions dated 2026-06-29, 07-05,
-      // 07-06, 07-06. Amount and partner scores are identical across all
-      // four (same amount, same partner), so the date score alone must
-      // produce a unique winner once the billing cycle is known.
+    it("acceptance case (Invoice-INCW9PTA-0011 shape): a same-amount weekly receipt ranks highest on exactly one of four candidate charges", () => {
+      // Shape from yazzbert/FiBuKI-selfhost#164: a 38.25 weekly charge was
+      // connected to four transactions (2026-06-29, 07-05, 07-06, 07-06).
+      // Amount and partner scores are identical across all four (same
+      // amount, same partner), so the date score alone must produce a
+      // unique winner once the billing cycle is known. The real reported
+      // dates aren't clean weekly intervals (6, 1, 0 days apart) — that
+      // irregularity is exactly why the charges got tangled in the first
+      // place — so this uses a clean weekly-spaced synthetic fixture
+      // instead of the literal dates: one period before the real charge,
+      // the real charge itself, and two same-day candidates a day after
+      // (mirroring the real data's 07-05/07-06/07-06 cluster).
       const billingCycle: BillingCycleHint = {
         invoiceToTransactionDelay: 3,
         delayVariance: 0,
         frequencyDays: 7,
-        dayVariance: 2,
       };
       const fileDate = new Date("2026-07-02"); // invoice extracted date
+      const target = new Date("2026-07-05"); // this charge's actual date
 
-      const t1PreviousPeriod = calculateDateScore(fileDate, new Date("2026-06-29"), billingCycle);
-      const t2ExpectedCharge = calculateDateScore(fileDate, new Date("2026-07-05"), billingCycle);
-      const t3NextDay = calculateDateScore(fileDate, new Date("2026-07-06"), billingCycle);
-      const t4NextDayDuplicate = calculateDateScore(fileDate, new Date("2026-07-06"), billingCycle);
+      const onePeriodBefore = calculateDateScore(fileDate, new Date("2026-06-28"), billingCycle);
+      const theCharge = calculateDateScore(fileDate, target, billingCycle);
+      const dayAfter1 = calculateDateScore(fileDate, new Date("2026-07-06"), billingCycle);
+      const dayAfter2 = calculateDateScore(fileDate, new Date("2026-07-06"), billingCycle);
 
-      expect(t2ExpectedCharge.score).toBe(25);
-      expect(t1PreviousPeriod.score).toBe(0); // one whole period before — penalised
-      expect(t3NextDay.score).toBeLessThan(t2ExpectedCharge.score);
-      expect(t4NextDayDuplicate.score).toBeLessThan(t2ExpectedCharge.score);
+      expect(theCharge.score).toBe(25);
+      expect(onePeriodBefore.score).toBe(0); // exactly one period before — penalised
+      expect(dayAfter1.score).toBeLessThan(theCharge.score);
+      expect(dayAfter2.score).toBeLessThan(theCharge.score);
 
-      const scores = [t1PreviousPeriod, t2ExpectedCharge, t3NextDay, t4NextDayDuplicate].map(
-        (r) => r.score
-      );
+      const scores = [onePeriodBefore, theCharge, dayAfter1, dayAfter2].map((r) => r.score);
       const winners = scores.filter((s) => s === Math.max(...scores));
       expect(winners).toHaveLength(1);
     });

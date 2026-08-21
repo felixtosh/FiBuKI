@@ -31,10 +31,15 @@ import {
   TransactionMatchScore,
   TransactionMatchSource,
   ScoringOptions,
+  buildScoringOptions,
+  toFileMatchingData,
+  toTransactionData,
+  derivePartnerAliases,
+  deriveScoringWeights,
 } from "./transactionScoring";
 import { readDismissedTransactionIds } from "./dismissedTransactions";
 import { isFileRejected } from "./rejectedFiles";
-import { selectEffectiveCycleForAmount, ResolvedEffectiveCycle } from "./billingCycle";
+import { ResolvedEffectiveCycle } from "./billingCycle";
 import { AutomationMeta } from "../automation/types";
 import { checkAIBudget } from "../billing/checkAIBudget";
 import { isPassiveMode } from "../utils/checkAutomationMode";
@@ -469,11 +474,7 @@ export async function runTransactionMatching(
       const partnerDoc = await db.collection("partners").doc(fileData.partnerId).get();
       if (partnerDoc.exists) {
         const partnerData = partnerDoc.data()!;
-        // Collect partner name + all aliases for matching
-        partnerAliases = [
-          partnerData.name,
-          ...(partnerData.aliases || []),
-        ].filter(Boolean);
+        partnerAliases = derivePartnerAliases(partnerData);
         console.log(`[TxMatch] Partner aliases: [${partnerAliases.map(a => `"${a}"`).join(", ")}]`);
 
         effectiveCycles = partnerData.billingCycle?.effective ?? [];
@@ -481,14 +482,9 @@ export async function runTransactionMatching(
           console.log(`[TxMatch] Partner has ${effectiveCycles.length} billing-cycle band(s)`);
         }
 
-        const sw = partnerData.scoringWeights;
-        if (sw) {
-          baseWeights = {
-            amountWeight: sw.amountWeight,
-            dateWeight: sw.dateWeight,
-            partnerWeight: sw.partnerWeight,
-          };
-          console.log(`[TxMatch] Using scoring weights: amt=${sw.amountWeight} date=${sw.dateWeight} partner=${sw.partnerWeight}`);
+        baseWeights = deriveScoringWeights(partnerData);
+        if (baseWeights) {
+          console.log(`[TxMatch] Using scoring weights: amt=${baseWeights.amountWeight} date=${baseWeights.dateWeight} partner=${baseWeights.partnerWeight}`);
         }
       }
     } catch (error) {
@@ -532,50 +528,15 @@ export async function runTransactionMatching(
 
   // Score each transaction — the billing-cycle band is selected per transaction, since which
   // recurrence a charge belongs to depends on that transaction's amount, not the file's.
+  const fileMatchingData = toFileMatchingData(fileData);
   const allScores = eligibleTransactions
     .map((doc) => {
       const txData = doc.data();
-
-      const band = selectEffectiveCycleForAmount(effectiveCycles, txData.amount);
-      let scoringOptions: ScoringOptions | undefined;
-      if (band || baseWeights) {
-        scoringOptions = {};
-        if (band) {
-          scoringOptions.billingCycle = {
-            invoiceToTransactionDelay: band.invoiceToTransactionDelay,
-            delayVariance: band.delayVariance,
-            frequencyDays: band.frequencyDays,
-            dayVariance: band.dayVariance,
-          };
-        }
-        if (baseWeights) scoringOptions.weights = baseWeights;
-      }
+      const scoringOptions = buildScoringOptions(effectiveCycles, baseWeights, txData.amount);
 
       return scoreTransaction(
-        {
-          extractedAmount: fileData.extractedAmount,
-          extractedCurrency: fileData.extractedCurrency,
-          extractedDate: fileData.extractedDate,
-          extractedPartner: fileData.extractedPartner,
-          extractedIban: fileData.extractedIban,
-          extractedText: fileData.extractedText,
-          partnerId: fileData.partnerId,
-          precisionSearchHint: fileData.precisionSearchHint,
-        },
-        {
-          id: doc.id,
-          amount: txData.amount,
-          date: txData.date,
-          currency: txData.currency,
-          // Carries the bank-stated original amount for #112.
-          _original: txData._original,
-          name: txData.name,
-          partner: txData.partner,
-          partnerName: txData.partnerName,
-          partnerId: txData.partnerId,
-          partnerIban: txData.partnerIban,
-          reference: txData.reference,
-        },
+        fileMatchingData,
+        toTransactionData(doc.id, txData),
         partnerAliases,
         scoringOptions
       );

@@ -345,25 +345,37 @@ function omitUndefined<T extends object>(obj: T): T {
 }
 
 /**
- * Pick the effective cycle band a candidate amount belongs to. A single-band
- * partner (no `amountBand` set — `deriveLearnedCycles` only sets one past the
- * first band) unambiguously matches. Against more than one band, the closest
- * `amountBand` within the same clustering tolerance that produced the bands
- * wins; no match within tolerance returns `undefined` rather than guessing.
+ * Pick the effective cycle band a candidate amount belongs to. A partner
+ * whose sole surviving band carries no `amountBand` (the true single-cycle
+ * case) unambiguously matches. `amountBand` can still be set on a length-1
+ * array — `deriveLearnedCycles` stamps it whenever the *clustering* found
+ * more than one band, even if only one of them went on to produce a valid
+ * cycle — so length alone is not a reliable signal; a set `amountBand`
+ * always goes through the tolerance check below. No match within tolerance
+ * returns `undefined` rather than guessing.
  */
 export function selectEffectiveCycleForAmount<T extends { amountBand?: number }>(
   effective: T[],
   amount: number
 ): T | undefined {
   if (effective.length === 0) return undefined;
-  if (effective.length === 1) return effective[0];
+  if (effective.length === 1 && effective[0].amountBand === undefined) {
+    return effective[0];
+  }
 
   const absAmount = Math.abs(amount);
   let best: T | undefined;
   let bestDiff = Infinity;
   for (const band of effective) {
-    if (band.amountBand === undefined || band.amountBand === 0) continue;
-    const diff = Math.abs(absAmount - band.amountBand) / band.amountBand;
+    if (band.amountBand === undefined) continue;
+    // A zero-amount band (a free/trial recurrence) can't use a relative
+    // tolerance — only an exact-zero candidate belongs to it.
+    const diff =
+      band.amountBand === 0
+        ? absAmount === 0
+          ? 0
+          : Infinity
+        : Math.abs(absAmount - band.amountBand) / band.amountBand;
     if (diff <= AMOUNT_BAND_TOLERANCE && diff < bestDiff) {
       best = band;
       bestDiff = diff;

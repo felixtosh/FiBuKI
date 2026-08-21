@@ -13,13 +13,15 @@
  * the connection's existence are never touched).
  */
 
+import { Timestamp } from "firebase-admin/firestore";
 import {
   scoreTransaction,
-  FileMatchingData,
-  TransactionData,
   ScoringOptions,
+  buildScoringOptions,
+  toFileMatchingData,
+  toTransactionData,
 } from "./transactionScoring";
-import { selectEffectiveCycleForAmount, ResolvedEffectiveCycle } from "./billingCycle";
+import { ResolvedEffectiveCycle } from "./billingCycle";
 
 /** Firestore batch write cap is 500; chunk with headroom. */
 const BATCH_CHUNK_SIZE = 400;
@@ -75,44 +77,9 @@ export async function rescoreFileConnectionsForPartner(
     if (!txDoc || !fileData) continue;
 
     const txData = txDoc.data();
-    const transactionData: TransactionData = {
-      id: txDoc.id,
-      amount: txData.amount,
-      date: txData.date,
-      currency: txData.currency,
-      name: txData.name,
-      partner: txData.partner,
-      partnerName: txData.partnerName,
-      partnerId: txData.partnerId,
-      partnerIban: txData.partnerIban,
-      reference: txData.reference,
-    };
-
-    const fileMatchingData: FileMatchingData = {
-      extractedAmount: fileData.extractedAmount,
-      extractedCurrency: fileData.extractedCurrency,
-      extractedDate: fileData.extractedDate,
-      extractedPartner: fileData.extractedPartner,
-      extractedIban: fileData.extractedIban,
-      extractedText: fileData.extractedText,
-      partnerId: fileData.partnerId,
-      precisionSearchHint: fileData.precisionSearchHint,
-    };
-
-    const band = selectEffectiveCycleForAmount(effective, transactionData.amount);
-    let scoringOptions: ScoringOptions | undefined;
-    if (band || weights) {
-      scoringOptions = {};
-      if (band) {
-        scoringOptions.billingCycle = {
-          invoiceToTransactionDelay: band.invoiceToTransactionDelay,
-          delayVariance: band.delayVariance,
-          frequencyDays: band.frequencyDays,
-          dayVariance: band.dayVariance,
-        };
-      }
-      if (weights) scoringOptions.weights = weights;
-    }
+    const transactionData = toTransactionData(txDoc.id, txData);
+    const fileMatchingData = toFileMatchingData(fileData);
+    const scoringOptions = buildScoringOptions(effective, weights, transactionData.amount);
 
     const result = scoreTransaction(
       fileMatchingData,
@@ -125,6 +92,7 @@ export async function rescoreFileConnectionsForPartner(
       matchConfidence: result.confidence,
       scoreBreakdown: result.breakdown,
       matchSources: result.matchSources,
+      rescoredAt: Timestamp.now(),
     });
     pending++;
     rescored++;

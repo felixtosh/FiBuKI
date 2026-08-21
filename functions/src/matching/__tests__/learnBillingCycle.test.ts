@@ -11,6 +11,7 @@ import {
   computeMode,
   deriveLearnedCycles,
   resolveEffectiveCycles,
+  selectEffectiveCycleForAmount,
   type BillingCycleTransaction,
 } from "../billingCycle";
 
@@ -309,5 +310,54 @@ describe("resolveEffectiveCycles", () => {
     expect(effective[0].source).toBe("learned");
     expect(effective[1].source).toBe("learned");
     expect(effective[2].source).toBe("declared");
+  });
+});
+
+// ============================================================================
+// selectEffectiveCycleForAmount (yazzbert/FiBuKI-selfhost#168)
+// ============================================================================
+
+describe("selectEffectiveCycleForAmount", () => {
+  it("returns undefined with no bands", () => {
+    expect(selectEffectiveCycleForAmount([], 100)).toBeUndefined();
+  });
+
+  it("returns the sole band unconditionally when it carries no amountBand (true single-cycle partner)", () => {
+    const effective = [{ source: "learned" as const, frequencyDays: 30 }];
+    expect(selectEffectiveCycleForAmount(effective, 999999)).toBe(effective[0]);
+  });
+
+  // Regression: deriveLearnedCycles stamps amountBand onto every surviving
+  // band once clustering found MORE than one band, even if only one band
+  // went on to produce a valid cycle (e.g. a 1-member band below the
+  // minimum-sample threshold gets dropped, leaving a length-1 array whose
+  // sole entry still carries the amountBand from when there were 2 bands).
+  // Length alone must not bypass the tolerance check in that case.
+  it("still applies the tolerance check when a length-1 array's sole band carries an amountBand", () => {
+    const effective = [{ source: "learned" as const, frequencyDays: 7, amountBand: 10 }];
+    expect(selectEffectiveCycleForAmount(effective, 10)).toBe(effective[0]);
+    expect(selectEffectiveCycleForAmount(effective, 500)).toBeUndefined();
+  });
+
+  it("picks the closest band within tolerance across multiple bands", () => {
+    const weekly = { source: "learned" as const, frequencyDays: 7, amountBand: 38.25 };
+    const monthly = { source: "learned" as const, frequencyDays: 30, amountBand: 90 };
+    const effective = [weekly, monthly];
+    expect(selectEffectiveCycleForAmount(effective, 38.25)).toBe(weekly);
+    expect(selectEffectiveCycleForAmount(effective, 90)).toBe(monthly);
+    expect(selectEffectiveCycleForAmount(effective, 5000)).toBeUndefined();
+  });
+
+  // Regression: a zero-amount band (a free/trial recurrence) used to be
+  // permanently excluded outright — `band.amountBand === 0` short-circuited
+  // to `continue`, so no candidate, not even an exact 0, could ever select
+  // it. A relative tolerance also can't apply against a zero denominator.
+  it("matches a zero-amount band only against an exact-zero candidate, without dividing by zero", () => {
+    const free = { source: "learned" as const, frequencyDays: 30, amountBand: 0 };
+    const paid = { source: "learned" as const, frequencyDays: 30, amountBand: 20 };
+    const effective = [free, paid];
+    expect(selectEffectiveCycleForAmount(effective, 0)).toBe(free);
+    expect(selectEffectiveCycleForAmount(effective, 20)).toBe(paid);
+    expect(selectEffectiveCycleForAmount(effective, 5)).toBeUndefined();
   });
 });
