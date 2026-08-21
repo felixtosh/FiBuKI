@@ -100,6 +100,16 @@ function toCents(value: unknown): number | null {
   return num === null ? null : Math.round(num);
 }
 
+/**
+ * A field the prompt asks the model to TRANSCRIBE (#104). Anything that is
+ * not a non-empty string is treated as "the document printed none" — the
+ * §11 classifier reads an invented value as a satisfied requirement, so a
+ * wrong shape must degrade to null rather than be coerced into one.
+ */
+function asTranscribedString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
 function normalizeVatPercent(vatPercent: unknown): number | null {
   const vat = toFiniteNumber(vatPercent);
   if (vat === null || vat < 0 || vat > 100) {
@@ -571,6 +581,22 @@ VAT SUMMARY BLOCK ("rateGroups", IMPORTANT):
 - If the document prints NO such summary block, return "rateGroups": null
 - Never invent a summary block from a single total line
 
+DOCUMENT SELF-DESIGNATION ("selfDesignation", IMPORTANT):
+- Transcribe the heading the document gives ITSELF, exactly as printed:
+  "Rechnung", "Invoice", "Quittung", "Zahlungsbestätigung", "Receipt",
+  "Gutschrift", "Kassenbeleg", and so on
+- Copy what is printed - do NOT compute, infer, translate or normalise it
+- If the document prints no such heading, return "selfDesignation": null
+- Never derive it from the content: a document that looks like an invoice but
+  prints no heading has none
+
+SEQUENTIAL INVOICE NUMBER ("invoiceNumber", IMPORTANT):
+- Transcribe the invoice's own sequential number, exactly as printed:
+  "Rechnungsnummer", "Rechnungs-Nr.", "Invoice No.", "Belegnummer"
+- Copy what is printed - do NOT construct one from a date, an order number,
+  a customer number or a reference
+- If the document prints no invoice number, return "invoiceNumber": null
+
 Input format: German (dates DD.MM.YYYY, amounts with comma like 123,45)
 Output: date as YYYY-MM-DD, amount in cents (123,45 → 12345)
 
@@ -612,6 +638,8 @@ JSON structure:
     "currency": "EUR",
     "vatPercent": 19,
     "vatPercent_raw": "19%",
+    "selfDesignation": "Rechnung",
+    "invoiceNumber": "2024-0042",
     "lineItems": [
       {
         "description": "USB-C Cable",
@@ -725,6 +753,8 @@ JSON only, no markdown, no explanation.`;
       currency?: string | null;
       vatPercent?: number | null;
       vatPercent_raw?: string | null;
+      selfDesignation?: string | null;
+      invoiceNumber?: string | null;
       lineItems?: GeminiLineItem[] | null;
       rateGroups?: GeminiRateGroup[] | null;
       confidence?: number;
@@ -812,6 +842,10 @@ JSON only, no markdown, no explanation.`;
     vatPercent: typeof parsed.extracted?.vatPercent === "number" ? parsed.extracted.vatPercent : null,
     lineItems,
     rateGroups,
+    // Transcribed headings only: a non-string is the model having invented
+    // something, and an invented §11 element is worse than a missing one.
+    selfDesignation: asTranscribedString(parsed.extracted?.selfDesignation),
+    invoiceNumber: asTranscribedString(parsed.extracted?.invoiceNumber),
     partner: legacyPartner,
     vatId: legacyVatId,
     iban: legacyIban,

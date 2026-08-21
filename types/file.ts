@@ -68,6 +68,48 @@ export interface ExtractedRateGroup {
 }
 
 /**
+ * What kind of document this is under § 11 UStG (#104).
+ *
+ * Duplicated from `functions/src/documents/types.ts` the same way
+ * `ExtractedRateGroup` is: `functions/tsconfig.json` pins `rootDir: "src"`,
+ * so the two trees cannot share a file. The backend module is the source of
+ * truth for the RULES; this is the shape the UI reads.
+ *
+ * Reverse charge is deliberately not a fifth value — a reverse-charge
+ * document is an invoice.
+ */
+export type DocumentType = "invoice" | "receipt" | "other" | "unknown";
+
+/** The § 11 elements the classifier can judge. See the backend module. */
+export type Section11Element =
+  | "issue-date"
+  | "supplier-name"
+  | "supplier-address"
+  | "description"
+  | "steuersatz"
+  | "invoice-number"
+  | "supplier-vat-id"
+  | "recipient"
+  | "recipient-vat-id";
+
+/** Why the classifier decided what it did — shown, not acted on. */
+export interface DocumentTypeBasis {
+  reason: string;
+  regime: "kleinbetrag" | "standard" | null;
+  grossTotal: number | null;
+  selfDesignation: string | null;
+  selfDesignationClass: "invoice" | "receipt" | "credit-note" | null;
+  zeroVatReason:
+    | "reverse-charge"
+    | "exempt"
+    | "foreign-supplier"
+    | "cross-border-b2b"
+    | "zero-rated"
+    | null;
+  degraded: boolean;
+}
+
+/**
  * Match sources for transaction matching - indicates which criteria contributed to a match
  */
 export type TransactionMatchSource =
@@ -266,6 +308,36 @@ export interface TaxFile {
 
   /** AI-extracted partner/company name */
   extractedPartner?: string | null;
+
+  /**
+   * The document's own printed heading, transcribed exactly as it appears
+   * ("Rechnung", "Invoice", "Quittung", "Zahlungsbestätigung"). Evidence for
+   * the § 11 classification, never the verdict (#104). Absent on every file
+   * extracted before the field existed; null when the document prints none.
+   */
+  extractedSelfDesignation?: string | null;
+
+  /**
+   * The sequential invoice number § 11 Abs 1 lit. h requires above 400 EUR,
+   * transcribed (#104). Absent on pre-#104 records; null when none printed.
+   */
+  extractedInvoiceNumber?: string | null;
+
+  /**
+   * What kind of document this is, decided by the § 11 rules at extraction
+   * time and stored here rather than recomputed at read time — two readers
+   * must not be able to disagree about the same document (#104).
+   */
+  documentType?: DocumentType;
+
+  /** Why the classifier decided that, so a borderline call can be judged. */
+  documentTypeBasis?: DocumentTypeBasis;
+
+  /**
+   * Which § 11 elements the document is missing at its amount — the list a
+   * request to the supplier can name.
+   */
+  documentTypeMissingElements?: Section11Element[];
 
   /** AI-extracted VAT ID */
   extractedVatId?: string | null;
@@ -609,6 +681,11 @@ export interface FileExtractionData {
   lineItemsUnreconciledRates?: number[] | null;
   vatSourceDowngraded?: boolean;
   vatFieldsPreserved?: boolean;
+  extractedSelfDesignation?: string | null;
+  extractedInvoiceNumber?: string | null;
+  documentType?: DocumentType;
+  documentTypeBasis?: DocumentTypeBasis;
+  documentTypeMissingElements?: Section11Element[];
   extractedPartner?: string | null;
   extractedVatId?: string | null;
   extractedIban?: string | null;

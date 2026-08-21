@@ -546,6 +546,7 @@ export async function runTransactionMatching(
           extractedText: fileData.extractedText,
           partnerId: fileData.partnerId,
           precisionSearchHint: fileData.precisionSearchHint,
+          documentType: fileData.documentType,
         },
         {
           id: doc.id,
@@ -560,6 +561,9 @@ export async function runTransactionMatching(
           partnerId: txData.partnerId,
           partnerIban: txData.partnerIban,
           reference: txData.reference,
+          // #104: what the target already holds decides whether this file is a
+          // duplicate to suppress or the invoice that upgrades the line.
+          documentationState: txData.documentationState,
         },
         partnerAliases,
         scoringOptions

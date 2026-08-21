@@ -12,6 +12,7 @@ import {
   readBankOriginalAmount,
   type BankOriginalAmount,
 } from "../fx/bankOriginalAmount";
+import type { DocumentType, DocumentationState } from "../documents/types";
 
 // === Configuration ===
 
@@ -71,12 +72,41 @@ export interface TransactionPreview {
   partner: string | null;
 }
 
+/** What the target's existing documentation did to this pair (#104). */
+export type DocumentationOutcome = "clear" | "upgrade" | "capped" | "suppressed";
+
+export type DocumentationReason =
+  /** The target holds nothing, or only a no-receipt category. */
+  | "target-undocumented"
+  /** The one case suppression must never hide: it closes the VAT gap. */
+  | "invoice-upgrades-receipt-only"
+  /** The target already holds a document of this class. */
+  | "duplicate-document-class"
+  /** A payment confirmation against a line that already has its Rechnung. */
+  | "receipt-against-invoice"
+  /** This candidate's own type is not established. */
+  | "candidate-unclassified"
+  /** The target's attached documents are not classified. */
+  | "target-documents-unclassified";
+
+export interface DocumentationAssessment {
+  outcome: DocumentationOutcome;
+  reason: DocumentationReason;
+  /** The score before the rule touched it, so a suppression is inspectable. */
+  confidenceBefore: number;
+}
+
 export interface TransactionMatchScore {
   transactionId: string;
   confidence: number;
   matchSources: TransactionMatchSource[];
   breakdown: ScoreBreakdown;
   preview: TransactionPreview;
+  /**
+   * Present only when the caller supplied the target's documentation state.
+   * Absent means the rule did not run, not that the pair is clear (#104).
+   */
+  documentation?: DocumentationAssessment;
 }
 
 export interface FileMatchingData {
@@ -91,6 +121,12 @@ export interface FileMatchingData {
     transactionId: string;
     matchConfidence?: number;
   } | null;
+  /**
+   * This document's §11 classification (#104). Absent on a file extracted
+   * before the classifier existed, which is treated as "not established"
+   * rather than as any particular type.
+   */
+  documentType?: DocumentType | null;
 }
 
 export interface TransactionData {
@@ -110,6 +146,12 @@ export interface TransactionData {
   partnerId?: string;
   partnerIban?: string;
   reference?: string;
+  /**
+   * How this transaction is already documented (#104). When omitted the
+   * suppression rule does not run at all, so every existing caller keeps its
+   * exact scores.
+   */
+  documentationState?: DocumentationState | null;
 }
 
 // === Utility Functions ===
@@ -374,6 +416,66 @@ export function calculatePartnerScore(
   return { score: 0, source: null };
 }
 
+/**
+ * What the target's existing documentation says about this candidate (#104).
+ *
+ * Suppression happens HERE, at scoring, rather than in the candidate query.
+ * Filtering out documented transactions up front is simpler and would kill
+ * all 25 false proposals seen on 2026-08-17 — but it also kills the
+ * invoice-after-receipt upgrade, which is the one case that must survive.
+ * Keeping the decision in the scorer also makes a suppressed pair an
+ * inspectable judgement rather than a row that silently never existed.
+ *
+ * This rule is deliberately independent of the dismissal list. Dismissal
+ * means "this pair is wrong"; suppression means "this document is redundant
+ * here". Two different facts, and these pairs are right.
+ */
+export function assessDocumentation(
+  documentType: DocumentType | null | undefined,
+  documentationState: DocumentationState
+): { outcome: DocumentationOutcome; reason: DocumentationReason } {
+  // Nothing to be redundant with. A no-receipt category is how a line with no
+  // document is resolved, so attaching a real one there is always an upgrade.
+  if (documentationState === "undocumented" || documentationState === "no-receipt-category") {
+    return { outcome: "clear", reason: "target-undocumented" };
+  }
+
+  // The target holds documents we could not classify. Suppressing would risk
+  // hiding the invoice that closes the gap; proposing at full score would
+  // auto-connect on missing information. Neither — send it to a human.
+  if (documentationState === "unknown") {
+    return { outcome: "capped", reason: "target-documents-unclassified" };
+  }
+
+  // The candidate's own type is not established, against a documented target.
+  if (documentType !== "invoice" && documentType !== "receipt") {
+    return { outcome: "capped", reason: "candidate-unclassified" };
+  }
+
+  if (documentationState === "receipt-only") {
+    return documentType === "invoice"
+      ? { outcome: "upgrade", reason: "invoice-upgrades-receipt-only" }
+      : { outcome: "suppressed", reason: "duplicate-document-class" };
+  }
+
+  // documentationState === "invoice"
+  return documentType === "receipt"
+    ? { outcome: "suppressed", reason: "receipt-against-invoice" }
+    : { outcome: "suppressed", reason: "duplicate-document-class" };
+}
+
+/** Apply the assessment to a score. Never raises one. */
+function applyDocumentationOutcome(
+  confidence: number,
+  outcome: DocumentationOutcome
+): number {
+  if (outcome === "suppressed") return 0;
+  if (outcome === "capped") {
+    return Math.min(confidence, SCORING_CONFIG.AUTO_MATCH_THRESHOLD - 1);
+  }
+  return confidence;
+}
+
 export interface ScoringOptions {
   /** Per-partner weight multipliers for scoring factors */
   weights?: {
@@ -524,12 +626,24 @@ export function scoreTransaction(
     hintScore +
     hardFactsScore;
   // Cap at 100 (multiple strong signals shouldn't exceed 100%)
-  const confidence = Math.min(100, Math.round(rawConfidence));
+  const scoredConfidence = Math.min(100, Math.round(rawConfidence));
+
+  // 7. Documentation-aware suppression (#104). Runs only when the caller
+  // supplied the target's state, so a caller that does not know it keeps the
+  // pre-#104 score exactly.
+  let confidence = scoredConfidence;
+  let documentation: DocumentationAssessment | undefined;
+  if (txData.documentationState) {
+    const assessment = assessDocumentation(fileData.documentType, txData.documentationState);
+    confidence = applyDocumentationOutcome(scoredConfidence, assessment.outcome);
+    documentation = { ...assessment, confidenceBefore: scoredConfidence };
+  }
 
   return {
     transactionId: txData.id,
     confidence,
     matchSources,
+    ...(documentation ? { documentation } : {}),
     breakdown: {
       amount: amountScore,
       date: dateScore,

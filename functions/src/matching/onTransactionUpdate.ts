@@ -11,6 +11,11 @@ import {
 } from "../utils/category-matcher";
 import { AutomationMeta } from "../automation/types";
 import { isPassiveMode } from "../utils/checkAutomationMode";
+import {
+  documentationStateChanged,
+  shouldRecomputeDocumentationState,
+} from "../documents/documentationState";
+import { deriveForTransaction } from "../documents/syncDocumentationState";
 
 // =============================================================================
 // AUTOMATION METADATA
@@ -20,7 +25,7 @@ export const AUTOMATION_META: AutomationMeta = {
   id: "onTransactionUpdate",
   name: "Transaction Update Handler",
   description:
-    "Syncs isComplete flag, learns resolution preferences, and triggers category matching on partner assignment",
+    "Syncs isComplete and documentationState, learns resolution preferences, and triggers category matching on partner assignment",
   trigger: {
     type: "document_update",
     collection: "transactions",
@@ -30,6 +35,7 @@ export const AUTOMATION_META: AutomationMeta = {
       entity: "transaction",
       fields: [
         "isComplete",
+        "documentationState",
         "noReceiptCategoryId",
         "noReceiptCategoryTemplateId",
         "noReceiptCategoryConfidence",
@@ -94,10 +100,15 @@ export const onTransactionUpdate = onDocumentUpdated(
 
     if (!before || !after) return;
 
-    // === SYNC isComplete FLAG ===
-    // isComplete = true when: fileIds.length > 0 OR noReceiptCategoryId is set
+    // === SYNC isComplete FLAG AND documentationState ===
+    // isComplete = true when: fileIds.length > 0 OR noReceiptCategoryId is set.
+    // Its meaning is deliberately unchanged by #104 — "has some documentation".
+    // documentationState is the additive fact that says WHAT the documentation
+    // is, so a green line can still be a bookkeeping gap and be found.
     const fileIdsChanged = JSON.stringify(before.fileIds) !== JSON.stringify(after.fileIds);
     const categoryChanged = before.noReceiptCategoryId !== after.noReceiptCategoryId;
+
+    const syncUpdates: Record<string, unknown> = {};
 
     if (fileIdsChanged || categoryChanged) {
       const hasFiles = (after.fileIds?.length ?? 0) > 0;
@@ -105,16 +116,34 @@ export const onTransactionUpdate = onDocumentUpdated(
       const shouldBeComplete = hasFiles || hasCategory;
 
       if (after.isComplete !== shouldBeComplete) {
-        await event.data!.after.ref.update({
-          isComplete: shouldBeComplete,
-          updatedAt: FieldValue.serverTimestamp(),
-        });
-        console.log(`[onTransactionUpdate] Synced isComplete=${shouldBeComplete} for ${transactionId}`);
-        // Return early - the update will trigger this function again with correct isComplete
-        return;
+        syncUpdates.isComplete = shouldBeComplete;
       }
     }
-    // === END isComplete SYNC ===
+
+    if (shouldRecomputeDocumentationState(before, after)) {
+      const derivedState = await deriveForTransaction(db, after);
+      if (documentationStateChanged(after.documentationState, derivedState)) {
+        syncUpdates.documentationState = derivedState;
+      }
+    }
+
+    if (Object.keys(syncUpdates).length > 0) {
+      await event.data!.after.ref.update({
+        ...syncUpdates,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      console.log(
+        `[onTransactionUpdate] Synced ${Object.keys(syncUpdates).join(", ")} for ${transactionId}`
+      );
+
+      // Return early only when isComplete moved — that is the flag everything
+      // below reads, and the re-trigger will run this function again with it
+      // settled. A documentationState-only write must NOT return: the partner
+      // automations belong to THIS event, and the re-trigger sees an unchanged
+      // partnerId and would skip them entirely.
+      if (syncUpdates.isComplete !== undefined) return;
+    }
+    // === END isComplete / documentationState SYNC ===
 
     // === LEARN RESOLUTION PREFERENCE ===
     // When transaction is marked complete, update partner's resolution preference

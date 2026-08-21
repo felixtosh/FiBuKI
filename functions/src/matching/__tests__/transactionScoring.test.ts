@@ -769,3 +769,126 @@ describe("SCORING_CONFIG", () => {
     expect(SCORING_CONFIG.MAX_SUGGESTIONS).toBe(5);
   });
 });
+
+// ============================================================================
+// Documentation-aware suppression (#104)
+// ============================================================================
+
+describe("scoreTransaction — suppression against an already-documented target", () => {
+  // A cent-exact, same-day pair: 40 + 25 + 20 hard-facts = 85, the
+  // auto-match threshold. Every case below starts from this score, so any
+  // difference is the suppression rule and nothing else.
+  const file = (documentType: FileMatchingData["documentType"]): FileMatchingData => ({
+    extractedAmount: 5400,
+    extractedCurrency: "EUR",
+    extractedDate: ts("2024-06-12"),
+    documentType,
+  });
+
+  const target = (
+    documentationState: TransactionData["documentationState"]
+  ): TransactionData => ({
+    id: "tx-1",
+    amount: -5400,
+    date: ts("2024-06-12"),
+    currency: "EUR",
+    name: "Elektro Huber",
+    documentationState,
+  });
+
+  it("scores an undocumented target exactly as it did before the rule existed", () => {
+    const withState = scoreTransaction(file("invoice"), target("undocumented"));
+    const withoutState = scoreTransaction(file("invoice"), target(undefined));
+
+    expect(withState.confidence).toBe(85);
+    expect(withoutState.confidence).toBe(85);
+    expect(withoutState.documentation).toBeUndefined();
+  });
+
+  it("scores an invoice against a receipt-only target at full score — the upgrade suppression must never hide", () => {
+    const result = scoreTransaction(file("invoice"), target("receipt-only"));
+
+    expect(result.confidence).toBe(85);
+    expect(result.documentation?.outcome).toBe("upgrade");
+    expect(result.documentation?.reason).toBe("invoice-upgrades-receipt-only");
+  });
+
+  it("suppresses a receipt against a target that already holds an invoice", () => {
+    const result = scoreTransaction(file("receipt"), target("invoice"));
+
+    expect(result.confidence).toBe(0);
+    expect(result.documentation?.outcome).toBe("suppressed");
+    expect(result.documentation?.reason).toBe("receipt-against-invoice");
+    expect(result.documentation?.confidenceBefore).toBe(85);
+  });
+
+  it("suppresses a second invoice against a target that already holds one", () => {
+    const result = scoreTransaction(file("invoice"), target("invoice"));
+
+    expect(result.confidence).toBe(0);
+    expect(result.documentation?.reason).toBe("duplicate-document-class");
+  });
+
+  it("suppresses a second receipt against a receipt-only target", () => {
+    const result = scoreTransaction(file("receipt"), target("receipt-only"));
+
+    expect(result.confidence).toBe(0);
+    expect(result.documentation?.reason).toBe("duplicate-document-class");
+  });
+
+  it("drops a suppressed pair below the suggestion threshold, so it leaves the queue", () => {
+    const result = scoreTransaction(file("receipt"), target("invoice"));
+
+    expect(result.confidence).toBeLessThan(SCORING_CONFIG.SUGGESTION_THRESHOLD);
+  });
+
+  it("keeps a suppressed pair inspectable rather than erasing why it scored", () => {
+    const result = scoreTransaction(file("receipt"), target("invoice"));
+
+    expect(result.breakdown.amount).toBe(40);
+    expect(result.matchSources).toContain("amount_exact");
+  });
+
+  it("proposes an unknown-type candidate against a documented target but never auto-matches it", () => {
+    const result = scoreTransaction(file("unknown"), target("invoice"));
+
+    expect(result.confidence).toBeGreaterThanOrEqual(SCORING_CONFIG.SUGGESTION_THRESHOLD);
+    expect(result.confidence).toBeLessThan(SCORING_CONFIG.AUTO_MATCH_THRESHOLD);
+    expect(result.documentation?.outcome).toBe("capped");
+  });
+
+  it("treats a candidate with no classification at all the same way", () => {
+    const result = scoreTransaction(file(undefined), target("invoice"));
+
+    expect(result.confidence).toBeLessThan(SCORING_CONFIG.AUTO_MATCH_THRESHOLD);
+    expect(result.documentation?.outcome).toBe("capped");
+  });
+
+  it("caps rather than suppresses against a target whose own documents are unclassified", () => {
+    const result = scoreTransaction(file("invoice"), target("unknown"));
+
+    expect(result.confidence).toBeLessThan(SCORING_CONFIG.AUTO_MATCH_THRESHOLD);
+    expect(result.documentation?.outcome).toBe("capped");
+    expect(result.documentation?.reason).toBe("target-documents-unclassified");
+  });
+
+  it("leaves a no-receipt-category target alone — attaching a document there is an upgrade", () => {
+    const result = scoreTransaction(file("receipt"), target("no-receipt-category"));
+
+    expect(result.confidence).toBe(85);
+    expect(result.documentation?.outcome).toBe("clear");
+  });
+
+  it("never raises a score: a capped pair that was already low stays where it was", () => {
+    const weak = scoreTransaction(
+      { ...file("unknown"), extractedDate: ts("2024-06-30") },
+      target("invoice")
+    );
+    const baseline = scoreTransaction(
+      { ...file("unknown"), extractedDate: ts("2024-06-30") },
+      target("undocumented")
+    );
+
+    expect(weak.confidence).toBe(baseline.confidence);
+  });
+});

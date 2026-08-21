@@ -200,6 +200,27 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     }
   },
   {
+    "name": "list_transactions_missing_invoice",
+    "description": "Find transactions documented by a receipt only — money moved, a document is attached, but no invoice satisfying § 11 UStG was ever received, so no Vorsteuer may be claimed. These lines look complete everywhere else. Returns { transactions, nextCursor, count } where each row carries the vendor, the amount, the date and the § 11 elements the attached document is missing, so a request to the supplier can name the defect. `count` is the size of this page, not a total — page with nextCursor until it comes back null.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "minAmount": {
+          "type": "number",
+          "description": "Minimum absolute amount in cents — the deductions worth chasing first"
+        },
+        "limit": {
+          "type": "number",
+          "description": "Max results per page (default 50, max 500)"
+        },
+        "cursor": {
+          "type": "string",
+          "description": "nextCursor from the previous response to fetch the next page"
+        }
+      }
+    }
+  },
+  {
     "name": "import_transactions",
     "description": "Import pre-mapped transactions into a source. Transactions must include date, amount, name, and currency.",
     "inputSchema": {
