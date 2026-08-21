@@ -93,6 +93,36 @@ test("applyFileFilters: isNotInvoice filter shows only not-invoices when true, o
   );
 });
 
+test("applyFileFilters: isNotInvoice=false hides not-invoice rows and the count follows", () => {
+  const files = [
+    makeFile({ id: "a", isNotInvoice: false }),
+    makeFile({ id: "b", isNotInvoice: true }),
+    makeFile({ id: "c" }),
+    // A file uploaded before the flag existed has no isNotInvoice at all.
+    makeFile({ id: "d", isNotInvoice: undefined }),
+  ];
+  const { rows, invoiceCount } = applyFileFilters(files, { isNotInvoice: false });
+  assert.deepEqual(rows.map((f) => f.id).sort(), ["a", "c", "d"]);
+  assert.equal(invoiceCount, 3);
+});
+
+test("applyFileFilters: isNotInvoice=false combines with the other filters", () => {
+  const files = [
+    makeFile({ id: "connected-invoice", transactionIds: ["t1"] }),
+    makeFile({ id: "connected-not-invoice", transactionIds: ["t1"], isNotInvoice: true }),
+    makeFile({ id: "loose-invoice", transactionIds: [] }),
+  ];
+  const { rows } = applyFileFilters(files, { isNotInvoice: false, hasConnections: true });
+  assert.deepEqual(rows.map((f) => f.id), ["connected-invoice"]);
+});
+
+test("applyFileFilters: isNotInvoice=false can hide every row", () => {
+  const files = [makeFile({ id: "a", isNotInvoice: true }), makeFile({ id: "b", isNotInvoice: true })];
+  const { rows, invoiceCount } = applyFileFilters(files, { isNotInvoice: false });
+  assert.deepEqual(rows, []);
+  assert.equal(invoiceCount, 0);
+});
+
 test("applyFileFilters: extractedDateFrom/To range is inclusive of the end date", () => {
   const files = [
     makeFile({ id: "before", extractedDate: ts(new Date("2026-01-01")) }),

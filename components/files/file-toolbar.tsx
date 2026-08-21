@@ -19,6 +19,7 @@ import {
   Filter,
   Trash2,
   FileX,
+  EyeOff,
 } from "lucide-react";
 import { SearchButton } from "@/components/ui/search-button";
 import { SearchInput } from "@/components/ui/search-input";
@@ -63,7 +64,7 @@ export function FileToolbar({
   const hasPartnerFilter = selectedPartnerIds.length > 0;
   const hasStatusFilter =
     filters.extractionComplete !== undefined ||
-    filters.isNotInvoice === true ||
+    filters.isNotInvoice !== undefined ||
     filters.includeDeleted === true;
 
   const handleDatePresetClick = (preset: string) => {
@@ -153,6 +154,7 @@ export function FileToolbar({
     if (filters.extractionComplete === true) return "Extracted";
     if (filters.extractionComplete === false) return "Pending";
     if (filters.isNotInvoice === true) return "Not invoices";
+    if (filters.isNotInvoice === false) return "Hide not invoices";
     if (filters.includeDeleted === true) return "Deleted";
     return "Status";
   };
@@ -557,7 +559,7 @@ export function FileToolbar({
             <Button
               variant={
                 filters.extractionComplete === undefined &&
-                !filters.isNotInvoice &&
+                filters.isNotInvoice === undefined &&
                 !filters.includeDeleted
                   ? "secondary"
                   : "ghost"
@@ -625,6 +627,23 @@ export function FileToolbar({
             >
               <FileX className="h-4 w-4" />
               Not invoices
+            </Button>
+            <Button
+              variant={filters.isNotInvoice === false ? "secondary" : "ghost"}
+              size="sm"
+              className="justify-start h-8 gap-2"
+              onClick={() => {
+                onFiltersChange({
+                  ...filters,
+                  extractionComplete: undefined,
+                  isNotInvoice: false,
+                  includeDeleted: undefined,
+                });
+                setStatusPopoverOpen(false);
+              }}
+            >
+              <EyeOff className="h-4 w-4" />
+              Hide not invoices
             </Button>
             <div className="border-t my-1" />
             <Button
