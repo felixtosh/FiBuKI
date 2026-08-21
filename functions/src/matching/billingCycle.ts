@@ -95,8 +95,12 @@ export interface BillingCycleTransaction {
   date: Date;
   /** Amount in the partner's billed currency — never the EUR conversion. */
   amount: number;
-  /** Extracted date of the file connected to this transaction, if any. */
-  invoiceDate?: Date;
+  /**
+   * Extracted dates of every file connected to this transaction that carries
+   * one. A transaction connected to more than one file (e.g. an invoice plus
+   * a credit note) contributes one delay sample per file.
+   */
+  invoiceDates?: Date[];
 }
 
 export interface DerivedBillingCycle {
@@ -212,9 +216,11 @@ function deriveBandCycle(
     Math.sqrt(daysOfMonth.reduce((s, d) => s + (d - dayMean) ** 2, 0) / daysOfMonth.length)
   );
 
-  const delays = sorted
-    .filter((t) => t.invoiceDate)
-    .map((t) => Math.round((t.date.getTime() - t.invoiceDate!.getTime()) / MS_PER_DAY));
+  const delays = sorted.flatMap((t) =>
+    (t.invoiceDates ?? []).map((invoiceDate) =>
+      Math.round((t.date.getTime() - invoiceDate.getTime()) / MS_PER_DAY)
+    )
+  );
 
   let invoiceToTransactionDelay: number | undefined;
   let delayVariance: number | undefined;
@@ -283,33 +289,34 @@ export function resolveEffectiveCycles(
   declared: DeclaredCycleInput[] = []
 ): ResolvedEffectiveCycle[] {
   const matchedLearnedIndices = new Set<number>();
-  const effective: ResolvedEffectiveCycle[] = [];
+  const matchedDeclared: ResolvedEffectiveCycle[] = [];
+  const unmatchedDeclared: ResolvedEffectiveCycle[] = [];
 
   for (const d of declared) {
     const matchIndex = findMatchingLearnedIndex(learned, d);
     const match = matchIndex === -1 ? undefined : learned[matchIndex];
     if (matchIndex !== -1) matchedLearnedIndices.add(matchIndex);
 
-    effective.push(
-      omitUndefined({
-        amountBand: d.amountBand,
-        source: "declared",
-        frequencyDays: d.frequencyDays,
-        typicalDayOfMonth: match?.typicalDayOfMonth,
-        dayVariance: match?.dayVariance,
-        invoiceToTransactionDelay: match?.invoiceToTransactionDelay,
-        delayVariance: match?.delayVariance,
-        documentExpectation: d.documentExpectation,
-      })
-    );
+    const entry = omitUndefined({
+      amountBand: d.amountBand,
+      source: "declared" as const,
+      frequencyDays: d.frequencyDays,
+      typicalDayOfMonth: match?.typicalDayOfMonth,
+      dayVariance: match?.dayVariance,
+      invoiceToTransactionDelay: match?.invoiceToTransactionDelay,
+      delayVariance: match?.delayVariance,
+      documentExpectation: d.documentExpectation,
+    });
+    (matchIndex === -1 ? unmatchedDeclared : matchedDeclared).push(entry);
   }
 
-  learned.forEach((l, i) => {
-    if (matchedLearnedIndices.has(i)) return;
-    effective.push(
+  const unmatchedLearned = learned
+    .map((l, i) => (matchedLearnedIndices.has(i) ? null : l))
+    .filter((l): l is DerivedBillingCycle => l !== null)
+    .map((l) =>
       omitUndefined({
         amountBand: l.amountBand,
-        source: "learned",
+        source: "learned" as const,
         frequencyDays: l.frequencyDays,
         frequencyConfidence: l.frequencyConfidence,
         typicalDayOfMonth: l.typicalDayOfMonth,
@@ -318,9 +325,13 @@ export function resolveEffectiveCycles(
         delayVariance: l.delayVariance,
       })
     );
-  });
 
-  return effective;
+  // A declared cycle that matched a real recurrence always leads (it's the
+  // authoritative view of that recurrence). An unmatched/ambiguous declared
+  // cycle — nothing to enrich it with — sorts after every real learned band,
+  // so a consumer that just wants "the" cycle doesn't land on a bare
+  // placeholder ahead of actual signal.
+  return [...matchedDeclared, ...unmatchedLearned, ...unmatchedDeclared];
 }
 
 /** Firestore rejects `undefined` values — drop keys that hold one. */
@@ -336,11 +347,13 @@ function findMatchingLearnedIndex(
   learned: DerivedBillingCycle[],
   declared: DeclaredCycleInput
 ): number {
-  // An unscoped declaration (no band) only makes sense against a partner
-  // with a single recurrence — pick it if there is exactly one.
-  if (declared.amountBand === undefined) {
-    return learned.length === 1 ? 0 : -1;
-  }
+  // A single learned recurrence never carries an amountBand (deriveLearnedCycles
+  // only sets one when there's more than one band) — any declared cycle for
+  // this partner unambiguously refers to it, scoped or not.
+  if (learned.length === 1) return 0;
+
+  // Against more than one learned band, an unscoped declaration is ambiguous.
+  if (declared.amountBand === undefined) return -1;
 
   return learned.findIndex((l) => {
     if (l.amountBand === undefined) return false;

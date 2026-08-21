@@ -67,7 +67,7 @@ export const learnBillingCycleCallable = createCallable<
       return {
         date: data.date.toDate(),
         amount: data.amount,
-        invoiceDate: invoiceDates.get(doc.id),
+        invoiceDates: invoiceDates.get(doc.id),
       };
     });
 
@@ -106,16 +106,17 @@ export const learnBillingCycleCallable = createCallable<
 );
 
 /**
- * Map transaction id -> extracted date of its connected file, for
- * transactions of this partner that have one.
+ * Map transaction id -> extracted dates of its connected files, for
+ * transactions of this partner that have any. A transaction connected to
+ * more than one file contributes one date per file.
  */
 async function getInvoiceDates(
   userId: string,
   partnerId: string,
   txDocs: FirebaseFirestore.QueryDocumentSnapshot[]
-): Promise<Map<string, Date>> {
+): Promise<Map<string, Date[]>> {
   const txIds = txDocs.map((d) => d.id);
-  const invoiceDates = new Map<string, Date>();
+  const invoiceDates = new Map<string, Date[]>();
 
   // Process in batches of 30 (Firestore 'in' limit)
   for (let i = 0; i < txIds.length; i += 30) {
@@ -144,7 +145,10 @@ async function getInvoiceDates(
         const conn = connections.docs.find((c) => c.data().fileId === fileDoc.id);
         if (!conn) continue;
 
-        invoiceDates.set(conn.data().transactionId, fileData.extractedDate.toDate());
+        const transactionId = conn.data().transactionId;
+        const existing = invoiceDates.get(transactionId) ?? [];
+        existing.push(fileData.extractedDate.toDate());
+        invoiceDates.set(transactionId, existing);
       }
     }
   }

@@ -102,11 +102,18 @@ describe("computeMode", () => {
 // deriveLearnedCycles
 // ============================================================================
 
-function tx(date: string, amount: number, invoiceDate?: string): BillingCycleTransaction {
+function tx(
+  date: string,
+  amount: number,
+  invoiceDates?: string | string[]
+): BillingCycleTransaction {
+  const dates = invoiceDates
+    ? (Array.isArray(invoiceDates) ? invoiceDates : [invoiceDates]).map((d) => new Date(d))
+    : undefined;
   return {
     date: new Date(date),
     amount,
-    ...(invoiceDate ? { invoiceDate: new Date(invoiceDate) } : {}),
+    ...(dates ? { invoiceDates: dates } : {}),
   };
 }
 
@@ -197,6 +204,21 @@ describe("deriveLearnedCycles", () => {
     expect(cycles[0].delayVariance).toBe(0);
   });
 
+  it("counts one delay sample per connected file, not per transaction", () => {
+    // Only 2 transactions carry a file, but the first has two connected
+    // files (e.g. an invoice plus a credit note) — 3 delay samples total,
+    // meeting the minimum even though only 2 transactions have any.
+    const transactions = [
+      tx("2024-01-15", 30, ["2024-01-10", "2024-01-11"]),
+      tx("2024-02-15", 30, "2024-02-10"),
+      tx("2024-03-15", 30),
+      tx("2024-04-15", 30),
+    ];
+    const cycles = deriveLearnedCycles(transactions);
+    // delays: 5, 4, 5 -> mean 4.67 -> rounds to 5
+    expect(cycles[0].invoiceToTransactionDelay).toBe(5);
+  });
+
   it("omits the delay fields entirely with fewer than 3 invoice delays", () => {
     const transactions = [
       tx("2024-01-15", 30),
@@ -263,16 +285,29 @@ describe("resolveEffectiveCycles", () => {
     expect(effective.find((c) => c.amountBand === 38.25)?.source).toBe("learned");
   });
 
-  it("returns nothing for an unscoped declaration against more than one learned band", () => {
+  it("matches a scoped declared cycle to the single learned band, which never carries an amountBand itself", () => {
+    const learned = [
+      { frequencyDays: 31, frequencyConfidence: 60, typicalDayOfMonth: 15, sampleSize: 4 },
+    ];
+    const declared = [{ amountBand: 20, frequencyDays: 30 }];
+    const effective = resolveEffectiveCycles(learned, declared);
+    expect(effective).toEqual([
+      expect.objectContaining({ source: "declared", frequencyDays: 30, typicalDayOfMonth: 15 }),
+    ]);
+  });
+
+  it("sorts an unmatched declared cycle after real learned bands, not ahead of them", () => {
     const learned = [
       { amountBand: 38.25, frequencyDays: 7, frequencyConfidence: 95, sampleSize: 5 },
       { amountBand: 90, frequencyDays: 30, frequencyConfidence: 90, sampleSize: 4 },
     ];
     const declared = [{ frequencyDays: 30 }]; // no amountBand — ambiguous against 2 bands
     const effective = resolveEffectiveCycles(learned, declared);
-    // The declared entry surfaces unenriched; both learned bands stay as-is.
+    // The declared entry surfaces unenriched, but a consumer picking
+    // effective[0] must land on real learned signal, not the placeholder.
     expect(effective).toHaveLength(3);
-    expect(effective.filter((c) => c.source === "learned")).toHaveLength(2);
-    expect(effective.filter((c) => c.source === "declared")).toHaveLength(1);
+    expect(effective[0].source).toBe("learned");
+    expect(effective[1].source).toBe("learned");
+    expect(effective[2].source).toBe("declared");
   });
 });

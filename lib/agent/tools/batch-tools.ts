@@ -330,7 +330,10 @@ export const loadPartnerBatchContextTool = tool(
         aliases: partnerData.aliases || [],
         emailDomains: partnerData.emailDomains || [],
         fileSourcePatterns: partnerData.fileSourcePatterns || [],
-        billingCycle: partnerData.billingCycle || null,
+        // yazzbert/FiBuKI-selfhost#165: billingCycle is now {learned,
+        // declared, effective}; worker-prompts.ts still expects a flat
+        // cycle (invoiceToTransactionDelay etc.), so read effective[0].
+        billingCycle: partnerData.billingCycle?.effective?.[0] || null,
         scoringWeights: partnerData.scoringWeights || null,
         learnedPatterns: (partnerData.learnedPatterns || []).map(
           (p: { pattern: string; confidence: number }) => ({
