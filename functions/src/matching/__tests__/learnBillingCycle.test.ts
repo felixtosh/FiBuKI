@@ -12,6 +12,8 @@ import {
   deriveLearnedCycles,
   resolveEffectiveCycles,
   selectEffectiveCycleForAmount,
+  nextExpectedCharge,
+  summarizeChargeCoverage,
   type BillingCycleTransaction,
 } from "../billingCycle";
 
@@ -359,5 +361,81 @@ describe("selectEffectiveCycleForAmount", () => {
     expect(selectEffectiveCycleForAmount(effective, 0)).toBe(free);
     expect(selectEffectiveCycleForAmount(effective, 20)).toBe(paid);
     expect(selectEffectiveCycleForAmount(effective, 5)).toBeUndefined();
+  });
+});
+
+// ============================================================================
+// nextExpectedCharge
+// ============================================================================
+
+describe("nextExpectedCharge", () => {
+  it("puts the next charge a full period after the last one", () => {
+    const window = nextExpectedCharge(new Date("2026-07-05T00:00:00Z"), {
+      frequencyDays: 30,
+      dayVariance: 2,
+    });
+
+    expect(window).toEqual({
+      expectedAt: new Date("2026-08-04T00:00:00Z"),
+      from: new Date("2026-08-02T00:00:00Z"),
+      to: new Date("2026-08-06T00:00:00Z"),
+      varianceDays: 2,
+    });
+  });
+
+  // dayVariance is the spread of the day-OF-MONTH, which on a weekly cadence
+  // routinely lands near 9 — wider than the period itself. Same clamp
+  // calculateDateScore applies, for the same reason.
+  it("clamps a day-of-month variance that is wider than half a period", () => {
+    const window = nextExpectedCharge(new Date("2026-07-06T00:00:00Z"), {
+      frequencyDays: 7,
+      dayVariance: 9,
+    });
+
+    expect(window).toMatchObject({
+      expectedAt: new Date("2026-07-13T00:00:00Z"),
+      varianceDays: 3,
+    });
+  });
+
+  it("falls back to the derivation's tolerance for a declared cycle with no history", () => {
+    const window = nextExpectedCharge(new Date("2026-07-05T00:00:00Z"), { frequencyDays: 30 });
+
+    expect(window!.varianceDays).toBe(5);
+  });
+
+  it("expects nothing without a last charge or without a frequency", () => {
+    expect(nextExpectedCharge(null, { frequencyDays: 30 })).toBeNull();
+    expect(nextExpectedCharge(new Date("2026-07-05T00:00:00Z"), undefined)).toBeNull();
+    expect(nextExpectedCharge(new Date("2026-07-05T00:00:00Z"), { frequencyDays: 0 })).toBeNull();
+  });
+});
+
+// ============================================================================
+// summarizeChargeCoverage
+// ============================================================================
+
+describe("summarizeChargeCoverage", () => {
+  it("counts a charge as covered by a file or by a no-receipt category", () => {
+    expect(
+      summarizeChargeCoverage([
+        { hasFile: true, hasCategory: false },
+        { hasFile: false, hasCategory: true },
+        { hasFile: false, hasCategory: false },
+        // Both: a file is the stronger document, so it counts once, as a file.
+        { hasFile: true, hasCategory: true },
+      ])
+    ).toEqual({ charges: 4, withFile: 2, withCategory: 1, missing: 1 });
+  });
+
+  // The SVS instalment, the bank fee, the N26 reward: recurring, no document
+  // by rule, and they must never sit in a missing list forever.
+  it("never misses a document a recurrence is not expected to produce", () => {
+    expect(
+      summarizeChargeCoverage([
+        { hasFile: false, hasCategory: false, documentExpectation: "nothing" },
+        { hasFile: false, hasCategory: false, documentExpectation: "no-receipt-category" },
+      ])
+    ).toEqual({ charges: 2, withFile: 0, withCategory: 0, missing: 1 });
   });
 });

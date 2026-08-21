@@ -413,3 +413,115 @@ function findMatchingLearnedIndex(
     return true;
   });
 }
+
+// ============================================================================
+// Expected charges
+// ============================================================================
+
+/**
+ * Named cadences, in days. A declaration names one of these or states its own
+ * `frequencyDays` ("every N days"); either way what gets stored is days, so
+ * nothing downstream has to know the vocabulary.
+ *
+ * The values are the same periods `findModeInterval` tests for, so a declared
+ * monthly partner and a learned monthly partner carry the same number.
+ */
+export const CADENCE_DAYS = {
+  weekly: 7,
+  monthly: 30,
+  quarterly: 90,
+  yearly: 365,
+} as const;
+
+export type BillingCadence = keyof typeof CADENCE_DAYS;
+
+/** When the next charge of a recurrence is due, and how wide the window is. */
+export interface ExpectedChargeWindow {
+  /** Last charge plus the frequency. */
+  expectedAt: Date;
+  /** `expectedAt` minus the variance. */
+  from: Date;
+  /** `expectedAt` plus the variance. */
+  to: Date;
+  /** Days the window reaches to either side of `expectedAt`. */
+  varianceDays: number;
+}
+
+/**
+ * The next expected charge after `lastChargeDate` — computed, never stored.
+ *
+ * The window is the frequency plus or minus the day variance. `dayVariance`
+ * is the spread of the day-OF-MONTH the charge lands on, so on a cadence
+ * shorter than monthly it can exceed the period itself (a weekly partner
+ * routinely learns a variance near 9); it is clamped to half a period, the
+ * same clamp `calculateDateScore` applies for the same reason. A recurrence
+ * that was declared rather than learned has no variance behind it and falls
+ * back to the derivation's own interval tolerance.
+ *
+ * Null when there is nothing to expect from: no last charge, or no frequency.
+ */
+export function nextExpectedCharge(
+  lastChargeDate: Date | null | undefined,
+  cycle: { frequencyDays?: number; dayVariance?: number } | null | undefined
+): ExpectedChargeWindow | null {
+  if (!lastChargeDate || isNaN(lastChargeDate.getTime())) return null;
+  const frequencyDays = cycle?.frequencyDays;
+  if (!frequencyDays || frequencyDays <= 0) return null;
+
+  const varianceDays = Math.min(
+    cycle?.dayVariance ?? INTERVAL_TOLERANCE_DAYS,
+    Math.floor(frequencyDays / 2)
+  );
+  const expectedAt = addDays(lastChargeDate, frequencyDays);
+
+  return {
+    expectedAt,
+    from: addDays(expectedAt, -varianceDays),
+    to: addDays(expectedAt, varianceDays),
+    varianceDays,
+  };
+}
+
+/** One charge of a recurrence, as far as its documentation goes. */
+export interface ChargeDocumentation {
+  hasFile: boolean;
+  hasCategory: boolean;
+  /** What this charge's recurrence is expected to produce. Defaults to an invoice. */
+  documentExpectation?: BillingDocumentExpectation;
+}
+
+/** How many of a recurrence's charges carry what they are expected to. */
+export interface ChargeCoverage {
+  charges: number;
+  withFile: number;
+  withCategory: number;
+  missing: number;
+}
+
+/**
+ * Count how many charges carry their expected document.
+ *
+ * The covering rule is the one `list_transactions_needing_files` already
+ * applies — a connected file or a no-receipt category documents the charge —
+ * read through the recurrence's expectation, so a charge that by rule never
+ * produces a document (a bank fee, the SVS instalment) can never read as
+ * missing one. The buckets therefore only partition `charges` when something
+ * is expected: an undocumented "nothing" charge is in none of them.
+ */
+export function summarizeChargeCoverage(charges: ChargeDocumentation[]): ChargeCoverage {
+  let withFile = 0;
+  let withCategory = 0;
+  let missing = 0;
+
+  for (const charge of charges) {
+    if (charge.hasFile) withFile++;
+    else if (charge.hasCategory) withCategory++;
+    else if ((charge.documentExpectation ?? "invoice") !== "nothing") missing++;
+  }
+
+  return { charges: charges.length, withFile, withCategory, missing };
+}
+
+function addDays(date: Date, days: number): Date {
+  return new Date(date.getTime() + days * MS_PER_DAY);
+}
