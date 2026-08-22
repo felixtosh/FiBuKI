@@ -148,6 +148,57 @@ test("applyFileFilters: partnerIds filter", () => {
   assert.deepEqual(rows.map((f) => f.id), ["a"]);
 });
 
+test("applyFileFilters: hasPartner true keeps only files with a partner", () => {
+  const files = [
+    makeFile({ id: "a", partnerId: "p1" }),
+    makeFile({ id: "b", partnerId: undefined }),
+    makeFile({ id: "c", partnerId: "" }),
+  ];
+  const { rows } = applyFileFilters(files, { hasPartner: true });
+  assert.deepEqual(rows.map((f) => f.id), ["a"]);
+});
+
+test("applyFileFilters: hasPartner false keeps only files without a partner", () => {
+  const files = [
+    makeFile({ id: "a", partnerId: "p1" }),
+    makeFile({ id: "b", partnerId: undefined }),
+    makeFile({ id: "c", partnerId: "" }),
+  ];
+  const { rows } = applyFileFilters(files, { hasPartner: false });
+  assert.deepEqual(rows.map((f) => f.id).sort(), ["b", "c"]);
+});
+
+test("applyFileFilters: an unset hasPartner leaves both piles in place", () => {
+  const files = [
+    makeFile({ id: "a", partnerId: "p1" }),
+    makeFile({ id: "b", partnerId: undefined }),
+  ];
+  const { rows } = applyFileFilters(files, {});
+  assert.deepEqual(rows.map((f) => f.id).sort(), ["a", "b"]);
+});
+
+test("applyFileFilters: picked partnerIds win over hasPartner", () => {
+  const files = [
+    makeFile({ id: "a", partnerId: "p1" }),
+    makeFile({ id: "b", partnerId: "p2" }),
+    makeFile({ id: "c", partnerId: undefined }),
+  ];
+  // "no partner" would keep only c, but the named partner is the narrower ask.
+  assert.deepEqual(
+    applyFileFilters(files, { partnerIds: ["p1"], hasPartner: false }).rows.map((f) => f.id),
+    ["a"],
+  );
+  assert.deepEqual(
+    applyFileFilters(files, { partnerIds: ["p1"], hasPartner: true }).rows.map((f) => f.id),
+    ["a"],
+  );
+  // An empty list is not a pick, so the state filter still applies.
+  assert.deepEqual(
+    applyFileFilters(files, { partnerIds: [], hasPartner: false }).rows.map((f) => f.id),
+    ["c"],
+  );
+});
+
 test("applyFileFilters: amountType income/expense maps to invoiceDirection", () => {
   const files = [
     makeFile({ id: "out", invoiceDirection: "outgoing" }),

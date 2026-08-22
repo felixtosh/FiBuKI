@@ -150,6 +150,7 @@ export const FileTable = forwardRef<FilesDataTableHandle, FileTableProps>(
     const totalUnfilteredCount = allFilesCount ?? files.length;
     const hasAnyFilters = searchValue || filters.extractedDateFrom || filters.extractedDateTo ||
       filters.hasConnections !== undefined || filters.amountType || filters.partnerIds?.length ||
+      filters.hasPartner !== undefined ||
       filters.extractionComplete !== undefined || filters.isNotInvoice !== undefined || filters.includeDeleted;
 
     const emptyState = useMemo(() => {

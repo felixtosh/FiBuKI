@@ -51,6 +51,46 @@ test("the hide toggle round-trips alongside the other filters and the search ter
   assert.deepEqual(parseFileFiltersFromUrl(rebuilt), filters);
 });
 
+test("partner=matched / partner=unmatched parse as the state filter and round-trip", () => {
+  const matched = roundTrip("partner=matched");
+  assert.equal(matched.filters.hasPartner, true);
+  assert.equal(matched.query, "partner=matched");
+
+  const unmatched = roundTrip("partner=unmatched");
+  assert.equal(unmatched.filters.hasPartner, false);
+  assert.equal(unmatched.query, "partner=unmatched");
+});
+
+test("a missing partner param means any, and stays out of the URL", () => {
+  const { filters, query } = roundTrip("");
+  assert.equal("hasPartner" in filters, false);
+  assert.equal(query, "");
+});
+
+test("an unrecognised partner value is ignored", () => {
+  const filters = parseFileFiltersFromUrl(new URLSearchParams("partner=true"));
+  assert.equal("hasPartner" in filters, false);
+});
+
+test("the partner state round-trips alongside picked partner ids", () => {
+  const filters = parseFileFiltersFromUrl(new URLSearchParams("partners=p1,p2&partner=unmatched"));
+  const rebuilt = buildFileSearchParams(filters, "");
+  assert.equal(rebuilt.get("partners"), "p1,p2");
+  assert.equal(rebuilt.get("partner"), "unmatched");
+  assert.deepEqual(parseFileFiltersFromUrl(rebuilt), filters);
+});
+
+test("the partner state counts as an active filter and clears with the rest", () => {
+  assert.equal(hasActiveFileFilters({ hasPartner: true }), true);
+  assert.equal(countActiveFileFilters({ hasPartner: true }), 1);
+  assert.equal(hasActiveFileFilters({ hasPartner: false }), true);
+  assert.equal(countActiveFileFilters({ hasPartner: false }), 1);
+
+  const cleared = { ...parseFileFiltersFromUrl(new URLSearchParams("partner=matched")), hasPartner: undefined };
+  assert.equal(hasActiveFileFilters(cleared), false);
+  assert.equal(buildFileSearchParams(cleared, "").toString(), "");
+});
+
 test("date params round-trip as ISO strings", () => {
   const filters = parseFileFiltersFromUrl(
     new URLSearchParams("extractedDateFrom=2026-02-01T00:00:00.000Z&extractedDateTo=2026-03-01T00:00:00.000Z"),

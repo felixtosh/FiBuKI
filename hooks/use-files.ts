@@ -52,6 +52,7 @@ export function useFiles(filters?: FileFilters) {
   const extractedDateFrom = filters?.extractedDateFrom;
   const extractedDateTo = filters?.extractedDateTo;
   const partnerIds = filters?.partnerIds;
+  const hasPartner = filters?.hasPartner;
   const amountType = filters?.amountType;
 
   // Apply filters client-side via useMemo - no loading state change
@@ -66,6 +67,7 @@ export function useFiles(filters?: FileFilters) {
         extractedDateFrom,
         extractedDateTo,
         partnerIds,
+        hasPartner,
         amountType,
       }),
     [
@@ -78,6 +80,7 @@ export function useFiles(filters?: FileFilters) {
       extractedDateFrom,
       extractedDateTo,
       partnerIds,
+      hasPartner,
       amountType,
     ],
   );
