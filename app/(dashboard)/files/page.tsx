@@ -6,7 +6,7 @@ import { useDropzone } from "react-dropzone";
 import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import { FileText, Upload, Loader2 } from "lucide-react";
 import { storage, db } from "@/lib/firebase/config";
-import { createFile, checkFileDuplicate, retryFileExtraction, connectFileToTransaction, OperationsContext } from "@/lib/operations";
+import { createFile, checkFileDuplicate, retryFileExtraction, connectFileToTransaction, assignPartnerToFile, OperationsContext } from "@/lib/operations";
 import { FileTable } from "@/components/files/file-table";
 import { FileDetailPanel } from "@/components/files/file-detail-panel";
 import { FileUploadZone } from "@/components/files/file-upload-zone";
@@ -23,6 +23,7 @@ import { usePartners } from "@/hooks/use-partners";
 import { useGlobalPartners } from "@/hooks/use-global-partners";
 import { useTransactions } from "@/hooks/use-transactions";
 import { TaxFile, FileFilters } from "@/types/file";
+import { PartnerFormData } from "@/types/partner";
 import { parseFileFiltersFromUrl, buildFileSearchParams } from "@/lib/filters/file-url-params";
 import { getNeighbourRowId } from "@/lib/navigation/row-neighbour";
 import { useRowNavigationKeys } from "@/hooks/use-row-navigation-keys";
@@ -46,6 +47,7 @@ import { useAuth, SmartFeatureGuard } from "@/components/auth";
 import { usePageTitle } from "@/hooks/use-page-title";
 import { callFunction } from "@/lib/firebase/callable";
 import { InvoiceDetailPanel } from "@/components/invoicing/InvoiceDetailPanel";
+import { AddPartnerDialog } from "@/components/partners/add-partner-dialog";
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const ACCEPTED_TYPES = {
   "image/jpeg": [".jpg", ".jpeg"],
@@ -161,6 +163,8 @@ function FilesContent() {
   const [additionalSelectedIds, setAdditionalSelectedIds] = useState<Set<string>>(new Set());
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [isBulkUpdating, setIsBulkUpdating] = useState(false);
+  const [isBulkAssigningPartner, setIsBulkAssigningPartner] = useState(false);
+  const [isBulkPartnerPickerOpen, setIsBulkPartnerPickerOpen] = useState(false);
   const [bulkProgress, setBulkProgress] = useState<{ completed: number; total: number } | null>(null);
   const [bulkToast, setBulkToast] = useState<SummaryToastState | null>(null);
 
@@ -939,6 +943,59 @@ function FilesContent() {
     }
   }, [allSelectedIds, unmarkAsNotInvoice, ctx]);
 
+  // Multi-select: bulk assign partner. Iterates the same single-file operation
+  // the detail panel calls, so twenty files end up recorded exactly as twenty
+  // manual assignments would be ("manual", confidence 100) — no new callable,
+  // no bulk-specific write path. A file that already had a different partner is
+  // overwritten, same as a single manual assignment.
+  const handleBulkAssignPartner = useCallback(
+    async (partnerId: string, partnerType: "user" | "global") => {
+      if (allSelectedIds.size === 0) return;
+      const fileIds = Array.from(allSelectedIds);
+
+      setIsBulkAssigningPartner(true);
+      setBulkProgress({ completed: 0, total: fileIds.length });
+      let successCount = 0;
+      let failureCount = 0;
+      try {
+        for (const fileId of fileIds) {
+          try {
+            await assignPartnerToFile(ctx, fileId, partnerId, partnerType, "manual", 100);
+            successCount++;
+          } catch (error) {
+            // Partial failure keeps the files already assigned — no rollback.
+            console.error(`Failed to assign partner to file ${fileId}:`, error);
+            failureCount++;
+          }
+          setBulkProgress((prev) => (prev ? { ...prev, completed: prev.completed + 1 } : prev));
+        }
+        setAdditionalSelectedIds(new Set());
+        setBulkToast({
+          message:
+            failureCount > 0
+              ? `Assigned partner to ${successCount} of ${fileIds.length} files (${failureCount} failed)`
+              : `Assigned partner to ${successCount} file${successCount === 1 ? "" : "s"}`,
+          tone: failureCount > 0 ? "error" : "success",
+        });
+      } finally {
+        setIsBulkAssigningPartner(false);
+        setBulkProgress(null);
+      }
+    },
+    [allSelectedIds, ctx]
+  );
+
+  // Creating a partner from inside the picker assigns it to the selection right
+  // away, the same way the detail panel does it for a single file.
+  const handleBulkCreateAndAssignPartner = useCallback(
+    async (data: PartnerFormData) => {
+      const partnerId = await createPartner(data, { skipAutoMatch: true });
+      await handleBulkAssignPartner(partnerId, "user");
+      return partnerId;
+    },
+    [createPartner, handleBulkAssignPartner]
+  );
+
   if (loading) {
     return <FileTableFallback />;
   }
@@ -1037,12 +1094,14 @@ function FilesContent() {
             bulkActionBar={{
               selectedCount: allSelectedIds.size,
               visible: showBulkActionBar,
+              onAssignPartner: () => setIsBulkPartnerPickerOpen(true),
               onMarkAsNotInvoice: handleBulkMarkAsNotInvoice,
               onMarkAsInvoice: handleBulkMarkAsInvoice,
               onDelete: handleBulkDelete,
               onClearSelection: handleClearSelection,
               isDeleting: isBulkDeleting,
               isUpdating: isBulkUpdating,
+              isAssigningPartner: isBulkAssigningPartner,
               progress: bulkProgress,
             }}
             onUploadClick={() => setIsUploadDialogOpen(true)}
@@ -1177,6 +1236,16 @@ function FilesContent() {
           <div className="fixed inset-0 z-50 cursor-col-resize" />
         )}
       </div>
+      {/* Bulk "Assign partner": the same picker the detail panel opens, minus
+          the per-file suggestions (a selection has no single extracted partner). */}
+      <AddPartnerDialog
+        open={isBulkPartnerPickerOpen}
+        onClose={() => setIsBulkPartnerPickerOpen(false)}
+        onAdd={handleBulkCreateAndAssignPartner}
+        onSelectPartner={handleBulkAssignPartner}
+        userPartners={userPartners}
+        globalPartners={globalPartners}
+      />
       <SummaryToast toast={bulkToast} />
     </TooltipProvider>
   );

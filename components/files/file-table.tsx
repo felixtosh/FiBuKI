@@ -54,12 +54,14 @@ interface FileTableProps {
   bulkActionBar?: {
     selectedCount: number;
     visible: boolean;
+    onAssignPartner: () => void;
     onMarkAsNotInvoice: () => void;
     onMarkAsInvoice: () => void;
     onDelete: () => void;
     onClearSelection: () => void;
     isDeleting?: boolean;
     isUpdating?: boolean;
+    isAssigningPartner?: boolean;
     progress?: { completed: number; total: number } | null;
   };
   /** Callback to trigger file upload dialog */
@@ -225,12 +227,14 @@ export const FileTable = forwardRef<FilesDataTableHandle, FileTableProps>(
           {bulkActionBar?.visible && (
             <FileBulkActionBar
               selectedCount={bulkActionBar.selectedCount}
+              onAssignPartner={bulkActionBar.onAssignPartner}
               onMarkAsNotInvoice={bulkActionBar.onMarkAsNotInvoice}
               onMarkAsInvoice={bulkActionBar.onMarkAsInvoice}
               onDelete={bulkActionBar.onDelete}
               onClearSelection={bulkActionBar.onClearSelection}
               isDeleting={bulkActionBar.isDeleting}
               isUpdating={bulkActionBar.isUpdating}
+              isAssigningPartner={bulkActionBar.isAssigningPartner}
               progress={bulkActionBar.progress}
             />
           )}
