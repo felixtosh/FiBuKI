@@ -80,6 +80,39 @@ function parseCSVLine(line: string): string[] {
 }
 
 /**
+ * Rebuild Firestore Timestamps nested inside a JSON-encoded column.
+ *
+ * `csvValue` only maps a *top-level* Timestamp to ISO; one sitting inside an
+ * object is JSON-encoded as the admin SDK's private `{_seconds,_nanoseconds}`
+ * shape. Left as a plain object it is not a Timestamp any more, so
+ * `billingCycle.learned[].learnedAt` would read as "never learned" everywhere
+ * downstream (`toIsoInstant` in the MCP handlers returns null for it).
+ *
+ * Duck-typed on exactly the two fields, as `dump-format.ts` does, so a
+ * business object that merely carries a numeric `_seconds` is left alone.
+ */
+function reviveTimestamps(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(reviveTimestamps);
+  if (value === null || typeof value !== "object") return value;
+
+  const obj = value as Record<string, unknown>;
+  const keys = Object.keys(obj);
+  if (
+    keys.length === 2 &&
+    typeof obj._seconds === "number" &&
+    typeof obj._nanoseconds === "number"
+  ) {
+    return new Timestamp(obj._seconds, obj._nanoseconds);
+  }
+
+  const revived: Record<string, unknown> = {};
+  for (const [key, nested] of Object.entries(obj)) {
+    revived[key] = reviveTimestamps(nested);
+  }
+  return revived;
+}
+
+/**
  * Parse a string value into its appropriate type
  */
 function parseValue(value: string, header: string): unknown {
@@ -135,6 +168,7 @@ function parseValue(value: string, header: string): unknown {
     header === "fileSourcePatterns" ||
     header === "manualRemovals" ||
     header === "emailDomains" ||
+    header === "billingCycle" ||
     header === "matchSources" ||
     header === "extractedIssuer" ||
     header === "extractedRecipient" ||
@@ -142,7 +176,10 @@ function parseValue(value: string, header: string): unknown {
     header === "_original_rawRow"
   ) {
     try {
-      return JSON.parse(value);
+      const parsed = JSON.parse(value);
+      // Only billingCycle: the older JSON columns have always imported their
+      // nested Timestamps as plain objects, and changing that is its own job.
+      return header === "billingCycle" ? reviveTimestamps(parsed) : parsed;
     } catch {
       return value;
     }
