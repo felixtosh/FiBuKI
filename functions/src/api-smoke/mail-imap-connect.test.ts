@@ -11,50 +11,27 @@
  * a regression.
  *
  * Runs under the api-smoke profile ONLY (needs root node_modules for
- * next/imapflow). The verify login is stubbed at the imapflow seam: no socket
- * is opened, the route's own catch/classify branch is what runs.
+ * next/imapflow); the db and identity wiring is ./route-harness. The verify
+ * login is stubbed at the imapflow seam: no socket is opened, the route's own
+ * catch/classify branch is what runs.
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { NextRequest } from "next/server";
-import { FakeFirestore } from "./fake-firestore";
+import { setupRouteHarness } from "./route-harness";
 
-// The route captures `getAdminDb()` at MODULE load, so the db and the error the
-// stubbed IMAP client throws both live in hoisted boxes the mock factories read.
-const h = vi.hoisted(() => {
-  const box: { db: unknown; connectError: unknown } = {
-    db: undefined,
-    connectError: undefined,
-  };
-  return { box };
-});
+const { store, authed } = setupRouteHarness();
 
-vi.mock("@/lib/firebase/admin", () => ({
-  getAdminDb: () => h.box.db,
-  getAdminApp: () => ({}),
-  getAdminStorage: () => ({}),
-  getAdminBucket: () => ({}),
-}));
+/** What the stubbed client throws on connect(); undefined means it succeeds. */
+const imap: { connectError: unknown } = { connectError: undefined };
 
-// Identity from the Bearer token (same seam stub as route-owner-scoping).
-vi.mock("@/lib/auth/get-server-user", async (importActual) => {
-  const actual = await importActual<typeof import("@/lib/auth/get-server-user")>();
-  return {
-    ...actual,
-    getServerUserIdWithFallback: async (request: Request): Promise<string> => {
-      const header = request.headers.get("Authorization");
-      if (!header?.startsWith("Bearer ")) throw new actual.UnauthorizedError();
-      return header.substring(7);
-    },
-  };
-});
-
-// A client whose connect() throws whatever the test staged, and succeeds when
-// nothing is staged.
+// The factory only runs when the ROUTE imports imapflow, which happens inside a
+// test body — long after `imap` above is initialised — so this needs no hoisted
+// box of its own.
 vi.mock("imapflow", () => ({
   ImapFlow: class {
     async connect(): Promise<void> {
-      if (h.box.connectError) throw h.box.connectError;
+      if (imap.connectError) throw imap.connectError;
     }
     async getMailboxLock(): Promise<{ release: () => void }> {
       return { release: () => {} };
@@ -64,32 +41,24 @@ vi.mock("imapflow", () => ({
   },
 }));
 
-const store = new FakeFirestore();
-h.box.db = store;
-
 beforeEach(() => {
-  store.reset();
-  h.box.connectError = undefined;
+  imap.connectError = undefined;
 });
 
 /** POST the connect body as an authenticated user. */
 function connectRequest(): NextRequest {
-  return new NextRequest("http://test.local/api/mail/imap/connect", {
-    method: "POST",
-    headers: { "content-type": "application/json", Authorization: "Bearer user-A" },
-    body: JSON.stringify({
-      host: "mail.example.test",
-      user: "someone@example.test",
-      password: "app-password",
-      mailbox: "INBOX",
-    }),
+  return authed("user-A", "http://test.local/api/mail/imap/connect", "POST", {
+    host: "mail.example.test",
+    user: "someone@example.test",
+    password: "app-password",
+    mailbox: "INBOX",
   });
 }
 
 async function connectWith(
   error: unknown
 ): Promise<{ status: number; code?: string; err?: string }> {
-  h.box.connectError = error;
+  imap.connectError = error;
   const { POST } = await import("@/app/api/mail/imap/connect/route");
   const res = await POST(connectRequest());
   const body = (await res.json()) as { code?: string; error?: string };

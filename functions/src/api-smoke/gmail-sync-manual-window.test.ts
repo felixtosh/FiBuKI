@@ -13,54 +13,22 @@
  *      job they never initiated. It now reads `lastManualSyncAt`, written by
  *      the route at enqueue time.
  *
- * Same harness as route-owner-scoping.test.ts: the REAL Next handler over an
- * in-memory Firestore, so this needs the ROOT dependency tree and runs in the
- * "App API routes (auth smoke)" CI job, not locally.
+ * Same harness as route-owner-scoping.test.ts (./route-harness): the REAL Next
+ * handler over an in-memory Firestore, so this needs the ROOT dependency tree
+ * and runs in the "App API routes (auth smoke)" CI job, not locally.
  */
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import { NextRequest } from "next/server";
-import { FakeFirestore, FakeDocRef } from "./fake-firestore";
+import { describe, it, expect, vi } from "vitest";
+import { FakeDocRef } from "./fake-firestore";
+import { setupRouteHarness } from "./route-harness";
 import { MANUAL_SYNC_WINDOW_DAYS } from "../mail/constants";
-
-// The sync route binds `getAdminDb()` once at module import, so every test must
-// see the SAME instance. Held in a hoisted box the vi.mock factory can reach.
-const h = vi.hoisted(() => {
-  const box: { db: unknown } = { db: undefined };
-  return { box, getDb: () => box.db };
-});
-
-vi.mock("@/lib/firebase/admin", () => ({
-  getAdminDb: () => h.getDb(),
-  getAdminApp: () => ({}),
-  getAdminStorage: () => ({}),
-  getAdminBucket: () => ({}),
-}));
-
-// The bearer token IS the uid; a missing/non-Bearer header still 401s.
-vi.mock("@/lib/auth/get-server-user", async (importActual) => {
-  const actual = await importActual<typeof import("@/lib/auth/get-server-user")>();
-  return {
-    ...actual,
-    getServerUserIdWithFallback: async (request: Request): Promise<string> => {
-      const header = request.headers.get("Authorization");
-      if (!header?.startsWith("Bearer ")) throw new actual.UnauthorizedError();
-      return header.substring(7);
-    },
-  };
-});
 
 const USER = "user-A";
 const INTEGRATION = "int-1";
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WINDOW_MS = MANUAL_SYNC_WINDOW_DAYS * DAY_MS;
 
-const store = new FakeFirestore();
-h.box.db = store;
-
-beforeEach(() => {
-  store.reset();
-});
+const { store, authed } = setupRouteHarness();
 
 /**
  * A Firestore-Timestamp-shaped value. The route reads these through
@@ -74,16 +42,7 @@ function ts(date: Date) {
 
 async function callSync(body: unknown) {
   const { POST } = await import("@/app/api/gmail/sync/route");
-  return POST(
-    new NextRequest("http://test.local/api/gmail/sync", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        Authorization: `Bearer ${USER}`,
-      },
-      body: JSON.stringify(body),
-    })
-  );
+  return POST(authed(USER, "http://test.local/api/gmail/sync", "POST", body));
 }
 
 interface Fixture {
