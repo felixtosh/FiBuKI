@@ -6,7 +6,7 @@
  * there; this file is Firestore I/O only.
  */
 
-import { getFirestore, Timestamp } from "firebase-admin/firestore";
+import { Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import {
   deriveLearnedCycles,
@@ -17,7 +17,11 @@ import {
 import { rescoreFileConnectionsForPartner } from "./rescoreFileConnections";
 import { derivePartnerAliases, deriveScoringWeights } from "./transactionScoring";
 
-const db = getFirestore();
+/** Charges a partner needs before any cycle can be derived. */
+export const MIN_BILLING_CYCLE_TRANSACTIONS = 3;
+
+/** Newest charges considered per partner. */
+const MAX_TRANSACTIONS = 100;
 
 interface LearnBillingCycleRequest {
   partnerId: string;
@@ -26,6 +30,115 @@ interface LearnBillingCycleRequest {
 interface LearnBillingCycleResponse {
   success: boolean;
   billingCycle: DerivedBillingCycle | null;
+}
+
+/**
+ * Learn one partner's billing cycle and persist it.
+ *
+ * Shared by the callable below and by both auto-learn triggers — the
+ * post-file-connect learn and the nightly schedule
+ * (yazzbert/FiBuKI-selfhost#166) — so every path writes the same shape
+ * through the same dotted-path update. History only: no AI call anywhere
+ * below, the derivation is arithmetic over dates and amounts.
+ *
+ * Verifies ownership itself and returns null for an unknown or foreign
+ * partner, the same way learnPatternsForPartnersBatch skips one, so an
+ * auto-learn caller cannot leak a cycle across tenants by passing an id it
+ * has not checked.
+ *
+ * Returns the most confident learned band, or null when the history yields
+ * no cycle.
+ */
+export async function learnBillingCycleForPartner(
+  db: FirebaseFirestore.Firestore,
+  userId: string,
+  partnerId: string
+): Promise<DerivedBillingCycle | null> {
+  const partnerRef = db.collection("partners").doc(partnerId);
+  const partnerSnap = await partnerRef.get();
+  if (!partnerSnap.exists || partnerSnap.data()!.userId !== userId) {
+    console.log(`[BillingCycle] Partner ${partnerId} not found for user ${userId}, skipping`);
+    return null;
+  }
+  const partnerData = partnerSnap.data()!;
+
+  // Query transactions for this partner, ordered by date. partnerId only —
+  // never bankPartnerId, which reflects the bank's descriptor rather than
+  // the resolved supplier and would pollute the learned cycle.
+  const txSnapshot = await db
+    .collection("transactions")
+    .where("userId", "==", userId)
+    .where("partnerId", "==", partnerId)
+    .orderBy("date", "asc")
+    .limit(MAX_TRANSACTIONS)
+    .get();
+
+  if (txSnapshot.size < MIN_BILLING_CYCLE_TRANSACTIONS) {
+    console.log(`[BillingCycle] Not enough transactions for partner ${partnerId}: ${txSnapshot.size}`);
+    return null;
+  }
+
+  const invoiceDates = await getInvoiceDates(db, userId, partnerId, txSnapshot.docs);
+  const transactions: BillingCycleTransaction[] = txSnapshot.docs.map((doc) => {
+    const data = doc.data();
+    return {
+      date: data.date.toDate(),
+      amount: data.amount,
+      invoiceDates: invoiceDates.get(doc.id),
+    };
+  });
+
+  const learned = deriveLearnedCycles(transactions);
+  if (learned.length === 0) {
+    console.log(`[BillingCycle] No consistent cycle found for partner ${partnerId}`);
+    return null;
+  }
+
+  const existingDeclared = partnerData.billingCycle?.declared;
+  const learnedAt = Timestamp.now();
+  const learnedWithTimestamp = learned.map((cycle) => ({ ...cycle, learnedAt }));
+  const effective = resolveEffectiveCycles(learned, existingDeclared);
+
+  // Declared halves are never touched here — they're set/cleared through
+  // set_partner_billing_cycle (yazzbert/FiBuKI-selfhost#167), and must
+  // survive a re-learn.
+  await partnerRef.update({
+    "billingCycle.learned": learnedWithTimestamp,
+    "billingCycle.effective": effective,
+    updatedAt: learnedAt,
+  });
+
+  console.log(
+    `[BillingCycle] Partner ${partnerId}: ${learned.length} band(s) learned, ` +
+    `sample=${txSnapshot.size}`
+  );
+
+  // Re-score already-connected files now that the cycle changed, so a
+  // same-amount recurring document that was mis-attached to the wrong
+  // charge (yazzbert/FiBuKI-selfhost#168) ranks correctly without
+  // disturbing which files are actually connected. Awaited (not
+  // fire-and-forget): callers expect the re-score to have already happened
+  // by the time this returns. Wrapped in try/catch, not left to propagate:
+  // the billing-cycle write above has already committed, so a re-score
+  // failure (e.g. a connection deleted by a concurrent session between the
+  // query and the write) must not turn a successful learn into a failure.
+  try {
+    await rescoreFileConnectionsForPartner(
+      db,
+      userId,
+      partnerId,
+      txSnapshot.docs,
+      effective,
+      deriveScoringWeights(partnerData),
+      derivePartnerAliases(partnerData)
+    );
+  } catch (error) {
+    console.warn(`[BillingCycle] Re-score failed for partner ${partnerId}:`, error);
+  }
+
+  // Today's callers (worker chat, agent tools) expect one flat cycle back.
+  // With more than one band, surface the most confident one.
+  return [...learned].sort((a, b) => b.frequencyConfidence - a.frequencyConfidence)[0];
 }
 
 export const learnBillingCycleCallable = createCallable<
@@ -40,95 +153,16 @@ export const learnBillingCycleCallable = createCallable<
       throw new HttpsError("invalid-argument", "partnerId is required");
     }
 
-    // Verify partner ownership
-    const partnerRef = ctx.db.collection("partners").doc(partnerId);
-    const partnerSnap = await partnerRef.get();
+    // Verify partner ownership. learnBillingCycleForPartner re-checks it (its
+    // auto-learn callers have no ownership check of their own), but only this
+    // path can tell the caller apart from "learned nothing".
+    const partnerSnap = await ctx.db.collection("partners").doc(partnerId).get();
     if (!partnerSnap.exists || partnerSnap.data()!.userId !== ctx.userId) {
       throw new HttpsError("not-found", "Partner not found");
     }
-    const partnerData = partnerSnap.data()!;
 
-    // Query transactions for this partner, ordered by date. partnerId only —
-    // never bankPartnerId, which reflects the bank's descriptor rather than
-    // the resolved supplier and would pollute the learned cycle.
-    const txSnapshot = await ctx.db
-      .collection("transactions")
-      .where("userId", "==", ctx.userId)
-      .where("partnerId", "==", partnerId)
-      .orderBy("date", "asc")
-      .limit(100)
-      .get();
-
-    if (txSnapshot.size < 3) {
-      console.log(`[BillingCycle] Not enough transactions for partner ${partnerId}: ${txSnapshot.size}`);
-      return { success: true, billingCycle: null };
-    }
-
-    const invoiceDates = await getInvoiceDates(ctx.userId, partnerId, txSnapshot.docs);
-    const transactions: BillingCycleTransaction[] = txSnapshot.docs.map((doc) => {
-      const data = doc.data();
-      return {
-        date: data.date.toDate(),
-        amount: data.amount,
-        invoiceDates: invoiceDates.get(doc.id),
-      };
-    });
-
-    const learned = deriveLearnedCycles(transactions);
-    if (learned.length === 0) {
-      console.log(`[BillingCycle] No consistent cycle found for partner ${partnerId}`);
-      return { success: true, billingCycle: null };
-    }
-
-    const existingDeclared = partnerData.billingCycle?.declared;
-    const learnedAt = Timestamp.now();
-    const learnedWithTimestamp = learned.map((cycle) => ({ ...cycle, learnedAt }));
-    const effective = resolveEffectiveCycles(learned, existingDeclared);
-
-    // Declared halves are never touched here — they're set/cleared through
-    // set_partner_billing_cycle (yazzbert/FiBuKI-selfhost#167), and must
-    // survive a re-learn.
-    await partnerRef.update({
-      "billingCycle.learned": learnedWithTimestamp,
-      "billingCycle.effective": effective,
-      updatedAt: learnedAt,
-    });
-
-    console.log(
-      `[BillingCycle] Partner ${partnerId}: ${learned.length} band(s) learned, ` +
-      `sample=${txSnapshot.size}`
-    );
-
-    // Re-score already-connected files now that the cycle changed, so a
-    // same-amount recurring document that was mis-attached to the wrong
-    // charge (yazzbert/FiBuKI-selfhost#168) ranks correctly without
-    // disturbing which files are actually connected. Awaited (not
-    // fire-and-forget): callers of this callable expect the re-score to have
-    // already happened by the time it returns. Wrapped in try/catch, not
-    // left to propagate: the billing-cycle write above has already
-    // committed, so a re-score failure (e.g. a connection deleted by a
-    // concurrent session between the query and the write) must not turn a
-    // successful learn into a failed callable call.
-    try {
-      await rescoreFileConnectionsForPartner(
-        ctx.db,
-        ctx.userId,
-        partnerId,
-        txSnapshot.docs,
-        effective,
-        deriveScoringWeights(partnerData),
-        derivePartnerAliases(partnerData)
-      );
-    } catch (error) {
-      console.warn(`[BillingCycle] Re-score failed for partner ${partnerId}:`, error);
-    }
-
-    // Today's callers (worker chat, agent tools) expect one flat cycle back.
-    // With more than one band, surface the most confident one.
-    const mostConfident = [...learned].sort(
-      (a, b) => b.frequencyConfidence - a.frequencyConfidence
-    )[0];
-    return { success: true, billingCycle: mostConfident };
+    const billingCycle = await learnBillingCycleForPartner(ctx.db, ctx.userId, partnerId);
+    return { success: true, billingCycle };
   }
 );
 
@@ -138,6 +172,7 @@ export const learnBillingCycleCallable = createCallable<
  * more than one file contributes one date per file.
  */
 async function getInvoiceDates(
+  db: FirebaseFirestore.Firestore,
   userId: string,
   partnerId: string,
   txDocs: FirebaseFirestore.QueryDocumentSnapshot[]

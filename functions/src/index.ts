@@ -11,6 +11,7 @@ export { learnPartnerPatterns } from "./matching/learnPartnerPatterns";
 export { learnPartnerCategoryPatterns } from "./matching/learnPartnerCategoryPatterns";
 export { searchExternalPartners } from "./matching/searchExternalPartners";
 export { learnBillingCycleCallable as learnBillingCycle } from "./matching/learnBillingCycle";
+export { scheduledLearnBillingCycles } from "./matching/scheduledBillingCycleLearn";
 export { learnScoringWeightsCallable as learnScoringWeights } from "./matching/learnScoringWeights";
 
 // Export analytics functions

@@ -10,6 +10,7 @@ import {
   cancelPrecisionSearchForTransaction,
 } from "../utils/cancelWorkers";
 import { deriveActivityLevel } from "../utils/activityLevel";
+import { learnBillingCycleForPartner } from "../matching/learnBillingCycle";
 
 interface FileConnectionSourceInfo {
   sourceType?: string;
@@ -503,6 +504,23 @@ export const connectFileToTransactionCallable = createCallable<
       } catch (learnErr) {
         // Don't fail the connection if pattern learning fails
         console.error(`[connectFileToTransaction] Failed to learn source patterns:`, learnErr);
+      }
+    }
+
+    // === LEARN BILLING CYCLE ON PARTNER ===
+    // yazzbert/FiBuKI-selfhost#166: a connect is the moment the partner's
+    // history changed in the way the cycle is derived from — the document
+    // just attached carries the invoice date the invoice-to-transaction
+    // delay is computed from. So re-learn that one partner, history only,
+    // no AI call. Awaited so the re-score it performs has landed before the
+    // caller reads the connection back, and swallowed on failure for the
+    // same reason as the pattern learning above: the connection is already
+    // committed and must not be reported as failed.
+    if (finalPartnerId) {
+      try {
+        await learnBillingCycleForPartner(ctx.db, ctx.userId, finalPartnerId);
+      } catch (cycleErr) {
+        console.error(`[connectFileToTransaction] Failed to learn billing cycle:`, cycleErr);
       }
     }
 
