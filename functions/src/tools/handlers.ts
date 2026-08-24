@@ -34,6 +34,8 @@ import type { ToolName } from "./definitions";
 import { readBankOriginalAmount } from "../fx/bankOriginalAmount";
 import {
   CADENCE_DAYS,
+  CHARGE_SCAN_LIMIT,
+  DEFAULT_COVERAGE_MONTHS,
   nextExpectedCharge,
   resolveEffectiveCycles,
   selectEffectiveCycleForAmount,
@@ -1148,16 +1150,6 @@ export async function createPartner(userId: string, args: Record<string, unknown
 // ============================================================================
 // Partner billing cycle (#167)
 // ============================================================================
-
-/** How far back a partner's charges are read when nothing else is asked for. */
-const DEFAULT_COVERAGE_MONTHS = 13;
-
-/**
- * Charges read per partner in `list_recurring_partners`, newest first.
- * Four years of a weekly recurrence — past that, coverage counts are bounded
- * by this rather than by the date range.
- */
-const CHARGE_SCAN_LIMIT = 200;
 
 const DOCUMENT_EXPECTATIONS: BillingDocumentExpectation[] = [
   "invoice",

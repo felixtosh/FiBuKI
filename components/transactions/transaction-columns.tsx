@@ -19,6 +19,10 @@ import { readBankOriginalAmount } from "@/functions/src/fx/bankOriginalAmount";
 import { SortableHeader } from "@/components/ui/data-table";
 import { PartnerPill } from "@/components/partners/partner-pill";
 import {
+  findMissingChargeCycle,
+  RecurringChargeMarker,
+} from "./recurring-charge-marker";
+import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
@@ -201,6 +205,15 @@ export function getTransactionColumns(
         const txId = row.original.id;
         const isSearching = searchingTransactionIds?.has(txId);
 
+        // A charge of a recurring partner that is missing what its recurrence
+        // expects. Computed here rather than in each branch below because the
+        // marker outlives a pending suggestion: a suggestion is a proposal to
+        // cover the charge, not the cover itself.
+        const missingBand = findMissingChargeCycle(
+          row.original,
+          row.original.partnerId ? userPartnerMap.get(row.original.partnerId) : undefined
+        );
+
         // Show loading spinner when precision search is in progress
         if (isSearching && !hasFile) {
           return (
@@ -263,22 +276,29 @@ export function getTransactionColumns(
           const category = categoryMap.get(catSuggestion.categoryId);
           const label = category?.name || "Category";
           return (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <div>
-                  <Pill
-                    label={label}
-                    icon={Tag}
-                    variant="suggestion"
-                    confidence={catSuggestion.confidence}
-                  />
-                </div>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p className="text-xs">Click row to assign</p>
-              </TooltipContent>
-            </Tooltip>
+            <div className="flex items-center gap-1.5 min-w-0">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div>
+                    <Pill
+                      label={label}
+                      icon={Tag}
+                      variant="suggestion"
+                      confidence={catSuggestion.confidence}
+                    />
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="text-xs">Click row to assign</p>
+                </TooltipContent>
+              </Tooltip>
+              {missingBand && <RecurringChargeMarker band={missingBand} />}
+            </div>
           );
+        }
+
+        if (missingBand) {
+          return <RecurringChargeMarker band={missingBand} />;
         }
 
         return (

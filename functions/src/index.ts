@@ -187,6 +187,7 @@ export {
   deleteUserPartnerCallable as deleteUserPartner,
   assignPartnerToTransactionCallable as assignPartnerToTransaction,
   removePartnerFromTransactionCallable as removePartnerFromTransaction,
+  setPartnerBillingCycleCallable as setPartnerBillingCycle,
 } from "./partners";
 
 // Source operations

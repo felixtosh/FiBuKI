@@ -14,7 +14,9 @@ import {
   selectEffectiveCycleForAmount,
   nextExpectedCharge,
   summarizeChargeCoverage,
+  isChargeMissingDocument,
   type BillingCycleTransaction,
+  type ChargeDocumentation,
 } from "../billingCycle";
 
 // ============================================================================
@@ -437,5 +439,50 @@ describe("summarizeChargeCoverage", () => {
         { hasFile: false, hasCategory: false, documentExpectation: "no-receipt-category" },
       ])
     ).toEqual({ charges: 2, withFile: 0, withCategory: 0, missing: 1 });
+  });
+});
+
+// ============================================================================
+// isChargeMissingDocument
+// ============================================================================
+
+describe("isChargeMissingDocument", () => {
+  // The transactions list marks a single row with this while the coverage
+  // counts fold it over a whole recurrence; the two must agree row for row.
+  it("agrees with the coverage counts, charge for charge", () => {
+    const charges: ChargeDocumentation[] = [
+      { hasFile: true, hasCategory: false },
+      { hasFile: false, hasCategory: true },
+      { hasFile: false, hasCategory: false },
+      { hasFile: false, hasCategory: false, documentExpectation: "nothing" },
+      { hasFile: false, hasCategory: false, documentExpectation: "no-receipt-category" },
+    ];
+
+    expect(charges.filter(isChargeMissingDocument).length).toBe(
+      summarizeChargeCoverage(charges).missing
+    );
+  });
+
+  it("marks an undocumented charge of a recurrence that expects a document", () => {
+    expect(isChargeMissingDocument({ hasFile: false, hasCategory: false })).toBe(true);
+    expect(
+      isChargeMissingDocument({
+        hasFile: false,
+        hasCategory: false,
+        documentExpectation: "no-receipt-category",
+      })
+    ).toBe(true);
+  });
+
+  it("never marks a charge that is documented, or one that expects nothing", () => {
+    expect(isChargeMissingDocument({ hasFile: true, hasCategory: false })).toBe(false);
+    expect(isChargeMissingDocument({ hasFile: false, hasCategory: true })).toBe(false);
+    expect(
+      isChargeMissingDocument({
+        hasFile: false,
+        hasCategory: false,
+        documentExpectation: "nothing",
+      })
+    ).toBe(false);
   });
 });

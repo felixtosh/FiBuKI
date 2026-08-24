@@ -44,6 +44,7 @@ export type CloudFunctionName =
   | "deleteUserPartner"
   | "assignPartnerToTransaction"
   | "removePartnerFromTransaction"
+  | "setPartnerBillingCycle"
   // Source operations
   | "createSource"
   | "updateSource"

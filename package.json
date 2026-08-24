@@ -15,6 +15,8 @@
     "test:chat-url": "node --test tests/chat-url-state.test.mjs",
     "test:file-filters": "node --test tests/apply-file-filters.test.mjs",
     "test:bulk-file-selection": "node --test tests/bulk-file-selection.test.mjs",
+    "test:partner-url-params": "node --test tests/partner-url-params.test.mjs",
+    "test:billing-cycle": "node --test tests/billing-cycle-presentation.test.mjs",
     "setup": "bash scripts/setup.sh",
     "generate:mcp-automations": "node scripts/generate-mcp-automations.js",
     "generate:tool-definitions": "node scripts/generate-tool-definitions.js"

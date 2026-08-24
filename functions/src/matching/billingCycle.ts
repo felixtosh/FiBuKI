@@ -482,6 +482,18 @@ export function nextExpectedCharge(
   };
 }
 
+/**
+ * How far back a partner's charges are read when nothing else is asked for.
+ * Wide enough that a yearly charge is seen once.
+ */
+export const DEFAULT_COVERAGE_MONTHS = 13;
+
+/**
+ * Charges read per partner, newest first. Four years of a weekly recurrence —
+ * past that, coverage counts are bounded by this rather than by the date range.
+ */
+export const CHARGE_SCAN_LIMIT = 200;
+
 /** One charge of a recurrence, as far as its documentation goes. */
 export interface ChargeDocumentation {
   hasFile: boolean;
@@ -499,14 +511,26 @@ export interface ChargeCoverage {
 }
 
 /**
- * Count how many charges carry their expected document.
+ * Whether one charge is missing what its recurrence expects.
  *
  * The covering rule is the one `list_transactions_needing_files` already
  * applies — a connected file or a no-receipt category documents the charge —
  * read through the recurrence's expectation, so a charge that by rule never
  * produces a document (a bank fee, the SVS instalment) can never read as
- * missing one. The buckets therefore only partition `charges` when something
- * is expected: an undocumented "nothing" charge is in none of them.
+ * missing one. It lives here rather than at either call site because the
+ * transactions list marks a single row with it while the coverage counts
+ * fold it over a whole recurrence, and the two must not disagree.
+ */
+export function isChargeMissingDocument(charge: ChargeDocumentation): boolean {
+  if (charge.hasFile || charge.hasCategory) return false;
+  return (charge.documentExpectation ?? "invoice") !== "nothing";
+}
+
+/**
+ * Count how many charges carry their expected document.
+ *
+ * The buckets only partition `charges` when something is expected: an
+ * undocumented "nothing" charge is in none of them.
  */
 export function summarizeChargeCoverage(charges: ChargeDocumentation[]): ChargeCoverage {
   let withFile = 0;
@@ -516,7 +540,7 @@ export function summarizeChargeCoverage(charges: ChargeDocumentation[]): ChargeC
   for (const charge of charges) {
     if (charge.hasFile) withFile++;
     else if (charge.hasCategory) withCategory++;
-    else if ((charge.documentExpectation ?? "invoice") !== "nothing") missing++;
+    else if (isChargeMissingDocument(charge)) missing++;
   }
 
   return { charges: charges.length, withFile, withCategory, missing };

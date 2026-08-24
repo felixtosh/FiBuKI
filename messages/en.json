@@ -204,5 +204,84 @@
     "german": "Deutsch",
     "english": "English",
     "back": "Back"
+  },
+  "billingCycle": {
+    "title": "Billing Cycle",
+    "none": "This partner does not bill on a schedule.",
+    "declare": "Declare cycle",
+    "edit": "Edit declaration",
+    "noCharge": "No charge seen yet",
+    "confidence": "{confidence}% confidence",
+    "typicalDayValue": "{day}. of the month",
+    "coverageEmpty": "No charge in the last {months} months",
+    "coverageCounts": "{withFile} with a document, {withCategory} categorised, {missing} missing of {charges}",
+    "source": {
+      "declared": "Declared",
+      "learned": "Learned"
+    },
+    "cadence": {
+      "weekly": "Weekly",
+      "monthly": "Monthly",
+      "quarterly": "Quarterly",
+      "yearly": "Yearly",
+      "custom": "Every {days} days",
+      "unknown": "Unknown frequency"
+    },
+    "expectation": {
+      "invoice": "Invoice expected",
+      "no-receipt-category": "Category expected",
+      "nothing": "No document expected"
+    },
+    "fields": {
+      "typicalDay": "Typical day",
+      "expectedAmount": "Expected",
+      "lastCharge": "Last charge",
+      "nextExpected": "Next expected",
+      "coverage": "Documents"
+    },
+    "window": {
+      "upcoming": "Upcoming",
+      "due": "Due",
+      "overdue": "Overdue",
+      "unknown": "Not enough history"
+    },
+    "coverageState": {
+      "complete": "Complete",
+      "partial": "Incomplete",
+      "none": "Nothing filed",
+      "empty": "No charges"
+    },
+    "filter": {
+      "label": "Recurring",
+      "all": "All partners",
+      "recurring": "Recurring",
+      "notRecurring": "Not recurring"
+    },
+    "marker": {
+      "label": "Document missing",
+      "tooltip": "{cadence} charge of a recurring partner — the expected document is not there yet."
+    },
+    "dialog": {
+      "title": "Declared billing cycle",
+      "description": "What you know about this partner's schedule. A declaration wins over what Fibuki learned; the learned cycle stays visible beside it.",
+      "recurrence": "Recurrence {index}",
+      "cadence": "Cadence",
+      "customCadence": "Every N days",
+      "frequencyDays": "Days",
+      "amountMin": "Amount from",
+      "amountMax": "Amount to",
+      "currency": "Currency",
+      "expectation": "Expected per charge",
+      "addRecurrence": "Add recurrence",
+      "clear": "Clear declaration",
+      "cancel": "Cancel",
+      "save": "Save"
+    },
+    "errors": {
+      "frequency": "Give a positive number of days.",
+      "amount": "An expected amount must be a number, e.g. 38,25.",
+      "amountOrder": "The lower amount must not exceed the upper one.",
+      "bandRequired": "With more than one recurrence, each needs its own expected amount range."
+    }
   }
 }

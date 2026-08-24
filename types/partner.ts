@@ -569,6 +569,8 @@ export interface PartnerFilters {
   country?: string;
   /** Filter by IBAN presence */
   hasIban?: boolean;
+  /** Filter by whether the partner bills on a schedule (an effective cycle) */
+  isRecurring?: boolean;
 }
 
 /**
