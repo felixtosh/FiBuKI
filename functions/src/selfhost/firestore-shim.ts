@@ -315,14 +315,70 @@ function decodeValue(v: unknown): unknown {
 // Sentinel (FieldValue transform) application
 // ---------------------------------------------------------------------------
 
+/**
+ * `FieldValue.<method>` -> sentinel kind.
+ *
+ * `methodName` is the SDK's own discriminator: a prototype getter returning a
+ * string LITERAL, so it survives both minification and a second copy of
+ * @google-cloud/firestore in the tree.
+ */
+const SENTINEL_KIND_BY_METHOD: Record<string, string> = {
+  "FieldValue.serverTimestamp": "serverTimestamp",
+  "FieldValue.arrayUnion": "arrayUnion",
+  "FieldValue.arrayRemove": "arrayRemove",
+  "FieldValue.increment": "increment",
+  "FieldValue.delete": "delete",
+};
+
+/**
+ * Which FieldValue sentinel this is, or null for an ordinary value.
+ *
+ * Class names are NOT usable for this, which is what the first version of this
+ * function got wrong. `next build` minifies the app's server bundle, and
+ * @google-cloud/firestore is bundled into it (not in serverExternalPackages),
+ * so in the fibuki-web container `FieldValue.serverTimestamp().constructor.name`
+ * is "u" and NumericIncrementTransform is "c". The api container runs unbundled
+ * via vite-node and the test profile runs under vitest, so name matching worked
+ * everywhere it was exercised and failed only in production web.
+ *
+ * The failure was silent data corruption rather than an error: an unrecognised
+ * sentinel falls through to encodeValue, which stores its own enumerable
+ * properties. serverTimestamp() and delete() have none, so they stored as `{}`;
+ * increment(n) stored as `{operand: n}` and arrayUnion(...) as
+ * `{elements: [...]}`. Every worker_activity notification written by
+ * app/api/worker/route.ts therefore had `createdAt: {}`, which reached the
+ * browser as a timestamp with no toDate() and took the notifications list down
+ * with "t.getTime is not a function".
+ */
 function sentinelKind(v: unknown): string | null {
   if (!v || typeof v !== "object") return null;
+
+  const method = (v as { methodName?: unknown }).methodName;
+  if (typeof method === "string") {
+    const byMethod = SENTINEL_KIND_BY_METHOD[method];
+    if (byMethod) return byMethod;
+  }
+
+  // Class names still answer for any SDK build that predates `methodName` (and
+  // for the hand-rolled sentinels in the shim's own tests). Kept as a fallback,
+  // never as the only check.
   const name = (v as object).constructor?.name || "";
   if (name.includes("ServerTimestamp")) return "serverTimestamp";
   if (name.includes("ArrayUnion")) return "arrayUnion";
   if (name.includes("ArrayRemove")) return "arrayRemove";
   if (name.includes("NumericIncrement")) return "increment";
   if (name === "DeleteTransform" || name.includes("Delete")) return "delete";
+
+  // A sentinel we could not classify must not reach encodeValue: storing its
+  // innards as document data is how the bug above stayed invisible for a
+  // cutover. Loud beats silent, and this is unreachable for the five sentinels
+  // the SDK actually has.
+  if (v instanceof FieldValue) {
+    throw new Error(
+      `selfhost firestore shim: unrecognised FieldValue sentinel ` +
+        `(methodName=${JSON.stringify(method)}, constructor=${JSON.stringify(name)})`,
+    );
+  }
   return null;
 }
 

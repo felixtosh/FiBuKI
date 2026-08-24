@@ -19,7 +19,7 @@ import {
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { ToolStepList } from "@/design-system/tool-results";
-import { cn } from "@/lib/utils";
+import { cn, toDateSafe } from "@/lib/utils";
 import {
   AutoActionNotification,
   NotificationType,
@@ -86,9 +86,21 @@ const workerIcons: Record<WorkerType, { icon: typeof Bot }> = {
   },
 };
 
-function formatTime(timestamp: { toDate: () => Date } | Date | null | undefined) {
-  if (!timestamp) return "Just now";
-  const date = "toDate" in timestamp ? timestamp.toDate() : timestamp;
+/**
+ * Timestamps reach this card in more than one shape (a Firestore Timestamp
+ * normally, a Date or a serialised {seconds, nanoseconds} occasionally), and a
+ * malformed one must not take the whole list down with it: this card renders
+ * inside the dashboard shell, so an exception here blanks the app rather than
+ * one row. `unknown` in, toDateSafe does the narrowing.
+ *
+ * The self-host cutover produced exactly that: worker notifications written
+ * from app/api/worker/route.ts stored `createdAt: {}` (see sentinelKind in
+ * functions/src/selfhost/firestore-shim.ts), and the previous narrowing,
+ * `"toDate" in timestamp`, handed that empty object straight to `.getTime()`.
+ */
+function formatTime(timestamp: unknown) {
+  const date = toDateSafe(timestamp);
+  if (!date || Number.isNaN(date.getTime())) return "Just now";
   const now = new Date();
   const diff = now.getTime() - date.getTime();
   const minutes = Math.floor(diff / 60000);

@@ -17,10 +17,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { cn } from "@/lib/utils";
+import { cn, toDateSafe } from "@/lib/utils";
 import { ChatSession } from "@/types/chat";
 import { useChatSessions } from "@/hooks/use-chat-sessions";
-import { Timestamp } from "firebase/firestore";
 
 interface ChatHistoryPanelProps {
   onSelectSession: (sessionId: string) => void;
@@ -46,9 +45,14 @@ export function ChatHistoryPanel({
     );
   });
 
-  // Format timestamp to relative time
-  const formatTime = (timestamp: Timestamp | Date) => {
-    const date = timestamp instanceof Timestamp ? timestamp.toDate() : timestamp;
+  // Format timestamp to relative time. Narrowed via toDateSafe rather than
+  // `instanceof Timestamp`, which passed anything else straight to date-fns.
+  // Worker-created sessions carry an `updatedAt` that the self-host cutover
+  // wrote as `{}` (see sentinelKind in functions/src/selfhost/firestore-shim.ts),
+  // which formatDistanceToNow answers with a thrown RangeError.
+  const formatTime = (timestamp: unknown) => {
+    const date = toDateSafe(timestamp);
+    if (!date || Number.isNaN(date.getTime())) return "";
     return formatDistanceToNow(date, { addSuffix: true, locale: de });
   };
 
