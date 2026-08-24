@@ -103,18 +103,29 @@ _Avoid_: VAT breakdown, tax group, summary row
 ## Connecting the two
 
 **Match**:
-A candidate pairing of one File with one Transaction, carrying a Score and the reasons
-behind it. A Match is a proposal, not a fact.
+A candidate pairing of one File with one Transaction, carrying a Confidence and the
+reasons behind it. A Match is a proposal, not a fact.
 _Avoid_: link, hit, candidate
 
 **Match Source**:
 One reason a Match scored: IBAN, VAT ID, website, email domain, name, learned pattern, or
 manual. Evidence, not a channel.
 
+**Confidence**:
+How strongly one pairing is evidenced, 0-100. Above the auto threshold a Match becomes a
+File Connection by itself; above the suggestion threshold it is shown to the user.
+**Never bare** — the codebase has four unrelated confidences, so always say which:
+*match confidence* (File↔Transaction), *partner match confidence* (Partner↔Transaction,
+a different scorer), *extraction confidence* (how sure the extractor is — worth little,
+two contradictory Uber readings both reported 100), and a Global Partner's *data
+confidence* (how much the crowdsourced record is trusted).
+_Avoid_: probability, rating, accuracy, a bare "confidence"
+
 **Score**:
-How strongly a Match is evidenced, 0-100. Above the auto threshold it becomes a File
-Connection by itself; above the suggestion threshold it is shown to the user.
-_Avoid_: confidence, probability, rating
+One signal's contribution to a Confidence — the points an IBAN hit, a date hit or a name
+hit is worth. Scores live in a breakdown and add up; the sum is the Confidence. A Score is
+never the total.
+_Avoid_: weight, points, confidence
 
 **File Connection**:
 An established pairing of a File and a Transaction — the record that says this document
@@ -162,9 +173,11 @@ chase list — an Eigenbeleg never creates a VAT deduction). Stored today as
 
 **Documentation State**:
 How well a Transaction is evidenced — its Nachweis, not the noun "document": `invoice`,
-`receipt-only`, `no-document-category` (stored `no-receipt-category`), `undocumented`.
-Derived, never set. Files outrank a No-document Category, and an invoice outranks a
-receipt, so extra Files never downgrade a line.
+`receipt-only`, `unknown` (holds Files whose type could not be established),
+`no-document-category` (stored `no-receipt-category`), `undocumented`. Derived, never set. Files outrank a No-document Category, and an invoice outranks a
+receipt, so extra Files never downgrade a line. Not the same as `isComplete`, which
+means only "has some documentation" and can be set by hand — see
+[ADR-0004](docs/adr/0004-is-complete-is-not-documentation-state.md).
 _Avoid_: complete, documented flag, status
 
 **UVA**:
