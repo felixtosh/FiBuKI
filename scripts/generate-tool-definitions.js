@@ -28,10 +28,13 @@ const { TOOL_DEFINITIONS } = require(DEFINITIONS_PATH);
 function main() {
   console.log(`Found ${TOOL_DEFINITIONS.length} tool definitions`);
 
+  // No generation timestamp: it made every regeneration a diff, which is why
+  // CI cannot simply check the committed file against a fresh run. The drift
+  // check in .github/workflows/ci.yml is the staleness signal now, and it
+  // cannot be two months late the way a timestamp can.
   const lines = [
     "// AUTO-GENERATED — DO NOT EDIT",
     "// Source: functions/src/tools/definitions.ts",
-    `// Generated at: ${new Date().toISOString()}`,
     "// Regenerate: npm run generate:tool-definitions",
     "",
     "export interface ToolDefinition {",
