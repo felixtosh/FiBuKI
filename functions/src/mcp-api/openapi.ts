@@ -5,7 +5,7 @@
  */
 
 import { onRequest } from "firebase-functions/v2/https";
-import { publicOrigin, PUBLIC_ORIGIN_UNSET_ERROR } from "../utils/publicOrigin";
+import { requestOrigin, PUBLIC_ORIGIN_UNSET_ERROR } from "../utils/publicOrigin";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -225,7 +225,7 @@ export const openApiSpec = onRequest({ region: "europe-west1" }, async (req, res
     return;
   }
 
-  const origin = publicOrigin();
+  const origin = requestOrigin(req);
   if (!origin) {
     res.status(500).json({ error: PUBLIC_ORIGIN_UNSET_ERROR });
     return;
@@ -248,7 +248,7 @@ export const aiPluginManifest = onRequest({ region: "europe-west1" }, async (req
     return;
   }
 
-  const origin = publicOrigin();
+  const origin = requestOrigin(req);
   if (!origin) {
     res.status(500).json({ error: PUBLIC_ORIGIN_UNSET_ERROR });
     return;
