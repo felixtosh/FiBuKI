@@ -118,7 +118,7 @@ export async function startImapInitialSync(
     .get();
 
   if (!inFlight.empty) {
-    console.log(`[MailService] initial sync already queued for ${email}, skipping`);
+    console.log(`[MailService] initial sync already queued for integration ${integrationId}, skipping`);
     return { queued: false };
   }
 
@@ -157,7 +157,7 @@ export async function startImapInitialSync(
     createdAt: now,
   });
 
-  console.log(`[MailService] IMAP integration auto-started: ${email}`);
+  console.log(`[MailService] IMAP integration auto-started: ${integrationId}`);
 
   await db.collection("notifications").add({
     userId,
