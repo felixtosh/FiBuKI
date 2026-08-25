@@ -29,8 +29,13 @@ export interface EmailIntegration {
   /** Provider-specific account ID (e.g., Google user ID) */
   accountId: string;
 
-  /** When the OAuth access token expires */
-  tokenExpiresAt: Timestamp;
+  /**
+   * When the OAuth access token expires.
+   *
+   * OAuth providers only. An IMAP mailbox authenticates with an app-password
+   * that does not expire, and its connect route never writes this.
+   */
+  tokenExpiresAt?: Timestamp;
 
   /** Last time this integration was used for search/download */
   lastAccessedAt?: Timestamp;
