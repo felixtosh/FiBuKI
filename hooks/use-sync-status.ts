@@ -7,6 +7,7 @@ import { TransactionSource } from "@/types/source";
 import { TrueLayerApiConfig } from "@/types/truelayer";
 import { FinapiBankingConfig } from "@/lib/banking/types";
 import { useAuth } from "@/components/auth/auth-provider";
+import { toDateSafe } from "@/lib/utils";
 
 interface SyncStatus {
   lastSyncAt: Date | null;
@@ -73,14 +74,14 @@ export function useSyncStatus(sourceId: string | null): UseSyncStatusReturn {
 
         if (sourceProvider === "finapi") {
           const config = source.apiConfig as unknown as FinapiBankingConfig;
-          const expiresAt = config.expiresAt?.toDate() || null;
+          const expiresAt = toDateSafe(config.expiresAt);
           const now = new Date();
           const daysRemaining = expiresAt
             ? Math.max(0, Math.floor((expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
             : null;
 
           setStatus({
-            lastSyncAt: config.lastSyncAt?.toDate() || null,
+            lastSyncAt: toDateSafe(config.lastSyncAt),
             lastSyncError: config.lastSyncError || null,
             needsReauth: expiresAt ? expiresAt < now : false,
             reauthExpiresAt: expiresAt,
@@ -90,7 +91,7 @@ export function useSyncStatus(sourceId: string | null): UseSyncStatusReturn {
           const config = source.apiConfig as unknown as TrueLayerApiConfig;
 
           setStatus({
-            lastSyncAt: config.lastSyncAt?.toDate() || null,
+            lastSyncAt: toDateSafe(config.lastSyncAt),
             lastSyncError: config.lastSyncError || null,
             needsReauth: false, // TrueLayer doesn't have same expiry concept
             reauthExpiresAt: null,

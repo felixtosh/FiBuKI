@@ -27,6 +27,7 @@ import {
 } from "@/hooks/use-integration-details";
 import { EmailIntegration } from "@/types/email-integration";
 import { usePageTitle } from "@/hooks/use-page-title";
+import { toDateSafe } from "@/lib/utils";
 
 function GmailContent() {
   const router = useRouter();
@@ -175,10 +176,10 @@ function GmailAccountCard({
   const needsReauth = integration.needsReauth;
   const isPaused = integration.isPaused;
 
-  const lastSyncAt = integration.lastSyncAt?.toDate();
+  const lastSyncAt = toDateSafe(integration.lastSyncAt);
   const lastSyncStatus = integration.lastSyncStatus;
   const initialSyncComplete = integration.initialSyncComplete;
-  const initialSyncStartedAt = integration.initialSyncStartedAt?.toDate();
+  const initialSyncStartedAt = toDateSafe(integration.initialSyncStartedAt);
   const lastSyncError = integration.lastSyncError;
 
   // Detect an initial sync that's been "in progress" for >24h while carrying

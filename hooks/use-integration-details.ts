@@ -24,6 +24,7 @@ type FileDoc = {
   partnerId?: string;
   extractedAmount?: number;
 };
+import { toDateSafe } from "@/lib/utils";
 
 function mapFileDoc(doc: QueryDocumentSnapshot): FileDoc {
   return doc.data() as FileDoc;
@@ -163,7 +164,7 @@ export function useActiveSyncForIntegration(integrationId: string | null): {
     }
 
     const queue = data[0];
-    const createdAt = queue.createdAt?.toDate();
+    const createdAt = toDateSafe(queue.createdAt);
     const isStale =
       createdAt &&
       queue.status === "pending" &&

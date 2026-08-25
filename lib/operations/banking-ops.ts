@@ -36,6 +36,7 @@ import {
   SyncResult,
   ReauthRequiredError,
 } from "@/lib/banking";
+import { toDateSafe } from "@/lib/utils";
 
 const CONNECTIONS_COLLECTION = "bankingConnections";
 const TRANSACTIONS_COLLECTION = "transactions";
@@ -474,7 +475,7 @@ export async function syncBankTransactions(
   }
 
   // Calculate date range
-  const lastSyncAt = config.lastSyncAt?.toDate();
+  const lastSyncAt = toDateSafe(config.lastSyncAt);
   const dateFrom = lastSyncAt
     ? new Date(lastSyncAt.getTime() - 24 * 60 * 60 * 1000).toISOString().split("T")[0]
     : new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
@@ -606,7 +607,7 @@ export async function getBankSyncStatus(
   const reauthInfo = provider.checkReauthRequired(config);
 
   return {
-    lastSyncAt: config.lastSyncAt?.toDate(),
+    lastSyncAt: toDateSafe(config.lastSyncAt) ?? undefined,
     lastSyncError: config.lastSyncError,
     needsReauth: reauthInfo.required,
     expiresAt: reauthInfo.expiresAt,

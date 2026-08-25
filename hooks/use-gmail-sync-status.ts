@@ -26,6 +26,7 @@ type GmailSyncQueueDoc = {
   id: string;
   data: Record<string, unknown>;
 };
+import { toDateSafe } from "@/lib/utils";
 
 function mapQueueDoc(doc: QueryDocumentSnapshot): GmailSyncQueueDoc {
   return { id: doc.id, data: doc.data() };
@@ -71,7 +72,7 @@ export function useGmailSyncStatus(): GmailSyncStatus {
       emailsProcessed?: number;
     };
 
-    const createdAt = queueData.createdAt?.toDate();
+    const createdAt = toDateSafe(queueData.createdAt);
     const isStale =
       createdAt &&
       queueData.status === "pending" &&
@@ -87,7 +88,7 @@ export function useGmailSyncStatus(): GmailSyncStatus {
       filesCreated: queueData.filesCreated ?? 0,
       emailsProcessed: queueData.emailsProcessed ?? 0,
       type: queueData.type,
-      startedAt: queueData.startedAt?.toDate(),
+      startedAt: toDateSafe(queueData.startedAt) ?? undefined,
     };
   }, [data, now]);
 }

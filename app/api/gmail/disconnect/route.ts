@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { Timestamp } from "firebase-admin/firestore";
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
+import { toDateSafe } from "@/lib/utils";
 
 const db = getAdminDb();
 const INTEGRATIONS_COLLECTION = "emailIntegrations";
@@ -161,8 +162,8 @@ async function getQueueStateAndDelete(integrationId: string): Promise<{
       }
 
       // Track date range
-      const from = data.dateFrom?.toDate();
-      const to = data.dateTo?.toDate();
+      const from = toDateSafe(data.dateFrom);
+      const to = toDateSafe(data.dateTo);
       if (from && (!minDate || from < minDate)) minDate = from;
       if (to && (!maxDate || to > maxDate)) maxDate = to;
     }
