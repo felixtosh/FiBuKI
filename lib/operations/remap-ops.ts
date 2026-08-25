@@ -18,7 +18,11 @@ import {
   RemapFieldChange,
 } from "@/types/import";
 import { OperationsContext } from "./types";
-import { parseDate } from "@/lib/import/date-parsers";
+import {
+  parseDate,
+  findDateColumnConflict,
+  getDateParserName,
+} from "@/lib/import/date-parsers";
 import { parseAmount, getAmountParserConfig } from "@/lib/import/amount-parsers";
 import { generateDedupeHash } from "@/lib/import/deduplication";
 
@@ -245,6 +249,35 @@ export async function generateRemapPreview(
   const matchedRows: RemapPreviewRow[] = [];
   const warnings: string[] = [];
   let totalChanges = 0;
+
+  // Remapping re-reads every row with the chosen date format, so it can swap
+  // day and month across a whole import just as the first import could (#70).
+  // The preview is where that has to be visible.
+  const dateMapping = newMappings.find((m) => m.targetField === "date");
+  if (dateMapping) {
+    if (!dateMapping.format) {
+      warnings.push(
+        `No date format is set for column "${dateMapping.csvColumn}" — dates will be read as ` +
+          `${getDateParserName("de")}, which may not be the file's order.`
+      );
+    } else {
+      const dateColumn = parsedRows
+        .map((row) => row[dateMapping.csvColumn])
+        .filter((value): value is string => Boolean(value));
+      const conflict = findDateColumnConflict(dateColumn, dateMapping.format);
+
+      if (conflict) {
+        const offending = conflict.offendingValue ? ` (for example "${conflict.offendingValue}")` : "";
+        warnings.push(
+          `The date column${offending} does not match the selected format ` +
+            `(${getDateParserName(dateMapping.format)})` +
+            (conflict.suggestedParserId
+              ? ` — it reads as ${getDateParserName(conflict.suggestedParserId)}.`
+              : ` — day and month order is inconsistent across the column.`)
+        );
+      }
+    }
+  }
 
   // Check for row count mismatch
   if (parsedRows.length !== existingTransactions.size) {

@@ -4,7 +4,7 @@ import {
   findFieldByAlias,
   buildFieldDescriptionsForAI,
 } from "./field-definitions";
-import { detectDateFormat } from "./date-parsers";
+import { detectDateFormat, looksLikeDateColumn } from "./date-parsers";
 import { detectAmountFormat } from "./amount-parsers";
 import { getColumnSamples } from "./csv-parser";
 import { matchColumnsWithAI } from "./ai-matcher";
@@ -36,7 +36,11 @@ export async function autoMatchColumnsRuleBased(
 
   for (const header of headers) {
     const samples = getColumnSamples(sampleRows, header);
-    const result = matchColumn(header, samples, usedFields);
+    // Date detection reads every row it has rather than the 10-value sample:
+    // whether a slash column is DD/MM or MM/DD is settled by the first day
+    // above 12 anywhere in it, which a short sample can easily miss (#70).
+    const columnValues = getColumnSamples(sampleRows, header, Number.MAX_SAFE_INTEGER);
+    const result = matchColumn(header, samples, usedFields, columnValues);
 
     mappings.push({
       csvColumn: header,
@@ -61,7 +65,8 @@ export async function autoMatchColumnsRuleBased(
 function matchColumn(
   header: string,
   samples: string[],
-  usedFields: Set<string>
+  usedFields: Set<string>,
+  columnValues: string[] = samples
 ): ColumnMatchResult {
   // Step 1: Try exact alias match
   const aliasMatch = findFieldByAlias(header);
@@ -70,7 +75,7 @@ function matchColumn(
       csvColumn: header,
       matchedField: aliasMatch.key,
       confidence: 1.0,
-      suggestedParser: detectParserForField(aliasMatch.key, samples),
+      suggestedParser: detectParserForField(aliasMatch.key, samples, columnValues),
     };
   }
 
@@ -81,12 +86,12 @@ function matchColumn(
       csvColumn: header,
       matchedField: fuzzyMatch.key,
       confidence: fuzzyMatch.confidence,
-      suggestedParser: detectParserForField(fuzzyMatch.key, samples),
+      suggestedParser: detectParserForField(fuzzyMatch.key, samples, columnValues),
     };
   }
 
   // Step 3: Try pattern detection
-  const patternMatch = detectFieldByPattern(samples, usedFields);
+  const patternMatch = detectFieldByPattern(samples, usedFields, columnValues);
   if (patternMatch) {
     return {
       csvColumn: header,
@@ -140,18 +145,28 @@ function fuzzyMatchAlias(
  */
 function detectFieldByPattern(
   samples: string[],
-  usedFields: Set<string>
+  usedFields: Set<string>,
+  columnValues: string[] = samples
 ): { key: string; confidence: number; suggestedParser?: string } | null {
   if (samples.length === 0) return null;
 
   // Check for date patterns
   if (!usedFields.has("date")) {
-    const dateFormat = detectDateFormat(samples);
+    const dateFormat = detectDateFormat(columnValues);
     if (dateFormat) {
       return {
         key: "date",
         confidence: 0.8,
         suggestedParser: dateFormat,
+      };
+    }
+    // A column can read as dates while its day/month order stays unproven
+    // (#70). It is still the date column — leaving the format unset sends the
+    // user to the dropdown instead of guessing an order.
+    if (looksLikeDateColumn(columnValues)) {
+      return {
+        key: "date",
+        confidence: 0.6,
       };
     }
   }
@@ -219,10 +234,12 @@ function looksLikeIban(samples: string[]): boolean {
  */
 function detectParserForField(
   fieldKey: string,
-  samples: string[]
+  samples: string[],
+  columnValues: string[] = samples
 ): string | undefined {
   if (fieldKey === "date") {
-    return detectDateFormat(samples) ?? undefined;
+    // Whole column, not the sample slice — see detectFieldByPattern (#70).
+    return detectDateFormat(columnValues) ?? undefined;
   }
   if (fieldKey === "amount") {
     return detectAmountFormat(samples) ?? undefined;
