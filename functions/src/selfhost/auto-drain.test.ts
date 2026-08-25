@@ -95,9 +95,21 @@ describe("auto-drain", () => {
     // the loop must have been cut somewhere around the per-path cap rather
     // than running forever.
     await until(() => seen.includes("b1"), 10_000);
-    const settled = spins;
-    await new Promise((r) => setTimeout(r, 200));
-    expect(spins).toBe(settled);
+
+    // Wait for the spinning to STOP rather than assuming it has stopped after a
+    // fixed sleep. A 200 ms sample is quiescent against PGlite and mid-loop
+    // against real Postgres, where the drain is slower — CI read 42 spins where
+    // the sample before it saw 5. The invariant is that the guard cuts the loop,
+    // not that it cuts it within any particular wall-clock window.
+    let previous = -1;
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      previous = spins;
+      await new Promise((r) => setTimeout(r, 200));
+      if (spins === previous) break;
+    }
+
+    expect(spins).toBe(previous);
     expect(spins).toBeLessThanOrEqual(110);
   }, 20_000);
 });

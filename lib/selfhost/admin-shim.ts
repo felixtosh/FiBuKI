@@ -44,7 +44,7 @@
 
 import { getFirestore } from "../../functions/src/selfhost/firestore-shim";
 import { getStorage } from "../../functions/src/selfhost/storage-shim";
-import { useDurableTriggerQueue } from "../../functions/src/selfhost/trigger-queue";
+import { installDurableTriggerQueue } from "../../functions/src/selfhost/trigger-queue";
 
 /**
  * Trigger delivery for this container.
@@ -61,7 +61,7 @@ import { useDurableTriggerQueue } from "../../functions/src/selfhost/trigger-que
  * them. Module scope on purpose — it must be true before the first write, and
  * every route reaches document IO through getAdminDb() below.
  */
-useDurableTriggerQueue();
+installDurableTriggerQueue();
 
 /**
  * The Firestore-shaped handle, backed by Postgres.

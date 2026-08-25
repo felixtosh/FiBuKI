@@ -8,7 +8,7 @@
  * because a test run has one process where a deployment has two.
  *
  * These tests reproduce that boundary in one process by toggling the mode flag:
- * `useDurableTriggerQueue()` puts the shim in fibuki-web's position (writes go
+ * `installDurableTriggerQueue()` puts the shim in fibuki-web's position (writes go
  * to `trigger_events`, nothing dispatches locally), and
  * `__resetTriggerQueueMode()` puts it back in fibuki-api's (the drain runs).
  * That is exactly the split the two containers have.
@@ -23,7 +23,7 @@ import {
 } from "./firestore-shim";
 import { getTenantId } from "./db/tenant";
 import {
-  useDurableTriggerQueue,
+  installDurableTriggerQueue,
   usesDurableTriggerQueue,
   __resetTriggerQueueMode,
 } from "./trigger-queue";
@@ -50,7 +50,7 @@ async function pending(): Promise<Record<string, unknown>[]> {
 
 /** Run `fn` as if it were executing inside the fibuki-web container. */
 async function asWebContainer<T>(fn: () => Promise<T>): Promise<T> {
-  useDurableTriggerQueue();
+  installDurableTriggerQueue();
   try {
     return await fn();
   } finally {

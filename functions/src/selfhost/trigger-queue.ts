@@ -50,7 +50,7 @@ let durable = false;
  * marker: `lib/selfhost/admin-shim.ts` is loaded in that container and nowhere
  * else, so it is the caller.
  */
-export function useDurableTriggerQueue(): void {
+export function installDurableTriggerQueue(): void {
   durable = true;
 }
 
