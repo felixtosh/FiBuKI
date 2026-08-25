@@ -26,8 +26,8 @@ engineering skills (`/wayfinder`, `/domain-modeling`, `/triage`, `/to-tickets`,
 
 ### Issue tracker
 
-GitHub issues on **`yazzbert/FiBuKI-selfhost`** — and every `gh` call needs an explicit
-`-R yazzbert/FiBuKI-selfhost`, because `origin` here points at upstream `felixtosh/FiBuKI`.
+GitHub issues on **`felixtosh/FiBuKI`** — the one trunk. Writing there needs the classic
+token, not the box's default fine-grained one, and every `gh` call needs an explicit `-R`.
 See [`docs/agents/issue-tracker.md`](docs/agents/issue-tracker.md).
 
 ### Triage labels
