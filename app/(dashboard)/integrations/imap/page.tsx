@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { formatDistanceToNow } from "date-fns";
 import {
@@ -434,8 +435,15 @@ function ImapMailboxRow({
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between rounded-lg border p-3">
-        <div className="min-w-0">
-          <div className="font-medium truncate">{integration.email}</div>
+        {/* The row body opens the mailbox's detail page — its import
+            statistics, sync history, and pause/resume controls, which were
+            reachable for Gmail accounts only because nothing linked here.
+            The buttons to the right stay in place rather than joining the
+            link, so a press does not navigate. */}
+        <Link href={`/integrations/${integration.id}`} className="min-w-0 group">
+          <div className="font-medium truncate group-hover:underline">
+            {integration.email}
+          </div>
           <div className="text-xs text-muted-foreground truncate">
             {integration.imapHost}:{integration.imapPort} ·{" "}
             {integration.imapMailbox || "INBOX"}
@@ -455,7 +463,7 @@ function ImapMailboxRow({
               <span className="text-muted-foreground">Not synced yet</span>
             )}
           </div>
-        </div>
+        </Link>
         <div className="flex items-center gap-2">
           {/* Hidden while paused or an active sync is running; disabled (not
               hidden) for a fatal classified error, matching the Gmail integration. */}

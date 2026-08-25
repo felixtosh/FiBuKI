@@ -139,6 +139,23 @@ function IntegrationsContent() {
       }
     }
 
+    // IMAP mailboxes needing repair or with failed syncs. Same conditions as
+    // the Gmail loop above: the badge on the IMAP card already reacted to
+    // these, but nothing linked the individual mailbox that caused it.
+    for (const i of imapIntegrations) {
+      if (i.needsReauth) {
+        items.push({
+          message: `IMAP mailbox (${i.email}) needs to be reconnected`,
+          href: `/integrations/${i.id}`,
+        });
+      } else if (i.lastSyncStatus === "failed") {
+        items.push({
+          message: `IMAP mailbox (${i.email}) sync failed`,
+          href: `/integrations/${i.id}`,
+        });
+      }
+    }
+
     // Email forwarding paused
     if (primaryAddress && !primaryAddress.isActive) {
       items.push({
@@ -156,7 +173,7 @@ function IntegrationsContent() {
     }
 
     return items;
-  }, [gmailIntegrations, primaryAddress, isAdmin, finanzonline]);
+  }, [gmailIntegrations, imapIntegrations, primaryAddress, isAdmin, finanzonline]);
 
   return (
     <div className="h-full overflow-auto">

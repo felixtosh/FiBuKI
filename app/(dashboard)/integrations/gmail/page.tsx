@@ -244,7 +244,7 @@ function GmailAccountCard({
             {isNewAndPaused && (
               <div className="flex items-center gap-1.5 text-xs text-blue-600 dark:text-blue-400 mt-1">
                 <Info className="h-3 w-3 flex-shrink-0" />
-                <span>New connections start paused. Click to open settings and start syncing.</span>
+                <span>Paused before the first sync finished. Resume to start importing.</span>
               </div>
             )}
           </div>
