@@ -43,6 +43,13 @@
       "when": 1784647283215,
       "tag": "0005_better_auth",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786872082632,
+      "tag": "0006_trigger_events",
+      "breakpoints": true
     }
   ]
 }

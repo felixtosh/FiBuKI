@@ -229,6 +229,37 @@ export const verifyBackupCode = onCall(
 // ============ MFA Status ============
 
 /**
+ * Whether Firebase Auth itself holds a TOTP second factor for this uid.
+ *
+ * A uid with no Auth record is not an error here. On self-host in OIDC-issuer
+ * mode there is no `auth_users` row for the OIDC uid at all — nothing inserts
+ * one, because the verifier is `createOidcVerifier` rather than the built-in
+ * Better Auth path that populates the table — and the shim's `getUser` throws
+ * `auth/user-not-found`. That reached the callable host as `INTERNAL` and put a
+ * stack trace in the log on every page load (#122).
+ *
+ * There is genuinely no Firebase-side enrolment to read in that deployment, so
+ * "no record" and "a record with no TOTP factor" are the same answer: false.
+ * The caller falls back to `settings.totpEnabled`, which is where self-host
+ * TOTP lives. Every other failure still propagates.
+ */
+export async function readFirebaseTotpEnrolment(userId: string): Promise<boolean> {
+  try {
+    const userRecord = await getAuth().getUser(userId);
+    return (
+      userRecord.multiFactor?.enrolledFactors?.some(
+        (factor) => factor.factorId === "totp"
+      ) ?? false
+    );
+  } catch (err) {
+    if ((err as { code?: string })?.code === "auth/user-not-found") {
+      return false;
+    }
+    throw err;
+  }
+}
+
+/**
  * Get comprehensive MFA status for a user
  */
 export const getMfaStatus = onCall(
@@ -272,12 +303,7 @@ export const getMfaStatus = onCall(
     const backupCodesRemaining = backupCodesSnapshot.data().count;
 
     // Check Firebase Auth MFA enrollment
-    const auth = getAuth();
-    const userRecord = await auth.getUser(userId);
-    const totpEnrolled =
-      userRecord.multiFactor?.enrolledFactors?.some(
-        (factor) => factor.factorId === "totp"
-      ) ?? false;
+    const totpEnrolled = await readFirebaseTotpEnrolment(userId);
 
     return {
       totpEnabled: settings.totpEnabled || totpEnrolled,

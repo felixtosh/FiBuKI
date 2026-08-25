@@ -26,8 +26,33 @@ import type {
 } from "./types";
 import { isInlineData, toVertexResponse } from "./types";
 
-const ENDPOINT = "https://api.anthropic.com/v1/messages";
+const DEFAULT_BASE_URL = "https://api.anthropic.com";
 const API_VERSION = "2023-06-01";
+
+/**
+ * Resolve the Messages endpoint, honouring a base-URL override.
+ *
+ * A self-hoster fronting Anthropic with a gateway (LiteLLM, Cloudflare AI
+ * Gateway, a corporate egress proxy) needs to redirect the origin without
+ * touching code. `openai-compatible` already has FIBUKI_AI_BASE_URL; this is the
+ * same affordance for the provider that reads PDFs natively.
+ *
+ * The variable pair mirrors the key pair: FIBUKI_-prefixed first so a self-host
+ * deployment can override without disturbing an ANTHROPIC_BASE_URL that other
+ * tooling on the same box already relies on.
+ *
+ * The value is an ORIGIN (optionally with a path prefix), not a full endpoint —
+ * `/v1/messages` is appended, matching the official SDK's ANTHROPIC_BASE_URL
+ * semantics. This deliberately differs from FIBUKI_AI_BASE_URL, which points at
+ * an OpenAI-shaped root that already includes `/v1`.
+ */
+export function anthropicEndpoint(): string {
+  const base =
+    process.env.FIBUKI_ANTHROPIC_BASE_URL?.trim() ||
+    process.env.ANTHROPIC_BASE_URL?.trim() ||
+    DEFAULT_BASE_URL;
+  return `${base.replace(/\/+$/, "")}/v1/messages`;
+}
 
 /** Anthropic requires max_tokens; Gemini treats it as optional. */
 const DEFAULT_MAX_TOKENS = 8192;
@@ -93,7 +118,7 @@ export class AnthropicProvider implements AiProvider {
       ? requireKey("FIBUKI_ANTHROPIC_API_KEY", "anthropic")
       : requireKey("ANTHROPIC_API_KEY", "anthropic");
 
-    const res = await fetch(ENDPOINT, {
+    const res = await fetch(anthropicEndpoint(), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

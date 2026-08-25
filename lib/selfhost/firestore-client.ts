@@ -675,35 +675,70 @@ export function onSnapshot(
   let lastHash: string | null = null;
   let inFlight = false;
 
+  /**
+   * Fetch and decode. Everything in here is the listen itself — a transport
+   * failure, a rejected query, an undecodable payload — so a throw belongs in
+   * the onError funnel. Returns null when the payload is unchanged and there
+   * is nothing to deliver.
+   */
+  async function fetchChanged(): Promise<{ snapshot: unknown; hash: string } | null> {
+    const raw = isDoc
+      ? await post("get", { path: (target as DocumentReference).path })
+      : await post("query", queryBody(target as Query));
+    if (stopped) return null;
+    const hash = JSON.stringify(raw);
+    if (hash === lastHash) return null;
+    if (isDoc) {
+      const ref = target as DocumentReference;
+      return {
+        hash,
+        snapshot: new DocumentSnapshot(
+          raw.id,
+          ref,
+          raw.exists ? (decodeValue(raw.data) as Record<string, unknown>) : undefined,
+          raw.exists,
+        ),
+      };
+    }
+    return { hash, snapshot: toQuerySnapshot((target as Query).path, raw.docs) };
+  }
+
   async function tick(): Promise<void> {
     if (stopped || inFlight) return;
     if (typeof document !== "undefined" && document.hidden) return;
     inFlight = true;
     try {
-      const raw = isDoc
-        ? await post("get", { path: (target as DocumentReference).path })
-        : await post("query", queryBody(target as Query));
-      if (stopped) return;
-      const hash = JSON.stringify(raw);
-      if (hash === lastHash) return;
-      lastHash = hash;
-      if (isDoc) {
-        const ref = target as DocumentReference;
-        next(
-          new DocumentSnapshot(
-            raw.id,
-            ref,
-            raw.exists ? (decodeValue(raw.data) as Record<string, unknown>) : undefined,
-            raw.exists,
-          ),
-        );
-      } else {
-        next(toQuerySnapshot((target as Query).path, raw.docs));
+      let pending: { snapshot: unknown; hash: string } | null;
+      try {
+        pending = await fetchChanged();
+      } catch (err) {
+        if (stopped) return; // unsubscribed mid-flight — don't deliver a late error
+        const fe = err instanceof FirestoreError ? err : new FirestoreError("unknown", String((err as Error)?.message ?? err));
+        error?.(fe);
+        return;
       }
-    } catch (err) {
-      if (stopped) return; // unsubscribed mid-flight — don't deliver a late error
-      const fe = err instanceof FirestoreError ? err : new FirestoreError("unknown", String((err as Error)?.message ?? err));
-      error?.(fe);
+      if (!pending || stopped) return;
+
+      // The consumer's own handler runs OUTSIDE the onError funnel. An exception
+      // thrown in here is application code failing, not the listen failing, and
+      // firebase/firestore lets it reach the host environment rather than
+      // dressing it up as a FirebaseError and handing it back to onError — which
+      // sends whoever reads the log looking at the data plane. Rethrowing from a
+      // timer reproduces that: it lands on window.onerror, unhandled, with the
+      // original name and stack.
+      try {
+        next(pending.snapshot);
+      } catch (err) {
+        setTimeout(() => {
+          throw err;
+        });
+        // lastHash stays where it was: the payload was NOT consumed. Assigning it
+        // before next() meant a throwing handler still marked the payload
+        // delivered, so the following tick saw an unchanged hash, returned early,
+        // and the listener stayed dark until the data next changed.
+        return;
+      }
+      lastHash = pending.hash;
     } finally {
       inFlight = false;
     }

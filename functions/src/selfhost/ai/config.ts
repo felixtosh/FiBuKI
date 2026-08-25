@@ -38,6 +38,10 @@
  *
  *   FIBUKI_GEMINI_API_KEY           aistudio.google.com/apikey
  *   FIBUKI_ANTHROPIC_API_KEY        falls back to ANTHROPIC_API_KEY
+ *   FIBUKI_ANTHROPIC_BASE_URL       anthropic only, falls back to
+ *                                   ANTHROPIC_BASE_URL. An ORIGIN to front the
+ *                                   API with a gateway; "/v1/messages" is
+ *                                   appended. Defaults to api.anthropic.com.
  *   FIBUKI_AI_BASE_URL              openai-compatible only (Ollama, LM Studio,
  *                                   OpenRouter, vLLM). No key needed locally.
  *   FIBUKI_AI_API_KEY               openai-compatible bearer token, if required

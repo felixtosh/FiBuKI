@@ -351,6 +351,11 @@ class UploadTaskImpl implements UploadTask {
   private readonly donePromise: Promise<UploadTaskSnapshot>;
   private resolveDone!: (s: UploadTaskSnapshot) => void;
   private rejectDone!: (e: unknown) => void;
+  /**
+   * An upload ends once. Without this, the error funnel could fire after the
+   * success one (see `_success`) and turn a delivered upload into a failure.
+   */
+  private settled = false;
 
   constructor(ref: StorageReference, totalBytes: number) {
     this._snapshot = { ref, bytesTransferred: 0, totalBytes, state: "running" };
@@ -370,12 +375,14 @@ class UploadTaskImpl implements UploadTask {
     error?: ErrorFn | null,
     complete?: CompleteFn | null,
   ): () => void {
-    if (next) {
-      this.nextListeners.push(next);
-      next(this._snapshot); // replay current state so late subscribers see at least one event
-    }
+    if (next) this.nextListeners.push(next);
     if (error) this.errorListeners.push(error);
     if (complete) this.completeListeners.push(complete);
+    // Replay current state so late subscribers see at least one event. It runs
+    // after all three are registered and through `emit`: a throw here used to
+    // escape `on()` with the subscription half-built, leaving the caller
+    // without the error and complete handlers it just passed (fork #135).
+    if (next) this.emit([next], this._snapshot);
     return () => {
       if (next) this.nextListeners = this.nextListeners.filter((f) => f !== next);
       if (error) this.errorListeners = this.errorListeners.filter((f) => f !== error);
@@ -396,20 +403,47 @@ class UploadTaskImpl implements UploadTask {
     return this.donePromise.catch(onrejected);
   }
 
+  /**
+   * Deliver one event to consumer callbacks (fork #135).
+   *
+   * A callback is not part of the upload. It can throw for reasons that have
+   * nothing to do with whether the bytes arrived — a React state update against
+   * an unmounted component, a TypeError in progress formatting — and the throw
+   * used to escape into `runResumableUpload`'s catch, which reported a
+   * completed upload as `storage/unknown`. So each listener is isolated, and
+   * the list is copied first because a listener may unsubscribe while running.
+   */
+  private emit<T>(listeners: ((arg: T) => void)[], arg: T): void {
+    for (const l of [...listeners]) {
+      try {
+        l(arg);
+      } catch (err) {
+        console.error("[storage] upload listener threw; upload outcome unaffected", err);
+      }
+    }
+  }
+
   _progress(bytesTransferred: number): void {
+    if (this.settled) return;
     this._snapshot = { ...this._snapshot, bytesTransferred, state: "running" };
-    for (const l of this.nextListeners) l(this._snapshot);
+    this.emit(this.nextListeners, this._snapshot);
   }
   _success(): void {
+    if (this.settled) return;
+    this.settled = true;
     this._snapshot = { ...this._snapshot, bytesTransferred: this._snapshot.totalBytes, state: "success" };
-    for (const l of this.nextListeners) l(this._snapshot);
-    for (const l of this.completeListeners) l();
+    // Settle first. `resolveDone` sat after the listener loop, so a throwing
+    // listener took `await uploadTask` down with it on a successful upload.
     this.resolveDone(this._snapshot);
+    this.emit(this.nextListeners, this._snapshot);
+    this.emit<void>(this.completeListeners, undefined);
   }
   _fail(err: StorageError): void {
+    if (this.settled) return;
+    this.settled = true;
     this._snapshot = { ...this._snapshot, state: "error" };
-    for (const l of this.errorListeners) l(err);
     this.rejectDone(err);
+    this.emit(this.errorListeners, err);
   }
 }
 

@@ -321,6 +321,93 @@ describe("onSnapshot (poll)", () => {
     delete process.env.NEXT_PUBLIC_FIBUKI_POLL_MS;
   });
 
+  /**
+   * #124. An exception thrown by the app's own snapshot handler used to be
+   * caught by the poller, wrapped in a FirestoreError, and delivered to that
+   * same listener's onError — so a crash in application code arrived wearing a
+   * FirebaseError name and an error code, reading as "the backend failed".
+   * firebase/firestore lets such an exception reach the host environment.
+   */
+  it("lets an exception from the caller's handler reach the host, not onError", async () => {
+    process.env.NEXT_PUBLIC_FIBUKI_POLL_MS = "40";
+    await seed("partners/throw1", { userId: USER, name: "A" });
+
+    // Take over uncaughtException for the duration: the rethrow is deliberately
+    // unhandled, which is the whole point, and the runner would otherwise fail
+    // the file. Capturing it here is also the assertion.
+    const runnerListeners = process.listeners("uncaughtException");
+    process.removeAllListeners("uncaughtException");
+    const escaped: Error[] = [];
+    process.on("uncaughtException", (e) => escaped.push(e as Error));
+
+    let errors = 0;
+    let deliveries = 0;
+    let unsub: (() => void) | null = null;
+    try {
+      unsub = onSnapshot(
+        collection(db, "partners"),
+        () => {
+          deliveries++;
+          if (deliveries === 1) throw new TypeError("e.createdAt.toDate is not a function");
+        },
+        () => {
+          errors++;
+        },
+      );
+      await waitFor(() => escaped.length >= 1);
+    } finally {
+      unsub?.();
+      process.removeAllListeners("uncaughtException");
+      for (const l of runnerListeners) process.on("uncaughtException", l);
+      delete process.env.NEXT_PUBLIC_FIBUKI_POLL_MS;
+    }
+
+    // The original error, with its own name and message — not a FirestoreError.
+    expect(escaped[0]).toBeInstanceOf(TypeError);
+    expect(escaped[0].message).toBe("e.createdAt.toDate is not a function");
+    expect(escaped[0]).not.toBeInstanceOf(FirestoreError);
+    // And nothing was reported as a listen failure.
+    expect(errors).toBe(0);
+  });
+
+  /**
+   * #124, the second half: lastHash was assigned BEFORE next() ran, so a
+   * throwing handler still marked the payload consumed. The following tick saw
+   * an unchanged hash and returned early, and the listener stayed dark until
+   * the data happened to change again.
+   */
+  it("re-delivers an unchanged payload after the handler throws", async () => {
+    process.env.NEXT_PUBLIC_FIBUKI_POLL_MS = "40";
+    await seed("partners/retry1", { userId: USER, name: "A" });
+
+    const runnerListeners = process.listeners("uncaughtException");
+    process.removeAllListeners("uncaughtException");
+    const escaped: Error[] = [];
+    process.on("uncaughtException", (e) => escaped.push(e as Error));
+
+    const received: string[][] = [];
+    let attempts = 0;
+    let unsub: (() => void) | null = null;
+    try {
+      unsub = onSnapshot(collection(db, "partners"), (snap) => {
+        attempts++;
+        if (attempts === 1) throw new TypeError("first delivery explodes");
+        received.push(snap.docs.map((d: any) => d.id).sort());
+      });
+      // Nothing writes to `partners` in between: the only way a second delivery
+      // arrives is the poller re-offering the payload it failed to hand over.
+      await waitFor(() => received.length >= 1);
+    } finally {
+      unsub?.();
+      process.removeAllListeners("uncaughtException");
+      for (const l of runnerListeners) process.on("uncaughtException", l);
+      delete process.env.NEXT_PUBLIC_FIBUKI_POLL_MS;
+    }
+
+    expect(escaped).toHaveLength(1);
+    expect(received[0]).toContain("retry1");
+  });
+
   it("surfaces server errors through the error callback", async () => {
     let err: FirestoreError | null = null;
     const unsub = onSnapshot(

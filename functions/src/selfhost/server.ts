@@ -19,7 +19,10 @@
  * Never set FIBUKI_DEV_UID in production; it defeats the other two.
  */
 
+import { enableAutoDrain } from "./bus";
+import { startTriggerQueueDrain } from "./trigger-queue-drain";
 import { createCronHost } from "./cron-host";
+import { resweepPendingExtractions } from "./extraction-resweep";
 import { createHost, type TokenVerifier } from "./host";
 import { createOidcVerifier } from "./oidc-verifier";
 import { createSelfhostAuth } from "./better-auth";
@@ -71,6 +74,13 @@ async function resolveVerifier(): Promise<ResolvedAuth> {
 }
 
 async function main() {
+  // Without this, no trigger fires in a deployed host: the barrel's
+  // onDocumentCreated/Updated handlers register on the bus, but only tests
+  // ever called drainChanges(). Extraction, matching cascades and invoicing
+  // hooks all queued in memory forever. Enable BEFORE the barrel import so
+  // nothing registered can outrun it.
+  enableAutoDrain();
+
   const barrel = await import("../index");
 
   const { verifyToken, authHandler } = await resolveVerifier();
@@ -95,11 +105,27 @@ async function main() {
     }
   }
 
+  // Cross-process trigger delivery. fibuki-web writes through the same shim but
+  // has no trigger registry and nothing draining its bus, so its changes land in
+  // `trigger_events` and are dispatched here. Without this, every trigger whose
+  // originating write comes from `app/api/**` stays dead — silently, which is
+  // how it went unnoticed until the mailbox-connect sync never queued.
+  const triggerQueue = startTriggerQueueDrain({ log: (m) => console.log(m) });
+
   for (const signal of ["SIGTERM", "SIGINT"] as const) {
     process.on(signal, () => {
+      triggerQueue.stop();
       void cron.stop().finally(() => process.exit(0));
     });
   }
+
+  // The bus is in-memory, so a restart loses queued-but-undelivered
+  // triggers; files whose created-event died with the process would stay
+  // unextracted forever. Fire-and-forget: a failed sweep logs and the next
+  // boot retries.
+  void resweepPendingExtractions((m) => console.log(m)).catch((err) => {
+    console.error("extraction resweep failed:", err);
+  });
 
   const port = Number(process.env.PORT ?? 8788);
   app.listen(port, () => {

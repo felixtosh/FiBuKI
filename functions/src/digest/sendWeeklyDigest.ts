@@ -11,11 +11,16 @@ import { buildDigestSubject, buildDigestHtml, buildDigestText } from "./digestEm
 import type { DigestStats } from "./digestEmail";
 import { generateUnsubscribeToken } from "./unsubscribeDigest";
 import { isMailerConfigured, sendEmail } from "../utils/mailer";
+import { publicOrigin, PUBLIC_ORIGIN_UNSET_ERROR } from "../utils/publicOrigin";
 
 const resendApiKey = defineSecret("RESEND_API_KEY");
 const BATCH_SIZE = 10;
-const UNSUBSCRIBE_BASE_URL =
-  "https://europe-west1-taxstudio-f12fb.cloudfunctions.net/unsubscribeDigest";
+// Built per run rather than at module load: the origin is deployment config, and
+// a module-level constant would bake in whatever was set when the container booted.
+const unsubscribeBaseUrl = () => {
+  const origin = publicOrigin();
+  return origin ? `${origin}/unsubscribeDigest` : null;
+};
 
 export const sendWeeklyDigest = onSchedule(
   {
@@ -85,7 +90,12 @@ export const sendWeeklyDigest = onSchedule(
 
             // Generate unsubscribe URL
             const token = generateUnsubscribeToken(userId);
-            const unsubscribeUrl = `${UNSUBSCRIBE_BASE_URL}?uid=${userId}&token=${token}`;
+            const base = unsubscribeBaseUrl();
+            if (!base) {
+              console.warn(`[sendWeeklyDigest] ${PUBLIC_ORIGIN_UNSET_ERROR} Skipping ${userId}.`);
+              return;
+            }
+            const unsubscribeUrl = `${base}?uid=${userId}&token=${token}`;
 
             const name = user.displayName || undefined;
             const subject = buildDigestSubject(stats);
