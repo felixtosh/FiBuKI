@@ -12,6 +12,8 @@
  */
 
 import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
+import { documentationStateChanged } from "../documents/documentationState";
+import { deriveForTransaction } from "../documents/syncDocumentationState";
 import { buildDownloadUrl } from "../utils/buildDownloadUrl";
 import { dayStartUtc, dayEndExclusiveUtc } from "../uva/dateWindow";
 import { buildMarkNotInvoiceUpdates, buildUnmarkNotInvoiceUpdates } from "../files/notInvoiceOps";
@@ -367,7 +369,18 @@ export async function updateTransaction(userId: string, args: Record<string, unk
 
   const updates: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
   if (description !== undefined) updates.description = description;
-  if (isComplete !== undefined) updates.isComplete = isComplete;
+  if (isComplete !== undefined) {
+    updates.isComplete = isComplete;
+    // #215: marking complete changes neither fileIds nor noReceiptCategoryId,
+    // so the onTransactionUpdate guard never re-derives — a bare line marked
+    // complete would stay `undocumented` forever. Derive here so this writer
+    // keeps the pair in step like every other one. The override itself stays:
+    // isComplete is written as given, only the derived fact is refreshed.
+    const derived = await deriveForTransaction(db, doc.data()!);
+    if (documentationStateChanged(doc.data()?.documentationState, derived)) {
+      updates.documentationState = derived;
+    }
+  }
   if (vatRate !== undefined) updates.vatRate = vatRate;
   if (isReverseCharge !== undefined) updates.isReverseCharge = isReverseCharge;
 

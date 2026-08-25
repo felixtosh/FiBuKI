@@ -325,6 +325,42 @@ describe("Tool Registry Handlers", () => {
         handlers.updateTransaction(userId, { transactionId: "non-existent", description: "test" })
       ).rejects.toThrow("Transaction not found");
     });
+
+    // #215: marking complete must re-derive documentationState — this writer
+    // changes neither fileIds nor the category, so the trigger guard never
+    // fires and a stale/unset state would stay that way forever.
+    it("derives documentationState when marking a bare line complete", async () => {
+      store.setDoc("transactions", "tx-1", createTestTransaction({ userId, isComplete: false }));
+
+      await handlers.updateTransaction(userId, { transactionId: "tx-1", isComplete: true });
+
+      const updated = store.getDoc("transactions", "tx-1");
+      expect(updated?.isComplete).toBe(true);
+      expect(updated?.documentationState).toBe("undocumented");
+    });
+
+    it("derives documentationState from attached files when setting isComplete", async () => {
+      store.setDoc("files", "file-1", createTestFile({ userId, documentType: "invoice" }));
+      store.setDoc(
+        "transactions",
+        "tx-1",
+        createTestTransaction({ userId, fileIds: ["file-1"], isComplete: false })
+      );
+
+      await handlers.updateTransaction(userId, { transactionId: "tx-1", isComplete: true });
+
+      const updated = store.getDoc("transactions", "tx-1");
+      expect(updated?.documentationState).toBe("invoice");
+    });
+
+    it("leaves documentationState alone on a description-only update", async () => {
+      store.setDoc("transactions", "tx-1", createTestTransaction({ userId }));
+
+      await handlers.updateTransaction(userId, { transactionId: "tx-1", description: "note" });
+
+      const updated = store.getDoc("transactions", "tx-1");
+      expect(updated?.documentationState).toBeUndefined();
+    });
   });
 
   describe("listTransactionsNeedingFiles", () => {
