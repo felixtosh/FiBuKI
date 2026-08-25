@@ -1,6 +1,5 @@
 // AUTO-GENERATED — DO NOT EDIT
 // Source: functions/src/tools/definitions.ts
-// Generated at: 2026-06-21T01:04:11.226Z
 // Regenerate: npm run generate:tool-definitions
 
 export interface ToolDefinition {
