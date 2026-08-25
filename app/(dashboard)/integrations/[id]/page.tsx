@@ -42,7 +42,16 @@ import {
   useIntegrationFileStats,
   useActiveSyncForIntegration,
 } from "@/hooks/use-integration-details";
-import { cn } from "@/lib/utils";
+import { getProviderPresentation } from "@/components/integrations/provider-presentation";
+import { ImapCredentialsDialog } from "@/components/integrations/imap-credentials-dialog";
+import { cn, toDateSafe } from "@/lib/utils";
+// Value import, not type-only — see the note on the same import in the IMAP
+// page: classify-error.ts is dependency-free, so this stays a few literals in
+// the client bundle rather than pulling functions/ runtime code into it.
+import {
+  FATAL_IMAP_ERROR_CODES,
+  IMAP_ERROR_MESSAGES,
+} from "@/functions/src/mail/imap/classify-error";
 
 interface IntegrationDetailPageProps {
   params: Promise<{ id: string }>;
@@ -64,6 +73,7 @@ export default function IntegrationDetailPage({ params }: IntegrationDetailPageP
   const [refreshing, setRefreshing] = useState(false);
   const [pausing, setPausing] = useState(false);
   const [resuming, setResuming] = useState(false);
+  const [credentialsDialogOpen, setCredentialsDialogOpen] = useState(false);
   const reconnectTriggeredRef = useRef(false);
 
   // Clear syncKnownInProgress when activeSync becomes inactive
@@ -81,9 +91,13 @@ export default function IntegrationDetailPage({ params }: IntegrationDetailPageP
     setSyncing(true);
     setSyncError(null);
     try {
+      // `force` covers a trailing window on top of any detected gap. Without
+      // it an integration whose synced range already runs to now — the normal
+      // state after a nightly sync — answers "already up to date" and the
+      // press does nothing. Matches the mailbox row's button.
       const response = await fetchWithAuth("/api/gmail/sync", {
         method: "POST",
-        body: JSON.stringify({ integrationId: id }),
+        body: JSON.stringify({ integrationId: id, force: true }),
       });
 
       const data = await response.json();
@@ -136,11 +150,20 @@ export default function IntegrationDetailPage({ params }: IntegrationDetailPageP
     }
   };
 
+  // Arriving with ?toggleReconnect=true (the file-connect overlay's link)
+  // means "start the reconnect for me". What that is depends on the provider:
+  // an OAuth redirect for Gmail, the credential dialog for a mailbox. Firing
+  // the OAuth redirect for an IMAP mailbox — which is what this did before —
+  // sent the user to Google for a mailbox Google does not host.
   useEffect(() => {
     if (!integration || reconnectTriggeredRef.current) return;
     const shouldReconnect = searchParams?.get("toggleReconnect") === "true";
     if (!shouldReconnect) return;
     reconnectTriggeredRef.current = true;
+    if (getProviderPresentation(integration.provider).reconnectKind === "credentials") {
+      setCredentialsDialogOpen(true);
+      return;
+    }
     const returnTo = searchParams?.get("returnTo") || undefined;
     handleRefresh(returnTo);
   }, [integration, searchParams, handleRefresh]);
@@ -168,10 +191,19 @@ export default function IntegrationDetailPage({ params }: IntegrationDetailPageP
     );
   }
 
+  const presentation = getProviderPresentation(integration.provider);
   const needsReauth = integration.needsReauth;
   const isExpired = needsReauth; // Only treat as expired when refresh token is truly invalid
   const isPaused = integration.isPaused;
-  const lastSyncAt = integration.lastSyncAt?.toDate();
+  // Classified IMAP failures. Absent for Gmail, whose failures are not
+  // classified — the reauth flag carries its OAuth story instead.
+  const errorCode = integration.lastSyncErrorCode;
+  const errorMessage = errorCode ? IMAP_ERROR_MESSAGES[errorCode] : null;
+  // Disable rather than hide, matching the mailbox row: an auth or
+  // missing-mailbox failure cannot resolve without reconnecting, so a press
+  // there is a promise the system cannot keep.
+  const isFatalError = !!errorCode && FATAL_IMAP_ERROR_CODES.has(errorCode);
+  const lastSyncAt = toDateSafe(integration.lastSyncAt);
   const lastSyncStatus = integration.lastSyncStatus;
   const lastSyncFileCount = integration.lastSyncFileCount;
   const initialSyncComplete = integration.initialSyncComplete;
@@ -222,8 +254,11 @@ export default function IntegrationDetailPage({ params }: IntegrationDetailPageP
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div className="flex items-center gap-3">
-            <div className="h-12 w-12 rounded-full bg-red-100 flex items-center justify-center">
-              <Mail className="h-6 w-6 text-red-600" />
+            <div className={cn(
+              "h-12 w-12 rounded-full flex items-center justify-center",
+              presentation.avatarBg
+            )}>
+              <Mail className={cn("h-6 w-6", presentation.avatarFg)} />
             </div>
             <div>
               <div className="flex items-center gap-2">
@@ -251,7 +286,7 @@ export default function IntegrationDetailPage({ params }: IntegrationDetailPageP
                 )}
               </div>
               <p className="text-sm text-muted-foreground">
-                Gmail Integration · Connected {formatDistanceToNow(integration.createdAt.toDate(), { addSuffix: true })}
+                {presentation.subtitleLabel} · Connected {formatDistanceToNow(integration.createdAt.toDate(), { addSuffix: true })}
               </p>
             </div>
           </div>
@@ -297,7 +332,8 @@ export default function IntegrationDetailPage({ params }: IntegrationDetailPageP
               variant="outline"
               size="sm"
               onClick={handlePullFiles}
-              disabled={syncing}
+              disabled={syncing || isFatalError}
+              title={isFatalError ? errorMessage ?? undefined : undefined}
             >
               {syncing ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -308,11 +344,20 @@ export default function IntegrationDetailPage({ params }: IntegrationDetailPageP
             </Button>
           )}
 
-          {(needsReauth || isExpired) && (
+          {/* A fatal classified error also earns the button even when the
+              reauth flag is not set: a mailbox whose folder no longer exists
+              is repaired through the same dialog, in its settings section. */}
+          {(needsReauth ||
+            isExpired ||
+            (presentation.reconnectKind === "credentials" && isFatalError)) && (
             <Button
               variant="default"
               size="sm"
-              onClick={() => handleRefresh()}
+              onClick={() =>
+                presentation.reconnectKind === "credentials"
+                  ? setCredentialsDialogOpen(true)
+                  : handleRefresh()
+              }
               disabled={refreshing}
             >
               {refreshing ? (
@@ -341,10 +386,12 @@ export default function IntegrationDetailPage({ params }: IntegrationDetailPageP
             </AlertDialogTrigger>
             <AlertDialogContent>
               <AlertDialogHeader>
-                <AlertDialogTitle>Disconnect Gmail Account?</AlertDialogTitle>
+                <AlertDialogTitle>{presentation.disconnectTitle}</AlertDialogTitle>
                 <AlertDialogDescription>
                   This will disconnect <strong>{integration.email}</strong> from FiBuKI.
-                  You can reconnect it anytime. Files already imported will remain.
+                  You can reconnect it anytime. Files already matched to a
+                  transaction are kept; imported files not yet matched to one
+                  are removed.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
@@ -357,6 +404,19 @@ export default function IntegrationDetailPage({ params }: IntegrationDetailPageP
           </AlertDialog>
         </div>
       </div>
+
+      {/* Classified failure from the last sync. Persisted on the integration,
+          so it survives a reload — unlike syncError below, which reports what
+          just happened in this session. Cleared by a successful sync or a
+          repaired credential. */}
+      {errorMessage && (
+        <div className="mb-6 p-4 rounded-lg bg-destructive/10 border border-destructive/30">
+          <div className="flex items-center gap-2 text-destructive">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            <span>{errorMessage}</span>
+          </div>
+        </div>
+      )}
 
       {/* Sync Error */}
       {syncError && (
@@ -551,8 +611,24 @@ export default function IntegrationDetailPage({ params }: IntegrationDetailPageP
             <CardContent className="space-y-4">
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Provider</span>
-                <span className="font-medium">Gmail</span>
+                <span className="font-medium">{presentation.name}</span>
               </div>
+              {presentation.showsImapServerDetails && (
+                <>
+                  <div className="flex justify-between text-sm gap-4">
+                    <span className="text-muted-foreground shrink-0">Server</span>
+                    <span className="font-medium truncate">
+                      {integration.imapHost}:{integration.imapPort}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-sm gap-4">
+                    <span className="text-muted-foreground shrink-0">Folder</span>
+                    <span className="font-medium truncate">
+                      {integration.imapMailbox || "INBOX"}
+                    </span>
+                  </div>
+                </>
+              )}
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Status</span>
                 <span className={cn(
@@ -601,6 +677,17 @@ export default function IntegrationDetailPage({ params }: IntegrationDetailPageP
           )}
         </div>
       </div>
+
+      {/* Mounted only while open, so its fields are initialised from the
+          mailbox as it is now. Kept mounted, it would hold the settings it
+          first saw and offer them back after a repair had changed them. */}
+      {presentation.reconnectKind === "credentials" && credentialsDialogOpen && (
+        <ImapCredentialsDialog
+          integration={integration}
+          open={true}
+          onOpenChange={setCredentialsDialogOpen}
+        />
+      )}
     </div>
   );
 }

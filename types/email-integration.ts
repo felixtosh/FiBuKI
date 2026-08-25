@@ -1,4 +1,8 @@
 import { Timestamp } from "firebase/firestore";
+// Type-only, so the app never pulls functions/ runtime code into its bundle.
+// One definition of the five codes, shared by the worker that writes them and
+// the UI that branches on them.
+import type { ImapErrorCode } from "@/functions/src/mail/imap/classify-error";
 
 /**
  * Supported email providers
@@ -25,8 +29,13 @@ export interface EmailIntegration {
   /** Provider-specific account ID (e.g., Google user ID) */
   accountId: string;
 
-  /** When the OAuth access token expires */
-  tokenExpiresAt: Timestamp;
+  /**
+   * When the OAuth access token expires.
+   *
+   * OAuth providers only. An IMAP mailbox authenticates with an app-password
+   * that does not expire, and its connect route never writes this.
+   */
+  tokenExpiresAt?: Timestamp;
 
   /** Last time this integration was used for search/download */
   lastAccessedAt?: Timestamp;
@@ -66,14 +75,28 @@ export interface EmailIntegration {
 
   // === Sync Status ===
 
-  /** Last time invoices were synced from this account */
+  /** Last time invoices were synced from this account (written by the worker) */
   lastSyncAt?: Timestamp;
+
+  /**
+   * Last time a human pressed "Pull New Files" for this integration, written
+   * by the sync route at enqueue time. The manual-sync throttle keys on this
+   * rather than lastSyncAt, so a nightly worker run does not consume it.
+   */
+  lastManualSyncAt?: Timestamp;
 
   /** Status of the last sync attempt */
   lastSyncStatus?: "success" | "partial" | "failed";
 
   /** Error message from last sync */
   lastSyncError?: string;
+
+  /**
+   * Classified cause of the last IMAP sync failure, written by the sync worker
+   * and cleared by a successful sync. Null/absent means no classified error.
+   * Gmail failures are not classified — the field stays absent for them.
+   */
+  lastSyncErrorCode?: ImapErrorCode | null;
 
   /** Number of files pulled in last sync */
   lastSyncFileCount?: number;

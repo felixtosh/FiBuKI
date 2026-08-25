@@ -274,6 +274,40 @@ export class FakeBatch {
   }
 }
 
+/** Minimal transaction double: reads pass through live, writes buffer until commit. */
+export class FakeTransaction {
+  private ops: WriteOp[] = [];
+  constructor(private db: FakeFirestore) {}
+
+  async get(ref: FakeDocRef): Promise<DocSnapshot> {
+    return ref.get();
+  }
+
+  set(ref: FakeDocRef, data: DocData): FakeTransaction {
+    this.ops.push({ kind: "set", collectionName: ref.collectionName, id: ref.id, data });
+    return this;
+  }
+
+  update(ref: FakeDocRef, data: DocData): FakeTransaction {
+    this.ops.push({ kind: "update", collectionName: ref.collectionName, id: ref.id, data });
+    return this;
+  }
+
+  delete(ref: FakeDocRef): FakeTransaction {
+    this.ops.push({ kind: "delete", collectionName: ref.collectionName, id: ref.id });
+    return this;
+  }
+
+  _commit(): void {
+    for (const op of this.ops) {
+      if (op.kind === "delete") this.db._delete(op.collectionName, op.id);
+      else if (op.kind === "update") this.db._update(op.collectionName, op.id, op.data ?? {});
+      else this.db._set(op.collectionName, op.id, { ...(op.data ?? {}) });
+    }
+    this.ops = [];
+  }
+}
+
 export class FakeFirestore {
   private collections = new Map<string, Map<string, DocData>>();
   private autoId = 0;
@@ -294,6 +328,14 @@ export class FakeFirestore {
 
   batch(): FakeBatch {
     return new FakeBatch(this);
+  }
+
+  /** Writes only land if `fn` resolves; a throw discards them, matching the real SDK. */
+  async runTransaction<T>(fn: (tx: FakeTransaction) => Promise<T>): Promise<T> {
+    const tx = new FakeTransaction(this);
+    const result = await fn(tx);
+    tx._commit();
+    return result;
   }
 
   // --- internals used by the ref/query/batch classes -----------------------

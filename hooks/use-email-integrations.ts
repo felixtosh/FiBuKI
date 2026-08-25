@@ -26,6 +26,17 @@ export interface ImapConnectParams {
   keywordPrefilter?: boolean;
 }
 
+export interface ImapRepairParams {
+  integrationId: string;
+  /** The new app-password. Everything else is optional and means "keep". */
+  password: string;
+  host?: string;
+  port?: number;
+  secure?: boolean;
+  mailbox?: string;
+  allowSelfSigned?: boolean;
+}
+
 export interface UseEmailIntegrationsResult {
   /** List of connected email integrations */
   integrations: EmailIntegration[];
@@ -37,6 +48,8 @@ export interface UseEmailIntegrationsResult {
   connectGmail: () => Promise<void>;
   /** Connect a mailbox over IMAP (verifies + persists server-side) */
   connectImap: (params: ImapConnectParams) => Promise<void>;
+  /** Repair a connected IMAP mailbox in place with a new app-password */
+  repairImapCredentials: (params: ImapRepairParams) => Promise<void>;
   /** Disconnect an integration */
   disconnect: (integrationId: string) => Promise<void>;
   /** Refresh an integration (reconnect OAuth) */
@@ -143,6 +156,29 @@ export function useEmailIntegrations(): UseEmailIntegrationsResult {
       throw err;
     }
   }, [userId]);
+
+  // Repair a broken mailbox in place. Unlike disconnect-then-connect, this
+  // keeps the integration document, its files, and its sync history: the route
+  // verifies the new app-password with a live login before storing it, so a
+  // rejected promise means nothing about the mailbox changed.
+  const repairImapCredentials = useCallback(async (params: ImapRepairParams) => {
+    try {
+      setError(null);
+      const response = await fetchWithAuth("/api/mail/imap/credentials", {
+        method: "PATCH",
+        body: JSON.stringify(params),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to update credentials");
+      }
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Failed to update credentials";
+      setError(message);
+      throw err;
+    }
+  }, []);
 
   // Disconnect integration
   const disconnect = useCallback(async (integrationId: string) => {
@@ -251,6 +287,7 @@ export function useEmailIntegrations(): UseEmailIntegrationsResult {
     error,
     connectGmail,
     connectImap,
+    repairImapCredentials,
     disconnect,
     refresh,
     pauseSync,

@@ -1,5 +1,9 @@
 import { onDocumentCreated, onDocumentUpdated } from "firebase-functions/v2/firestore";
 import { FieldValue, getFirestore, Timestamp } from "firebase-admin/firestore";
+import {
+  getTransactionDateRange,
+  startImapInitialSync,
+} from "./startImapInitialSync";
 
 const db = getFirestore();
 
@@ -158,63 +162,15 @@ async function setupGmailIntegration(
  * already verified by the connect route before this document was written.
  */
 async function setupImapIntegration(
-  event: Parameters<Parameters<typeof onDocumentCreated>[1]>[0],
+  _event: Parameters<Parameters<typeof onDocumentCreated>[1]>[0],
   data: EmailIntegration,
   integrationId: string,
   userId: string
 ): Promise<void> {
-  const dateRange = await getTransactionDateRange(userId);
-
-  let dateFrom: Date;
-  let dateTo: Date;
-
-  if (dateRange) {
-    dateFrom = new Date(dateRange.minDate);
-    dateFrom.setDate(dateFrom.getDate() - 7);
-    dateTo = new Date(dateRange.maxDate);
-    dateTo.setDate(dateTo.getDate() + 7);
-  } else {
-    dateTo = new Date();
-    dateFrom = new Date();
-    dateFrom.setDate(dateFrom.getDate() - 90);
-  }
-
-  console.log(`[MailService] IMAP date range: ${dateFrom.toISOString()} to ${dateTo.toISOString()}`);
-
-  const now = Timestamp.now();
-  await event.data?.ref.update({
-    initialSyncStartedAt: now,
-    isPaused: false,
-    updatedAt: now,
-  });
-
-  await db.collection("gmailSyncQueue").add({
-    userId,
-    integrationId,
-    type: "initial",
-    status: "pending",
-    dateFrom: Timestamp.fromDate(dateFrom),
-    dateTo: Timestamp.fromDate(dateTo),
-    emailsProcessed: 0,
-    filesCreated: 0,
-    attachmentsSkipped: 0,
-    errors: [],
-    retryCount: 0,
-    maxRetries: 3,
-    processedMessageIds: [],
-    createdAt: now,
-  });
-
-  console.log(`[MailService] IMAP integration auto-started: ${data.email}`);
-
-  await db.collection("notifications").add({
-    userId,
-    type: "mail_service_connected",
-    title: "Mailbox Connected",
-    message: `${data.email} connected. Syncing recent invoices now.`,
-    read: false,
-    createdAt: now,
-  });
+  // Shared with the connect route, which has to do this itself on a self-host
+  // deployment — see startImapInitialSync.ts for why the trigger cannot be the
+  // only path. The helper is idempotent, so both firing is harmless.
+  await startImapInitialSync({ integrationId, userId, email: data.email });
 }
 
 // ============================================================================
@@ -385,54 +341,3 @@ export const onMailServiceReconnected = onDocumentUpdated(
   }
 );
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
-/**
- * Get the date range of the user's transactions.
- * Used to limit invoice search to relevant dates.
- */
-async function getTransactionDateRange(
-  userId: string
-): Promise<{ minDate: Date; maxDate: Date } | null> {
-  console.log(`[MailService] Querying transactions for userId: ${userId}`);
-
-  // Get earliest transaction
-  const earliestQuery = await db
-    .collection("transactions")
-    .where("userId", "==", userId)
-    .orderBy("date", "asc")
-    .limit(1)
-    .get();
-
-  // Get latest transaction
-  const latestQuery = await db
-    .collection("transactions")
-    .where("userId", "==", userId)
-    .orderBy("date", "desc")
-    .limit(1)
-    .get();
-
-  console.log(`[MailService] Found ${earliestQuery.size} earliest, ${latestQuery.size} latest transactions`);
-
-  if (earliestQuery.empty || latestQuery.empty) {
-    console.log(`[MailService] No transactions found for user, will use fallback date range`);
-    return null;
-  }
-
-  const earliestDoc = earliestQuery.docs[0].data();
-  const latestDoc = latestQuery.docs[0].data();
-
-  // Handle both Timestamp and Date objects
-  const minDate =
-    earliestDoc.date instanceof Timestamp
-      ? earliestDoc.date.toDate()
-      : new Date(earliestDoc.date);
-  const maxDate =
-    latestDoc.date instanceof Timestamp
-      ? latestDoc.date.toDate()
-      : new Date(latestDoc.date);
-
-  return { minDate, maxDate };
-}

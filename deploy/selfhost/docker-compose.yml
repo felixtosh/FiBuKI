@@ -286,6 +286,12 @@ services:
       # Also at runtime: server-side reads in route handlers resolve it here, and
       # keeping both in step avoids a stale baked-in value outliving an origin change.
       NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL}
+      # The mailbox connect routes (app/api/mail/imap/connect, app/api/gmail/callback)
+      # encrypt the credential in THIS container before storing it, with the same key
+      # the api uses to decrypt it at sync time. Without it here, every IMAP connect
+      # answers "Server is not configured to store credentials securely." even when
+      # the api side has the key. Same value as the api service above.
+      GMAIL_TOKEN_ENCRYPTION_KEY: ${GMAIL_TOKEN_ENCRYPTION_KEY:-}
       # The /api/mcp and /api/mcp/sse route handlers proxy to the functions host
       # SERVER-SIDE, so this resolves at runtime, not build time. Unset, those
       # routes fell back to the SaaS production Cloud Functions and forwarded
