@@ -49,6 +49,7 @@ export function deriveDocumentationState(input: DocumentationInput): Documentati
 export interface DocumentationGuardState {
   fileIds?: string[] | null;
   noReceiptCategoryId?: string | null;
+  isComplete?: boolean | null;
   documentationState?: DocumentationState | null;
 }
 
@@ -59,6 +60,12 @@ export interface DocumentationGuardState {
  * or the category changed, or the state has never been derived at all — which
  * is what lets rows written before #104 fill in the first time they are
  * touched, without a backfill job.
+ *
+ * An `isComplete` flip also fires (#215): writers that set the flag without
+ * touching files or category — the callables, bulk updates, any direct
+ * writer — would otherwise leave a line complete and `undocumented` at once.
+ * The derivation is idempotent and the write is skipped when the state did
+ * not move, so the re-trigger after such a write cannot loop.
  *
  * A file's own classification changing is NOT visible from here; the
  * extraction path propagates that itself, calling the same derivation.
@@ -72,8 +79,9 @@ export function shouldRecomputeDocumentationState(
   const fileIdsChanged =
     JSON.stringify(before.fileIds ?? []) !== JSON.stringify(after.fileIds ?? []);
   const categoryChanged = (before.noReceiptCategoryId ?? null) !== (after.noReceiptCategoryId ?? null);
+  const completeFlagChanged = (before.isComplete ?? null) !== (after.isComplete ?? null);
 
-  return fileIdsChanged || categoryChanged;
+  return fileIdsChanged || categoryChanged || completeFlagChanged;
 }
 
 /** Is the derived state worth writing? Writing an unchanged value would re-fire the trigger. */

@@ -118,6 +118,28 @@ describe("shouldRecomputeDocumentationState", () => {
     ).toBe(false);
   });
 
+  // #215: writers that flip the flag without touching files or category (the
+  // callables, bulk updates, any direct writer) must re-derive, or a bare
+  // line marked complete stays `undocumented` forever.
+  it("fires when isComplete flips with files and category unchanged", () => {
+    expect(
+      shouldRecomputeDocumentationState(
+        { fileIds: [], noReceiptCategoryId: null, isComplete: false, documentationState: "undocumented" },
+        { fileIds: [], noReceiptCategoryId: null, isComplete: true, documentationState: "undocumented" }
+      )
+    ).toBe(true);
+  });
+
+  it("does not fire again after the isComplete-triggered write settles", () => {
+    const after = {
+      fileIds: [],
+      noReceiptCategoryId: null,
+      isComplete: true,
+      documentationState: "undocumented" as const,
+    };
+    expect(shouldRecomputeDocumentationState(after, after)).toBe(false);
+  });
+
   it("does not fire on the write it just made, so the trigger cannot loop", () => {
     const before = { fileIds: [], noReceiptCategoryId: null, documentationState: "undocumented" };
     const after = { fileIds: ["file-1"], noReceiptCategoryId: null, documentationState: "invoice" };
