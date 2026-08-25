@@ -147,3 +147,44 @@ describe("POST /api/mail/imap/connect — a connected mailbox starts clean", () 
     }
   });
 });
+
+describe("POST /api/mail/imap/connect — a body that does not match the schema", () => {
+  async function post(body: unknown): Promise<{ status: number; error?: string; issues?: string[] }> {
+    const { POST } = await import("@/app/api/mail/imap/connect/route");
+    const res = await POST(
+      authed("user-A", "http://test.local/api/mail/imap/connect", "POST", body as object)
+    );
+    const parsed = (await res.json()) as { error?: string; issues?: string[] };
+    return { status: res.status, error: parsed.error, issues: parsed.issues };
+  }
+
+  it("answers 400 and names the missing field", async () => {
+    const res = await post({ host: "mail.example.test", user: "someone@example.test" });
+    expect(res.status).toBe(400);
+    expect(res.issues?.join(" ")).toContain("password");
+  });
+
+  it("rejects a field of the wrong type rather than coercing it", async () => {
+    const res = await post({
+      host: "mail.example.test",
+      user: "someone@example.test",
+      password: "app-password",
+      port: "993",
+    });
+    expect(res.status).toBe(400);
+    expect(res.issues?.join(" ")).toContain("port");
+  });
+
+  it("rejects a present-but-blank field, which the old presence check also caught", async () => {
+    const res = await post({ host: "   ", user: "someone@example.test", password: "app-password" });
+    expect(res.status).toBe(400);
+    expect(res.issues?.join(" ")).toContain("host");
+  });
+
+  it("never reaches the mailbox when the body is wrong", async () => {
+    imap.connectError = new Error("must not be called");
+    const res = await post({ host: "mail.example.test", user: "someone@example.test" });
+    expect(res.status).toBe(400);
+    expect(res.error).not.toContain("must not be called");
+  });
+});

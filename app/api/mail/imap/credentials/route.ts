@@ -5,20 +5,16 @@ import { Timestamp } from "firebase-admin/firestore";
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { encrypt, getEncryptionKey } from "@/lib/crypto/encryption";
 import { verifyImapMailbox } from "@/lib/mail/verify-imap-mailbox";
+import {
+  credentialsBodySchema,
+  IncompleteMailbox,
+  invalidRequestResponse,
+  readBody,
+} from "@/lib/mail/imap-request";
 
 const db = getAdminDb();
 const INTEGRATIONS_COLLECTION = "emailIntegrations";
 const TOKENS_COLLECTION = "emailTokens";
-
-interface CredentialsBody {
-  integrationId?: string;
-  password?: string;
-  host?: string;
-  port?: number;
-  secure?: boolean;
-  mailbox?: string;
-  allowSelfSigned?: boolean;
-}
 
 /**
  * PATCH /api/mail/imap/credentials
@@ -52,17 +48,11 @@ interface CredentialsBody {
 export async function PATCH(request: NextRequest) {
   try {
     const userId = await getServerUserIdWithFallback(request);
-    const body = (await request.json()) as CredentialsBody;
-
-    const integrationId = body.integrationId?.trim();
-    const password = body.password;
-
-    if (!integrationId || !password) {
-      return NextResponse.json(
-        { error: "integrationId and password are required" },
-        { status: 400 }
-      );
-    }
+    // Parsed, not inspected — see lib/mail/imap-request.ts. Everything but the
+    // password is optional here, because an omitted field means "keep what the
+    // mailbox already stores".
+    const body = await readBody(request, credentialsBodySchema);
+    const { integrationId, password } = body;
 
     // 1. Resolve the mailbox and confirm it is the caller's. A mailbox
     //    belonging to someone else is reported as absent, matching the other
@@ -92,21 +82,19 @@ export async function PATCH(request: NextRequest) {
     // 2. Effective connection settings: what the caller supplied, else what the
     //    mailbox already stores. A repair usually changes only the password, so
     //    an omitted field must mean "keep", never "reset to default".
-    const host = body.host?.trim() || (integration.imapHost as string | undefined);
+    const host = body.host || (integration.imapHost as string | undefined);
     const port = body.port ?? (integration.imapPort as number | undefined) ?? 993;
     const secure = body.secure ?? (integration.imapSecure as boolean | undefined) ?? true;
     const mailbox =
-      body.mailbox?.trim() || (integration.imapMailbox as string | undefined) || "INBOX";
+      body.mailbox || (integration.imapMailbox as string | undefined) || "INBOX";
     const allowSelfSigned =
       body.allowSelfSigned ?? (integration.imapAllowSelfSigned as boolean | undefined) ?? false;
     const user = (integration.displayName as string | undefined) || (integration.email as string);
 
-    if (!host || !user) {
-      return NextResponse.json(
-        { error: "This mailbox is missing its connection settings. Reconnect it instead." },
-        { status: 400 }
-      );
-    }
+    // Not a check on what the caller sent — the caller's fields were validated
+    // on the way in. This is the STORED mailbox being too incomplete to repair,
+    // which is a different failure and gets its own error.
+    if (!host || !user) throw new IncompleteMailbox();
 
     // 3. Verify BEFORE persisting, exactly as the connect route does. A failed
     //    attempt must leave the mailbox precisely as it was — a user checking a
@@ -179,6 +167,8 @@ export async function PATCH(request: NextRequest) {
   } catch (error) {
     const unauthorized = unauthorizedResponse(error);
     if (unauthorized) return unauthorized;
+    const invalid = invalidRequestResponse(error);
+    if (invalid) return invalid;
     console.error("[IMAP credentials] error:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to update credentials" },

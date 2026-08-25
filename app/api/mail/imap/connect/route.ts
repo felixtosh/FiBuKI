@@ -6,6 +6,11 @@ import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/ge
 import { encrypt, getEncryptionKey } from "@/lib/crypto/encryption";
 import { startImapInitialSync } from "@/functions/src/gmail/startImapInitialSync";
 import { verifyImapMailbox } from "@/lib/mail/verify-imap-mailbox";
+import {
+  connectBodySchema,
+  invalidRequestResponse,
+  readBody,
+} from "@/lib/mail/imap-request";
 
 const db = getAdminDb();
 const INTEGRATIONS_COLLECTION = "emailIntegrations";
@@ -22,17 +27,6 @@ const TOKENS_COLLECTION = "emailTokens";
 const IS_SELFHOST =
   process.env.NEXT_PUBLIC_FIBUKI_BACKEND === "selfhost" ||
   process.env.FIBUKI_BACKEND === "selfhost";
-
-interface ConnectBody {
-  host?: string;
-  port?: number;
-  secure?: boolean;
-  user?: string;
-  password?: string;
-  mailbox?: string;
-  allowSelfSigned?: boolean;
-  keywordPrefilter?: boolean;
-}
 
 /**
  * POST /api/mail/imap/connect
@@ -52,23 +46,11 @@ interface ConnectBody {
 export async function POST(request: NextRequest) {
   try {
     const userId = await getServerUserIdWithFallback(request);
-    const body = (await request.json()) as ConnectBody;
-
-    const host = body.host?.trim();
-    const user = body.user?.trim();
-    const password = body.password;
-    const port = body.port ?? 993;
-    const secure = body.secure ?? true;
-    const mailbox = body.mailbox?.trim() || "INBOX";
-    const allowSelfSigned = Boolean(body.allowSelfSigned);
-    const keywordPrefilter = body.keywordPrefilter ?? true;
-
-    if (!host || !user || !password) {
-      return NextResponse.json(
-        { error: "host, user and password are required" },
-        { status: 400 }
-      );
-    }
+    // Parsed, not inspected: a body that does not match the schema raises
+    // InvalidRequestBody and never reaches the logic below, so nothing here
+    // branches on a caller-supplied value.
+    const { host, user, password, port, secure, mailbox, allowSelfSigned, keywordPrefilter } =
+      await readBody(request, connectBodySchema);
 
     // 1. Verify BEFORE persisting: live login + read-only mailbox open.
     //    Shared with the credential-repair route so both store only a
@@ -185,6 +167,8 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     const unauthorized = unauthorizedResponse(error);
     if (unauthorized) return unauthorized;
+    const invalid = invalidRequestResponse(error);
+    if (invalid) return invalid;
     console.error("[IMAP connect] error:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to connect mailbox" },
