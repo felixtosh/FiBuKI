@@ -5,6 +5,7 @@
  */
 
 import { onRequest } from "firebase-functions/v2/https";
+import { publicOrigin, PUBLIC_ORIGIN_UNSET_ERROR } from "../utils/publicOrigin";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -20,12 +21,9 @@ const OPENAPI_SPEC = {
     description: "Manage bank transactions, receipts, and tax categorization for German small businesses.",
     version: "1.0.0",
   },
-  servers: [
-    {
-      url: "https://europe-west1-taxstudio-f12fb.cloudfunctions.net",
-      description: "Production",
-    },
-  ],
+  // Filled per request from the deployment's own public origin — a spec that
+  // names somebody else's backend sends every client there.
+  servers: [{ url: "", description: "This deployment" }],
   paths: {
     "/mcpApi": {
       post: {
@@ -227,7 +225,16 @@ export const openApiSpec = onRequest({ region: "europe-west1" }, async (req, res
     return;
   }
 
-  res.status(200).json(OPENAPI_SPEC);
+  const origin = publicOrigin();
+  if (!origin) {
+    res.status(500).json({ error: PUBLIC_ORIGIN_UNSET_ERROR });
+    return;
+  }
+
+  res.status(200).json({
+    ...OPENAPI_SPEC,
+    servers: [{ url: origin, description: "This deployment" }],
+  });
 });
 
 /**
@@ -238,6 +245,12 @@ export const aiPluginManifest = onRequest({ region: "europe-west1" }, async (req
 
   if (req.method === "OPTIONS") {
     res.status(204).send("");
+    return;
+  }
+
+  const origin = publicOrigin();
+  if (!origin) {
+    res.status(500).json({ error: PUBLIC_ORIGIN_UNSET_ERROR });
     return;
   }
 
@@ -254,7 +267,7 @@ export const aiPluginManifest = onRequest({ region: "europe-west1" }, async (req
     },
     api: {
       type: "openapi",
-      url: "https://europe-west1-taxstudio-f12fb.cloudfunctions.net/openApiSpec",
+      url: `${origin}/openApiSpec`,
     },
     logo_url: "https://fibuki.com/icon.png",
     contact_email: "support@fibuki.com",

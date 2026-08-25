@@ -8,6 +8,7 @@
  */
 
 import { CloudFunctionName } from "@/types/function-call";
+import { functionsUrl, FUNCTIONS_URL_UNSET_ERROR } from "@/lib/api/functions-origin";
 
 interface CloudFunctionResponse<T> {
   result?: T;
@@ -26,7 +27,8 @@ function getProjectId(): string {
     process.env.GCLOUD_PROJECT ||
     process.env.GCP_PROJECT ||
     process.env.GOOGLE_CLOUD_PROJECT ||
-    process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "taxstudio-f12fb"
+    process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ||
+    "demo-fibuki"
   );
 }
 
@@ -43,20 +45,25 @@ function isEmulator(): boolean {
 }
 
 /**
- * Get the function URL (emulator or production)
+ * Get the function URL (emulator or the configured backend)
+ *
+ * The configured origin wins over everything. There is no Cloud Functions
+ * default any more: a deployment that has not said where its backend lives
+ * must fail here rather than post the caller's bearer token to a project it
+ * does not own. See lib/api/functions-origin.ts.
  */
 function getFunctionUrl(name: string): string {
-  const projectId = getProjectId();
-  const region = "europe-west1";
+  const configured = functionsUrl(name);
+  if (configured) return configured;
 
   if (isEmulator()) {
     // Emulator URL format: http://127.0.0.1:5001/{projectId}/{region}/{functionName}
+    const projectId = getProjectId();
     const emulatorHost = process.env.FUNCTIONS_EMULATOR_HOST || "127.0.0.1:5001";
-    return `http://${emulatorHost}/${projectId}/${region}/${name}`;
+    return `http://${emulatorHost}/${projectId}/europe-west1/${name}`;
   }
 
-  // Production URL
-  return `https://${region}-${projectId}.cloudfunctions.net/${name}`;
+  throw new Error(FUNCTIONS_URL_UNSET_ERROR);
 }
 
 // Store for current request's auth token

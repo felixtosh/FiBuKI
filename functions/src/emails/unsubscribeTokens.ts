@@ -4,6 +4,7 @@
  */
 
 import { createHmac, timingSafeEqual } from "crypto";
+import { publicOrigin, PUBLIC_ORIGIN_UNSET_ERROR } from "../utils/publicOrigin";
 
 const UNSUBSCRIBE_SECRET =
   process.env.DIGEST_HMAC_SECRET || "fibuki-digest-2026";
@@ -44,5 +45,7 @@ export function buildUnsubscribeUrl(
   const token = generateUnsubscribeToken(userId, category);
   const endpoint =
     category === "digest" ? "unsubscribeDigest" : "unsubscribeBudgetWarnings";
-  return `https://europe-west1-taxstudio-f12fb.cloudfunctions.net/${endpoint}?uid=${userId}&token=${token}`;
+  const origin = publicOrigin();
+  if (!origin) throw new Error(PUBLIC_ORIGIN_UNSET_ERROR);
+  return `${origin}/${endpoint}?uid=${userId}&token=${token}`;
 }

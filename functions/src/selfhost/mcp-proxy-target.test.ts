@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterAll } from "vitest";
-import { resolveFunctionsUrl } from "@/app/api/mcp/functions-url";
+import { resolveFunctionsUrl } from "@/lib/api/functions-origin";
 
 const saved = {
   base: process.env.NEXT_PUBLIC_FUNCTIONS_URL,
@@ -24,21 +24,25 @@ afterAll(() => {
   if (saved.backend !== undefined) process.env.NEXT_PUBLIC_FIBUKI_BACKEND = saved.backend;
 });
 
-describe("resolveFunctionsUrl", () => {
+describe("functionsUrl", () => {
   it("uses the configured origin, trimming a trailing slash", () => {
     process.env.NEXT_PUBLIC_FUNCTIONS_URL = "http://fibuki-api:8788/";
     expect(resolveFunctionsUrl("mcpApi")).toBe("http://fibuki-api:8788/mcpApi");
   });
 
-  it("returns null on selfhost with no origin configured — no silent SaaS fallback", () => {
+  it("returns null when no origin is configured — no silent Cloud Functions fallback", () => {
     process.env.NEXT_PUBLIC_FIBUKI_BACKEND = "selfhost";
     expect(resolveFunctionsUrl("mcpApi")).toBeNull();
     expect(resolveFunctionsUrl("mcpSse")).toBeNull();
   });
 
-  it("keeps the Cloud Functions fallback for the Firebase build", () => {
-    expect(resolveFunctionsUrl("mcpApi")).toBe(
-      "https://europe-west1-taxstudio-f12fb.cloudfunctions.net/mcpApi",
-    );
+  it("returns null for a build with no backend flag either — the fallback is gone for everyone", () => {
+    delete process.env.NEXT_PUBLIC_FIBUKI_BACKEND;
+    expect(resolveFunctionsUrl("mcpApi")).toBeNull();
+  });
+
+  it("never composes a cloudfunctions.net address", () => {
+    process.env.NEXT_PUBLIC_FUNCTIONS_URL = "https://api.fibuki.test";
+    expect(resolveFunctionsUrl("mcpApi")).not.toContain("cloudfunctions.net");
   });
 });

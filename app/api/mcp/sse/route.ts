@@ -6,7 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { resolveFunctionsUrl, FUNCTIONS_URL_UNSET_ERROR } from "../functions-url";
+import { resolveFunctionsUrl, FUNCTIONS_URL_UNSET_ERROR } from "@/lib/api/functions-origin";
 
 const CF_URL = resolveFunctionsUrl("mcpSse");
 
