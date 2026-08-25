@@ -18,6 +18,29 @@ FiBuKI - A tax/accounting tool for managing bank transactions, receipts, and cat
 - **[`docs/claude-practices.md`](docs/claude-practices.md)** — how to drive this repo:
   host safety, bounded output, model routing, small sessions + handoffs, spec→`/goal`.
 
+## Agent skills
+
+This repo is configured for the [mattpocock/skills](https://github.com/mattpocock/skills)
+engineering skills (`/wayfinder`, `/domain-modeling`, `/triage`, `/to-tickets`,
+`/grill-with-docs`, `/code-review`, ...).
+
+### Issue tracker
+
+GitHub issues on **`felixtosh/FiBuKI`** — the one trunk. Writing there needs the classic
+token, not the box's default fine-grained one, and every `gh` call needs an explicit `-R`.
+See [`docs/agents/issue-tracker.md`](docs/agents/issue-tracker.md).
+
+### Triage labels
+
+The five canonical roles, each label string equal to its name. See
+[`docs/agents/triage-labels.md`](docs/agents/triage-labels.md).
+
+### Domain docs
+
+Single-context: [`CONTEXT.md`](CONTEXT.md) at the root plus [`docs/adr/`](docs/adr/).
+Read them before exploring, and use the glossary's terms in issues, tests and proposals.
+See [`docs/agents/domain.md`](docs/agents/domain.md).
+
 ## Host safety (enforced)
 
 **Never run a full `vitest`, a project-wide `tsc`, or `next build` on a small host.**
