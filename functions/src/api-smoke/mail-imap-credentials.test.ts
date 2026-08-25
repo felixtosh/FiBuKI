@@ -212,6 +212,27 @@ describe("PATCH /api/mail/imap/credentials — what it refuses", () => {
     expect(token.secret).toBe("old-ciphertext");
   });
 
+  it("does not find a disconnected mailbox", async () => {
+    // Its files are already soft-deleted and its tokens removed; storing a
+    // credential against it would resurrect half of a removed mailbox.
+    store.seed("emailIntegrations", MAILBOX_ID, {
+      userId: "user-A",
+      provider: "imap",
+      email: "someone@example.test",
+      displayName: "someone@example.test",
+      isActive: false,
+      imapHost: "mail.example.test",
+    });
+    const { status } = await repair("user-A", {
+      integrationId: MAILBOX_ID,
+      password: "new-app-password",
+    });
+    expect(status).toBe(404);
+
+    const token = await read("emailTokens", MAILBOX_ID);
+    expect(token.secret).toBe("old-ciphertext");
+  });
+
   it("refuses a Gmail integration", async () => {
     store.seed("emailIntegrations", "gmail-1", {
       userId: "user-A",

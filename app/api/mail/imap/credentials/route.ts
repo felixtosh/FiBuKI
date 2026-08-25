@@ -71,7 +71,11 @@ export async function PATCH(request: NextRequest) {
     const integrationSnap = await integrationRef.get();
     const integration = integrationSnap.exists ? integrationSnap.data()! : null;
 
-    if (!integration || integration.userId !== userId) {
+    // A disconnected mailbox is not repairable: its files are already
+    // soft-deleted and its tokens removed, so storing a credential against it
+    // would resurrect half of something the user chose to remove. Reconnecting
+    // one is the connect route's job.
+    if (!integration || integration.userId !== userId || integration.isActive !== true) {
       return NextResponse.json({ error: "Mailbox not found" }, { status: 404 });
     }
 

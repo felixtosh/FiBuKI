@@ -678,10 +678,13 @@ export default function IntegrationDetailPage({ params }: IntegrationDetailPageP
         </div>
       </div>
 
-      {presentation.reconnectKind === "credentials" && (
+      {/* Mounted only while open, so its fields are initialised from the
+          mailbox as it is now. Kept mounted, it would hold the settings it
+          first saw and offer them back after a repair had changed them. */}
+      {presentation.reconnectKind === "credentials" && credentialsDialogOpen && (
         <ImapCredentialsDialog
           integration={integration}
-          open={credentialsDialogOpen}
+          open={true}
           onOpenChange={setCredentialsDialogOpen}
         />
       )}
