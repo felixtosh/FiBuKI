@@ -20,7 +20,8 @@ because a better File turned up, is not evidence that the pair was wrong.
 ## Consequences
 
 Vocabulary first, storage later, as in ADR-0001: the list stays `dismissedTransactions`
-and the ops file stays `dismissSuggestionOps.ts` until the Postgres port renames them.
+and the ops file stays `dismissSuggestionOps.ts` until a migration touches them (W5/W6),
+not as part of this landing.
 New code, issues, prompts and UI copy say Rejection; "dismiss" is not a synonym to reach
 for, and `unrejectFileFromTransaction` keeps its name for now precisely because it already
 speaks the chosen word.

@@ -6,7 +6,8 @@ date: 2026-08-24
 # `isComplete` keeps its old meaning; Documentation State is additive
 
 `isComplete` has meant "this Transaction has some documentation" since long before § 11
-classification existed, and 216 references depend on that meaning. Documentation State
+classification existed, and 282 references across `.ts`/`.tsx` on `main` depend on that
+meaning. Documentation State
 (#104) was deliberately added *beside* it rather than replacing it, so no line that is
 green today turns red, no existing view changes behaviour, and the whole Transaction
 corpus is not re-triggered by a backfill. The gap becomes visible through the new chase

@@ -5,6 +5,12 @@ bank lines into something a Steuerberater can book without cleaning it up first.
 This glossary is the project's ubiquitous language — issues, tests, UI copy and code
 should use these words and avoid the listed synonyms.
 
+Some entries describe code that is still landing. The § 11 classifier
+(`classifyDocumentType.ts`), Documentation State (`documentationState.ts`) and the single
+rejection list (`dismissSuggestionOps.ts`) arrive with their lanes — see the map,
+"One trunk: land the fork on main and retire the fork" (#93). The vocabulary lands first
+on purpose: every lane review is written in it.
+
 Scope note: this file is a glossary, not a spec. Positioning lives in
 [`docs/who-is-this-for.md`](docs/who-is-this-for.md), the rebuild plan in
 [`docs/rewrite-goals.md`](docs/rewrite-goals.md), decisions in [`docs/adr/`](docs/adr/).
@@ -136,8 +142,8 @@ _Avoid_: match (that is the candidate), attachment, link
 The standing "this File and this Transaction do not belong together", whoever recorded it
 — a click, an agent, an MCP call. Survives re-scoring and re-extraction; a rejected pair
 is never proposed again. One list, one shape, one writer.
-_Avoid_: dismissal, ignore, hide, snooze. (Stored as `dismissedTransactions` on the file
-until the Postgres port renames it — see
+_Avoid_: dismissal, ignore, hide, snooze. (Stored as `dismissedTransactions` on the file;
+the rename is deferred — see
 [ADR-0002](docs/adr/0002-rejection-is-the-word.md).)
 
 **Unlink**:
@@ -162,8 +168,8 @@ How a Transaction that has no File is legitimately resolved — bank fees, inter
 internal transfers, payroll, taxes, private, and so on. A stated reason no document
 exists, not an excuse for a missing one.
 _Avoid_: no-receipt category, exception, uncategorised, missing-receipt flag.
-(Stored as `noReceiptCategoryId` / collection `noReceiptCategories` until the Postgres
-port renames it — see [ADR-0001](docs/adr/0001-receipt-means-section-11-only.md).)
+(Stored as `noReceiptCategoryId` / collection `noReceiptCategories`; the rename is
+deferred — see [ADR-0001](docs/adr/0001-receipt-means-section-11-only.md).)
 
 **VAT Treatment**:
 What a No-document Category means for the UVA: `exempt-class` (zero input VAT by law),

@@ -8,7 +8,8 @@ date: 2026-08-24
 § 11 Abs 2 UStG lets a third party write an invoice in the name of the business that did
 the work. Uber Austria GmbH does this for licensed taxi operators, and the Extraction read
 two byte-identical Uber Files two different ways — one stored the operator, one stored Uber
-and Uber's own UID lifted from the page footer. 15 rows were wrong (fork #150).
+and Uber's own UID lifted from the page footer. 15 rows were wrong. (Reported as issue
+#150 on the fork; it migrates here with the rest of that backlog.)
 
 **The Partner is always the Leistungserbringer** — the business that supplied the service.
 The Vorsteuer trail follows that business and its UID. The business that wrote the document

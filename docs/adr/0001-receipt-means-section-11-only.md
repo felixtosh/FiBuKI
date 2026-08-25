@@ -16,11 +16,13 @@ language: **No-document Category**, VAT treatment **needs-document**.
 
 The rename is vocabulary-first, storage-later. `noReceiptCategoryId` is a stored field on
 transactions and `noReceiptCategories` a live collection — `noReceiptCategor*` alone
-appears in 85 files — so renaming the identifiers today is a data migration for no
+appears in 82 files on `main` (`.ts`/`.tsx`/`.json`, excluding `node_modules`) — so
+renaming the identifiers today is a data migration for no
 functional gain. Issues, specs, prompts, UI copy and new code use the glossary words
-immediately; the field and collection names are renamed as part of the Firebase → Postgres
-port, where the schema is rewritten anyway. Until then `CONTEXT.md` records the mapping,
-and code that reads `needs-receipt` is reading the term now called `needs-document`.
+immediately; the identifiers are renamed when a migration touches those tables anyway —
+which means the shim-teardown work (phase 2, W5/W6), not this landing. Until then
+`CONTEXT.md` records the mapping, and code that reads `needs-receipt` is reading the term
+now called `needs-document`.
 
 ## Considered and rejected
 
