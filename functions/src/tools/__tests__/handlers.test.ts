@@ -161,6 +161,118 @@ describe("Tool Registry Handlers", () => {
     });
   });
 
+  describe("listTransactions - date window (fork #65)", () => {
+    // Dates are stored as UTC midnight of the Vienna calendar day, so the
+    // window is a pure-UTC comparison. Rows written by the bank sync paths
+    // (finapi/banking) carry the booking timestamp as-is rather than a
+    // normalised midnight, which is where a Vienna-offset boundary misfiles
+    // them by a whole period.
+    const seedQuarterEdges = () => {
+      store.setDoc("transactions", "q1-last-midnight", createTestTransaction({
+        userId, name: "Q1 last day", date: new Date("2026-03-31T00:00:00Z"),
+      }));
+      store.setDoc("transactions", "q1-last-late", createTestTransaction({
+        userId, name: "Q1 last day late", date: new Date("2026-03-31T23:30:00Z"),
+      }));
+      store.setDoc("transactions", "q2-first", createTestTransaction({
+        userId, name: "Q2 first day", date: new Date("2026-04-01T00:00:00Z"),
+      }));
+      store.setDoc("transactions", "q2-mid", createTestTransaction({
+        userId, name: "Q2 middle", date: new Date("2026-05-15T00:00:00Z"),
+      }));
+      store.setDoc("transactions", "q2-last-late", createTestTransaction({
+        userId, name: "Q2 last day late", date: new Date("2026-06-30T23:30:00Z"),
+      }));
+      store.setDoc("transactions", "q3-first", createTestTransaction({
+        userId, name: "Q3 first day", date: new Date("2026-07-01T00:00:00Z"),
+      }));
+    };
+
+    const names = (result: { transactions: { name?: unknown }[] }) =>
+      result.transactions.map((t) => t.name).sort();
+
+    it("returns exactly the quarter, both edges included", async () => {
+      seedQuarterEdges();
+
+      const result = await handlers.listTransactions(userId, {
+        dateFrom: "2026-04-01",
+        dateTo: "2026-06-30",
+      });
+
+      expect(names(result)).toEqual([
+        "Q2 first day",
+        "Q2 last day late",
+        "Q2 middle",
+      ]);
+    });
+
+    it("does not pull in the last hours of the previous period", async () => {
+      seedQuarterEdges();
+
+      const result = await handlers.listTransactions(userId, { dateFrom: "2026-04-01" });
+
+      expect(names(result)).not.toContain("Q1 last day late");
+      expect(names(result)).not.toContain("Q1 last day");
+    });
+
+    it("does not drop the last hours of the end day", async () => {
+      seedQuarterEdges();
+
+      const result = await handlers.listTransactions(userId, { dateTo: "2026-06-30" });
+
+      expect(names(result)).toContain("Q2 last day late");
+      expect(names(result)).not.toContain("Q3 first day");
+    });
+
+    it("holds in summer, when Vienna is +02:00 rather than +01:00", async () => {
+      store.setDoc("transactions", "jul-1", createTestTransaction({
+        userId, name: "July first", date: new Date("2026-07-01T00:00:00Z"),
+      }));
+      store.setDoc("transactions", "jun-30-late", createTestTransaction({
+        userId, name: "June last late", date: new Date("2026-06-30T23:30:00Z"),
+      }));
+
+      const result = await handlers.listTransactions(userId, {
+        dateFrom: "2026-07-01",
+        dateTo: "2026-09-30",
+      });
+
+      expect(names(result)).toEqual(["July first"]);
+    });
+
+    it("rejects a malformed boundary instead of silently widening the window", async () => {
+      seedQuarterEdges();
+
+      // Dropping the filter would answer with the newest transactions of all
+      // time, which reads as "the period holds nothing older".
+      await expect(
+        handlers.listTransactions(userId, { dateFrom: "01/04/2026", dateTo: "2026-06-30" })
+      ).rejects.toThrow("dateFrom must be a calendar day");
+
+      await expect(
+        handlers.listTransactions(userId, { dateTo: "30.06.2026" })
+      ).rejects.toThrow("dateTo must be a calendar day");
+
+      await expect(
+        handlers.listTransactions(userId, { dateFrom: "2026-02-30" })
+      ).rejects.toThrow("dateFrom must be a calendar day");
+    });
+
+    it("reports each row under the day the window selected it by", async () => {
+      // The returned `date` and the filter have to read the timestamp the same
+      // way, or a June query answers with a row labelled July.
+      seedQuarterEdges();
+
+      const result = await handlers.listTransactions(userId, {
+        dateFrom: "2026-04-01",
+        dateTo: "2026-06-30",
+      });
+      const lateRow = result.transactions.find((t) => t.name === "Q2 last day late");
+
+      expect(lateRow?.date).toBe("2026-06-30");
+    });
+  });
+
   describe("getTransaction", () => {
     it("should return transaction by ID", async () => {
       store.setDoc("transactions", "tx-1", createTestTransaction({ userId, name: "Test TX" }));
@@ -223,8 +335,10 @@ describe("Tool Registry Handlers", () => {
 
       const result = await handlers.listTransactionsNeedingFiles(userId, {});
 
-      expect(result).toHaveLength(1);
-      expect(result[0].id).toBe("tx-1");
+      expect(result.transactions).toHaveLength(1);
+      expect(result.transactions[0].id).toBe("tx-1");
+      expect(result.count).toBe(1);
+      expect(result.nextCursor).toBeNull();
     });
 
     it("should filter by minAmount", async () => {
@@ -233,8 +347,134 @@ describe("Tool Registry Handlers", () => {
 
       const result = await handlers.listTransactionsNeedingFiles(userId, { minAmount: 1000 });
 
-      expect(result).toHaveLength(1);
-      expect(result[0].id).toBe("tx-1");
+      expect(result.transactions).toHaveLength(1);
+      expect(result.transactions[0].id).toBe("tx-1");
+    });
+
+    it("should exclude transactions parked on a quota-exceeded flag", async () => {
+      store.setDoc("transactions", "tx-1", createTestTransaction({ userId, fileIds: [] }));
+      store.setDoc("transactions", "tx-2", createTestTransaction({ userId, fileIds: [], quotaExceeded: true }));
+
+      const result = await handlers.listTransactionsNeedingFiles(userId, {});
+
+      expect(result.count).toBe(1);
+      expect(result.transactions[0].id).toBe("tx-1");
+    });
+  });
+
+  describe("listTransactionsNeedingFiles - paging and the limit", () => {
+    // Seed n transactions, newest first by date so page order is deterministic.
+    const seedTransactions = (n: number, overridesFor: (i: number) => Record<string, unknown> = () => ({})) => {
+      for (let i = 0; i < n; i++) {
+        store.setDoc(
+          "transactions",
+          `tx-${String(i).padStart(3, "0")}`,
+          createTestTransaction({
+            userId,
+            fileIds: [],
+            date: new Date(Date.UTC(2026, 0, 1) + (n - i) * 60_000),
+            ...overridesFor(i),
+          })
+        );
+      }
+    };
+
+    it("honours a limit above 100 instead of silently clamping to it", async () => {
+      seedTransactions(120);
+
+      const result = await handlers.listTransactionsNeedingFiles(userId, { limit: 200 });
+
+      expect(result.count).toBe(120);
+      expect(result.transactions).toHaveLength(120);
+    });
+
+    it("caps the page at 500 for an absurd limit, and says there is more", async () => {
+      seedTransactions(600);
+
+      const result = await handlers.listTransactionsNeedingFiles(userId, { limit: 10_000 });
+
+      expect(result.count).toBe(500);
+      expect(result.nextCursor).not.toBeNull();
+    });
+
+    it("reaches transactions past the old 500-document scan", async () => {
+      // The pre-fix handler read exactly 500 documents and filtered inside
+      // them, so anything older than the newest 500 was unreachable through
+      // the tool no matter what limit was passed.
+      seedTransactions(700);
+
+      const seen = new Set<string>();
+      let cursor: string | null | undefined = undefined;
+      let guard = 0;
+
+      do {
+        const page: Awaited<ReturnType<typeof handlers.listTransactionsNeedingFiles>> =
+          await handlers.listTransactionsNeedingFiles(userId, { limit: 200, ...(cursor ? { cursor } : {}) });
+        page.transactions.forEach((t) => seen.add(t.id as string));
+        cursor = page.nextCursor;
+      } while (cursor && ++guard < 20);
+
+      expect(seen.size).toBe(700);
+      expect(seen.has("tx-699")).toBe(true);
+    });
+
+    it("fills the page past already-matched rows instead of letting them consume slots", async () => {
+      // The 60 newest already have receipts, the ones needing files sit behind
+      // them. The pre-fix handler filtered after the cap, so a small limit
+      // could come back empty while work remained.
+      seedTransactions(120, (i) => (i < 60 ? { fileIds: ["file-1"] } : {}));
+
+      const result = await handlers.listTransactionsNeedingFiles(userId, { limit: 20 });
+
+      expect(result.count).toBe(20);
+      expect(result.transactions.every((t) => ((t.fileIds as string[]) || []).length === 0)).toBe(true);
+    });
+
+    it("pages to exhaustion via nextCursor, no duplicates, no gaps", async () => {
+      seedTransactions(25);
+
+      const seen: string[] = [];
+      let cursor: string | null | undefined = undefined;
+      let guard = 0;
+
+      do {
+        const page: Awaited<ReturnType<typeof handlers.listTransactionsNeedingFiles>> =
+          await handlers.listTransactionsNeedingFiles(userId, { limit: 7, ...(cursor ? { cursor } : {}) });
+        seen.push(...page.transactions.map((t) => t.id as string));
+        cursor = page.nextCursor;
+      } while (cursor && ++guard < 20);
+
+      expect(seen).toHaveLength(25);
+      expect(new Set(seen).size).toBe(25);
+    });
+
+    it("keeps paging when a whole scan window is filtered away", async () => {
+      // 60 matched rows in front of 5 unmatched ones, page size 5 -> scan
+      // window 25, so the first two pages are empty but must still hand back
+      // a cursor.
+      seedTransactions(65, (i) => (i < 60 ? { fileIds: ["file-1"] } : {}));
+
+      const seen: string[] = [];
+      let cursor: string | null | undefined = undefined;
+      let guard = 0;
+
+      do {
+        const page: Awaited<ReturnType<typeof handlers.listTransactionsNeedingFiles>> =
+          await handlers.listTransactionsNeedingFiles(userId, { limit: 5, ...(cursor ? { cursor } : {}) });
+        seen.push(...page.transactions.map((t) => t.id as string));
+        cursor = page.nextCursor;
+      } while (cursor && ++guard < 30);
+
+      expect(seen).toHaveLength(5);
+    });
+
+    it("ignores a cursor belonging to another user", async () => {
+      seedTransactions(3);
+      store.setDoc("transactions", "tx-other", createTestTransaction({ userId: otherUserId }));
+
+      const result = await handlers.listTransactionsNeedingFiles(userId, { cursor: "tx-other" });
+
+      expect(result.count).toBe(3);
     });
   });
 
@@ -361,6 +601,240 @@ describe("Tool Registry Handlers", () => {
       await expect(
         handlers.disconnectFileFromTransaction(userId, { fileId: "f-1", transactionId: "tx-1" })
       ).rejects.toThrow("Connection not found");
+    });
+  });
+
+  describe("updateFileExtraction", () => {
+    it("corrects only what was passed and makes the human the authority", async () => {
+      // IV-26-1170: a Schlussrechnung due 3180.00 whose items describe the
+      // full 6360.00 scope, flagged and carrying a printed rate-group block.
+      store.setDoc(
+        "files",
+        "f-1",
+        createTestFile({
+          userId,
+          extractedAmount: 636000,
+          extractedVatAmount: 106000,
+          extractedVatPercent: 20,
+          extractedPartner: "ELDI Handels GmbH",
+          lineItemsUnreconciled: true,
+          extractedRateGroups: [{ rate: 20, net: 530000, vat: 106000, gross: 636000 }],
+        })
+      );
+
+      const result = await handlers.updateFileExtraction(userId, {
+        fileId: "f-1",
+        amount: 318000,
+        vatAmount: 53000,
+      });
+
+      expect(result).toMatchObject({ success: true, fileId: "f-1", changed: ["amount", "vatAmount"] });
+
+      const file = store.getDoc("files", "f-1");
+      expect(file?.extractedAmount).toBe(318000);
+      expect(file?.extractedVatAmount).toBe(53000);
+      // Untouched by this correction.
+      expect(file?.extractedVatPercent).toBe(20);
+      expect(file?.extractedPartner).toBe("ELDI Handels GmbH");
+      // The artefacts that would outrank the correction are gone.
+      expect(file?.lineItemsUnreconciled).toBe(false);
+      expect(file?.extractedRateGroups).toBeNull();
+      expect(file?.vatSourceDowngraded).toBe(false);
+    });
+
+    it("writes a zero rate rather than reading it as unset", async () => {
+      store.setDoc("files", "f-1", createTestFile({ userId, extractedVatPercent: 20, extractedVatAmount: 4533 }));
+
+      await handlers.updateFileExtraction(userId, { fileId: "f-1", vatPercent: 0, vatAmount: 0 });
+
+      const file = store.getDoc("files", "f-1");
+      expect(file?.extractedVatPercent).toBe(0);
+      expect(file?.extractedVatAmount).toBe(0);
+    });
+
+    it("refuses a file the caller does not own", async () => {
+      store.setDoc("files", "f-1", createTestFile({ userId: "someone-else" }));
+
+      await expect(
+        handlers.updateFileExtraction(userId, { fileId: "f-1", amount: 1 })
+      ).rejects.toThrow("File not found");
+    });
+
+    it("refuses a correction that corrects nothing", async () => {
+      store.setDoc("files", "f-1", createTestFile({ userId }));
+
+      await expect(handlers.updateFileExtraction(userId, { fileId: "f-1" })).rejects.toThrow(
+        /Nothing to correct/
+      );
+    });
+
+    it("ignores a key the schema does not name", async () => {
+      store.setDoc("files", "f-1", createTestFile({ userId, extractedPartner: "ELDI Handels GmbH" }));
+
+      await handlers.updateFileExtraction(userId, {
+        fileId: "f-1",
+        amount: 318000,
+        extractedPartner: "Somebody Else",
+      });
+
+      expect(store.getDoc("files", "f-1")?.extractedPartner).toBe("ELDI Handels GmbH");
+    });
+  });
+
+  describe("markFileAsNotInvoice / unmarkFileAsNotInvoice", () => {
+    it("should flag the file, clear extracted data and empty the suggestion queue", async () => {
+      store.setDoc(
+        "files",
+        "f-1",
+        createTestFile({
+          userId,
+          transactionIds: [],
+          isNotInvoice: false,
+          extractedAmount: 1999,
+          extractedIssuer: "Anthropic, PBC",
+          extractionConfidence: 92,
+          transactionMatchComplete: true,
+          transactionSuggestions: [{ transactionId: "tx-1", confidence: 91 }],
+        })
+      );
+
+      const result = await handlers.markFileAsNotInvoice(userId, {
+        fileId: "f-1",
+        reason: "duplicate re-send",
+      });
+
+      expect(result).toMatchObject({ success: true, fileId: "f-1", isNotInvoice: true });
+
+      const file = store.getDoc("files", "f-1");
+      expect(file?.isNotInvoice).toBe(true);
+      expect(file?.notInvoiceReason).toBe("duplicate re-send");
+      expect(file?.extractedAmount).toBeNull();
+      expect(file?.extractionConfidence).toBeNull();
+      expect(file?.transactionSuggestions).toEqual([]);
+      expect(file?.transactionMatchComplete).toBe(false);
+      // Nothing left to extract, so extraction counts as done.
+      expect(file?.extractionComplete).toBe(true);
+    });
+
+    it("should default the reason when none is given", async () => {
+      store.setDoc("files", "f-1", createTestFile({ userId, transactionIds: [] }));
+
+      await handlers.markFileAsNotInvoice(userId, { fileId: "f-1" });
+
+      expect(store.getDoc("files", "f-1")?.notInvoiceReason).toBe("Marked by user");
+    });
+
+    it("should preserve a manually-set partner", async () => {
+      store.setDoc(
+        "files",
+        "f-1",
+        createTestFile({
+          userId,
+          transactionIds: [],
+          partnerId: "p-1",
+          partnerMatchedBy: "manual",
+        })
+      );
+
+      await handlers.markFileAsNotInvoice(userId, { fileId: "f-1" });
+
+      const file = store.getDoc("files", "f-1");
+      expect(file?.partnerId).toBe("p-1");
+      expect(file?.partnerMatchedBy).toBe("manual");
+    });
+
+    it("should clear an auto-matched partner", async () => {
+      store.setDoc(
+        "files",
+        "f-1",
+        createTestFile({ userId, transactionIds: [], partnerId: "p-1", partnerMatchedBy: "auto" })
+      );
+
+      await handlers.markFileAsNotInvoice(userId, { fileId: "f-1" });
+
+      expect(store.getDoc("files", "f-1")?.partnerId).toBeNull();
+    });
+
+    it("should refuse while the file is still connected to a transaction", async () => {
+      store.setDoc("files", "f-1", createTestFile({ userId, transactionIds: ["tx-1"] }));
+
+      await expect(handlers.markFileAsNotInvoice(userId, { fileId: "f-1" })).rejects.toThrow(
+        /connected to 1 transaction/
+      );
+
+      // The refusal must not have written anything.
+      expect(store.getDoc("files", "f-1")?.isNotInvoice).toBeFalsy();
+    });
+
+    it("should require a fileId", async () => {
+      await expect(handlers.markFileAsNotInvoice(userId, {})).rejects.toThrow("fileId is required");
+      await expect(handlers.unmarkFileAsNotInvoice(userId, {})).rejects.toThrow("fileId is required");
+    });
+
+    it("should not reach another user's file", async () => {
+      store.setDoc("files", "f-1", createTestFile({ userId: otherUserId, transactionIds: [] }));
+
+      await expect(handlers.markFileAsNotInvoice(userId, { fileId: "f-1" })).rejects.toThrow("File not found");
+      await expect(handlers.unmarkFileAsNotInvoice(userId, { fileId: "f-1" })).rejects.toThrow("File not found");
+    });
+
+    it("should re-open extraction on unmark", async () => {
+      store.setDoc(
+        "files",
+        "f-1",
+        createTestFile({
+          userId,
+          isNotInvoice: true,
+          notInvoiceReason: "duplicate re-send",
+          extractionComplete: true,
+        })
+      );
+
+      const result = await handlers.unmarkFileAsNotInvoice(userId, { fileId: "f-1" });
+
+      expect(result).toMatchObject({ success: true, isNotInvoice: false });
+
+      const file = store.getDoc("files", "f-1");
+      expect(file?.isNotInvoice).toBe(false);
+      expect(file?.notInvoiceReason).toBeNull();
+      expect(file?.extractionComplete).toBe(false);
+      expect(file?.transactionMatchComplete).toBe(false);
+    });
+
+    it("should leave transaction matching alone when a manual connection exists", async () => {
+      store.setDoc(
+        "files",
+        "f-1",
+        createTestFile({ userId, isNotInvoice: true, transactionMatchComplete: true })
+      );
+      store.setDoc("fileConnections", "conn-1", {
+        fileId: "f-1",
+        transactionId: "tx-1",
+        userId,
+        connectionType: "manual",
+      });
+
+      await handlers.unmarkFileAsNotInvoice(userId, { fileId: "f-1" });
+
+      const file = store.getDoc("files", "f-1");
+      expect(file?.isNotInvoice).toBe(false);
+      // Re-running the match would discard a connection a human made by hand.
+      expect(file?.transactionMatchComplete).toBe(true);
+    });
+
+    it("should round-trip mark then unmark", async () => {
+      store.setDoc("files", "f-1", createTestFile({ userId, transactionIds: [], extractedAmount: 1999 }));
+
+      await handlers.markFileAsNotInvoice(userId, { fileId: "f-1", reason: "statement" });
+      expect(store.getDoc("files", "f-1")?.isNotInvoice).toBe(true);
+
+      await handlers.unmarkFileAsNotInvoice(userId, { fileId: "f-1" });
+
+      const file = store.getDoc("files", "f-1");
+      expect(file?.isNotInvoice).toBe(false);
+      expect(file?.notInvoiceReason).toBeNull();
+      // The cleared fields come back via re-extraction, which this re-opens.
+      expect(file?.extractionComplete).toBe(false);
     });
   });
 
@@ -670,7 +1144,9 @@ describe("Tool Registry Handlers", () => {
 
       const result = await handlers.listTransactionsNeedingFiles(userId, { limit: 4 });
 
-      expect(result).toHaveLength(4);
+      expect(result.transactions).toHaveLength(4);
+      expect(result.count).toBe(4);
+      expect(result.nextCursor).not.toBeNull();
     });
   });
 

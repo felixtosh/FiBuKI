@@ -52,6 +52,8 @@ const OPENAPI_SPEC = {
                       "connect_file_to_transaction",
                       "disconnect_file_from_transaction",
                       "list_transactions_needing_files",
+                      "mark_file_as_not_invoice",
+                      "unmark_file_as_not_invoice",
                       "auto_connect_file_suggestions",
                       "list_no_receipt_categories",
                       "assign_no_receipt_category",
@@ -204,7 +206,11 @@ const OPENAPI_SPEC = {
     disconnect_file_from_transaction:
       "Disconnect a file from a transaction. Args: fileId (string), transactionId (string)",
     list_transactions_needing_files:
-      "Find transactions without receipts. Args: minAmount? (number, in cents), limit? (number)",
+      "Find transactions without receipts. Returns { transactions, nextCursor, count } — count is this page, not a total. Args: minAmount? (number, in cents), limit? (number, max 500), cursor? (string, nextCursor from the previous page)",
+    mark_file_as_not_invoice:
+      "Flag a file as not an invoice (duplicate re-send, payment reminder, statement). Clears extracted data and removes it from the unmatched-file queue; refuses while the file is still connected to a transaction. Args: fileId (string), reason? (string)",
+    unmark_file_as_not_invoice:
+      "Restore a file previously flagged as not an invoice, re-opening extraction. Args: fileId (string)",
     auto_connect_file_suggestions:
       "Auto-connect files to transactions above confidence threshold. Args: fileId? (string), minConfidence? (number, 0-100, default 89)",
     list_no_receipt_categories: "List categories for transactions that don't need receipts (bank fees, payroll, etc.)",

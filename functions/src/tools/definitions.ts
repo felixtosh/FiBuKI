@@ -114,12 +114,13 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     name: "list_transactions_needing_files",
-    description: "Find transactions without receipts (no files, no category)",
+    description: "Find transactions without receipts (no files, no category). Returns { transactions, nextCursor, count }. `count` is the size of this page, not a total — page with nextCursor until it comes back null to see everything that still needs a receipt.",
     inputSchema: {
       type: "object",
       properties: {
         minAmount: { type: "number", description: "Minimum amount in cents" },
-        limit: { type: "number", description: "Max results (default 50)" },
+        limit: { type: "number", description: "Max results per page (default 50, max 500)" },
+        cursor: { type: "string", description: "nextCursor from the previous response to fetch the next page" },
       },
     },
   },
@@ -199,6 +200,71 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         transactionId: { type: "string", description: "The transaction ID" },
       },
       required: ["fileId", "transactionId"],
+    },
+  },
+  {
+    name: "mark_file_as_not_invoice",
+    description:
+      "Flag a file as not an invoice (duplicate re-send, payment reminder, statement, anything that documents nothing). Clears its extracted data and takes it out of the unmatched-file queue. Refuses while the file is still connected to a transaction. Reversible with unmark_file_as_not_invoice.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fileId: { type: "string", description: "The file ID" },
+        reason: { type: "string", description: "Why it is not an invoice — stored on the file" },
+      },
+      required: ["fileId"],
+    },
+  },
+  {
+    name: "unmark_file_as_not_invoice",
+    description:
+      "Restore a file previously flagged as not an invoice. Re-opens extraction, which recovers the fields marking cleared.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fileId: { type: "string", description: "The file ID" },
+      },
+      required: ["fileId"],
+    },
+  },
+  {
+    name: "update_file_extraction",
+    description:
+      "Correct a file's extracted record by hand. Use when re-extraction cannot get there because the right value needs judgement the document does not state unambiguously — a Schlussrechnung printing both the full amount and the part already invoiced, VAT that is correctly read but not claimable, a one-cent OCR slip inside the reconciliation tolerance. Only the fields you pass are touched; pass null to clear one. The corrected total is NOT re-derived from the line items, so an amount that deliberately differs from them survives. Correcting anything VAT-bearing makes you the authority on the file: stored reconciliation flags and extraction-provenance markers are cleared, because they would otherwise outrank what you just set.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fileId: { type: "string", description: "The file ID" },
+        amount: {
+          type: ["number", "null"],
+          description: "Document total in cents. Negative is legal (a credit note).",
+        },
+        vatAmount: { type: ["number", "null"], description: "Document VAT in cents" },
+        vatPercent: {
+          type: ["number", "null"],
+          description:
+            "Document VAT rate, 0-100. Zero is a real correction — use it for a document whose VAT must not be claimed — and is not the same as null, which clears the rate.",
+        },
+        date: { type: ["string", "null"], description: "Document date as YYYY-MM-DD" },
+        lineItems: {
+          type: ["array", "null"],
+          description:
+            "Replace the itemisation wholesale. Each item: description, amount (cents, GROSS — the amount includes its own VAT), vatPercent, vatAmount (cents), and optionally quantity and unitPrice.",
+          items: {
+            type: "object",
+            properties: {
+              description: { type: "string" },
+              amount: { type: "number" },
+              vatPercent: { type: ["number", "null"] },
+              vatAmount: { type: "number" },
+              quantity: { type: ["number", "null"] },
+              unitPrice: { type: ["number", "null"] },
+            },
+            required: ["amount"],
+          },
+        },
+      },
+      required: ["fileId"],
     },
   },
   {

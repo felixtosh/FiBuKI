@@ -4,8 +4,8 @@
  * Preserves manually-set partner assignments.
  */
 
-import { FieldValue } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
+import { buildMarkNotInvoiceUpdates } from "./notInvoiceOps";
 
 interface MarkFileAsNotInvoiceRequest {
   fileId: string;
@@ -40,47 +40,7 @@ export const markFileAsNotInvoiceCallable = createCallable<
       throw new HttpsError("permission-denied", "Access denied");
     }
 
-    // Build update object
-    const updates: Record<string, unknown> = {
-      isNotInvoice: true,
-      notInvoiceReason: reason || "Marked by user",
-      classificationComplete: true,
-      // Clear all extracted data since it's not an invoice
-      extractedDate: null,
-      extractedAmount: null,
-      extractedCurrency: null,
-      extractedVatPercent: null,
-      extractedVatAmount: null,
-      extractedLineItems: null,
-      extractedPartner: null,
-      extractedVatId: null,
-      extractedIban: null,
-      extractedAddress: null,
-      extractedText: null,
-      extractedRaw: null,
-      extractedAdditionalFields: null,
-      extractedFields: null,
-      extractionConfidence: null,
-      invoiceDirection: null,
-      // Mark extraction as complete (nothing to extract for non-invoices)
-      extractionComplete: true,
-      // Reset downstream matching
-      partnerMatchComplete: false,
-      partnerSuggestions: [],
-      transactionMatchComplete: false,
-      transactionSuggestions: [],
-      updatedAt: FieldValue.serverTimestamp(),
-    };
-
-    // Only clear partner if NOT manually set (preserve user's intentional choice)
-    if (fileData.partnerMatchedBy !== "manual") {
-      updates.partnerId = null;
-      updates.partnerType = null;
-      updates.partnerMatchedBy = null;
-      updates.partnerMatchConfidence = null;
-    }
-
-    await fileRef.update(updates);
+    await fileRef.update(buildMarkNotInvoiceUpdates(fileData, reason));
 
     console.log(`[markFileAsNotInvoice] Marked file ${fileId} as not invoice`, {
       userId: ctx.userId,
