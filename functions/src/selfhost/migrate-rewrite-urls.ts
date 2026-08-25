@@ -12,7 +12,7 @@
  * paths), and `buildDownloadUrl-shim.ts` produces correct URLs for everything the
  * self-host backend writes from now on. But nothing rewrites what already exists,
  * so a migrated file's preview still fetches from Firebase — which fails today
- * with a CORS error (new.fibuki.com is not an allowed origin on the bucket) and
+ * with a CORS error (the new host is not an allowed origin on the bucket) and
  * fails permanently once the Firebase project is decommissioned.
  *
  * It is NOT folded into `migrate-import` because `verify` compares every imported

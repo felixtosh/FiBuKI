@@ -1,9 +1,12 @@
 # W4 — fibuki.com cutover runbook
 
-> **Status:** DRAFT — the tooling (W3) is merged and green; the cutover itself
-> (W4) is **blocked on Felix** (back 2026-07-26) for the hosting-target
-> decision. This runbook is the executable plan for the day that decision
-> lands; the env values and host names below are filled in at that point.
+> **Status: DONE.** The cutover happened. `fibuki.com` serves the container stack
+> from Hetzner, `new.fibuki.com` redirects to the apex, and the API host stayed
+> `new-api.fibuki.com` by the decision recorded in
+> [`deploy/selfhost/README-hetzner.md`](../deploy/selfhost/README-hetzner.md).
+> This page is kept as the record of how it was done — read it as history, not as a
+> plan, and do not run its steps against production. `cutover-to-apex.sh` has been
+> removed; recover it from git history if a similar move is ever needed.
 
 Scope and sequencing come from
 [`phase-2-rip-the-shim.md`](phase-2-rip-the-shim.md) §W4. The migration

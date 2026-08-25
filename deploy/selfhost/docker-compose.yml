@@ -134,7 +134,7 @@ services:
       # this box's copy of the data rather than live production.
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       # Per-ENDPOINT signing secret. Production's value will NOT validate a webhook
-      # delivered to new-api.fibuki.com — that needs its own endpoint registered in
+      # delivered to this deployment's api host — that needs its own endpoint registered in
       # the Stripe dashboard, which issues a different whsec_.
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
       # Decrypts users' stored Gmail OAuth tokens. With this present and cron enabled,
@@ -248,7 +248,7 @@ services:
         # time, so omitting it here left it undefined and every one of those call
         # sites silently fell back to http://localhost:3000 — links that resolve to
         # nothing for a user. Must be the PUBLIC web origin, and must be rebuilt when
-        # that origin changes (e.g. new.fibuki.com -> fibuki.com).
+        # that origin changes (as it did at the cutover to the apex domain).
         NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL}
     restart: unless-stopped
     depends_on:

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Nightly backup for the new.fibuki.com box: Postgres logical dump + MinIO
+# Nightly backup for the FiBuKI host: Postgres logical dump + MinIO
 # objects, encrypted, retained locally with a rolling window.
 #
 # The compose stack has NO backup story of its own — just two named volumes. This

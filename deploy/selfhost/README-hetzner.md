@@ -1,4 +1,10 @@
-# Standing up new.fibuki.com on Hetzner
+# Standing up FiBuKI on Hetzner
+
+> **Status.** The migration this document was written for is done. The web host is
+> **`fibuki.com`**; `new.fibuki.com` served the stack during the cutover and now only
+> redirects to the apex. The API host is still **`new-api.fibuki.com`** and stays that
+> way on purpose — see the decision at the end of this page. Read the DNS and host names
+> below as *your* deployment's names.
 
 ## Current deployment
 
@@ -71,16 +77,16 @@ Both names must resolve **before** you bring the stack up, or Caddy's ACME
 challenge fails and backs off with a retry delay.
 
 ```
-new.fibuki.com       A     <server-ipv4>
+fibuki.com           A     <server-ipv4>
 new-api.fibuki.com   A     <server-ipv4>
-new.fibuki.com       AAAA  <server-ipv6>
+fibuki.com           AAAA  <server-ipv6>
 new-api.fibuki.com   AAAA  <server-ipv6>
 ```
 
 Confirm from off-box, not just locally:
 
 ```bash
-dig +short new.fibuki.com new-api.fibuki.com
+dig +short fibuki.com new-api.fibuki.com
 ```
 
 ## 4. Ship the code
@@ -112,7 +118,7 @@ server's, and it would carry your development secrets onto a rented box. The
 ```bash
 ssh root@$IP
 cd /opt/fibuki/deploy/selfhost
-cp .env.newfibuki.example .env
+cp .env.hetzner.example .env
 chmod 600 .env
 # Fill every CHANGE_ME:  openssl rand -base64 36
 vi .env
@@ -145,14 +151,14 @@ curl -fsS http://127.0.0.1:8788/healthz    # ~112 callables / 12 scheduled jobs
 And from outside:
 
 ```bash
-curl -fsSI https://new.fibuki.com | head -1
+curl -fsSI https://fibuki.com | head -1
 curl -fsS  https://new-api.fibuki.com/healthz    # expect 404 — masked on purpose
 ```
 
 Confirm nothing else is exposed. Only 22, 80, 443 should answer:
 
 ```bash
-nmap -Pn -p 22,80,443,3000,5432,8788,9000,9001 new.fibuki.com
+nmap -Pn -p 22,80,443,3000,5432,8788,9000,9001 fibuki.com
 ```
 
 ## 6b. Prove mail works, before you need it
@@ -267,9 +273,9 @@ docker volume rm selfhost_fibuki-pgdata selfhost_fibuki-miniodata
 
 ## Decision: the API keeps the hostname `new-api.fibuki.com`, permanently
 
-Decided 2026-07-30. At cutover **only the web host changes** — `new.fibuki.com`
-becomes `fibuki.com` — and the API name stays as it is forever, despite the "new"
-reading oddly later.
+Decided 2026-07-30, and since carried out. At cutover **only the web host changed** —
+`new.fibuki.com` became `fibuki.com` — and the API name stays as it is forever, despite
+the "new" reading oddly later.
 
 The reason is that a rename is not just a DNS record. These are pinned to the API
 hostname today:
