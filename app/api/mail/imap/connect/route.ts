@@ -1,12 +1,11 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
-import { ImapFlow } from "imapflow";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { Timestamp } from "firebase-admin/firestore";
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { encrypt, getEncryptionKey } from "@/lib/crypto/encryption";
 import { startImapInitialSync } from "@/functions/src/gmail/startImapInitialSync";
-import { classifyImapError } from "@/functions/src/mail/imap/classify-error";
+import { verifyImapMailbox } from "@/lib/mail/verify-imap-mailbox";
 
 const db = getAdminDb();
 const INTEGRATIONS_COLLECTION = "emailIntegrations";
@@ -72,29 +71,23 @@ export async function POST(request: NextRequest) {
     }
 
     // 1. Verify BEFORE persisting: live login + read-only mailbox open.
-    const client = new ImapFlow({
+    //    Shared with the credential-repair route so both store only a
+    //    credential they have just used successfully.
+    const failure = await verifyImapMailbox({
       host,
       port,
       secure,
-      auth: { user, pass: password },
-      logger: false,
-      ...(allowSelfSigned ? { tls: { rejectUnauthorized: false } } : {}),
+      user,
+      password,
+      mailbox,
+      allowSelfSigned,
     });
-
-    try {
-      await client.connect();
-      const lock = await client.getMailboxLock(mailbox, { readOnly: true });
-      lock.release();
-      await client.logout();
-    } catch (error) {
-      try {
-        client.close();
-      } catch {
-        // ignore — connection may already be down
-      }
-      const { code, message } = classifyImapError(error);
-      console.error(`[IMAP connect] verify failed (${code}):`, error);
-      return NextResponse.json({ error: message, code }, { status: 400 });
+    if (failure) {
+      console.error(`[IMAP connect] verify failed (${failure.code})`);
+      return NextResponse.json(
+        { error: failure.message, code: failure.code },
+        { status: 400 }
+      );
     }
 
     const email = user.toLowerCase();

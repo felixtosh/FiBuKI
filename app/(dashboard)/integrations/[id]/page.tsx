@@ -43,6 +43,7 @@ import {
   useActiveSyncForIntegration,
 } from "@/hooks/use-integration-details";
 import { getProviderPresentation } from "@/components/integrations/provider-presentation";
+import { ImapCredentialsDialog } from "@/components/integrations/imap-credentials-dialog";
 import { cn, toDateSafe } from "@/lib/utils";
 // Value import, not type-only — see the note on the same import in the IMAP
 // page: classify-error.ts is dependency-free, so this stays a few literals in
@@ -72,6 +73,7 @@ export default function IntegrationDetailPage({ params }: IntegrationDetailPageP
   const [refreshing, setRefreshing] = useState(false);
   const [pausing, setPausing] = useState(false);
   const [resuming, setResuming] = useState(false);
+  const [credentialsDialogOpen, setCredentialsDialogOpen] = useState(false);
   const reconnectTriggeredRef = useRef(false);
 
   // Clear syncKnownInProgress when activeSync becomes inactive
@@ -148,11 +150,20 @@ export default function IntegrationDetailPage({ params }: IntegrationDetailPageP
     }
   };
 
+  // Arriving with ?toggleReconnect=true (the file-connect overlay's link)
+  // means "start the reconnect for me". What that is depends on the provider:
+  // an OAuth redirect for Gmail, the credential dialog for a mailbox. Firing
+  // the OAuth redirect for an IMAP mailbox — which is what this did before —
+  // sent the user to Google for a mailbox Google does not host.
   useEffect(() => {
     if (!integration || reconnectTriggeredRef.current) return;
     const shouldReconnect = searchParams?.get("toggleReconnect") === "true";
     if (!shouldReconnect) return;
     reconnectTriggeredRef.current = true;
+    if (getProviderPresentation(integration.provider).reconnectKind === "credentials") {
+      setCredentialsDialogOpen(true);
+      return;
+    }
     const returnTo = searchParams?.get("returnTo") || undefined;
     handleRefresh(returnTo);
   }, [integration, searchParams, handleRefresh]);
@@ -333,11 +344,20 @@ export default function IntegrationDetailPage({ params }: IntegrationDetailPageP
             </Button>
           )}
 
-          {(needsReauth || isExpired) && (
+          {/* A fatal classified error also earns the button even when the
+              reauth flag is not set: a mailbox whose folder no longer exists
+              is repaired through the same dialog, in its settings section. */}
+          {(needsReauth ||
+            isExpired ||
+            (presentation.reconnectKind === "credentials" && isFatalError)) && (
             <Button
               variant="default"
               size="sm"
-              onClick={() => handleRefresh()}
+              onClick={() =>
+                presentation.reconnectKind === "credentials"
+                  ? setCredentialsDialogOpen(true)
+                  : handleRefresh()
+              }
               disabled={refreshing}
             >
               {refreshing ? (
@@ -657,6 +677,14 @@ export default function IntegrationDetailPage({ params }: IntegrationDetailPageP
           )}
         </div>
       </div>
+
+      {presentation.reconnectKind === "credentials" && (
+        <ImapCredentialsDialog
+          integration={integration}
+          open={credentialsDialogOpen}
+          onOpenChange={setCredentialsDialogOpen}
+        />
+      )}
     </div>
   );
 }
