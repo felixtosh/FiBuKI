@@ -144,12 +144,12 @@ async function setupGmailIntegration(
 
   console.log(`[MailService] Gmail integration auto-started: ${data.email}`);
 
-  await db.collection("notifications").add({
+  await db.collection(`users/${userId}/notifications`).add({
     userId,
     type: "mail_service_connected",
     title: "Gmail Connected",
     message: `${data.email} connected. Syncing recent invoices now.`,
-    read: false,
+    readAt: null,
     createdAt: now,
   });
 }
@@ -327,12 +327,12 @@ export const onMailServiceReconnected = onDocumentUpdated(
       }
 
       // Create notification for user
-      await db.collection("notifications").add({
+      await db.collection(`users/${userId}/notifications`).add({
         userId,
         type: "mail_service_reconnected",
         title: `${provider.charAt(0).toUpperCase() + provider.slice(1)} Reconnected`,
         message: `${afterData.email} is reconnected. Paused syncs will resume automatically.`,
-        read: false,
+        readAt: null,
         createdAt: Timestamp.now(),
       });
     } catch (error) {
