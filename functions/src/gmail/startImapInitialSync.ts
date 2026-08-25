@@ -159,12 +159,12 @@ export async function startImapInitialSync(
 
   console.log(`[MailService] IMAP integration auto-started: ${integrationId}`);
 
-  await db.collection("notifications").add({
+  await db.collection(`users/${userId}/notifications`).add({
     userId,
     type: "mail_service_connected",
     title: "Mailbox Connected",
     message: `${email} connected. Syncing recent invoices now.`,
-    read: false,
+    readAt: null,
     createdAt: now,
   });
 

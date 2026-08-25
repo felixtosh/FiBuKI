@@ -175,17 +175,23 @@ describe("startImapInitialSync", () => {
     expect(await queueItems("integration-2")).toHaveLength(1);
   });
 
-  it("notifies the user that the mailbox is syncing", async () => {
+  it("notifies the user that the mailbox is syncing, where the app reads", async () => {
     await startImapInitialSync({
       integrationId: INTEGRATION,
       userId: USER,
       email: "stefan@example.com",
     });
 
-    const snap = await db
-      .collection("notifications")
-      .where("userId", "==", USER)
-      .get();
-    expect(snap.docs.map((d) => d.data().type)).toContain("mail_service_connected");
+    // The path `hooks/use-notifications.ts` subscribes to. A notification
+    // written anywhere else is an orphan document the user never sees.
+    const snap = await db.collection(`users/${USER}/notifications`).get();
+    const connected = snap.docs
+      .map((d) => d.data())
+      .find((n) => n.type === "mail_service_connected");
+
+    expect(connected).toBeDefined();
+    // Unread is `readAt == null`, not `read == false`; a document carrying the
+    // wrong field cannot match the unread filter.
+    expect(connected?.readAt).toBeNull();
   });
 });
