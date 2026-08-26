@@ -4,6 +4,10 @@ import { ColumnDef } from "@tanstack/react-table";
 import { format } from "date-fns";
 import { Upload, Mail, Loader2, FileText } from "lucide-react";
 import { TaxFile } from "@/types/file";
+// The one normalizer, shared with the extraction path that wrote this value.
+// functions/tsconfig.json sets rootDir "src", so the shared module has to live
+// under functions/src and be imported from here rather than the other way round.
+import { normalizeCurrencyForDisplay } from "@/functions/src/fx/currencyNormalization";
 import { UserPartner, GlobalPartner } from "@/types/partner";
 import { PipelineId } from "@/types/automation";
 import { SortableHeader, AutomationHeader } from "@/components/ui/data-table";
@@ -20,24 +24,6 @@ import {
 export interface TransactionAmountInfo {
   amount: number;
   currency: string;
-}
-
-// Map currency symbols to ISO codes
-const CURRENCY_SYMBOL_MAP: Record<string, string> = {
-  "€": "EUR",
-  "$": "USD",
-  "£": "GBP",
-  "¥": "JPY",
-  "CHF": "CHF",
-  "Fr.": "CHF",
-};
-
-function normalizeCurrency(currency: string | null | undefined): string {
-  if (!currency) return "EUR";
-  // Already an ISO code
-  if (/^[A-Z]{3}$/.test(currency)) return currency;
-  // Try to map symbol
-  return CURRENCY_SYMBOL_MAP[currency] || "EUR";
 }
 
 function inferLineItemAmountsAreNet(file: TaxFile): boolean {
@@ -205,7 +191,7 @@ export function getFileColumns(
       ),
       cell: ({ row }) => {
         const amount = getEffectiveExtractedAmount(row.original);
-        const currency = normalizeCurrency(row.original.extractedCurrency);
+        const currency = normalizeCurrencyForDisplay(row.original.extractedCurrency);
         const vatAmount = row.original.extractedVatAmount;
         const invoiceDirection = row.original.invoiceDirection;
         const extractedDate = row.original.extractedDate;
@@ -406,7 +392,7 @@ export function getFileColumns(
               count={count}
               countType="tx"
               primaryAmount={extractedAmount ?? null}
-              primaryCurrency={normalizeCurrency(extractedCurrency)}
+              primaryCurrency={normalizeCurrencyForDisplay(extractedCurrency)}
               secondaryAmounts={txAmounts}
               conversionDate={fileDate}
             />

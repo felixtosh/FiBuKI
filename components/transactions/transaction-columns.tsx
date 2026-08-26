@@ -15,6 +15,7 @@ import { UserNoReceiptCategory, CategorySuggestion } from "@/types/no-receipt-ca
 import { getCategoryTemplate } from "@/lib/data/no-receipt-category-templates";
 import { Pill } from "@/components/ui/pill";
 import { AmountMatchDisplay } from "@/components/ui/amount-match-display";
+import { readBankOriginalAmount } from "@/functions/src/fx/bankOriginalAmount";
 import { SortableHeader } from "@/components/ui/data-table";
 import { PartnerPill } from "@/components/partners/partner-pill";
 import {
@@ -220,6 +221,9 @@ export function getTransactionColumns(
               countType="file"
               primaryAmount={row.original.amount}
               primaryCurrency={row.original.currency || "EUR"}
+              // #112: lets the pill compare in the document's currency when the
+              // bank stated what it charged before settling, instead of converting.
+              primaryOriginal={readBankOriginalAmount(row.original._original?.rawRow)}
               secondaryAmounts={fileData?.amounts || []}
               conversionDate={txDate}
               isExtracting={fileData?.hasExtractingFiles}

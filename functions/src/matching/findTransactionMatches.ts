@@ -302,6 +302,8 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
           amount: txData.amount,
           date: txData.date,
           currency: txData.currency,
+          // Carries the bank-stated original amount for #112.
+          _original: txData._original,
           name: txData.name,
           partner: txData.partner,
           partnerName: txData.partnerName,

@@ -140,19 +140,25 @@ describe("characterization: geminiParser.parseWithGemini", () => {
     expect(res.additionalFields).toEqual([]);
   });
 
-  it("normalizes currency symbols; unknown/lowercase currencies collapse to EUR", async () => {
+  it("normalizes currency symbols and preserves an unrecognised code", async () => {
     const cases: Array<[string | null, string | null]> = [
       ["€", "EUR"],
       ["$", "USD"],
       ["£", "GBP"],
       ["¥", "JPY"],
       ["Fr.", "CHF"],
+      ["FR.", "CHF"], // fork #113: the symbol map is matched case-insensitively now
       ["CHF", "CHF"],
       ["USD", "USD"],
-      // characterization: anything not a 3-uppercase-letter code and not in the
-      // symbol map becomes "EUR" — even unrelated currencies:
-      ["Kč", "EUR"],
-      ["usd", "EUR"], // characterization: lowercase "usd" is NOT recognized → EUR
+      // fork #113: these two used to collapse to "EUR". The coercion happened
+      // here, at extraction time, so the wrong currency was already stamped in
+      // Firestore before the scorer or the UVA could route the document to the
+      // foreign-currency worklist built for it — and a coerced record is
+      // byte-identical to a genuine EUR one.
+      ["Kč", "KČ"],
+      ["usd", "USD"],
+      [" eur ", "EUR"],
+      ["", null],
       [null, null],
     ];
     for (const [input, expected] of cases) {

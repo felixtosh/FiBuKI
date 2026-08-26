@@ -10,7 +10,13 @@ export interface ConversionResult {
   amount: number;      // Converted amount in cents
   currency: string;    // Target currency
   rate: number;        // Exchange rate used
-  rateDate: string;    // Month/year of rate used (e.g., "2024-01")
+  /**
+   * Month the rate was taken from (e.g. "2024-01"), or "n/a" for a
+   * same-currency conversion. Up to MAX_RATE_SUBSTITUTION_MONTHS earlier than
+   * the requested date — show it wherever the converted figure is shown, so a
+   * substituted rate is visible rather than implied.
+   */
+  rateDate: string;
 }
 
 // Monthly EUR exchange rates (1 EUR = X foreign currency)
@@ -59,36 +65,58 @@ const EUR_RATES: Record<string, Record<string, number>> = {
   "2022-12": { USD: 1.0565, GBP: 0.8695, CHF: 0.9875, JPY: 143.25 },
 };
 
-// Fallback rates if no historical data available (use latest)
-const FALLBACK_RATES = EUR_RATES["2025-01"] || EUR_RATES["2024-12"];
+// The currency set this table covers. Any code outside it converts to null,
+// which is why getAvailableCurrencies reads its keys rather than a hand-kept
+// list. Not a fallback any more: a date the table cannot reach returns null.
+const COVERED_CURRENCIES = EUR_RATES["2025-01"] || EUR_RATES["2024-12"];
+
+/** How far back a missing month may borrow a neighbouring month's rate. */
+export const MAX_RATE_SUBSTITUTION_MONTHS = 3;
+
+/** The newest month this table holds, as YYYY-MM. */
+export function getLatestRateMonth(): string {
+  return Object.keys(EUR_RATES).sort().reverse()[0] ?? "";
+}
+
+function monthKeyOf(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
 
 /**
- * Get the EUR rate for a specific month
+ * Get the EUR rate for a specific month, or null when the table does not
+ * reach it.
+ *
+ * A missing month borrows from up to MAX_RATE_SUBSTITUTION_MONTHS earlier —
+ * rates move slowly enough that a one-quarter substitution is a rounding
+ * question. Past that the answer is null, not the newest row in the table.
+ *
+ * It used to be the newest row: every date from four months after the last
+ * key onward was converted at that key's rates and rendered identically to a
+ * correct figure. `rateDate` carried the substitution but no consumer read it,
+ * so a table that stopped in 2025-01 quietly priced every 2026 amount at
+ * January 2025. Returning null instead puts those amounts on the components'
+ * existing conversion-failed path, where the user can see the tool does not
+ * know rather than being told a wrong number confidently.
  */
-function getEurRatesForMonth(date: Date): { rates: Record<string, number>; rateDate: string } {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const monthKey = `${year}-${month}`;
+function getEurRatesForMonth(
+  date: Date
+): { rates: Record<string, number>; rateDate: string } | null {
+  const monthKey = monthKeyOf(date);
 
   if (EUR_RATES[monthKey]) {
     return { rates: EUR_RATES[monthKey], rateDate: monthKey };
   }
 
-  // Try previous months if current month not available
-  for (let i = 1; i <= 3; i++) {
+  for (let i = 1; i <= MAX_RATE_SUBSTITUTION_MONTHS; i++) {
     const prevDate = new Date(date);
     prevDate.setMonth(prevDate.getMonth() - i);
-    const prevYear = prevDate.getFullYear();
-    const prevMonth = String(prevDate.getMonth() + 1).padStart(2, "0");
-    const prevKey = `${prevYear}-${prevMonth}`;
+    const prevKey = monthKeyOf(prevDate);
     if (EUR_RATES[prevKey]) {
       return { rates: EUR_RATES[prevKey], rateDate: prevKey };
     }
   }
 
-  // Fallback to latest available
-  const keys = Object.keys(EUR_RATES).sort().reverse();
-  return { rates: EUR_RATES[keys[0]] || FALLBACK_RATES, rateDate: keys[0] || "latest" };
+  return null;
 }
 
 /**
@@ -115,7 +143,12 @@ export function convertCurrency(
     return { amount, currency: to, rate: 1, rateDate: "n/a" };
   }
 
-  const { rates, rateDate } = getEurRatesForMonth(date);
+  const monthRates = getEurRatesForMonth(date);
+  // No rate within reach of this date. The caller renders its conversion-failed
+  // state rather than a figure priced off an unrelated month.
+  if (!monthRates) return null;
+
+  const { rates, rateDate } = monthRates;
 
   let rate: number;
 
@@ -148,5 +181,5 @@ export function convertCurrency(
  * Get available currencies for conversion
  */
 export function getAvailableCurrencies(): string[] {
-  return ["EUR", ...Object.keys(FALLBACK_RATES)];
+  return ["EUR", ...Object.keys(COVERED_CURRENCIES)];
 }

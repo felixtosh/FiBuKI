@@ -16,6 +16,10 @@ import { ConnectTransactionOverlay } from "@/components/files/connect-transactio
 import { UploadProgress, FileUploadStatus } from "@/components/files/upload-progress";
 import { FilesDataTableHandle } from "@/components/files/files-data-table";
 import { useFiles } from "@/hooks/use-files";
+import {
+  readBankOriginalAmount,
+  type BankOriginalAmount,
+} from "@/functions/src/fx/bankOriginalAmount";
 import { usePartners } from "@/hooks/use-partners";
 import { useGlobalPartners } from "@/hooks/use-global-partners";
 import { useTransactions } from "@/hooks/use-transactions";
@@ -116,12 +120,14 @@ function FilesContent() {
 
   // Create a map of fileId -> transaction amounts for AmountMatchDisplay
   const transactionAmountsMap = useMemo(() => {
-    const map = new Map<string, Array<{ amount: number; currency: string }>>();
+    const map = new Map<string, Array<{ amount: number; currency: string; original: BankOriginalAmount | null }>>();
     for (const tx of transactions) {
       if (tx.fileIds && tx.fileIds.length > 0) {
+        // #112: the bank's own pre-settlement figure, when the row states one.
+        const original = readBankOriginalAmount(tx._original?.rawRow);
         for (const fileId of tx.fileIds) {
           const existing = map.get(fileId) || [];
-          existing.push({ amount: tx.amount, currency: tx.currency });
+          existing.push({ amount: tx.amount, currency: tx.currency, original });
           map.set(fileId, existing);
         }
       }
