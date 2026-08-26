@@ -279,7 +279,16 @@ function encodeValue(v: unknown): unknown {
   }
   if (Array.isArray(v)) return v.map((x) => encodeValue(x));
   if (typeof v === "object") {
-    const out: Record<string, unknown> = {};
+    // Null prototype, so a key called "__proto__" is an ordinary key and cannot
+    // reach Object.prototype at all. The literal guard below still stands: it
+    // DROPS those keys rather than storing them, which is the behaviour writes
+    // rely on. The null prototype is what makes the drop unnecessary for safety
+    // rather than load-bearing for it, and it is what CodeQL can see
+    // (js/remote-property-injection, alert #285 — the guard alone does not
+    // satisfy the rule, and an unread alert on the trunk is worse than two
+    // extra words here). Safe for this value: the result is serialised with
+    // JSON.stringify on its way to Postgres and never carries methods.
+    const out: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
     for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
       // Sink guard (writes reject these upfront; literal comparisons on purpose)
       if (k === "__proto__" || k === "constructor" || k === "prototype") continue;
