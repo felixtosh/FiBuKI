@@ -37,6 +37,7 @@ const DEFAULT_FILE_COLUMN_SIZES: Record<string, number> = {
   extractedAmount: 90,
   extractedVatPercent: 55,
   fileName: 190,
+  documentType: 110,
   sourceType: 80,
   uploadedAt: 115,
   assignedPartner: 140,

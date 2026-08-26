@@ -12,6 +12,8 @@ import { UserPartner, GlobalPartner } from "@/types/partner";
 import { PipelineId } from "@/types/automation";
 import { SortableHeader, AutomationHeader } from "@/components/ui/data-table";
 import { PartnerPill } from "@/components/partners/partner-pill";
+import { DocumentTypeBadge } from "@/components/documents/document-type-badge";
+import { describeDocumentType } from "@/lib/documents/document-type-presentation";
 import { AmountMatchDisplay } from "@/components/ui/amount-match-display";
 import { cn, toDateSafe } from "@/lib/utils";
 import { convertCurrency } from "@/lib/currency";
@@ -151,6 +153,23 @@ export function getFileColumns(
           </div>
         );
       },
+    },
+    {
+      id: "documentType",
+      // Sort on the RESOLVED type, so the files that carry no verdict at all
+      // group with the explicit `unknown` ones instead of forming a second,
+      // identical-looking bucket.
+      accessorFn: (row) => describeDocumentType(row.documentType).type,
+      size: 110,
+      header: ({ column }) => (
+        <SortableHeader column={column}>Document</SortableHeader>
+      ),
+      cell: ({ row }) => (
+        // Never an em-dash: a file with no verdict reads as "nicht bestimmt",
+        // which is the state most of the corpus is honestly in until the
+        // backfill and the re-extraction sweep have run.
+        <DocumentTypeBadge type={row.original.documentType} />
+      ),
     },
     {
       accessorKey: "extractedDate",
