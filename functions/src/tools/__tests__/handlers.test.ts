@@ -1499,11 +1499,11 @@ describe("Tool Registry Handlers", () => {
       store.setDoc("files", "f-legacy", createTestFile({ userId }));
 
       const flagged = await handlers.listFiles(userId, { foreignRecipient: true });
-      expect(flagged.map((f: Record<string, unknown>) => f.id)).toEqual(["f-foreign"]);
+      expect(flagged.files.map((f) => f.id)).toEqual(["f-foreign"]);
 
       // A record written before the rule is not "addressed to somebody else".
       const rest = await handlers.listFiles(userId, { foreignRecipient: false });
-      expect(rest.map((f: Record<string, unknown>) => f.id).sort()).toEqual(["f-legacy", "f-mine"]);
+      expect(rest.files.map((f) => f.id).sort()).toEqual(["f-legacy", "f-mine"]);
     });
 
     it("returns the direction review list when asked", async () => {
@@ -1511,7 +1511,7 @@ describe("Tool Registry Handlers", () => {
       store.setDoc("files", "f-clear", createTestFile({ userId, needsDirectionReview: false }));
 
       const flagged = await handlers.listFiles(userId, { needsDirectionReview: true });
-      expect(flagged.map((f: Record<string, unknown>) => f.id)).toEqual(["f-flagged"]);
+      expect(flagged.files.map((f) => f.id)).toEqual(["f-flagged"]);
     });
   });
 
