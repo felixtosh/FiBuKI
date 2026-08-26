@@ -311,18 +311,20 @@ function encodeValue(v: unknown): unknown {
   }
   if (Array.isArray(v)) return v.map((x) => encodeValue(x));
   if (typeof v === "object") {
-    // Null prototype, so a key called "__proto__" is an ordinary key and cannot
-    // reach Object.prototype at all. The literal guard below still stands: it
-    // DROPS those keys rather than storing them, which is the behaviour writes
-    // rely on. The null prototype is what makes the drop unnecessary for safety
-    // rather than load-bearing for it, and it is what CodeQL can see
-    // (js/remote-property-injection, alert #285 — the guard alone does not
-    // satisfy the rule, and an unread alert on the trunk is worse than two
-    // extra words here). It also covers the ordering trap described just below
-    // if that ordering is ever got wrong. Safe for this value: the result is
-    // serialised with JSON.stringify on its way to Postgres, and never carries
-    // methods.
-    const out: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+    // Accumulated in a Map, never by assigning a computed key to an object.
+    // The keys here come from caller data, so `out[k] = ...` is a property
+    // write with an attacker-influenced name — CodeQL alert #285
+    // (js/remote-property-injection). A Map has no prototype to pollute and no
+    // property to shadow, so the sink does not exist. `Object.fromEntries`
+    // rebuilds the plain object the rest of the codec expects, and it is safe
+    // in its own right: it DEFINES own data properties, so even a key called
+    // "__proto__" lands as an ordinary own property instead of reaching the
+    // setter.
+    //
+    // The literal guard below still stands. It is not the safety measure here —
+    // it decides that those keys are DROPPED rather than stored, which is the
+    // behaviour writes depend on.
+    const out = new Map<string, unknown>();
     for (const [rawKey, val] of Object.entries(v as Record<string, unknown>)) {
       // A key is a jsonb string too, and Postgres rejects it on the same terms.
       // Sanitise BEFORE the guard, never after: "__proto__\u0000" would pass a
@@ -332,9 +334,9 @@ function encodeValue(v: unknown): unknown {
       // Sink guard (writes reject these upfront; literal comparisons on purpose)
       if (k === "__proto__" || k === "constructor" || k === "prototype") continue;
       const enc = encodeValue(val);
-      if (enc !== undefined) out[k] = enc;
+      if (enc !== undefined) out.set(k, enc);
     }
-    return out;
+    return Object.fromEntries(out);
   }
   return v;
 }

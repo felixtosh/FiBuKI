@@ -57,23 +57,27 @@ function daysBetween(start: string, end: string): number {
  * Keep only the currencies asked for, and drop a day left with none.
  *
  * `wanted` holds currency codes that came from the query string, so the keys
- * written here derive from a request. They are already narrowed to `^[A-Z]{3}$`
+ * built here derive from a request. They are already narrowed to `^[A-Z]{3}$`
  * before this runs, which no dangerous key can pass — but that filter is three
  * call frames away and neither a reader nor CodeQL can see it from here
- * (js/remote-property-injection, alert #296). The null prototype settles it
- * locally and permanently: with no prototype, a key called "__proto__" is an
- * ordinary key and reaches nothing. The object is serialised straight into the
- * JSON response, so it needs no methods.
+ * (js/remote-property-injection, alert #296).
+ *
+ * So the rates are accumulated in a Map and never by assigning a computed key
+ * to an object. A Map has no prototype to pollute and no property to shadow, so
+ * the sink does not exist rather than being filtered. `Object.fromEntries`
+ * rebuilds the plain object the JSON response needs, and it is safe in its own
+ * right: it DEFINES own data properties, so even a key called "__proto__" lands
+ * as an ordinary own property instead of reaching the setter.
  */
 function project(days: EcbDay[], wanted: Set<string>): EcbDay[] {
   const out: EcbDay[] = [];
   for (const day of days) {
-    const rates: Record<string, number> = Object.create(null) as Record<string, number>;
+    const rates = new Map<string, number>();
     for (const code of wanted) {
       const rate = day.rates[code];
-      if (typeof rate === "number") rates[code] = rate;
+      if (typeof rate === "number") rates.set(code, rate);
     }
-    if (Object.keys(rates).length > 0) out.push({ date: day.date, rates });
+    if (rates.size > 0) out.push({ date: day.date, rates: Object.fromEntries(rates) });
   }
   return out;
 }
