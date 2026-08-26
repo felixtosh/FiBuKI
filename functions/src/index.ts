@@ -164,6 +164,7 @@ export {
   connectFileToTransactionCallable as connectFileToTransaction,
   disconnectFileFromTransactionCallable as disconnectFileFromTransaction,
   dismissTransactionSuggestionCallable as dismissTransactionSuggestion,
+  undismissTransactionSuggestionCallable as undismissTransactionSuggestion,
   unrejectFileFromTransactionCallable as unrejectFileFromTransaction,
 } from "./files";
 

@@ -262,6 +262,7 @@ export function formatFunctionDisplayName(functionName: string): string {
     connectFileToTransaction: "Connect File",
     disconnectFileFromTransaction: "Disconnect File",
     dismissTransactionSuggestion: "Dismiss Suggestion",
+    undismissTransactionSuggestion: "Undo Dismiss Suggestion",
     unrejectFileFromTransaction: "Unreject File",
     // Partner operations
     createUserPartner: "Create Partner",

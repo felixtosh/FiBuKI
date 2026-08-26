@@ -29,6 +29,7 @@ import {
   generateTypedSearchQueries,
   QueryGenerationPartner,
 } from "../precision-search/generateSearchQueries";
+import { isTransactionDismissed } from "../matching/dismissedTransactions";
 
 export type FindReceiptStatus =
   | "connected"
@@ -241,6 +242,9 @@ export async function findReceiptForTransaction(
       ? (file.transactionIds as string[])
       : [];
     if (fileTxIds.includes(transactionId)) continue;
+    // A pair this file dismissed is off the table: the clear winner here is
+    // auto-connected outright, so scoring it would undo the rejection.
+    if (isTransactionDismissed(file, transactionId)) continue;
     localFileCount++;
 
     const result = scoreAttachmentMatch({

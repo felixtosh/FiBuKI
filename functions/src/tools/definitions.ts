@@ -180,7 +180,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     name: "connect_file_to_transaction",
-    description: "Connect a file (receipt) to a transaction, marking it complete",
+    description:
+      "Connect a file (receipt) to a transaction, marking it complete. A pair that was previously rejected is refused with PAIR_REJECTED; lift the rejection with undismiss_transaction_suggestion first if the connection is genuinely intended.",
     inputSchema: {
       type: "object",
       properties: {
@@ -198,6 +199,36 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       properties: {
         fileId: { type: "string", description: "The file ID" },
         transactionId: { type: "string", description: "The transaction ID" },
+      },
+      required: ["fileId", "transactionId"],
+    },
+  },
+  {
+    name: "dismiss_transaction_suggestion",
+    description:
+      "Reject a proposed file-to-transaction pair. Removes the suggestion from the file's suggestion list and records the rejection so re-scoring does not propose it again. Use for a genuinely wrong pair (coincidental amount or date, an own-side document scored against an expense line). Do NOT use when the pair is correct but the transaction already holds a document. Reversible with undismiss_transaction_suggestion.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fileId: { type: "string", description: "The file ID" },
+        transactionId: { type: "string", description: "The transaction ID to reject" },
+        reason: {
+          type: "string",
+          description: "Why the pair is wrong — stored with the rejection, max 500 characters",
+        },
+      },
+      required: ["fileId", "transactionId"],
+    },
+  },
+  {
+    name: "undismiss_transaction_suggestion",
+    description:
+      "Clear a previous rejection of a file-to-transaction pair, making it eligible to be suggested again. Does not itself regenerate the suggestion — the pair reappears when matching next runs for that file (a partner change, a precision search, or the UI's refresh-matches action), or can be scored on demand with score_file_transaction_match. The earlier rejection stays in the file's history.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fileId: { type: "string", description: "The file ID" },
+        transactionId: { type: "string", description: "The transaction ID to un-reject" },
       },
       required: ["fileId", "transactionId"],
     },

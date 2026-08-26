@@ -579,6 +579,113 @@ describe("Tool Registry Handlers", () => {
     });
   });
 
+  // Fork #101. The gate lives in this handler rather than at its callers
+  // because auto_connect_file_suggestions reaches the same write through it.
+  describe("connectFileToTransaction — dismissal gate (fork #101)", () => {
+    it("refuses a pair the file has rejected", async () => {
+      store.setDoc(
+        "files",
+        "f-1",
+        createTestFile({ userId, dismissedTransactionIds: ["tx-1"] })
+      );
+      store.setDoc("transactions", "tx-1", createTestTransaction({ userId, fileIds: [] }));
+
+      await expect(
+        handlers.connectFileToTransaction(userId, { fileId: "f-1", transactionId: "tx-1" })
+      ).rejects.toThrow("PAIR_REJECTED");
+
+      // The refusal must leave no half-written state behind.
+      const file = store.getDoc("files", "f-1");
+      const tx = store.getDoc("transactions", "tx-1");
+      expect(file?.transactionIds ?? []).not.toContain("tx-1");
+      expect(tx?.fileIds ?? []).not.toContain("f-1");
+      expect(
+        store.queryDocs("fileConnections", [{ field: "fileId", op: "==", value: "f-1" }])
+      ).toHaveLength(0);
+    });
+
+    it("refuses on the record shape too, not only the legacy id array", async () => {
+      store.setDoc(
+        "files",
+        "f-1",
+        createTestFile({
+          userId,
+          dismissedTransactions: [{ transactionId: "tx-1", dismissedAt: new Date() }],
+        })
+      );
+      store.setDoc("transactions", "tx-1", createTestTransaction({ userId }));
+
+      await expect(
+        handlers.connectFileToTransaction(userId, { fileId: "f-1", transactionId: "tx-1" })
+      ).rejects.toThrow("PAIR_REJECTED");
+    });
+
+    it("connects again once the rejection is taken back", async () => {
+      // What undismiss leaves behind: the id gone from the enforcement array,
+      // the record kept as history and stamped. The pair must be connectable.
+      store.setDoc(
+        "files",
+        "f-1",
+        createTestFile({
+          userId,
+          dismissedTransactionIds: [],
+          dismissedTransactions: [
+            { transactionId: "tx-1", dismissedAt: new Date(), undismissedAt: new Date() },
+          ],
+        })
+      );
+      store.setDoc("transactions", "tx-1", createTestTransaction({ userId, fileIds: [] }));
+
+      const result = await handlers.connectFileToTransaction(userId, {
+        fileId: "f-1",
+        transactionId: "tx-1",
+      });
+
+      expect(result.success).toBe(true);
+      expect(store.getDoc("files", "f-1")?.transactionIds).toContain("tx-1");
+    });
+
+    it("leaves an unrelated dismissal alone", async () => {
+      store.setDoc(
+        "files",
+        "f-1",
+        createTestFile({ userId, dismissedTransactionIds: ["tx-other"] })
+      );
+      store.setDoc("transactions", "tx-1", createTestTransaction({ userId, fileIds: [] }));
+
+      const result = await handlers.connectFileToTransaction(userId, {
+        fileId: "f-1",
+        transactionId: "tx-1",
+      });
+
+      expect(result.success).toBe(true);
+    });
+
+    it("stops autoConnectFileSuggestions from reconnecting a rejected pair", async () => {
+      // The suggestion is stale: dismissal normally strips it, but a file
+      // written before the record format, or re-scored by a path that predates
+      // the filter, can still carry one. The handler is the backstop.
+      store.setDoc(
+        "files",
+        "f-1",
+        createTestFile({
+          userId,
+          transactionIds: [],
+          transactionMatchComplete: true,
+          dismissedTransactionIds: ["tx-1"],
+          transactionSuggestions: [{ transactionId: "tx-1", confidence: 99 }],
+        })
+      );
+      store.setDoc("transactions", "tx-1", createTestTransaction({ userId, fileIds: [] }));
+
+      const result = await handlers.autoConnectFileSuggestions(userId, { minConfidence: 89 });
+
+      expect(result.connected).toBe(0);
+      expect(result.skipped).toBe(1);
+      expect(store.getDoc("files", "f-1")?.transactionIds ?? []).not.toContain("tx-1");
+    });
+  });
+
   describe("disconnectFileFromTransaction", () => {
     it("should disconnect file from transaction", async () => {
       store.setDoc("files", "f-1", createTestFile({ userId, transactionIds: ["tx-1"] }));
@@ -1478,4 +1585,260 @@ describe("Tool Registry Handlers", () => {
       }
     });
   });
+  describe("dismissTransactionSuggestion / undismissTransactionSuggestion", () => {
+    const suggestion = (transactionId: string, confidence: number) => ({
+      transactionId,
+      confidence,
+      matchSources: [{ type: "amount", weight: 40 }],
+    });
+
+    it("should drop the suggestion, blacklist the pair and report its confidence", async () => {
+      store.setDoc(
+        "files",
+        "f-1",
+        createTestFile({
+          userId,
+          transactionSuggestions: [suggestion("tx-1", 82), suggestion("tx-2", 61)],
+        })
+      );
+
+      const result = await handlers.dismissTransactionSuggestion(userId, {
+        fileId: "f-1",
+        transactionId: "tx-1",
+        reason: "coincidental amount",
+      });
+
+      expect(result).toMatchObject({
+        success: true,
+        fileId: "f-1",
+        transactionId: "tx-1",
+        dismissedConfidence: 82,
+      });
+
+      const file = store.getDoc("files", "f-1");
+      expect(file?.transactionSuggestions).toEqual([suggestion("tx-2", 61)]);
+      expect(file?.dismissedTransactionIds).toEqual(["tx-1"]);
+      expect(file?.dismissedTransactions).toEqual([
+        expect.objectContaining({ transactionId: "tx-1", confidence: 82, reason: "coincidental amount" }),
+      ]);
+    });
+
+    it("should succeed with a null confidence when the pair was not suggested", async () => {
+      store.setDoc("files", "f-1", createTestFile({ userId, transactionSuggestions: [] }));
+
+      const result = await handlers.dismissTransactionSuggestion(userId, {
+        fileId: "f-1",
+        transactionId: "tx-1",
+      });
+
+      expect(result).toMatchObject({ success: true, dismissedConfidence: null });
+      expect(store.getDoc("files", "f-1")?.dismissedTransactionIds).toEqual(["tx-1"]);
+    });
+
+    it("should be idempotent across a sweep re-run", async () => {
+      store.setDoc(
+        "files",
+        "f-1",
+        createTestFile({ userId, transactionSuggestions: [suggestion("tx-1", 82)] })
+      );
+
+      await handlers.dismissTransactionSuggestion(userId, { fileId: "f-1", transactionId: "tx-1" });
+      const second = await handlers.dismissTransactionSuggestion(userId, {
+        fileId: "f-1",
+        transactionId: "tx-1",
+      });
+
+      expect(second).toMatchObject({ success: true, dismissedConfidence: null });
+      const file = store.getDoc("files", "f-1");
+      expect(file?.dismissedTransactionIds).toEqual(["tx-1"]);
+      // A second record here would double-count the rejection in the learning export.
+      expect(file?.dismissedTransactions).toHaveLength(1);
+    });
+
+    it("should refuse a reason longer than 500 characters without writing", async () => {
+      store.setDoc(
+        "files",
+        "f-1",
+        createTestFile({ userId, transactionSuggestions: [suggestion("tx-1", 82)] })
+      );
+
+      await expect(
+        handlers.dismissTransactionSuggestion(userId, {
+          fileId: "f-1",
+          transactionId: "tx-1",
+          reason: "x".repeat(501),
+        })
+      ).rejects.toThrow(/at most 500 characters/);
+
+      expect(store.getDoc("files", "f-1")?.dismissedTransactionIds).toBeUndefined();
+    });
+
+    it("should refuse a non-string reason rather than persist it raw", async () => {
+      store.setDoc(
+        "files",
+        "f-1",
+        createTestFile({ userId, transactionSuggestions: [suggestion("tx-1", 82)] })
+      );
+
+      await expect(
+        handlers.dismissTransactionSuggestion(userId, {
+          fileId: "f-1",
+          transactionId: "tx-1",
+          reason: { note: "x".repeat(9999) },
+        })
+      ).rejects.toThrow(/must be a string/);
+
+      expect(store.getDoc("files", "f-1")?.dismissedTransactionIds).toBeUndefined();
+    });
+
+    it("should require both ids", async () => {
+      await expect(handlers.dismissTransactionSuggestion(userId, {})).rejects.toThrow(
+        "fileId is required"
+      );
+      await expect(
+        handlers.dismissTransactionSuggestion(userId, { fileId: "f-1" })
+      ).rejects.toThrow("transactionId is required");
+      await expect(handlers.undismissTransactionSuggestion(userId, {})).rejects.toThrow(
+        "fileId is required"
+      );
+      await expect(
+        handlers.undismissTransactionSuggestion(userId, { fileId: "f-1" })
+      ).rejects.toThrow("transactionId is required");
+    });
+
+    it("should separate an unknown file from another user's file", async () => {
+      await expect(
+        handlers.dismissTransactionSuggestion(userId, { fileId: "f-1", transactionId: "tx-1" })
+      ).rejects.toThrow("File not found");
+
+      store.setDoc("files", "f-2", createTestFile({ userId: otherUserId }));
+
+      await expect(
+        handlers.dismissTransactionSuggestion(userId, { fileId: "f-2", transactionId: "tx-1" })
+      ).rejects.toThrow("Access denied");
+      await expect(
+        handlers.undismissTransactionSuggestion(userId, { fileId: "f-2", transactionId: "tx-1" })
+      ).rejects.toThrow("Access denied");
+
+      // The refusal must not have written anything.
+      expect(store.getDoc("files", "f-2")?.dismissedTransactionIds).toBeUndefined();
+    });
+
+    it("should round-trip dismiss then undismiss, keeping the attempt as history", async () => {
+      store.setDoc(
+        "files",
+        "f-1",
+        createTestFile({ userId, transactionSuggestions: [suggestion("tx-1", 82)] })
+      );
+
+      await handlers.dismissTransactionSuggestion(userId, {
+        fileId: "f-1",
+        transactionId: "tx-1",
+        reason: "coincidence",
+      });
+
+      const result = await handlers.undismissTransactionSuggestion(userId, {
+        fileId: "f-1",
+        transactionId: "tx-1",
+      });
+
+      expect(result).toMatchObject({ success: true, wasDismissed: true });
+
+      const file = store.getDoc("files", "f-1");
+      // The enforcement list is what undo clears.
+      expect(file?.dismissedTransactionIds).toEqual([]);
+      // The record survives, stamped, so a later sweep can see what was tried
+      // and why rather than re-deriving the same wrong pairing blind.
+      expect(file?.dismissedTransactions).toEqual([
+        expect.objectContaining({
+          transactionId: "tx-1",
+          confidence: 82,
+          reason: "coincidence",
+          undismissedAt: expect.anything(),
+        }),
+      ]);
+      // Undismissing does not fabricate the suggestion back — matching does that.
+      expect(file?.transactionSuggestions).toEqual([]);
+    });
+
+    it("should log a second rejection after an undo instead of silently keeping one", async () => {
+      store.setDoc(
+        "files",
+        "f-1",
+        createTestFile({ userId, transactionSuggestions: [suggestion("tx-1", 82)] })
+      );
+
+      await handlers.dismissTransactionSuggestion(userId, {
+        fileId: "f-1",
+        transactionId: "tx-1",
+        reason: "first call",
+      });
+      await handlers.undismissTransactionSuggestion(userId, {
+        fileId: "f-1",
+        transactionId: "tx-1",
+      });
+      await handlers.dismissTransactionSuggestion(userId, {
+        fileId: "f-1",
+        transactionId: "tx-1",
+        reason: "second call",
+      });
+
+      const file = store.getDoc("files", "f-1");
+      // Two decisions logged, one of them reversed...
+      expect(file?.dismissedTransactions).toEqual([
+        expect.objectContaining({ reason: "first call", undismissedAt: expect.anything() }),
+        expect.objectContaining({ reason: "second call" }),
+      ]);
+      expect(
+        (file?.dismissedTransactions as Array<Record<string, unknown>>)[1]
+      ).not.toHaveProperty("undismissedAt");
+      // ...and exactly one live entry on the list matching enforces against.
+      expect(file?.dismissedTransactionIds).toEqual(["tx-1"]);
+    });
+
+    it("should report wasDismissed false and write nothing for a pair that was never dismissed", async () => {
+      store.setDoc("files", "f-1", createTestFile({ userId }));
+      const before = { ...store.getDoc("files", "f-1") };
+
+      const result = await handlers.undismissTransactionSuggestion(userId, {
+        fileId: "f-1",
+        transactionId: "tx-1",
+      });
+
+      expect(result).toMatchObject({ success: true, wasDismissed: false });
+      // Not even updatedAt: a sweep clearing a speculative list must not stamp
+      // every file it looked at.
+      expect(store.getDoc("files", "f-1")).toEqual(before);
+    });
+
+    it("should treat a reversed rejection as no rejection at all", async () => {
+      store.setDoc(
+        "files",
+        "f-1",
+        createTestFile({
+          userId,
+          dismissedTransactionIds: [],
+          dismissedTransactions: [
+            {
+              transactionId: "tx-1",
+              dismissedAt: new Date(),
+              confidence: 82,
+              reason: null,
+              undismissedAt: new Date(),
+            },
+          ],
+        })
+      );
+      const before = { ...store.getDoc("files", "f-1") };
+
+      const result = await handlers.undismissTransactionSuggestion(userId, {
+        fileId: "f-1",
+        transactionId: "tx-1",
+      });
+
+      expect(result).toMatchObject({ wasDismissed: false });
+      expect(store.getDoc("files", "f-1")).toEqual(before);
+    });
+  });
+
 });

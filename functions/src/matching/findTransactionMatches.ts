@@ -7,6 +7,7 @@
 
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
+import { readDismissedTransactionIds } from "./dismissedTransactions";
 import {
   SCORING_CONFIG,
   scoreTransaction,
@@ -133,6 +134,10 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
       partnerId?: string | null;
     };
 
+    // Pairs the file has had dismissed. Only knowable on the fileId path — a
+    // caller passing raw fileInfo has no stored document to carry them.
+    let dismissedIds = new Set<string>();
+
     if (fileId) {
       // Fetch from Firestore
       const fileDoc = await db.collection("files").doc(fileId).get();
@@ -152,6 +157,8 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
         console.log(`[FindMatches] File ${fileId} is not an invoice, returning empty`);
         return { matches: [], totalCandidates: 0 };
       }
+
+      dismissedIds = readDismissedTransactionIds(docData);
 
       fileData = {
         extractedAmount: docData.extractedAmount,
@@ -259,6 +266,13 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
     let candidates = transactions.filter((doc) => {
       // Exclude already connected
       if (excludeSet.has(doc.id)) return false;
+
+      // Exclude pairs this file already dismissed. Callers auto-connect the
+      // top result at AUTO_MATCH_THRESHOLD, so an unfiltered refresh reconnects
+      // what was just rejected. An explicit search is exempt: it is the only
+      // way back to a dismissed pair by hand, and dismissal is not meant to be
+      // irreversible.
+      if (!searchQuery && dismissedIds.has(doc.id)) return false;
 
       // Apply search query filter if provided
       if (searchQuery && !matchesSearchQuery(doc.data(), searchQuery)) {

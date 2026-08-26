@@ -11,6 +11,7 @@
 
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
+import { readRejectedFileIds } from "./rejectedFiles";
 
 const db = getFirestore();
 
@@ -69,11 +70,10 @@ export const learnScoringWeightsCallable = createCallable<
     const rejectedPairs = new Set<string>();
     for (const doc of txSnap.docs) {
       const data = doc.data();
-      for (const id of (data.rejectedFileIds || []) as string[]) {
-        rejectedPairs.add(`${id}:${doc.id}`);
-      }
-      for (const r of (data.rejectedFiles || []) as Array<{ fileId: string }>) {
-        rejectedPairs.add(`${r.fileId}:${doc.id}`);
+      // Both shapes, minus rejections the user took back (fork #102) — a
+      // withdrawn rejection is not a false positive to learn from.
+      for (const fileId of readRejectedFileIds(data)) {
+        rejectedPairs.add(`${fileId}:${doc.id}`);
       }
     }
 

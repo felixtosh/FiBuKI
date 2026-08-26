@@ -34,6 +34,9 @@ export type CloudFunctionName =
   | "connectFileToTransaction"
   | "disconnectFileFromTransaction"
   | "dismissTransactionSuggestion"
+  // Exported by functions/src/index since fork #95 but never named here, so no
+  // client could reach it through callFunction (which is keyed on this union).
+  | "undismissTransactionSuggestion"
   | "unrejectFileFromTransaction"
   // Partner operations
   | "createUserPartner"
