@@ -134,9 +134,16 @@ export function createStorageRoutes(verifyToken: TokenVerifier, options?: { json
           if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
             throw new StorageRouteError("invalid-argument", "x-fibuki-custom must be a JSON object");
           }
-          customMetadata = {};
+          // Accumulated in a Map: the keys come straight off a request header,
+          // so `customMetadata[k] = ...` is a property write with an
+          // attacker-controlled name (js/remote-property-injection, alert
+          // #283). The literal guard below does NOT satisfy that rule — this
+          // file used to claim it did, and the alert stayed open on main as
+          // the evidence. Removing the sink is what satisfies it.
+          const collected = new Map<string, string>();
           for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
-            // Literal comparisons on purpose — the guard shape CodeQL recognizes.
+            // Kept because it decides the request is REFUSED rather than the
+            // key quietly dropped. Literal comparisons on purpose.
             if (k === "__proto__" || k === "constructor" || k === "prototype") {
               throw new StorageRouteError("invalid-argument", `unsafe custom metadata key "${k}"`);
             }
@@ -146,8 +153,12 @@ export function createStorageRoutes(verifyToken: TokenVerifier, options?: { json
                 `custom metadata value for "${k}" must be a primitive`,
               );
             }
-            customMetadata[k] = String(v);
+            collected.set(k, String(v));
           }
+          // Rebuilt as a plain object before it leaves this block: it is handed
+          // to the storage SDK, which serialises it as an ordinary object and
+          // would not understand a Map.
+          customMetadata = Object.fromEntries(collected);
         }
 
         const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
