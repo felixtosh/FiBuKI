@@ -32,6 +32,7 @@ import { randomUUID } from "crypto";
 import { TOOL_DEFINITIONS, TOOL_NAMES } from "./definitions";
 import type { ToolName } from "./definitions";
 import { PLANS } from "../billing/config";
+import { KNOWN_AUSTRIAN_RATES } from "../uva/rateSet";
 import type { PlanId, PlanFeatures } from "../billing/config";
 
 /**
@@ -333,8 +334,26 @@ export async function getTransaction(userId: string, transactionId: string) {
 }
 
 export async function updateTransaction(userId: string, args: Record<string, unknown>) {
-  const { transactionId, description, isComplete } = args;
+  const { transactionId, description, isComplete, vatRate, isReverseCharge } = args;
   if (!transactionId) throw new Error("transactionId is required");
+
+  // Manual override lane (fork #64, spec §3 step 3): the UVA calculation
+  // validates the rate against the transaction's period; this only rejects
+  // values that are never an Austrian rate (19 = Jungholz/Mittelberg).
+  if (vatRate !== undefined && vatRate !== null) {
+    if (typeof vatRate !== "number" || !KNOWN_AUSTRIAN_RATES.includes(vatRate)) {
+      throw new Error(
+        `vatRate must be one of ${KNOWN_AUSTRIAN_RATES.join(", ")} (or null to clear the override)`
+      );
+    }
+  }
+  if (
+    isReverseCharge !== undefined &&
+    isReverseCharge !== null &&
+    typeof isReverseCharge !== "boolean"
+  ) {
+    throw new Error("isReverseCharge must be true, false, or null to clear");
+  }
 
   const docRef = db.collection("transactions").doc(transactionId as string);
   const doc = await docRef.get();
@@ -345,6 +364,8 @@ export async function updateTransaction(userId: string, args: Record<string, unk
   const updates: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
   if (description !== undefined) updates.description = description;
   if (isComplete !== undefined) updates.isComplete = isComplete;
+  if (vatRate !== undefined) updates.vatRate = vatRate;
+  if (isReverseCharge !== undefined) updates.isReverseCharge = isReverseCharge;
 
   await docRef.update(updates);
   return { success: true, transactionId };

@@ -9,36 +9,9 @@ interface ReportPeriod {
   type: "monthly" | "quarterly";
 }
 
-interface UVAReportData {
-  taxableRevenue: {
-    rate20Net: number;
-    rate20Vat: number;
-    rate10Net: number;
-    rate10Vat: number;
-    rate13Net: number;
-    rate13Vat: number;
-  };
-  exemptRevenue: {
-    exports: number;
-    euDeliveries: number;
-    other: number;
-  };
-  euAcquisitions: {
-    netAmount: number;
-    vatAmount: number;
-  };
-  inputVat: {
-    standard: number;
-    euAcquisitions: number;
-    imports: number;
-  };
-  totalVatPayable: number;
-  totalInputVat: number;
-  vatBalance: number;
-}
-
 interface SubmitRequest {
-  report: UVAReportData;
+  /** Per-Kennzahl figures from the calculation module (fork #64) */
+  kennzahlen: Record<string, number>;
   period: ReportPeriod;
   taxNumber: string;
 }
@@ -68,12 +41,12 @@ export async function POST(request: NextRequest) {
       : undefined;
 
     const body: SubmitRequest = await request.json();
-    const { report, period, taxNumber } = body;
+    const { kennzahlen, period, taxNumber } = body;
 
     // Validate required fields
-    if (!report) {
+    if (!kennzahlen || typeof kennzahlen !== "object") {
       return NextResponse.json(
-        { error: "report data is required" },
+        { error: "kennzahlen record is required" },
         { status: 400 }
       );
     }
@@ -94,7 +67,7 @@ export async function POST(request: NextRequest) {
 
     const response = await callFirebaseFunction<SubmitRequest, SubmitResponse>(
       "submitUvaToFinanzOnline",
-      { report, period, taxNumber },
+      { kennzahlen, period, taxNumber },
       authToken
     );
 

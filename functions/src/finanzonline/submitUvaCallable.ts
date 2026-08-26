@@ -63,7 +63,7 @@ export const submitUvaToFinanzOnlineCallable = createCallable<
       );
     }
 
-    const { report, period, taxNumber } = request;
+    const { kennzahlen, period, taxNumber } = request;
 
     // ========================================================================
     // Validate inputs
@@ -76,8 +76,8 @@ export const submitUvaToFinanzOnlineCallable = createCallable<
       );
     }
 
-    if (!report) {
-      throw new HttpsError("invalid-argument", "Report data is required");
+    if (!kennzahlen || typeof kennzahlen !== "object") {
+      throw new HttpsError("invalid-argument", "kennzahlen record is required");
     }
 
     if (!period) {
@@ -131,7 +131,7 @@ export const submitUvaToFinanzOnlineCallable = createCallable<
       `[FinanzOnline] Generating UVA XML for ${period.year}-${period.period} (${period.type})`
     );
 
-    const xml = generateUvaXml(report, period, taxNumber);
+    const xml = generateUvaXml(kennzahlen, period, taxNumber);
     const xmlHash = sha256(xml);
 
     // ========================================================================

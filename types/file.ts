@@ -208,6 +208,13 @@ export interface TaxFile {
   /** AI-extracted line items */
   extractedLineItems?: ExtractedLineItem[] | null;
 
+  /**
+   * Set when the extracted line items failed reconciliation against the
+   * document total (fork #64): the items are kept for human repair but
+   * must not be trusted for VAT derivation.
+   */
+  lineItemsUnreconciled?: boolean;
+
   /** AI-extracted partner/company name */
   extractedPartner?: string | null;
 
@@ -548,6 +555,7 @@ export interface FileExtractionData {
   extractedVatPercent?: number | null;
   extractedVatAmount?: number | null;
   extractedLineItems?: ExtractedLineItem[] | null;
+  lineItemsUnreconciled?: boolean;
   extractedPartner?: string | null;
   extractedVatId?: string | null;
   extractedIban?: string | null;

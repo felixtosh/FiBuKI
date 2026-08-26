@@ -43,35 +43,11 @@ export interface TestConnectionResponse {
 }
 
 /**
- * UVA report data for submission
+ * UVA figures for submission: Kennzahl code → value in cents, as produced
+ * by the calculation module (functions/src/uva). Replaces the legacy
+ * UVAReportData shape whose hand-mapping had 12 of 16 KZ codes wrong.
  */
-export interface UVAReportData {
-  taxableRevenue: {
-    rate20Net: number;
-    rate20Vat: number;
-    rate10Net: number;
-    rate10Vat: number;
-    rate13Net: number;
-    rate13Vat: number;
-  };
-  exemptRevenue: {
-    exports: number;
-    euDeliveries: number;
-    other: number;
-  };
-  euAcquisitions: {
-    netAmount: number;
-    vatAmount: number;
-  };
-  inputVat: {
-    standard: number;
-    euAcquisitions: number;
-    imports: number;
-  };
-  totalVatPayable: number;
-  totalInputVat: number;
-  vatBalance: number;
-}
+export type UvaKennzahlValues = Record<string, number>;
 
 /**
  * Report period
@@ -86,7 +62,7 @@ export interface ReportPeriod {
  * Request to submit UVA
  */
 export interface SubmitUvaRequest {
-  report: UVAReportData;
+  kennzahlen: UvaKennzahlValues;
   period: ReportPeriod;
   taxNumber: string;
 }

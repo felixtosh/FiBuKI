@@ -156,6 +156,13 @@ export async function getReportReadiness(
 
 /**
  * Calculate UVA report from transactions
+ *
+ * @deprecated Fork #64: this browser-side calculation assumes 20% VAT on
+ * every transaction and never reads the connected receipts — its figures
+ * are wrong by construction. The reports page now calls the server-side
+ * calculateUva callable (functions/src/uva) via POST /api/reports/calculate.
+ * Only createUVADraft/recalculateReport below still reference this; both
+ * are themselves unused from the UI.
  */
 export async function calculateUVAReport(
   ctx: OperationsContext,
