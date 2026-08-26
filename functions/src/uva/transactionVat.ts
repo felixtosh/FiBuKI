@@ -18,6 +18,7 @@
 
 import { deriveRateGroups } from "./calculateUva";
 import { isSameCurrency } from "../fx/fxPlausibility";
+import type { EcbRateTable } from "../fx/ecbRates";
 import type {
   DerivationStep,
   ForeignVatEntry,
@@ -78,7 +79,10 @@ export type TransactionVat =
  * voucher never creates a deduction (D1), and letting an override rescue it
  * would put input VAT in the export that the UVA refuses to claim.
  */
-export function deriveTransactionVat(tx: UvaTransaction): TransactionVat {
+export function deriveTransactionVat(
+  tx: UvaTransaction,
+  ecbRates?: EcbRateTable | null
+): TransactionVat {
   // A bank line in another currency cannot be read as EUR cents anywhere
   // (fork #87). Surfaced, never guessed.
   if (!isSameCurrency(tx.currency, "EUR")) {
@@ -111,7 +115,7 @@ export function deriveTransactionVat(tx: UvaTransaction): TransactionVat {
     };
   }
 
-  const derivation = deriveRateGroups(tx);
+  const derivation = deriveRateGroups(tx, ecbRates);
   if (derivation.ok) {
     return {
       kind: "groups",

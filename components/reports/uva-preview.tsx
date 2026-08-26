@@ -12,6 +12,11 @@
  * signing: the exceptions this filing carries WITH their statutory basis,
  * and the trace from every claimed Vorsteuer cent to the document it rests
  * on — with anything that rests on none listed rather than dropped.
+ *
+ * Since #92 it renders which § 20 Abs 6 rate each foreign-currency document
+ * was converted at, and what the choice moved: the rate that produced a figure
+ * is part of the figure, and the alternative is a reader who cannot tell a
+ * published rate from the one the card charged.
  */
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -24,6 +29,7 @@ import type { UvaReportResult } from "@/functions/src/uva/types";
 import {
   buildVorsteuerTrace,
   deriveFilingExceptions,
+  deriveFxRateDeltas,
 } from "@/functions/src/uva/filing";
 
 interface UVAPreviewProps {
@@ -60,6 +66,12 @@ const KZ_LABELS: Record<string, string> = {
   "061": "Import VAT paid (Einfuhrumsatzsteuer)",
   "083": "Import VAT via §26 (EUSt deferral)",
   "095": "Zahllast / Gutschrift (netted)",
+};
+
+/** Which § 20 Abs 6 method converted a document (#92). */
+const FX_METHOD_LABELS: Record<string, string> = {
+  "ecb-reference": "ECB rate (method 2)",
+  "effective-bank-rate": "bank rate (method 3)",
 };
 
 const KZ_ORDER = [
@@ -154,6 +166,7 @@ export function UVAPreview({ result, period, country }: UVAPreviewProps) {
   // remember is an exception that cannot go missing next quarter (#85).
   const exceptions = deriveFilingExceptions(result);
   const vorsteuer = buildVorsteuerTrace(result);
+  const fxDeltas = deriveFxRateDeltas(result);
 
   return (
     <div className="space-y-6">
@@ -310,6 +323,53 @@ export function UVAPreview({ result, period, country }: UVAPreviewProps) {
           )}
         </CardContent>
       </Card>
+
+      {fxDeltas.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">
+              Foreign-currency conversions ({fxDeltas.length})
+            </CardTitle>
+            <CardDescription>
+              § 20 Abs 6 UStG permits the ECB reference rate for the payment date
+              (method 2) and the effective rate a Bankmitteilung evidences (method 3).
+              Each document below names the one it used and what the choice moved
+              against the other.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-1">
+              {fxDeltas.map((d) => (
+                <div
+                  key={`${d.transactionId}-${d.fileId}`}
+                  className="flex items-center gap-3 py-1.5 px-2 text-sm border-b last:border-b-0"
+                >
+                  <span className="w-28 font-mono text-xs text-muted-foreground truncate">
+                    {d.rateDate ?? "no ECB rate"}
+                  </span>
+                  <span className="flex-1 truncate">
+                    {d.documentCurrency} {formatAmount(d.documentGross)}
+                  </span>
+                  <Badge
+                    variant={d.method === "ecb-reference" ? "outline" : "secondary"}
+                    className="text-xs"
+                  >
+                    {FX_METHOD_LABELS[d.method]}
+                  </Badge>
+                  <span className="w-28 text-right font-mono text-xs tabular-nums">
+                    {d.appliedRate.toFixed(5)}
+                  </span>
+                  <span className="w-32 text-right font-mono text-xs text-muted-foreground tabular-nums">
+                    {d.vatDelta === 0
+                      ? "no change"
+                      : `${d.vatDelta > 0 ? "+" : ""}${formatAmount(d.vatDelta)} VSt`}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {result.unresolved.length > 0 && (
         <Card>

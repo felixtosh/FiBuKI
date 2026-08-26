@@ -87,3 +87,43 @@ describe("assessImpliedFx", () => {
     expect(assessImpliedFx(100, "USD", 0, "EUR").impliedRate).toBeNull();
   });
 });
+
+describe("date-keyed anchor (#92)", () => {
+  // The ECB published 0.9992 USD per EUR on 2022-09-15 — EUR 1.0008 per USD.
+  const parity2022 = 1 / 0.9992;
+
+  it("judges a 2022 pair against 2022 instead of against today", () => {
+    // USD 100.00 settled at EUR 101.00. Against the current-era anchor that is
+    // 15% out and merely "loose"; against the day's own rate it is exact.
+    const r = assessImpliedFx(10000, "USD", 10100, "EUR", { referenceRate: parity2022 });
+
+    expect(r.referenceRate).toBe(parity2022);
+    expect(r.band).toBe("tight");
+  });
+
+  it("rejects what the current-era anchor let through", () => {
+    // USD 100.00 settled at EUR 75.00 in a month USD was at parity: three
+    // quarters of the document, not a full payment at an unusual rate.
+    expect(assessImpliedFx(10000, "USD", 7500, "EUR").band).toBe("loose");
+    expect(
+      assessImpliedFx(10000, "USD", 7500, "EUR", { referenceRate: parity2022 }).band
+    ).toBeNull();
+  });
+
+  it("anchors a pair the static table has no entry for", () => {
+    const r = assessImpliedFx(10000, "XYZ", 5000, "EUR", { referenceRate: 0.5 });
+
+    expect(r.referenceRate).toBe(0.5);
+    expect(r.band).toBe("tight");
+  });
+
+  it("keeps the static anchor for a null, zero or absent override", () => {
+    const staticBand = assessImpliedFx(2400, "USD", 2086, "EUR").band;
+
+    expect(assessImpliedFx(2400, "USD", 2086, "EUR", {}).band).toBe(staticBand);
+    expect(assessImpliedFx(2400, "USD", 2086, "EUR", { referenceRate: null }).band)
+      .toBe(staticBand);
+    expect(assessImpliedFx(2400, "USD", 2086, "EUR", { referenceRate: 0 }).band)
+      .toBe(staticBand);
+  });
+});

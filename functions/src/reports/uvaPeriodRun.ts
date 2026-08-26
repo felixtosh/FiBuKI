@@ -20,6 +20,7 @@ import {
   type FileRecord,
   type TransactionRecord,
 } from "../uva/adapter";
+import { loadEcbRateTable } from "../fx/ecbRateStore";
 import type { TransactionStats } from "../uva/legacyProjection";
 import type { UvaPeriod, UvaReportResult } from "../uva/types";
 
@@ -146,6 +147,12 @@ export async function runUvaForPeriod(
     }
   }
 
+  // § 20 Abs 6 UStG method 2 (#92): a foreign-currency document is converted
+  // at the last ECB rate published on or before its payment date, and falls
+  // back to the effective bank rate where the table does not reach. Loaded per
+  // run rather than per document — a quarter is four month documents.
+  const ecbRates = await loadEcbRateTable(db, bounds.start, bounds.end);
+
   const result = calculateUva({
     period,
     transactions: buildUvaTransactions(txRecords, {
@@ -153,6 +160,7 @@ export async function runUvaForPeriod(
       categoriesById,
       priorClaimedFractionByFileId,
     }),
+    ecbRates,
   });
 
   return {

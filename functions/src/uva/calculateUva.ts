@@ -22,10 +22,13 @@ import {
   ratesValidOn,
 } from "./rateSet";
 import { assessImpliedFx, isSameCurrency } from "../fx/fxPlausibility";
+import { ecbCrossRate, type EcbRateTable } from "../fx/ecbRates";
 import type {
   DerivationStep,
   ForeignVatEntry,
   FxConversionEntry,
+  FxRateMethod,
+  FxRateReason,
   KennzahlFigure,
   NonClaimableVatEntry,
   RateGroup,
@@ -268,7 +271,7 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
     // --- Steps 1-3: derive rate groups -----------------------------------
     // The ladder is pure and shared — the BMD export runs the same one, so the
     // two trails cannot disagree about a transaction's VAT (fork #66).
-    const derivation = deriveRateGroups(tx);
+    const derivation = deriveRateGroups(tx, input.ecbRates ?? null);
     result.foreignVat.push(...derivation.foreignVat);
     result.nonClaimableVat.push(...derivation.nonClaimableVat);
 
@@ -386,7 +389,8 @@ function guessVat20(bank: number): number {
  * (R2/R5/R6) including partial payments and instalment caps.
  */
 export function deriveRateGroups(
-  tx: UvaTransaction
+  tx: UvaTransaction,
+  ecbRates?: EcbRateTable | null
 ): Derivation | DerivationFailure {
   const bank = Math.abs(tx.amount);
   const validRates = ratesValidOn(tx.date);
@@ -414,28 +418,51 @@ export function deriveRateGroups(
   }
 
   let files = tx.files ?? [];
+  /**
+   * R6 total to reconcile the bank line against, when it is not the sum of
+   * the converted documents (#92). See the conversion block below.
+   */
+  let reconcileTotal: number | null = null;
 
   if (files.length > 0) {
     // Foreign-currency documents (fork #87): the document figures are in
     // another unit than the bank line, so they must never be read as-is.
-    // With exactly one file the bank line IS the payment: bank / totalGross
-    // is the effective rate actually paid on the payment date, and the whole
-    // document is rescaled by it. Known limitation: § 20 Abs 6 UStG points
-    // at the BMF monthly / ECB rate, and the card issuer's markup (1-3%) is
-    // inside the effective rate, so the claim runs slightly high; without an
-    // FX feed this is the best rate the data holds and the delta is
-    // bounded by the plausibility band. Anything else — several files, no
-    // total, an unknown currency, or an implied rate that is not a plausible
-    // FX rate (a partial payment in disguise) — is surfaced instead of
-    // guessed.
+    // With exactly one file the bank line IS the payment, and the document is
+    // rescaled into the bank's currency.
+    //
+    // WHICH rate does the rescaling is § 20 Abs 6 UStG's question, and since
+    // #92 it prefers method 2 — the last rate the ECB published on or before
+    // the payment date — over method 3, the effective rate the card charged
+    // (bank / totalGross). Both are permitted; the effective rate carries the
+    // issuer's 1-3% markup inside it and so claims slightly more input VAT
+    // than the supply actually bore. Method 3 remains the fallback for a date
+    // or a currency the feed does not reach, which is what every run did
+    // before the feed existed.
+    //
+    // Anything else — several files, no total, an unknown currency, or an
+    // implied rate that is not a plausible FX rate (a partial payment in
+    // disguise) — is surfaced instead of guessed.
     const foreign = files.filter((f) => !isSameCurrency(f.currency, tx.currency));
     if (foreign.length > 0) {
-      const converted = files.length === 1 ? convertToBankCurrency(files[0], tx) : null;
+      const converted =
+        files.length === 1
+          ? convertToBankCurrency(files[0], tx, ecbRates, isIncome)
+          : null;
       if (!converted) {
         return { ok: false, reason: "foreign-currency", foregoneVat: guessVat20(bank), foreignVat, nonClaimableVat, fxConversions };
       }
       fxConversions.push(converted.conversion);
       files = [converted.file];
+      // R6 compares the bank line against the document total, and at a
+      // published rate those two no longer agree: the residual IS the markup
+      // the method exists to strip. Read as a payment difference it would be
+      // an over- or under-payment — a 20.86 document paid with 21.28 looks
+      // like a tip on a non-restaurant, i.e. amount-mismatch, and the whole
+      // claim would be refused for being MORE correct. So the converted
+      // document reconciles against the payment itself; whether the bank line
+      // really is the whole payment was already decided, in the document's
+      // own currency, by the plausibility gate.
+      reconcileTotal = converted.conversion.bankAmount;
     }
 
     // The extraction fix (§6) flags unreconciled line items instead of
@@ -541,7 +568,8 @@ export function deriveRateGroups(
     }
 
     // Reconcile bank amount vs the SUM of the connected documents (R6).
-    const invoiceTotal = files.reduce((s, f) => s + (f.totalGross ?? 0), 0);
+    const invoiceTotal =
+      reconcileTotal ?? files.reduce((s, f) => s + (f.totalGross ?? 0), 0);
     const prior = tx.priorClaimedFraction ?? 0;
     let fraction = 1;
     if (invoiceTotal > 0) {
@@ -613,28 +641,78 @@ export function deriveRateGroups(
 }
 
 /**
- * Rescale a foreign-currency document into the bank line's currency at the
- * effective rate bank / totalGross. Returns null when no plausible rate can
- * be derived. Per group, vat and gross are rounded independently and net is
- * the difference, so net + vat === gross survives the conversion.
+ * Rescale a foreign-currency document into the bank line's currency
+ * (§ 20 Abs 6 UStG). Returns null when no plausible rate can be derived. Per
+ * group, vat and gross are rounded independently and net is the difference,
+ * so net + vat === gross survives the conversion.
+ *
+ * Two rates are in play and both end up on the record (#92):
+ *
+ *  - the EFFECTIVE rate, bank / totalGross. It is what the payment actually
+ *    carried, and it is what the plausibility gate judges — an implausible
+ *    one means this bank line is not the whole payment for this document, and
+ *    then no rate at all should be applied to it.
+ *  - the APPLIED rate, which is the ECB's published rate for the payment date
+ *    when the feed reaches it (method 2) and otherwise the effective rate
+ *    (method 3).
+ *
+ * The gate stays on the effective rate deliberately. Preferring the ECB rate
+ * changes which figure is booked; it must not change which documents are
+ * trusted enough to book at all.
  */
 function convertToBankCurrency(
   f: UvaFile,
-  tx: UvaTransaction
+  tx: UvaTransaction,
+  ecbRates?: EcbRateTable | null,
+  isIncome = false
 ): { file: UvaFile; conversion: FxConversionEntry } | null {
   const gross = f.totalGross ?? 0;
   if (gross <= 0) return null;
-  const fx = assessImpliedFx(gross, f.currency, tx.amount, tx.currency);
+
+  // The published rate doubles as the plausibility anchor for this date. The
+  // static anchors in fxPlausibility are current-era, so on an older payment
+  // they judge the pair against a rate the day never carried (the 2022 USD
+  // parity case); where the feed reaches the date, it is simply the better
+  // anchor and the same number the conversion is about to use.
+  const published = ecbRates
+    ? ecbCrossRate(ecbRates, f.currency, tx.currency, tx.date)
+    : null;
+  const fx = assessImpliedFx(gross, f.currency, tx.amount, tx.currency, {
+    referenceRate: published?.rate ?? null,
+  });
   if (!fx.band || fx.impliedRate === null) return null;
-  const r = fx.impliedRate;
+
+  const effective = fx.impliedRate;
+  // Method 2 is preferred on the DEDUCTION side, where the issuer's markup
+  // inside the effective rate claims more input VAT than the supply bore.
+  // Income is the other direction: under Ist-Besteuerung the Entgelt is the
+  // money that actually arrived, so the bank's own EUR figure IS the base.
+  // Converting it at a published rate would declare a turnover nobody
+  // received, and a published rate below the effective one would understate
+  // the liability — the direction this module refuses everywhere else.
+  const usePublished = published !== null && !isIncome;
+  const r = usePublished ? published.rate : effective;
+  const method: FxRateMethod = usePublished ? "ecb-reference" : "effective-bank-rate";
+  const reason: FxRateReason = usePublished
+    ? "ecb-published"
+    : isIncome
+      ? "income-cash-basis"
+      : ecbRates
+        ? "no-ecb-rate"
+        : "no-ecb-table";
   const cents = (c: number) => Math.round(c * r);
   const conversion: FxConversionEntry = {
     transactionId: tx.id,
     fileId: f.id,
     documentCurrency: f.currency ?? "EUR",
     documentGross: gross,
+    documentVat: documentVatOf(f),
     bankAmount: Math.abs(tx.amount),
-    impliedRate: r,
+    impliedRate: effective,
+    appliedRate: r,
+    method,
+    reason,
+    rateDate: usePublished ? published.rateDate : null,
     band: fx.band,
   };
   const file: UvaFile = {
@@ -654,6 +732,27 @@ function convertToBankCurrency(
       : f.rateGroups,
   };
   return { file, conversion };
+}
+
+/**
+ * The document's own VAT, in its own currency (#92). Follows the derivation's
+ * own preference order — printed rate groups, then line items, then the
+ * top-level figure — so the delta between the two rates is measured on the
+ * same cents the claim is built from.
+ */
+function documentVatOf(f: UvaFile): number {
+  // Through the derivation's own predicates, not a parallel copy of them, so
+  // the delta is measured on the cents the claim was built from. The line-item
+  // rung needs every item to state a rate; a partial set falls through to the
+  // top-level figure, and summing it here would report a movement against
+  // cents that never reached a Kennzahl.
+  if (hasUsableRateGroups(f)) {
+    return (f.rateGroups as RateGroup[]).reduce((s, g) => s + g.vat, 0);
+  }
+  if (f.lineItems?.length && f.lineItems.every((li) => li.vatPercent != null)) {
+    return f.lineItems.reduce((s, li) => s + li.vatAmount, 0);
+  }
+  return f.vatAmount ?? 0;
 }
 
 function scaleAnchored(cents: number, prior: number, fraction: number): number {
