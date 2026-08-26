@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   describeDocumentType,
+  describeDocumentationState,
   describeDocumentTypeBasis,
   describeMissingElements,
   describeSection11Element,
@@ -225,4 +226,64 @@ test("describeMissingElements: nothing missing yields an empty list the caller c
   const missing = describeMissingElements("invoice", []);
   assert.deepEqual(missing.items, []);
   assert.equal(missing.requestText, null);
+});
+
+test("describeDocumentationState: an absent state reads as not-established, never as undocumented", () => {
+  // A row written before #104 carries no state. Reading that as
+  // `undocumented` would tell the operator a documented line has no document.
+  for (const value of [undefined, null, "unknown"]) {
+    const presentation = describeDocumentationState(value);
+    assert.equal(presentation.state, "unknown");
+    assert.equal(presentation.label, "Nicht bestimmt");
+    assert.equal(presentation.tone, "unset");
+  }
+});
+
+test("describeDocumentationState: an unrecognised value degrades to unknown rather than blank", () => {
+  assert.equal(describeDocumentationState("receipt").state, "unknown");
+});
+
+test("describeDocumentationState: the five states each render with their own label and tone", () => {
+  assert.deepEqual(
+    [
+      "invoice",
+      "receipt-only",
+      "no-receipt-category",
+      "undocumented",
+      "unknown",
+    ].map((state) => {
+      const p = describeDocumentationState(state);
+      return [p.label, p.tone];
+    }),
+    [
+      ["Rechnung", "positive"],
+      ["Nur Zahlungsbeleg", "warning"],
+      ["Kategorie statt Beleg", "neutral"],
+      ["Kein Dokument", "unset"],
+      ["Nicht bestimmt", "unset"],
+    ],
+  );
+});
+
+test("describeDocumentationState: a receipt-only line is visibly distinct from an invoiced one", () => {
+  const receiptOnly = describeDocumentationState("receipt-only");
+  const invoiced = describeDocumentationState("invoice");
+  assert.notEqual(receiptOnly.label, invoiced.label);
+  assert.notEqual(receiptOnly.tone, invoiced.tone);
+  assert.match(receiptOnly.summary, /Vorsteuer/);
+});
+
+test("describeDocumentationState: a no-receipt category is distinguishable from a real invoice", () => {
+  const category = describeDocumentationState("no-receipt-category");
+  const invoiced = describeDocumentationState("invoice");
+  assert.notEqual(category.label, invoiced.label);
+  assert.notEqual(category.tone, invoiced.tone);
+});
+
+test("describeDocumentationState: an invoiced transaction reads in the document type's own words", () => {
+  // The transaction and the file behind it must not read as two things.
+  assert.equal(
+    describeDocumentationState("invoice").label,
+    describeDocumentType("invoice").label,
+  );
 });

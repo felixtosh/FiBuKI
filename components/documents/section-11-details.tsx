@@ -24,7 +24,13 @@ import {
 
 interface Section11MissingElementsProps {
   documentType: DocumentType | null | undefined;
-  elements: Section11Element[] | null | undefined;
+  /**
+   * Widened to plain strings for the transaction surfaces (#207): the queue
+   * unions the elements the stored records carry, and an element the backend
+   * learns to report before this module learns to name it still has to
+   * appear. `describeSection11Element` already falls back for those.
+   */
+  elements: Array<Section11Element | string> | null | undefined;
   className?: string;
 }
 

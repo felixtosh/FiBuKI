@@ -1,6 +1,21 @@
 import { Timestamp } from "firebase/firestore";
 
 /**
+ * How a transaction is documented (#104).
+ *
+ * Duplicated from `functions/src/documents/types.ts` the same way
+ * `DocumentType` is in `types/file.ts`: `functions/tsconfig.json` pins
+ * `rootDir: "src"`, so the two trees cannot share a file. The backend module
+ * is the source of truth for the DERIVATION; this is the shape the UI reads.
+ */
+export type DocumentationState =
+  | "invoice"
+  | "receipt-only"
+  | "no-receipt-category"
+  | "undocumented"
+  | "unknown";
+
+/**
  * Entry in the automation history for a transaction.
  * Tracks what automated actions were performed and when.
  */
@@ -145,12 +160,7 @@ export interface Transaction {
    * Derived in the onTransactionUpdate trigger from the attached files'
    * `documentType`, never authored.
    */
-  documentationState?:
-    | "invoice"
-    | "receipt-only"
-    | "no-receipt-category"
-    | "undocumented"
-    | "unknown";
+  documentationState?: DocumentationState;
 
   // === Metadata ===
 

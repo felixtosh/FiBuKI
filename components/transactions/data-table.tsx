@@ -32,6 +32,7 @@ const DEFAULT_TRANSACTION_COLUMN_SIZES: Record<string, number> = {
   name: 220,
   assignedPartner: 240,
   file: 140,
+  documentation: 130,
   sourceId: 120,
 };
 
