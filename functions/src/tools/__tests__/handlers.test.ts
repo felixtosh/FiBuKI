@@ -700,7 +700,9 @@ describe("Tool Registry Handlers", () => {
 
       const result = await handlers.listFiles(userId, {});
 
-      expect(result).toHaveLength(2);
+      expect(result.files).toHaveLength(2);
+      expect(result.count).toBe(2);
+      expect(result.nextCursor).toBeNull();
     });
 
     it("should exclude deleted files", async () => {
@@ -709,7 +711,7 @@ describe("Tool Registry Handlers", () => {
 
       const result = await handlers.listFiles(userId, {});
 
-      expect(result).toHaveLength(1);
+      expect(result.files).toHaveLength(1);
     });
 
     it("should filter by hasConnections", async () => {
@@ -719,8 +721,8 @@ describe("Tool Registry Handlers", () => {
       const connected = await handlers.listFiles(userId, { hasConnections: true });
       const unconnected = await handlers.listFiles(userId, { hasConnections: false });
 
-      expect(connected).toHaveLength(1);
-      expect(unconnected).toHaveLength(1);
+      expect(connected.files).toHaveLength(1);
+      expect(unconnected.files).toHaveLength(1);
     });
 
     it("filters to the hand-corrected population, and away from it", async () => {
@@ -731,12 +733,143 @@ describe("Tool Registry Handlers", () => {
       );
       store.setDoc("files", "f-2", createTestFile({ userId }));
 
-      // listFiles returns a plain array on main, not the fork's page object.
       const corrected = await handlers.listFiles(userId, { handCorrected: true });
       const untouched = await handlers.listFiles(userId, { handCorrected: false });
 
-      expect(corrected.map((f) => (f as { id: string }).id)).toEqual(["f-1"]);
-      expect(untouched.map((f) => (f as { id: string }).id)).toEqual(["f-2"]);
+      expect(corrected.files.map((f) => f.id)).toEqual(["f-1"]);
+      expect(untouched.files.map((f) => f.id)).toEqual(["f-2"]);
+    });
+  });
+
+  describe("listFiles - paging and the limit (#116)", () => {
+    // Seed n files, newest first by uploadedAt so page order is deterministic.
+    const seedFiles = (n: number, overridesFor: (i: number) => Record<string, unknown> = () => ({})) => {
+      for (let i = 0; i < n; i++) {
+        store.setDoc(
+          "files",
+          `f-${String(i).padStart(3, "0")}`,
+          createTestFile({
+            userId,
+            uploadedAt: new Date(Date.UTC(2026, 0, 1) + (n - i) * 60_000),
+            ...overridesFor(i),
+          })
+        );
+      }
+    };
+
+    it("honours a limit above 100 instead of silently clamping to it", async () => {
+      seedFiles(120);
+
+      const result = await handlers.listFiles(userId, { limit: 200 });
+
+      expect(result.count).toBe(120);
+      expect(result.files).toHaveLength(120);
+    });
+
+    it("caps the page at 500 for an absurd limit, and says there is more", async () => {
+      seedFiles(600);
+
+      const result = await handlers.listFiles(userId, { limit: 10_000 });
+
+      expect(result.count).toBe(500);
+      expect(result.nextCursor).not.toBeNull();
+    });
+
+    it("does not report an empty account when the newest documents are all filtered away", async () => {
+      // The headline bug: the pre-fix handler read the newest `limit`
+      // documents and dropped the soft-deleted and not-an-invoice ones after
+      // that, so an account whose newest 100 are all filtered came back as [],
+      // which reads to an agent as "this account has no files".
+      seedFiles(120, (i) => (i < 100 ? { deletedAt: new Date() } : {}));
+
+      const result = await handlers.listFiles(userId, { limit: 50 });
+
+      expect(result.count).toBe(20);
+      expect(result.files.every((f) => !f.deletedAt)).toBe(true);
+    });
+
+    it("reaches files past the newest 100 documents", async () => {
+      // Anything older than the newest 100 by uploadedAt was unreachable
+      // through the tool at all: the cap was hard and there was no cursor.
+      seedFiles(250);
+
+      const seen = new Set<string>();
+      let cursor: string | null | undefined = undefined;
+      let guard = 0;
+
+      do {
+        const page: Awaited<ReturnType<typeof handlers.listFiles>> = await handlers.listFiles(userId, {
+          limit: 50,
+          ...(cursor ? { cursor } : {}),
+        });
+        page.files.forEach((f) => seen.add(f.id as string));
+        cursor = page.nextCursor;
+      } while (cursor && ++guard < 20);
+
+      expect(seen.size).toBe(250);
+      expect(seen.has("f-249")).toBe(true);
+    });
+
+    it("pages to exhaustion via nextCursor, no duplicates, no gaps", async () => {
+      seedFiles(25);
+
+      const seen: string[] = [];
+      let cursor: string | null | undefined = undefined;
+      let guard = 0;
+
+      do {
+        const page: Awaited<ReturnType<typeof handlers.listFiles>> = await handlers.listFiles(userId, {
+          limit: 7,
+          ...(cursor ? { cursor } : {}),
+        });
+        seen.push(...page.files.map((f) => f.id as string));
+        cursor = page.nextCursor;
+      } while (cursor && ++guard < 20);
+
+      expect(seen).toHaveLength(25);
+      expect(new Set(seen).size).toBe(25);
+    });
+
+    it("keeps paging when a whole scan window is filtered away", async () => {
+      // 60 not-an-invoice files in front of 5 real ones, page size 5 -> scan
+      // window 25, so the first two pages are empty but must still hand back a
+      // cursor rather than ending the walk.
+      seedFiles(65, (i) => (i < 60 ? { isNotInvoice: true } : {}));
+
+      const seen: string[] = [];
+      let cursor: string | null | undefined = undefined;
+      let guard = 0;
+
+      do {
+        const page: Awaited<ReturnType<typeof handlers.listFiles>> = await handlers.listFiles(userId, {
+          limit: 5,
+          ...(cursor ? { cursor } : {}),
+        });
+        seen.push(...page.files.map((f) => f.id as string));
+        cursor = page.nextCursor;
+      } while (cursor && ++guard < 30);
+
+      expect(seen).toHaveLength(5);
+    });
+
+    it("ignores a cursor belonging to another user", async () => {
+      // Without the ownership check on the cursor document, a caller holding
+      // another user's file id resumes paging from a position in that user's
+      // data.
+      seedFiles(3);
+      store.setDoc("files", "f-other", createTestFile({ userId: otherUserId }));
+
+      const result = await handlers.listFiles(userId, { cursor: "f-other" });
+
+      expect(result.count).toBe(3);
+    });
+
+    it("ignores a cursor that does not exist", async () => {
+      seedFiles(3);
+
+      const result = await handlers.listFiles(userId, { cursor: "f-gone" });
+
+      expect(result.count).toBe(3);
     });
   });
 
@@ -1647,7 +1780,7 @@ describe("Tool Registry Handlers", () => {
       const result = await handlers.listFiles(userId, { limit: 5 });
 
       expect(result).toBeDefined();
-      expect(Array.isArray(result)).toBe(true);
+      expect(Array.isArray(result.files)).toBe(true);
     });
 
     it("listTransactionsNeedingFiles should apply limit after filtering", async () => {
@@ -1833,16 +1966,16 @@ describe("Tool Registry Handlers", () => {
       const flagged = await handlers.listFiles(userId, { needsVatRateReview: true });
       const rest = await handlers.listFiles(userId, { needsVatRateReview: false });
 
-      expect(flagged.map((f) => f.id)).toEqual(["f-flagged"]);
-      expect(flagged[0].vatRatesOutsideSet).toEqual([11]);
-      expect(rest.map((f) => f.id).sort()).toEqual(["f-legacy", "f-ok"]);
+      expect(flagged.files.map((f) => f.id)).toEqual(["f-flagged"]);
+      expect(flagged.files[0].vatRatesOutsideSet).toEqual([11]);
+      expect(rest.files.map((f) => f.id).sort()).toEqual(["f-legacy", "f-ok"]);
     });
 
     it("returns every file when the filter is not passed", async () => {
       store.setDoc("files", "f-flagged", createTestFile({ userId, needsVatRateReview: true }));
       store.setDoc("files", "f-ok", createTestFile({ userId }));
 
-      expect(await handlers.listFiles(userId, {})).toHaveLength(2);
+      expect((await handlers.listFiles(userId, {})).files).toHaveLength(2);
     });
   });
 
@@ -1859,8 +1992,8 @@ describe("Tool Registry Handlers", () => {
 
       const result = await handlers.listFiles(userId, { hasSuggestions: true });
 
-      expect(result).toHaveLength(1);
-      expect(result[0].id).toBe("f-1");
+      expect(result.files).toHaveLength(1);
+      expect(result.files[0].id).toBe("f-1");
     });
 
     it("should filter by hasSuggestions false", async () => {
@@ -1875,8 +2008,8 @@ describe("Tool Registry Handlers", () => {
 
       const result = await handlers.listFiles(userId, { hasSuggestions: false });
 
-      expect(result).toHaveLength(1);
-      expect(result[0].id).toBe("f-2");
+      expect(result.files).toHaveLength(1);
+      expect(result.files[0].id).toBe("f-2");
     });
 
     it("should exclude isNotInvoice files", async () => {
@@ -1885,8 +2018,8 @@ describe("Tool Registry Handlers", () => {
 
       const result = await handlers.listFiles(userId, {});
 
-      expect(result).toHaveLength(1);
-      expect(result[0].id).toBe("f-1");
+      expect(result.files).toHaveLength(1);
+      expect(result.files[0].id).toBe("f-1");
     });
 
     it("should combine multiple filters", async () => {
@@ -1911,8 +2044,8 @@ describe("Tool Registry Handlers", () => {
         hasSuggestions: true,
       });
 
-      expect(result).toHaveLength(1);
-      expect(result[0].id).toBe("f-1");
+      expect(result.files).toHaveLength(1);
+      expect(result.files[0].id).toBe("f-1");
     });
   });
 

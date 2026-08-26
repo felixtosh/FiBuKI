@@ -203,7 +203,7 @@ const OPENAPI_SPEC = {
     update_transaction:
       "Update transaction description or status. Args: transactionId (string), description? (string), isComplete? (boolean)",
     list_files:
-      "List uploaded files/receipts. Args: hasConnections? (boolean), hasSuggestions? (boolean), handCorrected? (boolean, true = only files a human corrected by hand, which is the exclusion list for a re-extraction sweep), limit? (number)",
+      "List uploaded files/receipts. Returns { files, nextCursor, count } — count is this page, not a total. Args: hasConnections? (boolean), hasSuggestions? (boolean), needsVatRateReview? (boolean), handCorrected? (boolean, true = only files a human corrected by hand, which is the exclusion list for a re-extraction sweep), limit? (number, max 500), cursor? (string, nextCursor from the previous page)",
     get_file: "Get file details including suggestions. Args: fileId (string)",
     connect_file_to_transaction:
       "Connect a file to a transaction (marks transaction complete). A pair previously rejected with dismiss_transaction_suggestion is refused with PAIR_REJECTED; lift it with undismiss_transaction_suggestion first if the connection is genuinely intended. Args: fileId (string), transactionId (string)",
