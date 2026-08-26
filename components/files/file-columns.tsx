@@ -16,7 +16,7 @@ import { DocumentTypeBadge } from "@/components/documents/document-type-badge";
 import { describeDocumentType } from "@/lib/documents/document-type-presentation";
 import { AmountMatchDisplay } from "@/components/ui/amount-match-display";
 import { cn, toDateSafe } from "@/lib/utils";
-import { convertCurrency } from "@/lib/currency";
+import type { EcbConverter } from "@/lib/currency";
 import {
   Tooltip,
   TooltipContent,
@@ -85,7 +85,14 @@ export function getFileColumns(
   globalPartners: GlobalPartner[] = [],
   transactionAmountsMap?: Map<string, TransactionAmountInfo[]>,
   onAutomationClick?: (pipelineId: PipelineId) => void,
-  searchingFileIds?: Set<string>
+  searchingFileIds?: Set<string>,
+  /**
+   * ECB conversion for the amount column. A column definition is not a React
+   * component, so the converter is handed in from the table above rather than
+   * taken from `useEcbConverter()` here — the hook lives in FileTable, whose
+   * re-render is what puts a newly loaded rate on screen (#120).
+   */
+  convert: EcbConverter = () => null
 ): ColumnDef<TaxFile>[] {
   const userPartnerMap = new Map(userPartners.map((p) => [p.id, p]));
   const globalPartnerMap = new Map(globalPartners.map((p) => [p.id, p]));
@@ -243,7 +250,7 @@ export function getFileColumns(
 
         if (currency !== "EUR") {
           const dateForConversion = toDateSafe(extractedDate) || new Date();
-          const conversion = convertCurrency(Math.abs(amount), currency, "EUR", dateForConversion);
+          const conversion = convert(Math.abs(amount), currency, "EUR", dateForConversion);
           if (conversion) {
             const signedConverted = invoiceDirection === "incoming" ? -(conversion.amount / 100) : conversion.amount / 100;
             displayAmount = "~" + new Intl.NumberFormat("de-DE", {

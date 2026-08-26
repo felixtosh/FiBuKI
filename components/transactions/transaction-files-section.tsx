@@ -35,7 +35,7 @@ import { Section11MissingElements } from "@/components/documents/section-11-deta
 import { NoReceiptCategoryPopover } from "./no-receipt-category-popover";
 import { ReceiptLostDialog } from "./receipt-lost-dialog";
 import { useTransactionFiles, useFiles } from "@/hooks/use-files";
-import { convertCurrency } from "@/lib/currency";
+import { useEcbConverter } from "@/lib/currency";
 import { useNoReceiptCategories } from "@/hooks/use-no-receipt-categories";
 // Category suggestions now come from transaction.categorySuggestions (computed on backend)
 import { cn, toDateSafe } from "@/lib/utils";
@@ -125,6 +125,7 @@ interface DifferenceLineProps {
 }
 
 function DifferenceLine({ transactionAmount, transactionCurrency, transactionDate, files }: DifferenceLineProps) {
+  const convert = useEcbConverter();
   // Calculate sum of file amounts (only files with extracted amounts), converting to transaction currency
   const filesWithAmounts = files.filter((f) => f.extractedAmount != null);
   const isExtracting = files.some((f) => !f.extractionComplete && !f.isNotInvoice);
@@ -136,7 +137,7 @@ function DifferenceLine({ transactionAmount, transactionCurrency, transactionDat
     if (file.extractedCurrency === transactionCurrency) {
       filesSum += file.extractedAmount!;
     } else {
-      const conversion = convertCurrency(
+      const conversion = convert(
         file.extractedAmount!,
         file.extractedCurrency || "EUR",
         transactionCurrency,
@@ -210,6 +211,7 @@ interface FileRowProps {
 }
 
 function FileRow({ file, transactionCurrency, transactionDate, onDisconnect, disconnecting }: FileRowProps) {
+  const convert = useEcbConverter();
   const isExtracting = !file.extractionComplete && !file.isNotInvoice;
 
   // Check if file currency differs from transaction currency
@@ -221,7 +223,7 @@ function FileRow({ file, transactionCurrency, transactionDate, onDisconnect, dis
   // Convert to transaction currency using payment date
   let convertedAmount: number | null = null;
   if (hasCurrencyMismatch) {
-    const conversion = convertCurrency(
+    const conversion = convert(
       file.extractedAmount!,
       file.extractedCurrency!,
       transactionCurrency,
