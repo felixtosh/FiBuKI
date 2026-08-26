@@ -1194,6 +1194,85 @@ describe("Tool Registry Handlers", () => {
     });
   });
 
+  // #203. The marker is a judgement about the document, not a correction to
+  // it, which is what separates this pair from update_file_extraction.
+  describe("markFileVatNotClaimable / unmarkFileVatNotClaimable", () => {
+    it("stores the reason and leaves the extracted figures alone", async () => {
+      // paperless-ap-1004: 11% Versicherungssteuer, printed rate-group block.
+      store.setDoc(
+        "files",
+        "f-1",
+        createTestFile({
+          userId,
+          transactionIds: ["tx-1"],
+          extractedAmount: 22200,
+          extractedRateGroups: [{ rate: 11, net: 20000, vat: 2200, gross: 22200 }],
+        })
+      );
+
+      const result = await handlers.markFileVatNotClaimable(userId, {
+        fileId: "f-1",
+        reason: "insurance-tax",
+        note: "Filmproduktionshaftpflicht",
+      });
+
+      expect(result).toMatchObject({
+        success: true,
+        fileId: "f-1",
+        vatNotClaimableReason: "insurance-tax",
+      });
+
+      const file = store.getDoc("files", "f-1");
+      expect(file?.vatNotClaimableReason).toBe("insurance-tax");
+      expect(file?.vatNotClaimableNote).toBe("Filmproduktionshaftpflicht");
+      expect(file?.extractedAmount).toBe(22200);
+      expect(file?.extractedRateGroups).toEqual([
+        { rate: 11, net: 20000, vat: 2200, gross: 22200 },
+      ]);
+    });
+
+    it("refuses a reason outside the closed set", async () => {
+      store.setDoc("files", "f-1", createTestFile({ userId }));
+
+      await expect(
+        handlers.markFileVatNotClaimable(userId, { fileId: "f-1", reason: "because" })
+      ).rejects.toThrow(/insurance-tax/);
+      expect(store.getDoc("files", "f-1")?.vatNotClaimableReason).toBeUndefined();
+    });
+
+    it("marks a connected file — that is the case it exists for", async () => {
+      store.setDoc("files", "f-1", createTestFile({ userId, transactionIds: ["tx-1"] }));
+
+      await handlers.markFileVatNotClaimable(userId, {
+        fileId: "f-1",
+        reason: "discount-to-zero",
+      });
+
+      expect(store.getDoc("files", "f-1")?.vatNotClaimableReason).toBe("discount-to-zero");
+    });
+
+    it("round-trips mark then unmark", async () => {
+      store.setDoc("files", "f-1", createTestFile({ userId, extractedVatAmount: 2000 }));
+
+      await handlers.markFileVatNotClaimable(userId, { fileId: "f-1", reason: "private" });
+      await handlers.unmarkFileVatNotClaimable(userId, { fileId: "f-1" });
+
+      const file = store.getDoc("files", "f-1");
+      expect(file?.vatNotClaimableReason).toBeNull();
+      expect(file?.vatNotClaimableNote).toBeNull();
+      // Nothing was ever cleared, so nothing has to come back.
+      expect(file?.extractedVatAmount).toBe(2000);
+    });
+
+    it("refuses a file that is not the caller's", async () => {
+      store.setDoc("files", "f-other", createTestFile({ userId: otherUserId }));
+
+      await expect(
+        handlers.markFileVatNotClaimable(userId, { fileId: "f-other", reason: "levy" })
+      ).rejects.toThrow("File not found");
+    });
+  });
+
   // ==========================================================================
   // Categories
   // ==========================================================================
@@ -1654,6 +1733,35 @@ describe("Tool Registry Handlers", () => {
   // ==========================================================================
   // Edge Cases: listFiles filters
   // ==========================================================================
+
+  // #203: the rate-review queue has to be reachable from the tool surface, or
+  // the flag is only ever seen by someone already looking at the file.
+  describe("listFiles - VAT rate review queue", () => {
+    it("filters to files printing a rate outside the Austrian set", async () => {
+      store.setDoc(
+        "files",
+        "f-flagged",
+        createTestFile({ userId, needsVatRateReview: true, vatRatesOutsideSet: [11] })
+      );
+      store.setDoc("files", "f-ok", createTestFile({ userId, needsVatRateReview: false }));
+      // Written before the detector existed: no flag at all, not a flagged one.
+      store.setDoc("files", "f-legacy", createTestFile({ userId }));
+
+      const flagged = await handlers.listFiles(userId, { needsVatRateReview: true });
+      const rest = await handlers.listFiles(userId, { needsVatRateReview: false });
+
+      expect(flagged.map((f) => f.id)).toEqual(["f-flagged"]);
+      expect(flagged[0].vatRatesOutsideSet).toEqual([11]);
+      expect(rest.map((f) => f.id).sort()).toEqual(["f-legacy", "f-ok"]);
+    });
+
+    it("returns every file when the filter is not passed", async () => {
+      store.setDoc("files", "f-flagged", createTestFile({ userId, needsVatRateReview: true }));
+      store.setDoc("files", "f-ok", createTestFile({ userId }));
+
+      expect(await handlers.listFiles(userId, {})).toHaveLength(2);
+    });
+  });
 
   describe("listFiles - additional filters", () => {
     it("should filter by hasSuggestions true", async () => {

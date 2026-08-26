@@ -26,6 +26,7 @@ import type {
   DerivationStep,
   ForeignVatEntry,
   KennzahlFigure,
+  NonClaimableVatEntry,
   RateGroup,
   UnresolvedReason,
   UvaCalculationInput,
@@ -64,6 +65,8 @@ export interface Derivation {
   groups: RateGroup[];
   /** D2 foreign-VAT sightings made while deriving. Usually empty. */
   foreignVat: ForeignVatEntry[];
+  /** Documents whose VAT was excluded as non-claimable (#203). Usually empty. */
+  nonClaimableVat: NonClaimableVatEntry[];
 }
 
 export interface DerivationFailure {
@@ -73,6 +76,8 @@ export interface DerivationFailure {
   foregoneVat: number | null;
   /** D2 foreign-VAT sightings made while deriving. Usually empty. */
   foreignVat: ForeignVatEntry[];
+  /** Documents whose VAT was excluded as non-claimable (#203). Usually empty. */
+  nonClaimableVat: NonClaimableVatEntry[];
 }
 
 export function calculateUva(input: UvaCalculationInput): UvaReportResult {
@@ -105,6 +110,7 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
     totalInputVat: 0,
     balance: 0,
     unresolved: [],
+    nonClaimableVat: [],
     foreignVat: [],
     reverseCharge: [],
     euKennzahlen: { basis: "not-implemented" },
@@ -207,6 +213,7 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
     // two trails cannot disagree about a transaction's VAT (fork #66).
     const derivation = deriveRateGroups(tx);
     result.foreignVat.push(...derivation.foreignVat);
+    result.nonClaimableVat.push(...derivation.nonClaimableVat);
 
     if (derivation.ok) {
       applyGroups(tx, derivation, isIncome);
@@ -254,6 +261,7 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
         step: "defaulted-20",
         groups: [{ rate: 20, net, vat, gross: bank }],
         foreignVat: [],
+        nonClaimableVat: [],
       },
       true
     );
@@ -307,6 +315,8 @@ export function deriveRateGroups(
   const bank = Math.abs(tx.amount);
   const validRates = ratesValidOn(tx.date);
   const foreignVat: ForeignVatEntry[] = [];
+  const nonClaimableVat: NonClaimableVatEntry[] = [];
+  const isIncome = tx.amount > 0;
 
   // Income: the linked outgoing invoice carries real per-line rates and
   // resolves before any fallback (spec §3 step 4 note).
@@ -315,9 +325,9 @@ export function deriveRateGroups(
       (g) => !validRates.includes(g.rate)
     );
     if (invalid) {
-      return { ok: false, reason: "foreign-or-invalid-rate", foregoneVat: null, foreignVat };
+      return { ok: false, reason: "foreign-or-invalid-rate", foregoneVat: null, foreignVat, nonClaimableVat };
     }
-    return { ok: true, step: "invoice", groups: tx.invoiceRateGroups, foreignVat };
+    return { ok: true, step: "invoice", groups: tx.invoiceRateGroups, foreignVat, nonClaimableVat };
   }
 
   let files = tx.files ?? [];
@@ -339,7 +349,7 @@ export function deriveRateGroups(
     if (foreign.length > 0) {
       const converted = files.length === 1 ? convertToBankCurrency(files[0], tx) : null;
       if (!converted) {
-        return { ok: false, reason: "foreign-currency", foregoneVat: guessVat20(bank), foreignVat };
+        return { ok: false, reason: "foreign-currency", foregoneVat: guessVat20(bank), foreignVat, nonClaimableVat };
       }
       files = [converted];
     }
@@ -350,7 +360,7 @@ export function deriveRateGroups(
     // which is an independent (and §11-sufficient) reading of the document:
     // that block clears the file even when its line items are flagged.
     if (files.some((f) => f.lineItemsUnreconciled && !hasUsableRateGroups(f))) {
-      return { ok: false, reason: "amount-mismatch", foregoneVat: guessVat20(bank), foreignVat };
+      return { ok: false, reason: "amount-mismatch", foregoneVat: guessVat20(bank), foreignVat, nonClaimableVat };
     }
 
     // Build per-file rate groups (step 1 falls through to step 2 per file).
@@ -359,10 +369,44 @@ export function deriveRateGroups(
     const groups: RateGroup[] = [];
     let step: DerivationStep = "top-level";
     let sawVatData = false;
+    let sawClaimableGroups = false;
     for (const f of files) {
       const fileGroups = fileRateGroups(f, bank);
+
+      // #203: a human recorded that this document's VAT is not deductible.
+      // The figure is real — it is on the paper — so the document's GROSS
+      // still books, at zero rate, and the excluded VAT is reported rather
+      // than dropped. Nothing below runs for such a file: rate validation is
+      // what would reject a Versicherungssteuer document as an invalid rate
+      // and put its 22.00 EUR on the chasing list as recoverable, which is
+      // the opposite of what the marker says.
+      //
+      // Expenses only. The marker names input VAT that must not be deducted;
+      // applied to income it would zero an output liability instead, which is
+      // the understating direction the whole module is built to avoid (D1).
+      const excludedReason = isIncome ? null : f.nonClaimableVatReason ?? null;
+      if (excludedReason) {
+        sawVatData = true;
+        let excludedVat = 0;
+        for (const g of fileGroups?.groups ?? []) {
+          excludedVat += g.vat;
+          groups.push({ rate: 0, net: g.gross, vat: 0, gross: g.gross });
+        }
+        if (!fileGroups && f.totalGross) {
+          groups.push({ rate: 0, net: f.totalGross, vat: 0, gross: f.totalGross });
+        }
+        nonClaimableVat.push({
+          transactionId: tx.id,
+          fileId: f.id,
+          reason: excludedReason,
+          excludedVat,
+        });
+        continue;
+      }
+
       if (fileGroups === null) continue; // no VAT data on this file
       sawVatData = true;
+      sawClaimableGroups = true;
       if (fileGroups.step === "rate-groups") {
         step = "rate-groups";
       } else if (fileGroups.step === "line-items" && step !== "rate-groups") {
@@ -388,14 +432,23 @@ export function deriveRateGroups(
             reason: "foreign-or-invalid-rate",
             foregoneVat: g.vat || guessVat20(bank),
             foreignVat,
+            nonClaimableVat,
           };
         }
         groups.push(g);
       }
     }
 
+    // The step names the rung that produced the claim. When every file that
+    // carried VAT was excluded, no rung did — say so, so the exclusion shows
+    // up in the Kennzahl's contributions instead of masquerading as a
+    // top-level reading that happened to come out at zero.
+    if (nonClaimableVat.length > 0 && !sawClaimableGroups) {
+      step = "non-claimable";
+    }
+
     if (!sawVatData) {
-      return { ok: false, reason: "no-vat-data", foregoneVat: guessVat20(bank), foreignVat };
+      return { ok: false, reason: "no-vat-data", foregoneVat: guessVat20(bank), foreignVat, nonClaimableVat };
     }
 
     // Reconcile bank amount vs the SUM of the connected documents (R6).
@@ -422,12 +475,13 @@ export function deriveRateGroups(
           reason: "amount-mismatch",
           foregoneVat: guessVat20(bank),
           foreignVat,
+          nonClaimableVat,
         };
       }
     }
 
     if (fraction >= 1 && prior === 0) {
-      return { ok: true, step, groups, foreignVat };
+      return { ok: true, step, groups, foreignVat, nonClaimableVat };
     }
     // Scale each group; rounding is anchored to the cumulative fraction so
     // instalments sum exactly to the document's VAT once fully paid.
@@ -437,14 +491,14 @@ export function deriveRateGroups(
       vat: scaleAnchored(g.vat, prior, fraction),
       gross: scaleAnchored(g.gross, prior, fraction),
     }));
-    return { ok: true, step, groups: scaled, foreignVat };
+    return { ok: true, step, groups: scaled, foreignVat, nonClaimableVat };
   }
 
   // Step 3: manual override lane.
   if (tx.vatRateOverride != null) {
     const rate = tx.vatRateOverride;
     if (!validRates.includes(rate)) {
-      return { ok: false, reason: "foreign-or-invalid-rate", foregoneVat: null, foreignVat };
+      return { ok: false, reason: "foreign-or-invalid-rate", foregoneVat: null, foreignVat, nonClaimableVat };
     }
     const vat = Math.round((bank * rate) / (100 + rate));
     return {
@@ -452,10 +506,11 @@ export function deriveRateGroups(
       step: "override",
       groups: [{ rate, net: bank - vat, vat, gross: bank }],
       foreignVat,
+      nonClaimableVat,
     };
   }
 
-  return { ok: false, reason: "no-file", foregoneVat: guessVat20(bank), foreignVat };
+  return { ok: false, reason: "no-file", foregoneVat: guessVat20(bank), foreignVat, nonClaimableVat };
 }
 
 /**

@@ -71,6 +71,42 @@ export interface UvaFile {
   lineItemsUnreconciledRates?: number[] | null;
   /** Supplier VAT ID (extractedIssuer.vatId ?? extractedVatId), e.g. ATU…, DE… */
   supplierVatId?: string | null;
+  /**
+   * A human's standing decision that the VAT this document prints is not
+   * deductible Vorsteuer (#203). Carries the REASON, never a bare boolean:
+   * setting the rate to zero by hand produced the same figure and lost why,
+   * leaving the record indistinguishable from a document that genuinely
+   * printed 0%.
+   */
+  nonClaimableVatReason?: NonClaimableVatReason | null;
+}
+
+/**
+ * Why a VAT-looking figure on a document is not deductible Vorsteuer (#203).
+ * A closed set — an open note would not survive being read by a rule.
+ *
+ *  - insurance-tax    Versicherungssteuer. Insurance is VAT-exempt (§ 6 Abs 1
+ *                     Z 9 lit. c UStG), so the 11% line on a policy is a
+ *                     different tax that no § 12 deduction reaches.
+ *  - levy             another public charge printed in the VAT column.
+ *  - discount-to-zero a 100% discount leaves nothing due, so there is nothing
+ *                     to deduct even though the document still prints a rate.
+ *  - private          privately consumed, so no business deduction (§ 12
+ *                     Abs 2 UStG).
+ */
+export type NonClaimableVatReason =
+  | "insurance-tax"
+  | "levy"
+  | "discount-to-zero"
+  | "private";
+
+/** One document whose printed VAT the derivation refused to claim (#203). */
+export interface NonClaimableVatEntry {
+  transactionId: string;
+  fileId: string;
+  reason: NonClaimableVatReason;
+  /** The VAT the document prints, kept out of Vorsteuer (cents). */
+  excludedVat: number;
 }
 
 /** vatTreatment attribute on no-receipt categories (spec §3 step 0). */
@@ -163,6 +199,8 @@ export type DerivationStep =
   | "invoice"
   | "defaulted-20"
   | "exempt-class"
+  /** A file marked non-claimable: the VAT is real, the deduction is not (#203) */
+  | "non-claimable"
   | "reverse-charge"
   | "eu-acquisition"
   | "import";
@@ -249,6 +287,13 @@ export interface UvaReportResult {
   /** KZ095: Zahllast (>0) / Gutschrift (<0), single netted figure. */
   balance: number;
   unresolved: UnresolvedEntry[];
+  /**
+   * Documents whose VAT was excluded from Vorsteuer because a human marked
+   * them non-claimable (#203). The exclusion is reported rather than applied
+   * silently: a figure that leaves the report has to be readable as a
+   * decision, not as a gap.
+   */
+  nonClaimableVat: NonClaimableVatEntry[];
   foreignVat: ForeignVatEntry[];
   reverseCharge: ReverseChargeEntry[];
   /** Spec §3: EU Kennzahlen are structurally-empty-with-reason until real detection lands. */

@@ -67,9 +67,18 @@ const STEP_LABELS: Record<string, string> = {
   invoice: "from outgoing invoice",
   "defaulted-20": "DEFAULTED to 20%",
   "exempt-class": "exempt class",
+  "non-claimable": "not claimable — excluded",
   "reverse-charge": "reverse charge",
   "eu-acquisition": "EU acquisition",
   import: "import",
+};
+
+/** Why a document's VAT was kept out of Vorsteuer (#203). */
+const NON_CLAIMABLE_LABELS: Record<string, string> = {
+  "insurance-tax": "Versicherungssteuer — insurance is VAT-exempt",
+  levy: "Public levy printed in the VAT column",
+  "discount-to-zero": "100% discount — nothing due",
+  private: "Private consumption",
 };
 
 const REASON_LABELS: Record<string, string> = {
@@ -221,6 +230,41 @@ export function UVAPreview({ result, period, country }: UVAPreviewProps) {
                       : u.foregoneVat != null
                         ? `${formatAmount(u.foregoneVat)} VSt lost`
                         : ""}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {result.nonClaimableVat.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">
+              Non-claimable VAT ({result.nonClaimableVat.length})
+            </CardTitle>
+            <CardDescription>
+              These documents print a VAT figure that is not deductible Vorsteuer. The
+              amount was excluded from KZ 060 on a recorded decision — it is not a
+              missing receipt, and there is nothing to chase.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-1">
+              {result.nonClaimableVat.map((n) => (
+                <div
+                  key={`${n.transactionId}-${n.fileId}`}
+                  className="flex items-center gap-3 py-1.5 px-2 text-sm border-b last:border-b-0"
+                >
+                  <span className="flex-1 truncate">
+                    {NON_CLAIMABLE_LABELS[n.reason] ?? n.reason}
+                  </span>
+                  <Badge variant="outline" className="text-xs">
+                    {n.reason}
+                  </Badge>
+                  <span className="w-32 text-right font-mono text-xs text-muted-foreground tabular-nums">
+                    {formatAmount(n.excludedVat)} VSt excluded
                   </span>
                 </div>
               ))}

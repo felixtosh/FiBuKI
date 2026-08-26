@@ -46,6 +46,10 @@ export function buildMarkNotInvoiceUpdates(
     lineItemsUnreconciledRates: null,
     vatSourceDowngraded: false,
     vatFieldsPreserved: false,
+    // The rates the review flag pointed at are among the fields just cleared
+    // (#203), so the flag goes with them.
+    needsVatRateReview: false,
+    vatRatesOutsideSet: [],
     extractedPartner: null,
     extractedVatId: null,
     extractedIban: null,
