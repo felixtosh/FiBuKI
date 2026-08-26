@@ -314,6 +314,15 @@ service cloud.firestore {
       }
     }
 
+    // ECB reference rates (#92) - Cloud Functions only, both ways. A published
+    // exchange rate is not user data and is never read from the client: the UVA
+    // derivation that needs it runs server-side, and a client-readable copy
+    // would only be a second place for it to disagree with itself.
+    match /fxReferenceRates/{month} {
+      allow read: if false;
+      allow write: if false; // Cloud Functions only
+    }
+
     // Referral conversions - referrer can read their own, Cloud Functions write only
     match /referralConversions/{docId} {
       allow read: if isAuthenticated() && resource.data.referrerUserId == request.auth.uid;

@@ -16,6 +16,11 @@
  * genuinely historical outlier lands in the worklist, never in a figure.
  * Unknown codes have no anchor and are never guessed here — the scorer
  * falls back to its numeric ladder for those, the UVA surfaces them.
+ *
+ * Since #92 a caller that HAS a published rate for the payment date can pass
+ * it as the anchor (`options.referenceRate`), which is how the gate stops
+ * being current-era. The static table stays the fallback: it covers the dates
+ * and currencies the feed does not reach.
  */
 
 import { normalizeCurrencyForDisplay } from "./currencyNormalization";
@@ -50,12 +55,27 @@ export const FX_LOOSE_TOLERANCE = 0.2;
 
 export type FxBand = "tight" | "loose";
 
+export interface FxAssessmentOptions {
+  /**
+   * Anchor to judge the implied rate against, replacing the static one for
+   * this call (#92). Supplied by the caller from a published rate for the
+   * payment DATE, which is the whole point: the static anchors are
+   * current-era, and USD sat at parity with EUR in 2022, so a 2022 pair is
+   * scored against a rate that is 16% away from the one it was actually
+   * settled at. Null or omitted keeps the static anchor.
+   */
+  referenceRate?: number | null;
+}
+
 export interface FxAssessment {
   /** True when the two currencies differ after normalization. */
   mismatch: boolean;
   /** Bank amount per document unit (|tx| / |doc|); null when not assessable. */
   impliedRate: number | null;
-  /** Anchor rate for the pair; null when either currency is unknown. */
+  /**
+   * Anchor the implied rate was judged against; null when either currency is
+   * unknown and no date-keyed anchor was supplied.
+   */
   referenceRate: number | null;
   /** |implied - reference| / reference; null when either side is missing. */
   deviation: number | null;
@@ -92,12 +112,18 @@ export function referenceRate(from: string, to: string): number | null {
 /**
  * Assess whether `txAmount` in `txCurrency` is a plausible payment for a
  * document of `docAmount` in `docCurrency`. Signs are ignored.
+ *
+ * `options.referenceRate` date-keys the anchor. The tolerances do not change
+ * with it: a date-keyed anchor only makes the band sit around the rate the day
+ * actually carried instead of around today's, which is a tightening on
+ * historical pairs and a no-op on current ones.
  */
 export function assessImpliedFx(
   docAmount: number,
   docCurrency: string | null | undefined,
   txAmount: number,
-  txCurrency: string | null | undefined
+  txCurrency: string | null | undefined,
+  options: FxAssessmentOptions = {}
 ): FxAssessment {
   const mismatch = !isSameCurrency(docCurrency, txCurrency);
   const none: FxAssessment = {
@@ -114,7 +140,11 @@ export function assessImpliedFx(
   if (!absDoc || !absTx) return none;
 
   const implied = absTx / absDoc;
-  const ref = referenceRate(normalizeCurrency(docCurrency), normalizeCurrency(txCurrency));
+  const dateKeyed = options.referenceRate;
+  const ref =
+    dateKeyed != null && Number.isFinite(dateKeyed) && dateKeyed > 0
+      ? dateKeyed
+      : referenceRate(normalizeCurrency(docCurrency), normalizeCurrency(txCurrency));
   if (ref === null) return { ...none, impliedRate: implied };
 
   const deviation = Math.abs(implied - ref) / ref;

@@ -15,11 +15,12 @@
  *     one moves if acted on. A deferral without a stated effect is a hole.
  *
  * Exceptions are DERIVED, never typed in: a non-claimable marker (#203) and a
- * foreign-currency conversion (fork #87) are both already data on the run, so
- * the filing reads them off rather than asking a human to remember them. Open
- * items cannot be derived — nothing in the corpus knows that a POS receipt's
- * 10/20 split has to be read off the paper — so they are declared, and a
- * declaration with no rationale or no stated effect is a blocker, not a note.
+ * foreign-currency conversion (fork #87, rate choice #92) are both already
+ * data on the run, so the filing reads them off rather than asking a human to
+ * remember them. Open items cannot be derived — nothing in the corpus knows
+ * that a POS receipt's 10/20 split has to be read off the paper — so they are
+ * declared, and a declaration with no rationale or no stated effect is a
+ * blocker, not a note.
  *
  * Nothing here submits anything. `UvaFilingHandover` has no "submitted" state
  * to reach: FinanzOnline submission is a separate, human-triggered path
@@ -29,6 +30,7 @@
 
 import type {
   FxConversionEntry,
+  FxRateMethod,
   NonClaimableVatReason,
   DerivationStep,
   UvaReportResult,
@@ -77,7 +79,12 @@ export interface VorsteuerTrace {
   reconciles: boolean;
 }
 
-export type FilingExceptionKind = "non-claimable-vat" | "fx-effective-rate";
+export type FilingExceptionKind =
+  | "non-claimable-vat"
+  /** Converted at the last ECB rate published for the payment date (#92). */
+  | "fx-ecb-reference"
+  /** Converted at the effective rate the card charged — the fallback. */
+  | "fx-effective-rate";
 
 /**
  * An exception the filing carries, with the reasoning that justifies it. The
@@ -111,6 +118,10 @@ export interface UvaFilingException {
  * it, so a claim converted at that rate runs high by roughly this much against
  * a BMF/ECB Tageskurs. Bounding it is what lets the method be used knowingly
  * rather than defended after the fact.
+ *
+ * It bounds the FALLBACK only since #92. Where a published ECB rate reached
+ * the payment date the delta is no longer a band to be bounded — both rates
+ * are on the record and their difference is reported per file.
  */
 export const FX_MARKUP_LOW = 0.01;
 export const FX_MARKUP_HIGH = 0.03;
@@ -132,12 +143,22 @@ const NON_CLAIMABLE_BASIS: Record<NonClaimableVatReason, string> = {
     "deduction.",
 };
 
-const FX_BASIS =
+const FX_EFFECTIVE_BASIS =
   "§ 20 Abs 6 UStG method 3: the Tageskurs, where the amounts are evidenced by " +
   "a Bankmitteilung — here the card statement, whose settled EUR amount over " +
   "the document's own total IS the rate the payment carried on the payment " +
   "date. The issuer's markup sits inside that rate, so the claim runs high by " +
-  "the bounded exposure below rather than by an unknown amount.";
+  "the bounded exposure below rather than by an unknown amount. Used where no " +
+  "published ECB rate reaches the payment date or the document's currency.";
+
+const FX_ECB_BASIS =
+  "§ 20 Abs 6 UStG method 2: \"Der Unternehmer kann stattdessen auch den " +
+  "letzten, von der Europäischen Zentralbank veröffentlichten, " +
+  "Umrechnungskurs anwenden.\" The rate is the ECB reference rate published " +
+  "for the payment date — or, where the ECB did not publish that day, the last " +
+  "one before it, which is what \"der letzte veröffentlichte\" means. It " +
+  "carries no card-issuer markup, so the method has no exposure to bound: the " +
+  "figure is reproducible from a published table.";
 
 /**
  * Something the filing knows it has not settled. Declared by the operator: the
@@ -203,6 +224,11 @@ export interface UvaFiling {
   basis: "ist";
   vorsteuer: VorsteuerTrace;
   exceptions: UvaFilingException[];
+  /**
+   * What the § 20 Abs 6 rate choice moved, per converted document (#92).
+   * Empty when the period converted nothing.
+   */
+  fxRateDeltas: FxRateDelta[];
   openItems: UvaOpenItem[];
   /** Comparison against an earlier run of the same period, when one was kept. */
   reconciliation: UvaReconciliation | null;
@@ -279,16 +305,44 @@ export function deriveFilingExceptions(result: UvaReportResult): UvaFilingExcept
     });
   }
 
-  if (result.fxConversions.length > 0) {
-    const converted = fxConvertedInputVat(result);
+  // One exception per METHOD actually used (#92). A quarter can carry both:
+  // the ECB feed reaches most payment dates and not all of them, and a filing
+  // that says "converted at a published rate" while three documents took the
+  // card's rate is a filing that misstates its own basis.
+  const deltas = deriveFxRateDeltas(result);
+  for (const method of ["ecb-reference", "effective-bank-rate"] as FxRateMethod[]) {
+    const used = result.fxConversions.filter((c) => c.method === method);
+    if (used.length === 0) continue;
+    const converted = fxConvertedInputVat(result, used);
+    const currencies = fxCurrencies(used).join(", ");
+
+    if (method === "ecb-reference") {
+      const moved = deltas
+        .filter((d) => d.method === method)
+        .reduce((s, d) => s + d.vatDelta, 0);
+      exceptions.push({
+        kind: "fx-ecb-reference",
+        statement:
+          `${used.length} foreign-currency document(s) were converted at the last ` +
+          `ECB rate published on or before the payment date (${currencies}). ` +
+          `Against the effective rate the card charged, that moves input VAT by ` +
+          `${moved} cent(s).`,
+        basis: FX_ECB_BASIS,
+        fileIds: used.map((c) => c.fileId),
+        amount: converted,
+        exposure: null,
+      });
+      continue;
+    }
+
     exceptions.push({
       kind: "fx-effective-rate",
       statement:
-        `${result.fxConversions.length} foreign-currency document(s) were read at the ` +
-        `effective rate the payment carried (${fxCurrencies(result.fxConversions).join(", ")}), ` +
+        `${used.length} foreign-currency document(s) were read at the ` +
+        `effective rate the payment carried (${currencies}), ` +
         `not at a published daily rate.`,
-      basis: FX_BASIS,
-      fileIds: result.fxConversions.map((c) => c.fileId),
+      basis: FX_EFFECTIVE_BASIS,
+      fileIds: used.map((c) => c.fileId),
       amount: converted,
       exposure: {
         low: Math.round(converted * FX_MARKUP_LOW),
@@ -298,6 +352,65 @@ export function deriveFilingExceptions(result: UvaReportResult): UvaFilingExcept
   }
 
   return exceptions;
+}
+
+/**
+ * What the rate choice cost or saved, per converted document (#92).
+ *
+ * The ticket asks for the delta "per affected file, not merely asserted", and
+ * the reason is that the alternative is a percentage band: the effective rate
+ * embeds a card markup somewhere between 1% and 3%, so a total stated from the
+ * band is a guess with a range, while the two rates are both on the record and
+ * their difference is arithmetic.
+ *
+ * Measured on the document's own VAT at the two rates, which is the figure the
+ * choice actually moves. It is not the same number as the transaction's booked
+ * input VAT — instalment scaling, a non-claimable marker or a rate the period
+ * does not allow can all sit between them — so it is reported as the delta of
+ * the conversion, not as a correction to KZ 060.
+ */
+export interface FxRateDelta {
+  transactionId: string;
+  fileId: string;
+  documentCurrency: string;
+  /** Document total in its own currency, cents. */
+  documentGross: number;
+  /** The document's own VAT in its own currency, cents. */
+  documentVat: number;
+  method: FxRateMethod;
+  /** ECB publication date the applied rate came from; null on the fallback. */
+  rateDate: string | null;
+  /** bank / document — what the pre-#92 conversion used throughout. */
+  effectiveRate: number;
+  /** The rate this run applied. Equal to effectiveRate on the fallback. */
+  appliedRate: number;
+  /** The document's VAT at the effective bank rate, cents. */
+  vatAtEffectiveRate: number;
+  /** The document's VAT at the applied rate, cents. */
+  vatAtAppliedRate: number;
+  /** applied − effective. Negative means this run claims less than before. */
+  vatDelta: number;
+}
+
+export function deriveFxRateDeltas(result: UvaReportResult): FxRateDelta[] {
+  return result.fxConversions.map((c) => {
+    const vatAtEffectiveRate = Math.round(c.documentVat * c.impliedRate);
+    const vatAtAppliedRate = Math.round(c.documentVat * c.appliedRate);
+    return {
+      transactionId: c.transactionId,
+      fileId: c.fileId,
+      documentCurrency: c.documentCurrency,
+      documentGross: c.documentGross,
+      documentVat: c.documentVat,
+      method: c.method,
+      rateDate: c.rateDate,
+      effectiveRate: c.impliedRate,
+      appliedRate: c.appliedRate,
+      vatAtEffectiveRate,
+      vatAtAppliedRate,
+      vatDelta: vatAtAppliedRate - vatAtEffectiveRate,
+    };
+  });
 }
 
 export interface BuildFilingInput {
@@ -392,6 +505,7 @@ export function buildUvaFiling(input: BuildFilingInput): UvaFiling {
     basis: "ist",
     vorsteuer,
     exceptions,
+    fxRateDeltas: deriveFxRateDeltas(report),
     openItems,
     reconciliation,
     handover,
@@ -399,9 +513,12 @@ export function buildUvaFiling(input: BuildFilingInput): UvaFiling {
   };
 }
 
-/** Input VAT claimed on transactions whose document was FX-converted. */
-function fxConvertedInputVat(result: UvaReportResult): number {
-  const txIds = new Set(result.fxConversions.map((c) => c.transactionId));
+/** Input VAT claimed on the transactions behind the given conversions. */
+function fxConvertedInputVat(
+  result: UvaReportResult,
+  conversions: FxConversionEntry[]
+): number {
+  const txIds = new Set(conversions.map((c) => c.transactionId));
   return result.derivations
     .filter((d) => txIds.has(d.transactionId))
     .reduce((s, d) => s + d.inputVat, 0);

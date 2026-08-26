@@ -207,6 +207,9 @@ export { runReceiptSearchForTransactionCallable as runReceiptSearchForTransactio
 // Workflow callables (deterministic secret-sauce strategies, invocable from all four personas)
 export { findReceiptForTransactionCallable as findReceiptForTransaction } from "./workflows/findReceiptForTransactionCallable";
 
+// FX reference rates (ECB feed refresh — § 20 Abs 6 UStG method 2)
+export { scheduledRefreshEcbRates } from "./fx/refreshEcbRates";
+
 // Report operations
 export {
   generateUvaXmlCallable as generateUvaXml,

@@ -12,6 +12,8 @@
  * Ist-Besteuerung — the payment date decides the period).
  */
 
+import type { EcbRateTable } from "../fx/ecbRates";
+
 export interface UvaPeriod {
   year: number;
   /** 1-12 for monthly, 1-4 for quarterly */
@@ -35,9 +37,11 @@ export interface UvaFile {
   id: string;
   /**
    * Document currency (extractedCurrency), ISO code; null/undefined = EUR.
-   * A file whose currency differs from the transaction's is converted at the
-   * effective rate actually paid (bank / totalGross) before derivation, and
-   * only when that rate is a plausible FX rate for the pair (fork #87).
+   * A file whose currency differs from the transaction's is converted before
+   * derivation — at the ECB rate published for the payment date where one is
+   * available (#92), otherwise at the effective rate actually paid
+   * (bank / totalGross) — and only when the effective rate is a plausible FX
+   * rate for the pair (fork #87).
    */
   currency?: string | null;
   /** Document total in cents (extractedAmount) */
@@ -272,10 +276,42 @@ export interface TransactionDerivationEntry {
 }
 
 /**
- * A foreign-currency document read at the effective rate the payment carries
- * (fork #87), reported so the filing can state the method it used rather than
- * leaving it implicit — § 20 Abs 6 UStG method 3, the Tageskurs evidenced by
- * the Bankmitteilung (here: the card statement).
+ * Which of the § 20 Abs 6 UStG methods produced the rate a document was read
+ * at (#92).
+ *
+ *  - ecb-reference       method 2, "der letzte, von der Europäischen
+ *                        Zentralbank veröffentlichte Umrechnungskurs". The
+ *                        preferred one: it is published, reproducible, and
+ *                        carries no card-issuer markup.
+ *  - effective-bank-rate method 3, the Tageskurs evidenced by a Bankmitteilung
+ *                        — here the card statement, whose settled amount over
+ *                        the document total IS the rate the payment carried.
+ *                        The fallback, because the issuer's markup (1-3%) sits
+ *                        inside it and runs the claim slightly high.
+ */
+export type FxRateMethod = "ecb-reference" | "effective-bank-rate";
+
+/**
+ * Why that method and not the other (#92). Machine-readable, because "which
+ * rate did this quarter use" is a question the next quarter asks of the data,
+ * not of a sentence.
+ */
+export type FxRateReason =
+  /** A published ECB rate reached the payment date. */
+  | "ecb-published"
+  /** Rates were available to the run, but not for this date or currency. */
+  | "no-ecb-rate"
+  /** The run was given no rate table at all — nothing to prefer. */
+  | "no-ecb-table";
+
+/**
+ * A foreign-currency document converted into the bank line's currency
+ * (fork #87, rate choice #92), reported so the filing can state the method it
+ * used rather than leaving it implicit.
+ *
+ * Both rates are on the record, always. That is what lets the delta between
+ * them be reported per file instead of asserted as a percentage band, and it
+ * is what lets a filing say which rate it actually rests on.
  */
 export interface FxConversionEntry {
   transactionId: string;
@@ -284,10 +320,18 @@ export interface FxConversionEntry {
   documentCurrency: string;
   /** Document total in its own currency, cents. */
   documentGross: number;
+  /** The document's own VAT in its own currency, cents. */
+  documentVat: number;
   /** The bank line actually paid, cents in the bank currency. */
   bankAmount: number;
   /** bank / document — the effective rate, markup included. */
   impliedRate: number;
+  /** The rate the figures were actually converted at. */
+  appliedRate: number;
+  method: FxRateMethod;
+  reason: FxRateReason;
+  /** ECB publication date the rate came from; null on the bank-rate fallback. */
+  rateDate: string | null;
   /** Plausibility band the implied rate fell in (fork #87). */
   band: "tight" | "loose";
 }
@@ -372,4 +416,11 @@ export interface UvaCalculationInput {
    * string comparison (timezone-proof — §7).
    */
   transactions: UvaTransaction[];
+  /**
+   * ECB reference rates for the period, loaded by the caller (#92). Present,
+   * a foreign-currency document is converted at the rate published for its
+   * payment date; absent — or not reaching that date — it falls back to the
+   * effective bank rate, which is what every run did before #92.
+   */
+  ecbRates?: EcbRateTable | null;
 }
