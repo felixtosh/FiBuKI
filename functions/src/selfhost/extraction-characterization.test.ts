@@ -696,6 +696,47 @@ describe("characterization: retryFileExtraction callable", () => {
     });
   });
 
+  // #184: the marker has to survive the round trip through the shim's jsonb
+  // column, and the refusal has to fire for the UI's click too — the retry
+  // button always passes force, so force cannot be what protects a correction.
+  it("refuses a hand-corrected file, naming the fields, even when forced", async () => {
+    await seedFile("f-corrected", {
+      extractionComplete: true,
+      extractedVatPercent: 0,
+      extractionCorrectedFields: { vatPercent: Timestamp.now(), amount: Timestamp.now() },
+      extractionCorrectedAt: Timestamp.now(),
+    });
+
+    await expect(call({ fileId: "f-corrected", force: true })).rejects.toMatchObject({
+      code: "failed-precondition",
+      message: expect.stringContaining("(amount, vatPercent)"),
+    });
+    expect(gemini.requests).toHaveLength(0);
+    expect((await fileDoc("f-corrected")).extractedVatPercent).toBe(0);
+  });
+
+  it("re-extracts a corrected file when the caller opts in per file", async () => {
+    await seedFile("f-overwrite", {
+      extractionComplete: true,
+      extractionCorrectedFields: { amount: Timestamp.now() },
+      extractionCorrectedAt: Timestamp.now(),
+    });
+    q({ isInvoice: true, confidence: 0.95 });
+    q({ extracted: { amount: 42, confidence: 1 } });
+
+    const res = (await call({
+      fileId: "f-overwrite",
+      force: true,
+      overwriteCorrections: true,
+    })) as { success: boolean };
+
+    expect(res.success).toBe(true);
+    const doc = await fileDoc("f-overwrite");
+    expect(doc.extractedAmount).toBe(42);
+    // The marker survives the overwrite — the file stays on the exclusion list.
+    expect(Object.keys(doc.extractionCorrectedFields as object)).toEqual(["amount"]);
+  });
+
   it("force re-extracts a completed file the guard would refuse", async () => {
     await seedFile("f-forced", { extractionComplete: true });
     // force is not a user override, so classification still runs first.

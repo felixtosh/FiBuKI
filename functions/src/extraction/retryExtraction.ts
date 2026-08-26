@@ -22,6 +22,7 @@ const ERROR_CODES: Record<RetryRefusalCode, "not-found" | "permission-denied" | 
   NOT_FOUND: "not-found",
   ACCESS_DENIED: "permission-denied",
   ALREADY_EXTRACTED: "failed-precondition",
+  HAND_CORRECTED: "failed-precondition",
   EXTRACTION_FAILED: "internal",
 };
 
@@ -31,6 +32,10 @@ const ERROR_CODES: Record<RetryRefusalCode, "not-found" | "permission-denied" | 
  * - Files with extraction errors
  * - Files user marked as invoice (overriding AI classification)
  * - Files that extracted "successfully" but produced nothing usable (force)
+ *
+ * A file carrying hand corrections (#184) is refused unless the caller also
+ * passes overwriteCorrections — the UI's retry button always passes force, so
+ * force cannot be what protects a correction.
  *
  * The eligibility rule and the writes live in retryExtractionOps, shared with
  * the retry_file_extraction tool on the MCP surface.
@@ -44,7 +49,7 @@ export const retryFileExtraction = onCall(
     cors: CORS_ORIGINS,
   },
   async (request) => {
-    const { fileId, force } = request.data;
+    const { fileId, force, overwriteCorrections } = request.data;
 
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "Must be logged in");
@@ -59,6 +64,7 @@ export const retryFileExtraction = onCall(
         fileId,
         userId: request.auth.uid,
         force: force === true,
+        overwriteCorrections: overwriteCorrections === true,
         anthropicApiKey: anthropicApiKey.value(),
       });
     } catch (error) {

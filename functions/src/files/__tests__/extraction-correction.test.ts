@@ -106,4 +106,25 @@ describe("buildExtractionCorrection", () => {
   it("refuses a non-numeric amount rather than storing NaN", () => {
     expect(() => buildExtractionCorrection({ amount: "3180" as never })).toThrow(/finite number of cents/);
   });
+
+  // #184: without this the correction leaves no trace of itself and the next
+  // re-extraction sweep discards it silently.
+  it("stamps the corrected fields as human-set, merging with earlier corrections", () => {
+    const previous = { extractionCorrectedFields: { date: { _seconds: 5 } } };
+
+    const { updates } = buildExtractionCorrection({ amount: 318000, vatAmount: 53000 }, previous);
+
+    expect(updates.extractionCorrectedFields).toMatchObject({
+      date: { _seconds: 5 },
+      amount: { _seconds: 0 },
+      vatAmount: { _seconds: 0 },
+    });
+    expect(updates.extractionCorrectedAt).toEqual({ _seconds: 0 });
+  });
+
+  it("stamps a date-only correction too, VAT-bearing or not", () => {
+    const { updates } = buildExtractionCorrection({ date: "2026-05-30" });
+
+    expect(Object.keys(updates.extractionCorrectedFields as object)).toEqual(["date"]);
+  });
 });

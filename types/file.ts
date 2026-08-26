@@ -317,6 +317,22 @@ export interface TaxFile {
   vatFieldsPreserved?: boolean;
 
   /**
+   * #184: which extracted fields a human set by hand, and when each was set —
+   * `{ amount: Timestamp, vatPercent: Timestamp }`, keyed by the names
+   * `update_file_extraction` takes. Per field rather than one timestamp on the
+   * document, because a `vatPercent: 0` ruling on a levy says nothing about the
+   * total. Present means a re-extraction would discard a person's work, which
+   * is why `retryFileExtraction` refuses the file without `overwriteCorrections`.
+   *
+   * The rules live in `functions/src/files/extractionProvenanceOps.ts`; this is
+   * the shape the client reads, duplicated the way `DocumentType` is.
+   */
+  extractionCorrectedFields?: Record<string, Timestamp>;
+
+  /** The newest of those, so the corrected population is one query. */
+  extractionCorrectedAt?: Timestamp | null;
+
+  /**
    * A human's standing decision that the VAT this document prints is not
    * deductible Vorsteuer (#203) — 11% Versicherungssteuer on an insurance
    * policy, a 100% discount leaving nothing due. The reason IS the marker:

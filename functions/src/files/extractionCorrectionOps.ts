@@ -14,6 +14,7 @@
 
 import { Timestamp } from "firebase-admin/firestore";
 import { ExtractedLineItem } from "../types/extraction";
+import { buildCorrectionProvenance } from "./extractionProvenanceOps";
 
 /**
  * A correction. **Omitted is not null**: a key absent here is left untouched,
@@ -124,8 +125,17 @@ export interface BuiltCorrection {
  * would quietly ignore a corrected rate), and the fork #137 downgrade markers.
  * That happens for any VAT-bearing correction; a date-only fix leaves them be,
  * since it says nothing about the VAT.
+ *
+ * **Every correction stamps its own provenance** (#184), merged onto whatever
+ * `previous` already carries. That is here rather than at the call site so a
+ * correction cannot be applied by any surface without saying a human made it —
+ * which is what a re-extraction later refuses on, and what a sweep reads to
+ * build its exclusion list.
  */
-export function buildExtractionCorrection(fields: FileExtractionCorrection): BuiltCorrection {
+export function buildExtractionCorrection(
+  fields: FileExtractionCorrection,
+  previous: Record<string, unknown> = {}
+): BuiltCorrection {
   const updates: Record<string, unknown> = {};
   const changed: string[] = [];
 
@@ -180,6 +190,8 @@ export function buildExtractionCorrection(fields: FileExtractionCorrection): Bui
     updates.vatSourceDowngraded = false;
     updates.vatFieldsPreserved = false;
   }
+
+  Object.assign(updates, buildCorrectionProvenance(previous, changed));
 
   updates.updatedAt = Timestamp.now();
 

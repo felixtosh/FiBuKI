@@ -203,7 +203,7 @@ const OPENAPI_SPEC = {
     update_transaction:
       "Update transaction description or status. Args: transactionId (string), description? (string), isComplete? (boolean)",
     list_files:
-      "List uploaded files/receipts. Args: hasConnections? (boolean), hasSuggestions? (boolean), limit? (number)",
+      "List uploaded files/receipts. Args: hasConnections? (boolean), hasSuggestions? (boolean), handCorrected? (boolean, true = only files a human corrected by hand, which is the exclusion list for a re-extraction sweep), limit? (number)",
     get_file: "Get file details including suggestions. Args: fileId (string)",
     connect_file_to_transaction:
       "Connect a file to a transaction (marks transaction complete). A pair previously rejected with dismiss_transaction_suggestion is refused with PAIR_REJECTED; lift it with undismiss_transaction_suggestion first if the connection is genuinely intended. Args: fileId (string), transactionId (string)",
@@ -212,7 +212,7 @@ const OPENAPI_SPEC = {
     list_transactions_needing_files:
       "Find transactions without receipts. Returns { transactions, nextCursor, count } — count is this page, not a total. Args: minAmount? (number, in cents), limit? (number, max 500), cursor? (string, nextCursor from the previous page)",
     retry_file_extraction:
-      "Re-run extraction on a file that extracted without erroring but produced nothing usable (no line items, no VAT amount). Runs synchronously, up to a minute. Resets partner and transaction matching for the file; a manual partner assignment is kept. Args: fileId (string), force? (boolean, required for a file that already extracted cleanly)",
+      "Re-run extraction on a file that extracted without erroring but produced nothing usable (no line items, no VAT amount). Runs synchronously, up to a minute. Resets partner and transaction matching for the file; a manual partner assignment is kept. A file whose record a human corrected is refused with HAND_CORRECTED, naming the corrected fields — overwriting them takes its own flag, decided per file. Args: fileId (string), force? (boolean, required for a file that already extracted cleanly), overwriteCorrections? (boolean, required for a hand-corrected file)",
     list_transactions_missing_invoice:
       "Find transactions documented by a receipt only — a document is attached but no § 11 UStG invoice was ever received, so no Vorsteuer may be claimed. Each row carries the vendor, the amount, the date and the § 11 elements the attached document is missing. Returns { transactions, nextCursor, count } — count is this page, not a total. Args: minAmount? (number, in cents), limit? (number, max 500), cursor? (string, nextCursor from the previous page)",
     mark_file_as_not_invoice:
