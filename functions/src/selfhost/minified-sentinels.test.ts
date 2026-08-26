@@ -105,6 +105,23 @@ describe("minified FieldValue sentinels", () => {
     expect((await ref.get()).data()).toEqual({ keep: 1 });
   });
 
+  it("a VectorValue is refused rather than stored as its private _values array", async () => {
+    // FieldValue.vector() is the one FieldValue.* factory that does NOT return a
+    // transform: it returns a VectorValue, which is not `instanceof FieldValue`
+    // and carries no `methodName`, so it misses every check above. Without a
+    // guard it reaches encodeValue and stores as `{_values: [...]}` — a shape
+    // nothing decodes back, i.e. the same silent lossy write this file exists
+    // to stop, for the one value type the sentinel path cannot see.
+    const vector = FieldValue.vector([1, 2, 3]);
+    expect((vector as unknown as { methodName?: string }).methodName).toBeUndefined();
+    expect(vector instanceof FieldValue).toBe(false);
+
+    const ref = getFirestore().collection("minified").doc("vec");
+    await expect(ref.set({ embedding: vector })).rejects.toThrow(/VectorValue .* is not supported/);
+    // Nested too — the generic object branch recurses.
+    await expect(ref.set({ meta: { embedding: vector } })).rejects.toThrow(/VectorValue/);
+  });
+
   it("a FieldValue the shim cannot classify throws rather than being stored as data", async () => {
     // No known methodName, no matching class name: the shape a future SDK
     // sentinel would have. Silently storing its innards is what made the

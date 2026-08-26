@@ -13,7 +13,7 @@
  * Firestore backend applies transforms.
  */
 
-import { FieldValue, Timestamp } from "@google-cloud/firestore";
+import { FieldValue, Timestamp, VectorValue } from "@google-cloud/firestore";
 import { emitChange } from "./bus";
 import { notifyChange } from "./change-notify";
 import { FLATTENED, FlatSpec } from "./db/collections";
@@ -527,6 +527,23 @@ function applySentinelsInPlace(value: unknown): unknown {
   if (kind === "arrayRemove") return [];
   if (kind === "increment") return sentinelOperand(value);
   if (Array.isArray(value)) return value.map((v) => applySentinelsInPlace(v));
+  // `FieldValue.vector()` is the one FieldValue.* factory that does not return a
+  // transform, so sentinelKind cannot see it: a VectorValue is not
+  // `instanceof FieldValue` and carries no `methodName`. Left alone it falls
+  // into the object branch below, which rebuilds it as a PLAIN object of its
+  // own enumerable properties — `{_values: [...]}` — and the class identity is
+  // gone before encodeValue is ever reached. That is the same silent, lossy
+  // write the sentinel handling above exists to stop, so refuse it here, where
+  // the identity still exists to test. By class identity and not by constructor
+  // name, because names are mangled in the minified web bundle. `dump-format.ts`
+  // already refuses the other exotic Firestore types (GeoPoint,
+  // DocumentReference, Bytes); this closes the write path for the one it omits.
+  if (value instanceof VectorValue) {
+    throw new Error(
+      "selfhost firestore shim: VectorValue (FieldValue.vector) is not supported — " +
+        "storing it would write a shape nothing can read back",
+    );
+  }
   if (value && typeof value === "object" && !isTimestampLike(value) && !(value instanceof Date)) {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
