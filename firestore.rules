@@ -298,6 +298,14 @@ service cloud.firestore {
       allow write: if false; // Cloud Functions only
     }
 
+    // UVA filing records (#85) - owner reads, Cloud Functions write only. The
+    // kept baseline and the recorded handover are what a later run is judged
+    // against, so a client must not be able to move either.
+    match /uvaFilings/{docId} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow write: if false; // Cloud Functions only
+    }
+
     // Referral conversions - referrer can read their own, Cloud Functions write only
     match /referralConversions/{docId} {
       allow read: if isAuthenticated() && resource.data.referrerUserId == request.auth.uid;

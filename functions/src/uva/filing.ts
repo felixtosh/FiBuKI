@@ -184,7 +184,9 @@ export type FilingBlockerCode =
   /** A supplied reconciliation leaves part of the delta unowned. */
   | "reconciliation-unaccounted"
   /** A supplied reconciliation is against a different period. */
-  | "reconciliation-not-comparable";
+  | "reconciliation-not-comparable"
+  /** The recorded handover covered a run whose totals this one no longer has. */
+  | "handover-stale";
 
 export interface FilingBlocker {
   code: FilingBlockerCode;
@@ -306,6 +308,20 @@ export interface BuildFilingInput {
   reconciliation?: UvaReconciliation | null;
   /** Defaults to `{ state: "prepared" }` — a filing is never born handed over. */
   handover?: UvaFilingHandover;
+  /**
+   * The totals the recorded handover covered. A handover outlives the run it
+   * was recorded against — it is kept per period, the run is re-derived — so a
+   * later run that moves the figures would otherwise leave a record saying the
+   * Steuerberater received THIS filing when he received a different one.
+   */
+  handoverCovers?: HandoverCoverage | null;
+}
+
+/** The figures a recorded handover went out with. */
+export interface HandoverCoverage {
+  totalInputVat: number;
+  totalOutputVat: number;
+  balance: number;
 }
 
 export function buildUvaFiling(input: BuildFilingInput): UvaFiling {
@@ -340,6 +356,22 @@ export function buildUvaFiling(input: BuildFilingInput): UvaFiling {
       });
     }
   }
+  const handover = input.handover ?? { state: "prepared" };
+  if (handover.state === "handed-over" && input.handoverCovers) {
+    const covered = input.handoverCovers;
+    if (
+      covered.totalInputVat !== report.totalInputVat ||
+      covered.totalOutputVat !== report.totalOutputVat ||
+      covered.balance !== report.balance
+    ) {
+      blockers.push({
+        code: "handover-stale",
+        detail:
+          `Handed over at a balance of ${covered.balance} cents; this run ` +
+          `produces ${report.balance} cents. Re-hand it over or explain the move.`,
+      });
+    }
+  }
   if (reconciliation) {
     if (!reconciliation.comparable) {
       blockers.push({
@@ -362,7 +394,7 @@ export function buildUvaFiling(input: BuildFilingInput): UvaFiling {
     exceptions,
     openItems,
     reconciliation,
-    handover: input.handover ?? { state: "prepared" },
+    handover,
     blockers,
   };
 }

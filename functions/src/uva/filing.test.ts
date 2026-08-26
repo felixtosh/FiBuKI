@@ -268,6 +268,42 @@ describe("buildUvaFiling", () => {
     expect(filing.openItems[0].effect).toEqual({ inputVat: 671, outputVat: 0 });
   });
 
+  it("keeps a recorded handover, and says so when the run no longer matches it", () => {
+    const report = run([DOCUMENTED]);
+    const handover = {
+      state: "handed-over" as const,
+      to: "Stefan",
+      at: "2026-08-24",
+      via: "e-mail",
+    };
+
+    const asSent = buildUvaFiling({
+      report,
+      handover,
+      handoverCovers: {
+        totalInputVat: report.totalInputVat,
+        totalOutputVat: report.totalOutputVat,
+        balance: report.balance,
+      },
+    });
+    // A late correction to a document the Steuerberater already has.
+    const corrected = buildUvaFiling({
+      report: run([
+        { ...DOCUMENTED, files: [{ id: "f-doc", totalGross: 12000, vatPercent: 20, vatAmount: 1500 }] },
+      ]),
+      handover,
+      handoverCovers: {
+        totalInputVat: report.totalInputVat,
+        totalOutputVat: report.totalOutputVat,
+        balance: report.balance,
+      },
+    });
+
+    expect(asSent.blockers).toEqual([]);
+    expect(corrected.handover).toEqual(handover);
+    expect(corrected.blockers.map((b) => b.code)).toEqual(["handover-stale"]);
+  });
+
   it("rejects a baseline from another period rather than reporting its delta", () => {
     const before = snapshotDerivations(run([DOCUMENTED]));
     const after = snapshotDerivations(
