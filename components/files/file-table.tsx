@@ -7,6 +7,7 @@ import { Loader2, Mail, FileText, Search, Upload } from "lucide-react";
 import { FilesDataTable, FilesDataTableHandle } from "./files-data-table";
 import { FileToolbar } from "./file-toolbar";
 import { getFileColumns } from "./file-columns";
+import { useEcbConverter } from "@/lib/currency";
 import { FileBulkActionBar } from "./file-bulk-action-bar";
 import { Checkbox } from "@/components/ui/checkbox";
 import { TableEmptyState, emptyStatePresets } from "@/components/ui/table-empty-state";
@@ -97,6 +98,7 @@ export const FileTable = forwardRef<FilesDataTableHandle, FileTableProps>(
     ref
   ) {
     const router = useRouter();
+    const convert = useEcbConverter();
     const { runningFileIds } = useRunningWorkers();
 
     const selectionColumn: ColumnDef<TaxFile> = useMemo(
@@ -129,8 +131,8 @@ export const FileTable = forwardRef<FilesDataTableHandle, FileTableProps>(
     );
 
     const dataColumns = useMemo(
-      () => getFileColumns(userPartners, globalPartners, transactionAmountsMap, undefined, runningFileIds),
-      [userPartners, globalPartners, transactionAmountsMap, runningFileIds]
+      () => getFileColumns(userPartners, globalPartners, transactionAmountsMap, undefined, runningFileIds, convert),
+      [userPartners, globalPartners, transactionAmountsMap, runningFileIds, convert]
     );
 
     const columns = useMemo(

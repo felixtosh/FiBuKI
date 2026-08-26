@@ -7,7 +7,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { convertCurrency } from "@/lib/currency";
+import { useEcbConverter } from "@/lib/currency";
 import {
   comparableAmount,
   type BankOriginalAmount,
@@ -66,6 +66,7 @@ export function AmountMatchDisplay({
   className,
   primaryOriginal,
 }: AmountMatchDisplayProps) {
+  const convert = useEcbConverter();
   const Icon = FileText;
 
   // Determine the currency to display the difference in
@@ -141,7 +142,7 @@ export function AmountMatchDisplay({
   let primaryWasConverted = false;
 
   if (needsPrimaryConversion && primaryAmount != null && conversionDate) {
-    const conversion = convertCurrency(
+    const conversion = convert(
       Math.abs(primaryAmount),
       primaryCurrency,
       displayCurrency,
@@ -158,9 +159,10 @@ export function AmountMatchDisplay({
   // Convert all secondary amounts to display currency and sum them
   let convertedTotal = 0;
   let conversionRate: number | null = null;
-  // The month the rate came from. The table is monthly and a missing month
-  // borrows from up to three earlier, so this is not always the payment month
-  // — showing it is the only way a substitution is visible to the user.
+  // The ECB publication day the rate came from. Not always the payment date —
+  // the ECB does not publish at weekends or on TARGET holidays, so a payment
+  // then reads the last day published before it. Showing it is the only way
+  // that substitution is visible to the user.
   let conversionRateDate: string | null = null;
   let conversionFailed = false;
   let wasConverted = false;
@@ -170,7 +172,7 @@ export function AmountMatchDisplay({
       convertedTotal += Math.abs(secondary.amount);
     } else if (conversionDate) {
       // Use transaction/payment date for currency conversion
-      const conversion = convertCurrency(
+      const conversion = convert(
         Math.abs(secondary.amount),
         secondary.currency,
         displayCurrency,

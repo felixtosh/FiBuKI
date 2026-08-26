@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn, toDateSafe } from "@/lib/utils";
-import { convertCurrency } from "@/lib/currency";
+import { useEcbConverter } from "@/lib/currency";
 import {
   Tooltip,
   TooltipContent,
@@ -140,6 +140,7 @@ function getEffectiveExtractedAmount(file: TaxFile): number | null {
 }
 
 export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsing, onFieldClick, onDirectionChange, onUpdate, isUpdating }: FileExtractedInfoProps) {
+  const convert = useEcbConverter();
   const [showMore, setShowMore] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editedFields, setEditedFields] = useState<EditableExtractedFields>({
@@ -303,7 +304,7 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
 
     // Convert to EUR - EUR becomes primary display
     const dateForConversion = conversionDate || new Date();
-    const conversion = convertCurrency(
+    const conversion = convert(
       Math.abs(amount),
       normalizedCurrency,
       "EUR",
