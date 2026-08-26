@@ -22,7 +22,7 @@ function getProjectId(): string {
 // Vertex AI location - match Firebase region to minimize latency
 const VERTEX_LOCATION = process.env.VERTEX_LOCATION || "europe-west1";
 
-import { ExtractedData, ExtractedLineItem } from "../types/extraction";
+import { ExtractedData, ExtractedLineItem, ExtractedRateGroup } from "../types/extraction";
 
 /**
  * Bounding box extracted by Gemini for a field
@@ -421,6 +421,91 @@ function normalizeLineItems(lineItems: GeminiLineItem[] | null | undefined): Ext
   return normalizedItems.length > 0 ? normalizedItems : null;
 }
 
+interface GeminiRateGroup {
+  rate?: number | string | null;
+  net?: number | string | null;
+  vat?: number | string | null;
+  gross?: number | string | null;
+}
+
+/**
+ * Normalize the document's printed VAT summary block (fork #67, spec §6
+ * item 3).
+ *
+ * The block is all-or-nothing: a single unreadable row means we cannot
+ * trust the transcription of the others either, so the whole block is
+ * dropped rather than half-kept. Downstream treats "rateGroups present"
+ * as "the receipt printed this", which only holds if we never fabricate.
+ *
+ * Completing a missing COLUMN is allowed — net/vat/gross and the rate are
+ * four views of the same two numbers, and receipts routinely print only
+ * two or three of them. Completing a missing ROW is not.
+ */
+function normalizeRateGroups(
+  rateGroups: GeminiRateGroup[] | null | undefined
+): ExtractedRateGroup[] | null {
+  if (!Array.isArray(rateGroups) || rateGroups.length === 0) {
+    return null;
+  }
+
+  const completed: ExtractedRateGroup[] = [];
+
+  for (const group of rateGroups) {
+    const rate = normalizeVatPercent(group?.rate);
+    if (rate === null) {
+      return null;
+    }
+
+    let net = toCents(group?.net);
+    let vat = toCents(group?.vat);
+    let gross = toCents(group?.gross);
+
+    // Fill from the other two printed columns first — pure arithmetic on
+    // numbers the document itself showed.
+    if (gross === null && net !== null && vat !== null) gross = net + vat;
+    if (net === null && gross !== null && vat !== null) net = gross - vat;
+    if (vat === null && gross !== null && net !== null) vat = gross - net;
+
+    // Only one column printed: the rate closes the system.
+    if (net === null || vat === null || gross === null) {
+      if (gross !== null) {
+        vat = Math.round((gross * rate) / (100 + rate));
+        net = gross - vat;
+      } else if (net !== null) {
+        vat = Math.round((net * rate) / 100);
+        gross = net + vat;
+      } else if (vat !== null && rate > 0) {
+        net = Math.round((vat * 100) / rate);
+        gross = net + vat;
+      }
+    }
+
+    if (net === null || vat === null || gross === null) {
+      return null;
+    }
+    if (net < 0 || vat < 0 || gross <= 0) {
+      return null;
+    }
+
+    completed.push({ rate, net, vat, gross });
+  }
+
+  // A rate printed twice (block split across a page break) is one group.
+  const byRate = new Map<number, ExtractedRateGroup>();
+  for (const g of completed) {
+    const existing = byRate.get(g.rate);
+    if (existing) {
+      existing.net += g.net;
+      existing.vat += g.vat;
+      existing.gross += g.gross;
+    } else {
+      byRate.set(g.rate, { ...g });
+    }
+  }
+
+  return [...byRate.values()];
+}
+
 export async function parseWithGemini(
   fileBuffer: Buffer,
   fileType: string,
@@ -466,6 +551,16 @@ LINE ITEM EXTRACTION (IMPORTANT):
 - Use "vatPercent": null when the rate is not explicitly visible (do not guess)
 - Sanity check: line item totals must reconcile with the invoice total amount
   (if they do not, fix the line item selection so they match)
+
+VAT SUMMARY BLOCK ("rateGroups", IMPORTANT):
+- Most Austrian/German receipts print a per-rate VAT summary near the total, e.g.
+  "MwSt-Satz | Netto | MwSt | Brutto", "A 20% 45,00 9,00 54,00", "USt 10% ..."
+- Transcribe that block into "rateGroups", ONE entry per printed rate
+- Copy the printed numbers exactly - do NOT compute them, do NOT derive them
+  from the line items, do NOT infer a missing column
+- If a column is missing from the block, leave that field null (do not fill it in)
+- If the document prints NO such summary block, return "rateGroups": null
+- Never invent a summary block from a single total line
 
 Input format: German (dates DD.MM.YYYY, amounts with comma like 123,45)
 Output: date as YYYY-MM-DD, amount in cents (123,45 → 12345)
@@ -516,6 +611,14 @@ JSON structure:
         "vatPercent": 20,
         "vatAmount": 333,
         "amount": 1998
+      }
+    ],
+    "rateGroups": [
+      {
+        "rate": 20,
+        "net": 1665,
+        "vat": 333,
+        "gross": 1998
       }
     ],
     "confidence": 0.85,
@@ -604,6 +707,7 @@ JSON only, no markdown, no explanation.`;
   interface GeminiResponse {
     rawText?: string;
     lineItems?: GeminiLineItem[] | null;
+    rateGroups?: GeminiRateGroup[] | null;
     extracted?: {
       date?: string | null;
       date_raw?: string | null;
@@ -613,6 +717,7 @@ JSON only, no markdown, no explanation.`;
       vatPercent?: number | null;
       vatPercent_raw?: string | null;
       lineItems?: GeminiLineItem[] | null;
+      rateGroups?: GeminiRateGroup[] | null;
       confidence?: number;
       // New entity fields
       issuer?: GeminiEntity | null;
@@ -688,6 +793,7 @@ JSON only, no markdown, no explanation.`;
   const legacyAddress = issuer?.address || parsed.extracted?.address || null;
   const legacyWebsite = issuer?.website || normalizeWebsite(parsed.extracted?.website);
   const lineItems = normalizeLineItems(parsed.extracted?.lineItems || parsed.lineItems || null);
+  const rateGroups = normalizeRateGroups(parsed.extracted?.rateGroups || parsed.rateGroups || null);
 
   // Classification is handled by classifyDocument, not here
   const extracted: ExtractedData = {
@@ -696,6 +802,7 @@ JSON only, no markdown, no explanation.`;
     currency: normalizeCurrency(parsed.extracted?.currency),
     vatPercent: typeof parsed.extracted?.vatPercent === "number" ? parsed.extracted.vatPercent : null,
     lineItems,
+    rateGroups,
     partner: legacyPartner,
     vatId: legacyVatId,
     iban: legacyIban,

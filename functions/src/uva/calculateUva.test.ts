@@ -203,6 +203,64 @@ describe("step 1: line items with per-rate groups", () => {
     expect(r.unresolved[0].reason).toBe("amount-mismatch");
   });
 
+  it("derives from the receipt's printed rate groups in preference to line items (#67)", () => {
+    const r = run([
+      {
+        id: "t-printed",
+        date: "2026-02-10",
+        amount: -4750,
+        files: [
+          {
+            id: "f-printed",
+            totalGross: 4750,
+            rateGroups: [
+              { rate: 10, net: 3500, vat: 350, gross: 3850 },
+              { rate: 20, net: 750, vat: 150, gross: 900 },
+            ],
+            lineItems: [
+              { vatPercent: 10, vatAmount: 350, amount: 3850 },
+              { vatPercent: 20, vatAmount: 150, amount: 900 },
+            ],
+          },
+        ],
+      },
+    ]);
+    expect(r.totalInputVat).toBe(500);
+    expect(r.kennzahlen["060"].contributions["rate-groups"]).toBe(1);
+    expect(r.kennzahlen["060"].contributions["line-items"]).toBeUndefined();
+  });
+
+  it("a printed rate-group block clears a file whose line items are flagged (#67)", () => {
+    // Spec §6 item 2/3: the printed per-rate totals are an independent,
+    // §11-sufficient reading — broken itemisation no longer condemns the file.
+    const r = run([
+      {
+        id: "t-unrec-printed",
+        date: "2026-02-10",
+        amount: -4750,
+        files: [
+          {
+            id: "f-unrec-printed",
+            totalGross: 4750,
+            lineItemsUnreconciled: true,
+            lineItemsUnreconciledRates: [20],
+            rateGroups: [
+              { rate: 10, net: 3500, vat: 350, gross: 3850 },
+              { rate: 20, net: 750, vat: 150, gross: 900 },
+            ],
+            lineItems: [
+              { vatPercent: 10, vatAmount: 350, amount: 3850 },
+              { vatPercent: 20, vatAmount: 150, amount: 9000 },
+            ],
+          },
+        ],
+      },
+    ]);
+    expect(r.totalInputVat).toBe(500);
+    expect(r.unresolved).toHaveLength(0);
+    expect(r.kennzahlen["060"].contributions["rate-groups"]).toBe(1);
+  });
+
   it("rejects a rate outside the period-valid set (11% live case)", () => {
     const r = run([
       {

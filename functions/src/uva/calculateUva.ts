@@ -283,12 +283,17 @@ function deriveRateGroups(
 
   if (files.length > 0) {
     // The extraction fix (§6) flags unreconciled line items instead of
-    // destroying them — such a file is never trusted here.
-    if (files.some((f) => f.lineItemsUnreconciled)) {
+    // destroying them — such a file is never trusted here. Since §6 item 3
+    // a file can also carry the receipt's own printed per-rate VAT summary,
+    // which is an independent (and §11-sufficient) reading of the document:
+    // that block clears the file even when its line items are flagged.
+    if (files.some((f) => f.lineItemsUnreconciled && !hasUsableRateGroups(f))) {
       return { ok: false, reason: "amount-mismatch", foregoneVat: guessVat20(bank) };
     }
 
     // Build per-file rate groups (step 1 falls through to step 2 per file).
+    // Across files the reported step is the strongest one any file reached,
+    // strongest first: printed rate groups, then line items, then top-level.
     const groups: RateGroup[] = [];
     let step: DerivationStep = "top-level";
     let sawVatData = false;
@@ -296,7 +301,11 @@ function deriveRateGroups(
       const fileGroups = fileRateGroups(f, bank);
       if (fileGroups === null) continue; // no VAT data on this file
       sawVatData = true;
-      if (fileGroups.step === "line-items") step = "line-items";
+      if (fileGroups.step === "rate-groups") {
+        step = "rate-groups";
+      } else if (fileGroups.step === "line-items" && step !== "rate-groups") {
+        step = "line-items";
+      }
       for (const g of fileGroups.groups) {
         const rateOk =
           validRates.includes(g.rate) ||
@@ -393,10 +402,27 @@ function scaleAnchored(cents: number, prior: number, fraction: number): number {
  * top-level extraction (Kleinbetragsrechnung math gross x r/(100+r), R4),
  * otherwise implied-rate from vatAmount alone. Null = no VAT data.
  */
+/**
+ * Does this file carry a printed per-rate VAT summary block we can use?
+ * Validation already happened at extraction time (spec §6 item 3); here we
+ * only guard against a legacy or hand-edited record carrying an empty array.
+ */
+function hasUsableRateGroups(f: UvaFile): boolean {
+  return Array.isArray(f.rateGroups) && f.rateGroups.length > 0;
+}
+
 function fileRateGroups(
   f: UvaFile,
   bankFallbackGross: number
-): { step: "line-items" | "top-level"; groups: RateGroup[] } | null {
+): { step: "rate-groups" | "line-items" | "top-level"; groups: RateGroup[] } | null {
+  // Spec §6 item 3: the receipt's own VAT summary block outranks the line
+  // items. It is one transcribed number per rate instead of a sum of N
+  // itemised rows, so it survives the OCR noise that breaks itemisation —
+  // and §11 makes the per-rate totals sufficient on their own.
+  if (hasUsableRateGroups(f)) {
+    return { step: "rate-groups", groups: (f.rateGroups as RateGroup[]).map((g) => ({ ...g })) };
+  }
+
   const items = f.lineItems ?? [];
   if (items.length > 0 && items.every((li) => li.vatPercent != null)) {
     const byRate = new Map<number, RateGroup>();

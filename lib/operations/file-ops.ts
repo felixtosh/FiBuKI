@@ -635,6 +635,17 @@ export async function updateFileExtractedFields(
   const normalizedLineItems = normalizeEditableLineItems(fields.lineItems);
   const hasLineItems = fields.lineItems !== undefined && normalizedLineItems.length > 0;
 
+  if (fields.lineItems !== undefined) {
+    // A manual line-item edit makes the human the authority on this file
+    // (fork #64/#67). Two stored artefacts would otherwise outrank them:
+    // the unreconciled flags, which keep the file in the review bucket
+    // forever no matter how well it was repaired, and the extracted
+    // rate-group block, which VAT derivation prefers over line items.
+    updates.lineItemsUnreconciled = false;
+    updates.lineItemsUnreconciledRates = null;
+    updates.extractedRateGroups = null;
+  }
+
   if (hasLineItems) {
     const explicitAmount = parseCurrencyToCents(fields.amount);
     const consolidated = consolidateLineItems(normalizedLineItems, explicitAmount);
@@ -858,6 +869,9 @@ export async function markFileAsNotInvoice(
     extractedVatPercent: null,
     extractedVatAmount: null,
     extractedLineItems: null,
+    extractedRateGroups: null,
+    lineItemsUnreconciled: false,
+    lineItemsUnreconciledRates: null,
     extractedPartner: null,
     extractedVatId: null,
     extractedIban: null,

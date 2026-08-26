@@ -17,7 +17,7 @@ import { MODELS } from "../utils/models";
 
 const db = getFirestore();
 
-import { ExtractedEntity, ExtractedLineItem } from "../types/extraction";
+import { ExtractedEntity, ExtractedLineItem, ExtractedRateGroup } from "../types/extraction";
 
 /**
  * User data for invoice direction detection and counterparty determination
@@ -494,12 +494,122 @@ function consolidateLineItems(
   };
 }
 
+/** Reconciliation tolerance for a figure: 5 cents or 0.5%, whichever is larger. */
+function amountTolerance(amount: number): number {
+  return Math.max(5, Math.round(amount * 0.005));
+}
+
+/**
+ * Validate the document's printed VAT summary block (fork #67, spec §6
+ * item 3) before anything is allowed to trust it.
+ *
+ * The block earns its authority from being PRINTED, so a transcription we
+ * cannot verify is worth less than no block at all — a hallucinated
+ * summary would silently become the VAT truth for the whole document.
+ * Three gates, all-or-nothing across the block:
+ *
+ *  1. each row is internally consistent (net + vat = gross, and vat is
+ *     what the row's own rate implies),
+ *  2. the rows sum to the document total,
+ *  3. no negative or empty figures.
+ *
+ * A block that fails any gate is discarded, and the caller falls back to
+ * whole-document reconciliation exactly as before fork #67.
+ */
+export function validateRateGroups(
+  rateGroups: ExtractedRateGroup[] | null | undefined,
+  extractedAmount: number | null | undefined
+): ExtractedRateGroup[] | null {
+  if (!Array.isArray(rateGroups) || rateGroups.length === 0) {
+    return null;
+  }
+
+  for (const g of rateGroups) {
+    if (
+      typeof g?.rate !== "number" || !Number.isFinite(g.rate) ||
+      g.rate < 0 || g.rate > 100 ||
+      typeof g.net !== "number" || !Number.isFinite(g.net) ||
+      typeof g.vat !== "number" || !Number.isFinite(g.vat) ||
+      typeof g.gross !== "number" || !Number.isFinite(g.gross)
+    ) {
+      return null;
+    }
+    if (g.net < 0 || g.vat < 0 || g.gross <= 0) {
+      return null;
+    }
+    // net + vat = gross, allowing per-row cent rounding.
+    if (Math.abs(g.net + g.vat - g.gross) > 2) {
+      return null;
+    }
+    // The printed vat must be what the printed rate implies for the
+    // printed net — this is what catches a column read off the wrong row.
+    const impliedVat = Math.round((g.net * g.rate) / 100);
+    if (Math.abs(g.vat - impliedVat) > Math.max(2, Math.round(g.gross * 0.002))) {
+      return null;
+    }
+  }
+
+  if (typeof extractedAmount === "number" && Number.isFinite(extractedAmount) && extractedAmount > 0) {
+    const summed = rateGroups.reduce((sum, g) => sum + g.gross, 0);
+    if (Math.abs(summed - extractedAmount) > amountTolerance(extractedAmount)) {
+      console.warn(
+        `[ExtractionCore] Printed rate groups sum to ${summed} cents but the ` +
+        `document total is ${extractedAmount}. Discarding the block.`
+      );
+      return null;
+    }
+  }
+
+  return rateGroups;
+}
+
+/**
+ * Do the line items carrying `rate` reproduce the printed group total?
+ *
+ * Line item `amount` is gross on most extractions and net on some, and the
+ * interpretation can differ between groups on the same receipt — so each
+ * group is tested against both readings independently. That is precisely
+ * the case a single global net-or-gross decision gets wrong.
+ */
+function rateGroupReconciles(
+  group: ExtractedRateGroup,
+  itemsAtRate: ExtractedLineItem[]
+): boolean {
+  if (itemsAtRate.length === 0) {
+    return false;
+  }
+  const summedAmount = itemsAtRate.reduce((sum, item) => sum + item.amount, 0);
+  const summedVat = itemsAtRate.reduce((sum, item) => sum + item.vatAmount, 0);
+  const tolerance = amountTolerance(group.gross);
+
+  return (
+    Math.abs(summedAmount - group.gross) <= tolerance ||
+    Math.abs(summedAmount + summedVat - group.gross) <= tolerance
+  );
+}
+
+export interface ReconciliationResult {
+  lineItems: ExtractedLineItem[];
+  unreconciled: boolean;
+  /**
+   * The VAT rates whose printed group the line items failed to reproduce.
+   * Empty while `unreconciled` is true means the damage could not be
+   * localised and the whole document is suspect.
+   */
+  unreconciledRates: number[];
+  /** The printed VAT summary block, once validated; null when unusable. */
+  rateGroups: ExtractedRateGroup[] | null;
+}
+
 export function reconcileLineItemsWithDocumentTotal(
   lineItems: ExtractedLineItem[],
-  extractedAmount: number | null | undefined
-): { lineItems: ExtractedLineItem[]; unreconciled: boolean } {
+  extractedAmount: number | null | undefined,
+  rateGroups?: ExtractedRateGroup[] | null
+): ReconciliationResult {
+  const validatedGroups = validateRateGroups(rateGroups, extractedAmount);
+
   if (lineItems.length === 0) {
-    return { lineItems: [], unreconciled: false };
+    return { lineItems: [], unreconciled: false, unreconciledRates: [], rateGroups: validatedGroups };
   }
 
   const filtered = lineItems.filter((item) =>
@@ -508,15 +618,55 @@ export function reconcileLineItemsWithDocumentTotal(
   const candidateLineItems = filtered.length > 0 ? filtered : lineItems;
 
   if (typeof extractedAmount !== "number" || !Number.isFinite(extractedAmount) || extractedAmount <= 0) {
-    return { lineItems: candidateLineItems, unreconciled: false };
+    return {
+      lineItems: candidateLineItems,
+      unreconciled: false,
+      unreconciledRates: [],
+      rateGroups: validatedGroups,
+    };
   }
 
   const consolidated = consolidateLineItems(candidateLineItems, extractedAmount);
   const mismatch = Math.abs(consolidated.totalAmount - extractedAmount);
-  const tolerance = Math.max(5, Math.round(extractedAmount * 0.005));
 
-  if (mismatch <= tolerance) {
-    return { lineItems: candidateLineItems, unreconciled: false };
+  if (mismatch <= amountTolerance(extractedAmount)) {
+    return {
+      lineItems: candidateLineItems,
+      unreconciled: false,
+      unreconciledRates: [],
+      rateGroups: validatedGroups,
+    };
+  }
+
+  // Fork #67 (spec §6 item 2): before giving up on the whole document, try
+  // to reconcile each printed rate group on its own. OCR noise lands in one
+  // group; the per-group totals the receipt prints are §11-sufficient on
+  // their own and can clear the groups the noise never touched.
+  const perGroup = reconcilePerRateGroup(candidateLineItems, validatedGroups);
+  if (perGroup) {
+    if (perGroup.length === 0) {
+      console.log(
+        "[ExtractionCore] Document total missed by the global item sum but " +
+        "every printed rate group reconciles — treating as reconciled."
+      );
+      return {
+        lineItems: candidateLineItems,
+        unreconciled: false,
+        unreconciledRates: [],
+        rateGroups: validatedGroups,
+      };
+    }
+    console.warn(
+      `[ExtractionCore] Line items mismatch document total by ${mismatch} cents; ` +
+      `localised to rate group(s) ${perGroup.join(", ")}%. Keeping items and ` +
+      "flagging only those rates."
+    );
+    return {
+      lineItems: candidateLineItems,
+      unreconciled: true,
+      unreconciledRates: perGroup,
+      rateGroups: validatedGroups,
+    };
   }
 
   // Fork #64 (spec §6): keep the extracted items and flag the file instead
@@ -531,7 +681,56 @@ export function reconcileLineItemsWithDocumentTotal(
     `Keeping items and flagging lineItemsUnreconciled.`
   );
 
-  return { lineItems: candidateLineItems, unreconciled: true };
+  return {
+    lineItems: candidateLineItems,
+    unreconciled: true,
+    unreconciledRates: [],
+    rateGroups: validatedGroups,
+  };
+}
+
+/**
+ * Per-rate-group reconciliation, or null when the document does not
+ * support it — no validated printed block, an item without a rate, or an
+ * item at a rate the printed block never mentions. Those are structural
+ * disagreements between the two readings of the document, not localised
+ * OCR noise, so the caller falls back to flagging the whole document.
+ *
+ * Returns the failing rates; an empty array means every group reconciled.
+ */
+function reconcilePerRateGroup(
+  lineItems: ExtractedLineItem[],
+  validatedGroups: ExtractedRateGroup[] | null
+): number[] | null {
+  if (!validatedGroups || validatedGroups.length === 0) {
+    return null;
+  }
+  if (lineItems.some((item) => item.vatPercent === null)) {
+    return null;
+  }
+
+  const groupRates = new Set(validatedGroups.map((g) => g.rate));
+  if (lineItems.some((item) => !groupRates.has(item.vatPercent as number))) {
+    return null;
+  }
+
+  return validatedGroups
+    .filter((group) => !rateGroupReconciles(
+      group,
+      lineItems.filter((item) => item.vatPercent === group.rate)
+    ))
+    .map((group) => group.rate);
+}
+
+/** Document-level totals implied by the printed VAT summary block. */
+function rateGroupTotals(groups: ExtractedRateGroup[]): {
+  totalVatAmount: number;
+  consolidatedVatPercent: number | null;
+} {
+  return {
+    totalVatAmount: groups.reduce((sum, g) => sum + g.vat, 0),
+    consolidatedVatPercent: groups.length === 1 ? groups[0].rate : null,
+  };
 }
 
 /**
@@ -617,6 +816,9 @@ export async function runExtraction(
         extractedVatPercent: null,
         extractedVatAmount: null,
         extractedLineItems: null,
+        extractedRateGroups: null,
+        lineItemsUnreconciled: false,
+        lineItemsUnreconciledRates: null,
         extractedPartner: null,
         extractedVatId: null,
         extractedIban: null,
@@ -742,6 +944,9 @@ export async function runExtraction(
     updateData.extractedVatPercent = null;
     updateData.extractedVatAmount = null;
     updateData.extractedLineItems = null;
+    updateData.extractedRateGroups = null;
+    updateData.lineItemsUnreconciled = false;
+    updateData.lineItemsUnreconciledRates = null;
     updateData.extractedPartner = null;
     updateData.extractedVatId = null;
     updateData.extractedIban = null;
@@ -775,17 +980,39 @@ export async function runExtraction(
     if (normalizedLineItems.length > 0) {
       const reconciled = reconcileLineItemsWithDocumentTotal(
         normalizedLineItems,
-        extracted.amount
+        extracted.amount,
+        extracted.rateGroups
       );
       updateData.extractedLineItems = reconciled.lineItems;
+      updateData.extractedRateGroups = reconciled.rateGroups;
       updateData.lineItemsUnreconciled = reconciled.unreconciled;
+      updateData.lineItemsUnreconciledRates =
+        reconciled.unreconciledRates.length > 0 ? reconciled.unreconciledRates : null;
+
       if (reconciled.unreconciled) {
         // The item sum contradicts the document total — keep the document's
         // own top-level extraction and let the flagged items wait for a
         // human repair (fork #64, spec §6).
         updateData.extractedAmount = extracted.amount;
-        updateData.extractedVatAmount = null;
-        updateData.extractedVatPercent = extracted.vatPercent;
+        if (reconciled.rateGroups) {
+          // Fork #67: the printed VAT summary is a SECOND reading of the
+          // document, not a derivation from the broken rows — it survives
+          // a line-item failure and still carries the document's VAT.
+          const totals = rateGroupTotals(reconciled.rateGroups);
+          updateData.extractedVatAmount = totals.totalVatAmount;
+          updateData.extractedVatPercent = totals.consolidatedVatPercent ?? extracted.vatPercent;
+        } else {
+          updateData.extractedVatAmount = null;
+          updateData.extractedVatPercent = extracted.vatPercent;
+        }
+      } else if (reconciled.rateGroups) {
+        // Both readings agree: prefer the printed block's VAT, which is one
+        // transcribed number per rate rather than a sum of N item rows.
+        const consolidated = consolidateLineItems(reconciled.lineItems, extracted.amount);
+        const totals = rateGroupTotals(reconciled.rateGroups);
+        updateData.extractedAmount = consolidated.totalAmount;
+        updateData.extractedVatAmount = totals.totalVatAmount;
+        updateData.extractedVatPercent = totals.consolidatedVatPercent;
       } else {
         const consolidated = consolidateLineItems(reconciled.lineItems, extracted.amount);
         updateData.extractedAmount = consolidated.totalAmount;
@@ -793,11 +1020,22 @@ export async function runExtraction(
         updateData.extractedVatPercent = consolidated.consolidatedVatPercent;
       }
     } else {
+      // No itemisation — but a receipt can still print its VAT summary
+      // block, and that alone is a §11-sufficient record (fork #67).
+      const validatedGroups = validateRateGroups(extracted.rateGroups, extracted.amount);
       updateData.extractedLineItems = null;
+      updateData.extractedRateGroups = validatedGroups;
       updateData.lineItemsUnreconciled = false;
-      updateData.extractedVatAmount = null;
+      updateData.lineItemsUnreconciledRates = null;
       updateData.extractedAmount = extracted.amount;
-      updateData.extractedVatPercent = extracted.vatPercent;
+      if (validatedGroups) {
+        const totals = rateGroupTotals(validatedGroups);
+        updateData.extractedVatAmount = totals.totalVatAmount;
+        updateData.extractedVatPercent = totals.consolidatedVatPercent ?? extracted.vatPercent;
+      } else {
+        updateData.extractedVatAmount = null;
+        updateData.extractedVatPercent = extracted.vatPercent;
+      }
     }
 
     // Use counterparty data if available, otherwise fall back to legacy extracted.partner
