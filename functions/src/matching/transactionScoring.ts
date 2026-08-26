@@ -13,6 +13,18 @@ import { Timestamp } from "firebase-admin/firestore";
 export const SCORING_CONFIG = {
   /** Minimum confidence for auto-matching (creates connection) */
   AUTO_MATCH_THRESHOLD: 85,
+  /**
+   * Bonus when the two hard financial facts agree on their own: a cent-exact
+   * amount (same currency) AND the same day. 40 + 25 + 20 = 85, so this pair
+   * clears AUTO_MATCH_THRESHOLD without needing partner corroboration (#78).
+   */
+  HARD_FACTS_BONUS_SAME_DAY: 20,
+  /**
+   * Bonus for a cent-exact amount within 3 days. 40 + 22 + 15 = 77: a strong
+   * suggestion, but auto-connect still needs one more signal (any partner
+   * text match >= 12 pushes it over 85).
+   */
+  HARD_FACTS_BONUS_CLOSE: 15,
   /** Minimum confidence to show as suggestion */
   SUGGESTION_THRESHOLD: 50,
   /** Days to search before/after file date */
@@ -42,6 +54,8 @@ export interface ScoreBreakdown {
   iban: number;
   reference: number;
   hint: number;
+  /** Combination bonus for exact amount + exact/close date (see HARD_FACTS_BONUS_*) */
+  hardFacts: number;
 }
 
 export interface TransactionPreview {
@@ -337,9 +351,13 @@ export function scoreTransaction(
   let ibanScore = 0;
   let referenceScore = 0;
   let hintScore = 0;
+  let hardFactsScore = 0;
   const matchSources: TransactionMatchSource[] = [];
 
   // 1. Amount scoring (0-40, reduced if currency mismatch)
+  // amountExact is only true for a cent-exact, same-currency match (score 40):
+  // a currency-mismatched exact amount is halved to 20 and does not qualify.
+  let amountExact = false;
   if (fileData.extractedAmount != null) {
     const result = calculateAmountScore(
       fileData.extractedAmount,
@@ -348,10 +366,12 @@ export function scoreTransaction(
       txData.currency
     );
     amountScore = result.score;
+    amountExact = result.source === "amount_exact" && !result.currencyMismatch;
     if (result.source) matchSources.push(result.source);
   }
 
   // 2. Date scoring (0-25, boosted when partner matches)
+  let rawDateScore = 0;
   if (fileData.extractedDate) {
     const result = calculateDateScore(
       fileData.extractedDate.toDate(),
@@ -359,7 +379,21 @@ export function scoreTransaction(
       options?.billingCycle
     );
     dateScore = result.score;
+    rawDateScore = result.score;
     if (result.source) matchSources.push(result.source);
+  }
+
+  // 2b. Hard-facts combination bonus (#78)
+  // Exact amount + exact date used to cap at 65 (< AUTO_MATCH_THRESHOLD 85), so
+  // auto-connect was gated on partner identity rather than on the two facts that
+  // actually identify a payment. Uses the RAW date score, before the partner
+  // boost in 3b, so the bonus does not depend on partner signals.
+  if (amountExact) {
+    if (rawDateScore >= 25) {
+      hardFactsScore = SCORING_CONFIG.HARD_FACTS_BONUS_SAME_DAY;
+    } else if (rawDateScore >= 22) {
+      hardFactsScore = SCORING_CONFIG.HARD_FACTS_BONUS_CLOSE;
+    }
   }
 
   // 3. Partner scoring (0-25 for ID match, 0-15 for text match)
@@ -430,7 +464,13 @@ export function scoreTransaction(
   const weightedPartner = w ? partnerScore * w.partnerWeight : partnerScore;
 
   const rawConfidence =
-    weightedAmount + weightedDate + weightedPartner + ibanScore + referenceScore + hintScore;
+    weightedAmount +
+    weightedDate +
+    weightedPartner +
+    ibanScore +
+    referenceScore +
+    hintScore +
+    hardFactsScore;
   // Cap at 100 (multiple strong signals shouldn't exceed 100%)
   const confidence = Math.min(100, Math.round(rawConfidence));
 
@@ -445,6 +485,7 @@ export function scoreTransaction(
       iban: ibanScore,
       reference: referenceScore,
       hint: hintScore,
+      hardFacts: hardFactsScore,
     },
     preview: {
       date: txData.date,
@@ -467,5 +508,6 @@ export function formatScoreBreakdown(breakdown: ScoreBreakdown): string {
   if (breakdown.iban > 0) parts.push(`iban:${breakdown.iban}`);
   if (breakdown.reference > 0) parts.push(`ref:${breakdown.reference}`);
   if (breakdown.hint > 0) parts.push(`hint:${breakdown.hint}`);
+  if (breakdown.hardFacts > 0) parts.push(`facts:${breakdown.hardFacts}`);
   return parts.join(" + ");
 }
