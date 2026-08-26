@@ -18,6 +18,8 @@ import { AmountMatchDisplay } from "@/components/ui/amount-match-display";
 import { readBankOriginalAmount } from "@/functions/src/fx/bankOriginalAmount";
 import { SortableHeader } from "@/components/ui/data-table";
 import { PartnerPill } from "@/components/partners/partner-pill";
+import { DocumentationStateBadge } from "@/components/documents/document-type-badge";
+import { describeDocumentationState } from "@/lib/documents/document-type-presentation";
 import {
   findMissingChargeCycle,
   RecurringChargeMarker,
@@ -305,6 +307,28 @@ export function getTransactionColumns(
           <span className="text-sm text-muted-foreground">—</span>
         );
       },
+    },
+    {
+      id: "documentation",
+      // WHAT the row is documented by, next to the File cell that says only
+      // THAT it is. A receipt-only line and an invoice-documented one are both
+      // green — `isComplete` is untouched by design — so this is the only
+      // thing on the row that tells them apart.
+      //
+      // Sorted on the RESOLVED state, so rows carrying no state at all group
+      // with the explicit `unknown` ones instead of forming a second,
+      // identical-looking bucket.
+      accessorFn: (row) => describeDocumentationState(row.documentationState).state,
+      size: 130,
+      header: ({ column }) => (
+        <SortableHeader column={column}>Documentation</SortableHeader>
+      ),
+      cell: ({ row }) => (
+        // Never an em-dash: a row with no derived state reads as "nicht
+        // bestimmt", which is what most of the corpus honestly is until the
+        // backfill runs.
+        <DocumentationStateBadge state={row.original.documentationState} />
+      ),
     },
     {
       id: "reconciliation",

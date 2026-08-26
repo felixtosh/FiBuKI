@@ -30,6 +30,8 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { DocumentationStateBadge } from "@/components/documents/document-type-badge";
+import { Section11MissingElements } from "@/components/documents/section-11-details";
 import { NoReceiptCategoryPopover } from "./no-receipt-category-popover";
 import { ReceiptLostDialog } from "./receipt-lost-dialog";
 import { useTransactionFiles, useFiles } from "@/hooks/use-files";
@@ -414,6 +416,18 @@ export function TransactionFilesSection({
   // Check if transaction has files
   const hasFiles = files.length > 0;
 
+  // The chase case (#207): money moved, a document is attached, and none of
+  // the attached documents is a Rechnung under § 11. The state is derived on
+  // the backend and stored — nothing here re-decides it.
+  const isReceiptOnly = transaction.documentationState === "receipt-only";
+
+  // Union across the attached documents, deduplicated. The statute order is
+  // applied where they are named, by the same module the file surfaces use.
+  const missingSection11Elements = useMemo(
+    () => [...new Set(files.flatMap((f) => f.documentTypeMissingElements ?? []))],
+    [files]
+  );
+
   // Use stored category suggestions from backend (no client-side computation)
   const categorySuggestions = useMemo(() => {
     if (hasCategory || hasFiles) {
@@ -739,7 +753,15 @@ export function TransactionFilesSection({
             </FieldRow>
           ) : hasFiles ? (
             <>
-              <span className="text-sm text-muted-foreground">Receipt</span>
+              {/*
+                WHAT the attached documents are, not just that they exist
+                (#207). The row in the table carries the same badge, from the
+                same module, so the panel cannot say something else.
+              */}
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm text-muted-foreground">Receipt</span>
+                <DocumentationStateBadge state={transaction.documentationState} />
+              </div>
               <div className="space-y-0.5">
                 {files.map((file) => (
                   <FileRow
@@ -781,6 +803,19 @@ export function TransactionFilesSection({
                   transactionDate={toDateSafe(transaction.date) || new Date()}
                   files={files}
                 />
+                {/*
+                  The defect to chase, named in the statute's own words so a
+                  mail to the supplier can cite it — the same component the
+                  file detail panel uses, framed as a receipt's defect because
+                  that is what a receipt-only transaction has.
+                */}
+                {isReceiptOnly && missingSection11Elements.length > 0 && (
+                  <Section11MissingElements
+                    documentType="receipt"
+                    elements={missingSection11Elements}
+                    className="mt-2 pt-2 border-t border-dashed"
+                  />
+                )}
                 {/* Rejected files list */}
                 {showRejectedFiles && rejectedFiles.length > 0 && (
                   <div className="mt-2 pt-2 border-t border-dashed space-y-1">

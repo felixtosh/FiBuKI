@@ -199,6 +199,8 @@ export async function handleTool(
       return undismissTransactionSuggestion(userId, args);
     case "retry_file_extraction":
       return retryFileExtractionTool(userId, args);
+    case "reclassify_documents":
+      return reclassifyDocumentsTool(userId, args);
 
     // Identity entities (the user's personal/company entities used as invoice
     // sender). Returns id + name + vatId + ibans + address per entity.
@@ -832,6 +834,29 @@ export async function updateFileExtraction(userId: string, args: Record<string, 
       extractedRateGroups: after.extractedRateGroups ?? null,
     },
   };
+}
+
+/**
+ * Re-run the § 11 classifier over stored records and persist the verdict
+ * (#204), then re-derive documentation state from what was just written.
+ *
+ * Dry run unless the caller passes dryRun exactly false — the same default as
+ * rematch_assigned_partners, and for the same reason: a boolean that defaults
+ * to "write" is how a whole corpus gets rewritten by a typo. The sweep itself
+ * lives in documents/reclassifyStoredDocuments; this owns only the argument.
+ */
+export async function reclassifyDocumentsTool(userId: string, args: Record<string, unknown>) {
+  if (args.dryRun !== undefined && typeof args.dryRun !== "boolean") {
+    throw new Error("dryRun must be a boolean");
+  }
+
+  const { reclassifyStoredDocuments } = await import(
+    "../documents/reclassifyStoredDocuments"
+  );
+
+  return reclassifyStoredDocuments(userId, {
+    dryRun: args.dryRun === undefined ? true : (args.dryRun as boolean),
+  });
 }
 
 export async function markFileAsNotInvoice(userId: string, args: Record<string, unknown>) {
