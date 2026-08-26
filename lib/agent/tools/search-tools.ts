@@ -1667,7 +1667,10 @@ export const getPartnerReceiptHintsTool = tool(
       filenameExamples?: string[];
     }> = partner.fileSourcePatterns || [];
     const emailDomains: string[] = partner.emailDomains || [];
-    const billingCycle = partner.billingCycle || null;
+    // yazzbert/FiBuKI-selfhost#165: billingCycle is now {learned, declared,
+    // effective}; this tool wants a flat cycle, so it reads the first
+    // effective recurrence (band-aware search is #169).
+    const billingCycle = partner.billingCycle?.effective?.[0] || null;
 
     const sortedPatterns = [...fileSourcePatterns].sort(
       (a, b) => (b.usageCount || 0) - (a.usageCount || 0)

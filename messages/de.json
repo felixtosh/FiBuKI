@@ -204,5 +204,84 @@
     "german": "Deutsch",
     "english": "English",
     "back": "Zurück"
+  },
+  "billingCycle": {
+    "title": "Abrechnungszyklus",
+    "none": "Dieser Partner rechnet nicht nach Zeitplan ab.",
+    "declare": "Zyklus angeben",
+    "edit": "Angabe bearbeiten",
+    "noCharge": "Noch keine Buchung gesehen",
+    "confidence": "{confidence}% Konfidenz",
+    "typicalDayValue": "{day}. des Monats",
+    "coverageEmpty": "Keine Buchung in den letzten {months} Monaten",
+    "coverageCounts": "{withFile} mit Beleg, {withCategory} kategorisiert, {missing} fehlen von {charges}",
+    "source": {
+      "declared": "Angegeben",
+      "learned": "Gelernt"
+    },
+    "cadence": {
+      "weekly": "Wöchentlich",
+      "monthly": "Monatlich",
+      "quarterly": "Quartalsweise",
+      "yearly": "Jährlich",
+      "custom": "Alle {days} Tage",
+      "unknown": "Frequenz unbekannt"
+    },
+    "expectation": {
+      "invoice": "Rechnung erwartet",
+      "no-receipt-category": "Kategorie erwartet",
+      "nothing": "Kein Beleg erwartet"
+    },
+    "fields": {
+      "typicalDay": "Typischer Tag",
+      "expectedAmount": "Erwartet",
+      "lastCharge": "Letzte Buchung",
+      "nextExpected": "Nächste erwartet",
+      "coverage": "Belege"
+    },
+    "window": {
+      "upcoming": "Bevorstehend",
+      "due": "Fällig",
+      "overdue": "Überfällig",
+      "unknown": "Zu wenig Historie"
+    },
+    "coverageState": {
+      "complete": "Vollständig",
+      "partial": "Unvollständig",
+      "none": "Nichts abgelegt",
+      "empty": "Keine Buchungen"
+    },
+    "filter": {
+      "label": "Wiederkehrend",
+      "all": "Alle Partner",
+      "recurring": "Wiederkehrend",
+      "notRecurring": "Nicht wiederkehrend"
+    },
+    "marker": {
+      "label": "Beleg fehlt",
+      "tooltip": "{cadence} Buchung eines wiederkehrenden Partners — der erwartete Beleg fehlt noch."
+    },
+    "dialog": {
+      "title": "Angegebener Abrechnungszyklus",
+      "description": "Was Sie über den Zeitplan dieses Partners wissen. Eine Angabe hat Vorrang vor dem Gelernten; der gelernte Zyklus bleibt daneben sichtbar.",
+      "recurrence": "Wiederkehr {index}",
+      "cadence": "Rhythmus",
+      "customCadence": "Alle N Tage",
+      "frequencyDays": "Tage",
+      "amountMin": "Betrag von",
+      "amountMax": "Betrag bis",
+      "currency": "Währung",
+      "expectation": "Pro Buchung erwartet",
+      "addRecurrence": "Wiederkehr hinzufügen",
+      "clear": "Angabe löschen",
+      "cancel": "Abbrechen",
+      "save": "Speichern"
+    },
+    "errors": {
+      "frequency": "Geben Sie eine positive Anzahl Tage an.",
+      "amount": "Ein erwarteter Betrag muss eine Zahl sein, z. B. 38,25.",
+      "amountOrder": "Der untere Betrag darf den oberen nicht übersteigen.",
+      "bandRequired": "Bei mehr als einer Wiederkehr braucht jede ihren eigenen erwarteten Betragsbereich."
+    }
   }
 }

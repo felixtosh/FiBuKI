@@ -179,6 +179,10 @@ export const partnersColumns = [
   { key: "fileSourcePatterns", header: "fileSourcePatterns" },
   { key: "manualRemovals", header: "manualRemovals" },
   { key: "resolutionPreference", header: "resolutionPreference" },
+  // Whole structure in one cell: learned, declared and the resolved effective
+  // view travel together, so an import restores what the partner believed
+  // without re-deriving it.
+  { key: "billingCycle", header: "billingCycle" },
   { key: "isActive", header: "isActive" },
   { key: "createdAt", header: "createdAt" },
   { key: "updatedAt", header: "updatedAt" },

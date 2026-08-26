@@ -18,6 +18,8 @@ interface FilesDataTableProps {
   enableMultiSelect?: boolean;
   selectedRowIds?: Set<string>;
   onSelectionChange?: (selectedIds: Set<string>) => void;
+  /** Callback with the row ids in displayed order (filtered rows, active sort) */
+  onDisplayedOrderChange?: (orderedIds: string[]) => void;
   /** Custom empty state component */
   emptyState?: ReactNode;
   /** Set of file IDs that are currently being searched - used to bust row memo cache */
@@ -30,6 +32,7 @@ export interface FilesDataTableHandle {
 
 // Default column sizes for files table
 const DEFAULT_FILE_COLUMN_SIZES: Record<string, number> = {
+  select: 36,
   extractedDate: 110,
   extractedAmount: 90,
   extractedVatPercent: 55,
@@ -52,6 +55,7 @@ function FilesDataTableInner(
     enableMultiSelect,
     selectedRowIds,
     onSelectionChange,
+    onDisplayedOrderChange,
     emptyState,
     searchingFileIds,
   }: FilesDataTableProps,
@@ -119,6 +123,7 @@ function FilesDataTableInner(
       enableMultiSelect={enableMultiSelect}
       selectedRowIds={selectedRowIds}
       onSelectionChange={onSelectionChange}
+      onDisplayedOrderChange={onDisplayedOrderChange}
     />
   );
 }

@@ -4,11 +4,24 @@
  * Keep in sync with the UI version!
  */
 
+import {
+  selectEffectiveCycleForAmount,
+  ResolvedEffectiveCycle,
+} from "../matching/billingCycle";
+
 export interface QueryGenerationTransaction {
   name: string;
   partner?: string | null;
   description?: string;
   reference?: string;
+  /** Booking date of the charge. Anchors the expected-invoice window (#169). */
+  date?: Date;
+  /**
+   * Charge amount, in the same unit the recurrence bands were learned from
+   * (cents, as stored). Picks which recurrence of a multi-band partner this
+   * charge belongs to (#169).
+   */
+  amount?: number;
 }
 
 export interface QueryGenerationPartner {
@@ -24,6 +37,83 @@ export interface QueryGenerationPartner {
     confidence: number;
     usageCount: number;
   }>;
+  /**
+   * The partner's effective billing cycles — `billingCycle.effective`, one
+   * entry per amount band, declared already resolved over learned. An array,
+   * not a single cycle: a partner can bill on more than one cadence (the
+   * Anthropic weekly API charge beside the monthly subscription), so the
+   * band is picked per charge, not per partner.
+   */
+  effectiveCycles?: ResolvedEffectiveCycle[];
+}
+
+const MS_PER_DAY = 1000 * 60 * 60 * 24;
+
+/** What `calculateDateScore` falls back to when a band learned a delay but no variance. */
+const DEFAULT_DELAY_VARIANCE_DAYS = 3;
+
+/**
+ * The date range the document for one charge of a recurring partner should
+ * carry: the charge's transaction date shifted back by the recurrence's
+ * learned invoice-to-transaction delay, plus or minus the delay variance.
+ */
+export interface SearchDateWindow {
+  /** Transaction date minus the learned delay — where the invoice is expected. */
+  expectedAt: Date;
+  /** `expectedAt` minus `varianceDays`. */
+  from: Date;
+  /** `expectedAt` plus `varianceDays`. */
+  to: Date;
+  /** Days the window reaches to either side of `expectedAt`. */
+  varianceDays: number;
+}
+
+function addDays(date: Date, days: number): Date {
+  return new Date(date.getTime() + days * MS_PER_DAY);
+}
+
+/**
+ * Where this charge's document is expected to be dated, for a partner that
+ * bills on a schedule. Undefined for everyone else — a partner with no
+ * effective cycle, a charge that belongs to none of its amount bands (a
+ * one-off payment to a recurring vendor), or a transaction with no date.
+ *
+ * The window is never wider than half a period: a wider one spans the
+ * neighbouring charge and so cannot tell two same-amount documents apart,
+ * which is the whole point of carrying it. That is the clamp
+ * `calculateDateScore` and `nextExpectedCharge` already apply, for the same
+ * reason. A band with no learned delay has nothing to shift by, so it gets
+ * that half-period window centred on the transaction date itself.
+ */
+export function expectedInvoiceWindow(
+  transaction: QueryGenerationTransaction,
+  partner?: QueryGenerationPartner | null
+): SearchDateWindow | undefined {
+  const cycles = partner?.effectiveCycles;
+  if (!cycles?.length) return undefined;
+  if (!transaction.date || isNaN(transaction.date.getTime())) return undefined;
+  if (transaction.amount === undefined) return undefined;
+
+  const band = selectEffectiveCycleForAmount(cycles, transaction.amount);
+  if (!band || !band.frequencyDays || band.frequencyDays <= 0) return undefined;
+
+  const maxVarianceDays = Math.max(1, Math.floor(band.frequencyDays / 2));
+  const delay = band.invoiceToTransactionDelay;
+  // Twice the delay variance, not once: `calculateDateScore` still calls a
+  // candidate within 2x a "close" date match, and a window that dropped those
+  // would hide documents the scorer would happily have taken.
+  const varianceDays =
+    delay === undefined
+      ? maxVarianceDays
+      : Math.min((band.delayVariance ?? DEFAULT_DELAY_VARIANCE_DAYS) * 2, maxVarianceDays);
+
+  const expectedAt = addDays(transaction.date, -(delay ?? 0));
+  return {
+    expectedAt,
+    from: addDays(expectedAt, -varianceDays),
+    to: addDays(expectedAt, varianceDays),
+    varianceDays,
+  };
 }
 
 /** Types of search suggestions - used for UI pill labels */
@@ -265,6 +355,30 @@ export function generateTypedSearchQueries(
     type: entry.type,
     score: entry.score,
   }));
+}
+
+/**
+ * Queries plus, for a recurring partner, the date window the document for
+ * this charge is expected to fall in.
+ *
+ * This is the entry point a search strategy wants: the queries say *what* to
+ * look for, the window says *when*, and both are derived from the same
+ * (transaction, partner) pair so they cannot drift apart.
+ */
+export interface SearchQueryPlan {
+  suggestions: TypedSuggestion[];
+  /** Absent for a non-recurring partner — the search keeps its full reach. */
+  dateWindow?: SearchDateWindow;
+}
+
+export function generateSearchQueryPlan(
+  transaction: QueryGenerationTransaction,
+  partner?: QueryGenerationPartner | null,
+  maxQueries: number = 8
+): SearchQueryPlan {
+  const suggestions = generateTypedSearchQueries(transaction, partner, maxQueries);
+  const dateWindow = expectedInvoiceWindow(transaction, partner);
+  return dateWindow ? { suggestions, dateWindow } : { suggestions };
 }
 
 /**

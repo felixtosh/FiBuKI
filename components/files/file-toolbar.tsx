@@ -19,6 +19,8 @@ import {
   Filter,
   Trash2,
   FileX,
+  EyeOff,
+  UserCheck,
 } from "lucide-react";
 import { SearchButton } from "@/components/ui/search-button";
 import { SearchInput } from "@/components/ui/search-input";
@@ -51,6 +53,7 @@ export function FileToolbar({
   const [connectionPopoverOpen, setConnectionPopoverOpen] = useState(false);
   const [typePopoverOpen, setTypePopoverOpen] = useState(false);
   const [partnerPopoverOpen, setPartnerPopoverOpen] = useState(false);
+  const [partnerStatePopoverOpen, setPartnerStatePopoverOpen] = useState(false);
   const [statusPopoverOpen, setStatusPopoverOpen] = useState(false);
   const [partnerSearch, setPartnerSearch] = useState("");
   const [showFromCalendar, setShowFromCalendar] = useState(false);
@@ -61,9 +64,13 @@ export function FileToolbar({
   const hasAmountFilter = filters.amountType && filters.amountType !== "all";
   const selectedPartnerIds = filters.partnerIds || [];
   const hasPartnerFilter = selectedPartnerIds.length > 0;
+  const hasPartnerStateFilter = filters.hasPartner !== undefined;
+  // Picking specific partners is the narrower ask: it wins, and the state
+  // control goes inert so the user can see why it stopped mattering.
+  const partnerStateIgnored = hasPartnerFilter;
   const hasStatusFilter =
     filters.extractionComplete !== undefined ||
-    filters.isNotInvoice === true ||
+    filters.isNotInvoice !== undefined ||
     filters.includeDeleted === true;
 
   const handleDatePresetClick = (preset: string) => {
@@ -117,6 +124,11 @@ export function FileToolbar({
     onFiltersChange({ ...filters, partnerIds: undefined });
   };
 
+  const clearPartnerStateFilter = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onFiltersChange({ ...filters, hasPartner: undefined });
+  };
+
   const clearStatusFilter = (e: React.MouseEvent) => {
     e.stopPropagation();
     onFiltersChange({
@@ -149,10 +161,17 @@ export function FileToolbar({
     return "Type";
   };
 
+  const getPartnerStateLabel = () => {
+    if (filters.hasPartner === true) return "Has partner";
+    if (filters.hasPartner === false) return "No partner";
+    return "Partner state";
+  };
+
   const getStatusLabel = () => {
     if (filters.extractionComplete === true) return "Extracted";
     if (filters.extractionComplete === false) return "Pending";
     if (filters.isNotInvoice === true) return "Not invoices";
+    if (filters.isNotInvoice === false) return "Hide not invoices";
     if (filters.includeDeleted === true) return "Deleted";
     return "Status";
   };
@@ -529,6 +548,74 @@ export function FileToolbar({
         </PopoverContent>
       </Popover>
 
+      {/* Partner state filter (any / has partner / no partner) */}
+      <Popover open={partnerStatePopoverOpen} onOpenChange={setPartnerStatePopoverOpen}>
+        <PopoverTrigger asChild>
+          <Button
+            variant={hasPartnerStateFilter && !partnerStateIgnored ? "secondary" : "outline"}
+            size="sm"
+            className="h-9 gap-2"
+            disabled={partnerStateIgnored}
+            title={
+              partnerStateIgnored
+                ? "Ignored while specific partners are selected"
+                : undefined
+            }
+          >
+            <UserCheck className="h-4 w-4" />
+            <span>{getPartnerStateLabel()}</span>
+            {hasPartnerStateFilter && !partnerStateIgnored && (
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={clearPartnerStateFilter}
+                onKeyDown={(e) => e.key === "Enter" && clearPartnerStateFilter(e as unknown as React.MouseEvent)}
+                className="ml-1 hover:bg-muted rounded p-0.5 -mr-1 cursor-pointer"
+              >
+                <X className="h-3 w-3" />
+              </span>
+            )}
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="w-auto p-2" align="start">
+          <div className="flex flex-col gap-1">
+            <Button
+              variant={filters.hasPartner === undefined ? "secondary" : "ghost"}
+              size="sm"
+              className="justify-start h-8"
+              onClick={() => {
+                onFiltersChange({ ...filters, hasPartner: undefined });
+                setPartnerStatePopoverOpen(false);
+              }}
+            >
+              Any
+            </Button>
+            <Button
+              variant={filters.hasPartner === true ? "secondary" : "ghost"}
+              size="sm"
+              className="justify-start h-8"
+              onClick={() => {
+                onFiltersChange({ ...filters, hasPartner: true });
+                setPartnerStatePopoverOpen(false);
+              }}
+            >
+              Has partner
+            </Button>
+            <Button
+              variant={filters.hasPartner === false ? "secondary" : "ghost"}
+              size="sm"
+              className="justify-start h-8"
+              onClick={() => {
+                onFiltersChange({ ...filters, hasPartner: false });
+                setPartnerStatePopoverOpen(false);
+              }}
+            >
+              No partner
+            </Button>
+          </div>
+        </PopoverContent>
+      </Popover>
+
       {/* Status filter */}
       <Popover open={statusPopoverOpen} onOpenChange={setStatusPopoverOpen}>
         <PopoverTrigger asChild>
@@ -557,7 +644,7 @@ export function FileToolbar({
             <Button
               variant={
                 filters.extractionComplete === undefined &&
-                !filters.isNotInvoice &&
+                filters.isNotInvoice === undefined &&
                 !filters.includeDeleted
                   ? "secondary"
                   : "ghost"
@@ -625,6 +712,23 @@ export function FileToolbar({
             >
               <FileX className="h-4 w-4" />
               Not invoices
+            </Button>
+            <Button
+              variant={filters.isNotInvoice === false ? "secondary" : "ghost"}
+              size="sm"
+              className="justify-start h-8 gap-2"
+              onClick={() => {
+                onFiltersChange({
+                  ...filters,
+                  extractionComplete: undefined,
+                  isNotInvoice: false,
+                  includeDeleted: undefined,
+                });
+                setStatusPopoverOpen(false);
+              }}
+            >
+              <EyeOff className="h-4 w-4" />
+              Hide not invoices
             </Button>
             <div className="border-t my-1" />
             <Button

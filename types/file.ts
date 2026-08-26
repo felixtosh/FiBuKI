@@ -622,6 +622,12 @@ export interface FileFilters {
   /** Filter by assigned partner IDs */
   partnerIds?: string[];
 
+  /**
+   * Filter by partner state: true = has a partner, false = has none.
+   * Ignored when partnerIds picks specific partners — those win.
+   */
+  hasPartner?: boolean;
+
   /** Filter by invoice direction (income = outgoing, expense = incoming) */
   amountType?: "all" | "income" | "expense";
 }

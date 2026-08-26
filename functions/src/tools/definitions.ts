@@ -406,7 +406,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   // =========================================================================
   {
     name: "list_partners",
-    description: "List user partners with optional search",
+    description:
+      "List user partners with optional search. Each partner carries `billingCycle`: the effective " +
+      "cycle plus the learned and declared halves it was resolved from, one entry per recurrence " +
+      "(null when the partner does not bill on a schedule).",
     inputSchema: {
       type: "object",
       properties: {
@@ -417,11 +420,96 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     name: "get_partner",
-    description: "Get partner details by ID",
+    description:
+      "Get partner details by ID, including `billingCycle`: the effective cycle plus the learned " +
+      "and declared halves it was resolved from, one entry per recurrence (a partner can bill in " +
+      "more than one amount band).",
     inputSchema: {
       type: "object",
       properties: { partnerId: { type: "string", description: "The partner ID" } },
       required: ["partnerId"],
+    },
+  },
+  {
+    name: "set_partner_billing_cycle",
+    description:
+      "Declare, change or clear the DECLARED billing cycle of a partner. A declaration wins over " +
+      "what Fibuki learned from the transaction history; the learned half stays visible beside it " +
+      "and is never touched here. Pass one recurrence or an array of them (a partner can bill in " +
+      "more than one amount band), or `declared: null` to clear every declaration and fall back to " +
+      "what was learned.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        partnerId: { type: "string", description: "The partner ID" },
+        declared: {
+          description:
+            "The declared recurrence, an array of recurrences, or null to clear. Give either " +
+            "`cadence` or `frequencyDays`.",
+          properties: {
+            cadence: {
+              type: "string",
+              enum: ["weekly", "monthly", "quarterly", "yearly"],
+              description: "Named cadence — 7, 30, 90 or 365 days",
+            },
+            frequencyDays: {
+              type: "number",
+              description: "Days between charges, for a cadence with no name (every N days)",
+            },
+            amountBand: {
+              type: "number",
+              description:
+                "Absolute amount in cents this recurrence bills, when the partner has more than " +
+                "one (e.g. a weekly API charge beside a monthly subscription). Derived from " +
+                "expectedAmountMin/Max when those are given.",
+            },
+            expectedAmountMin: { type: "number", description: "Lowest expected amount in cents" },
+            expectedAmountMax: { type: "number", description: "Highest expected amount in cents" },
+            currency: {
+              type: "string",
+              description:
+                "Currency the recurrence is billed in (e.g. USD) — a USD subscription stays one " +
+                "recurrence although the booked EUR amount drifts",
+            },
+            documentExpectation: {
+              type: "string",
+              enum: ["invoice", "no-receipt-category", "nothing"],
+              description:
+                "What each charge is expected to carry (default: invoice). Use 'nothing' for " +
+                "charges that by rule never produce a document (bank fees, SVS, insolvency " +
+                "instalments) so they never read as missing one.",
+            },
+          },
+        },
+      },
+      required: ["partnerId", "declared"],
+    },
+  },
+  {
+    name: "list_recurring_partners",
+    description:
+      "List the partners that bill on a schedule, with everything a subscription view needs per " +
+      "partner: the billing cycle, the last charge seen (date, amount in the billed currency and " +
+      "in EUR, transaction id), the next expected charge window, and how many of its charges in " +
+      "the date range carry their expected document. `recurrences` splits all of that per amount " +
+      "band, so a vendor billing weekly and monthly reads as two rows. Amounts are absolute cents; " +
+      "`amountEur` is null when the account is not booked in EUR. Returns " +
+      "{ partners, nextCursor, count, dateFrom, dateTo } — pass nextCursor back as `cursor` for " +
+      "the next page. Up to 200 charges per partner, ending at dateTo, are read.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        dateFrom: {
+          type: "string",
+          description: "Coverage range start, inclusive (YYYY-MM-DD). Default: 13 months before dateTo.",
+        },
+        dateTo: {
+          type: "string",
+          description: "Coverage range end, inclusive (YYYY-MM-DD). Default: today.",
+        },
+        limit: { type: "number", description: "Max partners per page (default 25, max 100)" },
+        cursor: { type: "string", description: "nextCursor from the previous response" },
+      },
     },
   },
   {

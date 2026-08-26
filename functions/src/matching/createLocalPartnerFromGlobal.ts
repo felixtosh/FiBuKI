@@ -61,15 +61,21 @@ export async function createLocalPartnerFromGlobal(
         ? freqDaysMap[insights.billingFrequency] || 0
         : 0;
       if (freqDays > 0) {
-        partnerData.billingCycle = {
+        // yazzbert/FiBuKI-selfhost#165: billingCycle is {learned, declared,
+        // effective}. This is a system-derived starting hint, not a user
+        // declaration, so it seeds `learned`; `effective` mirrors it since
+        // no declared cycle exists yet on a brand-new partner.
+        const seedFields = {
           frequencyDays: freqDays,
           frequencyConfidence: Math.min(50, insights.contributingUsers * 10), // Low initial confidence
           // Omitted when unknown — Firestore rejects undefined values.
           ...(insights.typicalInvoiceDelay != null
             ? { invoiceToTransactionDelay: insights.typicalInvoiceDelay }
             : {}),
-          sampleSize: 0, // No local data yet
-          updatedAt: Timestamp.now(),
+        };
+        partnerData.billingCycle = {
+          learned: [{ ...seedFields, sampleSize: 0, learnedAt: Timestamp.now() }],
+          effective: [{ source: "learned", ...seedFields }],
         };
       }
     }

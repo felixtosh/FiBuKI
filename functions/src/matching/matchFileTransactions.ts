@@ -31,9 +31,15 @@ import {
   TransactionMatchScore,
   TransactionMatchSource,
   ScoringOptions,
+  buildScoringOptions,
+  toFileMatchingData,
+  toTransactionData,
+  derivePartnerAliases,
+  deriveScoringWeights,
 } from "./transactionScoring";
 import { readDismissedTransactionIds } from "./dismissedTransactions";
 import { isFileRejected } from "./rejectedFiles";
+import { ResolvedEffectiveCycle } from "./billingCycle";
 import { AutomationMeta } from "../automation/types";
 import { checkAIBudget } from "../billing/checkAIBudget";
 import { isPassiveMode } from "../utils/checkAutomationMode";
@@ -456,41 +462,29 @@ export async function runTransactionMatching(
     return;
   }
 
-  // Fetch partner aliases, billing cycle, and scoring weights if file has an assigned partner
+  // Fetch partner aliases, billing cycle bands, and scoring weights if file has an assigned partner.
+  // Band selection happens per candidate transaction below (each charge can belong to a
+  // different recurrence band, e.g. a weekly API charge vs. a monthly subscription), not once
+  // here — a single upfront band would silently mis-score every candidate outside band 0.
   let partnerAliases: string[] = [];
-  let scoringOptions: ScoringOptions | undefined;
+  let effectiveCycles: ResolvedEffectiveCycle[] = [];
+  let baseWeights: ScoringOptions["weights"] | undefined;
   if (fileData.partnerId) {
     try {
       const partnerDoc = await db.collection("partners").doc(fileData.partnerId).get();
       if (partnerDoc.exists) {
         const partnerData = partnerDoc.data()!;
-        // Collect partner name + all aliases for matching
-        partnerAliases = [
-          partnerData.name,
-          ...(partnerData.aliases || []),
-        ].filter(Boolean);
+        partnerAliases = derivePartnerAliases(partnerData);
         console.log(`[TxMatch] Partner aliases: [${partnerAliases.map(a => `"${a}"`).join(", ")}]`);
 
-        // Read billing cycle and scoring weights for enhanced scoring
-        const bc = partnerData.billingCycle;
-        const sw = partnerData.scoringWeights;
-        if (bc || sw) {
-          scoringOptions = {};
-          if (bc) {
-            scoringOptions.billingCycle = {
-              invoiceToTransactionDelay: bc.invoiceToTransactionDelay,
-              delayVariance: bc.delayVariance,
-            };
-            console.log(`[TxMatch] Using billing cycle: delay=${bc.invoiceToTransactionDelay}d ±${bc.delayVariance}d`);
-          }
-          if (sw) {
-            scoringOptions.weights = {
-              amountWeight: sw.amountWeight,
-              dateWeight: sw.dateWeight,
-              partnerWeight: sw.partnerWeight,
-            };
-            console.log(`[TxMatch] Using scoring weights: amt=${sw.amountWeight} date=${sw.dateWeight} partner=${sw.partnerWeight}`);
-          }
+        effectiveCycles = partnerData.billingCycle?.effective ?? [];
+        if (effectiveCycles.length > 0) {
+          console.log(`[TxMatch] Partner has ${effectiveCycles.length} billing-cycle band(s)`);
+        }
+
+        baseWeights = deriveScoringWeights(partnerData);
+        if (baseWeights) {
+          console.log(`[TxMatch] Using scoring weights: amt=${baseWeights.amountWeight} date=${baseWeights.dateWeight} partner=${baseWeights.partnerWeight}`);
         }
       }
     } catch (error) {
@@ -532,39 +526,17 @@ export async function runTransactionMatching(
       `${rejectedCount} rejected this file, ${dismissedCount} dismissed by this file)`
   );
 
-  // Score each transaction
+  // Score each transaction — the billing-cycle band is selected per transaction, since which
+  // recurrence a charge belongs to depends on that transaction's amount, not the file's.
+  const fileMatchingData = toFileMatchingData(fileData);
   const allScores = eligibleTransactions
     .map((doc) => {
       const txData = doc.data();
+      const scoringOptions = buildScoringOptions(effectiveCycles, baseWeights, txData.amount);
+
       return scoreTransaction(
-        {
-          extractedAmount: fileData.extractedAmount,
-          extractedCurrency: fileData.extractedCurrency,
-          extractedDate: fileData.extractedDate,
-          extractedPartner: fileData.extractedPartner,
-          extractedIban: fileData.extractedIban,
-          extractedText: fileData.extractedText,
-          partnerId: fileData.partnerId,
-          precisionSearchHint: fileData.precisionSearchHint,
-          documentType: fileData.documentType,
-        },
-        {
-          id: doc.id,
-          amount: txData.amount,
-          date: txData.date,
-          currency: txData.currency,
-          // Carries the bank-stated original amount for #112.
-          _original: txData._original,
-          name: txData.name,
-          partner: txData.partner,
-          partnerName: txData.partnerName,
-          partnerId: txData.partnerId,
-          partnerIban: txData.partnerIban,
-          reference: txData.reference,
-          // #104: what the target already holds decides whether this file is a
-          // duplicate to suppress or the invoice that upgrades the line.
-          documentationState: txData.documentationState,
-        },
+        fileMatchingData,
+        toTransactionData(doc.id, txData),
         partnerAliases,
         scoringOptions
       );

@@ -270,6 +270,7 @@ export function formatFunctionDisplayName(functionName: string): string {
     deleteUserPartner: "Delete Partner",
     assignPartnerToTransaction: "Assign Partner",
     removePartnerFromTransaction: "Remove Partner",
+    setPartnerBillingCycle: "Set Billing Cycle",
     // Source operations
     createSource: "Create Source",
     updateSource: "Update Source",
