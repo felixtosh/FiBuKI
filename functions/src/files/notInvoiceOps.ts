@@ -44,6 +44,8 @@ export function buildMarkNotInvoiceUpdates(
     extractedRateGroups: null,
     lineItemsUnreconciled: false,
     lineItemsUnreconciledRates: null,
+    vatSourceDowngraded: false,
+    vatFieldsPreserved: false,
     extractedPartner: null,
     extractedVatId: null,
     extractedIban: null,

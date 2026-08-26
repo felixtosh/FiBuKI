@@ -644,6 +644,11 @@ export async function updateFileExtractedFields(
     updates.lineItemsUnreconciled = false;
     updates.lineItemsUnreconciledRates = null;
     updates.extractedRateGroups = null;
+    // Fork #137: the same applies to a VAT downgrade a re-extraction left
+    // behind — a human who has just re-keyed the rows has settled it, and the
+    // marker would otherwise keep the file in the review bucket forever.
+    updates.vatSourceDowngraded = false;
+    updates.vatFieldsPreserved = false;
   }
 
   if (hasLineItems) {
