@@ -20,6 +20,7 @@ const db = getFirestore();
 import { ExtractedEntity, ExtractedLineItem, ExtractedRateGroup } from "../types/extraction";
 import { applyVatDowngradeGuard } from "./vatSourceGuard";
 import { classifyFileRecord, documentTypeFields } from "../documents/adapter";
+import { reviewFileRecordVatRates, vatRateReviewFields } from "../documents/vatRateReview";
 import { classifyDocumentType } from "../documents/classifyDocumentType";
 import { syncDocumentationStateForTransactions } from "../documents/syncDocumentationState";
 
@@ -952,6 +953,9 @@ export async function runExtraction(
         extractedSelfDesignation: null,
         extractedInvoiceNumber: null,
         ...documentTypeFields(classifyDocumentType({ grossTotal: null, isNotInvoice: true })),
+        // Every printed rate was just cleared, so there is nothing left to
+        // review (#203).
+        ...vatRateReviewFields({ ratesOutsideSet: [], needsReview: false }),
         extractedText: "(classification only - not an invoice)",
         extractedFields: [],
         updatedAt: Timestamp.now(),
@@ -1264,10 +1268,21 @@ export async function runExtraction(
   // after the VAT guard, which can keep the PREVIOUS VAT fields and so change
   // the answer. Persisted rather than recomputed at read time, so two readers
   // cannot disagree about the same document (#104).
-  Object.assign(
-    updateData,
-    documentTypeFields(classifyFileRecord({ ...fileData, ...updateData }))
-  );
+  const storedRecord = { ...fileData, ...updateData };
+  Object.assign(updateData, documentTypeFields(classifyFileRecord(storedRecord)));
+
+  // #203: the same pass answers "does this document print a rate Austria does
+  // not have". Reading it off the stored record rather than the raw parse means
+  // the VAT guard above has already decided which figures survive, so the flag
+  // describes the rates the derivation will actually see.
+  const rateReview = reviewFileRecordVatRates(storedRecord);
+  Object.assign(updateData, vatRateReviewFields(rateReview));
+  if (rateReview.needsReview) {
+    console.warn(
+      `[ExtractionCore] ${fileId} prints VAT rate(s) outside the Austrian set: ` +
+      `${rateReview.ratesOutsideSet.join(", ")}. Flagged for review.`
+    );
+  }
   console.log(
     `[+${Date.now() - t0}ms] Document type: ${updateData.documentType} ` +
     `(${(updateData.documentTypeBasis as { reason?: string })?.reason})`

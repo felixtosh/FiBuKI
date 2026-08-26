@@ -18,6 +18,11 @@ import { buildDownloadUrl } from "../utils/buildDownloadUrl";
 import { dayStartUtc, dayEndExclusiveUtc } from "../uva/dateWindow";
 import { buildMarkNotInvoiceUpdates, buildUnmarkNotInvoiceUpdates } from "../files/notInvoiceOps";
 import {
+  buildClearVatNotClaimableUpdates,
+  buildMarkVatNotClaimableUpdates,
+  NonClaimableVatError,
+} from "../files/nonClaimableVatOps";
+import {
   buildExtractionCorrection,
   ExtractionCorrectionError,
   FileExtractionCorrection,
@@ -32,6 +37,7 @@ import {
 import { getStorage } from "firebase-admin/storage";
 import { randomUUID } from "crypto";
 import { classifyFileRecord, documentTypeFields } from "../documents/adapter";
+import { reviewFileRecordVatRates, vatRateReviewFields } from "../documents/vatRateReview";
 import { syncDocumentationStateForTransactions } from "../documents/syncDocumentationState";
 import { TOOL_DEFINITIONS, TOOL_NAMES } from "./definitions";
 import type { ToolName } from "./definitions";
@@ -164,6 +170,10 @@ export async function handleTool(
       return markFileAsNotInvoice(userId, args);
     case "unmark_file_as_not_invoice":
       return unmarkFileAsNotInvoice(userId, args);
+    case "mark_file_vat_not_claimable":
+      return markFileVatNotClaimable(userId, args);
+    case "unmark_file_vat_not_claimable":
+      return unmarkFileVatNotClaimable(userId, args);
     case "update_file_extraction":
       return updateFileExtraction(userId, args);
     case "dismiss_transaction_suggestion":
@@ -573,6 +583,16 @@ export async function listFiles(userId: string, args: Record<string, unknown>) {
     );
   }
 
+  // #203: the review queue for documents printing a rate Austria does not
+  // have. In memory like the filters above, and for the same reason — the flag
+  // is absent on every record written before the detector existed, and
+  // Firestore has no "field missing" predicate.
+  if (args.needsVatRateReview !== undefined) {
+    files = files.filter((f: Record<string, unknown>) =>
+      args.needsVatRateReview ? f.needsVatRateReview === true : f.needsVatRateReview !== true
+    );
+  }
+
   return files;
 }
 
@@ -747,6 +767,10 @@ export async function updateFileExtraction(userId: string, args: Record<string, 
   const corrected = { ...fileSnap.data()!, ...built.updates };
   Object.assign(built.updates, documentTypeFields(classifyFileRecord(corrected)));
 
+  // The rate-review flag is stored the same way and goes stale the same way: a
+  // correction that types 11% in, or types it back out, has to move it (#203).
+  Object.assign(built.updates, vatRateReviewFields(reviewFileRecordVatRates(corrected)));
+
   await fileRef.update(built.updates);
 
   const previousDocumentType = fileSnap.data()?.documentType;
@@ -844,6 +868,79 @@ export async function unmarkFileAsNotInvoice(userId: string, args: Record<string
   });
 
   return { success: true, fileId, isNotInvoice: false };
+}
+
+/**
+ * Record that a document's printed VAT is not deductible Vorsteuer (#203).
+ *
+ * The state transition lives in `files/nonClaimableVatOps` so the rules can be
+ * tested without a database; this owns ownership, the write, and the reply.
+ *
+ * No connection guard, unlike mark_file_as_not_invoice: a connected file is
+ * exactly the case that matters here. The whole point is that the transaction
+ * keeps its receipt and stops claiming the VAT on it.
+ */
+export async function markFileVatNotClaimable(userId: string, args: Record<string, unknown>) {
+  const fileId = args.fileId as string;
+  if (!fileId) {
+    throw new Error("fileId is required");
+  }
+
+  const fileRef = db.collection("files").doc(fileId);
+  const fileSnap = await fileRef.get();
+
+  if (!fileSnap.exists || fileSnap.data()?.userId !== userId) {
+    throw new Error("File not found");
+  }
+
+  let updates: Record<string, unknown>;
+  try {
+    updates = buildMarkVatNotClaimableUpdates(args.reason, args.note);
+  } catch (error) {
+    if (error instanceof NonClaimableVatError) {
+      throw new Error(error.message);
+    }
+    throw error;
+  }
+
+  await fileRef.update(updates);
+
+  console.log(`[markFileVatNotClaimable] Marked file ${fileId} non-claimable`, {
+    userId,
+    reason: updates.vatNotClaimableReason,
+    via: "tools",
+  });
+
+  return {
+    success: true,
+    fileId,
+    vatNotClaimableReason: updates.vatNotClaimableReason,
+    vatNotClaimableNote: updates.vatNotClaimableNote,
+  };
+}
+
+/** Clear the marker. The extracted figures never moved, so nothing is restored. */
+export async function unmarkFileVatNotClaimable(userId: string, args: Record<string, unknown>) {
+  const fileId = args.fileId as string;
+  if (!fileId) {
+    throw new Error("fileId is required");
+  }
+
+  const fileRef = db.collection("files").doc(fileId);
+  const fileSnap = await fileRef.get();
+
+  if (!fileSnap.exists || fileSnap.data()?.userId !== userId) {
+    throw new Error("File not found");
+  }
+
+  await fileRef.update(buildClearVatNotClaimableUpdates());
+
+  console.log(`[unmarkFileVatNotClaimable] Cleared non-claimable marker on ${fileId}`, {
+    userId,
+    via: "tools",
+  });
+
+  return { success: true, fileId, vatNotClaimableReason: null };
 }
 
 /**

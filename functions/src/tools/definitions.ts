@@ -188,6 +188,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       properties: {
         hasConnections: { type: "boolean", description: "true = matched, false = unmatched" },
         hasSuggestions: { type: "boolean", description: "Filter by suggestion availability" },
+        needsVatRateReview: {
+          type: "boolean",
+          description:
+            "true = only files printing a VAT rate Austria does not have (anything outside 0/10/13/20 on the document's date). Each such file reports the offending rates in vatRatesOutsideSet. 11% is Versicherungssteuer, not VAT, and is not deductible — mark those with mark_file_vat_not_claimable.",
+        },
         limit: { type: "number", description: "Max results (default 50)" },
       },
     },
@@ -224,6 +229,39 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         transactionId: { type: "string", description: "The transaction ID" },
       },
       required: ["fileId", "transactionId"],
+    },
+  },
+  {
+    name: "mark_file_vat_not_claimable",
+    description:
+      "Record that the VAT this document prints must not be claimed as Vorsteuer, with the reason. Use for a figure that looks like VAT and is not: 11% on an insurance policy is Versicherungssteuer and insurance is VAT-exempt (insurance-tax), another public charge printed in the VAT column (levy), a 100% discount leaving nothing due (discount-to-zero), or private consumption (private). The UVA derivation then books the document's gross at 0% and lists the excluded VAT under nonClaimableVat instead of putting it on the receipt-chasing list as recoverable. Nothing extracted is touched — the document still says what it says. Reversible with unmark_file_vat_not_claimable.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fileId: { type: "string", description: "The file ID" },
+        reason: {
+          type: "string",
+          enum: ["insurance-tax", "levy", "discount-to-zero", "private"],
+          description: "Why the VAT is not deductible",
+        },
+        note: {
+          type: "string",
+          description: "Free-text detail stored with the reason, max 500 characters",
+        },
+      },
+      required: ["fileId", "reason"],
+    },
+  },
+  {
+    name: "unmark_file_vat_not_claimable",
+    description:
+      "Clear a file's non-claimable VAT marker, so its VAT is deductible again. The extracted figures never changed, so the derivation resumes reading them as printed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fileId: { type: "string", description: "The file ID" },
+      },
+      required: ["fileId"],
     },
   },
   {

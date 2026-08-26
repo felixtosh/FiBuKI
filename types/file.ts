@@ -80,6 +80,16 @@ export interface ExtractedRateGroup {
  */
 export type DocumentType = "invoice" | "receipt" | "other" | "unknown";
 
+/**
+ * Why a VAT-looking figure on a document is not deductible Vorsteuer (#203).
+ * A closed set. See `functions/src/uva/types.ts` for what each one means.
+ */
+export type NonClaimableVatReason =
+  | "insurance-tax"
+  | "levy"
+  | "discount-to-zero"
+  | "private";
+
 /** The § 11 elements the classifier can judge. See the backend module. */
 export type Section11Element =
   | "issue-date"
@@ -305,6 +315,33 @@ export interface TaxFile {
    * could not be carried forward; that file needs a human.
    */
   vatFieldsPreserved?: boolean;
+
+  /**
+   * A human's standing decision that the VAT this document prints is not
+   * deductible Vorsteuer (#203) — 11% Versicherungssteuer on an insurance
+   * policy, a 100% discount leaving nothing due. The reason IS the marker:
+   * typing the rate down to zero produced the same figure and lost the why.
+   *
+   * Duplicated from `functions/src/uva/types.ts` the same way `DocumentType`
+   * is; the backend module is the source of truth for the RULES.
+   */
+  vatNotClaimableReason?: NonClaimableVatReason | null;
+
+  /** Free-text detail stored alongside the reason. */
+  vatNotClaimableNote?: string | null;
+
+  /** When the marker was set. */
+  vatNotClaimableAt?: Timestamp | null;
+
+  /**
+   * The document prints at least one VAT rate that is not an Austrian rate on
+   * its date (#203) — 11% Versicherungssteuer is the case this was built for.
+   * Written by the detector at extraction time, queryable as a review list.
+   */
+  needsVatRateReview?: boolean;
+
+  /** Which rates those are, so the queue reads without opening the PDF. */
+  vatRatesOutsideSet?: number[];
 
   /** AI-extracted partner/company name */
   extractedPartner?: string | null;
@@ -692,6 +729,8 @@ export interface FileExtractionData {
   documentType?: DocumentType;
   documentTypeBasis?: DocumentTypeBasis;
   documentTypeMissingElements?: Section11Element[];
+  needsVatRateReview?: boolean;
+  vatRatesOutsideSet?: number[];
   extractedPartner?: string | null;
   extractedVatId?: string | null;
   extractedIban?: string | null;

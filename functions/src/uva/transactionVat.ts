@@ -21,6 +21,7 @@ import { isSameCurrency } from "../fx/fxPlausibility";
 import type {
   DerivationStep,
   ForeignVatEntry,
+  NonClaimableVatEntry,
   RateGroup,
   UnresolvedReason,
   UvaTransaction,
@@ -53,6 +54,11 @@ export type TransactionVat =
       /** One entry per VAT rate found on the document. */
       groups: RateGroup[];
       foreignVat: ForeignVatEntry[];
+      /**
+       * Documents whose VAT was excluded as non-claimable (#203). Their gross
+       * is in `groups` at rate 0, so the booking still covers the payment.
+       */
+      nonClaimableVat: NonClaimableVatEntry[];
     }
   | { kind: "no-vat"; why: NoVatReason }
   | {
@@ -112,6 +118,7 @@ export function deriveTransactionVat(tx: UvaTransaction): TransactionVat {
       step: derivation.step,
       groups: derivation.groups,
       foreignVat: derivation.foreignVat,
+      nonClaimableVat: derivation.nonClaimableVat,
     };
   }
 
@@ -139,6 +146,7 @@ function defaultedIncomeAt20(bank: number, foreignVat: ForeignVatEntry[]): Trans
     step: "defaulted-20",
     groups: [{ rate: 20, net, vat: bank - net, gross: bank }],
     foreignVat,
+    nonClaimableVat: [],
   };
 }
 

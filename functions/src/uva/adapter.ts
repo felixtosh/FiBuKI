@@ -9,6 +9,7 @@
  */
 
 import type {
+  NonClaimableVatReason,
   UvaFile,
   UvaForeignRegime,
   UvaTransaction,
@@ -52,6 +53,12 @@ export interface FileRecord {
   lineItemsUnreconciledRates?: number[] | null;
   extractedVatId?: string | null;
   extractedIssuer?: { vatId?: string | null } | null;
+  /**
+   * A human's standing decision that this document's VAT is not deductible
+   * (#203). The reason IS the marker — there is no separate boolean, so the
+   * fact and the why cannot drift apart.
+   */
+  vatNotClaimableReason?: NonClaimableVatReason | null;
 }
 
 export interface CategoryRecord {
@@ -108,6 +115,7 @@ export function toUvaFile(f: FileRecord): UvaFile {
     lineItemsUnreconciled: f.lineItemsUnreconciled ?? false,
     lineItemsUnreconciledRates: f.lineItemsUnreconciledRates ?? null,
     supplierVatId: f.extractedIssuer?.vatId ?? f.extractedVatId ?? null,
+    nonClaimableVatReason: f.vatNotClaimableReason ?? null,
   };
 }
 
