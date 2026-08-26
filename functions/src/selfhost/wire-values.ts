@@ -65,17 +65,25 @@ export function decodeWire(value: unknown, allowSentinels: boolean): unknown {
   const anyTag = Object.keys(value).find((k) => k.startsWith("__"));
   if (anyTag) throw new WireError(`unknown wire tag "${anyTag}"`);
 
-  const out: Record<string, unknown> = {};
+  // Accumulated in a Map, never by assigning a computed key to an object. The
+  // keys arrive from the client, so `out[k] = ...` is a property write with an
+  // attacker-controlled name — js/remote-property-injection, alert #284. The
+  // guard below does NOT satisfy that rule (this file used to claim it did,
+  // and the alert stayed open on main as the evidence). What satisfies it is
+  // removing the sink: a Map has no prototype to pollute, and
+  // Object.fromEntries rebuilds the plain object by DEFINING own data
+  // properties, so no hardening is lost.
+  const out = new Map<string, unknown>();
   for (const [k, v] of Object.entries(value)) {
     // "__proto__" is already dead (the "__" tag check above); refuse the
-    // rest of the prototype-polluting trio just as loudly. Literal
-    // comparisons on purpose — the guard shape CodeQL recognizes.
+    // rest of the prototype-polluting trio just as loudly. Kept because it
+    // decides that such a payload is REFUSED, which callers depend on.
     if (k === "__proto__" || k === "constructor" || k === "prototype") {
       throw new WireError(`unsafe field name "${k}"`);
     }
-    out[k] = decodeWire(v, allowSentinels);
+    out.set(k, decodeWire(v, allowSentinels));
   }
-  return out;
+  return Object.fromEntries(out);
 }
 
 /** Encode shim values into wire JSON (Timestamps tagged, undefined dropped). */

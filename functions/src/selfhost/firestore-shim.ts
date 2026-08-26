@@ -469,39 +469,102 @@ function throwUnsafeSegment(seg: string, dotPath: string): never {
   );
 }
 
-function deepSet(obj: Record<string, unknown>, dotPath: string, value: unknown): void {
-  const segs = dotPath.split(".");
-  let cur = obj;
-  for (let i = 0; i < segs.length - 1; i++) {
-    const seg = segs[i];
+/** Guard every segment of a dot-path before any of them is used. */
+function assertSafeSegments(segs: string[], dotPath: string): void {
+  for (const seg of segs) {
+    // Literal comparisons on purpose — these are the sink guards, and they
+    // decide that the update is REFUSED rather than silently reshaped.
     if (seg === "__proto__" || seg === "constructor" || seg === "prototype") {
       throwUnsafeSegment(seg, dotPath);
     }
-    if (!cur[seg] || typeof cur[seg] !== "object" || Array.isArray(cur[seg])) cur[seg] = {};
-    cur = cur[seg] as Record<string, unknown>;
   }
-  const last = segs[segs.length - 1];
-  if (last === "__proto__" || last === "constructor" || last === "prototype") {
-    throwUnsafeSegment(last, dotPath);
-  }
-  cur[last] = value;
 }
 
-function deepDelete(obj: Record<string, unknown>, dotPath: string): void {
+/**
+ * Only a container we are willing to rebuild. A Timestamp or a Date is a leaf
+ * value, not a map: writing "at.child" onto one REPLACES it, which is what
+ * Firestore does with a dot-path through a non-map field. (The previous
+ * in-place walk wrote a stray property onto the Timestamp instance instead,
+ * where encodeValue then dropped it — the update silently did nothing.)
+ */
+function isRebuildableMap(v: unknown): v is Record<string, unknown> {
+  return (
+    typeof v === "object" &&
+    v !== null &&
+    !Array.isArray(v) &&
+    !isTimestampLike(v) &&
+    !(v instanceof Date)
+  );
+}
+
+/**
+ * Set a dot-path, rebuilding each level on the way out instead of assigning
+ * into the level in place. `node[seg] = ...` writes a property whose name comes
+ * from caller data, which is the shape js/remote-property-injection flags
+ * (alerts #279/#280). A Map has no prototype to pollute and no property to
+ * shadow, so the sink is gone rather than guarded; `Object.fromEntries`
+ * rebuilds the plain object the rest of the shim expects, and DEFINES own data
+ * properties, so even a key called "__proto__" would land as ordinary data.
+ *
+ * Untouched branches keep their identity — only the containers along `segs`
+ * are rebuilt, and their values (Timestamps included) carry over by reference.
+ */
+function setIn(
+  node: Record<string, unknown>,
+  segs: string[],
+  i: number,
+  value: unknown,
+): Record<string, unknown> {
+  const seg = segs[i];
+  const next = new Map(Object.entries(node));
+  if (i === segs.length - 1) {
+    next.set(seg, value);
+  } else {
+    const child = node[seg];
+    next.set(seg, setIn(isRebuildableMap(child) ? child : {}, segs, i + 1, value));
+  }
+  return Object.fromEntries(next);
+}
+
+function deepSet(
+  obj: Record<string, unknown>,
+  dotPath: string,
+  value: unknown,
+): Record<string, unknown> {
   const segs = dotPath.split(".");
-  let cur: Record<string, unknown> | undefined = obj;
-  for (let i = 0; i < segs.length - 1 && cur; i++) {
-    const seg = segs[i];
-    if (seg === "__proto__" || seg === "constructor" || seg === "prototype") {
-      throwUnsafeSegment(seg, dotPath);
-    }
-    cur = cur[seg] as Record<string, unknown> | undefined;
+  assertSafeSegments(segs, dotPath);
+  return setIn(obj, segs, 0, value);
+}
+
+/** Rebuild-on-the-way-out delete, for the same reason as setIn (alert #281). */
+function deleteIn(
+  node: Record<string, unknown>,
+  segs: string[],
+  i: number,
+): Record<string, unknown> {
+  const seg = segs[i];
+  if (i === segs.length - 1) {
+    if (!Object.prototype.hasOwnProperty.call(node, seg)) return node;
+    const next = new Map(Object.entries(node));
+    next.delete(seg);
+    return Object.fromEntries(next);
   }
-  const last = segs[segs.length - 1];
-  if (last === "__proto__" || last === "constructor" || last === "prototype") {
-    throwUnsafeSegment(last, dotPath);
-  }
-  if (cur && typeof cur === "object") delete cur[last];
+  const child = node[seg];
+  // Nothing map-shaped under this segment: nothing to delete. Note this also
+  // covers an ARRAY intermediate ("tags.0"), which the old in-place walk
+  // descended into, leaving a hole that stored as [null, ...]. Firestore does
+  // not address array elements by dot-path at all, so a no-op is the safer of
+  // the two wrong answers — and it is pinned by a test.
+  if (!isRebuildableMap(child)) return node;
+  const next = new Map(Object.entries(node));
+  next.set(seg, deleteIn(child, segs, i + 1));
+  return Object.fromEntries(next);
+}
+
+function deepDelete(obj: Record<string, unknown>, dotPath: string): Record<string, unknown> {
+  const segs = dotPath.split(".");
+  assertSafeSegments(segs, dotPath);
+  return deleteIn(obj, segs, 0);
 }
 
 /**
@@ -541,13 +604,15 @@ function applyUpdate(
   updates: Record<string, unknown>,
 ): Record<string, unknown> {
   const result = JSON.parse(JSON.stringify(encodeValue(existing)));
-  const decoded = decodeValue(result) as Record<string, unknown>; // deep clone preserving Timestamps
+  // deep clone preserving Timestamps; reassigned as the dot-path helpers
+  // rebuild the containers they touch instead of mutating them in place.
+  let decoded = decodeValue(result) as Record<string, unknown>;
   for (const [key, value] of Object.entries(updates)) {
     const kind = sentinelKind(value);
     if (kind === "serverTimestamp") {
-      deepSet(decoded, key, Timestamp.now());
+      decoded = deepSet(decoded, key, Timestamp.now());
     } else if (kind === "delete") {
-      deepDelete(decoded, key);
+      decoded = deepDelete(decoded, key);
     } else if (kind === "arrayUnion") {
       const cur = deepGet(decoded, key);
       const arr = Array.isArray(cur) ? [...cur] : [];
@@ -556,23 +621,23 @@ function applyUpdate(
           arr.push(el);
         }
       }
-      deepSet(decoded, key, arr);
+      decoded = deepSet(decoded, key, arr);
     } else if (kind === "arrayRemove") {
       const cur = deepGet(decoded, key);
       const removals = sentinelElements(value).map((el) => JSON.stringify(encodeValue(el)));
       const arr = (Array.isArray(cur) ? cur : []).filter(
         (x) => !removals.includes(JSON.stringify(encodeValue(x))),
       );
-      deepSet(decoded, key, arr);
+      decoded = deepSet(decoded, key, arr);
     } else if (kind === "increment") {
       const cur = deepGet(decoded, key);
-      deepSet(decoded, key, (typeof cur === "number" ? cur : 0) + sentinelOperand(value));
+      decoded = deepSet(decoded, key, (typeof cur === "number" ? cur : 0) + sentinelOperand(value));
     } else if (value === undefined) {
       // Unreachable from update()/set() — assertNoUndefined throws first.
       // Kept as a safety net for internal callers (e.g. sentinel-stripped
       // merge payloads).
     } else {
-      deepSet(decoded, key, applySentinelsInPlace(value));
+      decoded = deepSet(decoded, key, applySentinelsInPlace(value));
     }
   }
   return decoded;
@@ -605,14 +670,20 @@ function applySentinelsInPlace(value: unknown): unknown {
     );
   }
   if (value && typeof value === "object" && !isTimestampLike(value) && !(value instanceof Date)) {
-    const out: Record<string, unknown> = {};
+    // Accumulated in a Map for the same reason as encodeValue above: the keys
+    // come from caller data, so `out[k] = ...` is a property write with an
+    // attacker-influenced name (js/remote-property-injection, alert #282). A
+    // Map has no prototype to pollute; Object.fromEntries rebuilds the plain
+    // object callers expect, defining own data properties only.
+    const out = new Map<string, unknown>();
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      // Sink guard (writes reject these upfront; literal comparisons on purpose)
+      // Sink guard (writes reject these upfront; literal comparisons on purpose).
+      // Load-bearing for behaviour, not for safety: it DROPS these keys.
       if (k === "__proto__" || k === "constructor" || k === "prototype") continue;
       const applied = applySentinelsInPlace(v);
-      if (applied !== undefined) out[k] = applied;
+      if (applied !== undefined) out.set(k, applied);
     }
-    return out;
+    return Object.fromEntries(out);
   }
   return value;
 }

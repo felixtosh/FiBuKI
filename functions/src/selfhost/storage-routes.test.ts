@@ -15,7 +15,7 @@ import express from "express";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { createStorageRoutes } from "./storage-routes";
-import { _resetStorageForTests } from "./storage-shim";
+import { _resetStorageForTests, getStorage as adminStorage } from "./storage-shim";
 import {
   __configureStorageClient,
   getStorage,
@@ -72,6 +72,30 @@ describe("storage-routes + storage-client", () => {
     await uploadBytes(u8Ref, u8, { customMetadata: { kind: "test" } });
     const gotU8 = new Uint8Array(await getBytes(u8Ref));
     expect(gotU8).toEqual(u8);
+  });
+
+  it("custom metadata reaches the storage SDK as a plain object, and a polluting key is refused", async () => {
+    const storage = getStorage();
+
+    const okRef = ref(storage, "receipts/u1/meta.bin");
+    await uploadBytes(okRef, new Uint8Array([1]), {
+      customMetadata: { kind: "receipt", "with.dot": "1" },
+    });
+    // Read back through the server-side shim: the route hands `customMetadata`
+    // to the SDK, so it must arrive as an ordinary object with own string
+    // properties, not a Map and not something with a mangled prototype.
+    const [meta] = await adminStorage().bucket().file("receipts/u1/meta.bin").getMetadata();
+    expect(meta.metadata).toEqual({ kind: "receipt", "with.dot": "1" });
+
+    // The literal guard is load-bearing behaviour: the upload is REFUSED, not
+    // silently stripped of the key.
+    const badRef = ref(storage, "receipts/u1/bad.bin");
+    await expect(
+      uploadBytes(badRef, new Uint8Array([1]), {
+        customMetadata: JSON.parse('{"__proto__": "x"}') as Record<string, string>,
+      }),
+    ).rejects.toThrow(/unsafe custom metadata key/);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });
 
   it("getDownloadURL returns a TOKEN-FREE /__storage/download/... URL, streamable with a bearer header", async () => {
