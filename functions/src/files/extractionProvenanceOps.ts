@@ -40,6 +40,12 @@ export const CORRECTABLE_FIELDS = [
   "vatPercent",
   "date",
   "lineItems",
+  /**
+   * #233. Not an extracted figure but a read of the document, and it belongs
+   * here for the same reason the figures do: a person who sets it by hand must
+   * not have a re-extraction quietly put it back.
+   */
+  "invoiceDirection",
 ] as const;
 
 export type CorrectableField = (typeof CORRECTABLE_FIELDS)[number];

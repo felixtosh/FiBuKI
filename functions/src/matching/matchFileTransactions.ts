@@ -387,6 +387,24 @@ export async function runTransactionMatching(
     return;
   }
 
+  // #229: a document addressed to somebody else is a valid invoice and not
+  // this user's. Suggesting it against their bank lines is the step that puts
+  // its VAT into the UVA as recoverable, so the suggestion is never offered —
+  // a person who means it can still connect the file by hand, and confirming
+  // the recipient (`recipientConfirmedAsUser`) reopens matching outright.
+  if (fileData.foreignRecipient === true) {
+    console.log(
+      `[TxMatch] File ${fileId} names a recipient who is not the user, skipping transaction matching`
+    );
+    await db.collection("files").doc(fileId).update({
+      transactionMatchComplete: true,
+      transactionMatchedAt: Timestamp.now(),
+      transactionSuggestions: [],
+      updatedAt: Timestamp.now(),
+    });
+    return;
+  }
+
   const userId = fileData.userId;
   const t0 = Date.now();
 

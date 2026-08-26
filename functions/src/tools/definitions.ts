@@ -188,10 +188,20 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       properties: {
         hasConnections: { type: "boolean", description: "true = matched, false = unmatched" },
         hasSuggestions: { type: "boolean", description: "Filter by suggestion availability" },
+        needsDirectionReview: {
+          type: "boolean",
+          description:
+            "true = only files whose invoice direction needs a person. Two ways in: the direction contradicts a transaction the file is linked to (an incoming document on money that left the account, or the reverse), or no direction was ever established. Each such file reports directionReviewReason, directionSuggested and directionConflictTransactionIds. Fix it with update_file_extraction's invoiceDirection.",
+        },
         needsVatRateReview: {
           type: "boolean",
           description:
             "true = only files printing a VAT rate Austria does not have (anything outside 0/10/13/20 on the document's date). Each such file reports the offending rates in vatRatesOutsideSet. 11% is Versicherungssteuer, not VAT, and is not deductible — mark those with mark_file_vat_not_claimable.",
+        },
+        foreignRecipient: {
+          type: "boolean",
+          description:
+            "true = only files whose document names a Leistungsempfänger who is not the user. Such a document can satisfy § 11 completely and still carry no Vorsteuer for this user (§ 12 Abs 1 Z 1): the supply was rendered to somebody else. Their VAT is excluded from the UVA and they are not offered as transaction matches. If the recipient IS the user under a different name, confirm_file_recipient_is_user lifts it.",
         },
         handCorrected: {
           type: "boolean",
@@ -234,6 +244,26 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         transactionId: { type: "string", description: "The transaction ID" },
       },
       required: ["fileId", "transactionId"],
+    },
+  },
+  {
+    name: "confirm_file_recipient_is_user",
+    description:
+      "Rule that the recipient printed on this document is the user, despite the identity comparison saying otherwise — a maiden name, a c/o address, an employer's name on a folio, OCR noise. Lifts the foreignRecipient block: the file reclassifies, its VAT becomes claimable again and transaction matching is re-run for it. Nothing extracted is touched. Reversible with unconfirm_file_recipient_is_user.",
+    inputSchema: {
+      type: "object",
+      properties: { fileId: { type: "string", description: "The file ID" } },
+      required: ["fileId"],
+    },
+  },
+  {
+    name: "unconfirm_file_recipient_is_user",
+    description:
+      "Withdraw a recipient confirmation, so the identity comparison's own verdict stands again. A document that names somebody else goes back to being excluded from Vorsteuer and from transaction matching.",
+    inputSchema: {
+      type: "object",
+      properties: { fileId: { type: "string", description: "The file ID" } },
+      required: ["fileId"],
     },
   },
   {
@@ -359,6 +389,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
             },
             required: ["amount"],
           },
+        },
+        invoiceDirection: {
+          type: ["string", "null"],
+          enum: ["incoming", "outgoing", "unknown", null],
+          description:
+            "Which way the document points: incoming is a purchase, outgoing a sale. Setting it clears any direction-review flag on the file. null stores unknown. Direction is otherwise decided by comparing the document's parties against the user's identity data, so a document those data cannot place stays unknown until it is set here — and an unknown direction renders as a positive figure, indistinguishable from income.",
         },
       },
       required: ["fileId"],

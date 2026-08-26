@@ -6,6 +6,10 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { cancelPartnerWorkersForFile } from "../utils/cancelWorkers";
 import { ExtractedLineItem } from "../types/extraction";
+import { classifyFileRecord, documentTypeFields } from "../documents/adapter";
+import { computeDirectionReviewFields } from "../documents/syncDirectionReview";
+import { syncDocumentationStateForTransactions } from "../documents/syncDocumentationState";
+import { buildCorrectionProvenance } from "./extractionProvenanceOps";
 
 interface UpdateFileRequest {
   fileId: string;
@@ -211,9 +215,43 @@ export const updateFileCallable = createCallable<
       }
     }
 
+    // #233: the direction is a read of the document, and until now setting it
+    // through this callable left everything downstream stale — the § 11
+    // classification (which asks whether the user issued the document), the
+    // direction review flags, and the provenance a re-extraction reads before
+    // it overwrites a person's work.
+    if (data.invoiceDirection !== undefined) {
+      // Null stores `unknown` rather than removing the field: the review rule
+      // reads an absent direction and an explicit unknown identically.
+      updateData.invoiceDirection = data.invoiceDirection ?? "unknown";
+
+      // #184: a hand-set direction is a correction like any other, so a later
+      // re-extraction has to refuse the file rather than quietly undo it.
+      Object.assign(
+        updateData,
+        buildCorrectionProvenance(fileSnap.data(), ["invoiceDirection"])
+      );
+
+      const next = { ...fileSnap.data()!, ...updateData };
+      Object.assign(updateData, documentTypeFields(classifyFileRecord(next)));
+      Object.assign(updateData, await computeDirectionReviewFields(ctx.db, next));
+    }
+
     updateData.updatedAt = FieldValue.serverTimestamp();
 
     await fileRef.update(updateData);
+
+    // A file's classification changing is invisible to onTransactionUpdate —
+    // nothing on the transaction document moved — so the propagation happens
+    // here, through the same derivation the trigger uses (#104).
+    const connectedTransactionIds = (fileSnap.data()?.transactionIds as string[] | undefined) ?? [];
+    if (
+      updateData.documentType !== undefined &&
+      updateData.documentType !== fileSnap.data()?.documentType &&
+      connectedTransactionIds.length > 0
+    ) {
+      await syncDocumentationStateForTransactions(ctx.db, connectedTransactionIds);
+    }
 
     console.log(`[updateFile] Updated file ${fileId}`, {
       userId: ctx.userId,

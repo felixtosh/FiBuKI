@@ -861,6 +861,16 @@ export const listFilesTool = tool(
         hasTransaction: (data.transactionIds || []).length > 0,
         extractionComplete: data.extractionComplete || false,
         isNotInvoice: data.isNotInvoice || false,
+        // #233: the sign above is derived from the direction, and `unknown`
+        // produces a POSITIVE figure — which is what income looks like. The
+        // direction and its review flag ride along so a reader can tell a
+        // document that was placed from one that never was, instead of
+        // reading the sign as a fact.
+        invoiceDirection: data.invoiceDirection || "unknown",
+        needsDirectionReview: data.needsDirectionReview === true,
+        // #229: this document names somebody else as the Leistungsempfänger,
+        // so its VAT is not this user's Vorsteuer however good the invoice is.
+        foreignRecipient: data.foreignRecipient === true,
         uploadedAt: data.uploadedAt?.toDate?.()?.toISOString(),
       };
     });
@@ -984,6 +994,12 @@ export const getFileTool = tool(
       extractedIban: data.extractedIban || null,
       extractedInvoiceNumber: data.extractedInvoiceNumber || null,
       invoiceDirection: data.invoiceDirection || null,
+      // #233 / #229: the two facts that decide what this document is worth to
+      // this user, next to the figures rather than behind them.
+      needsDirectionReview: data.needsDirectionReview === true,
+      directionReviewReason: data.directionReviewReason || null,
+      directionSuggested: data.directionSuggested || null,
+      foreignRecipient: data.foreignRecipient === true,
       // Status
       extractionComplete: data.extractionComplete || false,
       isNotInvoice: data.isNotInvoice || false,

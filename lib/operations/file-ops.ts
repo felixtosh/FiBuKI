@@ -31,6 +31,7 @@ import {
   learnFileSourcePattern,
 } from "./partner-ops";
 import { OperationsContext } from "./types";
+import { callFunction } from "@/lib/firebase/callable";
 
 const PARTNERS_COLLECTION = "partners";
 
@@ -423,23 +424,25 @@ export async function updateFile(
 }
 
 /**
- * Update the invoice direction for a file
+ * Update the invoice direction for a file (#233).
+ *
+ * Through the callable rather than straight to Firestore, because setting the
+ * direction is not just a field write: it decides whether the document counts
+ * as one the user issued, which moves the § 11 classification, and it can
+ * resolve or create a disagreement with the transactions the file is attached
+ * to. It also has to leave a provenance mark, so a later re-extraction refuses
+ * the file instead of quietly undoing the person's ruling. All of that is
+ * domain logic, and the server already owns it.
  */
 export async function updateFileDirection(
   ctx: OperationsContext,
   fileId: string,
   direction: "incoming" | "outgoing" | "unknown"
 ): Promise<void> {
-  const existing = await getFile(ctx, fileId);
-  if (!existing) {
-    throw new Error(`File ${fileId} not found or access denied`);
-  }
-
-  const docRef = doc(ctx.db, FILES_COLLECTION, fileId);
-  await updateDoc(docRef, {
-    invoiceDirection: direction,
-    updatedAt: Timestamp.now(),
-  });
+  await callFunction<
+    { fileId: string; data: { invoiceDirection: "incoming" | "outgoing" | "unknown" } },
+    { success: boolean }
+  >("updateFile", { fileId, data: { invoiceDirection: direction } });
 }
 
 /**

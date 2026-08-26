@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  describeInvoiceDirection,
+  describeDirectionReview,
+  describeForeignRecipient,
   describeDocumentType,
   describeDocumentationState,
   describeDocumentTypeBasis,
@@ -286,4 +289,70 @@ test("describeDocumentationState: an invoiced transaction reads in the document 
     describeDocumentationState("invoice").label,
     describeDocumentType("invoice").label,
   );
+});
+
+test("describeInvoiceDirection: an unplaced document is unsigned, not income (#233)", () => {
+  for (const value of [undefined, null, "unknown", "sideways"]) {
+    const presentation = describeInvoiceDirection(value);
+    assert.equal(presentation.direction, "unknown");
+    assert.equal(presentation.sign, "unsigned");
+    assert.equal(presentation.tone, "unset");
+  }
+
+  assert.equal(describeInvoiceDirection("incoming").sign, "negative");
+  assert.equal(describeInvoiceDirection("outgoing").sign, "positive");
+});
+
+test("describeDirectionReview: nothing to show for a file that is not flagged", () => {
+  assert.equal(describeDirectionReview(null), null);
+  assert.equal(describeDirectionReview({}), null);
+  assert.equal(describeDirectionReview({ needsDirectionReview: false }), null);
+});
+
+test("describeDirectionReview: a conflict reads as a finding and names what the money says", () => {
+  const review = describeDirectionReview({
+    needsDirectionReview: true,
+    directionReviewReason: "conflict",
+    directionSuggested: "incoming",
+  });
+
+  assert.equal(review.reason, "conflict");
+  assert.equal(review.tone, "warning");
+  assert.equal(review.suggestedDirection, "incoming");
+  assert.match(review.suggestion, /Eingangsrechnung/);
+});
+
+test("describeDirectionReview: an unestablished direction is not a finding against the document", () => {
+  const review = describeDirectionReview({
+    needsDirectionReview: true,
+    directionReviewReason: "unknown-direction",
+    directionSuggested: null,
+  });
+
+  assert.equal(review.tone, "unset");
+  assert.equal(review.suggestion, null);
+});
+
+test("describeForeignRecipient: only speaks when the document is somebody else's (#229)", () => {
+  assert.equal(describeForeignRecipient(false), null);
+  assert.equal(describeForeignRecipient(undefined), null);
+
+  const chip = describeForeignRecipient(true);
+  assert.equal(chip.tone, "warning");
+  assert.match(chip.text, /§ 12/);
+});
+
+test("describeDocumentTypeBasis: a third-party recipient is stated even when it is not the verdict", () => {
+  const lines = describeDocumentTypeBasis(
+    basis({ reason: "receipt-designation", recipientIdentity: "third-party" }),
+    "receipt",
+  );
+
+  assert.ok(lines.some((line) => line.id === "recipient"));
+});
+
+test("describeDocumentTypeBasis: says nothing about a recipient it could not place", () => {
+  const lines = describeDocumentTypeBasis(basis({ recipientIdentity: "unknown" }), "invoice");
+
+  assert.equal(lines.some((line) => line.id === "recipient"), false);
 });

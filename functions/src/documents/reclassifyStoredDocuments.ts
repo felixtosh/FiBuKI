@@ -26,6 +26,14 @@
  * `matchFileTransactions` gate on the extraction and partner-match flags, none
  * of which this touches, so a swept corpus does not re-run matching.
  *
+ * It reads `recipientIdentityMatch` off the record like any other stored fact
+ * and never recomputes it (#229): the comparison needs the user's identity
+ * entities, which this sweep does not load, and guessing here would be the one
+ * way a sweep COULD disagree with an extraction. A corpus written before #229
+ * therefore classifies `unknown` on that axis, which demotes nothing. The
+ * backfill for it is the identity sweep — `onUserDataUpdate` recomputes the
+ * verdict and the classification together for every file the user owns.
+ *
  * Two things it deliberately does not do:
  *  - it never touches an extraction field. Only the three classification
  *    fields are written, so a hand correction (#184) cannot be destroyed and
@@ -120,6 +128,7 @@ function emptyReasonCounts(): Record<DocumentTypeReason, number> {
     "no-vat-no-invoice-identity": 0,
     "missing-decisive-elements": 0,
     "own-outgoing-document": 0,
+    "foreign-recipient": 0,
     "legacy-record-undecidable": 0,
   };
 }

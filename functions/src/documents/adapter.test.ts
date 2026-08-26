@@ -99,6 +99,7 @@ describe("documentTypeFields", () => {
       "documentType",
       "documentTypeBasis",
       "documentTypeMissingElements",
+      "foreignRecipient",
     ]);
     for (const value of Object.values(fields)) expect(value).not.toBeUndefined();
     for (const value of Object.values(fields.documentTypeBasis as Record<string, unknown>)) {
@@ -281,5 +282,88 @@ describe("toDocumentFacts — outgoing detection", () => {
     expect(toDocumentFacts({ matchedUserAccount: "recipient" }).isOutgoing).toBe(false);
     expect(toDocumentFacts({ invoiceDirection: "unknown" }).isOutgoing).toBe(false);
     expect(toDocumentFacts({}).isOutgoing).toBe(false);
+  });
+});
+
+describe("toDocumentFacts — whose invoice this is (#229)", () => {
+  it("reads the recipient verdict the counterparty matcher stored", () => {
+    expect(toDocumentFacts({ recipientIdentityMatch: "third-party" }).recipientIdentity).toBe(
+      "third-party"
+    );
+    expect(toDocumentFacts({ recipientIdentityMatch: "user" }).recipientIdentity).toBe("user");
+  });
+
+  it("says unknown on a record written before the verdict existed", () => {
+    // The whole corpus is in this state until re-extraction or the next
+    // identity change sweeps it, and none of it may be demoted meanwhile.
+    expect(toDocumentFacts({}).recipientIdentity).toBe("unknown");
+    expect(toDocumentFacts({ recipientIdentityMatch: "nonsense" }).recipientIdentity).toBe(
+      "unknown"
+    );
+  });
+
+  it("lets a human overrule the verdict — maiden names, c/o addresses, OCR noise", () => {
+    const overridden = toDocumentFacts({
+      recipientIdentityMatch: "third-party",
+      recipientConfirmedAsUser: true,
+    });
+
+    expect(overridden.recipientIdentity).toBe("user");
+  });
+});
+
+describe("documentTypeFields — the foreign-recipient flag (#229)", () => {
+  const thirdParty = {
+    extractedAmount: 48000,
+    extractedVatPercent: 20,
+    extractedLineItems: [{ description: "Monitor", vatPercent: 20 }],
+    extractedIssuer: { name: "Fernhandel S.à r.l.", address: "L-2338", vatId: "LU12345678" },
+    extractedRecipient: { name: "Maria Musterfrau", address: "Musterweg 4, 4020 Linz" },
+    extractedDate: "2026-05-14",
+    extractedSelfDesignation: "Rechnung",
+    extractedInvoiceNumber: "2026-0771",
+    recipientIdentityMatch: "third-party",
+  };
+
+  it("flags the document the § 12 deduction does not reach", () => {
+    const fields = documentTypeFields(classifyFileRecord(thirdParty));
+
+    expect(fields.documentType).toBe("invoice");
+    expect(fields.foreignRecipient).toBe(true);
+  });
+
+  it("keeps the flag on a document that also fails § 11", () => {
+    // The type stops being `invoice`; whose supply it was does not change.
+    const fields = documentTypeFields(
+      classifyFileRecord({
+        ...thirdParty,
+        extractedVatPercent: null,
+        extractedLineItems: [{ description: "Monitor" }],
+        extractedIssuer: { name: "Fernhandel S.à r.l.", address: "L-2338" },
+        extractedInvoiceNumber: null,
+        extractedSelfDesignation: "Quittung",
+      })
+    );
+
+    expect(fields.documentType).toBe("receipt");
+    expect(fields.foreignRecipient).toBe(true);
+  });
+
+  it("leaves every other document unflagged", () => {
+    expect(documentTypeFields(classifyFileRecord({ ...thirdParty, recipientIdentityMatch: "user" }))
+      .foreignRecipient).toBe(false);
+    expect(documentTypeFields(classifyFileRecord({ ...thirdParty, recipientIdentityMatch: null }))
+      .foreignRecipient).toBe(false);
+    expect(documentTypeFields(classifyFileRecord({ extractedAmount: null })).foreignRecipient).toBe(
+      false
+    );
+  });
+
+  it("does not flag the user's own outgoing invoice, which always names somebody else", () => {
+    const fields = documentTypeFields(
+      classifyFileRecord({ ...thirdParty, matchedUserAccount: "issuer" })
+    );
+
+    expect(fields.foreignRecipient).toBe(false);
   });
 });

@@ -143,6 +143,11 @@ const NON_CLAIMABLE_BASIS: Record<NonClaimableVatReason, string> = {
   private:
     "Privately consumed, so not for the business — § 12 Abs 2 UStG denies the " +
     "deduction.",
+  "foreign-recipient":
+    "§ 12 Abs 1 Z 1 deducts the tax on a supply rendered to the claimant's own " +
+    "Unternehmen. This document names a different Leistungsempfänger, so the " +
+    "deduction is theirs and not this user's — however completely the document " +
+    "satisfies § 11.",
 };
 
 const FX_EFFECTIVE_BASIS =

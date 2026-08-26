@@ -25,6 +25,14 @@
 
 import { onDocumentUpdated, onDocumentCreated } from "firebase-functions/v2/firestore";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
+import { classifyFileRecord, documentTypeFields } from "../documents/adapter";
+import { syncDocumentationStateForTransactions } from "../documents/syncDocumentationState";
+import {
+  hasIdentitySignals,
+  hasRecipientEntity,
+  resolveRecipientIdentity,
+  type RecipientIdentity,
+} from "./recipientIdentity";
 
 const db = getFirestore();
 
@@ -88,6 +96,12 @@ interface CounterpartyResult {
   counterparty: ExtractedEntity | null;
   matchedUserAccount: "issuer" | "recipient" | null;
   invoiceDirection: InvoiceDirection;
+  /**
+   * Whether the recipient the document names is the user (#229). Recomputed
+   * here for the same reason the direction is: adding a company or an alias
+   * can turn a document that looked like somebody else's into the user's own.
+   */
+  recipientIdentityMatch: RecipientIdentity;
 }
 
 // === Identity Partner Sync ===
@@ -529,12 +543,25 @@ function determineCounterparty(
   // Check if recipient matches user data
   const recipientMatchesUser = entityMatchesUserData(recipient, userData, sourceIbans);
 
+  // #229: the same comparison, recorded as its own verdict.
+  const recipientIdentityMatch = resolveRecipientIdentity({
+    recipientPresent: hasRecipientEntity(recipient),
+    recipientMatchesUser,
+    hasIdentityData: hasIdentitySignals({
+      names: getAllIdentityNames(userData),
+      vatIds: getAllIdentityVatIds(userData),
+      ibans: getAllIdentityIbans(userData),
+      sourceIbans,
+    }),
+  });
+
   if (issuerMatchesUser && !recipientMatchesUser) {
     // User is the issuer → outgoing invoice → recipient is counterparty
     return {
       counterparty: recipient,
       matchedUserAccount: "issuer",
       invoiceDirection: "outgoing",
+      recipientIdentityMatch,
     };
   }
 
@@ -544,6 +571,7 @@ function determineCounterparty(
       counterparty: issuer,
       matchedUserAccount: "recipient",
       invoiceDirection: "incoming",
+      recipientIdentityMatch,
     };
   }
 
@@ -553,6 +581,7 @@ function determineCounterparty(
       counterparty: recipient,
       matchedUserAccount: "issuer",
       invoiceDirection: "outgoing",
+      recipientIdentityMatch,
     };
   }
 
@@ -561,6 +590,7 @@ function determineCounterparty(
     counterparty: issuer,
     matchedUserAccount: null,
     invoiceDirection: "unknown",
+    recipientIdentityMatch,
   };
 }
 
@@ -628,6 +658,8 @@ export const onUserDataUpdate = onDocumentUpdated(
 
     let updatedCount = 0;
     let skippedCount = 0;
+    /** Transactions whose documentation state a reclassification just moved. */
+    const affectedTransactionIds = new Set<string>();
 
     // Process files in batches
     const batch = db.batch();
@@ -653,10 +685,12 @@ export const onUserDataUpdate = onDocumentUpdated(
       const currentDirection = fileData.invoiceDirection as InvoiceDirection;
       const currentMatchedAccount = fileData.matchedUserAccount as "issuer" | "recipient" | null;
       const currentPartner = fileData.extractedPartner as string | null;
+      const currentRecipientIdentity = fileData.recipientIdentityMatch as RecipientIdentity | undefined;
 
       if (
         result.invoiceDirection === currentDirection &&
         result.matchedUserAccount === currentMatchedAccount &&
+        result.recipientIdentityMatch === currentRecipientIdentity &&
         result.counterparty?.name === currentPartner
       ) {
         skippedCount++;
@@ -667,6 +701,7 @@ export const onUserDataUpdate = onDocumentUpdated(
       const updateData: Record<string, unknown> = {
         invoiceDirection: result.invoiceDirection,
         matchedUserAccount: result.matchedUserAccount,
+        recipientIdentityMatch: result.recipientIdentityMatch,
         updatedAt: Timestamp.now(),
       };
 
@@ -688,6 +723,20 @@ export const onUserDataUpdate = onDocumentUpdated(
         updateData.partnerSuggestions = [];
       }
 
+      // #229 / #104: the § 11 classification is stored, not recomputed at read
+      // time, and both facts this sweep moves feed it — whether the user
+      // issued the document, and whether its recipient is the user. Leaving it
+      // behind would mean a file that has just become somebody else's invoice
+      // keeps saying it is the user's Vorsteuer until it is next extracted.
+      const reclassified = { ...fileData, ...updateData };
+      Object.assign(updateData, documentTypeFields(classifyFileRecord(reclassified)));
+
+      if (fileData.documentType !== updateData.documentType) {
+        for (const transactionId of (fileData.transactionIds as string[] | undefined) ?? []) {
+          affectedTransactionIds.add(transactionId);
+        }
+      }
+
       batch.update(fileDoc.ref, updateData);
       updatedCount++;
       batchCount++;
@@ -702,6 +751,13 @@ export const onUserDataUpdate = onDocumentUpdated(
     // Commit remaining updates
     if (batchCount > 0) {
       await batch.commit();
+    }
+
+    // A file's classification changing is invisible to onTransactionUpdate —
+    // nothing on the transaction document moved — so the propagation happens
+    // here, the same way the extraction path does it (#104).
+    if (affectedTransactionIds.size > 0) {
+      await syncDocumentationStateForTransactions(db, [...affectedTransactionIds]);
     }
 
     console.log(

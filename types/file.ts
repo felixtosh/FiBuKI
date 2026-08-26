@@ -88,7 +88,19 @@ export type NonClaimableVatReason =
   | "insurance-tax"
   | "levy"
   | "discount-to-zero"
-  | "private";
+  | "private"
+  /** Derived, never set by hand: the document is addressed to somebody else (#229). */
+  | "foreign-recipient";
+
+/**
+ * Whether the recipient a document names is the user (#229). See
+ * `functions/src/documents/types.ts` for what each value means; `unknown` is
+ * the answer to every question the comparison could not answer.
+ */
+export type RecipientIdentity = "user" | "third-party" | "unknown";
+
+/** Why a file is on the direction review list (#233). See the backend module. */
+export type DirectionReviewReason = "conflict" | "unknown-direction";
 
 /** The § 11 elements the classifier can judge. See the backend module. */
 export type Section11Element =
@@ -358,6 +370,51 @@ export interface TaxFile {
 
   /** Which rates those are, so the queue reads without opening the PDF. */
   vatRatesOutsideSet?: number[];
+
+  /**
+   * The document names a Leistungsempfänger who is not the user (#229), on a
+   * document the user did not issue. § 11 can be perfectly satisfied and § 12
+   * still not reached: the supply was rendered to somebody else's Unternehmen,
+   * so the VAT is their Vorsteuer. Such a file is kept out of the UVA and out
+   * of transaction matching.
+   *
+   * Written by the § 11 classifier alongside `documentType`.
+   */
+  foreignRecipient?: boolean;
+
+  /**
+   * Whether the recipient is the user, as the identity comparison saw it
+   * (#229). `unknown` on every record written before the rule, and on every
+   * user who has configured no identity data — it demotes nothing.
+   */
+  recipientIdentityMatch?: RecipientIdentity;
+
+  /**
+   * A human's ruling that the recipient IS the user despite the comparison —
+   * a maiden name, a c/o address, OCR noise (#229). Outranks the verdict and
+   * survives re-extraction, because it is a fact about the user rather than
+   * about the page.
+   */
+  recipientConfirmedAsUser?: boolean;
+
+  /** When that ruling was made. */
+  recipientConfirmedAt?: Timestamp | null;
+
+  /**
+   * The invoice direction needs a person (#233): either it contradicts a
+   * transaction this file is linked to, or it was never established at all.
+   * Queryable as a review list, the same shape as `needsVatRateReview`.
+   */
+  needsDirectionReview?: boolean;
+
+  /** Which of the two put it on the list. */
+  directionReviewReason?: DirectionReviewReason | null;
+
+  /** What the linked transactions say the direction should be, when they agree. */
+  directionSuggested?: InvoiceDirection | null;
+
+  /** The linked transactions whose sign contradicts the stored direction. */
+  directionConflictTransactionIds?: string[];
 
   /** AI-extracted partner/company name */
   extractedPartner?: string | null;

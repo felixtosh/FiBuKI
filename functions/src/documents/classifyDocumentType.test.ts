@@ -388,6 +388,7 @@ describe("classifyDocumentType — the basis is inspectable", () => {
       selfDesignation: "Rechnung",
       selfDesignationClass: "invoice",
       zeroVatReason: null,
+      recipientIdentity: "unknown",
       degraded: false,
     });
   });
@@ -590,5 +591,116 @@ describe("classifyDocumentType — a stated zero rate is a Steuersatz, not a gap
 
     expect(result.type).not.toBe("invoice");
     expect(result.missingElements).toContain("supplier-vat-id");
+  });
+});
+
+describe("classifyDocumentType — a recipient who is not the user (#229)", () => {
+  /**
+   * The shape that motivated this: a marketplace invoice, § 11-perfect,
+   * addressed to a client the equipment was shipped to. It classified
+   * `section-11-satisfied` and its VAT was one connection away from the UVA,
+   * because nothing ever asked whose Unternehmen the supply was rendered to.
+   */
+  const thirdParty = standard({
+    supplierName: "Fernhandel S.à r.l.",
+    supplierVatId: "LU12345678",
+    recipientName: "Maria Musterfrau",
+    recipientAddress: "Musterweg 4, 4020 Linz",
+    recipientIdentity: "third-party",
+  });
+
+  it("keeps it an invoice — it IS one — and says why it is not the user's", () => {
+    const result = classifyDocumentType(thirdParty);
+
+    expect(result.type).toBe("invoice");
+    expect(result.basis.reason).toBe("foreign-recipient");
+    expect(result.basis.recipientIdentity).toBe("third-party");
+  });
+
+  it("leaves a document addressed to the user exactly as it was", () => {
+    const mine = classifyDocumentType({ ...thirdParty, recipientIdentity: "user" });
+
+    expect(mine.type).toBe("invoice");
+    expect(mine.basis.reason).toBe("section-11-satisfied");
+    expect(mine.basis.recipientIdentity).toBe("user");
+  });
+
+  it("says nothing when identity could not be compared at all", () => {
+    const undecided = classifyDocumentType({ ...thirdParty, recipientIdentity: undefined });
+
+    expect(undecided.type).toBe("invoice");
+    expect(undecided.basis.reason).toBe("section-11-satisfied");
+    expect(undecided.basis.recipientIdentity).toBe("unknown");
+  });
+
+  it("does not hold a third-party recipient against the user's own outgoing invoice", () => {
+    // Every outgoing invoice names somebody else — that is what makes it outgoing.
+    const issued = classifyDocumentType({
+      ...thirdParty,
+      isOutgoing: true,
+      recipientIdentity: "third-party",
+    });
+
+    expect(issued.type).toBe("invoice");
+    expect(issued.basis.reason).toBe("section-11-satisfied");
+  });
+
+  it("carries the finding on a document that fails § 11 for other reasons too", () => {
+    // The § 12 consequence does not depend on the § 11 verdict, so the fact
+    // has to survive a demotion to receipt rather than be lost with it.
+    const alsoDefective = classifyDocumentType({
+      ...thirdParty,
+      vatPercent: null,
+      lineItems: [{ description: "Monitor" }],
+      supplierVatId: null,
+      invoiceNumber: null,
+      selfDesignation: "Quittung",
+    });
+
+    expect(alsoDefective.type).toBe("receipt");
+    expect(alsoDefective.basis.recipientIdentity).toBe("third-party");
+  });
+
+  it("still prefers the stated zero-VAT regime in the basis it reports for the rate", () => {
+    const reverseCharged = classifyDocumentType({
+      ...thirdParty,
+      vatPercent: null,
+      lineItems: [{ description: "Beratungsleistung" }],
+      text: "Reverse charge: VAT to be accounted for by the recipient",
+    });
+
+    expect(reverseCharged.type).toBe("invoice");
+    expect(reverseCharged.basis.reason).toBe("foreign-recipient");
+    expect(reverseCharged.basis.zeroVatReason).toBe("reverse-charge");
+  });
+
+  it("says nothing about a document that is not a financial document at all", () => {
+    const notFinancial = classifyDocumentType({ ...thirdParty, isNotInvoice: true });
+
+    expect(notFinancial.type).toBe("other");
+    expect(notFinancial.foreignRecipient).toBe(false);
+  });
+
+  it("leaves a Kleinbetragsrechnung alone — it prints no recipient to judge", () => {
+    const small = classifyDocumentType(kleinbetrag({ recipientIdentity: "unknown" }));
+
+    expect(small.type).toBe("invoice");
+    expect(small.basis.reason).toBe("section-11-satisfied");
+  });
+
+  it("flags a Kleinbetragsrechnung that does name somebody else", () => {
+    // Under 400 EUR § 11 requires no recipient, but § 12 does not care about
+    // the threshold: a document addressed to a third party is still not the
+    // user's Vorsteuer.
+    const small = classifyDocumentType(
+      kleinbetrag({
+        recipientName: "Maria Musterfrau",
+        recipientAddress: "Musterweg 4, 4020 Linz",
+        recipientIdentity: "third-party",
+      })
+    );
+
+    expect(small.type).toBe("invoice");
+    expect(small.basis.reason).toBe("foreign-recipient");
   });
 });

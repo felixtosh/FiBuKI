@@ -17,6 +17,19 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  describeDirectionReview,
+  describeForeignRecipient,
+  describeInvoiceDirection,
+  INVOICE_DIRECTIONS,
+} from "@/lib/documents/document-type-presentation";
 
 // Consistent field row component (matching transaction-details.tsx)
 // Uses container queries to stack vertically when panel is narrow (<340px)
@@ -141,6 +154,9 @@ function getEffectiveExtractedAmount(file: TaxFile): number | null {
 
 export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsing, onFieldClick, onDirectionChange, onUpdate, isUpdating }: FileExtractedInfoProps) {
   const convert = useEcbConverter();
+  const directionPresentation = describeInvoiceDirection(file.invoiceDirection);
+  const directionReview = describeDirectionReview(file);
+  const foreignRecipient = describeForeignRecipient(file.foreignRecipient);
   const [showMore, setShowMore] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editedFields, setEditedFields] = useState<EditableExtractedFields>({
@@ -264,8 +280,11 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
 
   const formatAmount = (amount: number | null | undefined, currency: string | null | undefined, direction?: string) => {
     if (amount == null) return "—";
-    // Apply sign based on direction (incoming = expense/negative, outgoing = income/positive)
-    const signedAmount = direction === "incoming" ? -(amount / 100) : amount / 100;
+    // Apply sign based on direction (incoming = expense/negative, outgoing =
+    // income/positive). A document nothing places gets no sign at all (#233):
+    // it used to fall through to positive, which is what income looks like.
+    const signedAmount =
+      describeInvoiceDirection(direction).sign === "negative" ? -(amount / 100) : amount / 100;
     return new Intl.NumberFormat("de-DE", {
       style: "currency",
       currency: currency || "EUR",
@@ -295,7 +314,7 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
 
     const normalizedCurrency = (currency || "EUR").toUpperCase();
     const originalFormatted = formatAmount(amount, currency, direction);
-    const isNegative = direction === "incoming";
+    const isNegative = describeInvoiceDirection(direction).sign === "negative";
 
     // No conversion needed if already EUR
     if (normalizedCurrency === "EUR") {
@@ -465,6 +484,35 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
         </div>
       )}
 
+      {/* Findings that change what the document is worth, before its figures */}
+      {foreignRecipient && (
+        <div className="rounded border border-amber-500/40 bg-amber-500/10 p-2 space-y-1">
+          <Badge variant="outline" className="text-xs">
+            {foreignRecipient.label}
+          </Badge>
+          <p className="text-xs text-muted-foreground">{foreignRecipient.text}</p>
+        </div>
+      )}
+
+      {directionReview && (
+        <div
+          className={cn(
+            "rounded border p-2 space-y-1",
+            directionReview.tone === "warning"
+              ? "border-amber-500/40 bg-amber-500/10"
+              : "border-border bg-muted/40"
+          )}
+        >
+          <Badge variant="outline" className="text-xs">
+            {directionReview.label}
+          </Badge>
+          <p className="text-xs text-muted-foreground">
+            {directionReview.text}
+            {directionReview.suggestion ? ` ${directionReview.suggestion}` : ""}
+          </p>
+        </div>
+      )}
+
       {/* Fields - only show for invoices (not-invoice toggle is in Quick Info now) */}
       {file.extractionComplete && !file.extractionError && !file.isNotInvoice && (
         <div className="space-y-2">
@@ -503,10 +551,21 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
               );
 
               const amountDisplay = (
-                <span className={cn(
-                  "tabular-nums",
-                  isNegative ? "text-amount-negative" : "text-amount-positive"
-                )}>
+                <span
+                  className={cn(
+                    "tabular-nums",
+                    directionPresentation.sign === "unsigned"
+                      ? "text-muted-foreground"
+                      : isNegative
+                        ? "text-amount-negative"
+                        : "text-amount-positive"
+                  )}
+                  title={
+                    directionPresentation.sign === "unsigned"
+                      ? directionPresentation.summary
+                      : undefined
+                  }
+                >
                   {display}
                 </span>
               );
@@ -534,6 +593,42 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
 
               return amountDisplay;
             })()}
+          </FieldRow>
+
+          {/*
+            Direction (#233). Until this row existed the field was rendered
+            only as the SIGN of the amount above, where `unknown` fell through
+            to a positive figure — so an undirected purchase read as income and
+            nothing in the product said so. Editable here because the only
+            other way to move it was to edit identity data and hope the
+            backfill picked the file up.
+          */}
+          <FieldRow label="Direction">
+            {onDirectionChange ? (
+              <Select
+                value={directionPresentation.direction}
+                onValueChange={(value) => onDirectionChange(value as InvoiceDirection)}
+              >
+                <SelectTrigger className="h-7 w-full text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(Object.keys(INVOICE_DIRECTIONS) as InvoiceDirection[]).map((direction) => (
+                    <SelectItem key={direction} value={direction}>
+                      {INVOICE_DIRECTIONS[direction].label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <span
+                className={cn(
+                  directionPresentation.direction === "unknown" && "text-muted-foreground"
+                )}
+              >
+                {directionPresentation.label}
+              </span>
+            )}
           </FieldRow>
 
           <FieldRow

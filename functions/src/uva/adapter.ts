@@ -59,6 +59,12 @@ export interface FileRecord {
    * fact and the why cannot drift apart.
    */
   vatNotClaimableReason?: NonClaimableVatReason | null;
+  /**
+   * The § 11 classifier found this document addressed to somebody who is not
+   * the user (#229). Written by `documentTypeFields`, read here because the
+   * consequence is a § 12 one: there is no Vorsteuer to claim.
+   */
+  foreignRecipient?: boolean;
 }
 
 export interface CategoryRecord {
@@ -115,7 +121,10 @@ export function toUvaFile(f: FileRecord): UvaFile {
     lineItemsUnreconciled: f.lineItemsUnreconciled ?? false,
     lineItemsUnreconciledRates: f.lineItemsUnreconciledRates ?? null,
     supplierVatId: f.extractedIssuer?.vatId ?? f.extractedVatId ?? null,
-    nonClaimableVatReason: f.vatNotClaimableReason ?? null,
+    // A reason a human recorded outranks the derived one: both keep the VAT
+    // out, and the human's says something the rule does not know.
+    nonClaimableVatReason:
+      f.vatNotClaimableReason ?? (f.foreignRecipient === true ? "foreign-recipient" : null),
   };
 }
 

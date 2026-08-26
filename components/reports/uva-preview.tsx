@@ -101,6 +101,7 @@ const NON_CLAIMABLE_LABELS: Record<string, string> = {
   levy: "Public levy printed in the VAT column",
   "discount-to-zero": "100% discount — nothing due",
   private: "Private consumption",
+  "foreign-recipient": "Addressed to somebody else — not this Unternehmen's Vorsteuer",
 };
 
 /** Why a claimed input-VAT figure has no document under it (#85). */

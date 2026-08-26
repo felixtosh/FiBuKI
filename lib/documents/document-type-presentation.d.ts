@@ -1,8 +1,10 @@
 import type {
+  DirectionReviewReason,
   DocumentType,
   DocumentTypeBasis,
   Section11Element,
 } from "@/types/file";
+import type { InvoiceDirection } from "@/types/user-data";
 import type { DocumentationState } from "@/types/transaction";
 
 /**
@@ -53,7 +55,7 @@ export interface MissingElementsPresentation {
 }
 
 export interface BasisLine {
-  id: "verdict" | "regime" | "heading" | "zero-vat" | "degraded";
+  id: "verdict" | "regime" | "heading" | "zero-vat" | "recipient" | "degraded";
   label: string;
   text: string;
 }
@@ -104,3 +106,56 @@ export declare function describeDocumentTypeBasis(
 export declare function buildSupplierRequestText(
   elements: Array<Section11Element | string> | null | undefined,
 ): string | null;
+
+/** How an amount reads once the direction is known — or that it does not. */
+export type DirectionSign = "negative" | "positive" | "unsigned";
+
+export interface InvoiceDirectionPresentation {
+  /** The resolved direction — anything unrecognised resolves to `unknown`. */
+  direction: InvoiceDirection;
+  /** German, as an Austrian EPU reads it: Eingangsrechnung, Ausgangsrechnung, … */
+  label: string;
+  tone: DocumentTone;
+  summary: string;
+  sign: DirectionSign;
+}
+
+export interface DirectionReviewPresentation {
+  reason: DirectionReviewReason;
+  label: string;
+  tone: DocumentTone;
+  text: string;
+  /** What the linked transactions say it should be, when they agree. */
+  suggestion: string | null;
+  suggestedDirection: InvoiceDirection | null;
+}
+
+export interface ForeignRecipientPresentation {
+  label: string;
+  tone: DocumentTone;
+  text: string;
+}
+
+export declare const INVOICE_DIRECTIONS: Record<
+  InvoiceDirection,
+  Omit<InvoiceDirectionPresentation, "direction">
+>;
+
+export declare function describeInvoiceDirection(
+  direction: InvoiceDirection | string | null | undefined,
+): InvoiceDirectionPresentation;
+
+export declare function describeDirectionReview(
+  review:
+    | {
+        needsDirectionReview?: boolean;
+        directionReviewReason?: DirectionReviewReason | null;
+        directionSuggested?: InvoiceDirection | null;
+      }
+    | null
+    | undefined,
+): DirectionReviewPresentation | null;
+
+export declare function describeForeignRecipient(
+  foreignRecipient: boolean | null | undefined,
+): ForeignRecipientPresentation | null;
