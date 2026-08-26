@@ -196,6 +196,48 @@ describe("non-claimable VAT rules", () => {
     expect(r.nonClaimableVat).toHaveLength(0);
   });
 
+  it("is not sunk by its own unreconciled line items", () => {
+    // The flag says the printed figures are not trustworthy enough to CLAIM
+    // from. This file claims nothing, so refusing the whole transaction over
+    // it would put its VAT back on the chasing list as recoverable — the exact
+    // reading the marker exists to remove.
+    const flagged = marked(
+      {
+        ...DISCOUNTED,
+        files: [{ ...DISCOUNTED.files![0], lineItemsUnreconciled: true }],
+      },
+      "discount-to-zero"
+    );
+
+    const d = deriveRateGroups(flagged);
+    expect(d.ok).toBe(true);
+    if (!d.ok) return;
+    expect(d.step).toBe("non-claimable");
+
+    const r = run([flagged]);
+    expect(r.unresolved).toHaveLength(0);
+    expect(r.totalInputVat).toBe(0);
+    expect(r.nonClaimableVat).toHaveLength(1);
+  });
+
+  it("scales the excluded figure on a partial payment, like the groups beside it", () => {
+    // Half the document is paid, so half its VAT is what this transaction
+    // could ever have claimed — and therefore half of what it excluded. Two
+    // instalments each reporting the full figure would double-count it.
+    const half: UvaTransaction = {
+      ...marked(DISCOUNTED, "discount-to-zero"),
+      id: "t-instalment-1",
+      amount: -6000,
+    };
+
+    const d = deriveRateGroups(half);
+    expect(d.ok).toBe(true);
+    if (!d.ok) return;
+    expect(d.nonClaimableVat).toEqual([
+      { transactionId: "t-instalment-1", fileId: "FIBU_20260109-8624", reason: "discount-to-zero", excludedVat: 1000 },
+    ]);
+  });
+
   it("excludes only the marked file when a payment carries two documents", () => {
     const r = run([
       {

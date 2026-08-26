@@ -238,11 +238,11 @@ export function UVAPreview({ result, period, country }: UVAPreviewProps) {
         </Card>
       )}
 
-      {result.nonClaimableVat.length > 0 && (
+      {(result.nonClaimableVat?.length ?? 0) > 0 && (
         <Card>
           <CardHeader>
             <CardTitle className="text-base">
-              Non-claimable VAT ({result.nonClaimableVat.length})
+              Non-claimable VAT ({result.nonClaimableVat?.length ?? 0})
             </CardTitle>
             <CardDescription>
               These documents print a VAT figure that is not deductible Vorsteuer. The
@@ -252,7 +252,7 @@ export function UVAPreview({ result, period, country }: UVAPreviewProps) {
           </CardHeader>
           <CardContent>
             <div className="space-y-1">
-              {result.nonClaimableVat.map((n) => (
+              {(result.nonClaimableVat ?? []).map((n) => (
                 <div
                   key={`${n.transactionId}-${n.fileId}`}
                   className="flex items-center gap-3 py-1.5 px-2 text-sm border-b last:border-b-0"

@@ -317,6 +317,12 @@ export function deriveRateGroups(
   const foreignVat: ForeignVatEntry[] = [];
   const nonClaimableVat: NonClaimableVatEntry[] = [];
   const isIncome = tx.amount > 0;
+  /**
+   * A file a human marked non-claimable (#203), on an expense. Nothing it
+   * prints is claimed, so the guards that refuse a transaction on the strength
+   * of what a file prints must not read it either — see the call sites below.
+   */
+  const isExcluded = (f: UvaFile) => !isIncome && f.nonClaimableVatReason != null;
 
   // Income: the linked outgoing invoice carries real per-line rates and
   // resolves before any fallback (spec §3 step 4 note).
@@ -359,7 +365,11 @@ export function deriveRateGroups(
     // a file can also carry the receipt's own printed per-rate VAT summary,
     // which is an independent (and §11-sufficient) reading of the document:
     // that block clears the file even when its line items are flagged.
-    if (files.some((f) => f.lineItemsUnreconciled && !hasUsableRateGroups(f))) {
+    // A file marked non-claimable is exempt: the flag says its printed figures
+    // are not trustworthy enough to CLAIM from, and this file claims nothing.
+    // Refusing the transaction over it would put its VAT back on the chasing
+    // list as recoverable, which is the reading the marker exists to remove.
+    if (files.some((f) => !isExcluded(f) && f.lineItemsUnreconciled && !hasUsableRateGroups(f))) {
       return { ok: false, reason: "amount-mismatch", foregoneVat: guessVat20(bank), foreignVat, nonClaimableVat };
     }
 
@@ -384,7 +394,7 @@ export function deriveRateGroups(
       // Expenses only. The marker names input VAT that must not be deducted;
       // applied to income it would zero an output liability instead, which is
       // the understating direction the whole module is built to avoid (D1).
-      const excludedReason = isIncome ? null : f.nonClaimableVatReason ?? null;
+      const excludedReason = isExcluded(f) ? f.nonClaimableVatReason ?? null : null;
       if (excludedReason) {
         sawVatData = true;
         let excludedVat = 0;
@@ -491,7 +501,15 @@ export function deriveRateGroups(
       vat: scaleAnchored(g.vat, prior, fraction),
       gross: scaleAnchored(g.gross, prior, fraction),
     }));
-    return { ok: true, step, groups: scaled, foreignVat, nonClaimableVat };
+    // The excluded figure is scaled on the same anchor as the groups it sits
+    // beside. An instalment that could only ever have claimed half the
+    // document's VAT did not exclude the whole of it, and two instalments
+    // must not each report the full amount.
+    const scaledNonClaimable = nonClaimableVat.map((n) => ({
+      ...n,
+      excludedVat: scaleAnchored(n.excludedVat, prior, fraction),
+    }));
+    return { ok: true, step, groups: scaled, foreignVat, nonClaimableVat: scaledNonClaimable };
   }
 
   // Step 3: manual override lane.
