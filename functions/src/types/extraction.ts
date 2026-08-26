@@ -56,6 +56,21 @@ export interface ExtractedData {
   lineItems?: ExtractedLineItem[] | null;
   /** Printed per-rate VAT summary block, when the document shows one */
   rateGroups?: ExtractedRateGroup[] | null;
+  /**
+   * The document's own printed self-designation — the literal heading it
+   * gives itself ("Rechnung", "Invoice", "Quittung", "Zahlungsbestätigung",
+   * "Receipt", "Gutschrift"). Transcribed, never inferred; null when the
+   * document prints no such heading (#104).
+   *
+   * Evidence, not verdict: a document titled "Rechnung" that fails the § 11
+   * test at its amount is still classified on its structure.
+   */
+  selfDesignation: string | null;
+  /**
+   * The sequential invoice number § 11 Abs 1 lit. h requires above 400 EUR.
+   * Transcribed, never invented; null when the document prints none (#104).
+   */
+  invoiceNumber: string | null;
   partner: string | null;
   vatId: string | null; // VAT ID (e.g., ATU12345678, DE123456789)
   iban: string | null; // IBAN if visible

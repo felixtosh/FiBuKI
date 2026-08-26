@@ -16,6 +16,7 @@ import {
   TransactionMatchSource,
   ScoreBreakdown,
 } from "./transactionScoring";
+import type { DocumentType } from "../documents/types";
 
 const db = getFirestore();
 
@@ -132,6 +133,8 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
       extractedIban?: string | null;
       extractedText?: string | null;
       partnerId?: string | null;
+      /** #104: absent on the raw fileInfo path, which has no stored record. */
+      documentType?: DocumentType | null;
     };
 
     // Pairs the file has had dismissed. Only knowable on the fileId path — a
@@ -168,6 +171,7 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
         extractedIban: docData.extractedIban,
         extractedText: docData.extractedText,
         partnerId: docData.partnerId,
+        documentType: docData.documentType,
       };
     } else {
       // Use provided fileInfo
@@ -296,6 +300,7 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
           extractedIban: fileData.extractedIban,
           extractedText: fileData.extractedText,
           partnerId: fileData.partnerId,
+          documentType: fileData.documentType,
         },
         {
           id: doc.id,
@@ -310,6 +315,7 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
           partnerId: txData.partnerId,
           partnerIban: txData.partnerIban,
           reference: txData.reference,
+          documentationState: txData.documentationState,
         },
         partnerAliases
       );

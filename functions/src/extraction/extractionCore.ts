@@ -19,6 +19,9 @@ const db = getFirestore();
 
 import { ExtractedEntity, ExtractedLineItem, ExtractedRateGroup } from "../types/extraction";
 import { applyVatDowngradeGuard } from "./vatSourceGuard";
+import { classifyFileRecord, documentTypeFields } from "../documents/adapter";
+import { classifyDocumentType } from "../documents/classifyDocumentType";
+import { syncDocumentationStateForTransactions } from "../documents/syncDocumentationState";
 
 /**
  * User data for invoice direction detection and counterparty determination
@@ -946,6 +949,9 @@ export async function runExtraction(
         extractedWebsite: null,
         extractedRaw: null,
         extractedAdditionalFields: null,
+        extractedSelfDesignation: null,
+        extractedInvoiceNumber: null,
+        ...documentTypeFields(classifyDocumentType({ grossTotal: null, isNotInvoice: true })),
         extractedText: "(classification only - not an invoice)",
         extractedFields: [],
         updatedAt: Timestamp.now(),
@@ -1076,6 +1082,8 @@ export async function runExtraction(
     updateData.extractedWebsite = null;
     updateData.extractedRaw = null;
     updateData.extractedAdditionalFields = null;
+    updateData.extractedSelfDesignation = null;
+    updateData.extractedInvoiceNumber = null;
     console.log(`[+${Date.now() - t0}ms] Classified as NOT an invoice: ${result.notInvoiceReason}`);
   } else {
     // Add extracted fields if found
@@ -1097,6 +1105,12 @@ export async function runExtraction(
     if (extracted.currency) {
       updateData.extractedCurrency = extracted.currency;
     }
+
+    // Transcribed, not inferred (#104). Written unconditionally — a document
+    // that prints no heading and no invoice number must record that as an
+    // absence, or the §11 classifier reads the record as merely legacy.
+    updateData.extractedSelfDesignation = extracted.selfDesignation ?? null;
+    updateData.extractedInvoiceNumber = extracted.invoiceNumber ?? null;
 
     const normalizedLineItems = normalizeExtractedLineItems(extracted.lineItems);
     if (normalizedLineItems.length > 0) {
@@ -1246,9 +1260,33 @@ export async function runExtraction(
     );
   }
 
+  // §11 classification runs on the record as it will actually be stored —
+  // after the VAT guard, which can keep the PREVIOUS VAT fields and so change
+  // the answer. Persisted rather than recomputed at read time, so two readers
+  // cannot disagree about the same document (#104).
+  Object.assign(
+    updateData,
+    documentTypeFields(classifyFileRecord({ ...fileData, ...updateData }))
+  );
+  console.log(
+    `[+${Date.now() - t0}ms] Document type: ${updateData.documentType} ` +
+    `(${(updateData.documentTypeBasis as { reason?: string })?.reason})`
+  );
+
   // Save to Firestore
   const t6 = Date.now();
+  const documentTypeChanged = fileData.documentType !== updateData.documentType;
   await db.collection("files").doc(fileId).update(updateData);
+
+  // A file's classification changing is invisible to onTransactionUpdate —
+  // nothing on the transaction document moved — so the propagation happens
+  // here, through the same derivation the trigger uses (#104). Only on an
+  // actual change: re-extraction that lands on the same type owes no writes.
+  const connectedTransactionIds = (fileData.transactionIds as string[] | undefined) ?? [];
+  if (documentTypeChanged && connectedTransactionIds.length > 0) {
+    await syncDocumentationStateForTransactions(db, connectedTransactionIds);
+  }
+
   const tEnd = Date.now();
   console.log(`[+${tEnd - t0}ms] DONE - Firestore write took ${tEnd - t6}ms | Total: ${tEnd - t0}ms`);
 

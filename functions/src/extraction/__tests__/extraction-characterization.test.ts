@@ -116,6 +116,10 @@ describe("characterization: geminiParser.parseWithGemini", () => {
       vatPercent: null,
       lineItems: null,
       rateGroups: null,
+      // #104: transcribed heading and invoice number, null when the model
+      // returns neither — an invented §11 element is worse than a missing one.
+      selfDesignation: null,
+      invoiceNumber: null,
       partner: null,
       vatId: null,
       iban: null,
@@ -342,6 +346,29 @@ describe("characterization: geminiParser.parseWithGemini", () => {
     expect(res.extracted.rateGroups).toEqual([{ rate: 10, net: 1000, vat: 100, gross: 1100 }]);
   });
 
+  it("selfDesignation/invoiceNumber are transcribed, and a non-string degrades to null (#104)", async () => {
+    q(
+      JSON.stringify({
+        extracted: { amount: 100, selfDesignation: "  Zahlungsbestätigung  ", invoiceNumber: 2024 },
+      }),
+    );
+    const res = await parseWithGemini(BUF, "application/pdf");
+
+    // Trimmed but otherwise copied — the §11 classifier reads this as evidence.
+    expect(res.extracted.selfDesignation).toBe("Zahlungsbestätigung");
+    // A number is the model having invented one; an invented §11 element
+    // would read as a satisfied requirement, so it must degrade, not coerce.
+    expect(res.extracted.invoiceNumber).toBeNull();
+  });
+
+  it("an empty transcription is the same as none (#104)", async () => {
+    q(JSON.stringify({ extracted: { amount: 100, selfDesignation: "   ", invoiceNumber: "" } }));
+    const res = await parseWithGemini(BUF, "application/pdf");
+
+    expect(res.extracted.selfDesignation).toBeNull();
+    expect(res.extracted.invoiceNumber).toBeNull();
+  });
+
   it("repairs trailing commas in malformed JSON", async () => {
     q('{"extracted": {"amount": 500,}}');
     const res = await parseWithGemini(BUF, "application/pdf");
@@ -555,6 +582,8 @@ describe("characterization: claudeParser.parseWithClaude", () => {
       currency: "EUR",
       vatPercent: 20,
       lineItems: null, // characterization: legacy parser never extracts line items
+      selfDesignation: null, // #104: prompted for, absent from this response
+      invoiceNumber: null,
       partner: "ACME GmbH",
       vatId: "ATU12345678",
       iban: "AT123456789012345678",
@@ -639,6 +668,8 @@ describe("characterization: documentExtractor", () => {
       currency: null,
       vatPercent: null,
       lineItems: null,
+      selfDesignation: null,
+      invoiceNumber: null,
       partner: null,
       vatId: null,
       iban: null,

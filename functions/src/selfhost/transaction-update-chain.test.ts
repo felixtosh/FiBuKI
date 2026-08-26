@@ -112,6 +112,121 @@ describe("selfhost hardening: onTransactionUpdate chain", () => {
   });
 
   // -------------------------------------------------------------------------
+  // 1b. documentationState (#104) — the second self-retriggering write
+  // -------------------------------------------------------------------------
+
+  it("derives documentationState from the attached file's document type", async () => {
+    await db.collection("files").doc("f-receipt").set({
+      userId: USER,
+      fileName: "amazon-zahlungsbestaetigung.pdf",
+      documentType: "receipt",
+      transactionIds: ["t1"],
+    });
+    await db.collection("transactions").doc("t1").set(baseTx());
+
+    await db.collection("transactions").doc("t1").update({
+      fileIds: ["f-receipt"],
+      updatedAt: Timestamp.now(),
+    });
+    await drainTriggers();
+
+    const tx = (await db.collection("transactions").doc("t1").get()).data()!;
+    // isComplete keeps its old meaning — the line is green either way.
+    expect(tx.isComplete).toBe(true);
+    // …and the gap is now visible.
+    expect(tx.documentationState).toBe("receipt-only");
+  });
+
+  it("lets an invoice attached alongside a receipt win, without downgrading on the extra receipt", async () => {
+    await db.collection("files").doc("f-receipt").set({ userId: USER, documentType: "receipt" });
+    await db.collection("files").doc("f-invoice").set({ userId: USER, documentType: "invoice" });
+    await db.collection("transactions").doc("t1").set(baseTx());
+
+    await db.collection("transactions").doc("t1").update({
+      fileIds: ["f-receipt", "f-invoice"],
+      updatedAt: Timestamp.now(),
+    });
+    await drainTriggers();
+
+    expect((await db.collection("transactions").doc("t1").get()).data()!.documentationState).toBe(
+      "invoice"
+    );
+  });
+
+  it("reads a no-receipt category as its own state, distinct from a real document", async () => {
+    await seedCategory("cat-1");
+    await db.collection("transactions").doc("t1").set(baseTx());
+
+    await db.collection("transactions").doc("t1").update({
+      noReceiptCategoryId: "cat-1",
+      updatedAt: Timestamp.now(),
+    });
+    await drainTriggers();
+
+    const tx = (await db.collection("transactions").doc("t1").get()).data()!;
+    expect(tx.isComplete).toBe(true);
+    expect(tx.documentationState).toBe("no-receipt-category");
+  });
+
+  it("fills in a row that predates the field on the next unrelated touch, then stops", async () => {
+    await db.collection("transactions").doc("t1").set(baseTx());
+
+    await db.collection("transactions").doc("t1").update({
+      description: "a note",
+      updatedAt: Timestamp.now(),
+    });
+    await drainTriggers();
+
+    expect((await db.collection("transactions").doc("t1").get()).data()!.documentationState).toBe(
+      "undocumented"
+    );
+
+    // The derivation write re-fires the trigger. If the guard did not settle,
+    // drainTriggers would not have returned above; touch it once more to pin
+    // that a second unrelated edit writes nothing new either.
+    const before = (await db.collection("transactions").doc("t1").get()).data()!.updatedAt;
+    await db.collection("transactions").doc("t1").update({ description: "another note" });
+    await drainTriggers();
+
+    const after = (await db.collection("transactions").doc("t1").get()).data()!;
+    expect(after.documentationState).toBe("undocumented");
+    expect(after.updatedAt).toEqual(before);
+  });
+
+  it("still runs the partner automations when the same update also derives documentationState", async () => {
+    // The interaction the trigger's early-return guard exists for. A row that
+    // predates #104 has no documentationState, so ANY first touch derives one
+    // — including the touch that assigns a partner. Returning early on that
+    // write would defer the partner automations to a re-trigger, where
+    // partnerId is unchanged and the guard skips them for good.
+    await db.collection("partners").doc("p-hetzner").set({
+      userId: USER,
+      name: "Hetzner",
+      isActive: true,
+    });
+    await seedCategory("cat-hosting", {
+      templateId: "bank-fees",
+      matchedPartnerIds: ["p-hetzner"],
+    });
+    await db.collection("transactions").doc("t-both").set(baseTx({ name: "Hetzner Online" }));
+
+    await db.collection("transactions").doc("t-both").update({
+      partnerId: "p-hetzner",
+      partnerType: "user",
+      partnerMatchedBy: "manual",
+      updatedAt: Timestamp.now(),
+    });
+    await drainTriggers();
+
+    const tx = (await db.collection("transactions").doc("t-both").get()).data()!;
+    // The new field was derived…
+    expect(tx.documentationState).toBe("no-receipt-category");
+    // …and the category automation that belonged to this event still ran.
+    expect(tx.noReceiptCategoryId).toBe("cat-hosting");
+    expect(tx.noReceiptCategoryMatchedBy).toBe("auto");
+  });
+
+  // -------------------------------------------------------------------------
   // 2. Resolution learning (dynamic import inside the trigger)
   // -------------------------------------------------------------------------
 
