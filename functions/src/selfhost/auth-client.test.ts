@@ -510,6 +510,19 @@ describe("selfhost auth-client — Google social callback pickup (built-in mode)
    * so module-init's fire-and-forget maybeCompleteSocialCallback runs the real
    * pickup against `fetchImpl` (a stubbed host serving get-session + token).
    */
+  /**
+   * Clients this describe loaded, so `afterEach` can sign them out.
+   *
+   * Module init starts a ChangeStreamClient as soon as a session is adopted
+   * (auth-client's `ensureChangeStream`), and that client reconnects on a
+   * backoff timer for the life of the worker process. Nothing else holds a
+   * handle to it, so a client left signed in keeps calling `getToken()` — and
+   * `getToken()` reads whatever `window` a LATER test installed, finds a stale
+   * token set there, and takes the OIDC refresh lock inside that test. That is
+   * what made the lock test below flaky (#150).
+   */
+  const loaded: AuthClient[] = [];
+
   async function loadAfterSocialReturn(
     fetchImpl: typeof fetch,
     onReplaceState: (url?: string) => void,
@@ -530,10 +543,18 @@ describe("selfhost auth-client — Google social callback pickup (built-in mode)
     }
     process.env.NEXT_PUBLIC_FIBUKI_API_URL = API;
     vi.stubGlobal("fetch", fetchImpl);
-    return import("../../../lib/selfhost/auth-client");
+    const client = (await import("../../../lib/selfhost/auth-client")) as AuthClient;
+    loaded.push(client);
+    return client;
   }
 
-  afterEach(() => {
+  afterEach(async () => {
+    // Sign out before unstubbing, so the (fire-and-forget) revoke call still
+    // hits the stubbed host rather than the network. signOut clears the user
+    // and notifies, which is what stops the change stream.
+    for (const client of loaded.splice(0)) {
+      await client.signOut(client.getAuth()).catch(() => undefined);
+    }
     vi.unstubAllGlobals();
     delete process.env.NEXT_PUBLIC_FIBUKI_API_URL;
   });
@@ -966,10 +987,14 @@ describe("selfhost auth-client — OIDC refresh serialisation (fork #73)", () =>
     const tab = await openTab();
     await tick();
 
+    // Measure the locks taken BY THIS REFRESH, not every lock taken over the
+    // tab's lifetime. Anything else alive in the worker shares one globalThis,
+    // so the lifetime form counted other modules' locks too (#150).
+    const takenBefore = inside.length;
     await expect(tab.getAuth().currentUser!.getIdToken()).resolves.toBe(nextIdToken);
     // Exactly one lock, held around the refresh — not the lease fallback.
-    expect(inside).toEqual(["fibuki-oidc-refresh"]);
-    expect(request).toHaveBeenCalledTimes(1);
+    expect(inside.slice(takenBefore)).toEqual(["fibuki-oidc-refresh"]);
+    expect(request).toHaveBeenCalledTimes(takenBefore + 1);
     expect(readStored(w)).toMatchObject({ refresh_token: "rt-2", rotates: true });
   });
 });
