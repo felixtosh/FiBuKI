@@ -25,14 +25,11 @@
 
 import { onDocumentUpdated, onDocumentCreated } from "firebase-functions/v2/firestore";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
+import { ExtractedEntity } from "../types/extraction";
+import type { RecipientIdentity } from "./recipientIdentity";
+import { determineCounterparty, type InvoiceDirection } from "../utils/identity-matcher";
 import { classifyFileRecord, documentTypeFields } from "../documents/adapter";
 import { syncDocumentationStateForTransactions } from "../documents/syncDocumentationState";
-import {
-  hasIdentitySignals,
-  hasRecipientEntity,
-  resolveRecipientIdentity,
-  type RecipientIdentity,
-} from "./recipientIdentity";
 
 const db = getFirestore();
 
@@ -80,28 +77,6 @@ interface UserData {
   ibans?: string[];
   identityPartnerIds?: IdentityPartnerIds;
   markedAsMe?: string[];
-}
-
-interface ExtractedEntity {
-  name: string | null;
-  vatId: string | null;
-  address: string | null;
-  iban: string | null;
-  website: string | null;
-}
-
-type InvoiceDirection = "incoming" | "outgoing" | "unknown";
-
-interface CounterpartyResult {
-  counterparty: ExtractedEntity | null;
-  matchedUserAccount: "issuer" | "recipient" | null;
-  invoiceDirection: InvoiceDirection;
-  /**
-   * Whether the recipient the document names is the user (#229). Recomputed
-   * here for the same reason the direction is: adding a company or an alias
-   * can turn a document that looked like somebody else's into the user's own.
-   */
-  recipientIdentityMatch: RecipientIdentity;
 }
 
 // === Identity Partner Sync ===
@@ -318,76 +293,6 @@ async function deleteIdentityPartner(
 // === Helper Functions ===
 
 /**
- * Get all identity names from user data (personal + companies + legacy fields)
- */
-function getAllIdentityNames(userData: UserData): string[] {
-  const names: string[] = [];
-
-  // New format: personal entity
-  if (userData.personalEntity?.name) {
-    names.push(userData.personalEntity.name);
-    names.push(...(userData.personalEntity.aliases || []));
-  }
-
-  // New format: company entities
-  for (const company of userData.companies || []) {
-    if (company.name) {
-      names.push(company.name);
-      names.push(...(company.aliases || []));
-    }
-  }
-
-  // Backward compatibility: deprecated fields
-  if (userData.name) names.push(userData.name);
-  if (userData.companyName) names.push(userData.companyName);
-  names.push(...(userData.aliases || []));
-
-  return [...new Set(names)].filter(Boolean);
-}
-
-/**
- * Get all VAT IDs from user data (personal + companies + legacy fields)
- */
-function getAllIdentityVatIds(userData: UserData): string[] {
-  const vatIds: string[] = [];
-
-  // New format
-  if (userData.personalEntity?.vatId) {
-    vatIds.push(userData.personalEntity.vatId);
-  }
-  for (const company of userData.companies || []) {
-    if (company.vatId) {
-      vatIds.push(company.vatId);
-    }
-  }
-
-  // Backward compatibility
-  vatIds.push(...(userData.vatIds || []));
-
-  return [...new Set(vatIds)].filter(Boolean);
-}
-
-/**
- * Get all IBANs from user data (personal + companies + legacy fields)
- */
-function getAllIdentityIbans(userData: UserData): string[] {
-  const ibans: string[] = [];
-
-  // New format
-  if (userData.personalEntity?.ibans) {
-    ibans.push(...userData.personalEntity.ibans);
-  }
-  for (const company of userData.companies || []) {
-    ibans.push(...(company.ibans || []));
-  }
-
-  // Backward compatibility
-  ibans.push(...(userData.ibans || []));
-
-  return [...new Set(ibans)].filter(Boolean);
-}
-
-/**
  * Check if identity entities changed
  */
 function hasIdentityEntitiesChanged(
@@ -463,135 +368,6 @@ async function getSourceIbans(userId: string): Promise<string[]> {
     console.warn("[SourceIbans] Failed to fetch source IBANs:", error);
     return [];
   }
-}
-
-/**
- * Check if an entity matches user data (by VAT ID, IBAN, or name/aliases).
- * Checks ALL identity entities (personal + companies + legacy fields).
- */
-function entityMatchesUserData(
-  entity: ExtractedEntity | null,
-  userData: UserData,
-  sourceIbans: string[]
-): boolean {
-  if (!entity) return false;
-
-  // Get all user identity data
-  const allVatIds = getAllIdentityVatIds(userData);
-  const allIbans = getAllIdentityIbans(userData);
-  const allNames = getAllIdentityNames(userData);
-
-  // Check VAT ID match (strongest signal)
-  if (entity.vatId && allVatIds.length > 0) {
-    const normalizedEntityVat = entity.vatId.toUpperCase().replace(/[^A-Z0-9]/g, "");
-    for (const userVat of allVatIds) {
-      if (userVat.toUpperCase().replace(/[^A-Z0-9]/g, "") === normalizedEntityVat) {
-        return true;
-      }
-    }
-  }
-
-  // Check IBAN match against user's identity IBANs
-  if (entity.iban && allIbans.length > 0) {
-    const normalizedEntityIban = entity.iban.toUpperCase().replace(/\s/g, "");
-    for (const userIban of allIbans) {
-      if (userIban.toUpperCase().replace(/\s/g, "") === normalizedEntityIban) {
-        return true;
-      }
-    }
-  }
-
-  // Check IBAN match against connected bank account IBANs
-  if (entity.iban && sourceIbans.length > 0) {
-    const normalizedEntityIban = entity.iban.toUpperCase().replace(/\s/g, "");
-    for (const sourceIban of sourceIbans) {
-      if (sourceIban === normalizedEntityIban) {
-        return true;
-      }
-    }
-  }
-
-  // Check name match (weakest signal)
-  if (entity.name && allNames.length > 0) {
-    const entityNameLower = entity.name.toLowerCase().trim();
-
-    for (const name of allNames) {
-      if (name) {
-        const nameLower = name.toLowerCase();
-        if (entityNameLower.includes(nameLower) || nameLower.includes(entityNameLower)) {
-          return true;
-        }
-      }
-    }
-  }
-
-  return false;
-}
-
-/**
- * Determine the counterparty from extracted entities.
- */
-function determineCounterparty(
-  issuer: ExtractedEntity | null,
-  recipient: ExtractedEntity | null,
-  userData: UserData,
-  sourceIbans: string[]
-): CounterpartyResult {
-  // Check if issuer matches user data
-  const issuerMatchesUser = entityMatchesUserData(issuer, userData, sourceIbans);
-
-  // Check if recipient matches user data
-  const recipientMatchesUser = entityMatchesUserData(recipient, userData, sourceIbans);
-
-  // #229: the same comparison, recorded as its own verdict.
-  const recipientIdentityMatch = resolveRecipientIdentity({
-    recipientPresent: hasRecipientEntity(recipient),
-    recipientMatchesUser,
-    hasIdentityData: hasIdentitySignals({
-      names: getAllIdentityNames(userData),
-      vatIds: getAllIdentityVatIds(userData),
-      ibans: getAllIdentityIbans(userData),
-      sourceIbans,
-    }),
-  });
-
-  if (issuerMatchesUser && !recipientMatchesUser) {
-    // User is the issuer → outgoing invoice → recipient is counterparty
-    return {
-      counterparty: recipient,
-      matchedUserAccount: "issuer",
-      invoiceDirection: "outgoing",
-      recipientIdentityMatch,
-    };
-  }
-
-  if (recipientMatchesUser && !issuerMatchesUser) {
-    // User is the recipient → incoming invoice → issuer is counterparty
-    return {
-      counterparty: issuer,
-      matchedUserAccount: "recipient",
-      invoiceDirection: "incoming",
-      recipientIdentityMatch,
-    };
-  }
-
-  if (issuerMatchesUser && recipientMatchesUser) {
-    // Both match - internal transfer/self-invoice
-    return {
-      counterparty: recipient,
-      matchedUserAccount: "issuer",
-      invoiceDirection: "outgoing",
-      recipientIdentityMatch,
-    };
-  }
-
-  // Neither matches - default to issuer
-  return {
-    counterparty: issuer,
-    matchedUserAccount: null,
-    invoiceDirection: "unknown",
-    recipientIdentityMatch,
-  };
 }
 
 // === Main Function ===
