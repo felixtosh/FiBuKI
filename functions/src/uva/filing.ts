@@ -84,7 +84,9 @@ export type FilingExceptionKind =
   /** Converted at the last ECB rate published for the payment date (#92). */
   | "fx-ecb-reference"
   /** Converted at the effective rate the card charged — the fallback. */
-  | "fx-effective-rate";
+  | "fx-effective-rate"
+  /** Income converted at the rate the money actually arrived at (#92). */
+  | "fx-income-cash-basis";
 
 /**
  * An exception the filing carries, with the reasoning that justifies it. The
@@ -150,6 +152,14 @@ const FX_EFFECTIVE_BASIS =
   "date. The issuer's markup sits inside that rate, so the claim runs high by " +
   "the bounded exposure below rather than by an unknown amount. Used where no " +
   "published ECB rate reaches the payment date or the document's currency.";
+
+const FX_INCOME_BASIS =
+  "Ist-Besteuerung: the Bemessungsgrundlage is the Entgelt actually received, " +
+  "and for a foreign-currency invoice settled into a EUR account that IS the " +
+  "amount the bank credited. § 20 Abs 6 UStG permits a published rate here " +
+  "too, but applying one would declare a turnover nobody received — and where " +
+  "it is the lower rate, understate the tax. So income keeps the rate the " +
+  "money arrived at, and the deduction side alone takes method 2.";
 
 const FX_ECB_BASIS =
   "§ 20 Abs 6 UStG method 2: \"Der Unternehmer kann stattdessen auch den " +
@@ -335,18 +345,39 @@ export function deriveFilingExceptions(result: UvaReportResult): UvaFilingExcept
       continue;
     }
 
+    // Income on the effective rate is not the fallback — it is the rule. Its
+    // basis is different and it carries no markup exposure, so it is stated
+    // separately rather than folded into the fallback's band.
+    const income = used.filter((c) => c.reason === "income-cash-basis");
+    const fallback = used.filter((c) => c.reason !== "income-cash-basis");
+
+    if (income.length > 0) {
+      exceptions.push({
+        kind: "fx-income-cash-basis",
+        statement:
+          `${income.length} foreign-currency income document(s) were converted at ` +
+          `the rate the payment actually arrived at (${fxCurrencies(income).join(", ")}).`,
+        basis: FX_INCOME_BASIS,
+        fileIds: income.map((c) => c.fileId),
+        amount: 0,
+        exposure: null,
+      });
+    }
+    if (fallback.length === 0) continue;
+
+    const fallbackConverted = fxConvertedInputVat(result, fallback);
     exceptions.push({
       kind: "fx-effective-rate",
       statement:
-        `${used.length} foreign-currency document(s) were read at the ` +
-        `effective rate the payment carried (${currencies}), ` +
+        `${fallback.length} foreign-currency document(s) were read at the ` +
+        `effective rate the payment carried (${fxCurrencies(fallback).join(", ")}), ` +
         `not at a published daily rate.`,
       basis: FX_EFFECTIVE_BASIS,
-      fileIds: used.map((c) => c.fileId),
-      amount: converted,
+      fileIds: fallback.map((c) => c.fileId),
+      amount: fallbackConverted,
       exposure: {
-        low: Math.round(converted * FX_MARKUP_LOW),
-        high: Math.round(converted * FX_MARKUP_HIGH),
+        low: Math.round(fallbackConverted * FX_MARKUP_LOW),
+        high: Math.round(fallbackConverted * FX_MARKUP_HIGH),
       },
     });
   }
@@ -393,7 +424,11 @@ export interface FxRateDelta {
 }
 
 export function deriveFxRateDeltas(result: UvaReportResult): FxRateDelta[] {
-  return result.fxConversions.map((c) => {
+  // Tolerates a result without the field. The web app deploys itself from main
+  // and the Cloud Functions do not, so between the two deployments this runs
+  // against a run that predates `fxConversions` — and it runs on every render
+  // of the figure sheet, not only where a conversion happened.
+  return (result.fxConversions ?? []).map((c) => {
     const vatAtEffectiveRate = Math.round(c.documentVat * c.impliedRate);
     const vatAtAppliedRate = Math.round(c.documentVat * c.appliedRate);
     return {

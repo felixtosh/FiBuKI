@@ -242,3 +242,92 @@ describe("what the filing says about the rate", () => {
     });
   });
 });
+
+describe("income is converted at the rate the money arrived at", () => {
+  // Under Ist-Besteuerung the Entgelt is what was actually received. Method 2
+  // is preferred on the deduction side, where the issuer's markup claims more
+  // input VAT than the supply bore; on the liability side it would declare a
+  // turnover nobody received, and a published rate below the effective one
+  // would understate the tax.
+  const INCOME: UvaTransaction = {
+    id: "t-usd-income",
+    date: "2026-07-31",
+    amount: 2128,
+    partnerName: "A client abroad",
+    files: [
+      {
+        id: "f-usd-invoice",
+        currency: "USD",
+        totalGross: 2400,
+        rateGroups: [{ rate: 20, net: 2000, vat: 400, gross: 2400 }],
+      },
+    ],
+  };
+
+  it("keeps the effective rate and says why", () => {
+    const result = run([INCOME]);
+
+    expect(result.fxConversions[0]).toMatchObject({
+      fileId: "f-usd-invoice",
+      method: "effective-bank-rate",
+      reason: "income-cash-basis",
+      rateDate: null,
+    });
+  });
+
+  it("declares the turnover the bank actually received", () => {
+    const result = run([INCOME]);
+
+    // 2400 USD gross at the effective rate is the 2128 that arrived; at the
+    // ECB rate it would be 2085, and the output VAT would follow it down.
+    expect(result.kennzahlen["000"].value).toBe(1773);
+    expect(result.totalOutputVat).toBe(355);
+  });
+
+  it("states its own basis in the filing, with no markup exposure", () => {
+    const filing = buildUvaFiling({ report: run([INCOME]) });
+    const income = filing.exceptions.find((e) => e.kind === "fx-income-cash-basis");
+
+    expect(income?.exposure).toBeNull();
+    expect(income?.fileIds).toEqual(["f-usd-invoice"]);
+    // The card-markup band bounds an overclaimed deduction. Income claims none.
+    expect(filing.exceptions.some((e) => e.kind === "fx-effective-rate")).toBe(false);
+  });
+});
+
+describe("what the rate-choice delta is measured on", () => {
+  it("skips line items that do not all carry a rate, as the derivation does", () => {
+    // `fileRateGroups` only reads line items when every one of them states a
+    // rate; otherwise it falls through to the top-level figure. Summing a
+    // partial set here would measure the delta on cents the claim was never
+    // built from.
+    const result = run([
+      {
+        id: "t-partial-items",
+        date: "2026-07-31",
+        amount: -2128,
+        files: [
+          {
+            id: "f-partial-items",
+            currency: "USD",
+            totalGross: 2400,
+            vatPercent: 20,
+            vatAmount: 400,
+            lineItems: [
+              { description: "a", amount: 1200, vatAmount: 200, vatPercent: 20 },
+              { description: "b", amount: 1200, vatAmount: 100 },
+            ],
+          },
+        ],
+      },
+    ]);
+
+    expect(result.fxConversions[0].documentVat).toBe(400);
+  });
+
+  it("survives a run that predates the field", () => {
+    // The web app deploys itself from main and the Cloud Functions do not.
+    const legacy = { ...run([OPENAI]), fxConversions: undefined } as never;
+    expect(deriveFxRateDeltas(legacy)).toEqual([]);
+  });
+});

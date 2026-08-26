@@ -445,7 +445,9 @@ export function deriveRateGroups(
     const foreign = files.filter((f) => !isSameCurrency(f.currency, tx.currency));
     if (foreign.length > 0) {
       const converted =
-        files.length === 1 ? convertToBankCurrency(files[0], tx, ecbRates) : null;
+        files.length === 1
+          ? convertToBankCurrency(files[0], tx, ecbRates, isIncome)
+          : null;
       if (!converted) {
         return { ok: false, reason: "foreign-currency", foregoneVat: guessVat20(bank), foreignVat, nonClaimableVat, fxConversions };
       }
@@ -661,7 +663,8 @@ export function deriveRateGroups(
 function convertToBankCurrency(
   f: UvaFile,
   tx: UvaTransaction,
-  ecbRates?: EcbRateTable | null
+  ecbRates?: EcbRateTable | null,
+  isIncome = false
 ): { file: UvaFile; conversion: FxConversionEntry } | null {
   const gross = f.totalGross ?? 0;
   if (gross <= 0) return null;
@@ -680,13 +683,23 @@ function convertToBankCurrency(
   if (!fx.band || fx.impliedRate === null) return null;
 
   const effective = fx.impliedRate;
-  const r = published ? published.rate : effective;
-  const method: FxRateMethod = published ? "ecb-reference" : "effective-bank-rate";
-  const reason: FxRateReason = published
+  // Method 2 is preferred on the DEDUCTION side, where the issuer's markup
+  // inside the effective rate claims more input VAT than the supply bore.
+  // Income is the other direction: under Ist-Besteuerung the Entgelt is the
+  // money that actually arrived, so the bank's own EUR figure IS the base.
+  // Converting it at a published rate would declare a turnover nobody
+  // received, and a published rate below the effective one would understate
+  // the liability — the direction this module refuses everywhere else.
+  const usePublished = published !== null && !isIncome;
+  const r = usePublished ? published.rate : effective;
+  const method: FxRateMethod = usePublished ? "ecb-reference" : "effective-bank-rate";
+  const reason: FxRateReason = usePublished
     ? "ecb-published"
-    : ecbRates
-      ? "no-ecb-rate"
-      : "no-ecb-table";
+    : isIncome
+      ? "income-cash-basis"
+      : ecbRates
+        ? "no-ecb-rate"
+        : "no-ecb-table";
   const cents = (c: number) => Math.round(c * r);
   const conversion: FxConversionEntry = {
     transactionId: tx.id,
@@ -699,7 +712,7 @@ function convertToBankCurrency(
     appliedRate: r,
     method,
     reason,
-    rateDate: published?.rateDate ?? null,
+    rateDate: usePublished ? published.rateDate : null,
     band: fx.band,
   };
   const file: UvaFile = {
@@ -728,8 +741,17 @@ function convertToBankCurrency(
  * same cents the claim is built from.
  */
 function documentVatOf(f: UvaFile): number {
-  if (f.rateGroups?.length) return f.rateGroups.reduce((s, g) => s + g.vat, 0);
-  if (f.lineItems?.length) return f.lineItems.reduce((s, li) => s + li.vatAmount, 0);
+  // Through the derivation's own predicates, not a parallel copy of them, so
+  // the delta is measured on the cents the claim was built from. The line-item
+  // rung needs every item to state a rate; a partial set falls through to the
+  // top-level figure, and summing it here would report a movement against
+  // cents that never reached a Kennzahl.
+  if (hasUsableRateGroups(f)) {
+    return (f.rateGroups as RateGroup[]).reduce((s, g) => s + g.vat, 0);
+  }
+  if (f.lineItems?.length && f.lineItems.every((li) => li.vatPercent != null)) {
+    return f.lineItems.reduce((s, li) => s + li.vatAmount, 0);
+  }
   return f.vatAmount ?? 0;
 }
 

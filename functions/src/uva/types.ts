@@ -302,7 +302,15 @@ export type FxRateReason =
   /** Rates were available to the run, but not for this date or currency. */
   | "no-ecb-rate"
   /** The run was given no rate table at all — nothing to prefer. */
-  | "no-ecb-table";
+  | "no-ecb-table"
+  /**
+   * Income, deliberately. Under Ist-Besteuerung the Entgelt is what was
+   * actually received, so the taxable base is the EUR that reached the
+   * account — the effective rate. Preferring a published rate here would move
+   * the declared turnover off the money, and when the published rate is the
+   * lower one it would understate the liability.
+   */
+  | "income-cash-basis";
 
 /**
  * A foreign-currency document converted into the bank line's currency

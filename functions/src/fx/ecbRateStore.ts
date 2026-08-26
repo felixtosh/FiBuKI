@@ -38,6 +38,19 @@ export const ECB_RATES_SOURCE = "ecb-eurofxref";
 /** Firestore writes per batch. The limit is 500; this leaves headroom. */
 const WRITE_CHUNK = 400;
 
+/**
+ * Bytes per batch, estimated from the serialized month documents.
+ *
+ * The op count is not the binding limit here. Seeding the full history writes
+ * ~320 month documents holding roughly 6,800 publication days of ~30 rates —
+ * comfortably under 500 ops and of the same order as the 8 MB source feed,
+ * against a 10 MiB commit ceiling that grows no larger while the history does.
+ * A rejected commit would leave the store empty, and an empty store re-fetches
+ * the whole history every night and fails the same way, silently: every
+ * conversion just keeps using the effective rate.
+ */
+const WRITE_CHUNK_BYTES = 4_000_000;
+
 /** Stored shape of one month of publication days. */
 export interface EcbRateMonth {
   /** YYYY-MM — also the document id, so a month cannot be stored twice. */
@@ -119,21 +132,37 @@ export async function storeEcbDays(
   }
 
   let stored = 0;
-  for (const chunk of chunked(months, WRITE_CHUNK)) {
-    const batch = db.batch();
-    for (const month of chunk) {
-      const merged = { ...(existing.get(month) ?? {}), ...(incoming.get(month) ?? {}) };
-      stored += Object.keys(merged).length;
-      const doc: EcbRateMonth = {
-        month,
-        source: ECB_RATES_SOURCE,
-        days: merged,
-        updatedAt: Timestamp.now(),
-      };
-      batch.set(collection.doc(month), doc);
-    }
+  let batch = db.batch();
+  let ops = 0;
+  let bytes = 0;
+  const commit = async () => {
+    if (ops === 0) return;
     await batch.commit();
+    batch = db.batch();
+    ops = 0;
+    bytes = 0;
+  };
+
+  for (const month of months) {
+    const merged = { ...(existing.get(month) ?? {}), ...(incoming.get(month) ?? {}) };
+    stored += Object.keys(merged).length;
+    const doc: EcbRateMonth = {
+      month,
+      source: ECB_RATES_SOURCE,
+      days: merged,
+      updatedAt: Timestamp.now(),
+    };
+    const size = JSON.stringify(merged).length;
+    // Commit BEFORE adding, so a batch never exceeds the budget it was
+    // measured against. A single month document is far under it either way.
+    if (ops > 0 && (ops >= WRITE_CHUNK || bytes + size > WRITE_CHUNK_BYTES)) {
+      await commit();
+    }
+    batch.set(collection.doc(month), doc);
+    ops += 1;
+    bytes += size;
   }
+  await commit();
 
   return { months: months.length, days: stored };
 }
@@ -151,8 +180,3 @@ function monthOf(date: string): string {
   return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date.slice(0, 7) : "";
 }
 
-function chunked<T>(items: T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
-  return out;
-}
