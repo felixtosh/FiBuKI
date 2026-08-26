@@ -700,7 +700,9 @@ describe("Tool Registry Handlers", () => {
 
       const result = await handlers.listFiles(userId, {});
 
-      expect(result).toHaveLength(2);
+      expect(result.files).toHaveLength(2);
+      expect(result.count).toBe(2);
+      expect(result.nextCursor).toBeNull();
     });
 
     it("should exclude deleted files", async () => {
@@ -709,7 +711,7 @@ describe("Tool Registry Handlers", () => {
 
       const result = await handlers.listFiles(userId, {});
 
-      expect(result).toHaveLength(1);
+      expect(result.files).toHaveLength(1);
     });
 
     it("should filter by hasConnections", async () => {
@@ -719,8 +721,8 @@ describe("Tool Registry Handlers", () => {
       const connected = await handlers.listFiles(userId, { hasConnections: true });
       const unconnected = await handlers.listFiles(userId, { hasConnections: false });
 
-      expect(connected).toHaveLength(1);
-      expect(unconnected).toHaveLength(1);
+      expect(connected.files).toHaveLength(1);
+      expect(unconnected.files).toHaveLength(1);
     });
 
     it("filters to the hand-corrected population, and away from it", async () => {
@@ -731,12 +733,352 @@ describe("Tool Registry Handlers", () => {
       );
       store.setDoc("files", "f-2", createTestFile({ userId }));
 
-      // listFiles returns a plain array on main, not the fork's page object.
       const corrected = await handlers.listFiles(userId, { handCorrected: true });
       const untouched = await handlers.listFiles(userId, { handCorrected: false });
 
-      expect(corrected.map((f) => (f as { id: string }).id)).toEqual(["f-1"]);
-      expect(untouched.map((f) => (f as { id: string }).id)).toEqual(["f-2"]);
+      expect(corrected.files.map((f) => f.id)).toEqual(["f-1"]);
+      expect(untouched.files.map((f) => f.id)).toEqual(["f-2"]);
+    });
+  });
+
+  describe("listFiles - paging and the limit (#116)", () => {
+    // Seed n files, newest first by uploadedAt so page order is deterministic.
+    const seedFiles = (n: number, overridesFor: (i: number) => Record<string, unknown> = () => ({})) => {
+      for (let i = 0; i < n; i++) {
+        store.setDoc(
+          "files",
+          `f-${String(i).padStart(3, "0")}`,
+          createTestFile({
+            userId,
+            uploadedAt: new Date(Date.UTC(2026, 0, 1) + (n - i) * 60_000),
+            ...overridesFor(i),
+          })
+        );
+      }
+    };
+
+    it("honours a limit above 100 instead of silently clamping to it", async () => {
+      seedFiles(120);
+
+      const result = await handlers.listFiles(userId, { limit: 200 });
+
+      expect(result.count).toBe(120);
+      expect(result.files).toHaveLength(120);
+    });
+
+    it("caps the page at 500 for an absurd limit, and says there is more", async () => {
+      seedFiles(600);
+
+      const result = await handlers.listFiles(userId, { limit: 10_000 });
+
+      expect(result.count).toBe(500);
+      expect(result.nextCursor).not.toBeNull();
+    });
+
+    it("does not report an empty account when the newest documents are all filtered away", async () => {
+      // The headline bug: the pre-fix handler read the newest `limit`
+      // documents and dropped the soft-deleted and not-an-invoice ones after
+      // that, so an account whose newest 100 are all filtered came back as [],
+      // which reads to an agent as "this account has no files".
+      seedFiles(120, (i) => (i < 100 ? { deletedAt: new Date() } : {}));
+
+      const result = await handlers.listFiles(userId, { limit: 50 });
+
+      expect(result.count).toBe(20);
+      expect(result.files.every((f) => !f.deletedAt)).toBe(true);
+    });
+
+    it("reaches files past the newest 100 documents", async () => {
+      // Anything older than the newest 100 by uploadedAt was unreachable
+      // through the tool at all: the cap was hard and there was no cursor.
+      seedFiles(250);
+
+      const seen = new Set<string>();
+      let cursor: string | null | undefined = undefined;
+      let guard = 0;
+
+      do {
+        const page: Awaited<ReturnType<typeof handlers.listFiles>> = await handlers.listFiles(userId, {
+          limit: 50,
+          ...(cursor ? { cursor } : {}),
+        });
+        page.files.forEach((f) => seen.add(f.id as string));
+        cursor = page.nextCursor;
+      } while (cursor && ++guard < 20);
+
+      expect(seen.size).toBe(250);
+      expect(seen.has("f-249")).toBe(true);
+    });
+
+    it("pages to exhaustion via nextCursor, no duplicates, no gaps", async () => {
+      seedFiles(25);
+
+      const seen: string[] = [];
+      let cursor: string | null | undefined = undefined;
+      let guard = 0;
+
+      do {
+        const page: Awaited<ReturnType<typeof handlers.listFiles>> = await handlers.listFiles(userId, {
+          limit: 7,
+          ...(cursor ? { cursor } : {}),
+        });
+        seen.push(...page.files.map((f) => f.id as string));
+        cursor = page.nextCursor;
+      } while (cursor && ++guard < 20);
+
+      expect(seen).toHaveLength(25);
+      expect(new Set(seen).size).toBe(25);
+    });
+
+    it("keeps paging when a whole scan window is filtered away", async () => {
+      // 60 not-an-invoice files in front of 5 real ones, page size 5 -> scan
+      // window 25, so the first two pages are empty but must still hand back a
+      // cursor rather than ending the walk.
+      seedFiles(65, (i) => (i < 60 ? { isNotInvoice: true } : {}));
+
+      const seen: string[] = [];
+      let cursor: string | null | undefined = undefined;
+      let guard = 0;
+
+      do {
+        const page: Awaited<ReturnType<typeof handlers.listFiles>> = await handlers.listFiles(userId, {
+          limit: 5,
+          ...(cursor ? { cursor } : {}),
+        });
+        seen.push(...page.files.map((f) => f.id as string));
+        cursor = page.nextCursor;
+      } while (cursor && ++guard < 30);
+
+      expect(seen).toHaveLength(5);
+    });
+
+    it("ignores a cursor belonging to another user", async () => {
+      seedFiles(3);
+      store.setDoc("files", "f-other", createTestFile({ userId: otherUserId }));
+
+      const result = await handlers.listFiles(userId, { cursor: "f-other" });
+
+      expect(result.count).toBe(3);
+    });
+
+    it("ignores a cursor that does not exist", async () => {
+      seedFiles(3);
+
+      const result = await handlers.listFiles(userId, { cursor: "f-gone" });
+
+      expect(result.count).toBe(3);
+    });
+  });
+
+  // The ownership check on a cursor cannot be observed through listFiles here:
+  // the in-memory Firestore resolves a cursor by locating its id inside the
+  // already user-filtered result set, so another user's id is a no-op there
+  // whether the check exists or not. Real Firestore skips by position, which
+  // is where the leak would be. So the helper is tested directly.
+  describe("startAfterCursor (#116)", () => {
+    // A stand-in for the query being built: it only has to record whether the
+    // cursor was applied, and to whom.
+    const spyQuery = () => {
+      const calls: Array<{ id: string }> = [];
+      const query = {
+        startAfter: (snap: { id: string }) => {
+          calls.push({ id: snap.id });
+          return query;
+        },
+      };
+      return { query, calls };
+    };
+
+    it("resumes after a cursor document the caller owns", async () => {
+      store.setDoc("files", "f-own", createTestFile({ userId }));
+      const { query, calls } = spyQuery();
+
+      await handlers.startAfterCursor(
+        query as unknown as FirebaseFirestore.Query,
+        "files",
+        userId,
+        "f-own"
+      );
+
+      expect(calls.map((c) => c.id)).toEqual(["f-own"]);
+    });
+
+    it("refuses a cursor document belonging to another user", async () => {
+      // The leak this guards: a caller holding or guessing another user's
+      // document id would otherwise resume paging from a position inside that
+      // user's data.
+      store.setDoc("files", "f-other", createTestFile({ userId: otherUserId }));
+      const { query, calls } = spyQuery();
+
+      const result = await handlers.startAfterCursor(
+        query as unknown as FirebaseFirestore.Query,
+        "files",
+        userId,
+        "f-other"
+      );
+
+      expect(calls).toHaveLength(0);
+      expect(result).toBe(query);
+    });
+
+    it("ignores a cursor that does not exist, and a cursor that is not a string", async () => {
+      const missing = spyQuery();
+      await handlers.startAfterCursor(
+        missing.query as unknown as FirebaseFirestore.Query,
+        "files",
+        userId,
+        "f-gone"
+      );
+      expect(missing.calls).toHaveLength(0);
+
+      for (const cursor of [undefined, null, "", 42, { id: "f-1" }]) {
+        const { query, calls } = spyQuery();
+        await handlers.startAfterCursor(
+          query as unknown as FirebaseFirestore.Query,
+          "files",
+          userId,
+          cursor
+        );
+        expect(calls).toHaveLength(0);
+      }
+    });
+
+    it("guards the transactions listings the same way", async () => {
+      store.setDoc("transactions", "tx-other", createTestTransaction({ userId: otherUserId }));
+      const { query, calls } = spyQuery();
+
+      await handlers.startAfterCursor(
+        query as unknown as FirebaseFirestore.Query,
+        "transactions",
+        userId,
+        "tx-other"
+      );
+
+      expect(calls).toHaveLength(0);
+    });
+  });
+
+  describe("listPartners - bounded read and paging (#116)", () => {
+    // Seed n partners with sortable names, so page order is the name order.
+    const seedPartners = (n: number, nameFor: (i: number) => string = (i) => `Partner ${String(i).padStart(3, "0")}`) => {
+      for (let i = 0; i < n; i++) {
+        store.setDoc("partners", `p-${String(i).padStart(3, "0")}`, createTestPartner({
+          userId,
+          name: nameFor(i),
+          isActive: true,
+        }));
+      }
+    };
+
+    it("asks Firestore for one page, not for the whole collection", async () => {
+      // The read used to be every active partner of the account, sliced to
+      // 100 afterwards. The rows returned look the same either way, so the
+      // assertion is on what the query carried.
+      seedPartners(120);
+
+      const result = await handlers.listPartners(userId, { limit: 10 });
+
+      expect(result.count).toBe(10);
+      expect(store.queries.filter((q) => q.collection === "partners")).toEqual([
+        { collection: "partners", limit: 10, cursor: undefined },
+      ]);
+    });
+
+    it("overfetches rather than truncating when a search has to filter in memory", async () => {
+      // The search is a substring match Firestore cannot push down, so the
+      // page still has to be filled from a wider read — bounded, not unbounded.
+      seedPartners(120);
+
+      await handlers.listPartners(userId, { search: "partner", limit: 10 });
+
+      expect(store.queries.filter((q) => q.collection === "partners")).toEqual([
+        { collection: "partners", limit: 50, cursor: undefined },
+      ]);
+    });
+
+    it("honours a limit above the old ceiling of 100", async () => {
+      seedPartners(150);
+
+      const result = await handlers.listPartners(userId, { limit: 200 });
+
+      expect(result.count).toBe(150);
+    });
+
+    it("caps the page at 500, and says there is more", async () => {
+      seedPartners(600);
+
+      const result = await handlers.listPartners(userId, { limit: 10_000 });
+
+      expect(result.count).toBe(500);
+      expect(result.nextCursor).not.toBeNull();
+    });
+
+    it("reaches partners past the old hard cap of 100", async () => {
+      // Before the cursor there was no way to ask for the 101st name.
+      seedPartners(250);
+
+      const seen: string[] = [];
+      let cursor: string | null | undefined = undefined;
+      let guard = 0;
+
+      do {
+        const page: Awaited<ReturnType<typeof handlers.listPartners>> = await handlers.listPartners(userId, {
+          limit: 50,
+          ...(cursor ? { cursor } : {}),
+        });
+        seen.push(...page.partners.map((p) => p.id as string));
+        cursor = page.nextCursor;
+      } while (cursor && ++guard < 20);
+
+      expect(seen).toHaveLength(250);
+      expect(new Set(seen).size).toBe(250);
+      expect(seen).toContain("p-249");
+    });
+
+    it("keeps search results whole across a page the filter empties", async () => {
+      // 60 partners the search cannot match sit in front of 3 that do, with a
+      // page of 5 -> a scan window of 25, so the first pages match nothing and
+      // must still hand back a cursor.
+      seedPartners(63, (i) => (i < 60 ? `Partner ${String(i).padStart(3, "0")}` : `Zebra ${i}`));
+
+      const seen: string[] = [];
+      let cursor: string | null | undefined = undefined;
+      let guard = 0;
+
+      do {
+        const page: Awaited<ReturnType<typeof handlers.listPartners>> = await handlers.listPartners(userId, {
+          search: "zebra",
+          limit: 5,
+          ...(cursor ? { cursor } : {}),
+        });
+        seen.push(...page.partners.map((p) => p.name as string));
+        cursor = page.nextCursor;
+      } while (cursor && ++guard < 30);
+
+      expect(seen.sort()).toEqual(["Zebra 60", "Zebra 61", "Zebra 62"]);
+    });
+
+    it("leaves another user's partners out of the page and its cursor", async () => {
+      seedPartners(3);
+      store.setDoc("partners", "p-other", createTestPartner({
+        userId: otherUserId,
+        name: "Aaa Other",
+        isActive: true,
+      }));
+
+      const result = await handlers.listPartners(userId, { cursor: "p-other" });
+
+      expect(result.count).toBe(3);
+      expect(result.partners.every((p) => (p.name as string).startsWith("Partner"))).toBe(true);
+    });
+
+    it("skips inactive partners", async () => {
+      seedPartners(2);
+      store.setDoc("partners", "p-off", createTestPartner({ userId, name: "Partner off", isActive: false }));
+
+      const result = await handlers.listPartners(userId, {});
+
+      expect(result.count).toBe(2);
     });
   });
 
@@ -1647,7 +1989,7 @@ describe("Tool Registry Handlers", () => {
       const result = await handlers.listFiles(userId, { limit: 5 });
 
       expect(result).toBeDefined();
-      expect(Array.isArray(result)).toBe(true);
+      expect(Array.isArray(result.files)).toBe(true);
     });
 
     it("listTransactionsNeedingFiles should apply limit after filtering", async () => {
@@ -1833,16 +2175,16 @@ describe("Tool Registry Handlers", () => {
       const flagged = await handlers.listFiles(userId, { needsVatRateReview: true });
       const rest = await handlers.listFiles(userId, { needsVatRateReview: false });
 
-      expect(flagged.map((f) => f.id)).toEqual(["f-flagged"]);
-      expect(flagged[0].vatRatesOutsideSet).toEqual([11]);
-      expect(rest.map((f) => f.id).sort()).toEqual(["f-legacy", "f-ok"]);
+      expect(flagged.files.map((f) => f.id)).toEqual(["f-flagged"]);
+      expect(flagged.files[0].vatRatesOutsideSet).toEqual([11]);
+      expect(rest.files.map((f) => f.id).sort()).toEqual(["f-legacy", "f-ok"]);
     });
 
     it("returns every file when the filter is not passed", async () => {
       store.setDoc("files", "f-flagged", createTestFile({ userId, needsVatRateReview: true }));
       store.setDoc("files", "f-ok", createTestFile({ userId }));
 
-      expect(await handlers.listFiles(userId, {})).toHaveLength(2);
+      expect((await handlers.listFiles(userId, {})).files).toHaveLength(2);
     });
   });
 
@@ -1859,8 +2201,8 @@ describe("Tool Registry Handlers", () => {
 
       const result = await handlers.listFiles(userId, { hasSuggestions: true });
 
-      expect(result).toHaveLength(1);
-      expect(result[0].id).toBe("f-1");
+      expect(result.files).toHaveLength(1);
+      expect(result.files[0].id).toBe("f-1");
     });
 
     it("should filter by hasSuggestions false", async () => {
@@ -1875,8 +2217,8 @@ describe("Tool Registry Handlers", () => {
 
       const result = await handlers.listFiles(userId, { hasSuggestions: false });
 
-      expect(result).toHaveLength(1);
-      expect(result[0].id).toBe("f-2");
+      expect(result.files).toHaveLength(1);
+      expect(result.files[0].id).toBe("f-2");
     });
 
     it("should exclude isNotInvoice files", async () => {
@@ -1885,8 +2227,8 @@ describe("Tool Registry Handlers", () => {
 
       const result = await handlers.listFiles(userId, {});
 
-      expect(result).toHaveLength(1);
-      expect(result[0].id).toBe("f-1");
+      expect(result.files).toHaveLength(1);
+      expect(result.files[0].id).toBe("f-1");
     });
 
     it("should combine multiple filters", async () => {
@@ -1911,8 +2253,8 @@ describe("Tool Registry Handlers", () => {
         hasSuggestions: true,
       });
 
-      expect(result).toHaveLength(1);
-      expect(result[0].id).toBe("f-1");
+      expect(result.files).toHaveLength(1);
+      expect(result.files[0].id).toBe("f-1");
     });
   });
 
@@ -2347,10 +2689,12 @@ describe("Tool Registry Handlers", () => {
         }));
         store.setDoc("partners", "partner-2", createTestPartner({ userId, name: "Rewe" }));
 
-        const list = await handlers.listPartners(userId, {}) as Array<{
-          name: string;
-          billingCycle: { effective: Array<{ frequencyDays: number }> } | null;
-        }>;
+        const { partners: list } = await handlers.listPartners(userId, {}) as {
+          partners: Array<{
+            name: string;
+            billingCycle: { effective: Array<{ frequencyDays: number }> } | null;
+          }>;
+        };
 
         expect(list[0].billingCycle!.effective[0].frequencyDays).toBe(365);
         // A partner that does not bill on a schedule reads as null, not as an
