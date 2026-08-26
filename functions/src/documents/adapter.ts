@@ -134,3 +134,46 @@ export function documentTypeFields(result: DocumentTypeResult): Record<string, u
     documentTypeMissingElements: result.missingElements,
   };
 }
+
+/**
+ * Compare two stored-shaped values, key order and `undefined` aside.
+ *
+ * The basis is written as one object, so a stored copy and a fresh verdict can
+ * carry the same facts in a different key order; treating that as a change
+ * would make every run write the whole corpus.
+ */
+function sameStoredValue(stored: unknown, next: unknown): boolean {
+  if (stored === next) return true;
+  if (stored === null || stored === undefined || next === null || next === undefined) {
+    return (stored ?? null) === (next ?? null);
+  }
+  if (Array.isArray(stored) || Array.isArray(next)) {
+    if (!Array.isArray(stored) || !Array.isArray(next) || stored.length !== next.length) return false;
+    return stored.every((entry, index) => sameStoredValue(entry, next[index]));
+  }
+  if (typeof stored === "object" && typeof next === "object") {
+    const storedRecord = stored as Record<string, unknown>;
+    const nextRecord = next as Record<string, unknown>;
+    const keys = new Set([...Object.keys(storedRecord), ...Object.keys(nextRecord)]);
+    return [...keys].every((key) => sameStoredValue(storedRecord[key], nextRecord[key]));
+  }
+  return false;
+}
+
+/**
+ * Would writing this classification onto this record change anything?
+ *
+ * The file-side twin of `documentationStateChanged`, and there for the same
+ * reason: a write that changes nothing costs a document write and re-fires
+ * whatever watches the collection. It compares the whole written field set,
+ * not just the type — a verdict that keeps its type while its basis or its
+ * missing elements move is still an answer worth storing.
+ */
+export function documentTypeFieldsChanged(
+  record: FileRecord,
+  result: DocumentTypeResult
+): boolean {
+  return Object.entries(documentTypeFields(result)).some(
+    ([field, value]) => !sameStoredValue(record[field], value)
+  );
+}

@@ -583,6 +583,19 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     }
   },
   {
+    "name": "reclassify_documents",
+    "description": "Re-run the § 11 UStG document classifier over every stored file and then re-derive the documentation state of every transaction, whole account, in that order. This is what puts invoice/receipt on records that were stored before the classifier existed or before a rule fix — it never re-extracts, spends no AI call and touches no extracted field, so a hand correction cannot be destroyed. Defaults to a dry run: pass dryRun=false to write. Writes only where the value actually moved, so a second run in a row writes nothing. Returns summary counts only — by document type, by basis reason and by documentation state, never per-file rows. Inspect the result with list_transactions_missing_invoice.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "dryRun": {
+          "type": "boolean",
+          "description": "Default true — classify and report only, nothing written. Pass false to persist."
+        }
+      }
+    }
+  },
+  {
     "name": "auto_connect_file_suggestions",
     "description": "Auto-connect files to transactions above confidence threshold",
     "requiredFeature": "aiMatching",
