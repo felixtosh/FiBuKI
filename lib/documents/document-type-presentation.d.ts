@@ -3,6 +3,7 @@ import type {
   DocumentTypeBasis,
   Section11Element,
 } from "@/types/file";
+import type { DocumentationState } from "@/types/transaction";
 
 /**
  * A presentation-neutral name for how strongly a value reads. `unset` is its
@@ -18,6 +19,16 @@ export interface DocumentTypePresentation {
   label: string;
   tone: DocumentTone;
   /** One sentence on what the type means for the Vorsteuer. */
+  summary: string;
+}
+
+export interface DocumentationStatePresentation {
+  /** The resolved state — an absent field resolves to `unknown`, never to `undocumented`. */
+  state: DocumentationState;
+  /** German, as an Austrian EPU reads it: Rechnung, Nur Zahlungsbeleg, … */
+  label: string;
+  tone: DocumentTone;
+  /** One sentence on what the state means for the Vorsteuer. */
   summary: string;
 }
 
@@ -56,6 +67,11 @@ export declare const DOCUMENT_TYPES: Record<
   Omit<DocumentTypePresentation, "type">
 >;
 
+export declare const DOCUMENTATION_STATES: Record<
+  DocumentationState,
+  Omit<DocumentationStatePresentation, "state">
+>;
+
 export declare const SECTION_11_ELEMENTS: Record<
   Section11Element,
   Omit<Section11ElementPresentation, "element">
@@ -66,6 +82,10 @@ export declare const SECTION_11_ELEMENT_ORDER: Section11Element[];
 export declare function describeDocumentType(
   type: DocumentType | null | undefined,
 ): DocumentTypePresentation;
+
+export declare function describeDocumentationState(
+  state: DocumentationState | null | undefined,
+): DocumentationStatePresentation;
 
 export declare function describeSection11Element(
   element: Section11Element | string,

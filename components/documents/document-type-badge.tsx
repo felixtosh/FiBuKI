@@ -8,11 +8,16 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { DocumentType } from "@/types/file";
-import { describeDocumentType } from "@/lib/documents/document-type-presentation";
+import type { DocumentationState } from "@/types/transaction";
+import {
+  describeDocumentType,
+  describeDocumentationState,
+} from "@/lib/documents/document-type-presentation";
 import type { DocumentTone } from "@/lib/documents/document-type-presentation";
 
 /**
- * The § 11 document type as a badge (#205).
+ * The § 11 document type as a badge (#205), and how a transaction is
+ * documented as the same badge (#207).
  *
  * Built here rather than inside the files table because the transaction
  * surfaces show the same fact about the same file, and two badges drifting
@@ -31,20 +36,18 @@ const TONE_VARIANT: Record<DocumentTone, "success" | "warning" | "outline" | "mu
   unset: "muted",
 };
 
-interface DocumentTypeBadgeProps {
-  type: DocumentType | null | undefined;
-  /** Suppress the tooltip where the surrounding row already explains itself. */
-  withTooltip?: boolean;
+interface TonedBadgeProps {
+  presentation: { label: string; tone: DocumentTone; summary: string };
+  withTooltip: boolean;
   className?: string;
 }
 
-export function DocumentTypeBadge({
-  type,
-  withTooltip = true,
-  className,
-}: DocumentTypeBadgeProps) {
-  const presentation = describeDocumentType(type);
-
+/**
+ * One rendering for both badges: the tone table, the muted treatment of
+ * `unset` and the summary tooltip are decided once, so a transaction's state
+ * and its document's type cannot end up looking like different kinds of fact.
+ */
+function TonedBadge({ presentation, withTooltip, className }: TonedBadgeProps) {
   const badge = (
     <Badge
       variant={TONE_VARIANT[presentation.tone]}
@@ -69,5 +72,55 @@ export function DocumentTypeBadge({
         <p className="text-xs">{presentation.summary}</p>
       </TooltipContent>
     </Tooltip>
+  );
+}
+
+interface DocumentTypeBadgeProps {
+  type: DocumentType | null | undefined;
+  /** Suppress the tooltip where the surrounding row already explains itself. */
+  withTooltip?: boolean;
+  className?: string;
+}
+
+export function DocumentTypeBadge({
+  type,
+  withTooltip = true,
+  className,
+}: DocumentTypeBadgeProps) {
+  return (
+    <TonedBadge
+      presentation={describeDocumentType(type)}
+      withTooltip={withTooltip}
+      className={className}
+    />
+  );
+}
+
+interface DocumentationStateBadgeProps {
+  state: DocumentationState | null | undefined;
+  /** Suppress the tooltip where the surrounding row already explains itself. */
+  withTooltip?: boolean;
+  className?: string;
+}
+
+/**
+ * How a transaction is documented (#207).
+ *
+ * A row documented by a payment confirmation and a row documented by a proper
+ * Rechnung are both green — `isComplete` is untouched by design — so this
+ * badge is the only thing that tells them apart, and a line resolved by a
+ * no-receipt category has to be readable as neither.
+ */
+export function DocumentationStateBadge({
+  state,
+  withTooltip = true,
+  className,
+}: DocumentationStateBadgeProps) {
+  return (
+    <TonedBadge
+      presentation={describeDocumentationState(state)}
+      withTooltip={withTooltip}
+      className={className}
+    />
   );
 }
