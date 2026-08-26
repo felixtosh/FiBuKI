@@ -360,6 +360,24 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    name: "retry_file_extraction",
+    description:
+      "Re-run extraction on a file. Use when a file extracted without erroring but produced nothing usable — no line items, no VAT amount, a wrong total — which is the case the UI's retry button did not cover. Extraction runs synchronously and can take up to a minute. Re-extracting resets partner and transaction matching for the file so both re-run against the new data; a manual partner assignment is kept. A file that already extracted cleanly needs force: true.",
+    requiredFeature: "aiExtraction",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fileId: { type: "string", description: "The file ID" },
+        force: {
+          type: "boolean",
+          description:
+            "Re-extract a file whose extraction completed without error. Required for that case, ignored otherwise.",
+        },
+      },
+      required: ["fileId"],
+    },
+  },
+  {
     name: "reclassify_documents",
     description:
       "Re-run the § 11 UStG document classifier over every stored file and then re-derive the " +

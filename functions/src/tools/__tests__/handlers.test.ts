@@ -45,6 +45,19 @@ vi.mock("firebase-admin/firestore", () => {
   };
 });
 
+// retry_file_extraction is the one tool that spends an AI call; the model
+// boundary and the secret are mocked, the eligibility rule and the writes are
+// the real ones.
+const extraction = vi.hoisted(() => ({ runExtraction: vi.fn() }));
+
+vi.mock("../../extraction/extractionCore", () => ({
+  runExtraction: (...args: unknown[]) => extraction.runExtraction(...args),
+}));
+
+vi.mock("firebase-functions/params", () => ({
+  defineSecret: (name: string) => ({ value: () => `test-${name}` }),
+}));
+
 // Import handlers after mocking
 const handlers = await import("../handlers");
 
@@ -2759,6 +2772,129 @@ describe("Tool Registry Handlers", () => {
         await expect(handlers.listRecurringPartners(userId, { dateTo: "2026-13-01" }))
           .rejects.toThrow("dateTo must be a calendar day");
       });
+    });
+  });
+  // ==========================================================================
+  // Extraction retry (fork #74)
+  // ==========================================================================
+
+  describe("retryFileExtractionTool", () => {
+    beforeEach(() => {
+      extraction.runExtraction.mockReset();
+      extraction.runExtraction.mockResolvedValue({ success: true, duration: 12 });
+    });
+
+    it("re-extracts a file whose extraction errored", async () => {
+      store.setDoc(
+        "files",
+        "f-1",
+        createTestFile({ userId, extractionComplete: true, extractionError: "boom" })
+      );
+
+      const result = await handlers.retryFileExtractionTool(userId, { fileId: "f-1" });
+
+      expect(result).toMatchObject({ success: true, fileId: "f-1", duration: 12 });
+      expect(extraction.runExtraction).toHaveBeenCalledTimes(1);
+      // The reset is written before extraction runs, and matching is re-armed.
+      const file = store.getDoc("files", "f-1") as Record<string, unknown>;
+      expect(file.extractionError).toBeNull();
+      expect(file.partnerMatchComplete).toBe(false);
+      expect(file.transactionSuggestions).toEqual([]);
+    });
+
+    it("refuses a clean extraction without force, and runs it with force", async () => {
+      store.setDoc(
+        "files",
+        "f-2",
+        createTestFile({ userId, extractionComplete: true, extractionError: null })
+      );
+
+      await expect(handlers.retryFileExtractionTool(userId, { fileId: "f-2" })).rejects.toThrow(
+        /^ALREADY_EXTRACTED:/
+      );
+      expect(extraction.runExtraction).not.toHaveBeenCalled();
+
+      await handlers.retryFileExtractionTool(userId, { fileId: "f-2", force: true });
+      expect(extraction.runExtraction).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps a manual partner assignment across the reset", async () => {
+      store.setDoc(
+        "files",
+        "f-3",
+        createTestFile({
+          userId,
+          extractionComplete: true,
+          extractionError: "boom",
+          partnerId: "p-manual",
+          partnerMatchedBy: "manual",
+        })
+      );
+
+      await handlers.retryFileExtractionTool(userId, { fileId: "f-3" });
+
+      const file = store.getDoc("files", "f-3") as Record<string, unknown>;
+      expect(file.partnerId).toBe("p-manual");
+      expect(file.partnerMatchedBy).toBe("manual");
+    });
+
+    it("refuses another user's file without touching it", async () => {
+      store.setDoc(
+        "files",
+        "f-4",
+        createTestFile({ userId: otherUserId, extractionComplete: true, extractionError: "boom" })
+      );
+
+      await expect(handlers.retryFileExtractionTool(userId, { fileId: "f-4" })).rejects.toThrow(
+        /^ACCESS_DENIED:/
+      );
+      expect(extraction.runExtraction).not.toHaveBeenCalled();
+      expect((store.getDoc("files", "f-4") as Record<string, unknown>).extractionError).toBe("boom");
+    });
+
+    it("distinguishes a missing file from one that is not the caller's", async () => {
+      await expect(handlers.retryFileExtractionTool(userId, { fileId: "nope" })).rejects.toThrow(
+        /^NOT_FOUND:/
+      );
+      await expect(handlers.retryFileExtractionTool(userId, {})).rejects.toThrow(
+        "fileId is required"
+      );
+    });
+
+    it("stamps a failed extraction on the document and reports it", async () => {
+      store.setDoc(
+        "files",
+        "f-5",
+        createTestFile({ userId, extractionComplete: true, extractionError: "boom" })
+      );
+      extraction.runExtraction.mockRejectedValue(new Error("No such object: missing/nope.pdf"));
+
+      await expect(handlers.retryFileExtractionTool(userId, { fileId: "f-5" })).rejects.toThrow(
+        /^EXTRACTION_FAILED: No such object/
+      );
+
+      const file = store.getDoc("files", "f-5") as Record<string, unknown>;
+      expect(file.extractionComplete).toBe(true);
+      expect(file.extractionError).toBe("No such object: missing/nope.pdf");
+    });
+
+    it("is reachable through the dispatcher, behind the aiExtraction gate", async () => {
+      store.setDoc(
+        "files",
+        "f-6",
+        createTestFile({ userId, extractionComplete: true, extractionError: "boom" })
+      );
+
+      // Extraction spends an AI call, so the tool is gated like the other AI
+      // tools. On the free plan the dispatcher refuses it before the handler.
+      await expect(
+        handlers.handleTool(userId, "retry_file_extraction", { fileId: "f-6" })
+      ).rejects.toThrow(/requires the "aiExtraction" feature/);
+      expect(extraction.runExtraction).not.toHaveBeenCalled();
+
+      store.setDoc("subscriptions", userId, { plan: "smart" });
+      await handlers.handleTool(userId, "retry_file_extraction", { fileId: "f-6" });
+      expect(extraction.runExtraction).toHaveBeenCalledTimes(1);
     });
   });
 });
