@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import Link from "next/link";
 import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -17,6 +18,7 @@ import {
   X,
   CalendarIcon,
   Check,
+  ReceiptText,
 } from "lucide-react";
 import { SearchButton } from "@/components/ui/search-button";
 import { SearchInput } from "@/components/ui/search-input";
@@ -40,6 +42,8 @@ interface TransactionToolbarProps {
   filteredSum?: number;
   /** Completion percentage (0-100) for the progress ring */
   scorePercent?: number;
+  /** Receipt-only transactions across the account, not the filtered view (#207) */
+  chaseQueueCount?: number;
 }
 
 function ScoreRing({ percent }: { percent: number }) {
@@ -94,6 +98,7 @@ export function TransactionToolbar({
   totalCount,
   filteredSum,
   scorePercent,
+  chaseQueueCount = 0,
 }: TransactionToolbarProps) {
   const [datePopoverOpen, setDatePopoverOpen] = useState(false);
   const [statusPopoverOpen, setStatusPopoverOpen] = useState(false);
@@ -570,6 +575,24 @@ export function TransactionToolbar({
           </div>
         </PopoverContent>
       </Popover>
+
+      {/*
+        The way into the chase queue (#207). Shown even at zero: before the
+        backfill runs every transaction reads as unset and the queue is empty
+        for everyone, and a link that only appears once there is work is a
+        feature nobody ever finds.
+      */}
+      <Button variant="outline" size="sm" className="h-9 gap-2" asChild>
+        <Link href="/transactions/chase">
+          <ReceiptText className="h-4 w-4" />
+          <span>Chase</span>
+          {chaseQueueCount > 0 && (
+            <Badge variant="warning" className="h-5 px-1.5 tabular-nums">
+              {chaseQueueCount}
+            </Badge>
+          )}
+        </Link>
+      </Button>
 
         {/* Import filter badge (if active) */}
         {filters.importId && (

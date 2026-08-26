@@ -38,6 +38,7 @@ import {
 import { FilePreview } from "./file-preview";
 import { FileExtractedInfo } from "./file-extracted-info";
 import { FileConnectionsList } from "./file-connections-list";
+import { DocumentTypeSection } from "@/components/documents/section-11-details";
 import { AddPartnerDialog } from "@/components/partners/add-partner-dialog";
 import { PartnerPill } from "@/components/partners/partner-pill";
 import {
@@ -578,6 +579,15 @@ function FileDetailPanelInner({
               onDirectionChange={handleDirectionChange}
               onUpdate={handleUpdateExtractedFields}
               isUpdating={isUpdatingExtractedFields}
+            />
+
+            <Separator />
+
+            {/* § 11 verdict: what the document is, why, and what it does not show */}
+            <DocumentTypeSection
+              documentType={file.documentType}
+              basis={file.documentTypeBasis}
+              missingElements={file.documentTypeMissingElements}
             />
 
             <Separator />

@@ -1050,6 +1050,60 @@ describe("Tool Registry Handlers", () => {
     });
   });
 
+  // ==========================================================================
+  // Classifier write path (#204)
+  //
+  // The sweep itself is tested in documents/reclassifyStoredDocuments.test.ts;
+  // what belongs here is the tool surface — one call covering both
+  // collections, and the dry-run default a typo must not get past.
+  // ==========================================================================
+
+  describe("reclassifyDocumentsTool", () => {
+    /** A payment confirmation: no rate, no UID, and it says what it is. */
+    function receiptFile() {
+      return createTestFile({
+        userId,
+        extractedAmount: 2499,
+        extractedDate: new Date("2026-03-05"),
+        extractedIssuer: { name: "Amazon EU S.à r.l.", address: "Luxembourg", vatId: null },
+        extractedSelfDesignation: "Zahlungsbestätigung",
+        extractedInvoiceNumber: null,
+      });
+    }
+
+    it("defaults to a dry run when dispatched with no arguments", async () => {
+      store.setDoc("files", "f-1", receiptFile());
+      store.setDoc("transactions", "tx-1", createTestTransaction({ userId, fileIds: ["f-1"] }));
+
+      const result = (await handlers.handleTool(userId, "reclassify_documents", {})) as {
+        dryRun: boolean;
+        files: { changed: number; written: number };
+        transactions: { changed: number; written: number };
+      };
+
+      expect(result.dryRun).toBe(true);
+      expect(result.files).toMatchObject({ changed: 1, written: 0 });
+      expect(result.transactions).toMatchObject({ changed: 1, written: 0 });
+      expect(store.getDoc("files", "f-1")?.documentType).toBeUndefined();
+    });
+
+    it("classifies files and re-derives transactions in one call when opted in", async () => {
+      store.setDoc("files", "f-1", receiptFile());
+      store.setDoc("transactions", "tx-1", createTestTransaction({ userId, fileIds: ["f-1"] }));
+
+      await handlers.reclassifyDocumentsTool(userId, { dryRun: false });
+
+      expect(store.getDoc("files", "f-1")?.documentType).toBe("receipt");
+      expect(store.getDoc("transactions", "tx-1")?.documentationState).toBe("receipt-only");
+    });
+
+    it("refuses a dryRun that is not a boolean", async () => {
+      await expect(
+        handlers.reclassifyDocumentsTool(userId, { dryRun: "false" })
+      ).rejects.toThrow("dryRun must be a boolean");
+    });
+  });
+
   describe("markFileAsNotInvoice / unmarkFileAsNotInvoice", () => {
     it("should flag the file, clear extracted data and empty the suggestion queue", async () => {
       store.setDoc(

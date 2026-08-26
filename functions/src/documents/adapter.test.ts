@@ -7,7 +7,12 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { classifyFileRecord, documentTypeFields, toDocumentFacts } from "./adapter";
+import {
+  classifyFileRecord,
+  documentTypeFields,
+  documentTypeFieldsChanged,
+  toDocumentFacts,
+} from "./adapter";
 
 describe("toDocumentFacts", () => {
   it("prefers the issuer entity over the flat legacy fields", () => {
@@ -99,6 +104,51 @@ describe("documentTypeFields", () => {
     for (const value of Object.values(fields.documentTypeBasis as Record<string, unknown>)) {
       expect(value).not.toBeUndefined();
     }
+  });
+});
+
+describe("documentTypeFieldsChanged", () => {
+  const record = {
+    extractedAmount: 5400,
+    extractedVatPercent: 20,
+    extractedDate: { toDate: () => new Date() },
+    extractedLineItems: [{ description: "USB-C Kabel", vatPercent: 20 }],
+    extractedIssuer: { name: "Elektro Huber e.U.", address: "Wien", vatId: null },
+    extractedSelfDesignation: "Rechnung",
+    extractedInvoiceNumber: null,
+  };
+
+  it("sees a record that carries no classification at all as changed", () => {
+    expect(documentTypeFieldsChanged(record, classifyFileRecord(record))).toBe(true);
+  });
+
+  it("reports no change once the verdict is stored — a second sweep owes no writes", () => {
+    const stored = { ...record, ...documentTypeFields(classifyFileRecord(record)) };
+
+    expect(documentTypeFieldsChanged(stored, classifyFileRecord(stored))).toBe(false);
+  });
+
+  it("ignores the key order a stored basis came back in", () => {
+    const fields = documentTypeFields(classifyFileRecord(record));
+    const basis = fields.documentTypeBasis as Record<string, unknown>;
+    const reordered = Object.fromEntries(Object.entries(basis).reverse());
+
+    expect(
+      documentTypeFieldsChanged(
+        { ...record, ...fields, documentTypeBasis: reordered },
+        classifyFileRecord(record)
+      )
+    ).toBe(false);
+  });
+
+  it("sees a basis that moved while the type stayed put", () => {
+    const stored = {
+      ...record,
+      ...documentTypeFields(classifyFileRecord(record)),
+      documentTypeBasis: { reason: "legacy-record-undecidable" },
+    };
+
+    expect(documentTypeFieldsChanged(stored, classifyFileRecord(record))).toBe(true);
   });
 });
 
