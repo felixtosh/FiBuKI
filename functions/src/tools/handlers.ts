@@ -113,8 +113,13 @@ const db = getFirestore();
  * user's data. A cursor that is unknown, or that belongs to someone else, is
  * ignored rather than rejected — the page then starts from the top, which is
  * what every call site here already did.
+ *
+ * Exported for its own test: the in-memory Firestore the handler tests run
+ * against resolves a cursor by locating its id inside the already-filtered
+ * result set, so a foreign cursor is a no-op there whether the ownership check
+ * exists or not. Only a direct test can hold that check in place.
  */
-async function startAfterCursor(
+export async function startAfterCursor(
   query: FirebaseFirestore.Query,
   collection: string,
   userId: string,

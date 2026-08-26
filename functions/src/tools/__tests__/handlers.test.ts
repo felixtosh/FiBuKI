@@ -853,9 +853,6 @@ describe("Tool Registry Handlers", () => {
     });
 
     it("ignores a cursor belonging to another user", async () => {
-      // Without the ownership check on the cursor document, a caller holding
-      // another user's file id resumes paging from a position in that user's
-      // data.
       seedFiles(3);
       store.setDoc("files", "f-other", createTestFile({ userId: otherUserId }));
 
@@ -870,6 +867,94 @@ describe("Tool Registry Handlers", () => {
       const result = await handlers.listFiles(userId, { cursor: "f-gone" });
 
       expect(result.count).toBe(3);
+    });
+  });
+
+  // The ownership check on a cursor cannot be observed through listFiles here:
+  // the in-memory Firestore resolves a cursor by locating its id inside the
+  // already user-filtered result set, so another user's id is a no-op there
+  // whether the check exists or not. Real Firestore skips by position, which
+  // is where the leak would be. So the helper is tested directly.
+  describe("startAfterCursor (#116)", () => {
+    // A stand-in for the query being built: it only has to record whether the
+    // cursor was applied, and to whom.
+    const spyQuery = () => {
+      const calls: Array<{ id: string }> = [];
+      const query = {
+        startAfter: (snap: { id: string }) => {
+          calls.push({ id: snap.id });
+          return query;
+        },
+      };
+      return { query, calls };
+    };
+
+    it("resumes after a cursor document the caller owns", async () => {
+      store.setDoc("files", "f-own", createTestFile({ userId }));
+      const { query, calls } = spyQuery();
+
+      await handlers.startAfterCursor(
+        query as unknown as FirebaseFirestore.Query,
+        "files",
+        userId,
+        "f-own"
+      );
+
+      expect(calls.map((c) => c.id)).toEqual(["f-own"]);
+    });
+
+    it("refuses a cursor document belonging to another user", async () => {
+      // The leak this guards: a caller holding or guessing another user's
+      // document id would otherwise resume paging from a position inside that
+      // user's data.
+      store.setDoc("files", "f-other", createTestFile({ userId: otherUserId }));
+      const { query, calls } = spyQuery();
+
+      const result = await handlers.startAfterCursor(
+        query as unknown as FirebaseFirestore.Query,
+        "files",
+        userId,
+        "f-other"
+      );
+
+      expect(calls).toHaveLength(0);
+      expect(result).toBe(query);
+    });
+
+    it("ignores a cursor that does not exist, and a cursor that is not a string", async () => {
+      const missing = spyQuery();
+      await handlers.startAfterCursor(
+        missing.query as unknown as FirebaseFirestore.Query,
+        "files",
+        userId,
+        "f-gone"
+      );
+      expect(missing.calls).toHaveLength(0);
+
+      for (const cursor of [undefined, null, "", 42, { id: "f-1" }]) {
+        const { query, calls } = spyQuery();
+        await handlers.startAfterCursor(
+          query as unknown as FirebaseFirestore.Query,
+          "files",
+          userId,
+          cursor
+        );
+        expect(calls).toHaveLength(0);
+      }
+    });
+
+    it("guards the transactions listings the same way", async () => {
+      store.setDoc("transactions", "tx-other", createTestTransaction({ userId: otherUserId }));
+      const { query, calls } = spyQuery();
+
+      await handlers.startAfterCursor(
+        query as unknown as FirebaseFirestore.Query,
+        "transactions",
+        userId,
+        "tx-other"
+      );
+
+      expect(calls).toHaveLength(0);
     });
   });
 
