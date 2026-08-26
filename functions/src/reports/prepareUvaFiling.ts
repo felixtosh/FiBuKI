@@ -83,15 +83,29 @@ interface StoredFiling {
   userId: string;
   periodKey: string;
   period: UvaPeriod;
-  baseline: UvaDerivationSnapshot | null;
   baselineOrigin: BaselineOrigin;
-  /** The run the last preparation produced. */
-  latest: UvaDerivationSnapshot;
   openItems: UvaOpenItem[];
   handover: UvaFilingHandover;
   /** The totals the recorded handover covered — see the module note. */
   handoverCovers: HandoverCoverage | null;
   blockerCodes: string[];
+}
+
+/**
+ * Snapshots live one document each, in a subcollection, rather than both on
+ * the filing record. A snapshot holds one entry per transaction in the period,
+ * so two of them on one document put a busy quarter against Firestore's 1 MiB
+ * ceiling — and the failure would land after a 120-second derivation, with
+ * nothing kept. One document each doubles the headroom and keeps the metadata
+ * record small enough to read on its own.
+ */
+const SNAPSHOTS = "snapshots";
+
+interface StoredSnapshot {
+  userId: string;
+  periodKey: string;
+  kind: "baseline" | "latest";
+  snapshot: UvaDerivationSnapshot;
 }
 
 interface HandoverCoverage {
@@ -123,81 +137,119 @@ export const prepareUvaFilingCallable = createCallable<
     const docRef = ctx.db
       .collection(COLLECTION)
       .doc(`${ctx.userId}_${periodKey}`);
-    const existingDoc = await docRef.get();
-    const existing = existingDoc.exists
-      ? (existingDoc.data() as StoredFiling)
-      : null;
+    const baselineRef = docRef.collection(SNAPSHOTS).doc("baseline");
+    const latestRef = docRef.collection(SNAPSHOTS).doc("latest");
 
+    // The derivation runs OUTSIDE the transaction: it reads the whole period
+    // and can take a minute, which is longer than a Firestore transaction may
+    // hold. What has to be atomic is the read-decide-write on the filing
+    // record itself, so only that part is inside.
     const { result } = await runUvaForPeriod(ctx.db, ctx.userId, period);
     const latest = snapshotDerivations(result);
 
-    // A run only compares against something that came from somewhere else. When
-    // no baseline exists, this run becomes it and the filing carries no
-    // reconciliation — a self-diff showing no movement would read as "compared
-    // and clean" while nothing was compared at all.
-    const baseline = suppliedBaseline ?? existing?.baseline ?? null;
-    const origin: BaselineOrigin = suppliedBaseline
-      ? "supplied"
-      : baseline
-        ? "stored"
-        : "established";
-    const reconciliation = baseline
-      ? reconcileDerivations(baseline, latest)
-      : null;
+    const outcome = await ctx.db.runTransaction(async (tx) => {
+      // Every read first: Firestore refuses a read after a write in the same
+      // transaction.
+      const existingDoc = await tx.get(docRef);
+      const existing = existingDoc.exists
+        ? (existingDoc.data() as StoredFiling)
+        : null;
+      const storedBaselineDoc = suppliedBaseline ? null : await tx.get(baselineRef);
+      const storedBaseline = storedBaselineDoc?.exists
+        ? (storedBaselineDoc.data() as StoredSnapshot).snapshot
+        : null;
 
-    const openItems = openItemsRequested ?? existing?.openItems ?? [];
-    const handover = handoverRequested ??
-      existing?.handover ?? { state: "prepared" as const };
-    // A handover recorded on this call covers the run it was recorded against;
-    // one carried over from an earlier call covers whatever it covered then.
-    const handoverCovers: HandoverCoverage | null = handoverRequested
-      ? coverageOf(result)
-      : (existing?.handoverCovers ?? null);
+      // A run only compares against something that came from somewhere else.
+      // When no baseline exists, this run becomes it and the filing carries no
+      // reconciliation — a self-diff showing no movement would read as
+      // "compared and clean" while nothing was compared at all.
+      const baseline = suppliedBaseline ?? storedBaseline ?? null;
+      const origin: BaselineOrigin = suppliedBaseline
+        ? "supplied"
+        : baseline
+          ? "stored"
+          : "established";
+      const reconciliation = baseline
+        ? reconcileDerivations(baseline, latest)
+        : null;
 
-    const filing = buildUvaFiling({
-      report: result,
-      openItems,
-      reconciliation,
-      handover,
-      handoverCovers,
+      const openItems = openItemsRequested ?? existing?.openItems ?? [];
+      const handover = handoverRequested ??
+        existing?.handover ?? { state: "prepared" as const };
+      // A handover recorded on this call covers the run it was recorded
+      // against; one carried over from an earlier call covers whatever it
+      // covered then.
+      const handoverCovers: HandoverCoverage | null = handoverRequested
+        ? coverageOf(result)
+        : (existing?.handoverCovers ?? null);
+
+      const filing = buildUvaFiling({
+        report: result,
+        openItems,
+        reconciliation,
+        handover,
+        handoverCovers,
+      });
+
+      // Recording a HANDOVER is what a blocker refuses: undocumented
+      // Vorsteuer, a trace that does not add up, an unexplained deferral —
+      // none of those should reach a Steuerberater as though it were signed
+      // off. Clearing a handover back to `prepared` is the opposite act, and
+      // refusing THAT would trap the record in a state a blocker made
+      // untrue, along with the open items sent to explain it.
+      if (handoverRequested?.state === "handed-over" && filing.blockers.length > 0) {
+        throw new HttpsError(
+          "failed-precondition",
+          `Filing ${periodKey} has ${filing.blockers.length} blocker(s): ` +
+            filing.blockers.map((b) => b.code).join(", ")
+        );
+      }
+
+      const stored: StoredFiling & { updatedAt: FieldValue } = {
+        userId: ctx.userId,
+        periodKey,
+        period,
+        baselineOrigin: origin,
+        openItems,
+        handover,
+        handoverCovers,
+        blockerCodes: filing.blockers.map((b) => b.code),
+        updatedAt: FieldValue.serverTimestamp(),
+      };
+      tx.set(docRef, stored, { merge: true });
+      tx.set(latestRef, snapshotDoc(ctx.userId, periodKey, "latest", latest));
+      if (!storedBaseline || suppliedBaseline) {
+        tx.set(
+          baselineRef,
+          snapshotDoc(ctx.userId, periodKey, "baseline", baseline ?? latest)
+        );
+      }
+
+      return { filing, origin, baselinePeriodKey: baseline ? baseline.periodKey : null };
     });
 
-    if (handoverRequested && filing.blockers.length > 0) {
-      // A blocker is a defect in the filing, not a warning: undocumented
-      // Vorsteuer, a trace that does not add up, an unexplained deferral. None
-      // of those should reach a Steuerberater as though it were signed off.
-      throw new HttpsError(
-        "failed-precondition",
-        `Filing ${periodKey} has ${filing.blockers.length} blocker(s): ` +
-          filing.blockers.map((b) => b.code).join(", ")
-      );
-    }
-
-    const stored: StoredFiling & { updatedAt: FieldValue } = {
-      userId: ctx.userId,
-      periodKey,
-      period,
-      baseline: baseline ?? latest,
-      baselineOrigin: origin,
-      latest,
-      openItems,
-      handover,
-      handoverCovers,
-      blockerCodes: filing.blockers.map((b) => b.code),
-      updatedAt: FieldValue.serverTimestamp(),
-    };
-    await docRef.set(stored, { merge: true });
+    const { filing, origin } = outcome;
 
     return {
       success: true,
       filing,
       baseline: {
         origin,
-        periodKey: baseline ? baseline.periodKey : null,
+        periodKey: outcome.baselinePeriodKey,
       },
     };
   }
 );
+
+/** One snapshot document. Kept apart from the filing record — see SNAPSHOTS. */
+function snapshotDoc(
+  userId: string,
+  periodKey: string,
+  kind: "baseline" | "latest",
+  snapshot: UvaDerivationSnapshot
+): StoredSnapshot {
+  return { userId, periodKey, kind, snapshot };
+}
 
 function coverageOf(result: {
   totalInputVat: number;

@@ -304,6 +304,14 @@ service cloud.firestore {
     match /uvaFilings/{docId} {
       allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
       allow write: if false; // Cloud Functions only
+
+      // The kept derivation snapshots, one document each so a busy quarter
+      // cannot push both against the 1 MiB ceiling. Server-side only: they
+      // exist to be reconciled against, never to be read by a client.
+      match /snapshots/{snapshotId} {
+        allow read: if false;
+        allow write: if false; // Cloud Functions only
+      }
     }
 
     // Referral conversions - referrer can read their own, Cloud Functions write only

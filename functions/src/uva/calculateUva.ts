@@ -271,9 +271,13 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
     const derivation = deriveRateGroups(tx);
     result.foreignVat.push(...derivation.foreignVat);
     result.nonClaimableVat.push(...derivation.nonClaimableVat);
-    result.fxConversions.push(...derivation.fxConversions);
 
     if (derivation.ok) {
+      // A conversion is reported only when it was USED. A document converted
+      // on the way to a derivation that then failed had no rate applied to
+      // anything, and listing it would put a file in the filing's exception
+      // with no cents behind it.
+      result.fxConversions.push(...derivation.fxConversions);
       applyGroups(tx, derivation, isIncome, null);
       continue;
     }

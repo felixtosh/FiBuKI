@@ -395,6 +395,61 @@ describe("prepareUvaFiling: open items and the handover", () => {
     expect(stored.exists).toBe(false);
   });
 
+  it("still clears a handover back to prepared while the filing is blocked", async () => {
+    // Recording a handover is what a blocker refuses. Clearing one is the
+    // opposite act, and refusing it would trap the record in a state the
+    // blocker made untrue — along with the open items sent to explain it.
+    await seedDomestic();
+    await call({
+      period: Q1,
+      handover: { state: "handed-over", to: "the accountant", at: "2026-08-24", via: "e-mail" },
+    });
+    await seedTransaction("t-typed", "2026-03-20", -6000, [], { vatRate: 20 });
+
+    const { filing } = await call({
+      period: Q1,
+      handover: { state: "prepared" },
+      openItems: [
+        {
+          ref: "t-typed",
+          summary: "Rate typed by hand, no document",
+          disposition: "deferred",
+          rationale: "Supplier asked for the invoice; expected next week.",
+          effect: { inputVat: 0, outputVat: 0 },
+        },
+      ],
+    });
+
+    expect(filing.handover).toEqual({ state: "prepared" });
+    expect(filing.blockers.map((b) => b.code)).toContain("vorsteuer-undocumented");
+    const stored = (
+      await db.collection("uvaFilings").doc(`${USER}_2026-Q1`).get()
+    ).data();
+    expect(stored?.handover).toEqual({ state: "prepared" });
+    expect(stored?.openItems).toHaveLength(1);
+  });
+
+  it("keeps the two snapshots in their own documents, not on the record", async () => {
+    // One entry per transaction, twice over, would put a busy quarter against
+    // the 1 MiB document ceiling — and the failure would land after the
+    // derivation had already run.
+    await seedDomestic();
+    await call({ period: Q1 });
+
+    const record = await db.collection("uvaFilings").doc(`${USER}_2026-Q1`).get();
+    expect(record.data()?.baseline).toBeUndefined();
+    expect(record.data()?.latest).toBeUndefined();
+
+    const snapshots = db
+      .collection("uvaFilings")
+      .doc(`${USER}_2026-Q1`)
+      .collection("snapshots");
+    const baseline = await snapshots.doc("baseline").get();
+    const latest = await snapshots.doc("latest").get();
+    expect(baseline.data()?.snapshot.periodKey).toBe("2026-Q1");
+    expect(latest.data()?.snapshot.entries.length).toBeGreaterThan(0);
+  });
+
   it("marks the recorded handover stale once the figures move under it", async () => {
     await seedDomestic();
     await call({
