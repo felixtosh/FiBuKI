@@ -958,6 +958,130 @@ describe("Tool Registry Handlers", () => {
     });
   });
 
+  describe("listPartners - bounded read and paging (#116)", () => {
+    // Seed n partners with sortable names, so page order is the name order.
+    const seedPartners = (n: number, nameFor: (i: number) => string = (i) => `Partner ${String(i).padStart(3, "0")}`) => {
+      for (let i = 0; i < n; i++) {
+        store.setDoc("partners", `p-${String(i).padStart(3, "0")}`, createTestPartner({
+          userId,
+          name: nameFor(i),
+          isActive: true,
+        }));
+      }
+    };
+
+    it("asks Firestore for one page, not for the whole collection", async () => {
+      // The read used to be every active partner of the account, sliced to
+      // 100 afterwards. The rows returned look the same either way, so the
+      // assertion is on what the query carried.
+      seedPartners(120);
+
+      const result = await handlers.listPartners(userId, { limit: 10 });
+
+      expect(result.count).toBe(10);
+      expect(store.queries.filter((q) => q.collection === "partners")).toEqual([
+        { collection: "partners", limit: 10, cursor: undefined },
+      ]);
+    });
+
+    it("overfetches rather than truncating when a search has to filter in memory", async () => {
+      // The search is a substring match Firestore cannot push down, so the
+      // page still has to be filled from a wider read — bounded, not unbounded.
+      seedPartners(120);
+
+      await handlers.listPartners(userId, { search: "partner", limit: 10 });
+
+      expect(store.queries.filter((q) => q.collection === "partners")).toEqual([
+        { collection: "partners", limit: 50, cursor: undefined },
+      ]);
+    });
+
+    it("honours a limit above the old ceiling of 100", async () => {
+      seedPartners(150);
+
+      const result = await handlers.listPartners(userId, { limit: 200 });
+
+      expect(result.count).toBe(150);
+    });
+
+    it("caps the page at 500, and says there is more", async () => {
+      seedPartners(600);
+
+      const result = await handlers.listPartners(userId, { limit: 10_000 });
+
+      expect(result.count).toBe(500);
+      expect(result.nextCursor).not.toBeNull();
+    });
+
+    it("reaches partners past the old hard cap of 100", async () => {
+      // Before the cursor there was no way to ask for the 101st name.
+      seedPartners(250);
+
+      const seen: string[] = [];
+      let cursor: string | null | undefined = undefined;
+      let guard = 0;
+
+      do {
+        const page: Awaited<ReturnType<typeof handlers.listPartners>> = await handlers.listPartners(userId, {
+          limit: 50,
+          ...(cursor ? { cursor } : {}),
+        });
+        seen.push(...page.partners.map((p) => p.id as string));
+        cursor = page.nextCursor;
+      } while (cursor && ++guard < 20);
+
+      expect(seen).toHaveLength(250);
+      expect(new Set(seen).size).toBe(250);
+      expect(seen).toContain("p-249");
+    });
+
+    it("keeps search results whole across a page the filter empties", async () => {
+      // 60 partners the search cannot match sit in front of 3 that do, with a
+      // page of 5 -> a scan window of 25, so the first pages match nothing and
+      // must still hand back a cursor.
+      seedPartners(63, (i) => (i < 60 ? `Partner ${String(i).padStart(3, "0")}` : `Zebra ${i}`));
+
+      const seen: string[] = [];
+      let cursor: string | null | undefined = undefined;
+      let guard = 0;
+
+      do {
+        const page: Awaited<ReturnType<typeof handlers.listPartners>> = await handlers.listPartners(userId, {
+          search: "zebra",
+          limit: 5,
+          ...(cursor ? { cursor } : {}),
+        });
+        seen.push(...page.partners.map((p) => p.name as string));
+        cursor = page.nextCursor;
+      } while (cursor && ++guard < 30);
+
+      expect(seen.sort()).toEqual(["Zebra 60", "Zebra 61", "Zebra 62"]);
+    });
+
+    it("leaves another user's partners out of the page and its cursor", async () => {
+      seedPartners(3);
+      store.setDoc("partners", "p-other", createTestPartner({
+        userId: otherUserId,
+        name: "Aaa Other",
+        isActive: true,
+      }));
+
+      const result = await handlers.listPartners(userId, { cursor: "p-other" });
+
+      expect(result.count).toBe(3);
+      expect(result.partners.every((p) => (p.name as string).startsWith("Partner"))).toBe(true);
+    });
+
+    it("skips inactive partners", async () => {
+      seedPartners(2);
+      store.setDoc("partners", "p-off", createTestPartner({ userId, name: "Partner off", isActive: false }));
+
+      const result = await handlers.listPartners(userId, {});
+
+      expect(result.count).toBe(2);
+    });
+  });
+
   describe("getFile", () => {
     it("should return file by ID", async () => {
       store.setDoc("files", "f-1", createTestFile({ userId, fileName: "invoice.pdf" }));
@@ -2565,10 +2689,12 @@ describe("Tool Registry Handlers", () => {
         }));
         store.setDoc("partners", "partner-2", createTestPartner({ userId, name: "Rewe" }));
 
-        const list = await handlers.listPartners(userId, {}) as Array<{
-          name: string;
-          billingCycle: { effective: Array<{ frequencyDays: number }> } | null;
-        }>;
+        const { partners: list } = await handlers.listPartners(userId, {}) as {
+          partners: Array<{
+            name: string;
+            billingCycle: { effective: Array<{ frequencyDays: number }> } | null;
+          }>;
+        };
 
         expect(list[0].billingCycle!.effective[0].frequencyDays).toBe(365);
         // A partner that does not bill on a schedule reads as null, not as an

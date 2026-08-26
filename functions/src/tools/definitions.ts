@@ -496,14 +496,17 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "list_partners",
     description:
-      "List user partners with optional search. Each partner carries `billingCycle`: the effective " +
+      "List user partners with optional search. Returns { partners, nextCursor, count } — `count` is " +
+      "the size of this page, not a total; page with nextCursor until it comes back null to see every " +
+      "partner. Each partner carries `billingCycle`: the effective " +
       "cycle plus the learned and declared halves it was resolved from, one entry per recurrence " +
       "(null when the partner does not bill on a schedule).",
     inputSchema: {
       type: "object",
       properties: {
         search: { type: "string", description: "Search in partner name and aliases" },
-        limit: { type: "number", description: "Max results (default 50, max 100)" },
+        limit: { type: "number", description: "Max results per page (default 50, max 500)" },
+        cursor: { type: "string", description: "nextCursor from the previous response to fetch the next page" },
       },
     },
   },

@@ -1465,15 +1465,39 @@ export async function updateIdentityEntity(
   return { success: true, entityId };
 }
 
+/**
+ * One page of the user's partners, by name.
+ *
+ * The read is bounded (#116): every filter Firestore can apply — the owner and
+ * the active flag — is already in the query, and the ordering is a stored
+ * field, so the page limit belongs in the query too. This used to read the
+ * whole active collection on every call and slice to 100 afterwards, which is
+ * the entire partner list of the account for a tool that was asked for fifty
+ * of them, and left everything past the hundredth name unreachable.
+ *
+ * `search` is a substring match Firestore cannot push down, so when it is set
+ * the read overfetches and filters in memory, exactly as `list_transactions`
+ * does. The cursor is the last document actually CONSUMED, so a page that the
+ * search filters away entirely still hands back a position to resume from.
+ */
 export async function listPartners(userId: string, args: Record<string, unknown>) {
-  const snapshot = await db
+  let query: FirebaseFirestore.Query = db
     .collection("partners")
     .where("userId", "==", userId)
     .where("isActive", "==", true)
-    .orderBy("name", "asc")
-    .get();
+    .orderBy("name", "asc");
 
-  let partners = snapshot.docs.map((doc) => {
+  // Cursor pagination: cursor is the last document id from the previous page.
+  query = await startAfterCursor(query, "partners", userId, args.cursor);
+
+  const requestedLimit = Math.min(Math.max((args.limit as number) || 50, 1), 500);
+  const search = (args.search as string | undefined)?.toLowerCase();
+  const fetchLimit = search ? Math.min(requestedLimit * 5, 1000) : requestedLimit;
+  query = query.limit(fetchLimit);
+
+  const snapshot = await query.get();
+
+  const scanned = snapshot.docs.map((doc) => {
     const data = doc.data();
     return {
       id: doc.id,
@@ -1488,17 +1512,25 @@ export async function listPartners(userId: string, args: Record<string, unknown>
     };
   });
 
-  if (args.search) {
-    const search = (args.search as string).toLowerCase();
-    partners = partners.filter(
-      (p) =>
-        p.name?.toLowerCase().includes(search) ||
-        p.aliases?.some((a: string) => a.toLowerCase().includes(search))
-    );
-  }
+  const partners = search
+    ? scanned.filter(
+        (p) =>
+          p.name?.toLowerCase().includes(search) ||
+          p.aliases?.some((a: string) => a.toLowerCase().includes(search))
+      )
+    : scanned;
 
-  const limit = Math.min((args.limit as number) || 50, 100);
-  return partners.slice(0, limit);
+  const page = partners.slice(0, requestedLimit);
+  const truncated = partners.length > requestedLimit;
+  const hasMore = truncated || scanned.length === fetchLimit;
+
+  const nextCursor = !hasMore
+    ? null
+    : truncated
+      ? page[page.length - 1].id
+      : (scanned[scanned.length - 1]?.id ?? null);
+
+  return { partners: page, nextCursor, count: page.length };
 }
 
 export async function getPartner(userId: string, partnerId: string) {
@@ -1745,9 +1777,10 @@ function optionalCents(value: unknown, field: string): number | undefined {
  * directly. Keep it stable.
  *
  * "Recurring" is an effective cycle, declared or learned, which lives in a
- * nested array Firestore cannot filter on: the partners are read the way
- * `list_partners` reads them and filtered here, and only the page's partners
- * cost a transaction query.
+ * nested array Firestore cannot filter on. So unlike `list_partners`, which
+ * pages inside the query, this one reads every active partner and filters
+ * here, and its cursor is a position in that scan rather than a document to
+ * resume after. Only the page's partners cost a transaction query.
  */
 export async function listRecurringPartners(userId: string, args: Record<string, unknown>) {
   const dateTo = (args.dateTo as string | undefined) ?? new Date().toISOString().slice(0, 10);
