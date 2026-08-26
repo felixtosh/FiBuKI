@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 #
-# Provision the new.fibuki.com host on Hetzner Cloud.
+# Provision a FiBuKI host on Hetzner Cloud.
+#
+# The host name comes from FIBUKI_WEB_HOST (see .env.hetzner.example); it was
+# new.fibuki.com during the migration off Firebase and is fibuki.com now.
 #
 # Idempotent: every hcloud object is created only if absent, so a re-run after a
 # partial failure converges instead of erroring. Creates nothing chargeable
@@ -203,9 +206,9 @@ Next, in order:
 
 1. DNS at GoDaddy (fibuki.com nameservers are ns23/ns24.domaincontrol.com):
 
-     new.fibuki.com      A     $IP4
+     ${FIBUKI_WEB_HOST:-fibuki.com}      A     $IP4
      new-api.fibuki.com  A     $IP4
-$( [[ -n "${IP6:-}" ]] && echo "     new.fibuki.com      AAAA  $IP6
+$( [[ -n "${IP6:-}" ]] && echo "     ${FIBUKI_WEB_HOST:-fibuki.com}      AAAA  $IP6
      new-api.fibuki.com  AAAA  $IP6" )
 
    Both names must resolve BEFORE first boot — Caddy's ACME challenge fails

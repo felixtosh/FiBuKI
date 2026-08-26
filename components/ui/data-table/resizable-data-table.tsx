@@ -58,6 +58,7 @@ function ResizableDataTableInner<TData extends { id: string }>(
     enableMultiSelect = false,
     selectedRowIds,
     onSelectionChange,
+    onDisplayedOrderChange,
   }: ResizableDataTableProps<TData>,
   ref: React.ForwardedRef<DataTableHandle>
 ) {
@@ -217,6 +218,28 @@ function ResizableDataTableInner<TData extends { id: string }>(
 
     return items;
   }, [rows, sections]);
+
+  // Report the displayed order so pages can drive prev/next from the list the
+  // user sees instead of from their own array order. Derived from displayItems,
+  // so it already carries the active sort (and skips section headers).
+  const displayedRowIds = React.useMemo(() => {
+    const ids: string[] = [];
+    displayItems.forEach((item) => {
+      if (item.type === "row") ids.push(item.data.id);
+    });
+    return ids;
+  }, [displayItems]);
+
+  // Hold the latest callback in a ref so an inline arrow prop from the page
+  // doesn't re-fire the effect on every render.
+  const onDisplayedOrderChangeRef = React.useRef(onDisplayedOrderChange);
+  React.useEffect(() => {
+    onDisplayedOrderChangeRef.current = onDisplayedOrderChange;
+  }, [onDisplayedOrderChange]);
+
+  React.useEffect(() => {
+    onDisplayedOrderChangeRef.current?.(displayedRowIds);
+  }, [displayedRowIds]);
 
   // Multi-select: track last selected ROW ID for Shift+click range selection
   // We store the ID (not index) so it stays valid when sorting changes

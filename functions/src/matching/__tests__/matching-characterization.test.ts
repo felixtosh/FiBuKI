@@ -12,7 +12,8 @@
  * Covers (not covered by the existing unit tests):
  * - Cologne phonetics exact codes and edge quirks
  * - Company-name normalization (suffix stripping order effects, umlauts)
- * - Company-name similarity exact scores (phonetic 92, containment 75+coverage)
+ * - Company-name similarity exact scores (phonetic 92 with the fork #71
+ *   collision guard, containment 75+coverage)
  * - Partner matching confidences, ranking/tie-breaking, pattern exclusions
  * - Glob/pattern matching anchoring, escaping, umlaut handling
  * - Transaction scoring: amount tolerance asymmetry, currency rounding,
@@ -202,9 +203,11 @@ describe("calculateCompanyNameSimilarity — exact values", () => {
     expect(calculateCompanyNameSimilarity("Amazon", "")).toBe(0);
   });
 
-  it("phonetic branch requires code length >= 2 (single letters fall through)", () => {
+  it("phonetic branch requires code length >= 3 (short codes fall through)", () => {
     // "b" vs "p" both code "1" (length 1) → Levenshtein: (1-1)/1 = 0
     expect(calculateCompanyNameSimilarity("b", "p")).toBe(0);
+    // fork #71: "uber" vs "porr" both code "17" (length 2) → Levenshtein 25
+    expect(calculateCompanyNameSimilarity("Uber", "PORR AG")).toBe(25);
   });
 });
 
@@ -342,15 +345,18 @@ describe("matchTransaction — match sources and exact confidences", () => {
     expect(results[0].confidence).toBe(77);
   });
 
-  it("name + alias both matching boosts to 95", () => {
+  // Re-pinned for fork #71: the old branch had a floor of 92 (above the
+  // auto-apply gate), so ANY name+alias pair auto-applied. Agreement is now a
+  // bounded +4 on the similarity-derived confidence.
+  it("name + alias both matching adds a bounded bonus: 86 + 4 = 90", () => {
     const results = matchTransaction(
       ptx({ name: "AMZN Amazon Marketplace" }),
       [pd({ id: "p1", name: "Amazon", aliases: ["AMZN"] })],
       []
     );
-    // min(95, 92 + (95-60)*0.075) = 94.625 → 95
-    expect(results[0].confidence).toBe(95);
-    expect(shouldAutoApply(95)).toBe(true);
+    // min(90, 60 + (95-60)*30/40) = 86.25, + 4 = 90.25 → 90
+    expect(results[0].confidence).toBe(90);
+    expect(shouldAutoApply(90)).toBe(true);
   });
 
   // characterization: field checks are else-if chained — when tx.partner is
@@ -500,11 +506,15 @@ describe("calculateAmountScore — tolerance asymmetry and boundaries", () => {
     expect(calculateAmountScore(111, 100).score).toBe(20);
   });
 
-  it("currency mismatch halves then rounds: 38→19, 30→15, 20→10, 40→20", () => {
-    expect(calculateAmountScore(100, 101, "USD", "EUR").score).toBe(19);
-    expect(calculateAmountScore(100, 105, "USD", "EUR").score).toBe(15);
-    expect(calculateAmountScore(100, 110, "USD", "EUR").score).toBe(10);
+  // Fork #87: currency mismatch is no longer "same tolerance ladder, halved".
+  // Near-1:1 USD/EUR pairs are not plausible payments and score 0; the
+  // amount signal for a mismatched pair comes from FX plausibility instead.
+  it("currency mismatch: FX-tight 30, FX-loose 20 (incl. 1:1), outside band 0", () => {
+    expect(calculateAmountScore(100, 88, "USD", "EUR").score).toBe(30);
+    expect(calculateAmountScore(100, 95, "USD", "EUR").score).toBe(20);
     expect(calculateAmountScore(100, 100, "USD", "EUR").score).toBe(20);
+    expect(calculateAmountScore(100, 101, "USD", "EUR").source).toBe("amount_close");
+    expect(calculateAmountScore(100, 110, "USD", "EUR").score).toBe(0);
   });
 
   it("currency comparison is case-insensitive", () => {

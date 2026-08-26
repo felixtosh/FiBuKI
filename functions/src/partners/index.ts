@@ -9,3 +9,4 @@ export { updateUserPartnerCallable } from "./updateUserPartner";
 export { deleteUserPartnerCallable } from "./deleteUserPartner";
 export { assignPartnerToTransactionCallable } from "./assignPartnerToTransaction";
 export { removePartnerFromTransactionCallable } from "./removePartnerFromTransaction";
+export { setPartnerBillingCycleCallable } from "./setPartnerBillingCycle";

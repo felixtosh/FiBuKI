@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
@@ -13,6 +14,7 @@ import {
   FileText,
   CreditCard,
   Globe,
+  Repeat,
 } from "lucide-react";
 import { SearchButton } from "@/components/ui/search-button";
 import { PartnerFilters } from "@/types/partner";
@@ -35,10 +37,13 @@ export function PartnerToolbar({
   const [vatPopoverOpen, setVatPopoverOpen] = useState(false);
   const [ibanPopoverOpen, setIbanPopoverOpen] = useState(false);
   const [countryPopoverOpen, setCountryPopoverOpen] = useState(false);
+  const [recurringPopoverOpen, setRecurringPopoverOpen] = useState(false);
+  const t = useTranslations("billingCycle");
 
   const hasVatFilter = filters.hasVatId !== undefined;
   const hasIbanFilter = filters.hasIban !== undefined;
   const hasCountryFilter = !!filters.country;
+  const hasRecurringFilter = filters.isRecurring !== undefined;
 
   const clearVatFilter = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -53,6 +58,17 @@ export function PartnerToolbar({
   const clearCountryFilter = (e: React.MouseEvent) => {
     e.stopPropagation();
     onFiltersChange({ ...filters, country: undefined });
+  };
+
+  const clearRecurringFilter = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onFiltersChange({ ...filters, isRecurring: undefined });
+  };
+
+  const getRecurringLabel = () => {
+    if (filters.isRecurring === true) return t("filter.recurring");
+    if (filters.isRecurring === false) return t("filter.notRecurring");
+    return t("filter.label");
   };
 
   const getVatLabel = () => {
@@ -265,6 +281,68 @@ export function PartnerToolbar({
                 {c.name}
               </Button>
             ))}
+          </div>
+        </PopoverContent>
+      </Popover>
+
+      {/* Recurring filter */}
+      <Popover open={recurringPopoverOpen} onOpenChange={setRecurringPopoverOpen}>
+        <PopoverTrigger asChild>
+          <Button
+            variant={hasRecurringFilter ? "secondary" : "outline"}
+            size="sm"
+            className="h-9 gap-2"
+          >
+            <Repeat className="h-4 w-4" />
+            <span>{getRecurringLabel()}</span>
+            {hasRecurringFilter && (
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={clearRecurringFilter}
+                onKeyDown={(e) => e.key === "Enter" && clearRecurringFilter(e as unknown as React.MouseEvent)}
+                className="ml-1 hover:bg-muted rounded p-0.5 -mr-1 cursor-pointer"
+              >
+                <X className="h-3 w-3" />
+              </span>
+            )}
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="w-auto p-2" align="start">
+          <div className="flex flex-col gap-1">
+            <Button
+              variant={filters.isRecurring === undefined ? "secondary" : "ghost"}
+              size="sm"
+              className="justify-start h-8"
+              onClick={() => {
+                onFiltersChange({ ...filters, isRecurring: undefined });
+                setRecurringPopoverOpen(false);
+              }}
+            >
+              {t("filter.all")}
+            </Button>
+            <Button
+              variant={filters.isRecurring === true ? "secondary" : "ghost"}
+              size="sm"
+              className="justify-start h-8"
+              onClick={() => {
+                onFiltersChange({ ...filters, isRecurring: true });
+                setRecurringPopoverOpen(false);
+              }}
+            >
+              {t("filter.recurring")}
+            </Button>
+            <Button
+              variant={filters.isRecurring === false ? "secondary" : "ghost"}
+              size="sm"
+              className="justify-start h-8"
+              onClick={() => {
+                onFiltersChange({ ...filters, isRecurring: false });
+                setRecurringPopoverOpen(false);
+              }}
+            >
+              {t("filter.notRecurring")}
+            </Button>
           </div>
         </PopoverContent>
       </Popover>

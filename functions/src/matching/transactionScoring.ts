@@ -7,12 +7,31 @@
  */
 
 import { Timestamp } from "firebase-admin/firestore";
+import { assessImpliedFx, isSameCurrency } from "../fx/fxPlausibility";
+import {
+  readBankOriginalAmount,
+  type BankOriginalAmount,
+} from "../fx/bankOriginalAmount";
+import { selectEffectiveCycleForAmount, ResolvedEffectiveCycle } from "./billingCycle";
+import type { DocumentType, DocumentationState } from "../documents/types";
 
 // === Configuration ===
 
 export const SCORING_CONFIG = {
   /** Minimum confidence for auto-matching (creates connection) */
   AUTO_MATCH_THRESHOLD: 85,
+  /**
+   * Bonus when the two hard financial facts agree on their own: a cent-exact
+   * amount (same currency) AND the same day. 40 + 25 + 20 = 85, so this pair
+   * clears AUTO_MATCH_THRESHOLD without needing partner corroboration (#78).
+   */
+  HARD_FACTS_BONUS_SAME_DAY: 20,
+  /**
+   * Bonus for a cent-exact amount within 3 days. 40 + 22 + 15 = 77: a strong
+   * suggestion, but auto-connect still needs one more signal (any partner
+   * text match >= 12 pushes it over 85).
+   */
+  HARD_FACTS_BONUS_CLOSE: 15,
   /** Minimum confidence to show as suggestion */
   SUGGESTION_THRESHOLD: 50,
   /** Days to search before/after file date */
@@ -42,6 +61,8 @@ export interface ScoreBreakdown {
   iban: number;
   reference: number;
   hint: number;
+  /** Combination bonus for exact amount + exact/close date (see HARD_FACTS_BONUS_*) */
+  hardFacts: number;
 }
 
 export interface TransactionPreview {
@@ -52,12 +73,41 @@ export interface TransactionPreview {
   partner: string | null;
 }
 
+/** What the target's existing documentation did to this pair (#104). */
+export type DocumentationOutcome = "clear" | "upgrade" | "capped" | "suppressed";
+
+export type DocumentationReason =
+  /** The target holds nothing, or only a no-receipt category. */
+  | "target-undocumented"
+  /** The one case suppression must never hide: it closes the VAT gap. */
+  | "invoice-upgrades-receipt-only"
+  /** The target already holds a document of this class. */
+  | "duplicate-document-class"
+  /** A payment confirmation against a line that already has its Rechnung. */
+  | "receipt-against-invoice"
+  /** This candidate's own type is not established. */
+  | "candidate-unclassified"
+  /** The target's attached documents are not classified. */
+  | "target-documents-unclassified";
+
+export interface DocumentationAssessment {
+  outcome: DocumentationOutcome;
+  reason: DocumentationReason;
+  /** The score before the rule touched it, so a suppression is inspectable. */
+  confidenceBefore: number;
+}
+
 export interface TransactionMatchScore {
   transactionId: string;
   confidence: number;
   matchSources: TransactionMatchSource[];
   breakdown: ScoreBreakdown;
   preview: TransactionPreview;
+  /**
+   * Present only when the caller supplied the target's documentation state.
+   * Absent means the rule did not run, not that the pair is clear (#104).
+   */
+  documentation?: DocumentationAssessment;
 }
 
 export interface FileMatchingData {
@@ -72,6 +122,12 @@ export interface FileMatchingData {
     transactionId: string;
     matchConfidence?: number;
   } | null;
+  /**
+   * This document's §11 classification (#104). Absent on a file extracted
+   * before the classifier existed, which is treated as "not established"
+   * rather than as any particular type.
+   */
+  documentType?: DocumentType | null;
 }
 
 export interface TransactionData {
@@ -79,12 +135,24 @@ export interface TransactionData {
   amount: number;
   date: Timestamp;
   currency?: string;
+  /**
+   * The preserved import row. Read only for the bank-stated original amount
+   * (#112) — see readBankOriginalAmount. Optional because the precision-search
+   * and remap paths build a TransactionData without it.
+   */
+  _original?: { rawRow?: Record<string, string> | null } | null;
   name?: string;
   partner?: string;
   partnerName?: string;
   partnerId?: string;
   partnerIban?: string;
   reference?: string;
+  /**
+   * How this transaction is already documented (#104). When omitted the
+   * suppression rule does not run at all, so every existing caller keeps its
+   * exact scores.
+   */
+  documentationState?: DocumentationState | null;
 }
 
 // === Utility Functions ===
@@ -147,11 +215,35 @@ export function namesMatch(
 
 // === Scoring Functions ===
 
+/**
+ * The cent-exact-then-tolerance ladder for two amounts already known to be in
+ * the same currency. Tolerance is relative to the FILE amount, which is why it
+ * is asymmetric — see the characterization tests.
+ *
+ * Extracted (#112) so the bank-original path and the same-currency path score
+ * identically instead of growing a second, drifting copy.
+ */
+function scoreSameCurrencyLadder(
+  absFile: number,
+  absOther: number
+): { score: number; source: TransactionMatchSource | null } {
+  if (absFile === absOther) return { score: 40, source: "amount_exact" };
+
+  const difference = Math.abs(absFile - absOther);
+  const tolerance = absFile;
+
+  if (difference <= tolerance * 0.01) return { score: 38, source: "amount_close" };
+  if (difference <= tolerance * 0.05) return { score: 30, source: "amount_close" };
+  if (difference <= tolerance * 0.1) return { score: 20, source: "amount_close" };
+  return { score: 0, source: null };
+}
+
 export function calculateAmountScore(
   fileAmount: number,
   txAmount: number,
   fileCurrency?: string | null,
-  txCurrency?: string | null
+  txCurrency?: string | null,
+  txOriginal?: BankOriginalAmount | null
 ): { score: number; source: TransactionMatchSource | null; currencyMismatch: boolean } {
   const absFile = Math.abs(fileAmount);
   const absTx = Math.abs(txAmount);
@@ -160,48 +252,64 @@ export function calculateAmountScore(
     return { score: 0, source: null, currencyMismatch: false };
   }
 
-  // Check for currency mismatch
-  // Normalize currencies for comparison (handle null/undefined/empty)
-  const normFileCurrency = (fileCurrency || "EUR").toUpperCase();
-  const normTxCurrency = (txCurrency || "EUR").toUpperCase();
-  const currencyMismatch = normFileCurrency !== normTxCurrency;
-
-  // Calculate base amount score
-  let score = 0;
-  let source: TransactionMatchSource | null = null;
-
-  if (absFile === absTx) {
-    score = 40;
-    source = "amount_exact";
-  } else {
-    const difference = Math.abs(absFile - absTx);
-    const tolerance = absFile;
-
-    if (difference <= tolerance * 0.01) {
-      score = 38;
-      source = "amount_close";
-    } else if (difference <= tolerance * 0.05) {
-      score = 30;
-      source = "amount_close";
-    } else if (difference <= tolerance * 0.1) {
-      score = 20;
-      source = "amount_close";
+  // Ground truth beats plausibility (#112). When the document is in one
+  // currency and the bank line in another, the bank usually still states what
+  // it charged BEFORE settling — "Original Amount 24, Original Currency USD"
+  // against a EUR 20.77 row. That figure is in the document's own currency, so
+  // the two can be compared directly: no rate, no tolerance, no FX band.
+  //
+  // Scored on the same-currency ladder and reported with currencyMismatch
+  // false, because in the currency that matters this is NOT a mismatched pair
+  // — it is a cent-exact one, and it should earn the hard-facts bonus (#78)
+  // exactly as the equivalent domestic payment does. Only the settlement
+  // differs, and the settlement is not what identifies a payment.
+  if (txOriginal && !isSameCurrency(fileCurrency, txCurrency)) {
+    if (isSameCurrency(fileCurrency, txOriginal.currency)) {
+      const ladder = scoreSameCurrencyLadder(absFile, Math.abs(txOriginal.amount));
+      if (ladder.source !== null) {
+        return { ...ladder, currencyMismatch: false };
+      }
+      // The bank stated an original in the document's currency and the two
+      // still disagree by more than 10%. That is a real disagreement about
+      // real numbers, not an FX artefact, so fall through to nothing rather
+      // than letting the rate-plausibility path award points for it.
+      return { score: 0, source: null, currencyMismatch: false };
     }
   }
 
-  // Apply currency mismatch penalty: reduce amount score by 50%
-  // This allows USD invoice to still match EUR transaction (with exchange rate variance)
-  // but prioritizes same-currency matches
-  if (currencyMismatch && score > 0) {
+  // Currency mismatch (fork #87): the raw numbers are in different units, so
+  // comparing them is meaningless — USD 24.00 vs EUR 20.86 is the SAME
+  // payment and used to score 0 (13% apart, outside the 10% band), while
+  // USD 10.00 vs EUR 10.00 is a different payment and used to score 20.
+  // Score the plausibility of the implied exchange rate instead. It is
+  // deliberately capped below a same-currency exact match (40) and never
+  // sets source amount_exact, so it cannot earn the hard-facts bonus:
+  // a foreign-currency file still needs partner or date corroboration.
+  const fx = assessImpliedFx(fileAmount, fileCurrency, txAmount, txCurrency);
+  if (fx.mismatch && fx.referenceRate !== null) {
+    if (fx.band === "tight") return { score: 30, source: "amount_close", currencyMismatch: true };
+    if (fx.band === "loose") return { score: 20, source: "amount_close", currencyMismatch: true };
+    return { score: 0, source: null, currencyMismatch: true };
+  }
+  // A mismatched pair with no anchor (unknown/garbled code — often a
+  // mis-tagged EUR document) keeps the pre-#87 behaviour: numeric ladder,
+  // halved. It still never reports amount_exact as a hard fact.
+
+  // Same currency: cent-exact, then tolerance ladder relative to the FILE amount
+  let { score, source } = scoreSameCurrencyLadder(absFile, absTx);
+
+  if (fx.mismatch && score > 0) {
     score = Math.round(score * 0.5);
   }
 
-  return { score, source, currencyMismatch };
+  return { score, source, currencyMismatch: fx.mismatch };
 }
 
 export interface BillingCycleHint {
   invoiceToTransactionDelay?: number;
   delayVariance?: number;
+  /** Days between charges of this recurrence — enables the period-penalty below. */
+  frequencyDays?: number;
 }
 
 export function calculateDateScore(
@@ -225,6 +333,33 @@ export function calculateDateScore(
       (txDate.getTime() - fileDate.getTime()) / (1000 * 60 * 60 * 24)
     );
     const delayDiff = Math.abs(actualDelay - expectedDelay);
+
+    // Checked before the near/close bands below, not after: for a short
+    // frequency (e.g. weekly, 7d) with a loose delayVariance (e.g. 5d),
+    // variance*2 (10) can exceed frequencyDays (7), so a same-amount
+    // candidate exactly one period away would otherwise land in the "close"
+    // band by raw delay proximity alone. This is the INCW9PTA bug: a
+    // same-amount receipt from a neighbouring period must lose here, not
+    // fall through to a proximity check that can't tell periods apart.
+    //
+    // Tolerance is `variance` itself (the same delay noise that governs the
+    // near/close bands below), clamped to at most half a period. Without the
+    // clamp, a loose variance relative to a short frequency would make this
+    // check true for almost any delayDiff past the period midpoint — not
+    // just delays that actually land near a period boundary — swallowing
+    // same-period-but-late matches into a false rejection.
+    if (billingCycle.frequencyDays) {
+      const periodsAway = Math.round(delayDiff / billingCycle.frequencyDays);
+      if (periodsAway >= 1) {
+        const periodVariance = Math.min(variance, Math.floor(billingCycle.frequencyDays / 2));
+        const distanceFromPeriod = Math.abs(
+          delayDiff - periodsAway * billingCycle.frequencyDays
+        );
+        if (distanceFromPeriod <= periodVariance) {
+          return { score: 0, source: null };
+        }
+      }
+    }
 
     if (delayDiff <= variance) return { score: 25, source: "date_exact" };
     if (delayDiff <= variance * 2) return { score: 22, source: "date_close" };
@@ -311,6 +446,66 @@ export function calculatePartnerScore(
   return { score: 0, source: null };
 }
 
+/**
+ * What the target's existing documentation says about this candidate (#104).
+ *
+ * Suppression happens HERE, at scoring, rather than in the candidate query.
+ * Filtering out documented transactions up front is simpler and would kill
+ * all 25 false proposals seen on 2026-08-17 — but it also kills the
+ * invoice-after-receipt upgrade, which is the one case that must survive.
+ * Keeping the decision in the scorer also makes a suppressed pair an
+ * inspectable judgement rather than a row that silently never existed.
+ *
+ * This rule is deliberately independent of the dismissal list. Dismissal
+ * means "this pair is wrong"; suppression means "this document is redundant
+ * here". Two different facts, and these pairs are right.
+ */
+export function assessDocumentation(
+  documentType: DocumentType | null | undefined,
+  documentationState: DocumentationState
+): { outcome: DocumentationOutcome; reason: DocumentationReason } {
+  // Nothing to be redundant with. A no-receipt category is how a line with no
+  // document is resolved, so attaching a real one there is always an upgrade.
+  if (documentationState === "undocumented" || documentationState === "no-receipt-category") {
+    return { outcome: "clear", reason: "target-undocumented" };
+  }
+
+  // The target holds documents we could not classify. Suppressing would risk
+  // hiding the invoice that closes the gap; proposing at full score would
+  // auto-connect on missing information. Neither — send it to a human.
+  if (documentationState === "unknown") {
+    return { outcome: "capped", reason: "target-documents-unclassified" };
+  }
+
+  // The candidate's own type is not established, against a documented target.
+  if (documentType !== "invoice" && documentType !== "receipt") {
+    return { outcome: "capped", reason: "candidate-unclassified" };
+  }
+
+  if (documentationState === "receipt-only") {
+    return documentType === "invoice"
+      ? { outcome: "upgrade", reason: "invoice-upgrades-receipt-only" }
+      : { outcome: "suppressed", reason: "duplicate-document-class" };
+  }
+
+  // documentationState === "invoice"
+  return documentType === "receipt"
+    ? { outcome: "suppressed", reason: "receipt-against-invoice" }
+    : { outcome: "suppressed", reason: "duplicate-document-class" };
+}
+
+/** Apply the assessment to a score. Never raises one. */
+function applyDocumentationOutcome(
+  confidence: number,
+  outcome: DocumentationOutcome
+): number {
+  if (outcome === "suppressed") return 0;
+  if (outcome === "capped") {
+    return Math.min(confidence, SCORING_CONFIG.AUTO_MATCH_THRESHOLD - 1);
+  }
+  return confidence;
+}
+
 export interface ScoringOptions {
   /** Per-partner weight multipliers for scoring factors */
   weights?: {
@@ -320,6 +515,90 @@ export interface ScoringOptions {
   };
   /** Billing cycle data for improved date scoring */
   billingCycle?: BillingCycleHint;
+}
+
+/**
+ * Resolve the billing-cycle band + weights for one candidate transaction into
+ * a `ScoringOptions`. Shared by every caller that scores a partner's
+ * transactions against its `billingCycle.effective` bands (live matching,
+ * bulk re-scoring) so band selection and hint assembly can't drift between
+ * them.
+ */
+export function buildScoringOptions(
+  effective: ResolvedEffectiveCycle[],
+  weights: ScoringOptions["weights"] | undefined,
+  amount: number
+): ScoringOptions | undefined {
+  const band = selectEffectiveCycleForAmount(effective, amount);
+  if (!band && !weights) return undefined;
+
+  const options: ScoringOptions = {};
+  if (band) {
+    options.billingCycle = {
+      invoiceToTransactionDelay: band.invoiceToTransactionDelay,
+      delayVariance: band.delayVariance,
+      frequencyDays: band.frequencyDays,
+    };
+  }
+  if (weights) options.weights = weights;
+  return options;
+}
+
+/** Map a transaction Firestore doc's data into the shape `scoreTransaction` expects. */
+export function toTransactionData(
+  id: string,
+  data: FirebaseFirestore.DocumentData
+): TransactionData {
+  return {
+    id,
+    amount: data.amount,
+    date: data.date,
+    currency: data.currency,
+    // Carries the bank-stated original amount for #112.
+    _original: data._original,
+    name: data.name,
+    partner: data.partner,
+    partnerName: data.partnerName,
+    partnerId: data.partnerId,
+    partnerIban: data.partnerIban,
+    reference: data.reference,
+    // #104: what the target already holds decides whether this file is a
+    // duplicate to suppress or the invoice that upgrades the line.
+    documentationState: data.documentationState,
+  };
+}
+
+/** Map a file Firestore doc's data into the shape `scoreTransaction` expects. */
+export function toFileMatchingData(data: FirebaseFirestore.DocumentData): FileMatchingData {
+  return {
+    extractedAmount: data.extractedAmount,
+    extractedCurrency: data.extractedCurrency,
+    extractedDate: data.extractedDate,
+    extractedPartner: data.extractedPartner,
+    extractedIban: data.extractedIban,
+    extractedText: data.extractedText,
+    partnerId: data.partnerId,
+    precisionSearchHint: data.precisionSearchHint,
+    documentType: data.documentType,
+  };
+}
+
+/** Partner name + aliases, as `calculatePartnerScore` wants them. */
+export function derivePartnerAliases(partnerData: FirebaseFirestore.DocumentData): string[] {
+  return [partnerData.name, ...(partnerData.aliases || [])].filter(Boolean);
+}
+
+/** A partner's learned per-factor weight multipliers, if any. */
+export function deriveScoringWeights(
+  partnerData: FirebaseFirestore.DocumentData
+): ScoringOptions["weights"] | undefined {
+  const sw = partnerData.scoringWeights;
+  if (!sw) return undefined;
+  return {
+    amountWeight: sw.amountWeight,
+    dateWeight: sw.dateWeight,
+    partnerWeight: sw.partnerWeight,
+  };
 }
 
 /**
@@ -337,21 +616,30 @@ export function scoreTransaction(
   let ibanScore = 0;
   let referenceScore = 0;
   let hintScore = 0;
+  let hardFactsScore = 0;
   const matchSources: TransactionMatchSource[] = [];
 
-  // 1. Amount scoring (0-40, reduced if currency mismatch)
+  // 1. Amount scoring (0-40; a currency-mismatched pair scores FX plausibility, max 30)
+  // amountExact is only true for a cent-exact match in a shared currency
+  // (score 40). A currency-mismatched pair reaches that only through the bank's
+  // own stated original amount (#112), which is a real same-currency
+  // comparison; an FX-plausibility score never reports amount_exact.
+  let amountExact = false;
   if (fileData.extractedAmount != null) {
     const result = calculateAmountScore(
       fileData.extractedAmount,
       txData.amount,
       fileData.extractedCurrency,
-      txData.currency
+      txData.currency,
+      readBankOriginalAmount(txData._original?.rawRow)
     );
     amountScore = result.score;
+    amountExact = result.source === "amount_exact" && !result.currencyMismatch;
     if (result.source) matchSources.push(result.source);
   }
 
   // 2. Date scoring (0-25, boosted when partner matches)
+  let rawDateScore = 0;
   if (fileData.extractedDate) {
     const result = calculateDateScore(
       fileData.extractedDate.toDate(),
@@ -359,7 +647,21 @@ export function scoreTransaction(
       options?.billingCycle
     );
     dateScore = result.score;
+    rawDateScore = result.score;
     if (result.source) matchSources.push(result.source);
+  }
+
+  // 2b. Hard-facts combination bonus (#78)
+  // Exact amount + exact date used to cap at 65 (< AUTO_MATCH_THRESHOLD 85), so
+  // auto-connect was gated on partner identity rather than on the two facts that
+  // actually identify a payment. Uses the RAW date score, before the partner
+  // boost in 3b, so the bonus does not depend on partner signals.
+  if (amountExact) {
+    if (rawDateScore >= 25) {
+      hardFactsScore = SCORING_CONFIG.HARD_FACTS_BONUS_SAME_DAY;
+    } else if (rawDateScore >= 22) {
+      hardFactsScore = SCORING_CONFIG.HARD_FACTS_BONUS_CLOSE;
+    }
   }
 
   // 3. Partner scoring (0-25 for ID match, 0-15 for text match)
@@ -430,14 +732,32 @@ export function scoreTransaction(
   const weightedPartner = w ? partnerScore * w.partnerWeight : partnerScore;
 
   const rawConfidence =
-    weightedAmount + weightedDate + weightedPartner + ibanScore + referenceScore + hintScore;
+    weightedAmount +
+    weightedDate +
+    weightedPartner +
+    ibanScore +
+    referenceScore +
+    hintScore +
+    hardFactsScore;
   // Cap at 100 (multiple strong signals shouldn't exceed 100%)
-  const confidence = Math.min(100, Math.round(rawConfidence));
+  const scoredConfidence = Math.min(100, Math.round(rawConfidence));
+
+  // 7. Documentation-aware suppression (#104). Runs only when the caller
+  // supplied the target's state, so a caller that does not know it keeps the
+  // pre-#104 score exactly.
+  let confidence = scoredConfidence;
+  let documentation: DocumentationAssessment | undefined;
+  if (txData.documentationState) {
+    const assessment = assessDocumentation(fileData.documentType, txData.documentationState);
+    confidence = applyDocumentationOutcome(scoredConfidence, assessment.outcome);
+    documentation = { ...assessment, confidenceBefore: scoredConfidence };
+  }
 
   return {
     transactionId: txData.id,
     confidence,
     matchSources,
+    ...(documentation ? { documentation } : {}),
     breakdown: {
       amount: amountScore,
       date: dateScore,
@@ -445,6 +765,7 @@ export function scoreTransaction(
       iban: ibanScore,
       reference: referenceScore,
       hint: hintScore,
+      hardFacts: hardFactsScore,
     },
     preview: {
       date: txData.date,
@@ -467,5 +788,6 @@ export function formatScoreBreakdown(breakdown: ScoreBreakdown): string {
   if (breakdown.iban > 0) parts.push(`iban:${breakdown.iban}`);
   if (breakdown.reference > 0) parts.push(`ref:${breakdown.reference}`);
   if (breakdown.hint > 0) parts.push(`hint:${breakdown.hint}`);
+  if (breakdown.hardFacts > 0) parts.push(`facts:${breakdown.hardFacts}`);
   return parts.join(" + ");
 }

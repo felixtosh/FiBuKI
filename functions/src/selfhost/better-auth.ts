@@ -500,7 +500,7 @@ function socialProviders() {
  *
  * Better Auth trusts only its own baseURL by default. The documented deploy
  * shape puts the web app and the API on SEPARATE hostnames (deploy/selfhost:
- * new.fibuki.com and new-api.fibuki.com), because the api's CORS layer expects
+ * the web and api hosts of one deployment), because the api's CORS layer expects
  * a split origin — so every social sign-in callback points at an origin that is
  * not the baseURL, and Better Auth rejects it with
  * 403 INVALID_CALLBACK_URL. That presents as "Google sign-in unavailable" with

@@ -1,0 +1,190 @@
+/**
+ * Route smoke over POST /api/mail/imap/connect — the flow every new mailbox
+ * goes through, and until now untested.
+ *
+ * The point of the suite is the classified 400: a failed verify login must come
+ * back as an error *code* the UI can branch on. #176 lifts the classifier out
+ * of this route into shared mail code so the sync worker can reach it too, and
+ * this pins that the move changes nothing the caller can see.
+ *
+ * Codes are pinned; messages are not — they are copy, and rewording them is not
+ * a regression.
+ *
+ * Runs under the api-smoke profile ONLY (needs root node_modules for
+ * next/imapflow); the db and identity wiring is ./route-harness. The verify
+ * login is stubbed at the imapflow seam: no socket is opened, the route's own
+ * catch/classify branch is what runs.
+ */
+
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { NextRequest } from "next/server";
+import { setupRouteHarness } from "./route-harness";
+
+const { store, authed } = setupRouteHarness();
+
+/** What the stubbed client throws on connect(); undefined means it succeeds. */
+const imap: { connectError: unknown } = { connectError: undefined };
+
+// The factory only runs when the ROUTE imports imapflow, which happens inside a
+// test body — long after `imap` above is initialised — so this needs no hoisted
+// box of its own.
+vi.mock("imapflow", () => ({
+  ImapFlow: class {
+    async connect(): Promise<void> {
+      if (imap.connectError) throw imap.connectError;
+    }
+    async getMailboxLock(): Promise<{ release: () => void }> {
+      return { release: () => {} };
+    }
+    async logout(): Promise<void> {}
+    close(): void {}
+  },
+}));
+
+beforeEach(() => {
+  imap.connectError = undefined;
+});
+
+/** POST the connect body as an authenticated user. */
+function connectRequest(): NextRequest {
+  return authed("user-A", "http://test.local/api/mail/imap/connect", "POST", {
+    host: "mail.example.test",
+    user: "someone@example.test",
+    password: "app-password",
+    mailbox: "INBOX",
+  });
+}
+
+async function connectWith(
+  error: unknown
+): Promise<{ status: number; code?: string; err?: string }> {
+  imap.connectError = error;
+  const { POST } = await import("@/app/api/mail/imap/connect/route");
+  const res = await POST(connectRequest());
+  const body = (await res.json()) as { code?: string; error?: string };
+  return { status: res.status, code: body.code, err: body.error };
+}
+
+describe("POST /api/mail/imap/connect — classified verify failures", () => {
+  it("a rejected login answers 400 auth_failed", async () => {
+    // Shape observed live against Migadu on 2026-08-21 (see
+    // functions/src/mail/imap/classify-error.live.test.ts): bare "Command
+    // failed" message, the reason on the error object, no serverResponseCode.
+    const error = Object.assign(new Error("Command failed"), {
+      authenticationFailed: true,
+      responseText: "Authentication failed",
+    });
+    const res = await connectWith(error);
+    expect(res.status).toBe(400);
+    expect(res.code).toBe("auth_failed");
+    expect(res.err).toBeTruthy();
+  });
+
+  it("an unresolvable host answers 400 unreachable", async () => {
+    const error = Object.assign(new Error("getaddrinfo ENOTFOUND mail.example.test"), {
+      code: "ENOTFOUND",
+    });
+    const res = await connectWith(error);
+    expect(res.status).toBe(400);
+    expect(res.code).toBe("unreachable");
+  });
+
+  it("a missing mailbox answers 400 mailbox_not_found", async () => {
+    const error = Object.assign(new Error("Command failed"), {
+      mailboxMissing: true,
+      responseText: "Mailbox doesn't exist",
+    });
+    const res = await connectWith(error);
+    expect(res.status).toBe(400);
+    expect(res.code).toBe("mailbox_not_found");
+  });
+
+  it("a self-signed certificate answers 400 tls_failed", async () => {
+    const error = new Error("self signed certificate in certificate chain");
+    const res = await connectWith(error);
+    expect(res.status).toBe(400);
+    expect(res.code).toBe("tls_failed");
+  });
+
+  it("an unrecognised failure answers 400 connect_failed", async () => {
+    const res = await connectWith(new Error("no branch matches this text"));
+    expect(res.status).toBe(400);
+    expect(res.code).toBe("connect_failed");
+  });
+
+  it("nothing is persisted when the verify login fails", async () => {
+    await connectWith(
+      Object.assign(new Error("Command failed"), { authenticationFailed: true })
+    );
+    const integrations = await store.collection("emailIntegrations").get();
+    expect(integrations.docs.length).toBe(0);
+  });
+});
+
+describe("POST /api/mail/imap/connect — a connected mailbox starts clean", () => {
+  // Reconnecting a broken mailbox is disconnect-then-connect (a second active
+  // row for the same mailbox is refused), so the fixed app-password lands as a
+  // fresh integration. It must not carry the previous failure's state: a user
+  // who has just fixed their password should not be looking at an "action
+  // needed" badge until the next nightly sync clears it. (#178)
+  it("writes no classified error and no reauth flag", async () => {
+    const key = "0".repeat(64);
+    const previous = process.env.GMAIL_TOKEN_ENCRYPTION_KEY;
+    process.env.GMAIL_TOKEN_ENCRYPTION_KEY = key;
+    try {
+      const { POST } = await import("@/app/api/mail/imap/connect/route");
+      const res = await POST(connectRequest());
+      expect(res.status).toBe(200);
+
+      const integrations = await store.collection("emailIntegrations").get();
+      expect(integrations.docs.length).toBe(1);
+      const data = integrations.docs[0].data() as Record<string, unknown>;
+      expect(data.lastSyncErrorCode).toBeNull();
+      expect(data.needsReauth).toBe(false);
+    } finally {
+      if (previous === undefined) delete process.env.GMAIL_TOKEN_ENCRYPTION_KEY;
+      else process.env.GMAIL_TOKEN_ENCRYPTION_KEY = previous;
+    }
+  });
+});
+
+describe("POST /api/mail/imap/connect — a body that does not match the schema", () => {
+  async function post(body: unknown): Promise<{ status: number; error?: string; issues?: string[] }> {
+    const { POST } = await import("@/app/api/mail/imap/connect/route");
+    const res = await POST(
+      authed("user-A", "http://test.local/api/mail/imap/connect", "POST", body as object)
+    );
+    const parsed = (await res.json()) as { error?: string; issues?: string[] };
+    return { status: res.status, error: parsed.error, issues: parsed.issues };
+  }
+
+  it("answers 400 and names the missing field", async () => {
+    const res = await post({ host: "mail.example.test", user: "someone@example.test" });
+    expect(res.status).toBe(400);
+    expect(res.issues?.join(" ")).toContain("password");
+  });
+
+  it("rejects a field of the wrong type rather than coercing it", async () => {
+    const res = await post({
+      host: "mail.example.test",
+      user: "someone@example.test",
+      password: "app-password",
+      port: "993",
+    });
+    expect(res.status).toBe(400);
+    expect(res.issues?.join(" ")).toContain("port");
+  });
+
+  it("rejects a present-but-blank field, which the old presence check also caught", async () => {
+    const res = await post({ host: "   ", user: "someone@example.test", password: "app-password" });
+    expect(res.status).toBe(400);
+    expect(res.issues?.join(" ")).toContain("host");
+  });
+
+  it("never reaches the mailbox when the body is wrong", async () => {
+    imap.connectError = new Error("must not be called");
+    const res = await post({ host: "mail.example.test", user: "someone@example.test" });
+    expect(res.status).toBe(400);
+    expect(res.error).not.toContain("must not be called");
+  });
+});

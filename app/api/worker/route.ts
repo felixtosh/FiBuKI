@@ -233,8 +233,8 @@ async function createGmailReauthNotification(
   const emailPreview = affectedEmails[0] || "your Gmail account";
   const message = `${emailPreview} needs reconnection. Automated matching is paused and will resume automatically once reconnected.`;
   const notificationRef = db
-    .collection("notifications")
-    .doc(`gmail_reauth_required_${userId}`);
+    .collection(`users/${userId}/notifications`)
+    .doc("gmail_reauth_required");
   const notificationSnap = await notificationRef.get();
 
   await notificationRef.set({
@@ -242,7 +242,7 @@ async function createGmailReauthNotification(
     type: "gmail_reauth_required",
     title: "Reconnect Gmail to Resume Matching",
     message,
-    read: false, // re-open the reminder every time this condition recurs
+    readAt: null, // re-open the reminder every time this condition recurs
     createdAt: notificationSnap.exists
       ? (notificationSnap.data()?.createdAt || now)
       : now,

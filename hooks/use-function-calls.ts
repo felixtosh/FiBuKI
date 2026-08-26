@@ -262,6 +262,7 @@ export function formatFunctionDisplayName(functionName: string): string {
     connectFileToTransaction: "Connect File",
     disconnectFileFromTransaction: "Disconnect File",
     dismissTransactionSuggestion: "Dismiss Suggestion",
+    undismissTransactionSuggestion: "Undo Dismiss Suggestion",
     unrejectFileFromTransaction: "Unreject File",
     // Partner operations
     createUserPartner: "Create Partner",
@@ -269,6 +270,7 @@ export function formatFunctionDisplayName(functionName: string): string {
     deleteUserPartner: "Delete Partner",
     assignPartnerToTransaction: "Assign Partner",
     removePartnerFromTransaction: "Remove Partner",
+    setPartnerBillingCycle: "Set Billing Cycle",
     // Source operations
     createSource: "Create Source",
     updateSource: "Update Source",

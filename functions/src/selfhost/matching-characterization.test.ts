@@ -243,8 +243,17 @@ describe("characterization: learnBillingCycleCallable", () => {
       delayVariance: 0,
     });
 
+    // yazzbert/FiBuKI-selfhost#165: billingCycle is now {learned, declared,
+    // effective} — the flat shape moved to billingCycle.learned[0].
     const partner = (await db.collection("partners").doc("p-c1").get()).data()!;
-    expect(partner.billingCycle).toMatchObject({ frequencyDays: 30, frequencyConfidence: 98 });
+    expect(partner.billingCycle.learned[0]).toMatchObject({
+      frequencyDays: 30,
+      frequencyConfidence: 98,
+    });
+    expect(partner.billingCycle.effective[0]).toMatchObject({
+      source: "learned",
+      frequencyDays: 30,
+    });
   });
 
   // characterization: the common-period loop uses `>=` when comparing match
@@ -302,7 +311,7 @@ describe("characterization: learnBillingCycleCallable", () => {
       sampleSize: 4,
     });
     const partner = (await db.collection("partners").doc("p-c6").get()).data()!;
-    const stored = partner.billingCycle as Record<string, unknown>;
+    const stored = partner.billingCycle.learned[0] as Record<string, unknown>;
     expect(stored.frequencyDays).toBe(30);
     // The unlearned delay fields are ABSENT, not null/undefined-written.
     expect("invoiceToTransactionDelay" in stored).toBe(false);

@@ -5,6 +5,7 @@
  */
 
 import { onRequest } from "firebase-functions/v2/https";
+import { requestOrigin, PUBLIC_ORIGIN_UNSET_ERROR } from "../utils/publicOrigin";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -20,12 +21,9 @@ const OPENAPI_SPEC = {
     description: "Manage bank transactions, receipts, and tax categorization for German small businesses.",
     version: "1.0.0",
   },
-  servers: [
-    {
-      url: "https://europe-west1-taxstudio-f12fb.cloudfunctions.net",
-      description: "Production",
-    },
-  ],
+  // Filled per request from the deployment's own public origin — a spec that
+  // names somebody else's backend sends every client there.
+  servers: [{ url: "", description: "This deployment" }],
   paths: {
     "/mcpApi": {
       post: {
@@ -54,6 +52,12 @@ const OPENAPI_SPEC = {
                       "connect_file_to_transaction",
                       "disconnect_file_from_transaction",
                       "list_transactions_needing_files",
+                      "list_transactions_missing_invoice",
+                      "mark_file_as_not_invoice",
+                      "unmark_file_as_not_invoice",
+                      "dismiss_transaction_suggestion",
+                      "undismiss_transaction_suggestion",
+                      "retry_file_extraction",
                       "auto_connect_file_suggestions",
                       "list_no_receipt_categories",
                       "assign_no_receipt_category",
@@ -199,14 +203,26 @@ const OPENAPI_SPEC = {
     update_transaction:
       "Update transaction description or status. Args: transactionId (string), description? (string), isComplete? (boolean)",
     list_files:
-      "List uploaded files/receipts. Args: hasConnections? (boolean), hasSuggestions? (boolean), limit? (number)",
+      "List uploaded files/receipts. Args: hasConnections? (boolean), hasSuggestions? (boolean), handCorrected? (boolean, true = only files a human corrected by hand, which is the exclusion list for a re-extraction sweep), limit? (number)",
     get_file: "Get file details including suggestions. Args: fileId (string)",
     connect_file_to_transaction:
-      "Connect a file to a transaction (marks transaction complete). Args: fileId (string), transactionId (string)",
+      "Connect a file to a transaction (marks transaction complete). A pair previously rejected with dismiss_transaction_suggestion is refused with PAIR_REJECTED; lift it with undismiss_transaction_suggestion first if the connection is genuinely intended. Args: fileId (string), transactionId (string)",
     disconnect_file_from_transaction:
       "Disconnect a file from a transaction. Args: fileId (string), transactionId (string)",
     list_transactions_needing_files:
-      "Find transactions without receipts. Args: minAmount? (number, in cents), limit? (number)",
+      "Find transactions without receipts. Returns { transactions, nextCursor, count } — count is this page, not a total. Args: minAmount? (number, in cents), limit? (number, max 500), cursor? (string, nextCursor from the previous page)",
+    retry_file_extraction:
+      "Re-run extraction on a file that extracted without erroring but produced nothing usable (no line items, no VAT amount). Runs synchronously, up to a minute. Resets partner and transaction matching for the file; a manual partner assignment is kept. A file whose record a human corrected is refused with HAND_CORRECTED, naming the corrected fields — overwriting them takes its own flag, decided per file. Args: fileId (string), force? (boolean, required for a file that already extracted cleanly), overwriteCorrections? (boolean, required for a hand-corrected file)",
+    list_transactions_missing_invoice:
+      "Find transactions documented by a receipt only — a document is attached but no § 11 UStG invoice was ever received, so no Vorsteuer may be claimed. Each row carries the vendor, the amount, the date and the § 11 elements the attached document is missing. Returns { transactions, nextCursor, count } — count is this page, not a total. Args: minAmount? (number, in cents), limit? (number, max 500), cursor? (string, nextCursor from the previous page)",
+    mark_file_as_not_invoice:
+      "Flag a file as not an invoice (duplicate re-send, payment reminder, statement). Clears extracted data and removes it from the unmatched-file queue; refuses while the file is still connected to a transaction. Args: fileId (string), reason? (string)",
+    unmark_file_as_not_invoice:
+      "Restore a file previously flagged as not an invoice, re-opening extraction. Args: fileId (string)",
+    dismiss_transaction_suggestion:
+      "Reject a proposed file-to-transaction pair (coincidental amount or date, an own-side document scored against an expense line). Removes the suggestion and records the rejection so re-scoring does not propose it again; do not use when the pair is correct but the transaction already holds a document. Args: fileId (string), transactionId (string), reason? (string, max 500 characters)",
+    undismiss_transaction_suggestion:
+      "Clear a previous rejection of a file-to-transaction pair, making it eligible to be suggested again. Does not regenerate the suggestion — the pair reappears when matching next runs for that file, or can be scored on demand with score_file_transaction_match. The earlier rejection stays in the file's history. Args: fileId (string), transactionId (string)",
     auto_connect_file_suggestions:
       "Auto-connect files to transactions above confidence threshold. Args: fileId? (string), minConfidence? (number, 0-100, default 89)",
     list_no_receipt_categories: "List categories for transactions that don't need receipts (bank fees, payroll, etc.)",
@@ -227,7 +243,16 @@ export const openApiSpec = onRequest({ region: "europe-west1" }, async (req, res
     return;
   }
 
-  res.status(200).json(OPENAPI_SPEC);
+  const origin = requestOrigin(req);
+  if (!origin) {
+    res.status(500).json({ error: PUBLIC_ORIGIN_UNSET_ERROR });
+    return;
+  }
+
+  res.status(200).json({
+    ...OPENAPI_SPEC,
+    servers: [{ url: origin, description: "This deployment" }],
+  });
 });
 
 /**
@@ -238,6 +263,12 @@ export const aiPluginManifest = onRequest({ region: "europe-west1" }, async (req
 
   if (req.method === "OPTIONS") {
     res.status(204).send("");
+    return;
+  }
+
+  const origin = requestOrigin(req);
+  if (!origin) {
+    res.status(500).json({ error: PUBLIC_ORIGIN_UNSET_ERROR });
     return;
   }
 
@@ -254,7 +285,7 @@ export const aiPluginManifest = onRequest({ region: "europe-west1" }, async (req
     },
     api: {
       type: "openapi",
-      url: "https://europe-west1-taxstudio-f12fb.cloudfunctions.net/openApiSpec",
+      url: `${origin}/openApiSpec`,
     },
     logo_url: "https://fibuki.com/icon.png",
     contact_email: "support@fibuki.com",

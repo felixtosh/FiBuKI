@@ -37,6 +37,7 @@ const { deleteFileCallable } = await import("../files/deleteFile");
 const { connectFileToTransactionCallable } = await import("../files/connectFileToTransaction");
 const { disconnectFileFromTransactionCallable } = await import("../files/disconnectFileFromTransaction");
 const { markFileAsNotInvoiceCallable } = await import("../files/markFileAsNotInvoice");
+const { dismissTransactionSuggestionCallable } = await import("../files/dismissTransactionSuggestion");
 
 describe("File Cloud Functions", () => {
   setupTestHooks();
@@ -507,6 +508,101 @@ describe("File Cloud Functions", () => {
       expect(file?.isNotInvoice).toBe(true);
       // Manual partner assignment should be preserved
       expect(file?.partnerId).toBe("partner-123");
+    });
+  });
+
+  describe("dismissTransactionSuggestion", () => {
+    const userId = "user-123";
+    const fileId = "file-456";
+
+    const ctx = () => ({
+      userId,
+      db: createMockFirestore(),
+      request: { auth: { uid: userId }, data: {} },
+      logAIUsage: vi.fn(),
+    });
+
+    const suggestion = (transactionId: string, confidence: number) => ({
+      transactionId,
+      confidence,
+      matchSources: [{ type: "amount", weight: 40 }],
+    });
+
+    it("should write the same field set the MCP tool writes", async () => {
+      store.setDoc(
+        "files",
+        fileId,
+        createTestFile({
+          userId,
+          transactionSuggestions: [suggestion("tx-1", 82), suggestion("tx-2", 61)],
+        })
+      );
+
+      const result = await dismissTransactionSuggestionCallable(ctx() as any, {
+        fileId,
+        transactionId: "tx-1",
+        reason: "own-side document",
+      });
+
+      expect(result).toEqual({ success: true, dismissedConfidence: 82 });
+
+      const file = store.getDoc("files", fileId);
+      expect(file?.transactionSuggestions).toEqual([suggestion("tx-2", 61)]);
+      expect(file?.dismissedTransactionIds).toEqual(["tx-1"]);
+      expect(file?.dismissedTransactions).toEqual([
+        expect.objectContaining({ transactionId: "tx-1", confidence: 82, reason: "own-side document" }),
+      ]);
+    });
+
+    it("should keep the UI's reason-less dismiss working", async () => {
+      store.setDoc(
+        "files",
+        fileId,
+        createTestFile({ userId, transactionSuggestions: [suggestion("tx-1", 70)] })
+      );
+
+      const result = await dismissTransactionSuggestionCallable(ctx() as any, {
+        fileId,
+        transactionId: "tx-1",
+      });
+
+      expect(result).toEqual({ success: true, dismissedConfidence: 70 });
+      expect(store.getDoc("files", fileId)?.dismissedTransactions).toEqual([
+        expect.objectContaining({ transactionId: "tx-1", reason: null }),
+      ]);
+    });
+
+    it("should reject missing ids, an over-long reason and another user's file", async () => {
+      await expect(
+        dismissTransactionSuggestionCallable(ctx() as any, { transactionId: "tx-1" } as any)
+      ).rejects.toThrow("fileId is required");
+      await expect(
+        dismissTransactionSuggestionCallable(ctx() as any, { fileId } as any)
+      ).rejects.toThrow("transactionId is required");
+
+      store.setDoc("files", fileId, createTestFile({ userId }));
+      await expect(
+        dismissTransactionSuggestionCallable(ctx() as any, {
+          fileId,
+          transactionId: "tx-1",
+          reason: "x".repeat(501),
+        })
+      ).rejects.toThrow(/at most 500 characters/);
+
+      store.setDoc("files", "file-other", createTestFile({ userId: "someone-else" }));
+      await expect(
+        dismissTransactionSuggestionCallable(ctx() as any, {
+          fileId: "file-other",
+          transactionId: "tx-1",
+        })
+      ).rejects.toThrow("Access denied");
+
+      await expect(
+        dismissTransactionSuggestionCallable(ctx() as any, {
+          fileId: "file-missing",
+          transactionId: "tx-1",
+        })
+      ).rejects.toThrow("File not found");
     });
   });
 });

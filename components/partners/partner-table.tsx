@@ -10,6 +10,7 @@ import { PartnerDataTable } from "./partner-data-table";
 import { AddPartnerDialog } from "./add-partner-dialog";
 import { TableEmptyState, emptyStatePresets } from "@/components/ui/table-empty-state";
 import { UserPartner, PartnerFormData, PartnerFilters } from "@/types/partner";
+import { isRecurringPartner } from "@/lib/partners/billing-cycle-presentation";
 import { Skeleton } from "@/components/ui/skeleton";
 
 interface PartnerTableProps {
@@ -66,6 +67,13 @@ export function PartnerTable({
       );
     }
 
+    // Apply recurring filter
+    if (filters.isRecurring !== undefined) {
+      data = data.filter((p) =>
+        filters.isRecurring ? isRecurringPartner(p) : !isRecurringPartner(p)
+      );
+    }
+
     // Apply country filter
     if (filters.country) {
       data = data.filter((p) => p.country === filters.country);
@@ -76,7 +84,8 @@ export function PartnerTable({
 
   // Determine which empty state to show
   const hasAnyFilters = searchValue || filters.hasVatId !== undefined ||
-    filters.hasIban !== undefined || filters.country;
+    filters.hasIban !== undefined || filters.isRecurring !== undefined ||
+    filters.country;
 
   const emptyState = useMemo(() => {
     // Don't show empty state while still loading - prevents flicker

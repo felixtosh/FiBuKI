@@ -1,6 +1,21 @@
 import { Timestamp } from "firebase/firestore";
 
 /**
+ * How a transaction is documented (#104).
+ *
+ * Duplicated from `functions/src/documents/types.ts` the same way
+ * `DocumentType` is in `types/file.ts`: `functions/tsconfig.json` pins
+ * `rootDir: "src"`, so the two trees cannot share a file. The backend module
+ * is the source of truth for the DERIVATION; this is the shape the UI reads.
+ */
+export type DocumentationState =
+  | "invoice"
+  | "receipt-only"
+  | "no-receipt-category"
+  | "undocumented"
+  | "unknown";
+
+/**
  * Entry in the automation history for a transaction.
  * Tracks what automated actions were performed and when.
  */
@@ -131,6 +146,21 @@ export interface Transaction {
 
   /** Whether transaction has documentation (file OR no-receipt category) */
   isComplete: boolean;
+
+  /**
+   * WHAT the documentation is (#104). Additive to `isComplete`, which keeps
+   * its meaning of "has some documentation" — a line that is green today does
+   * not turn red because this field exists.
+   *
+   * `receipt-only` is the bookkeeping gap: the transaction holds a payment
+   * confirmation, no invoice satisfying § 11 was ever received, and no
+   * Vorsteuer may be claimed on it. Absent on every row written before #104,
+   * which is "never checked", not "checked and fine".
+   *
+   * Derived in the onTransactionUpdate trigger from the attached files'
+   * `documentType`, never authored.
+   */
+  documentationState?: DocumentationState;
 
   // === Metadata ===
 

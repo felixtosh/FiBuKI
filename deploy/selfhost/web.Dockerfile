@@ -29,13 +29,24 @@ ARG NEXT_PUBLIC_OIDC_SCOPE
 ARG NEXT_PUBLIC_OIDC_ADMIN_GROUP
 ARG NEXT_PUBLIC_OIDC_REDIRECT_URI
 ARG NEXT_PUBLIC_FIBUKI_POLL_MS
+# The public web origin, read by app/api/truelayer/callback, app/api/banking/connect
+# and the agent's download tools to build absolute links. Compose has passed it as a
+# build arg all along; without the ARG here Docker discarded it and Next inlined
+# undefined, so every one of those call sites fell back to http://localhost:3000.
+ARG NEXT_PUBLIC_APP_URL
+# Gates the GitHub sign-in button. Dropped the same way: the button rendered from a
+# stale default and then 4xx'd, because the value the api validates against never
+# reached the client bundle.
+ARG NEXT_PUBLIC_GITHUB_SIGNIN_ENABLED
 ENV NEXT_PUBLIC_FIBUKI_API_URL=$NEXT_PUBLIC_FIBUKI_API_URL \
     NEXT_PUBLIC_OIDC_ISSUER=$NEXT_PUBLIC_OIDC_ISSUER \
     NEXT_PUBLIC_OIDC_CLIENT_ID=$NEXT_PUBLIC_OIDC_CLIENT_ID \
     NEXT_PUBLIC_OIDC_SCOPE=$NEXT_PUBLIC_OIDC_SCOPE \
     NEXT_PUBLIC_OIDC_ADMIN_GROUP=$NEXT_PUBLIC_OIDC_ADMIN_GROUP \
     NEXT_PUBLIC_OIDC_REDIRECT_URI=$NEXT_PUBLIC_OIDC_REDIRECT_URI \
-    NEXT_PUBLIC_FIBUKI_POLL_MS=$NEXT_PUBLIC_FIBUKI_POLL_MS
+    NEXT_PUBLIC_FIBUKI_POLL_MS=$NEXT_PUBLIC_FIBUKI_POLL_MS \
+    NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL \
+    NEXT_PUBLIC_GITHUB_SIGNIN_ENABLED=$NEXT_PUBLIC_GITHUB_SIGNIN_ENABLED
 
 RUN npm run build
 

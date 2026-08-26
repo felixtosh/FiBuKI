@@ -10,6 +10,7 @@ import { useNoReceiptCategories } from "@/hooks/use-no-receipt-categories";
 import { useFiles } from "@/hooks/use-files";
 import { useFilteredTransactions } from "@/hooks/use-filtered-transactions";
 import { parseFiltersFromUrl, buildFilterUrl } from "@/lib/filters/url-params";
+import { countChaseQueue } from "@/lib/documents/chase-queue";
 // Category suggestions come from transaction.categorySuggestions (computed on backend)
 import { DataTable, DataTableHandle } from "./data-table";
 import { getTransactionColumns } from "./transaction-columns";
@@ -29,6 +30,8 @@ interface TransactionTableProps {
   userPartners?: UserPartner[];
   globalPartners?: GlobalPartner[];
   tableRef?: React.RefObject<DataTableHandle | null>;
+  /** Callback with the row ids in displayed order (filtered rows, active sort) */
+  onDisplayedOrderChange?: (orderedIds: string[]) => void;
 }
 
 export function TransactionTable({
@@ -39,6 +42,7 @@ export function TransactionTable({
   userPartners = [],
   globalPartners = [],
   tableRef: externalTableRef,
+  onDisplayedOrderChange,
 }: TransactionTableProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -75,6 +79,14 @@ export function TransactionTable({
     transactions,
     filters,
     searchValue
+  );
+
+  // The chase queue is counted across the whole account, not the filtered
+  // view: a filter narrowing the table must not make outstanding work look
+  // smaller than it is.
+  const chaseQueueCount = useMemo(
+    () => countChaseQueue(transactions),
+    [transactions]
   );
 
   // Calculate assigned count and sum of amounts
@@ -313,6 +325,7 @@ export function TransactionTable({
         totalCount={totalCount}
         filteredSum={filteredSum}
         scorePercent={scorePercent}
+        chaseQueueCount={chaseQueueCount}
       />
 
       {/* Scrollable table area */}
@@ -325,6 +338,7 @@ export function TransactionTable({
             onRowClick={handleRowClick}
             selectedRowId={selectedTransactionId}
             emptyState={emptyState}
+            onDisplayedOrderChange={onDisplayedOrderChange}
             searchingTransactionIds={searchingTransactions}
           />
         </TooltipProvider>

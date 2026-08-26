@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { Timestamp } from "firebase-admin/firestore";
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
+import { toDateSafe } from "@/lib/utils";
 
 const db = getAdminDb();
 const INTEGRATIONS_COLLECTION = "emailIntegrations";
@@ -95,8 +96,8 @@ export async function POST(request: NextRequest) {
       if (!pausedQueueItem) {
         pausedQueueItem = {
           type: data.type,
-          dateFrom: data.dateFrom?.toDate() || null,
-          dateTo: data.dateTo?.toDate() || null,
+          dateFrom: toDateSafe(data.dateFrom),
+          dateTo: toDateSafe(data.dateTo),
           emailsProcessed: data.emailsProcessed || 0,
           filesCreated: data.filesCreated || 0,
           attachmentsSkipped: data.attachmentsSkipped || 0,

@@ -14,10 +14,10 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
+import { cn, toDateSafe } from "@/lib/utils";
 import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
-import { convertCurrency } from "@/lib/currency";
+import { useEcbConverter } from "@/lib/currency";
 import Link from "next/link";
 import {
   getTransactionMatchConfidenceColor,
@@ -152,13 +152,14 @@ interface TransactionRowProps {
 }
 
 function TransactionRow({ transaction, fileCurrency, onRemove, disabled }: TransactionRowProps) {
-  const txDate = transaction.date?.toDate();
+  const convert = useEcbConverter();
+  const txDate = toDateSafe(transaction.date);
   const hasCurrencyMismatch = transaction.currency !== fileCurrency;
 
   // Convert to file currency using transaction/payment date
   let convertedAmount: number | null = null;
   if (hasCurrencyMismatch && txDate) {
-    const conversion = convertCurrency(
+    const conversion = convert(
       Math.abs(transaction.amount),
       transaction.currency,
       fileCurrency,
@@ -223,6 +224,7 @@ interface DifferenceLineProps {
 }
 
 function DifferenceLine({ fileAmount, fileCurrency, transactions }: DifferenceLineProps) {
+  const convert = useEcbConverter();
   // Determine the target currency for difference calculation (use first transaction's currency)
   // This ensures difference is shown in accounting/transaction currency
   const targetCurrency = transactions[0]?.currency || fileCurrency;
@@ -232,7 +234,7 @@ function DifferenceLine({ fileAmount, fileCurrency, transactions }: DifferenceLi
   let fileConversionFailed = false;
   if (fileCurrency !== targetCurrency && transactions[0]?.date) {
     const txDate = transactions[0].date.toDate();
-    const conversion = convertCurrency(fileAmount, fileCurrency, targetCurrency, txDate);
+    const conversion = convert(fileAmount, fileCurrency, targetCurrency, txDate);
     if (conversion) {
       convertedFileAmount = conversion.amount;
     } else {
@@ -245,11 +247,11 @@ function DifferenceLine({ fileAmount, fileCurrency, transactions }: DifferenceLi
   let txConversionFailed = false;
 
   for (const tx of transactions) {
-    const txDate = tx.date?.toDate();
+    const txDate = toDateSafe(tx.date);
     if (tx.currency === targetCurrency) {
       transactionsSum += Math.abs(tx.amount);
     } else if (txDate) {
-      const conversion = convertCurrency(
+      const conversion = convert(
         Math.abs(tx.amount),
         tx.currency,
         targetCurrency,

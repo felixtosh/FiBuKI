@@ -11,6 +11,7 @@ export { learnPartnerPatterns } from "./matching/learnPartnerPatterns";
 export { learnPartnerCategoryPatterns } from "./matching/learnPartnerCategoryPatterns";
 export { searchExternalPartners } from "./matching/searchExternalPartners";
 export { learnBillingCycleCallable as learnBillingCycle } from "./matching/learnBillingCycle";
+export { scheduledLearnBillingCycles } from "./matching/scheduledBillingCycleLearn";
 export { learnScoringWeightsCallable as learnScoringWeights } from "./matching/learnScoringWeights";
 
 // Export analytics functions
@@ -164,6 +165,7 @@ export {
   connectFileToTransactionCallable as connectFileToTransaction,
   disconnectFileFromTransactionCallable as disconnectFileFromTransaction,
   dismissTransactionSuggestionCallable as dismissTransactionSuggestion,
+  undismissTransactionSuggestionCallable as undismissTransactionSuggestion,
   unrejectFileFromTransactionCallable as unrejectFileFromTransaction,
 } from "./files";
 
@@ -185,6 +187,7 @@ export {
   deleteUserPartnerCallable as deleteUserPartner,
   assignPartnerToTransactionCallable as assignPartnerToTransaction,
   removePartnerFromTransactionCallable as removePartnerFromTransaction,
+  setPartnerBillingCycleCallable as setPartnerBillingCycle,
 } from "./partners";
 
 // Source operations
@@ -204,10 +207,15 @@ export { runReceiptSearchForTransactionCallable as runReceiptSearchForTransactio
 // Workflow callables (deterministic secret-sauce strategies, invocable from all four personas)
 export { findReceiptForTransactionCallable as findReceiptForTransaction } from "./workflows/findReceiptForTransactionCallable";
 
+// FX reference rates (ECB feed refresh — § 20 Abs 6 UStG method 2)
+export { scheduledRefreshEcbRates } from "./fx/refreshEcbRates";
+
 // Report operations
 export {
   generateUvaXmlCallable as generateUvaXml,
   generateUvaPdfCallable as generateUvaPdf,
+  calculateUvaCallable as calculateUva,
+  prepareUvaFilingCallable as prepareUvaFiling,
 } from "./reports";
 
 // Automation registry (for admin page)

@@ -115,15 +115,19 @@ async function processOneGlobalPartner(
 
   const userPartners = userPartnersSnap.docs.map((d) => d.data());
 
-  // 1. Aggregate billing frequency
+  // 1. Aggregate billing frequency.
+  // yazzbert/FiBuKI-selfhost#165: billingCycle is now {learned, declared,
+  // effective}; read the first effective recurrence (band-aware aggregation
+  // is unscoped for now — this admin job predates multi-band partners).
   const frequencies: number[] = [];
   const invoiceDelays: number[] = [];
   for (const p of userPartners) {
-    if (p.billingCycle?.frequencyDays) {
-      frequencies.push(p.billingCycle.frequencyDays);
+    const cycle = p.billingCycle?.effective?.[0];
+    if (cycle?.frequencyDays) {
+      frequencies.push(cycle.frequencyDays);
     }
-    if (p.billingCycle?.invoiceToTransactionDelay != null) {
-      invoiceDelays.push(p.billingCycle.invoiceToTransactionDelay);
+    if (cycle?.invoiceToTransactionDelay != null) {
+      invoiceDelays.push(cycle.invoiceToTransactionDelay);
     }
   }
 
@@ -188,8 +192,8 @@ async function processOneGlobalPartner(
   // 5. Compute amount variance from file connections
   // (simplified: use billingCycle dayVariance as proxy)
   const dayVariances = userPartners
-    .filter((p) => p.billingCycle?.dayVariance != null)
-    .map((p) => p.billingCycle.dayVariance);
+    .map((p) => p.billingCycle?.effective?.[0]?.dayVariance)
+    .filter((v): v is number => v != null);
   const avgVariance =
     dayVariances.length > 0
       ? dayVariances.reduce((s: number, v: number) => s + v, 0) / dayVariances.length

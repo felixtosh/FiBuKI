@@ -52,6 +52,74 @@ export interface ExtractedLineItem {
 }
 
 /**
+ * One row of the document's own printed VAT summary block (fork #67).
+ * Read off the receipt, never derived from line items.
+ * Monetary fields are stored in cents.
+ */
+export interface ExtractedRateGroup {
+  /** VAT rate for this group (0-100) */
+  rate: number;
+  /** Net (excl. VAT) subtotal, cents */
+  net: number;
+  /** VAT amount, cents */
+  vat: number;
+  /** Gross (incl. VAT) subtotal, cents */
+  gross: number;
+}
+
+/**
+ * What kind of document this is under § 11 UStG (#104).
+ *
+ * Duplicated from `functions/src/documents/types.ts` the same way
+ * `ExtractedRateGroup` is: `functions/tsconfig.json` pins `rootDir: "src"`,
+ * so the two trees cannot share a file. The backend module is the source of
+ * truth for the RULES; this is the shape the UI reads.
+ *
+ * Reverse charge is deliberately not a fifth value — a reverse-charge
+ * document is an invoice.
+ */
+export type DocumentType = "invoice" | "receipt" | "other" | "unknown";
+
+/**
+ * Why a VAT-looking figure on a document is not deductible Vorsteuer (#203).
+ * A closed set. See `functions/src/uva/types.ts` for what each one means.
+ */
+export type NonClaimableVatReason =
+  | "insurance-tax"
+  | "levy"
+  | "discount-to-zero"
+  | "private";
+
+/** The § 11 elements the classifier can judge. See the backend module. */
+export type Section11Element =
+  | "issue-date"
+  | "supplier-name"
+  | "supplier-address"
+  | "description"
+  | "steuersatz"
+  | "invoice-number"
+  | "supplier-vat-id"
+  | "recipient"
+  | "recipient-vat-id";
+
+/** Why the classifier decided what it did — shown, not acted on. */
+export interface DocumentTypeBasis {
+  reason: string;
+  regime: "kleinbetrag" | "standard" | null;
+  grossTotal: number | null;
+  selfDesignation: string | null;
+  selfDesignationClass: "invoice" | "receipt" | "credit-note" | null;
+  zeroVatReason:
+    | "reverse-charge"
+    | "exempt"
+    | "foreign-supplier"
+    | "cross-border-b2b"
+    | "zero-rated"
+    | null;
+  degraded: boolean;
+}
+
+/**
  * Match sources for transaction matching - indicates which criteria contributed to a match
  */
 export type TransactionMatchSource =
@@ -208,8 +276,121 @@ export interface TaxFile {
   /** AI-extracted line items */
   extractedLineItems?: ExtractedLineItem[] | null;
 
+  /**
+   * The document's own printed per-rate VAT summary block (fork #67),
+   * validated on ingest: each row is internally consistent and the rows
+   * sum to the document total. Absent when the document prints no such
+   * block or the printed figures did not validate — never back-filled by
+   * summing line items, so its presence means "the receipt said so".
+   */
+  extractedRateGroups?: ExtractedRateGroup[] | null;
+
+  /**
+   * Set when the extracted line items failed reconciliation against the
+   * document total (fork #64): the items are kept for human repair but
+   * must not be trusted for VAT derivation.
+   */
+  lineItemsUnreconciled?: boolean;
+
+  /**
+   * Fork #67: which VAT rates actually failed reconciliation, when the
+   * printed rate groups let us localise the damage. OCR noise usually
+   * hits one group; the untouched groups stay usable. Empty/absent while
+   * `lineItemsUnreconciled` is true means the whole document is suspect.
+   */
+  lineItemsUnreconciledRates?: number[] | null;
+
+  /**
+   * Fork #137: this file's last re-extraction read the document's VAT worse
+   * than the record it replaced. Re-extraction is destructive, so without
+   * this the loss leaves no trace at all in the record afterwards.
+   */
+  vatSourceDowngraded?: boolean;
+
+  /**
+   * Fork #137: the downgrade above was refused — the previous VAT fields are
+   * still the ones stored, while the rest of the newer extraction was
+   * written. False alongside `vatSourceDowngraded` means the document total
+   * moved as well, so the older VAT fields described a different reading and
+   * could not be carried forward; that file needs a human.
+   */
+  vatFieldsPreserved?: boolean;
+
+  /**
+   * #184: which extracted fields a human set by hand, and when each was set —
+   * `{ amount: Timestamp, vatPercent: Timestamp }`, keyed by the names
+   * `update_file_extraction` takes. Per field rather than one timestamp on the
+   * document, because a `vatPercent: 0` ruling on a levy says nothing about the
+   * total. Present means a re-extraction would discard a person's work, which
+   * is why `retryFileExtraction` refuses the file without `overwriteCorrections`.
+   *
+   * The rules live in `functions/src/files/extractionProvenanceOps.ts`; this is
+   * the shape the client reads, duplicated the way `DocumentType` is.
+   */
+  extractionCorrectedFields?: Record<string, Timestamp>;
+
+  /** The newest of those, so the corrected population is one query. */
+  extractionCorrectedAt?: Timestamp | null;
+
+  /**
+   * A human's standing decision that the VAT this document prints is not
+   * deductible Vorsteuer (#203) — 11% Versicherungssteuer on an insurance
+   * policy, a 100% discount leaving nothing due. The reason IS the marker:
+   * typing the rate down to zero produced the same figure and lost the why.
+   *
+   * Duplicated from `functions/src/uva/types.ts` the same way `DocumentType`
+   * is; the backend module is the source of truth for the RULES.
+   */
+  vatNotClaimableReason?: NonClaimableVatReason | null;
+
+  /** Free-text detail stored alongside the reason. */
+  vatNotClaimableNote?: string | null;
+
+  /** When the marker was set. */
+  vatNotClaimableAt?: Timestamp | null;
+
+  /**
+   * The document prints at least one VAT rate that is not an Austrian rate on
+   * its date (#203) — 11% Versicherungssteuer is the case this was built for.
+   * Written by the detector at extraction time, queryable as a review list.
+   */
+  needsVatRateReview?: boolean;
+
+  /** Which rates those are, so the queue reads without opening the PDF. */
+  vatRatesOutsideSet?: number[];
+
   /** AI-extracted partner/company name */
   extractedPartner?: string | null;
+
+  /**
+   * The document's own printed heading, transcribed exactly as it appears
+   * ("Rechnung", "Invoice", "Quittung", "Zahlungsbestätigung"). Evidence for
+   * the § 11 classification, never the verdict (#104). Absent on every file
+   * extracted before the field existed; null when the document prints none.
+   */
+  extractedSelfDesignation?: string | null;
+
+  /**
+   * The sequential invoice number § 11 Abs 1 lit. h requires above 400 EUR,
+   * transcribed (#104). Absent on pre-#104 records; null when none printed.
+   */
+  extractedInvoiceNumber?: string | null;
+
+  /**
+   * What kind of document this is, decided by the § 11 rules at extraction
+   * time and stored here rather than recomputed at read time — two readers
+   * must not be able to disagree about the same document (#104).
+   */
+  documentType?: DocumentType;
+
+  /** Why the classifier decided that, so a borderline call can be judged. */
+  documentTypeBasis?: DocumentTypeBasis;
+
+  /**
+   * Which § 11 elements the document is missing at its amount — the list a
+   * request to the supplier can name.
+   */
+  documentTypeMissingElements?: Section11Element[];
 
   /** AI-extracted VAT ID */
   extractedVatId?: string | null;
@@ -316,6 +497,11 @@ export interface TaxFile {
     dismissedAt: Timestamp;
     /** Confidence of the suggestion that was dismissed */
     confidence?: number | null;
+    /**
+     * Why the pair was rejected, when the caller gave a reason. Absent on every
+     * record written before fork #93 added the field.
+     */
+    reason?: string | null;
   }>;
 
   // === Partner Matching ===
@@ -489,6 +675,12 @@ export interface FileFilters {
   /** Filter by assigned partner IDs */
   partnerIds?: string[];
 
+  /**
+   * Filter by partner state: true = has a partner, false = has none.
+   * Ignored when partnerIds picks specific partners — those win.
+   */
+  hasPartner?: boolean;
+
   /** Filter by invoice direction (income = outgoing, expense = incoming) */
   amountType?: "all" | "income" | "expense";
 }
@@ -543,6 +735,18 @@ export interface FileExtractionData {
   extractedVatPercent?: number | null;
   extractedVatAmount?: number | null;
   extractedLineItems?: ExtractedLineItem[] | null;
+  extractedRateGroups?: ExtractedRateGroup[] | null;
+  lineItemsUnreconciled?: boolean;
+  lineItemsUnreconciledRates?: number[] | null;
+  vatSourceDowngraded?: boolean;
+  vatFieldsPreserved?: boolean;
+  extractedSelfDesignation?: string | null;
+  extractedInvoiceNumber?: string | null;
+  documentType?: DocumentType;
+  documentTypeBasis?: DocumentTypeBasis;
+  documentTypeMissingElements?: Section11Element[];
+  needsVatRateReview?: boolean;
+  vatRatesOutsideSet?: number[];
   extractedPartner?: string | null;
   extractedVatId?: string | null;
   extractedIban?: string | null;

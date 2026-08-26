@@ -57,6 +57,12 @@ export interface ResizableDataTableProps<TData extends { id: string }> {
   selectedRowIds?: Set<string>;
   /** Callback when selection changes in multi-select mode */
   onSelectionChange?: (selectedIds: Set<string>) => void;
+  /**
+   * Callback with the row ids in the order they are displayed (the data the
+   * table was given, in the active sort order). Fires whenever that order
+   * changes, so pages can drive prev/next navigation from what the user sees.
+   */
+  onDisplayedOrderChange?: (orderedIds: string[]) => void;
 }
 
 export interface DataTableHandle {

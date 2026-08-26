@@ -13,6 +13,7 @@ import {
   limit,
 } from "firebase/firestore";
 import { ChatSession, ChatMessage, ToolCall, ToolResult } from "@/types/chat";
+import { toDateSafe } from "@/lib/utils";
 import { OperationsContext } from "./types";
 
 const CHAT_SESSIONS_COLLECTION = "chatSessions";
@@ -382,7 +383,12 @@ export function serializeMessagesForSDK(
       id: m.id,
       role: m.role,
       content: m.content,
-      createdAt: m.createdAt instanceof Date ? m.createdAt : m.createdAt?.toDate(),
+      // `?.` guards null/undefined and nothing else: a createdAt that is present
+      // but not a Timestamp — a {seconds, nanoseconds} shape that survived a
+      // serialisation round-trip, an ISO string, a plain {} — passes the optional
+      // chain and throws on the call, which kills the whole live-sync listener
+      // rather than one rendered row (#123, same family as #53).
+      createdAt: toDateSafe(m.createdAt) ?? undefined,
     };
 
     // Include tool invocations if present

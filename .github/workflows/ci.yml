@@ -18,6 +18,11 @@ jobs:
         with:
           node-version: 20
           cache: npm
+      # Needs no dependencies, so it runs before the install and fails fast.
+      # A build arg compose passes but web.Dockerfile does not declare is dropped
+      # silently, and Next inlines undefined into the client bundle (fork #54).
+      - name: Web build args reach the Dockerfile
+        run: node scripts/check-web-build-args.js
       - run: npm ci
       - run: npx tsc --noEmit
       - run: npm run lint
@@ -41,6 +46,20 @@ jobs:
       - run: npm ci
       - run: npx tsc --noEmit
       - run: npm test
+
+      # lib/data/generated-tool-definitions.ts is committed but generated from
+      # functions/src/tools/definitions.ts, and nothing used to fail when the
+      # two disagreed — it sat stale while llm.txt and openapi.json served the
+      # old tool docs to agents (fork #60). Regenerate and require no diff.
+      # The generator reads the compiled functions/lib, and the type check above
+      # is --noEmit, so this emits first.
+      - run: npx tsc
+      - name: Tool definitions are in sync
+        working-directory: .
+        run: |
+          node scripts/generate-tool-definitions.js
+          git diff --exit-code lib/data/generated-tool-definitions.ts \
+            || { echo "::error::lib/data/generated-tool-definitions.ts is stale — run 'npm run generate:tool-definitions' and commit the result"; exit 1; }
 
   functions-selfhost:
     name: Self-host suite (PGlite + in-memory storage)

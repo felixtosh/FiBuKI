@@ -1,7 +1,11 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # dependencies
-node_modules/
+# No trailing slash: a git worktree that symlinks node_modules at the repo root
+# and at functions/ (the usual way to avoid a second npm ci) creates a SYMLINK,
+# not a directory, and "node_modules/" does not match one. Those symlinks then
+# show up as untracked and get swept into a commit by `git add -A`.
+node_modules
 /.pnp
 .pnp.js
 .yarn/install-state.gz

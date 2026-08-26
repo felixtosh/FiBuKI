@@ -15,8 +15,15 @@ import { UserNoReceiptCategory, CategorySuggestion } from "@/types/no-receipt-ca
 import { getCategoryTemplate } from "@/lib/data/no-receipt-category-templates";
 import { Pill } from "@/components/ui/pill";
 import { AmountMatchDisplay } from "@/components/ui/amount-match-display";
+import { readBankOriginalAmount } from "@/functions/src/fx/bankOriginalAmount";
 import { SortableHeader } from "@/components/ui/data-table";
 import { PartnerPill } from "@/components/partners/partner-pill";
+import { DocumentationStateBadge } from "@/components/documents/document-type-badge";
+import { describeDocumentationState } from "@/lib/documents/document-type-presentation";
+import {
+  findMissingChargeCycle,
+  RecurringChargeMarker,
+} from "./recurring-charge-marker";
 import {
   Tooltip,
   TooltipContent,
@@ -200,6 +207,15 @@ export function getTransactionColumns(
         const txId = row.original.id;
         const isSearching = searchingTransactionIds?.has(txId);
 
+        // A charge of a recurring partner that is missing what its recurrence
+        // expects. Computed here rather than in each branch below because the
+        // marker outlives a pending suggestion: a suggestion is a proposal to
+        // cover the charge, not the cover itself.
+        const missingBand = findMissingChargeCycle(
+          row.original,
+          row.original.partnerId ? userPartnerMap.get(row.original.partnerId) : undefined
+        );
+
         // Show loading spinner when precision search is in progress
         if (isSearching && !hasFile) {
           return (
@@ -220,6 +236,9 @@ export function getTransactionColumns(
               countType="file"
               primaryAmount={row.original.amount}
               primaryCurrency={row.original.currency || "EUR"}
+              // #112: lets the pill compare in the document's currency when the
+              // bank stated what it charged before settling, instead of converting.
+              primaryOriginal={readBankOriginalAmount(row.original._original?.rawRow)}
               secondaryAmounts={fileData?.amounts || []}
               conversionDate={txDate}
               isExtracting={fileData?.hasExtractingFiles}
@@ -259,28 +278,57 @@ export function getTransactionColumns(
           const category = categoryMap.get(catSuggestion.categoryId);
           const label = category?.name || "Category";
           return (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <div>
-                  <Pill
-                    label={label}
-                    icon={Tag}
-                    variant="suggestion"
-                    confidence={catSuggestion.confidence}
-                  />
-                </div>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p className="text-xs">Click row to assign</p>
-              </TooltipContent>
-            </Tooltip>
+            <div className="flex items-center gap-1.5 min-w-0">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div>
+                    <Pill
+                      label={label}
+                      icon={Tag}
+                      variant="suggestion"
+                      confidence={catSuggestion.confidence}
+                    />
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="text-xs">Click row to assign</p>
+                </TooltipContent>
+              </Tooltip>
+              {missingBand && <RecurringChargeMarker band={missingBand} />}
+            </div>
           );
+        }
+
+        if (missingBand) {
+          return <RecurringChargeMarker band={missingBand} />;
         }
 
         return (
           <span className="text-sm text-muted-foreground">—</span>
         );
       },
+    },
+    {
+      id: "documentation",
+      // WHAT the row is documented by, next to the File cell that says only
+      // THAT it is. A receipt-only line and an invoice-documented one are both
+      // green — `isComplete` is untouched by design — so this is the only
+      // thing on the row that tells them apart.
+      //
+      // Sorted on the RESOLVED state, so rows carrying no state at all group
+      // with the explicit `unknown` ones instead of forming a second,
+      // identical-looking bucket.
+      accessorFn: (row) => describeDocumentationState(row.documentationState).state,
+      size: 130,
+      header: ({ column }) => (
+        <SortableHeader column={column}>Documentation</SortableHeader>
+      ),
+      cell: ({ row }) => (
+        // Never an em-dash: a row with no derived state reads as "nicht
+        // bestimmt", which is what most of the corpus honestly is until the
+        // backfill runs.
+        <DocumentationStateBadge state={row.original.documentationState} />
+      ),
     },
     {
       id: "reconciliation",

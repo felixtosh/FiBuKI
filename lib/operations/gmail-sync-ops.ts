@@ -20,6 +20,7 @@ import {
   GmailSyncResult,
 } from "@/types/gmail-sync";
 import { EmailIntegration } from "@/types/email-integration";
+import { toDateSafe } from "@/lib/utils";
 
 const GMAIL_SYNC_QUEUE_COLLECTION = "gmailSyncQueue";
 const EMAIL_INTEGRATIONS_COLLECTION = "emailIntegrations";
@@ -501,7 +502,7 @@ const STALE_THRESHOLD_MS = 10 * 60 * 1000;
  */
 function isQueueItemStale(data: { status: string; createdAt?: { toDate: () => Date } }): boolean {
   if (data.status !== "pending") return false;
-  const createdAt = data.createdAt?.toDate();
+  const createdAt = toDateSafe(data.createdAt);
   if (!createdAt) return false;
   return Date.now() - createdAt.getTime() > STALE_THRESHOLD_MS;
 }

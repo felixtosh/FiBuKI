@@ -18,73 +18,17 @@
  *
  * The auth seam is stubbed to supply identity (the real token-verify is covered
  * by auth-routes.test.ts); the fork under test here is the route's own
- * owner-scoping branch, exercised against a real (in-memory) data plane.
- *
- * Note on wiring: the gmail routes capture `const db = getAdminDb()` at MODULE
- * load, so the whole suite shares ONE FakeFirestore that we reset() (not
- * recreate) between tests. firebase-admin/firestore is deliberately NOT mocked —
- * the route (repo root) and this test (functions/) resolve it to different
- * physical trees, so a vi.mock here wouldn't intercept the route's copy anyway;
- * the fake db stores the real Timestamp/FieldValue values opaquely, which is
- * fine because the assertions read the HTTP contract and the userId scoping, not
- * sentinel internals.
+ * owner-scoping branch, exercised against a real (in-memory) data plane. That
+ * wiring, and the constraints behind it, live in ./route-harness.
  */
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import { NextRequest } from "next/server";
-import { FakeFirestore } from "./fake-firestore";
-
-// One shared data plane — the gmail routes bind `getAdminDb()` once at import,
-// so every route (and every test) must see the SAME instance. Held in a hoisted
-// box so the vi.mock factory below can reach it.
-const h = vi.hoisted(() => {
-  const box: { db: unknown } = { db: undefined };
-  return { box, getDb: () => box.db };
-});
-
-vi.mock("@/lib/firebase/admin", () => ({
-  getAdminDb: () => h.getDb(),
-  getAdminApp: () => ({}),
-  getAdminStorage: () => ({}),
-  getAdminBucket: () => ({}),
-}));
-
-// Keep the real UnauthorizedError + unauthorizedResponse (routes use both in
-// their catch), but resolve identity from the Bearer token: the token IS the
-// uid. A missing/non-Bearer header throws, so the 401 path still holds.
-vi.mock("@/lib/auth/get-server-user", async (importActual) => {
-  const actual = await importActual<typeof import("@/lib/auth/get-server-user")>();
-  return {
-    ...actual,
-    getServerUserIdWithFallback: async (request: Request): Promise<string> => {
-      const header = request.headers.get("Authorization");
-      if (!header?.startsWith("Bearer ")) throw new actual.UnauthorizedError();
-      return header.substring(7);
-    },
-    isServerUserAdmin: async (request: Request): Promise<boolean> => {
-      return request.headers.get("Authorization") === "Bearer admin";
-    },
-  };
-});
+import { describe, it, expect } from "vitest";
+import { setupRouteHarness } from "./route-harness";
 
 const USER_A = "user-A";
 const USER_B = "user-B";
 
-const store = new FakeFirestore();
-h.box.db = store;
-
-beforeEach(() => {
-  store.reset();
-});
-
-/** A request carrying `uid` as its bearer token (see the auth mock above). */
-function authed(uid: string, url: string, method = "POST", body?: unknown): NextRequest {
-  return new NextRequest(url, {
-    method,
-    headers: { "content-type": "application/json", Authorization: `Bearer ${uid}` },
-    ...(method === "GET" ? {} : { body: JSON.stringify(body ?? {}) }),
-  });
-}
+const { store, authed } = setupRouteHarness();
 
 // ---------------------------------------------------------------------------
 // POST /api/gmail/pause

@@ -4,13 +4,19 @@ import { ColumnDef } from "@tanstack/react-table";
 import { format } from "date-fns";
 import { Upload, Mail, Loader2, FileText } from "lucide-react";
 import { TaxFile } from "@/types/file";
+// The one normalizer, shared with the extraction path that wrote this value.
+// functions/tsconfig.json sets rootDir "src", so the shared module has to live
+// under functions/src and be imported from here rather than the other way round.
+import { normalizeCurrencyForDisplay } from "@/functions/src/fx/currencyNormalization";
 import { UserPartner, GlobalPartner } from "@/types/partner";
 import { PipelineId } from "@/types/automation";
 import { SortableHeader, AutomationHeader } from "@/components/ui/data-table";
 import { PartnerPill } from "@/components/partners/partner-pill";
+import { DocumentTypeBadge } from "@/components/documents/document-type-badge";
+import { describeDocumentType } from "@/lib/documents/document-type-presentation";
 import { AmountMatchDisplay } from "@/components/ui/amount-match-display";
 import { cn, toDateSafe } from "@/lib/utils";
-import { convertCurrency } from "@/lib/currency";
+import type { EcbConverter } from "@/lib/currency";
 import {
   Tooltip,
   TooltipContent,
@@ -20,24 +26,6 @@ import {
 export interface TransactionAmountInfo {
   amount: number;
   currency: string;
-}
-
-// Map currency symbols to ISO codes
-const CURRENCY_SYMBOL_MAP: Record<string, string> = {
-  "€": "EUR",
-  "$": "USD",
-  "£": "GBP",
-  "¥": "JPY",
-  "CHF": "CHF",
-  "Fr.": "CHF",
-};
-
-function normalizeCurrency(currency: string | null | undefined): string {
-  if (!currency) return "EUR";
-  // Already an ISO code
-  if (/^[A-Z]{3}$/.test(currency)) return currency;
-  // Try to map symbol
-  return CURRENCY_SYMBOL_MAP[currency] || "EUR";
 }
 
 function inferLineItemAmountsAreNet(file: TaxFile): boolean {
@@ -97,7 +85,14 @@ export function getFileColumns(
   globalPartners: GlobalPartner[] = [],
   transactionAmountsMap?: Map<string, TransactionAmountInfo[]>,
   onAutomationClick?: (pipelineId: PipelineId) => void,
-  searchingFileIds?: Set<string>
+  searchingFileIds?: Set<string>,
+  /**
+   * ECB conversion for the amount column. A column definition is not a React
+   * component, so the converter is handed in from the table above rather than
+   * taken from `useEcbConverter()` here — the hook lives in FileTable, whose
+   * re-render is what puts a newly loaded rate on screen (#120).
+   */
+  convert: EcbConverter = () => null
 ): ColumnDef<TaxFile>[] {
   const userPartnerMap = new Map(userPartners.map((p) => [p.id, p]));
   const globalPartnerMap = new Map(globalPartners.map((p) => [p.id, p]));
@@ -167,6 +162,23 @@ export function getFileColumns(
       },
     },
     {
+      id: "documentType",
+      // Sort on the RESOLVED type, so the files that carry no verdict at all
+      // group with the explicit `unknown` ones instead of forming a second,
+      // identical-looking bucket.
+      accessorFn: (row) => describeDocumentType(row.documentType).type,
+      size: 110,
+      header: ({ column }) => (
+        <SortableHeader column={column}>Document</SortableHeader>
+      ),
+      cell: ({ row }) => (
+        // Never an em-dash: a file with no verdict reads as "nicht bestimmt",
+        // which is the state most of the corpus is honestly in until the
+        // backfill and the re-extraction sweep have run.
+        <DocumentTypeBadge type={row.original.documentType} />
+      ),
+    },
+    {
       accessorKey: "extractedDate",
       size: 100,
       header: ({ column }) => (
@@ -205,7 +217,7 @@ export function getFileColumns(
       ),
       cell: ({ row }) => {
         const amount = getEffectiveExtractedAmount(row.original);
-        const currency = normalizeCurrency(row.original.extractedCurrency);
+        const currency = normalizeCurrencyForDisplay(row.original.extractedCurrency);
         const vatAmount = row.original.extractedVatAmount;
         const invoiceDirection = row.original.invoiceDirection;
         const extractedDate = row.original.extractedDate;
@@ -238,7 +250,7 @@ export function getFileColumns(
 
         if (currency !== "EUR") {
           const dateForConversion = toDateSafe(extractedDate) || new Date();
-          const conversion = convertCurrency(Math.abs(amount), currency, "EUR", dateForConversion);
+          const conversion = convert(Math.abs(amount), currency, "EUR", dateForConversion);
           if (conversion) {
             const signedConverted = invoiceDirection === "incoming" ? -(conversion.amount / 100) : conversion.amount / 100;
             displayAmount = "~" + new Intl.NumberFormat("de-DE", {
@@ -406,7 +418,7 @@ export function getFileColumns(
               count={count}
               countType="tx"
               primaryAmount={extractedAmount ?? null}
-              primaryCurrency={normalizeCurrency(extractedCurrency)}
+              primaryCurrency={normalizeCurrencyForDisplay(extractedCurrency)}
               secondaryAmounts={txAmounts}
               conversionDate={fileDate}
             />

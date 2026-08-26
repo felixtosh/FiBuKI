@@ -9,6 +9,44 @@ import { getFirestore } from "firebase-admin/firestore";
 import { PLANS } from "./config";
 import type { AIBudgetCheckResult, PlanId } from "./config";
 
+export interface BudgetFields {
+  plan: PlanId;
+  fairUseLimit: number;
+  currentUsage: number;
+  overageCap: number;
+  currentOverage: number;
+  overageAllowed: boolean;
+}
+
+/**
+ * Read the budget numbers off a subscription doc, falling back to the plan's
+ * defaults for any field that is not a finite number.
+ *
+ * A subscription doc is not guaranteed to carry every budget field: it can be
+ * created by an older code path, by an admin tool, or by hand on a self-host
+ * instance (`{"plan":"pro","status":"active"}` and nothing else). Reading
+ * `undefined` straight into the arithmetic gives `NaN`, and every comparison
+ * against NaN is false — so `fairUseRemaining > 0.001` fails, the overage branch
+ * fails, and the very first AI call flips `aiPaused: true`. From then on the
+ * pause check short-circuits and the user's AI features are dead with nothing
+ * in the UI to say why. Missing fields must read as "fresh row for this plan",
+ * not as "over budget".
+ */
+export function resolveBudgetFields(sub: Record<string, unknown>): BudgetFields {
+  const planId = (typeof sub.plan === "string" && sub.plan in PLANS ? sub.plan : "free") as PlanId;
+  const plan = PLANS[planId];
+  const num = (v: unknown, fallback: number): number =>
+    typeof v === "number" && Number.isFinite(v) ? v : fallback;
+  return {
+    plan: planId,
+    fairUseLimit: num(sub.aiFairUseLimitEur, plan.aiFairUseLimitEur),
+    currentUsage: num(sub.aiUsageCurrentPeriodEur, 0),
+    overageCap: num(sub.aiOverageCapEur, 0),
+    currentOverage: num(sub.aiOverageCurrentPeriodEur, 0),
+    overageAllowed: plan.overageAllowed ?? false,
+  };
+}
+
 export async function checkAIBudget(
   userId: string,
   isAdmin: boolean = false
@@ -48,12 +86,8 @@ export async function checkAIBudget(
     };
   }
 
-  const fairUseLimit = sub.aiFairUseLimitEur as number;
-  const currentUsage = sub.aiUsageCurrentPeriodEur as number;
-  const overageCap = sub.aiOverageCapEur as number;
-  const currentOverage = sub.aiOverageCurrentPeriodEur as number;
-  const plan = (sub.plan || "free") as PlanId;
-  const overageAllowed = PLANS[plan]?.overageAllowed ?? false;
+  const { fairUseLimit, currentUsage, overageCap, currentOverage, overageAllowed } =
+    resolveBudgetFields(sub);
 
   // 1. Fair use remaining?
   const fairUseRemaining = fairUseLimit - currentUsage;

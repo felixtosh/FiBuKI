@@ -138,6 +138,7 @@ export async function initializeUserCategories(
       name: template.name,
       description: template.description,
       helperText: template.helperText,
+      ...(template.vatTreatment ? { vatTreatment: template.vatTreatment } : {}),
       matchedPartnerIds: [],
       learnedPatterns: [],
       transactionCount: 0,

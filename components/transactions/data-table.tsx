@@ -17,6 +17,8 @@ interface DataTableProps<TData> {
   selectedRowId?: string | null;
   /** Custom empty state component */
   emptyState?: ReactNode;
+  /** Callback with the row ids in displayed order (filtered rows, active sort) */
+  onDisplayedOrderChange?: (orderedIds: string[]) => void;
   /** Set of transaction IDs that are currently being searched - used to bust row memo cache */
   searchingTransactionIds?: Set<string>;
 }
@@ -30,6 +32,7 @@ const DEFAULT_TRANSACTION_COLUMN_SIZES: Record<string, number> = {
   name: 220,
   assignedPartner: 240,
   file: 140,
+  documentation: 130,
   sourceId: 120,
 };
 
@@ -37,7 +40,15 @@ const DEFAULT_TRANSACTION_COLUMN_SIZES: Record<string, number> = {
 const DEFAULT_SORTING: SortingState = [{ id: "date", desc: true }];
 
 function DataTableInner<TData extends { id: string }>(
-  { columns, data, onRowClick, selectedRowId, emptyState, searchingTransactionIds }: DataTableProps<TData>,
+  {
+    columns,
+    data,
+    onRowClick,
+    selectedRowId,
+    emptyState,
+    onDisplayedOrderChange,
+    searchingTransactionIds,
+  }: DataTableProps<TData>,
   ref: React.ForwardedRef<DataTableHandle>
 ) {
   // Type guard to check if row is a transaction
@@ -106,6 +117,7 @@ function DataTableInner<TData extends { id: string }>(
       getRowStateKey={getRowStateKey}
       emptyState={emptyState}
       emptyMessage="No transactions found."
+      onDisplayedOrderChange={onDisplayedOrderChange}
     />
   );
 }

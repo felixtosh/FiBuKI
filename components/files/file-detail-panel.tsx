@@ -38,6 +38,7 @@ import {
 import { FilePreview } from "./file-preview";
 import { FileExtractedInfo } from "./file-extracted-info";
 import { FileConnectionsList } from "./file-connections-list";
+import { DocumentTypeSection } from "@/components/documents/section-11-details";
 import { AddPartnerDialog } from "@/components/partners/add-partner-dialog";
 import { PartnerPill } from "@/components/partners/partner-pill";
 import {
@@ -351,10 +352,13 @@ function FileDetailPanelInner({
     [ctx, file.id]
   );
 
+  // Always forced: the retry is offered on files that extracted without
+  // erroring too (fork #74), and the callable refuses those without it. On a
+  // file that did error, force changes nothing.
   const handleRetryExtraction = useCallback(async () => {
     setIsRetryingExtraction(true);
     try {
-      await retryFileExtraction(ctx, file.id);
+      await retryFileExtraction(ctx, file.id, true);
     } catch (error) {
       console.error("Failed to retry extraction:", error);
     } finally {
@@ -568,13 +572,22 @@ function FileDetailPanelInner({
             {/* Extracted Info */}
             <FileExtractedInfo
               file={file}
-              onRetryExtraction={file.extractionError ? handleRetryExtraction : undefined}
+              onRetryExtraction={handleRetryExtraction}
               isRetrying={isRetryingExtraction}
               isParsing={isParsing}
               onFieldClick={onHighlightField}
               onDirectionChange={handleDirectionChange}
               onUpdate={handleUpdateExtractedFields}
               isUpdating={isUpdatingExtractedFields}
+            />
+
+            <Separator />
+
+            {/* § 11 verdict: what the document is, why, and what it does not show */}
+            <DocumentTypeSection
+              documentType={file.documentType}
+              basis={file.documentTypeBasis}
+              missingElements={file.documentTypeMissingElements}
             />
 
             <Separator />

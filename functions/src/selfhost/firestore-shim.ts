@@ -15,6 +15,7 @@
 
 import { FieldValue, Timestamp, VectorValue } from "@google-cloud/firestore";
 import { emitChange } from "./bus";
+import { enqueueTriggerEvent, usesDurableTriggerQueue } from "./trigger-queue";
 import { notifyChange } from "./change-notify";
 import { FLATTENED, FlatSpec } from "./db/collections";
 import { runMigrations } from "./db/migrate";
@@ -256,6 +257,9 @@ export async function __resetFirestoreShim(): Promise<void> {
   await withTenant(async (q) => {
     await q(`DELETE FROM docs`);
     for (const spec of Object.values(FLATTENED)) await q(`DELETE FROM ${spec.table}`);
+    // Undelivered trigger events are per-test state too: leaving them behind
+    // lets one case's queued write fire inside the next case's drain.
+    await q(`DELETE FROM trigger_events`);
   });
 }
 
@@ -269,9 +273,37 @@ function isTimestampLike(v: unknown): v is Timestamp {
   return v instanceof Timestamp;
 }
 
+/**
+ * Characters JSON allows and a Postgres `jsonb` string cannot hold: U+0000,
+ * which has no representation in `text`, and an unpaired surrogate, which is
+ * not a character at all. Postgres refuses the whole value with `unsupported
+ * Unicode escape sequence`, so one bad byte costs the entire document rather
+ * than itself — and the error names Unicode, not the field, which sends triage
+ * at the AI provider instead of the persistence layer (fork #138).
+ *
+ * Both arrive here from real documents: a PDF text layer carrying a NUL, or a
+ * multi-byte character truncated mid-pair by an upstream buffer.
+ */
+const PG_ILLEGAL_IN_JSONB =
+  /\u0000|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+/**
+ * Drop what Postgres cannot store, keep everything else byte for byte. NUL is
+ * removed outright; a lone surrogate becomes U+FFFD, the replacement character,
+ * because it stands for a character that was there and did not survive.
+ */
+function sanitizeForJsonb(s: string): string {
+  if (!PG_ILLEGAL_IN_JSONB.test(s)) return s;
+  return s
+    .replace(/\u0000/g, "")
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, "\uFFFD")
+    .replace(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "\uFFFD");
+}
+
 function encodeValue(v: unknown): unknown {
   if (v === undefined) return undefined;
   if (v === null) return null;
+  if (typeof v === "string") return sanitizeForJsonb(v);
   if (isTimestampLike(v)) return { [TS_MARKER]: { s: v.seconds, n: v.nanoseconds } };
   if (v instanceof Date) {
     const ts = Timestamp.fromDate(v);
@@ -286,10 +318,17 @@ function encodeValue(v: unknown): unknown {
     // rather than load-bearing for it, and it is what CodeQL can see
     // (js/remote-property-injection, alert #285 — the guard alone does not
     // satisfy the rule, and an unread alert on the trunk is worse than two
-    // extra words here). Safe for this value: the result is serialised with
-    // JSON.stringify on its way to Postgres and never carries methods.
+    // extra words here). It also covers the ordering trap described just below
+    // if that ordering is ever got wrong. Safe for this value: the result is
+    // serialised with JSON.stringify on its way to Postgres, and never carries
+    // methods.
     const out: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
-    for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+    for (const [rawKey, val] of Object.entries(v as Record<string, unknown>)) {
+      // A key is a jsonb string too, and Postgres rejects it on the same terms.
+      // Sanitise BEFORE the guard, never after: "__proto__\u0000" would pass a
+      // literal comparison and then sanitise back into "__proto__", which is
+      // the exact key the guard exists to stop.
+      const k = sanitizeForJsonb(rawKey);
       // Sink guard (writes reject these upfront; literal comparisons on purpose)
       if (k === "__proto__" || k === "constructor" || k === "prototype") continue;
       const enc = encodeValue(val);
@@ -298,6 +337,16 @@ function encodeValue(v: unknown): unknown {
     return out;
   }
   return v;
+}
+
+/**
+ * The `docs.data` codec, exported for `trigger-queue-drain.ts`: a queued
+ * trigger event stores wire-encoded documents, and the snapshot pair handed to
+ * a handler must decode through exactly this path or a Timestamp arrives as a
+ * `{ __fbts__: ... }` bag and every `.toDate()` in a handler throws.
+ */
+export function __decodeDocValue(v: unknown): unknown {
+  return decodeValue(v);
 }
 
 function decodeValue(v: unknown): unknown {
@@ -592,6 +641,7 @@ async function rawPut(
   collectionPath: string,
   id: string,
   data: Record<string, unknown>,
+  before: Record<string, unknown> | undefined,
 ): Promise<void> {
   const spec = flatSpecFor(collectionPath);
   const path = `${collectionPath}/${id}`;
@@ -618,10 +668,25 @@ async function rawPut(
       id,
       op: "w",
     });
+    // Same transaction, same reason: a process that does not dispatch triggers
+    // itself must hand the change to one that does, and must not do so for a
+    // write that then rolls back.
+    if (usesDurableTriggerQueue()) {
+      await enqueueTriggerEvent(q, getTenantId(), {
+        collectionPath,
+        id,
+        path,
+        before: encodeValue(before),
+        after: encodeValue(data),
+      });
+    }
   });
 }
 
-async function rawDelete(path: string): Promise<void> {
+async function rawDelete(
+  path: string,
+  before: Record<string, unknown> | undefined,
+): Promise<void> {
   const segs = path.split("/");
   const spec = segs.length === 2 ? flatSpecFor(segs[0]) : undefined;
   await withTenant(async (q) => {
@@ -636,6 +701,15 @@ async function rawDelete(path: string): Promise<void> {
       id: segs[segs.length - 1],
       op: "d",
     });
+    if (usesDurableTriggerQueue()) {
+      await enqueueTriggerEvent(q, getTenantId(), {
+        collectionPath: segs.slice(0, -1).join("/"),
+        id: segs[segs.length - 1],
+        path,
+        before: encodeValue(before),
+        after: undefined,
+      });
+    }
   });
 }
 
@@ -647,11 +721,19 @@ async function writeDoc(
   const path = `${collectionPath}/${id}`;
   const before = await rawGet(path);
   if (next === undefined) {
-    await rawDelete(path);
+    await rawDelete(path, before);
   } else {
-    await rawPut(collectionPath, id, next);
+    await rawPut(collectionPath, id, next, before);
   }
-  emitChange({ collectionPath, id, path, before, after: next });
+  // Two delivery paths, never both, chosen by whether THIS process dispatches
+  // triggers. fibuki-api emits in-process (cheap, and handler cascades stay in
+  // memory where the drain's loop guard can see them). Everyone else has
+  // already appended to trigger_events inside the write's transaction above;
+  // emitting here as well would queue a change onto a bus with no listeners,
+  // which is exactly the silent drop this replaces.
+  if (!usesDurableTriggerQueue()) {
+    emitChange({ collectionPath, id, path, before, after: next });
+  }
 }
 
 // ---------------------------------------------------------------------------

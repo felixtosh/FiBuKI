@@ -115,6 +115,11 @@ describe("characterization: geminiParser.parseWithGemini", () => {
       currency: "EUR",
       vatPercent: null,
       lineItems: null,
+      rateGroups: null,
+      // #104: transcribed heading and invoice number, null when the model
+      // returns neither — an invented §11 element is worse than a missing one.
+      selfDesignation: null,
+      invoiceNumber: null,
       partner: null,
       vatId: null,
       iban: null,
@@ -140,19 +145,25 @@ describe("characterization: geminiParser.parseWithGemini", () => {
     expect(res.additionalFields).toEqual([]);
   });
 
-  it("normalizes currency symbols; unknown/lowercase currencies collapse to EUR", async () => {
+  it("normalizes currency symbols and preserves an unrecognised code", async () => {
     const cases: Array<[string | null, string | null]> = [
       ["€", "EUR"],
       ["$", "USD"],
       ["£", "GBP"],
       ["¥", "JPY"],
       ["Fr.", "CHF"],
+      ["FR.", "CHF"], // fork #113: the symbol map is matched case-insensitively now
       ["CHF", "CHF"],
       ["USD", "USD"],
-      // characterization: anything not a 3-uppercase-letter code and not in the
-      // symbol map becomes "EUR" — even unrelated currencies:
-      ["Kč", "EUR"],
-      ["usd", "EUR"], // characterization: lowercase "usd" is NOT recognized → EUR
+      // fork #113: these two used to collapse to "EUR". The coercion happened
+      // here, at extraction time, so the wrong currency was already stamped in
+      // Firestore before the scorer or the UVA could route the document to the
+      // foreign-currency worklist built for it — and a coerced record is
+      // byte-identical to a genuine EUR one.
+      ["Kč", "KČ"],
+      ["usd", "USD"],
+      [" eur ", "EUR"],
+      ["", null],
       [null, null],
     ];
     for (const [input, expected] of cases) {
@@ -297,6 +308,65 @@ describe("characterization: geminiParser.parseWithGemini", () => {
     expect(res.extracted.lineItems).toEqual([
       { description: "top", quantity: null, unitPrice: null, vatPercent: null, vatAmount: 0, amount: 100 },
     ]);
+  });
+
+  it("rateGroups: completes a missing column from the printed rate (#67)", async () => {
+    q({ extracted: { rateGroups: [{ rate: 20, gross: 1200 }, { rate: 10, net: 1000 }] } });
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.rateGroups).toEqual([
+      { rate: 20, net: 1000, vat: 200, gross: 1200 },
+      { rate: 10, net: 1000, vat: 100, gross: 1100 },
+    ]);
+  });
+
+  it("rateGroups: one unreadable ROW drops the whole block (#67)", async () => {
+    // A half-kept summary block would still read downstream as "the receipt
+    // said so" — so the block is all-or-nothing.
+    q({ extracted: { rateGroups: [{ rate: 20, gross: 1200 }, { rate: null, gross: 500 }] } });
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.rateGroups).toBeNull();
+  });
+
+  it("rateGroups: a rate printed twice is merged into one group (#67)", async () => {
+    q({
+      extracted: {
+        rateGroups: [
+          { rate: 20, net: 1000, vat: 200, gross: 1200 },
+          { rate: 20, net: 500, vat: 100, gross: 600 },
+        ],
+      },
+    });
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.rateGroups).toEqual([{ rate: 20, net: 1500, vat: 300, gross: 1800 }]);
+  });
+
+  it("rateGroups: accepted at the response top level as a fallback (#67)", async () => {
+    q({ rawText: "", rateGroups: [{ rate: 10, net: 1000, vat: 100, gross: 1100 }] });
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.rateGroups).toEqual([{ rate: 10, net: 1000, vat: 100, gross: 1100 }]);
+  });
+
+  it("selfDesignation/invoiceNumber are transcribed, and a non-string degrades to null (#104)", async () => {
+    q(
+      JSON.stringify({
+        extracted: { amount: 100, selfDesignation: "  Zahlungsbestätigung  ", invoiceNumber: 2024 },
+      }),
+    );
+    const res = await parseWithGemini(BUF, "application/pdf");
+
+    // Trimmed but otherwise copied — the §11 classifier reads this as evidence.
+    expect(res.extracted.selfDesignation).toBe("Zahlungsbestätigung");
+    // A number is the model having invented one; an invented §11 element
+    // would read as a satisfied requirement, so it must degrade, not coerce.
+    expect(res.extracted.invoiceNumber).toBeNull();
+  });
+
+  it("an empty transcription is the same as none (#104)", async () => {
+    q(JSON.stringify({ extracted: { amount: 100, selfDesignation: "   ", invoiceNumber: "" } }));
+    const res = await parseWithGemini(BUF, "application/pdf");
+
+    expect(res.extracted.selfDesignation).toBeNull();
+    expect(res.extracted.invoiceNumber).toBeNull();
   });
 
   it("repairs trailing commas in malformed JSON", async () => {
@@ -512,6 +582,8 @@ describe("characterization: claudeParser.parseWithClaude", () => {
       currency: "EUR",
       vatPercent: 20,
       lineItems: null, // characterization: legacy parser never extracts line items
+      selfDesignation: null, // #104: prompted for, absent from this response
+      invoiceNumber: null,
       partner: "ACME GmbH",
       vatId: "ATU12345678",
       iban: "AT123456789012345678",
@@ -596,6 +668,8 @@ describe("characterization: documentExtractor", () => {
       currency: null,
       vatPercent: null,
       lineItems: null,
+      selfDesignation: null,
+      invoiceNumber: null,
       partner: null,
       vatId: null,
       iban: null,

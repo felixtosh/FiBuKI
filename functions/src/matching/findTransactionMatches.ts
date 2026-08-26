@@ -7,6 +7,7 @@
 
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
+import { readDismissedTransactionIds } from "./dismissedTransactions";
 import {
   SCORING_CONFIG,
   scoreTransaction,
@@ -15,6 +16,7 @@ import {
   TransactionMatchSource,
   ScoreBreakdown,
 } from "./transactionScoring";
+import type { DocumentType } from "../documents/types";
 
 const db = getFirestore();
 
@@ -131,7 +133,13 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
       extractedIban?: string | null;
       extractedText?: string | null;
       partnerId?: string | null;
+      /** #104: absent on the raw fileInfo path, which has no stored record. */
+      documentType?: DocumentType | null;
     };
+
+    // Pairs the file has had dismissed. Only knowable on the fileId path — a
+    // caller passing raw fileInfo has no stored document to carry them.
+    let dismissedIds = new Set<string>();
 
     if (fileId) {
       // Fetch from Firestore
@@ -153,6 +161,8 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
         return { matches: [], totalCandidates: 0 };
       }
 
+      dismissedIds = readDismissedTransactionIds(docData);
+
       fileData = {
         extractedAmount: docData.extractedAmount,
         extractedCurrency: docData.extractedCurrency,
@@ -161,6 +171,7 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
         extractedIban: docData.extractedIban,
         extractedText: docData.extractedText,
         partnerId: docData.partnerId,
+        documentType: docData.documentType,
       };
     } else {
       // Use provided fileInfo
@@ -260,6 +271,13 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
       // Exclude already connected
       if (excludeSet.has(doc.id)) return false;
 
+      // Exclude pairs this file already dismissed. Callers auto-connect the
+      // top result at AUTO_MATCH_THRESHOLD, so an unfiltered refresh reconnects
+      // what was just rejected. An explicit search is exempt: it is the only
+      // way back to a dismissed pair by hand, and dismissal is not meant to be
+      // irreversible.
+      if (!searchQuery && dismissedIds.has(doc.id)) return false;
+
       // Apply search query filter if provided
       if (searchQuery && !matchesSearchQuery(doc.data(), searchQuery)) {
         return false;
@@ -282,18 +300,22 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
           extractedIban: fileData.extractedIban,
           extractedText: fileData.extractedText,
           partnerId: fileData.partnerId,
+          documentType: fileData.documentType,
         },
         {
           id: doc.id,
           amount: txData.amount,
           date: txData.date,
           currency: txData.currency,
+          // Carries the bank-stated original amount for #112.
+          _original: txData._original,
           name: txData.name,
           partner: txData.partner,
           partnerName: txData.partnerName,
           partnerId: txData.partnerId,
           partnerIban: txData.partnerIban,
           reference: txData.reference,
+          documentationState: txData.documentationState,
         },
         partnerAliases
       );

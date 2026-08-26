@@ -12,13 +12,20 @@
 
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { buildDownloadUrl } from "../utils/buildDownloadUrl";
+import { isTransactionDismissed } from "../matching/dismissedTransactions";
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import { getFirestore, Timestamp, FieldValue } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import * as crypto from "crypto";
 import { analyzeEmailForInvoice } from "./geminiSearchHelper";
+import { isFileRejected } from "../matching/rejectedFiles";
 import { generateQueriesWithGemini } from "./generateQueriesWithGemini";
-import { QueryGenerationPartner } from "./generateSearchQueries";
+import {
+  expectedInvoiceWindow,
+  QueryGenerationPartner,
+  SearchDateWindow,
+} from "./generateSearchQueries";
+import { ResolvedEffectiveCycle } from "../matching/billingCycle";
 import { convertHtmlToPdf } from "./htmlToPdf";
 import {
   scoreAttachmentMatch,
@@ -146,6 +153,7 @@ interface Partner {
   vatId?: string;
   aliases?: string[];
   fileSourcePatterns?: FileSourcePattern[];
+  billingCycle?: { effective?: ResolvedEffectiveCycle[] };
 }
 
 interface EmailIntegration {
@@ -286,10 +294,14 @@ function isEmailDateInRange(emailDate: Date, transactionDate: Date, daysRange: n
 }
 
 /**
- * Check if a file was rejected by the transaction (user manually removed it)
+ * Check if a file was rejected by the transaction (user manually removed it).
+ *
+ * Reads both stored shapes through matching/rejectedFiles: this used to consult
+ * the legacy id array alone, so a rejection recorded only as a `rejectedFiles`
+ * record was invisible here and the pair was re-queued (fork #102).
  */
 function isFileRejectedByTransaction(fileId: string, transaction: Transaction): boolean {
-  return (transaction.rejectedFileIds || []).includes(fileId);
+  return isFileRejected(transaction, fileId);
 }
 
 /**
@@ -839,6 +851,79 @@ async function createFileFromHtmlPdf(
 }
 
 // ============================================================================
+// Billing-cycle date window (#169)
+// ============================================================================
+
+/**
+ * Where this charge's document is expected to be dated, when the transaction
+ * belongs to a partner that bills on a schedule.
+ *
+ * Resolved once per transaction and handed to every strategy: the file
+ * strategies narrow their candidates to it, the email strategies only record
+ * it for now (applying it to a mailbox query is the IMAP port, yazzbert/homelab
+ * item 4). A transaction with no partner, a partner with no effective cycle,
+ * or a charge that belongs to none of the partner's amount bands yields
+ * undefined and every strategy keeps its pre-#169 reach.
+ */
+async function resolveExpectedInvoiceWindow(
+  transaction: Transaction
+): Promise<SearchDateWindow | undefined> {
+  if (!transaction.partnerId) return undefined;
+
+  try {
+    const partnerDoc = await db
+      .collection(transaction.partnerType === "global" ? "globalPartners" : "partners")
+      .doc(transaction.partnerId)
+      .get();
+    if (!partnerDoc.exists) return undefined;
+
+    const effectiveCycles: ResolvedEffectiveCycle[] =
+      (partnerDoc.data() as Partner | undefined)?.billingCycle?.effective ?? [];
+
+    const window = expectedInvoiceWindow(
+      {
+        name: transaction.name,
+        date: transaction.date.toDate(),
+        amount: transaction.amount,
+      },
+      { effectiveCycles }
+    );
+
+    if (window) {
+      console.log(
+        `[PrecisionSearch] Billing-cycle window for tx ${transaction.id}: ` +
+        `${window.from.toISOString().slice(0, 10)} .. ${window.to.toISOString().slice(0, 10)} ` +
+        `(expected ${window.expectedAt.toISOString().slice(0, 10)}, +/-${window.varianceDays}d)`
+      );
+    }
+    return window;
+  } catch (error) {
+    console.warn("[PrecisionSearch] Failed to resolve billing-cycle window:", error);
+    return undefined;
+  }
+}
+
+/** Whether a file's extracted date falls in the window. No window, or no extracted date to judge, passes. */
+function isExtractedDateInWindow(
+  extractedDate: Timestamp | undefined,
+  dateWindow: SearchDateWindow | undefined
+): boolean {
+  if (!dateWindow || !extractedDate) return true;
+  const dated = extractedDate.toDate().getTime();
+  return dated >= dateWindow.from.getTime() && dated <= dateWindow.to.getTime();
+}
+
+/** The window as it goes into the `searchParams` audit record. */
+function toWindowParams(dateWindow: SearchDateWindow) {
+  return {
+    expectedAt: dateWindow.expectedAt.toISOString(),
+    from: dateWindow.from.toISOString(),
+    to: dateWindow.to.toISOString(),
+    varianceDays: dateWindow.varianceDays,
+  };
+}
+
+// ============================================================================
 // Strategy Execution
 // ============================================================================
 
@@ -848,13 +933,17 @@ async function createFileFromHtmlPdf(
  */
 async function executePartnerFilesStrategy(
   transaction: Transaction,
-  userId: string
+  userId: string,
+  dateWindow?: SearchDateWindow
 ): Promise<SearchAttempt> {
   const startedAt = Timestamp.now();
   const attempt: SearchAttempt = {
     strategy: "partner_files",
     startedAt,
-    searchParams: { partnerId: transaction.partnerId },
+    searchParams: {
+      partnerId: transaction.partnerId,
+      ...(dateWindow ? { dateWindow: toWindowParams(dateWindow) } : {}),
+    },
     candidatesFound: 0,
     candidatesEvaluated: 0,
     matchesFound: 0,
@@ -897,10 +986,15 @@ async function executePartnerFilesStrategy(
     const unassociatedFiles = filesSnapshot.docs
       .map((doc) => ({ id: doc.id, ...doc.data() }) as TaxFile)
       .filter((f) => !f.deletedAt) // Exclude soft-deleted files
-      .filter((f) => !f.transactionIds || f.transactionIds.length === 0);
+      .filter((f) => !f.transactionIds || f.transactionIds.length === 0)
+      // #169: a recurring partner's charge only wants the document of its own
+      // period — every other month's invoice from the same vendor carries the
+      // same amount and the same name, and is exactly what the scorer cannot
+      // tell apart. A file with no extracted date is not judged, only scored.
+      .filter((f) => isExtractedDateInWindow(f.extractedDate, dateWindow));
 
     attempt.candidatesFound = unassociatedFiles.length;
-    console.log(`[PrecisionSearch] partner_files: Found ${filesSnapshot.size} files for partner, ${unassociatedFiles.length} unassociated`);
+    console.log(`[PrecisionSearch] partner_files: Found ${filesSnapshot.size} files for partner, ${unassociatedFiles.length} unassociated${dateWindow ? " and inside the billing-cycle window" : ""}`);
 
     if (unassociatedFiles.length === 0) {
       attempt.completedAt = Timestamp.now();
@@ -952,6 +1046,18 @@ async function executePartnerFilesStrategy(
         continue;
       }
 
+      // ...and the mirror image: a pair the file itself dismissed. The hint
+      // below only re-triggers matching, which now drops dismissed candidates —
+      // so hinting one burns a read and then counts a connection that never
+      // happened.
+      if (isTransactionDismissed(file, transaction.id)) {
+        console.log(
+          `[PrecisionSearch] Skipping dismissed pair: file ${file.fileName} (${file.id}) ` +
+          `x transaction ${transaction.id}`
+        );
+        continue;
+      }
+
       // Match found! Add hint and re-trigger matching logic
       await db.collection("files").doc(file.id).update({
         precisionSearchHint: {
@@ -985,7 +1091,8 @@ async function executePartnerFilesStrategy(
  */
 async function executeAmountFilesStrategy(
   transaction: Transaction,
-  userId: string
+  userId: string,
+  dateWindow?: SearchDateWindow
 ): Promise<SearchAttempt> {
   const startedAt = Timestamp.now();
   const attempt: SearchAttempt = {
@@ -993,10 +1100,7 @@ async function executeAmountFilesStrategy(
     startedAt,
     searchParams: {
       amount: transaction.amount,
-      dateRange: {
-        from: transaction.date.toDate().toISOString(),
-        to: transaction.date.toDate().toISOString(),
-      },
+      ...(dateWindow ? { dateWindow: toWindowParams(dateWindow) } : {}),
     },
     candidatesFound: 0,
     candidatesEvaluated: 0,
@@ -1012,13 +1116,36 @@ async function executeAmountFilesStrategy(
     const dateTo = new Date(txDate);
     dateTo.setDate(dateTo.getDate() + 90);
 
+    // #169: for a recurring partner the expected invoice date is known, so the
+    // sweep narrows to that charge's own window and same-amount documents from
+    // neighbouring periods never become candidates. Intersected with the ±90d
+    // reach rather than replacing it, so this can only ever narrow the search:
+    // a document outside ±90d was never found here before either.
+    const from = dateWindow
+      ? new Date(Math.max(dateFrom.getTime(), dateWindow.from.getTime()))
+      : dateFrom;
+    const to = dateWindow
+      ? new Date(Math.min(dateTo.getTime(), dateWindow.to.getTime()))
+      : dateTo;
+
+    attempt.searchParams = {
+      ...attempt.searchParams,
+      dateRange: { from: from.toISOString(), to: to.toISOString() },
+    };
+
+    if (from.getTime() > to.getTime()) {
+      console.log(`[PrecisionSearch] amount_files: Billing-cycle window falls outside the ±90d sweep, no candidates`);
+      attempt.completedAt = Timestamp.now();
+      return attempt;
+    }
+
     // Query files in date range
     const filesSnapshot = await db
       .collection("files")
       .where("userId", "==", userId)
       .where("extractionComplete", "==", true)
-      .where("extractedDate", ">=", Timestamp.fromDate(dateFrom))
-      .where("extractedDate", "<=", Timestamp.fromDate(dateTo))
+      .where("extractedDate", ">=", Timestamp.fromDate(from))
+      .where("extractedDate", "<=", Timestamp.fromDate(to))
       .limit(100)
       .get();
 
@@ -1082,9 +1209,11 @@ async function executeAmountFilesStrategy(
       return attempt;
     }
 
-    // Add hints to top candidates and re-trigger matching (skip rejected files)
+    // Add hints to top candidates and re-trigger matching (skip rejected files,
+    // and pairs the file itself dismissed — matching drops those anyway)
     const topCandidates = scoredCandidates
       .filter(({ file }) => !isFileRejectedByTransaction(file.id, transaction))
+      .filter(({ file }) => !isTransactionDismissed(file, transaction.id))
       .slice(0, 3); // Top 3 non-rejected matches
 
     for (const { file: candidate, score } of topCandidates) {
@@ -1119,13 +1248,20 @@ async function executeAmountFilesStrategy(
  */
 async function executeEmailAttachmentStrategy(
   transaction: Transaction,
-  userId: string
+  userId: string,
+  // #169: carried, not yet applied. Narrowing a mailbox query to the window is
+  // the IMAP port (yazzbert/homelab item 4); recording it here means that port
+  // inherits the window instead of designing one of its own.
+  dateWindow?: SearchDateWindow
 ): Promise<SearchAttempt> {
   const startedAt = Timestamp.now();
   const attempt: SearchAttempt = {
     strategy: "email_attachment",
     startedAt,
-    searchParams: { transactionName: transaction.name },
+    searchParams: {
+      transactionName: transaction.name,
+      ...(dateWindow ? { dateWindow: toWindowParams(dateWindow) } : {}),
+    },
     candidatesFound: 0,
     candidatesEvaluated: 0,
     matchesFound: 0,
@@ -1337,6 +1473,14 @@ async function executeEmailAttachmentStrategy(
                       console.log(`[PrecisionSearch] Skipping rejected file ${fileName} (${existingFile.id})`);
                       continue;
                     }
+                    // ...or dismissed on the file's side
+                    if (isTransactionDismissed(existingFile, transaction.id)) {
+                      console.log(
+                        `[PrecisionSearch] Skipping dismissed pair: file ${fileName} ` +
+                        `(${existingFile.id}) x transaction ${transaction.id}`
+                      );
+                      continue;
+                    }
                     await db.collection("files").doc(existingFile.id).update({
                       precisionSearchHint: {
                         transactionId: transaction.id,
@@ -1429,6 +1573,11 @@ async function executeEmailAttachmentStrategy(
                         // Check if this file was rejected by the transaction
                         if (isFileRejectedByTransaction(existingFileId, transaction)) {
                           console.log(`[PrecisionSearch] Skipping rejected file ${fileName} (${existingFileId})`);
+                        } else if (isTransactionDismissed(existingFile, transaction.id)) {
+                          console.log(
+                            `[PrecisionSearch] Skipping dismissed pair: file ${fileName} ` +
+                            `(${existingFileId}) x transaction ${transaction.id}`
+                          );
                         } else {
                           await db.collection("files").doc(existingFileId).update({
                             precisionSearchHint: {
@@ -1490,13 +1639,19 @@ async function executeEmailAttachmentStrategy(
  */
 async function executeEmailInvoiceStrategy(
   transaction: Transaction,
-  userId: string
+  userId: string,
+  // #169: carried, not yet applied — see `executeEmailAttachmentStrategy`.
+  dateWindow?: SearchDateWindow
 ): Promise<SearchAttempt> {
   const startedAt = Timestamp.now();
   const attempt: SearchAttempt = {
     strategy: "email_invoice",
     startedAt,
-    searchParams: { transactionName: transaction.name, partnerId: transaction.partnerId },
+    searchParams: {
+      transactionName: transaction.name,
+      partnerId: transaction.partnerId,
+      ...(dateWindow ? { dateWindow: toWindowParams(dateWindow) } : {}),
+    },
     candidatesFound: 0,
     candidatesEvaluated: 0,
     matchesFound: 0,
@@ -1793,17 +1948,18 @@ async function executeEmailInvoiceStrategy(
 async function executeStrategy(
   strategy: SearchStrategy,
   transaction: Transaction,
-  userId: string
+  userId: string,
+  dateWindow?: SearchDateWindow
 ): Promise<SearchAttempt> {
   switch (strategy) {
     case "partner_files":
-      return executePartnerFilesStrategy(transaction, userId);
+      return executePartnerFilesStrategy(transaction, userId, dateWindow);
     case "amount_files":
-      return executeAmountFilesStrategy(transaction, userId);
+      return executeAmountFilesStrategy(transaction, userId, dateWindow);
     case "email_attachment":
-      return executeEmailAttachmentStrategy(transaction, userId);
+      return executeEmailAttachmentStrategy(transaction, userId, dateWindow);
     case "email_invoice":
-      return executeEmailInvoiceStrategy(transaction, userId);
+      return executeEmailInvoiceStrategy(transaction, userId, dateWindow);
     default:
       throw new Error(`Unknown strategy: ${strategy}`);
   }
@@ -2023,6 +2179,11 @@ async function processQueueItem(queueItem: PrecisionSearchQueueItem): Promise<{
       try {
         let foundMatch = false;
 
+        // #169: resolved once for the transaction, not once per strategy —
+        // every strategy scores the same charge, so they must agree on when
+        // its document is expected.
+        const dateWindow = await resolveExpectedInvoiceWindow(tx);
+
         // Run strategies in order until one finds a match
         // Threshold for stopping early - only stop if we find a very strong match
         // Set high because attachment scoring and transaction scoring can diverge
@@ -2032,7 +2193,7 @@ async function processQueueItem(queueItem: PrecisionSearchQueueItem): Promise<{
           // Skip if transaction already completed (from initial data)
           if (tx.isComplete) break;
 
-          const attempt = await executeStrategy(strategy, tx, queueItem.userId);
+          const attempt = await executeStrategy(strategy, tx, queueItem.userId, dateWindow);
 
           // Log the attempt
           await logSearchAttempt(tx.id, queueItem.id, queueItem.triggeredBy, attempt);

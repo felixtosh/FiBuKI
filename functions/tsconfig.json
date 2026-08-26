@@ -15,5 +15,10 @@
   },
   "compileOnSave": true,
   "include": ["src/**/*"],
-  "exclude": ["**/__tests__/**", "**/*.test.ts", "**/*.spec.ts"]
+  "exclude": [
+    "**/__tests__/**",
+    "**/*.test.ts",
+    "**/*.spec.ts",
+    "src/api-smoke/route-harness.ts"
+  ]
 }

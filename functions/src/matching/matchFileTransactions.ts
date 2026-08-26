@@ -31,7 +31,15 @@ import {
   TransactionMatchScore,
   TransactionMatchSource,
   ScoringOptions,
+  buildScoringOptions,
+  toFileMatchingData,
+  toTransactionData,
+  derivePartnerAliases,
+  deriveScoringWeights,
 } from "./transactionScoring";
+import { readDismissedTransactionIds } from "./dismissedTransactions";
+import { isFileRejected } from "./rejectedFiles";
+import { ResolvedEffectiveCycle } from "./billingCycle";
 import { AutomationMeta } from "../automation/types";
 import { checkAIBudget } from "../billing/checkAIBudget";
 import { isPassiveMode } from "../utils/checkAutomationMode";
@@ -146,6 +154,9 @@ interface PartnerBatchStateDoc {
 }
 
 const PARTNER_BATCH_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
+
+/** Cap on dismissed ids spelled out in an agentic worker prompt. */
+const MAX_DISMISSED_IN_PROMPT = 20;
 
 // === Transcript Builder ===
 
@@ -451,41 +462,29 @@ export async function runTransactionMatching(
     return;
   }
 
-  // Fetch partner aliases, billing cycle, and scoring weights if file has an assigned partner
+  // Fetch partner aliases, billing cycle bands, and scoring weights if file has an assigned partner.
+  // Band selection happens per candidate transaction below (each charge can belong to a
+  // different recurrence band, e.g. a weekly API charge vs. a monthly subscription), not once
+  // here — a single upfront band would silently mis-score every candidate outside band 0.
   let partnerAliases: string[] = [];
-  let scoringOptions: ScoringOptions | undefined;
+  let effectiveCycles: ResolvedEffectiveCycle[] = [];
+  let baseWeights: ScoringOptions["weights"] | undefined;
   if (fileData.partnerId) {
     try {
       const partnerDoc = await db.collection("partners").doc(fileData.partnerId).get();
       if (partnerDoc.exists) {
         const partnerData = partnerDoc.data()!;
-        // Collect partner name + all aliases for matching
-        partnerAliases = [
-          partnerData.name,
-          ...(partnerData.aliases || []),
-        ].filter(Boolean);
+        partnerAliases = derivePartnerAliases(partnerData);
         console.log(`[TxMatch] Partner aliases: [${partnerAliases.map(a => `"${a}"`).join(", ")}]`);
 
-        // Read billing cycle and scoring weights for enhanced scoring
-        const bc = partnerData.billingCycle;
-        const sw = partnerData.scoringWeights;
-        if (bc || sw) {
-          scoringOptions = {};
-          if (bc) {
-            scoringOptions.billingCycle = {
-              invoiceToTransactionDelay: bc.invoiceToTransactionDelay,
-              delayVariance: bc.delayVariance,
-            };
-            console.log(`[TxMatch] Using billing cycle: delay=${bc.invoiceToTransactionDelay}d ±${bc.delayVariance}d`);
-          }
-          if (sw) {
-            scoringOptions.weights = {
-              amountWeight: sw.amountWeight,
-              dateWeight: sw.dateWeight,
-              partnerWeight: sw.partnerWeight,
-            };
-            console.log(`[TxMatch] Using scoring weights: amt=${sw.amountWeight} date=${sw.dateWeight} partner=${sw.partnerWeight}`);
-          }
+        effectiveCycles = partnerData.billingCycle?.effective ?? [];
+        if (effectiveCycles.length > 0) {
+          console.log(`[TxMatch] Partner has ${effectiveCycles.length} billing-cycle band(s)`);
+        }
+
+        baseWeights = deriveScoringWeights(partnerData);
+        if (baseWeights) {
+          console.log(`[TxMatch] Using scoring weights: amt=${baseWeights.amountWeight} date=${baseWeights.dateWeight} partner=${baseWeights.partnerWeight}`);
         }
       }
     } catch (error) {
@@ -497,19 +496,24 @@ export async function runTransactionMatching(
   const connectedIds = new Set(fileData.transactionIds || []);
   let rejectedCount = 0;
 
-  // Filter out transactions that have rejected this file
-  // Handles both legacy rejectedFileIds (string[]) and new rejectedFiles (object[])
+  // Pairs the user dismissed on this file. Read off the file document already
+  // in hand — no extra query — so a re-score cannot resurrect them.
+  const dismissedIds = readDismissedTransactionIds(fileData);
+  let dismissedCount = 0;
+
+  // Filter out transactions that have rejected this file. Both stored shapes,
+  // and a rejection the user took back no longer counts — matching/rejectedFiles
+  // owns that rule for every reader (fork #102).
   const eligibleTransactions = transactions.filter((doc) => {
     if (connectedIds.has(doc.id)) return false;
+    if (dismissedIds.has(doc.id)) {
+      dismissedCount++;
+      return false;
+    }
     const txData = doc.data();
     // Skip over-quota transactions (soft limit)
     if (txData.quotaExceeded) return false;
-    const rejectedFileIds: string[] = txData.rejectedFileIds || [];
-    const rejectedFiles: Array<{ fileId: string }> = txData.rejectedFiles || [];
-    const isRejected =
-      rejectedFileIds.includes(fileId) ||
-      rejectedFiles.some((r) => r.fileId === fileId);
-    if (isRejected) {
+    if (isFileRejected(txData, fileId)) {
       rejectedCount++;
       return false;
     }
@@ -517,35 +521,22 @@ export async function runTransactionMatching(
   });
 
   const candidateCount = eligibleTransactions.length;
-  console.log(`[TxMatch] Scoring ${candidateCount} transactions (${connectedIds.size} connected, ${rejectedCount} rejected this file)`);
+  console.log(
+    `[TxMatch] Scoring ${candidateCount} transactions (${connectedIds.size} connected, ` +
+      `${rejectedCount} rejected this file, ${dismissedCount} dismissed by this file)`
+  );
 
-  // Score each transaction
+  // Score each transaction — the billing-cycle band is selected per transaction, since which
+  // recurrence a charge belongs to depends on that transaction's amount, not the file's.
+  const fileMatchingData = toFileMatchingData(fileData);
   const allScores = eligibleTransactions
     .map((doc) => {
       const txData = doc.data();
+      const scoringOptions = buildScoringOptions(effectiveCycles, baseWeights, txData.amount);
+
       return scoreTransaction(
-        {
-          extractedAmount: fileData.extractedAmount,
-          extractedCurrency: fileData.extractedCurrency,
-          extractedDate: fileData.extractedDate,
-          extractedPartner: fileData.extractedPartner,
-          extractedIban: fileData.extractedIban,
-          extractedText: fileData.extractedText,
-          partnerId: fileData.partnerId,
-          precisionSearchHint: fileData.precisionSearchHint,
-        },
-        {
-          id: doc.id,
-          amount: txData.amount,
-          date: txData.date,
-          currency: txData.currency,
-          name: txData.name,
-          partner: txData.partner,
-          partnerName: txData.partnerName,
-          partnerId: txData.partnerId,
-          partnerIban: txData.partnerIban,
-          reference: txData.reference,
-        },
+        fileMatchingData,
+        toTransactionData(doc.id, txData),
         partnerAliases,
         scoringOptions
       );
@@ -1108,6 +1099,22 @@ async function queueAgenticTransactionSearch(
     promptParts.push(`Partner: ${fileInfo.partner}`);
   }
 
+  // A dismissed pair is now filtered out of scoring, so a file whose only
+  // strong candidate was dismissed reaches this worker looking unmatched. The
+  // worker connects through connectFileToTransaction, which has no dismissal
+  // check of its own — tell the agent what is off-limits, or it re-proposes
+  // exactly what the user rejected.
+  const dismissedIds = [...readDismissedTransactionIds(fileData)];
+  if (dismissedIds.length > 0) {
+    const listed = dismissedIds.slice(0, MAX_DISMISSED_IN_PROMPT);
+    const more = dismissedIds.length - listed.length;
+    promptParts.push(
+      `Do NOT connect these transactions - the user already rejected them for this file: ` +
+        listed.join(", ") +
+        (more > 0 ? ` (and ${more} more)` : "")
+    );
+  }
+
   const initialPrompt = promptParts.join(". ");
 
   // Create worker request for frontend/worker processor to pick up
@@ -1120,6 +1127,7 @@ async function queueAgenticTransactionSearch(
       fileId,
       topSuggestionConfidence,
       triggeredAfterRuleBasedMatch: true,
+      dismissedTransactionIds: dismissedIds,
     },
     triggeredBy: "auto",
     status: "pending",

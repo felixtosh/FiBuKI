@@ -7,7 +7,9 @@
  * Supports both production and Firebase emulator (detected via NODE_ENV=development).
  */
 
-const FIREBASE_PROJECT_ID = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "taxstudio-f12fb";
+import { functionsUrl, FUNCTIONS_URL_UNSET_ERROR } from "./functions-origin";
+
+const FIREBASE_PROJECT_ID = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "demo-fibuki";
 const FIREBASE_REGION = "europe-west1";
 
 // Use emulator in development mode (matching client-side config in lib/firebase/config.ts)
@@ -27,10 +29,14 @@ export async function callFirebaseFunction<TRequest, TResponse>(
   data: TRequest,
   authToken?: string
 ): Promise<TResponse> {
-  // Use emulator URL in development, otherwise production
+  // The configured backend origin wins. No Cloud Functions default: a deployment
+  // that has not said where its backend lives must fail here rather than post the
+  // caller's bearer token to a project it does not own.
+  const configured = functionsUrl(functionName);
   const url = USE_EMULATOR
     ? `http://${EMULATOR_HOST}/${FIREBASE_PROJECT_ID}/${FIREBASE_REGION}/${functionName}`
-    : `https://${FIREBASE_REGION}-${FIREBASE_PROJECT_ID}.cloudfunctions.net/${functionName}`;
+    : configured;
+  if (!url) throw new Error(FUNCTIONS_URL_UNSET_ERROR);
 
   console.log(`[Firebase Callable] Calling ${functionName} at ${url}`);
   console.log(`[Firebase Callable] Auth token present:`, !!authToken);

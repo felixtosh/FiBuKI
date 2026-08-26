@@ -149,6 +149,41 @@ describe("findReceiptForTransaction", () => {
     );
   });
 
+  it("ignores a local file that dismissed this transaction (fork #94)", async () => {
+    store.setDoc(
+      "transactions",
+      "tx-1",
+      createTestTransaction({
+        userId: "u1",
+        amount: -1999,
+        partner: "Netflix",
+        name: "NETFLIX.COM",
+        date: new Date("2026-02-15"),
+      })
+    );
+    store.setDoc(
+      "files",
+      "file-netflix",
+      createTestFile({
+        userId: "u1",
+        fileName: "netflix_invoice_2026_02.pdf",
+        fileType: "application/pdf",
+        extractedPartner: "Netflix Inc.",
+        extractedAmount: -1999,
+        extractedDate: new Date("2026-02-15"),
+        dismissedTransactionIds: ["tx-1"],
+      })
+    );
+    const deps = buildDeps();
+    const result = await findReceiptForTransaction(
+      { transactionId: "tx-1", userId: "u1" },
+      deps
+    );
+    expect(result.status).toBe("no_match");
+    expect(result.sourcesChecked?.localFiles).toBe(0);
+    expect(deps.connectFileToTransaction).not.toHaveBeenCalled();
+  });
+
   it("ignores soft-deleted local files", async () => {
     store.setDoc(
       "transactions",

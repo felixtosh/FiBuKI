@@ -51,6 +51,7 @@ import { removeEmailPatternFromPartner } from "@/lib/operations";
 import { useUserData } from "@/hooks/use-user-data";
 import { useBrowserRecipes } from "@/hooks/use-browser-recipes";
 import { BrowserAutomationsSection } from "./browser-automations-section";
+import { BillingCycleSection } from "./billing-cycle-section";
 import { RuleCard } from "./rule-card";
 // Collapsible components used internally by CollapsibleListSection primitive
 import { cn } from "@/lib/utils";
@@ -843,6 +844,9 @@ export function PartnerDetailPanel({
               </FieldRow>
             )}
           </div>
+
+          {/* Billing Cycle Section */}
+          <BillingCycleSection partner={partner} />
 
           {/* Matching Rules Section */}
           {hasMatchingRules && (

@@ -44,9 +44,15 @@ export function ImportPreview({
       let parsedValue: string | number = rawValue;
 
       if (field.targetField === "date") {
-        const dateFormat = field.format || "de";
-        const date = parseDate(rawValue, dateFormat);
-        parsedValue = date ? format(date, "MMM d, yyyy") : "Invalid";
+        // No format means detection could not settle the column's day/month
+        // order (#70). Rendering it through a default reads every row as
+        // "Invalid" and hides why — say what the user has to do instead.
+        if (!field.format) {
+          parsedValue = "Select a date format";
+        } else {
+          const date = parseDate(rawValue, field.format);
+          parsedValue = date ? format(date, "MMM d, yyyy") : "Invalid";
+        }
       } else if (field.targetField === "amount") {
         const amountFormat = field.format || "de";
         const amountConfig = getAmountParserConfig(amountFormat);

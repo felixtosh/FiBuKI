@@ -44,7 +44,7 @@ import {
 } from "@/components/ui/select";
 import { TrueLayerApiConfig } from "@/types/truelayer";
 import { formatIban } from "@/lib/import/deduplication";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, toDateSafe } from "@/lib/utils";
 import { usePageTitle } from "@/hooks/use-page-title";
 import { Wallet, Check } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -196,7 +196,7 @@ export default function SourceDetailPage({ params }: SourceDetailPageProps) {
   const finapiConfig = isFinapi ? source.apiConfig as any : undefined;
 
   // Check if re-auth is needed (finAPI has expiry)
-  const expiresAt = finapiConfig?.expiresAt?.toDate();
+  const expiresAt = toDateSafe(finapiConfig?.expiresAt);
   const needsReauth = expiresAt ? expiresAt < new Date() : false;
 
   // Days until expiry

@@ -85,9 +85,18 @@ export async function createChatModel(
 
   // Default to Anthropic
   const { ChatAnthropic } = await import("@langchain/anthropic");
+  // The sidebar chat runs in the web container, so a self-hoster pointing the
+  // API container at a gateway would otherwise still dial api.anthropic.com from
+  // here. Same variables, same precedence as functions/src/selfhost/ai/anthropic.ts.
+  const anthropicApiUrl =
+    process.env.FIBUKI_ANTHROPIC_BASE_URL?.trim() ||
+    process.env.ANTHROPIC_BASE_URL?.trim();
   const model = new ChatAnthropic({
     model: MODEL_IDS.anthropic,
     temperature,
+    ...(anthropicApiUrl
+      ? { anthropicApiUrl: anthropicApiUrl.replace(/\/+$/, "") }
+      : {}),
   });
   return model.bindTools(tools) as unknown as BaseChatModel;
 }

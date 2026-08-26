@@ -70,6 +70,8 @@ export const TOP_LEVEL_POLICIES: Readonly<Record<string, CollectionPolicy>> = {
   // future edit consciously flips them instead of "fixing" a 403.
   emailTokens: denied,
   invoiceShares: denied,
+  // ECB reference rates (#92): server-side only, and not user data at all.
+  fxReferenceRates: denied,
 };
 
 /**

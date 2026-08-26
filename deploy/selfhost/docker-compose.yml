@@ -134,7 +134,7 @@ services:
       # this box's copy of the data rather than live production.
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       # Per-ENDPOINT signing secret. Production's value will NOT validate a webhook
-      # delivered to new-api.fibuki.com — that needs its own endpoint registered in
+      # delivered to this deployment's api host — that needs its own endpoint registered in
       # the Stripe dashboard, which issues a different whsec_.
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
       # Decrypts users' stored Gmail OAuth tokens. With this present and cron enabled,
@@ -170,6 +170,12 @@ services:
       FIBUKI_GEMINI_API_KEY: ${FIBUKI_GEMINI_API_KEY:-}
       FIBUKI_ANTHROPIC_API_KEY: ${FIBUKI_ANTHROPIC_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Redirect the Anthropic origin at a gateway or egress proxy. An ORIGIN,
+      # not an endpoint: "/v1/messages" is appended, matching the official SDK's
+      # ANTHROPIC_BASE_URL. Unlike FIBUKI_AI_BASE_URL below, which is an
+      # OpenAI-shaped root that already carries "/v1".
+      FIBUKI_ANTHROPIC_BASE_URL: ${FIBUKI_ANTHROPIC_BASE_URL:-}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
       FIBUKI_AI_BASE_URL: ${FIBUKI_AI_BASE_URL:-}
       FIBUKI_AI_API_KEY: ${FIBUKI_AI_API_KEY:-}
       # OIDC_JWKS_URI lets the verifier fetch keys from a directly-reachable URL
@@ -196,14 +202,22 @@ services:
     # env_file, so the mappings above remain authoritative.
     env_file:
       - .env
-    # Loopback-only publish. On a public host a bare "8788:8788" binds 0.0.0.0
-    # AND Docker writes its own iptables rules, which bypass ufw/firewalld — the
-    # API would be reachable over plain HTTP from the internet. TLS termination
-    # and the only public listener belong to Caddy (docker-compose.prod.yml);
-    # Caddy reaches this service over the compose network, not via the host.
-    # This bind exists for on-box debugging (curl 127.0.0.1:8788/healthz).
+    # Loopback-only publish by default. On a public host a bare "8788:8788" binds
+    # 0.0.0.0 AND Docker writes its own iptables rules, which bypass ufw/firewalld
+    # — the API would be reachable over plain HTTP from the internet. TLS
+    # termination and the only public listener belong to Caddy
+    # (docker-compose.prod.yml); Caddy reaches this service over the compose
+    # network, not via the host. This bind exists for on-box debugging
+    # (curl 127.0.0.1:8788/healthz).
+    #
+    # FIBUKI_BIND_ADDR exists for the one topology loopback cannot serve: a
+    # reverse proxy on a DIFFERENT host, which sees 502 while every container is
+    # healthy and localhost answers 200. Widen it to a private interface address
+    # (e.g. 10.0.0.5), never to 0.0.0.0 — the iptables bypass above means a
+    # host firewall will NOT save you, so the reachable set is exactly whoever
+    # can route to the address you name.
     ports:
-      - "127.0.0.1:8788:8788"
+      - "${FIBUKI_BIND_ADDR:-127.0.0.1}:8788:8788"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:8788/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 10s
@@ -234,7 +248,7 @@ services:
         # time, so omitting it here left it undefined and every one of those call
         # sites silently fell back to http://localhost:3000 — links that resolve to
         # nothing for a user. Must be the PUBLIC web origin, and must be rebuilt when
-        # that origin changes (e.g. new.fibuki.com -> fibuki.com).
+        # that origin changes (as it did at the cutover to the apex domain).
         NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL}
     restart: unless-stopped
     depends_on:
@@ -260,6 +274,10 @@ services:
       # the agent reports a clean error for whichever is missing.
       FIBUKI_GEMINI_API_KEY: ${FIBUKI_GEMINI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # The sidebar chat dials Anthropic from THIS container, so a gateway has to
+      # be declared on both services or half the traffic still leaves directly.
+      FIBUKI_ANTHROPIC_BASE_URL: ${FIBUKI_ANTHROPIC_BASE_URL:-}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
       # types/ai-usage.ts pins Vertex-era model ids, and some are retired for new
       # API-key consumers — "gemini-2.5-flash" answers 404 "not found for API
       # version v1beta". Override without editing the shared registry, which the
@@ -268,6 +286,35 @@ services:
       # Also at runtime: server-side reads in route handlers resolve it here, and
       # keeping both in step avoids a stale baked-in value outliving an origin change.
       NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL}
+      # The mailbox connect routes (app/api/mail/imap/connect, app/api/gmail/callback)
+      # encrypt the credential in THIS container before storing it, with the same key
+      # the api uses to decrypt it at sync time. Without it here, every IMAP connect
+      # answers "Server is not configured to store credentials securely." even when
+      # the api side has the key. Same value as the api service above.
+      GMAIL_TOKEN_ENCRYPTION_KEY: ${GMAIL_TOKEN_ENCRYPTION_KEY:-}
+      # The /api/mcp and /api/mcp/sse route handlers proxy to the functions host
+      # SERVER-SIDE, so this resolves at runtime, not build time. Unset, those
+      # routes fell back to the SaaS production Cloud Functions and forwarded
+      # every request — API key included — off-box, whose answer ("Invalid or
+      # expired API key") was indistinguishable from a local auth bug. The api
+      # container is on the compose network, so its service URL is the right
+      # default; override only if the proxies must reach fibuki-api elsewhere.
+      NEXT_PUBLIC_FUNCTIONS_URL: ${NEXT_PUBLIC_FUNCTIONS_URL:-http://fibuki-api:8788}
+      # The ~45 routes under app/api verify the browser's bearer token SERVER-SIDE
+      # in this container (lib/selfhost/get-server-user-shim.ts) and must reach
+      # the same verdict as fibuki-api. These select the mode exactly as they do
+      # for the api above: OIDC_ISSUER set → verify against the IdP (keys from
+      # OIDC_JWKS_URI, or discovery), unset → Better Auth's JWKS on fibuki-api,
+      # fetched via NEXT_PUBLIC_FUNCTIONS_URL when set (the compose service URL)
+      # so the fetch never depends on this container reaching its own public
+      # hostname. Without these the shim assumed built-in auth and dialled the
+      # PUBLIC api hostname for a /__auth/jwks that an OIDC deployment does not
+      # serve — every route 401'd, logging only "Token verification failed:
+      # request timed out".
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_JWKS_URI: ${OIDC_JWKS_URI:-}
+      OIDC_AUDIENCE: ${OIDC_AUDIENCE:-}
+      OIDC_ADMIN_GROUP: ${OIDC_ADMIN_GROUP:-}
       # Server-side document IO. ~35 modules in this container call getAdminDb()
       # — the chat agent's tools, the public invoice share page, precision search,
       # the worker endpoint, Gmail, the auth routes — and off GCP the Firebase Admin
@@ -292,10 +339,11 @@ services:
       # Pool ceiling per container. Both share Postgres' max_connections, so this
       # is now split two ways rather than owned by fibuki-api alone.
       POSTGRES_MAX_CONNECTIONS: ${WEB_POSTGRES_MAX_CONNECTIONS:-10}
-    # Loopback-only — see the note on fibuki-api's ports. Public ingress is
-    # Caddy only (docker-compose.prod.yml).
+    # Loopback-only by default, and FIBUKI_BIND_ADDR widens both services
+    # together — see the note on fibuki-api's ports for why 0.0.0.0 is the wrong
+    # value. Public ingress is Caddy only (docker-compose.prod.yml).
     ports:
-      - "127.0.0.1:3000:3000"
+      - "${FIBUKI_BIND_ADDR:-127.0.0.1}:3000:3000"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3000/').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
       interval: 10s

@@ -35,6 +35,7 @@ import {
   TRANSACTION_MATCH_CONFIG,
 } from "@/types/transaction-matching";
 import { functions } from "@/lib/firebase/config";
+import { callFunction } from "@/lib/firebase/callable";
 
 // Server callable for transaction matching (single source of truth for scoring)
 const findTransactionMatchesFn = httpsCallable<
@@ -136,29 +137,39 @@ export async function acceptTransactionSuggestion(
 }
 
 /**
- * Dismiss a transaction suggestion (removes from suggestions list)
+ * Reject a proposed file-to-transaction pair.
+ *
+ * Delegates to the dismissTransactionSuggestion callable rather than writing
+ * the file document here. Rejecting is not "drop an entry from an array": it
+ * also has to blacklist the pair in `dismissedTransactionIds` /
+ * `dismissedTransactions`, which is what matching reads to keep the pair from
+ * being re-proposed (fork #94). Those field-writes are built in exactly one
+ * place, functions/src/files/dismissSuggestionOps, shared by the callable and
+ * the MCP tool — a client-side copy would be a third writer to drift out of
+ * step, and the browser cannot be trusted with a blacklist write anyway.
+ *
+ * Before fork #100 this trimmed `transactionSuggestions` and stopped there, so
+ * a rejection clicked in the UI did not survive the next re-score while one
+ * made by an agent did.
+ *
+ * `ctx` is unused: the callable resolves the caller from the auth token and
+ * enforces ownership server-side. It stays in the signature because every
+ * operation in this module takes it, and the two detail panels call this one
+ * alongside its siblings.
+ *
+ * @param reason optional free text stored with the rejection (max 500 chars,
+ *   refused by the callable above that). No UI passes one yet.
  */
 export async function dismissTransactionSuggestion(
   ctx: OperationsContext,
   fileId: string,
-  transactionId: string
+  transactionId: string,
+  reason?: string
 ): Promise<void> {
-  const fileRef = doc(ctx.db, FILES_COLLECTION, fileId);
-  const fileDoc = await getDoc(fileRef);
-
-  if (!fileDoc.exists() || fileDoc.data().userId !== ctx.userId) {
-    throw new Error("File not found or access denied");
-  }
-
-  const currentSuggestions = fileDoc.data().transactionSuggestions || [];
-  const filteredSuggestions = currentSuggestions.filter(
-    (s: TransactionSuggestion) => s.transactionId !== transactionId
-  );
-
-  await updateDoc(fileRef, {
-    transactionSuggestions: filteredSuggestions,
-    updatedAt: Timestamp.now(),
-  });
+  await callFunction<
+    { fileId: string; transactionId: string; reason?: string },
+    { success: boolean; dismissedConfidence: number | null }
+  >("dismissTransactionSuggestion", { fileId, transactionId, reason });
 }
 
 /**

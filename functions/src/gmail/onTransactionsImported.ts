@@ -12,6 +12,7 @@
 
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
+import { SYNCABLE_MAIL_PROVIDERS } from "../mail/constants";
 
 const db = getFirestore();
 
@@ -91,9 +92,11 @@ async function getImportTransactionDateRange(
  * Get all active Gmail integrations for a user that have completed initial sync.
  */
 async function getActiveGmailIntegrations(userId: string): Promise<EmailIntegration[]> {
+  // Gmail and IMAP alike — the sync worker handles both; only the enqueue
+  // side ever asked for Gmail alone (see SYNCABLE_MAIL_PROVIDERS).
   const snapshot = await db.collection("emailIntegrations")
     .where("userId", "==", userId)
-    .where("provider", "==", "gmail")
+    .where("provider", "in", [...SYNCABLE_MAIL_PROVIDERS])
     .where("isActive", "==", true)
     .where("needsReauth", "==", false)
     .where("initialSyncComplete", "==", true)

@@ -14,4 +14,5 @@ export { unmarkFileAsNotInvoiceCallable } from "./unmarkFileAsNotInvoice";
 export { connectFileToTransactionCallable } from "./connectFileToTransaction";
 export { disconnectFileFromTransactionCallable } from "./disconnectFileFromTransaction";
 export { dismissTransactionSuggestionCallable } from "./dismissTransactionSuggestion";
+export { undismissTransactionSuggestionCallable } from "./undismissTransactionSuggestion";
 export { unrejectFileFromTransactionCallable } from "./unrejectFileFromTransaction";

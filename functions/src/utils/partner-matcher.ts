@@ -232,6 +232,38 @@ function levenshteinDistance(a: string, b: string): number {
   return matrix[b.length][a.length];
 }
 
+/** Similarity awarded to a plausible Cologne-phonetic match ("Schmidt" / "Schmitt"). */
+export const PHONETIC_MATCH_SIMILARITY = 92;
+
+/**
+ * Cologne codes shorter than this are hash collisions, not phonetic matches:
+ * the alphabet is 8 digits and vowels are dropped, so "uber", "bayer" and
+ * "porr" all reduce to "17" and "esim me" / "s immo" both reduce to "86".
+ */
+export const MIN_PHONETIC_CODE_LENGTH = 3;
+
+/**
+ * Two strings with equal Cologne codes must also share at least this much
+ * spelling (Levenshtein ratio) before the equality counts as a phonetic match.
+ * "Meyer Bau" / "Maier Bau" sit at 78, "Schmidt" / "Schmitt" at 86;
+ * "uber" / "bayer" at 40 and "esim me" / "s immo" at 43 are rejected.
+ * The ratio also bounds the length difference: two strings whose lengths
+ * differ by more than 2:1 can never reach 50.
+ */
+export const MIN_PHONETIC_SPELLING_SIMILARITY = 50;
+
+function isPlausiblePhoneticMatch(code: string, normalized1: string, normalized2: string): boolean {
+  if (code.length < MIN_PHONETIC_CODE_LENGTH) return false;
+  return levenshteinSimilarity(normalized1, normalized2) >= MIN_PHONETIC_SPELLING_SIMILARITY;
+}
+
+function levenshteinSimilarity(a: string, b: string): number {
+  const maxLen = Math.max(a.length, b.length);
+  if (maxLen === 0) return 0;
+  const distance = levenshteinDistance(a, b);
+  return Math.round(((maxLen - distance) / maxLen) * 100);
+}
+
 export function calculateCompanyNameSimilarity(name1: string, name2: string): number {
   const normalized1 = normalizeCompanyName(name1);
   const normalized2 = normalizeCompanyName(name2);
@@ -245,8 +277,13 @@ export function calculateCompanyNameSimilarity(name1: string, name2: string): nu
   // Phonetic match (Cologne Phonetics) - "Müller" matches "Mueller" matches "MULLER"
   const phonetic1 = colognePhonetic(normalized1);
   const phonetic2 = colognePhonetic(normalized2);
-  if (phonetic1 && phonetic2 && phonetic1.length >= 2 && phonetic1 === phonetic2) {
-    return 92; // Strong phonetic match
+  if (
+    phonetic1 &&
+    phonetic2 &&
+    phonetic1 === phonetic2 &&
+    isPlausiblePhoneticMatch(phonetic1, normalized1, normalized2)
+  ) {
+    return PHONETIC_MATCH_SIMILARITY;
   }
 
   if (normalized1.includes(normalized2) || normalized2.includes(normalized1)) {
@@ -256,11 +293,7 @@ export function calculateCompanyNameSimilarity(name1: string, name2: string): nu
     return Math.round(75 + coverage * 25);
   }
 
-  const maxLen = Math.max(normalized1.length, normalized2.length);
-  if (maxLen === 0) return 0;
-
-  const distance = levenshteinDistance(normalized1, normalized2);
-  return Math.round(((maxLen - distance) / maxLen) * 100);
+  return levenshteinSimilarity(normalized1, normalized2);
 }
 
 // ============ Partner Matching ============
@@ -324,10 +357,9 @@ export function matchTransaction(
   }
 
   // Sort with user partners taking absolute precedence over global when both above threshold
-  const AUTO_ASSIGN_THRESHOLD = 89;
   results.sort((a, b) => {
-    const aAboveThreshold = a.confidence >= AUTO_ASSIGN_THRESHOLD;
-    const bAboveThreshold = b.confidence >= AUTO_ASSIGN_THRESHOLD;
+    const aAboveThreshold = shouldAutoApply(a.confidence);
+    const bAboveThreshold = shouldAutoApply(b.confidence);
 
     // If both above threshold, user always wins over global
     if (aAboveThreshold && bAboveThreshold) {
@@ -429,7 +461,7 @@ function matchSinglePartner(
     }
   }
 
-  // 4. Name matching (60-90%, boosted if multiple match)
+  // 4. Name matching (60-90%, +ALIAS_AGREEMENT_BONUS when name and alias agree)
   // Combine transaction text for matching
   const txCombinedText = [transaction.name, transaction.partner, transaction.reference]
     .filter(Boolean)
@@ -464,25 +496,15 @@ function matchSinglePartner(
   }
 
   if (matchedNames.length > 0) {
-    // Check if BOTH primary name AND an alias matched - strong signal
     const hasNameMatch = matchedNames.some(m => !m.isAlias);
     const hasAliasMatch = matchedNames.some(m => m.isAlias);
     const bestSimilarity = Math.max(...matchedNames.map(m => m.similarity));
-
-    let confidence: number;
-    if (hasNameMatch && hasAliasMatch) {
-      // Both name and alias found - boost to 92-95%
-      confidence = Math.min(95, 92 + (bestSimilarity - 60) * 0.075);
-    } else {
-      // Single match - normal scoring (60-90%)
-      confidence = Math.min(90, 60 + ((bestSimilarity - 60) * 30) / 40);
-    }
 
     candidates.push({
       partnerId: partner.id,
       partnerType,
       partnerName: partner.name,
-      confidence: Math.round(confidence),
+      confidence: nameMatchConfidence(bestSimilarity, hasNameMatch && hasAliasMatch, partnerType),
       source: "name",
     });
   }
@@ -497,6 +519,53 @@ function matchSinglePartner(
   );
 }
 
+export const AUTO_APPLY_THRESHOLD = 89;
+
+/**
+ * Bonus when the partner's primary name AND one of its aliases both match.
+ * Bounded so that agreement can never lift approximate evidence over the
+ * auto-apply gate on its own: a phonetic-only match (similarity 92 → 84)
+ * lands at 88, still below AUTO_APPLY_THRESHOLD.
+ */
+export const ALIAS_AGREEMENT_BONUS = 4;
+
+/**
+ * Similarity from which a name match counts as literal evidence — the name
+ * appears verbatim in the transaction text (95) or equals the partner field
+ * after normalization (100). Anything lower is approximate (Levenshtein,
+ * phonetic, partial containment).
+ */
+export const LITERAL_NAME_SIMILARITY = 95;
+
+/**
+ * Global preset partners are a ~300-entry catalogue of short corporate names
+ * the user never chose, so an approximate name match against it is far more
+ * likely a collision than a user-list match is. Approximate evidence may
+ * suggest a global partner but never auto-apply it.
+ */
+export const GLOBAL_APPROXIMATE_NAME_CAP = AUTO_APPLY_THRESHOLD - 1;
+
+/**
+ * Name-source confidence. Derived from the best similarity (60 → 60, 100 → 90),
+ * plus a bounded bonus when name and alias agree. The floor of the old
+ * "name + alias" branch (92) sat above the auto-apply gate and turned any
+ * pair of weak matches into an unreviewed assignment (fork #71).
+ */
+export function nameMatchConfidence(
+  bestSimilarity: number,
+  nameAndAliasAgree: boolean,
+  partnerType: "global" | "user"
+): number {
+  let confidence = Math.min(90, 60 + ((bestSimilarity - 60) * 30) / 40);
+  if (nameAndAliasAgree) {
+    confidence += ALIAS_AGREEMENT_BONUS;
+  }
+  if (partnerType === "global" && bestSimilarity < LITERAL_NAME_SIMILARITY) {
+    confidence = Math.min(confidence, GLOBAL_APPROXIMATE_NAME_CAP);
+  }
+  return Math.round(confidence);
+}
+
 export function shouldAutoApply(confidence: number): boolean {
-  return confidence >= 89;
+  return confidence >= AUTO_APPLY_THRESHOLD;
 }
