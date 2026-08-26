@@ -19,52 +19,21 @@ const db = getFirestore();
 
 import { ExtractedEntity, ExtractedLineItem, ExtractedRateGroup } from "../types/extraction";
 import { applyVatDowngradeGuard } from "./vatSourceGuard";
+import type { RecipientIdentity } from "../matching/recipientIdentity";
+import {
+  determineCounterparty,
+  getAllIdentityNames,
+  identityNameMatches,
+  matchEntityToIdentity,
+  type InvoiceDirection,
+  type UserIdentityData,
+} from "../utils/identity-matcher";
 import { classifyFileRecord, documentTypeFields } from "../documents/adapter";
 import { reviewFileRecordVatRates, vatRateReviewFields } from "../documents/vatRateReview";
-import {
-  hasIdentitySignals,
-  hasRecipientEntity,
-  resolveRecipientIdentity,
-  type RecipientIdentity,
-} from "../matching/recipientIdentity";
 import { classifyDocumentType } from "../documents/classifyDocumentType";
 import { syncDocumentationStateForTransactions } from "../documents/syncDocumentationState";
 import { computeDirectionReviewFields } from "../documents/syncDirectionReview";
 import { directionReviewFields } from "../documents/directionReview";
-
-/**
- * User data for invoice direction detection and counterparty determination
- */
-interface UserData {
-  name: string;
-  companyName: string;
-  aliases: string[];
-  vatIds?: string[];
-  ibans?: string[];
-}
-
-/**
- * Invoice direction type
- */
-type InvoiceDirection = "incoming" | "outgoing" | "unknown";
-
-/**
- * Result of counterparty determination
- */
-interface CounterpartyResult {
-  /** The counterparty entity (the one that's NOT the user) */
-  counterparty: ExtractedEntity | null;
-  /** Which entity matched user data */
-  matchedUserAccount: "issuer" | "recipient" | null;
-  /** Invoice direction derived from match */
-  invoiceDirection: InvoiceDirection;
-  /**
-   * Whether the recipient the document names is the user (#229). Stored so
-   * the § 11 classifier can read it: § 11 asks only that a recipient exist,
-   * § 12 asks whose supply it was, and only the second decides the Vorsteuer.
-   */
-  recipientIdentityMatch: RecipientIdentity;
-}
 
 /**
  * Options for running extraction
@@ -79,12 +48,14 @@ export interface ExtractionOptions {
 }
 
 /**
- * Fetch user data from Firestore.
- * Normalizes both the new format (personalEntity + companies[]) and
- * deprecated flat fields (name, companyName, vatIds) into the UserData
- * interface used by counterparty matching.
+ * Fetch the user's identity data from Firestore.
+ *
+ * Returned as stored: the shared identity matcher reads both the current
+ * format (personalEntity + companies[]) and the deprecated flat fields itself,
+ * so there is nothing to flatten here. Flattening is what let this copy drift
+ * from the one in onUserDataUpdate (issue #232).
  */
-async function getUserData(userId: string): Promise<UserData | null> {
+async function getUserData(userId: string): Promise<UserIdentityData | null> {
   try {
     const doc = await db
       .collection("users")
@@ -97,66 +68,7 @@ async function getUserData(userId: string): Promise<UserData | null> {
       return null;
     }
 
-
-    const raw = doc.data() as any;
-
-    // Collect names from all sources
-    const names: string[] = [];
-    const aliases: string[] = [];
-    const vatIds: string[] = [];
-    const ibans: string[] = [];
-
-    // New format: personalEntity
-    if (raw.personalEntity?.name) {
-      names.push(raw.personalEntity.name);
-      aliases.push(...(raw.personalEntity.aliases || []));
-    }
-    if (raw.personalEntity?.vatId) {
-      vatIds.push(raw.personalEntity.vatId);
-    }
-    if (raw.personalEntity?.ibans) {
-      ibans.push(...raw.personalEntity.ibans);
-    }
-
-    // New format: companies[]
-    for (const company of raw.companies || []) {
-      if (company.name) {
-        names.push(company.name);
-        aliases.push(...(company.aliases || []));
-      }
-      if (company.vatId) {
-        vatIds.push(company.vatId);
-      }
-      if (company.ibans) {
-        ibans.push(...company.ibans);
-      }
-    }
-
-    // Deprecated flat fields (backward compat)
-    if (raw.name) names.push(raw.name);
-    if (raw.companyName) names.push(raw.companyName);
-    aliases.push(...(raw.aliases || []));
-    vatIds.push(...(raw.vatIds || []));
-    ibans.push(...(raw.ibans || []));
-
-    // Deduplicate
-    const uniqueNames = [...new Set(names)].filter(Boolean);
-    const uniqueAliases = [...new Set(aliases)].filter(Boolean);
-    const uniqueVatIds = [...new Set(vatIds)].filter(Boolean);
-    const uniqueIbans = [...new Set(ibans)].filter(Boolean);
-
-    // Build normalized UserData with the first personal name and first company name
-    const personalName = raw.personalEntity?.name || raw.name || uniqueNames[0] || "";
-    const companyName =
-      raw.companies?.[0]?.name || raw.companyName || (uniqueNames.length > 1 ? uniqueNames[1] : "");
-
-    return {
-      name: personalName,
-      companyName: companyName,
-      aliases: [...uniqueAliases, ...uniqueNames], // include all names as aliases for broad matching
-      vatIds: uniqueVatIds,
-      ibans: uniqueIbans,
-    };
+    return doc.data() as UserIdentityData;
   } catch (error) {
     console.warn("[UserData] Failed to fetch user data:", error);
     return null;
@@ -164,48 +76,26 @@ async function getUserData(userId: string): Promise<UserData | null> {
 }
 
 /**
- * Determine invoice direction based on extracted partner and user data.
- * - If partner matches user data: outgoing invoice (user is the issuer)
- * - If partner doesn't match: incoming invoice (user is the recipient)
- * - If no partner or no user data: unknown
+ * Legacy direction detection, used when the extractor produced no issuer or
+ * recipient entities and all we have is a partner name.
+ * - Partner matches the user: the user issued it, so the invoice is outgoing
+ * - Partner does not match: incoming
+ * - No partner or no user data: unknown
  */
 function determineInvoiceDirection(
   extractedPartner: string | null,
-  userData: UserData | null
+  userData: UserIdentityData | null
 ): InvoiceDirection {
   if (!extractedPartner || !userData) {
     return "unknown";
   }
 
-  const partnerLower = extractedPartner.toLowerCase().trim();
-
-  // Check if extracted partner matches user's company name
-  if (userData.companyName) {
-    const companyLower = userData.companyName.toLowerCase();
-    if (partnerLower.includes(companyLower) || companyLower.includes(partnerLower)) {
+  for (const identityName of getAllIdentityNames(userData)) {
+    if (identityNameMatches(identityName, extractedPartner)) {
       return "outgoing";
     }
   }
 
-  // Check if extracted partner matches user's name
-  if (userData.name) {
-    const nameLower = userData.name.toLowerCase();
-    if (partnerLower.includes(nameLower) || nameLower.includes(partnerLower)) {
-      return "outgoing";
-    }
-  }
-
-  // Check against aliases
-  for (const alias of userData.aliases || []) {
-    if (alias) {
-      const aliasLower = alias.toLowerCase();
-      if (partnerLower.includes(aliasLower) || aliasLower.includes(partnerLower)) {
-        return "outgoing";
-      }
-    }
-  }
-
-  // Partner doesn't match user data - this is an incoming invoice
   return "incoming";
 }
 
@@ -228,168 +118,6 @@ async function getSourceIbans(userId: string): Promise<string[]> {
     console.warn("[SourceIbans] Failed to fetch source IBANs:", error);
     return [];
   }
-}
-
-/**
- * Check if an entity matches user data (by VAT ID, IBAN, or name/aliases)
- */
-function entityMatchesUserData(
-  entity: ExtractedEntity | null,
-  userData: UserData,
-  sourceIbans: string[]
-): boolean {
-  if (!entity) return false;
-
-  // Check VAT ID match (strongest signal)
-  if (entity.vatId && userData.vatIds?.length) {
-    const normalizedEntityVat = entity.vatId.toUpperCase().replace(/[^A-Z0-9]/g, "");
-    for (const userVat of userData.vatIds) {
-      if (userVat.toUpperCase().replace(/[^A-Z0-9]/g, "") === normalizedEntityVat) {
-        console.log(`  [CounterpartyMatch] VAT ID match: ${entity.vatId}`);
-        return true;
-      }
-    }
-  }
-
-  // Check IBAN match against user's manual IBANs
-  if (entity.iban && userData.ibans?.length) {
-    const normalizedEntityIban = entity.iban.toUpperCase().replace(/\s/g, "");
-    for (const userIban of userData.ibans) {
-      if (userIban.toUpperCase().replace(/\s/g, "") === normalizedEntityIban) {
-        console.log(`  [CounterpartyMatch] Manual IBAN match: ${entity.iban}`);
-        return true;
-      }
-    }
-  }
-
-  // Check IBAN match against connected bank account IBANs
-  if (entity.iban && sourceIbans.length) {
-    const normalizedEntityIban = entity.iban.toUpperCase().replace(/\s/g, "");
-    for (const sourceIban of sourceIbans) {
-      if (sourceIban === normalizedEntityIban) {
-        console.log(`  [CounterpartyMatch] Source IBAN match: ${entity.iban}`);
-        return true;
-      }
-    }
-  }
-
-  // Check name match (weakest signal)
-  if (entity.name) {
-    const entityNameLower = entity.name.toLowerCase().trim();
-
-    if (userData.companyName) {
-      const companyLower = userData.companyName.toLowerCase();
-      if (entityNameLower.includes(companyLower) || companyLower.includes(entityNameLower)) {
-        console.log(`  [CounterpartyMatch] Company name match: ${entity.name}`);
-        return true;
-      }
-    }
-
-    if (userData.name) {
-      const nameLower = userData.name.toLowerCase();
-      if (entityNameLower.includes(nameLower) || nameLower.includes(entityNameLower)) {
-        console.log(`  [CounterpartyMatch] Personal name match: ${entity.name}`);
-        return true;
-      }
-    }
-
-    for (const alias of userData.aliases || []) {
-      if (alias) {
-        const aliasLower = alias.toLowerCase();
-        if (entityNameLower.includes(aliasLower) || aliasLower.includes(entityNameLower)) {
-          console.log(`  [CounterpartyMatch] Alias match: ${entity.name} ~ ${alias}`);
-          return true;
-        }
-      }
-    }
-  }
-
-  return false;
-}
-
-/**
- * Determine the counterparty from extracted entities.
- * The counterparty is whichever entity does NOT match user data.
- */
-function determineCounterparty(
-  issuer: ExtractedEntity | null,
-  recipient: ExtractedEntity | null,
-  userData: UserData | null,
-  sourceIbans: string[]
-): CounterpartyResult {
-  // If no user data, can't determine - default to issuer as partner (legacy behavior)
-  if (!userData) {
-    console.log("  [CounterpartyMatch] No user data configured, defaulting to issuer");
-    return {
-      counterparty: issuer,
-      matchedUserAccount: null,
-      invoiceDirection: "unknown",
-      recipientIdentityMatch: "unknown",
-    };
-  }
-
-  // Check if issuer matches user data
-  const issuerMatchesUser = entityMatchesUserData(issuer, userData, sourceIbans);
-
-  // Check if recipient matches user data
-  const recipientMatchesUser = entityMatchesUserData(recipient, userData, sourceIbans);
-
-  // #229: the same comparison, recorded as its own verdict. A failed match
-  // only means "somebody else" when there was something to match against and
-  // a recipient to match — see `resolveRecipientIdentity`.
-  const recipientIdentityMatch = resolveRecipientIdentity({
-    recipientPresent: hasRecipientEntity(recipient),
-    recipientMatchesUser,
-    hasIdentityData: hasIdentitySignals({
-      names: [userData.name, userData.companyName, ...(userData.aliases ?? [])],
-      vatIds: userData.vatIds,
-      ibans: userData.ibans,
-      sourceIbans,
-    }),
-  });
-
-  if (issuerMatchesUser && !recipientMatchesUser) {
-    // User is the issuer → outgoing invoice → recipient is counterparty
-    console.log(`  [CounterpartyMatch] OUTGOING: issuer matches user, recipient is counterparty`);
-    return {
-      counterparty: recipient,
-      matchedUserAccount: "issuer",
-      invoiceDirection: "outgoing",
-      recipientIdentityMatch,
-    };
-  }
-
-  if (recipientMatchesUser && !issuerMatchesUser) {
-    // User is the recipient → incoming invoice → issuer is counterparty
-    console.log(`  [CounterpartyMatch] INCOMING: recipient matches user, issuer is counterparty`);
-    return {
-      counterparty: issuer,
-      matchedUserAccount: "recipient",
-      invoiceDirection: "incoming",
-      recipientIdentityMatch,
-    };
-  }
-
-  if (issuerMatchesUser && recipientMatchesUser) {
-    // Both match - internal transfer/self-invoice, use recipient as counterparty
-    console.log(`  [CounterpartyMatch] INTERNAL: both match user, treating as outgoing`);
-    return {
-      counterparty: recipient,
-      matchedUserAccount: "issuer",
-      invoiceDirection: "outgoing",
-      recipientIdentityMatch,
-    };
-  }
-
-  // Neither matches - forwarded invoice or unknown
-  // Default to issuer as partner (legacy behavior)
-  console.log(`  [CounterpartyMatch] UNKNOWN: neither matches user, defaulting to issuer`);
-  return {
-    counterparty: issuer,
-    matchedUserAccount: null,
-    invoiceDirection: "unknown",
-    recipientIdentityMatch,
-  };
 }
 
 function normalizeExtractedLineItems(
@@ -1068,6 +796,24 @@ export async function runExtraction(
 
     // Use new determineCounterparty if we have entity data
     if (extractedIssuer || extractedRecipient) {
+      // Which lane matched is the first thing to look at when a document lands
+      // on the wrong direction, so log it before deciding.
+      if (userData) {
+        for (const [side, entity] of [
+          ["Issuer", extractedIssuer],
+          ["Recipient", extractedRecipient],
+        ] as const) {
+          const match = matchEntityToIdentity(entity, userData, sourceIbans);
+          console.log(
+            match
+              ? `  [CounterpartyMatch] ${side} is the user via ${match.lane}: "${match.entityValue}" ~ "${match.identityValue}"`
+              : `  [CounterpartyMatch] ${side} is not the user`
+          );
+        }
+      } else {
+        console.log("  [CounterpartyMatch] No user data configured, defaulting to issuer");
+      }
+
       const counterpartyResult = determineCounterparty(
         extractedIssuer,
         extractedRecipient,
