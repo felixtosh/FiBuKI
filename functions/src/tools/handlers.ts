@@ -34,6 +34,11 @@ import {
   isTransactionDismissedForFile,
   type DismissibleFileState,
 } from "../files/dismissSuggestionOps";
+import { defineSecret } from "firebase-functions/params";
+import {
+  RetryExtractionError,
+  retryExtractionForFile,
+} from "../extraction/retryExtractionOps";
 import { getStorage } from "firebase-admin/storage";
 import { randomUUID } from "crypto";
 import { classifyFileRecord, documentTypeFields } from "../documents/adapter";
@@ -93,6 +98,13 @@ export { TOOL_NAMES };
 export type { ToolName };
 
 const db = getFirestore();
+
+/**
+ * Extraction is the one tool on this surface that spends an AI call directly,
+ * so the two functions that dispatch tools — mcpApi and mcpSse — declare this
+ * secret. On self-host the params shim reads it from the environment.
+ */
+const anthropicApiKey = defineSecret("ANTHROPIC_API_KEY");
 
 /**
  * Check if a tool requires a feature the user's plan doesn't have.
@@ -180,6 +192,8 @@ export async function handleTool(
       return dismissTransactionSuggestion(userId, args);
     case "undismiss_transaction_suggestion":
       return undismissTransactionSuggestion(userId, args);
+    case "retry_file_extraction":
+      return retryFileExtractionTool(userId, args);
 
     // Identity entities (the user's personal/company entities used as invoice
     // sender). Returns id + name + vatId + ibans + address per entity.
@@ -868,6 +882,49 @@ export async function unmarkFileAsNotInvoice(userId: string, args: Record<string
   });
 
   return { success: true, fileId, isNotInvoice: false };
+}
+
+/**
+ * Re-run extraction on one file from the MCP surface.
+ *
+ * The eligibility rule, the reset and the ownership check live in
+ * extraction/retryExtractionOps, shared with the retryFileExtraction callable
+ * the UI drives — a file re-extracted by an agent and one re-extracted by a
+ * click have to land in the same state.
+ *
+ * Extraction runs inline here rather than being queued: the only trigger that
+ * re-runs it fires on undelete, so there is nothing to hand the work to. That
+ * is why mcpApi and mcpSse declare ANTHROPIC_API_KEY.
+ *
+ * The refusal codes are surfaced as message prefixes, matching the
+ * PAIR_REJECTED convention the connect handler uses: an agent working a list
+ * needs to tell a stale id from a file that simply does not need re-extracting.
+ */
+export async function retryFileExtractionTool(userId: string, args: Record<string, unknown>) {
+  const fileId = args.fileId as string;
+  if (!fileId) {
+    throw new Error("fileId is required");
+  }
+
+  try {
+    const result = await retryExtractionForFile(db, {
+      fileId,
+      userId,
+      force: args.force === true,
+      anthropicApiKey: anthropicApiKey.value(),
+    });
+
+    console.log(`[retryFileExtraction] Re-extracted file ${fileId}`, { userId, via: "tools" });
+
+    // runExtraction already reports success and duration; fileId is what the
+    // agent needs to tie the result back to the file it asked about.
+    return { ...result, fileId };
+  } catch (error) {
+    if (error instanceof RetryExtractionError) {
+      throw new Error(`${error.code}: ${error.message}`);
+    }
+    throw error;
+  }
 }
 
 /**

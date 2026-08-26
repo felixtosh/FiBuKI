@@ -9,6 +9,7 @@
  */
 
 import { onRequest } from "firebase-functions/v2/https";
+import { defineSecret } from "firebase-functions/params";
 import { validateApiKey } from "../api-keys";
 import { handleToolInternal } from "./handlers";
 import { TOOL_DEFINITIONS } from "../tools/definitions";
@@ -20,6 +21,9 @@ const CORS_HEADERS = {
 };
 
 // MCP Protocol version
+/** retry_file_extraction runs extraction inline, so the dispatcher carries the key. */
+const anthropicApiKey = defineSecret("ANTHROPIC_API_KEY");
+
 const MCP_VERSION = "2024-11-05";
 
 // Tool definitions in MCP format (derived from central definitions)
@@ -35,6 +39,8 @@ export const mcpSse = onRequest(
     region: "europe-west1",
     memory: "512MiB",
     timeoutSeconds: 300,
+    // retry_file_extraction runs extraction inline (fork #74).
+    secrets: [anthropicApiKey],
   },
   async (req, res) => {
     // Handle CORS

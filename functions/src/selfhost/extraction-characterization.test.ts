@@ -656,8 +656,8 @@ describe("runExtraction: printed rate groups", () => {
 // ===========================================================================
 
 describe("characterization: retryFileExtraction callable", () => {
-  function call(data: unknown) {
-    return retryFileExtraction.run({ data } as never);
+  function call(data: unknown, uid: string = USER) {
+    return retryFileExtraction.run({ data, auth: { uid } } as never);
   }
 
   it("rejects a missing fileId as invalid-argument", async () => {
@@ -668,12 +668,43 @@ describe("characterization: retryFileExtraction callable", () => {
     await expect(call({ fileId: "nope" })).rejects.toMatchObject({ code: "not-found" });
   });
 
+  // Behaviour change, fork #74: this callable used to fetch a file by bare id
+  // and re-extract it without looking at request.auth or the file's userId.
+  it("requires authentication", async () => {
+    await seedFile("f-anon", { extractionError: "boom", extractionComplete: true });
+    await expect(retryFileExtraction.run({ data: { fileId: "f-anon" } } as never)).rejects.toMatchObject({
+      code: "unauthenticated",
+    });
+    expect(gemini.requests).toHaveLength(0);
+  });
+
+  it("refuses a file owned by another user", async () => {
+    await seedFile("f-theirs", { extractionError: "boom", extractionComplete: true });
+    await expect(call({ fileId: "f-theirs" }, "someone-else")).rejects.toMatchObject({
+      code: "permission-denied",
+    });
+    expect(gemini.requests).toHaveLength(0);
+    // The reset is not written either — a refused retry leaves the document alone.
+    expect((await fileDoc("f-theirs")).extractionError).toBe("boom");
+  });
+
   it("rejects a completed file only when isNotInvoice was never set", async () => {
     await seedFile("f-done", { extractionComplete: true });
     await expect(call({ fileId: "f-done" })).rejects.toMatchObject({
       code: "failed-precondition",
-      message: "File has already been extracted successfully",
+      message: "File has already been extracted successfully. Pass force to re-extract it anyway.",
     });
+  });
+
+  it("force re-extracts a completed file the guard would refuse", async () => {
+    await seedFile("f-forced", { extractionComplete: true });
+    // force is not a user override, so classification still runs first.
+    q({ isInvoice: true, confidence: 0.95 });
+    q({ extracted: { amount: 42, confidence: 1 } });
+
+    const res = (await call({ fileId: "f-forced", force: true })) as { success: boolean };
+    expect(res.success).toBe(true);
+    expect((await fileDoc("f-forced")).extractedAmount).toBe(42);
   });
 
   it("QUIRK: a successfully extracted file with isNotInvoice=false can always be re-extracted", async () => {

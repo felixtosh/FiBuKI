@@ -351,10 +351,13 @@ function FileDetailPanelInner({
     [ctx, file.id]
   );
 
+  // Always forced: the retry is offered on files that extracted without
+  // erroring too (fork #74), and the callable refuses those without it. On a
+  // file that did error, force changes nothing.
   const handleRetryExtraction = useCallback(async () => {
     setIsRetryingExtraction(true);
     try {
-      await retryFileExtraction(ctx, file.id);
+      await retryFileExtraction(ctx, file.id, true);
     } catch (error) {
       console.error("Failed to retry extraction:", error);
     } finally {
@@ -568,7 +571,7 @@ function FileDetailPanelInner({
             {/* Extracted Info */}
             <FileExtractedInfo
               file={file}
-              onRetryExtraction={file.extractionError ? handleRetryExtraction : undefined}
+              onRetryExtraction={handleRetryExtraction}
               isRetrying={isRetryingExtraction}
               isParsing={isParsing}
               onFieldClick={onHighlightField}

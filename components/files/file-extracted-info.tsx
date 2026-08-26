@@ -404,6 +404,25 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
                 <Badge variant="secondary" className="text-green-600 bg-green-50">
                   {file.extractionConfidence != null && `${file.extractionConfidence}%`}
                 </Badge>
+                {/*
+                  Available on a clean extraction too (fork #74). An extraction
+                  that returns a poor-but-non-erroring result — no line items,
+                  no VAT — sets no error, so gating this on one hid the retry
+                  from exactly the files that need it.
+                */}
+                {onRetryExtraction && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 text-muted-foreground"
+                    onClick={onRetryExtraction}
+                    disabled={isRetrying}
+                    title="Re-run extraction"
+                  >
+                    <RefreshCw className={cn("h-4 w-4", isRetrying && "animate-spin")} />
+                    <span className="sr-only">Re-run extraction</span>
+                  </Button>
+                )}
                 {/* Edit/Close button */}
                 {onUpdate && !file.isNotInvoice && (
                   <Button
