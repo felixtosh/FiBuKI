@@ -27,12 +27,12 @@ import {
   buildConfirmRecipientIsUserUpdates,
 } from "../files/recipientConfirmationOps";
 import { runTransactionMatching } from "../matching/matchFileTransactions";
-import { computeDirectionReviewFields } from "../documents/syncDirectionReview";
 import {
-  buildExtractionCorrection,
   ExtractionCorrectionError,
   FileExtractionCorrection,
 } from "../files/extractionCorrectionOps";
+import { classifyFileRecord, documentTypeFields } from "../documents/adapter";
+import { buildCorrectedFileUpdate } from "../files/correctedFileUpdate";
 import {
   CORRECTABLE_FIELDS,
   correctedFieldsOf,
@@ -52,8 +52,6 @@ import {
 } from "../extraction/retryExtractionOps";
 import { getStorage } from "firebase-admin/storage";
 import { randomUUID } from "crypto";
-import { classifyFileRecord, documentTypeFields } from "../documents/adapter";
-import { reviewFileRecordVatRates, vatRateReviewFields } from "../documents/vatRateReview";
 import { syncDocumentationStateForTransactions } from "../documents/syncDocumentationState";
 import { TOOL_DEFINITIONS, TOOL_NAMES } from "./definitions";
 import type { ToolName } from "./definitions";
@@ -838,7 +836,7 @@ export async function disconnectFileFromTransaction(userId: string, args: Record
 /**
  * Correct a file's extracted record by hand (fork #147).
  *
- * The shape rules live in `buildExtractionCorrection` so they can be tested
+ * The shape rules live in `buildCorrectedFileUpdate` so they can be tested
  * without a database; this owns ownership, the write, and the reply.
  */
 export async function updateFileExtraction(userId: string, args: Record<string, unknown>) {
@@ -867,29 +865,18 @@ export async function updateFileExtraction(userId: string, args: Record<string, 
   let built;
   try {
     // The stored record goes in so the correction's provenance stamp (#184)
-    // merges onto the marks earlier corrections left, instead of replacing them.
-    built = buildExtractionCorrection(fields, fileSnap.data()!);
+    // merges onto the marks earlier corrections left, instead of replacing
+    // them, and so everything derived from the corrected values moves with them
+    // rather than going stale: the § 11 classification (#104), the rate-review
+    // flag (#203) and the direction review (#233). Shared with the UI's
+    // correction callable since #149, so both surfaces write the same set.
+    built = await buildCorrectedFileUpdate(db, fields, fileSnap.data()!);
   } catch (error) {
     if (error instanceof ExtractionCorrectionError) {
       throw new Error(error.message);
     }
     throw error;
   }
-
-  // The § 11 classification is stored, not recomputed at read time, so a
-  // correction that moves the amount or the rate must move it too — otherwise
-  // the person fixes the figure and the document type stays wrong (#104).
-  const corrected = { ...fileSnap.data()!, ...built.updates };
-  Object.assign(built.updates, documentTypeFields(classifyFileRecord(corrected)));
-
-  // The rate-review flag is stored the same way and goes stale the same way: a
-  // correction that types 11% in, or types it back out, has to move it (#203).
-  Object.assign(built.updates, vatRateReviewFields(reviewFileRecordVatRates(corrected)));
-
-  // And the direction review, which is the whole point of being able to set
-  // the direction by hand: setting it right has to clear the flag that said it
-  // was wrong (#233).
-  Object.assign(built.updates, await computeDirectionReviewFields(db, corrected));
 
   await fileRef.update(built.updates);
 

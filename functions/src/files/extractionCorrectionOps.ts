@@ -14,7 +14,7 @@
 
 import { Timestamp } from "firebase-admin/firestore";
 import { ExtractedLineItem } from "../types/extraction";
-import { buildCorrectionProvenance } from "./extractionProvenanceOps";
+import { buildCorrectionProvenance, CORRECTABLE_FIELDS } from "./extractionProvenanceOps";
 
 /**
  * A correction. **Omitted is not null**: a key absent here is left untouched,
@@ -226,4 +226,166 @@ export function buildExtractionCorrection(
   updates.updatedAt = Timestamp.now();
 
   return { updates, changed };
+}
+
+/** Where each correctable field is stored on the file record. */
+const STORED_FIELD: Record<(typeof CORRECTABLE_FIELDS)[number], string> = {
+  amount: "extractedAmount",
+  vatAmount: "extractedVatAmount",
+  vatPercent: "extractedVatPercent",
+  date: "extractedDate",
+  lineItems: "extractedLineItems",
+  // Not an extracted figure and not stored under `extracted*`: the direction is
+  // a read of the document, kept on the record itself (#233).
+  invoiceDirection: "invoiceDirection",
+};
+
+/**
+ * Reduce a proposed correction to the fields that actually moved (#149).
+ *
+ * The MCP tool names the fields it means, so there "present" is "corrected".
+ * The file detail panel sends the whole extracted record on every save, so
+ * there "present" says nothing — passing that straight to
+ * `buildExtractionCorrection` would stamp all five fields the first time
+ * someone opens the panel and saves without typing, and a file stamped that
+ * way is a file `retry_file_extraction` refuses to touch forever.
+ *
+ * So the comparison is here, beside the builder that stamps, rather than in
+ * the client: one copy of "did this field really change", and it is the copy
+ * that owns cents, a Timestamp date and a line-item array.
+ *
+ * **A value it cannot compare counts as moved.** Dropping an unparseable date
+ * as "unchanged" would turn the builder's refusal into a silent no-op; keeping
+ * it lets the refusal happen where the message is.
+ */
+export function selectMovedCorrections(
+  fields: FileExtractionCorrection,
+  previous: Record<string, unknown>
+): FileExtractionCorrection {
+  const moved: Record<string, unknown> = {};
+
+  for (const field of CORRECTABLE_FIELDS) {
+    const proposed = (fields as Record<string, unknown>)[field];
+    if (proposed === undefined) continue;
+    if (!matchesStored(field, proposed, previous[STORED_FIELD[field]])) {
+      moved[field] = proposed;
+    }
+  }
+
+  return moved as FileExtractionCorrection;
+}
+
+function matchesStored(
+  field: (typeof CORRECTABLE_FIELDS)[number],
+  proposed: unknown,
+  stored: unknown
+): boolean {
+  if (field === "date") return datesMatch(proposed, stored);
+  if (field === "lineItems") return lineItemsMatch(proposed, stored);
+  if (field === "invoiceDirection") return directionsMatch(proposed, stored);
+  return numbersMatch(proposed, stored, field !== "vatPercent");
+}
+
+/**
+ * The direction has three values and two spellings of "not established": the
+ * builder stores `unknown` where a caller passed null, and records written
+ * before #233 have no field at all. All three read as the same answer here, so
+ * re-sending `unknown` for a document nobody has placed is not a correction.
+ */
+function directionsMatch(proposed: unknown, stored: unknown): boolean {
+  const settled = (value: unknown) => (isEmpty(value) || value === "unknown" ? "unknown" : value);
+  return settled(proposed) === settled(stored);
+}
+
+/** Absent and null are the same answer: the record holds no value. */
+function isEmpty(value: unknown): boolean {
+  return value === null || value === undefined;
+}
+
+function numbersMatch(proposed: unknown, stored: unknown, asCents: boolean): boolean {
+  if (isEmpty(proposed)) return isEmpty(stored);
+  if (typeof proposed !== "number" || !Number.isFinite(proposed)) return false;
+  if (typeof stored !== "number" || !Number.isFinite(stored)) return false;
+  return asCents ? Math.round(proposed) === Math.round(stored) : proposed === stored;
+}
+
+/**
+ * A date is compared by the day it names. The stored value is a Timestamp and
+ * the proposed one a `YYYY-MM-DD` string, so anything else would compare a
+ * wrapper object against text and call every save a correction.
+ *
+ * **Both time frames count as the same day.** `extractionCore` writes the
+ * stored Timestamp with `new Date(y, m - 1, d)`, which is midnight *local*.
+ * Cloud Functions run in UTC so the two agree there, but a self-host container
+ * running in Europe/Vienna stores 23:00 UTC of the day before, and reading that
+ * back in UTC only would report the date as moved on every save of a file
+ * nobody edited — stamping a correction that was never made. Where the two
+ * readings straddle midnight the ambiguity is unresolvable, so it is resolved
+ * towards "unchanged": a phantom correction is the expensive answer, since it
+ * is what a later re-extraction refuses on.
+ */
+function datesMatch(proposed: unknown, stored: unknown): boolean {
+  if (isEmpty(proposed)) return isEmpty(stored);
+  if (typeof proposed !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(proposed)) return false;
+
+  const storedDate = toDate(stored);
+  if (!storedDate) return false;
+
+  return storedDate.toISOString().slice(0, 10) === proposed || localDay(storedDate) === proposed;
+}
+
+/** The day a Date names in the host's own time zone, as `YYYY-MM-DD`. */
+function localDay(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function toDate(value: unknown): Date | null {
+  if (value instanceof Date) return value;
+  const candidate = value as { toDate?: () => Date; _seconds?: number } | null;
+  if (candidate && typeof candidate.toDate === "function") {
+    const date = candidate.toDate();
+    return date instanceof Date && !isNaN(date.getTime()) ? date : null;
+  }
+  if (candidate && typeof candidate._seconds === "number") {
+    return new Date(candidate._seconds * 1000);
+  }
+  return null;
+}
+
+/**
+ * Itemisations are compared position by position: the order is what the
+ * document prints, so moving two rows is a correction even when the totals are
+ * untouched. Both sides go through the same normaliser, so a stored row that
+ * predates a shape change does not read as a change on every save.
+ */
+function lineItemsMatch(proposed: unknown, stored: unknown): boolean {
+  const storedItems = Array.isArray(stored) ? stored : [];
+  if (isEmpty(proposed)) return storedItems.length === 0;
+  if (!Array.isArray(proposed)) return false;
+
+  let left: ExtractedLineItem[];
+  let right: ExtractedLineItem[];
+  try {
+    left = normalizeLineItems(proposed, "lineItems");
+    right = normalizeLineItems(storedItems, "lineItems");
+  } catch {
+    // An item the builder will refuse, or a stored row too broken to normalise.
+    // Either way this is not a match the caller can rely on.
+    return false;
+  }
+
+  if (left.length !== right.length) return false;
+
+  return left.every((item, index) => {
+    const other = right[index];
+    return (
+      item.description === other.description &&
+      item.quantity === other.quantity &&
+      item.unitPrice === other.unitPrice &&
+      item.vatPercent === other.vatPercent &&
+      item.vatAmount === other.vatAmount &&
+      item.amount === other.amount
+    );
+  });
 }

@@ -27,6 +27,9 @@ export type CloudFunctionName =
   // File operations
   | "createFile"
   | "updateFile"
+  // The file detail panel's correction save (#149) — the UI half of the hand
+  // correction the MCP tool makes through update_file_extraction.
+  | "updateFileExtractedFields"
   | "deleteFile"
   | "restoreFile"
   | "markFileAsNotInvoice"
