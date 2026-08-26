@@ -212,6 +212,7 @@ export {
   generateUvaXmlCallable as generateUvaXml,
   generateUvaPdfCallable as generateUvaPdf,
   calculateUvaCallable as calculateUva,
+  prepareUvaFilingCallable as prepareUvaFiling,
 } from "./reports";
 
 // Automation registry (for admin page)

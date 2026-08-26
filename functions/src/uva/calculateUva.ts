@@ -25,6 +25,7 @@ import { assessImpliedFx, isSameCurrency } from "../fx/fxPlausibility";
 import type {
   DerivationStep,
   ForeignVatEntry,
+  FxConversionEntry,
   KennzahlFigure,
   NonClaimableVatEntry,
   RateGroup,
@@ -67,6 +68,8 @@ export interface Derivation {
   foreignVat: ForeignVatEntry[];
   /** Documents whose VAT was excluded as non-claimable (#203). Usually empty. */
   nonClaimableVat: NonClaimableVatEntry[];
+  /** Foreign-currency documents read at the effective rate paid. Usually empty. */
+  fxConversions: FxConversionEntry[];
 }
 
 export interface DerivationFailure {
@@ -78,6 +81,8 @@ export interface DerivationFailure {
   foreignVat: ForeignVatEntry[];
   /** Documents whose VAT was excluded as non-claimable (#203). Usually empty. */
   nonClaimableVat: NonClaimableVatEntry[];
+  /** Foreign-currency documents read at the effective rate paid. Usually empty. */
+  fxConversions: FxConversionEntry[];
 }
 
 export function calculateUva(input: UvaCalculationInput): UvaReportResult {
@@ -110,6 +115,8 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
     totalInputVat: 0,
     balance: 0,
     unresolved: [],
+    derivations: [],
+    fxConversions: [],
     nonClaimableVat: [],
     foreignVat: [],
     reverseCharge: [],
@@ -134,6 +141,36 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
     });
   };
 
+  /**
+   * One line in the per-transaction record the Kennzahlen were summed from
+   * (#85). Every transaction the loop touches gets exactly one, including the
+   * ones that book nothing — an entry that books zero because its class is
+   * exempt is a different fact from one that books zero because no receipt
+   * turned up, and the reconciliation has to be able to tell them apart.
+   */
+  const recordDerivation = (
+    tx: UvaTransaction,
+    e: {
+      step: DerivationStep | null;
+      reason?: UnresolvedReason | null;
+      outputVat?: number;
+      inputVat?: number;
+    }
+  ) => {
+    result.derivations.push({
+      transactionId: tx.id,
+      date: tx.date,
+      partner: tx.partnerName ?? null,
+      amount: tx.amount,
+      side: tx.amount > 0 ? "income" : "expense",
+      step: e.step,
+      reason: e.reason ?? null,
+      fileIds: (tx.files ?? []).map((f) => f.id),
+      outputVat: e.outputVat ?? 0,
+      inputVat: e.inputVat ?? 0,
+    });
+  };
+
   for (const tx of transactions) {
     const isIncome = tx.amount > 0;
     const bank = Math.abs(tx.amount);
@@ -142,6 +179,7 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
     // Kennzahl in any lane (fork #87). Surface it rather than add raw cents.
     if (!isSameCurrency(tx.currency, "EUR")) {
       markUnresolved(tx, "foreign-currency", null);
+      recordDerivation(tx, { step: null, reason: "foreign-currency" });
       continue;
     }
 
@@ -167,6 +205,11 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
           origin: regime.origin,
           basis: regime.basis,
         });
+        recordDerivation(tx, {
+          step: "reverse-charge",
+          outputVat: vat,
+          inputVat: vat,
+        });
       } else if (regime.origin === "eu") {
         // ig. Erwerb Art 1 BMR: Erwerbsteuer owed + deducted (KZ 065).
         const rate = regime.domesticRate ?? 20;
@@ -177,6 +220,11 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
         addKz("065", tax, "eu-acquisition");
         totalOutputVat += tax;
         totalInputVat += tax;
+        recordDerivation(tx, {
+          step: "eu-acquisition",
+          outputVat: tax,
+          inputVat: tax,
+        });
       } else {
         // Import: Einfuhrumsatzsteuer is deductible only when documented —
         // KZ 061 when paid, KZ 083 when deferred via §26 to the tax account.
@@ -184,8 +232,13 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
           const kzCode = regime.importVatScheme === "deferred" ? "083" : "061";
           addKz(kzCode, regime.importVatPaid, "import");
           totalInputVat += regime.importVatPaid;
+          recordDerivation(tx, {
+            step: "import",
+            inputVat: regime.importVatPaid,
+          });
         } else {
           markUnresolved(tx, "no-vat-data", null);
+          recordDerivation(tx, { step: null, reason: "no-vat-data" });
         }
       }
       continue;
@@ -195,6 +248,7 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
     const treatment = tx.noReceiptCategory?.vatTreatment;
     if (treatment === "exempt-class" || treatment === "documented-elsewhere") {
       // Zero input VAT by construction (R9) / documented outside this report.
+      recordDerivation(tx, { step: treatment });
       continue;
     }
     if (treatment === "needs-receipt") {
@@ -204,7 +258,10 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
       // receipt was lost still owes output VAT, so it takes the same defaulted
       // lane step 4 uses instead of dropping out of the report entirely.
       if (isIncome) defaultIncomeAt20(tx, bank, "needs-receipt");
-      else markUnresolved(tx, "needs-receipt", guessVat20(bank));
+      else {
+        markUnresolved(tx, "needs-receipt", guessVat20(bank));
+        recordDerivation(tx, { step: null, reason: "needs-receipt" });
+      }
       continue;
     }
 
@@ -216,7 +273,12 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
     result.nonClaimableVat.push(...derivation.nonClaimableVat);
 
     if (derivation.ok) {
-      applyGroups(tx, derivation, isIncome);
+      // A conversion is reported only when it was USED. A document converted
+      // on the way to a derivation that then failed had no rate applied to
+      // anything, and listing it would put a file in the filing's exception
+      // with no cents behind it.
+      result.fxConversions.push(...derivation.fxConversions);
+      applyGroups(tx, derivation, isIncome, null);
       continue;
     }
 
@@ -225,6 +287,7 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
       defaultIncomeAt20(tx, bank, derivation.reason);
     } else {
       markUnresolved(tx, derivation.reason, derivation.foregoneVat);
+      recordDerivation(tx, { step: null, reason: derivation.reason });
     }
   }
 
@@ -262,13 +325,20 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
         groups: [{ rate: 20, net, vat, gross: bank }],
         foreignVat: [],
         nonClaimableVat: [],
+        fxConversions: [],
       },
-      true
+      true,
+      reason
     );
     markUnresolved(tx, reason, null, vat);
   }
 
-  function applyGroups(tx: UvaTransaction, d: Derivation, income: boolean) {
+  function applyGroups(
+    tx: UvaTransaction,
+    d: Derivation,
+    income: boolean,
+    reason: UnresolvedReason | null
+  ) {
     if (income) {
       // Aggregate per KZ before counting so one transaction contributes
       // one count per Kennzahl regardless of its group structure.
@@ -289,11 +359,17 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
       }
       addKz("000", totalNet, d.step);
       for (const [code, cents] of perKz) addKz(code, cents, d.step);
+      recordDerivation(tx, {
+        step: d.step,
+        reason,
+        outputVat: d.groups.reduce((s, g) => s + g.vat, 0),
+      });
     } else {
       let vat = 0;
       for (const g of d.groups) vat += g.vat;
       totalInputVat += vat;
       addKz("060", vat, d.step);
+      recordDerivation(tx, { step: d.step, reason, inputVat: vat });
     }
   }
 }
@@ -316,6 +392,7 @@ export function deriveRateGroups(
   const validRates = ratesValidOn(tx.date);
   const foreignVat: ForeignVatEntry[] = [];
   const nonClaimableVat: NonClaimableVatEntry[] = [];
+  const fxConversions: FxConversionEntry[] = [];
   const isIncome = tx.amount > 0;
   /**
    * A file a human marked non-claimable (#203), on an expense. Nothing it
@@ -331,9 +408,9 @@ export function deriveRateGroups(
       (g) => !validRates.includes(g.rate)
     );
     if (invalid) {
-      return { ok: false, reason: "foreign-or-invalid-rate", foregoneVat: null, foreignVat, nonClaimableVat };
+      return { ok: false, reason: "foreign-or-invalid-rate", foregoneVat: null, foreignVat, nonClaimableVat, fxConversions };
     }
-    return { ok: true, step: "invoice", groups: tx.invoiceRateGroups, foreignVat, nonClaimableVat };
+    return { ok: true, step: "invoice", groups: tx.invoiceRateGroups, foreignVat, nonClaimableVat, fxConversions };
   }
 
   let files = tx.files ?? [];
@@ -355,9 +432,10 @@ export function deriveRateGroups(
     if (foreign.length > 0) {
       const converted = files.length === 1 ? convertToBankCurrency(files[0], tx) : null;
       if (!converted) {
-        return { ok: false, reason: "foreign-currency", foregoneVat: guessVat20(bank), foreignVat, nonClaimableVat };
+        return { ok: false, reason: "foreign-currency", foregoneVat: guessVat20(bank), foreignVat, nonClaimableVat, fxConversions };
       }
-      files = [converted];
+      fxConversions.push(converted.conversion);
+      files = [converted.file];
     }
 
     // The extraction fix (§6) flags unreconciled line items instead of
@@ -370,7 +448,7 @@ export function deriveRateGroups(
     // Refusing the transaction over it would put its VAT back on the chasing
     // list as recoverable, which is the reading the marker exists to remove.
     if (files.some((f) => !isExcluded(f) && f.lineItemsUnreconciled && !hasUsableRateGroups(f))) {
-      return { ok: false, reason: "amount-mismatch", foregoneVat: guessVat20(bank), foreignVat, nonClaimableVat };
+      return { ok: false, reason: "amount-mismatch", foregoneVat: guessVat20(bank), foreignVat, nonClaimableVat, fxConversions };
     }
 
     // Build per-file rate groups (step 1 falls through to step 2 per file).
@@ -443,6 +521,7 @@ export function deriveRateGroups(
             foregoneVat: g.vat || guessVat20(bank),
             foreignVat,
             nonClaimableVat,
+            fxConversions,
           };
         }
         groups.push(g);
@@ -458,7 +537,7 @@ export function deriveRateGroups(
     }
 
     if (!sawVatData) {
-      return { ok: false, reason: "no-vat-data", foregoneVat: guessVat20(bank), foreignVat, nonClaimableVat };
+      return { ok: false, reason: "no-vat-data", foregoneVat: guessVat20(bank), foreignVat, nonClaimableVat, fxConversions };
     }
 
     // Reconcile bank amount vs the SUM of the connected documents (R6).
@@ -486,12 +565,13 @@ export function deriveRateGroups(
           foregoneVat: guessVat20(bank),
           foreignVat,
           nonClaimableVat,
+          fxConversions,
         };
       }
     }
 
     if (fraction >= 1 && prior === 0) {
-      return { ok: true, step, groups, foreignVat, nonClaimableVat };
+      return { ok: true, step, groups, foreignVat, nonClaimableVat, fxConversions };
     }
     // Scale each group; rounding is anchored to the cumulative fraction so
     // instalments sum exactly to the document's VAT once fully paid.
@@ -509,14 +589,14 @@ export function deriveRateGroups(
       ...n,
       excludedVat: scaleAnchored(n.excludedVat, prior, fraction),
     }));
-    return { ok: true, step, groups: scaled, foreignVat, nonClaimableVat: scaledNonClaimable };
+    return { ok: true, step, groups: scaled, foreignVat, nonClaimableVat: scaledNonClaimable, fxConversions };
   }
 
   // Step 3: manual override lane.
   if (tx.vatRateOverride != null) {
     const rate = tx.vatRateOverride;
     if (!validRates.includes(rate)) {
-      return { ok: false, reason: "foreign-or-invalid-rate", foregoneVat: null, foreignVat, nonClaimableVat };
+      return { ok: false, reason: "foreign-or-invalid-rate", foregoneVat: null, foreignVat, nonClaimableVat, fxConversions };
     }
     const vat = Math.round((bank * rate) / (100 + rate));
     return {
@@ -525,10 +605,11 @@ export function deriveRateGroups(
       groups: [{ rate, net: bank - vat, vat, gross: bank }],
       foreignVat,
       nonClaimableVat,
+      fxConversions,
     };
   }
 
-  return { ok: false, reason: "no-file", foregoneVat: guessVat20(bank), foreignVat, nonClaimableVat };
+  return { ok: false, reason: "no-file", foregoneVat: guessVat20(bank), foreignVat, nonClaimableVat, fxConversions };
 }
 
 /**
@@ -537,14 +618,26 @@ export function deriveRateGroups(
  * be derived. Per group, vat and gross are rounded independently and net is
  * the difference, so net + vat === gross survives the conversion.
  */
-function convertToBankCurrency(f: UvaFile, tx: UvaTransaction): UvaFile | null {
+function convertToBankCurrency(
+  f: UvaFile,
+  tx: UvaTransaction
+): { file: UvaFile; conversion: FxConversionEntry } | null {
   const gross = f.totalGross ?? 0;
   if (gross <= 0) return null;
   const fx = assessImpliedFx(gross, f.currency, tx.amount, tx.currency);
   if (!fx.band || fx.impliedRate === null) return null;
   const r = fx.impliedRate;
   const cents = (c: number) => Math.round(c * r);
-  return {
+  const conversion: FxConversionEntry = {
+    transactionId: tx.id,
+    fileId: f.id,
+    documentCurrency: f.currency ?? "EUR",
+    documentGross: gross,
+    bankAmount: Math.abs(tx.amount),
+    impliedRate: r,
+    band: fx.band,
+  };
+  const file: UvaFile = {
     ...f,
     currency: tx.currency ?? null,
     totalGross: cents(gross),
@@ -560,6 +653,7 @@ function convertToBankCurrency(f: UvaFile, tx: UvaTransaction): UvaFile | null {
         })
       : f.rateGroups,
   };
+  return { file, conversion };
 }
 
 function scaleAnchored(cents: number, prior: number, fraction: number): number {

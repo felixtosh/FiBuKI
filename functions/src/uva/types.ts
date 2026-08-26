@@ -199,6 +199,8 @@ export type DerivationStep =
   | "invoice"
   | "defaulted-20"
   | "exempt-class"
+  /** Accounted for outside this report — transfers, private, PSP settlements */
+  | "documented-elsewhere"
   /** A file marked non-claimable: the VAT is real, the deduction is not (#203) */
   | "non-claimable"
   | "reverse-charge"
@@ -236,6 +238,58 @@ export interface UnresolvedEntry {
   foregoneVat: number | null;
   /** Income only: output VAT that was defaulted at 20% (cents). */
   defaultedOutputVat?: number;
+}
+
+/**
+ * One transaction's derivation, as it happened (#85).
+ *
+ * The Kennzahlen are sums; this is the per-transaction record they were summed
+ * from. Two things need it and neither can recompute it without running a
+ * second copy of the ladder: the Vorsteuer trace ("every claimed cent traces
+ * to a document, and what does not is listed") and the reconciliation against
+ * an earlier run, which diffs on the derivation SOURCE rather than on field
+ * equality — a figure that moved while its source stayed put is a different
+ * event from one whose rung changed under it.
+ */
+export interface TransactionDerivationEntry {
+  transactionId: string;
+  /** Europe/Vienna calendar day of the bank movement (R3 — Ist). */
+  date: string;
+  partner: string | null;
+  /** Signed cents as on the bank line. */
+  amount: number;
+  side: "income" | "expense";
+  /** The rung that produced the claim; null when nothing was derived. */
+  step: DerivationStep | null;
+  /** Why it landed on the worklist. Set on a defaulted income too. */
+  reason: UnresolvedReason | null;
+  /** The documents the figures rest on. Empty = nothing to trace to. */
+  fileIds: string[];
+  /** Cents this transaction added to output VAT. */
+  outputVat: number;
+  /** Cents this transaction added to input VAT (Vorsteuer + self-assessed). */
+  inputVat: number;
+}
+
+/**
+ * A foreign-currency document read at the effective rate the payment carries
+ * (fork #87), reported so the filing can state the method it used rather than
+ * leaving it implicit — § 20 Abs 6 UStG method 3, the Tageskurs evidenced by
+ * the Bankmitteilung (here: the card statement).
+ */
+export interface FxConversionEntry {
+  transactionId: string;
+  fileId: string;
+  /** The document's own currency, ISO code. */
+  documentCurrency: string;
+  /** Document total in its own currency, cents. */
+  documentGross: number;
+  /** The bank line actually paid, cents in the bank currency. */
+  bankAmount: number;
+  /** bank / document — the effective rate, markup included. */
+  impliedRate: number;
+  /** Plausibility band the implied rate fell in (fork #87). */
+  band: "tight" | "loose";
 }
 
 export interface ForeignVatEntry {
@@ -287,6 +341,17 @@ export interface UvaReportResult {
   /** KZ095: Zahllast (>0) / Gutschrift (<0), single netted figure. */
   balance: number;
   unresolved: UnresolvedEntry[];
+  /**
+   * Every transaction the period contained, with the rung that booked it
+   * (#85). The Kennzahlen are the sums; this is what they were summed from.
+   */
+  derivations: TransactionDerivationEntry[];
+  /**
+   * Foreign-currency documents converted at the effective rate actually paid.
+   * The conversion is a filing exception with a legal basis, so it is reported
+   * rather than folded silently into a Kennzahl.
+   */
+  fxConversions: FxConversionEntry[];
   /**
    * Documents whose VAT was excluded from Vorsteuer because a human marked
    * them non-claimable (#203). The exclusion is reported rather than applied

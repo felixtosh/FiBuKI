@@ -7,6 +7,11 @@
  * the foreign-VAT tag list and the reverse-charge list. This replaces
  * the old preview whose KZ labels encoded the broken hand-mapping
  * (KZ000 as the 20% line, fabricated KZ096, swapped 10%/13%).
+ *
+ * Since #85 it also renders the two things a Steuerberater needs before
+ * signing: the exceptions this filing carries WITH their statutory basis,
+ * and the trace from every claimed Vorsteuer cent to the document it rests
+ * on — with anything that rests on none listed rather than dropped.
  */
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,6 +21,10 @@ import { cn } from "@/lib/utils";
 import { ReportPeriod, formatPeriod } from "@/types/report";
 import { TaxCountryCode } from "@/types/user-data";
 import type { UvaReportResult } from "@/functions/src/uva/types";
+import {
+  buildVorsteuerTrace,
+  deriveFilingExceptions,
+} from "@/functions/src/uva/filing";
 
 interface UVAPreviewProps {
   result: UvaReportResult;
@@ -67,6 +76,7 @@ const STEP_LABELS: Record<string, string> = {
   invoice: "from outgoing invoice",
   "defaulted-20": "DEFAULTED to 20%",
   "exempt-class": "exempt class",
+  "documented-elsewhere": "documented outside this report",
   "non-claimable": "not claimable — excluded",
   "reverse-charge": "reverse charge",
   "eu-acquisition": "EU acquisition",
@@ -79,6 +89,13 @@ const NON_CLAIMABLE_LABELS: Record<string, string> = {
   levy: "Public levy printed in the VAT column",
   "discount-to-zero": "100% discount — nothing due",
   private: "Private consumption",
+};
+
+/** Why a claimed input-VAT figure has no document under it (#85). */
+const UNTRACED_LABELS: Record<string, string> = {
+  "no-document": "No document — rate entered by hand",
+  "self-assessed": "Self-assessed (§19 / ig. Erwerb) — netted against output VAT",
+  "import-declaration": "Evidenced by the customs declaration",
 };
 
 const REASON_LABELS: Record<string, string> = {
@@ -133,6 +150,10 @@ export function UVAPreview({ result, period, country }: UVAPreviewProps) {
   const codes = KZ_ORDER.filter(
     (code) => result.kennzahlen[code] && (result.kennzahlen[code].value !== 0 || code === "095")
   );
+  // Both are derived from the run, never typed in — an exception nobody has to
+  // remember is an exception that cannot go missing next quarter (#85).
+  const exceptions = deriveFilingExceptions(result);
+  const vorsteuer = buildVorsteuerTrace(result);
 
   return (
     <div className="space-y-6">
@@ -198,6 +219,95 @@ export function UVAPreview({ result, period, country }: UVAPreviewProps) {
               {formatAmount(Math.abs(result.balance))} EUR
             </p>
           </div>
+        </CardContent>
+      </Card>
+
+      {exceptions.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">
+              Filing exceptions ({exceptions.length})
+            </CardTitle>
+            <CardDescription>
+              Departures from the plain reading of the documents, each with the basis
+              that allows it. They are derived from the data every time the period is
+              calculated, so next quarter does not rediscover them.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              {exceptions.map((e) => (
+                <div key={`${e.kind}-${e.reason ?? ""}`} className="space-y-1">
+                  <div className="flex items-center gap-3 text-sm">
+                    <Badge variant="outline" className="text-xs">
+                      {e.reason ?? e.kind}
+                    </Badge>
+                    <span className="flex-1">{e.statement}</span>
+                    <span className="w-28 text-right font-mono tabular-nums">
+                      {formatAmount(e.amount)} EUR
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">{e.basis}</p>
+                  {e.exposure && (
+                    <p className="text-xs text-muted-foreground">
+                      Bounded exposure of the method: {formatAmount(e.exposure.low)} to{" "}
+                      {formatAmount(e.exposure.high)} EUR.
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Vorsteuer trace</CardTitle>
+          <CardDescription>
+            § 12 Abs 1 Z 1 deducts tax invoiced under § 11. Every claimed cent is
+            attributed to the document it rests on; what rests on no document is listed
+            here rather than left inside a total.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex items-center gap-4 text-sm">
+            <span className="flex-1">
+              Traced to a document ({vorsteuer.traced.length} transactions)
+            </span>
+            <span className="w-28 text-right font-mono tabular-nums">
+              {formatAmount(vorsteuer.tracedVat)} EUR
+            </span>
+          </div>
+          {vorsteuer.untraced.map((u) => (
+            <div
+              key={u.transactionId}
+              className="flex items-center gap-3 py-1.5 px-2 text-sm border-b last:border-b-0"
+            >
+              <span className="w-24 font-mono text-xs text-muted-foreground">{u.date}</span>
+              <span className="flex-1 truncate">{u.partner ?? "—"}</span>
+              <Badge
+                variant={u.basis === "no-document" ? "destructive" : "outline"}
+                className="text-xs"
+              >
+                {UNTRACED_LABELS[u.basis] ?? u.basis}
+              </Badge>
+              <span className="w-28 text-right font-mono tabular-nums">
+                {formatAmount(u.vat)} EUR
+              </span>
+            </div>
+          ))}
+          {vorsteuer.undocumentedVat !== 0 && (
+            <p className="text-xs text-amount-negative px-2">
+              {formatAmount(vorsteuer.undocumentedVat)} EUR of input VAT rests on no
+              document at all. Not filable as it stands.
+            </p>
+          )}
+          {!vorsteuer.reconciles && (
+            <p className="text-xs text-amount-negative px-2">
+              The trace does not add up to KZ 060 — do not file this figure sheet.
+            </p>
+          )}
         </CardContent>
       </Card>
 

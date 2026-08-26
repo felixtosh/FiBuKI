@@ -8,3 +8,4 @@
 export { generateUvaXmlCallable } from "./generateUvaXml";
 export { generateUvaPdfCallable } from "./generateUvaPdf";
 export { calculateUvaCallable } from "./calculateUvaCallable";
+export { prepareUvaFilingCallable } from "./prepareUvaFiling";
