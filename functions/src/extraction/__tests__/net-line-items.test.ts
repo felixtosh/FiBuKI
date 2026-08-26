@@ -29,7 +29,7 @@ const item = (amount: number, vatPercent: number | null = null, vatAmount = 0) =
 
 describe("net line items on a gross document total (fork #137)", () => {
   it("stamps the document's rate on unrated rows when grossing up hits the total", () => {
-    // IV-26-1168.pdf: one net row of 2650.00 against a document total of
+    // One net row of 2650.00 against a document total of
     // 3180.00, the document itself stating 20%.
     const r = reconcileLineItemsWithDocumentTotal([item(265000)], 318000, null, 20);
 
@@ -80,7 +80,7 @@ describe("net line items on a gross document total (fork #137)", () => {
   });
 
   it("still flags rows the document rate cannot explain", () => {
-    // IV-26-1170.pdf: rows summing to 5300.00 against a 3180.00 total. No
+    // Rows summing to 5300.00 against a 3180.00 total. No
     // reading of net-versus-gross closes that, so it stays a human's problem.
     const r = reconcileLineItemsWithDocumentTotal([item(530000)], 318000, null, 20);
 
@@ -89,7 +89,7 @@ describe("net line items on a gross document total (fork #137)", () => {
   });
 
   it("does not invent a rate the document never printed", () => {
-    // IV-26-1171.pdf: 2050.00 of rows against 2460.00, which happens to be
+    // 2050.00 of rows against 2460.00, which happens to be
     // exactly 20% — but the document states no rate, so nothing is stamped.
     const r = reconcileLineItemsWithDocumentTotal([item(205000)], 246000, null, null);
 

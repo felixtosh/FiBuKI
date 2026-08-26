@@ -27,7 +27,7 @@ function run(
 }
 
 /**
- * paperless-ap-1004 — Filmproduktionshaftpflichtversicherung, 11%.
+ * f-insurance-11pct — Filmproduktionshaftpflichtversicherung, 11%.
  *
  * The only file in the corpus outside the Austrian rate set. 11% is
  * Versicherungssteuer; insurance is VAT-exempt (§ 6 Abs 1 Z 9 lit. c UStG), so
@@ -35,13 +35,13 @@ function run(
  * printed rate-group block, which is the strongest rung of the ladder.
  */
 const INSURANCE: UvaTransaction = {
-  id: "t-ap-1004",
+  id: "t-insurance-11pct",
   date: "2026-02-18",
   amount: -22200,
   partnerName: "Filmproduktionshaftpflicht",
   files: [
     {
-      id: "paperless-ap-1004",
+      id: "f-insurance-11pct",
       totalGross: 22200,
       supplierVatId: "ATU12345678",
       rateGroups: [{ rate: 11, net: 20000, vat: 2200, gross: 22200 }],
@@ -50,20 +50,20 @@ const INSURANCE: UvaTransaction = {
 };
 
 /**
- * FIBU_20260109-8624 — a 100% discount leaves EUR 0 due.
+ * f-discount-to-zero — a 100% discount leaves EUR 0 due.
  *
  * The document still prints its 20% line; the standing decision is that its VAT
  * must not be claimed. Modelled as a payment of the residual only, so there is
  * a bank line for the derivation to hang off at all.
  */
 const DISCOUNTED: UvaTransaction = {
-  id: "t-fibu-8624",
+  id: "t-discount-to-zero",
   date: "2026-01-09",
   amount: -12000,
   partnerName: "FIBU 20260109-8624",
   files: [
     {
-      id: "FIBU_20260109-8624",
+      id: "f-discount-to-zero",
       totalGross: 12000,
       vatPercent: 20,
       vatAmount: 2000,
@@ -80,7 +80,7 @@ const marked = (tx: UvaTransaction, reason: "insurance-tax" | "discount-to-zero"
 // The corpus anchors, before and after
 // ---------------------------------------------------------------------------
 
-describe("paperless-ap-1004 — Versicherungssteuer at 11%", () => {
+describe("f-insurance-11pct — Versicherungssteuer at 11%", () => {
   it("today: claims nothing, but sits on the chasing list as 22.00 recoverable", () => {
     const before = run([INSURANCE]);
 
@@ -100,8 +100,8 @@ describe("paperless-ap-1004 — Versicherungssteuer at 11%", () => {
     expect(after.unresolved).toHaveLength(0);
     expect(after.nonClaimableVat).toEqual([
       {
-        transactionId: "t-ap-1004",
-        fileId: "paperless-ap-1004",
+        transactionId: "t-insurance-11pct",
+        fileId: "f-insurance-11pct",
         reason: "insurance-tax",
         excludedVat: 2200,
       },
@@ -128,7 +128,7 @@ describe("paperless-ap-1004 — Versicherungssteuer at 11%", () => {
   });
 });
 
-describe("FIBU_20260109-8624 — 100% discount, EUR 0 due", () => {
+describe("f-discount-to-zero — 100% discount, EUR 0 due", () => {
   it("today: the printed 20% reaches Vorsteuer", () => {
     const before = run([DISCOUNTED]);
 
@@ -146,8 +146,8 @@ describe("FIBU_20260109-8624 — 100% discount, EUR 0 due", () => {
     expect(after.unresolved).toHaveLength(0);
     expect(after.nonClaimableVat).toEqual([
       {
-        transactionId: "t-fibu-8624",
-        fileId: "FIBU_20260109-8624",
+        transactionId: "t-discount-to-zero",
+        fileId: "f-discount-to-zero",
         reason: "discount-to-zero",
         excludedVat: 2000,
       },
@@ -234,7 +234,7 @@ describe("non-claimable VAT rules", () => {
     expect(d.ok).toBe(true);
     if (!d.ok) return;
     expect(d.nonClaimableVat).toEqual([
-      { transactionId: "t-instalment-1", fileId: "FIBU_20260109-8624", reason: "discount-to-zero", excludedVat: 1000 },
+      { transactionId: "t-instalment-1", fileId: "f-discount-to-zero", reason: "discount-to-zero", excludedVat: 1000 },
     ]);
   });
 
@@ -246,7 +246,7 @@ describe("non-claimable VAT rules", () => {
         amount: -34200,
         files: [
           {
-            id: "paperless-ap-1004",
+            id: "f-insurance-11pct",
             totalGross: 22200,
             supplierVatId: "ATU12345678",
             rateGroups: [{ rate: 11, net: 20000, vat: 2200, gross: 22200 }],

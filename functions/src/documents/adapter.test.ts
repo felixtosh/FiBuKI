@@ -210,7 +210,7 @@ describe("classifyFileRecord — corpus shapes", () => {
   });
 
   it("classifies a legacy Amazon Rechnung over 400 EUR today, from the invoice number extraction already stored", () => {
-    // paperless-ap-1181.pdf — EUR 503.20, ATU UID, printed rate group, and an
+    // A legacy record — EUR 503.20, ATU UID, printed rate group, and an
     // invoice number that only exists under extractedAdditionalFields because
     // the record predates the dedicated field.
     const result = classifyFileRecord({

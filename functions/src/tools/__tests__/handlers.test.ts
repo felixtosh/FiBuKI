@@ -939,7 +939,7 @@ describe("Tool Registry Handlers", () => {
 
   describe("updateFileExtraction", () => {
     it("corrects only what was passed and makes the human the authority", async () => {
-      // IV-26-1170: a Schlussrechnung due 3180.00 whose items describe the
+      // A Schlussrechnung due 3180.00 whose items describe the
       // full 6360.00 scope, flagged and carrying a printed rate-group block.
       store.setDoc(
         "files",
@@ -1281,7 +1281,7 @@ describe("Tool Registry Handlers", () => {
   // it, which is what separates this pair from update_file_extraction.
   describe("markFileVatNotClaimable / unmarkFileVatNotClaimable", () => {
     it("stores the reason and leaves the extracted figures alone", async () => {
-      // paperless-ap-1004: 11% Versicherungssteuer, printed rate-group block.
+      // f-insurance-11pct: 11% Versicherungssteuer, printed rate-group block.
       store.setDoc(
         "files",
         "f-1",

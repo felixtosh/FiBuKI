@@ -2,7 +2,7 @@
  * Test harness for the UVA calculation module (fork #64).
  *
  * Built BEFORE the arithmetic per the spec's hard rule. Fixtures mirror the
- * live corpus anchors in homelab work/finance/uva-research/ plus the
+ * anchors taken from real documents plus the
  * constructed cases from spec §9. No characterization test of the old
  * calculateUVAReport — it is wrong by construction.
  */
@@ -182,7 +182,7 @@ describe("step 0: zero-VAT classes", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Step 1 — line items, multi-rate (corpus: Sapori d'Italia / paperless-ap-694)
+// Step 1 — line items, multi-rate (a restaurant bill: food at 10%, drinks at 20%)
 // ---------------------------------------------------------------------------
 
 describe("step 1: line items with per-rate groups", () => {
