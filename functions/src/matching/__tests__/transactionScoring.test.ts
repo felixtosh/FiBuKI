@@ -778,7 +778,7 @@ describe("scoreTransaction", () => {
   });
 
   describe("foreign-currency subscriptions (fork #87)", () => {
-    // Live pair: paperless-ap-1108.pdf OpenAI USD 24.00 2026-04-02 vs
+    // The cross-currency pair: a USD 24.00 document dated 2026-04-02 vs
     // "OPENAI *CHATGPT SUBSCR" EUR 20.86 2026-04-03. Scored 58
     // (date_close 33 + partner 25) with zero amount points before #87.
     const usdFile: FileMatchingData = {

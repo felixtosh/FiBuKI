@@ -23,6 +23,11 @@ jobs:
       # silently, and Next inlines undefined into the client bundle (fork #54).
       - name: Web build args reach the Dockerfile
         run: node scripts/check-web-build-args.js
+      # Test fixtures were written against a real bookkeeping corpus, and both
+      # repos are public. An anchor like a Paperless document id resolves to
+      # nothing for a reader and everything for the instance it came from.
+      - name: No anchors to one operator's private documents
+        run: node scripts/check-corpus-anchors.js
       - run: npm ci
       - run: npx tsc --noEmit
       - run: npm run lint

@@ -24,7 +24,7 @@ import {
   validateRateGroups,
 } from "../extractionCore";
 
-// Sapori d'Italia shape: food at 10%, drinks at 20%, 47,50 € total.
+// Restaurant-bill shape: food at 10%, drinks at 20%, 47,50 € total.
 const PRINTED_BLOCK = [
   { rate: 10, net: 3500, vat: 350, gross: 3850 },
   { rate: 20, net: 750, vat: 150, gross: 900 },

@@ -29,7 +29,7 @@ describe("buildExtractionCorrection", () => {
   });
 
   it("treats zero as a correction, not as unset", () => {
-    // Dokument FIBU_20260109-8624: the VAT is read correctly and is not
+    // A discounted document: the VAT is read correctly and is not
     // claimable — 100% discount, EUR 0 due.
     const { updates } = buildExtractionCorrection({ vatPercent: 0, vatAmount: 0 });
 
@@ -44,7 +44,7 @@ describe("buildExtractionCorrection", () => {
   });
 
   it("does not re-derive the corrected total from the line items", () => {
-    // IV-26-1170: a Schlussrechnung due 3180.00 whose items describe the full
+    // A Schlussrechnung due 3180.00 whose items describe the full
     // 6360.00 scope. Consolidating would silently undo the correction.
     const { updates } = buildExtractionCorrection({
       amount: 318000,

@@ -128,7 +128,7 @@ describe("deriveFilingExceptions", () => {
           amount: -22200,
           files: [
             {
-              id: "paperless-ap-1004",
+              id: "f-insurance-11pct",
               totalGross: 22200,
               supplierVatId: "ATU12345678",
               rateGroups: [{ rate: 11, net: 20000, vat: 2200, gross: 22200 }],
@@ -143,7 +143,7 @@ describe("deriveFilingExceptions", () => {
     expect(exceptions[0]).toMatchObject({
       kind: "non-claimable-vat",
       reason: "insurance-tax",
-      fileIds: ["paperless-ap-1004"],
+      fileIds: ["f-insurance-11pct"],
       amount: 2200,
       exposure: null,
     });
