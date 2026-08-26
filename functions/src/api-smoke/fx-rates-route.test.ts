@@ -100,6 +100,27 @@ describe("GET /api/fx/rates", () => {
     expect(res.status).toBe(400);
   });
 
+  it("cannot be made to write a prototype-polluting key", async () => {
+    // The currency codes become object KEYS in the response, and they come from
+    // the query string. Two things stop that being an injection: the `^[A-Z]{3}$`
+    // filter, which no dangerous name passes, and the null-prototype object the
+    // keys are written into (CodeQL js/remote-property-injection, alert #296).
+    seedMonth("2026-08", { "2026-08-03": { USD: 1.16 } });
+
+    for (const bad of ["__proto__", "constructor", "prototype"]) {
+      const res = await get(`start=2026-08-01&end=2026-08-31&currencies=${bad}`);
+      // Filtered out entirely, so the set is empty and the request is refused.
+      expect(res.status).toBe(400);
+    }
+
+    // Mixed with a real code, the bad one is dropped and the good one survives.
+    const res = await get("start=2026-08-01&end=2026-08-31&currencies=__proto__,USD");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { days: Array<{ rates: Record<string, number> }> };
+    expect(Object.keys(body.days[0].rates)).toEqual(["USD"]);
+    expect(({} as Record<string, unknown>).USD).toBeUndefined();
+  });
+
   it("requires a signed-in caller", async () => {
     const { GET } = await import("@/app/api/fx/rates/route");
     const anonymous = new Request(`${URL_BASE}?start=2026-08-01&end=2026-08-31&currencies=USD`);
