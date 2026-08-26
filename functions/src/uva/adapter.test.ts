@@ -36,6 +36,11 @@ describe("toUvaFile", () => {
     expect(f.supplierVatId).toBe("DE123456789");
     expect(f.totalGross).toBe(1000);
   });
+
+  it("carries extractedCurrency (fork #87)", () => {
+    expect(toUvaFile({ id: "f-usd", extractedAmount: 3600, extractedCurrency: "USD" }).currency).toBe("USD");
+    expect(toUvaFile({ id: "f-eur", extractedAmount: 3600 }).currency).toBeNull();
+  });
 });
 
 describe("deriveForeignRegime", () => {
@@ -155,6 +160,12 @@ describe("buildUvaTransaction", () => {
     );
     expect(tx.files).toHaveLength(1);
     expect(tx.files?.[0].totalGross).toBe(1200);
+  });
+
+  it("carries the transaction currency (fork #87)", () => {
+    const opts = baseOpts();
+    expect(buildUvaTransaction({ ...txRecord(), currency: "EUR" }, opts).currency).toBe("EUR");
+    expect(buildUvaTransaction(txRecord(), opts).currency).toBeNull();
   });
 
   it("passes prior instalment fractions through", () => {

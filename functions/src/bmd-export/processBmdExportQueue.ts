@@ -107,6 +107,9 @@ async function processBmdExport(
       vatRate?: number;
       vatAmount?: number;
       vatId?: string;
+      currency?: string;
+      /** Manual reverse-charge flag / veto, read by the D3 classifier (#66). */
+      isReverseCharge?: boolean;
       noReceiptCategoryId?: string | null;
       noReceiptCategoryTemplateId?: string | null;
     }
@@ -150,6 +153,19 @@ async function processBmdExport(
           fileName: data?.fileName || "document",
           extractedDate: data?.extractedDate,
           storagePath: data?.storagePath,
+          // Extraction fields feed the shared VAT ladder (fork #66). Without
+          // them every booking row falls back to 0% instead of reading the
+          // receipt it is attached to.
+          extractedAmount: data?.extractedAmount,
+          extractedCurrency: data?.extractedCurrency,
+          extractedVatAmount: data?.extractedVatAmount,
+          extractedVatPercent: data?.extractedVatPercent,
+          extractedLineItems: data?.extractedLineItems,
+          extractedRateGroups: data?.extractedRateGroups,
+          lineItemsUnreconciled: data?.lineItemsUnreconciled,
+          lineItemsUnreconciledRates: data?.lineItemsUnreconciledRates,
+          extractedVatId: data?.extractedVatId,
+          extractedIssuer: data?.extractedIssuer,
         });
       }
     }
@@ -236,19 +252,19 @@ async function processBmdExport(
         vatRate: tx.vatRate as number | undefined,
         vatAmount: tx.vatAmount as number | undefined,
         vatId: tx.vatId as string | undefined,
+        currency: tx.currency as string | undefined,
+        isReverseCharge: tx.isReverseCharge as boolean | undefined,
         noReceiptCategoryId: tx.noReceiptCategoryId,
         noReceiptCategoryTemplateId: tx.noReceiptCategoryTemplateId,
       })
     );
 
-    // Convert filesMap to simple FileForExport map
+    // Drop only storagePath — the extraction fields must survive, the VAT
+    // ladder reads them (fork #66).
     const simpleFilesMap = new Map<string, FileForExport>();
     filesMap.forEach((file, id) => {
-      simpleFilesMap.set(id, {
-        id: file.id,
-        fileName: file.fileName,
-        extractedDate: file.extractedDate,
-      });
+      const { storagePath: _storagePath, ...forExport } = file;
+      simpleFilesMap.set(id, forExport);
     });
 
     const buchungenCsv = generateBuchungenCsv(

@@ -21,8 +21,10 @@ import {
   ratesValidInPeriod,
   ratesValidOn,
 } from "./rateSet";
+import { assessImpliedFx, isSameCurrency } from "../fx/fxPlausibility";
 import type {
   DerivationStep,
+  ForeignVatEntry,
   KennzahlFigure,
   RateGroup,
   UnresolvedReason,
@@ -55,18 +57,22 @@ const EU_ACQUISITION_BASE_KZ: Record<number, string> = {
   4.9: "125",
 };
 
-interface Derivation {
+export interface Derivation {
   ok: true;
   step: DerivationStep;
   /** Rate groups scaled to the claimed fraction. */
   groups: RateGroup[];
+  /** D2 foreign-VAT sightings made while deriving. Usually empty. */
+  foreignVat: ForeignVatEntry[];
 }
 
-interface DerivationFailure {
+export interface DerivationFailure {
   ok: false;
   reason: UnresolvedReason;
   /** Best-guess foregone VAT for the unresolved list, if any. */
   foregoneVat: number | null;
+  /** D2 foreign-VAT sightings made while deriving. Usually empty. */
+  foreignVat: ForeignVatEntry[];
 }
 
 export function calculateUva(input: UvaCalculationInput): UvaReportResult {
@@ -126,6 +132,13 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
     const isIncome = tx.amount > 0;
     const bank = Math.abs(tx.amount);
 
+    // The report is in EUR; a bank line in another currency cannot feed a
+    // Kennzahl in any lane (fork #87). Surface it rather than add raw cents.
+    if (!isSameCurrency(tx.currency, "EUR")) {
+      markUnresolved(tx, "foreign-currency", null);
+      continue;
+    }
+
     // --- D3: foreign regimes, each in its own bucket, never mixed --------
     if (tx.foreignRegime) {
       const regime = tx.foreignRegime;
@@ -179,12 +192,21 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
       continue;
     }
     if (treatment === "needs-receipt") {
-      markUnresolved(tx, "needs-receipt", guessVat20(bank));
+      // The gate is direction-aware (fork #129). An Eigenbeleg is a self-issued
+      // voucher, so an EXPENSE claims no Vorsteuer (R9) and only earns a place
+      // on the chasing list. INCOME is the understating direction: a sale whose
+      // receipt was lost still owes output VAT, so it takes the same defaulted
+      // lane step 4 uses instead of dropping out of the report entirely.
+      if (isIncome) defaultIncomeAt20(tx, bank, "needs-receipt");
+      else markUnresolved(tx, "needs-receipt", guessVat20(bank));
       continue;
     }
 
     // --- Steps 1-3: derive rate groups -----------------------------------
-    const derivation = deriveRateGroups(tx, result);
+    // The ladder is pure and shared — the BMD export runs the same one, so the
+    // two trails cannot disagree about a transaction's VAT (fork #66).
+    const derivation = deriveRateGroups(tx);
+    result.foreignVat.push(...derivation.foreignVat);
 
     if (derivation.ok) {
       applyGroups(tx, derivation, isIncome);
@@ -193,15 +215,7 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
 
     // --- Step 4: unresolved bucket (D1 asymmetry) -------------------------
     if (isIncome) {
-      // Understating output VAT is the worse error: default 20%, flagged.
-      const net = Math.round((bank * 100) / 120);
-      const vat = bank - net;
-      applyGroups(
-        tx,
-        { ok: true, step: "defaulted-20", groups: [{ rate: 20, net, vat, gross: bank }] },
-        true
-      );
-      markUnresolved(tx, derivation.reason, null, vat);
+      defaultIncomeAt20(tx, bank, derivation.reason);
     } else {
       markUnresolved(tx, derivation.reason, derivation.foregoneVat);
     }
@@ -218,6 +232,33 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
   return result;
 
   // --- helpers bound to the accumulator state ----------------------------
+
+  /**
+   * The D1 asymmetry: income whose VAT cannot be derived still books 20%,
+   * flagged in the unresolved bucket, because understating output VAT is the
+   * worse error. `foregoneVat` stays null — it names input VAT the operator
+   * could still recover with a receipt, which is not what an unremitted output
+   * liability is.
+   */
+  function defaultIncomeAt20(
+    tx: UvaTransaction,
+    bank: number,
+    reason: UnresolvedReason
+  ) {
+    const net = Math.round((bank * 100) / 120);
+    const vat = bank - net;
+    applyGroups(
+      tx,
+      {
+        ok: true,
+        step: "defaulted-20",
+        groups: [{ rate: 20, net, vat, gross: bank }],
+        foreignVat: [],
+      },
+      true
+    );
+    markUnresolved(tx, reason, null, vat);
+  }
 
   function applyGroups(tx: UvaTransaction, d: Derivation, income: boolean) {
     if (income) {
@@ -260,12 +301,12 @@ function guessVat20(bank: number): number {
  * enclave case), D2 foreign-VAT tagging, and bank-vs-invoice reconciliation
  * (R2/R5/R6) including partial payments and instalment caps.
  */
-function deriveRateGroups(
-  tx: UvaTransaction,
-  result: UvaReportResult
+export function deriveRateGroups(
+  tx: UvaTransaction
 ): Derivation | DerivationFailure {
   const bank = Math.abs(tx.amount);
   const validRates = ratesValidOn(tx.date);
+  const foreignVat: ForeignVatEntry[] = [];
 
   // Income: the linked outgoing invoice carries real per-line rates and
   // resolves before any fallback (spec §3 step 4 note).
@@ -274,21 +315,42 @@ function deriveRateGroups(
       (g) => !validRates.includes(g.rate)
     );
     if (invalid) {
-      return { ok: false, reason: "foreign-or-invalid-rate", foregoneVat: null };
+      return { ok: false, reason: "foreign-or-invalid-rate", foregoneVat: null, foreignVat };
     }
-    return { ok: true, step: "invoice", groups: tx.invoiceRateGroups };
+    return { ok: true, step: "invoice", groups: tx.invoiceRateGroups, foreignVat };
   }
 
-  const files = tx.files ?? [];
+  let files = tx.files ?? [];
 
   if (files.length > 0) {
+    // Foreign-currency documents (fork #87): the document figures are in
+    // another unit than the bank line, so they must never be read as-is.
+    // With exactly one file the bank line IS the payment: bank / totalGross
+    // is the effective rate actually paid on the payment date, and the whole
+    // document is rescaled by it. Known limitation: § 20 Abs 6 UStG points
+    // at the BMF monthly / ECB rate, and the card issuer's markup (1-3%) is
+    // inside the effective rate, so the claim runs slightly high; without an
+    // FX feed this is the best rate the data holds and the delta is
+    // bounded by the plausibility band. Anything else — several files, no
+    // total, an unknown currency, or an implied rate that is not a plausible
+    // FX rate (a partial payment in disguise) — is surfaced instead of
+    // guessed.
+    const foreign = files.filter((f) => !isSameCurrency(f.currency, tx.currency));
+    if (foreign.length > 0) {
+      const converted = files.length === 1 ? convertToBankCurrency(files[0], tx) : null;
+      if (!converted) {
+        return { ok: false, reason: "foreign-currency", foregoneVat: guessVat20(bank), foreignVat };
+      }
+      files = [converted];
+    }
+
     // The extraction fix (§6) flags unreconciled line items instead of
     // destroying them — such a file is never trusted here. Since §6 item 3
     // a file can also carry the receipt's own printed per-rate VAT summary,
     // which is an independent (and §11-sufficient) reading of the document:
     // that block clears the file even when its line items are flagged.
     if (files.some((f) => f.lineItemsUnreconciled && !hasUsableRateGroups(f))) {
-      return { ok: false, reason: "amount-mismatch", foregoneVat: guessVat20(bank) };
+      return { ok: false, reason: "amount-mismatch", foregoneVat: guessVat20(bank), foreignVat };
     }
 
     // Build per-file rate groups (step 1 falls through to step 2 per file).
@@ -312,7 +374,7 @@ function deriveRateGroups(
           (g.rate === 19 && isAustrianUid(f.supplierVatId));
         if (!rateOk) {
           if (isForeignUid(f.supplierVatId)) {
-            result.foreignVat.push({
+            foreignVat.push({
               transactionId: tx.id,
               fileId: f.id,
               supplierVatId: f.supplierVatId ?? null,
@@ -325,6 +387,7 @@ function deriveRateGroups(
             ok: false,
             reason: "foreign-or-invalid-rate",
             foregoneVat: g.vat || guessVat20(bank),
+            foreignVat,
           };
         }
         groups.push(g);
@@ -332,7 +395,7 @@ function deriveRateGroups(
     }
 
     if (!sawVatData) {
-      return { ok: false, reason: "no-vat-data", foregoneVat: guessVat20(bank) };
+      return { ok: false, reason: "no-vat-data", foregoneVat: guessVat20(bank), foreignVat };
     }
 
     // Reconcile bank amount vs the SUM of the connected documents (R6).
@@ -358,12 +421,13 @@ function deriveRateGroups(
           ok: false,
           reason: "amount-mismatch",
           foregoneVat: guessVat20(bank),
+          foreignVat,
         };
       }
     }
 
     if (fraction >= 1 && prior === 0) {
-      return { ok: true, step, groups };
+      return { ok: true, step, groups, foreignVat };
     }
     // Scale each group; rounding is anchored to the cumulative fraction so
     // instalments sum exactly to the document's VAT once fully paid.
@@ -373,24 +437,56 @@ function deriveRateGroups(
       vat: scaleAnchored(g.vat, prior, fraction),
       gross: scaleAnchored(g.gross, prior, fraction),
     }));
-    return { ok: true, step, groups: scaled };
+    return { ok: true, step, groups: scaled, foreignVat };
   }
 
   // Step 3: manual override lane.
   if (tx.vatRateOverride != null) {
     const rate = tx.vatRateOverride;
     if (!validRates.includes(rate)) {
-      return { ok: false, reason: "foreign-or-invalid-rate", foregoneVat: null };
+      return { ok: false, reason: "foreign-or-invalid-rate", foregoneVat: null, foreignVat };
     }
     const vat = Math.round((bank * rate) / (100 + rate));
     return {
       ok: true,
       step: "override",
       groups: [{ rate, net: bank - vat, vat, gross: bank }],
+      foreignVat,
     };
   }
 
-  return { ok: false, reason: "no-file", foregoneVat: guessVat20(bank) };
+  return { ok: false, reason: "no-file", foregoneVat: guessVat20(bank), foreignVat };
+}
+
+/**
+ * Rescale a foreign-currency document into the bank line's currency at the
+ * effective rate bank / totalGross. Returns null when no plausible rate can
+ * be derived. Per group, vat and gross are rounded independently and net is
+ * the difference, so net + vat === gross survives the conversion.
+ */
+function convertToBankCurrency(f: UvaFile, tx: UvaTransaction): UvaFile | null {
+  const gross = f.totalGross ?? 0;
+  if (gross <= 0) return null;
+  const fx = assessImpliedFx(gross, f.currency, tx.amount, tx.currency);
+  if (!fx.band || fx.impliedRate === null) return null;
+  const r = fx.impliedRate;
+  const cents = (c: number) => Math.round(c * r);
+  return {
+    ...f,
+    currency: tx.currency ?? null,
+    totalGross: cents(gross),
+    vatAmount: f.vatAmount != null ? cents(f.vatAmount) : f.vatAmount,
+    lineItems: f.lineItems
+      ? f.lineItems.map((li) => ({ ...li, amount: cents(li.amount), vatAmount: cents(li.vatAmount) }))
+      : f.lineItems,
+    rateGroups: f.rateGroups
+      ? f.rateGroups.map((g) => {
+          const vat = cents(g.vat);
+          const gr = cents(g.gross);
+          return { rate: g.rate, vat, gross: gr, net: gr - vat };
+        })
+      : f.rateGroups,
+  };
 }
 
 function scaleAnchored(cents: number, prior: number, fraction: number): number {
