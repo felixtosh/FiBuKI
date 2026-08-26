@@ -607,94 +607,88 @@ function consolidateLineItems(
 }
 
 /**
- * Update a file's extracted fields from user edits.
- * Handles conversion from string inputs to proper types.
+ * Save the file detail panel's extracted-fields form (#149).
+ *
+ * Delegates to the `updateFileExtractedFields` callable rather than writing the
+ * file document here. A hand correction is not "put these values in the
+ * record": it also has to stamp `extractionCorrectedFields` /
+ * `extractionCorrectedAt`, which is what `retry_file_extraction` refuses on
+ * (#147/#184) and what a re-extraction sweep reads to build its exclusion
+ * list. Those stamps are built in exactly one place,
+ * functions/src/files/extractionCorrectionOps, shared by the callable and the
+ * MCP tool. A client-side copy would be a second writer of the same rule, and
+ * the rule includes the comparison of what actually moved — this form posts
+ * every field on every save, so without that comparison a save that typed
+ * nothing would mark the file hand-corrected on all five fields.
+ *
+ * Until this delegated, a correction made by an agent survived the next
+ * re-extraction and the same correction typed by a person did not.
+ *
+ * What stays here is the form's own concern: turning boxes of text into typed
+ * values. Two rules of the old direct write are preserved deliberately — an
+ * empty box clears the stored value, and a box that cannot be parsed is left
+ * out entirely rather than clearing a good figure.
+ *
+ * `ctx` is unused: the callable resolves the caller from the auth token and
+ * enforces ownership server-side. It stays in the signature because every
+ * operation in this module takes it.
  */
 export async function updateFileExtractedFields(
   ctx: OperationsContext,
   fileId: string,
   fields: EditableExtractedFields
 ): Promise<void> {
-  const existing = await getFile(ctx, fileId);
-  if (!existing) {
-    throw new Error(`File ${fileId} not found or access denied`);
-  }
+  const correction: Record<string, unknown> = {};
 
-  // Convert string inputs to proper types
-  const updates: Record<string, unknown> = {
-    updatedAt: Timestamp.now(),
-  };
-
-  // Date: convert from yyyy-MM-dd string to Timestamp
   if (fields.date) {
     const dateObj = new Date(fields.date);
     if (!isNaN(dateObj.getTime())) {
-      updates.extractedDate = Timestamp.fromDate(dateObj);
+      correction.date = dateObj.toISOString().slice(0, 10);
     }
   } else {
-    updates.extractedDate = null;
+    correction.date = null;
   }
 
   const normalizedLineItems = normalizeEditableLineItems(fields.lineItems);
   const hasLineItems = fields.lineItems !== undefined && normalizedLineItems.length > 0;
 
-  if (fields.lineItems !== undefined) {
-    // A manual line-item edit makes the human the authority on this file
-    // (fork #64/#67). Two stored artefacts would otherwise outrank them:
-    // the unreconciled flags, which keep the file in the review bucket
-    // forever no matter how well it was repaired, and the extracted
-    // rate-group block, which VAT derivation prefers over line items.
-    updates.lineItemsUnreconciled = false;
-    updates.lineItemsUnreconciledRates = null;
-    updates.extractedRateGroups = null;
-    // Fork #137: the same applies to a VAT downgrade a re-extraction left
-    // behind — a human who has just re-keyed the rows has settled it, and the
-    // marker would otherwise keep the file in the review bucket forever.
-    updates.vatSourceDowngraded = false;
-    updates.vatFieldsPreserved = false;
-  }
-
   if (hasLineItems) {
+    // The panel shows a total derived from the rows, so that derived total is
+    // what the person is looking at when they save — it goes over as an
+    // explicit correction rather than being re-derived server-side, which the
+    // builder refuses to do on purpose (a Schlussrechnung's total is not the
+    // sum of its items).
     const explicitAmount = parseCurrencyToCents(fields.amount);
     const consolidated = consolidateLineItems(normalizedLineItems, explicitAmount);
-    updates.extractedLineItems = normalizedLineItems;
-    updates.extractedAmount = consolidated.amount;
-    updates.extractedVatAmount = consolidated.vatAmount;
-    updates.extractedVatPercent = consolidated.vatPercent;
+    correction.lineItems = normalizedLineItems;
+    correction.amount = consolidated.amount;
+    correction.vatAmount = consolidated.vatAmount;
+    correction.vatPercent = consolidated.vatPercent;
   } else {
     if (fields.lineItems !== undefined) {
-      updates.extractedLineItems = null;
-      updates.extractedVatAmount = null;
+      correction.lineItems = null;
+      correction.vatAmount = null;
     }
 
-    // Amount: convert from currency units to cents
     if (fields.amount) {
       const amountNum = parseNumberInput(fields.amount);
       if (amountNum !== null) {
-        updates.extractedAmount = Math.round(amountNum * 100);
+        correction.amount = Math.round(amountNum * 100);
       }
     } else {
-      updates.extractedAmount = null;
+      correction.amount = null;
     }
 
-    // VAT percent: convert to number
     if (fields.vatPercent) {
       const vatNum = parseNumberInput(fields.vatPercent);
       if (vatNum !== null) {
-        updates.extractedVatPercent = vatNum;
+        correction.vatPercent = vatNum;
       }
     } else {
-      updates.extractedVatPercent = null;
+      correction.vatPercent = null;
     }
   }
 
-  // String fields: use value or null if empty
-  updates.extractedPartner = fields.partner || null;
-  updates.extractedVatId = fields.vatId || null;
-  updates.extractedIban = fields.iban || null;
-  updates.extractedAddress = fields.address || null;
-
-  // Additional fields: filter out empty ones, map to storage format
   const additionalFields = fields.additionalFields
     .filter((f) => f.label.trim() && f.value.trim())
     .map((f) => ({
@@ -702,10 +696,25 @@ export async function updateFileExtractedFields(
       value: f.value.trim(),
       rawValue: f.value.trim(), // use edited value as raw
     }));
-  updates.extractedAdditionalFields = additionalFields.length > 0 ? additionalFields : null;
 
-  const docRef = doc(ctx.db, FILES_COLLECTION, fileId);
-  await updateDoc(docRef, updates);
+  await callFunction<
+    {
+      fileId: string;
+      correction: Record<string, unknown>;
+      details: Record<string, unknown>;
+    },
+    { success: boolean; changed: string[]; correctedFields: string[] }
+  >("updateFileExtractedFields", {
+    fileId,
+    correction,
+    details: {
+      partner: fields.partner || null,
+      vatId: fields.vatId || null,
+      iban: fields.iban || null,
+      address: fields.address || null,
+      additionalFields: additionalFields.length > 0 ? additionalFields : null,
+    },
+  });
 }
 
 /**

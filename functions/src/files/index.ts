@@ -7,6 +7,7 @@
 
 export { createFileCallable } from "./createFile";
 export { updateFileCallable } from "./updateFile";
+export { updateFileExtractedFieldsCallable } from "./updateFileExtractedFields";
 export { deleteFileCallable } from "./deleteFile";
 export { restoreFileCallable } from "./restoreFile";
 export { markFileAsNotInvoiceCallable } from "./markFileAsNotInvoice";

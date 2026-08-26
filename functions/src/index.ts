@@ -158,6 +158,7 @@ export {
 export {
   createFileCallable as createFile,
   updateFileCallable as updateFile,
+  updateFileExtractedFieldsCallable as updateFileExtractedFields,
   deleteFileCallable as deleteFile,
   restoreFileCallable as restoreFile,
   markFileAsNotInvoiceCallable as markFileAsNotInvoice,
