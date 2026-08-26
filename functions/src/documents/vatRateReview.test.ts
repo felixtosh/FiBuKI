@@ -25,7 +25,7 @@ describe("reviewVatRates", () => {
   });
 
   it("flags 11% — the Versicherungssteuer case this exists for", () => {
-    // paperless-ap-1004: Filmproduktionshaftpflicht, printed rate-group block.
+    // f-insurance-11pct: Filmproduktionshaftpflicht, printed rate-group block.
     const result = reviewVatRates({
       date: "2026-02-18",
       supplierVatId: "ATU12345678",
@@ -112,7 +112,7 @@ describe("toVatRateFacts", () => {
 });
 
 describe("reviewFileRecordVatRates", () => {
-  it("flags the stored paperless-ap-1004 record", () => {
+  it("flags the stored f-insurance-11pct record", () => {
     const result = reviewFileRecordVatRates({
       extractedDate: T("2026-02-18T00:00:00Z"),
       extractedAmount: 22200,

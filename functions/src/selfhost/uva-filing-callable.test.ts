@@ -11,8 +11,8 @@
  * weakened records would have read as noise; and a handover nobody recorded is
  * a handover that happens twice. Both live on the stored record here.
  *
- * The corpus anchors are the ticket's own: paperless-ap-1004 (11%
- * Versicherungssteuer), FIBU_20260109-8624 (100% discount), and a USD document
+ * The anchors are the ticket's own: an insurance policy at 11%
+ * Versicherungssteuer, an invoice discounted to zero, and a USD document
  * settled by card.
  */
 
@@ -64,23 +64,23 @@ async function seedFile(id: string, data: Record<string, unknown>) {
 
 /** The Versicherungssteuer document — 11%, 22.00 that must not reach Vorsteuer. */
 async function seedInsurance() {
-  await seedFile("paperless-ap-1004", {
+  await seedFile("f-insurance-11pct", {
     extractedAmount: 22200,
     extractedRateGroups: [{ rate: 11, net: 20000, vat: 2200, gross: 22200 }],
     vatNotClaimableReason: "insurance-tax",
   });
-  await seedTransaction("t-ap-1004", "2026-02-18", -22200, ["paperless-ap-1004"]);
+  await seedTransaction("t-insurance-11pct", "2026-02-18", -22200, ["f-insurance-11pct"]);
 }
 
 /** The 100% discount — EUR 0 due, so nothing to deduct. */
 async function seedDiscounted() {
-  await seedFile("FIBU_20260109-8624", {
+  await seedFile("f-discount-to-zero", {
     extractedAmount: 12000,
     extractedVatAmount: 2000,
     extractedVatPercent: 20,
     vatNotClaimableReason: "discount-to-zero",
   });
-  await seedTransaction("t-fibu-8624", "2026-01-09", -12000, ["FIBU_20260109-8624"]);
+  await seedTransaction("t-discount-to-zero", "2026-01-09", -12000, ["f-discount-to-zero"]);
 }
 
 /** A USD document settled by card: read at the effective rate the payment carried. */
@@ -169,10 +169,10 @@ describe("prepareUvaFiling: the quarter derived from the corpus", () => {
     // All three are read OFF the corpus — two #203 markers on the file records
     // and the conversion the derivation performed — so re-running the quarter
     // reproduces them without anyone remembering.
-    expect(byReason["insurance-tax"].fileIds).toEqual(["paperless-ap-1004"]);
+    expect(byReason["insurance-tax"].fileIds).toEqual(["f-insurance-11pct"]);
     expect(byReason["insurance-tax"].amount).toBe(2200);
     expect(byReason["insurance-tax"].basis).toContain("§ 6 Abs 1 Z 9 lit. c UStG");
-    expect(byReason["discount-to-zero"].fileIds).toEqual(["FIBU_20260109-8624"]);
+    expect(byReason["discount-to-zero"].fileIds).toEqual(["f-discount-to-zero"]);
     expect(byReason["discount-to-zero"].amount).toBe(2000);
     expect(byReason["fx-effective-rate"].basis).toContain("§ 20 Abs 6 UStG method 3");
     // The bounded cost of the method: 1-3% of the converted claim.

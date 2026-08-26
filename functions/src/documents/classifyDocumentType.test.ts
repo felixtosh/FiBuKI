@@ -411,7 +411,7 @@ describe("classifyDocumentType — the user's own outgoing documents", () => {
     supplierVatId: "ATU78971436",
     issueDate: "2026-01-09",
     selfDesignation: "Rechnung",
-    invoiceNumber: "IV-25-1147",
+    invoiceNumber: "IV-25-0042",
   };
 
   it("does not call an outgoing document a receipt — that would chase the user for their own paperwork", () => {

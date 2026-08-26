@@ -42,7 +42,7 @@ describe("parseNonClaimableVatReason", () => {
 
 describe("buildMarkVatNotClaimableUpdates", () => {
   it("stores the reason, not only the fact", () => {
-    // paperless-ap-1004: 11% Versicherungssteuer on a film liability policy.
+    // f-insurance-11pct: 11% Versicherungssteuer on a film liability policy.
     const updates = buildMarkVatNotClaimableUpdates("insurance-tax");
 
     expect(updates.vatNotClaimableReason).toBe("insurance-tax");

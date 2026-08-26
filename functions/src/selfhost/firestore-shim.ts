@@ -13,7 +13,7 @@
  * Firestore backend applies transforms.
  */
 
-import { FieldValue, Timestamp } from "@google-cloud/firestore";
+import { FieldValue, Timestamp, VectorValue } from "@google-cloud/firestore";
 import { emitChange } from "./bus";
 import { enqueueTriggerEvent, usesDurableTriggerQueue } from "./trigger-queue";
 import { notifyChange } from "./change-notify";
@@ -311,7 +311,18 @@ function encodeValue(v: unknown): unknown {
   }
   if (Array.isArray(v)) return v.map((x) => encodeValue(x));
   if (typeof v === "object") {
-    const out: Record<string, unknown> = {};
+    // Null prototype, so a key called "__proto__" is an ordinary key and cannot
+    // reach Object.prototype at all. The literal guard below still stands: it
+    // DROPS those keys rather than storing them, which is the behaviour writes
+    // rely on. The null prototype is what makes the drop unnecessary for safety
+    // rather than load-bearing for it, and it is what CodeQL can see
+    // (js/remote-property-injection, alert #285 — the guard alone does not
+    // satisfy the rule, and an unread alert on the trunk is worse than two
+    // extra words here). It also covers the ordering trap described just below
+    // if that ordering is ever got wrong. Safe for this value: the result is
+    // serialised with JSON.stringify on its way to Postgres, and never carries
+    // methods.
+    const out: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
     for (const [rawKey, val] of Object.entries(v as Record<string, unknown>)) {
       // A key is a jsonb string too, and Postgres rejects it on the same terms.
       // Sanitise BEFORE the guard, never after: "__proto__\u0000" would pass a
@@ -362,14 +373,70 @@ function decodeValue(v: unknown): unknown {
 // Sentinel (FieldValue transform) application
 // ---------------------------------------------------------------------------
 
+/**
+ * `FieldValue.<method>` -> sentinel kind.
+ *
+ * `methodName` is the SDK's own discriminator: a prototype getter returning a
+ * string LITERAL, so it survives both minification and a second copy of
+ * @google-cloud/firestore in the tree.
+ */
+const SENTINEL_KIND_BY_METHOD: Record<string, string> = {
+  "FieldValue.serverTimestamp": "serverTimestamp",
+  "FieldValue.arrayUnion": "arrayUnion",
+  "FieldValue.arrayRemove": "arrayRemove",
+  "FieldValue.increment": "increment",
+  "FieldValue.delete": "delete",
+};
+
+/**
+ * Which FieldValue sentinel this is, or null for an ordinary value.
+ *
+ * Class names are NOT usable for this, which is what the first version of this
+ * function got wrong. `next build` minifies the app's server bundle, and
+ * @google-cloud/firestore is bundled into it (not in serverExternalPackages),
+ * so in the fibuki-web container `FieldValue.serverTimestamp().constructor.name`
+ * is "u" and NumericIncrementTransform is "c". The api container runs unbundled
+ * via vite-node and the test profile runs under vitest, so name matching worked
+ * everywhere it was exercised and failed only in production web.
+ *
+ * The failure was silent data corruption rather than an error: an unrecognised
+ * sentinel falls through to encodeValue, which stores its own enumerable
+ * properties. serverTimestamp() and delete() have none, so they stored as `{}`;
+ * increment(n) stored as `{operand: n}` and arrayUnion(...) as
+ * `{elements: [...]}`. Every worker_activity notification written by
+ * app/api/worker/route.ts therefore had `createdAt: {}`, which reached the
+ * browser as a timestamp with no toDate() and took the notifications list down
+ * with "t.getTime is not a function".
+ */
 function sentinelKind(v: unknown): string | null {
   if (!v || typeof v !== "object") return null;
+
+  const method = (v as { methodName?: unknown }).methodName;
+  if (typeof method === "string") {
+    const byMethod = SENTINEL_KIND_BY_METHOD[method];
+    if (byMethod) return byMethod;
+  }
+
+  // Class names still answer for any SDK build that predates `methodName` (and
+  // for the hand-rolled sentinels in the shim's own tests). Kept as a fallback,
+  // never as the only check.
   const name = (v as object).constructor?.name || "";
   if (name.includes("ServerTimestamp")) return "serverTimestamp";
   if (name.includes("ArrayUnion")) return "arrayUnion";
   if (name.includes("ArrayRemove")) return "arrayRemove";
   if (name.includes("NumericIncrement")) return "increment";
   if (name === "DeleteTransform" || name.includes("Delete")) return "delete";
+
+  // A sentinel we could not classify must not reach encodeValue: storing its
+  // innards as document data is how the bug above stayed invisible for a
+  // cutover. Loud beats silent, and this is unreachable for the five sentinels
+  // the SDK actually has.
+  if (v instanceof FieldValue) {
+    throw new Error(
+      `selfhost firestore shim: unrecognised FieldValue sentinel ` +
+        `(methodName=${JSON.stringify(method)}, constructor=${JSON.stringify(name)})`,
+    );
+  }
   return null;
 }
 
@@ -518,6 +585,23 @@ function applySentinelsInPlace(value: unknown): unknown {
   if (kind === "arrayRemove") return [];
   if (kind === "increment") return sentinelOperand(value);
   if (Array.isArray(value)) return value.map((v) => applySentinelsInPlace(v));
+  // `FieldValue.vector()` is the one FieldValue.* factory that does not return a
+  // transform, so sentinelKind cannot see it: a VectorValue is not
+  // `instanceof FieldValue` and carries no `methodName`. Left alone it falls
+  // into the object branch below, which rebuilds it as a PLAIN object of its
+  // own enumerable properties — `{_values: [...]}` — and the class identity is
+  // gone before encodeValue is ever reached. That is the same silent, lossy
+  // write the sentinel handling above exists to stop, so refuse it here, where
+  // the identity still exists to test. By class identity and not by constructor
+  // name, because names are mangled in the minified web bundle. `dump-format.ts`
+  // already refuses the other exotic Firestore types (GeoPoint,
+  // DocumentReference, Bytes); this closes the write path for the one it omits.
+  if (value instanceof VectorValue) {
+    throw new Error(
+      "selfhost firestore shim: VectorValue (FieldValue.vector) is not supported — " +
+        "storing it would write a shape nothing can read back",
+    );
+  }
   if (value && typeof value === "object" && !isTimestampLike(value) && !(value instanceof Date)) {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {

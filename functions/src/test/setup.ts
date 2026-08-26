@@ -122,9 +122,25 @@ export class InMemoryStore {
   private collections: Map<string, Map<string, Record<string, unknown>>> = new Map();
   private autoIdCounter = 0;
 
+  /**
+   * What each query actually asked Firestore for, in call order.
+   *
+   * A handler that pages has to be able to prove the page is a property of the
+   * query and not of a slice taken afterwards, and that is not visible in the
+   * rows it returns: `queryDocs` copies every matching document before any
+   * limit applies, so an unbounded read and a bounded one hand back the same
+   * page here. This records the limit and cursor the query carried instead.
+   */
+  readonly queries: Array<{ collection: string; limit?: number; cursor?: string }> = [];
+
   clear(): void {
     this.collections.clear();
+    this.queries.length = 0;
     this.autoIdCounter = 0;
+  }
+
+  recordQuery(query: { collection: string; limit?: number; cursor?: string }): void {
+    this.queries.push(query);
   }
 
   getCollection(name: string): Map<string, Record<string, unknown>> {
@@ -297,6 +313,7 @@ export function createMockFirestore(): MockFirestore {
     limit: (n: number) => createQuery(collection, filters, order, cursorId, n, projection),
     select: (...fields: string[]) => createQuery(collection, filters, order, cursorId, limitN, fields),
     get: async () => {
+      store.recordQuery({ collection, limit: limitN, cursor: cursorId });
       let results = store.queryDocs(collection, filters);
 
       if (order) {

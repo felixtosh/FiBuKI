@@ -12,7 +12,7 @@ const ratedItems = [
   { description: "row", quantity: null, unitPrice: null, vatPercent: 20, vatAmount: 53000, amount: 318000 },
 ];
 
-/** IV-26-1168.pdf as it stood before the D6 sweep. */
+/** A net-itemised invoice as it stood before the D6 sweep. */
 const strongRecord = {
   extractedAmount: 318000,
   extractedVatPercent: 20,

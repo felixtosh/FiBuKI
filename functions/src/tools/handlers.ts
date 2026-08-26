@@ -111,6 +111,35 @@ export type { ToolName };
 const db = getFirestore();
 
 /**
+ * Resume a paginated listing after the caller's cursor.
+ *
+ * `cursor` is a raw document id handed back as `nextCursor`, so the ownership
+ * check is the load-bearing part: without it a caller who holds or guesses
+ * another user's document id resumes paging from a position inside that
+ * user's data. A cursor that is unknown, or that belongs to someone else, is
+ * ignored rather than rejected — the page then starts from the top, which is
+ * what every call site here already did.
+ *
+ * Exported for its own test: the in-memory Firestore the handler tests run
+ * against resolves a cursor by locating its id inside the already-filtered
+ * result set, so a foreign cursor is a no-op there whether the ownership check
+ * exists or not. Only a direct test can hold that check in place.
+ */
+export async function startAfterCursor(
+  query: FirebaseFirestore.Query,
+  collection: string,
+  userId: string,
+  cursor: unknown
+): Promise<FirebaseFirestore.Query> {
+  if (typeof cursor !== "string" || !cursor) return query;
+
+  const cursorSnap = await db.collection(collection).doc(cursor).get();
+  if (!cursorSnap.exists || cursorSnap.data()?.userId !== userId) return query;
+
+  return query.startAfter(cursorSnap);
+}
+
+/**
  * Extraction is the one tool on this surface that spends an AI call directly,
  * so the two functions that dispatch tools — mcpApi and mcpSse — declare this
  * secret. On self-host the params shim reads it from the environment.
@@ -339,12 +368,7 @@ export async function listTransactions(userId: string, args: Record<string, unkn
   query = query.orderBy("date", "desc");
 
   // Cursor pagination: cursor is the last document id from the previous page.
-  if (args.cursor) {
-    const cursorSnap = await db.collection("transactions").doc(args.cursor as string).get();
-    if (cursorSnap.exists && cursorSnap.data()?.userId === userId) {
-      query = query.startAfter(cursorSnap);
-    }
-  }
+  query = await startAfterCursor(query, "transactions", userId, args.cursor);
 
   // Search is a substring match that Firestore can't push down. When set we
   // overfetch (up to 5x the requested limit) and filter in memory, capped to
@@ -474,12 +498,7 @@ async function scanTransactionsPage(
     .orderBy("date", "desc");
 
   // Cursor pagination: cursor is the last document id from the previous page.
-  if (args.cursor) {
-    const cursorSnap = await db.collection("transactions").doc(args.cursor as string).get();
-    if (cursorSnap.exists && cursorSnap.data()?.userId === userId) {
-      query = query.startAfter(cursorSnap);
-    }
-  }
+  query = await startAfterCursor(query, "transactions", userId, args.cursor);
 
   const requestedLimit = Math.min(Math.max((args.limit as number) || 50, 1), 500);
   const scanLimit = Math.min(requestedLimit * 5, 1000);
@@ -587,16 +606,38 @@ export async function listTransactionsMissingInvoice(userId: string, args: Recor
 // Files
 // ============================================================================
 
+/**
+ * One page of the user's files, newest first, filtered in memory.
+ *
+ * Every filter below selects on a field that is absent on most documents, and
+ * Firestore has no "field missing" predicate — so, like the transaction scan
+ * above, the read deliberately overfetches and a page is built from up to
+ * `scanLimit` documents. Rows past that are reached via `nextCursor`, not
+ * silently dropped, and `count` is the size of this page and never a count of
+ * the account (#116: filtering after a hard limit of 100 let this tool answer
+ * "no files" to an account holding thousands).
+ *
+ * The cursor is the last document actually CONSUMED, not the last one
+ * returned, so the next page resumes exactly where this one stopped: rows
+ * filtered out in memory are skipped, rows that simply did not fit are not.
+ */
 export async function listFiles(userId: string, args: Record<string, unknown>) {
-  let query = db.collection("files").where("userId", "==", userId).orderBy("uploadedAt", "desc");
+  let query: FirebaseFirestore.Query = db
+    .collection("files")
+    .where("userId", "==", userId)
+    .orderBy("uploadedAt", "desc");
 
-  const limit = Math.min((args.limit as number) || 50, 100);
-  query = query.limit(limit);
+  // Cursor pagination: cursor is the last document id from the previous page.
+  query = await startAfterCursor(query, "files", userId, args.cursor);
+
+  const requestedLimit = Math.min(Math.max((args.limit as number) || 50, 1), 500);
+  const scanLimit = Math.min(requestedLimit * 5, 1000);
+  query = query.limit(scanLimit);
 
   const snapshot = await query.get();
-  let files = snapshot.docs
-    .map((doc) => ({ id: doc.id, ...doc.data() }))
-    .filter((f: Record<string, unknown>) => !f.deletedAt && !f.isNotInvoice);
+  const scanned = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as Record<string, unknown>);
+
+  let files = scanned.filter((f: Record<string, unknown>) => !f.deletedAt && !f.isNotInvoice);
 
   if (args.hasConnections !== undefined) {
     files = files.filter((f: Record<string, unknown>) =>
@@ -654,7 +695,18 @@ export async function listFiles(userId: string, args: Record<string, unknown>) {
     );
   }
 
-  return files;
+  // The page ends either at the requested limit or at the end of the scan.
+  const page = files.slice(0, requestedLimit);
+  const truncated = files.length > requestedLimit;
+  const hasMore = truncated || scanned.length === scanLimit;
+
+  const nextCursor = !hasMore
+    ? null
+    : truncated
+      ? (page[page.length - 1].id as string)
+      : ((scanned[scanned.length - 1]?.id as string) ?? null);
+
+  return { files: page, nextCursor, count: page.length };
 }
 
 export async function getFile(userId: string, fileId: string) {
@@ -1536,15 +1588,39 @@ export async function updateIdentityEntity(
   return { success: true, entityId };
 }
 
+/**
+ * One page of the user's partners, by name.
+ *
+ * The read is bounded (#116): every filter Firestore can apply — the owner and
+ * the active flag — is already in the query, and the ordering is a stored
+ * field, so the page limit belongs in the query too. This used to read the
+ * whole active collection on every call and slice to 100 afterwards, which is
+ * the entire partner list of the account for a tool that was asked for fifty
+ * of them, and left everything past the hundredth name unreachable.
+ *
+ * `search` is a substring match Firestore cannot push down, so when it is set
+ * the read overfetches and filters in memory, exactly as `list_transactions`
+ * does. The cursor is the last document actually CONSUMED, so a page that the
+ * search filters away entirely still hands back a position to resume from.
+ */
 export async function listPartners(userId: string, args: Record<string, unknown>) {
-  const snapshot = await db
+  let query: FirebaseFirestore.Query = db
     .collection("partners")
     .where("userId", "==", userId)
     .where("isActive", "==", true)
-    .orderBy("name", "asc")
-    .get();
+    .orderBy("name", "asc");
 
-  let partners = snapshot.docs.map((doc) => {
+  // Cursor pagination: cursor is the last document id from the previous page.
+  query = await startAfterCursor(query, "partners", userId, args.cursor);
+
+  const requestedLimit = Math.min(Math.max((args.limit as number) || 50, 1), 500);
+  const search = (args.search as string | undefined)?.toLowerCase();
+  const fetchLimit = search ? Math.min(requestedLimit * 5, 1000) : requestedLimit;
+  query = query.limit(fetchLimit);
+
+  const snapshot = await query.get();
+
+  const scanned = snapshot.docs.map((doc) => {
     const data = doc.data();
     return {
       id: doc.id,
@@ -1559,17 +1635,25 @@ export async function listPartners(userId: string, args: Record<string, unknown>
     };
   });
 
-  if (args.search) {
-    const search = (args.search as string).toLowerCase();
-    partners = partners.filter(
-      (p) =>
-        p.name?.toLowerCase().includes(search) ||
-        p.aliases?.some((a: string) => a.toLowerCase().includes(search))
-    );
-  }
+  const partners = search
+    ? scanned.filter(
+        (p) =>
+          p.name?.toLowerCase().includes(search) ||
+          p.aliases?.some((a: string) => a.toLowerCase().includes(search))
+      )
+    : scanned;
 
-  const limit = Math.min((args.limit as number) || 50, 100);
-  return partners.slice(0, limit);
+  const page = partners.slice(0, requestedLimit);
+  const truncated = partners.length > requestedLimit;
+  const hasMore = truncated || scanned.length === fetchLimit;
+
+  const nextCursor = !hasMore
+    ? null
+    : truncated
+      ? page[page.length - 1].id
+      : (scanned[scanned.length - 1]?.id ?? null);
+
+  return { partners: page, nextCursor, count: page.length };
 }
 
 export async function getPartner(userId: string, partnerId: string) {
@@ -1816,9 +1900,10 @@ function optionalCents(value: unknown, field: string): number | undefined {
  * directly. Keep it stable.
  *
  * "Recurring" is an effective cycle, declared or learned, which lives in a
- * nested array Firestore cannot filter on: the partners are read the way
- * `list_partners` reads them and filtered here, and only the page's partners
- * cost a transaction query.
+ * nested array Firestore cannot filter on. So unlike `list_partners`, which
+ * pages inside the query, this one reads every active partner and filters
+ * here, and its cursor is a position in that scan rather than a document to
+ * resume after. Only the page's partners cost a transaction query.
  */
 export async function listRecurringPartners(userId: string, args: Record<string, unknown>) {
   const dateTo = (args.dateTo as string | undefined) ?? new Date().toISOString().slice(0, 10);

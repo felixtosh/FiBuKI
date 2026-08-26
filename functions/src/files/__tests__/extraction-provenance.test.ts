@@ -32,7 +32,7 @@ describe("buildCorrectionProvenance", () => {
   });
 
   it("merges onto the marks earlier corrections left", () => {
-    // paperless-ap-698: the total and the split were corrected first, the rate
+    // f-corrected-total: the total and the split were corrected first, the rate
     // later. The second correction must not make the first one invisible.
     const previous = { extractionCorrectedFields: { amount: AT, lineItems: AT } };
     const later = { _seconds: 99 } as never;
