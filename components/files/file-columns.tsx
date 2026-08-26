@@ -13,7 +13,10 @@ import { PipelineId } from "@/types/automation";
 import { SortableHeader, AutomationHeader } from "@/components/ui/data-table";
 import { PartnerPill } from "@/components/partners/partner-pill";
 import { DocumentTypeBadge } from "@/components/documents/document-type-badge";
-import { describeDocumentType } from "@/lib/documents/document-type-presentation";
+import {
+  describeDocumentType,
+  describeInvoiceDirection,
+} from "@/lib/documents/document-type-presentation";
 import { AmountMatchDisplay } from "@/components/ui/amount-match-display";
 import { cn, toDateSafe } from "@/lib/utils";
 import type { EcbConverter } from "@/lib/currency";
@@ -237,8 +240,12 @@ export function getFileColumns(
           return <span className="text-sm text-muted-foreground">—</span>;
         }
 
-        // Apply sign based on direction (incoming = expense/negative, outgoing = income/positive)
-        const signedAmount = invoiceDirection === "incoming" ? -(amount / 100) : amount / 100;
+        // Apply sign based on direction (incoming = expense/negative, outgoing
+        // = income/positive). An unplaced document gets NO sign (#233): until
+        // #233 it fell through to positive, so a purchase whose direction was
+        // never established rendered as green income and nothing said so.
+        const direction = describeInvoiceDirection(invoiceDirection);
+        const signedAmount = direction.sign === "negative" ? -(amount / 100) : amount / 100;
         const originalFormatted = new Intl.NumberFormat("de-DE", {
           style: "currency",
           currency,
@@ -252,7 +259,8 @@ export function getFileColumns(
           const dateForConversion = toDateSafe(extractedDate) || new Date();
           const conversion = convert(Math.abs(amount), currency, "EUR", dateForConversion);
           if (conversion) {
-            const signedConverted = invoiceDirection === "incoming" ? -(conversion.amount / 100) : conversion.amount / 100;
+            const signedConverted =
+              direction.sign === "negative" ? -(conversion.amount / 100) : conversion.amount / 100;
             displayAmount = "~" + new Intl.NumberFormat("de-DE", {
               style: "currency",
               currency: "EUR",
@@ -271,8 +279,13 @@ export function getFileColumns(
             <p
               className={cn(
                 "text-sm tabular-nums whitespace-nowrap",
-                signedAmount < 0 ? "text-amount-negative" : "text-amount-positive"
+                direction.sign === "unsigned"
+                  ? "text-muted-foreground"
+                  : signedAmount < 0
+                    ? "text-amount-negative"
+                    : "text-amount-positive"
               )}
+              title={direction.sign === "unsigned" ? direction.summary : undefined}
             >
               {displayAmount}
             </p>

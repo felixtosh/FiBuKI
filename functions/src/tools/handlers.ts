@@ -23,6 +23,12 @@ import {
   NonClaimableVatError,
 } from "../files/nonClaimableVatOps";
 import {
+  buildClearRecipientConfirmationUpdates,
+  buildConfirmRecipientIsUserUpdates,
+} from "../files/recipientConfirmationOps";
+import { runTransactionMatching } from "../matching/matchFileTransactions";
+import { computeDirectionReviewFields } from "../documents/syncDirectionReview";
+import {
   buildExtractionCorrection,
   ExtractionCorrectionError,
   FileExtractionCorrection,
@@ -216,6 +222,10 @@ export async function handleTool(
       return markFileAsNotInvoice(userId, args);
     case "unmark_file_as_not_invoice":
       return unmarkFileAsNotInvoice(userId, args);
+    case "confirm_file_recipient_is_user":
+      return confirmFileRecipientIsUser(userId, args);
+    case "unconfirm_file_recipient_is_user":
+      return unconfirmFileRecipientIsUser(userId, args);
     case "mark_file_vat_not_claimable":
       return markFileVatNotClaimable(userId, args);
     case "unmark_file_vat_not_claimable":
@@ -655,6 +665,26 @@ export async function listFiles(userId: string, args: Record<string, unknown>) {
     );
   }
 
+  // #233: the direction review list — a conflict against a linked transaction,
+  // or a direction that was never established. In memory for the same reason
+  // as the flags around it.
+  if (args.needsDirectionReview !== undefined) {
+    files = files.filter((f: Record<string, unknown>) =>
+      args.needsDirectionReview
+        ? f.needsDirectionReview === true
+        : f.needsDirectionReview !== true
+    );
+  }
+
+  // #229: the documents addressed to somebody else. Same in-memory treatment
+  // as the flags above, and for the same reason — absent on every record
+  // written before the rule existed.
+  if (args.foreignRecipient !== undefined) {
+    files = files.filter((f: Record<string, unknown>) =>
+      args.foreignRecipient ? f.foreignRecipient === true : f.foreignRecipient !== true
+    );
+  }
+
   // #184: the corrected population, so a re-extraction sweep can build its own
   // exclusion list from the records instead of carrying one by hand. In memory
   // like the filters above — the marker is absent on every record written
@@ -856,6 +886,11 @@ export async function updateFileExtraction(userId: string, args: Record<string, 
   // correction that types 11% in, or types it back out, has to move it (#203).
   Object.assign(built.updates, vatRateReviewFields(reviewFileRecordVatRates(corrected)));
 
+  // And the direction review, which is the whole point of being able to set
+  // the direction by hand: setting it right has to clear the flag that said it
+  // was wrong (#233).
+  Object.assign(built.updates, await computeDirectionReviewFields(db, corrected));
+
   await fileRef.update(built.updates);
 
   const previousDocumentType = fileSnap.data()?.documentType;
@@ -1025,6 +1060,94 @@ export async function retryFileExtractionTool(userId: string, args: Record<strin
     }
     throw error;
   }
+}
+
+/**
+ * Rule that the recipient a document names is the user after all (#229).
+ *
+ * The § 11 classification is stored, so lifting the block means reclassifying
+ * in the same write — and a file that was excluded from matching has never had
+ * its suggestions computed, so matching is re-run rather than merely re-enabled.
+ */
+export async function confirmFileRecipientIsUser(userId: string, args: Record<string, unknown>) {
+  const fileId = args.fileId as string;
+  if (!fileId) {
+    throw new Error("fileId is required");
+  }
+
+  const fileRef = db.collection("files").doc(fileId);
+  const fileSnap = await fileRef.get();
+
+  if (!fileSnap.exists || fileSnap.data()?.userId !== userId) {
+    throw new Error("File not found");
+  }
+
+  const updates = buildConfirmRecipientIsUserUpdates();
+  const confirmed = { ...fileSnap.data()!, ...updates };
+  Object.assign(updates, documentTypeFields(classifyFileRecord(confirmed)));
+
+  await fileRef.update(updates);
+
+  console.log(`[confirmFileRecipientIsUser] Confirmed recipient on file ${fileId}`, {
+    userId,
+    via: "tools",
+  });
+
+  // Matching was skipped while the file read as somebody else's, so there are
+  // no suggestions to un-hide — they have to be computed now. Failures are
+  // logged rather than thrown: the ruling itself is already stored, and the
+  // trigger will pick the file up on its next update regardless.
+  if (fileSnap.data()?.foreignRecipient === true) {
+    try {
+      await runTransactionMatching(fileId, { ...confirmed, ...updates });
+    } catch (error) {
+      console.error(`[confirmFileRecipientIsUser] Re-matching ${fileId} failed:`, error);
+    }
+  }
+
+  return {
+    success: true,
+    fileId,
+    recipientConfirmedAsUser: true,
+    documentType: updates.documentType,
+    foreignRecipient: updates.foreignRecipient,
+  };
+}
+
+/** Withdraw the confirmation; the matcher's own verdict stands again. */
+export async function unconfirmFileRecipientIsUser(userId: string, args: Record<string, unknown>) {
+  const fileId = args.fileId as string;
+  if (!fileId) {
+    throw new Error("fileId is required");
+  }
+
+  const fileRef = db.collection("files").doc(fileId);
+  const fileSnap = await fileRef.get();
+
+  if (!fileSnap.exists || fileSnap.data()?.userId !== userId) {
+    throw new Error("File not found");
+  }
+
+  const updates = buildClearRecipientConfirmationUpdates();
+  Object.assign(
+    updates,
+    documentTypeFields(classifyFileRecord({ ...fileSnap.data()!, ...updates }))
+  );
+
+  await fileRef.update(updates);
+
+  console.log(`[unconfirmFileRecipientIsUser] Withdrew recipient confirmation on ${fileId}`, {
+    userId,
+    via: "tools",
+  });
+
+  return {
+    success: true,
+    fileId,
+    recipientConfirmedAsUser: false,
+    documentType: updates.documentType,
+    foreignRecipient: updates.foreignRecipient,
+  };
 }
 
 /**

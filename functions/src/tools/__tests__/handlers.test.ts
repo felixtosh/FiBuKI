@@ -1416,6 +1416,167 @@ describe("Tool Registry Handlers", () => {
   // collections, and the dry-run default a typo must not get past.
   // ==========================================================================
 
+  describe("updateFileExtraction — setting the direction by hand (#233)", () => {
+    it("stores a direction a person set, and stamps it as their work", async () => {
+      store.setDoc("files", "f-1", createTestFile({ userId, invoiceDirection: "unknown" }));
+
+      const result = await handlers.updateFileExtraction(userId, {
+        fileId: "f-1",
+        invoiceDirection: "incoming",
+      });
+
+      expect(result).toMatchObject({ changed: ["invoiceDirection"] });
+      const file = store.getDoc("files", "f-1");
+      expect(file?.invoiceDirection).toBe("incoming");
+      // #184: a re-extraction must not quietly undo it.
+      expect(Object.keys(file?.extractionCorrectedFields as object)).toContain("invoiceDirection");
+    });
+
+    it("refuses a direction that is not one of the three", async () => {
+      store.setDoc("files", "f-1", createTestFile({ userId }));
+
+      await expect(
+        handlers.updateFileExtraction(userId, { fileId: "f-1", invoiceDirection: "sideways" })
+      ).rejects.toThrow(/invoiceDirection must be one of/);
+    });
+
+    it("clears the review flag once the direction agrees with the linked transaction", async () => {
+      store.setDoc("transactions", "tx-1", createTestTransaction({ userId, amount: -12000 }));
+      store.setDoc(
+        "files",
+        "f-1",
+        createTestFile({
+          userId,
+          extractionComplete: true,
+          transactionIds: ["tx-1"],
+          invoiceDirection: "outgoing",
+          needsDirectionReview: true,
+          directionReviewReason: "conflict",
+          directionConflictTransactionIds: ["tx-1"],
+        })
+      );
+
+      await handlers.updateFileExtraction(userId, {
+        fileId: "f-1",
+        invoiceDirection: "incoming",
+      });
+
+      const file = store.getDoc("files", "f-1");
+      expect(file?.needsDirectionReview).toBe(false);
+      expect(file?.directionReviewReason).toBeNull();
+      expect(file?.directionConflictTransactionIds).toEqual([]);
+    });
+
+    it("raises the flag when the correction puts the file at odds with its transaction", async () => {
+      store.setDoc("transactions", "tx-1", createTestTransaction({ userId, amount: -12000 }));
+      store.setDoc(
+        "files",
+        "f-1",
+        createTestFile({
+          userId,
+          extractionComplete: true,
+          transactionIds: ["tx-1"],
+          invoiceDirection: "incoming",
+        })
+      );
+
+      await handlers.updateFileExtraction(userId, {
+        fileId: "f-1",
+        invoiceDirection: "outgoing",
+      });
+
+      const file = store.getDoc("files", "f-1");
+      expect(file?.needsDirectionReview).toBe(true);
+      expect(file?.directionReviewReason).toBe("conflict");
+      expect(file?.directionSuggested).toBe("incoming");
+    });
+  });
+
+  describe("listFiles — the review lists (#229, #233)", () => {
+    it("returns only the files addressed to somebody else when asked", async () => {
+      store.setDoc("files", "f-foreign", createTestFile({ userId, foreignRecipient: true }));
+      store.setDoc("files", "f-mine", createTestFile({ userId, foreignRecipient: false }));
+      store.setDoc("files", "f-legacy", createTestFile({ userId }));
+
+      const flagged = await handlers.listFiles(userId, { foreignRecipient: true });
+      expect(flagged.files.map((f) => f.id)).toEqual(["f-foreign"]);
+
+      // A record written before the rule is not "addressed to somebody else".
+      const rest = await handlers.listFiles(userId, { foreignRecipient: false });
+      expect(rest.files.map((f) => f.id).sort()).toEqual(["f-legacy", "f-mine"]);
+    });
+
+    it("returns the direction review list when asked", async () => {
+      store.setDoc("files", "f-flagged", createTestFile({ userId, needsDirectionReview: true }));
+      store.setDoc("files", "f-clear", createTestFile({ userId, needsDirectionReview: false }));
+
+      const flagged = await handlers.listFiles(userId, { needsDirectionReview: true });
+      expect(flagged.files.map((f) => f.id)).toEqual(["f-flagged"]);
+    });
+  });
+
+  describe("confirmFileRecipientIsUser / unconfirmFileRecipientIsUser (#229)", () => {
+    /** § 11-perfect, addressed to somebody the identity data does not know. */
+    const thirdPartyInvoice = () =>
+      createTestFile({
+        userId,
+        extractionComplete: true,
+        extractedAmount: 48000,
+        extractedVatPercent: 20,
+        extractedVatAmount: 8000,
+        extractedLineItems: [{ description: "Monitor", vatPercent: 20 }],
+        extractedIssuer: { name: "Fernhandel S.à r.l.", address: "L-2338", vatId: "LU12345678" },
+        extractedRecipient: { name: "Maria Musterfrau", address: "Musterweg 4, 4020 Linz" },
+        extractedDate: new Date("2026-05-14"),
+        extractedSelfDesignation: "Rechnung",
+        extractedInvoiceNumber: "2026-0771",
+        recipientIdentityMatch: "third-party",
+        documentType: "invoice",
+        foreignRecipient: true,
+      });
+
+    it("lifts the block and reclassifies the file in the same write", async () => {
+      store.setDoc("files", "f-1", thirdPartyInvoice());
+
+      const result = await handlers.confirmFileRecipientIsUser(userId, { fileId: "f-1" });
+
+      expect(result).toMatchObject({ success: true, foreignRecipient: false });
+      const file = store.getDoc("files", "f-1");
+      expect(file?.recipientConfirmedAsUser).toBe(true);
+      expect(file?.foreignRecipient).toBe(false);
+      expect(file?.documentType).toBe("invoice");
+      expect((file?.documentTypeBasis as Record<string, unknown>)?.reason).toBe(
+        "section-11-satisfied"
+      );
+    });
+
+    it("puts the block back when the confirmation is withdrawn", async () => {
+      store.setDoc(
+        "files",
+        "f-1",
+        { ...thirdPartyInvoice(), recipientConfirmedAsUser: true, foreignRecipient: false }
+      );
+
+      const result = await handlers.unconfirmFileRecipientIsUser(userId, { fileId: "f-1" });
+
+      expect(result).toMatchObject({ success: true, foreignRecipient: true });
+      const file = store.getDoc("files", "f-1");
+      expect(file?.recipientConfirmedAsUser).toBe(false);
+      expect(file?.foreignRecipient).toBe(true);
+      expect((file?.documentTypeBasis as Record<string, unknown>)?.reason).toBe(
+        "foreign-recipient"
+      );
+    });
+
+    it("refuses another user's file", async () => {
+      store.setDoc("files", "f-1", createTestFile({ userId: otherUserId }));
+
+      await expect(
+        handlers.confirmFileRecipientIsUser(userId, { fileId: "f-1" })
+      ).rejects.toThrow("File not found");
+    });
+  });
+
   describe("reclassifyDocumentsTool", () => {
     /** A payment confirmation: no rate, no UID, and it says what it is. */
     function receiptFile() {

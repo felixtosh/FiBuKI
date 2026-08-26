@@ -198,3 +198,32 @@ describe("buildUvaTransaction", () => {
 function txRecord(): TransactionRecord {
   return { id: "t", date: ts("2026-02-01T00:00:00Z"), amount: -1000 };
 }
+
+describe("toUvaFile — an invoice addressed to somebody else (#229)", () => {
+  const thirdPartyInvoice = (): FileRecord => ({
+    id: "f-third-party",
+    extractedAmount: 48000,
+    extractedVatAmount: 8000,
+    extractedVatPercent: 20,
+    foreignRecipient: true,
+  });
+
+  it("keeps its VAT out of Vorsteuer — the supply was not rendered to this user", () => {
+    expect(toUvaFile(thirdPartyInvoice()).nonClaimableVatReason).toBe("foreign-recipient");
+  });
+
+  it("leaves a document addressed to the user claimable", () => {
+    expect(
+      toUvaFile({ ...thirdPartyInvoice(), foreignRecipient: false }).nonClaimableVatReason
+    ).toBeNull();
+    expect(
+      toUvaFile({ ...thirdPartyInvoice(), foreignRecipient: undefined }).nonClaimableVatReason
+    ).toBeNull();
+  });
+
+  it("does not overwrite a reason a human already recorded", () => {
+    const marked = toUvaFile({ ...thirdPartyInvoice(), vatNotClaimableReason: "private" });
+
+    expect(marked.nonClaimableVatReason).toBe("private");
+  });
+});

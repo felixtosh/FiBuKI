@@ -77,6 +77,25 @@ export type ZeroVatReason =
 /** What the document's own printed heading reads as, when it is recognisable. */
 export type SelfDesignationClass = "invoice" | "receipt" | "credit-note";
 
+/**
+ * Whether the *Leistungsempfänger* § 11 Abs 1 lit. b names is the user (#229).
+ *
+ * § 11 asks only that a recipient be named; § 12 asks whose Unternehmen the
+ * supply was rendered to. A third party's invoice satisfies the first and
+ * fails the second, so a document that is § 11-perfect can still carry no
+ * Vorsteuer for the person holding it.
+ *
+ *   user         identity matching resolved the recipient to one of the
+ *                user's own entities, or a human confirmed it by hand
+ *   third-party  the document names a recipient, identity data exists to
+ *                compare it against, and it is somebody else
+ *   unknown      nothing can be said: no recipient printed, no identity data
+ *                configured, or a record written before this was decided.
+ *                Never demotes anything — the absence of an answer must not
+ *                read as an answer.
+ */
+export type RecipientIdentity = "user" | "third-party" | "unknown";
+
 /** One-line machine-readable reason for the verdict. */
 export type DocumentTypeReason =
   /** The text classifier already ruled this out as a financial document. */
@@ -95,6 +114,11 @@ export type DocumentTypeReason =
   | "missing-decisive-elements"
   /** § 11 fails, but on a document the user issued rather than received. */
   | "own-outgoing-document"
+  /**
+   * § 11 holds, but the recipient it names is somebody else (#229). A valid
+   * invoice, and not one that carries any Vorsteuer for this user.
+   */
+  | "foreign-recipient"
   /** Only fields this record predates would decide it. */
   | "legacy-record-undecidable";
 
@@ -118,6 +142,13 @@ export interface DocumentTypeBasis {
   /** Why an absent Austrian rate is lawful here, when it is. */
   zeroVatReason: ZeroVatReason | null;
   /**
+   * Whether the named recipient is the user (#229). Carried on every verdict,
+   * not only the ones it changes: a document that fails § 11 for other
+   * reasons is still addressed to whoever it is addressed to, and the § 12
+   * consequence is the same.
+   */
+  recipientIdentity: RecipientIdentity;
+  /**
    * True when a decisive element could not be judged because this record
    * predates the fields that decide it. Such a file classifies `unknown`
    * rather than guessing, and improves when it is next extracted.
@@ -136,6 +167,15 @@ export interface DocumentTypeResult {
    * so their absence is reported without demoting the document.
    */
   missingElements: Section11Element[];
+  /**
+   * The § 12 finding (#229): this document names a recipient who is not the
+   * user, on a document the user did not issue — so whatever VAT it prints is
+   * somebody else's Vorsteuer, whatever the § 11 verdict above says.
+   *
+   * Separate from `basis.recipientIdentity`, which is the raw comparison. An
+   * outgoing invoice always names a third party and is never this.
+   */
+  foreignRecipient: boolean;
 }
 
 /** One line item, as far as classification cares. */
@@ -179,6 +219,17 @@ export interface DocumentFacts {
   recipientName?: string | null;
   recipientAddress?: string | null;
   recipientVatId?: string | null;
+  /**
+   * Whether that recipient is the user (#229). Decided where the identity
+   * data lives — the counterparty matcher — and stored on the record, not
+   * re-derived here: this module has no access to the user's entities and
+   * must not grow a second opinion about them.
+   *
+   * Absent means `unknown`, which changes nothing. That is what keeps every
+   * record written before #229, and every user who has configured no
+   * identity at all, out of this rule.
+   */
+  recipientIdentity?: RecipientIdentity;
   /** Issue date, any non-empty string counts as present. */
   issueDate?: string | null;
   /** The printed heading. null = none printed; undefined = legacy record. */

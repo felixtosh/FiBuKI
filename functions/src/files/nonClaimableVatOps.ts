@@ -17,8 +17,9 @@ import { FieldValue } from "firebase-admin/firestore";
 import type { NonClaimableVatReason } from "../uva/types";
 
 /**
- * The closed set, as data. The union in `uva/types.ts` is the type; this is
- * what a runtime validator and a tool schema enumerate.
+ * The closed set a HUMAN can set, as data. The union in `uva/types.ts` is the
+ * type and carries one more value — `foreign-recipient`, which a rule derives
+ * (#229) and no caller may assert by hand.
  */
 export const NON_CLAIMABLE_VAT_REASONS: NonClaimableVatReason[] = [
   "insurance-tax",

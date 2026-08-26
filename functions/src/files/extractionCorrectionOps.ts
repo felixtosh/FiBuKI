@@ -32,7 +32,19 @@ export interface FileExtractionCorrection {
   date?: string | null;
   /** The itemisation, replaced wholesale. */
   lineItems?: ExtractedLineItem[] | null;
+  /**
+   * Which way the document points (#233): `incoming` is a purchase, `outgoing`
+   * a sale, `unknown` an honest absence. Until this existed the only way to
+   * change it was to edit the user's identity data and hope the backfill
+   * picked the file up.
+   */
+  invoiceDirection?: InvoiceDirection | null;
 }
+
+/** Mirrors `InvoiceDirection` on the file record. */
+export type InvoiceDirection = "incoming" | "outgoing" | "unknown";
+
+const INVOICE_DIRECTIONS: InvoiceDirection[] = ["incoming", "outgoing", "unknown"];
 
 export class ExtractionCorrectionError extends Error {}
 
@@ -177,9 +189,27 @@ export function buildExtractionCorrection(
     changed.push("lineItems");
   }
 
+  if (fields.invoiceDirection !== undefined) {
+    // Null clears it to `unknown` rather than removing the field: the review
+    // rule reads an absent direction and an explicit unknown identically, and
+    // one stored shape is easier to query than two.
+    if (fields.invoiceDirection === null) {
+      updates.invoiceDirection = "unknown";
+    } else {
+      if (!INVOICE_DIRECTIONS.includes(fields.invoiceDirection)) {
+        throw new ExtractionCorrectionError(
+          `invoiceDirection must be one of ${INVOICE_DIRECTIONS.join(", ")}`
+        );
+      }
+      updates.invoiceDirection = fields.invoiceDirection;
+    }
+    changed.push("invoiceDirection");
+  }
+
   if (changed.length === 0) {
     throw new ExtractionCorrectionError(
-      "Nothing to correct — pass at least one of amount, vatAmount, vatPercent, date, lineItems"
+      "Nothing to correct — pass at least one of amount, vatAmount, vatPercent, date, " +
+        "lineItems, invoiceDirection"
     );
   }
 

@@ -89,6 +89,12 @@ export interface UvaFile {
  * Why a VAT-looking figure on a document is not deductible Vorsteuer (#203).
  * A closed set — an open note would not survive being read by a rule.
  *
+ * The first four are a human's standing decision, set through
+ * `mark_file_vat_not_claimable`. The fifth is derived by a rule (#229) and is
+ * deliberately not settable by hand: it says the document is addressed to
+ * somebody else, which is a fact about the document, and the way to overrule
+ * it is to correct that fact rather than to record a judgement about the VAT.
+ *
  *  - insurance-tax    Versicherungssteuer. Insurance is VAT-exempt (§ 6 Abs 1
  *                     Z 9 lit. c UStG), so the 11% line on a policy is a
  *                     different tax that no § 12 deduction reaches.
@@ -97,12 +103,17 @@ export interface UvaFile {
  *                     to deduct even though the document still prints a rate.
  *  - private          privately consumed, so no business deduction (§ 12
  *                     Abs 2 UStG).
+ *  - foreign-recipient the document names a Leistungsempfänger who is not the
+ *                     user (#229). § 11 is satisfied and § 12 still is not:
+ *                     the supply was rendered to somebody else's Unternehmen,
+ *                     so the deduction belongs to them.
  */
 export type NonClaimableVatReason =
   | "insurance-tax"
   | "levy"
   | "discount-to-zero"
-  | "private";
+  | "private"
+  | "foreign-recipient";
 
 /** One document whose printed VAT the derivation refused to claim (#203). */
 export interface NonClaimableVatEntry {

@@ -8,7 +8,7 @@
  */
 
 import { classifyDocumentType } from "./classifyDocumentType";
-import type { DocumentFacts, DocumentTypeResult } from "./types";
+import type { DocumentFacts, DocumentTypeResult, RecipientIdentity } from "./types";
 
 /** A files-collection record, as loosely as this module needs to read one. */
 export type FileRecord = Record<string, unknown>;
@@ -74,6 +74,27 @@ function invoiceNumberFromAdditionalFields(record: FileRecord): string | undefin
 }
 
 /**
+ * Whether the recipient this document names is the user (#229).
+ *
+ * The verdict is computed where the identity data lives — the counterparty
+ * matcher, at extraction time and again whenever the user's own entities
+ * change — and read here. Anything this module does not recognise is
+ * `unknown`, which is also what every record written before #229 carries, and
+ * `unknown` demotes nothing.
+ *
+ * `recipientConfirmedAsUser` is the human override and outranks the verdict.
+ * It exists because the comparison is a name match: a maiden name, a c/o
+ * address or an OCR slip can put the user's own invoice on the wrong side of
+ * it, and the answer to that must not be to weaken the rule for everyone.
+ */
+function readRecipientIdentity(record: FileRecord): RecipientIdentity {
+  if (record.recipientConfirmedAsUser === true) return "user";
+
+  const stored = record.recipientIdentityMatch;
+  return stored === "user" || stored === "third-party" ? stored : "unknown";
+}
+
+/**
  * The document date is a Firestore Timestamp on the record and an ISO string
  * nowhere. Classification only asks whether one is present, so anything
  * non-null counts.
@@ -108,6 +129,7 @@ export function toDocumentFacts(record: FileRecord): DocumentFacts {
     recipientName: asString(recipient.name),
     recipientAddress: asString(recipient.address),
     recipientVatId: asString(recipient.vatId),
+    recipientIdentity: readRecipientIdentity(record),
     issueDate: hasIssueDate(record.extractedDate),
     selfDesignation: asOptionalString(record, "extractedSelfDesignation"),
     invoiceNumber:
@@ -126,12 +148,23 @@ export function classifyFileRecord(record: FileRecord): DocumentTypeResult {
   return classifyDocumentType(toDocumentFacts(record));
 }
 
-/** The fields a classification writes onto a file record. */
+/**
+ * The fields a classification writes onto a file record.
+ *
+ * `foreignRecipient` is the basis fact hoisted to the top level (#229), and it
+ * is deliberately not derived from the REASON: a third-party invoice that also
+ * fails § 11 classifies `receipt` for that other defect, and the § 12
+ * consequence — this is not the user's Vorsteuer — is unchanged by which
+ * verdict the § 11 test reached. Hoisted rather than read through
+ * `documentTypeBasis.reason` because it is queried: the UVA derivation, the
+ * matching sweep and the review list all ask this question of the record.
+ */
 export function documentTypeFields(result: DocumentTypeResult): Record<string, unknown> {
   return {
     documentType: result.type,
     documentTypeBasis: result.basis,
     documentTypeMissingElements: result.missingElements,
+    foreignRecipient: result.foreignRecipient,
   };
 }
 

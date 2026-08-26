@@ -34,6 +34,7 @@ import type {
   DocumentTypeBasis,
   DocumentTypeReason,
   DocumentTypeResult,
+  RecipientIdentity,
   Section11Element,
   Section11Regime,
   SelfDesignationClass,
@@ -356,6 +357,7 @@ function basis(
     selfDesignation: parts.selfDesignation ?? null,
     selfDesignationClass: parts.selfDesignationClass ?? null,
     zeroVatReason: parts.zeroVatReason ?? null,
+    recipientIdentity: parts.recipientIdentity ?? "unknown",
     degraded: parts.degraded ?? false,
   };
 }
@@ -372,14 +374,36 @@ function basis(
 export function classifyDocumentType(facts: DocumentFacts): DocumentTypeResult {
   const selfDesignation = isPresent(facts.selfDesignation) ? facts.selfDesignation!.trim() : null;
   const selfDesignationClass = readSelfDesignationClass(facts.selfDesignation);
+  const recipientIdentity: RecipientIdentity = facts.recipientIdentity ?? "unknown";
+
+  /**
+   * § 11 holds and the supply was rendered to somebody else (#229).
+   *
+   * On an outgoing document this is not a finding at all: every invoice the
+   * user issues names a recipient who is not them, and that is what makes it
+   * outgoing.
+   */
+  const foreignRecipient =
+    recipientIdentity === "third-party" &&
+    facts.isOutgoing !== true &&
+    // A document already ruled out as a financial document has no supply to
+    // have been rendered to anybody. Saying otherwise would put this
+    // classifier at odds with the not-invoice write path, which clears the
+    // flag outright.
+    facts.isNotInvoice !== true;
 
   // The text classifier already ruled this out as a financial document; there
   // is nothing for § 11 to say about a tax form or a newsletter.
   if (facts.isNotInvoice === true) {
     return {
       type: "other",
-      basis: basis("not-a-financial-document", { selfDesignation, selfDesignationClass }),
+      basis: basis("not-a-financial-document", {
+        selfDesignation,
+        selfDesignationClass,
+        recipientIdentity,
+      }),
       missingElements: [],
+      foreignRecipient,
     };
   }
 
@@ -389,8 +413,14 @@ export function classifyDocumentType(facts: DocumentFacts): DocumentTypeResult {
   if (rawTotal === null || rawTotal === 0) {
     return {
       type: "unknown",
-      basis: basis("no-gross-total", { selfDesignation, selfDesignationClass, degraded: true }),
+      basis: basis("no-gross-total", {
+        selfDesignation,
+        selfDesignationClass,
+        recipientIdentity,
+        degraded: true,
+      }),
       missingElements: [],
+      foreignRecipient,
     };
   }
 
@@ -414,13 +444,31 @@ export function classifyDocumentType(facts: DocumentFacts): DocumentTypeResult {
   );
   const decisiveUndecidable = undecidable.filter((element) => decisive.includes(element));
 
-  const shared = { regime, grossTotal, selfDesignation, selfDesignationClass, zeroVatReason };
+  const shared = {
+    regime,
+    grossTotal,
+    selfDesignation,
+    selfDesignationClass,
+    zeroVatReason,
+    recipientIdentity,
+  };
 
   if (decisiveMissing.length === 0 && decisiveUndecidable.length === 0) {
+    // The document is a valid invoice either way. Which of the two facts the
+    // reason names is a question of what the reader has to act on, and "this
+    // is not your Vorsteuer" outranks "it lawfully prints no Austrian rate" —
+    // the zero-VAT regime stays readable in `zeroVatReason` regardless.
+    const satisfiedReason: DocumentTypeReason = foreignRecipient
+      ? "foreign-recipient"
+      : zeroVatReason
+        ? "zero-vat-with-stated-regime"
+        : "section-11-satisfied";
+
     return {
       type: "invoice",
-      basis: basis(zeroVatReason ? "zero-vat-with-stated-regime" : "section-11-satisfied", shared),
+      basis: basis(satisfiedReason, shared),
       missingElements: missing,
+      foreignRecipient,
     };
   }
 
@@ -431,6 +479,7 @@ export function classifyDocumentType(facts: DocumentFacts): DocumentTypeResult {
       type: "unknown",
       basis: basis("legacy-record-undecidable", { ...shared, degraded: true }),
       missingElements: missing,
+      foreignRecipient,
     };
   }
 
@@ -444,6 +493,7 @@ export function classifyDocumentType(facts: DocumentFacts): DocumentTypeResult {
       type: "unknown",
       basis: basis("own-outgoing-document", shared),
       missingElements: missing,
+      foreignRecipient,
     };
   }
 
@@ -463,5 +513,6 @@ export function classifyDocumentType(facts: DocumentFacts): DocumentTypeResult {
     type: "receipt",
     basis: basis(reason, shared),
     missingElements: missing,
+    foreignRecipient,
   };
 }

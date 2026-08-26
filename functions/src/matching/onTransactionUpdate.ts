@@ -16,6 +16,7 @@ import {
   shouldRecomputeDocumentationState,
 } from "../documents/documentationState";
 import { deriveForTransaction } from "../documents/syncDocumentationState";
+import { syncDirectionReviewForFiles } from "../documents/syncDirectionReview";
 
 // =============================================================================
 // AUTOMATION METADATA
@@ -118,6 +119,19 @@ export const onTransactionUpdate = onDocumentUpdated(
       if (after.isComplete !== shouldBeComplete) {
         syncUpdates.isComplete = shouldBeComplete;
       }
+    }
+
+    // #233: a file's direction is checkable only against the money it is
+    // attached to, so every change to the attachment — or to the amount the
+    // attachment is judged against — re-runs the cross-check. Both sides of a
+    // link move: a file that was just detached has to lose its conflict flag.
+    const amountChanged = before.amount !== after.amount;
+    if (fileIdsChanged || amountChanged) {
+      const touchedFileIds = new Set<string>([
+        ...((before.fileIds as string[] | undefined) ?? []),
+        ...((after.fileIds as string[] | undefined) ?? []),
+      ]);
+      await syncDirectionReviewForFiles(db, [...touchedFileIds]);
     }
 
     if (shouldRecomputeDocumentationState(before, after)) {

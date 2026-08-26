@@ -21,8 +21,16 @@ import { ExtractedEntity, ExtractedLineItem, ExtractedRateGroup } from "../types
 import { applyVatDowngradeGuard } from "./vatSourceGuard";
 import { classifyFileRecord, documentTypeFields } from "../documents/adapter";
 import { reviewFileRecordVatRates, vatRateReviewFields } from "../documents/vatRateReview";
+import {
+  hasIdentitySignals,
+  hasRecipientEntity,
+  resolveRecipientIdentity,
+  type RecipientIdentity,
+} from "../matching/recipientIdentity";
 import { classifyDocumentType } from "../documents/classifyDocumentType";
 import { syncDocumentationStateForTransactions } from "../documents/syncDocumentationState";
+import { computeDirectionReviewFields } from "../documents/syncDirectionReview";
+import { directionReviewFields } from "../documents/directionReview";
 
 /**
  * User data for invoice direction detection and counterparty determination
@@ -50,6 +58,12 @@ interface CounterpartyResult {
   matchedUserAccount: "issuer" | "recipient" | null;
   /** Invoice direction derived from match */
   invoiceDirection: InvoiceDirection;
+  /**
+   * Whether the recipient the document names is the user (#229). Stored so
+   * the § 11 classifier can read it: § 11 asks only that a recipient exist,
+   * § 12 asks whose supply it was, and only the second decides the Vorsteuer.
+   */
+  recipientIdentityMatch: RecipientIdentity;
 }
 
 /**
@@ -310,6 +324,7 @@ function determineCounterparty(
       counterparty: issuer,
       matchedUserAccount: null,
       invoiceDirection: "unknown",
+      recipientIdentityMatch: "unknown",
     };
   }
 
@@ -319,6 +334,20 @@ function determineCounterparty(
   // Check if recipient matches user data
   const recipientMatchesUser = entityMatchesUserData(recipient, userData, sourceIbans);
 
+  // #229: the same comparison, recorded as its own verdict. A failed match
+  // only means "somebody else" when there was something to match against and
+  // a recipient to match — see `resolveRecipientIdentity`.
+  const recipientIdentityMatch = resolveRecipientIdentity({
+    recipientPresent: hasRecipientEntity(recipient),
+    recipientMatchesUser,
+    hasIdentityData: hasIdentitySignals({
+      names: [userData.name, userData.companyName, ...(userData.aliases ?? [])],
+      vatIds: userData.vatIds,
+      ibans: userData.ibans,
+      sourceIbans,
+    }),
+  });
+
   if (issuerMatchesUser && !recipientMatchesUser) {
     // User is the issuer → outgoing invoice → recipient is counterparty
     console.log(`  [CounterpartyMatch] OUTGOING: issuer matches user, recipient is counterparty`);
@@ -326,6 +355,7 @@ function determineCounterparty(
       counterparty: recipient,
       matchedUserAccount: "issuer",
       invoiceDirection: "outgoing",
+      recipientIdentityMatch,
     };
   }
 
@@ -336,6 +366,7 @@ function determineCounterparty(
       counterparty: issuer,
       matchedUserAccount: "recipient",
       invoiceDirection: "incoming",
+      recipientIdentityMatch,
     };
   }
 
@@ -346,6 +377,7 @@ function determineCounterparty(
       counterparty: recipient,
       matchedUserAccount: "issuer",
       invoiceDirection: "outgoing",
+      recipientIdentityMatch,
     };
   }
 
@@ -356,6 +388,7 @@ function determineCounterparty(
     counterparty: issuer,
     matchedUserAccount: null,
     invoiceDirection: "unknown",
+    recipientIdentityMatch,
   };
 }
 
@@ -956,6 +989,14 @@ export async function runExtraction(
         // Every printed rate was just cleared, so there is nothing left to
         // review (#203).
         ...vatRateReviewFields({ ratesOutsideSet: [], needsReview: false }),
+        // Nor a direction: a document that is not a financial document has
+        // none to hold, so any flag it carried from an earlier pass goes (#233).
+        ...directionReviewFields({
+          needsReview: false,
+          reason: null,
+          conflictingTransactionIds: [],
+          suggestedDirection: null,
+        }),
         extractedText: "(classification only - not an invoice)",
         extractedFields: [],
         updatedAt: Timestamp.now(),
@@ -1010,6 +1051,7 @@ export async function runExtraction(
   // Determine counterparty and invoice direction based on user data
   let invoiceDirection: InvoiceDirection = "unknown";
   let matchedUserAccount: "issuer" | "recipient" | null = null;
+  let recipientIdentityMatch: RecipientIdentity = "unknown";
   let counterparty: ExtractedEntity | null = null;
 
   // Get extracted entities (from Gemini) or null (from legacy Claude parser)
@@ -1035,6 +1077,7 @@ export async function runExtraction(
       counterparty = counterpartyResult.counterparty;
       matchedUserAccount = counterpartyResult.matchedUserAccount;
       invoiceDirection = counterpartyResult.invoiceDirection;
+      recipientIdentityMatch = counterpartyResult.recipientIdentityMatch;
       console.log(`[+${Date.now() - t0}ms] Counterparty: "${counterparty?.name || "(none)"}", matchedUserAccount: ${matchedUserAccount}, direction: ${invoiceDirection}`);
     } else {
       // Fall back to legacy direction detection if no entities available
@@ -1053,6 +1096,11 @@ export async function runExtraction(
     extractedFields: [], // Bounding box overlays removed - using text search instead
     invoiceDirection,
     matchedUserAccount,
+    // #229: whether the recipient this document names is the user, decided
+    // here where the identity data is loaded and read by the § 11 classifier
+    // below. The legacy no-entity path leaves it "unknown", which is honest:
+    // that path never looked at a recipient at all.
+    recipientIdentityMatch,
     // Store extracted entities for future re-calculation
     extractedIssuer: extractedIssuer || null,
     extractedRecipient: extractedRecipient || null,
@@ -1277,6 +1325,12 @@ export async function runExtraction(
   // describes the rates the derivation will actually see.
   const rateReview = reviewFileRecordVatRates(storedRecord);
   Object.assign(updateData, vatRateReviewFields(rateReview));
+
+  // #233: extraction is where a file's direction is decided, so it is also
+  // where the direction can start disagreeing with the transactions the file
+  // is already attached to. Folded into this write rather than run after it —
+  // the record is in hand and a second write would re-fire every file trigger.
+  Object.assign(updateData, await computeDirectionReviewFields(db, storedRecord));
   if (rateReview.needsReview) {
     console.warn(
       `[ExtractionCore] ${fileId} prints VAT rate(s) outside the Austrian set: ` +
