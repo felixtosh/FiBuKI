@@ -722,6 +722,22 @@ describe("Tool Registry Handlers", () => {
       expect(connected).toHaveLength(1);
       expect(unconnected).toHaveLength(1);
     });
+
+    it("filters to the hand-corrected population, and away from it", async () => {
+      store.setDoc(
+        "files",
+        "f-1",
+        createTestFile({ userId, extractionCorrectedFields: { vatPercent: new Date() } })
+      );
+      store.setDoc("files", "f-2", createTestFile({ userId }));
+
+      // listFiles returns a plain array on main, not the fork's page object.
+      const corrected = await handlers.listFiles(userId, { handCorrected: true });
+      const untouched = await handlers.listFiles(userId, { handCorrected: false });
+
+      expect(corrected.map((f) => (f as { id: string }).id)).toEqual(["f-1"]);
+      expect(untouched.map((f) => (f as { id: string }).id)).toEqual(["f-2"]);
+    });
   });
 
   describe("getFile", () => {
@@ -2816,6 +2832,61 @@ describe("Tool Registry Handlers", () => {
 
       await handlers.retryFileExtractionTool(userId, { fileId: "f-2", force: true });
       expect(extraction.runExtraction).toHaveBeenCalledTimes(1);
+    });
+
+    // #184: the whole point — a sweep must not re-roll the model over a value a
+    // person decided, and force cannot be the flag that protects it because
+    // every sweep (and the UI button) passes force already.
+    it("refuses a hand-corrected file, naming the fields, even when forced", async () => {
+      store.setDoc(
+        "files",
+        "f-corrected",
+        createTestFile({
+          userId,
+          extractionComplete: true,
+          extractedVatPercent: 0,
+          extractionCorrectedFields: { vatPercent: new Date(), amount: new Date() },
+        })
+      );
+
+      await expect(
+        handlers.retryFileExtractionTool(userId, { fileId: "f-corrected" })
+      ).rejects.toThrow(/^HAND_CORRECTED: .*\(amount, vatPercent\)/);
+      await expect(
+        handlers.retryFileExtractionTool(userId, { fileId: "f-corrected", force: true })
+      ).rejects.toThrow(/^HAND_CORRECTED:/);
+
+      expect(extraction.runExtraction).not.toHaveBeenCalled();
+      // A refused retry leaves the record alone — the corrected rate is intact.
+      expect((store.getDoc("files", "f-corrected") as Record<string, unknown>).extractedVatPercent).toBe(0);
+    });
+
+    it("re-extracts a corrected file when the caller says so per file", async () => {
+      store.setDoc(
+        "files",
+        "f-corrected",
+        createTestFile({
+          userId,
+          extractionComplete: true,
+          extractionCorrectedFields: { vatPercent: new Date() },
+        })
+      );
+
+      // Both flags: force answers "it already extracted cleanly",
+      // overwriteCorrections answers "and a person corrected it".
+      await handlers.retryFileExtractionTool(userId, {
+        fileId: "f-corrected",
+        force: true,
+        overwriteCorrections: true,
+      });
+
+      expect(extraction.runExtraction).toHaveBeenCalledTimes(1);
+      // The marker is not cleared: a person did rule on this document, and the
+      // file stays on the next sweep's exclusion list rather than falling off
+      // it because it was overridden once.
+      const marker = (store.getDoc("files", "f-corrected") as Record<string, unknown>)
+        .extractionCorrectedFields as Record<string, unknown>;
+      expect(Object.keys(marker)).toEqual(["vatPercent"]);
     });
 
     it("keeps a manual partner assignment across the reset", async () => {

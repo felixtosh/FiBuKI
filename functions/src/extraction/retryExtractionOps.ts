@@ -18,12 +18,14 @@
 import type { Firestore } from "firebase-admin/firestore";
 import { Timestamp } from "firebase-admin/firestore";
 import { runExtraction } from "./extractionCore";
+import { correctedFieldsOf } from "../files/extractionProvenanceOps";
 
 /** Why a retry was refused. Each surface maps these onto its own error type. */
 export type RetryRefusalCode =
   | "NOT_FOUND"
   | "ACCESS_DENIED"
   | "ALREADY_EXTRACTED"
+  | "HAND_CORRECTED"
   | "EXTRACTION_FAILED";
 
 export class RetryExtractionError extends Error {
@@ -43,6 +45,16 @@ export interface RetryExtractionOptions {
    * items, no VAT — which is the whole population a re-extraction sweep is for.
    */
   force?: boolean;
+  /**
+   * Re-extract a file carrying hand corrections, replacing what a person set
+   * with whatever the model reads this time (#184).
+   *
+   * Deliberately NOT `force`. Every bulk sweep passes `force: true` as a matter
+   * of habit — the UI's own retry button does too, because a cleanly extracted
+   * file needs it — so gating corrections on that flag would be no gate at all.
+   * A caller that means to overwrite a person's ruling says so per file.
+   */
+  overwriteCorrections?: boolean;
   anthropicApiKey: string;
 }
 
@@ -108,10 +120,17 @@ export function buildRetryResetUpdates(fileData: {
  * — the failure is stamped on the document first, exactly as the trigger path
  * does, so a file never sits with `extractionComplete: false` forever after a
  * crash mid-run.
+ *
+ * A file carrying hand corrections is refused outright unless the caller asks
+ * for those corrections to be overwritten (#184), and the refusal names the
+ * fields so the caller can judge what it is about to destroy. The marker itself
+ * is not cleared when the overwrite goes ahead: it records that a person once
+ * ruled on this document, which stays true, and it keeps the file on the next
+ * sweep's exclusion list rather than quietly falling off it after one override.
  */
 export async function retryExtractionForFile(
   db: Firestore,
-  { fileId, userId, force, anthropicApiKey }: RetryExtractionOptions
+  { fileId, userId, force, overwriteCorrections, anthropicApiKey }: RetryExtractionOptions
 ): Promise<Awaited<ReturnType<typeof runExtraction>>> {
   const fileRef = db.collection("files").doc(fileId);
   const fileDoc = await fileRef.get();
@@ -124,6 +143,18 @@ export async function retryExtractionForFile(
 
   if (fileData.userId !== userId) {
     throw new RetryExtractionError("ACCESS_DENIED", "Access denied");
+  }
+
+  // Ahead of the force check, because a corrected file has almost always
+  // extracted cleanly: whichever refusal fires, the caller needs to hear about
+  // the corrections rather than be told to pass the flag that destroys them.
+  const correctedFields = correctedFieldsOf(fileData);
+  if (correctedFields.length > 0 && overwriteCorrections !== true) {
+    throw new RetryExtractionError(
+      "HAND_CORRECTED",
+      `File carries hand corrections a re-extraction would discard (${correctedFields.join(", ")}). ` +
+        "Pass overwriteCorrections to re-extract it anyway."
+    );
   }
 
   if (!canRetryExtraction(fileData, force)) {
@@ -141,7 +172,7 @@ export async function retryExtractionForFile(
 
   console.log(
     `[${new Date().toISOString()}] Retrying extraction for file: ${fileData.fileName} (${fileId})`,
-    { userId, force: force === true, isUserOverride }
+    { userId, force: force === true, isUserOverride, overwrittenCorrections: correctedFields }
   );
 
   await fileRef.update(buildRetryResetUpdates(fileData));

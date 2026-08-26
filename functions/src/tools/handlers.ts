@@ -28,6 +28,11 @@ import {
   FileExtractionCorrection,
 } from "../files/extractionCorrectionOps";
 import {
+  CORRECTABLE_FIELDS,
+  correctedFieldsOf,
+  hasHandCorrections,
+} from "../files/extractionProvenanceOps";
+import {
   buildDismissSuggestionUpdates,
   buildUndismissSuggestionUpdates,
   checkDismissalReason,
@@ -609,6 +614,16 @@ export async function listFiles(userId: string, args: Record<string, unknown>) {
     );
   }
 
+  // #184: the corrected population, so a re-extraction sweep can build its own
+  // exclusion list from the records instead of carrying one by hand. In memory
+  // like the filters above — the marker is absent on every record written
+  // before it existed, and Firestore has no "field missing" predicate.
+  if (args.handCorrected !== undefined) {
+    files = files.filter((f: Record<string, unknown>) =>
+      args.handCorrected ? hasHandCorrections(f) : !hasHandCorrections(f)
+    );
+  }
+
   return files;
 }
 
@@ -761,7 +776,7 @@ export async function updateFileExtraction(userId: string, args: Record<string, 
   // unknown key must not reach the update, and "absent" has to stay distinct
   // from "null" all the way down.
   const fields: FileExtractionCorrection = {};
-  for (const key of ["amount", "vatAmount", "vatPercent", "date", "lineItems"] as const) {
+  for (const key of CORRECTABLE_FIELDS) {
     if (args[key] !== undefined) {
       (fields as Record<string, unknown>)[key] = args[key];
     }
@@ -769,7 +784,9 @@ export async function updateFileExtraction(userId: string, args: Record<string, 
 
   let built;
   try {
-    built = buildExtractionCorrection(fields);
+    // The stored record goes in so the correction's provenance stamp (#184)
+    // merges onto the marks earlier corrections left, instead of replacing them.
+    built = buildExtractionCorrection(fields, fileSnap.data()!);
   } catch (error) {
     if (error instanceof ExtractionCorrectionError) {
       throw new Error(error.message);
@@ -805,6 +822,9 @@ export async function updateFileExtraction(userId: string, args: Record<string, 
     success: true,
     fileId,
     changed: built.changed,
+    // Every field a human has ever set on this record, not only the ones this
+    // call moved — this is what a re-extraction now refuses on (#184).
+    correctedFields: correctedFieldsOf(after),
     file: {
       fileName: after.fileName ?? null,
       extractedAmount: after.extractedAmount ?? null,
@@ -924,6 +944,8 @@ export async function unmarkFileAsNotInvoice(userId: string, args: Record<string
  * The refusal codes are surfaced as message prefixes, matching the
  * PAIR_REJECTED convention the connect handler uses: an agent working a list
  * needs to tell a stale id from a file that simply does not need re-extracting.
+ * HAND_CORRECTED is the one a sweep meets most (#184): it names the fields a
+ * person set, so the agent can decide per file instead of blanket-overriding.
  */
 export async function retryFileExtractionTool(userId: string, args: Record<string, unknown>) {
   const fileId = args.fileId as string;
@@ -936,6 +958,7 @@ export async function retryFileExtractionTool(userId: string, args: Record<strin
       fileId,
       userId,
       force: args.force === true,
+      overwriteCorrections: args.overwriteCorrections === true,
       anthropicApiKey: anthropicApiKey.value(),
     });
 
