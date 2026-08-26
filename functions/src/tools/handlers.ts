@@ -12,6 +12,8 @@
  */
 
 import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
+import { documentationStateChanged } from "../documents/documentationState";
+import { deriveForTransaction } from "../documents/syncDocumentationState";
 import { buildDownloadUrl } from "../utils/buildDownloadUrl";
 import { dayStartUtc, dayEndExclusiveUtc } from "../uva/dateWindow";
 import { buildMarkNotInvoiceUpdates, buildUnmarkNotInvoiceUpdates } from "../files/notInvoiceOps";
@@ -29,6 +31,8 @@ import {
 } from "../files/dismissSuggestionOps";
 import { getStorage } from "firebase-admin/storage";
 import { randomUUID } from "crypto";
+import { classifyFileRecord, documentTypeFields } from "../documents/adapter";
+import { syncDocumentationStateForTransactions } from "../documents/syncDocumentationState";
 import { TOOL_DEFINITIONS, TOOL_NAMES } from "./definitions";
 import type { ToolName } from "./definitions";
 import { readBankOriginalAmount } from "../fx/bankOriginalAmount";
@@ -49,6 +53,7 @@ import {
   type ResolvedEffectiveCycle,
 } from "../matching/billingCycle";
 import { PLANS } from "../billing/config";
+import { KNOWN_AUSTRIAN_RATES } from "../uva/rateSet";
 import type { PlanId, PlanFeatures } from "../billing/config";
 
 /**
@@ -135,6 +140,8 @@ export async function handleTool(
       return updateTransaction(userId, args);
     case "list_transactions_needing_files":
       return listTransactionsNeedingFiles(userId, args);
+    case "list_transactions_missing_invoice":
+      return listTransactionsMissingInvoice(userId, args);
     case "import_transactions":
       return importTransactions(userId, args);
 
@@ -354,8 +361,26 @@ export async function getTransaction(userId: string, transactionId: string) {
 }
 
 export async function updateTransaction(userId: string, args: Record<string, unknown>) {
-  const { transactionId, description, isComplete } = args;
+  const { transactionId, description, isComplete, vatRate, isReverseCharge } = args;
   if (!transactionId) throw new Error("transactionId is required");
+
+  // Manual override lane (fork #64, spec §3 step 3): the UVA calculation
+  // validates the rate against the transaction's period; this only rejects
+  // values that are never an Austrian rate (19 = Jungholz/Mittelberg).
+  if (vatRate !== undefined && vatRate !== null) {
+    if (typeof vatRate !== "number" || !KNOWN_AUSTRIAN_RATES.includes(vatRate)) {
+      throw new Error(
+        `vatRate must be one of ${KNOWN_AUSTRIAN_RATES.join(", ")} (or null to clear the override)`
+      );
+    }
+  }
+  if (
+    isReverseCharge !== undefined &&
+    isReverseCharge !== null &&
+    typeof isReverseCharge !== "boolean"
+  ) {
+    throw new Error("isReverseCharge must be true, false, or null to clear");
+  }
 
   const docRef = db.collection("transactions").doc(transactionId as string);
   const doc = await docRef.get();
@@ -365,13 +390,43 @@ export async function updateTransaction(userId: string, args: Record<string, unk
 
   const updates: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
   if (description !== undefined) updates.description = description;
-  if (isComplete !== undefined) updates.isComplete = isComplete;
+  if (isComplete !== undefined) {
+    updates.isComplete = isComplete;
+    // #215: marking complete changes neither fileIds nor noReceiptCategoryId,
+    // so the onTransactionUpdate guard never re-derives — a bare line marked
+    // complete would stay `undocumented` forever. Derive here so this writer
+    // keeps the pair in step like every other one. The override itself stays:
+    // isComplete is written as given, only the derived fact is refreshed.
+    const derived = await deriveForTransaction(db, doc.data()!);
+    if (documentationStateChanged(doc.data()?.documentationState, derived)) {
+      updates.documentationState = derived;
+    }
+  }
+  if (vatRate !== undefined) updates.vatRate = vatRate;
+  if (isReverseCharge !== undefined) updates.isReverseCharge = isReverseCharge;
 
   await docRef.update(updates);
   return { success: true, transactionId };
 }
 
-export async function listTransactionsNeedingFiles(userId: string, args: Record<string, unknown>) {
+/**
+ * One page of the user's transactions, newest first, filtered in memory.
+ *
+ * Every listing that selects on an absent field has to work this way:
+ * Firestore has no "field missing" predicate, so the read deliberately
+ * overfetches and a page is built from up to `scanLimit` documents. Rows past
+ * that are reached via `nextCursor`, not silently dropped, and the caller's
+ * `count` is the page size — never a count of what the account owes.
+ *
+ * The cursor is the last document actually CONSUMED, not the last one
+ * returned, so the next page resumes exactly where this one stopped: rows
+ * filtered out in memory are skipped, rows that simply didn't fit are not.
+ */
+async function scanTransactionsPage(
+  userId: string,
+  args: Record<string, unknown>,
+  keep: (transaction: Record<string, unknown>) => boolean
+): Promise<{ page: Array<Record<string, unknown>>; nextCursor: string | null }> {
   let query: FirebaseFirestore.Query = db
     .collection("transactions")
     .where("userId", "==", userId)
@@ -385,13 +440,6 @@ export async function listTransactionsNeedingFiles(userId: string, args: Record<
     }
   }
 
-  // "needs a receipt" is three absent-field tests (fileIds empty,
-  // noReceiptCategoryId unset, quotaExceeded unset) and Firestore has no
-  // "field missing" predicate, so the filtering happens in memory and the read
-  // deliberately overfetches — a page is built from up to `scanLimit`
-  // documents. Rows past that are reached via `nextCursor`, not silently
-  // dropped, and the returned `count` is the page size, never a count of what
-  // the account still owes receipts for.
   const requestedLimit = Math.min(Math.max((args.limit as number) || 50, 1), 500);
   const scanLimit = Math.min(requestedLimit * 5, 1000);
   query = query.limit(scanLimit);
@@ -402,22 +450,15 @@ export async function listTransactionsNeedingFiles(userId: string, args: Record<
     return { id: doc.id, ...data, date: toLocalDate(data.date) || data.date } as Record<string, unknown>;
   });
 
-  let transactions = scanned.filter(
-    (t) =>
-      (!(t.fileIds as string[]) || (t.fileIds as string[]).length === 0) && !t.noReceiptCategoryId && !t.quotaExceeded
-  );
+  let matching = scanned.filter(keep);
 
   if (args.minAmount !== undefined) {
     const minAmount = args.minAmount as number;
-    transactions = transactions.filter((t) => Math.abs((t.amount as number) || 0) >= minAmount);
+    matching = matching.filter((t) => Math.abs((t.amount as number) || 0) >= minAmount);
   }
 
-  // The page ends either at the requested limit or at the end of the scan.
-  // The cursor is the last document actually consumed, so the next page
-  // resumes exactly where this one stopped — rows filtered out in memory are
-  // skipped, rows that simply didn't fit are not.
-  const page = transactions.slice(0, requestedLimit);
-  const truncated = transactions.length > requestedLimit;
+  const page = matching.slice(0, requestedLimit);
+  const truncated = matching.length > requestedLimit;
   const hasMore = truncated || scanned.length === scanLimit;
 
   const nextCursor = !hasMore
@@ -426,7 +467,79 @@ export async function listTransactionsNeedingFiles(userId: string, args: Record<
       ? (page[page.length - 1].id as string)
       : ((scanned[scanned.length - 1]?.id as string) ?? null);
 
+  return { page, nextCursor };
+}
+
+export async function listTransactionsNeedingFiles(userId: string, args: Record<string, unknown>) {
+  // "needs a receipt" is three absent-field tests: no files, no no-receipt
+  // category, not parked on the quota limit.
+  const { page, nextCursor } = await scanTransactionsPage(
+    userId,
+    args,
+    (t) =>
+      (!(t.fileIds as string[]) || (t.fileIds as string[]).length === 0) &&
+      !t.noReceiptCategoryId &&
+      !t.quotaExceeded
+  );
+
   return { transactions: page, nextCursor, count: page.length };
+}
+
+/**
+ * The chase queue (#104): transactions holding a receipt but no invoice.
+ *
+ * `documentationState` is a present-field equality Firestore could filter on
+ * directly, but that needs a composite index alongside the date ordering, and
+ * the sibling listing already established the over-fetch shape — so this uses
+ * the same scan, with the same cursor semantics.
+ */
+export async function listTransactionsMissingInvoice(userId: string, args: Record<string, unknown>) {
+  const { page, nextCursor } = await scanTransactionsPage(
+    userId,
+    args,
+    (t) => t.documentationState === "receipt-only"
+  );
+
+  // Only the page's own documents are read — the § 11 defect list is what
+  // makes the row actionable, and reading it for rows nobody asked for would
+  // turn a listing into a fan-out.
+  const transactions = await Promise.all(
+    page.map(async (t) => {
+      const fileIds = (t.fileIds as string[] | undefined) ?? [];
+      const files = await Promise.all(
+        fileIds.slice(0, 10).map(async (fileId) => {
+          const snap = await db.collection("files").doc(fileId).get();
+          if (!snap.exists) return null;
+          const data = snap.data()!;
+          return {
+            fileId,
+            fileName: data.fileName ?? null,
+            documentType: data.documentType ?? null,
+            missingElements: data.documentTypeMissingElements ?? [],
+            basisReason: (data.documentTypeBasis as { reason?: string } | undefined)?.reason ?? null,
+          };
+        })
+      );
+
+      const documents = files.filter((f): f is NonNullable<typeof f> => f !== null);
+      const missingElements = [...new Set(documents.flatMap((d) => d.missingElements as string[]))];
+
+      return {
+        id: t.id,
+        date: t.date,
+        amount: t.amount,
+        currency: t.currency ?? "EUR",
+        name: t.name ?? null,
+        partner: t.partner ?? t.partnerName ?? null,
+        partnerId: t.partnerId ?? null,
+        documentationState: t.documentationState,
+        missingElements,
+        documents,
+      };
+    })
+  );
+
+  return { transactions, nextCursor, count: transactions.length };
 }
 
 // ============================================================================
@@ -628,7 +741,19 @@ export async function updateFileExtraction(userId: string, args: Record<string, 
     throw error;
   }
 
+  // The § 11 classification is stored, not recomputed at read time, so a
+  // correction that moves the amount or the rate must move it too — otherwise
+  // the person fixes the figure and the document type stays wrong (#104).
+  const corrected = { ...fileSnap.data()!, ...built.updates };
+  Object.assign(built.updates, documentTypeFields(classifyFileRecord(corrected)));
+
   await fileRef.update(built.updates);
+
+  const previousDocumentType = fileSnap.data()?.documentType;
+  const connectedTransactionIds = (fileSnap.data()?.transactionIds as string[] | undefined) ?? [];
+  if (previousDocumentType !== built.updates.documentType && connectedTransactionIds.length > 0) {
+    await syncDocumentationStateForTransactions(db, connectedTransactionIds);
+  }
 
   const after = (await fileRef.get()).data() ?? {};
   console.log(`[updateFileExtraction] Corrected file ${fileId}`, {
@@ -2031,6 +2156,7 @@ export async function scoreFileTransactionMatch(userId: string, args: Record<str
       extractedIban: fileData.extractedIban,
       extractedText: fileData.extractedText,
       partnerId: fileData.partnerId,
+      documentType: fileData.documentType,
     },
     {
       id: transactionId as string,
@@ -2043,6 +2169,7 @@ export async function scoreFileTransactionMatch(userId: string, args: Record<str
       partnerId: txData.partnerId,
       partnerIban: txData.partnerIban,
       reference: txData.reference,
+      documentationState: txData.documentationState,
     },
     []
   );
@@ -2053,6 +2180,9 @@ export async function scoreFileTransactionMatch(userId: string, args: Record<str
     confidence: result.confidence,
     matchSources: result.matchSources,
     breakdown: formatScoreBreakdown(result.breakdown),
+    // #104: why a confident pair still scored zero, or why it will not
+    // auto-connect. Absent when the transaction has no documentation state.
+    documentation: result.documentation ?? null,
   };
 }
 

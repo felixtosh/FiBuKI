@@ -327,6 +327,42 @@ describe("Tool Registry Handlers", () => {
         handlers.updateTransaction(userId, { transactionId: "non-existent", description: "test" })
       ).rejects.toThrow("Transaction not found");
     });
+
+    // #215: marking complete must re-derive documentationState — this writer
+    // changes neither fileIds nor the category, so the trigger guard never
+    // fires and a stale/unset state would stay that way forever.
+    it("derives documentationState when marking a bare line complete", async () => {
+      store.setDoc("transactions", "tx-1", createTestTransaction({ userId, isComplete: false }));
+
+      await handlers.updateTransaction(userId, { transactionId: "tx-1", isComplete: true });
+
+      const updated = store.getDoc("transactions", "tx-1");
+      expect(updated?.isComplete).toBe(true);
+      expect(updated?.documentationState).toBe("undocumented");
+    });
+
+    it("derives documentationState from attached files when setting isComplete", async () => {
+      store.setDoc("files", "file-1", createTestFile({ userId, documentType: "invoice" }));
+      store.setDoc(
+        "transactions",
+        "tx-1",
+        createTestTransaction({ userId, fileIds: ["file-1"], isComplete: false })
+      );
+
+      await handlers.updateTransaction(userId, { transactionId: "tx-1", isComplete: true });
+
+      const updated = store.getDoc("transactions", "tx-1");
+      expect(updated?.documentationState).toBe("invoice");
+    });
+
+    it("leaves documentationState alone on a description-only update", async () => {
+      store.setDoc("transactions", "tx-1", createTestTransaction({ userId }));
+
+      await handlers.updateTransaction(userId, { transactionId: "tx-1", description: "note" });
+
+      const updated = store.getDoc("transactions", "tx-1");
+      expect(updated?.documentationState).toBeUndefined();
+    });
   });
 
   describe("listTransactionsNeedingFiles", () => {
@@ -361,6 +397,165 @@ describe("Tool Registry Handlers", () => {
 
       expect(result.count).toBe(1);
       expect(result.transactions[0].id).toBe("tx-1");
+    });
+  });
+
+  describe("listTransactionsMissingInvoice", () => {
+    it("returns only the receipt-only lines, not the ones holding an invoice", async () => {
+      store.setDoc("files", "file-receipt", createTestFile({ userId, documentType: "receipt" }));
+      store.setDoc("files", "file-invoice", createTestFile({ userId, documentType: "invoice" }));
+      store.setDoc(
+        "transactions",
+        "tx-gap",
+        createTestTransaction({ userId, fileIds: ["file-receipt"], isComplete: true, documentationState: "receipt-only" })
+      );
+      store.setDoc(
+        "transactions",
+        "tx-fine",
+        createTestTransaction({ userId, fileIds: ["file-invoice"], isComplete: true, documentationState: "invoice" })
+      );
+      store.setDoc("transactions", "tx-empty", createTestTransaction({ userId, documentationState: "undocumented" }));
+
+      const result = await handlers.listTransactionsMissingInvoice(userId, {});
+
+      expect(result.transactions.map((t) => t.id)).toEqual(["tx-gap"]);
+      expect(result.count).toBe(1);
+      expect(result.nextCursor).toBeNull();
+    });
+
+    it("carries the vendor, the amount and the date so the queue can be prioritised", async () => {
+      store.setDoc("files", "file-receipt", createTestFile({ userId, documentType: "receipt" }));
+      store.setDoc(
+        "transactions",
+        "tx-gap",
+        createTestTransaction({
+          userId,
+          amount: -12000,
+          partner: "Amazon EU S.à r.l.",
+          fileIds: ["file-receipt"],
+          documentationState: "receipt-only",
+        })
+      );
+
+      const [row] = (await handlers.listTransactionsMissingInvoice(userId, {})).transactions;
+
+      expect(row.partner).toBe("Amazon EU S.à r.l.");
+      expect(row.amount).toBe(-12000);
+      expect(row.date).toBe("2024-01-15");
+    });
+
+    it("names the § 11 elements the attached document is missing", async () => {
+      store.setDoc(
+        "files",
+        "file-receipt",
+        createTestFile({
+          userId,
+          documentType: "receipt",
+          documentTypeMissingElements: ["steuersatz", "supplier-vat-id"],
+          documentTypeBasis: { reason: "no-vat-no-invoice-identity" },
+        })
+      );
+      store.setDoc(
+        "transactions",
+        "tx-gap",
+        createTestTransaction({ userId, fileIds: ["file-receipt"], documentationState: "receipt-only" })
+      );
+
+      const [row] = (await handlers.listTransactionsMissingInvoice(userId, {})).transactions;
+
+      expect(row.missingElements).toEqual(["steuersatz", "supplier-vat-id"]);
+      expect(row.documents[0].basisReason).toBe("no-vat-no-invoice-identity");
+    });
+
+    it("survives a dangling file reference rather than failing the whole page", async () => {
+      store.setDoc(
+        "transactions",
+        "tx-gap",
+        createTestTransaction({ userId, fileIds: ["file-gone"], documentationState: "receipt-only" })
+      );
+
+      const [row] = (await handlers.listTransactionsMissingInvoice(userId, {})).transactions;
+
+      expect(row.documents).toEqual([]);
+      expect(row.missingElements).toEqual([]);
+    });
+
+    it("filters by minAmount on the absolute value, since expenses are negative", async () => {
+      store.setDoc(
+        "transactions",
+        "tx-big",
+        createTestTransaction({ userId, amount: -50000, documentationState: "receipt-only" })
+      );
+      store.setDoc(
+        "transactions",
+        "tx-small",
+        createTestTransaction({ userId, amount: -500, documentationState: "receipt-only" })
+      );
+
+      const result = await handlers.listTransactionsMissingInvoice(userId, { minAmount: 1000 });
+
+      expect(result.transactions.map((t) => t.id)).toEqual(["tx-big"]);
+    });
+
+    it("never returns another user's transactions", async () => {
+      store.setDoc(
+        "transactions",
+        "tx-theirs",
+        createTestTransaction({ userId: otherUserId, documentationState: "receipt-only" })
+      );
+
+      const result = await handlers.listTransactionsMissingInvoice(userId, {});
+
+      expect(result.transactions).toEqual([]);
+    });
+
+    it("pages the whole queue when the receipt-only rows are sparse in the scan", async () => {
+      // 60 transactions, every fifth one a receipt-only gap. With limit 3 the
+      // scan window (3 * 5 = 15 rows) holds exactly 3 matches, so the cursor
+      // has to resume from the last row CONSUMED, not the last one returned —
+      // the case a copied pagination block gets wrong.
+      for (let i = 0; i < 60; i++) {
+        store.setDoc(
+          "transactions",
+          `tx-${String(i).padStart(3, "0")}`,
+          createTestTransaction({
+            userId,
+            date: new Date(Date.UTC(2026, 0, 1) + (60 - i) * 60_000),
+            documentationState: i % 5 === 0 ? "receipt-only" : "invoice",
+          })
+        );
+      }
+
+      const seen: string[] = [];
+      let cursor: string | undefined;
+      for (let guard = 0; guard < 40; guard++) {
+        const page: Awaited<ReturnType<typeof handlers.listTransactionsMissingInvoice>> =
+          await handlers.listTransactionsMissingInvoice(userId, {
+            limit: 3,
+            ...(cursor ? { cursor } : {}),
+          });
+        seen.push(...page.transactions.map((t) => t.id as string));
+        if (!page.nextCursor) break;
+        cursor = page.nextCursor;
+      }
+
+      expect(seen).toHaveLength(12);
+      expect(new Set(seen).size).toBe(12);
+      expect(seen.every((id) => Number(id.slice(3)) % 5 === 0)).toBe(true);
+    });
+
+    it("is reachable through the dispatcher under its tool name", async () => {
+      store.setDoc(
+        "transactions",
+        "tx-gap",
+        createTestTransaction({ userId, documentationState: "receipt-only" })
+      );
+
+      const result = (await handlers.handleTool(userId, "list_transactions_missing_invoice", {})) as {
+        count: number;
+      };
+
+      expect(result.count).toBe(1);
     });
   });
 
@@ -749,6 +944,58 @@ describe("Tool Registry Handlers", () => {
       expect(file?.lineItemsUnreconciled).toBe(false);
       expect(file?.extractedRateGroups).toBeNull();
       expect(file?.vatSourceDowngraded).toBe(false);
+    });
+
+    it("recomputes the § 11 document type, since it is stored and not read-time (#104)", async () => {
+      // Under 400 EUR with a rate: a valid Kleinbetragsrechnung.
+      store.setDoc(
+        "files",
+        "f-1",
+        createTestFile({
+          userId,
+          extractedAmount: 5400,
+          extractedVatPercent: 20,
+          extractedDate: new Date("2026-03-04"),
+          extractedPartner: "Elektro Huber e.U.",
+          extractedAddress: "Wien",
+          extractedLineItems: [{ description: "USB-C Kabel", vatPercent: 20 }],
+          extractedSelfDesignation: "Rechnung",
+          extractedInvoiceNumber: null,
+          documentType: "invoice",
+        })
+      );
+
+      // Clearing the rate takes the § 11 Abs 6 discriminator away with it.
+      await handlers.updateFileExtraction(userId, { fileId: "f-1", vatPercent: null, lineItems: [] });
+
+      const file = store.getDoc("files", "f-1");
+      expect(file?.documentType).toBe("receipt");
+      expect(file?.documentTypeMissingElements).toContain("steuersatz");
+    });
+
+    it("propagates a changed document type to the transactions holding the file (#104)", async () => {
+      store.setDoc(
+        "files",
+        "f-1",
+        createTestFile({
+          userId,
+          extractedAmount: 5400,
+          extractedVatPercent: 20,
+          documentType: "receipt",
+          transactionIds: ["tx-1"],
+        })
+      );
+      store.setDoc(
+        "transactions",
+        "tx-1",
+        createTestTransaction({ userId, fileIds: ["f-1"], documentationState: "receipt-only" })
+      );
+
+      // A rate at this amount makes it a Kleinbetragsrechnung.
+      await handlers.updateFileExtraction(userId, { fileId: "f-1", vatPercent: 20 });
+
+      expect(store.getDoc("files", "f-1")?.documentType).toBe("invoice");
+      expect(store.getDoc("transactions", "tx-1")?.documentationState).toBe("invoice");
     });
 
     it("writes a zero rate rather than reading it as unset", async () => {

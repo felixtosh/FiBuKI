@@ -39,6 +39,8 @@ Extract these fields (use null if not found):
 - vatId: VAT identification number (e.g., ATU12345678, DE123456789). Look for "UID", "UID-Nr", "VAT ID", "USt-IdNr", "MwSt-Nr", "Steuernummer".
 - iban: IBAN if visible (e.g., AT12 3456 7890 1234 5678, DE89 3704 0044 0532 0130 00). Look for "IBAN", bank details section.
 - address: Full company address as single string. Look for the address block near the company name, letterhead, or "Adresse".
+- selfDesignation: The heading the document gives ITSELF, transcribed exactly as printed ("Rechnung", "Invoice", "Quittung", "Zahlungsbestätigung", "Receipt", "Gutschrift"). Copy it, never infer it. null if the document prints no such heading.
+- invoiceNumber: The sequential invoice number, transcribed exactly as printed. Look for "Rechnungsnummer", "Rechnungs-Nr.", "Invoice No.", "Belegnummer". Never construct one from a date, order number or customer number. null if none is printed.
 
 IMPORTANT for German formats:
 - Dates: DD.MM.YYYY or DD/MM/YYYY -> convert to YYYY-MM-DD
@@ -55,6 +57,8 @@ Example response:
   "amount": 12345,
   "currency": "EUR",
   "vatPercent": 19,
+  "selfDesignation": "Rechnung",
+  "invoiceNumber": "2024-0042",
   "partner": "ACME GmbH",
   "vatId": "ATU12345678",
   "iban": "AT123456789012345678",
@@ -107,6 +111,14 @@ Example response:
       currency: parsed.currency || null,
       vatPercent: typeof parsed.vatPercent === "number" ? parsed.vatPercent : null,
       lineItems: null, // Legacy Claude parser does not extract line items
+      // Transcribed, never inferred (#104): anything that is not a non-empty
+      // string means the document printed none.
+      selfDesignation: typeof parsed.selfDesignation === "string" && parsed.selfDesignation.trim()
+        ? parsed.selfDesignation.trim()
+        : null,
+      invoiceNumber: typeof parsed.invoiceNumber === "string" && parsed.invoiceNumber.trim()
+        ? parsed.invoiceNumber.trim()
+        : null,
       partner: parsed.partner || null,
       vatId: parsed.vatId || null,
       iban: parsed.iban || null,

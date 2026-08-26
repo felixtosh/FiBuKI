@@ -7,6 +7,7 @@
 
 import { describe, it, expect } from "vitest";
 import { dayStartUtc, dayEndExclusiveUtc } from "./dateWindow";
+import { periodBoundaries } from "./rateSet";
 
 const iso = (d: Date | null) => d?.toISOString() ?? null;
 
@@ -70,10 +71,18 @@ describe("dayEndExclusiveUtc", () => {
   });
 });
 
-// A third describe, "window composed from periodBoundaries", was cut from this
-// lane rather than dropped. It reads `periodBoundaries` from ./rateSet, which
-// arrives with the UVA bundle (#89) and does not exist on main yet, so it
-// cannot compile here. It belongs with the module it integrates against and is
-// tracked as a required addition on #89 — the coverage it carries is that a
-// UVA period's boundaries compose into a window with no gap or overlap between
-// consecutive quarters.
+describe("window composed from periodBoundaries", () => {
+  it("matches the window calculateUva runs on for a quarter", () => {
+    const bounds = periodBoundaries({ year: 2026, period: 2, type: "quarterly" });
+
+    expect(iso(dayStartUtc(bounds.start))).toBe("2026-04-01T00:00:00.000Z");
+    expect(iso(dayEndExclusiveUtc(bounds.end))).toBe("2026-07-01T00:00:00.000Z");
+  });
+
+  it("leaves no gap or overlap between consecutive quarters", () => {
+    const q1 = periodBoundaries({ year: 2026, period: 1, type: "quarterly" });
+    const q2 = periodBoundaries({ year: 2026, period: 2, type: "quarterly" });
+
+    expect(iso(dayEndExclusiveUtc(q1.end))).toBe(iso(dayStartUtc(q2.start)));
+  });
+});

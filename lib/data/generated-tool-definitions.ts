@@ -142,7 +142,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "update_transaction",
-    "description": "Update a transaction's description or completion status",
+    "description": "Update a transaction's description, completion status, or manual VAT-rate override (the override feeds the UVA calculation when no receipt resolves the rate)",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -157,6 +157,20 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         "isComplete": {
           "type": "boolean",
           "description": "Mark as complete/incomplete"
+        },
+        "vatRate": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Manual VAT rate override for UVA derivation: one of 0, 4.9, 10, 13, 19, 20. Pass null to clear. The calculation still validates the rate against the transaction's period."
+        },
+        "isReverseCharge": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Reverse-charge classification for UVA derivation: true forces the §19 service regime (KZ 057/066), false vetoes the automatic foreign-supplier heuristic, null clears and lets the heuristic decide."
         }
       },
       "required": [
@@ -173,6 +187,27 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         "minAmount": {
           "type": "number",
           "description": "Minimum amount in cents"
+        },
+        "limit": {
+          "type": "number",
+          "description": "Max results per page (default 50, max 500)"
+        },
+        "cursor": {
+          "type": "string",
+          "description": "nextCursor from the previous response to fetch the next page"
+        }
+      }
+    }
+  },
+  {
+    "name": "list_transactions_missing_invoice",
+    "description": "Find transactions documented by a receipt only — money moved, a document is attached, but no invoice satisfying § 11 UStG was ever received, so no Vorsteuer may be claimed. These lines look complete everywhere else. Returns { transactions, nextCursor, count } where each row carries the vendor, the amount, the date and the § 11 elements the attached document is missing, so a request to the supplier can name the defect. `count` is the size of this page, not a total — page with nextCursor until it comes back null.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "minAmount": {
+          "type": "number",
+          "description": "Minimum absolute amount in cents — the deductions worth chasing first"
         },
         "limit": {
           "type": "number",

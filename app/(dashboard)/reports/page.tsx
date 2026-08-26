@@ -34,8 +34,8 @@ import { callFunction } from "@/lib/firebase/callable";
 import { formatCurrency } from "@/lib/utils";
 import {
   getReportReadiness,
-  calculateUVAReport,
 } from "@/lib/operations";
+import type { UvaReportResult } from "@/functions/src/uva/types";
 import { OperationsContext } from "@/lib/operations/types";
 import {
   ReportPeriod,
@@ -107,6 +107,7 @@ function ReportsContent() {
   // Report state
   const [readiness, setReadiness] = useState<ReportReadiness | null>(null);
   const [report, setReport] = useState<Omit<UVAReport, "id" | "createdAt" | "updatedAt"> | null>(null);
+  const [uvaResult, setUvaResult] = useState<UvaReportResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState<"pdf" | "xml" | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -147,22 +148,47 @@ function ReportsContent() {
     const loadData = async () => {
       setLoading(true);
       try {
-        // Load readiness check and calculate report in parallel
-        const [readinessResult, reportData] = await Promise.all([
+        // Readiness stays client-side; the calculation runs server-side
+        // (fork #64, D4) so it can read the connected receipts.
+        const token = await user?.getIdToken();
+        const [readinessResult, calcResponse] = await Promise.all([
           getReportReadiness(ctx, selectedPeriod),
-          calculateUVAReport(ctx, selectedPeriod, country),
+          fetch("/api/reports/calculate", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify({ period: selectedPeriod }),
+          }),
         ]);
         setReadiness(readinessResult);
-        setReport(reportData);
+        if (!calcResponse.ok) {
+          const errorData = await calcResponse.json().catch(() => ({}));
+          throw new Error(errorData.error || "UVA calculation failed");
+        }
+        const calc = await calcResponse.json();
+        setUvaResult(calc.result);
+        // Legacy projection keeps the PDF export and breakdown tab working
+        // with the corrected figures.
+        setReport({
+          ...calc.legacy,
+          userId: userId ?? "",
+          period: selectedPeriod,
+          country,
+          status: "draft" as const,
+        });
       } catch (error) {
         console.error("Error loading report data:", error);
+        setUvaResult(null);
+        setReport(null);
       } finally {
         setLoading(false);
       }
     };
 
     loadData();
-  }, [ctx, userId, selectedPeriod, country]);
+  }, [ctx, userId, user, selectedPeriod, country]);
 
   // Handle period type change
   const handlePeriodTypeChange = (type: "monthly" | "quarterly") => {
@@ -226,9 +252,17 @@ function ReportsContent() {
   const deadline = getUvaDeadline(selectedPeriod);
   const deadlinePassed = isDeadlinePassed(selectedPeriod);
 
+  // Per-KZ values for the XML/submit paths (fork #64)
+  const kennzahlValues = () =>
+    uvaResult
+      ? Object.fromEntries(
+          Object.entries(uvaResult.kennzahlen).map(([code, f]) => [code, f.value])
+        )
+      : null;
+
   // Export handlers
   const handleExport = async (format: "pdf" | "xml") => {
-    if (!report || !user) return;
+    if (!report || !uvaResult || !user) return;
 
     // Check tax number for XML export
     if (format === "xml" && (!userData?.taxNumber || userData.taxNumber.length !== 9)) {
@@ -252,6 +286,7 @@ function ReportsContent() {
         body: JSON.stringify({
           format,
           report,
+          kennzahlen: kennzahlValues(),
           period: selectedPeriod,
           taxNumber: userData?.taxNumber,
           companyName: userData?.companyName,
@@ -292,7 +327,7 @@ function ReportsContent() {
 
   // Submit to FinanzOnline
   const handleSubmitToFinanzOnline = async () => {
-    if (!report || !user) return;
+    if (!uvaResult || !user) return;
 
     // Check tax number
     if (!userData?.taxNumber || userData.taxNumber.length !== 9) {
@@ -325,7 +360,7 @@ function ReportsContent() {
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          report,
+          kennzahlen: kennzahlValues(),
           period: selectedPeriod,
           taxNumber: userData.taxNumber,
         }),
@@ -559,9 +594,9 @@ function ReportsContent() {
               </TabsList>
 
               <TabsContent value="preview" className="mt-4">
-                {report && (
+                {uvaResult && (
                   <UVAPreview
-                    report={report}
+                    result={uvaResult}
                     period={selectedPeriod}
                     country={country}
                   />

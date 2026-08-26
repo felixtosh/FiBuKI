@@ -454,7 +454,7 @@ describe("characterization: runExtraction extraction + counterparty", () => {
 // ===========================================================================
 
 describe("characterization: runExtraction line-item reconciliation", () => {
-  it("line items that badly mismatch the document total collapse into one 'Invoice total' item", async () => {
+  it("line items that badly mismatch the document total are KEPT and flagged (fork #64)", async () => {
     const fileData = await seedFile("f-mismatch");
     q({
       extracted: {
@@ -467,13 +467,16 @@ describe("characterization: runExtraction line-item reconciliation", () => {
     await runExtraction("f-mismatch", fileData, { skipClassification: true });
 
     const doc = await fileDoc("f-mismatch");
-    // 5798 (net+VAT view) vs 11900 → mismatch 6102 > tolerance 60 → fallback:
-    // gross 11900 @19% → VAT round(11900*19/119) = 1900, unit price 10000
+    // 5798 (net+VAT view) vs 11900 → mismatch 6102 > tolerance 60. The old
+    // behavior destroyed the items with one document-rate fallback line;
+    // now they survive for human repair, the file is flagged, and the
+    // top-level keeps the document's own extraction (spec §6).
     expect(doc.extractedLineItems).toEqual([
-      { description: "Invoice total", quantity: 1, unitPrice: 10000, vatPercent: 19, vatAmount: 1900, amount: 11900 },
+      { description: "Teilposten", quantity: null, unitPrice: null, vatPercent: 19, vatAmount: 798, amount: 5000 },
     ]);
+    expect(doc.lineItemsUnreconciled).toBe(true);
     expect(doc.extractedAmount).toBe(11900);
-    expect(doc.extractedVatAmount).toBe(1900);
+    expect(doc.extractedVatAmount).toBeNull();
     expect(doc.extractedVatPercent).toBe(19);
   });
 
@@ -525,6 +528,126 @@ describe("characterization: runExtraction line-item reconciliation", () => {
     expect(doc.extractedAmount).toBe(1200);
     expect(doc.extractedVatAmount).toBe(200);
     expect(doc.extractedVatPercent).toBe(20);
+  });
+});
+
+// ===========================================================================
+// runExtraction — printed per-rate VAT summary block (fork #67, spec §6)
+// ===========================================================================
+
+describe("runExtraction: printed rate groups", () => {
+  it("stores the printed block and takes the document VAT from it", async () => {
+    const fileData = await seedFile("f-rg-clean");
+    q({
+      extracted: {
+        amount: 4750,
+        confidence: 0.9,
+        lineItems: [
+          { description: "Pasta", amount: 3850, vatPercent: 10, vatAmount: 350 },
+          { description: "Wein", amount: 900, vatPercent: 20, vatAmount: 150 },
+        ],
+        rateGroups: [
+          { rate: 10, net: 3500, vat: 350, gross: 3850 },
+          { rate: 20, net: 750, vat: 150, gross: 900 },
+        ],
+      },
+    });
+    await runExtraction("f-rg-clean", fileData, { skipClassification: true });
+
+    const doc = await fileDoc("f-rg-clean");
+    expect(doc.extractedRateGroups).toEqual([
+      { rate: 10, net: 3500, vat: 350, gross: 3850 },
+      { rate: 20, net: 750, vat: 150, gross: 900 },
+    ]);
+    expect(doc.lineItemsUnreconciled).toBe(false);
+    expect(doc.lineItemsUnreconciledRates).toBeNull();
+    expect(doc.extractedAmount).toBe(4750);
+    expect(doc.extractedVatAmount).toBe(500);
+    expect(doc.extractedVatPercent).toBeNull(); // mixed 10% / 20%
+  });
+
+  it("localises a line-item failure to the damaged rate and keeps the block's VAT", async () => {
+    const fileData = await seedFile("f-rg-noisy");
+    q({
+      extracted: {
+        amount: 4750,
+        vatPercent: 20,
+        confidence: 0.7,
+        lineItems: [
+          { description: "Pasta", amount: 3850, vatPercent: 10, vatAmount: 350 },
+          // 9,00 read as 90,00
+          { description: "Wein", amount: 9000, vatPercent: 20, vatAmount: 150 },
+        ],
+        rateGroups: [
+          { rate: 10, net: 3500, vat: 350, gross: 3850 },
+          { rate: 20, net: 750, vat: 150, gross: 900 },
+        ],
+      },
+    });
+    await runExtraction("f-rg-noisy", fileData, { skipClassification: true });
+
+    const doc = await fileDoc("f-rg-noisy");
+    expect(doc.lineItemsUnreconciled).toBe(true);
+    expect(doc.lineItemsUnreconciledRates).toEqual([20]);
+    // the printed block is a second reading of the document, so it survives
+    // the line-item failure and still carries the VAT
+    expect(doc.extractedVatAmount).toBe(500);
+    expect(doc.extractedAmount).toBe(4750);
+    expect(doc.extractedLineItems).toHaveLength(2);
+  });
+
+  it("completes a block that prints only rate and gross", async () => {
+    const fileData = await seedFile("f-rg-partial");
+    q({
+      extracted: {
+        amount: 1200,
+        confidence: 0.8,
+        rateGroups: [{ rate: 20, gross: 1200 }],
+      },
+    });
+    await runExtraction("f-rg-partial", fileData, { skipClassification: true });
+
+    const doc = await fileDoc("f-rg-partial");
+    // a missing COLUMN is arithmetic on printed numbers; a missing ROW is not
+    expect(doc.extractedRateGroups).toEqual([{ rate: 20, net: 1000, vat: 200, gross: 1200 }]);
+    expect(doc.extractedVatAmount).toBe(200);
+    expect(doc.extractedVatPercent).toBe(20);
+  });
+
+  it("discards a block that does not sum to the document total", async () => {
+    const fileData = await seedFile("f-rg-badsum");
+    q({
+      extracted: {
+        amount: 9999,
+        vatPercent: 20,
+        confidence: 0.8,
+        rateGroups: [{ rate: 20, net: 1000, vat: 200, gross: 1200 }],
+      },
+    });
+    await runExtraction("f-rg-badsum", fileData, { skipClassification: true });
+
+    const doc = await fileDoc("f-rg-badsum");
+    expect(doc.extractedRateGroups).toBeNull();
+    expect(doc.extractedVatAmount).toBeNull();
+    expect(doc.extractedAmount).toBe(9999);
+  });
+
+  it("clears the block when the document turns out not to be an invoice", async () => {
+    const fileData = await seedFile("f-rg-notinvoice");
+    q({ isNotInvoice: true, notInvoiceReason: "Werbeprospekt" });
+    q({
+      extracted: {
+        amount: 1200,
+        confidence: 0.8,
+        rateGroups: [{ rate: 20, net: 1000, vat: 200, gross: 1200 }],
+      },
+    });
+    await runExtraction("f-rg-notinvoice", fileData, {});
+
+    const doc = await fileDoc("f-rg-notinvoice");
+    expect(doc.isNotInvoice).toBe(true);
+    expect(doc.extractedRateGroups).toBeNull();
+    expect(doc.lineItemsUnreconciledRates).toBeNull();
   });
 });
 

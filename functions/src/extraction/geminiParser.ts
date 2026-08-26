@@ -22,7 +22,7 @@ function getProjectId(): string {
 // Vertex AI location - match Firebase region to minimize latency
 const VERTEX_LOCATION = process.env.VERTEX_LOCATION || "europe-west1";
 
-import { ExtractedData, ExtractedLineItem } from "../types/extraction";
+import { ExtractedData, ExtractedLineItem, ExtractedRateGroup } from "../types/extraction";
 
 /**
  * Bounding box extracted by Gemini for a field
@@ -98,6 +98,16 @@ function toFiniteNumber(value: unknown): number | null {
 function toCents(value: unknown): number | null {
   const num = toFiniteNumber(value);
   return num === null ? null : Math.round(num);
+}
+
+/**
+ * A field the prompt asks the model to TRANSCRIBE (#104). Anything that is
+ * not a non-empty string is treated as "the document printed none" — the
+ * §11 classifier reads an invented value as a satisfied requirement, so a
+ * wrong shape must degrade to null rather than be coerced into one.
+ */
+function asTranscribedString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
 function normalizeVatPercent(vatPercent: unknown): number | null {
@@ -421,6 +431,91 @@ function normalizeLineItems(lineItems: GeminiLineItem[] | null | undefined): Ext
   return normalizedItems.length > 0 ? normalizedItems : null;
 }
 
+interface GeminiRateGroup {
+  rate?: number | string | null;
+  net?: number | string | null;
+  vat?: number | string | null;
+  gross?: number | string | null;
+}
+
+/**
+ * Normalize the document's printed VAT summary block (fork #67, spec §6
+ * item 3).
+ *
+ * The block is all-or-nothing: a single unreadable row means we cannot
+ * trust the transcription of the others either, so the whole block is
+ * dropped rather than half-kept. Downstream treats "rateGroups present"
+ * as "the receipt printed this", which only holds if we never fabricate.
+ *
+ * Completing a missing COLUMN is allowed — net/vat/gross and the rate are
+ * four views of the same two numbers, and receipts routinely print only
+ * two or three of them. Completing a missing ROW is not.
+ */
+function normalizeRateGroups(
+  rateGroups: GeminiRateGroup[] | null | undefined
+): ExtractedRateGroup[] | null {
+  if (!Array.isArray(rateGroups) || rateGroups.length === 0) {
+    return null;
+  }
+
+  const completed: ExtractedRateGroup[] = [];
+
+  for (const group of rateGroups) {
+    const rate = normalizeVatPercent(group?.rate);
+    if (rate === null) {
+      return null;
+    }
+
+    let net = toCents(group?.net);
+    let vat = toCents(group?.vat);
+    let gross = toCents(group?.gross);
+
+    // Fill from the other two printed columns first — pure arithmetic on
+    // numbers the document itself showed.
+    if (gross === null && net !== null && vat !== null) gross = net + vat;
+    if (net === null && gross !== null && vat !== null) net = gross - vat;
+    if (vat === null && gross !== null && net !== null) vat = gross - net;
+
+    // Only one column printed: the rate closes the system.
+    if (net === null || vat === null || gross === null) {
+      if (gross !== null) {
+        vat = Math.round((gross * rate) / (100 + rate));
+        net = gross - vat;
+      } else if (net !== null) {
+        vat = Math.round((net * rate) / 100);
+        gross = net + vat;
+      } else if (vat !== null && rate > 0) {
+        net = Math.round((vat * 100) / rate);
+        gross = net + vat;
+      }
+    }
+
+    if (net === null || vat === null || gross === null) {
+      return null;
+    }
+    if (net < 0 || vat < 0 || gross <= 0) {
+      return null;
+    }
+
+    completed.push({ rate, net, vat, gross });
+  }
+
+  // A rate printed twice (block split across a page break) is one group.
+  const byRate = new Map<number, ExtractedRateGroup>();
+  for (const g of completed) {
+    const existing = byRate.get(g.rate);
+    if (existing) {
+      existing.net += g.net;
+      existing.vat += g.vat;
+      existing.gross += g.gross;
+    } else {
+      byRate.set(g.rate, { ...g });
+    }
+  }
+
+  return [...byRate.values()];
+}
+
 export async function parseWithGemini(
   fileBuffer: Buffer,
   fileType: string,
@@ -463,9 +558,44 @@ LINE ITEM EXTRACTION (IMPORTANT):
 - Do NOT extract summary rows like Subtotal, Total, VAT, Amount paid, Payment history
 - If no itemization is visible, create exactly ONE line item for the total
 - Return all monetary amounts in cents
-- Use "vatPercent": null when the rate is not explicitly visible (do not guess)
-- Sanity check: line item totals must reconcile with the invoice total amount
-  (if they do not, fix the line item selection so they match)
+- Set "vatPercent" on every row the document's rate applies to. The rate counts
+  as visible whether it is printed on the row itself, in the per-rate summary
+  block, or as a single line near the total ("zzgl. 20% USt", "+ 20% MwSt")
+- Use "vatPercent": null only when the document prints no rate at all anywhere
+  (do not guess a rate that is not on the page)
+- Copy "amount" exactly as the row prints it, net or gross, and say which by
+  filling "vatAmount" for every row that has a rate: on a NET row (an invoice
+  that lists net rows and adds VAT once at the bottom) "vatAmount" is the VAT
+  ON TOP of "amount"; on a GROSS row it is the VAT ALREADY INSIDE "amount"
+- Sanity check: the rows must reconcile with the invoice total amount, either
+  as they stand (gross rows) or once their VAT is added (net rows). If neither
+  works, fix the line item selection so one of them does
+
+VAT SUMMARY BLOCK ("rateGroups", IMPORTANT):
+- Most Austrian/German receipts print a per-rate VAT summary near the total, e.g.
+  "MwSt-Satz | Netto | MwSt | Brutto", "A 20% 45,00 9,00 54,00", "USt 10% ..."
+- Transcribe that block into "rateGroups", ONE entry per printed rate
+- Copy the printed numbers exactly - do NOT compute them, do NOT derive them
+  from the line items, do NOT infer a missing column
+- If a column is missing from the block, leave that field null (do not fill it in)
+- If the document prints NO such summary block, return "rateGroups": null
+- Never invent a summary block from a single total line
+
+DOCUMENT SELF-DESIGNATION ("selfDesignation", IMPORTANT):
+- Transcribe the heading the document gives ITSELF, exactly as printed:
+  "Rechnung", "Invoice", "Quittung", "Zahlungsbestätigung", "Receipt",
+  "Gutschrift", "Kassenbeleg", and so on
+- Copy what is printed - do NOT compute, infer, translate or normalise it
+- If the document prints no such heading, return "selfDesignation": null
+- Never derive it from the content: a document that looks like an invoice but
+  prints no heading has none
+
+SEQUENTIAL INVOICE NUMBER ("invoiceNumber", IMPORTANT):
+- Transcribe the invoice's own sequential number, exactly as printed:
+  "Rechnungsnummer", "Rechnungs-Nr.", "Invoice No.", "Belegnummer"
+- Copy what is printed - do NOT construct one from a date, an order number,
+  a customer number or a reference
+- If the document prints no invoice number, return "invoiceNumber": null
 
 Input format: German (dates DD.MM.YYYY, amounts with comma like 123,45)
 Output: date as YYYY-MM-DD, amount in cents (123,45 → 12345)
@@ -508,6 +638,8 @@ JSON structure:
     "currency": "EUR",
     "vatPercent": 19,
     "vatPercent_raw": "19%",
+    "selfDesignation": "Rechnung",
+    "invoiceNumber": "2024-0042",
     "lineItems": [
       {
         "description": "USB-C Cable",
@@ -516,6 +648,14 @@ JSON structure:
         "vatPercent": 20,
         "vatAmount": 333,
         "amount": 1998
+      }
+    ],
+    "rateGroups": [
+      {
+        "rate": 20,
+        "net": 1665,
+        "vat": 333,
+        "gross": 1998
       }
     ],
     "confidence": 0.85,
@@ -604,6 +744,7 @@ JSON only, no markdown, no explanation.`;
   interface GeminiResponse {
     rawText?: string;
     lineItems?: GeminiLineItem[] | null;
+    rateGroups?: GeminiRateGroup[] | null;
     extracted?: {
       date?: string | null;
       date_raw?: string | null;
@@ -612,7 +753,10 @@ JSON only, no markdown, no explanation.`;
       currency?: string | null;
       vatPercent?: number | null;
       vatPercent_raw?: string | null;
+      selfDesignation?: string | null;
+      invoiceNumber?: string | null;
       lineItems?: GeminiLineItem[] | null;
+      rateGroups?: GeminiRateGroup[] | null;
       confidence?: number;
       // New entity fields
       issuer?: GeminiEntity | null;
@@ -688,6 +832,7 @@ JSON only, no markdown, no explanation.`;
   const legacyAddress = issuer?.address || parsed.extracted?.address || null;
   const legacyWebsite = issuer?.website || normalizeWebsite(parsed.extracted?.website);
   const lineItems = normalizeLineItems(parsed.extracted?.lineItems || parsed.lineItems || null);
+  const rateGroups = normalizeRateGroups(parsed.extracted?.rateGroups || parsed.rateGroups || null);
 
   // Classification is handled by classifyDocument, not here
   const extracted: ExtractedData = {
@@ -696,6 +841,11 @@ JSON only, no markdown, no explanation.`;
     currency: normalizeCurrency(parsed.extracted?.currency),
     vatPercent: typeof parsed.extracted?.vatPercent === "number" ? parsed.extracted.vatPercent : null,
     lineItems,
+    rateGroups,
+    // Transcribed headings only: a non-string is the model having invented
+    // something, and an invented §11 element is worse than a missing one.
+    selfDesignation: asTranscribedString(parsed.extracted?.selfDesignation),
+    invoiceNumber: asTranscribedString(parsed.extracted?.invoiceNumber),
     partner: legacyPartner,
     vatId: legacyVatId,
     iban: legacyIban,
