@@ -257,8 +257,12 @@ export function createDataPlane(
   const router = express.Router();
   router.use(express.json({ limit: options?.jsonLimit ?? "32mb" }));
 
-  // DoS/bruteforce backstop; the client shim is chatty, so the cap is high.
-  router.use(makeRateLimiter(1000));
+  // DoS/bruteforce backstop. Sized for what the shim actually generates: every
+  // onSnapshot polls on NEXT_PUBLIC_FIBUKI_POLL_MS (2.5s default) and one view
+  // holds tens of listeners, so a single idle tab already sits in the high
+  // hundreds per minute. At 1000 the app tripped its own limiter — see
+  // rate-limit.ts.
+  router.use(makeRateLimiter(6000, "data"));
 
   // Data plane always requires a verified identity.
   router.use(async (req: Request & { fibukiAuth?: AuthData }, res: Response, next: NextFunction) => {

@@ -20,6 +20,7 @@ import {
   pokePollers,
   registerPoller,
   __pollerCount,
+  __resetPokeWindow,
   setStreamHealthy,
   isStreamHealthy,
 } from "../../../lib/selfhost/poll-bus";
@@ -30,6 +31,11 @@ import {
   setDoc,
   getFirestore,
 } from "../../../lib/selfhost/firestore-client";
+
+// Pokes coalesce inside a 400ms window, and the window is module state — without
+// this, a case that pokes shortly after the previous one gets the previous case's
+// trailing fan-out instead of its own immediate one.
+beforeEach(() => __resetPokeWindow());
 
 describe("poll bus: unit", () => {
   it("pokes every registered listener", () => {
