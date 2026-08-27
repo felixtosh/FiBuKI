@@ -652,6 +652,59 @@ describe("runExtraction: printed rate groups", () => {
 });
 
 // ===========================================================================
+// runExtraction — the document's own designated payable amount (#206)
+// ===========================================================================
+
+describe("runExtraction: designated payable amount", () => {
+  it("stores the demanded figure beside the document total, moving neither", async () => {
+    // A Mahnung printing 750,00 (the original invoice) and 3.390,00 (what is
+    // now demanded). Before #206 nothing on the record distinguished them and
+    // the figure had to be set by hand.
+    const fileData = await seedFile("f-pay-mahnung");
+    q({
+      extracted: {
+        amount: 75000,
+        payableAmount: 339000,
+        vatPercent: 20,
+        selfDesignation: "Mahnung",
+        confidence: 0.8,
+      },
+    });
+    await runExtraction("f-pay-mahnung", fileData, { skipClassification: true });
+
+    const doc = await fileDoc("f-pay-mahnung");
+    expect(doc.extractedPayableAmount).toBe(339000);
+    // The pre-existing figure is untouched — the new field is a second
+    // reading, not a correction of the first.
+    expect(doc.extractedAmount).toBe(75000);
+    expect(doc.extractedVatPercent).toBe(20);
+  });
+
+  it("records an absence when the document designates no figure as due", async () => {
+    const fileData = await seedFile("f-pay-single");
+    q({ extracted: { amount: 4200, vatPercent: 20, confidence: 0.9 } });
+    await runExtraction("f-pay-single", fileData, { skipClassification: true });
+
+    const doc = await fileDoc("f-pay-single");
+    // Written, not omitted: "looked and found none" must be distinguishable
+    // from a record written before the field existed.
+    expect(doc.extractedPayableAmount).toBeNull();
+    expect(doc.extractedAmount).toBe(4200);
+  });
+
+  it("clears the figure when the document turns out not to be an invoice", async () => {
+    const fileData = await seedFile("f-pay-notinvoice");
+    q({ isNotInvoice: true, notInvoiceReason: "Werbeprospekt" });
+    q({ extracted: { amount: 4200, payableAmount: 4200, confidence: 0.8 } });
+    await runExtraction("f-pay-notinvoice", fileData, {});
+
+    const doc = await fileDoc("f-pay-notinvoice");
+    expect(doc.isNotInvoice).toBe(true);
+    expect(doc.extractedPayableAmount).toBeNull();
+  });
+});
+
+// ===========================================================================
 // retryFileExtraction — gating, reset semantics, error persistence
 // ===========================================================================
 

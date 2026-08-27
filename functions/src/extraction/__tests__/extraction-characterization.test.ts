@@ -115,6 +115,9 @@ describe("characterization: geminiParser.parseWithGemini", () => {
       // #172: null, not absent — a document that prints no Trinkgeld line
       // records that as an absence.
       tipAmount: null,
+      // #206: null when the response designates no figure as due — the
+      // document total is NOT copied into it as a fallback.
+      payableAmount: null,
       currency: "EUR",
       vatPercent: null,
       lineItems: null,
@@ -372,6 +375,45 @@ describe("characterization: geminiParser.parseWithGemini", () => {
     expect(res.extracted.invoiceNumber).toBeNull();
   });
 
+  it("payableAmount: a Mahnung's demanded figure survives beside the invoice total (#206)", async () => {
+    // A Mahnung prints the original invoice amount and the sum now demanded.
+    // Nothing about `amount` says which of the two is owed, so the designated
+    // figure is transcribed into its own field instead of guessed at read time.
+    q({
+      extracted: {
+        amount: 75000,
+        payableAmount: 339000,
+        selfDesignation: "Mahnung",
+        rateGroups: [{ rate: 20, net: 62500, vat: 12500, gross: 75000 }],
+      },
+    });
+    const res = await parseWithGemini(BUF, "application/pdf");
+
+    expect(res.extracted.payableAmount).toBe(339000);
+    // The existing figure does not move: `amount` is still what it always was,
+    // and the printed VAT block still describes the invoice it belongs to.
+    expect(res.extracted.amount).toBe(75000);
+    expect(res.extracted.rateGroups).toEqual([{ rate: 20, net: 62500, vat: 12500, gross: 75000 }]);
+  });
+
+  it("payableAmount: a document printing one total yields that total unchanged (#206)", async () => {
+    q({ extracted: { amount: 12345, vatPercent: 20 } });
+    const res = await parseWithGemini(BUF, "application/pdf");
+
+    expect(res.extracted.amount).toBe(12345);
+    // Transcription, not computation: no designated figure is printed, so the
+    // field is null rather than a copy of the total.
+    expect(res.extracted.payableAmount).toBeNull();
+  });
+
+  it("payableAmount: an unreadable figure degrades to null (#206)", async () => {
+    q({ extracted: { amount: 12345, payableAmount: "dreitausend" } });
+    const res = await parseWithGemini(BUF, "application/pdf");
+
+    expect(res.extracted.amount).toBe(12345);
+    expect(res.extracted.payableAmount).toBeNull();
+  });
+
   it("repairs trailing commas in malformed JSON", async () => {
     q('{"extracted": {"amount": 500,}}');
     const res = await parseWithGemini(BUF, "application/pdf");
@@ -582,6 +624,7 @@ describe("characterization: claudeParser.parseWithClaude", () => {
     expect(res.extracted).toEqual({
       date: "2024-02-01",
       amount: 9999,
+      payableAmount: null, // #206: prompted for, absent from this response
       currency: "EUR",
       vatPercent: 20,
       lineItems: null, // characterization: legacy parser never extracts line items
@@ -668,6 +711,7 @@ describe("characterization: documentExtractor", () => {
     expect(res.extracted).toEqual({
       date: null,
       amount: null,
+      payableAmount: null, // #206: an absence, like every other field here
       currency: null,
       vatPercent: null,
       lineItems: null,
