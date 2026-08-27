@@ -25,6 +25,7 @@
  */
 
 import { pokePollers } from "./poll-bus";
+import { readHttpError } from "./http-error";
 
 /* ------------------------------------------------------------------ */
 /* Transport                                                           */
@@ -75,7 +76,9 @@ const CODE_BY_HTTP: Record<number, string> = {
   403: "permission-denied",
   404: "not-found",
   409: "aborted",
+  429: "resource-exhausted",
   500: "internal",
+  503: "unavailable",
 };
 
 async function post(name: string, data: unknown): Promise<any> {
@@ -95,17 +98,7 @@ async function post(name: string, data: unknown): Promise<any> {
     body: JSON.stringify({ data: data ?? null }),
   });
   if (!res.ok) {
-    let message = res.statusText;
-    let statusCode = "";
-    let details: unknown;
-    try {
-      const j = await res.json();
-      if (j?.error?.message) message = j.error.message;
-      if (j?.error?.status) statusCode = j.error.status;
-      if (j?.error && "details" in j.error) details = j.error.details;
-    } catch {
-      /* non-JSON body — fall back to HTTP status */
-    }
+    const { statusCode, message, details } = await readHttpError(res);
     const code = statusCode
       ? statusCode.toLowerCase().replace(/_/g, "-")
       : CODE_BY_HTTP[res.status] ?? "unknown";
