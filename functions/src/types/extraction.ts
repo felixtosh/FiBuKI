@@ -51,6 +51,15 @@ export interface ExtractedRateGroup {
 export interface ExtractedData {
   date: string | null; // ISO format YYYY-MM-DD
   amount: number | null; // cents
+  /**
+   * Freiwilliges Trinkgeld the document prints on its own line (#172), cents.
+   * Kept OUT of `amount`: a voluntary tip to the staff is not Entgelt for the
+   * restaurant's supply, so it is outside the scope of VAT and carries no
+   * Vorsteuer. `amount` stays the VAT-bearing Summe that the printed rate
+   * groups add up to; the card was charged `amount + tipAmount`.
+   * null when the document prints no tip line.
+   */
+  tipAmount?: number | null;
   currency: string | null;
   vatPercent: number | null;
   lineItems?: ExtractedLineItem[] | null;

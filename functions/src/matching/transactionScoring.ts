@@ -112,6 +112,11 @@ export interface TransactionMatchScore {
 
 export interface FileMatchingData {
   extractedAmount?: number | null;
+  /**
+   * Freiwilliges Trinkgeld printed on the document (#172). Not part of the
+   * VAT base, but part of what the card was charged — see filePaymentTotal.
+   */
+  extractedTipAmount?: number | null;
   extractedCurrency?: string | null;
   extractedDate?: Timestamp | null;
   extractedPartner?: string | null;
@@ -544,6 +549,26 @@ export function buildScoringOptions(
   return options;
 }
 
+/**
+ * What the bank was charged for a document: the VAT-bearing total plus any
+ * printed Trinkgeld (#172).
+ *
+ * `extractedAmount` is the Summe the printed rate groups add up to, which is
+ * deliberately NOT the figure on the bank line for a restaurant Beleg with a
+ * terminal-added tip. Every comparison against a bank amount goes through
+ * here so the two readings cannot drift apart.
+ */
+export function filePaymentTotal(
+  extractedAmount: number | null | undefined,
+  extractedTipAmount: number | null | undefined
+): number | null {
+  if (extractedAmount == null) return null;
+  const tip = extractedTipAmount ?? 0;
+  if (tip <= 0) return extractedAmount;
+  // A credit note carries the sign on the document total; the tip follows it.
+  return extractedAmount < 0 ? extractedAmount - tip : extractedAmount + tip;
+}
+
 /** Map a transaction Firestore doc's data into the shape `scoreTransaction` expects. */
 export function toTransactionData(
   id: string,
@@ -572,6 +597,7 @@ export function toTransactionData(
 export function toFileMatchingData(data: FirebaseFirestore.DocumentData): FileMatchingData {
   return {
     extractedAmount: data.extractedAmount,
+    extractedTipAmount: data.extractedTipAmount,
     extractedCurrency: data.extractedCurrency,
     extractedDate: data.extractedDate,
     extractedPartner: data.extractedPartner,
@@ -625,9 +651,12 @@ export function scoreTransaction(
   // own stated original amount (#112), which is a real same-currency
   // comparison; an FX-plausibility score never reports amount_exact.
   let amountExact = false;
-  if (fileData.extractedAmount != null) {
+  // #172: the bank was charged Summe + Trinkgeld, so that is the figure the
+  // bank line is scored against — not the VAT-bearing total on its own.
+  const filePayment = filePaymentTotal(fileData.extractedAmount, fileData.extractedTipAmount);
+  if (filePayment != null) {
     const result = calculateAmountScore(
-      fileData.extractedAmount,
+      filePayment,
       txData.amount,
       fileData.extractedCurrency,
       txData.currency,

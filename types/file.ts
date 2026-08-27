@@ -276,6 +276,22 @@ export interface TaxFile {
   /** AI-extracted amount in cents */
   extractedAmount?: number | null;
 
+  /**
+   * Freiwilliges Trinkgeld the document prints on its own line (#172), cents.
+   *
+   * A restaurant Beleg paid by card prints Summe / Trinkgeld / Gesamt.
+   * `extractedAmount` is the Summe — the VAT-bearing total the printed rate
+   * groups add up to — and this is the tip beside it. The tip is not Entgelt
+   * for the restaurant's supply, so it is outside the scope of VAT: 0 net,
+   * 0 VAT, no Vorsteuer, and never a rate group. What the bank was charged is
+   * `extractedAmount + extractedTipAmount`, and that is the only figure that
+   * reconciles against a bank line.
+   *
+   * Absent on a file extracted before the field existed; null when the
+   * document prints no tip line.
+   */
+  extractedTipAmount?: number | null;
+
   /** AI-extracted currency code */
   extractedCurrency?: string | null;
 
@@ -788,6 +804,7 @@ export interface FileCreateData {
 export interface FileExtractionData {
   extractedDate?: Timestamp | null;
   extractedAmount?: number | null;
+  extractedTipAmount?: number | null;
   extractedCurrency?: string | null;
   extractedVatPercent?: number | null;
   extractedVatAmount?: number | null;

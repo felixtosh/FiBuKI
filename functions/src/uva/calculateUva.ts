@@ -41,8 +41,6 @@ import type {
 
 /** Bank-vs-invoice equality tolerance in cents — a product decision, not a legal bright line (spec §10.5). */
 export const RECONCILE_TOLERANCE_CENTS = 2;
-/** A restaurant overpay up to this fraction of the invoice total classifies as tip (R5) — product decision. */
-const TIP_MAX_FRACTION = 0.1;
 /** Tolerance in percentage points when matching an implied rate (vatAmount only) to the valid set. */
 const IMPLIED_RATE_TOLERANCE = 0.5;
 
@@ -386,7 +384,7 @@ function guessVat20(bank: number): number {
  * Steps 1-3: derive per-rate groups from files (line items, then top-level),
  * then the manual override. Handles rate validation (R1 + the 19% ATU
  * enclave case), D2 foreign-VAT tagging, and bank-vs-invoice reconciliation
- * (R2/R5/R6) including partial payments and instalment caps.
+ * (R2/R6) including partial payments and instalment caps.
  */
 export function deriveRateGroups(
   tx: UvaTransaction,
@@ -456,12 +454,11 @@ export function deriveRateGroups(
       // R6 compares the bank line against the document total, and at a
       // published rate those two no longer agree: the residual IS the markup
       // the method exists to strip. Read as a payment difference it would be
-      // an over- or under-payment — a 20.86 document paid with 21.28 looks
-      // like a tip on a non-restaurant, i.e. amount-mismatch, and the whole
-      // claim would be refused for being MORE correct. So the converted
-      // document reconciles against the payment itself; whether the bank line
-      // really is the whole payment was already decided, in the document's
-      // own currency, by the plausibility gate.
+      // an over- or under-payment — a 20.86 document paid with 21.28 reads as
+      // amount-mismatch, and the whole claim would be refused for being MORE
+      // correct. So the converted document reconciles against the payment
+      // itself; whether the bank line really is the whole payment was already
+      // decided, in the document's own currency, by the plausibility gate.
       reconcileTotal = converted.conversion.bankAmount;
     }
 
@@ -568,8 +565,12 @@ export function deriveRateGroups(
     }
 
     // Reconcile bank amount vs the SUM of the connected documents (R6).
+    // A printed Trinkgeld is part of what the card was charged and no part of
+    // the VAT base (#172), so it joins the total here and nowhere else: the
+    // reconcile comes out exact and no tolerance rung is involved.
     const invoiceTotal =
-      reconcileTotal ?? files.reduce((s, f) => s + (f.totalGross ?? 0), 0);
+      reconcileTotal ??
+      files.reduce((s, f) => s + (f.totalGross ?? 0) + (f.tipAmount ?? 0), 0);
     const prior = tx.priorClaimedFraction ?? 0;
     let fraction = 1;
     if (invoiceTotal > 0) {
@@ -580,13 +581,14 @@ export function deriveRateGroups(
         // Partial payment: proportional claim (R2), capped so the file's
         // cumulative claimed fraction never exceeds 1 (instalments).
         fraction = Math.min(bank / invoiceTotal, 1 - prior);
-      } else if (
-        tx.partnerClass === "restaurant" &&
-        delta <= invoiceTotal * TIP_MAX_FRACTION
-      ) {
-        // Tip delta (R5): outside VAT scope, claim from the invoice portion.
-        fraction = 1;
       } else {
+        // An overpay the connected documents do not account for. R5 used to
+        // classify a small one at a restaurant-class partner as a tip and
+        // claim the full invoice portion, but nothing ever wrote partnerClass
+        // — it read like coverage and provided none (#172). A tip the Beleg
+        // PRINTS is now its own extracted figure, already inside invoiceTotal
+        // above; an unexplained delta goes to the review bucket, which is
+        // where a cash tip nobody wrote on the document belongs.
         return {
           ok: false,
           reason: "amount-mismatch",
@@ -719,6 +721,7 @@ function convertToBankCurrency(
     ...f,
     currency: tx.currency ?? null,
     totalGross: cents(gross),
+    tipAmount: f.tipAmount != null ? cents(f.tipAmount) : f.tipAmount,
     vatAmount: f.vatAmount != null ? cents(f.vatAmount) : f.vatAmount,
     lineItems: f.lineItems
       ? f.lineItems.map((li) => ({ ...li, amount: cents(li.amount), vatAmount: cents(li.vatAmount) }))

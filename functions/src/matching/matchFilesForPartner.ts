@@ -14,6 +14,7 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { MODELS } from "../utils/models";
 import { readDismissedTransactionIds } from "./dismissedTransactions";
+import { filePaymentTotal } from "./transactionScoring";
 
 const db = getFirestore();
 
@@ -106,8 +107,10 @@ function scoreFileForTransaction(
   const matchReasons: string[] = [];
 
   // 1. Amount match (0-40)
-  if (fileData.extractedAmount != null && txData.amount != null) {
-    const fileAmount = Math.abs(fileData.extractedAmount);
+  // The bank was charged the document total plus any printed Trinkgeld (#172).
+  const filePayment = filePaymentTotal(fileData.extractedAmount, fileData.extractedTipAmount);
+  if (filePayment != null && txData.amount != null) {
+    const fileAmount = Math.abs(filePayment);
     const txAmount = Math.abs(txData.amount);
 
     if (fileAmount > 0 && txAmount > 0) {

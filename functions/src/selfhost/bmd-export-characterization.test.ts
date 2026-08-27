@@ -649,6 +649,35 @@ describe("bmd #66: VAT is derived from the connected documents", () => {
     expect(Number(a[6].replace(",", ".")) + Number(b[6].replace(",", "."))).toBeCloseTo(33.0, 2);
   });
 
+  it("books a printed Trinkgeld as its own 0% row (#172)", () => {
+    // Summe 50,80 (10% food + 20% drinks), Trinkgeld 3,20, Gesamt 54,00.
+    // Scaling the rate mix over the tip would state VAT on money that is
+    // outside the scope of VAT — and disagree with the UVA about it.
+    const files = new Map([
+      [
+        "f1",
+        file({
+          extractedAmount: 5080,
+          extractedTipAmount: 320,
+          extractedRateGroups: [
+            { rate: 10, net: 3500, vat: 350, gross: 3850 },
+            { rate: 20, net: 1025, vat: 205, gross: 1230 },
+          ],
+        }),
+      ],
+    ]);
+    const rows = generateBuchungenCsv([tx({ amount: -5400, fileIds: ["f1"] })], files, new Map())
+      .split("\n")
+      .slice(1)
+      .filter(Boolean)
+      .map((r) => r.split(";"));
+    expect(rows.map((r) => r[9])).toEqual(["10", "20", "0"]);
+    expect(rows.map((r) => r[8])).toEqual(["3,50", "2,05", "0,00"]);
+    // The Betriebsausgabe is the whole 54,00, tip included.
+    const booked = rows.reduce((s, r) => s + Number(r[6].replace(",", ".")), 0);
+    expect(booked).toBeCloseTo(54.0, 2);
+  });
+
   it("books the full payment on a partial payment, using the document's rate mix", () => {
     // Bank paid 60,00 against a 120,00 invoice: the UVA claims half the VAT,
     // but the booking still has to book the 60,00 that actually moved.

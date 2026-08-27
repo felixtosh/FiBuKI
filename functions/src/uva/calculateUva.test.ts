@@ -489,24 +489,59 @@ describe("amount reconciliation", () => {
     expect(r.totalInputVat).toBe(1400 - first);
   });
 
-  it("treats a small overpay at a restaurant as tip: VAT from invoice portion only (R5)", () => {
-    // invoice 10500 @10%+20% mixed simplified: 10500 @20% vat 1750; bank 11000, tip 500
+  it("reconciles a Beleg against Summe + printed Trinkgeld exactly (#172)", () => {
+    // Restaurant Beleg: Summe 50,80 (10% food + 20% drinks), Trinkgeld 3,20,
+    // Gesamt 54,00 — the figure the card charged and the bank line carries.
     const r = run([
       {
-        id: "t-tip",
+        id: "t-trinkgeld",
         date: "2026-02-20",
-        amount: -11000,
-        partnerClass: "restaurant",
+        amount: -5400,
         files: [
-          { id: "f-rest", totalGross: 10500, vatPercent: 20, vatAmount: 1750 },
+          {
+            id: "f-beleg",
+            totalGross: 5080,
+            tipAmount: 320,
+            rateGroups: [
+              { rate: 10, net: 3500, vat: 350, gross: 3850 },
+              { rate: 20, net: 1025, vat: 205, gross: 1230 },
+            ],
+          },
         ],
       },
     ]);
-    expect(r.totalInputVat).toBe(1750);
+    // Vorsteuer on the Summe only; nothing is scaled and nothing is foregone.
+    expect(r.totalInputVat).toBe(555);
     expect(r.unresolved).toHaveLength(0);
   });
 
-  it("sends a non-restaurant overpay to the review bucket as amount-mismatch", () => {
+  it("keeps the Trinkgeld out of every Kennzahl (#172)", () => {
+    const beleg = {
+      id: "f-beleg-kz",
+      totalGross: 5080,
+      rateGroups: [{ rate: 20, net: 4233, vat: 847, gross: 5080 }],
+    };
+    // The same document, once with a 3,20 tip charged on top and once without
+    // one at all. The tip moves what the bank paid, and nothing else: every
+    // Kennzahl has to come out identical.
+    const withTip = run([
+      {
+        id: "t-kz",
+        date: "2026-02-20",
+        amount: -5400,
+        files: [{ ...beleg, tipAmount: 320 }],
+      },
+    ]);
+    const withoutTip = run([
+      { id: "t-kz", date: "2026-02-20", amount: -5080, files: [beleg] },
+    ]);
+    expect(kz(withTip, "060")).toBe(847);
+    expect(withTip.kennzahlen).toEqual(withoutTip.kennzahlen);
+  });
+
+  it("sends an overpay the documents do not account for to the review bucket", () => {
+    // No tip line on the Beleg: a cash tip nobody wrote down is a mismatch,
+    // not a claim. R5 used to guess here off a partnerClass nothing set.
     const r = run([
       {
         id: "t-over",

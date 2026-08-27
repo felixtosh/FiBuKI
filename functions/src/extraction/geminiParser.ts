@@ -516,6 +516,20 @@ function normalizeRateGroups(
   return [...byRate.values()];
 }
 
+/**
+ * The printed Trinkgeld, cents (#172).
+ *
+ * Transcribed like the other TOP-LEVEL figures, not like line items: a
+ * non-number is the model having produced something it did not read off the
+ * page, and the same strictness that discards a string `amount` applies here.
+ * A tip is only a tip when it is positive; zero and negative are no tip.
+ */
+function normalizeTipAmount(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  const cents = Math.round(value);
+  return cents > 0 ? cents : null;
+}
+
 export async function parseWithGemini(
   fileBuffer: Buffer,
   fileType: string,
@@ -580,6 +594,18 @@ VAT SUMMARY BLOCK ("rateGroups", IMPORTANT):
 - If a column is missing from the block, leave that field null (do not fill it in)
 - If the document prints NO such summary block, return "rateGroups": null
 - Never invent a summary block from a single total line
+- A Trinkgeld/Tip line is NEVER a row in this block
+
+TRINKGELD / TIP ("tipAmount", IMPORTANT):
+- A restaurant or bar Beleg paid by card often prints THREE figures:
+  "Summe 50,80" (the VAT-bearing total), "Trinkgeld 3,20" (the tip) and
+  "Gesamt 54,00" (what the card was charged)
+- Transcribe the tip line - "Trinkgeld", "Tip", "Service", "Bedienung" - into
+  "tipAmount", exactly as printed
+- "amount" is the SUMME, the figure the VAT summary block adds up to. Do NOT
+  put the Gesamt in "amount", and do NOT fold the tip into it
+- Never emit the tip as a "rateGroups" row and never as a line item
+- If the document prints no tip line, return "tipAmount": null
 
 DOCUMENT SELF-DESIGNATION ("selfDesignation", IMPORTANT):
 - Transcribe the heading the document gives ITSELF, exactly as printed:
@@ -635,6 +661,7 @@ JSON structure:
     "date_raw": "15.12.2024",
     "amount": 12345,
     "amount_raw": "123,45 €",
+    "tipAmount": null,
     "currency": "EUR",
     "vatPercent": 19,
     "vatPercent_raw": "19%",
@@ -745,11 +772,13 @@ JSON only, no markdown, no explanation.`;
     rawText?: string;
     lineItems?: GeminiLineItem[] | null;
     rateGroups?: GeminiRateGroup[] | null;
+    tipAmount?: number | null;
     extracted?: {
       date?: string | null;
       date_raw?: string | null;
       amount?: number | null;
       amount_raw?: string | null;
+      tipAmount?: number | null;
       currency?: string | null;
       vatPercent?: number | null;
       vatPercent_raw?: string | null;
@@ -838,6 +867,7 @@ JSON only, no markdown, no explanation.`;
   const extracted: ExtractedData = {
     date: parsed.extracted?.date || null,
     amount: typeof parsed.extracted?.amount === "number" ? parsed.extracted.amount : null,
+    tipAmount: normalizeTipAmount(parsed.extracted?.tipAmount ?? parsed.tipAmount),
     currency: normalizeCurrency(parsed.extracted?.currency),
     vatPercent: typeof parsed.extracted?.vatPercent === "number" ? parsed.extracted.vatPercent : null,
     lineItems,

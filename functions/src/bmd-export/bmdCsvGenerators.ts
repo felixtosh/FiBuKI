@@ -301,7 +301,21 @@ function vatRowsFor(
   );
 
   const derived = deriveTransactionVat(uvaTx);
-  if (derived.kind === "groups") return splitByRate(bankGross, derived.groups);
+  if (derived.kind === "groups") {
+    // A printed Trinkgeld is a Betriebsausgabe and no part of the VAT base
+    // (#172), so it books as its own 0% row instead of being scaled into the
+    // rate groups. Without this, splitByRate would stretch the document's
+    // rates over the tip too and the export would state VAT the UVA does not
+    // — the fork #66 divergence, reintroduced.
+    const tip = uvaTx.files?.reduce((s, f) => s + (f.tipAmount ?? 0), 0) ?? 0;
+    if (tip > 0 && tip < bankGross) {
+      return [
+        ...splitByRate(bankGross - tip, derived.groups),
+        { rate: 0, gross: tip, vat: 0 },
+      ];
+    }
+    return splitByRate(bankGross, derived.groups);
+  }
   return [{ rate: 0, gross: bankGross, vat: 0 }];
 }
 

@@ -34,6 +34,7 @@ export interface TransactionRecord {
 export interface FileRecord {
   id: string;
   extractedAmount?: number | null;
+  extractedTipAmount?: number | null;
   extractedCurrency?: string | null;
   extractedVatAmount?: number | null;
   extractedVatPercent?: number | null;
@@ -114,6 +115,7 @@ export function toUvaFile(f: FileRecord): UvaFile {
     id: f.id,
     currency: f.extractedCurrency ?? null,
     totalGross: f.extractedAmount ?? null,
+    tipAmount: f.extractedTipAmount ?? null,
     vatAmount: f.extractedVatAmount ?? null,
     vatPercent: f.extractedVatPercent ?? null,
     lineItems: f.extractedLineItems ?? null,

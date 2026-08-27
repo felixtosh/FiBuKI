@@ -157,6 +157,7 @@ async function processBmdExport(
           // them every booking row falls back to 0% instead of reading the
           // receipt it is attached to.
           extractedAmount: data?.extractedAmount,
+          extractedTipAmount: data?.extractedTipAmount,
           extractedCurrency: data?.extractedCurrency,
           extractedVatAmount: data?.extractedVatAmount,
           extractedVatPercent: data?.extractedVatPercent,

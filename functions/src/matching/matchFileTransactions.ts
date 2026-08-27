@@ -32,6 +32,7 @@ import {
   TransactionMatchSource,
   ScoringOptions,
   buildScoringOptions,
+  filePaymentTotal,
   toFileMatchingData,
   toTransactionData,
   derivePartnerAliases,
@@ -1213,8 +1214,10 @@ async function isTransactionCovered(
 
     for (const fileDoc of filesSnapshot.docs) {
       const fileData = fileDoc.data();
-      if (fileData.extractedAmount != null) {
-        totalFileAmount += Math.abs(fileData.extractedAmount);
+      // Against the bank line, so a printed Trinkgeld counts (#172).
+      const payment = filePaymentTotal(fileData.extractedAmount, fileData.extractedTipAmount);
+      if (payment != null) {
+        totalFileAmount += Math.abs(payment);
       }
     }
   }

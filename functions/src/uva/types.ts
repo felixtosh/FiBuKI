@@ -46,6 +46,14 @@ export interface UvaFile {
   currency?: string | null;
   /** Document total in cents (extractedAmount) */
   totalGross?: number | null;
+  /**
+   * Freiwilliges Trinkgeld printed on the document (extractedTipAmount),
+   * cents (#172). Outside the scope of VAT — 0 net, 0 VAT — so it never
+   * becomes a rate group and never reaches a Kennzahl. Read in exactly one
+   * place: the R6 reconcile, where the bank line was charged
+   * `totalGross + tipAmount`.
+   */
+  tipAmount?: number | null;
   /** Top-level extracted VAT amount in cents (extractedVatAmount) */
   vatAmount?: number | null;
   /** Top-level extracted VAT rate (extractedVatPercent) */
@@ -178,8 +186,6 @@ export interface UvaTransaction {
   /** Bank-line currency, ISO code; null/undefined = EUR. */
   currency?: string | null;
   partnerName?: string | null;
-  /** Restaurant-class partner enables tip-delta classification (R5). */
-  partnerClass?: "restaurant" | null;
   /** Manual override lane (tx.vatRate) — spec §3 step 3. */
   vatRateOverride?: number | null;
   /** Assigned no-receipt category, with its vatTreatment when set. */

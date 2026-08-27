@@ -127,6 +127,8 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
     // === Get File Data ===
     let fileData: {
       extractedAmount?: number | null;
+      /** #172: absent on the raw fileInfo path, which has no stored record. */
+      extractedTipAmount?: number | null;
       extractedCurrency?: string | null;
       extractedDate?: Timestamp | null;
       extractedPartner?: string | null;
@@ -165,6 +167,7 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
 
       fileData = {
         extractedAmount: docData.extractedAmount,
+        extractedTipAmount: docData.extractedTipAmount,
         extractedCurrency: docData.extractedCurrency,
         extractedDate: docData.extractedDate,
         extractedPartner: docData.extractedPartner,
@@ -294,6 +297,7 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
       return scoreTransaction(
         {
           extractedAmount: fileData.extractedAmount,
+          extractedTipAmount: fileData.extractedTipAmount,
           extractedCurrency: fileData.extractedCurrency,
           extractedDate: fileData.extractedDate,
           extractedPartner: fileData.extractedPartner,

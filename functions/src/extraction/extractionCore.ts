@@ -330,6 +330,49 @@ export function validateRateGroups(
 }
 
 /**
+ * The VAT-bearing Summe, once a printed Trinkgeld is out of it (#172).
+ *
+ * A restaurant Beleg paid by card prints three figures — Summe, Trinkgeld,
+ * Gesamt — and only the Summe carries the printed rate groups. The prompt
+ * asks for the Summe in `amount`, but when the model hands back the Gesamt
+ * anyway the printed block is the arbiter: a block that reconciles against
+ * `amount - tip` and NOT against `amount` says `amount` is the Gesamt.
+ *
+ * Nothing weaker moves the figure. Subtracting a tip on the model's word
+ * alone would be the loose-tolerance fix this ticket exists to avoid — it
+ * would let a hallucinated tip line eat 3,20 EUR of a real VAT base.
+ */
+export function totalWithoutPrintedTip(
+  extractedAmount: number | null | undefined,
+  tipAmount: number | null | undefined,
+  rateGroups: ExtractedRateGroup[] | null | undefined
+): number | null | undefined {
+  if (typeof extractedAmount !== "number" || !Number.isFinite(extractedAmount)) {
+    return extractedAmount;
+  }
+  if (typeof tipAmount !== "number" || tipAmount <= 0 || extractedAmount <= tipAmount) {
+    return extractedAmount;
+  }
+  if (!Array.isArray(rateGroups) || rateGroups.length === 0) {
+    return extractedAmount;
+  }
+
+  const summed = rateGroups.reduce((sum, g) => sum + (g?.gross ?? 0), 0);
+  const withoutTip = extractedAmount - tipAmount;
+  const fitsWithoutTip = Math.abs(summed - withoutTip) <= amountTolerance(withoutTip);
+  const fitsTotal = Math.abs(summed - extractedAmount) <= amountTolerance(extractedAmount);
+  if (fitsWithoutTip && !fitsTotal) {
+    console.warn(
+      `[ExtractionCore] Document total ${extractedAmount} includes the printed ` +
+      `tip of ${tipAmount}; the rate groups sum to ${summed}. Reading ${withoutTip} ` +
+      "as the VAT-bearing total."
+    );
+    return withoutTip;
+  }
+  return extractedAmount;
+}
+
+/**
  * Do the line items carrying `rate` reproduce the printed group total?
  *
  * Line item `amount` is gross on most extractions and net on some, and the
@@ -864,6 +907,7 @@ export async function runExtraction(
     // Clear any hallucinated extracted data for non-invoices
     updateData.extractedDate = null;
     updateData.extractedAmount = null;
+    updateData.extractedTipAmount = null;
     updateData.extractedCurrency = null;
     updateData.extractedVatPercent = null;
     updateData.extractedVatAmount = null;
@@ -910,11 +954,23 @@ export async function runExtraction(
     updateData.extractedSelfDesignation = extracted.selfDesignation ?? null;
     updateData.extractedInvoiceNumber = extracted.invoiceNumber ?? null;
 
+    // #172: the printed Trinkgeld is its own figure and stays out of every
+    // total below. Written unconditionally, like the §11 transcriptions — a
+    // document that prints no tip line must record that as an absence rather
+    // than leave a stale figure from an earlier pass standing.
+    const tipAmount = extracted.tipAmount ?? null;
+    updateData.extractedTipAmount = tipAmount;
+    const documentTotal = totalWithoutPrintedTip(
+      extracted.amount,
+      tipAmount,
+      extracted.rateGroups
+    );
+
     const normalizedLineItems = normalizeExtractedLineItems(extracted.lineItems);
     if (normalizedLineItems.length > 0) {
       const reconciled = reconcileLineItemsWithDocumentTotal(
         normalizedLineItems,
-        extracted.amount,
+        documentTotal,
         extracted.rateGroups,
         extracted.vatPercent
       );
@@ -928,7 +984,7 @@ export async function runExtraction(
         // The item sum contradicts the document total — keep the document's
         // own top-level extraction and let the flagged items wait for a
         // human repair (fork #64, spec §6).
-        updateData.extractedAmount = extracted.amount;
+        updateData.extractedAmount = documentTotal;
         if (reconciled.rateGroups) {
           // Fork #67: the printed VAT summary is a SECOND reading of the
           // document, not a derivation from the broken rows — it survives
@@ -943,13 +999,13 @@ export async function runExtraction(
       } else if (reconciled.rateGroups) {
         // Both readings agree: prefer the printed block's VAT, which is one
         // transcribed number per rate rather than a sum of N item rows.
-        const consolidated = consolidateLineItems(reconciled.lineItems, extracted.amount);
+        const consolidated = consolidateLineItems(reconciled.lineItems, documentTotal);
         const totals = rateGroupTotals(reconciled.rateGroups);
         updateData.extractedAmount = consolidated.totalAmount;
         updateData.extractedVatAmount = totals.totalVatAmount;
         updateData.extractedVatPercent = totals.consolidatedVatPercent;
       } else {
-        const consolidated = consolidateLineItems(reconciled.lineItems, extracted.amount);
+        const consolidated = consolidateLineItems(reconciled.lineItems, documentTotal);
         updateData.extractedAmount = consolidated.totalAmount;
         updateData.extractedVatAmount = consolidated.totalVatAmount;
         updateData.extractedVatPercent = consolidated.consolidatedVatPercent;
@@ -957,12 +1013,12 @@ export async function runExtraction(
     } else {
       // No itemisation — but a receipt can still print its VAT summary
       // block, and that alone is a §11-sufficient record (fork #67).
-      const validatedGroups = validateRateGroups(extracted.rateGroups, extracted.amount);
+      const validatedGroups = validateRateGroups(extracted.rateGroups, documentTotal);
       updateData.extractedLineItems = null;
       updateData.extractedRateGroups = validatedGroups;
       updateData.lineItemsUnreconciled = false;
       updateData.lineItemsUnreconciledRates = null;
-      updateData.extractedAmount = extracted.amount;
+      updateData.extractedAmount = documentTotal;
       if (validatedGroups) {
         const totals = rateGroupTotals(validatedGroups);
         updateData.extractedVatAmount = totals.totalVatAmount;

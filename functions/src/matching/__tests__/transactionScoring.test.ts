@@ -569,6 +569,27 @@ describe("scoreTransaction", () => {
     expect(result.matchSources).toContain("partner");
   });
 
+  it("scores the bank line against Summe + printed Trinkgeld (#172)", () => {
+    // Beleg: Summe 50,80, Trinkgeld 3,20 — the card was charged 54,00.
+    const beleg: FileMatchingData = {
+      ...baseFileData,
+      extractedAmount: 5080,
+      extractedTipAmount: 320,
+    };
+    const cardCharge: TransactionData = { ...baseTxData, amount: -5400 };
+
+    const withTip = scoreTransaction(beleg, cardCharge);
+    expect(withTip.matchSources).toContain("amount_exact");
+
+    // Without the tip on the record the same pair is only "close", which is
+    // what used to keep a restaurant Beleg off its own bank line.
+    const withoutTip = scoreTransaction(
+      { ...beleg, extractedTipAmount: null },
+      cardCharge
+    );
+    expect(withoutTip.matchSources).not.toContain("amount_exact");
+  });
+
   it("returns breakdown with all factors", () => {
     const result = scoreTransaction(baseFileData, baseTxData);
     expect(result.breakdown).toHaveProperty("amount");
