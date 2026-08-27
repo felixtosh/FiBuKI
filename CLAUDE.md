@@ -408,12 +408,28 @@ Used for the main chat interface and LangGraph agent. Requires `ANTHROPIC_API_KE
 
 ## Deployment
 
-### Frontend (Next.js)
-- Hosted on **Firebase App Hosting** (not Firebase Hosting - different service)
-- Auto-deploys when pushing to `main` branch
-- Region: `europe-west4`
-- Domain: `fibuki.com`
-- Backend name: `taxstudio`
+**`fibuki.com` runs the self-host stack on Hetzner, not Firebase.** The W4 cutover
+moved it: the apex A record points at the box, Caddy terminates TLS, and the
+Firebase App Hosting backend this section used to describe has been deleted
+(`firebase apphosting:backends:list --project taxstudio-f12fb` returns nothing).
+
+### Production (Hetzner, current)
+- Pushing to `main` deploys, via `.github/workflows/deploy-hetzner.yml`: gate
+  (typecheck, lint, self-host build, self-host suite), then rsync to
+  `/opt/fibuki` and `docker compose up -d --build fibuki-api fibuki-web`
+- Both containers are rebuilt every time. `fibuki-web` carries the frontend AND
+  its server-side document IO; `caddy` is deliberately left running so it does
+  not re-request certificates
+- Commits touching only markdown or `docs/` skip the deploy (`paths-ignore`)
+- Rollback is a revert commit. There is no blue/green
+- Host, secrets, and the manual equivalent of every step:
+  [`deploy/selfhost/README-hetzner.md`](deploy/selfhost/README-hetzner.md)
+
+### Firebase (legacy, for the retained project only)
+The sections below still describe the Firebase deployment. They apply to the
+retained `taxstudio-f12fb` project, which is the rollback anchor until the soak
+window closes (see [`docs/w4-cutover-runbook.md`](docs/w4-cutover-runbook.md)
+step 9), and NOT to what serves `fibuki.com` today.
 
 ### Cloud Functions
 - Deploy manually: `firebase deploy --only functions`

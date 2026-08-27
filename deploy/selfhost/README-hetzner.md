@@ -271,6 +271,57 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml down
 docker volume rm selfhost_fibuki-pgdata selfhost_fibuki-miniodata
 ```
 
+## Continuous deploy from main
+
+`.github/workflows/deploy-hetzner.yml` does steps 4 and 6 on every push to
+`main`, so the rsync-and-rebuild above is now the manual fallback rather than the
+normal path. It gates first (typecheck, lint, a `FIBUKI_BACKEND=selfhost` build,
+and the self-host suite), then rsyncs with the same excludes documented in step
+4 and runs `docker compose up -d --build --wait fibuki-api fibuki-web`.
+
+`--wait` means an unhealthy container fails the run instead of reporting green
+over a broken site. It does **not** roll back: the containers stay in the new
+state, so recovery is a revert commit, which deploys again.
+
+`caddy` is deliberately not named in that `up`, because recreating it
+re-requests both certificates and counts against Let's Encrypt's
+duplicate-certificate limit.
+
+### One-time setup
+
+The workflow needs a keypair whose public half is on the box. Use a dedicated CI
+key rather than a personal one, so it can be revoked from `authorized_keys`
+without locking anyone out:
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/fibuki_ci -C fibuki-ci -N ''
+ssh-copy-id -i ~/.ssh/fibuki_ci.pub root@$(hcloud server ip fibuki-selfhost)
+ssh-keyscan -t ed25519 $(hcloud server ip fibuki-selfhost)   # for the pin below
+```
+
+Then set four Actions secrets (Settings > Secrets and variables > Actions):
+
+| Secret | Value |
+|---|---|
+| `HETZNER_SSH_KEY` | contents of `~/.ssh/fibuki_ci`, the full PEM including the BEGIN/END lines |
+| `HETZNER_SSH_KNOWN_HOSTS` | the `ssh-keyscan` line above, so the runner pins the host key instead of a fresh TOFU accept per run |
+| `HETZNER_HOST` | the server IPv4 |
+| `HETZNER_USER` | optional, defaults to `root` |
+
+Confirm with a manual run (Actions > Deploy (Hetzner) > Run workflow) before
+relying on it, since a push deploy that fails at the SSH step has already
+skipped the gate you would otherwise read.
+
+### What this depends on
+
+GitHub-hosted runners have dynamic egress IPs, so the Cloud Firewall has to keep
+22 open to `0.0.0.0/0`, which it does today. Narrowing 22 to a fixed address is
+what would break this workflow, and the alternatives are a self-hosted runner on
+the box (pull, no inbound SSH at all) or Tailscale.
+
+The key is root-equivalent on the box. A forced command cannot be used to narrow
+it, because the deploy needs both `rsync` and a shell step.
+
 ## Decision: the API keeps the hostname `new-api.fibuki.com`, permanently
 
 Decided 2026-07-30, and since carried out. At cutover **only the web host changed** —

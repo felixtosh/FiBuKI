@@ -1,0 +1,208 @@
+# Continuous deploy of main onto the Hetzner self-host stack (fibuki.com).
+#
+# There was no automated path to production before this: ci.yml runs on
+# pull_request only, and the Firebase App Hosting backend that CLAUDE.md still
+# describes as auto-deploying from main no longer exists (the backends list for
+# taxstudio-f12fb is empty). Production is the box in deploy/selfhost, reached by
+# rsync + `docker compose up --build`, which was a manual runbook.
+#
+# This is a PUSH deploy: the runner holds a key that is root on the box. Two
+# consequences worth knowing before enabling it.
+#
+#  1. GitHub-hosted runners have dynamic egress IPs, so the Hetzner Cloud
+#     Firewall has to keep 22 open to 0.0.0.0/0, which it already does. If that
+#     ever gets narrowed to an office IP, this workflow is what breaks. The
+#     alternatives are a self-hosted runner on the box (pull, no inbound SSH) or
+#     Tailscale, both a bigger change than this file.
+#  2. The key is root-equivalent. Use a dedicated CI keypair, not a personal one,
+#     so it can be revoked from authorized_keys without locking anyone out. A
+#     forced command cannot be used here because the deploy needs both rsync and
+#     an interactive-style shell step.
+#
+# Secrets (Settings > Secrets and variables > Actions):
+#   HETZNER_SSH_KEY          private key, full PEM including BEGIN/END lines
+#   HETZNER_SSH_KNOWN_HOSTS  output of `ssh-keyscan -t ed25519 <ip>`, so the
+#                            runner pins the host key instead of trusting a
+#                            fresh TOFU accept on every run
+#   HETZNER_HOST             167.233.172.244
+#   HETZNER_USER             optional, defaults to root
+#
+# Rollback is a revert commit: push it and this runs again. There is no
+# blue/green here, so a bad deploy is visible for one build cycle.
+
+name: Deploy (Hetzner)
+
+on:
+  push:
+    branches: [main]
+    # A docs-only commit would otherwise rebuild both images and recreate the
+    # containers, which costs real downtime for no change in behaviour.
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "handoffs/**"
+      - ".github/ISSUE_TEMPLATE/**"
+  workflow_dispatch:
+    inputs:
+      skip_gate:
+        description: "Deploy without re-running the gate (only to re-apply a commit already known good)"
+        type: boolean
+        default: false
+
+# One deploy at a time, and never cancel one in flight: the box is mid-rsync or
+# mid-rebuild, and a half-applied tree is worse than a queued run.
+concurrency:
+  group: deploy-hetzner
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  gate-app:
+    name: Gate (typecheck + lint + selfhost build)
+    if: ${{ !inputs.skip_gate }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm run lint
+      # FIBUKI_BACKEND=selfhost on purpose. ci.yml builds the Firebase variant,
+      # but the box builds this one, and the two resolve different modules
+      # (next.config.ts swaps the firebase SDKs plus @/lib/firebase/admin for the
+      # lib/selfhost shims). Failing here costs three minutes on a runner instead
+      # of ten on the box, after the tree has already been shipped.
+      - run: npm run build
+        env:
+          FIBUKI_BACKEND: selfhost
+          NEXT_TELEMETRY_DISABLED: 1
+
+  gate-selfhost:
+    name: Gate (self-host suite)
+    if: ${{ !inputs.skip_gate }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: functions
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            functions/package-lock.json
+      # BOTH dependency trees, for the reason spelled out in ci.yml: the suite
+      # exercises real app code and needs the root's deps as well as functions'.
+      - run: npm ci
+        working-directory: .
+      - run: npm ci
+      - run: npm run test:selfhost
+
+  deploy:
+    name: Deploy to fibuki.com
+    needs: [gate-app, gate-selfhost]
+    # `always()` so the skip_gate path still reaches this job: a skipped need
+    # counts as unmet otherwise. Index syntax on the job ids because a hyphen in
+    # a property path parses as subtraction in an expression.
+    if: >-
+      ${{ always() && (inputs.skip_gate ||
+      (needs['gate-app'].result == 'success' && needs['gate-selfhost'].result == 'success')) }}
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Load the deploy key, pin the host key
+        env:
+          SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.HETZNER_SSH_KNOWN_HOSTS }}
+        run: |
+          : "${SSH_KEY:?HETZNER_SSH_KEY is not set}"
+          : "${KNOWN_HOSTS:?HETZNER_SSH_KNOWN_HOSTS is not set}"
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/deploy_key ~/.ssh/known_hosts
+
+      - name: Ship the tree to /opt/fibuki
+        env:
+          HOST: ${{ secrets.HETZNER_HOST }}
+          DEPLOY_USER: ${{ secrets.HETZNER_USER || 'root' }}
+        run: |
+          : "${HOST:?HETZNER_HOST is not set}"
+          # Excludes copied from README-hetzner.md, and the order matters: the
+          # --include for the templates must precede the --exclude that would
+          # otherwise swallow them, and a bare --exclude '.env*' takes the
+          # examples with it. Excluding real .env files is not optional, since
+          # --delete would otherwise remove the box's own secrets.
+          rsync -az --delete \
+            --exclude node_modules --exclude .next --exclude .git --exclude .DS_Store \
+            --include '.env*.example' --exclude '.env*' \
+            --exclude 'fibuki-dump' \
+            --exclude '.deployed-sha' \
+            -e "ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes" \
+            ./ "$DEPLOY_USER@$HOST:/opt/fibuki/"
+
+      - name: Rebuild and restart fibuki-api + fibuki-web
+        env:
+          HOST: ${{ secrets.HETZNER_HOST }}
+          DEPLOY_USER: ${{ secrets.HETZNER_USER || 'root' }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            "$DEPLOY_USER@$HOST" "SHA='${GITHUB_SHA}' bash -euo pipefail -s" <<'REMOTE'
+          cd /opt/fibuki/deploy/selfhost
+          compose() { docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env "$@"; }
+
+          # Both containers, always. fibuki-web carries the frontend AND its
+          # server-side document IO; fibuki-api carries the same shim code. Only
+          # naming these two leaves caddy untouched, which matters because
+          # recreating it re-requests certificates against Let's Encrypt's
+          # duplicate-certificate limit.
+          #
+          # --wait makes an unhealthy container a failed deploy rather than a
+          # green tick over a broken site. Note it does NOT roll back: the
+          # containers stay in the new state, so a failure here means revert.
+          compose up -d --build --wait --wait-timeout 600 fibuki-api fibuki-web
+          compose ps
+
+          curl -fsS --retry 12 --retry-delay 5 --retry-all-errors \
+            http://127.0.0.1:8788/healthz > /dev/null
+          curl -fsS --retry 12 --retry-delay 5 --retry-all-errors \
+            -o /dev/null http://127.0.0.1:3000/
+
+          # Two Node images per deploy fills a 160 GB disk eventually. Dangling
+          # layers only, so nothing in use is touched.
+          docker image prune -f > /dev/null
+          printf '%s\n' "$SHA" > /opt/fibuki/.deployed-sha
+          REMOTE
+
+      - name: Verify from outside
+        run: |
+          curl -fsS --retry 6 --retry-delay 5 --retry-all-errors \
+            -o /dev/null -w 'fibuki.com %{http_code}\n' https://fibuki.com/
+          {
+            echo "### Deployed"
+            echo
+            echo "\`${GITHUB_SHA}\` is live on fibuki.com."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Compose logs on failure
+        if: failure()
+        env:
+          HOST: ${{ secrets.HETZNER_HOST }}
+          DEPLOY_USER: ${{ secrets.HETZNER_USER || 'root' }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            "$DEPLOY_USER@$HOST" bash -s <<'REMOTE'
+          cd /opt/fibuki/deploy/selfhost
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env \
+            logs --tail 200 fibuki-api fibuki-web
+          REMOTE
