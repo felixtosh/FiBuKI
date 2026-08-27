@@ -112,6 +112,9 @@ describe("characterization: geminiParser.parseWithGemini", () => {
     expect(res.extracted).toEqual({
       date: "2024-01-31",
       amount: 12345,
+      // #172: null, not absent — a document that prints no Trinkgeld line
+      // records that as an absence.
+      tipAmount: null,
       currency: "EUR",
       vatPercent: null,
       lineItems: null,

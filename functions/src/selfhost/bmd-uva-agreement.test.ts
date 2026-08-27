@@ -66,6 +66,16 @@ const FIXTURES: Fixture[] = [
       { rate: 10, net: 1909, vat: 191, gross: 2100 },
     ],
   }),
+  // #172: Summe 50,80 (10% + 20%), Trinkgeld 3,20, Gesamt 54,00. The export
+  // books the whole 54,00 and the tip must carry no tax on either side.
+  withFile("printed Trinkgeld on a restaurant Beleg", -5400, {
+    extractedAmount: 5080,
+    extractedTipAmount: 320,
+    extractedRateGroups: [
+      { rate: 10, net: 3500, vat: 350, gross: 3850 },
+      { rate: 20, net: 1025, vat: 205, gross: 1230 },
+    ],
+  }),
   withFile("line items, two rates", -3300, {
     extractedAmount: 3300,
     extractedLineItems: [

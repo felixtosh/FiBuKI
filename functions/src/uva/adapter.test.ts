@@ -37,6 +37,11 @@ describe("toUvaFile", () => {
     expect(f.totalGross).toBe(1000);
   });
 
+  it("carries the printed Trinkgeld, absent on a file that has none (#172)", () => {
+    expect(toUvaFile({ id: "f-tip", extractedAmount: 5080, extractedTipAmount: 320 }).tipAmount).toBe(320);
+    expect(toUvaFile({ id: "f-no-tip", extractedAmount: 5080 }).tipAmount).toBeNull();
+  });
+
   it("carries extractedCurrency (fork #87)", () => {
     expect(toUvaFile({ id: "f-usd", extractedAmount: 3600, extractedCurrency: "USD" }).currency).toBe("USD");
     expect(toUvaFile({ id: "f-eur", extractedAmount: 3600 }).currency).toBeNull();
