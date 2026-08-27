@@ -74,7 +74,7 @@ export function createStorageRoutes(verifyToken: TokenVerifier, options?: { json
   const router = express.Router();
 
   // DoS/bruteforce backstop for the blob plane.
-  router.use(makeRateLimiter(600));
+  router.use(makeRateLimiter(600, "blob"));
 
   const bearerToken = (req: Request): string | undefined => {
     const header = req.headers.authorization;

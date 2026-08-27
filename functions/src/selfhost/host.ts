@@ -182,7 +182,7 @@ export function createHost(
   const inventory: HostInventory = { callables: [], requests: [], scheduled: [], excluded: [] };
 
   // One shared bucket across all callable/request routes (per source IP).
-  const limiter = makeRateLimiter(600);
+  const limiter = makeRateLimiter(600, "callables");
 
   const bearerToken = (req: Request): string | undefined => {
     const header = req.headers.authorization;

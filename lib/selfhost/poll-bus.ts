@@ -45,13 +45,23 @@ export function registerPoller(poll: Poller): () => void {
 }
 
 /**
- * Ask every active poller to refetch now.
+ * Shortest gap between two fan-outs. A poke costs one request PER LISTENER, so the
+ * window is what stands between a burst of changes and a burst of requests
+ * proportional to (changes x listeners).
  *
- * Never throws: a mutation must not fail because a subscriber's refetch did. Each
- * poller already guards against overlapping requests, so a poke during an in-flight
- * tick is dropped rather than doubled.
+ * 400ms is under the threshold where a refetch stops reading as "instant", and
+ * still collapses the bursts that actually happen: a server-side pipeline
+ * (extraction -> partner match -> transaction match -> trigger cascade) emits its
+ * writes far faster than that, and every one of them arrives as its own change
+ * frame.
  */
-export function pokePollers(): void {
+const COALESCE_MS = 400;
+
+let lastFanOut = 0;
+let trailing: ReturnType<typeof setTimeout> | null = null;
+
+function fanOut(): void {
+  lastFanOut = Date.now();
   for (const poll of pollers) {
     try {
       poll();
@@ -59,6 +69,50 @@ export function pokePollers(): void {
       /* a broken subscriber must not break the write that triggered it */
     }
   }
+}
+
+/**
+ * Ask every active poller to refetch soon.
+ *
+ * Never throws: a mutation must not fail because a subscriber's refetch did. Each
+ * poller already guards against overlapping requests, so a poke during an in-flight
+ * tick is dropped rather than doubled.
+ *
+ * ## Why this coalesces
+ *
+ * The first poke fans out immediately — that is the whole point of the bus, and a
+ * user's own action must not wait on a timer. Pokes that follow within COALESCE_MS
+ * are collapsed into ONE trailing fan-out at the end of the window.
+ *
+ * Without that, the request rate is unbounded in the number of changes: the
+ * realtime stream pokes on every change frame (change-stream-client.ts) and a
+ * single upload cascades through extraction, partner matching, transaction
+ * matching and their triggers, so a tab with ~30 live listeners answered one
+ * upload with hundreds of requests in a few seconds — enough on its own to trip
+ * the host's rate limiter and fail every listener at once.
+ *
+ * The trailing edge is what keeps this correct rather than merely cheaper: the
+ * last change in a burst is the one that matters, and it is always refetched.
+ */
+export function pokePollers(): void {
+  if (trailing) return; // a fan-out is already scheduled for the end of this window
+
+  const since = Date.now() - lastFanOut;
+  if (since >= COALESCE_MS) {
+    fanOut();
+    return;
+  }
+  trailing = setTimeout(() => {
+    trailing = null;
+    fanOut();
+  }, COALESCE_MS - since);
+}
+
+/** Test seam: drop the coalescing window so cases do not leak into each other. */
+export function __resetPokeWindow(): void {
+  if (trailing) clearTimeout(trailing);
+  trailing = null;
+  lastFanOut = 0;
 }
 
 /** Test/diagnostic hook: how many listeners would a poke reach. */

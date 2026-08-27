@@ -6,9 +6,9 @@
  * like the polling behaviour this replaces.
  */
 
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { startChangeStream } from "../../../lib/selfhost/change-stream-client";
-import { registerPoller, __pollerCount } from "../../../lib/selfhost/poll-bus";
+import { registerPoller, __pollerCount, __resetPokeWindow } from "../../../lib/selfhost/poll-bus";
 
 /** Build a fetch that streams the given chunks, then optionally stays open. */
 function streamingFetch(chunks: string[], opts: { keepOpen?: boolean } = {}) {
@@ -30,6 +30,11 @@ function streamingFetch(chunks: string[], opts: { keepOpen?: boolean } = {}) {
     });
   }) as unknown as typeof fetch;
 }
+
+// Pokes coalesce inside a 400ms window. Clearing it between cases stops one
+// case's trailing fan-out from landing on the next case's freshly registered
+// poller — which would make "ignores keepalive comments" fail for the wrong reason.
+beforeEach(() => __resetPokeWindow());
 
 const stops: Array<() => void> = [];
 afterEach(() => {

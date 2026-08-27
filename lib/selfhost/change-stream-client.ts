@@ -20,12 +20,38 @@
  * here degrades to "keep polling" rather than surfacing anything. The stream
  * reconnects with backoff; if it never comes back, the app behaves exactly as it did
  * before this file existed.
+ *
+ * ## Why there is a watchdog
+ *
+ * A reconnect loop only runs when the previous attempt FINISHES. Two states finish
+ * neither way:
+ *
+ *  - `await reader.read()` on a connection that died without closing — a half-open
+ *    TCP, a proxy that dropped the upstream while holding the downstream. The read
+ *    never resolves and never rejects, so `connectOnce()` never returns, the loop
+ *    never reaches its backoff, and the client sits there indefinitely.
+ *  - a `fetch` whose response headers never arrive.
+ *
+ * Both are silent: no error, no state change, no request in any access log. On the
+ * self-host deployment this showed as gaps of 3 to 24 minutes with no stream and no
+ * reconnect attempt, during which every `onSnapshot` fell back to full-speed
+ * polling — which is how a realtime feature became a request-volume problem.
+ *
+ * So both waits are bounded. The server heartbeats every 25s (change-stream.ts), so
+ * silence past SILENCE_MS means the connection is gone whatever the transport
+ * believes; abort it and let the existing backoff ladder do its job.
  */
 
 import { pokePollers, setStreamHealthy } from "./poll-bus";
 
 /** Reconnect backoff, capped. Jittered to avoid a thundering herd after an outage. */
 const BACKOFF_MS = [1_000, 2_000, 5_000, 10_000, 30_000];
+
+/** Two missed heartbeats (the server sends one every 25s). */
+const SILENCE_MS = 60_000;
+
+/** Headers should arrive in well under this; a longer wait is a dead attempt. */
+const CONNECT_TIMEOUT_MS = 15_000;
 
 export interface ChangeStreamClientOptions {
   /** Base URL of fibuki-api, no trailing slash. */
@@ -35,6 +61,14 @@ export interface ChangeStreamClientOptions {
   fetchImpl?: typeof fetch;
   /** Test seam so reconnect behaviour is assertable without real delays. */
   onStateChange?: (state: "open" | "closed" | "retrying") => void;
+  /**
+   * Longest silence tolerated on an open stream before it is treated as dead.
+   * The server sends `: ping` every 25s, so the default allows two missed beats.
+   * Lowered in tests; there is no reason to change it in an app.
+   */
+  silenceMs?: number;
+  /** Longest wait for response headers before the attempt is abandoned. */
+  connectTimeoutMs?: number;
 }
 
 export interface ChangeStreamClient {
@@ -66,14 +100,31 @@ export function startChangeStream(
   }
 
   async function connectOnce(): Promise<void> {
+    const silenceMs = options.silenceMs ?? SILENCE_MS;
+    const connectTimeoutMs = options.connectTimeoutMs ?? CONNECT_TIMEOUT_MS;
+
     const token = await options.getToken();
     if (!token) throw new Error("no token");
 
     controller = new AbortController();
-    const res = await doFetch(`${options.apiUrl}/__data/stream`, {
-      headers: { authorization: `Bearer ${token}` },
-      signal: controller.signal,
-    });
+    const ac = controller;
+
+    // Bound the wait for headers. Abort rather than race a rejection, so a fetch
+    // that would otherwise hang forever also releases its socket.
+    let connectTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+      connectTimer = null;
+      ac.abort();
+    }, connectTimeoutMs);
+
+    let res: Response;
+    try {
+      res = await doFetch(`${options.apiUrl}/__data/stream`, {
+        headers: { authorization: `Bearer ${token}` },
+        signal: ac.signal,
+      });
+    } finally {
+      if (connectTimer) clearTimeout(connectTimer);
+    }
     if (!res.ok || !res.body) throw new Error(`stream ${res.status}`);
 
     open = true;
@@ -87,32 +138,49 @@ export function startChangeStream(
     const decoder = new TextDecoder();
     let buffer = "";
 
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done || stopped) break;
-      buffer += decoder.decode(value, { stream: true });
+    // Anything at all — a change frame, a `: ping`, a partial chunk — is proof the
+    // connection is alive. Silence past the threshold is not.
+    let lastActivity = Date.now();
+    const watchdog = setInterval(() => {
+      if (Date.now() - lastActivity <= silenceMs) return;
+      // Both, deliberately. abort() releases the socket, and cancel() is what
+      // actually settles the parked `reader.read()` — a body whose transport has
+      // stopped feeding it does not necessarily notice the abort.
+      ac.abort();
+      void reader.cancel().catch(() => undefined);
+    }, Math.max(1_000, Math.round(silenceMs / 4)));
 
-      // SSE frames are separated by a blank line. Keep the trailing partial.
-      const frames = buffer.split("\n\n");
-      buffer = frames.pop() ?? "";
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done || stopped) break;
+        lastActivity = Date.now();
+        buffer += decoder.decode(value, { stream: true });
 
-      for (const frame of frames) {
-        const line = frame.trim();
-        // ": connected" / ": ping" keepalives — proof of life, nothing to do.
-        if (!line || line.startsWith(":")) continue;
-        if (!line.startsWith("data:")) continue;
-        try {
-          const change = JSON.parse(line.slice(5).trim()) as { collection?: string };
-          // Poke everything rather than only listeners on `change.collection`.
-          // A write frequently cascades (a file connection updates the transaction,
-          // a trigger writes a partner), and each poller drops a poke that lands
-          // while its own request is in flight, so the cost of over-poking is a
-          // bounded refetch and the cost of under-poking is a stale screen.
-          if (change) pokePollers();
-        } catch {
-          /* malformed frame — ignore, the next one will do */
+        // SSE frames are separated by a blank line. Keep the trailing partial.
+        const frames = buffer.split("\n\n");
+        buffer = frames.pop() ?? "";
+
+        for (const frame of frames) {
+          const line = frame.trim();
+          // ": connected" / ": ping" keepalives — proof of life, nothing to do.
+          if (!line || line.startsWith(":")) continue;
+          if (!line.startsWith("data:")) continue;
+          try {
+            const change = JSON.parse(line.slice(5).trim()) as { collection?: string };
+            // Poke everything rather than only listeners on `change.collection`.
+            // A write frequently cascades (a file connection updates the transaction,
+            // a trigger writes a partner), and each poller drops a poke that lands
+            // while its own request is in flight, so the cost of over-poking is a
+            // bounded refetch and the cost of under-poking is a stale screen.
+            if (change) pokePollers();
+          } catch {
+            /* malformed frame — ignore, the next one will do */
+          }
         }
       }
+    } finally {
+      clearInterval(watchdog);
     }
   }
 

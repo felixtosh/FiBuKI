@@ -195,9 +195,26 @@ export function createChangeStream(options: ChangeStreamOptions): ChangeStream {
 
     const sub: Subscriber = { tenant: auth.tenant, res };
     subscribers.add(sub);
+    // Realtime is invisible when it works and invisible when it does not: a client
+    // that never reconnects looks exactly like a client with nothing to say. Two
+    // lines per stream make a drop a fact rather than an inference — the gap
+    // between a close and the next open IS the window where every listener fell
+    // back to full-speed polling.
+    const openedAt = Date.now();
+    console.log(
+      `selfhost change-stream: subscriber opened (tenant=${auth.tenant}, subscribers=${subscribers.size})`,
+    );
 
+    let closed = false;
     const cleanup = (): void => {
+      if (closed) return; // "close" and "error" both fire on an aborted request
+      closed = true;
       subscribers.delete(sub);
+      console.log(
+        `selfhost change-stream: subscriber closed after ${Math.round(
+          (Date.now() - openedAt) / 1000,
+        )}s (subscribers=${subscribers.size})`,
+      );
     };
     req.on("close", cleanup);
     req.on("error", cleanup);
