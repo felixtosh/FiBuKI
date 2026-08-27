@@ -22,6 +22,7 @@
  */
 
 import { pokePollers, registerPoller, isStreamHealthy } from "./poll-bus";
+import { readHttpError } from "./http-error";
 
 /* ------------------------------------------------------------------ */
 /* Transport                                                           */
@@ -72,7 +73,12 @@ const CODE_BY_HTTP: Record<number, string> = {
   403: "permission-denied",
   404: "not-found",
   409: "aborted",
+  // The host rate-limits every plane (functions/src/selfhost/rate-limit.ts); a
+  // busy tab hits it before it hits anything else, and an unmapped status used to
+  // reach the app as the meaningless code "unknown".
+  429: "resource-exhausted",
   500: "internal",
+  503: "unavailable",
 };
 
 async function post(route: "query" | "get" | "write", body: unknown): Promise<any> {
@@ -87,15 +93,7 @@ async function post(route: "query" | "get" | "write", body: unknown): Promise<an
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    let message = res.statusText;
-    let statusCode = "";
-    try {
-      const j = await res.json();
-      if (j?.error?.message) message = j.error.message;
-      if (j?.error?.status) statusCode = j.error.status;
-    } catch {
-      /* non-JSON body — fall back to HTTP status */
-    }
+    const { statusCode, message } = await readHttpError(res);
     const code = statusCode
       ? statusCode.toLowerCase().replace(/_/g, "-")
       : CODE_BY_HTTP[res.status] ?? "unknown";

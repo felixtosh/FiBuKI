@@ -37,6 +37,8 @@
  *     deployment.
  */
 
+import { readHttpError, readXhrError } from "./http-error";
+
 /* ------------------------------------------------------------------ */
 /* Transport                                                           */
 /* ------------------------------------------------------------------ */
@@ -95,38 +97,23 @@ export class StorageError extends Error {
   }
 }
 
+function storageCode(status: number): string {
+  if (status === 404) return "storage/object-not-found";
+  if (status === 401 || status === 403) return "storage/unauthorized";
+  // The host rate-limits the blob plane too, and an upload retried into a 429 is
+  // worth naming: "unknown" sends the user looking for a broken file.
+  if (status === 429) return "storage/quota-exceeded";
+  return "storage/unknown";
+}
+
 async function toStorageError(res: Response): Promise<StorageError> {
-  let message = res.statusText;
-  try {
-    const j = await res.json();
-    if (j?.error?.message) message = j.error.message;
-  } catch {
-    /* non-JSON body — fall back to HTTP status */
-  }
-  const code =
-    res.status === 404
-      ? "storage/object-not-found"
-      : res.status === 401 || res.status === 403
-        ? "storage/unauthorized"
-        : "storage/unknown";
-  return new StorageError(code, message);
+  const { message } = await readHttpError(res);
+  return new StorageError(storageCode(res.status), message);
 }
 
 function xhrError(xhr: XMLHttpRequest): StorageError {
-  let message = xhr.statusText || "Upload failed";
-  try {
-    const j = JSON.parse(xhr.responseText);
-    if (j?.error?.message) message = j.error.message;
-  } catch {
-    /* non-JSON body */
-  }
-  const code =
-    xhr.status === 404
-      ? "storage/object-not-found"
-      : xhr.status === 401 || xhr.status === 403
-        ? "storage/unauthorized"
-        : "storage/unknown";
-  return new StorageError(code, message);
+  const { message } = readXhrError(xhr, "Upload failed");
+  return new StorageError(storageCode(xhr.status), message);
 }
 
 /* ------------------------------------------------------------------ */
