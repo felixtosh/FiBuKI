@@ -121,6 +121,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Load the deploy key, pin the host key
+        id: key
         env:
           SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
           KNOWN_HOSTS: ${{ secrets.HETZNER_SSH_KNOWN_HOSTS }}
@@ -194,8 +195,11 @@ jobs:
             echo "\`${GITHUB_SHA}\` is live on fibuki.com."
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # Only worth asking the box for logs if we ever got a key loaded. Without
+      # this the missing-secret case fails TWICE, and the second error is an SSH
+      # failure that says nothing about the actual cause.
       - name: Compose logs on failure
-        if: failure()
+        if: ${{ failure() && steps.key.outcome == 'success' }}
         env:
           HOST: ${{ secrets.HETZNER_HOST }}
           DEPLOY_USER: ${{ secrets.HETZNER_USER || 'root' }}
