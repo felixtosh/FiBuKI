@@ -56,6 +56,10 @@ describe("buildExtractionCorrection", () => {
 
     expect(updates.extractedAmount).toBe(318000);
     expect(updates.extractedVatAmount).toBe(53000);
+    // #203: the disagreement is deliberate here, and it is SURFACED — the
+    // items stay flagged so VAT derivation refuses them rather than summing a
+    // scope the person just said is not what is due.
+    expect(updates.lineItemsUnreconciled).toBe(true);
   });
 
   it("makes the human the authority on any VAT-bearing correction", () => {
@@ -66,6 +70,68 @@ describe("buildExtractionCorrection", () => {
     expect(updates.extractedRateGroups).toBeNull();
     expect(updates.vatSourceDowngraded).toBe(false);
     expect(updates.vatFieldsPreserved).toBe(false);
+  });
+
+  // #203: the block above used to hard-code `lineItemsUnreconciled = false`,
+  // which disarmed the UVA's amount-mismatch guard on exactly the files it
+  // existed for — an extractor that skipped a printed discount row leaves
+  // items summing to MORE than the document, and one hand correction turned
+  // that from a refused file into silently over-claimed VAT. The flag is now
+  // re-derived against the record as it will be after the write.
+  describe("re-deriving the reconciliation flag (#203)", () => {
+    // Three captured goods rows, gross 90.00 — but the document prints 81.00,
+    // because its postage (0.00) and discount (−9.00) rows were not captured.
+    const capturedRows = [
+      { description: "goods A", vatPercent: 20, vatAmount: 500, amount: 3000 },
+      { description: "goods B", vatPercent: 20, vatAmount: 750, amount: 4500 },
+      { description: "goods C", vatPercent: 20, vatAmount: 250, amount: 1500 },
+    ];
+
+    it("keeps the file flagged when the corrected items still contradict the total", () => {
+      const { updates } = buildExtractionCorrection(
+        { lineItems: capturedRows },
+        { extractedAmount: 8100 }
+      );
+
+      expect(updates.lineItemsUnreconciled).toBe(true);
+      expect(updates.extractedRateGroups).toBeNull();
+    });
+
+    it("un-flags a file once the person completes the itemisation", () => {
+      const { updates } = buildExtractionCorrection(
+        {
+          lineItems: [
+            ...capturedRows,
+            { description: "postage", vatPercent: 20, vatAmount: 0, amount: 0 },
+            { description: "discount 10%", vatPercent: 20, vatAmount: -150, amount: -900 },
+          ],
+        },
+        { extractedAmount: 8100, lineItemsUnreconciled: true }
+      );
+
+      expect(updates.lineItemsUnreconciled).toBe(false);
+      expect(updates.lineItemsUnreconciledRates).toBeNull();
+    });
+
+    it("judges an amount correction against the items already stored", () => {
+      const stored = { extractedLineItems: capturedRows };
+
+      const agrees = buildExtractionCorrection({ amount: 9000 }, stored);
+      expect(agrees.updates.lineItemsUnreconciled).toBe(false);
+
+      const disagrees = buildExtractionCorrection({ amount: 8100 }, stored);
+      expect(disagrees.updates.lineItemsUnreconciled).toBe(true);
+    });
+
+    it("clearing the itemisation clears the flag — nothing is left to contradict", () => {
+      const { updates } = buildExtractionCorrection(
+        { lineItems: null },
+        { extractedAmount: 8100, extractedLineItems: capturedRows, lineItemsUnreconciled: true }
+      );
+
+      expect(updates.extractedLineItems).toBeNull();
+      expect(updates.lineItemsUnreconciled).toBe(false);
+    });
   });
 
   it("leaves the VAT artefacts alone on a date-only correction", () => {

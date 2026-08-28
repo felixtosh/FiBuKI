@@ -70,6 +70,12 @@ function getEffectiveExtractedAmount(data: any): number | null {
     return extractedAmount;
   }
 
+  // #203: flagged items are exactly the ones whose sum contradicts the
+  // document — never derive the display figure from them.
+  if (data?.lineItemsUnreconciled) {
+    return extractedAmount;
+  }
+
   const amountFromItems = lineItems.reduce((sum, item) => {
     const amount = toFiniteNumber(item.amount);
     return amount === null ? sum : sum + amount;

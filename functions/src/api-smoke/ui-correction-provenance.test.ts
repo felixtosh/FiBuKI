@@ -146,7 +146,12 @@ describe("updateFileExtractedFields (client operation)", () => {
     expect(payload().correction).not.toHaveProperty("amount");
   });
 
-  it("consolidates edited line items into the total the panel shows", async () => {
+  it("sends the rows and the boxes as typed — never a total derived from the rows", async () => {
+    // #203: this used to consolidate the rows into a total and VAT and post
+    // them as the person's correction. On a file whose rows disagree with the
+    // document (a skipped discount row), that stamped the row sum over the
+    // stored total as hand-corrected — a value nobody typed, which the next
+    // re-extraction then refused to repair.
     await updateFileExtractedFields(
       ctx,
       "file-1",
@@ -165,11 +170,13 @@ describe("updateFileExtractedFields (client operation)", () => {
     );
 
     expect(payload().correction).toMatchObject({
-      amount: 318000,
-      vatAmount: 53000,
-      vatPercent: 20,
+      amount: 318000, // the amount box, as typed — not a row sum
+      vatPercent: 20, // the rate box, as typed
       lineItems: [expect.objectContaining({ description: "Consulting", amount: 318000 })],
     });
+    // The top-level VAT is derived from the rows everywhere it is read, so a
+    // derivation must not go over dressed as a ruling.
+    expect(payload().correction).not.toHaveProperty("vatAmount");
   });
 
   it("clears the itemisation when the last row is removed", async () => {

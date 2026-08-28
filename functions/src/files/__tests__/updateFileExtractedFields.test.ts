@@ -172,18 +172,58 @@ describe("updateFileExtractedFieldsCallable", () => {
     expect(file().vatSourceDowngraded).toBe(false);
   });
 
-  it("still lifts the review flags when a person saves rows they left as they were", async () => {
-    // The panel did this before it delegated (fork #64/#67): having the
-    // itemisation in front of you and saving settles the file. It is an
-    // acknowledgement rather than a correction, so no stamp goes with it —
-    // otherwise re-extraction would refuse a file nobody actually re-keyed.
+  it("lifts a stale review flag on an untouched save — when the record actually reconciles", async () => {
+    // The seeded item is net 2650.00 + VAT 530.00 against a stored total of
+    // 3180.00, so the flag on this record is simply wrong. An untouched save
+    // re-derives it and lifts it; no stamp goes with that, otherwise
+    // re-extraction would refuse a file nobody actually re-keyed. The
+    // downgrade marker is NOT an assertion about reconciliation, so a save
+    // that corrected nothing leaves it standing (#203).
     seedFile({ lineItemsUnreconciled: true, vatSourceDowngraded: true });
 
     const result = await call(unchangedSave());
 
     expect(file().lineItemsUnreconciled).toBe(false);
-    expect(file().vatSourceDowngraded).toBe(false);
+    expect(file().vatSourceDowngraded).toBe(true);
     expect(result.changed).toEqual([]);
+    expect(file().extractionCorrectedFields).toBeUndefined();
+  });
+
+  it("keeps the guard armed on an untouched save when the items contradict the total (#203)", async () => {
+    // The #203 shape: captured rows sum to 90.00 gross, the document prints
+    // 81.00 (a skipped discount row). Before the fix, merely opening the
+    // panel and saving cleared BOTH halves of the UVA's amount-mismatch
+    // guard — the flag it tests and the printed rate-group block that is its
+    // other escape — turning a refused file into silently over-claimed VAT.
+    const capturedRows = [
+      { description: "goods A", quantity: 1, unitPrice: 3000, vatPercent: 20, vatAmount: 500, amount: 3000 },
+      { description: "goods B", quantity: 1, unitPrice: 4500, vatPercent: 20, vatAmount: 750, amount: 4500 },
+      { description: "goods C", quantity: 1, unitPrice: 1500, vatPercent: 20, vatAmount: 250, amount: 1500 },
+    ];
+    const printedBlock = [{ rate: 20, net: 6750, vat: 1350, gross: 8100 }];
+    seedFile({
+      extractedAmount: 8100,
+      extractedVatAmount: 1350,
+      extractedVatPercent: 20,
+      extractedLineItems: capturedRows,
+      extractedRateGroups: printedBlock,
+      lineItemsUnreconciled: true,
+    });
+
+    const result = await call(
+      unchangedSave({
+        correction: {
+          amount: 8100,
+          vatAmount: 1350,
+          vatPercent: 20,
+          lineItems: capturedRows,
+        },
+      })
+    );
+
+    expect(result.changed).toEqual([]);
+    expect(file().lineItemsUnreconciled).toBe(true);
+    expect(file().extractedRateGroups).toEqual(printedBlock);
     expect(file().extractionCorrectedFields).toBeUndefined();
   });
 

@@ -141,6 +141,12 @@ function getEffectiveExtractedAmount(file: TaxFile): number | null {
     return file.extractedAmount ?? null;
   }
 
+  // #203: flagged items are exactly the ones whose sum contradicts the
+  // document — never derive the display figure from them.
+  if (file.lineItemsUnreconciled) {
+    return file.extractedAmount ?? null;
+  }
+
   const amountFromItems = lineItems.reduce((sum, item) => sum + item.amount, 0);
   const vatFromItems = lineItems.reduce((sum, item) => sum + item.vatAmount, 0);
   const amountsLookNet = vatFromItems > 0 && inferLineItemAmountsAreNet(lineItems);
@@ -572,40 +578,6 @@ function inferLineItemAmountsAreNet(lineItems: ExtractedLineItem[]): boolean {
   return netInterpretationError < grossInterpretationError;
 }
 
-function consolidateLineItems(
-  lineItems: ExtractedLineItem[],
-  explicitDocumentAmount?: number | null
-): {
-  amount: number;
-  vatAmount: number;
-  vatPercent: number | null;
-} {
-  const amountFromItems = lineItems.reduce((sum, item) => sum + item.amount, 0);
-  const vatAmount = lineItems.reduce((sum, item) => sum + item.vatAmount, 0);
-  const amountFromNetPlusVat = amountFromItems + vatAmount;
-
-  const firstRate = lineItems[0]?.vatPercent ?? null;
-  const hasSingleRate = firstRate !== null && lineItems.every((item) =>
-    item.vatPercent !== null && Math.abs(item.vatPercent - firstRate) < 0.0001
-  );
-
-  let amount = amountFromItems;
-  if (typeof explicitDocumentAmount === "number" && Number.isFinite(explicitDocumentAmount)) {
-    const distanceToAsIs = Math.abs(amountFromItems - explicitDocumentAmount);
-    const distanceToNetPlusVat = Math.abs(amountFromNetPlusVat - explicitDocumentAmount);
-    amount = distanceToNetPlusVat < distanceToAsIs ? amountFromNetPlusVat : amountFromItems;
-  } else {
-    const amountsLookNet = vatAmount > 0 && inferLineItemAmountsAreNet(lineItems);
-    amount = amountsLookNet ? amountFromNetPlusVat : amountFromItems;
-  }
-
-  return {
-    amount,
-    vatAmount,
-    vatPercent: hasSingleRate ? firstRate : null,
-  };
-}
-
 /**
  * Save the file detail panel's extracted-fields form (#149).
  *
@@ -652,41 +624,39 @@ export async function updateFileExtractedFields(
   const normalizedLineItems = normalizeEditableLineItems(fields.lineItems);
   const hasLineItems = fields.lineItems !== undefined && normalizedLineItems.length > 0;
 
+  // #203: only what the person actually stated goes over as a correction.
+  // This used to send a total and VAT CONSOLIDATED FROM THE ROWS whenever the
+  // itemisation was present — a derived figure posted as if a person had ruled
+  // on it. On a file whose rows disagree with its document total (a skipped
+  // discount row), that overwrote the stored total with the row sum and
+  // stamped the wrong value as hand-corrected, which a re-extraction then
+  // refused to repair. The amount and rate boxes go over as typed; the
+  // top-level VAT is not sent at all when rows exist, because every consumer
+  // derives VAT from the rows first and the builder must never receive a
+  // derivation dressed as a ruling.
   if (hasLineItems) {
-    // The panel shows a total derived from the rows, so that derived total is
-    // what the person is looking at when they save — it goes over as an
-    // explicit correction rather than being re-derived server-side, which the
-    // builder refuses to do on purpose (a Schlussrechnung's total is not the
-    // sum of its items).
-    const explicitAmount = parseCurrencyToCents(fields.amount);
-    const consolidated = consolidateLineItems(normalizedLineItems, explicitAmount);
     correction.lineItems = normalizedLineItems;
-    correction.amount = consolidated.amount;
-    correction.vatAmount = consolidated.vatAmount;
-    correction.vatPercent = consolidated.vatPercent;
+  } else if (fields.lineItems !== undefined) {
+    correction.lineItems = null;
+    correction.vatAmount = null;
+  }
+
+  if (fields.amount) {
+    const amountNum = parseNumberInput(fields.amount);
+    if (amountNum !== null) {
+      correction.amount = Math.round(amountNum * 100);
+    }
   } else {
-    if (fields.lineItems !== undefined) {
-      correction.lineItems = null;
-      correction.vatAmount = null;
-    }
+    correction.amount = null;
+  }
 
-    if (fields.amount) {
-      const amountNum = parseNumberInput(fields.amount);
-      if (amountNum !== null) {
-        correction.amount = Math.round(amountNum * 100);
-      }
-    } else {
-      correction.amount = null;
+  if (fields.vatPercent) {
+    const vatNum = parseNumberInput(fields.vatPercent);
+    if (vatNum !== null) {
+      correction.vatPercent = vatNum;
     }
-
-    if (fields.vatPercent) {
-      const vatNum = parseNumberInput(fields.vatPercent);
-      if (vatNum !== null) {
-        correction.vatPercent = vatNum;
-      }
-    } else {
-      correction.vatPercent = null;
-    }
+  } else {
+    correction.vatPercent = null;
   }
 
   const additionalFields = fields.additionalFields
