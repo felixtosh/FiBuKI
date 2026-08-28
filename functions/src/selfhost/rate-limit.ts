@@ -57,7 +57,18 @@ const MAX_LOGGED_VALUE = 200;
  * terminal or a log viewer in their own way.
  */
 function forLog(value: unknown, max = MAX_LOGGED_VALUE): string {
-  const text = String(value ?? "unknown").replace(/[\u0000-\u001f\u007f-\u009f]/g, " ");
+  const text = String(value ?? "unknown")
+    // Newlines go first, and SEPARATELY, spelled as a literal alternation.
+    // CodeQL's log-injection sanitiser model has to see the newline removal to
+    // accept this as a barrier, and it does NOT read a \u-escaped character-class
+    // range as one even though the range covers \n and \r: the range form alone
+    // scored alert #298 on this exact line. Same lesson #181 recorded for
+    // js/remote-property-injection — the guard has to be in the shape the rule
+    // recognises, not merely correct.
+    .replace(/\r|\n/g, " ")
+    // Then the rest: a NUL, a backspace or an ANSI escape each corrupt a terminal
+    // or a log viewer in their own way, and none of them are newlines.
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ");
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
