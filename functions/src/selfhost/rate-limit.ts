@@ -36,15 +36,42 @@ import type { Request, RequestHandler, Response } from "express";
 const WINDOW_MS = 60_000;
 const lastLoggedAt = new Map<string, number>();
 
+/**
+ * Longest a single request-derived value may be in the log line. A URL is
+ * unbounded; the diagnostic value is in its prefix.
+ */
+const MAX_LOGGED_VALUE = 200;
+
+/**
+ * Neutralise a request-controlled value before it reaches a log line.
+ *
+ * `req.originalUrl` is whatever the client put on the request line, and Express
+ * does not strip newlines from it. Interpolated raw, a CR or LF forges entries an
+ * operator reads as separate, genuine log lines — and anything parsing the log
+ * line-by-line believes them (CodeQL js/log-injection, alert #297).
+ *
+ * Stripping the newlines is the fix rather than dropping the line: the line exists
+ * because a 429 is otherwise invisible — it reaches the browser as a generic
+ * "Failed to load" with no server-side trace at all. Every C0/C1 control character
+ * goes, not just CR/LF, because a lone \r, a NUL or an ANSI escape all corrupt a
+ * terminal or a log viewer in their own way.
+ */
+function forLog(value: unknown, max = MAX_LOGGED_VALUE): string {
+  const text = String(value ?? "unknown").replace(/[\u0000-\u001f\u007f-\u009f]/g, " ");
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
 function logTrip(plane: string, limit: number, req: Request): void {
   const now = Date.now();
   const last = lastLoggedAt.get(plane) ?? 0;
   if (now - last < WINDOW_MS) return;
   lastLoggedAt.set(plane, now);
+  // `plane` and `limit` are ours; everything off `req` goes through forLog().
   console.warn(
-    `selfhost rate-limit: ${plane} plane hit its cap of ${limit}/min from ${req.ip ?? "unknown"} ` +
-      `(${req.method} ${req.originalUrl}). Clients see this as a failed request with no ` +
-      `explanation; raise FIBUKI_RATE_LIMIT_MAX if this is normal traffic for this deployment.`,
+    `selfhost rate-limit: ${plane} plane hit its cap of ${limit}/min from ${forLog(req.ip)} ` +
+      `(${forLog(req.method, 16)} ${forLog(req.originalUrl)}). Clients see this as a failed ` +
+      `request with no explanation; raise FIBUKI_RATE_LIMIT_MAX if this is normal traffic ` +
+      `for this deployment.`,
   );
 }
 

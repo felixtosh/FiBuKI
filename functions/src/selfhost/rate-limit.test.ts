@@ -110,6 +110,49 @@ describe("makeRateLimiter", () => {
     }
   });
 
+  it("a newline in the request target cannot forge a second log line", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const limiter = makeRateLimiter(1, "test");
+    // Node's HTTP parser refuses a raw CR/LF on the request line, so the value is
+    // planted where a proxy actually puts it: `originalUrl` is passed through
+    // verbatim, and a deployment behind a proxy is exactly this file's subject.
+    const { url, close } = await serve((req, res, next) => {
+      (req as { originalUrl: string }).originalUrl =
+        "/thing\r\nselfhost rate-limit: blob plane hit its cap of 1/min from 10.0.0.1";
+      limiter(req, res, next);
+    });
+    try {
+      await fetch(url);
+      await fetch(url);
+      expect(warn).toHaveBeenCalledTimes(1);
+      const line = String(warn.mock.calls[0]?.[0]);
+      // The whole point: one call, and nothing in it that a log reader splits on.
+      expect(line).not.toMatch(/[\r\n]/);
+      // Flattened, not dropped — the operator still sees what was requested.
+      expect(line).toContain("blob plane hit its cap");
+    } finally {
+      await close();
+    }
+  });
+
+  it("truncates an unbounded request target instead of logging all of it", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const limiter = makeRateLimiter(1, "test");
+    const { url, close } = await serve((req, res, next) => {
+      (req as { originalUrl: string }).originalUrl = `/thing?q=${"A".repeat(5_000)}`;
+      limiter(req, res, next);
+    });
+    try {
+      await fetch(url);
+      await fetch(url);
+      const line = String(warn.mock.calls[0]?.[0]);
+      expect(line).toContain("…");
+      expect(line.length).toBeLessThan(600);
+    } finally {
+      await close();
+    }
+  });
+
   it("an unusable FIBUKI_RATE_LIMIT_MAX falls back to the plane default", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     process.env.FIBUKI_RATE_LIMIT_MAX = "lots";
