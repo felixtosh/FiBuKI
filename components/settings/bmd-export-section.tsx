@@ -24,6 +24,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
+import { useAuthenticatedDownload } from "@/hooks/use-authenticated-download";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useBmdExports } from "@/hooks/use-bmd-exports";
 import { BmdExport } from "@/types/bmd-export";
@@ -279,6 +280,7 @@ function BmdCompletedExportRow({
   formatSize: (bytes?: number) => string;
   daysUntilExpiry: number;
 }) {
+  const storedDownload = useAuthenticatedDownload();
   const completedDate = exp.completedAt?.toDate?.();
   const dateStr = completedDate
     ? completedDate.toLocaleDateString("de-DE", {
@@ -333,11 +335,16 @@ function BmdCompletedExportRow({
                   href={exp.downloadUrl}
                   target="_blank"
                   rel="noopener noreferrer"
+                  onClick={storedDownload.onClick}
+                  aria-busy={storedDownload.pending}
                 >
                   <Download className="mr-1 h-3 w-3" />
                   Download
                 </a>
               </Button>
+            )}
+            {storedDownload.error && (
+              <p className="text-xs text-destructive">{storedDownload.error}</p>
             )}
           </>
         )}

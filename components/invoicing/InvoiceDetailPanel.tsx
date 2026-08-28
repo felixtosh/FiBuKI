@@ -24,6 +24,7 @@ import {
 import QRCode from "qrcode";
 import { doc, onSnapshot } from "firebase/firestore";
 import { Button } from "@/components/ui/button";
+import { useAuthenticatedDownload } from "@/hooks/use-authenticated-download";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -216,6 +217,7 @@ export function InvoiceDetailPanel({
   onOpenConnectTransaction,
   isConnectTransactionOpen = false,
 }: InvoiceDetailPanelProps) {
+  const storedDownload = useAuthenticatedDownload();
   const { invoice, loading } = useInvoice(invoiceId);
   const { userData } = useUserData();
   const { userId } = useAuth();
@@ -1137,11 +1139,18 @@ export function InvoiceDetailPanel({
                         <a
                           href={issuedFile!.downloadUrl}
                           download={issuedFile!.fileName}
+                          onClick={storedDownload.onClick}
+                          aria-busy={storedDownload.pending}
                         >
                           <Download className="h-4 w-4 mr-2" />
                           Download
                         </a>
                       </Button>
+                    )}
+                    {storedDownload.error && (
+                      <p className="col-span-2 text-xs text-destructive">
+                        {storedDownload.error}
+                      </p>
                     )}
                     <AlertDialog>
                       <AlertDialogTrigger asChild>

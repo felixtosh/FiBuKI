@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { auth } from "@/lib/firebase/config";
+import { isSelfAuthenticating, stripStaleToken } from "@/lib/storage/stored-url";
 
 /**
  * Turn a stored file `downloadUrl` into something a browser can actually render.
@@ -39,46 +40,12 @@ import { auth } from "@/lib/firebase/config";
  * Trade-off worth knowing: this buffers the whole object before rendering, so it
  * gives up HTTP range requests. Fine for invoices and receipts, wrong for very
  * large files.
- */
-
-/**
- * A URL the browser can load without us attaching credentials.
  *
- * Firebase Storage download tokens are durable — they live on the object until
- * revoked — so those URLs are genuinely self-authenticating and pass through.
- * Local blob:/data: URLs need nothing.
- *
- * A self-host `?token=` URL is deliberately NOT trusted, even though the download
- * route accepts one. Those carried a bearer token, which expires within the hour,
- * so trusting them meant a stored URL silently stopped working and the preview
- * failed with a 401. Re-fetching with a fresh header always works, so any such URL
- * is treated as needing credentials and the stale token is stripped before the
- * request. (getDownloadURL no longer mints these, but migrated and previously
- * stored documents still hold them.)
+ * The two URL predicates live in lib/storage/stored-url.ts, shared with
+ * hooks/use-authenticated-download.ts, which answers the same question for a
+ * SAVE rather than a render. One definition: a link and a preview must agree on
+ * whether a URL can be loaded without credentials, or one of them breaks.
  */
-function isSelfAuthenticating(url: string): boolean {
-  return (
-    url.includes("firebasestorage.googleapis.com") ||
-    url.includes("storage.googleapis.com") ||
-    url.startsWith("blob:") ||
-    url.startsWith("data:")
-  );
-}
-
-/**
- * Drop a stale `?token=` before re-requesting with a live Authorization header.
- * Leaving it on would make the host verify an expired credential and 401 rather
- * than fall through to the header.
- */
-function stripStaleToken(url: string): string {
-  try {
-    const u = new URL(url, window.location.origin);
-    u.searchParams.delete("token");
-    return u.toString();
-  } catch {
-    return url;
-  }
-}
 
 export interface FileObjectUrl {
   /** Renderable URL, or null while loading / on failure. */
