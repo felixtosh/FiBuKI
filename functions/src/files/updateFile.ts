@@ -1,11 +1,18 @@
 /**
- * Update a file's metadata
+ * Update a file's metadata.
+ *
+ * NOT the extracted figures: a change to those is a correction, and every
+ * correction goes through `updateFileExtractedFields`, which stamps
+ * provenance, compares what actually moved, and re-derives the
+ * reconciliation flag (#203). This callable used to accept them too, on a
+ * path that consolidated the line items into the total — a derivation
+ * written as if a person had ruled on it, with no stamp a re-extraction
+ * would respect. No caller was left using it; now it refuses.
  */
 
-import { FieldValue, Timestamp } from "firebase-admin/firestore";
+import { FieldValue } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { cancelPartnerWorkersForFile } from "../utils/cancelWorkers";
-import { ExtractedLineItem } from "../types/extraction";
 import { classifyFileRecord, documentTypeFields } from "../documents/adapter";
 import { computeDirectionReviewFields } from "../documents/syncDirectionReview";
 import { syncDocumentationStateForTransactions } from "../documents/syncDocumentationState";
@@ -26,128 +33,52 @@ interface UpdateFileRequest {
     isNotInvoice?: boolean;
     notInvoiceReason?: string | null;
     invoiceDirection?: "incoming" | "outgoing" | "unknown" | null;
-    // Extraction override
-    extractedDate?: string | null; // ISO date string
-    extractedAmount?: number | null; // in cents
+    // Descriptive extraction text (who/where, not figures)
     extractedPartner?: string | null;
-    extractedVatPercent?: number | null;
-    extractedVatAmount?: number | null; // in cents
-    extractedLineItems?: ExtractedLineItem[] | null;
     extractedVatId?: string | null;
     extractedIban?: string | null;
     extractedAddress?: string | null;
   };
 }
 
+/**
+ * The correction vocabulary. Writing any of these here would bypass the
+ * provenance stamp, the moved-field comparison and the reconciliation
+ * re-derivation that `updateFileExtractedFields` exists to enforce (#203).
+ */
+const CORRECTION_ONLY_FIELDS = [
+  "extractedAmount",
+  "extractedVatAmount",
+  "extractedVatPercent",
+  "extractedDate",
+  "extractedLineItems",
+] as const;
+
+/**
+ * What this callable writes, and nothing else. The payload is whatever JSON
+ * the caller sent, and the old copy loop forwarded every key of it into the
+ * Firestore update — so a caller could set any field on their own file
+ * record: a provenance stamp, a derived classification, a review flag. The
+ * interface above is the contract; this is the contract enforced.
+ */
+const WRITABLE_FIELDS = new Set([
+  "fileName",
+  "thumbnailUrl",
+  "partnerId",
+  "partnerType",
+  "partnerMatchedBy",
+  "partnerMatchConfidence",
+  "isNotInvoice",
+  "notInvoiceReason",
+  "invoiceDirection",
+  "extractedPartner",
+  "extractedVatId",
+  "extractedIban",
+  "extractedAddress",
+]);
+
 interface UpdateFileResponse {
   success: boolean;
-}
-
-function normalizeExtractedLineItems(lineItems: ExtractedLineItem[] | null | undefined): ExtractedLineItem[] {
-  if (!Array.isArray(lineItems)) {
-    return [];
-  }
-
-  return lineItems
-    .map((item, index): ExtractedLineItem | null => {
-      if (!item || typeof item.amount !== "number" || !Number.isFinite(item.amount)) {
-        return null;
-      }
-
-      const normalizedVatPercent = typeof item.vatPercent === "number" &&
-        Number.isFinite(item.vatPercent) &&
-        item.vatPercent >= 0 &&
-        item.vatPercent <= 100
-        ? item.vatPercent
-        : null;
-
-      const normalizedVatAmount = typeof item.vatAmount === "number" && Number.isFinite(item.vatAmount)
-        ? Math.round(item.vatAmount)
-        : 0;
-
-      const normalizedQuantity = typeof item.quantity === "number" && Number.isFinite(item.quantity)
-        ? item.quantity
-        : null;
-
-      const normalizedUnitPrice = typeof item.unitPrice === "number" && Number.isFinite(item.unitPrice)
-        ? Math.round(item.unitPrice)
-        : null;
-
-      return {
-        description: item.description?.trim() || `Item ${index + 1}`,
-        quantity: normalizedQuantity,
-        unitPrice: normalizedUnitPrice,
-        vatPercent: normalizedVatPercent,
-        vatAmount: normalizedVatAmount,
-        amount: Math.round(item.amount),
-      };
-    })
-    .filter((item): item is ExtractedLineItem => item !== null);
-}
-
-function inferLineItemAmountsAreNet(lineItems: ExtractedLineItem[]): boolean {
-  let comparedItems = 0;
-  let netInterpretationError = 0;
-  let grossInterpretationError = 0;
-
-  for (const item of lineItems) {
-    if (
-      item.vatPercent === null ||
-      !Number.isFinite(item.vatPercent) ||
-      item.vatPercent <= 0 ||
-      !Number.isFinite(item.vatAmount)
-    ) {
-      continue;
-    }
-
-    const rate = item.vatPercent;
-    const expectedVatIfNet = Math.round((item.amount * rate) / 100);
-    const expectedVatIfGross = Math.round((item.amount * rate) / (100 + rate));
-
-    netInterpretationError += Math.abs(expectedVatIfNet - item.vatAmount);
-    grossInterpretationError += Math.abs(expectedVatIfGross - item.vatAmount);
-    comparedItems += 1;
-  }
-
-  if (comparedItems === 0) {
-    return false;
-  }
-
-  return netInterpretationError < grossInterpretationError;
-}
-
-function consolidateLineItems(
-  lineItems: ExtractedLineItem[],
-  extractedDocumentAmount?: number | null
-): {
-  totalAmount: number;
-  totalVatAmount: number;
-  consolidatedVatPercent: number | null;
-} {
-  const totalAmountFromItems = lineItems.reduce((sum, item) => sum + item.amount, 0);
-  const totalVatAmount = lineItems.reduce((sum, item) => sum + item.vatAmount, 0);
-  const totalAmountFromNetPlusVat = totalAmountFromItems + totalVatAmount;
-
-  const firstRate = lineItems[0]?.vatPercent ?? null;
-  const hasSingleRate = firstRate !== null && lineItems.every((item) =>
-    item.vatPercent !== null && Math.abs(item.vatPercent - firstRate) < 0.0001
-  );
-
-  let totalAmount = totalAmountFromItems;
-  if (typeof extractedDocumentAmount === "number" && Number.isFinite(extractedDocumentAmount)) {
-    const distanceToAsIs = Math.abs(totalAmountFromItems - extractedDocumentAmount);
-    const distanceToNetPlusVat = Math.abs(totalAmountFromNetPlusVat - extractedDocumentAmount);
-    totalAmount = distanceToNetPlusVat < distanceToAsIs ? totalAmountFromNetPlusVat : totalAmountFromItems;
-  } else {
-    const amountsLookNet = totalVatAmount > 0 && inferLineItemAmountsAreNet(lineItems);
-    totalAmount = amountsLookNet ? totalAmountFromNetPlusVat : totalAmountFromItems;
-  }
-
-  return {
-    totalAmount,
-    totalVatAmount,
-    consolidatedVatPercent: hasSingleRate ? firstRate : null,
-  };
 }
 
 export const updateFileCallable = createCallable<
@@ -185,34 +116,36 @@ export const updateFileCallable = createCallable<
       });
     }
 
-    // Build update object, converting dates and filtering undefined
+    // Refusing loudly beats stripping silently: a silent strip is the same
+    // "correction that looks like it worked" this rule exists to end. The
+    // figure fields get the specific message, since they have a correct door.
+    const figures = CORRECTION_ONLY_FIELDS.filter(
+      (field) => (data as Record<string, unknown>)[field] !== undefined
+    );
+    if (figures.length > 0) {
+      throw new HttpsError(
+        "invalid-argument",
+        `${figures.join(", ")} cannot be written through updateFile — corrections ` +
+          "to the extracted figures go through updateFileExtractedFields"
+      );
+    }
+
+    const unknown = Object.keys(data).filter(
+      (key) => !WRITABLE_FIELDS.has(key) && (data as Record<string, unknown>)[key] !== undefined
+    );
+    if (unknown.length > 0) {
+      throw new HttpsError(
+        "invalid-argument",
+        `updateFile does not write ${unknown.join(", ")}`
+      );
+    }
+
+    // Build update object, filtering undefined
     const updateData: Record<string, unknown> = {};
 
     for (const [key, value] of Object.entries(data)) {
       if (value === undefined) continue;
-
-      // Handle date conversion
-      if (key === "extractedDate" && value) {
-        const dateObj = new Date(value as string);
-        if (!isNaN(dateObj.getTime())) {
-          updateData.extractedDate = Timestamp.fromDate(dateObj);
-        }
-      } else {
-        updateData[key] = value;
-      }
-    }
-
-    if (Array.isArray(data.extractedLineItems)) {
-      const normalizedLineItems = normalizeExtractedLineItems(data.extractedLineItems);
-      if (normalizedLineItems.length > 0) {
-        const consolidated = consolidateLineItems(normalizedLineItems, data.extractedAmount);
-        updateData.extractedLineItems = normalizedLineItems;
-        updateData.extractedAmount = consolidated.totalAmount;
-        updateData.extractedVatAmount = consolidated.totalVatAmount;
-        updateData.extractedVatPercent = consolidated.consolidatedVatPercent;
-      } else {
-        updateData.extractedLineItems = null;
-      }
+      updateData[key] = value;
     }
 
     // #233: the direction is a read of the document, and until now setting it

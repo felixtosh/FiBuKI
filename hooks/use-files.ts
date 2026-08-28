@@ -16,7 +16,6 @@ import {
   TaxFile,
   FileFilters,
   FileCreateData,
-  FileExtractionData,
   TransactionMatchSource,
 } from "@/types/file";
 import { useAuth } from "@/components/auth";
@@ -100,27 +99,6 @@ export function useFiles(filters?: FileFilters) {
   const update = useCallback(
     async (fileId: string, data: Partial<Pick<TaxFile, "fileName" | "thumbnailUrl">>): Promise<void> => {
       await callFunction("updateFile", { fileId, data });
-    },
-    []
-  );
-
-  const updateExtraction = useCallback(
-    async (fileId: string, data: FileExtractionData): Promise<void> => {
-      // Convert FileExtractionData to updateFile format
-      const updateData: Record<string, unknown> = {};
-      if (data.extractedDate) {
-        updateData.extractedDate = data.extractedDate.toDate().toISOString();
-      }
-      if (data.extractedAmount !== undefined) updateData.extractedAmount = data.extractedAmount;
-      if (data.extractedPartner !== undefined) updateData.extractedPartner = data.extractedPartner;
-      if (data.extractedVatPercent !== undefined) updateData.extractedVatPercent = data.extractedVatPercent;
-      if (data.extractedVatAmount !== undefined) updateData.extractedVatAmount = data.extractedVatAmount;
-      if (data.extractedLineItems !== undefined) updateData.extractedLineItems = data.extractedLineItems;
-      if (data.extractedVatId !== undefined) updateData.extractedVatId = data.extractedVatId;
-      if (data.extractedIban !== undefined) updateData.extractedIban = data.extractedIban;
-      if (data.extractedAddress !== undefined) updateData.extractedAddress = data.extractedAddress;
-
-      await callFunction("updateFile", { fileId, data: updateData });
     },
     []
   );
@@ -253,7 +231,6 @@ export function useFiles(filters?: FileFilters) {
     error,
     create,
     update,
-    updateExtraction,
     remove,
     restore,
     markAsNotInvoice,

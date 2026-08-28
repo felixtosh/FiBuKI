@@ -19,7 +19,6 @@ import {
   FileConnection,
   FileFilters,
   FileCreateData,
-  FileExtractionData,
   ExtractedLineItem,
   TransactionSuggestion,
 } from "@/types/file";
@@ -387,26 +386,6 @@ export async function createFile(
 
   const docRef = await addDoc(collection(ctx.db, FILES_COLLECTION), newFile);
   return docRef.id;
-}
-
-/**
- * Update a file's extraction results
- */
-export async function updateFileExtraction(
-  ctx: OperationsContext,
-  fileId: string,
-  data: FileExtractionData
-): Promise<void> {
-  const existing = await getFile(ctx, fileId);
-  if (!existing) {
-    throw new Error(`File ${fileId} not found or access denied`);
-  }
-
-  const docRef = doc(ctx.db, FILES_COLLECTION, fileId);
-  await updateDoc(docRef, {
-    ...data,
-    updatedAt: Timestamp.now(),
-  });
 }
 
 /**
