@@ -110,15 +110,15 @@ describe("makeRateLimiter", () => {
     }
   });
 
-  it("a newline in the request target cannot forge a second log line", async () => {
+  it("never puts the request into the log line, so a newline cannot forge one", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const limiter = makeRateLimiter(1, "test");
-    // Node's HTTP parser refuses a raw CR/LF on the request line, so the value is
-    // planted where a proxy actually puts it: `originalUrl` is passed through
-    // verbatim, and a deployment behind a proxy is exactly this file's subject.
+    // Node's HTTP parser refuses a raw CR/LF on the request line, so the hostile
+    // value is planted where a proxy actually puts it: `originalUrl` is passed
+    // through verbatim, and a deployment behind a proxy is this file's subject.
+    const forged = "/thing\r\nselfhost rate-limit: blob plane hit its cap of 1/min";
     const { url, close } = await serve((req, res, next) => {
-      (req as { originalUrl: string }).originalUrl =
-        "/thing\r\nselfhost rate-limit: blob plane hit its cap of 1/min from 10.0.0.1";
+      (req as { originalUrl: string }).originalUrl = forged;
       limiter(req, res, next);
     });
     try {
@@ -126,28 +126,27 @@ describe("makeRateLimiter", () => {
       await fetch(url);
       expect(warn).toHaveBeenCalledTimes(1);
       const line = String(warn.mock.calls[0]?.[0]);
-      // The whole point: one call, and nothing in it that a log reader splits on.
+      // Nothing a log reader splits on, and no trace of the request at all —
+      // the sink is removed rather than sanitised. See the comment on logTrip.
       expect(line).not.toMatch(/[\r\n]/);
-      // Flattened, not dropped — the operator still sees what was requested.
-      expect(line).toContain("blob plane hit its cap");
+      expect(line).not.toContain("/thing");
+      expect(line).not.toContain("blob plane");
     } finally {
       await close();
     }
   });
 
-  it("truncates an unbounded request target instead of logging all of it", async () => {
+  it("still says which plane tripped and what its cap was", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const limiter = makeRateLimiter(1, "test");
-    const { url, close } = await serve((req, res, next) => {
-      (req as { originalUrl: string }).originalUrl = `/thing?q=${"A".repeat(5_000)}`;
-      limiter(req, res, next);
-    });
+    const { url, close } = await serve(makeRateLimiter(1, "data"));
     try {
       await fetch(url);
       await fetch(url);
       const line = String(warn.mock.calls[0]?.[0]);
-      expect(line).toContain("…");
-      expect(line.length).toBeLessThan(600);
+      // The diagnosis the line exists for survives the sink removal.
+      expect(line).toContain("data plane");
+      expect(line).toContain("1/min");
+      expect(line).toContain("FIBUKI_RATE_LIMIT_MAX");
     } finally {
       await close();
     }

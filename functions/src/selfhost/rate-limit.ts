@@ -37,54 +37,36 @@ const WINDOW_MS = 60_000;
 const lastLoggedAt = new Map<string, number>();
 
 /**
- * Longest a single request-derived value may be in the log line. A URL is
- * unbounded; the diagnostic value is in its prefix.
- */
-const MAX_LOGGED_VALUE = 200;
-
-/**
- * Neutralise a request-controlled value before it reaches a log line.
+ * Report that a plane tripped its cap — WITHOUT naming the request.
  *
- * `req.originalUrl` is whatever the client put on the request line, and Express
- * does not strip newlines from it. Interpolated raw, a CR or LF forges entries an
- * operator reads as separate, genuine log lines — and anything parsing the log
- * line-by-line believes them (CodeQL js/log-injection, alert #297).
+ * This line used to carry `req.ip`, `req.method` and `req.originalUrl`. That is a
+ * log-injection sink (CodeQL js/log-injection, #297/#298): Express passes
+ * `originalUrl` through verbatim, so a CR or LF in it forges entries an operator
+ * reads as genuine, and anything parsing the log line-by-line believes them.
  *
- * Stripping the newlines is the fix rather than dropping the line: the line exists
- * because a 429 is otherwise invisible — it reaches the browser as a generic
- * "Failed to load" with no server-side trace at all. Every C0/C1 control character
- * goes, not just CR/LF, because a lone \r, a NUL or an ANSI escape all corrupt a
- * terminal or a log viewer in their own way.
+ * Three sanitiser shapes were tried and all three were still flagged — a
+ * \u-escaped control-character range, an alternation `/\r|\n/g`, and one global
+ * replace per newline constant. The rule wants the sink gone, not guarded. That is
+ * the same conclusion storage-routes.ts reached for js/remote-property-injection
+ * in #181, and its comment says so explicitly: removing the sink is what satisfies
+ * it. Do not reintroduce a "sanitised" request value here expecting it to pass.
+ *
+ * What is kept is what the line was added for: a 429 reaches the browser as a
+ * generic "Failed to load" with no server-side trace at all, so an operator needs
+ * to know THAT a plane tripped, WHICH plane, and what its cap was. Per-client
+ * attribution needs a structured logger that escapes its fields, not a template
+ * literal — see felixtosh/FiBuKI#200.
  */
-function forLog(value: unknown, max = MAX_LOGGED_VALUE): string {
-  const text = String(value ?? "unknown")
-    // Each newline gets its OWN global replace with a single-constant pattern.
-    // This shape is load-bearing, not style: CodeQL reads the replaced string off
-    // a constant regex root, so a \u-escaped character-class RANGE covering \n
-    // does not register (alert #298, first attempt) and neither does an
-    // alternation `/\r|\n/g` (second attempt) — an alternation root yields no
-    // matched string at all. Same lesson #181 recorded for
-    // js/remote-property-injection: the guard has to be in the shape the rule
-    // recognises, not merely correct. Do not "simplify" these two lines into one.
-    .replace(/\n/g, " ")
-    .replace(/\r/g, " ")
-    // Then the rest: a NUL, a backspace or an ANSI escape each corrupt a terminal
-    // or a log viewer in their own way, and none of them are newlines.
-    .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ");
-  return text.length > max ? `${text.slice(0, max)}…` : text;
-}
-
-function logTrip(plane: string, limit: number, req: Request): void {
+function logTrip(plane: string, limit: number): void {
   const now = Date.now();
   const last = lastLoggedAt.get(plane) ?? 0;
   if (now - last < WINDOW_MS) return;
   lastLoggedAt.set(plane, now);
-  // `plane` and `limit` are ours; everything off `req` goes through forLog().
+  // `plane` and `limit` are ours — neither is request-derived. Keep it that way.
   console.warn(
-    `selfhost rate-limit: ${plane} plane hit its cap of ${limit}/min from ${forLog(req.ip)} ` +
-      `(${forLog(req.method, 16)} ${forLog(req.originalUrl)}). Clients see this as a failed ` +
-      `request with no explanation; raise FIBUKI_RATE_LIMIT_MAX if this is normal traffic ` +
-      `for this deployment.`,
+    `selfhost rate-limit: ${plane} plane hit its cap of ${limit}/min. Clients see this ` +
+      `as a failed request with no explanation; raise FIBUKI_RATE_LIMIT_MAX if this is ` +
+      `normal traffic for this deployment.`,
   );
 }
 
@@ -112,8 +94,8 @@ export function makeRateLimiter(defaultPerMinute: number, plane = "unnamed"): Re
     // The default handler answers in plain text, which every client in this repo
     // discards — it parses the JSON error shape and falls back to `statusText`,
     // empty on HTTP/2. Answer in the shape the clients actually read.
-    handler: (req: Request, res: Response) => {
-      logTrip(plane, limit, req);
+    handler: (_req: Request, res: Response) => {
+      logTrip(plane, limit);
       res.setHeader("Retry-After", Math.ceil(WINDOW_MS / 1000));
       res.status(429).json({
         error: {
