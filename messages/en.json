@@ -283,5 +283,27 @@
       "amountOrder": "The lower amount must not exceed the upper one.",
       "bandRequired": "With more than one recurrence, each needs its own expected amount range."
     }
+  },
+  "documents": {
+    "type": {
+      "invoice": "Invoice",
+      "receipt": "Payment confirmation",
+      "other": "Not a document",
+      "unknown": "Not determined"
+    },
+    "state": {
+      "receiptOnly": "Payment confirmation only",
+      "noReceiptCategory": "Category instead of a document",
+      "undocumented": "No document"
+    },
+    "direction": {
+      "incoming": "Incoming invoice",
+      "outgoing": "Outgoing invoice",
+      "unknown": "Direction not determined"
+    },
+    "directionReview": {
+      "conflict": "Direction conflicts",
+      "open": "Direction open"
+    }
   }
 }

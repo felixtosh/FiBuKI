@@ -7,6 +7,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { useDocumentLabel } from "@/hooks/use-document-label";
 import type { DocumentType } from "@/types/file";
 import type { DocumentationState } from "@/types/transaction";
 import {
@@ -25,7 +26,13 @@ import type { DocumentTone } from "@/lib/documents/document-type-presentation";
  *
  * An absent `type` is not an empty cell. Until the backfill and the
  * re-extraction sweep run, most files carry no verdict at all, and that state
- * has to say "nicht bestimmt" rather than render as missing data.
+ * has to name itself rather than render as missing data.
+ *
+ * The label comes from the message catalogue via `labelKey`, so the badge
+ * follows the interface locale. The presentation module's `label` is the
+ * English fallback that non-React callers get, and it is what renders if a key
+ * is ever missing from the catalogue: a badge with no word on it would be
+ * worse than an untranslated one.
  */
 
 /** `unset` gets the quietest variant there is — it is a state, not a finding. */
@@ -37,17 +44,13 @@ const TONE_VARIANT: Record<DocumentTone, "success" | "warning" | "outline" | "mu
 };
 
 interface TonedBadgeProps {
-  presentation: { label: string; tone: DocumentTone; summary: string };
+  presentation: { label: string; labelKey?: string; tone: DocumentTone; summary: string };
   withTooltip: boolean;
   className?: string;
 }
 
-/**
- * One rendering for both badges: the tone table, the muted treatment of
- * `unset` and the summary tooltip are decided once, so a transaction's state
- * and its document's type cannot end up looking like different kinds of fact.
- */
 function TonedBadge({ presentation, withTooltip, className }: TonedBadgeProps) {
+  const label = useDocumentLabel()(presentation);
   const badge = (
     <Badge
       variant={TONE_VARIANT[presentation.tone]}
@@ -57,7 +60,7 @@ function TonedBadge({ presentation, withTooltip, className }: TonedBadgeProps) {
         className
       )}
     >
-      {presentation.label}
+      {label}
     </Badge>
   );
 

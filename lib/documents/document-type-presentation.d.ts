@@ -17,8 +17,10 @@ export type DocumentTone = "positive" | "warning" | "neutral" | "unset";
 export interface DocumentTypePresentation {
   /** The resolved type — an absent field resolves to `unknown`. */
   type: DocumentType;
-  /** German, as an Austrian EPU reads it: Rechnung, Zahlungsbeleg, … */
+  /** English default for non-React callers. The UI renders `labelKey`. */
   label: string;
+  /** Message-catalogue key for the interface locale; `label` is the English fallback. */
+  labelKey?: string;
   tone: DocumentTone;
   /** One sentence on what the type means for the Vorsteuer. */
   summary: string;
@@ -29,6 +31,8 @@ export interface DocumentationStatePresentation {
   state: DocumentationState;
   /** German, as an Austrian EPU reads it: Rechnung, Nur Zahlungsbeleg, … */
   label: string;
+  /** Message-catalogue key for the interface locale; `label` is the English fallback. */
+  labelKey?: string;
   tone: DocumentTone;
   /** One sentence on what the state means for the Vorsteuer. */
   summary: string;

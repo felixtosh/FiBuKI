@@ -31,6 +31,10 @@ jobs:
       - run: npm ci
       - run: npx tsc --noEmit
       - run: npm run lint
+      # The 10 node:test files under tests/ had a script each and no job, so
+      # nothing ran them. They cover the pure presentation and URL-state logic
+      # the product's tables and panels are built on.
+      - run: npm run test:node
       - run: npm run build
         env:
           NEXT_TELEMETRY_DISABLED: 1

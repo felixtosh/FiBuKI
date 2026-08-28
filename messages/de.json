@@ -283,5 +283,27 @@
       "amountOrder": "Der untere Betrag darf den oberen nicht übersteigen.",
       "bandRequired": "Bei mehr als einer Wiederkehr braucht jede ihren eigenen erwarteten Betragsbereich."
     }
+  },
+  "documents": {
+    "type": {
+      "invoice": "Rechnung",
+      "receipt": "Zahlungsbeleg",
+      "other": "Kein Beleg",
+      "unknown": "Nicht bestimmt"
+    },
+    "state": {
+      "receiptOnly": "Nur Zahlungsbeleg",
+      "noReceiptCategory": "Kategorie statt Beleg",
+      "undocumented": "Kein Dokument"
+    },
+    "direction": {
+      "incoming": "Eingangsrechnung",
+      "outgoing": "Ausgangsrechnung",
+      "unknown": "Richtung nicht bestimmt"
+    },
+    "directionReview": {
+      "conflict": "Richtung widerspricht",
+      "open": "Richtung offen"
+    }
   }
 }

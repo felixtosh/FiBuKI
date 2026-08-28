@@ -29,7 +29,8 @@ test("describeDocumentType: an absent type reads as not-established, never as mi
   for (const value of [undefined, null, "unknown"]) {
     const presentation = describeDocumentType(value);
     assert.equal(presentation.type, "unknown");
-    assert.equal(presentation.label, "Nicht bestimmt");
+    assert.equal(presentation.label, "Not determined");
+    assert.equal(presentation.labelKey, "documents.type.unknown");
     assert.equal(presentation.tone, "unset");
     assert.ok(presentation.summary.length > 0);
     assert.ok(!presentation.summary.toLowerCase().includes("error"));
@@ -39,20 +40,23 @@ test("describeDocumentType: an absent type reads as not-established, never as mi
 test("describeDocumentType: an unrecognised value degrades to unknown rather than blank", () => {
   const presentation = describeDocumentType("gutschrift");
   assert.equal(presentation.type, "unknown");
-  assert.equal(presentation.label, "Nicht bestimmt");
+  assert.equal(presentation.label, "Not determined");
 });
 
 test("describeDocumentType: the four types each render with their own label and tone", () => {
   assert.deepEqual(
     ["invoice", "receipt", "other", "unknown"].map((t) => {
       const p = describeDocumentType(t);
-      return [p.label, p.tone];
+      // The KEY is the contract: the word follows the interface locale through
+      // messages/{en,de}.json, and `label` is only the English fallback for
+      // callers with no translator (the agent tools, the exports, this test).
+      return [p.labelKey, p.label, p.tone];
     }),
     [
-      ["Rechnung", "positive"],
-      ["Zahlungsbeleg", "warning"],
-      ["Kein Beleg", "neutral"],
-      ["Nicht bestimmt", "unset"],
+      ["documents.type.invoice", "Invoice", "positive"],
+      ["documents.type.receipt", "Payment confirmation", "warning"],
+      ["documents.type.other", "Not a document", "neutral"],
+      ["documents.type.unknown", "Not determined", "unset"],
     ],
   );
 });
@@ -237,7 +241,8 @@ test("describeDocumentationState: an absent state reads as not-established, neve
   for (const value of [undefined, null, "unknown"]) {
     const presentation = describeDocumentationState(value);
     assert.equal(presentation.state, "unknown");
-    assert.equal(presentation.label, "Nicht bestimmt");
+    assert.equal(presentation.label, "Not determined");
+    assert.equal(presentation.labelKey, "documents.type.unknown");
     assert.equal(presentation.tone, "unset");
   }
 });
@@ -256,14 +261,14 @@ test("describeDocumentationState: the five states each render with their own lab
       "unknown",
     ].map((state) => {
       const p = describeDocumentationState(state);
-      return [p.label, p.tone];
+      return [p.labelKey, p.label, p.tone];
     }),
     [
-      ["Rechnung", "positive"],
-      ["Nur Zahlungsbeleg", "warning"],
-      ["Kategorie statt Beleg", "neutral"],
-      ["Kein Dokument", "unset"],
-      ["Nicht bestimmt", "unset"],
+      ["documents.type.invoice", "Invoice", "positive"],
+      ["documents.state.receiptOnly", "Payment confirmation only", "warning"],
+      ["documents.state.noReceiptCategory", "Category instead of a document", "neutral"],
+      ["documents.state.undocumented", "No document", "unset"],
+      ["documents.type.unknown", "Not determined", "unset"],
     ],
   );
 });
@@ -319,7 +324,7 @@ test("describeDirectionReview: a conflict reads as a finding and names what the 
   assert.equal(review.reason, "conflict");
   assert.equal(review.tone, "warning");
   assert.equal(review.suggestedDirection, "incoming");
-  assert.match(review.suggestion, /Eingangsrechnung/);
+  assert.match(review.suggestion, /this is a purchase/);
 });
 
 test("describeDirectionReview: an unestablished direction is not a finding against the document", () => {
