@@ -756,6 +756,7 @@ export async function runExtraction(
         extractedAdditionalFields: null,
         extractedSelfDesignation: null,
         extractedInvoiceNumber: null,
+        extractedPayableAmount: null,
         ...documentTypeFields(classifyDocumentType({ grossTotal: null, isNotInvoice: true })),
         // Every printed rate was just cleared, so there is nothing left to
         // review (#203).
@@ -926,6 +927,7 @@ export async function runExtraction(
     updateData.extractedAdditionalFields = null;
     updateData.extractedSelfDesignation = null;
     updateData.extractedInvoiceNumber = null;
+    updateData.extractedPayableAmount = null;
     console.log(`[+${Date.now() - t0}ms] Classified as NOT an invoice: ${result.notInvoiceReason}`);
   } else {
     // Add extracted fields if found
@@ -953,6 +955,12 @@ export async function runExtraction(
     // absence, or the §11 classifier reads the record as merely legacy.
     updateData.extractedSelfDesignation = extracted.selfDesignation ?? null;
     updateData.extractedInvoiceNumber = extracted.invoiceNumber ?? null;
+
+    // #206: the figure the document itself designates as due, transcribed
+    // beside the total rather than replacing it. Written unconditionally, so
+    // "designates no figure as due" is recorded as an absence rather than
+    // left indistinguishable from a record written before the field existed.
+    updateData.extractedPayableAmount = extracted.payableAmount ?? null;
 
     // #172: the printed Trinkgeld is its own figure and stays out of every
     // total below. Written unconditionally, like the §11 transcriptions — a

@@ -145,6 +145,7 @@ async function extractWithGemini(
         extracted: {
           date: null,
           amount: null,
+          payableAmount: null,
           currency: null,
           vatPercent: null,
           lineItems: null,

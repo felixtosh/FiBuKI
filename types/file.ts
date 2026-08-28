@@ -292,6 +292,20 @@ export interface TaxFile {
    */
   extractedTipAmount?: number | null;
 
+  /**
+   * The figure the document itself designates as due, in cents, transcribed
+   * from beside its own wording ("Zahlbetrag", "Rechnungsbetrag", "zu zahlen",
+   * "Amount Due") (#206). A Mahnung prints both the original invoice amount
+   * and the sum now demanded, so this sits BESIDE `extractedAmount` rather
+   * than replacing it.
+   *
+   * Evidence, not verdict: nothing downstream is required to prefer it.
+   *
+   * Absent on every file extracted before the field existed; null when the
+   * document designates no figure as due.
+   */
+  extractedPayableAmount?: number | null;
+
   /** AI-extracted currency code */
   extractedCurrency?: string | null;
 
@@ -805,6 +819,7 @@ export interface FileExtractionData {
   extractedDate?: Timestamp | null;
   extractedAmount?: number | null;
   extractedTipAmount?: number | null;
+  extractedPayableAmount?: number | null;
   extractedCurrency?: string | null;
   extractedVatPercent?: number | null;
   extractedVatAmount?: number | null;

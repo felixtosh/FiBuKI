@@ -60,6 +60,23 @@ export interface ExtractedData {
    * null when the document prints no tip line.
    */
   tipAmount?: number | null;
+  /**
+   * The figure the document ITSELF designates as due (#206), cents —
+   * transcribed from beside its own wording ("Zahlbetrag", "Rechnungsbetrag",
+   * "Zu zahlen", "Offener Betrag", "Amount Due").
+   *
+   * A Mahnung prints the original invoice amount beside the sum now demanded;
+   * a Schlussrechnung prints the full scope beside what is left after
+   * part-payments. `amount` holds one number and cannot say which of the two
+   * is owed, so the document's own designation is recorded separately.
+   *
+   * Copied, never computed: not a difference, not a sum, not the largest or
+   * the last number on the page. null when the document designates none.
+   *
+   * Evidence, not verdict — nothing downstream is required to prefer it over
+   * `amount`.
+   */
+  payableAmount: number | null;
   currency: string | null;
   vatPercent: number | null;
   lineItems?: ExtractedLineItem[] | null;

@@ -41,6 +41,7 @@ Extract these fields (use null if not found):
 - address: Full company address as single string. Look for the address block near the company name, letterhead, or "Adresse".
 - selfDesignation: The heading the document gives ITSELF, transcribed exactly as printed ("Rechnung", "Invoice", "Quittung", "Zahlungsbestätigung", "Receipt", "Gutschrift"). Copy it, never infer it. null if the document prints no such heading.
 - invoiceNumber: The sequential invoice number, transcribed exactly as printed. Look for "Rechnungsnummer", "Rechnungs-Nr.", "Invoice No.", "Belegnummer". Never construct one from a date, order number or customer number. null if none is printed.
+- payableAmount: The figure the document ITSELF designates as due, in cents, copied from beside its own wording. Look for "Zahlbetrag", "Zahlungsbetrag", "Zu zahlen", "Zu zahlender Betrag", "Rechnungsbetrag", "Offener Betrag", "Amount Due", "Total Due". A Mahnung prints the original invoice amount AND the sum now demanded - copy the one the document designates, never compute it, never derive it from a difference, and never pick a number just because it is the largest. null if the document designates no figure as due.
 
 IMPORTANT for German formats:
 - Dates: DD.MM.YYYY or DD/MM/YYYY -> convert to YYYY-MM-DD
@@ -55,6 +56,7 @@ Example response:
 {
   "date": "2024-01-15",
   "amount": 12345,
+  "payableAmount": null,
   "currency": "EUR",
   "vatPercent": 19,
   "selfDesignation": "Rechnung",
@@ -108,6 +110,9 @@ Example response:
     extracted: {
       date: parsed.date || null,
       amount: typeof parsed.amount === "number" ? parsed.amount : null,
+      // Transcribed, not computed (#206): the figure the document designates
+      // as due, null when it designates none. It never rewrites `amount`.
+      payableAmount: typeof parsed.payableAmount === "number" ? parsed.payableAmount : null,
       currency: parsed.currency || null,
       vatPercent: typeof parsed.vatPercent === "number" ? parsed.vatPercent : null,
       lineItems: null, // Legacy Claude parser does not extract line items
