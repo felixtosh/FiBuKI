@@ -18,13 +18,21 @@ GH_TOKEN=$GH_CLASSIC_TOKEN gh issue create -R felixtosh/FiBuKI --title "..." --b
 Never print the value; verify the file by key name only
 (`awk -F= '/^[A-Z_]+=/{print $1}' ~/.secrets/github-classic.env`).
 
-## Until the fork is archived
+## The fork is archived
 
-`yazzbert/FiBuKI-selfhost` still holds open issues and is where the lane branches live.
-It is being retired — see the map, "One trunk: land the fork on main and retire the fork"
-(felixtosh/FiBuKI#93). File **new** work upstream; touch fork issues only to migrate or
-close them. A clone with both remotes infers `gh`'s repo from `origin`, so pass `-R`
-explicitly either way.
+`yazzbert/FiBuKI-selfhost` is **archived read-only**. It holds no open issues, carries no
+branch anyone deploys, and accepts no writes — a `gh` command that targets it will fail
+rather than do something unexpected.
+
+This repository is the only tracker. Its issue numbers are the only ones to cite.
+
+Fork issue numbers still appear throughout the code comments and in older tickets, written
+as `yazzbert/FiBuKI-selfhost#<n>`. Those links still resolve, which is exactly why the fork
+was archived rather than deleted — **do not "fix" them to upstream numbers**, because the
+two numbering schemes collide and the migration renumbered everything. Fork #149 is not
+upstream #149. The mapping is the comment on #98.
+
+A clone with both remotes infers `gh`'s repo from `origin`, so pass `-R` explicitly.
 
 ## Conventions
 
