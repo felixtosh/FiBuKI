@@ -25,6 +25,7 @@ import { _resetStorageForTests, getStorage as adminStorage } from "./storage-shi
 import { buildDownloadUrl } from "./buildDownloadUrl-shim";
 import {
   fileNameFromStoredUrl,
+  isCredentialTarget,
   isSelfAuthenticating,
   stripStaleToken,
 } from "../../../lib/storage/stored-url";
@@ -149,6 +150,53 @@ describe("#206 which stored URLs need credentials", () => {
     );
     expect(stripStaleToken("/__storage/download/u1/a.zip?token=x&alt=media")).toBe(
       "/__storage/download/u1/a.zip?alt=media",
+    );
+  });
+
+  // js/incomplete-url-substring-sanitization, flagged by CodeQL on the first
+  // version of this module, which asked url.includes("…googleapis.com"). Both
+  // directions are pinned: a lookalike host must not read as Firebase, and a
+  // host that merely mentions one in a query string must not either.
+  it("a lookalike host is not mistaken for Firebase", () => {
+    expect(isSelfAuthenticating("https://firebasestorage.googleapis.com.evil.example/o/f.pdf")).toBe(
+      false,
+    );
+    expect(isSelfAuthenticating("https://evil.example/firebasestorage.googleapis.com/f.pdf")).toBe(
+      false,
+    );
+    expect(isSelfAuthenticating("https://evil.example/?x=storage.googleapis.com")).toBe(false);
+    expect(isSelfAuthenticating("https://FIREBASESTORAGE.GOOGLEAPIS.COM/o/f.pdf")).toBe(true);
+  });
+
+  it("the id token is offered only to our own origin and our own API host", () => {
+    const allowed = ["fibuki.com", "new-api.fibuki.com"];
+
+    // Root-relative is same-origin by definition.
+    expect(isCredentialTarget("/__storage/download/u1/a.zip", allowed)).toBe(true);
+    expect(isCredentialTarget("https://new-api.fibuki.com/__storage/download/u1/a.zip", allowed)).toBe(
+      true,
+    );
+    expect(isCredentialTarget("https://NEW-API.FIBUKI.COM/__storage/download/u1/a.zip", allowed)).toBe(
+      true,
+    );
+
+    // A stored document is data. None of these may receive a live bearer token.
+    expect(isCredentialTarget("https://evil.example/__storage/download/u1/a.zip", allowed)).toBe(false);
+    expect(isCredentialTarget("https://new-api.fibuki.com.evil.example/steal", allowed)).toBe(false);
+    expect(isCredentialTarget("//evil.example/__storage/download/u1/a.zip", allowed)).toBe(false);
+    expect(isCredentialTarget("https://fibuki.com.evil.example/x", allowed)).toBe(false);
+    expect(isCredentialTarget("https://evil.example/?x=fibuki.com", allowed)).toBe(false);
+    expect(isCredentialTarget("/__storage/download/u1/a.zip", [])).toBe(true);
+    expect(isCredentialTarget("https://anything.example/x", [])).toBe(false);
+  });
+
+  it("stripStaleToken does not mangle a host that merely shares the parsing base's prefix", () => {
+    // The third CodeQL finding: startsWith("http://relative.invalid") matched
+    // this host too, and the slice turned it into a different URL entirely.
+    const lookalike = "http://relative.invalid.evil.example/x?token=stale";
+    expect(stripStaleToken(lookalike)).toBe("http://relative.invalid.evil.example/x");
+    expect(stripStaleToken("http://relative.invalid.evil.example/x")).toBe(
+      "http://relative.invalid.evil.example/x",
     );
   });
 

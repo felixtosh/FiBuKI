@@ -3,7 +3,9 @@
 import { useCallback, useRef, useState } from "react";
 import { auth } from "@/lib/firebase/config";
 import {
+  browserCredentialHosts,
   fileNameFromStoredUrl,
+  isCredentialTarget,
   isSelfAuthenticating,
   stripStaleToken,
 } from "@/lib/storage/stored-url";
@@ -74,7 +76,10 @@ export function useAuthenticatedDownload(): AuthenticatedDownload {
     void (async () => {
       let objectUrl: string | null = null;
       try {
-        const token = auth.currentUser ? await auth.currentUser.getIdToken() : null;
+        // The href comes out of a stored document, so it is data. The token goes
+        // to our own origin and our own API host, or the request goes without it.
+        const trusted = isCredentialTarget(href, browserCredentialHosts());
+        const token = trusted && auth.currentUser ? await auth.currentUser.getIdToken() : null;
         const res = await fetch(stripStaleToken(href), {
           headers: token ? { authorization: `Bearer ${token}` } : {},
         });

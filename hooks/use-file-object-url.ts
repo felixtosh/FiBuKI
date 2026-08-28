@@ -2,7 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { auth } from "@/lib/firebase/config";
-import { isSelfAuthenticating, stripStaleToken } from "@/lib/storage/stored-url";
+import {
+  browserCredentialHosts,
+  isCredentialTarget,
+  isSelfAuthenticating,
+  stripStaleToken,
+} from "@/lib/storage/stored-url";
 
 /**
  * Turn a stored file `downloadUrl` into something a browser can actually render.
@@ -79,7 +84,10 @@ export function useFileObjectUrl(
 
     void (async () => {
       try {
-        const token = auth.currentUser ? await auth.currentUser.getIdToken() : null;
+        // Same rule as the download hook: a stored URL is data, so the token
+        // only ever goes to our own origin or our own API host.
+        const trusted = isCredentialTarget(downloadUrl, browserCredentialHosts());
+        const token = trusted && auth.currentUser ? await auth.currentUser.getIdToken() : null;
         const res = await fetch(stripStaleToken(downloadUrl), {
           headers: token ? { authorization: `Bearer ${token}` } : {},
         });
