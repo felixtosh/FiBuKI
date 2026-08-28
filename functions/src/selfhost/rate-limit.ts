@@ -58,14 +58,16 @@ const MAX_LOGGED_VALUE = 200;
  */
 function forLog(value: unknown, max = MAX_LOGGED_VALUE): string {
   const text = String(value ?? "unknown")
-    // Newlines go first, and SEPARATELY, spelled as a literal alternation.
-    // CodeQL's log-injection sanitiser model has to see the newline removal to
-    // accept this as a barrier, and it does NOT read a \u-escaped character-class
-    // range as one even though the range covers \n and \r: the range form alone
-    // scored alert #298 on this exact line. Same lesson #181 recorded for
-    // js/remote-property-injection — the guard has to be in the shape the rule
-    // recognises, not merely correct.
-    .replace(/\r|\n/g, " ")
+    // Each newline gets its OWN global replace with a single-constant pattern.
+    // This shape is load-bearing, not style: CodeQL reads the replaced string off
+    // a constant regex root, so a \u-escaped character-class RANGE covering \n
+    // does not register (alert #298, first attempt) and neither does an
+    // alternation `/\r|\n/g` (second attempt) — an alternation root yields no
+    // matched string at all. Same lesson #181 recorded for
+    // js/remote-property-injection: the guard has to be in the shape the rule
+    // recognises, not merely correct. Do not "simplify" these two lines into one.
+    .replace(/\n/g, " ")
+    .replace(/\r/g, " ")
     // Then the rest: a NUL, a backspace or an ANSI escape each corrupt a terminal
     // or a log viewer in their own way, and none of them are newlines.
     .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ");
