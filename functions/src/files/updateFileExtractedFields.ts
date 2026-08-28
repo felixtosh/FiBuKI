@@ -25,6 +25,8 @@
 
 import { FieldValue } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
+import type { ExtractedLineItem, ExtractedRateGroup } from "../types/extraction";
+import { reconcileLineItemsWithDocumentTotal } from "../extraction/lineItemReconciliation";
 import {
   ExtractionCorrectionError,
   FileExtractionCorrection,
@@ -115,19 +117,31 @@ export const updateFileExtractedFieldsCallable = createCallable<
       }
     }
 
-    // Fork #64/#67: a person who has the itemisation editor open in front of
-    // them and saves has settled this file, whether or not they retyped a row —
-    // so the artefacts that would keep it in the review bucket come off, the
-    // same as they did when the panel wrote the document itself. That is an
-    // acknowledgement, not a ruling on a figure, so it stamps nothing; a save
-    // that did move a row goes through the builder above and clears them there
-    // as well.
-    if (correction.lineItems !== undefined) {
-      updates.lineItemsUnreconciled = false;
-      updates.lineItemsUnreconciledRates = null;
-      updates.extractedRateGroups = null;
-      updates.vatSourceDowngraded = false;
-      updates.vatFieldsPreserved = false;
+    // Fork #64/#67 read a save with the itemisation editor open as "this
+    // person has settled the file" and cleared the review artefacts wholesale.
+    // #203 showed what that costs: the clear removed both the flag the UVA's
+    // amount-mismatch guard tests and the printed rate-group block that is its
+    // other escape, so a save that changed NOTHING silently turned a refused
+    // file into one contributing VAT summed from an incomplete itemisation.
+    // A save that moved a figure re-derives the flag inside the builder above;
+    // an untouched save re-derives it here against the stored record — with
+    // its printed block still standing, which a save that corrected nothing
+    // says nothing against — and writes only when the answer differs. A file
+    // whose items genuinely contradict its total therefore stays flagged until
+    // someone completes the itemisation, clears it, or corrects the total.
+    if (correction.lineItems !== undefined && updates.lineItemsUnreconciled === undefined) {
+      const items = record.extractedLineItems as ExtractedLineItem[] | null | undefined;
+      const reconciled = reconcileLineItemsWithDocumentTotal(
+        Array.isArray(items) ? items : [],
+        (record.extractedAmount as number | null | undefined) ?? null,
+        (record.extractedRateGroups as ExtractedRateGroup[] | null | undefined) ?? null,
+        (record.extractedVatPercent as number | null | undefined) ?? null
+      );
+      if (reconciled.unreconciled !== Boolean(record.lineItemsUnreconciled)) {
+        updates.lineItemsUnreconciled = reconciled.unreconciled;
+        updates.lineItemsUnreconciledRates =
+          reconciled.unreconciledRates.length > 0 ? reconciled.unreconciledRates : null;
+      }
     }
 
     for (const [key, storedField] of Object.entries(DETAIL_FIELD)) {

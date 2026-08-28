@@ -141,6 +141,12 @@ function getEffectiveExtractedAmount(file: TaxFile): number | null {
     return file.extractedAmount ?? null;
   }
 
+  // #203: flagged items are exactly the ones whose sum contradicts the
+  // document — never derive the display figure from them.
+  if (file.lineItemsUnreconciled) {
+    return file.extractedAmount ?? null;
+  }
+
   const lineAmountSum = lineItems.reduce((sum, item) => sum + item.amount, 0);
   const lineVatSum = lineItems.reduce((sum, item) => sum + item.vatAmount, 0);
   const looksNet = lineVatSum > 0 && inferLineItemAmountsAreNet(lineItems);
@@ -173,7 +179,6 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
 
   // Initialize edit fields from file data
   const startEditing = () => {
-    const effectiveAmount = getEffectiveExtractedAmount(file);
     const existingAdditional = (file.extractedAdditionalFields || []).map((f) => ({
       label: f.label,
       value: f.value,
@@ -190,7 +195,11 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
     const extractedDate = toDateSafe(file.extractedDate);
     setEditedFields({
       date: extractedDate ? format(extractedDate, "yyyy-MM-dd") : "",
-      amount: effectiveAmount != null ? (effectiveAmount / 100).toString() : "",
+      // The STORED total, not the row-derived display figure (#203): whatever
+      // sits in this box goes back to the server as the person's correction,
+      // and seeding it with a derivation stamped the derived value as
+      // hand-corrected on every save of a file whose rows disagree with it.
+      amount: file.extractedAmount != null ? (file.extractedAmount / 100).toString() : "",
       vatPercent: file.extractedVatPercent != null ? file.extractedVatPercent.toString() : "",
       partner: file.extractedPartner || "",
       vatId: file.extractedVatId || "",

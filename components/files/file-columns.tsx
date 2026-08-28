@@ -72,6 +72,12 @@ function getEffectiveExtractedAmount(file: TaxFile): number | null {
     return file.extractedAmount ?? null;
   }
 
+  // #203: flagged items are exactly the ones whose sum contradicts the
+  // document — never derive the display figure from them.
+  if (file.lineItemsUnreconciled) {
+    return file.extractedAmount ?? null;
+  }
+
   const amountFromItems = file.extractedLineItems.reduce((sum, item) => sum + item.amount, 0);
   const vatFromItems = file.extractedLineItems.reduce((sum, item) => sum + item.vatAmount, 0);
   const looksNet = vatFromItems > 0 && inferLineItemAmountsAreNet(file);

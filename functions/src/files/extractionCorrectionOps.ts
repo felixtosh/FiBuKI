@@ -14,6 +14,7 @@
 
 import { Timestamp } from "firebase-admin/firestore";
 import { ExtractedLineItem } from "../types/extraction";
+import { reconcileLineItemsWithDocumentTotal } from "../extraction/lineItemReconciliation";
 import { buildCorrectionProvenance, CORRECTABLE_FIELDS } from "./extractionProvenanceOps";
 
 /**
@@ -131,12 +132,15 @@ export interface BuiltCorrection {
  * the items would silently undo the correction the person just made.
  *
  * **A correction makes the person the authority**, so the artefacts that would
- * outrank them are cleared: the reconciliation flags (which otherwise keep a
- * repaired file in the review bucket forever), the printed rate-group block
- * (which VAT derivation prefers over everything else, so a surviving block
- * would quietly ignore a corrected rate), and the fork #137 downgrade markers.
- * That happens for any VAT-bearing correction; a date-only fix leaves them be,
- * since it says nothing about the VAT.
+ * outrank them are cleared: the printed rate-group block (which VAT derivation
+ * prefers over everything else, so a surviving block would quietly ignore a
+ * corrected rate) and the fork #137 downgrade markers. The reconciliation flag
+ * is NOT cleared but re-derived against the corrected values (#203) — a
+ * repaired file whose items now agree with its total leaves the review bucket,
+ * while one whose items still contradict it stays flagged so the UVA's
+ * amount-mismatch guard can refuse it. That happens for any VAT-bearing
+ * correction; a date-only fix leaves all of it be, since it says nothing about
+ * the VAT.
  *
  * **Every correction stamps its own provenance** (#184), merged onto whatever
  * `previous` already carries. That is here rather than at the call site so a
@@ -214,11 +218,42 @@ export function buildExtractionCorrection(
   }
 
   if (VAT_BEARING.some((field) => fields[field] !== undefined)) {
-    updates.lineItemsUnreconciled = false;
-    updates.lineItemsUnreconciledRates = null;
     updates.extractedRateGroups = null;
     updates.vatSourceDowngraded = false;
     updates.vatFieldsPreserved = false;
+
+    // #203: the old code also asserted `lineItemsUnreconciled = false` here,
+    // which defeated the UVA's amount-mismatch guard twice over — it cleared
+    // the flag the guard tests AND (above) the rate groups whose presence is
+    // the guard's other escape. A correction invalidates the OLD
+    // reconciliation; it does not establish that the items now agree with the
+    // total. So the flag is re-derived from the record as it will be after
+    // this write, through the same rules extraction used to set it. When the
+    // items still contradict the total — the classic case is an extractor
+    // that skipped a printed discount row — the file stays flagged and the
+    // UVA refuses it instead of silently summing an incomplete itemisation.
+    const effectiveItems =
+      fields.lineItems !== undefined
+        ? (updates.extractedLineItems as ExtractedLineItem[] | null)
+        : (previous.extractedLineItems as ExtractedLineItem[] | null | undefined);
+    const effectiveAmount =
+      fields.amount !== undefined
+        ? (updates.extractedAmount as number | null)
+        : (previous.extractedAmount as number | null | undefined);
+    const effectiveVatPercent =
+      fields.vatPercent !== undefined
+        ? (updates.extractedVatPercent as number | null)
+        : (previous.extractedVatPercent as number | null | undefined);
+
+    const reconciled = reconcileLineItemsWithDocumentTotal(
+      Array.isArray(effectiveItems) ? effectiveItems : [],
+      effectiveAmount ?? null,
+      null, // the printed block is cleared above — the person outranks it
+      effectiveVatPercent ?? null
+    );
+    updates.lineItemsUnreconciled = reconciled.unreconciled;
+    updates.lineItemsUnreconciledRates =
+      reconciled.unreconciledRates.length > 0 ? reconciled.unreconciledRates : null;
   }
 
   Object.assign(updates, buildCorrectionProvenance(previous, changed));
