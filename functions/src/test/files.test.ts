@@ -65,7 +65,7 @@ describe("File Cloud Functions", () => {
       expect(updated?.fileName).toBe("renamed-invoice.pdf");
     });
 
-    it("should update extraction data", async () => {
+    it("should update descriptive extraction text", async () => {
       const userId = "user-123";
       const fileId = "file-456";
       store.setDoc("files", fileId, createTestFile({ userId }));
@@ -80,34 +80,23 @@ describe("File Cloud Functions", () => {
       await updateFileCallable(ctx as any, {
         fileId,
         data: {
-          extractedAmount: 1998,
-          extractedVatAmount: 333,
-          extractedLineItems: [
-            {
-              description: "USB-C Cable",
-              quantity: 2,
-              unitPrice: 833,
-              vatPercent: 20,
-              vatAmount: 333,
-              amount: 1998,
-            },
-          ],
           extractedPartner: "Amazon",
-          extractedDate: "2024-01-15T00:00:00.000Z",
         },
       });
 
       const updated = store.getDoc("files", fileId);
-      expect(updated?.extractedAmount).toBe(1998);
-      expect(updated?.extractedVatAmount).toBe(333);
-      expect(updated?.extractedLineItems).toHaveLength(1);
       expect(updated?.extractedPartner).toBe("Amazon");
     });
 
-    it("should consolidate net line-item amounts to gross extractedAmount", async () => {
+    it("should refuse the extracted figures towards updateFileExtractedFields", async () => {
+      // These are corrections: they need the provenance stamp, the
+      // moved-field comparison and the reconciliation re-derivation (#203)
+      // that only updateFileExtractedFields performs. This callable used to
+      // accept them and consolidate the line items into the total — a
+      // derivation stored as if a person had ruled on it.
       const userId = "user-123";
       const fileId = "file-457";
-      store.setDoc("files", fileId, createTestFile({ userId }));
+      store.setDoc("files", fileId, createTestFile({ userId, extractedAmount: 1998 }));
 
       const ctx = {
         userId,
@@ -116,26 +105,27 @@ describe("File Cloud Functions", () => {
         logAIUsage: vi.fn(),
       };
 
-      await updateFileCallable(ctx as any, {
-        fileId,
-        data: {
-          extractedLineItems: [
-            {
-              description: "Consulting",
-              quantity: 1,
-              unitPrice: 50000,
-              vatPercent: 20,
-              vatAmount: 10000,
-              amount: 50000,
-            },
-          ],
-        },
-      });
+      await expect(
+        updateFileCallable(ctx as any, {
+          fileId,
+          data: {
+            extractedLineItems: [
+              {
+                description: "Consulting",
+                quantity: 1,
+                unitPrice: 50000,
+                vatPercent: 20,
+                vatAmount: 10000,
+                amount: 50000,
+              },
+            ],
+          },
+        })
+      ).rejects.toThrow(/updateFileExtractedFields/);
 
       const updated = store.getDoc("files", fileId);
-      expect(updated?.extractedAmount).toBe(60000);
-      expect(updated?.extractedVatAmount).toBe(10000);
-      expect(updated?.extractedVatPercent).toBe(20);
+      expect(updated?.extractedAmount).toBe(1998);
+      expect(updated?.extractedLineItems).toBeUndefined();
     });
 
     it("should reject update for file owned by another user", async () => {
