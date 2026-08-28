@@ -20,6 +20,7 @@ import Link from "next/link";
 import { TaxFile, TransactionSuggestion } from "@/types/file";
 import { UserPartner, GlobalPartner, PartnerSuggestion } from "@/types/partner";
 import { Button } from "@/components/ui/button";
+import { useAuthenticatedDownload } from "@/hooks/use-authenticated-download";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { PanelHeader, FieldRow } from "@/components/ui/detail-panel-primitives";
@@ -154,6 +155,7 @@ function FileDetailPanelInner({
   isConnectTransactionOpen = false,
 }: FileDetailPanelProps) {
   const router = useRouter();
+  const storedDownload = useAuthenticatedDownload();
   const { userId } = useAuth();
   const [isAddPartnerOpen, setIsAddPartnerOpen] = useState(false);
   const [isAssigningPartner, setIsAssigningPartner] = useState(false);
@@ -739,7 +741,12 @@ function FileDetailPanelInner({
           {/* Primary row: Download + Delete/Restore */}
           <div className="flex gap-2">
             <Button variant="outline" className="flex-1" asChild>
-              <a href={file.downloadUrl} download={file.fileName}>
+              <a
+                href={file.downloadUrl}
+                download={file.fileName}
+                onClick={storedDownload.onClick}
+                aria-busy={storedDownload.pending}
+              >
                 <Download className="h-4 w-4 mr-2" />
                 Download
               </a>
@@ -770,6 +777,9 @@ function FileDetailPanelInner({
               )
             )}
           </div>
+          {storedDownload.error && (
+            <p className="text-xs text-destructive">{storedDownload.error}</p>
+          )}
         </div>
       </div>
 

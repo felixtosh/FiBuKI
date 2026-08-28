@@ -16,6 +16,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
+import { useAuthenticatedDownload } from "@/hooks/use-authenticated-download";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useUserExports } from "@/hooks/use-user-exports";
 import { UserExport } from "@/types/user-export";
@@ -203,6 +204,7 @@ function CompletedExportRow({
   formatSize: (bytes?: number) => string;
   daysUntilExpiry: number;
 }) {
+  const storedDownload = useAuthenticatedDownload();
   const completedDate = exp.completedAt?.toDate?.();
   const dateStr = completedDate
     ? completedDate.toLocaleDateString("de-DE", {
@@ -244,11 +246,20 @@ function CompletedExportRow({
             </Badge>
             {exp.downloadUrl && (
               <Button size="sm" variant="outline" asChild>
-                <a href={exp.downloadUrl} target="_blank" rel="noopener noreferrer">
+                <a
+                  href={exp.downloadUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={storedDownload.onClick}
+                  aria-busy={storedDownload.pending}
+                >
                   <Download className="mr-1 h-3 w-3" />
                   Download
                 </a>
               </Button>
+            )}
+            {storedDownload.error && (
+              <p className="text-xs text-destructive">{storedDownload.error}</p>
             )}
           </>
         )}
