@@ -110,6 +110,48 @@ describe("makeRateLimiter", () => {
     }
   });
 
+  it("never puts the request into the log line, so a newline cannot forge one", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const limiter = makeRateLimiter(1, "test");
+    // Node's HTTP parser refuses a raw CR/LF on the request line, so the hostile
+    // value is planted where a proxy actually puts it: `originalUrl` is passed
+    // through verbatim, and a deployment behind a proxy is this file's subject.
+    const forged = "/thing\r\nselfhost rate-limit: blob plane hit its cap of 1/min";
+    const { url, close } = await serve((req, res, next) => {
+      (req as { originalUrl: string }).originalUrl = forged;
+      limiter(req, res, next);
+    });
+    try {
+      await fetch(url);
+      await fetch(url);
+      expect(warn).toHaveBeenCalledTimes(1);
+      const line = String(warn.mock.calls[0]?.[0]);
+      // Nothing a log reader splits on, and no trace of the request at all —
+      // the sink is removed rather than sanitised. See the comment on logTrip.
+      expect(line).not.toMatch(/[\r\n]/);
+      expect(line).not.toContain("/thing");
+      expect(line).not.toContain("blob plane");
+    } finally {
+      await close();
+    }
+  });
+
+  it("still says which plane tripped and what its cap was", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { url, close } = await serve(makeRateLimiter(1, "data"));
+    try {
+      await fetch(url);
+      await fetch(url);
+      const line = String(warn.mock.calls[0]?.[0]);
+      // The diagnosis the line exists for survives the sink removal.
+      expect(line).toContain("data plane");
+      expect(line).toContain("1/min");
+      expect(line).toContain("FIBUKI_RATE_LIMIT_MAX");
+    } finally {
+      await close();
+    }
+  });
+
   it("an unusable FIBUKI_RATE_LIMIT_MAX falls back to the plane default", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     process.env.FIBUKI_RATE_LIMIT_MAX = "lots";

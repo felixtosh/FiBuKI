@@ -36,15 +36,37 @@ import type { Request, RequestHandler, Response } from "express";
 const WINDOW_MS = 60_000;
 const lastLoggedAt = new Map<string, number>();
 
-function logTrip(plane: string, limit: number, req: Request): void {
+/**
+ * Report that a plane tripped its cap — WITHOUT naming the request.
+ *
+ * This line used to carry `req.ip`, `req.method` and `req.originalUrl`. That is a
+ * log-injection sink (CodeQL js/log-injection, #297/#298): Express passes
+ * `originalUrl` through verbatim, so a CR or LF in it forges entries an operator
+ * reads as genuine, and anything parsing the log line-by-line believes them.
+ *
+ * Three sanitiser shapes were tried and all three were still flagged — a
+ * \u-escaped control-character range, an alternation `/\r|\n/g`, and one global
+ * replace per newline constant. The rule wants the sink gone, not guarded. That is
+ * the same conclusion storage-routes.ts reached for js/remote-property-injection
+ * in #181, and its comment says so explicitly: removing the sink is what satisfies
+ * it. Do not reintroduce a "sanitised" request value here expecting it to pass.
+ *
+ * What is kept is what the line was added for: a 429 reaches the browser as a
+ * generic "Failed to load" with no server-side trace at all, so an operator needs
+ * to know THAT a plane tripped, WHICH plane, and what its cap was. Per-client
+ * attribution needs a structured logger that escapes its fields, not a template
+ * literal — see felixtosh/FiBuKI#200.
+ */
+function logTrip(plane: string, limit: number): void {
   const now = Date.now();
   const last = lastLoggedAt.get(plane) ?? 0;
   if (now - last < WINDOW_MS) return;
   lastLoggedAt.set(plane, now);
+  // `plane` and `limit` are ours — neither is request-derived. Keep it that way.
   console.warn(
-    `selfhost rate-limit: ${plane} plane hit its cap of ${limit}/min from ${req.ip ?? "unknown"} ` +
-      `(${req.method} ${req.originalUrl}). Clients see this as a failed request with no ` +
-      `explanation; raise FIBUKI_RATE_LIMIT_MAX if this is normal traffic for this deployment.`,
+    `selfhost rate-limit: ${plane} plane hit its cap of ${limit}/min. Clients see this ` +
+      `as a failed request with no explanation; raise FIBUKI_RATE_LIMIT_MAX if this is ` +
+      `normal traffic for this deployment.`,
   );
 }
 
@@ -72,8 +94,8 @@ export function makeRateLimiter(defaultPerMinute: number, plane = "unnamed"): Re
     // The default handler answers in plain text, which every client in this repo
     // discards — it parses the JSON error shape and falls back to `statusText`,
     // empty on HTTP/2. Answer in the shape the clients actually read.
-    handler: (req: Request, res: Response) => {
-      logTrip(plane, limit, req);
+    handler: (_req: Request, res: Response) => {
+      logTrip(plane, limit);
       res.setHeader("Retry-After", Math.ceil(WINDOW_MS / 1000));
       res.status(429).json({
         error: {
