@@ -812,60 +812,6 @@ export interface FileCreateData {
   inboundReceivedAt?: Date;
 }
 
-/**
- * Data for updating AI extraction results
- */
-export interface FileExtractionData {
-  extractedDate?: Timestamp | null;
-  extractedAmount?: number | null;
-  extractedTipAmount?: number | null;
-  extractedPayableAmount?: number | null;
-  extractedCurrency?: string | null;
-  extractedVatPercent?: number | null;
-  extractedVatAmount?: number | null;
-  extractedLineItems?: ExtractedLineItem[] | null;
-  extractedRateGroups?: ExtractedRateGroup[] | null;
-  lineItemsUnreconciled?: boolean;
-  lineItemsUnreconciledRates?: number[] | null;
-  vatSourceDowngraded?: boolean;
-  vatFieldsPreserved?: boolean;
-  extractedSelfDesignation?: string | null;
-  extractedInvoiceNumber?: string | null;
-  documentType?: DocumentType;
-  documentTypeBasis?: DocumentTypeBasis;
-  documentTypeMissingElements?: Section11Element[];
-  needsVatRateReview?: boolean;
-  vatRatesOutsideSet?: number[];
-  extractedPartner?: string | null;
-  extractedVatId?: string | null;
-  extractedIban?: string | null;
-  extractedAddress?: string | null;
-  extractedWebsite?: string | null;
-  extractedText?: string | null;
-
-  // Extracted entities (for counterparty determination)
-  extractedIssuer?: ExtractedEntity | null;
-  extractedRecipient?: ExtractedEntity | null;
-  matchedUserAccount?: "issuer" | "recipient" | null;
-
-  extractedRaw?: {
-    date?: string | null;
-    amount?: string | null;
-    vatPercent?: string | null;
-    partner?: string | null;
-    vatId?: string | null;
-    iban?: string | null;
-    address?: string | null;
-    website?: string | null;
-    issuer?: ExtractedEntityRaw | null;
-    recipient?: ExtractedEntityRaw | null;
-  } | null;
-  extractedAdditionalFields?: ExtractedAdditionalField[] | null;
-  extractionConfidence?: number | null;
-  extractionComplete: boolean;
-  extractionError?: string | null;
-  extractedFields?: ExtractedFieldLocation[];
-}
 
 /**
  * Location of an extracted field on the document for overlay rendering
