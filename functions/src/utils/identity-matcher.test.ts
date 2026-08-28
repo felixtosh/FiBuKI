@@ -284,6 +284,60 @@ describe("determineCounterparty", () => {
     });
   });
 
+  // The Kleinbetragsrechnung case (§ 11 Abs 6: up to EUR 400, no UID, no
+  // sequential number, NO RECIPIENT REQUIRED). The document names only its
+  // issuer, so requiring a positive match on one side left every small supplier
+  // invoice undirected, and an undirected document rendered as green income.
+  describe("no recipient printed at all", () => {
+    it("infers incoming when the issuer is demonstrably not the user", () => {
+      expect(determineCounterparty(issuer, null, userData, [])).toEqual({
+        counterparty: issuer,
+        // Inferred by elimination, not matched: nothing on the document was
+        // compared to the user successfully.
+        matchedUserAccount: null,
+        invoiceDirection: "incoming",
+        recipientIdentityMatch: "unknown",
+      });
+    });
+
+    it("treats an empty recipient block the same as an absent one", () => {
+      const blank = entity({ name: "" });
+      expect(determineCounterparty(issuer, blank, userData, []).invoiceDirection).toBe("incoming");
+    });
+
+    it("stays unknown when there is no issuer either, since nothing was compared", () => {
+      expect(determineCounterparty(null, null, userData, [])).toEqual({
+        counterparty: null,
+        matchedUserAccount: null,
+        invoiceDirection: "unknown",
+        recipientIdentityMatch: "unknown",
+      });
+    });
+
+    it("stays unknown without identity signals, where 'not the user' means nothing", () => {
+      const noSignals: UserIdentityData = {
+        personalEntity: { name: "", aliases: [], ibans: [] },
+      };
+      expect(determineCounterparty(issuer, null, noSignals, []).invoiceDirection).toBe("unknown");
+    });
+
+    it("does not touch the outgoing case: the user's own invoice still matches as issuer", () => {
+      // The failure mode the inference must not create. The user issued this,
+      // and their own name is in the issuer block, so the earlier branch wins.
+      expect(determineCounterparty(recipient, null, userData, [])).toEqual({
+        counterparty: null,
+        matchedUserAccount: "issuer",
+        invoiceDirection: "outgoing",
+        recipientIdentityMatch: "unknown",
+      });
+    });
+
+    it("a named third-party recipient is a forwarded document and stays unknown", () => {
+      const other = entity({ name: "Maria Gruber" });
+      expect(determineCounterparty(issuer, other, userData, []).invoiceDirection).toBe("unknown");
+    });
+  });
+
   it("is unknown when there is no user data at all", () => {
     expect(determineCounterparty(issuer, recipient, null, [])).toEqual({
       counterparty: issuer,

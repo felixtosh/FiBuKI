@@ -26,6 +26,7 @@
 import { ExtractedEntity } from "../types/extraction";
 import {
   hasIdentitySignals,
+  hasIssuerEntity,
   hasRecipientEntity,
   resolveRecipientIdentity,
   type RecipientIdentity,
@@ -405,15 +406,17 @@ export function determineCounterparty(
   // #229: the same comparison, recorded as its own verdict. A failed match
   // only means "somebody else" when there was something to match against and
   // a recipient to match - see `resolveRecipientIdentity`.
+  const identityIsKnown = hasIdentitySignals({
+    names: getAllIdentityNames(userData),
+    vatIds: getAllIdentityVatIds(userData),
+    ibans: getAllIdentityIbans(userData),
+    sourceIbans,
+  });
+
   const recipientIdentityMatch = resolveRecipientIdentity({
     recipientPresent: hasRecipientEntity(recipient),
     recipientMatchesUser,
-    hasIdentityData: hasIdentitySignals({
-      names: getAllIdentityNames(userData),
-      vatIds: getAllIdentityVatIds(userData),
-      ibans: getAllIdentityIbans(userData),
-      sourceIbans,
-    }),
+    hasIdentityData: identityIsKnown,
   });
 
   // User is the issuer, so this is an outgoing invoice and the recipient is the
@@ -448,8 +451,47 @@ export function determineCounterparty(
     };
   }
 
-  // Neither matches: a forwarded invoice, or an extraction that produced no
-  // recipient at all. Default to the issuer as counterparty.
+  // Nobody is named as the recipient, and the issuer demonstrably is not the
+  // user. Then the user is the recipient by elimination, and the document is a
+  // purchase.
+  //
+  // This is the ordinary case, not an edge one. § 11 Abs 6 expressly permits a
+  // Kleinbetragsrechnung up to EUR 400 to print no recipient at all, along with
+  // no UID and no sequential number, so every small supplier invoice arrives
+  // with the recipient block empty. Requiring a POSITIVE match on one side left
+  // that whole class undirected, and an undirected document used to render as a
+  // positive amount, i.e. as green income (see documents/directionReview.ts).
+  //
+  // Three conditions keep the inference honest, and all three are needed:
+  //   - identity signals exist, or "the issuer is not the user" means nothing;
+  //   - an issuer was actually read, so something was genuinely compared;
+  //   - no recipient was read AT ALL. A recipient naming somebody else is a
+  //     forwarded document, which is a different thing and stays unknown.
+  //
+  // The remaining failure mode is a document the user issued whose issuer block
+  // extraction misread. The cross-check in directionReview still catches that
+  // the moment a transaction is linked, because a sale attached to an outgoing
+  // payment contradicts itself.
+  if (
+    identityIsKnown &&
+    !issuerMatchesUser &&
+    hasIssuerEntity(issuer) &&
+    !hasRecipientEntity(recipient)
+  ) {
+    return {
+      counterparty: issuer,
+      // Nothing MATCHED. The direction is inferred, and claiming a matched
+      // account here would tell onUserDataUpdate and the file panel that an
+      // identity comparison succeeded when none did.
+      matchedUserAccount: null,
+      invoiceDirection: "incoming",
+      recipientIdentityMatch,
+    };
+  }
+
+  // Neither matches, and there is a recipient naming somebody else, or there is
+  // nothing to compare at all: a forwarded invoice, or an extraction that read
+  // no entities. Default to the issuer as counterparty.
   return {
     counterparty: issuer,
     matchedUserAccount: null,

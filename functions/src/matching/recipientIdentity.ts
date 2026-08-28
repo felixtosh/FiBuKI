@@ -67,6 +67,17 @@ export function hasIdentitySignals(signals: IdentitySignals): boolean {
   );
 }
 
+/**
+ * Did extraction read this side of the document at all, or is the block empty?
+ *
+ * Named for the issuer at the one call site that asks about it, so the question
+ * reads honestly there. One implementation, because "is there an entity here"
+ * is the same question whichever side is asking.
+ */
+export function hasIssuerEntity(issuer: RecipientEntityLike | null | undefined): boolean {
+  return hasRecipientEntity(issuer);
+}
+
 /** Did extraction read a recipient at all, or is the block empty? */
 export function hasRecipientEntity(recipient: RecipientEntityLike | null | undefined): boolean {
   if (!recipient) return false;
