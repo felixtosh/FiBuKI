@@ -17,7 +17,7 @@ import { MODELS } from "../utils/models";
 
 const db = getFirestore();
 
-import { ExtractedEntity, ExtractedLineItem, ExtractedRateGroup } from "../types/extraction";
+import { ExtractedEntity, ExtractedLineItem } from "../types/extraction";
 import { applyVatDowngradeGuard } from "./vatSourceGuard";
 import type { RecipientIdentity } from "../matching/recipientIdentity";
 import {
