@@ -16,12 +16,14 @@ Edit the right-hand column to match whatever vocabulary you actually use.
 
 ## Which of these exist today
 
-`ready-for-agent` and `wontfix` already exist on `yazzbert/FiBuKI-selfhost` and carry
-exactly these meanings. `needs-triage`, `needs-info` and `ready-for-human` do **not**
-exist yet — create them on first use:
+`ready-for-agent`, `ready-for-human` and `wontfix` already exist on this repository and
+carry exactly these meanings. `needs-triage` and `needs-info` do **not** exist yet —
+create them on first use:
 
 ```bash
-gh label create needs-triage -R yazzbert/FiBuKI-selfhost --description "Maintainer needs to evaluate this issue" --color FBCA04
-gh label create needs-info -R yazzbert/FiBuKI-selfhost --description "Waiting on reporter for more information" --color D4C5F9
-gh label create ready-for-human -R yazzbert/FiBuKI-selfhost --description "Requires human implementation" --color 5319E7
+gh label create needs-triage -R felixtosh/FiBuKI --description "Maintainer needs to evaluate this issue" --color FBCA04
+gh label create needs-info -R felixtosh/FiBuKI --description "Waiting on reporter for more information" --color D4C5F9
 ```
+
+These commands previously targeted `yazzbert/FiBuKI-selfhost`, which is now archived and
+rejects writes — they would have failed rather than done nothing.
