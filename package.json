@@ -22,6 +22,7 @@
     "test:billing-cycle": "node --test tests/billing-cycle-presentation.test.mjs",
     "test:document-type": "node --test tests/document-type-presentation.test.mjs",
     "test:chase-queue": "node --test tests/chase-queue.test.mjs",
+    "test:node": "node --test tests/",
     "setup": "bash scripts/setup.sh",
     "generate:mcp-automations": "node scripts/generate-mcp-automations.js",
     "generate:tool-definitions": "node scripts/generate-tool-definitions.js",

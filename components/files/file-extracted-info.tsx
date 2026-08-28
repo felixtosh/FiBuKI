@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn, toDateSafe } from "@/lib/utils";
 import { useEcbConverter } from "@/lib/currency";
+import { useDocumentLabel } from "@/hooks/use-document-label";
 import {
   Tooltip,
   TooltipContent,
@@ -160,6 +161,7 @@ function getEffectiveExtractedAmount(file: TaxFile): number | null {
 
 export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsing, onFieldClick, onDirectionChange, onUpdate, isUpdating }: FileExtractedInfoProps) {
   const convert = useEcbConverter();
+  const documentLabel = useDocumentLabel();
   const directionPresentation = describeInvoiceDirection(file.invoiceDirection);
   const directionReview = describeDirectionReview(file);
   const foreignRecipient = describeForeignRecipient(file.foreignRecipient);
@@ -513,7 +515,7 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
           )}
         >
           <Badge variant="outline" className="text-xs">
-            {directionReview.label}
+            {documentLabel(directionReview)}
           </Badge>
           <p className="text-xs text-muted-foreground">
             {directionReview.text}
@@ -624,7 +626,7 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
                 <SelectContent>
                   {(Object.keys(INVOICE_DIRECTIONS) as InvoiceDirection[]).map((direction) => (
                     <SelectItem key={direction} value={direction}>
-                      {INVOICE_DIRECTIONS[direction].label}
+                      {documentLabel(INVOICE_DIRECTIONS[direction])}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -635,7 +637,7 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
                   directionPresentation.direction === "unknown" && "text-muted-foreground"
                 )}
               >
-                {directionPresentation.label}
+                {documentLabel(directionPresentation)}
               </span>
             )}
           </FieldRow>
