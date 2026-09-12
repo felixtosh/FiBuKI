@@ -472,18 +472,22 @@ function planFileSweep(
       updatedAt: Timestamp.now(),
     };
 
-    // Update partner fields from counterparty, each one only when the entity
-    // actually carries it — the same guard extractionCore applies at the other
-    // end of this derivation. Copying them unguarded is what made #158 silent:
-    // an entity with no vatId put `undefined` in the payload, Firestore
-    // refuses an undefined value, and the refusal took every File batched
-    // behind it down with it.
+    // Update partner fields from counterparty. Copying them raw is what made
+    // #158 silent: an entity that carries only a name put `undefined` in the
+    // payload, Firestore refuses an undefined value, and the refusal took
+    // every File batched behind it down with it.
+    //
+    // The absent ones are written as null rather than left out, because these
+    // four fields mirror whoever the counterparty currently is, and this sweep
+    // is what re-points them when the identity moves. Leaving one out would
+    // keep the PREVIOUS counterparty's VAT ID or IBAN on the File, and partner
+    // matching — which the block below re-arms — matches on both.
     if (result.counterparty) {
-      if (counterpartyName) updateData.extractedPartner = counterpartyName;
-      if (result.counterparty.vatId) updateData.extractedVatId = result.counterparty.vatId;
-      if (result.counterparty.iban) updateData.extractedIban = result.counterparty.iban;
-      if (result.counterparty.address) updateData.extractedAddress = result.counterparty.address;
-      if (result.counterparty.website) updateData.extractedWebsite = result.counterparty.website;
+      updateData.extractedPartner = counterpartyName ?? null;
+      updateData.extractedVatId = result.counterparty.vatId ?? null;
+      updateData.extractedIban = result.counterparty.iban ?? null;
+      updateData.extractedAddress = result.counterparty.address ?? null;
+      updateData.extractedWebsite = result.counterparty.website ?? null;
     }
 
     // If extractedPartner changed, reset partner matching so it re-runs
@@ -617,6 +621,14 @@ export const onUserDataUpdate = onDocumentUpdated(
       CONFIG.MAX_BATCH_SIZE
     );
 
+    // Recorded before the propagation below, not after: the books are closed
+    // once the writes have had their verdicts, and a throw further down must
+    // not be one more way for a run that moved Files to leave no record of it
+    // (#158).
+    const summary = ledger.summarise(runId, userId);
+    console.log(formatSweepSummary(summary));
+    await persistSweepSummary(summary);
+
     // A file's classification changing is invisible to onTransactionUpdate —
     // nothing on the transaction document moved — so the propagation happens
     // here, the same way the extraction path does it (#104). Only writes that
@@ -624,10 +636,6 @@ export const onUserDataUpdate = onDocumentUpdated(
     if (affectedTransactionIds.size > 0) {
       await syncDocumentationStateForTransactions(db, [...affectedTransactionIds]);
     }
-
-    const summary = ledger.summarise(runId, userId);
-    console.log(formatSweepSummary(summary));
-    await persistSweepSummary(summary);
   }
 );
 

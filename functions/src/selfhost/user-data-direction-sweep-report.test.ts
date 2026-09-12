@@ -328,6 +328,62 @@ describe("selfhost: onUserDataUpdate invoice-direction sweep accounting (#158)",
     expect(await Promise.all([updatedAtOf("f-a"), updatedAtOf("f-b")])).toEqual(afterFirst);
   });
 
+  it("clears the partner fields the new counterparty does not carry", async () => {
+    // The four partner fields mirror the counterparty, and this sweep is what
+    // re-points them when the identity moves. A counterparty block that prints
+    // no VAT ID must therefore leave none behind, or the File keeps the
+    // previous counterparty's identifiers and partner matching — which this
+    // sweep re-arms — matches on them.
+    await seedFile("f-stale", {
+      extractedIssuer: {
+        name: "ACME Handels GmbH",
+        vatId: null,
+        iban: null,
+        address: null,
+        website: null,
+      },
+      extractedVatId: "ATU00000000",
+      extractedIban: "AT611904300234573201",
+    });
+    await drainTriggers();
+
+    await editIdentity(["AT483200000012345864"]);
+
+    const file = (await db.collection("files").doc("f-stale").get()).data()!;
+    expect(file.invoiceDirection).toBe("incoming");
+    expect(file.extractedVatId).toBeNull();
+    expect(file.extractedIban).toBeNull();
+  });
+
+  it("sweeps only the Files the user owns", async () => {
+    await seedFile("mine");
+    await seedFile("theirs", { userId: "somebody-else" });
+    await drainTriggers();
+
+    await editIdentity(["AT611904300234573201"]);
+
+    const run = workingRun(await sweepRuns());
+    // The candidate set is every File THIS user owns. It is now read without
+    // the extraction filter, so the owner filter is the only thing keeping
+    // another tenant's corpus out of the run.
+    expect(run.candidates).toBe(1);
+    expect(await directionOf("theirs")).toBe("unknown");
+    expect(await updatedAtOf("theirs")).toBe(PRE_RUN.toDate().toISOString());
+  });
+
+  it("reports a complete run over an empty corpus", async () => {
+    const seen = new Set((await sweepRuns()).map((r) => r.runId));
+
+    await editIdentity(["AT611904300234573201"]);
+
+    const runs = (await sweepRuns()).filter((r) => !seen.has(r.runId));
+    expect(runs).toHaveLength(1);
+    expect(runs[0].candidates).toBe(0);
+    expect(totalOutcomes(runs[0])).toBe(0);
+    // Nothing to do is a whole run, not an unfinished one.
+    expect(runs[0].complete).toBe(true);
+  });
+
   it("keeps the run inspectable after it finished", async () => {
     await seedFile("f-a");
     await drainTriggers();
