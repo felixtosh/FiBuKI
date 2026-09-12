@@ -1287,6 +1287,50 @@ describe("selfhost auth-client — OIDC refresh serialisation (fork #73)", () =>
     expect(readStored(w)).toMatchObject({ refresh_token: "rt-2", rotates: true });
   });
 
+  it("#280: stealing a stale lease re-reads storage, so a dead holder's grant is not replayed", async () => {
+    // The crash that leaves a stale lease behind can happen either side of the
+    // token grant. Stealing the lease only became reachable with this ticket's
+    // wider wait, so the half where the holder died AFTER its grant landed is
+    // newly reachable: we must take the abandoned lease, find the peer's set
+    // already stored by the re-read inside the critical section, and present
+    // nothing. lostResponseFetch throws on any grant, so an empty `spent` here
+    // means no token endpoint call was made at all.
+    const peerIdToken = makeJwt({ sub: UID, email: "stefan@example.test", exp: IN_AN_HOUR() });
+    const spent: string[] = [];
+    const w = installOidcEnv(lostResponseFetch(spent));
+    seedTokens(w, staleSet("rt-1", { rotates: true }));
+    w.localStorage.setItem(LEASE_KEY, JSON.stringify({ owner: "peer-tab", at: Date.now() }));
+
+    const tab = await openTab();
+    await tick();
+
+    vi.useFakeTimers();
+    try {
+      const pending = tab.getAuth().currentUser!.getIdToken();
+      const settled = expect(pending).resolves.toBe(peerIdToken);
+      // The holder's grant had landed before it died — it just never got to
+      // release the lease, which now has to age out under us.
+      await vi.advanceTimersByTimeAsync(2_000);
+      seedTokens(w, {
+        id_token: peerIdToken,
+        refresh_token: "rt-2",
+        expires_at: Date.now() + 3_600_000,
+        rotates: true,
+      });
+      await vi.advanceTimersByTimeAsync(8_500);
+      await settled;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(spent).toEqual([]);
+    expect(tab.getAuth().currentUser?.uid).toBe(UID);
+    expect(readStored(w)).toMatchObject({ refresh_token: "rt-2", rotates: true });
+    // We held the stolen lease and released it, so the next tab is not stuck
+    // waiting out another TTL.
+    expect(w.localStorage.getItem(LEASE_KEY)).toBeNull();
+  });
+
   it("#280: still times out against a peer that keeps its lease continuously fresh", async () => {
     // The fail-shut behaviour #216 added must survive #280's wider wait: a
     // peer that is genuinely alive and re-claims its lease well inside
