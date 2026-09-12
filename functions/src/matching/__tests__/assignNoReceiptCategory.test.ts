@@ -229,6 +229,30 @@ describe("assignNoReceiptCategoryToTransaction (#164 shared writer)", () => {
     expect(shouldAutoApplyCategory(suggestions[0].confidence)).toBe(true);
   });
 
+  it("does not teach the matcher when the assignment is only a suggestion", async () => {
+    seedTransaction("tx-5", { partnerId: "partner-5" });
+    seedCategory("cat-5");
+
+    // The web surface passes matchedBy "suggestion" when the user accepts a
+    // suggested category; only confirmed assignments may grow the matched
+    // partner set, or accepting a suggestion would auto-apply the category to
+    // every future transaction from that partner.
+    const ctx = { userId, db: createMockFirestore(), request: {}, logAIUsage: vi.fn() };
+    await (assignNoReceiptCategoryCallable as any)(ctx, {
+      transactionId: "tx-5",
+      categoryId: "cat-5",
+      matchedBy: "suggestion",
+    });
+
+    const tx = store.getDoc("transactions", "tx-5");
+    expect(tx?.noReceiptCategoryMatchedBy).toBe("suggestion");
+    expect(tx?.isComplete).toBe(true);
+
+    const category = store.getDoc("noReceiptCategories", "cat-5");
+    expect(category?.matchedPartnerIds).toEqual([]);
+    expect(category?.transactionCount).toBe(1);
+  });
+
   it("rejects a category or transaction that does not belong to the caller", async () => {
     seedTransaction("tx-4", { partnerId: "partner-1" });
     seedCategory("cat-4", { userId: "someone-else" });
