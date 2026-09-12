@@ -609,6 +609,17 @@ describe("dotted dates that are not DD.MM.YYYY", () => {
     expect(iso("01.15.26", "de-mdy-short")).toBe("2026-01-15T00:00:00.000Z");
   });
 
+  it("reads the unpadded form German exports write", () => {
+    // German dates are routinely written without leading zeros ("1.1.26"), and
+    // both dotted patterns allow one digit per component, so the month-first
+    // pair has to read that shape as its day-first sibling already does.
+    expect(iso("1.15.2026", "de-mdy")).toBe("2026-01-15T00:00:00.000Z");
+    expect(iso("1.15.26", "de-mdy-short")).toBe("2026-01-15T00:00:00.000Z");
+    expect(iso("15.1.2026", "de")).toBe("2026-01-15T00:00:00.000Z");
+
+    expect(detectDateFormat(["1.15.2026", "3.28.2026", "2.3.2026"])).toBe("de-mdy");
+  });
+
   it("detects a month-first dotted column instead of failing the import", () => {
     // The ticket's column, verbatim: no format matched it before.
     const samples = ["01.15.2026", "03.28.2026", "02.03.2026", "12.01.2026"];
