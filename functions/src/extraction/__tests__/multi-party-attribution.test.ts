@@ -121,6 +121,11 @@ describe("the extraction prompt names the authoritative printed block", () => {
 
     // The agent has one name and is asked for nowhere else.
     expect(prompt).toContain('"invoicingAgent"');
+    // ...and it is § 11 Abs 2 only: on a self-billed document (§ 11 Abs 7) the
+    // business that wrote it is the addressee, which the guard below refuses
+    // as an agent. The carve-out has to be in the prompt or a marketplace
+    // payout statement loses its recipient.
+    expect(prompt).toContain("§ 11 Abs 7 UStG");
     expect(prompt).toContain("Issuer Platform");
     expect(prompt).toContain("Service Provider");
 
@@ -178,6 +183,37 @@ describe("parseWithGemini: third-party issuance", () => {
     expect(res.extractedRaw.partner).toBeNull();
     // The agent is kept — it explains the document, it just is not the Partner.
     expect(res.extracted.invoicingAgent).toEqual(AGENT);
+  });
+
+  it("refuses the agent when the response holds only the legacy flat fields", async () => {
+    // The entity block is optional in the response the parser accepts, and a
+    // response without one falls back to the flat fields wholesale — the
+    // second route the agent takes to extractedPartner, with no issuer entity
+    // for the guard to refuse.
+    q({
+      extracted: {
+        amount: 2400,
+        partner: AGENT.name,
+        vatId: AGENT.vatId,
+        address: AGENT.address,
+        iban: "AT111111111111111111",
+        website: "agent-platform.at",
+        partner_raw: AGENT.name,
+        vatId_raw: "ATU 8765 4321",
+        website_raw: "www.agent-platform.at",
+        invoicingAgent: { ...AGENT, website: "agent-platform.at" },
+      },
+    });
+    const res = await parseWithGemini(Buffer.from("x"), "application/pdf");
+
+    expect(res.extracted.partner).toBeNull();
+    expect(res.extracted.vatId).toBeNull();
+    expect(res.extracted.iban).toBeNull();
+    expect(res.extracted.address).toBeNull();
+    expect(res.extracted.website).toBeNull();
+    expect(res.extractedRaw.partner).toBeNull();
+    expect(res.extractedRaw.vatId).toBeNull();
+    expect(res.extracted.invoicingAgent?.name).toBe(AGENT.name);
   });
 
   it("reads two byte-identical layouts to the same issuer", async () => {
@@ -269,6 +305,25 @@ describe("parseWithGemini: the recipient block", () => {
     expect(res.extracted.recipient?.name).toBe("House of Bandits GmbH");
     expect(res.extracted.recipient?.address).toBe("Kundenweg 5, 1010 Wien");
     expect(res.extractedRaw.recipient?.name).toBe("House of Bandits GmbH");
+  });
+
+  it("keeps the platform as the recipient of a self-billed payout (§ 11 Abs 7)", async () => {
+    // A Gutschrift is written by the recipient of the supply in the
+    // supplier's name, so its writer is the addressee and not an Invoicing
+    // Agent — the prompt says so, because the guard below would otherwise
+    // refuse the recipient of every marketplace payout statement.
+    q({
+      extracted: {
+        amount: 50000,
+        selfDesignation: "Gutschrift",
+        issuer: { name: "House of Bandits GmbH", vatId: "ATU99999999" },
+        recipient: { name: "Marketplace Payouts GmbH", vatId: "ATU87654321" },
+      },
+    });
+    const res = await parseWithGemini(Buffer.from("x"), "application/pdf");
+
+    expect(res.extracted.recipient?.name).toBe("Marketplace Payouts GmbH");
+    expect(res.extracted.invoicingAgent).toBeNull();
   });
 
   it("refuses the agent transcribed into the recipient block", async () => {

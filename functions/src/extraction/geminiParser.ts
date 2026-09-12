@@ -911,6 +911,12 @@ block that is biggest, first on the page, or carries the logo.
      document prints about that business
    - If the business that wrote the document is also the one that did the
      work, there is no agent: return "invoicingAgent": null
+   - A self-billed document has no agent either (§ 11 Abs 7 UStG: an
+     "Abrechnung" or "Gutschrift" that the RECIPIENT of the supply writes in
+     the supplier's name, a marketplace payout statement being the common
+     case). There the business that wrote the document is the party it is
+     made out to: return "invoicingAgent": null and report that business as
+     the "recipient"
    - It is never the issuer and never the recipient. Report it HERE and
      nowhere else - never under an invented label such as "Issuer Platform",
      "Service Provider" or "billing partner", and never in "additionalFields"
