@@ -10,6 +10,7 @@ import { EditableExtractedFields } from "@/lib/operations";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { cn, toDateSafe } from "@/lib/utils";
 import { useEcbConverter } from "@/lib/currency";
 import { useDocumentLabel } from "@/hooks/use-document-label";
@@ -183,6 +184,7 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
     date: "",
     amount: "",
     tipAmount: "",
+    tipNotPrinted: false,
     vatPercent: "",
     partner: "",
     vatId: "",
@@ -217,6 +219,10 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
       // #217: seeded from the stored figure so a printed Trinkgeld is not
       // cleared by a save that never touched the box.
       tipAmount: file.extractedTipAmount != null ? (file.extractedTipAmount / 100).toString() : "",
+      // #310: seeded from the bound the last correction recorded, so re-saving
+      // a tip that was accepted as unprinted does not re-measure it against a
+      // document total it was never meant to fit inside.
+      tipNotPrinted: file.extractedTipBound?.bound === "transaction",
       vatPercent: file.extractedVatPercent != null ? file.extractedVatPercent.toString() : "",
       partner: file.extractedPartner || "",
       vatId: file.extractedVatId || "",
@@ -690,6 +696,29 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
             >
               {formatDocumentAmount(file.extractedTipAmount, file.extractedCurrency)}
             </FieldRow>
+          )}
+
+          {/*
+            #310. A hand-set tip is bounded, and which total bounds it depends
+            on something only the person knows: whether the document printed the
+            tip at all. Ticking this measures it against the bank line instead
+            of the invoice — which is the only way a 5,00 tip on a 3,00 coffee
+            can be recorded, and still no way to record one larger than the
+            payment itself.
+          */}
+          {isEditing && editedFields.tipAmount.trim() !== "" && (
+            <div className="flex items-center gap-4 field-row-responsive">
+              <span className="text-sm text-muted-foreground shrink-0 w-28 field-row-label" />
+              <label className="flex items-center gap-2 text-sm field-row-value">
+                <Checkbox
+                  checked={editedFields.tipNotPrinted === true}
+                  onCheckedChange={(checked) =>
+                    setEditedFields((prev) => ({ ...prev, tipNotPrinted: checked === true }))
+                  }
+                />
+                Not printed on the invoice
+              </label>
+            </div>
           )}
 
           {/*
