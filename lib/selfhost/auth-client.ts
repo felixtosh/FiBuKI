@@ -591,7 +591,13 @@ function lockManager(): LockManagerLike | null {
 const LEASE_TTL_MS = 10_000; // a crashed holder's lease becomes stealable
 const LEASE_CONFIRM_MS = 40; // write-then-re-read settle window
 const LEASE_POLL_MS = 120;
-const LEASE_MAX_WAIT_MS = 5_000;
+/* MAX_WAIT is coupled to TTL and must stay longer than it: a waiter that
+ * gives up before a stale lease has actually crossed LEASE_TTL_MS can never
+ * steal it no matter how long it polls, so every peer of a tab that crashed
+ * mid-refresh would hard-fail with auth/timeout even though the lease was
+ * about to go stale. Wait a full TTL, then enough slack for one more poll
+ * plus a claim's confirm delay to land after that. */
+const LEASE_MAX_WAIT_MS = LEASE_TTL_MS + LEASE_POLL_MS + LEASE_CONFIRM_MS + 2_000;
 
 interface RefreshLease {
   owner: string;
