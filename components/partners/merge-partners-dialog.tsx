@@ -89,8 +89,17 @@ export function MergePartnersDialog({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<MergeUserPartnersResponse | null>(null);
+  // The survivor's name as it stood when the merge was submitted. The
+  // `partners` prop is live, and the losers leave it the moment the merge
+  // commits (they are no longer `isActive`), so the result view cannot read
+  // the merge back off it — it reports what the callable returned (#263 AC5).
+  const [survivorNameAtSubmit, setSurvivorNameAtSubmit] = useState("");
   const [previewCounts, setPreviewCounts] = useState<PreviewCounts | null>(null);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
+  // The count query failed. Said out loud rather than left as a spinner that
+  // never resolves: the confirmation has to state what will move, and "we
+  // could not count it" is the honest version of that (#263 AC3).
+  const [previewFailed, setPreviewFailed] = useState(false);
 
   // Reset whenever the dialog opens. Deliberately keyed on `open` alone: the
   // `partners` prop can get a new array identity from a live Firestore update
@@ -103,7 +112,9 @@ export function MergePartnersDialog({
     setIsSubmitting(false);
     setError(null);
     setResult(null);
+    setSurvivorNameAtSubmit("");
     setPreviewCounts(null);
+    setPreviewFailed(false);
   }, [open]);
 
   const survivor = useMemo(
@@ -149,11 +160,13 @@ export function MergePartnersDialog({
   useEffect(() => {
     if (!survivorId || !userId) {
       setPreviewCounts(null);
+      setPreviewFailed(false);
       return;
     }
     let cancelled = false;
     const loserIds = losers.map((l) => l.id);
     setIsLoadingPreview(true);
+    setPreviewFailed(false);
     Promise.all([
       countByField("transactions", "partnerId", userId, loserIds),
       countByField("files", "partnerId", userId, loserIds),
@@ -163,7 +176,9 @@ export function MergePartnersDialog({
         if (!cancelled) setPreviewCounts({ transactions, files, invoices });
       })
       .catch(() => {
-        if (!cancelled) setPreviewCounts(null);
+        if (cancelled) return;
+        setPreviewCounts(null);
+        setPreviewFailed(true);
       })
       .finally(() => {
         if (!cancelled) setIsLoadingPreview(false);
@@ -180,6 +195,7 @@ export function MergePartnersDialog({
     if (!survivor) return;
     setIsSubmitting(true);
     setError(null);
+    setSurvivorNameAtSubmit(survivor.name);
     try {
       const response = await mergePartners({
         survivorId: survivor.id,
@@ -208,8 +224,9 @@ export function MergePartnersDialog({
             <DialogHeader>
               <DialogTitle>Partners merged</DialogTitle>
               <DialogDescription>
-                {losers.length} partner{losers.length === 1 ? "" : "s"} merged into
-                &quot;{survivor?.name}&quot;.
+                {result.mergedPartnerIds.length} partner
+                {result.mergedPartnerIds.length === 1 ? "" : "s"} merged into &quot;
+                {survivorNameAtSubmit}&quot;.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-2 text-sm">
@@ -219,14 +236,14 @@ export function MergePartnersDialog({
                 {result.repointed.files} file{result.repointed.files === 1 ? "" : "s"} and{" "}
                 {result.repointed.invoices} invoice
                 {result.repointed.invoices === 1 ? "" : "s"} now point to &quot;
-                {survivor?.name}&quot;.
+                {survivorNameAtSubmit}&quot;.
               </p>
               <p className="text-muted-foreground">
                 {result.rematchPreview.newlyMatchable > 0
                   ? `${result.rematchPreview.newlyMatchable} previously unmatched transaction${
                       result.rematchPreview.newlyMatchable === 1 ? "" : "s"
-                    } could now match "${survivor?.name}". Review with the partner rematch report.`
-                  : `No previously unmatched transactions would now match "${survivor?.name}".`}
+                    } could now match "${survivorNameAtSubmit}". Review with the partner rematch report.`
+                  : `No previously unmatched transactions would now match "${survivorNameAtSubmit}".`}
               </p>
             </div>
             <DialogFooter>
@@ -278,7 +295,13 @@ export function MergePartnersDialog({
                 </p>
                 <ul className="list-disc space-y-1 pl-5">
                   <li>
-                    {isLoadingPreview || !previewCounts ? (
+                    {previewFailed ? (
+                      <span className="text-muted-foreground">
+                        Could not count what will move. Everything pointing at{" "}
+                        {losers.length === 1 ? "the merged partner" : "the merged partners"}{" "}
+                        still moves to &quot;{survivor.name}&quot;.
+                      </span>
+                    ) : isLoadingPreview || !previewCounts ? (
                       <span className="inline-flex items-center gap-1 text-muted-foreground">
                         <Loader2 className="h-3 w-3 animate-spin" /> Counting what will move…
                       </span>

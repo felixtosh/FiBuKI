@@ -89,6 +89,20 @@ test("newEntryCount: counts only entries the survivor does not already have", ()
   );
 });
 
+test("newEntryCount: the same new entry from two losers counts once", () => {
+  assert.equal(
+    newEntryCount(["AT001"], [["AT002"], ["AT002"]], (v) => String(v).toUpperCase()),
+    1,
+  );
+});
+
+test("newEntryCount: a partner missing the list entirely has none of it", () => {
+  // Older Partner documents predate `aliases`/`ibans`, so both the survivor's
+  // list and a loser's can be absent rather than empty.
+  assert.equal(newEntryCount(undefined, [["a"], undefined, null], (v) => String(v)), 1);
+  assert.equal(newEntryCount(null, [], (v) => String(v)), 0);
+});
+
 test("newEntryCount: zero when the survivor already has everything", () => {
   assert.equal(
     newEntryCount(["a", "b"], [["a"], ["b"]], (v) => String(v)),
