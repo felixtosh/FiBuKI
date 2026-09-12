@@ -23,6 +23,7 @@ function getProjectId(): string {
 const VERTEX_LOCATION = process.env.VERTEX_LOCATION || "europe-west1";
 
 import { ExtractedData, ExtractedLineItem, ExtractedRateGroup } from "../types/extraction";
+import { decodeHtmlEntities } from "../utils/htmlEntities";
 
 /**
  * Bounding box extracted by Gemini for a field
@@ -1031,8 +1032,19 @@ JSON only, no markdown, no explanation.`;
   }
 
   // Extract issuer entity (normalize values)
+  //
+  // #299: the name is decoded here, at entity normalisation, and nowhere
+  // downstream. `extractedIssuer`/`extractedRecipient` are stored as shaped
+  // here, so every consumer inherits one spelling: identity name-lane
+  // matching, `extractedPartner`, Partner display, export. Decoding at a
+  // write point instead (what #233 did) left the stored entity encoded, and
+  // the name lane then compared an encoded document name against the user's
+  // own name as typed.
+  //
+  // `issuer_raw`/`recipient_raw` below are deliberately NOT decoded: those
+  // are the document's own characters, searched verbatim to highlight the PDF.
   const issuer = parsed.extracted?.issuer ? {
-    name: parsed.extracted.issuer.name || null,
+    name: decodeHtmlEntities(parsed.extracted.issuer.name),
     vatId: normalizeVatId(parsed.extracted.issuer.vatId),
     address: parsed.extracted.issuer.address || null,
     iban: parsed.extracted.issuer.iban || null,
@@ -1041,7 +1053,7 @@ JSON only, no markdown, no explanation.`;
 
   // Extract recipient entity (normalize values)
   const recipient = parsed.extracted?.recipient ? {
-    name: parsed.extracted.recipient.name || null,
+    name: decodeHtmlEntities(parsed.extracted.recipient.name),
     vatId: normalizeVatId(parsed.extracted.recipient.vatId),
     address: parsed.extracted.recipient.address || null,
     iban: parsed.extracted.recipient.iban || null,
@@ -1050,7 +1062,9 @@ JSON only, no markdown, no explanation.`;
 
   // For backward compatibility, use issuer as partner (will be overridden by extractionCore)
   // This ensures legacy code continues to work during the transition
-  const legacyPartner = issuer?.name || parsed.extracted?.partner || null;
+  // The flat fallback is decoded for the same reason the entity is: it is the
+  // name a record ends up storing when the model returns no issuer block.
+  const legacyPartner = issuer?.name || decodeHtmlEntities(parsed.extracted?.partner) || null;
   const legacyVatId = issuer?.vatId || normalizeVatId(parsed.extracted?.vatId);
   const legacyIban = issuer?.iban || parsed.extracted?.iban || null;
   const legacyAddress = issuer?.address || parsed.extracted?.address || null;

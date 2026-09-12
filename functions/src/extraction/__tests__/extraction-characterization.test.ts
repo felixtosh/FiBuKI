@@ -194,6 +194,60 @@ describe("characterization: geminiParser.parseWithGemini", () => {
     expect(res2.extracted.issuer?.website).toBeNull();
   });
 
+  it("#299: decodes character references in issuer, recipient and the flat partner name", async () => {
+    // Entity normalisation is the one place the stored counterparty name is
+    // shaped, so extractedIssuer/extractedRecipient land decoded and every
+    // consumer — identity name-lane matching above all — reads one spelling.
+    q({
+      extracted: {
+        issuer: { name: "AL&amp;FA Taxi KG" },
+        recipient: { name: "M&#38;S Handels GmbH" },
+      },
+    });
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.issuer?.name).toBe("AL&FA Taxi KG");
+    expect(res.extracted.recipient?.name).toBe("M&S Handels GmbH");
+    // The flat legacy field is shaped here too, so it never carries an entity
+    // into extractedPartner on a response with no issuer block.
+    expect(res.extracted.partner).toBe("AL&FA Taxi KG");
+
+    q({ extracted: { partner: "Q &amp; A Solutions" } });
+    const res2 = await parseWithGemini(BUF, "application/pdf");
+    expect(res2.extracted.partner).toBe("Q & A Solutions");
+  });
+
+  it("#299: a name with no character reference in it, bare '&' included, is byte-identical", async () => {
+    q({
+      extracted: {
+        issuer: { name: "Q & A Solutions" },
+        recipient: { name: "AT&T" },
+        partner: "M & S",
+      },
+    });
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.issuer?.name).toBe("Q & A Solutions");
+    expect(res.extracted.recipient?.name).toBe("AT&T");
+    // issuer wins over the flat field, so assert the flat one on its own.
+    q({ extracted: { partner: "M & S" } });
+    const res2 = await parseWithGemini(BUF, "application/pdf");
+    expect(res2.extracted.partner).toBe("M & S");
+  });
+
+  it("#299: issuer_raw keeps the document's own characters, undecoded", async () => {
+    // The raw block is searched verbatim to highlight the PDF, so decoding it
+    // would make the highlight miss the very characters it is looking for.
+    q({
+      extracted: {
+        issuer: { name: "AL&amp;FA Taxi KG" },
+        issuer_raw: { name: "AL&amp;FA Taxi KG" },
+      },
+    });
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.issuer?.name).toBe("AL&FA Taxi KG");
+    expect(res.extractedRaw?.issuer?.name).toBe("AL&amp;FA Taxi KG");
+    expect(res.extractedRaw?.partner).toBe("AL&amp;FA Taxi KG");
+  });
+
   it("legacy flat fields are used only when no issuer entity exists; issuer wins otherwise", async () => {
     q({
       extracted: {

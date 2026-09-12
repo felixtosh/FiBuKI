@@ -1,12 +1,17 @@
 /**
  * Decode HTML/XML character references that leaked into extracted text.
  *
- * Used at the point where an extracted entity name is persisted (#233):
- * neither a manually uploaded PDF nor a Gmail import runs any HTML escaper on
- * its own, so a name arriving with "&amp;" in it got that way either from the
- * source document's own text or from the extraction model emitting the
- * escaped form. Either way it must be decoded before storage, or every
- * consumer (Partner display, matching, export) inherits the corruption.
+ * Used at entity normalisation, where the extracted counterparty entities are
+ * shaped (#299): neither a manually uploaded PDF nor a Gmail import runs any
+ * HTML escaper on its own, so a name arriving with "&amp;" in it got that way
+ * either from the source document's own text or from the extraction model
+ * emitting the escaped form. Either way it must be decoded before storage, or
+ * every consumer (Partner display, identity matching, export) inherits the
+ * corruption — #233 decoded at the two write points instead, which left the
+ * STORED entity encoded and the name lane comparing encoded to decoded.
+ *
+ * The two backfills — `backfillPartnerNameEntities` (#233) and
+ * `backfillFileEntityNames` (#299) — use it to repair records written earlier.
  */
 
 const NAMED_ENTITIES: Record<string, string> = {

@@ -169,6 +169,7 @@ export {
   undismissTransactionSuggestionCallable as undismissTransactionSuggestion,
   unrejectFileFromTransactionCallable as unrejectFileFromTransaction,
   backfillFileTypesCallable as backfillFileTypes,
+  backfillFileEntityNamesCallable as backfillFileEntityNames,
 } from "./files";
 
 // Import operations

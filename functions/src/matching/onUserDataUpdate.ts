@@ -371,6 +371,17 @@ async function getSourceIbans(userId: string): Promise<string[]> {
   }
 }
 
+/**
+ * A stored entity with its name decoded (#299). Returns the entity unchanged
+ * when there is nothing to decode, so an already-decoded record keeps its
+ * identity and the sweep's skip comparison is untouched.
+ */
+function decodeEntityName(entity: ExtractedEntity | null): ExtractedEntity | null {
+  if (!entity?.name) return entity;
+  const decoded = decodeHtmlEntities(entity.name);
+  return decoded === entity.name ? entity : { ...entity, name: decoded };
+}
+
 // === Main Function ===
 
 export const onUserDataUpdate = onDocumentUpdated(
@@ -447,8 +458,16 @@ export const onUserDataUpdate = onDocumentUpdated(
       const fileData = fileDoc.data();
 
       // Skip files without extracted entities (can't re-calculate)
-      const issuer = fileData.extractedIssuer as ExtractedEntity | null;
-      const recipient = fileData.extractedRecipient as ExtractedEntity | null;
+      //
+      // #299: entities extracted since the decode moved to entity
+      // normalisation are already stored decoded, and `backfillFileEntityNames`
+      // repairs the ones written before it. A record that predates both still
+      // holds "&amp;", and this sweep both MATCHES on those names and rewrites
+      // extractedPartner from them — so decode before the match, not after it.
+      // Comparing an encoded document name against the user's own name as
+      // typed is the defect; doing it after the match only fixed the string.
+      const issuer = decodeEntityName(fileData.extractedIssuer as ExtractedEntity | null);
+      const recipient = decodeEntityName(fileData.extractedRecipient as ExtractedEntity | null);
 
       if (!issuer && !recipient) {
         skippedCount++;
@@ -458,15 +477,9 @@ export const onUserDataUpdate = onDocumentUpdated(
       // Determine new counterparty
       const result = determineCounterparty(issuer, recipient, userData, sourceIbans);
 
-      // #233: extractedIssuer/extractedRecipient hold the RAW extraction, so a
-      // name that arrived as "AL&amp;FA Taxi KG" is still encoded here.
-      // extractionCore decodes on the way in and this sweep rewrites the same
-      // field, so it has to decode identically — otherwise editing identity
-      // data writes the entity back and partner matching, which re-runs
-      // below, splits the company into an encoded and a decoded Partner.
-      const counterpartyName = result.counterparty?.name
-        ? decodeHtmlEntities(result.counterparty.name)
-        : result.counterparty?.name;
+      // Decoded above, before the match, so the value written here and the
+      // one the skip comparison reads are the same string (#299).
+      const counterpartyName = result.counterparty?.name;
 
       // Check if anything changed
       const currentDirection = fileData.invoiceDirection as InvoiceDirection;
