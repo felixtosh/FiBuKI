@@ -54,6 +54,7 @@ import { getStorage } from "firebase-admin/storage";
 import { createHash, randomUUID } from "crypto";
 import { createFileRecord, findFileByContentHash } from "../files/createFileRecord";
 import { syncDocumentationStateForTransactions } from "../documents/syncDocumentationState";
+import { assignNoReceiptCategoryToTransaction } from "../matching/assignNoReceiptCategory";
 import { TOOL_DEFINITIONS, TOOL_NAMES } from "./definitions";
 import type { ToolName } from "./definitions";
 import { readBankOriginalAmount } from "../fx/bankOriginalAmount";
@@ -1417,37 +1418,20 @@ export async function assignNoReceiptCategory(userId: string, args: Record<strin
     throw new Error("transactionId and categoryId are required");
   }
 
-  const [txDoc, catDoc] = await Promise.all([
-    db.collection("transactions").doc(transactionId as string).get(),
-    db.collection("noReceiptCategories").doc(categoryId as string).get(),
-  ]);
-
-  if (!txDoc.exists || txDoc.data()?.userId !== userId) {
-    throw new Error("Transaction not found");
-  }
-  if (!catDoc.exists || catDoc.data()?.userId !== userId) {
-    throw new Error("Category not found");
-  }
-
-  const catData = catDoc.data()!;
-  const batch = db.batch();
-  const now = FieldValue.serverTimestamp();
-
-  batch.update(txDoc.ref, {
-    noReceiptCategoryId: categoryId,
-    noReceiptCategoryTemplateId: catData.templateId,
-    noReceiptCategoryMatchedBy: "api",
-    isComplete: true,
-    updatedAt: now,
+  // #164: delegates to the same writer the web path's callable uses, so an
+  // MCP assignment also teaches the category matcher via matchedPartnerIds.
+  const result = await assignNoReceiptCategoryToTransaction(db, userId, {
+    transactionId: transactionId as string,
+    categoryId: categoryId as string,
+    matchedBy: "manual",
   });
 
-  batch.update(catDoc.ref, {
-    transactionCount: FieldValue.increment(1),
-    updatedAt: now,
-  });
-
-  await batch.commit();
-  return { success: true, transactionId, categoryId, categoryName: catData.name };
+  return {
+    success: true,
+    transactionId: result.transactionId,
+    categoryId: result.categoryId,
+    categoryName: result.categoryName,
+  };
 }
 
 export async function removeNoReceiptCategory(userId: string, transactionId: string) {
