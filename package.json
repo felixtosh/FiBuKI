@@ -21,6 +21,7 @@
     "test:partner-url-params": "node --test tests/partner-url-params.test.mjs",
     "test:billing-cycle": "node --test tests/billing-cycle-presentation.test.mjs",
     "test:document-type": "node --test tests/document-type-presentation.test.mjs",
+    "test:line-item-presentation": "node --test tests/line-item-presentation.test.mjs",
     "test:chase-queue": "node --test tests/chase-queue.test.mjs",
     "test:file-kind": "node --test tests/file-kind.test.mjs",
     "test:delete-confirmation": "node --test tests/delete-confirmation.test.mjs",
