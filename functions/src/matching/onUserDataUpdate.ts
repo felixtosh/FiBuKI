@@ -495,10 +495,10 @@ export const onUserDataUpdate = onDocumentUpdated(
       // Update partner fields from counterparty
       if (result.counterparty) {
         updateData.extractedPartner = counterpartyName;
-        updateData.extractedVatId = result.counterparty.vatId;
-        updateData.extractedIban = result.counterparty.iban;
-        updateData.extractedAddress = result.counterparty.address;
-        updateData.extractedWebsite = result.counterparty.website;
+        updateData.extractedVatId = result.counterparty.vatId || null;
+        updateData.extractedIban = result.counterparty.iban || null;
+        updateData.extractedAddress = result.counterparty.address || null;
+        updateData.extractedWebsite = result.counterparty.website || null;
       }
 
       // If extractedPartner changed, reset partner matching so it re-runs

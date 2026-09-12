@@ -33,8 +33,9 @@ async function seedFileWithEncodedIssuer(fileId: string, extractedPartner: strin
     fileType: "application/pdf",
     extractionComplete: true,
     // What the model handed back, stored verbatim: still HTML-encoded.
-    // Every counterparty field is present because the sweep copies them all
-    // unguarded, and Firestore rejects an undefined value.
+    // Every counterparty field is present so this fixture exercises the
+    // encoding question alone; an incomplete entity is #294's case, and the
+    // sweep guards those copies with `|| null` since.
     extractedIssuer: {
       name: "AL&amp;FA Taxi KG",
       vatId: "ATU12345678",
