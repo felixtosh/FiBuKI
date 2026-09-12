@@ -11,7 +11,12 @@ import {
 import { db } from "@/lib/firebase/config";
 import { callFunction } from "@/lib/firebase/callable";
 import { useFirestoreCollection } from "@/lib/firebase/use-firestore-collection";
-import { UserPartner, PartnerFormData } from "@/types/partner";
+import {
+  UserPartner,
+  PartnerFormData,
+  MergeUserPartnersRequest,
+  MergeUserPartnersResponse,
+} from "@/types/partner";
 import { useAuth } from "@/components/auth";
 
 const PARTNERS_COLLECTION = "partners";
@@ -69,6 +74,16 @@ export function usePartners() {
     await callFunction("deleteUserPartner", { partnerId });
   }, []);
 
+  const mergePartners = useCallback(
+    async (request: MergeUserPartnersRequest): Promise<MergeUserPartnersResponse> => {
+      return callFunction<MergeUserPartnersRequest, MergeUserPartnersResponse>(
+        "mergeUserPartners",
+        request,
+      );
+    },
+    [],
+  );
+
   const getPartnerById = useCallback(
     (partnerId: string): UserPartner | undefined => {
       return partners.find((p) => p.id === partnerId);
@@ -109,6 +124,7 @@ export function usePartners() {
     createPartner,
     updatePartner,
     deletePartner,
+    mergePartners,
     getPartnerById,
     assignToTransaction,
     removeFromTransaction,
