@@ -1,12 +1,14 @@
 /**
- * #239: a Match scored against a Transaction's Remainder is a suggestion,
- * whatever its Confidence.
+ * When a Remainder Match may connect itself (#242).
  *
- * The pair this guards is the split part-invoice: a 500,00 bank line already
- * carrying a 285,80 invoice, and a 214,20 document that closes it. Scored
- * against the Remainder it is a cent-exact, same-day, same-partner hit — well
- * past AUTO_MATCH_THRESHOLD — so nothing in the Confidence stops it connecting
- * itself. The gate does, until #242 decides the same-day exception.
+ * #239 made a Match scored against a Transaction's Remainder a suggestion
+ * whatever its Confidence. #242 opens one exception: the documents are from
+ * the same day, and no Transaction holding nothing wants the File at least as
+ * much. The pair it exists for is the split part-invoice — a 500,00 bank line
+ * already carrying a 285,80 invoice, and a 214,20 document from the same day
+ * that closes it. The hazard it has to survive is the two-receipts-one-day
+ * case, where a greedy per-File score would put receipt B on Transaction A's
+ * Remainder while B's own Transaction sits empty beside it.
  *
  * The matcher calls getFirestore()/getAuth() at import time and registers a
  * trigger, so the Firebase surface is swapped for an in-memory fake, the same
@@ -37,7 +39,7 @@ vi.mock("firebase-admin/firestore", async () => {
   });
 
   const query = (collection: string) => {
-    // Two filtered reads matter here, both inside loadDocumentedAmounts:
+    // Two filtered reads matter here, both inside loadConnectedFiles:
     // `where("transactionId", "in", [...])` over fileConnections, and
     // `where("__name__", "in", [...])` over the files those name. Everything
     // else is answered from the seeded state regardless of the clauses.
@@ -143,9 +145,15 @@ vi.mock("../../billing/checkAIBudget", () => ({
 
 import { Timestamp } from "@google-cloud/firestore";
 import { runTransactionMatching } from "../matchFileTransactions";
+import {
+  extractedDayKey,
+  isSameDayEvidence,
+  hasUndocumentedRival,
+} from "../remainderAutoConnect";
 
 const USER = "u1";
 const DATE = new Date("2026-07-01T00:00:00Z");
+const NEXT_DAY = new Date("2026-07-02T00:00:00Z");
 
 function tx(id: string, over: Record<string, unknown> = {}) {
   return {
@@ -195,6 +203,10 @@ function connectionsCreated() {
   return h.state.batchWrites.filter((w) => w.collection === "fileConnections");
 }
 
+function connectedTransactionIds(): string[] {
+  return connectionsCreated().map((c) => c.data.transactionId as string);
+}
+
 beforeEach(() => {
   h.state.transactions = [];
   h.state.files.clear();
@@ -202,43 +214,151 @@ beforeEach(() => {
   h.state.batchWrites = [];
 });
 
-describe("runTransactionMatching: a remainder match is a suggestion only (#239)", () => {
+// ============================================================================
+// The rule itself
+// ============================================================================
+
+describe("isSameDayEvidence", () => {
+  const day = (d: string) => Timestamp.fromDate(new Date(`${d}T00:00:00Z`));
+
+  it("holds when the candidate carries the day every connected file carries", () => {
+    expect(isSameDayEvidence(day("2026-07-01"), [day("2026-07-01")])).toBe(true);
+    expect(
+      isSameDayEvidence(day("2026-07-01"), [day("2026-07-01"), day("2026-07-01")])
+    ).toBe(true);
+  });
+
+  it("fails on one day's distance — same day means same day", () => {
+    expect(isSameDayEvidence(day("2026-07-02"), [day("2026-07-01")])).toBe(false);
+    expect(
+      isSameDayEvidence(day("2026-07-01"), [day("2026-07-01"), day("2026-06-30")])
+    ).toBe(false);
+  });
+
+  it("fails when any date is unknown — unknown is not same-day", () => {
+    expect(isSameDayEvidence(null, [day("2026-07-01")])).toBe(false);
+    expect(isSameDayEvidence(day("2026-07-01"), [null])).toBe(false);
+    expect(isSameDayEvidence(day("2026-07-01"), [day("2026-07-01"), undefined])).toBe(false);
+  });
+
+  it("fails when the transaction holds nothing: that is not a remainder case", () => {
+    expect(isSameDayEvidence(day("2026-07-01"), [])).toBe(false);
+  });
+
+  it("reads the day in UTC, where an extracted date is put", () => {
+    // A date stored as the printed day's midnight keeps that day whatever zone
+    // the container runs in.
+    expect(extractedDayKey(day("2026-07-01"))).toBe("2026-07-01");
+    expect(extractedDayKey(null)).toBeNull();
+  });
+});
+
+describe("hasUndocumentedRival", () => {
+  const holdsFiles = (id: string) => id === "t-split";
+
+  it("finds an empty transaction that scores at least as well", () => {
+    const match = { transactionId: "t-split", confidence: 90 };
+    const rival = { transactionId: "t-open", confidence: 90 };
+    // A tie goes to the line that explains nothing yet.
+    expect(hasUndocumentedRival(match, [match, rival], holdsFiles)).toBe(true);
+  });
+
+  it("ignores an empty transaction that scores below it", () => {
+    const match = { transactionId: "t-split", confidence: 90 };
+    const rival = { transactionId: "t-open", confidence: 89 };
+    expect(hasUndocumentedRival(match, [match, rival], holdsFiles)).toBe(false);
+  });
+
+  it("ignores a rival that already holds files of its own", () => {
+    const match = { transactionId: "t-split", confidence: 90 };
+    const rival = { transactionId: "t-split-2", confidence: 95 };
+    expect(
+      hasUndocumentedRival(match, [match, rival], (id) => id.startsWith("t-split"))
+    ).toBe(false);
+  });
+});
+
+// ============================================================================
+// The rule in the matcher
+// ============================================================================
+
+describe("runTransactionMatching: a same-day remainder match connects itself (#242)", () => {
   beforeEach(() => {
-    // 500,00 line with a 285,80 invoice already on it: 214,20 open.
+    // 500,00 line with a 285,80 invoice from 1 July already on it: 214,20 open.
     h.state.transactions = [tx("t-split", { fileIds: ["f-existing"] })];
     h.state.files.set("f-existing", {
       userId: USER,
       extractedAmount: 28580,
       extractedCurrency: "EUR",
+      extractedDate: Timestamp.fromDate(DATE),
     });
   });
 
-  it("suggests the file that closes the remainder", async () => {
+  it("auto-connects a file dated the same day as the file already on the line", async () => {
     await runTransactionMatching("f-candidate", candidate());
 
-    const suggested = suggestionsWritten();
-    expect(suggested.map((s) => s.transactionId)).toEqual(["t-split"]);
-    expect(suggested[0].matchSources).toContain("amount_remainder");
+    expect(connectedTransactionIds()).toEqual(["t-split"]);
+    expect(suggestionsWritten()[0].matchSources).toContain("amount_remainder");
   });
 
-  it("does not auto-connect it, even past the auto-match threshold", async () => {
+  it("says on the stored connection why it was allowed to", async () => {
     await runTransactionMatching("f-candidate", candidate());
 
-    // Cent-exact + same day + partner: comfortably above 85, and still only a
-    // suggestion. The Confidence is not what holds it back.
-    expect(suggestionsWritten()[0].confidence).toBeGreaterThanOrEqual(85);
+    const connection = connectionsCreated()[0].data;
+    expect(connection.autoConnectReason).toBe("remainder_same_day");
+    expect(connection.matchSources).toContain("amount_remainder");
+    // The figure it was judged against, so a wrong one can be read back.
+    expect(
+      (connection.scoreBreakdown as { scoredAgainstRemainder?: number }).scoredAgainstRemainder
+    ).toBe(21420);
+  });
+
+  it("suggests, but does not connect, the same file dated one day later", async () => {
+    await runTransactionMatching(
+      "f-candidate",
+      candidate({ extractedDate: Timestamp.fromDate(NEXT_DAY) })
+    );
+
+    // Still well past the auto-match threshold: it is the dates that hold it
+    // back, not the Confidence.
+    const suggested = suggestionsWritten();
+    expect(suggested.map((s) => s.transactionId)).toEqual(["t-split"]);
+    expect(suggested[0].confidence).toBeGreaterThanOrEqual(85);
     expect(connectionsCreated()).toEqual([]);
     expect(h.state.fileUpdates.some((u) => u.transactionIds)).toBe(false);
   });
 
-  it("still auto-connects the same file to a line that holds nothing", async () => {
-    h.state.transactions = [tx("t-open", { amount: -21420 })];
-    h.state.files.clear();
+  it("never connects a file with no extracted date", async () => {
+    // A part-invoice whose number the bank line prints: 40 + 50 clears the
+    // threshold with no date at all. Unknown is not same-day, so it stays a
+    // suggestion.
+    h.state.transactions = [
+      tx("t-split", {
+        fileIds: ["f-existing"],
+        description: "RECHNUNG 4711002356 HETZNER",
+      }),
+    ];
+
+    await runTransactionMatching(
+      "f-candidate",
+      candidate({ extractedDate: null, extractedInvoiceNumber: "4711002356" })
+    );
+
+    expect(suggestionsWritten()[0].confidence).toBeGreaterThanOrEqual(85);
+    expect(connectionsCreated()).toEqual([]);
+  });
+
+  it("never connects when a file already on the line has no extracted date", async () => {
+    h.state.files.set("f-existing", {
+      userId: USER,
+      extractedAmount: 28580,
+      extractedCurrency: "EUR",
+    });
 
     await runTransactionMatching("f-candidate", candidate());
 
-    expect(connectionsCreated()).toHaveLength(1);
-    expect(connectionsCreated()[0].data.transactionId).toBe("t-open");
+    expect(suggestionsWritten()[0].confidence).toBeGreaterThanOrEqual(85);
+    expect(connectionsCreated()).toEqual([]);
   });
 
   it("scores a fully documented line on its full amount again", async () => {
@@ -246,6 +366,7 @@ describe("runTransactionMatching: a remainder match is a suggestion only (#239)"
       userId: USER,
       extractedAmount: 50000,
       extractedCurrency: "EUR",
+      extractedDate: Timestamp.fromDate(DATE),
     });
 
     await runTransactionMatching("f-candidate", candidate());
@@ -257,6 +378,88 @@ describe("runTransactionMatching: a remainder match is a suggestion only (#239)"
     expect(suggested.map((s) => s.transactionId)).toEqual(["t-split"]);
     expect(suggested[0].matchSources).not.toContain("amount_remainder");
     expect(suggested[0].matchSources).not.toContain("amount_exact");
+    expect(connectionsCreated()).toEqual([]);
+  });
+});
+
+describe("runTransactionMatching: never over an undocumented transaction (#242)", () => {
+  it("prefers the empty line and leaves the remainder a suggestion", async () => {
+    // The same 214,20 document could close t-split's remainder or explain
+    // t-open outright. The line that explains nothing yet wins.
+    h.state.transactions = [
+      tx("t-split", { fileIds: ["f-existing"] }),
+      tx("t-open", { amount: -21420 }),
+    ];
+    h.state.files.set("f-existing", {
+      userId: USER,
+      extractedAmount: 28580,
+      extractedCurrency: "EUR",
+      extractedDate: Timestamp.fromDate(DATE),
+    });
+
+    await runTransactionMatching("f-candidate", candidate());
+
+    expect(connectedTransactionIds()).toEqual(["t-open"]);
+    expect(connectionsCreated()[0].data.autoConnectReason).toBeUndefined();
+    // The remainder match is still on the file for the user to accept.
+    expect(suggestionsWritten().map((s) => s.transactionId)).toContain("t-split");
+  });
+
+  it("puts two same-day receipts on two same-day transactions, not both on one", async () => {
+    // 50,00 card payment already carrying the 30,00 receipt A, and a second
+    // 20,00 card payment from the same day holding nothing. Receipt B closes
+    // A's remainder exactly — and is B's own line's whole amount.
+    h.state.transactions = [
+      tx("t-a", { amount: -5000, name: "REWE", partner: "REWE", fileIds: ["f-receipt-a"] }),
+      tx("t-b", { amount: -2000, name: "REWE", partner: "REWE" }),
+    ];
+    h.state.files.set("f-receipt-a", {
+      userId: USER,
+      extractedAmount: 3000,
+      extractedCurrency: "EUR",
+      extractedDate: Timestamp.fromDate(DATE),
+    });
+
+    await runTransactionMatching(
+      "f-receipt-b",
+      candidate({
+        fileName: "rewe-2.pdf",
+        extractedAmount: 2000,
+        extractedPartner: "REWE",
+      })
+    );
+
+    expect(connectedTransactionIds()).toEqual(["t-b"]);
+  });
+});
+
+describe("runTransactionMatching: full-amount auto-connect is unchanged (#242)", () => {
+  it("still auto-connects a file to a line that holds nothing", async () => {
+    h.state.transactions = [tx("t-open", { amount: -21420 })];
+
+    await runTransactionMatching("f-candidate", candidate());
+
+    expect(connectedTransactionIds()).toEqual(["t-open"]);
+    const connection = connectionsCreated()[0].data;
+    // Not a remainder connection: the record says nothing new about it.
+    expect(connection.autoConnectReason).toBeUndefined();
+    expect(connection.connectionType).toBe("auto_matched");
+    expect(connection.matchSources).not.toContain("amount_remainder");
+  });
+
+  it("still refuses a line already covered by what sits on it", async () => {
+    // 95% documented: past COVERAGE_RATIO, so no further file connects itself,
+    // same-day or not.
+    h.state.transactions = [tx("t-covered", { amount: -30000, fileIds: ["f-existing"] })];
+    h.state.files.set("f-existing", {
+      userId: USER,
+      extractedAmount: 28580,
+      extractedCurrency: "EUR",
+      extractedDate: Timestamp.fromDate(DATE),
+    });
+
+    await runTransactionMatching("f-candidate", candidate({ extractedAmount: 1420 }));
+
     expect(connectionsCreated()).toEqual([]);
   });
 });

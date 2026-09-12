@@ -706,6 +706,16 @@ export interface FileConnection {
   /** AI confidence if auto-matched (0-100) */
   matchConfidence?: number | null;
 
+  /**
+   * Why an auto-connection was permitted, when it was not the ordinary
+   * full-amount case (#242). `remainder_same_day`: the File closed the
+   * Transaction's Remainder and carried the same extracted date as every File
+   * already on it — see
+   * [ADR-0008](../docs/adr/0008-remainder-auto-connect-is-same-day-only.md).
+   * Absent on every other Connection, including a full-amount auto-connect.
+   */
+  autoConnectReason?: "remainder_same_day";
+
   /** Score breakdown by factor (amount, date, partner, iban, reference, hint) */
   scoreBreakdown?: {
     amount: number;
