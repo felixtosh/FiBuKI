@@ -21,6 +21,11 @@
  * - Invoice direction (incoming vs outgoing)
  * - Which party is the counterparty (extractedPartner)
  * - Which user account was matched (matchedUserAccount)
+ *
+ * The sweep accounts for every File it reads: one named outcome each, and a
+ * run summary stored at `users/{userId}/directionSweeps/{runId}` that says
+ * whether the run covered the corpus. See `invoiceDirectionSweepReport.ts`
+ * for why a count of "skipped" on its own was not enough (#158).
  */
 
 import { onDocumentUpdated, onDocumentCreated } from "firebase-functions/v2/firestore";
@@ -31,14 +36,29 @@ import { determineCounterparty, type InvoiceDirection } from "../utils/identity-
 import { classifyFileRecord, documentTypeFields } from "../documents/adapter";
 import { syncDocumentationStateForTransactions } from "../documents/syncDocumentationState";
 import { decodeHtmlEntities } from "../utils/htmlEntities";
+import {
+  SweepLedger,
+  commitSweepWrites,
+  formatSweepSummary,
+  persistSweepSummary,
+  type PlannedFileWrite,
+} from "./invoiceDirectionSweepReport";
 
 const db = getFirestore();
 
 // === Configuration ===
 
 const CONFIG = {
-  /** Maximum files to process per update */
-  MAX_FILES_PER_UPDATE: 500,
+  /** Files read per query page while scanning the candidate set. */
+  PAGE_SIZE: 500,
+  /**
+   * Hard ceiling on Files read in one run. Reaching it does not truncate the
+   * report: the run records `scanCeilingReached` and reports itself
+   * incomplete, because the Files past it were never candidates at all.
+   */
+  MAX_FILES_SCANNED: 20000,
+  /** Documents per batched commit. */
+  MAX_BATCH_SIZE: 500,
   /** Region for the function */
   REGION: "europe-west1",
 };
@@ -371,6 +391,141 @@ async function getSourceIbans(userId: string): Promise<string[]> {
   }
 }
 
+// === Invoice Direction Sweep ===
+
+/**
+ * Re-derive one File, and either plan its write or record why it has none.
+ *
+ * Every path out of here records exactly one outcome, the throwing one
+ * included: before #158 a derivation that threw took the rest of the run with
+ * it, and the Files it never reached kept their pre-run `updatedAt` with
+ * nothing anywhere saying so.
+ */
+function planFileSweep(
+  fileDoc: FirebaseFirestore.QueryDocumentSnapshot,
+  userData: UserData,
+  sourceIbans: string[],
+  ledger: SweepLedger,
+  planned: PlannedFileWrite[]
+): void {
+  const fileData = fileDoc.data();
+
+  // Extraction has not finished, so extractedIssuer/extractedRecipient are not
+  // facts yet. This used to be a `where` clause, which made such a File
+  // invisible to the run rather than skipped by it.
+  if (fileData.extractionComplete !== true) {
+    ledger.record(fileDoc.id, "extraction-incomplete");
+    return;
+  }
+
+  // isNotInvoice can be false, null or undefined; only an explicit true means
+  // the user has said this document carries no direction.
+  if (fileData.isNotInvoice === true) {
+    ledger.record(fileDoc.id, "not-an-invoice");
+    return;
+  }
+
+  const issuer = fileData.extractedIssuer as ExtractedEntity | null;
+  const recipient = fileData.extractedRecipient as ExtractedEntity | null;
+
+  // Nothing was read off either side of the document, so there is nothing to
+  // compare the identity against.
+  if (!issuer && !recipient) {
+    ledger.record(fileDoc.id, "no-entities");
+    return;
+  }
+
+  try {
+    const result = determineCounterparty(issuer, recipient, userData, sourceIbans);
+
+    // #233: extractedIssuer/extractedRecipient hold the RAW extraction, so a
+    // name that arrived as "AL&amp;FA Taxi KG" is still encoded here.
+    // extractionCore decodes on the way in and this sweep rewrites the same
+    // field, so it has to decode identically — otherwise editing identity
+    // data writes the entity back and partner matching, which re-runs
+    // below, splits the company into an encoded and a decoded Partner.
+    const counterpartyName = result.counterparty?.name
+      ? decodeHtmlEntities(result.counterparty.name)
+      : result.counterparty?.name;
+
+    // Check if anything changed
+    const currentDirection = fileData.invoiceDirection as InvoiceDirection;
+    const currentMatchedAccount = fileData.matchedUserAccount as "issuer" | "recipient" | null;
+    const currentPartner = fileData.extractedPartner as string | null;
+    const currentRecipientIdentity = fileData.recipientIdentityMatch as RecipientIdentity | undefined;
+
+    if (
+      result.invoiceDirection === currentDirection &&
+      result.matchedUserAccount === currentMatchedAccount &&
+      result.recipientIdentityMatch === currentRecipientIdentity &&
+      counterpartyName === currentPartner
+    ) {
+      ledger.record(fileDoc.id, "already-correct", { direction: result.invoiceDirection });
+      return;
+    }
+
+    // Update file
+    const updateData: Record<string, unknown> = {
+      invoiceDirection: result.invoiceDirection,
+      matchedUserAccount: result.matchedUserAccount,
+      recipientIdentityMatch: result.recipientIdentityMatch,
+      updatedAt: Timestamp.now(),
+    };
+
+    // Update partner fields from counterparty. Copying them raw is what made
+    // #158 silent: an entity that carries only a name put `undefined` in the
+    // payload, Firestore refuses an undefined value, and the refusal took
+    // every File batched behind it down with it.
+    //
+    // The absent ones are written as null rather than left out, because these
+    // four fields mirror whoever the counterparty currently is, and this sweep
+    // is what re-points them when the identity moves. Leaving one out would
+    // keep the PREVIOUS counterparty's VAT ID or IBAN on the File, and partner
+    // matching — which the block below re-arms — matches on both.
+    if (result.counterparty) {
+      updateData.extractedPartner = counterpartyName ?? null;
+      updateData.extractedVatId = result.counterparty.vatId ?? null;
+      updateData.extractedIban = result.counterparty.iban ?? null;
+      updateData.extractedAddress = result.counterparty.address ?? null;
+      updateData.extractedWebsite = result.counterparty.website ?? null;
+    }
+
+    // If extractedPartner changed, reset partner matching so it re-runs
+    if (counterpartyName !== currentPartner) {
+      updateData.partnerMatchComplete = false;
+      updateData.partnerId = null;
+      updateData.partnerMatchedBy = null;
+      updateData.partnerMatchConfidence = null;
+      updateData.partnerSuggestions = [];
+    }
+
+    // #229 / #104: the § 11 classification is stored, not recomputed at read
+    // time, and both facts this sweep moves feed it — whether the user
+    // issued the document, and whether its recipient is the user. Leaving it
+    // behind would mean a file that has just become somebody else's invoice
+    // keeps saying it is the user's Vorsteuer until it is next extracted.
+    const reclassified = { ...fileData, ...updateData };
+    Object.assign(updateData, documentTypeFields(classifyFileRecord(reclassified)));
+
+    const affectedTransactionIds =
+      fileData.documentType !== updateData.documentType
+        ? ((fileData.transactionIds as string[] | undefined) ?? [])
+        : [];
+
+    planned.push({
+      ref: fileDoc.ref,
+      fileId: fileDoc.id,
+      updates: updateData,
+      direction: result.invoiceDirection,
+      affectedTransactionIds,
+    });
+  } catch (error) {
+    ledger.record(fileDoc.id, "evaluation-failed", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 // === Main Function ===
 
 export const onUserDataUpdate = onDocumentUpdated(
@@ -415,141 +570,72 @@ export const onUserDataUpdate = onDocumentUpdated(
     const sourceIbans = await getSourceIbans(userId);
     console.log(`[onUserDataUpdate] Found ${sourceIbans.length} source IBANs`);
 
-    // Find files that have extracted entities
-    // Note: We query all extracted files and filter isNotInvoice client-side
-    // because isNotInvoice can be false, null, or undefined (undefined = not an invoice marker)
-    const filesSnapshot = await db
-      .collection("files")
-      .where("userId", "==", userId)
-      .where("extractionComplete", "==", true)
-      .limit(CONFIG.MAX_FILES_PER_UPDATE)
-      .get();
+    // The candidate set is every File the user owns, paged rather than capped.
+    // It used to be a `.limit()` over an unordered query with the extraction
+    // and isNotInvoice filters folded in, which meant three different ways for
+    // a File to be absent from the run with nothing recording that it was
+    // (#158). Both filters are still applied — they are now named skip
+    // reasons, so a File that is not swept says why.
+    const runId = db.collection(`users/${userId}/directionSweeps`).doc().id;
+    const ledger = new SweepLedger();
+    const planned: PlannedFileWrite[] = [];
 
-    // Filter out files marked as not invoice (client-side filter)
-    const invoiceFiles = filesSnapshot.docs.filter((doc) => {
-      const data = doc.data();
-      return data.isNotInvoice !== true; // Include false, null, undefined
-    });
+    let scanned = 0;
+    let cursor: FirebaseFirestore.QueryDocumentSnapshot | null = null;
 
-    console.log(`[onUserDataUpdate] Found ${invoiceFiles.length} invoice files to check (${filesSnapshot.size - invoiceFiles.length} non-invoices skipped)`);
+    for (;;) {
+      let query = db
+        .collection("files")
+        .where("userId", "==", userId)
+        .orderBy("__name__")
+        .limit(CONFIG.PAGE_SIZE);
+      if (cursor) query = query.startAfter(cursor);
 
-    let updatedCount = 0;
-    let skippedCount = 0;
-    /** Transactions whose documentation state a reclassification just moved. */
-    const affectedTransactionIds = new Set<string>();
+      const snapshot = await query.get();
+      if (snapshot.empty) break;
 
-    // Process files in batches
-    const batch = db.batch();
-    const MAX_BATCH_SIZE = 500;
-    let batchCount = 0;
-
-    for (const fileDoc of invoiceFiles) {
-      const fileData = fileDoc.data();
-
-      // Skip files without extracted entities (can't re-calculate)
-      const issuer = fileData.extractedIssuer as ExtractedEntity | null;
-      const recipient = fileData.extractedRecipient as ExtractedEntity | null;
-
-      if (!issuer && !recipient) {
-        skippedCount++;
-        continue;
+      for (const fileDoc of snapshot.docs) {
+        scanned++;
+        ledger.candidate();
+        planFileSweep(fileDoc, userData, sourceIbans, ledger, planned);
       }
 
-      // Determine new counterparty
-      const result = determineCounterparty(issuer, recipient, userData, sourceIbans);
-
-      // #233: extractedIssuer/extractedRecipient hold the RAW extraction, so a
-      // name that arrived as "AL&amp;FA Taxi KG" is still encoded here.
-      // extractionCore decodes on the way in and this sweep rewrites the same
-      // field, so it has to decode identically — otherwise editing identity
-      // data writes the entity back and partner matching, which re-runs
-      // below, splits the company into an encoded and a decoded Partner.
-      const counterpartyName = result.counterparty?.name
-        ? decodeHtmlEntities(result.counterparty.name)
-        : result.counterparty?.name;
-
-      // Check if anything changed
-      const currentDirection = fileData.invoiceDirection as InvoiceDirection;
-      const currentMatchedAccount = fileData.matchedUserAccount as "issuer" | "recipient" | null;
-      const currentPartner = fileData.extractedPartner as string | null;
-      const currentRecipientIdentity = fileData.recipientIdentityMatch as RecipientIdentity | undefined;
-
-      if (
-        result.invoiceDirection === currentDirection &&
-        result.matchedUserAccount === currentMatchedAccount &&
-        result.recipientIdentityMatch === currentRecipientIdentity &&
-        counterpartyName === currentPartner
-      ) {
-        skippedCount++;
-        continue;
+      if (snapshot.size < CONFIG.PAGE_SIZE) break;
+      if (scanned >= CONFIG.MAX_FILES_SCANNED) {
+        // Stop, and say so. The Files past this point are not in the candidate
+        // set at all, so the run cannot claim to have covered the corpus.
+        ledger.ceilingReached();
+        break;
       }
+      cursor = snapshot.docs[snapshot.docs.length - 1];
+    }
 
-      // Update file
-      const updateData: Record<string, unknown> = {
-        invoiceDirection: result.invoiceDirection,
-        matchedUserAccount: result.matchedUserAccount,
-        recipientIdentityMatch: result.recipientIdentityMatch,
-        updatedAt: Timestamp.now(),
-      };
-
-      // Update partner fields from counterparty
-      if (result.counterparty) {
-        updateData.extractedPartner = counterpartyName;
-        updateData.extractedVatId = result.counterparty.vatId;
-        updateData.extractedIban = result.counterparty.iban;
-        updateData.extractedAddress = result.counterparty.address;
-        updateData.extractedWebsite = result.counterparty.website;
-      }
-
-      // If extractedPartner changed, reset partner matching so it re-runs
-      if (counterpartyName !== currentPartner) {
-        updateData.partnerMatchComplete = false;
-        updateData.partnerId = null;
-        updateData.partnerMatchedBy = null;
-        updateData.partnerMatchConfidence = null;
-        updateData.partnerSuggestions = [];
-      }
-
-      // #229 / #104: the § 11 classification is stored, not recomputed at read
-      // time, and both facts this sweep moves feed it — whether the user
-      // issued the document, and whether its recipient is the user. Leaving it
-      // behind would mean a file that has just become somebody else's invoice
-      // keeps saying it is the user's Vorsteuer until it is next extracted.
-      const reclassified = { ...fileData, ...updateData };
-      Object.assign(updateData, documentTypeFields(classifyFileRecord(reclassified)));
-
-      if (fileData.documentType !== updateData.documentType) {
-        for (const transactionId of (fileData.transactionIds as string[] | undefined) ?? []) {
-          affectedTransactionIds.add(transactionId);
-        }
-      }
-
-      batch.update(fileDoc.ref, updateData);
-      updatedCount++;
-      batchCount++;
-
-      // Commit batch if full
-      if (batchCount >= MAX_BATCH_SIZE) {
+    const affectedTransactionIds = await commitSweepWrites(
+      planned,
+      ledger,
+      async (chunk) => {
+        const batch = db.batch();
+        for (const write of chunk) batch.update(write.ref, write.updates);
         await batch.commit();
-        batchCount = 0;
-      }
-    }
+      },
+      CONFIG.MAX_BATCH_SIZE
+    );
 
-    // Commit remaining updates
-    if (batchCount > 0) {
-      await batch.commit();
-    }
+    // Recorded before the propagation below, not after: the books are closed
+    // once the writes have had their verdicts, and a throw further down must
+    // not be one more way for a run that moved Files to leave no record of it
+    // (#158).
+    const summary = ledger.summarise(runId, userId);
+    console.log(formatSweepSummary(summary));
+    await persistSweepSummary(summary);
 
     // A file's classification changing is invisible to onTransactionUpdate —
     // nothing on the transaction document moved — so the propagation happens
-    // here, the same way the extraction path does it (#104).
+    // here, the same way the extraction path does it (#104). Only writes that
+    // actually landed are propagated; a rejected one moved nothing.
     if (affectedTransactionIds.size > 0) {
       await syncDocumentationStateForTransactions(db, [...affectedTransactionIds]);
     }
-
-    console.log(
-      `[onUserDataUpdate] Complete: updated ${updatedCount} files, skipped ${skippedCount} files`
-    );
   }
 );
 

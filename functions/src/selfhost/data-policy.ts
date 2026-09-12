@@ -95,6 +95,7 @@ export const SUBTREE_POLICIES: Readonly<Record<string, CollectionPolicy>> = {
   workerRequests: { read: "authed", create: "authed", update: "authed", delete: "authed" },
   mfaSettings: { read: "authed", create: "authed", update: "authed", delete: "authed" },
   workerRuns: { read: "authed", create: "none", update: "none", delete: "none" },
+  directionSweeps: { read: "authed", create: "none", update: "none", delete: "none" },
   passkeys: { read: "authed", create: "none", update: "none", delete: "none" },
   backupCodes: denied,
   system: denied, // learningQueue etc. — server-only
