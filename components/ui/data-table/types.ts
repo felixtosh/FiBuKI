@@ -49,6 +49,11 @@ export interface ResizableDataTableProps<TData extends { id: string }> {
   data?: TData[];
   /** Sectioned data with headers (use this OR data, not both) */
   sections?: DataTableSection<TData>[];
+  /**
+   * Safe to pass inline: the table routes every row click through its own
+   * `useLatestCallback` handler, so a memoised row never calls a previous
+   * render's copy of this.
+   */
   onRowClick?: (row: TData) => void;
   selectedRowId?: string | null;
   defaultColumnSizes: Record<string, number>;
@@ -74,7 +79,7 @@ export interface ResizableDataTableProps<TData extends { id: string }> {
   enableMultiSelect?: boolean;
   /** Set of currently selected row IDs (for multi-select mode) */
   selectedRowIds?: Set<string>;
-  /** Callback when selection changes in multi-select mode */
+  /** Callback when selection changes in multi-select mode. Safe to pass inline, for the same reason as `onRowClick`. */
   onSelectionChange?: (selectedIds: Set<string>, meta: SelectionChangeMeta) => void;
   /**
    * Callback with the row ids in the order they are displayed (the data the
@@ -93,6 +98,12 @@ export interface VirtualRowProps<TData extends { id: string }> {
   isSelected: boolean;
   /** True if this is the primary/anchor selection (stronger highlight) */
   isPrimarySelected?: boolean;
+  /**
+   * Held across renders: the memo comparator ignores this prop on purpose, so a
+   * row that skips a render keeps the handler it last painted with. It must be
+   * identity-stable and read current state — see the comparator in
+   * virtual-row.tsx.
+   */
   onClick: (row: TData, modifiers: RowClickModifiers) => void;
   virtualStart: number;
   virtualSize: number;

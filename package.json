@@ -26,6 +26,7 @@
     "test:file-kind": "node --test tests/file-kind.test.mjs",
     "test:delete-confirmation": "node --test tests/delete-confirmation.test.mjs",
     "test:merge-preview": "node --test tests/merge-preview.test.mjs",
+    "test:latest-callback": "node --test tests/latest-callback.test.mjs",
     "test:files-upload-pipeline": "node --test tests/files-upload-pipeline.test.mjs",
     "test:node": "node --test tests/",
     "setup": "bash scripts/setup.sh",
