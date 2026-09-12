@@ -328,6 +328,45 @@ describe("runTransactionMatching: a same-day remainder match connects itself (#2
     expect(h.state.fileUpdates.some((u) => u.transactionIds)).toBe(false);
   });
 
+  it("never connects a file whose amount does not close the remainder", async () => {
+    // Same day, same partner, and the bank line prints the invoice number:
+    // 37 + 25 + 50 reaches 100% with no amount points at all. A 50,00 document
+    // against a 214,20 Remainder explains none of what is open, so it is not
+    // the split this permission exists for and stays a suggestion.
+    h.state.transactions = [
+      tx("t-split", {
+        fileIds: ["f-existing"],
+        description: "RECHNUNG 4711002356 HETZNER",
+      }),
+    ];
+
+    await runTransactionMatching(
+      "f-candidate",
+      candidate({ extractedAmount: 5000, extractedInvoiceNumber: "4711002356" })
+    );
+
+    expect(suggestionsWritten()[0].confidence).toBeGreaterThanOrEqual(85);
+    expect(connectionsCreated()).toEqual([]);
+  });
+
+  it("connects one that closes the remainder within the tolerance, not only an exact hit", async () => {
+    // 10,00 line carrying a 4,20 receipt: 5,80 open, and a 5,00 document from
+    // the same day. Eighty cents is the rounding-or-Trinkgeld gap
+    // REMAINDER_CLOSE_TOLERANCE forgives, so this is a closed Remainder.
+    h.state.transactions = [tx("t-split", { amount: -1000, fileIds: ["f-existing"] })];
+    h.state.files.set("f-existing", {
+      userId: USER,
+      extractedAmount: 420,
+      extractedCurrency: "EUR",
+      extractedDate: Timestamp.fromDate(DATE),
+    });
+
+    await runTransactionMatching("f-candidate", candidate({ extractedAmount: 500 }));
+
+    expect(connectedTransactionIds()).toEqual(["t-split"]);
+    expect(connectionsCreated()[0].data.autoConnectReason).toBe("remainder_same_day");
+  });
+
   it("never connects a file with no extracted date", async () => {
     // A part-invoice whose number the bank line prints: 40 + 50 clears the
     // threshold with no date at all. Unknown is not same-day, so it stays a
