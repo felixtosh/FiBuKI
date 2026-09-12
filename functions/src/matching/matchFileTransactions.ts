@@ -38,8 +38,9 @@ import {
   derivePartnerAliases,
   deriveScoringWeights,
 } from "./transactionScoring";
-import { deriveCoverage } from "./coverage";
-import { loadDocumentedAmounts } from "./documentedAmounts";
+import { deriveCoverage, isRemainderClosed, filePaymentTotal } from "./coverage";
+import { loadConnectedFiles, documentedAmountsOf } from "./documentedAmounts";
+import { isSameDayEvidence, hasUndocumentedRival } from "./remainderAutoConnect";
 import { readDismissedTransactionIds } from "./dismissedTransactions";
 import { isFileRejected } from "./rejectedFiles";
 import { ResolvedEffectiveCycle } from "./billingCycle";
@@ -547,10 +548,12 @@ export async function runTransactionMatching(
       `${rejectedCount} rejected this file, ${dismissedCount} dismissed by this file)`
   );
 
-  // What the Files already sitting on each candidate explain (#239). Only the
-  // candidates that hold Files cost a read; the rest are scored against their
-  // full amount exactly as before.
-  const documentedAmounts = await loadDocumentedAmounts(eligibleTransactions.map((t) => t.id), fileId);
+  // The Files already sitting on each candidate (#239). Only the candidates
+  // that hold Files cost a read; the rest are scored against their full amount
+  // exactly as before. The Files themselves, not just their total, because
+  // #242's same-day rule reads their extracted dates off the same read.
+  const connectedFiles = await loadConnectedFiles(eligibleTransactions.map((t) => t.id), fileId);
+  const documentedAmounts = documentedAmountsOf(connectedFiles);
   if (documentedAmounts.size > 0) {
     console.log(
       `[TxMatch] ${documentedAmounts.size} candidate(s) already hold files — scoring those against their remainder`
@@ -667,6 +670,16 @@ export async function runTransactionMatching(
   // Filter out auto-matches for transactions that are already "covered"
   // This prevents over-matching (e.g., 6 monthly invoices all matching one transaction)
   const autoMatches: typeof potentialAutoMatches = [];
+  // The Remainder Matches among them, so the Connection each writes can say so
+  // (#242). A wrong same-day auto-connect has to be findable afterwards.
+  const sameDayRemainderMatches = new Set<string>();
+  const holdsFiles = (transactionId: string) => connectedFiles.has(transactionId);
+  // What the bank was charged for this File, the figure a Remainder is closed
+  // with (#172's Trinkgeld included, as the scorer counts it).
+  const candidatePayment = filePaymentTotal(
+    fileMatchingData.extractedAmount,
+    fileMatchingData.extractedTipAmount
+  );
   for (const match of potentialAutoMatches) {
     const coverage = deriveCoverage(
       match.preview.amount,
@@ -679,14 +692,44 @@ export async function runTransactionMatching(
         `${(coverage.ratio * 100).toFixed(0)}%)`
       );
     } else if (isRemainderMatch(match)) {
-      // #239: a Remainder Match is a suggestion, whatever its Confidence.
-      // It says "this File explains what is left", which is a claim about a
-      // split the user has not confirmed — #242 decides the one case (same
-      // day) where it may connect itself.
-      console.log(
-        `[TxMatch] Suggestion only for ${match.transactionId} at ${match.confidence}% ` +
-        `(scored against its remainder, not its full amount)`
+      // #239 left every Remainder Match a suggestion: it says "this File
+      // explains what is left", which is a claim about a split the user has
+      // not confirmed. #242 opens the one case where it may connect itself —
+      // the documents are from the same day, the File closes what is open,
+      // and no Transaction holding nothing wants this File at least as much.
+      // See ADR-0008.
+      const connected = connectedFiles.get(match.transactionId) ?? [];
+      const sameDay = isSameDayEvidence(
+        fileData.extractedDate,
+        connected.map((f) => f.extractedDate)
       );
+      // `isRemainderMatch` only says the pair was JUDGED against the
+      // Remainder — one found wanting is a Remainder Match too, and a
+      // Confidence built out of date, partner and an invoice number alone
+      // would otherwise connect a File that explains none of what is open.
+      const closes =
+        candidatePayment != null &&
+        isRemainderClosed(coverage.remainder - Math.abs(candidatePayment));
+      const rival =
+        sameDay && closes && hasUndocumentedRival(match, allScores, holdsFiles);
+
+      if (sameDay && closes && !rival) {
+        sameDayRemainderMatches.add(match.transactionId);
+        autoMatches.push(match);
+        console.log(
+          `[TxMatch] Remainder auto-connect for ${match.transactionId} at ${match.confidence}% ` +
+          `(closes ${(coverage.remainder / 100).toFixed(2)}, same day as the files already on it)`
+        );
+      } else {
+        let refusal: string;
+        if (!sameDay) refusal = "not same-day evidence";
+        else if (!closes) refusal = "does not close the remainder";
+        else refusal = "an undocumented transaction scores at least as well";
+        console.log(
+          `[TxMatch] Suggestion only for ${match.transactionId} at ${match.confidence}% ` +
+          `(scored against its remainder, not its full amount; ${refusal})`
+        );
+      }
     } else {
       autoMatches.push(match);
     }
@@ -716,6 +759,11 @@ export async function runTransactionMatching(
       matchSources: match.matchSources,
       matchConfidence: match.confidence,
       scoreBreakdown: match.breakdown,
+      // #242: only a same-day Remainder auto-connect carries this. A
+      // full-amount auto-connect writes the record it always wrote.
+      ...(sameDayRemainderMatches.has(match.transactionId)
+        ? { autoConnectReason: "remainder_same_day" as const }
+        : {}),
       createdAt: Timestamp.now(),
     });
 

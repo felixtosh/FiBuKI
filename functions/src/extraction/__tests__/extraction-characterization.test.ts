@@ -194,6 +194,60 @@ describe("characterization: geminiParser.parseWithGemini", () => {
     expect(res2.extracted.issuer?.website).toBeNull();
   });
 
+  it("#299: decodes character references in issuer, recipient and the flat partner name", async () => {
+    // Entity normalisation is the one place the stored counterparty name is
+    // shaped, so extractedIssuer/extractedRecipient land decoded and every
+    // consumer — identity name-lane matching above all — reads one spelling.
+    q({
+      extracted: {
+        issuer: { name: "AL&amp;FA Taxi KG" },
+        recipient: { name: "M&#38;S Handels GmbH" },
+      },
+    });
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.issuer?.name).toBe("AL&FA Taxi KG");
+    expect(res.extracted.recipient?.name).toBe("M&S Handels GmbH");
+    // The flat legacy field is shaped here too, so it never carries an entity
+    // into extractedPartner on a response with no issuer block.
+    expect(res.extracted.partner).toBe("AL&FA Taxi KG");
+
+    q({ extracted: { partner: "Q &amp; A Solutions" } });
+    const res2 = await parseWithGemini(BUF, "application/pdf");
+    expect(res2.extracted.partner).toBe("Q & A Solutions");
+  });
+
+  it("#299: a name with no character reference in it, bare '&' included, is byte-identical", async () => {
+    q({
+      extracted: {
+        issuer: { name: "Q & A Solutions" },
+        recipient: { name: "AT&T" },
+        partner: "M & S",
+      },
+    });
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.issuer?.name).toBe("Q & A Solutions");
+    expect(res.extracted.recipient?.name).toBe("AT&T");
+    // issuer wins over the flat field, so assert the flat one on its own.
+    q({ extracted: { partner: "M & S" } });
+    const res2 = await parseWithGemini(BUF, "application/pdf");
+    expect(res2.extracted.partner).toBe("M & S");
+  });
+
+  it("#299: issuer_raw keeps the document's own characters, undecoded", async () => {
+    // The raw block is searched verbatim to highlight the PDF, so decoding it
+    // would make the highlight miss the very characters it is looking for.
+    q({
+      extracted: {
+        issuer: { name: "AL&amp;FA Taxi KG" },
+        issuer_raw: { name: "AL&amp;FA Taxi KG" },
+      },
+    });
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.issuer?.name).toBe("AL&FA Taxi KG");
+    expect(res.extractedRaw?.issuer?.name).toBe("AL&amp;FA Taxi KG");
+    expect(res.extractedRaw?.partner).toBe("AL&amp;FA Taxi KG");
+  });
+
   it("legacy flat fields are used only when no issuer entity exists; issuer wins otherwise", async () => {
     q({
       extracted: {
@@ -493,6 +547,115 @@ describe("characterization: geminiParser.parseWithGemini", () => {
     const res = await parseWithGemini(BUF, "application/pdf");
     expect(res.extracted.address).toBe("caf\\uZZZZ");
     expect(res.extracted.amount).toBe(9);
+  });
+
+  // -------------------------------------------------------------------------
+  // #283: a backslash of DATA immediately before a closing quote
+  //
+  // `\"` at the end of a value — a Windows path with a trailing separator — is
+  // byte-for-byte an escaped quote, so #231 left it alone, the walker never saw
+  // the string end, and extraction failed loudly. The reading is now settled by
+  // what FOLLOWS the quote; see `quoteClosesString`.
+  // -------------------------------------------------------------------------
+
+  it("rescues a value ending in a backslash when the object closes after it (#283)", async () => {
+    q('{"extracted": {"address": "C:\\Users\\"}}');
+    const res = await parseWithGemini(BUF, "application/pdf");
+    // One literal trailing backslash, not an escaped quote swallowing the rest.
+    expect(res.extracted.address).toBe("C:\\Users\\");
+  });
+
+  it("rescues it when another key follows the value (#283)", async () => {
+    q('{"extracted": {"address": "C:\\Users\\", "amount": 500}}');
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.address).toBe("C:\\Users\\");
+    expect(res.extracted.amount).toBe(500);
+  });
+
+  it("rescues it before a `]`, a `:` and the end of the response (#283)", async () => {
+    // Closing a bracket: the array is not an extracted field, so what is pinned
+    // is that the response parses at all and its siblings survive.
+    q('{"extracted": {"paths": ["C:\\Users\\"], "amount": 11}}');
+    expect((await parseWithGemini(BUF, "application/pdf")).extracted.amount).toBe(11);
+
+    // A KEY ending in a backslash, so the next structural character is `:`.
+    q('{"extracted": {"C:\\Users\\": 1, "amount": 22}}');
+    expect((await parseWithGemini(BUF, "application/pdf")).extracted.amount).toBe(22);
+
+    // Nothing at all follows the quote; the brace repair closes the object.
+    q('{"extracted": {"amount": 33, "address": "C:\\Users\\"');
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.amount).toBe(33);
+    expect(res.extracted.address).toBe("C:\\Users\\");
+  });
+
+  it("leaves a genuine escaped quote mid-string untouched (#283)", async () => {
+    // Forced down the repair path by the invalid escape in `invoiceNumber`: the
+    // quotes are followed by ordinary text, so neither closes the string.
+    q(
+      '{"extracted": {"invoiceNumber": "bad\\zescape", ' +
+        '"address": "he said \\"hi\\" once"}}',
+    );
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.address).toBe('he said "hi" once');
+    expect(res.extracted.invoiceNumber).toBe("bad\\zescape");
+  });
+
+  it("leaves an escaped quote that ENDS a value untouched (#283)", async () => {
+    // The boundary the lookahead sits on: here the `\"` is followed by the real
+    // closing quote, which is neither structural nor a token start, so the
+    // string runs on as it should. A rescue here would eat the rest of the
+    // response. The second case is the same `\"` before a `,` that #231 pins,
+    // with the next token an escaped quote rather than a key.
+    q(
+      '{"extracted": {"invoiceNumber": "bad\\zescape", ' +
+        '"address": "he said \\"hi\\""}}',
+    );
+    expect((await parseWithGemini(BUF, "application/pdf")).extracted.address).toBe(
+      'he said "hi"',
+    );
+
+    q(
+      '{"extracted": {"invoiceNumber": "bad\\zescape", ' +
+        '"address": "A\\", \\"B", "amount": 5}}',
+    );
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.address).toBe('A", "B');
+    expect(res.extracted.amount).toBe(5);
+  });
+
+  it("does not re-double a correctly escaped backslash before the close (#283)", async () => {
+    // `\\"` is the pair the lookahead must never split: the first backslash
+    // escapes the second, and only then does the quote close. Reading the
+    // second one as a data backslash would double it again and store TWO
+    // literal backslashes — a corruption that still parses, so nothing else
+    // would catch it. Nothing was guessed at either, so #275 stays quiet.
+    q('{"extracted": {"invoiceNumber": "bad\\zescape", "address": "C:\\\\temp\\\\"}}');
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.address).toBe("C:\\temp\\");
+    expect(res.repairAmbiguousFields).toEqual([]);
+  });
+
+  it("names the rescued field through #275's signal, with no second flag (#283)", async () => {
+    // The lookahead is a guess like the `\t` one, so it rides the same channel.
+    q('{"extracted": {"address": "C:\\Users\\", "amount": 500}}');
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.repairAmbiguousFields).toEqual(["address"]);
+  });
+
+  // characterization: the input the heuristic is wrong for, pinned so the trade
+  // is visible. Prose carrying an escaped quote followed by a structural
+  // character AND something that reads as a JSON token is taken for the end of
+  // the string. It fails loudly rather than storing a corrupted value — and it
+  // only arises once some OTHER defect has forced the repair pass to run.
+  it("mis-reads an escaped quote followed by a comma and a number (#283)", async () => {
+    q(
+      '{"extracted": {"invoiceNumber": "bad\\zescape", ' +
+        '"address": "he said \\"hi\\", 5 times"}}',
+    );
+    await expect(parseWithGemini(BUF, "application/pdf")).rejects.toThrow(
+      /JSON parse failed even after repair/,
+    );
   });
 
   // -------------------------------------------------------------------------
