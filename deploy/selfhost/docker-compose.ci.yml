@@ -24,7 +24,14 @@ services:
       retries: 20
 
   minio:
-    image: minio/minio:latest
+    # Pinned, and pulled from MinIO's own registry: `minio/minio:latest` on
+    # Docker Hub stopped resolving on 2026-09-12 ("pull access denied ...
+    # repository does not exist") and took every PR's self-host job down with
+    # it, before a single test ran. A floating tag is what made an upstream
+    # registry change an outage here, so this is a release tag rather than
+    # `latest`. Multi-arch (amd64 runner + arm64 locally); carries the `mc`
+    # the healthcheck below calls.
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
     command: server /data
     environment:
       MINIO_ROOT_USER: fibuki-ci

@@ -26,7 +26,10 @@ export const DATE_PARSERS: DateParser[] = [
     pattern: /^\d{4}-\d{2}-\d{2}$/,
     format: "yyyy-MM-dd",
   },
-  // German formats
+  // Dotted formats — the same day-first/month-first, four-/two-digit-year
+  // matrix the slash and dashed formats carry. A dotted column that proves
+  // month-first had no format to be offered and could not be imported, and
+  // `de` is what a column falls back to when the user chooses nothing (#303).
   {
     id: "de",
     name: "German (DD.MM.YYYY)",
@@ -34,10 +37,22 @@ export const DATE_PARSERS: DateParser[] = [
     format: "dd.MM.yyyy",
   },
   {
+    id: "de-mdy",
+    name: "Dotted US (MM.DD.YYYY)",
+    pattern: /^\d{1,2}\.\d{1,2}\.\d{4}$/,
+    format: "MM.dd.yyyy",
+  },
+  {
     id: "de-short",
     name: "German Short (DD.MM.YY)",
     pattern: /^\d{1,2}\.\d{1,2}\.\d{2}$/,
     format: "dd.MM.yy",
+  },
+  {
+    id: "de-mdy-short",
+    name: "Dotted US Short (MM.DD.YY)",
+    pattern: /^\d{1,2}\.\d{1,2}\.\d{2}$/,
+    format: "MM.dd.yy",
   },
   // US formats
   {
