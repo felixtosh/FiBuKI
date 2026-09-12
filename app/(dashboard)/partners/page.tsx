@@ -2,15 +2,18 @@
 
 import { Suspense, useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { doc, getDoc } from "firebase/firestore";
+import { db } from "@/lib/firebase/config";
 import { PartnerTable } from "@/components/partners/partner-table";
 import { PartnerDetailPanel } from "@/components/partners/partner-detail-panel";
+import { MergedPartnerNotice } from "@/components/partners/merged-partner-notice";
 import { usePartners } from "@/hooks/use-partners";
 import { Skeleton } from "@/components/ui/skeleton";
 import { UserPartner, PartnerFilters } from "@/types/partner";
 import { parsePartnerFiltersFromUrl, buildPartnerFilterUrl } from "@/lib/filters/partner-url-params";
 import { cn } from "@/lib/utils";
 import { usePageTitle } from "@/hooks/use-page-title";
-import { SmartFeatureGuard } from "@/components/auth";
+import { SmartFeatureGuard, useAuth } from "@/components/auth";
 
 const PANEL_WIDTH_KEY = "partnerDetailPanelWidth";
 const DEFAULT_PANEL_WIDTH = 480;
@@ -45,6 +48,7 @@ function PartnerTableFallback() {
 function PartnersContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { userId } = useAuth();
 
   const { partners, loading } = usePartners();
 
@@ -88,6 +92,41 @@ function PartnersContent() {
 
   // Set page title
   usePageTitle("Partners", selectedPartner?.name);
+
+  // An old link may still point at a Partner that has since been merged away.
+  // The active-only query above never returns it, so a stale id has to be
+  // looked up on its own to tell "merged" apart from "never existed" (#263 AC7).
+  const [mergedAwaySurvivorId, setMergedAwaySurvivorId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!selectedId || loading || selectedPartner || !userId) {
+      // Deferred so this reset runs event-handler-style, not synchronously
+      // from within the effect body.
+      queueMicrotask(() => setMergedAwaySurvivorId(null));
+      return;
+    }
+
+    let cancelled = false;
+    getDoc(doc(db, "partners", selectedId))
+      .then((snapshot) => {
+        if (cancelled) return;
+        if (!snapshot.exists()) {
+          setMergedAwaySurvivorId(null);
+          return;
+        }
+        const data = snapshot.data();
+        setMergedAwaySurvivorId(
+          data.userId === userId && typeof data.mergedInto === "string" ? data.mergedInto : null
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setMergedAwaySurvivorId(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId, loading, selectedPartner, userId]);
 
   // Load panel width from localStorage
   useEffect(() => {
@@ -151,16 +190,28 @@ function PartnersContent() {
     router.push(newUrl, { scroll: false });
   }, [router, searchParams]);
 
+  // Open a partner by id (used to jump from a Merged Partner to its survivor)
+  const handleOpenPartnerId = useCallback(
+    (partnerId: string) => {
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("id", partnerId);
+      router.push(`/partners?${params.toString()}`, { scroll: false });
+    },
+    [router, searchParams]
+  );
+
   if (loading) {
     return <PartnerTableFallback />;
   }
+
+  const showMergedNotice = !selectedPartner && !!mergedAwaySurvivorId;
 
   return (
     <div className="h-full overflow-hidden">
       {/* Main content - adjusts margin when panel is open */}
       <div
         className="h-full transition-[margin] duration-200 ease-in-out"
-        style={{ marginRight: selectedPartner ? panelWidth : 0 }}
+        style={{ marginRight: selectedPartner || showMergedNotice ? panelWidth : 0 }}
       >
         <PartnerTable
           onSelectPartner={handleSelectPartner}
@@ -173,7 +224,7 @@ function PartnersContent() {
       </div>
 
       {/* Right sidebar - fixed position */}
-      {selectedPartner && (
+      {(selectedPartner || showMergedNotice) && (
         <div
           className="fixed right-0 top-14 bottom-0 z-50 bg-background border-l flex"
           style={{ width: panelWidth }}
@@ -188,10 +239,18 @@ function PartnersContent() {
           />
           {/* Panel content */}
           <div className="flex-1 overflow-hidden detail-panel-container">
-            <PartnerDetailPanel
-              partner={selectedPartner}
-              onClose={handleCloseDetail}
-            />
+            {selectedPartner ? (
+              <PartnerDetailPanel
+                partner={selectedPartner}
+                onClose={handleCloseDetail}
+              />
+            ) : (
+              <MergedPartnerNotice
+                survivorId={mergedAwaySurvivorId!}
+                onOpenSurvivor={handleOpenPartnerId}
+                onClose={handleCloseDetail}
+              />
+            )}
           </div>
         </div>
       )}
