@@ -122,17 +122,24 @@ describe("detectDateFormat", () => {
     expect(detectDateFormat(samples)).toBe("eu-slash-short");
   });
 
-  it("refuses a contradicted leader that has no counterpart", () => {
-    // Dotted month-first (MM.DD.YYYY) is not a format that ships, so there is
-    // nothing to fall back to — naming "de" here would swap every readable row.
+  it("resolves a contradicted leader to its counterpart", () => {
+    // This used to return null: dotted month-first was not a format that
+    // shipped, so a column the evidence proved month-first had nothing to fall
+    // back to and could not be imported at all (#303).
     const samples = ["07.31.2026", "07.03.2026"];
 
-    expect(detectDateFormat(samples)).toBeNull();
+    expect(detectDateFormat(samples)).toBe("de-mdy");
   });
 
-  it("keeps a lone ambiguous leader the column says nothing about", () => {
-    // Only "de" matches this shape, and nothing contradicts it.
-    expect(detectDateFormat(["03.07.2026", "05.06.2026"])).toBe("de");
+  it("refuses a dotted column that proves nothing, as it refuses a slash one", () => {
+    // Every ambiguous numeric format now has a month-first sibling sharing its
+    // pattern, so an ambiguous column is always a tie and detection asks the
+    // user. The two "leader with no counterpart" arms of detectDateFormat are
+    // unreachable from the shipped table and stay only as guards.
+    expect(detectDateFormat(["03.07.2026", "05.06.2026"])).toBe(
+      detectDateFormat(["03/07/2026", "05/06/2026"])
+    );
+    expect(detectDateFormat(["03.07.2026", "05.06.2026"])).toBeNull();
   });
 
   it("refuses a short slash column that proves nothing", () => {
@@ -197,6 +204,8 @@ describe("dayMonthOrderOfFormat", () => {
       "dash-mdy",
       "dash-mdy-short",
       "de",
+      "de-mdy",
+      "de-mdy-short",
       "de-short",
       "eu-slash",
       "eu-slash-short",
@@ -251,14 +260,15 @@ describe("findDateColumnConflict", () => {
     expect(findDateColumnConflict(["31-Jul-2026"], "text-short")).toBeNull();
   });
 
-  it("flags a month-first column against the German default, with nothing to suggest", () => {
-    // "de" is the fallback format, and no MM.DD.YYYY parser ships, so the
-    // caller has to describe the mismatch rather than name a replacement.
+  it("flags a month-first column against the German default and names the swap", () => {
+    // "de" is the fallback format when the user has chosen none, so this is
+    // where a month-first dotted column lands. It used to have no replacement
+    // to name — the guard could only refuse the import (#303).
     const conflict = findDateColumnConflict(["07.31.2026", "07.03.2026"], "de");
 
     expect(conflict?.evidence).toBe("month-first");
     expect(conflict?.expected).toBe("day-first");
-    expect(conflict?.suggestedParserId).toBeNull();
+    expect(conflict?.suggestedParserId).toBe("de-mdy");
   });
 
   it("names a value that contradicts the chosen order", () => {
@@ -565,6 +575,148 @@ describe("dashed dates that are not DD-MM-YYYY", () => {
 
     // What the import does before writing: refuse on a day/month conflict,
     // then parse every row with the chosen format.
+    const column = rows.map((row) => row.Buchungstag);
+    expect(findDateColumnConflict(column, date!.format!)).toBeNull();
+
+    const dates = column.map((value) => parseDate(value, date!.format!));
+
+    expect(dates.map((d) => d?.toISOString().split("T")[0])).toEqual([
+      "2026-01-15",
+      "2026-02-03",
+      "2026-03-28",
+      "2026-12-01",
+    ]);
+  });
+});
+
+/**
+ * A dotted date column that is not day-first (#303).
+ *
+ * `de` (DD.MM.YYYY) and `de-short` had no month-first sibling, so a dotted
+ * column written "01.15.2026" matched no format at all — the same dead end
+ * #167 removed for dashes. It matters more here than there: `de` is the format
+ * a column falls back to when the user has chosen none, so a month-first
+ * dotted column did not merely fail to auto-detect, it read day-first wherever
+ * the guard did not intervene.
+ */
+describe("dotted dates that are not DD.MM.YYYY", () => {
+  const iso = (value: string, parserId: string) => parseDate(value, parserId)?.toISOString();
+
+  it("reads all four dotted shapes as 15 January 2026", () => {
+    expect(iso("15.01.2026", "de")).toBe("2026-01-15T00:00:00.000Z");
+    expect(iso("01.15.2026", "de-mdy")).toBe("2026-01-15T00:00:00.000Z");
+    expect(iso("15.01.26", "de-short")).toBe("2026-01-15T00:00:00.000Z");
+    expect(iso("01.15.26", "de-mdy-short")).toBe("2026-01-15T00:00:00.000Z");
+  });
+
+  it("detects a month-first dotted column instead of failing the import", () => {
+    // The ticket's column, verbatim: no format matched it before.
+    const samples = ["01.15.2026", "03.28.2026", "02.03.2026", "12.01.2026"];
+
+    expect(analyzeDayMonthOrder(samples)).toBe("month-first");
+    expect(looksLikeDateColumn(samples)).toBe(true);
+    expect(detectDateFormat(samples)).toBe("de-mdy");
+    expect(detectDateFormat(["01.15.26", "03.28.26", "02.03.26"])).toBe("de-mdy-short");
+  });
+
+  it("still detects a proven day-first dotted column", () => {
+    expect(detectDateFormat(["15.01.2026", "03.02.2026", "28.03.2026"])).toBe("de");
+    expect(detectDateFormat(["15.01.26", "03.02.26", "28.03.26"])).toBe("de-short");
+  });
+
+  it("gives the guard a dotted format to point at", () => {
+    const fourDigit = findDateColumnConflict(["01.03.2026", "01.15.2026"], "de");
+    expect(fourDigit?.evidence).toBe("month-first");
+    expect(fourDigit?.suggestedParserId).toBe("de-mdy");
+    expect(fourDigit?.offendingValue).toBe("01.15.2026");
+
+    const twoDigit = findDateColumnConflict(["01.15.26"], "de-short");
+    expect(twoDigit?.suggestedParserId).toBe("de-mdy-short");
+
+    // And the other way round, as `us` and `eu-slash` already do.
+    expect(findDateColumnConflict(["15.01.2026"], "de-mdy")?.suggestedParserId).toBe("de");
+  });
+
+  it("leaves an ambiguous dotted column unresolved, as the slash column is", () => {
+    const dotted = ["03.07.2026", "05.06.2026", "01.02.2026"];
+    const slashed = ["03/07/2026", "05/06/2026", "01/02/2026"];
+
+    // A dotted column with no day above 12 used to name `de` unopposed, which
+    // is the silent swap #70 removed from the slash formats. Asserted against
+    // the slash column rather than against null, so the two rows cannot drift.
+    expect(detectDateFormat(dotted)).toBe(detectDateFormat(slashed));
+    expect(detectDateFormat(dotted)).toBeNull();
+    expect(looksLikeDateColumn(dotted)).toBe(true);
+    expect(detectDateFormat(["03.07.26", "05.06.26"])).toBe(
+      detectDateFormat(["03/07/26", "05/06/26"])
+    );
+  });
+
+  it("maps two-digit years to the same century as the slash formats", () => {
+    // date-fns reads "yy" into a 100-year window ending 50 years after the
+    // reference date, so the century flips at (this year + 50) % 100 and not at
+    // a fixed number. Pin the flip itself, and pin that dotted and slash sit on
+    // the same side of it — a file read as 2026 by one format and 1926 by the
+    // other is a whole import filed under the wrong years.
+    const flip = (new Date().getFullYear() + 50) % 100;
+    const twoDigit = (yy: number) => String(yy).padStart(2, "0");
+    const below = twoDigit((flip + 99) % 100);
+    const at = twoDigit(flip);
+    const yearOf = (value: string, parserId: string) =>
+      parseDate(value, parserId)?.getUTCFullYear() ?? null;
+
+    expect(yearOf("15.01.26", "de-short")).toBe(2026);
+    expect(yearOf("01.15.26", "de-mdy-short")).toBe(2026);
+
+    // One below the flip is still this century.
+    expect(yearOf(`01.02.${below}`, "de-short")).toBe(yearOf(`01/02/${below}`, "eu-slash-short"));
+    expect(yearOf(`01.02.${below}`, "de-short")).toBeGreaterThan(2050);
+
+    // At the flip both roll back a century, which the 1990 floor then refuses.
+    expect(yearOf(`01.02.${at}`, "de-short")).toBe(yearOf(`01/02/${at}`, "eu-slash-short"));
+    expect(yearOf(`01.02.${at}`, "de-short")).toBeNull();
+
+    // Same for the month-first pair.
+    expect(yearOf(`02.01.${below}`, "de-mdy-short")).toBe(yearOf(`02/01/${below}`, "us-short"));
+    expect(yearOf(`02.01.${at}`, "de-mdy-short")).toBe(yearOf(`02/01/${at}`, "us-short"));
+  });
+
+  it("is reachable by the AI column matcher, not only by the dropdown", () => {
+    // The callable coerces a suggestion it does not recognise to "de", so a
+    // format missing from this list is one auto-detection can never name. The
+    // set equality above is what pins it; name the dotted row explicitly
+    // because "de" being the fallback makes a miss here look like a success.
+    expect([...DATE_FORMATS].sort()).toEqual(DATE_PARSERS.map((p) => p.id).sort());
+    expect(DATE_FORMATS).toContain("de");
+    expect(DATE_FORMATS).toContain("de-mdy");
+    expect(DATE_FORMATS).toContain("de-short");
+    expect(DATE_FORMATS).toContain("de-mdy-short");
+  });
+
+  it("carries a time, as the slash formats do", () => {
+    expect(iso("01.15.26 3:18", "de-mdy-short")).toBe("2026-01-15T00:00:00.000Z");
+    expect(analyzeDayMonthOrder(["01.15.26 3:18"])).toBe("month-first");
+  });
+
+  it("imports a month-first dotted CSV end to end", async () => {
+    const csv = [
+      "Buchungstag;Betrag;Name",
+      "01.15.26;-25,00;REWE",
+      "02.03.26;-12,50;Billa",
+      "03.28.26;1.200,00;Honorar",
+      "12.01.26;-49,90;A1 Telekom",
+    ].join("\n");
+
+    const { headers, rows } = parseCSV(csv, detectCSVFormat(csv));
+    const mappings = await autoMatchColumnsRuleBased(headers, rows);
+    const date = mappings.find((m) => m.csvColumn === "Buchungstag");
+
+    expect(date?.targetField).toBe("date");
+    expect(date?.format).toBe("de-mdy-short");
+
+    // What the import does before writing a Transaction: refuse on a day/month
+    // conflict, then parse every row with the chosen format. The row-to-
+    // Transaction step itself lives in the React hook and pulls Firebase.
     const column = rows.map((row) => row.Buchungstag);
     expect(findDateColumnConflict(column, date!.format!)).toBeNull();
 
