@@ -28,6 +28,8 @@
     "test:merge-preview": "node --test tests/merge-preview.test.mjs",
     "test:files-upload-pipeline": "node --test tests/files-upload-pipeline.test.mjs",
     "test:node": "node --test tests/",
+    "test:components": "vitest run --config vitest.components.config.ts",
+    "test:components:watch": "vitest --config vitest.components.config.ts",
     "setup": "bash scripts/setup.sh",
     "generate:mcp-automations": "node scripts/generate-mcp-automations.js",
     "generate:tool-definitions": "node scripts/generate-tool-definitions.js",
@@ -110,12 +112,17 @@
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.4",
     "@simplewebauthn/types": "^12.0.0",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.3",
     "@types/pg": "^8.20.0",
+    "@vitejs/plugin-react": "^5.2.0",
     "concurrently": "^9.2.1",
     "dotenv-cli": "^11.0.0",
     "eslint": "^9.39.2",
     "eslint-config-next": "^16.2.9",
-    "typescript": "^6.0.3"
+    "jsdom": "^29.1.1",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.11"
   },
   "overrides": {
     "sharp": "^0.35.3",
