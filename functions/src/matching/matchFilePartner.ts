@@ -36,6 +36,7 @@ import { MODELS } from "../utils/models";
 import { ensureGlobalPartnerFromVies } from "../utils/globalPartnerUpsert";
 import { checkAIBudget } from "../billing/checkAIBudget";
 import { isPassiveMode } from "../utils/checkAutomationMode";
+import { printedNameEquals } from "../utils/identity-matcher";
 
 // =============================================================================
 // AUTOMATION METADATA
@@ -225,12 +226,30 @@ interface PartnerSuggestion {
 /**
  * Learn extracted partner name as alias on an existing partner.
  * This improves future matching: invoices with the same extracted name will match.
+ *
+ * `invoicingAgentName` is refused (#156). Before the agent had a field of its
+ * own, correcting a third-party-issuance File by hand wrote the agent's name
+ * into the aliases of the Partner it was corrected TO — and since the agent
+ * issues for many suppliers, every later document on that template matched
+ * whichever of those Partners scored first. The repair spread the defect
+ * further than the defect did. An Invoicing Agent is not an alias of the
+ * Leistungserbringer (ADR-0003), and now that it is identifiable, it is
+ * refused here rather than learned.
  */
 async function learnPartnerAlias(
   partnerId: string,
-  extractedName: string | undefined
+  extractedName: string | undefined,
+  invoicingAgentName?: string | null
 ): Promise<void> {
   if (!extractedName) return;
+
+  if (printedNameEquals(extractedName, invoicingAgentName)) {
+    console.log(
+      `[PartnerMatch] Refused to learn "${extractedName}" as an alias of partner ${partnerId}: ` +
+      "it is this file's Invoicing Agent (#156)"
+    );
+    return;
+  }
 
   const partnerDoc = await db.collection("partners").doc(partnerId).get();
   if (!partnerDoc.exists) return;
@@ -947,6 +966,8 @@ export async function runPartnerMatching(
 ): Promise<void> {
   const userId = fileData.userId;
   const extractedPartner = fileData.extractedPartner;
+  // Never learned as an alias, never matched on: see learnPartnerAlias (#156).
+  const invoicingAgentName: string | null = fileData.extractedInvoicingAgent?.name ?? null;
   let extractedIban = fileData.extractedIban;
   let extractedVatId = fileData.extractedVatId;
   const gmailSenderEmail = fileData.gmailSenderEmail; // Full email for user detection
@@ -1097,7 +1118,7 @@ export async function runPartnerMatching(
       }
 
       // Learn extracted name as alias and email domain (non-blocking)
-      learnPartnerAlias(existingUserPartner.id, extractedPartner).catch(console.error);
+      learnPartnerAlias(existingUserPartner.id, extractedPartner, invoicingAgentName).catch(console.error);
       learnEmailDomainFromPartnerMatch(
         fileData,
         existingUserPartner.id,
@@ -1121,7 +1142,7 @@ export async function runPartnerMatching(
       const localPartnerId = await createLocalPartnerFromGlobal(userId, existingGlobalPartner.id);
       await markPartnerMatchComplete(fileId, localPartnerId, "user", "auto", 95, []);
       // Learn extracted name as alias and email domain (non-blocking)
-      learnPartnerAlias(localPartnerId, extractedPartner).catch(console.error);
+      learnPartnerAlias(localPartnerId, extractedPartner, invoicingAgentName).catch(console.error);
       learnEmailDomainFromPartnerMatch(
         fileData,
         localPartnerId,
@@ -1262,7 +1283,7 @@ export async function runPartnerMatching(
 
     // Learn extracted name as alias and email domain (non-blocking)
     if (assignedPartnerType === "user") {
-      learnPartnerAlias(assignedPartnerId, extractedPartner).catch((err) => {
+      learnPartnerAlias(assignedPartnerId, extractedPartner, invoicingAgentName).catch((err) => {
         console.error(`[PartnerMatch] Failed to learn alias:`, err);
       });
       // Find the partner data to get website for domain validation
@@ -1476,7 +1497,11 @@ export const matchFilePartner = onDocumentUpdated(
       console.log(
         `[PartnerMatch] Manual partner assignment detected for file ${fileId}, learning alias`
       );
-      learnPartnerAlias(after.partnerId, after.extractedPartner).catch((err) => {
+      learnPartnerAlias(
+        after.partnerId,
+        after.extractedPartner,
+        after.extractedInvoicingAgent?.name ?? null
+      ).catch((err) => {
         console.error(`[PartnerMatch] Failed to learn alias for manual assignment:`, err);
       });
       // Don't return - let normal flow continue if extraction also just completed
@@ -1512,7 +1537,11 @@ export const matchFilePartner = onDocumentUpdated(
       console.log(`[PartnerMatch] File ${fileId} already has manual partner, skipping`);
       // Still learn the extracted name as alias for manual assignments
       if (after.extractedPartner && after.partnerType === "user") {
-        learnPartnerAlias(after.partnerId, after.extractedPartner).catch((err) => {
+        learnPartnerAlias(
+          after.partnerId,
+          after.extractedPartner,
+          after.extractedInvoicingAgent?.name ?? null
+        ).catch((err) => {
           console.error(`[PartnerMatch] Failed to learn alias for manual assignment:`, err);
         });
       }
