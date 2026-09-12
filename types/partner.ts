@@ -604,6 +604,53 @@ export interface GlobalPartnerFormData extends PartnerFormData {
 }
 
 /**
+ * Request for `mergeUserPartners`: fold one or more Partners into another
+ * because they are the same business (#262, #263).
+ */
+export interface MergeUserPartnersRequest {
+  /** The Partner that lives. */
+  survivorId: string;
+  /** The Partners folded into it. */
+  loserIds: string[];
+  /**
+   * Deliberate affirmation that two non-empty, differing VAT IDs are meant to
+   * be merged anyway. Separate from the ordinary confirmation, because a
+   * wrong extracted VAT ID is itself a common cause of the duplicate and only
+   * the user knows which one is the typo.
+   */
+  confirmVatIdConflict?: boolean;
+}
+
+/** Which of a loser's single values the survivor's own values beat. */
+export interface MergeConflictReport {
+  partnerId: string;
+  fields: string[];
+}
+
+export interface MergeUserPartnersResponse {
+  success: boolean;
+  survivorId: string;
+  /** The losers, now Merged Partners, in the order given. */
+  mergedPartnerIds: string[];
+  /** Names and aliases the survivor did not have before. */
+  aliasesAdded: string[];
+  repointed: {
+    transactions: number;
+    files: number;
+    invoices: number;
+    identityReferences: number;
+    mergedPartners: number;
+  };
+  conflicts: MergeConflictReport[];
+  /** What a rematch WOULD find. Nothing was rematched. */
+  rematchPreview: {
+    newlyMatchable: number;
+    scanned: number;
+    truncated: boolean;
+  };
+}
+
+/**
  * Filters for partner queries
  */
 export interface PartnerFilters {
