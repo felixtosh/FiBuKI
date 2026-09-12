@@ -26,6 +26,17 @@
  * Partner that pointed at it, so a pointer is always one hop from a live
  * Partner and no consumer needs loop detection.
  *
+ * What a Merge repoints: Transactions, Files, an Invoice's
+ * `recipient.partnerId`, the identity settings document's entities, the Merged
+ * Partners that named a loser, and `invoiceFetchQueue` items — browser fetch
+ * work that would otherwise come back attributed to a Partner the list no
+ * longer shows (#307). Queue items move at every status, as Invoices do: a
+ * loser id left on a finished item cannot be told apart from one nobody
+ * repointed.
+ *
+ * Everything else that stores a Partner id is listed below as a deliberate
+ * omission, so a reader of this contract can tell a decision from an oversight.
+ *
  * What a Merge does NOT do:
  * - It does not re-run the Match. It reports how many unmatched Transactions
  *   the survivor's new identifying data would now hit and leaves the existing
@@ -39,7 +50,32 @@
  *   pointer beside the frozen recipient block moves, for every Invoice status,
  *   because the snapshot is the document of record either way.
  * - It does not touch Notifications. They record events that already happened,
- *   and rewriting them would rewrite history.
+ *   and rewriting them would rewrite history. The same holds for the other
+ *   records of something that already ran: `workerRuns` transcripts, `aiUsage`
+ *   metadata, and the `searchParams.partnerId` a precision search stamped on
+ *   the `transactions/{id}/searches` attempt it logged.
+ * - It does not repoint a queued `partner_file_batch` worker request. Its
+ *   `triggerContext.partnerId` is accompanied by a prompt naming the loser in
+ *   prose, so moving the pointer alone would leave the two disagreeing, and
+ *   the work the request actually does is over the `fileIds` it carries —
+ *   those moved. Nor does it rewrite `learningQueue.pendingPartners`: a loser
+ *   queued for pattern learning drains to a no-op, because the Transactions
+ *   the learner would read moved to the survivor.
+ * - It does not move `users/{uid}/partnerBatchStates/{partnerId}`, which is
+ *   keyed on a Partner id rather than pointing at one; the loser's document
+ *   goes idle with the Partner. Nor does it rewrite a queue item's
+ *   `invoiceSourceId`, which names an entry inside a Partner rather than a
+ *   Partner: that entry travels with the `invoiceSources`/`browserRecipes`
+ *   union unless the survivor already holds one for the same url, and a fetch
+ *   runs off the item's own `url` either way.
+ * - It does not promote the survivor to an identity-synced Partner.
+ *   `identitySourceField` is what makes a Partner offer "Edit in Identity"
+ *   instead of being edited on the Partner page, so it is not an ordinary
+ *   empty-value fill: it travels only where the identity entity that produced
+ *   it is itself repointed onto the survivor, which is the same write making
+ *   the survivor that entity's Partner (#307). The deprecated
+ *   `identityPartnerIds` pointers move without handing one over — they are the
+ *   legacy spelling of a pointer, not an entity identity sync maintains.
  * - It does not rewrite `partnerSuggestions` on Transactions or Files, or the
  *   `searchSuggestions.partnerId` cache key. Firestore cannot query an array of
  *   objects by member field, so repointing suggestions means a full scan of
@@ -63,6 +99,7 @@ const PARTNERS = "partners";
 const TRANSACTIONS = "transactions";
 const FILES = "files";
 const INVOICES = "invoices";
+const INVOICE_FETCH_QUEUE = "invoiceFetchQueue";
 
 const BATCH_SIZE = 500;
 
@@ -118,6 +155,8 @@ export interface MergeUserPartnersResponse {
     transactions: number;
     files: number;
     invoices: number;
+    /** Queued browser invoice-fetch work naming a loser. */
+    invoiceFetchQueue: number;
     /** Pointers inside the identity settings document. */
     identityReferences: number;
     /** Merged Partners that pointed at a loser and now point at the survivor. */
@@ -156,6 +195,10 @@ type Doc = Record<string, unknown>;
  *
  * `name` is absent on purpose: the survivor's name is the name of the merged
  * business, and each loser's name becomes an alias instead.
+ *
+ * `identitySourceField` is absent for a different reason: it changes where the
+ * survivor is edited, so it moves with the identity entity repoint rather than
+ * with an empty slot (#307). See `mergePartnerFields`.
  */
 const SINGLE_VALUE_FIELDS = [
   "globalPartnerId",
@@ -164,7 +207,6 @@ const SINGLE_VALUE_FIELDS = [
   "website",
   "notes",
   "defaultCategoryId",
-  "identitySourceField",
   "isMyCompany",
   "billingCycle",
   "scoringWeights",
@@ -390,11 +432,16 @@ export interface MergedPartnerFields {
  * beyond the `now` handed in, so the rules are testable on their own.
  *
  * `losers` must carry an `id`, because conflicts are recorded per loser.
+ *
+ * `identitySourceField` is the marker an identity entity repoint hands over,
+ * read from the plan the caller made against the identity settings document.
+ * It is the one single value that does not fill from a loser on its own.
  */
 export function mergePartnerFields(
   survivor: Doc,
   losers: Array<Doc & { id: string }>,
-  now: Timestamp
+  now: Timestamp,
+  options: { identitySourceField?: string | null } = {}
 ): MergedPartnerFields {
   const survivorUpdates: Doc = {};
   const mergedSurvivor: Doc = { ...survivor };
@@ -416,12 +463,25 @@ export function mergePartnerFields(
   fillSingle("vatId", VAT_ID_GROUP);
   for (const field of SINGLE_VALUE_FIELDS) fillSingle(field, [field]);
 
+  // The identity marker travels with the entity, never on its own: a survivor
+  // that was not identity-synced is not made so by a loser that happened to be
+  // (#307). A survivor that already carries one keeps it, as with any conflict.
+  if (options.identitySourceField && isEmptyValue(mergedSurvivor.identitySourceField)) {
+    survivorUpdates.identitySourceField = options.identitySourceField;
+    mergedSurvivor.identitySourceField = options.identitySourceField;
+  }
+
   // --- conflicts: measured against what the survivor ends up holding ---
   const conflictsByLoserId = new Map<
     string,
     Array<{ field: string; value: unknown; survivorValue: unknown }>
   >();
-  const conflictFields = ["vatId", ...SINGLE_VALUE_FIELDS];
+  // `identitySourceField` is not filled from a loser, but where the survivor
+  // ends up holding one of its own, a differing loser marker is a value that
+  // marker beat, so it is recorded on the Merged Partner like any other. A
+  // marker no survivor value beat is not a conflict: it stays readable on the
+  // Merged Partner's own document, which is where it already was.
+  const conflictFields = ["vatId", ...SINGLE_VALUE_FIELDS, "identitySourceField"];
 
   for (const loser of losers) {
     const conflicts: Array<{ field: string; value: unknown; survivorValue: unknown }> = [];
@@ -571,14 +631,22 @@ async function commitInChunks(
   }
 }
 
-/** Repoint a collection whose Partner pointer is a top-level `partnerId`. */
+/**
+ * Repoint a collection whose Partner pointer is a top-level `partnerId`.
+ *
+ * `alongside` carries whatever else that collection stores next to the
+ * pointer. Transactions and Files re-state `partnerType` and their
+ * `updatedAt`; an `invoiceFetchQueue` item holds neither field, and inventing
+ * them on a queue the browser extension reads would be a schema change this
+ * operation has no business making.
+ */
 async function repointByPartnerId(
   db: FirebaseFirestore.Firestore,
   collection: string,
   userId: string,
   loserId: string,
   survivorId: string,
-  now: Timestamp
+  alongside: Doc
 ): Promise<number> {
   const snapshot = await db
     .collection(collection)
@@ -592,7 +660,7 @@ async function repointByPartnerId(
     db,
     snapshot.docs.map((doc) => ({
       ref: doc.ref,
-      updates: { partnerId: survivorId, partnerType: "user", updatedAt: now },
+      updates: { partnerId: survivorId, ...alongside },
     }))
   );
 
@@ -635,42 +703,69 @@ async function repointInvoices(
   return snapshot.size;
 }
 
+interface IdentityRepointPlan {
+  /** Field updates for the identity settings document; empty when none moved. */
+  updates: Doc;
+  /** How many pointers move. */
+  repointed: number;
+  /**
+   * The marker the survivor inherits because it is now that identity entity's
+   * Partner — `"personalEntity"` or `company:{id}`, exactly what
+   * `syncIdentityPartners` writes — or null when no entity moved. It does not
+   * depend on the loser having carried one: identity sync writes through the
+   * entity's `partnerId`, so a survivor an entity now names is synced whether
+   * or not it says so, and the marker is what makes the UI honest about it.
+   * Only the entities identity sync maintains hand one over; the deprecated
+   * `identityPartnerIds` pointers move without minting a legacy marker.
+   */
+  identitySourceField: string | null;
+}
+
 /**
- * Repoint the identity settings document: the entity that carries the Partner
- * link, plus the two deprecated pointers the identity page and the partner
- * table still read. Leaving those stale would silently un-mark "this is my
- * company" by pointing it at a record nothing lists.
+ * Plan the identity settings document's repoint: the entity that carries the
+ * Partner link, plus the two deprecated pointers the identity page and the
+ * partner table still read. Leaving those stale would silently un-mark "this
+ * is my company" by pointing it at a record nothing lists.
+ *
+ * Planned rather than done, because the survivor's single update has to carry
+ * the marker this read decides on, and that write comes first (#307).
  */
-async function repointIdentityReferences(
+async function planIdentityRepoint(
   db: FirebaseFirestore.Firestore,
   userId: string,
   loserIds: Set<string>,
-  survivorId: string,
-  now: Timestamp
-): Promise<number> {
-  const ref = db.collection(`users/${userId}/settings`).doc("userData");
-  const snapshot = await ref.get();
-  if (!snapshot.exists) return 0;
+  survivorId: string
+): Promise<IdentityRepointPlan> {
+  const empty: IdentityRepointPlan = { updates: {}, repointed: 0, identitySourceField: null };
+
+  const snapshot = await db.collection(`users/${userId}/settings`).doc("userData").get();
+  if (!snapshot.exists) return empty;
 
   const data = snapshot.data() as Doc;
   const updates: Doc = {};
   let repointed = 0;
+  let identitySourceField: string | null = null;
 
-  const repointEntity = (entity: unknown): Doc | null => {
+  const repointEntity = (entity: unknown, sourceField: string | null): Doc | null => {
     const record = asRecord(entity);
     if (!loserIds.has(text(record.partnerId))) return null;
     repointed++;
+    // First entity wins, so a survivor that swallows two identity Partners at
+    // once is marked for one of them rather than for whichever came last.
+    if (identitySourceField === null && sourceField) identitySourceField = sourceField;
     return { ...record, partnerId: survivorId };
   };
 
-  const personal = repointEntity(data.personalEntity);
+  const personal = repointEntity(data.personalEntity, "personalEntity");
   if (personal) updates.personalEntity = personal;
 
   const companies = data.companies;
   if (Array.isArray(companies)) {
     let anyChanged = false;
     const next = companies.map((company) => {
-      const repointedCompany = repointEntity(company);
+      // An entity with no id cannot be named by a marker; it still repoints.
+      const companyId = text(asRecord(company).id);
+      const repointedCompany = repointEntity(company, companyId ? `company:${companyId}` : null);
       if (!repointedCompany) return company;
       anyChanged = true;
       return repointedCompany;
@@ -701,11 +796,26 @@ async function repointIdentityReferences(
   }
   if (legacyChanged) updates.identityPartnerIds = legacyNext;
 
-  if (Object.keys(updates).length === 0) return 0;
+  if (Object.keys(updates).length === 0) return empty;
 
-  updates.updatedAt = now;
-  await ref.update(updates);
-  return repointed;
+  return { updates, repointed, identitySourceField };
+}
+
+/** Write what `planIdentityRepoint` worked out. */
+async function applyIdentityRepoint(
+  db: FirebaseFirestore.Firestore,
+  userId: string,
+  plan: IdentityRepointPlan,
+  now: Timestamp
+): Promise<number> {
+  if (Object.keys(plan.updates).length === 0) return 0;
+
+  await db
+    .collection(`users/${userId}/settings`)
+    .doc("userData")
+    .update({ ...plan.updates, updatedAt: now });
+
+  return plan.repointed;
 }
 
 /** Rewrite every Merged Partner that pointed at a loser to point at the survivor. */
@@ -859,12 +969,18 @@ export async function mergeUserPartnersInternal(
     );
   }
 
+  // Read before anything is written: the survivor's single update carries the
+  // identity marker this plan decides on, so the plan has to exist first.
+  const identityPlan = await planIdentityRepoint(db, userId, new Set(loserIds), survivorId);
+
   const now = Timestamp.now();
   // Every Partner write below carries this id, so `onPartnerUpdate` recognises
   // all of them as this merge's own and re-runs no file matching (#306).
   const mergeWriteId = newMergeWriteId();
   const { survivorUpdates, mergedSurvivor, conflictsByLoserId, aliasesAdded } =
-    mergePartnerFields(survivorDoc, loserDocs, now);
+    mergePartnerFields(survivorDoc, loserDocs, now, {
+      identitySourceField: identityPlan.identitySourceField,
+    });
 
   // --- write order: the survivor gains first, the losers become tombstones
   // last. A crash in between leaves visible duplicates whose references have
@@ -878,28 +994,30 @@ export async function mergeUserPartnersInternal(
     transactions: 0,
     files: 0,
     invoices: 0,
+    invoiceFetchQueue: 0,
     identityReferences: 0,
     mergedPartners: 0,
   };
 
+  const alongsidePointer = { partnerType: "user", updatedAt: now };
+
   for (const loser of loserDocs) {
     repointed.transactions += await repointByPartnerId(
-      db, TRANSACTIONS, userId, loser.id, survivorId, now
+      db, TRANSACTIONS, userId, loser.id, survivorId, alongsidePointer
     );
-    repointed.files += await repointByPartnerId(db, FILES, userId, loser.id, survivorId, now);
+    repointed.files += await repointByPartnerId(
+      db, FILES, userId, loser.id, survivorId, alongsidePointer
+    );
     repointed.invoices += await repointInvoices(db, userId, loser.id, survivorId, now);
+    repointed.invoiceFetchQueue += await repointByPartnerId(
+      db, INVOICE_FETCH_QUEUE, userId, loser.id, survivorId, {}
+    );
     repointed.mergedPartners += await rewriteChainedTombstones(
       db, userId, loser.id, survivorId, now, mergeWriteId
     );
   }
 
-  repointed.identityReferences = await repointIdentityReferences(
-    db,
-    userId,
-    new Set(loserIds),
-    survivorId,
-    now
-  );
+  repointed.identityReferences = await applyIdentityRepoint(db, userId, identityPlan, now);
 
   const tombstoneWrites = loserDocs.map((loser) => {
     const conflicts = conflictsByLoserId.get(loser.id);
