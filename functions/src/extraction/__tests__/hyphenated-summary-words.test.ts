@@ -109,4 +109,18 @@ describe("hyphenated compounds survive the leading-word pre-filter", () => {
     expect(r.unreconciled).toBe(false);
     expect(r.lineItems.map((i) => i.description)).toEqual(["Consulting"]);
   });
+
+  // The rule looks at the character right after the leading word, not at the
+  // whole description: a hyphen further along does not rescue a summary row.
+  it("still drops a summary row whose hyphen comes later in the line", () => {
+    const items = [
+      { description: "Beratung", vatPercent: 20, vatAmount: 200, amount: 1200 },
+      { description: "Summe der Teil-Leistungen", vatPercent: null, vatAmount: 0, amount: 1200 },
+    ];
+
+    const r = reconcileLineItemsWithDocumentTotal(items, 1200);
+
+    expect(r.unreconciled).toBe(false);
+    expect(r.lineItems.map((i) => i.description)).toEqual(["Beratung"]);
+  });
 });
