@@ -528,6 +528,21 @@ export interface TaxFile {
   extractedRecipient?: ExtractedEntity | null;
 
   /**
+   * The Invoicing Agent (§ 11 Abs 2 UStG): the business that WROTE this
+   * document in the name of the supplier, with its own VAT ID — the footer
+   * one, on the templates that print both (#156).
+   *
+   * Recorded so a user who reads "Uber" on the document and sees a taxi
+   * operator in FiBuKI has something that says why. Never consulted to
+   * derive a Partner, to match a Transaction, or in a Vorsteuer trail
+   * (ADR-0003).
+   *
+   * Additive: absent on every File extracted before the field existed, and
+   * on every single-party document.
+   */
+  extractedInvoicingAgent?: ExtractedEntity | null;
+
+  /**
    * Which party matched user data (if any).
    * - "issuer" = user is the sender (outgoing invoice)
    * - "recipient" = user is the receiver (incoming invoice)

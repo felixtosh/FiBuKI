@@ -351,6 +351,10 @@ export async function runExtraction(
   // Get extracted entities (from Gemini) or null (from legacy Claude parser)
   const extractedIssuer = result.extracted.issuer;
   const extractedRecipient = result.extracted.recipient;
+  // The Invoicing Agent is stored and nothing else: it is not offered to
+  // `determineCounterparty`, so it can never become the Partner (#156,
+  // ADR-0003).
+  const extractedInvoicingAgent = result.extracted.invoicingAgent ?? null;
 
   if (userId && !result.isNotInvoice) {
     const userData = await getUserData(userId);
@@ -359,6 +363,12 @@ export async function runExtraction(
     console.log(`[+${Date.now() - t0}ms] Determining counterparty...`);
     console.log(`  [CounterpartyMatch] Issuer: ${extractedIssuer?.name || "(none)"}, VAT: ${extractedIssuer?.vatId || "(none)"}`);
     console.log(`  [CounterpartyMatch] Recipient: ${extractedRecipient?.name || "(none)"}, VAT: ${extractedRecipient?.vatId || "(none)"}`);
+    if (extractedInvoicingAgent) {
+      console.log(
+        `  [CounterpartyMatch] Invoicing Agent: ${extractedInvoicingAgent.name || "(none)"}, ` +
+        `VAT: ${extractedInvoicingAgent.vatId || "(none)"} — recorded only, never a Partner (#156)`
+      );
+    }
 
     // Use new determineCounterparty if we have entity data
     if (extractedIssuer || extractedRecipient) {
@@ -416,6 +426,7 @@ export async function runExtraction(
     // Store extracted entities for future re-calculation
     extractedIssuer: extractedIssuer || null,
     extractedRecipient: extractedRecipient || null,
+    extractedInvoicingAgent,
     classificationComplete: true,
     isNotInvoice: false, // If we got here, it's confirmed to be an invoice
     notInvoiceReason: null,
@@ -449,6 +460,7 @@ export async function runExtraction(
     updateData.extractedSelfDesignation = null;
     updateData.extractedInvoiceNumber = null;
     updateData.extractedPayableAmount = null;
+    updateData.extractedInvoicingAgent = null;
     console.log(`[+${Date.now() - t0}ms] Classified as NOT an invoice: ${result.notInvoiceReason}`);
   } else {
     // Add extracted fields if found

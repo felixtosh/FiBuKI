@@ -22,7 +22,13 @@ function getProjectId(): string {
 // Vertex AI location - match Firebase region to minimize latency
 const VERTEX_LOCATION = process.env.VERTEX_LOCATION || "europe-west1";
 
-import { ExtractedData, ExtractedLineItem, ExtractedRateGroup } from "../types/extraction";
+import {
+  ExtractedData,
+  ExtractedEntity,
+  ExtractedLineItem,
+  ExtractedRateGroup,
+} from "../types/extraction";
+import { printedNameEquals } from "../utils/identity-matcher";
 
 /**
  * Bounding box extracted by Gemini for a field
@@ -501,6 +507,74 @@ export interface ExtractedRawText {
 }
 
 /**
+ * What the Invoicing Agent guard refused, so the raw-text bag can drop the
+ * same values the entities lost.
+ */
+export type PartyRefusal = "issuer" | "issuerVatId" | "recipient";
+
+/** The three parties a document can print, after the guard has run. */
+export interface PartyAttribution {
+  issuer: ExtractedEntity | null;
+  recipient: ExtractedEntity | null;
+  invoicingAgent: ExtractedEntity | null;
+  refusals: PartyRefusal[];
+}
+
+/**
+ * Keep the Invoicing Agent out of the slots that decide the Partner (#156).
+ *
+ * On a third-party-issuance template the agent and the supplier are printed in
+ * adjacent blocks and the only UID on the page is often the agent's, in the
+ * footer. The prompt now names which block is authoritative, but a prompt is a
+ * request: the same reasoning as the closed `additionalFields` vocabulary
+ * applies, so the domain rule is enforced here, where a model swap cannot lose
+ * it.
+ *
+ * Two refusals, both of them ADR-0003 read literally:
+ *
+ *  - the agent returned as the issuer is not a supplier we can store. There is
+ *    no supplier in that response at all, so the issuer is dropped: a File with
+ *    no Partner gets one from a correction, a File with the agent as its
+ *    Partner teaches the agent's name as an alias and spreads.
+ *  - the agent's UID on the supplier's entity is the footer UID. It is dropped
+ *    and NOT replaced: an absent supplier UID is a lawful outcome — two of the
+ *    reported corpus are Kleinunternehmer whose block prints no UID at all —
+ *    and the agent's UID in a Vorsteuer trail is not.
+ *
+ * The agent is never the addressee either, so a recipient block that came back
+ * as the agent is refused the same way.
+ */
+export function applyInvoicingAgentGuard(
+  issuer: ExtractedEntity | null,
+  recipient: ExtractedEntity | null,
+  invoicingAgent: ExtractedEntity | null
+): PartyAttribution {
+  // An "agent" with neither a name nor a UID identifies nobody.
+  if (!invoicingAgent || (!invoicingAgent.name && !invoicingAgent.vatId)) {
+    return { issuer, recipient, invoicingAgent: null, refusals: [] };
+  }
+
+  const refusals: PartyRefusal[] = [];
+  let guardedIssuer = issuer;
+  let guardedRecipient = recipient;
+
+  if (issuer && printedNameEquals(issuer.name, invoicingAgent.name)) {
+    guardedIssuer = null;
+    refusals.push("issuer");
+  } else if (issuer?.vatId && invoicingAgent.vatId && issuer.vatId === invoicingAgent.vatId) {
+    guardedIssuer = { ...issuer, vatId: null };
+    refusals.push("issuerVatId");
+  }
+
+  if (recipient && printedNameEquals(recipient.name, invoicingAgent.name)) {
+    guardedRecipient = null;
+    refusals.push("recipient");
+  }
+
+  return { issuer: guardedIssuer, recipient: guardedRecipient, invoicingAgent, refusals };
+}
+
+/**
  * The closed vocabulary `additionalFields` is allowed to carry (#252).
  *
  * The bag used to be open — the prompt asked for "any other identifiers or
@@ -808,21 +882,58 @@ Output: date as YYYY-MM-DD, amount in cents (123,45 → 12345)
 
 === ENTITY EXTRACTION (IMPORTANT) ===
 
-Extract TWO entities from the document:
+A document can print SEVERAL name-and-address blocks. Each field below names
+the printed block it must be read from - read that block. Do not choose the
+block that is biggest, first on the page, or carries the logo.
 
-1. ISSUER (who created/sent this document):
-   - Usually in the letterhead/header with logo
-   - Has VAT ID, address, often IBAN/bank details
-   - Look for: "From:", sender info, company stamp, letterhead
-   - This is the company sending the invoice
+1. ISSUER ("issuer") - the business that DID THE WORK and is owed the money
+   (the Leistungserbringer):
+   - Authoritative block: the supplier's own name-and-address block. On an
+     ordinary document that is the letterhead/sender block ("From:", the
+     company stamp), which has the VAT ID, the address and often the IBAN
+   - THIRD-PARTY ISSUANCE (§ 11 Abs 2 UStG): one business may write the
+     document in the name of another, and says so - "Rechnung ausgestellt von
+     X im Namen von Y", "im Namen und für Rechnung von", "im Auftrag von",
+     "on behalf of", "Abrechnung durch". There the ISSUER is Y, the business
+     named AFTER "im Namen von" and printed in the block that follows it,
+     NEVER X, the business that wrote the document
+   - "vatId" is the UID printed INSIDE that same supplier block. NEVER take a
+     UID from the page footer, from an Impressum, or from the writing
+     business's block - not even when it is the only UID on the page
+   - A supplier that prints NO UID is an ordinary, lawful document (a
+     Kleinunternehmer: "Steuerfrei gemäß § 6 Abs. 1 Z 27 UStG"). Return
+     "vatId": null and leave it null - an absent UID is an answer, not a gap
+     to fill from elsewhere on the page
 
-2. RECIPIENT (who receives this document):
-   - Usually in "Bill to:", "To:", "Kunde:", "Empfänger:", "An:"
-   - May have VAT ID and address
-   - This is the company being billed
+2. INVOICING AGENT ("invoicingAgent") - the business that WROTE the document
+   in someone else's name (X above), with its own UID, usually the footer one:
+   - Fill this ONLY on a third-party-issuance document, and only from what the
+     document prints about that business
+   - If the business that wrote the document is also the one that did the
+     work, there is no agent: return "invoicingAgent": null
+   - It is never the issuer and never the recipient. Report it HERE and
+     nowhere else - never under an invented label such as "Issuer Platform",
+     "Service Provider" or "billing partner", and never in "additionalFields"
+
+3. RECIPIENT ("recipient") - the BILLING ADDRESSEE, the party this document is
+   made out to:
+   - Authoritative block, chosen by its printed heading: "Rechnungsadresse",
+     "Rechnung an", "Rechnungsempfänger", "Bill to", "Invoice to", "Kunde",
+     "Empfänger", "An:"
+   - NEVER the delivery block ("Lieferadresse", "Lieferanschrift",
+     "Versandadresse", "Ship to", "Deliver to") when a billing block is printed
+   - NEVER a seller block ("Verkäufer", "Verkauft von", "Sold by", a
+     marketplace seller's contact details): that names a supplier, not the
+     addressee
+   - Marketplace documents print several of these blocks at once. Decide by
+     the printed heading, not by position, size or order
+   - If NO block on the page can be identified as the billing addressee,
+     return "recipient": null and lower "confidence". A missing recipient can
+     be corrected later; a confidently wrong one cannot
 
 IMPORTANT - "website" field (for issuer):
-- Extract the issuer's website domain from the document
+- Extract the ISSUER's website domain from the document - on a third-party
+  issuance, the supplier's domain and never the writing business's
 - Look for: www.company.de, https://company.com, contact@company.de (extract domain)
 - Found in: letterhead, footer, contact section, email addresses
 - Return as domain only (e.g., "company.de" not "https://www.company.de/contact")
@@ -890,6 +1001,12 @@ JSON structure:
       "name": "Customer Corp",
       "vatId": "ATU12345678",
       "address": "Kundenweg 5\\n1010 Wien"
+    },
+
+    "invoicingAgent": {
+      "name": "Agent Platform GmbH",
+      "vatId": "ATU87654321",
+      "address": "Agenturweg 9, 1030 Wien"
     }
   },
   "additionalFields": [
@@ -909,6 +1026,8 @@ ADDITIONAL FIELDS ("additionalFields", IMPORTANT):
 - Anything else the document prints - a table number ("Tischnummer"), a till
   or server id, a loyalty number, any other metadata - is NOT an additional
   field. Leave it out; a field with a key outside the list is discarded
+- A party is never an additional field: the issuer, the recipient and the
+  Invoicing Agent each have their own field above, and belong in no other
 - Never invent a key to make a field fit
 
 JSON only, no markdown, no explanation.`;
@@ -977,6 +1096,8 @@ JSON only, no markdown, no explanation.`;
       issuer_raw?: GeminiEntity | null;
       recipient?: GeminiEntity | null;
       recipient_raw?: GeminiEntity | null;
+      // The business that wrote the document in another's name (#156)
+      invoicingAgent?: GeminiEntity | null;
       // Legacy fields (for backward compatibility during transition)
       partner?: string | null;
       partner_raw?: string | null;
@@ -1048,13 +1169,46 @@ JSON only, no markdown, no explanation.`;
     website: normalizeWebsite(parsed.extracted.recipient.website),
   } : null;
 
+  // Extract the Invoicing Agent (§ 11 Abs 2) — the business that WROTE the
+  // document in the supplier's name, recorded under its own fixed name (#156).
+  const parsedAgent = parsed.extracted?.invoicingAgent ? {
+    name: parsed.extracted.invoicingAgent.name || null,
+    vatId: normalizeVatId(parsed.extracted.invoicingAgent.vatId),
+    address: parsed.extracted.invoicingAgent.address || null,
+    iban: parsed.extracted.invoicingAgent.iban || null,
+    website: normalizeWebsite(parsed.extracted.invoicingAgent.website),
+  } : null;
+
+  const attribution = applyInvoicingAgentGuard(issuer, recipient, parsedAgent);
+  const invoicingAgent = attribution.invoicingAgent;
+  const guardedIssuer = attribution.issuer;
+  const guardedRecipient = attribution.recipient;
+  const issuerRefused = attribution.refusals.includes("issuer");
+  if (attribution.refusals.length > 0) {
+    console.warn(
+      `  [Gemini] Invoicing Agent "${invoicingAgent?.name || invoicingAgent?.vatId}" was ` +
+      `returned in: ${attribution.refusals.join(", ")}. Refused (#156).`
+    );
+  }
+
   // For backward compatibility, use issuer as partner (will be overridden by extractionCore)
-  // This ensures legacy code continues to work during the transition
-  const legacyPartner = issuer?.name || parsed.extracted?.partner || null;
-  const legacyVatId = issuer?.vatId || normalizeVatId(parsed.extracted?.vatId);
-  const legacyIban = issuer?.iban || parsed.extracted?.iban || null;
-  const legacyAddress = issuer?.address || parsed.extracted?.address || null;
-  const legacyWebsite = issuer?.website || normalizeWebsite(parsed.extracted?.website);
+  // This ensures legacy code continues to work during the transition.
+  // The flat fields are the second route the agent takes to the Partner: with
+  // the issuer entity refused they are what `extractedPartner` falls back to,
+  // and on these templates they hold the agent again (#156).
+  const flatPartner = parsed.extracted?.partner || null;
+  const flatVatId = normalizeVatId(parsed.extracted?.vatId);
+  const flatIsAgent =
+    issuerRefused ||
+    (invoicingAgent !== null &&
+      (printedNameEquals(flatPartner, invoicingAgent.name) ||
+        Boolean(flatVatId && invoicingAgent.vatId && flatVatId === invoicingAgent.vatId)));
+
+  const legacyPartner = guardedIssuer?.name || (flatIsAgent ? null : flatPartner);
+  const legacyVatId = guardedIssuer?.vatId || (flatIsAgent ? null : flatVatId);
+  const legacyIban = guardedIssuer?.iban || (flatIsAgent ? null : parsed.extracted?.iban || null);
+  const legacyAddress = guardedIssuer?.address || (flatIsAgent ? null : parsed.extracted?.address || null);
+  const legacyWebsite = guardedIssuer?.website || (flatIsAgent ? null : normalizeWebsite(parsed.extracted?.website));
   const lineItems = normalizeLineItems(parsed.extracted?.lineItems || parsed.lineItems || null);
   const rateGroups = normalizeRateGroups(parsed.extracted?.rateGroups || parsed.rateGroups || null);
 
@@ -1082,8 +1236,9 @@ JSON only, no markdown, no explanation.`;
     confidence: typeof parsed.extracted?.confidence === "number" ? parsed.extracted.confidence : 0.5,
     fieldSpans: {},
     // New entity fields
-    issuer,
-    recipient,
+    issuer: guardedIssuer,
+    recipient: guardedRecipient,
+    invoicingAgent,
   };
 
   // Note: Bounding boxes are no longer extracted - using PDF text search instead
@@ -1106,20 +1261,30 @@ JSON only, no markdown, no explanation.`;
     website: parsed.extracted.recipient_raw.website || null,
   } : null;
 
+  // The raw bag highlights what was stored, so it drops exactly what the
+  // Invoicing Agent guard refused (#156) — otherwise the PDF still points at
+  // the agent's block for a field the record no longer holds.
+  const guardedIssuerRaw = issuerRefused
+    ? null
+    : attribution.refusals.includes("issuerVatId") && issuerRaw
+      ? { ...issuerRaw, vatId: null }
+      : issuerRaw;
+  const guardedRecipientRaw = attribution.refusals.includes("recipient") ? null : recipientRaw;
+
   // Extract raw text values for PDF search
   const extractedRaw: ExtractedRawText = {
     date: parsed.extracted?.date_raw || null,
     amount: parsed.extracted?.amount_raw || null,
     vatPercent: parsed.extracted?.vatPercent_raw || null,
     // Use issuer raw as partner raw for backward compatibility
-    partner: issuerRaw?.name || parsed.extracted?.partner_raw || null,
-    vatId: issuerRaw?.vatId || parsed.extracted?.vatId_raw || null,
-    iban: issuerRaw?.iban || parsed.extracted?.iban_raw || null,
-    address: issuerRaw?.address || parsed.extracted?.address_raw || null,
-    website: issuerRaw?.website || parsed.extracted?.website_raw || null,
+    partner: guardedIssuerRaw?.name || (flatIsAgent ? null : parsed.extracted?.partner_raw || null),
+    vatId: guardedIssuerRaw?.vatId || (flatIsAgent ? null : parsed.extracted?.vatId_raw || null),
+    iban: guardedIssuerRaw?.iban || (flatIsAgent ? null : parsed.extracted?.iban_raw || null),
+    address: guardedIssuerRaw?.address || (flatIsAgent ? null : parsed.extracted?.address_raw || null),
+    website: guardedIssuerRaw?.website || (flatIsAgent ? null : parsed.extracted?.website_raw || null),
     // New entity raw fields
-    issuer: issuerRaw,
-    recipient: recipientRaw,
+    issuer: guardedIssuerRaw,
+    recipient: guardedRecipientRaw,
   };
 
   // Extract additional fields. The key must be in the closed vocabulary —
