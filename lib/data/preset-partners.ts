@@ -134,15 +134,15 @@ export const PRESET_PARTNERS: PresetPartner[] = [
   { name: "RHI Magnesita N.V.", aliases: ["RHI Magnesita"], country: "AT", website: "rhimagnesita.com" },
 
   // Telecom & Tech
-  { name: "A1 Telekom Austria AG", aliases: ["A1", "A1 Austria", "Telekom Austria"], country: "AT", website: "a1.net", vatId: "ATU62895905" },
+  { name: "A1 Telekom Austria AG", aliases: ["A1", "A1 Austria", "Telekom Austria", "Yesss"], country: "AT", website: "a1.net", vatId: "ATU62895905" },
   { name: "Magenta Telekom", aliases: ["Magenta", "T-Mobile Austria"], country: "AT", website: "magenta.at", vatId: "ATU62895668" },
-  { name: "Hutchison Drei Austria GmbH", aliases: ["Drei", "3 Austria"], country: "AT", website: "drei.at", vatId: "ATU61927217" },
+  { name: "Hutchison Drei Austria GmbH", aliases: ["Drei", "3 Austria", "Hutchison"], country: "AT", website: "drei.at", vatId: "ATU61927217" },
   { name: "Fabasoft AG", aliases: ["Fabasoft"], country: "AT", website: "fabasoft.com", vatId: "ATU40771407" },
   { name: "S&T AG", aliases: ["S&T", "Kontron"], country: "AT", website: "snt.at", vatId: "ATU65614203" },
 
   // Retail & Consumer
   { name: "SPAR Österreichische Warenhandels-AG", aliases: ["SPAR", "Interspar", "Eurospar"], country: "AT", website: "spar.at", vatId: "ATU16409502" },
-  { name: "REWE International AG", aliases: ["BILLA", "BIPA", "Merkur", "Penny"], country: "AT", website: "rewe-group.at", vatId: "ATU22126909" },
+  { name: "REWE International AG", aliases: ["BILLA", "BIPA", "Merkur", "Penny", "REWE"], country: "AT", website: "rewe-group.at", vatId: "ATU22126909" },
   { name: "Hofer KG", aliases: ["Hofer", "ALDI Süd Austria"], country: "AT", website: "hofer.at", vatId: "ATU46561808" },
   { name: "Lidl Österreich GmbH", aliases: ["Lidl"], country: "AT", website: "lidl.at", vatId: "ATU50477808" },
   { name: "MediaMarkt Austria", aliases: ["MediaMarkt", "Saturn"], country: "AT", website: "mediamarkt.at", vatId: "ATU52397906" },
