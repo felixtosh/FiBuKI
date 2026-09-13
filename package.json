@@ -28,7 +28,7 @@
     "test:merge-preview": "node --test tests/merge-preview.test.mjs",
     "test:latest-callback": "node --test tests/latest-callback.test.mjs",
     "test:files-upload-pipeline": "node --test tests/files-upload-pipeline.test.mjs",
-    "test:node": "node --test tests/",
+    "test:node": "node --test tests/*.test.mjs",
     "setup": "bash scripts/setup.sh",
     "generate:mcp-automations": "node scripts/generate-mcp-automations.js",
     "generate:tool-definitions": "node scripts/generate-tool-definitions.js",
