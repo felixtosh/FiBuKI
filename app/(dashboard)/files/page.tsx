@@ -15,6 +15,7 @@ import { ConnectTransactionOverlay } from "@/components/files/connect-transactio
 import { UploadProgress, FileUploadStatus } from "@/components/files/upload-progress";
 import { FilesDataTableHandle } from "@/components/files/files-data-table";
 import { SelectionChangeMeta } from "@/components/ui/data-table";
+import { useLatestCallback } from "@/hooks/use-latest-callback";
 import { useFiles } from "@/hooks/use-files";
 import {
   readBankOriginalAmount,
@@ -625,34 +626,31 @@ function FilesContent() {
     router.push(newUrl, { scroll: false });
   }, [router, filters, searchValue]);
 
-  // The table's rows are virtualised and memoised, so a row whose own selection
-  // state didn't change is not re-rendered and keeps the checkbox callback it
-  // last painted with — including that render's copy of additionalSelectedIds.
-  // Toggling against that snapshot is what made the checkboxes act like a radio
-  // group: the second row ticked still saw an empty selection and replaced the
-  // first (#232). Read the live set through a ref instead.
-  const additionalSelectedIdsRef = useRef(additionalSelectedIds);
-  useEffect(() => {
-    additionalSelectedIdsRef.current = additionalSelectedIds;
-  }, [additionalSelectedIds]);
-
   // Checkbox column: independent of row-click selection, so it never opens or
   // navigates the detail panel — except unchecking the primary row's own
   // checkbox, which has no other representation than closing its panel.
-  const handleFileCheckboxChange = useCallback(
+  //
+  // The table's rows are virtualised and memoised, and the comparator ignores
+  // the callbacks a cell paints (see components/ui/data-table/virtual-row.tsx),
+  // so a row whose own selection state didn't change keeps the checkbox handler
+  // it last painted with. Toggling against that render's copy of
+  // additionalSelectedIds is what made the checkboxes act like a radio group:
+  // the second row ticked still saw an empty selection and replaced the first
+  // (#232). useLatestCallback keeps the identity the stale row holds but runs
+  // this render's closure, so the set read below is the live one.
+  const handleFileCheckboxChange = useLatestCallback(
     (fileId: string, checked: boolean) => {
       const result = toggleFileCheckbox({
         fileId,
         checked,
         primarySelectedId,
-        additionalSelectedIds: additionalSelectedIdsRef.current,
+        additionalSelectedIds,
       });
       setAdditionalSelectedIds(result.additionalSelectedIds);
       if (result.closePrimary) {
         handleCloseDetail();
       }
-    },
-    [primarySelectedId, handleCloseDetail]
+    }
   );
 
   const handleToggleSelectAll = useCallback(() => {

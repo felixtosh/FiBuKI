@@ -317,7 +317,9 @@ what those Files come to. It is the figure both detail panels print
 against — a File that closes it is a Match on
 the Remainder, never an amount mismatch against the full line. At or below zero the
 Transaction is fully documented, and scoring goes back to the full amount. A Match scored
-against a Remainder is a suggestion, never an auto-connection.
+against a Remainder is a suggestion unless the documents are from the same day and no
+undocumented Transaction wants the File as much — see
+[ADR-0008](docs/adr/0008-remainder-auto-connect-is-same-day-only.md).
 _Deutsch_: Restbetrag
 _Avoid_: difference, open amount, balance, remaining amount, delta
 _Avoid (de)_: Differenz, offener Betrag, Saldo

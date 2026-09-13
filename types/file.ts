@@ -301,6 +301,27 @@ export interface TaxFile {
   extractedTipAmount?: number | null;
 
   /**
+   * Which total a hand-set tip was measured against, and what that total was
+   * (#310), in cents.
+   *
+   * A tip is bounded at correction time, because an oversized one is never
+   * caught afterwards: it moves the reconciled total away from the bank line
+   * and the file simply stops matching, with nothing saying why. The default
+   * bound is the document total; a tip declared as not printed on the invoice
+   * is bounded by the transaction total instead, since on that document the
+   * total is the Entgelt and the tip sits on top of it.
+   *
+   * Stored so the check is reproducible later and a reader can tell an
+   * overridden tip from an ordinary one. Absent on every file whose tip
+   * predates the guard, and on one the extractor transcribed from the page —
+   * a printed tip is evidence, not a hand-set figure.
+   */
+  extractedTipBound?: {
+    bound: "document" | "transaction";
+    total: number;
+  } | null;
+
+  /**
    * The figure the document itself designates as due, in cents, transcribed
    * from beside its own wording ("Zahlbetrag", "Rechnungsbetrag", "zu zahlen",
    * "Amount Due") (#206). A Mahnung prints both the original invoice amount
@@ -705,6 +726,16 @@ export interface FileConnection {
 
   /** AI confidence if auto-matched (0-100) */
   matchConfidence?: number | null;
+
+  /**
+   * Why an auto-connection was permitted, when it was not the ordinary
+   * full-amount case (#242). `remainder_same_day`: the File closed the
+   * Transaction's Remainder and carried the same extracted date as every File
+   * already on it — see
+   * [ADR-0008](../docs/adr/0008-remainder-auto-connect-is-same-day-only.md).
+   * Absent on every other Connection, including a full-amount auto-connect.
+   */
+  autoConnectReason?: "remainder_same_day";
 
   /** Score breakdown by factor (amount, date, partner, iban, reference, hint) */
   scoreBreakdown?: {

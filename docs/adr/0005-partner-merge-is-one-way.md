@@ -6,9 +6,10 @@ Duplicate Partners are routine — a bad extraction, a brand name against a lega
 HTML entity in a supplier name — and nothing in the product could fold two into one. A
 **Merge** now does: the caller names the survivor and one or more losers, the survivor
 keeps the values it has and fills its empty ones from the losers, the losers' names join
-its aliases, and every Transaction, File, Invoice and identity entity pointing at a loser
-is repointed. Each loser stays as a **Merged Partner**: inactive, carrying `mergedInto`,
-hidden from the Partner list, so an ID handed out before the merge still resolves.
+its aliases, and every Transaction, File, Invoice, identity entity and queued
+invoice-fetch item pointing at a loser is repointed. Each loser stays as a **Merged
+Partner**: inactive, carrying `mergedInto`, hidden from the Partner list, so an ID
+handed out before the merge still resolves.
 
 There is no unmerge. Offering one would mean recording every reference that moved, in an
 audit collection built for an operation whose whole purpose is removing a record nobody
@@ -40,6 +41,10 @@ wanted.
 - Two non-empty, differing VAT IDs warn and demand a second explicit confirmation, but
   never block. A wrong extracted VAT ID is itself a common cause of the duplicate, and
   only the user knows which one is the typo.
+- A merge does not promote the survivor to an identity-synced Partner. `identitySourceField`
+  decides where a Partner is edited — "Edit in Identity" rather than the Partner page — so
+  it travels only with the identity entity that produced it, never as one more empty value
+  filled from a loser (#307).
 - A merge does not re-run the Match. It reports how many unmatched Transactions the
   survivor's new identifying data would now hit and leaves the existing reviewed rematch
   path to act on it, because silent re-attribution of bookings is what makes users stop

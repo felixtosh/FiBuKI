@@ -402,6 +402,12 @@ export interface EditableExtractedFields {
    * print survives a save that did not touch this box.
    */
   tipAmount: string;
+  /**
+   * The tip above is not printed on the invoice (#310), so the server measures
+   * it against the transaction total rather than the document total. Absent is
+   * false: the default bound is the document's own total.
+   */
+  tipNotPrinted?: boolean;
   vatPercent: string; // number as string
   partner: string;
   vatId: string;
@@ -595,12 +601,16 @@ export async function updateFileExtractedFields(
     {
       fileId: string;
       correction: Record<string, unknown>;
+      tipNotPrinted: boolean;
       details: Record<string, unknown>;
     },
     { success: boolean; changed: string[]; correctedFields: string[] }
   >("updateFileExtractedFields", {
     fileId,
     correction,
+    // #310: beside the correction, not inside it — it says how to read the tip
+    // rather than being a value the record keeps per field.
+    tipNotPrinted: fields.tipNotPrinted === true,
     details: {
       partner: fields.partner || null,
       vatId: fields.vatId || null,

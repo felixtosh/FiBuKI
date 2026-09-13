@@ -18,3 +18,4 @@ export { dismissTransactionSuggestionCallable } from "./dismissTransactionSugges
 export { undismissTransactionSuggestionCallable } from "./undismissTransactionSuggestion";
 export { unrejectFileFromTransactionCallable } from "./unrejectFileFromTransaction";
 export { backfillFileTypesCallable } from "./backfillFileTypes";
+export { backfillFileEntityNamesCallable } from "./backfillFileEntityNames";

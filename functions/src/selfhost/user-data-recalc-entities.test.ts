@@ -33,8 +33,9 @@ async function seedFileWithEncodedIssuer(fileId: string, extractedPartner: strin
     fileType: "application/pdf",
     extractionComplete: true,
     // What the model handed back, stored verbatim: still HTML-encoded.
-    // Every counterparty field is present because the sweep copies them all
-    // unguarded, and Firestore rejects an undefined value.
+    // Every counterparty field is present so this fixture exercises the
+    // encoding question alone; an incomplete entity is #294's case, and the
+    // sweep guards those copies with `|| null` since.
     extractedIssuer: {
       name: "AL&amp;FA Taxi KG",
       vatId: "ATU12345678",
@@ -103,5 +104,64 @@ describe("selfhost: onUserDataUpdate counterparty re-calculation (#233)", () => 
 
     const file = (await db.collection("files").doc("f-legacy").get()).data()!;
     expect(file.extractedPartner).toBe("AL&FA Taxi KG");
+  });
+});
+
+/**
+ * #299: the sweep also MATCHES on the stored entity names, not just rewrites
+ * extractedPartner from them. Entities written since entity normalisation
+ * started decoding are already clean, and `backfillFileEntityNames` repairs
+ * the older ones — but a record that predates both still holds "&amp;", and
+ * on that record the name lane was comparing an encoded document name against
+ * the user's own company as typed. Decoding ahead of the match is what fixes
+ * the direction rather than only the string.
+ */
+describe("selfhost: onUserDataUpdate name-lane matching on an encoded entity (#299)", () => {
+  const emptyFields = { vatId: "", iban: "", address: "", website: "" };
+
+  async function seedUndirectedFile(): Promise<void> {
+    await db.collection("files").doc("f-own-amp").set({
+      userId: USER,
+      fileName: "outgoing-invoice.pdf",
+      fileType: "application/pdf",
+      extractionComplete: true,
+      // Written before the decode moved to entity normalisation.
+      extractedIssuer: { name: "AL&amp;FA", ...emptyFields },
+      extractedRecipient: { name: "Wiener Handels GmbH", ...emptyFields },
+      extractedPartner: "AL&FA",
+      invoiceDirection: "unknown",
+      matchedUserAccount: null,
+      recipientIdentityMatch: "third-party",
+      transactionIds: [],
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    });
+  }
+
+  it("recognises the user's own '&' company as the issuer and makes the document outgoing", async () => {
+    await userDataRef().set({
+      personalEntity: { name: "Stefan Bandit", vatId: USER_VAT, ibans: [] },
+      companies: [{ name: "AL&FA Taxi KG", aliases: [], ibans: [] }],
+    });
+    await drainTriggers();
+
+    await seedUndirectedFile();
+    await drainTriggers();
+
+    // A matching-relevant identity edit: adds an IBAN, so the sweep runs.
+    await userDataRef().update({
+      personalEntity: {
+        name: "Stefan Bandit",
+        vatId: USER_VAT,
+        ibans: ["AT611904300234573201"],
+      },
+    });
+    await drainTriggers();
+
+    const file = (await db.collection("files").doc("f-own-amp").get()).data()!;
+    expect(file.invoiceDirection).toBe("outgoing");
+    expect(file.matchedUserAccount).toBe("issuer");
+    // The counterparty is the recipient, not the user's own company.
+    expect(file.extractedPartner).toBe("Wiener Handels GmbH");
   });
 });

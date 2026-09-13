@@ -17,6 +17,7 @@ import {
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useLatestCallback } from "@/hooks/use-latest-callback";
 import { ResizableDataTableProps, DataTableHandle, DataTableSection, RowClickModifiers } from "./types";
 import { ResizeHandle } from "./resize-handle";
 import { VirtualRow } from "./virtual-row";
@@ -230,16 +231,16 @@ function ResizableDataTableInner<TData extends { id: string }>(
     return ids;
   }, [displayItems]);
 
-  // Hold the latest callback in a ref so an inline arrow prop from the page
-  // doesn't re-fire the effect on every render.
-  const onDisplayedOrderChangeRef = React.useRef(onDisplayedOrderChange);
-  React.useEffect(() => {
-    onDisplayedOrderChangeRef.current = onDisplayedOrderChange;
-  }, [onDisplayedOrderChange]);
+  // Stable identity, current closure: the effect fires when the order changes,
+  // not when the page re-creates its inline arrow prop, and it still calls the
+  // page's newest callback.
+  const emitDisplayedOrder = useLatestCallback((orderedIds: string[]) => {
+    onDisplayedOrderChange?.(orderedIds);
+  });
 
   React.useEffect(() => {
-    onDisplayedOrderChangeRef.current?.(displayedRowIds);
-  }, [displayedRowIds]);
+    emitDisplayedOrder(displayedRowIds);
+  }, [displayedRowIds, emitDisplayedOrder]);
 
   // Multi-select: track last selected ROW ID for Shift+click range selection
   // We store the ID (not index) so it stays valid when sorting changes
@@ -258,23 +259,6 @@ function ResizableDataTableInner<TData extends { id: string }>(
 
   // Get current index of last selected row (recalculated when displayItems changes)
   const lastSelectedIndex = lastSelectedRowId ? (rowIdToIndexMap.get(lastSelectedRowId) ?? null) : null;
-
-  // Use a ref to always have the latest selectedRowIds (avoids stale closure in rapid clicks)
-  const selectedRowIdsRef = React.useRef(selectedRowIds);
-  React.useEffect(() => {
-    selectedRowIdsRef.current = selectedRowIds;
-  }, [selectedRowIds]);
-
-  // Same reason, one level up: VirtualRow is memoised and does not compare its
-  // onClick, so a row whose selection state didn't change keeps the
-  // handleRowClick it last painted with — anchor, display order and index map
-  // frozen at that render. A shift-click arriving from such a row saw a null
-  // anchor and fell through to the plain-click branch, collapsing the selection
-  // instead of extending it. Read the range inputs live.
-  const rangeContextRef = React.useRef({ lastSelectedIndex, displayItems, rowIdToIndexMap });
-  React.useEffect(() => {
-    rangeContextRef.current = { lastSelectedIndex, displayItems, rowIdToIndexMap };
-  }, [lastSelectedIndex, displayItems, rowIdToIndexMap]);
 
   // Track total size and visible rows in state to avoid flushSync warning during render
   const [totalSize, setTotalSize] = React.useState(0);
@@ -529,8 +513,17 @@ function ResizableDataTableInner<TData extends { id: string }>(
     [columnSizing, lastColumnId, defaultColumnSizes]
   );
 
-  // Row click handler with multi-select support
-  const handleRowClick = React.useCallback(
+  // Row click handler with multi-select support.
+  //
+  // Every row holds this handler across renders: VirtualRow is memoised and its
+  // comparator ignores onClick on purpose (see virtual-row.tsx), so a row whose
+  // own flags didn't change keeps the one it last painted with. useLatestCallback
+  // is what makes that safe — the identity the row holds never changes, and the
+  // call runs this render's closure, so the shift-click anchor, display order,
+  // index map and selection below are read as of the click and not as of the
+  // row's last render (#232, #298). It covers the consumer's onRowClick and
+  // onSelectionChange too, which are read from the same live closure.
+  const handleRowClick = useLatestCallback(
     (row: TData, modifiers: RowClickModifiers) => {
       if (!enableMultiSelect) {
         // Single-select mode: just call onRowClick
@@ -539,11 +532,9 @@ function ResizableDataTableInner<TData extends { id: string }>(
       }
 
       // Multi-select mode
-      // Use ref to get latest selection (avoids stale closure when clicking rapidly)
-      const { lastSelectedIndex, displayItems, rowIdToIndexMap } = rangeContextRef.current;
       const clickedIndex = rowIdToIndexMap.get(row.id) ?? -1;
       const isModifierClick = modifiers.metaKey || modifiers.ctrlKey;
-      const currentSelection = selectedRowIdsRef.current ?? new Set<string>();
+      const currentSelection = selectedRowIds ?? new Set<string>();
 
       if (modifiers.shiftKey && lastSelectedIndex !== null && clickedIndex !== -1) {
         // Shift+click: select range from lastSelectedIndex to clicked index
@@ -590,8 +581,7 @@ function ResizableDataTableInner<TData extends { id: string }>(
         });
         setLastSelectedRowId(row.id);
       }
-    },
-    [enableMultiSelect, onRowClick, onSelectionChange]
+    }
   );
 
   return (

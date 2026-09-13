@@ -23,6 +23,7 @@ function getProjectId(): string {
 const VERTEX_LOCATION = process.env.VERTEX_LOCATION || "europe-west1";
 
 import { ExtractedData, ExtractedLineItem, ExtractedRateGroup } from "../types/extraction";
+import { decodeHtmlEntities } from "../utils/htmlEntities";
 
 /**
  * Bounding box extracted by Gemini for a field
@@ -131,13 +132,56 @@ const JSON_SINGLE_CHAR_ESCAPES = new Set(['"', "\\", "/", "b", "f", "n", "r", "t
 // the same two bytes.
 const AMBIGUOUS_ESCAPES = new Set(["b", "f", "n", "r", "t"]);
 
+// What can begin the key or value that follows a `,` or a `:` in well-formed
+// JSON. A delimiter alone is not enough to conclude a string ended — prose
+// contains commas and colons too (#283).
+const JSON_TOKEN_STARTS = /[-"{[\dtfn]/;
+
+function skipSpace(jsonStr: string, from: number): number {
+  let i = from;
+  while (i < jsonStr.length && /\s/.test(jsonStr[i])) i += 1;
+  return i;
+}
+
+/**
+ * Does the `"` sitting just before `quoteEnd` CLOSE the string literal it is
+ * in, rather than being an escaped quote inside it?
+ *
+ * This is a HEURISTIC (#283), not a decision the bytes support. A backslash of
+ * data immediately before a closing quote — a Windows path with a trailing
+ * separator, `"C:\Users\"` — is byte-for-byte an escaped quote, so nothing
+ * local can tell them apart. What differs is what comes NEXT: a string that
+ * really ended is followed by `,` `}` `]` `:` or the end of the response, and
+ * after a `,` or `:` by the start of the next key or value.
+ *
+ * It is wrong for a document whose own text carries an escaped quote followed
+ * immediately by a structural character AND by something that reads as a JSON
+ * token — the value `he said "hi", 5 times`. That input fails the parse loudly,
+ * the same way it does today, rather than being corrupted quietly; it is rarer
+ * than a trailing-separator path, which is why the trade goes this way.
+ */
+function quoteClosesString(jsonStr: string, quoteEnd: number): boolean {
+  const i = skipSpace(jsonStr, quoteEnd);
+  // Nothing follows: the response ended on the quote, so the string ended too.
+  if (i >= jsonStr.length) return true;
+
+  const follower = jsonStr[i];
+  if (follower === "}" || follower === "]") return true;
+  if (follower === "," || follower === ":") {
+    const j = skipSpace(jsonStr, i + 1);
+    return j < jsonStr.length && JSON_TOKEN_STARTS.test(jsonStr[j]);
+  }
+  return false;
+}
+
 /** What the backslash pass produced, and where it had to guess (#275). */
 interface BackslashRepair {
   text: string;
   /**
-   * The field names whose value came through an ambiguous escape: within one
-   * string literal the pass BOTH doubled a backslash AND left a `\b \f \n \r
-   * \t` standing. A literal the pass never had to touch is not suspect — the
+   * The field names whose value the pass had to guess at: within one string
+   * literal it BOTH doubled a backslash AND left a `\b \f \n \r \t` standing,
+   * or it read a `\"` as a data backslash on the strength of what followed the
+   * quote (#283). A literal the pass never had to touch is not suspect — the
    * model escaped that one correctly, and its `\t` is a real tab.
    */
   ambiguousFields: string[];
@@ -159,6 +203,11 @@ interface BackslashRepair {
  * had to choose (#275). This is the only place that knows which literals it
  * modified; a detector reading the parsed result instead would also flag the
  * raw-newline repair below, which produces an identical-looking value.
+ *
+ * `\"` is the one escape whose reading depends on more than the two bytes: at
+ * the end of a value it is a data backslash the parse chokes on (#283). That
+ * one is settled by `quoteClosesString`, and a literal settled that way is
+ * reported through the same #275 signal — the pass guessed there too.
  */
 function escapeInvalidBackslashes(jsonStr: string): BackslashRepair {
   let result = "";
@@ -170,6 +219,7 @@ function escapeInvalidBackslashes(jsonStr: string): BackslashRepair {
   let literalStart = 0;
   let doubled = false;
   let survivor = false;
+  let rescuedTerminator = false;
   let isValue = false;
   // The last non-whitespace character seen OUTSIDE a literal, and the last
   // literal that closed — together they name the key a value belongs to.
@@ -188,6 +238,7 @@ function escapeInvalidBackslashes(jsonStr: string): BackslashRepair {
         literalStart = result.length;
         doubled = false;
         survivor = false;
+        rescuedTerminator = false;
         isValue = prevNonSpace === ":";
       } else if (ch === ":") {
         currentKey = lastLiteral;
@@ -201,7 +252,7 @@ function escapeInvalidBackslashes(jsonStr: string): BackslashRepair {
       result += ch;
       inString = false;
       prevNonSpace = ch;
-      if (doubled && survivor) {
+      if ((doubled && survivor) || rescuedTerminator) {
         // A suspect key names itself; a suspect value is named by its key.
         ambiguousFields.add(isValue ? currentKey || "(unnamed)" : lastLiteral);
       }
@@ -214,6 +265,16 @@ function escapeInvalidBackslashes(jsonStr: string): BackslashRepair {
     }
 
     const next = jsonStr[i + 1];
+    if (next === '"' && quoteClosesString(jsonStr, i + 2)) {
+      // The quote ends the literal, so this backslash is the last character of
+      // the value rather than the escape it is byte-identical to (#283). Double
+      // it and leave the quote to the next iteration, which closes the string.
+      result += "\\\\";
+      doubled = true;
+      rescuedTerminator = true;
+      continue;
+    }
+
     if (next !== undefined && JSON_SINGLE_CHAR_ESCAPES.has(next)) {
       result += ch + next;
       if (AMBIGUOUS_ESCAPES.has(next)) survivor = true;
@@ -1031,8 +1092,19 @@ JSON only, no markdown, no explanation.`;
   }
 
   // Extract issuer entity (normalize values)
+  //
+  // #299: the name is decoded here, at entity normalisation, and nowhere
+  // downstream. `extractedIssuer`/`extractedRecipient` are stored as shaped
+  // here, so every consumer inherits one spelling: identity name-lane
+  // matching, `extractedPartner`, Partner display, export. Decoding at a
+  // write point instead (what #233 did) left the stored entity encoded, and
+  // the name lane then compared an encoded document name against the user's
+  // own name as typed.
+  //
+  // `issuer_raw`/`recipient_raw` below are deliberately NOT decoded: those
+  // are the document's own characters, searched verbatim to highlight the PDF.
   const issuer = parsed.extracted?.issuer ? {
-    name: parsed.extracted.issuer.name || null,
+    name: decodeHtmlEntities(parsed.extracted.issuer.name),
     vatId: normalizeVatId(parsed.extracted.issuer.vatId),
     address: parsed.extracted.issuer.address || null,
     iban: parsed.extracted.issuer.iban || null,
@@ -1041,7 +1113,7 @@ JSON only, no markdown, no explanation.`;
 
   // Extract recipient entity (normalize values)
   const recipient = parsed.extracted?.recipient ? {
-    name: parsed.extracted.recipient.name || null,
+    name: decodeHtmlEntities(parsed.extracted.recipient.name),
     vatId: normalizeVatId(parsed.extracted.recipient.vatId),
     address: parsed.extracted.recipient.address || null,
     iban: parsed.extracted.recipient.iban || null,
@@ -1050,7 +1122,9 @@ JSON only, no markdown, no explanation.`;
 
   // For backward compatibility, use issuer as partner (will be overridden by extractionCore)
   // This ensures legacy code continues to work during the transition
-  const legacyPartner = issuer?.name || parsed.extracted?.partner || null;
+  // The flat fallback is decoded for the same reason the entity is: it is the
+  // name a record ends up storing when the model returns no issuer block.
+  const legacyPartner = issuer?.name || decodeHtmlEntities(parsed.extracted?.partner) || null;
   const legacyVatId = issuer?.vatId || normalizeVatId(parsed.extracted?.vatId);
   const legacyIban = issuer?.iban || parsed.extracted?.iban || null;
   const legacyAddress = issuer?.address || parsed.extracted?.address || null;

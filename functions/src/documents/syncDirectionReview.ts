@@ -27,8 +27,11 @@ type Firestore = ReturnType<typeof getFirestore>;
  *
  * A dangling id contributes nothing rather than a zero-amount transaction:
  * a reference that no longer resolves is not evidence about direction.
+ *
+ * Exported since #310: the bound on a hand-set tip needs the same read, and a
+ * second copy of it would be a second opinion about what a dangling link means.
  */
-async function readLinkedTransactions(
+export async function readLinkedTransactions(
   db: Firestore,
   transactionIds: string[]
 ): Promise<DirectionTransactionFacts[]> {

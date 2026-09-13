@@ -9,15 +9,30 @@
  * Remainder in the other.
  */
 
-import { getFirestore } from "firebase-admin/firestore";
+import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { documentedAmountOf, filePaymentTotal } from "./coverage";
 
 const db = getFirestore();
 
+/** One File already connected to a candidate Transaction. */
+export interface ConnectedFile {
+  fileId: string;
+  /**
+   * What the bank was charged for it — `filePaymentTotal`, so a printed
+   * Trinkgeld counts (#172). Null when the File has no extracted amount, which
+   * contributes nothing to the documented amount.
+   */
+  payment: number | null;
+  /**
+   * The File's extracted date, or null when the Extraction found none. Read by
+   * the same-day rule (#242); a File with no date is never same-day.
+   */
+  extractedDate: Timestamp | null;
+}
+
 /**
- * Documented amount per transaction, for the candidates that hold any Files.
- * Transactions with no Files are absent from the map, which callers read as
- * zero — nothing connected, score against the full amount.
+ * The Files already connected to each candidate, keyed by transaction id.
+ * Transactions holding no Files are absent from the map.
  *
  * `excludeFileId` is the File being matched: it may already be connected to a
  * candidate, and a File cannot count towards the Remainder it is being scored
@@ -31,10 +46,10 @@ const db = getFirestore();
  * drift, and picking a new source of truth is not this ticket's decision to
  * make. The batching below exists because that read was per-candidate before.
  */
-export async function loadDocumentedAmounts(
+export async function loadConnectedFiles(
   transactionIds: string[],
   excludeFileId?: string
-): Promise<Map<string, number>> {
+): Promise<Map<string, ConnectedFile[]>> {
   const fileIdsByTransaction = new Map<string, string[]>();
   const wantedFileIds = new Set<string>();
 
@@ -60,11 +75,11 @@ export async function loadDocumentedAmounts(
     }
   }
 
-  const documented = new Map<string, number>();
-  if (wantedFileIds.size === 0) return documented;
+  const connected = new Map<string, ConnectedFile[]>();
+  if (wantedFileIds.size === 0) return connected;
 
   // Firestore 'in' queries have a limit of 30, batch if needed
-  const paymentByFileId = new Map<string, number | null>();
+  const byFileId = new Map<string, ConnectedFile>();
   const allFileIds = Array.from(wantedFileIds);
   for (let i = 0; i < allFileIds.length; i += 30) {
     const batch = allFileIds.slice(i, i + 30);
@@ -75,18 +90,53 @@ export async function loadDocumentedAmounts(
 
     for (const fileDoc of filesSnapshot.docs) {
       const fileData = fileDoc.data();
-      // Against the bank line, so a printed Trinkgeld counts (#172).
-      paymentByFileId.set(
-        fileDoc.id,
-        filePaymentTotal(fileData.extractedAmount, fileData.extractedTipAmount)
-      );
+      byFileId.set(fileDoc.id, {
+        fileId: fileDoc.id,
+        // Against the bank line, so a printed Trinkgeld counts (#172).
+        payment: filePaymentTotal(fileData.extractedAmount, fileData.extractedTipAmount),
+        extractedDate: fileData.extractedDate ?? null,
+      });
     }
   }
 
   for (const [transactionId, fileIds] of fileIdsByTransaction) {
-    const total = documentedAmountOf(fileIds.map((id) => paymentByFileId.get(id)));
-    if (total > 0) documented.set(transactionId, total);
+    const files = fileIds
+      .map((id) => byFileId.get(id))
+      .filter((f): f is ConnectedFile => f !== undefined);
+    if (files.length > 0) connected.set(transactionId, files);
   }
 
+  return connected;
+}
+
+/**
+ * Documented amount per transaction, from what `loadConnectedFiles` returned.
+ * A Transaction whose Files explain nothing — every one of them without an
+ * extracted amount — is absent, which callers read as zero: score against the
+ * full amount.
+ */
+export function documentedAmountsOf(
+  connected: Map<string, ConnectedFile[]>
+): Map<string, number> {
+  const documented = new Map<string, number>();
+  for (const [transactionId, files] of connected) {
+    const total = documentedAmountOf(files.map((f) => f.payment));
+    if (total > 0) documented.set(transactionId, total);
+  }
   return documented;
+}
+
+/**
+ * Documented amount per transaction, for the candidates that hold any Files.
+ * Transactions with no Files are absent from the map, which callers read as
+ * zero — nothing connected, score against the full amount.
+ *
+ * The two reads above in one call, for the callers that need nothing else off
+ * the connected Files.
+ */
+export async function loadDocumentedAmounts(
+  transactionIds: string[],
+  excludeFileId?: string
+): Promise<Map<string, number>> {
+  return documentedAmountsOf(await loadConnectedFiles(transactionIds, excludeFileId));
 }
