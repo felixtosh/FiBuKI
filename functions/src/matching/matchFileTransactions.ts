@@ -496,7 +496,7 @@ export async function runTransactionMatching(
       const partnerDoc = await db.collection("partners").doc(fileData.partnerId).get();
       if (partnerDoc.exists) {
         const partnerData = partnerDoc.data()!;
-        partnerAliases = derivePartnerAliases(partnerData);
+        partnerAliases = await derivePartnerAliases(db, partnerData);
         console.log(`[TxMatch] Partner aliases: [${partnerAliases.map(a => `"${a}"`).join(", ")}]`);
 
         effectiveCycles = partnerData.billingCycle?.effective ?? [];
