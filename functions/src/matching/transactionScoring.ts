@@ -615,25 +615,25 @@ export function calculatePartnerScore(
     return { score: 0, source: null };
   }
 
-  // 2. Check file's extracted partner text against transaction name
-  if (fileData.extractedPartner) {
-    const result = namesMatch(fileData.extractedPartner, txName);
-    if (result.match) {
-      return { score: result.score, source: "partner" };
+  // 2 & 3. Check the file's extracted partner text and every partner alias
+  // against the transaction name, taking the best-scoring match rather than
+  // the first (#138) — the alias list is not ordered by relevance, and the
+  // user Partner's own name sitting first must not shadow a stronger brand
+  // alias further down the list.
+  const candidates = [
+    ...(fileData.extractedPartner ? [fileData.extractedPartner] : []),
+    ...(partnerAliases || []),
+  ];
+
+  let best: { score: number; source: TransactionMatchSource | null } = { score: 0, source: null };
+  for (const candidate of candidates) {
+    const result = namesMatch(candidate, txName);
+    if (result.match && result.score > best.score) {
+      best = { score: result.score, source: "partner" };
     }
   }
 
-  // 3. Check partner aliases against transaction name
-  if (partnerAliases && partnerAliases.length > 0) {
-    for (const alias of partnerAliases) {
-      const result = namesMatch(alias, txName);
-      if (result.match) {
-        return { score: result.score, source: "partner" };
-      }
-    }
-  }
-
-  return { score: 0, source: null };
+  return best;
 }
 
 /**

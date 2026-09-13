@@ -29,6 +29,7 @@ import {
   FileMatchingData,
   TransactionData,
 } from "../transactionScoring";
+import { PRESET_PARTNERS } from "../../../../lib/data/preset-partners";
 
 // Helper to create a Timestamp from a date string
 function ts(dateStr: string): Timestamp {
@@ -874,6 +875,25 @@ describe("scoreTransaction", () => {
       );
       expect(result.score).toBeGreaterThan(0);
     });
+
+    it("takes the best-scoring alias, not the first (#138): a later, stronger alias beats an earlier, weaker one", () => {
+      const txName = "Magenta Mobil Rechnung 08/2026";
+      // "T-Mobile Austria GmbH" (first) matches txName only through the
+      // "mobil" ⊂ "t-mobile" word-overlap accident; "Magenta" (later) matches
+      // through a real brand-name substring hit and scores higher.
+      const weakFirst = namesMatch("T-Mobile Austria GmbH", txName);
+      const strongLater = namesMatch("Magenta", txName);
+      expect(weakFirst.match).toBe(true);
+      expect(strongLater.match).toBe(true);
+      expect(strongLater.score).toBeGreaterThan(weakFirst.score);
+
+      const result = calculatePartnerScore(
+        { ...baseFileData, partnerId: null, extractedPartner: null },
+        { ...baseTxData, partnerId: undefined, name: txName },
+        ["T-Mobile Austria GmbH", "Magenta"]
+      );
+      expect(result).toEqual({ score: strongLater.score, source: "partner" });
+    });
   });
 
   describe("date-partner boost interaction", () => {
@@ -1015,14 +1035,12 @@ describe("derivePartnerAliases", () => {
     const txName = "Magenta Mobil Rechnung 08/2026";
     expect(namesMatch("Magenta", txName)).toEqual({ match: true, score: 18 });
 
-    // Characterization, NOT the desired behaviour: the brand alias is in the
-    // list but does not yet decide the score. calculatePartnerScore returns
-    // the FIRST matching alias, and the list starts with the user Partner's
-    // own name, which still matches this bank line at 12 through the
-    // "mobil" inside "t-mobile" word-overlap accident #138 is about. The
-    // brand hit on "Magenta" is worth 18 and is never reached. Fixing that
-    // means making the loop take the best alias instead of the first, which
-    // raises partner scores everywhere and needs its own ruling.
+    // calculatePartnerScore takes the BEST-scoring alias, not the first
+    // (#138). The list starts with the user Partner's own name, which still
+    // matches this bank line at 12 through the "mobil" inside "t-mobile"
+    // word-overlap accident — but the later, stronger "Magenta" brand hit at
+    // 18 now wins, which is the right reason: the brand alias, not the
+    // substring accident.
     const tx = {
       id: "tx-magenta",
       amount: -4990,
@@ -1032,7 +1050,7 @@ describe("derivePartnerAliases", () => {
     };
     const file = { extractedPartner: null, partnerId: null };
     expect(namesMatch("Magenta", txName).score).toBe(18);
-    expect(calculatePartnerScore(file, tx, aliases)).toEqual({ score: 12, source: "partner" });
+    expect(calculatePartnerScore(file, tx, aliases)).toEqual({ score: 18, source: "partner" });
   });
 
   it("a dangling globalPartnerId (preset partners toggled off) falls back to the user Partner's own aliases", async () => {
@@ -1125,6 +1143,13 @@ describe("derivePartnerAliases", () => {
     );
     expect(result.source).toBe("partner");
     expect(result.score).toBeGreaterThan(0);
+  });
+
+  it("Wien Energie and EVN are separate companies: neither preset's aliases carry the other's name (#138)", () => {
+    const wienEnergie = PRESET_PARTNERS.find((p) => p.name === "Wien Energie GmbH");
+    const evn = PRESET_PARTNERS.find((p) => p.name === "EVN AG");
+    expect(wienEnergie?.aliases).toEqual(["Wien Energie"]);
+    expect(evn?.aliases).toEqual(["EVN"]);
   });
 });
 

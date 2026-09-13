@@ -74,8 +74,8 @@ export const PRESET_PARTNERS: PresetPartner[] = [
   // Energy & Utilities
   { name: "OMV AG", aliases: ["OMV"], country: "AT", website: "omv.com", vatId: "ATU15537705" },
   { name: "Verbund AG", aliases: ["Verbund"], country: "AT", website: "verbund.com", vatId: "ATU14703908" },
-  { name: "Wien Energie GmbH", aliases: ["Wien Energie", "EVN"], country: "AT", website: "wienenergie.at", vatId: "ATU56522727" },
-  { name: "EVN AG", aliases: ["EVN", "Wien Energie"], country: "AT", website: "evn.at", vatId: "ATU15590504" },
+  { name: "Wien Energie GmbH", aliases: ["Wien Energie"], country: "AT", website: "wienenergie.at", vatId: "ATU56522727" },
+  { name: "EVN AG", aliases: ["EVN"], country: "AT", website: "evn.at", vatId: "ATU15590504" },
   { name: "Energie Steiermark AG", aliases: ["Energie Steiermark", "E-Steiermark"], country: "AT", website: "e-steiermark.com", vatId: "ATU37001009" },
   { name: "Salzburg AG", aliases: ["Salzburg AG für Energie"], country: "AT", website: "salzburg-ag.at", vatId: "ATU36370907" },
   { name: "KELAG", aliases: ["KELAG-Kärntner Elektrizitäts-AG"], country: "AT", website: "kelag.at", vatId: "ATU37003203" },
