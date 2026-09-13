@@ -39,6 +39,28 @@ jobs:
         env:
           NEXT_TELEMETRY_DISABLED: 1
 
+  app-components:
+    name: App (component tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          # 22, not 20. `test:node` was broken on node 21+ for a long time and
+          # nobody noticed, because the only job running it pinned node 20 — a
+          # new job on a stale major is the same trap. jsdom 29 also requires
+          # >= 22.13 within the 22 line.
+          node-version: 22
+          cache: npm
+      # ROOT tree only, deliberately. Unlike api-auth-smoke and the self-host
+      # jobs, this suite must NOT install functions/ as well: React has to be a
+      # single instance at runtime, and a second copy reachable from
+      # functions/node_modules is how you get "Invalid hook call". The runner
+      # (vitest), the renderer (@testing-library/react) and React all come from
+      # the root package.json. See vitest.components.config.ts.
+      - run: npm ci
+      - run: npm run test:components
+
   functions:
     name: Cloud Functions (build + test)
     runs-on: ubuntu-latest
