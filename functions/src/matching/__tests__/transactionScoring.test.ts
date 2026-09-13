@@ -894,6 +894,23 @@ describe("scoreTransaction", () => {
       );
       expect(result).toEqual({ score: strongLater.score, source: "partner" });
     });
+
+    it("takes the best across the extracted partner AND the aliases (#138), not the extracted partner first", () => {
+      const txName = "Magenta Mobil Rechnung 08/2026";
+      // The document's own extracted partner text reaches this bank line only
+      // through the "mobil" ⊂ "t-mobile" word-overlap accident (12); the brand
+      // alias is a real containment hit (18). The extracted-partner comparison
+      // used to return before the alias loop ran, so its weaker score stood.
+      expect(namesMatch("T-Mobile Austria GmbH", txName).score).toBe(12);
+      expect(namesMatch("Magenta", txName).score).toBe(18);
+
+      const result = calculatePartnerScore(
+        { ...baseFileData, partnerId: null, extractedPartner: "T-Mobile Austria GmbH" },
+        { ...baseTxData, partnerId: undefined, name: txName },
+        ["Magenta"]
+      );
+      expect(result).toEqual({ score: 18, source: "partner" });
+    });
   });
 
   describe("date-partner boost interaction", () => {
@@ -1143,6 +1160,19 @@ describe("derivePartnerAliases", () => {
     );
     expect(result.source).toBe("partner");
     expect(result.score).toBeGreaterThan(0);
+  });
+
+  it("the Austrian presets carry the brand aliases the alias derivation exists to reach (#138)", () => {
+    const aliasesOf = (name: string) =>
+      PRESET_PARTNERS.find((p) => p.name === name)?.aliases ?? [];
+    expect(aliasesOf("Magenta Telekom")).toEqual(
+      expect.arrayContaining(["Magenta", "T-Mobile Austria"])
+    );
+    expect(aliasesOf("A1 Telekom Austria AG")).toContain("Yesss");
+    expect(aliasesOf("Hutchison Drei Austria GmbH")).toEqual(
+      expect.arrayContaining(["Drei", "Hutchison"])
+    );
+    expect(aliasesOf("REWE International AG")).toContain("BILLA");
   });
 
   it("Wien Energie and EVN are separate companies: neither preset's aliases carry the other's name (#138)", () => {
