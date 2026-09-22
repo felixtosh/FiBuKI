@@ -1,5 +1,10 @@
 /**
- * Delete a file (soft or hard delete)
+ * Delete a file.
+ *
+ * Deleting hides the File and can be undone by `restoreFile`; the document row
+ * and its stored bytes both survive. Destroying a deleted File is a Purge, and
+ * a Purge is its own writer — this callable has no parameter that reaches one.
+ * See docs/adr/0006-deleting-a-file-is-reversible.md.
  */
 
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
@@ -7,8 +12,6 @@ import { createCallable, HttpsError } from "../utils/createCallable";
 
 interface DeleteFileRequest {
   fileId: string;
-  /** If true, permanently deletes the file. If false, soft deletes (marks deletedAt). */
-  hardDelete?: boolean;
 }
 
 interface DeleteFileResponse {
@@ -25,7 +28,7 @@ export const deleteFileCallable = createCallable<
     timeoutSeconds: 120,
   },
   async (ctx, request) => {
-    const { fileId, hardDelete = false } = request;
+    const { fileId } = request;
 
     if (!fileId) {
       throw new HttpsError("invalid-argument", "fileId is required");
@@ -124,18 +127,16 @@ export const deleteFileCallable = createCallable<
       }
     }
 
-    // 3. Delete or soft-delete the file
-    if (hardDelete) {
-      await fileRef.delete();
-      console.log(`[deleteFile] Hard deleted file ${fileId}`);
-    } else {
-      await fileRef.update({
-        deletedAt: now,
-        transactionIds: [],
-        updatedAt: now,
-      });
-      console.log(`[deleteFile] Soft deleted file ${fileId}`);
-    }
+    // 3. Hide the file. The row stays — a Sync-sourced File needs it to
+    // deduplicate against, and every File needs it to be restorable — and the
+    // stored document is not touched at all.
+    // Clear transactionIds so it stops showing in transaction file lists.
+    await fileRef.update({
+      deletedAt: now,
+      transactionIds: [],
+      updatedAt: now,
+    });
+    console.log(`[deleteFile] Deleted file ${fileId} (reversible)`);
 
     return { success: true, deletedConnections };
   }

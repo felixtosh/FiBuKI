@@ -1,20 +1,23 @@
 /**
  * Document Extraction Abstraction Layer
  *
- * Provides a unified interface for document (PDF/image) extraction
- * that can switch between different providers:
+ * Provides a unified interface for document (PDF/image) extraction.
  *
- * - "vision-claude": Google Vision API for OCR + Claude Haiku for parsing (original)
- * - "gemini": Gemini Flash for native PDF vision + extraction (new)
+ * Gemini is the only provider. The original "vision-claude" path (Google Vision
+ * OCR + Claude Haiku) was retired in #170: no configuration in this repository
+ * ever selected it, no test asserted parity with Gemini, and it extracted
+ * neither Line Items nor the printed per-rate VAT summary — so a multi-rate
+ * document that went through it carried a single top-level rate and the UVA
+ * derivation over-claimed one rate group while under-claiming the other.
  *
- * Set EXTRACTION_PROVIDER environment variable to switch providers.
+ * EXTRACTION_PROVIDER is no longer read; nothing routes anywhere but Gemini.
  */
 
 import { ExtractedData } from "../types/extraction";
 import { OCRBlock } from "./visionApi";
 import { GeminiBoundingBox, ExtractedRawText, ExtractedAdditionalField } from "./geminiParser";
 
-export type ExtractionProvider = "vision-claude" | "gemini";
+export type ExtractionProvider = "gemini";
 
 export interface ExtractionResult {
   text: string;
@@ -31,12 +34,24 @@ export interface ExtractionResult {
   extractedRaw?: ExtractedRawText;
   /** Additional fields extracted beyond standard invoice fields */
   additionalFields?: ExtractedAdditionalField[];
+  /**
+   * Fields the JSON repair had to read through an ambiguous escape (#275).
+   * Carried up so the stored record can say a value was guessed at; the
+   * vision-claude path never repairs, so it never sets this.
+   */
+  repairAmbiguousFields?: string[];
   /** Token usage for AI calls */
   usage?: { inputTokens: number; outputTokens: number; model: string };
 }
 
 export interface ExtractionConfig {
   provider: ExtractionProvider;
+  /**
+   * Unused by extraction since the vision-claude path was retired (#170) —
+   * nothing downstream of here reads it. The callables that run extraction
+   * still declare the ANTHROPIC_API_KEY secret and hand it down; unwiring that
+   * plumbing is a separate change.
+   */
   anthropicApiKey?: string;
   // Gemini uses service account auth via Vertex AI (no API key needed)
   geminiModel?: string;
@@ -45,68 +60,23 @@ export interface ExtractionConfig {
 }
 
 /**
- * Get the default extraction provider from environment
+ * Get the default extraction provider.
+ *
+ * Gemini, always — there is nothing else to select since #170.
  */
 export function getDefaultProvider(): ExtractionProvider {
-  const provider = process.env.EXTRACTION_PROVIDER;
-  if (provider === "gemini" || provider === "vision-claude") {
-    return provider;
-  }
-  // Default to gemini (faster, uses service account auth)
   return "gemini";
 }
 
 /**
  * Extract text and structured data from a document
- * Uses the configured provider (vision-claude or gemini)
  */
 export async function extractDocument(
   fileBuffer: Buffer,
   fileType: string,
   config: ExtractionConfig
 ): Promise<ExtractionResult> {
-  const provider = config.provider;
-
-  if (provider === "gemini") {
-    return extractWithGemini(fileBuffer, fileType, config);
-  } else {
-    return extractWithVisionClaude(fileBuffer, fileType, config);
-  }
-}
-
-/**
- * Extract using Google Vision API + Claude Haiku (original approach)
- */
-async function extractWithVisionClaude(
-  fileBuffer: Buffer,
-  fileType: string,
-  config: ExtractionConfig
-): Promise<ExtractionResult> {
-  // Lazy import to avoid loading both providers unnecessarily
-  const { callVisionAPI } = await import("./visionApi");
-  const { parseWithClaude } = await import("./claudeParser");
-
-  if (!config.anthropicApiKey) {
-    throw new Error("Anthropic API key required for vision-claude provider");
-  }
-
-  // Step 1: OCR with Vision API
-  const ocrResult = await callVisionAPI(fileBuffer, fileType);
-
-  if (!ocrResult.text || ocrResult.text.trim().length === 0) {
-    throw new Error("No text extracted from document");
-  }
-
-  // Step 2: Parse with Claude Haiku
-  const parseResult = await parseWithClaude(ocrResult.text, config.anthropicApiKey);
-
-  return {
-    text: ocrResult.text,
-    blocks: ocrResult.blocks,
-    extracted: parseResult.extracted,
-    provider: "vision-claude",
-    usage: parseResult.usage,
-  };
+  return extractWithGemini(fileBuffer, fileType, config);
 }
 
 /**
@@ -215,6 +185,7 @@ async function extractWithGemini(
     geminiBoundingBoxes: result.boundingBoxes,
     extractedRaw: result.extractedRaw,
     additionalFields: result.additionalFields,
+    repairAmbiguousFields: result.repairAmbiguousFields,
     usage: result.usage,
   };
 }

@@ -24,12 +24,36 @@ export interface RowClickModifiers {
   ctrlKey: boolean;
 }
 
+/**
+ * Describes which interaction produced a selection-change call, so a consumer
+ * doesn't have to guess from the resulting Set's size. A plain click always
+ * replaces the whole selection with just the clicked row (size 1, but so can
+ * ctrl/cmd-click or shift-click after they've toggled/ranged down to one id) —
+ * only `isPlainClick` tells the two apart.
+ */
+export interface SelectionChangeMeta {
+  isPlainClick: boolean;
+  /**
+   * The row the user actually clicked. A modified click can promote it to the
+   * primary (panel) selection, which the resulting Set alone cannot express —
+   * it says which rows are selected, never which one was just acted on.
+   */
+  clickedRowId?: string;
+  /** True for shift-click, which selects a range and promotes its clicked end. */
+  isRangeClick?: boolean;
+}
+
 export interface ResizableDataTableProps<TData extends { id: string }> {
   columns: ColumnDef<TData, unknown>[];
   /** Flat data array (use this OR sections, not both) */
   data?: TData[];
   /** Sectioned data with headers (use this OR data, not both) */
   sections?: DataTableSection<TData>[];
+  /**
+   * Safe to pass inline: the table routes every row click through its own
+   * `useLatestCallback` handler, so a memoised row never calls a previous
+   * render's copy of this.
+   */
   onRowClick?: (row: TData) => void;
   selectedRowId?: string | null;
   defaultColumnSizes: Record<string, number>;
@@ -55,8 +79,8 @@ export interface ResizableDataTableProps<TData extends { id: string }> {
   enableMultiSelect?: boolean;
   /** Set of currently selected row IDs (for multi-select mode) */
   selectedRowIds?: Set<string>;
-  /** Callback when selection changes in multi-select mode */
-  onSelectionChange?: (selectedIds: Set<string>) => void;
+  /** Callback when selection changes in multi-select mode. Safe to pass inline, for the same reason as `onRowClick`. */
+  onSelectionChange?: (selectedIds: Set<string>, meta: SelectionChangeMeta) => void;
   /**
    * Callback with the row ids in the order they are displayed (the data the
    * table was given, in the active sort order). Fires whenever that order
@@ -74,6 +98,12 @@ export interface VirtualRowProps<TData extends { id: string }> {
   isSelected: boolean;
   /** True if this is the primary/anchor selection (stronger highlight) */
   isPrimarySelected?: boolean;
+  /**
+   * Held across renders: the memo comparator ignores this prop on purpose, so a
+   * row that skips a render keeps the handler it last painted with. It must be
+   * identity-stable and read current state — see the comparator in
+   * virtual-row.tsx.
+   */
   onClick: (row: TData, modifiers: RowClickModifiers) => void;
   virtualStart: number;
   virtualSize: number;

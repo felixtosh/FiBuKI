@@ -1,6 +1,13 @@
 /**
- * Callable Cloud Function for Gmail search
+ * Callable Cloud Function for mail search
  * Used by both UI (via callable) and can be imported by automation
+ *
+ * The request speaks the provider-neutral vocabulary of MailSearchTerms —
+ * keywords, a sender, filenames, a date window (#240) — so the manual attach
+ * path no longer has to know Gmail's query syntax to search a mailbox. A Gmail
+ * integration compiles those terms into its query string here; every other
+ * provider goes through the same factory Sync uses, and reports whatever it
+ * could not execute instead of quietly dropping it.
  */
 
 import { onCall, HttpsError } from "firebase-functions/v2/https";
@@ -8,6 +15,15 @@ import { defineSecret } from "firebase-functions/params";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { decrypt, encrypt } from "../utils/encryption";
 import { classifyEmail, EmailClassification } from "../precision-search/shared-utils";
+import {
+  makeProvider,
+  MailProvider,
+  MailSearchLimitation,
+  MailSearchTerms,
+} from "../mail";
+import { MAX_EMAILS_PER_BATCH } from "../mail/constants";
+import { buildGmailQuery } from "../mail/gmail-query";
+import { imapConfigFromIntegration } from "../mail/imap/config";
 
 // Secrets for token refresh
 const googleClientId = defineSecret("GOOGLE_CLIENT_ID");
@@ -22,12 +38,19 @@ const db = getFirestore();
 // Types
 // ============================================================================
 
-interface SearchGmailRequest {
+interface SearchGmailRequest extends MailSearchTerms {
   integrationId: string;
+  /**
+   * Raw Gmail query.
+   *
+   * Not used by the attach path, which speaks the neutral terms this interface
+   * inherits (#240). Kept for the Gmail-only automation callers — precision
+   * search and the chat agent — which compose Gmail OR-queries of their own.
+   * A provider that cannot execute it says so in `limitations`.
+   */
   query?: string;
   dateFrom?: string; // ISO date
   dateTo?: string; // ISO date
-  from?: string;
   hasAttachments?: boolean;
   limit?: number;
   pageToken?: string;
@@ -62,6 +85,11 @@ interface SearchGmailResponse {
   messages: GmailMessageResult[];
   nextPageToken?: string;
   totalEstimate?: number;
+  /**
+   * Constraints the provider could not execute as asked. Absent when it could
+   * — which is every Gmail search, since Gmail executes the whole vocabulary.
+   */
+  limitations?: MailSearchLimitation[];
 }
 
 export interface EmailTokenDocument {
@@ -128,9 +156,19 @@ function isLikelyReceiptAttachment(filename: string, mimeType: string): boolean 
   return RECEIPT_KEYWORDS.some((kw) => filenameLower.includes(kw));
 }
 
+/**
+ * Compile one search into Gmail's `q`.
+ *
+ * The terms half is `buildGmailQuery`, shared with GmailProvider so a keyword
+ * cannot mean one thing to Sync and another to the attach path. The raw `query`
+ * from the automation callers is prepended untouched, and the date window keeps
+ * this callable's own (unpadded, exclusive-`before:`) spelling.
+ */
 function buildGmailSearchQuery(params: {
   query?: string;
+  keywords?: string[];
   from?: string;
+  filenames?: string[];
   dateFrom?: Date;
   dateTo?: Date;
   hasAttachments?: boolean;
@@ -141,8 +179,17 @@ function buildGmailSearchQuery(params: {
     parts.push(params.query);
   }
 
-  if (params.from) {
-    parts.push(`from:${params.from}`);
+  // `keywords ?? []` and not `keywords`: an omitted keyword list here means
+  // "no keyword clause", never the invoice sweep buildGmailQuery falls back to
+  // for the sync worker.
+  const terms = buildGmailQuery({
+    keywords: params.keywords ?? [],
+    from: params.from,
+    filenames: params.filenames ?? [],
+    hasAttachment: params.hasAttachments === true,
+  });
+  if (terms) {
+    parts.push(terms);
   }
 
   if (params.dateFrom) {
@@ -153,10 +200,6 @@ function buildGmailSearchQuery(params: {
   if (params.dateTo) {
     const d = params.dateTo;
     parts.push(`before:${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`);
-  }
-
-  if (params.hasAttachments) {
-    parts.push("has:attachment");
   }
 
   return parts.join(" ");
@@ -384,6 +427,175 @@ async function tryRefreshToken(
 }
 
 // ============================================================================
+// Shared helpers (both provider legs)
+// ============================================================================
+
+/**
+ * Files already imported from these messages, keyed `messageId:attachmentId`.
+ *
+ * The two stored fields still carry Gmail's names for every provider — an IMAP
+ * File records its UID in `gmailMessageId` and its BODYSTRUCTURE part id in
+ * `gmailAttachmentId`, because the dedup index rides them. Renaming them is
+ * #102's, not this ticket's.
+ */
+async function findExistingFiles(
+  userId: string,
+  messageIds: string[]
+): Promise<Map<string, string>> {
+  const existingFilesMap = new Map<string, string>();
+  const ids = [...new Set(messageIds)];
+
+  for (let i = 0; i < ids.length; i += 30) {
+    const batch = ids.slice(i, i + 30);
+    const existingQuery = await db
+      .collection("files")
+      .where("userId", "==", userId)
+      .where("gmailMessageId", "in", batch)
+      .get();
+
+    for (const doc of existingQuery.docs) {
+      const data = doc.data();
+      if (data.gmailAttachmentId) {
+        const key = `${data.gmailMessageId}:${data.gmailAttachmentId}`;
+        existingFilesMap.set(key, doc.id);
+      }
+    }
+  }
+
+  return existingFilesMap;
+}
+
+/**
+ * How far back a search with no date window reaches on a provider that needs
+ * one. Gmail ranks an unbounded query and returns a page; IMAP would have to
+ * walk the mailbox, so the window is closed here and the caller is told.
+ */
+const DEFAULT_MAIL_WINDOW_DAYS = 365;
+
+/**
+ * The non-Gmail leg: run the same neutral terms through the provider factory
+ * that already serves Sync, and map its provider-neutral messages onto the
+ * result shape the attach path consumes.
+ *
+ * What is thinner than the Gmail leg, deliberately: no snippet, no body text
+ * and no thread expansion. Those are Gmail payload fields, and the tabs that
+ * need them (mail-to-PDF) are #245's; an attachment carries everything the
+ * attach path needs to file it.
+ */
+async function searchViaProvider(
+  provider: MailProvider,
+  params: {
+    userId: string;
+    terms: MailSearchTerms;
+    dateFrom?: Date;
+    dateTo?: Date;
+    limit: number;
+    pageToken?: string;
+    rawQuery?: string;
+    expandThreads?: boolean;
+  }
+): Promise<SearchGmailResponse> {
+  const limitations: MailSearchLimitation[] = [];
+
+  // The page is what bounds the work: everything the provider returns is then
+  // fetched one message at a time. MAX_EMAILS_PER_BATCH is the size both
+  // providers already page Sync at, and the attach path never asks for more —
+  // the clamp is here so a caller cannot turn one request into a mailbox walk.
+  const limit = Math.min(params.limit, MAX_EMAILS_PER_BATCH);
+
+  const dateTo = params.dateTo ?? new Date();
+  const dateFrom =
+    params.dateFrom ??
+    new Date(dateTo.getTime() - DEFAULT_MAIL_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  if (!params.dateFrom) {
+    limitations.push({
+      constraint: "dateWindow",
+      handling: "scanned",
+      detail: `No date window was given; this provider cannot search a mailbox unbounded, so the last ${DEFAULT_MAIL_WINDOW_DAYS} days were searched.`,
+    });
+  }
+  if (params.rawQuery) {
+    limitations.push({
+      constraint: "rawQuery",
+      handling: "unsupported",
+      detail:
+        "A raw Gmail query means nothing to this provider and was not applied; the neutral terms were.",
+    });
+  }
+  if (params.expandThreads) {
+    limitations.push({
+      constraint: "threads",
+      handling: "unsupported",
+      detail:
+        "This provider has no threads, so results are single messages rather than expanded conversations.",
+    });
+  }
+
+  try {
+    const page = await provider.search({
+      ...params.terms,
+      dateFrom,
+      dateTo,
+      limit,
+      pageToken: params.pageToken,
+    });
+    limitations.push(...(page.limitations ?? []));
+
+    const fetched = await Promise.all(
+      page.messages.map((ref) => provider.getMessage(ref))
+    );
+    // The attachment constraint is the provider's `scanned` limitation made
+    // good: it could not narrow the search to attachment-bearing messages, so
+    // the narrowing happens here, over the one bounded page it returned.
+    const messages =
+      params.terms.hasAttachment === false
+        ? fetched
+        : fetched.filter((m) => m.attachments.length > 0);
+
+    const existingFilesMap = await findExistingFiles(
+      params.userId,
+      messages.map((m) => m.id)
+    );
+
+    const responseMessages: GmailMessageResult[] = messages.map((msg) => {
+      const { email: fromEmail, name: fromName } = parseFromHeader(msg.from);
+      const attachments: GmailAttachment[] = msg.attachments.map((att) => ({
+        attachmentId: att.attachmentId,
+        messageId: msg.id,
+        filename: att.filename,
+        mimeType: att.mimeType,
+        size: att.size,
+        isLikelyReceipt: isLikelyReceiptAttachment(att.filename, att.mimeType),
+        existingFileId: existingFilesMap.get(`${msg.id}:${att.attachmentId}`) || null,
+      }));
+
+      return {
+        messageId: msg.id,
+        // No threads outside Gmail; the message stands in for its own thread.
+        threadId: msg.id,
+        subject: msg.subject || "(No Subject)",
+        from: fromEmail,
+        fromName,
+        date: msg.date.toISOString(),
+        snippet: "",
+        bodyText: null,
+        attachments,
+        classification: classifyEmail(msg.subject || "", "", attachments, null),
+      };
+    });
+
+    return {
+      messages: responseMessages,
+      nextPageToken: page.nextPageToken,
+      totalEstimate: responseMessages.length,
+      ...(limitations.length > 0 ? { limitations } : {}),
+    };
+  } finally {
+    await provider.close();
+  }
+}
+
+// ============================================================================
 // Main Callable Function
 // ============================================================================
 
@@ -410,6 +622,8 @@ export const searchGmailCallable = onCall<
     const {
       integrationId,
       query,
+      keywords,
+      filenames,
       dateFrom,
       dateTo,
       from,
@@ -427,6 +641,8 @@ export const searchGmailCallable = onCall<
       userId,
       integrationId,
       query,
+      keywords,
+      filenames,
       dateFrom,
       dateTo,
       from,
@@ -461,6 +677,62 @@ export const searchGmailCallable = onCall<
       throw new HttpsError("failed-precondition", "Tokens not found. Please reconnect Gmail.");
     }
 
+    // Everything but Gmail goes through the factory Sync already uses. The
+    // OAuth refresh below is Gmail's alone — an IMAP token doc holds one
+    // app-password and no expiresAt to read.
+    const providerName = (integration.provider as string) || "gmail";
+    if (providerName !== "gmail") {
+      if (providerName !== "imap") {
+        throw new HttpsError(
+          "failed-precondition",
+          `Mail provider "${providerName}" cannot be searched`
+        );
+      }
+
+      const provider = makeProvider("imap", {
+        imap: imapConfigFromIntegration(
+          integration,
+          tokenSnap.data() as { secret?: string; secretIv?: string },
+          tokenEncryptionKey.value()
+        ),
+      });
+
+      const response = await searchViaProvider(provider, {
+        userId,
+        // `?? []` on both lists, for the same reason the Gmail leg does it: an
+        // omitted list here means "the caller named no such term", never the
+        // invoice sweep a provider falls back to for the Sync worker. The two
+        // legs have to lower one request the same way or the neutral terms are
+        // not neutral.
+        terms: {
+          keywords: keywords ?? [],
+          from,
+          filenames: filenames ?? [],
+          hasAttachment: hasAttachments,
+        },
+        dateFrom: dateFrom ? new Date(dateFrom) : undefined,
+        dateTo: dateTo ? new Date(dateTo) : undefined,
+        limit,
+        pageToken,
+        rawQuery: query,
+        expandThreads,
+      });
+
+      await integrationRef.update({
+        lastAccessedAt: Timestamp.now(),
+        updatedAt: Timestamp.now(),
+      });
+
+      console.log("[searchGmailCallable] Response", {
+        integrationId,
+        provider: providerName,
+        messageCount: response.messages.length,
+        limitations: response.limitations?.map((l) => l.constraint),
+      });
+
+      return response;
+    }
+
     let tokens = tokenSnap.data() as EmailTokenDocument;
 
     // If access token is expired, attempt to refresh it
@@ -488,7 +760,9 @@ export const searchGmailCallable = onCall<
     // Build search query
     const searchQuery = buildGmailSearchQuery({
       query,
+      keywords,
       from,
+      filenames,
       dateFrom: dateFrom ? new Date(dateFrom) : undefined,
       dateTo: dateTo ? new Date(dateTo) : undefined,
       hasAttachments,
@@ -541,36 +815,11 @@ export const searchGmailCallable = onCall<
       );
     }
 
-    // Collect all attachment IDs to check for existing imports
-    const attachmentKeys: { messageId: string; attachmentId: string }[] = [];
-    for (const msg of messages) {
-      const attachments = extractAttachments(msg);
-      for (const att of attachments) {
-        attachmentKeys.push({ messageId: msg.id, attachmentId: att.attachmentId });
-      }
-    }
-
-    // Query for existing files with these Gmail references
-    const existingFilesMap = new Map<string, string>();
-    if (attachmentKeys.length > 0) {
-      const messageIds = [...new Set(attachmentKeys.map((k) => k.messageId))];
-      for (let i = 0; i < messageIds.length; i += 30) {
-        const batch = messageIds.slice(i, i + 30);
-        const existingQuery = await db
-          .collection("files")
-          .where("userId", "==", userId)
-          .where("gmailMessageId", "in", batch)
-          .get();
-
-        for (const doc of existingQuery.docs) {
-          const data = doc.data();
-          if (data.gmailAttachmentId) {
-            const key = `${data.gmailMessageId}:${data.gmailAttachmentId}`;
-            existingFilesMap.set(key, doc.id);
-          }
-        }
-      }
-    }
+    // Which of these attachments are already Files, keyed message:attachment
+    const existingFilesMap = await findExistingFiles(
+      userId,
+      messages.filter((msg) => extractAttachments(msg).length > 0).map((msg) => msg.id)
+    );
 
     // Transform messages to response format
     const responseMessages: GmailMessageResult[] = messages.map((msg) => {
@@ -639,7 +888,11 @@ export interface SearchGmailDirectParams {
 
 /**
  * Direct Gmail search for use within Cloud Functions (automation).
- * Uses the EXACT same logic as the callable - single source of truth.
+ *
+ * Shares the callable's query compilation (`buildGmailSearchQuery`), not its
+ * whole path: the callable also forks on the integration's provider (#240) and
+ * defaults `hasAttachments` to true, where automation callers here default it
+ * to false and pass a raw Gmail `query` of their own. Gmail only.
  */
 export async function searchGmailDirect(
   params: SearchGmailDirectParams

@@ -3,6 +3,9 @@ import { Timestamp } from "firebase/firestore";
 // One definition of the five codes, shared by the worker that writes them and
 // the UI that branches on them.
 import type { ImapErrorCode } from "@/functions/src/mail/imap/classify-error";
+// The search vocabulary both shipped providers execute (#240). Type-only, same
+// reason as above: no functions/ runtime code reaches the bundle.
+import type { MailSearchTerms } from "@/functions/src/mail/provider";
 
 /**
  * Supported email providers
@@ -250,24 +253,20 @@ export interface EmailMessage {
 }
 
 /**
- * Search parameters for email queries
+ * Search parameters for email queries.
+ *
+ * The search itself is stated in `MailSearchTerms` — keywords, a sender,
+ * filename fragments — which every connected mailbox can execute, not just a
+ * Gmail one (#240). `from` and `hasAttachment` come from there; the fields
+ * below are what wraps a search rather than what it asks for.
  */
-export interface EmailSearchParams {
+export interface EmailSearchParams extends MailSearchTerms {
   /** Integration ID to search within */
   integrationId: string;
-
-  /** Free-text search query (provider-specific syntax) */
-  query?: string;
 
   /** Search within specific time range */
   dateFrom?: Date;
   dateTo?: Date;
-
-  /** Only return messages with attachments */
-  hasAttachments?: boolean;
-
-  /** Filter by sender email/name */
-  from?: string;
 
   /** Filter by attachment MIME types */
   attachmentTypes?: string[];

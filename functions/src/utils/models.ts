@@ -37,9 +37,6 @@ export const MODELS = {
 
   /** Main chat/agent reasoning model (Anthropic). */
   chatAgent: "claude-sonnet-4-20250514",
-
-  /** Legacy Claude Haiku — used by `claudeParser` extraction path. */
-  claudeHaiku: "claude-3-haiku-20240307",
 } as const;
 
 export type KnownModel = (typeof MODELS)[keyof typeof MODELS];
@@ -52,6 +49,8 @@ export const MODEL_PRICING: Record<string, { input: number; output: number }> = 
   // Claude
   "claude-sonnet-4-20250514": { input: 3.0, output: 15.0 },
   "claude-3-5-haiku-20241022": { input: 0.8, output: 4.0 },
+  // No role points here since the legacy vision-claude extraction path was
+  // retired (#170); kept so historical aiUsage rows still cost correctly.
   "claude-3-haiku-20240307": { input: 0.25, output: 1.25 },
   // Gemini. Prices are the paid-tier Standard rates from
   // https://ai.google.dev/gemini-api/docs/pricing; output INCLUDES thinking tokens,

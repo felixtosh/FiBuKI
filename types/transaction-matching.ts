@@ -15,7 +15,9 @@ export type TransactionMatchSource =
   | "partner"
   | "iban"
   | "reference"
-  | "precision_hint";
+  | "precision_hint"
+  /** Scored against the Transaction's Remainder, not its full amount (#239). */
+  | "amount_remainder";
 
 // === Score Breakdown ===
 
@@ -111,6 +113,8 @@ export function getMatchSourceLabel(source: TransactionMatchSource): string {
       return "Reference Match";
     case "precision_hint":
       return "Search Hint";
+    case "amount_remainder":
+      return "Remainder";
     default:
       return source;
   }

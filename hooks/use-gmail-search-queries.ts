@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { httpsCallable } from "firebase/functions";
 import { functions } from "@/lib/firebase/config";
 import { Transaction } from "@/types/transaction";
+import type { MailSearchTerms } from "@/functions/src/mail/provider";
 
 /** Types of search suggestions - matches backend SuggestionType */
 export type SuggestionType =
@@ -16,9 +17,15 @@ export type SuggestionType =
   | "fallback";       // Generic search terms
 
 export interface TypedSuggestion {
+  /** The suggestion as text — the pill's label. May carry a Gmail operator. */
   query: string;
   type: SuggestionType;
   score: number;
+  /**
+   * The same suggestion in terms any mailbox can execute (#240). This, not
+   * `query`, is what a search built from a pill sends.
+   */
+  terms: MailSearchTerms;
 }
 
 interface UseGmailSearchQueriesOptions {

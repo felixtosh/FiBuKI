@@ -94,7 +94,7 @@ FiBuKI does not currently maintain a manual legal-hold mechanism. If an Austrian
 ## Evidence pointers
 
 - `app/api/gmail/disconnect/route.ts` — Gmail disconnect (revokes tokens, soft-deletes orphaned files)
-- `functions/src/files/deleteFile.ts` — file soft/hard delete
+- `functions/src/files/deleteFile.ts` — file delete: hides the file, leaves the stored object in place
 - `functions/src/user/scheduleAccountDeletionCallable.ts` — initiate 30-day account deletion
 - `functions/src/user/cancelAccountDeletionCallable.ts` — abort deletion during grace period
 - `functions/src/user/processPendingDeletions.ts` — scheduled job that processes due deletions

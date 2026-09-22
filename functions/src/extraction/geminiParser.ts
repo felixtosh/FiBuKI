@@ -23,6 +23,7 @@ function getProjectId(): string {
 const VERTEX_LOCATION = process.env.VERTEX_LOCATION || "europe-west1";
 
 import { ExtractedData, ExtractedLineItem, ExtractedRateGroup } from "../types/extraction";
+import { decodeHtmlEntities } from "../utils/htmlEntities";
 
 /**
  * Bounding box extracted by Gemini for a field
@@ -118,12 +119,196 @@ function normalizeVatPercent(vatPercent: unknown): number | null {
   return vat;
 }
 
+// The escapes JSON itself defines (RFC 8259 §7). Anything else after a
+// backslash is not syntax, it's a character the model transcribed as-is
+// (a Windows path, a `\d` in a reference number, a hand-typed separator).
+const JSON_SINGLE_CHAR_ESCAPES = new Set(['"', "\\", "/", "b", "f", "n", "r", "t"]);
+
+// The escapes that rewrite transcribed text into a control character when they
+// are read as syntax (#275). `\"` is structural and `\\` cannot be demoted
+// without it; `\/` yields `/` under either reading, so nothing is lost; a
+// `\uXXXX` is not plausible document text. These five are the set where "the
+// model escaped a real tab" and "the document prints a backslash and a t" are
+// the same two bytes.
+const AMBIGUOUS_ESCAPES = new Set(["b", "f", "n", "r", "t"]);
+
+// What can begin the key or value that follows a `,` or a `:` in well-formed
+// JSON. A delimiter alone is not enough to conclude a string ended — prose
+// contains commas and colons too (#283).
+const JSON_TOKEN_STARTS = /[-"{[\dtfn]/;
+
+function skipSpace(jsonStr: string, from: number): number {
+  let i = from;
+  while (i < jsonStr.length && /\s/.test(jsonStr[i])) i += 1;
+  return i;
+}
+
+/**
+ * Does the `"` sitting just before `quoteEnd` CLOSE the string literal it is
+ * in, rather than being an escaped quote inside it?
+ *
+ * This is a HEURISTIC (#283), not a decision the bytes support. A backslash of
+ * data immediately before a closing quote — a Windows path with a trailing
+ * separator, `"C:\Users\"` — is byte-for-byte an escaped quote, so nothing
+ * local can tell them apart. What differs is what comes NEXT: a string that
+ * really ended is followed by `,` `}` `]` `:` or the end of the response, and
+ * after a `,` or `:` by the start of the next key or value.
+ *
+ * It is wrong for a document whose own text carries an escaped quote followed
+ * immediately by a structural character AND by something that reads as a JSON
+ * token — the value `he said "hi", 5 times`. That input fails the parse loudly,
+ * the same way it does today, rather than being corrupted quietly; it is rarer
+ * than a trailing-separator path, which is why the trade goes this way.
+ */
+function quoteClosesString(jsonStr: string, quoteEnd: number): boolean {
+  const i = skipSpace(jsonStr, quoteEnd);
+  // Nothing follows: the response ended on the quote, so the string ended too.
+  if (i >= jsonStr.length) return true;
+
+  const follower = jsonStr[i];
+  if (follower === "}" || follower === "]") return true;
+  if (follower === "," || follower === ":") {
+    const j = skipSpace(jsonStr, i + 1);
+    return j < jsonStr.length && JSON_TOKEN_STARTS.test(jsonStr[j]);
+  }
+  return false;
+}
+
+/** What the backslash pass produced, and where it had to guess (#275). */
+interface BackslashRepair {
+  text: string;
+  /**
+   * The field names whose value the pass had to guess at: within one string
+   * literal it BOTH doubled a backslash AND left a `\b \f \n \r \t` standing,
+   * or it read a `\"` as a data backslash on the strength of what followed the
+   * quote (#283). A literal the pass never had to touch is not suspect — the
+   * model escaped that one correctly, and its `\t` is a real tab.
+   */
+  ambiguousFields: string[];
+}
+
+/**
+ * Walk a JSON string tracking string-literal boundaries, and neutralise any
+ * backslash that is not part of a JSON-defined escape (`\" \\ \/ \b \f \n \r
+ * \t \uXXXX`) by doubling it. `JSON.parse` then reads it as a literal
+ * backslash instead of throwing "Bad escaped character" (#231) — the
+ * offending byte survives into the extracted value instead of the whole
+ * response being discarded.
+ *
+ * The two rules disagree inside one value whenever a document's own text
+ * carries a backslash followed by `b f n r t`: the undefined escapes around it
+ * are neutralised, that one is honoured, and the transcription is silently
+ * rewritten into a control character. The ambiguity is irreducible here — #231
+ * chose the JSON-correct reading and that stays — so the pass reports where it
+ * had to choose (#275). This is the only place that knows which literals it
+ * modified; a detector reading the parsed result instead would also flag the
+ * raw-newline repair below, which produces an identical-looking value.
+ *
+ * `\"` is the one escape whose reading depends on more than the two bytes: at
+ * the end of a value it is a data backslash the parse chokes on (#283). That
+ * one is settled by `quoteClosesString`, and a literal settled that way is
+ * reported through the same #275 signal — the pass guessed there too.
+ */
+function escapeInvalidBackslashes(jsonStr: string): BackslashRepair {
+  let result = "";
+  let inString = false;
+
+  // #275 bookkeeping. Per literal: where its content starts in `result`,
+  // whether the pass doubled anything in it, whether an ambiguous escape
+  // survived it, and whether it sits after a `:` (so it is a value, not a key).
+  let literalStart = 0;
+  let doubled = false;
+  let survivor = false;
+  let rescuedTerminator = false;
+  let isValue = false;
+  // The last non-whitespace character seen OUTSIDE a literal, and the last
+  // literal that closed — together they name the key a value belongs to.
+  let prevNonSpace = "";
+  let lastLiteral = "";
+  let currentKey = "";
+  const ambiguousFields = new Set<string>();
+
+  for (let i = 0; i < jsonStr.length; i++) {
+    const ch = jsonStr[i];
+
+    if (!inString) {
+      result += ch;
+      if (ch === '"') {
+        inString = true;
+        literalStart = result.length;
+        doubled = false;
+        survivor = false;
+        rescuedTerminator = false;
+        isValue = prevNonSpace === ":";
+      } else if (ch === ":") {
+        currentKey = lastLiteral;
+      }
+      if (!/\s/.test(ch)) prevNonSpace = ch;
+      continue;
+    }
+
+    if (ch === '"') {
+      lastLiteral = result.slice(literalStart);
+      result += ch;
+      inString = false;
+      prevNonSpace = ch;
+      if ((doubled && survivor) || rescuedTerminator) {
+        // A suspect key names itself; a suspect value is named by its key.
+        ambiguousFields.add(isValue ? currentKey || "(unnamed)" : lastLiteral);
+      }
+      continue;
+    }
+
+    if (ch !== "\\") {
+      result += ch;
+      continue;
+    }
+
+    const next = jsonStr[i + 1];
+    if (next === '"' && quoteClosesString(jsonStr, i + 2)) {
+      // The quote ends the literal, so this backslash is the last character of
+      // the value rather than the escape it is byte-identical to (#283). Double
+      // it and leave the quote to the next iteration, which closes the string.
+      result += "\\\\";
+      doubled = true;
+      rescuedTerminator = true;
+      continue;
+    }
+
+    if (next !== undefined && JSON_SINGLE_CHAR_ESCAPES.has(next)) {
+      result += ch + next;
+      if (AMBIGUOUS_ESCAPES.has(next)) survivor = true;
+      i += 1;
+      continue;
+    }
+
+    if (next === "u" && /^[0-9a-fA-F]{4}$/.test(jsonStr.slice(i + 2, i + 6))) {
+      result += jsonStr.slice(i, i + 6);
+      i += 5;
+      continue;
+    }
+
+    // Not a defined escape: the backslash is data, not syntax. Double it so
+    // it survives the parse literally; `next` (if any) falls through to the
+    // next iteration as an ordinary character.
+    result += "\\\\";
+    doubled = true;
+  }
+
+  return { text: result, ambiguousFields: [...ambiguousFields] };
+}
+
 /**
  * Attempt to repair malformed JSON from Gemini responses
  */
-function repairJson(jsonStr: string): string {
+function repairJson(jsonStr: string): { repaired: string; ambiguousFields: string[] } {
+  // Neutralise invalid escape sequences before any other fix touches string
+  // content — it relies on quote-tracking that assumes the escapes seen so
+  // far are well-formed.
+  const escaped = escapeInvalidBackslashes(jsonStr);
+
   // Common fixes for Gemini JSON output issues
-  let repaired = jsonStr;
+  let repaired = escaped.text;
 
   // Fix trailing commas before } or ]
   repaired = repaired.replace(/,(\s*[}\]])/g, "$1");
@@ -145,7 +330,7 @@ function repairJson(jsonStr: string): string {
     repaired += "}";
   }
 
-  return repaired;
+  return { repaired, ambiguousFields: escaped.ambiguousFields };
 }
 
 /**
@@ -186,6 +371,26 @@ function extractJsonFromResponse(text: string): string | null {
  * a guard would faithfully pass through.
  */
 export function sniffMimeType(buffer: Buffer, declared?: string): string {
+  const sniffed = sniffMimeTypeStrict(buffer);
+  if (sniffed) return sniffed;
+
+  // Unrecognised bytes: trust a declared type that Gemini can actually accept,
+  // otherwise assume JPEG, which is what this module defaulted to before.
+  const d = typeof declared === "string" ? declared.trim() : "";
+  if (d === "application/pdf" || d.startsWith("image/")) return d;
+  return "image/jpeg";
+}
+
+/**
+ * The magic-number half of `sniffMimeType`, with no fallback: `undefined` means
+ * the bytes matched nothing we can name.
+ *
+ * `sniffMimeType` has to return a string because extraction needs *some* MIME
+ * type to hand the model, and that guess is transient — it is used for one call
+ * and discarded. A caller that PERSISTS the result must not store a guess as
+ * though it were a fact (#281), so it asks this instead and handles the absence.
+ */
+export function sniffMimeTypeStrict(buffer: Buffer): string | undefined {
   if (buffer.length >= 12) {
     if (buffer.subarray(0, 5).toString("latin1") === "%PDF-") return "application/pdf";
     if (buffer[0] === 0x89 && buffer.subarray(1, 4).toString("latin1") === "PNG")
@@ -200,11 +405,7 @@ export function sniffMimeType(buffer: Buffer, declared?: string): string {
       return "image/webp";
   }
 
-  // Unrecognised bytes: trust a declared type that Gemini can actually accept,
-  // otherwise assume JPEG, which is what this module defaulted to before.
-  const d = typeof declared === "string" ? declared.trim() : "";
-  if (d === "application/pdf" || d.startsWith("image/")) return d;
-  return "image/jpeg";
+  return undefined;
 }
 
 async function extractFirstPage(fileBuffer: Buffer, fileType: string): Promise<Buffer> {
@@ -361,9 +562,41 @@ export interface ExtractedRawText {
 }
 
 /**
+ * The closed vocabulary `additionalFields` is allowed to carry (#252).
+ *
+ * The bag used to be open — the prompt asked for "any other identifiers or
+ * metadata", so the model offered a Tischnummer because it is printed in the
+ * header where invoice numbers live, and a table number is not an identifier
+ * of the document at all.
+ *
+ * Matching is on the KEY and never on the label prose. A German/English
+ * synonym table over labels rots and fails OPEN: an unrecognised label is
+ * kept, and Tischnummer comes back. A closed key vocabulary fails closed,
+ * which is the point. Enforced here rather than requested in the prompt,
+ * because a prompt is a request and this has to survive a model swap.
+ */
+export const ADDITIONAL_FIELD_KEYS = [
+  "invoiceNumber",
+  "customerNumber",
+  "dueDate",
+  "paymentTerms",
+  "orderNumber",
+  "deliveryNoteNumber",
+  "referenceNumber",
+  "poNumber",
+] as const;
+
+export type AdditionalFieldKey = (typeof ADDITIONAL_FIELD_KEYS)[number];
+
+const ADDITIONAL_FIELD_KEY_SET: ReadonlySet<string> = new Set(ADDITIONAL_FIELD_KEYS);
+
+/**
  * Additional field extracted from document
  */
 export interface ExtractedAdditionalField {
+  /** Canonical key, one of ADDITIONAL_FIELD_KEYS. */
+  key: AdditionalFieldKey;
+  /** The label as the document PRINTS it — "Rechnungsnummer", not the key. */
   label: string;
   value: string;
   rawValue?: string;
@@ -371,8 +604,6 @@ export interface ExtractedAdditionalField {
 
 interface GeminiLineItem {
   description?: string | null;
-  quantity?: number | string | null;
-  unitPrice?: number | string | null;
   vatPercent?: number | string | null;
   vatAmount?: number | string | null;
   amount?: number | string | null;
@@ -394,10 +625,6 @@ function normalizeLineItems(lineItems: GeminiLineItem[] | null | undefined): Ext
         ? item.description.trim()
         : "";
 
-      const quantity = toFiniteNumber(item?.quantity);
-      const normalizedQuantity = quantity === null ? null : quantity;
-
-      let unitPrice = toCents(item?.unitPrice);
       const vatPercent = normalizeVatPercent(item?.vatPercent);
       let vatAmount = toCents(item?.vatAmount);
 
@@ -408,19 +635,8 @@ function normalizeLineItems(lineItems: GeminiLineItem[] | null | undefined): Ext
         vatAmount = 0;
       }
 
-      if (unitPrice === null && normalizedQuantity && normalizedQuantity !== 0) {
-        const amountLooksNet = vatPercent !== null && vatPercent > 0
-          ? Math.abs(Math.round((amount * vatPercent) / 100) - vatAmount) <
-            Math.abs(Math.round((amount * vatPercent) / (100 + vatPercent)) - vatAmount)
-          : false;
-        const netAmount = amountLooksNet ? amount : amount - vatAmount;
-        unitPrice = Math.round(netAmount / normalizedQuantity);
-      }
-
       return {
         description: description || `Item ${index + 1}`,
-        quantity: normalizedQuantity,
-        unitPrice,
         vatPercent,
         vatAmount,
         amount,
@@ -540,6 +756,12 @@ export async function parseWithGemini(
   boundingBoxes: GeminiBoundingBox[];
   extractedRaw: ExtractedRawText;
   additionalFields: ExtractedAdditionalField[];
+  /**
+   * Fields whose value the JSON repair had to read through an ambiguous
+   * escape, so the stored text may not be what the document prints (#275).
+   * Empty on every response that parsed first time.
+   */
+  repairAmbiguousFields: string[];
   usage: { inputTokens: number; outputTokens: number; model: string };
 }> {
   const projectId = getProjectId();
@@ -567,9 +789,14 @@ CRITICAL RULES:
 
 LINE ITEM EXTRACTION (IMPORTANT):
 - Extract ALL line items from the document
+- A line item is exactly four fields: "description", "vatPercent", "vatAmount"
+  and "amount". Do NOT return a quantity or a unit price - nothing reads them
 - Only extract TOP-LEVEL billable rows from the main items table
 - Do NOT extract nested/tier rows, explanatory rows, gray helper rows, "First 1", "2 and above", etc.
 - Do NOT extract summary rows like Subtotal, Total, VAT, Amount paid, Payment history
+- The same rule in German: never a "Zwischensumme", "Summe", "Gesamt",
+  "Gesamtbetrag", "Rechnungsbetrag", "Netto", "Brutto", "MwSt.", "USt.",
+  "Umsatzsteuer" or "Trinkgeld" row
 - If no itemization is visible, create exactly ONE line item for the total
 - Return all monetary amounts in cents
 - Set "vatPercent" on every row the document's rate applies to. The rate counts
@@ -685,8 +912,6 @@ JSON structure:
     "lineItems": [
       {
         "description": "USB-C Cable",
-        "quantity": 2,
-        "unitPrice": 999,
         "vatPercent": 20,
         "vatAmount": 333,
         "amount": 1998
@@ -729,18 +954,23 @@ JSON structure:
     }
   },
   "additionalFields": [
-    {"label": "Invoice Number", "value": "INV-2024-001", "rawValue": "INV-2024-001"},
-    {"label": "Due Date", "value": "2025-01-15", "rawValue": "15.01.2025"},
-    {"label": "Reference", "value": "PO-12345", "rawValue": "PO-12345"}
+    {"key": "invoiceNumber", "label": "Rechnungsnummer", "value": "INV-2024-001", "rawValue": "INV-2024-001"},
+    {"key": "dueDate", "label": "Fällig am", "value": "2025-01-15", "rawValue": "15.01.2025"},
+    {"key": "poNumber", "label": "Bestellnummer", "value": "PO-12345", "rawValue": "PO-12345"}
   ]
 }
 
-Additional fields: Extract any other useful fields from the document like:
-- Invoice number, reference number, PO number
-- Due date, payment terms
-- Customer/client number
-- Order number, delivery note number
-- Any other identifiers or metadata
+ADDITIONAL FIELDS ("additionalFields", IMPORTANT):
+- A CLOSED list. Return a field ONLY when its "key" is one of exactly these:
+  "invoiceNumber", "customerNumber", "dueDate", "paymentTerms",
+  "orderNumber", "deliveryNoteNumber", "referenceNumber", "poNumber"
+- "label" is the wording the DOCUMENT prints, in its own language
+  ("Rechnungsnummer", "Kundennummer", "Zahlungsziel") - it is what a person
+  reads, so do not translate or normalise it
+- Anything else the document prints - a table number ("Tischnummer"), a till
+  or server id, a loyalty number, any other metadata - is NOT an additional
+  field. Leave it out; a field with a key outside the list is discarded
+- Never invent a key to make a field fit
 
 JSON only, no markdown, no explanation.`;
 
@@ -821,6 +1051,7 @@ JSON only, no markdown, no explanation.`;
       website_raw?: string | null;
     };
     additionalFields?: Array<{
+      key?: string;
       label: string;
       value: string;
       rawValue?: string;
@@ -829,6 +1060,8 @@ JSON only, no markdown, no explanation.`;
 
   // Robust JSON parsing with repair fallback
   let parsed: GeminiResponse;
+  // #275: a response that parses first time was never guessed at.
+  let repairAmbiguousFields: string[] = [];
   try {
     parsed = JSON.parse(jsonStr) as GeminiResponse;
   } catch (firstError) {
@@ -840,10 +1073,17 @@ JSON only, no markdown, no explanation.`;
       throw new Error(`Could not extract JSON from response: ${firstError}`);
     }
 
-    const repaired = repairJson(extractedJson);
+    const { repaired, ambiguousFields } = repairJson(extractedJson);
     try {
       parsed = JSON.parse(repaired) as GeminiResponse;
       console.log("[Gemini] JSON repair successful");
+      repairAmbiguousFields = ambiguousFields;
+      if (repairAmbiguousFields.length > 0) {
+        console.warn(
+          "[Gemini] JSON repair had to choose a reading for an escape sequence in: " +
+          `${repairAmbiguousFields.join(", ")}. Flagged for review (#275).`
+        );
+      }
     } catch (repairError) {
       // Log the raw response for debugging
       console.error("[Gemini] JSON repair failed. Raw response:", jsonStr.substring(0, 500));
@@ -852,8 +1092,19 @@ JSON only, no markdown, no explanation.`;
   }
 
   // Extract issuer entity (normalize values)
+  //
+  // #299: the name is decoded here, at entity normalisation, and nowhere
+  // downstream. `extractedIssuer`/`extractedRecipient` are stored as shaped
+  // here, so every consumer inherits one spelling: identity name-lane
+  // matching, `extractedPartner`, Partner display, export. Decoding at a
+  // write point instead (what #233 did) left the stored entity encoded, and
+  // the name lane then compared an encoded document name against the user's
+  // own name as typed.
+  //
+  // `issuer_raw`/`recipient_raw` below are deliberately NOT decoded: those
+  // are the document's own characters, searched verbatim to highlight the PDF.
   const issuer = parsed.extracted?.issuer ? {
-    name: parsed.extracted.issuer.name || null,
+    name: decodeHtmlEntities(parsed.extracted.issuer.name),
     vatId: normalizeVatId(parsed.extracted.issuer.vatId),
     address: parsed.extracted.issuer.address || null,
     iban: parsed.extracted.issuer.iban || null,
@@ -862,7 +1113,7 @@ JSON only, no markdown, no explanation.`;
 
   // Extract recipient entity (normalize values)
   const recipient = parsed.extracted?.recipient ? {
-    name: parsed.extracted.recipient.name || null,
+    name: decodeHtmlEntities(parsed.extracted.recipient.name),
     vatId: normalizeVatId(parsed.extracted.recipient.vatId),
     address: parsed.extracted.recipient.address || null,
     iban: parsed.extracted.recipient.iban || null,
@@ -871,7 +1122,9 @@ JSON only, no markdown, no explanation.`;
 
   // For backward compatibility, use issuer as partner (will be overridden by extractionCore)
   // This ensures legacy code continues to work during the transition
-  const legacyPartner = issuer?.name || parsed.extracted?.partner || null;
+  // The flat fallback is decoded for the same reason the entity is: it is the
+  // name a record ends up storing when the model returns no issuer block.
+  const legacyPartner = issuer?.name || decodeHtmlEntities(parsed.extracted?.partner) || null;
   const legacyVatId = issuer?.vatId || normalizeVatId(parsed.extracted?.vatId);
   const legacyIban = issuer?.iban || parsed.extracted?.iban || null;
   const legacyAddress = issuer?.address || parsed.extracted?.address || null;
@@ -943,10 +1196,14 @@ JSON only, no markdown, no explanation.`;
     recipient: recipientRaw,
   };
 
-  // Extract additional fields
-  const additionalFields: ExtractedAdditionalField[] = (parsed.additionalFields || [])
-    .filter((f) => f && f.label && f.value)
+  // Extract additional fields. The key must be in the closed vocabulary —
+  // anything else (a Tischnummer, a loyalty number, a table of "metadata")
+  // is dropped here rather than trusted to the prompt (#252).
+  const offeredFields = (parsed.additionalFields || []).filter((f) => f && f.label && f.value);
+  const additionalFields: ExtractedAdditionalField[] = offeredFields
+    .filter((f) => typeof f.key === "string" && ADDITIONAL_FIELD_KEY_SET.has(f.key))
     .map((f) => ({
+      key: f.key as AdditionalFieldKey,
       label: f.label,
       value: f.value,
       rawValue: f.rawValue || f.value,
@@ -955,6 +1212,12 @@ JSON only, no markdown, no explanation.`;
   if (additionalFields.length > 0) {
     console.log(`  [Gemini] Extracted ${additionalFields.length} additional fields`);
   }
+  if (offeredFields.length > additionalFields.length) {
+    console.log(
+      `  [Gemini] Dropped ${offeredFields.length - additionalFields.length} additional ` +
+      "field(s) whose key is outside the closed vocabulary"
+    );
+  }
 
   return {
     extracted,
@@ -962,6 +1225,7 @@ JSON only, no markdown, no explanation.`;
     boundingBoxes: [], // Bounding boxes no longer extracted - using PDF text search
     extractedRaw,
     additionalFields,
+    repairAmbiguousFields,
     usage,
   };
 }

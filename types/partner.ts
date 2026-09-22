@@ -341,6 +341,23 @@ export interface ManualFileRemoval {
 }
 
 /**
+ * One single-valued field where a merged-away Partner disagreed with its
+ * survivor. Recorded on the Merged Partner, not the survivor: the survivor's
+ * record is the live one and says what it holds, the tombstone is where the
+ * discarded half of the conflict belongs.
+ */
+export interface PartnerMergeConflict {
+  /** The `UserPartner` field that conflicted, e.g. "vatId". */
+  field: string;
+
+  /** The value this Partner held at merge time. */
+  value: unknown;
+
+  /** The value the survivor kept. */
+  survivorValue: unknown;
+}
+
+/**
  * User-specific partner
  * Collection: /partners/{id} with userId field
  */
@@ -463,6 +480,35 @@ export interface UserPartner {
   isActive: boolean;
 
   /**
+   * Set when this Partner was merged away: the id of the survivor it was folded
+   * into. A Partner carrying this is a **Merged Partner** — inactive, absent
+   * from the Partner list, never a match candidate, and read back as itself so
+   * a caller holding the stale id learns once that it has to update. Never
+   * chained: merging a survivor onward rewrites every Merged Partner that
+   * pointed at it, so this is always one hop from a live Partner.
+   */
+  mergedInto?: string;
+
+  /** When this Partner was merged away. */
+  mergedAt?: Timestamp;
+
+  /**
+   * The id of the Merge that last wrote this Partner — one id per merge,
+   * carried by the survivor, every loser and every Merged Partner the merge
+   * rewrote. `onPartnerUpdate` skips its file re-match when a write brings an
+   * id the document did not already hold, which is how a merge-caused write is
+   * told apart from a hand-edited alias (#306).
+   */
+  mergeWriteId?: string;
+
+  /**
+   * Single values this Partner held that the survivor already had and kept.
+   * A consolidation exists to preserve identifying data, so a loser's value
+   * that lost a straight conflict is recorded here rather than dropped.
+   */
+  mergeConflicts?: PartnerMergeConflict[];
+
+  /**
    * If set, this partner is derived from identity settings and auto-syncs.
    * Value indicates which identity entity this partner comes from:
    * - "personalEntity": The user's personal identity
@@ -555,6 +601,53 @@ export interface PartnerFormData {
 export interface GlobalPartnerFormData extends PartnerFormData {
   externalIds?: ExternalIds;
   source?: "manual" | "user_promoted" | "external_registry" | "preset";
+}
+
+/**
+ * Request for `mergeUserPartners`: fold one or more Partners into another
+ * because they are the same business (#262, #263).
+ */
+export interface MergeUserPartnersRequest {
+  /** The Partner that lives. */
+  survivorId: string;
+  /** The Partners folded into it. */
+  loserIds: string[];
+  /**
+   * Deliberate affirmation that two non-empty, differing VAT IDs are meant to
+   * be merged anyway. Separate from the ordinary confirmation, because a
+   * wrong extracted VAT ID is itself a common cause of the duplicate and only
+   * the user knows which one is the typo.
+   */
+  confirmVatIdConflict?: boolean;
+}
+
+/** Which of a loser's single values the survivor's own values beat. */
+export interface MergeConflictReport {
+  partnerId: string;
+  fields: string[];
+}
+
+export interface MergeUserPartnersResponse {
+  success: boolean;
+  survivorId: string;
+  /** The losers, now Merged Partners, in the order given. */
+  mergedPartnerIds: string[];
+  /** Names and aliases the survivor did not have before. */
+  aliasesAdded: string[];
+  repointed: {
+    transactions: number;
+    files: number;
+    invoices: number;
+    identityReferences: number;
+    mergedPartners: number;
+  };
+  conflicts: MergeConflictReport[];
+  /** What a rematch WOULD find. Nothing was rematched. */
+  rematchPreview: {
+    newlyMatchable: number;
+    scanned: number;
+    truncated: boolean;
+  };
 }
 
 /**

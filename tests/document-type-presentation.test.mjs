@@ -4,6 +4,7 @@ import {
   describeInvoiceDirection,
   describeDirectionReview,
   describeForeignRecipient,
+  describeRepairAmbiguity,
   describeDocumentType,
   describeDocumentationState,
   describeDocumentTypeBasis,
@@ -345,6 +346,36 @@ test("describeForeignRecipient: only speaks when the document is somebody else's
   const chip = describeForeignRecipient(true);
   assert.equal(chip.tone, "warning");
   assert.match(chip.text, /§ 12/);
+});
+
+test("describeRepairAmbiguity: nothing to show for a file whose transcription was not guessed at", () => {
+  assert.equal(describeRepairAmbiguity(null), null);
+  assert.equal(describeRepairAmbiguity({}), null);
+  assert.equal(describeRepairAmbiguity({ needsRepairReview: false }), null);
+  // The field list alone is not the flag — the detector writes both.
+  assert.equal(describeRepairAmbiguity({ repairAmbiguousFields: ["address"] }), null);
+});
+
+test("describeRepairAmbiguity: a flagged file names the fields to check (#275)", () => {
+  const chip = describeRepairAmbiguity({
+    needsRepairReview: true,
+    repairAmbiguousFields: ["address", "invoiceNumber"],
+  });
+
+  assert.equal(chip.tone, "warning");
+  assert.deepEqual(chip.fields, ["address", "invoiceNumber"]);
+  assert.match(chip.text, /address and invoiceNumber/);
+  // It has to say what was ambiguous, or the reader cannot judge the value.
+  assert.match(chip.text, /b, f, n, r or t/);
+});
+
+test("describeRepairAmbiguity: still speaks when the field names are missing", () => {
+  // A record flagged without names is worse read as "nothing happened".
+  const chip = describeRepairAmbiguity({ needsRepairReview: true });
+
+  assert.deepEqual(chip.fields, []);
+  assert.ok(chip.text.length > 0);
+  assert.ok(!chip.text.includes("undefined"));
 });
 
 test("describeDocumentTypeBasis: a third-party recipient is stated even when it is not the verdict", () => {

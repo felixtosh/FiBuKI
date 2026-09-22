@@ -15,7 +15,8 @@ import {
   MailSearchOptions,
   MailSearchPage,
 } from "./provider";
-import { INVOICE_KEYWORDS, INVOICE_MIME_TYPES, MAX_EMAILS_PER_BATCH } from "./constants";
+import { INVOICE_MIME_TYPES, MAX_EMAILS_PER_BATCH } from "./constants";
+import { buildGmailQuery } from "./gmail-query";
 
 // ============================================================================
 // Constants (Gmail-specific)
@@ -62,12 +63,19 @@ function formatGmailDate(date: Date): string {
   return `${year}/${month}/${day}`;
 }
 
-function buildInvoiceSearchQuery(dateFrom: Date, dateTo: Date): string {
-  const keywordQuery = `(${INVOICE_KEYWORDS.map((k) => `"${k}"`).join(" OR ")})`;
-  const nextDay = new Date(dateTo);
+/**
+ * The Gmail `q` for one search: the caller's terms, then the date window.
+ *
+ * A search naming no terms compiles to the invoice sweep the sync worker has
+ * always sent — the quoted keyword list, `has:attachment filename:pdf` — so
+ * Sync's query is unchanged by the terms vocabulary (#240).
+ */
+function buildSearchQuery(opts: MailSearchOptions): string {
+  const nextDay = new Date(opts.dateTo);
   nextDay.setDate(nextDay.getDate() + 1);
 
-  return `${keywordQuery} has:attachment filename:pdf after:${formatGmailDate(dateFrom)} before:${formatGmailDate(nextDay)}`;
+  // `before:` is exclusive, so the window ends on dateTo + 1 to stay inclusive.
+  return `${buildGmailQuery(opts)} after:${formatGmailDate(opts.dateFrom)} before:${formatGmailDate(nextDay)}`;
 }
 
 function extractHeader(message: GmailMessage, headerName: string): string | null {
@@ -132,13 +140,14 @@ class GmailApiClient {
 
   async searchMessages(
     query: string,
-    pageToken?: string
+    pageToken?: string,
+    limit: number = MAX_EMAILS_PER_BATCH
   ): Promise<{ messages: Array<{ id: string }>; nextPageToken?: string }> {
     await this.waitForRateLimit();
 
     const params = new URLSearchParams({
       q: query,
-      maxResults: String(MAX_EMAILS_PER_BATCH),
+      maxResults: String(limit),
     });
     if (pageToken) {
       params.set("pageToken", pageToken);
@@ -215,9 +224,18 @@ export class GmailProvider implements MailProvider {
     this.client = new GmailApiClient(accessToken);
   }
 
+  /**
+   * Gmail executes every term of the vocabulary server-side — keywords, sender,
+   * filenames, the attachment flag — in the one request it already made, so no
+   * search reports a limitation and none costs an extra round trip.
+   */
   async search(opts: MailSearchOptions): Promise<MailSearchPage> {
-    const query = buildInvoiceSearchQuery(opts.dateFrom, opts.dateTo);
-    const result = await this.client.searchMessages(query, opts.pageToken);
+    const query = buildSearchQuery(opts);
+    const result = await this.client.searchMessages(
+      query,
+      opts.pageToken,
+      opts.limit
+    );
     return {
       messages: result.messages,
       nextPageToken: result.nextPageToken,

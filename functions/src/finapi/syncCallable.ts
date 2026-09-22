@@ -8,6 +8,7 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { defineSecret } from "firebase-functions/params";
 import { getFirestore, Timestamp, FieldValue } from "firebase-admin/firestore";
+import { toDateSafe } from "../utils/toDateSafe";
 
 // Define secrets
 const finapiClientId = defineSecret("FINAPI_CLIENT_ID");
@@ -188,7 +189,7 @@ export const syncFinapiTransactions = onCall(
 
     // Check if token needs refresh
     let userToken = config.userAccessToken;
-    const tokenExpiry = config.tokenExpiresAt?.toDate() || new Date(0);
+    const tokenExpiry = toDateSafe(config.tokenExpiresAt) || new Date(0);
 
     if (Date.now() > tokenExpiry.getTime() - 5 * 60 * 1000) {
       // Refresh token
@@ -211,7 +212,7 @@ export const syncFinapiTransactions = onCall(
     }
 
     // Calculate date range
-    const lastSyncAt = config.lastSyncAt?.toDate();
+    const lastSyncAt = toDateSafe(config.lastSyncAt);
     const minDate = lastSyncAt
       ? new Date(lastSyncAt.getTime() - 24 * 60 * 60 * 1000).toISOString().split("T")[0]
       : new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];

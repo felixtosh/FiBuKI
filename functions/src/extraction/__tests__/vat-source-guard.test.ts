@@ -9,7 +9,7 @@ import { describe, it, expect } from "vitest";
 import { applyVatDowngradeGuard, vatSourceOf, VAT_FIELDS } from "../vatSourceGuard";
 
 const ratedItems = [
-  { description: "row", quantity: null, unitPrice: null, vatPercent: 20, vatAmount: 53000, amount: 318000 },
+  { description: "row", vatPercent: 20, vatAmount: 53000, amount: 318000 },
 ];
 
 /** A net-itemised invoice as it stood before the D6 sweep. */
@@ -29,7 +29,7 @@ const weakRecord = {
   extractedVatPercent: 20,
   extractedVatAmount: null,
   extractedLineItems: [
-    { description: "row", quantity: null, unitPrice: null, vatPercent: null, vatAmount: 0, amount: 265000 },
+    { description: "row", vatPercent: null, vatAmount: 0, amount: 265000 },
   ],
   extractedRateGroups: null,
   lineItemsUnreconciled: true,

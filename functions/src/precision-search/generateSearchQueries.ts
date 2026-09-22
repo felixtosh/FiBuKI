@@ -1,13 +1,18 @@
 /**
- * Shared Gmail search query generation logic
- * This is a copy of lib/matching/generate-search-queries.ts for cloud functions
- * Keep in sync with the UI version!
+ * Shared search-suggestion generation logic.
+ *
+ * Decides *what* to look for out of a transaction and its learned Partner
+ * patterns. Each suggestion carries provider-neutral terms beside its text
+ * (#240), so the manual attach path can hand it to any mailbox instead of to
+ * Gmail's query parser.
  */
 
 import {
   selectEffectiveCycleForAmount,
   ResolvedEffectiveCycle,
 } from "../matching/billingCycle";
+import { MailSearchTerms } from "../mail/provider";
+import { termsFromQuery } from "../mail/search-terms";
 
 export interface QueryGenerationTransaction {
   name: string;
@@ -127,9 +132,47 @@ export type SuggestionType =
   | "fallback";       // Generic search terms
 
 export interface TypedSuggestion {
+  /**
+   * The suggestion as text: the pill's label, and the Gmail query string the
+   * Gmail-only automation callers (precision search, findReceiptForTransaction)
+   * still compose their OR-queries out of. It may carry a Gmail operator, which
+   * is exactly why `terms` exists beside it.
+   */
   query: string;
   type: SuggestionType;
   score: number;
+  /**
+   * The same suggestion as something any mailbox can execute (#240): keywords,
+   * a sender, a filename fragment. This is what the manual attach path sends —
+   * the pattern layer keeps deciding *what* to look for, and no longer decides
+   * it in one provider's dialect.
+   */
+  terms: MailSearchTerms;
+}
+
+/**
+ * Lower one suggestion to provider-neutral terms.
+ *
+ * Two sources feed this: the deterministic generator below, which knows it
+ * built `from:<domain>` out of a partner's email domain, and Gemini, which is
+ * prompted in Gmail's dialect and answers in it. Both arrive as text, so the
+ * operators are read off the text (termsFromQuery) and the suggestion's type is
+ * only the tie-breaker.
+ */
+export function suggestionTerms(
+  query: string,
+  type: SuggestionType
+): MailSearchTerms {
+  const terms = termsFromQuery(query);
+
+  // An email-domain suggestion is a sender even when it was written without
+  // the operator — "ouster.com" from Gemini means the same as "from:ouster.com"
+  // from the generator below, and a domain as free text finds little.
+  if (type === "email_domain" && !terms.from && terms.keywords?.length === 1) {
+    return { from: terms.keywords[0] };
+  }
+
+  return terms;
 }
 
 /**
@@ -354,6 +397,7 @@ export function generateTypedSearchQueries(
     query: entry.query,
     type: entry.type,
     score: entry.score,
+    terms: suggestionTerms(entry.query, entry.type),
   }));
 }
 

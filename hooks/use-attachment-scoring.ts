@@ -33,6 +33,12 @@ export interface AttachmentToScore {
 }
 
 export interface TransactionForScoring {
+  /**
+   * The Transaction being scored against. The server derives Coverage from it
+   * (#239); nothing about the Remainder is computed on this side. Absent for a
+   * Transaction with no id yet, which scores against the full amount.
+   */
+  id?: string | null;
   amount?: number | null;
   date?: Date | null;
   name?: string | null;
@@ -55,6 +61,8 @@ export interface ScoredAttachment {
   score: number;
   label: "Strong" | "Likely" | null;
   reasons: string[];
+  /** Scored against the Transaction's Remainder — suggestion only (#239). */
+  scoredAgainstRemainder?: boolean;
 }
 
 /**
@@ -102,6 +110,7 @@ export function useAttachmentScoring() {
               classification: att.classification,
             })),
             transaction: {
+              id: transaction.id,
               amount: transaction.amount,
               date: transaction.date?.toISOString() || null,
               name: transaction.name,

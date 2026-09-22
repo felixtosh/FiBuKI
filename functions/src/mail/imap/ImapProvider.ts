@@ -19,10 +19,16 @@ import {
   MailMessage,
   MailMessageRef,
   MailProvider,
+  MailSearchLimitation,
   MailSearchOptions,
   MailSearchPage,
 } from "../provider";
-import { INVOICE_KEYWORDS, INVOICE_MIME_TYPES, MAX_EMAILS_PER_BATCH } from "../constants";
+import {
+  INVOICE_KEYWORDS,
+  INVOICE_MIME_TYPES,
+  MAX_EMAILS_PER_BATCH,
+  MAX_IMAP_SCAN_MESSAGES,
+} from "../constants";
 
 /** Everything ImapProvider needs to reach one mailbox. */
 export interface ImapConfig {
@@ -126,6 +132,36 @@ function formatFrom(
   return address || name || "";
 }
 
+/** One IMAP SEARCH query object, as imapflow's `search()` takes it. */
+type ImapSearchQuery = Parameters<ImapFlow["search"]>[0];
+
+/** `kw` in the Subject or the body — one keyword, wherever it shows up. */
+function keywordClause(keyword: string): ImapSearchQuery {
+  return { or: [{ subject: keyword }, { body: keyword }] };
+}
+
+/**
+ * The invoice sweep: ANY of the shared keywords hits. One flat OR, the exact
+ * shape the Sync worker has sent since before terms existed.
+ */
+function anyKeyword(keywords: string[]): ImapSearchQuery {
+  return { or: keywords.flatMap((k) => [{ subject: k }, { body: k }]) };
+}
+
+/**
+ * Keywords a caller named: ALL of them must hit, because "netflix rechnung"
+ * means both words (#240).
+ *
+ * IMAP ANDs juxtaposed keys, but a query object holds one `or`, so the
+ * conjunction of two OR-clauses is spelled by De Morgan — NOT (NOT a OR NOT b).
+ * It is core IMAP4rev1, and a server that still will not run it throws, which
+ * drops the search to the bounded local scan.
+ */
+function allKeywords(keywords: string[]): ImapSearchQuery {
+  if (keywords.length === 1) return keywordClause(keywords[0]);
+  return { not: { or: keywords.map((k) => ({ not: keywordClause(k) })) } };
+}
+
 export class ImapProvider implements MailProvider {
   private config: ImapConfig;
   private client: ImapFlow | null = null;
@@ -156,36 +192,173 @@ export class ImapProvider implements MailProvider {
     return client;
   }
 
+  /**
+   * Execute one provider-neutral search (#240).
+   *
+   * Keywords and the sender go to the server as SEARCH keys, which is the whole
+   * point of lowering the manual attach path's query to this vocabulary: a
+   * mailbox that can answer does the work itself. Two terms it cannot answer
+   * are reported rather than dropped — attachment filenames (IMAP SEARCH has no
+   * key for them) and the attachment flag (BODYSTRUCTURE is only visible after
+   * a fetch, so the caller filters what it fetched).
+   *
+   * When the server rejects the keyword search — dovecot and friends do reject
+   * BODY searches on some mailboxes — the fall-back is a bounded fetch of the
+   * newest MAX_IMAP_SCAN_MESSAGES envelopes in the window, matched locally.
+   * Bounded, because an unbounded walk of a large mailbox is a hang, and
+   * narrower than the search it replaces: an envelope carries no body, so the
+   * scan matches Subject and From where the server matched Subject and body.
+   * Both the bound and the lost field are reported in `limitations`.
+   */
   async search(opts: MailSearchOptions): Promise<MailSearchPage> {
     const client = await this.connect();
+    const limitations: MailSearchLimitation[] = [];
 
-    const query: Parameters<ImapFlow["search"]>[0] = {
+    const window = {
       since: imapDate(opts.dateFrom),
       // IMAP `before` is exclusive on the date; +1 day makes dateTo inclusive.
       before: imapDate(addDays(opts.dateTo, 1)),
     };
 
-    if (this.config.keywordPrefilter) {
-      // (kw1 in subject OR body) OR (kw2 ...) — at least one keyword must hit.
-      query.or = INVOICE_KEYWORDS.flatMap((k) => [{ subject: k }, { body: k }]);
+    // The caller's keywords, or — when it names none — the invoice list this
+    // integration may have opted out of pre-filtering with. An explicitly named
+    // keyword is never dropped for `keywordPrefilter`: that flag turns off an
+    // optimisation, not the search the caller asked for.
+    const named = opts.keywords !== undefined;
+    const keywords =
+      opts.keywords ?? (this.config.keywordPrefilter ? INVOICE_KEYWORDS : []);
+
+    if (opts.filenames?.length) {
+      limitations.push({
+        constraint: "filenames",
+        handling: "unsupported",
+        detail:
+          "IMAP SEARCH has no attachment-filename key, so the results are not narrowed by filename.",
+      });
+    }
+    if (opts.hasAttachment !== false) {
+      limitations.push({
+        constraint: "hasAttachment",
+        handling: "scanned",
+        detail:
+          "IMAP SEARCH cannot see attachments; messages are filtered on BODYSTRUCTURE after they are fetched.",
+      });
     }
 
-    const found = await client.search(query, { uid: true });
-    const uids = (found || []).slice().sort((a, b) => b - a); // newest UID first
+    const query: ImapSearchQuery = { ...window };
+    if (keywords.length > 0) {
+      Object.assign(query, named ? allKeywords(keywords) : anyKeyword(keywords));
+    }
+    if (opts.from) {
+      query.from = opts.from;
+    }
+
+    let uids: number[];
+    try {
+      const found = await client.search(query, { uid: true });
+      uids = (found || []).slice().sort((a, b) => b - a); // newest UID first
+    } catch (error) {
+      uids = await this.scanWindow(client, window, keywords, named, opts.from, limitations, error);
+    }
 
     // Cursor = last UID of the previous page; continue strictly below it.
     const cursor = opts.pageToken ? Number(opts.pageToken) : undefined;
     const remaining =
       cursor !== undefined ? uids.filter((u) => u < cursor) : uids;
 
-    const page = remaining.slice(0, MAX_EMAILS_PER_BATCH);
+    const page = remaining.slice(0, opts.limit ?? MAX_EMAILS_PER_BATCH);
     const hasMore = remaining.length > page.length;
 
     return {
       messages: page.map((uid) => ({ id: String(uid) })),
       nextPageToken:
         hasMore && page.length > 0 ? String(page[page.length - 1]) : undefined,
+      ...(limitations.length > 0 ? { limitations } : {}),
     };
+  }
+
+  /**
+   * Fall-back for a server that will not run the keyword search: list the
+   * window by date alone, keep the newest MAX_IMAP_SCAN_MESSAGES UIDs, and
+   * match Subject/From ourselves over their envelopes.
+   *
+   * Both halves of the bound are reported — the keywords were matched locally
+   * rather than by the server, and, if the window held more messages than the
+   * scan reached, that the window was not exhausted.
+   */
+  private async scanWindow(
+    client: ImapFlow,
+    window: { since: string; before: string },
+    keywords: string[],
+    matchAll: boolean,
+    from: string | undefined,
+    limitations: MailSearchLimitation[],
+    cause: unknown
+  ): Promise<number[]> {
+    console.warn(
+      "[ImapProvider] server-side keyword search failed, scanning the window:",
+      cause
+    );
+
+    const found = await client.search(window, { uid: true });
+    const inWindow = (found || []).slice().sort((a, b) => b - a);
+    const scanned = inWindow.slice(0, MAX_IMAP_SCAN_MESSAGES);
+
+    // Which key the server choked on is not knowable from the rejection, so
+    // every key that was re-applied locally is reported — both of them when a
+    // search names keywords AND a sender, which the single entry this replaced
+    // used to hide.
+    //
+    // The local pass is NOT the server pass done here: the server searches
+    // Subject or body (`keywordClause`), the scan can only read the envelope it
+    // fetched, so it matches Subject or From. A mail whose keyword appears only
+    // in the body was found before the fall-back and is not found by it. That
+    // is a recall difference, so it is reported rather than left implied by the
+    // scan bound.
+    const scannedNote =
+      `Server rejected the search keys; matched locally over the newest ` +
+      `${scanned.length} messages in the window, against Subject and From only ` +
+      `— a match that appears solely in a message body is not found this way.`;
+    if (keywords.length > 0) {
+      limitations.push({ constraint: "keywords", handling: "scanned", detail: scannedNote });
+    }
+    if (from) {
+      limitations.push({ constraint: "from", handling: "scanned", detail: scannedNote });
+    }
+    if (inWindow.length > scanned.length) {
+      limitations.push({
+        constraint: "dateWindow",
+        handling: "scanned",
+        detail: `Window holds ${inWindow.length} messages; only the newest ${MAX_IMAP_SCAN_MESSAGES} were scanned.`,
+      });
+    }
+    if (scanned.length === 0) return [];
+
+    const needles = keywords.map((k) => k.toLowerCase());
+    const sender = from?.toLowerCase();
+    const matched: number[] = [];
+
+    for await (const msg of client.fetch(
+      scanned,
+      { uid: true, envelope: true },
+      { uid: true }
+    )) {
+      const uid = msg.uid;
+      if (uid === undefined) continue;
+      const subject = (msg.envelope?.subject || "").toLowerCase();
+      const fromHeader = formatFrom(msg.envelope?.from).toLowerCase();
+      // Same ALL/ANY split the server-side query makes: named keywords must all
+      // hit, the invoice sweep needs one. NOT the same fields, though — the
+      // server searches Subject or body, and an envelope fetch has no body to
+      // search, so this matches Subject or From. Reported as a limitation.
+      const hit = (k: string) => subject.includes(k) || fromHeader.includes(k);
+      const keywordHit =
+        needles.length === 0 || (matchAll ? needles.every(hit) : needles.some(hit));
+      const senderHit = !sender || fromHeader.includes(sender);
+      if (keywordHit && senderHit) matched.push(uid);
+    }
+
+    return matched.sort((a, b) => b - a);
   }
 
   async getMessage(ref: MailMessageRef): Promise<MailMessage> {

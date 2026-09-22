@@ -17,6 +17,8 @@
  * - Date multiplier: 0.25x - 1.0x based on distance
  */
 
+import { deriveCoverage, isRemainderClosed } from "../matching/coverage";
+
 // Receipt/invoice keywords (multilingual)
 export const RECEIPT_KEYWORDS = [
   "invoice",
@@ -50,6 +52,14 @@ export interface ScoreAttachmentInput {
 
   // Transaction info
   transactionAmount?: number | null; // in cents
+  /**
+   * What the Files already connected to this transaction explain, in cents
+   * (#239). Given it, the candidate is compared against the transaction's
+   * Remainder instead of its full amount — the same resolution
+   * `scoreTransaction` makes, through the same Coverage helper. Absent means
+   * "nothing connected", which is the pre-#239 comparison.
+   */
+  transactionDocumentedAmount?: number | null;
   transactionDate?: Date | null;
   transactionName?: string | null;
   transactionReference?: string | null;
@@ -80,6 +90,11 @@ export interface ScoreAttachmentResult {
   score: number; // 0-100 (percentage)
   label: "Strong" | "Likely" | null;
   reasons: string[];
+  /**
+   * True when the amount was judged against the transaction's Remainder (#239).
+   * A Remainder Match is a suggestion only, whatever its score.
+   */
+  scoredAgainstRemainder: boolean;
 }
 
 // Helper functions
@@ -211,28 +226,47 @@ export function scoreAttachmentMatch(input: ScoreAttachmentInput): ScoreAttachme
   // === NUMERIC AMOUNT COMPARISON (for local files with extracted data) ===
   // This is the most important signal - if we have extracted amounts, compare them numerically
   let amountMismatch = false;
+  // #239: a transaction that already holds Files is only open for its
+  // Remainder, so that is the figure a further candidate is compared against.
+  // Same helper as scoreTransaction, so the two scorers cannot disagree about
+  // what "the amount" is.
+  const coverage = deriveCoverage(
+    transactionAmount ?? 0,
+    input.transactionDocumentedAmount ?? 0
+  );
+  const scoredAgainstRemainder =
+    transactionAmount != null && fileExtractedAmount != null && coverage.againstRemainder;
   if (fileExtractedAmount != null && transactionAmount != null) {
     const fileAmt = Math.abs(fileExtractedAmount);
-    const txAmt = Math.abs(transactionAmount);
+    const txAmt = coverage.scoreAgainst;
     const diff = Math.abs(fileAmt - txAmt) / txAmt;
+    // Named in every reason it produces, so a 214,20 file scoring an exact hit
+    // on a 500,00 transaction reads as arithmetic rather than as a bug.
+    const against = scoredAgainstRemainder ? " (remainder)" : "";
 
     if (diff === 0) {
       score += 0.40; // Exact match: +40%
-      reasons.push("Exact amount match");
+      reasons.push(`Exact amount match${against}`);
     } else if (diff <= 0.01) {
       score += 0.38; // ±1%
-      reasons.push("Amount ±1%");
+      reasons.push(`Amount ±1%${against}`);
     } else if (diff <= 0.05) {
       score += 0.30; // ±5%
-      reasons.push("Amount ±5%");
+      reasons.push(`Amount ±5%${against}`);
     } else if (diff <= 0.10) {
       score += 0.20; // ±10%
-      reasons.push("Amount ±10%");
+      reasons.push(`Amount ±10%${against}`);
+    } else if (scoredAgainstRemainder && isRemainderClosed(txAmt - fileAmt)) {
+      // The absolute rung: a gap of a euro or less closes the Remainder even
+      // when it is a large share of a small one. Rounding and Trinkgeld are
+      // absolute, so the relative ladder above cannot see them down here.
+      score += 0.30;
+      reasons.push("Closes the remainder");
     } else if (diff > 0.5) {
       // Amounts differ by more than 50% - this is likely a wrong file
       // Apply a penalty by reducing the final score (via multiplier later)
       amountMismatch = true;
-      reasons.push(`Amount mismatch: ${(diff * 100).toFixed(0)}% diff`);
+      reasons.push(`Amount mismatch: ${(diff * 100).toFixed(0)}% diff${against}`);
     }
   }
 
@@ -430,6 +464,7 @@ export function scoreAttachmentMatch(input: ScoreAttachmentInput): ScoreAttachme
     score: scorePercent,
     label,
     reasons,
+    scoredAgainstRemainder,
   };
 }
 

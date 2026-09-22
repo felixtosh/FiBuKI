@@ -27,8 +27,6 @@ const storedDate = (iso: string) => ({ toDate: () => new Date(`${iso}T00:00:00Z`
 
 const ITEM = {
   description: "Consulting",
-  quantity: 2,
-  unitPrice: 50000,
   vatPercent: 20,
   vatAmount: 20000,
   amount: 100000,
@@ -104,6 +102,17 @@ describe("selectMovedCorrections", () => {
     });
   });
 
+  it("a stored row's quantity and unit price are not part of the comparison (#252)", () => {
+    // The pair left the shape because nothing computed with them, and the
+    // comparison is where their absence pays: a re-extraction that reads
+    // "2 x 9,99" as "1 x 19,98" for the identical money used to mark the row
+    // hand-corrected, which a later re-extraction then refused to repair.
+    const stored = { extractedLineItems: [{ ...ITEM, quantity: 2, unitPrice: 50000 }] };
+
+    expect(selectMovedCorrections({ lineItems: [{ ...ITEM, quantity: 1, unitPrice: 100000 }] }, stored))
+      .toEqual({});
+  });
+
   it("treats a re-ordered itemisation as a correction", () => {
     const second = { ...ITEM, description: "Travel", amount: 5000, vatAmount: 1000 };
     const stored = { extractedLineItems: [ITEM, second] };
@@ -154,6 +163,20 @@ describe("selectMovedCorrections", () => {
     expect(
       selectMovedCorrections({ invoiceDirection: "incoming" }, { invoiceDirection: "unknown" })
     ).toEqual({ invoiceDirection: "incoming" });
+  });
+
+  it("reads an empty tip box and a zero as the same answer: no tip (#217)", () => {
+    // The panel posts the tip box on every save, so a document with no tip
+    // must not be stamped by the act of opening the form.
+    expect(selectMovedCorrections({ tipAmount: null }, {})).toEqual({});
+    expect(selectMovedCorrections({ tipAmount: 0 }, {})).toEqual({});
+    expect(selectMovedCorrections({ tipAmount: 0 }, { extractedTipAmount: null })).toEqual({});
+    expect(selectMovedCorrections({ tipAmount: 320 }, { extractedTipAmount: 320 })).toEqual({});
+    expect(selectMovedCorrections({ tipAmount: 320 }, {})).toEqual({ tipAmount: 320 });
+    // A printed tip really being removed is still a correction.
+    expect(selectMovedCorrections({ tipAmount: null }, { extractedTipAmount: 320 })).toEqual({
+      tipAmount: null,
+    });
   });
 
   it("leaves a field the form did not send alone", () => {

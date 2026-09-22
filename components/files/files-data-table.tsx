@@ -7,6 +7,7 @@ import { TaxFile } from "@/types/file";
 import {
   ResizableDataTable,
   DataTableHandle,
+  SelectionChangeMeta,
 } from "@/components/ui/data-table";
 
 interface FilesDataTableProps {
@@ -17,7 +18,7 @@ interface FilesDataTableProps {
   // Multi-select props
   enableMultiSelect?: boolean;
   selectedRowIds?: Set<string>;
-  onSelectionChange?: (selectedIds: Set<string>) => void;
+  onSelectionChange?: (selectedIds: Set<string>, meta: SelectionChangeMeta) => void;
   /** Callback with the row ids in displayed order (filtered rows, active sort) */
   onDisplayedOrderChange?: (orderedIds: string[]) => void;
   /** Custom empty state component */

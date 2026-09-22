@@ -35,14 +35,14 @@ export interface ExtractedEntityRaw {
 }
 
 /**
- * A single extracted invoice line item.
+ * A single extracted invoice line item — a rate-group fallback with a human
+ * label, not a bill of goods (#252). `quantity` and `unitPrice` are gone:
+ * nothing ever computed with them. Outgoing invoice line items are a
+ * different object (`types/invoice.ts`) and keep both.
  * Monetary fields are stored in cents.
  */
 export interface ExtractedLineItem {
   description: string;
-  quantity?: number | null;
-  /** Net unit price before VAT (in cents) */
-  unitPrice?: number | null;
   /** VAT rate for this item (0-100), null when unknown */
   vatPercent: number | null;
   /** VAT amount for this item (in cents) */
@@ -141,7 +141,9 @@ export type TransactionMatchSource =
   | "date_close"
   | "partner"
   | "iban"
-  | "reference";
+  | "reference"
+  /** Scored against the Transaction's Remainder, not its full amount (#239). */
+  | "amount_remainder";
 
 /**
  * A suggested transaction match for a file
@@ -287,10 +289,37 @@ export interface TaxFile {
    * `extractedAmount + extractedTipAmount`, and that is the only figure that
    * reconciles against a bank line.
    *
-   * Absent on a file extracted before the field existed; null when the
-   * document prints no tip line.
+   * A tip the document does NOT print has the same shape and the opposite
+   * origin (#217): the terminal took it, the receipt is silent, so only a
+   * person can put it here — through the correction door, stamped like any
+   * other correction. There `extractedAmount` already is the VAT-bearing
+   * total, so this is added to it and never taken out of it.
+   *
+   * Absent on a file extracted before the field existed; null when neither
+   * the document nor a person recorded a tip.
    */
   extractedTipAmount?: number | null;
+
+  /**
+   * Which total a hand-set tip was measured against, and what that total was
+   * (#310), in cents.
+   *
+   * A tip is bounded at correction time, because an oversized one is never
+   * caught afterwards: it moves the reconciled total away from the bank line
+   * and the file simply stops matching, with nothing saying why. The default
+   * bound is the document total; a tip declared as not printed on the invoice
+   * is bounded by the transaction total instead, since on that document the
+   * total is the Entgelt and the tip sits on top of it.
+   *
+   * Stored so the check is reproducible later and a reader can tell an
+   * overridden tip from an ordinary one. Absent on every file whose tip
+   * predates the guard, and on one the extractor transcribed from the page —
+   * a printed tip is evidence, not a hand-set figure.
+   */
+  extractedTipBound?: {
+    bound: "document" | "transaction";
+    total: number;
+  } | null;
 
   /**
    * The figure the document itself designates as due, in cents, transcribed
@@ -400,6 +429,20 @@ export interface TaxFile {
 
   /** Which rates those are, so the queue reads without opening the PDF. */
   vatRatesOutsideSet?: number[];
+
+  /**
+   * A value on this file came through an ambiguous escape (#275). The model's
+   * response did not parse, the repair pass had to neutralise a backslash in a
+   * string that also carried a `\b \f \n \r \t`, and it read that one as JSON
+   * defines it — so the stored text may be a control character where the
+   * document prints a backslash. Written at extraction time, queryable as a
+   * review list. Records written before the detector stay unflagged: the raw
+   * response is gone, so the ambiguity is unrecoverable.
+   */
+  needsRepairReview?: boolean;
+
+  /** Which fields those are, so the record reads without opening the PDF. */
+  repairAmbiguousFields?: string[];
 
   /**
    * The document names a Leistungsempfänger who is not the user (#229), on a
@@ -684,6 +727,16 @@ export interface FileConnection {
   /** AI confidence if auto-matched (0-100) */
   matchConfidence?: number | null;
 
+  /**
+   * Why an auto-connection was permitted, when it was not the ordinary
+   * full-amount case (#242). `remainder_same_day`: the File closed the
+   * Transaction's Remainder and carried the same extracted date as every File
+   * already on it — see
+   * [ADR-0008](../docs/adr/0008-remainder-auto-connect-is-same-day-only.md).
+   * Absent on every other Connection, including a full-amount auto-connect.
+   */
+  autoConnectReason?: "remainder_same_day";
+
   /** Score breakdown by factor (amount, date, partner, iban, reference, hint) */
   scoreBreakdown?: {
     amount: number;
@@ -782,7 +835,11 @@ export interface FileCreateData {
   storagePath: string;
   downloadUrl: string;
   thumbnailUrl?: string;
-  contentHash?: string;
+  /**
+   * SHA-256 of the uploaded bytes. Required: the write refuses a File without
+   * one, because a record with no hash can never be recognised as a copy (#182).
+   */
+  contentHash: string;
 
   // Source tracking
   sourceType?: "upload" | "gmail" | "gmail_html_invoice" | "gmail_invoice_link" | "browser" | "email_inbound" | "email_inbound_body" | "fibuki_invoice";
@@ -837,10 +894,22 @@ export interface ExtractedFieldLocation {
 
 /**
  * An additional field extracted from a document beyond the standard invoice fields.
- * Used for arbitrary data like invoice numbers, due dates, references, etc.
+ * Used for invoice numbers, due dates, references, etc.
+ *
+ * Extraction only ever writes a field whose `key` is in the closed vocabulary
+ * (#252). `key` is optional here because two other kinds of record exist: rows
+ * a person typed into the panel by hand, and rows stored before the vocabulary
+ * closed.
  */
 export interface ExtractedAdditionalField {
-  /** Human-readable label for the field (e.g., "Invoice Number", "Due Date") */
+  /**
+   * Canonical key from the extraction vocabulary — "invoiceNumber",
+   * "customerNumber", "dueDate", "paymentTerms", "orderNumber",
+   * "deliveryNoteNumber", "referenceNumber", "poNumber".
+   */
+  key?: string;
+
+  /** The label as the document prints it (e.g., "Rechnungsnummer", "Due Date") */
   label: string;
 
   /** The extracted value */

@@ -69,8 +69,6 @@ function call(data: Record<string, unknown>) {
 
 const ITEM = {
   description: "Consulting",
-  quantity: 1,
-  unitPrice: 265000,
   vatPercent: 20,
   vatAmount: 53000,
   amount: 265000,
@@ -196,9 +194,9 @@ describe("updateFileExtractedFieldsCallable", () => {
     // guard — the flag it tests and the printed rate-group block that is its
     // other escape — turning a refused file into silently over-claimed VAT.
     const capturedRows = [
-      { description: "goods A", quantity: 1, unitPrice: 3000, vatPercent: 20, vatAmount: 500, amount: 3000 },
-      { description: "goods B", quantity: 1, unitPrice: 4500, vatPercent: 20, vatAmount: 750, amount: 4500 },
-      { description: "goods C", quantity: 1, unitPrice: 1500, vatPercent: 20, vatAmount: 250, amount: 1500 },
+      { description: "goods A", vatPercent: 20, vatAmount: 500, amount: 3000 },
+      { description: "goods B", vatPercent: 20, vatAmount: 750, amount: 4500 },
+      { description: "goods C", vatPercent: 20, vatAmount: 250, amount: 1500 },
     ];
     const printedBlock = [{ rate: 20, net: 6750, vat: 1350, gross: 8100 }];
     seedFile({
@@ -254,6 +252,27 @@ describe("updateFileExtractedFieldsCallable", () => {
     );
     expect(file().extractedAdditionalFields).toEqual([
       { label: "Nr", value: "R-1", rawValue: "R-1" },
+    ]);
+  });
+
+  it("carries the canonical additional-field key through a save (#252)", async () => {
+    seedFile();
+
+    // A save edits the value; it never reclassifies the field. A row a person
+    // typed into the panel has no key and does not acquire one.
+    await call(
+      unchangedSave({
+        details: {
+          additionalFields: [
+            { key: "invoiceNumber", label: "Rechnungsnummer", value: "2024-001" },
+            { label: "Notiz", value: "Beleg nachgereicht" },
+          ],
+        },
+      })
+    );
+    expect(file().extractedAdditionalFields).toEqual([
+      { key: "invoiceNumber", label: "Rechnungsnummer", value: "2024-001", rawValue: "2024-001" },
+      { label: "Notiz", value: "Beleg nachgereicht", rawValue: "Beleg nachgereicht" },
     ]);
   });
 

@@ -36,6 +36,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { isPdfAttachment } from "@/lib/email-providers/interface";
+import { termsFromQuery } from "@/functions/src/mail/search-terms";
+import type { MailSearchTerms } from "@/functions/src/mail/provider";
 import { ConnectResultRow } from "@/components/ui/connect-result-row";
 import { FilePreview } from "./file-preview";
 import { GmailAttachmentPreview } from "./gmail-attachment-preview";
@@ -419,6 +421,7 @@ export function ConnectFileOverlay({
       scoreAttachments(
         attachmentsToScore,
         {
+          id: transaction?.id,
           amount: transaction?.amount,
           date: transactionDate,
           name: transaction?.name,
@@ -506,6 +509,7 @@ export function ConnectFileOverlay({
     scoreAttachments(
       emailsToScore,
       {
+        id: transaction.id,
         amount: transaction.amount,
         date: transactionDate,
         name: transaction.name,
@@ -700,11 +704,42 @@ export function ConnectFileOverlay({
     [strategyMode, partnerStrategies.localPatterns]
   );
 
-  const buildGmailQueries = useCallback(
-    (searchWith: string, includeTransactionTokens: boolean) => {
-    const queries = new Set<string>();
+  /**
+   * The searches one typed term is worth, each in provider-neutral terms (#240).
+   *
+   * Same variations the Gmail query strings used to spell — the term itself, the
+   * term as a sender when it looks like a domain, and any invoice-number-shaped
+   * token as an attachment filename — but stated so that a mailbox of any
+   * provider can execute them. One search per variation, as before: they are
+   * alternatives whose results are unioned, not one narrower search.
+   */
+  const buildSearchVariants = useCallback(
+    (
+      searchWith: string,
+      includeTransactionTokens: boolean,
+      suggested?: MailSearchTerms
+    ): MailSearchTerms[] => {
+    const variants: MailSearchTerms[] = [];
+    const seen = new Set<string>();
+    const addVariant = (terms: MailSearchTerms) => {
+      if (Object.keys(terms).length === 0) return;
+      const key = JSON.stringify(terms);
+      if (seen.has(key)) return;
+      seen.add(key);
+      variants.push(terms);
+    };
+
+    // A suggestion arrives already lowered by the pattern layer that decided it
+    // (#240), so its own terms lead — they are what the layer meant, not what
+    // re-reading its label guesses. Usually they re-derive to the same thing and
+    // dedupe away; where they do not (a bare domain the layer knows is a
+    // sender), the label's readings still follow as alternatives.
+    if (suggested) addVariant(suggested);
+
     if (searchWith) {
-      queries.add(searchWith);
+      // Lowered, not passed through: a user may still type `from:acme.com`, and
+      // an operator has to become a term rather than reach a mailbox as text.
+      addVariant(termsFromQuery(searchWith));
     }
 
     const isDomain = /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(searchWith);
@@ -712,7 +747,7 @@ export function ConnectFileOverlay({
     const hasGmailOperator = searchWith.includes(":");
 
     if (!hasGmailOperator && (isDomain || isEmail)) {
-      queries.add(`from:${searchWith}`);
+      addVariant({ from: searchWith });
     }
 
     const tokenSources = [searchWith];
@@ -739,16 +774,16 @@ export function ConnectFileOverlay({
     }
 
     for (const token of filenameTokens) {
-      queries.add(`filename:${token}`);
+      addVariant({ filenames: [token] });
     }
 
-    return Array.from(queries);
+    return variants;
   }, [transaction?.name, transaction?.reference]);
 
-  // Helper to search Gmail with a specific query
-  const searchGmail = useCallback(async (
+  // Helper to search one mailbox for a specific set of terms
+  const searchMail = useCallback(async (
     integration: { id: string },
-    query: string,
+    terms: MailSearchTerms,
     hasAttachments: boolean,
     expandThreads: boolean = false,
     limit: number = 20
@@ -761,7 +796,13 @@ export function ConnectFileOverlay({
         method: "POST",
         body: JSON.stringify({
           integrationId: integration.id,
-          query,
+          keywords: terms.keywords,
+          from: terms.from,
+          filenames: terms.filenames,
+          // Named here rather than spread out of `terms`: the wire field is
+          // `hasAttachments`, the caller decides it per search, and letting the
+          // term's own flag ride along would put two spellings of one
+          // constraint in the same request.
           hasAttachments,
           limit,
           expandThreads,
@@ -815,19 +856,27 @@ export function ConnectFileOverlay({
     if (!transaction || !partnerStrategies.hasStrategy) return false;
 
     const primaryQuery = partnerStrategies.primaryQuery || simpleSearch || "";
+    // A learned mail pattern is stored as it was written, in Gmail's dialect
+    // ("from:amazon.de invoice"); the label keeps that text for the UI while the
+    // search itself goes out as terms any mailbox can execute (#240).
     const gmailPatternQueries = partnerStrategies.gmailPatterns.map((pattern) => ({
-      query: pattern.pattern,
+      label: pattern.pattern,
+      terms: termsFromQuery(pattern.pattern),
       integrationId: pattern.integrationId,
       resultType: pattern.resultType,
     }));
     const domainQueries = (partner?.emailDomains || []).map((domain) => ({
-      query: `from:${domain}`,
+      // Still spelled `from:` — the label is what gets stored back as this
+      // Partner's learned mail pattern when a hit is connected, and the store's
+      // format is the written query the read path lowers again.
+      label: `from:${domain}`,
+      terms: { from: domain } as MailSearchTerms,
       integrationId: undefined,
       resultType: undefined,
     }));
 
     const allQueries = [...gmailPatternQueries, ...domainQueries].filter(
-      (entry) => entry.query
+      (entry) => Object.keys(entry.terms).length > 0
     );
 
     setStrategyMode(true);
@@ -876,9 +925,9 @@ export function ConnectFileOverlay({
 
           let attachmentResult: { messages: EmailMessage[] } | null = null;
           if (shouldSearchAttachments) {
-            attachmentResult = await searchGmail(
+            attachmentResult = await searchMail(
               integration,
-              entry.query,
+              entry.terms,
               true,
               true,
               50
@@ -887,7 +936,7 @@ export function ConnectFileOverlay({
               attachmentMessages.push(message);
               strategyMessageIds.add(message.messageId);
               if (!queryMap.has(message.messageId)) {
-                queryMap.set(message.messageId, entry.query);
+                queryMap.set(message.messageId, entry.label);
               }
             }
           }
@@ -897,9 +946,9 @@ export function ConnectFileOverlay({
           );
 
           if (shouldSearchEmails || (!hasAnyAttachments && shouldSearchAttachments)) {
-            const emailResult = await searchGmail(
+            const emailResult = await searchMail(
               integration,
-              entry.query,
+              entry.terms,
               false,
               true,
               shouldSearchEmails ? 20 : 50
@@ -908,7 +957,7 @@ export function ConnectFileOverlay({
               emailMessages.push(message);
               strategyEmailIds.add(message.messageId);
               if (!queryMap.has(message.messageId)) {
-                queryMap.set(message.messageId, entry.query);
+                queryMap.set(message.messageId, entry.label);
               }
             }
           }
@@ -935,7 +984,7 @@ export function ConnectFileOverlay({
     searchLocalFiles,
     hasGmailIntegration,
     gmailIntegrations,
-    searchGmail,
+    searchMail,
   ]);
 
   // Track transaction ID to detect changes
@@ -969,7 +1018,11 @@ export function ConnectFileOverlay({
   }, [open, transaction?.id, clearLocalFiles]);
 
   // Search handler - searches based on active tab
-  const handleSearch = useCallback(async (query?: string, source: "auto" | "manual" = "manual") => {
+  const handleSearch = useCallback(async (
+    query?: string,
+    source: "auto" | "manual" = "manual",
+    suggested?: MailSearchTerms
+  ) => {
     const searchWith = query || searchQuery;
     if (!searchWith) return;
 
@@ -995,29 +1048,30 @@ export function ConnectFileOverlay({
 
       // Search Gmail if integrations available
       if (hasGmailIntegration && gmailIntegrations.length > 0) {
-        // Build query variations to find more results
-        // 1. Basic query (searches subject, body, etc.)
-        // 2. from: query (finds emails from sender/domain matching query)
-        const queries = buildGmailQueries(searchWith, source === "auto");
+        // Build search variations to find more results
+        // 1. The term itself (subject, body, ...)
+        // 2. The term as a sender, when it looks like a domain or address
+        // 3. Invoice-number-shaped tokens as attachment filenames
+        const variants = buildSearchVariants(searchWith, source === "auto", suggested);
 
-        // Search for attachments with all query variations
+        // Search for attachments with all variations
         // expandThreads=true fetches all messages in matching threads for complete attachment coverage
         const attachmentResults = await Promise.all(
           gmailIntegrations.flatMap((integration) =>
-            queries.flatMap((q) => [
-              searchGmail(integration, q, true, true, 50),
-              searchGmail(integration, q, false, true, 20),
+            variants.flatMap((terms) => [
+              searchMail(integration, terms, true, true, 50),
+              searchMail(integration, terms, false, true, 20),
             ])
           )
         );
         const attachmentMessages = attachmentResults.flatMap((result) => result.messages);
         setGmailMessages(dedupeMessages(attachmentMessages));
 
-        // Search for emails with all query variations
+        // Search for emails with all variations
         // expandThreads=true ensures we see full thread context for email-to-PDF conversion
         const emailResults = await Promise.all(
           gmailIntegrations.flatMap((integration) =>
-            queries.map((q) => searchGmail(integration, q, false, true, 20))
+            variants.map((terms) => searchMail(integration, terms, false, true, 20))
           )
         );
         const emailMessages = emailResults.flatMap((result) => result.messages);
@@ -1044,8 +1098,8 @@ export function ConnectFileOverlay({
     searchLocalFiles,
     hasGmailIntegration,
     gmailIntegrations,
-    searchGmail,
-    buildGmailQueries,
+    searchMail,
+    buildSearchVariants,
   ]);
 
   // Auto-search when transaction is ready
@@ -1063,10 +1117,12 @@ export function ConnectFileOverlay({
 
       // Priority: 1) First typed suggestion (sorted by effectiveness), 2) Learned pattern, 3) Simple search
       const queryToUse = typedSuggestions[0]?.query || suggestedQueries[0] || bestLearnedPattern?.pattern || simpleSearch;
+      // Only the first branch carries terms of its own; the rest are bare text.
+      const suggestedTerms = typedSuggestions[0]?.query ? typedSuggestions[0]?.terms : undefined;
 
       if (queryToUse) {
         setSearchQuery(queryToUse);
-        setTimeout(() => handleSearch(queryToUse, "auto"), 50);
+        setTimeout(() => handleSearch(queryToUse, "auto", suggestedTerms), 50);
       }
     };
 
@@ -1433,7 +1489,7 @@ export function ConnectFileOverlay({
                         type="button"
                         onClick={() => {
                           setSearchQuery(suggestion.query);
-                          handleSearch(suggestion.query, "manual");
+                          handleSearch(suggestion.query, "manual", suggestion.terms);
                         }}
                         className={cn(
                           "inline-flex items-stretch rounded-md text-xs font-medium transition-colors overflow-hidden border",

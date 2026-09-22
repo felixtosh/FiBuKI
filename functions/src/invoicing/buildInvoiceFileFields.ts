@@ -30,10 +30,10 @@ export function buildInvoiceFileFields(
   invoice: Invoice,
   opts: BuildOptions,
 ): Record<string, unknown> {
+  // The invoice's own line items keep quantity and unit price; the extracted
+  // shape they are projected into is four fields (#252).
   const extractedLineItems = invoice.lineItems.map((li) => ({
     description: li.description,
-    quantity: li.quantity,
-    unitPrice: li.unitPrice,
     vatPercent: li.vatRate,
     vatAmount: Math.round((li.quantity * li.unitPrice * li.vatRate) / 100),
     amount: Math.round(li.quantity * li.unitPrice * (1 + li.vatRate / 100)),

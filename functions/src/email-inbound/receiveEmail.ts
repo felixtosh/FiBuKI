@@ -15,6 +15,7 @@ import * as crypto from "crypto";
 import Busboy from "busboy";
 import { simpleParser, ParsedMail, Attachment, AddressObject } from "mailparser";
 import { convertHtmlToPdf } from "../precision-search/htmlToPdf";
+import { createFileRecord } from "../files/createFileRecord";
 
 const db = getFirestore();
 const storage = getStorage();
@@ -308,7 +309,7 @@ async function uploadToStorage(
 /**
  * Create file document in Firestore
  */
-async function createFileDocument(data: {
+export async function createFileDocument(data: {
   userId: string;
   fileName: string;
   fileType: string;
@@ -327,7 +328,11 @@ async function createFileDocument(data: {
 }): Promise<string> {
   const now = Timestamp.now();
 
-  const docRef = await db.collection(FILES_COLLECTION).add(
+  // Through the shared write point (#182): the hash check the callers run
+  // first is a read, and a second delivery of the same mail can land between
+  // that read and this write.
+  const { fileId } = await createFileRecord(
+    db,
     omitUndefined({
       ...data,
       extractionComplete: false,
@@ -338,7 +343,7 @@ async function createFileDocument(data: {
     })
   );
 
-  return docRef.id;
+  return fileId;
 }
 
 /**

@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { format, subDays, addDays } from "date-fns";
 import { fetchWithAuth } from "@/lib/api/fetch-with-auth";
+import { termsFromQuery } from "@/functions/src/mail/search-terms";
 import {
   Search,
   Mail,
@@ -151,7 +152,11 @@ export function EmailSearchPanel({
               method: "POST",
               body: JSON.stringify({
                 integrationId: integration.id,
-                query: searchQuery || undefined,
+                // Neutral terms, not a Gmail query string (#240). Lowered word
+                // by word rather than sent as one keyword: a whole typed line
+                // as a single term would be matched as an exact phrase, which
+                // finds less than the box finds today.
+                ...termsFromQuery(searchQuery),
                 dateFrom: searchDateFrom?.toISOString(),
                 dateTo: searchDateTo?.toISOString(),
                 hasAttachments: true,

@@ -9,4 +9,5 @@ export type {
   DataTableSection,
   VirtualRowProps,
   RowClickModifiers,
+  SelectionChangeMeta,
 } from "./types";

@@ -1,15 +1,10 @@
 "use client";
 
-import { useCallback, useState, useMemo } from "react";
+import { useCallback } from "react";
 import { useDropzone } from "react-dropzone";
-import { Upload, Loader2, FileText, Image, X } from "lucide-react";
-import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
-import { storage, db } from "@/lib/firebase/config";
-import { createFile, checkFileDuplicate, OperationsContext } from "@/lib/operations";
+import { Upload, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
-import { useAuth } from "@/components/auth";
+
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const ACCEPTED_TYPES = {
   "image/jpeg": [".jpg", ".jpeg"],
@@ -19,113 +14,35 @@ const ACCEPTED_TYPES = {
 };
 
 interface FileUploadZoneProps {
-  onUploadComplete?: (fileId: string) => void;
+  /** Hand the dropped files to the page's upload pipeline. */
+  onFilesAccepted: (files: File[]) => void;
   className?: string;
 }
 
-export function FileUploadZone({ onUploadComplete, className }: FileUploadZoneProps) {
-  const { userId } = useAuth();
-  const [uploading, setUploading] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [error, setError] = useState<string | null>(null);
-  const [currentFileName, setCurrentFileName] = useState<string | null>(null);
-
-  const ctx: OperationsContext = useMemo(
-    () => ({ db, userId: userId ?? "" }),
-    [userId]
-  );
-
-  // Calculate SHA-256 hash of file content
-  const calculateFileHash = useCallback(async (file: File): Promise<string> => {
-    const buffer = await file.arrayBuffer();
-    const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
-    return Array.from(new Uint8Array(hashBuffer))
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
-  }, []);
-
-  const uploadFile = useCallback(
-    async (file: File) => {
-      setUploading(true);
-      setProgress(0);
-      setError(null);
-      setCurrentFileName(file.name);
-
-      try {
-        // Calculate hash first for duplicate detection
-        const contentHash = await calculateFileHash(file);
-
-        // Check for duplicate
-        const existingFile = await checkFileDuplicate(ctx, contentHash);
-        if (existingFile) {
-          throw new Error(`Duplicate: "${existingFile.fileName}" already exists`);
-        }
-
-        // Create storage path
-        const timestamp = Date.now();
-        const sanitizedName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
-        const storagePath = `files/${userId}/${timestamp}_${sanitizedName}`;
-
-        // Upload to Firebase Storage
-        const storageRef = ref(storage, storagePath);
-        const uploadTask = uploadBytesResumable(storageRef, file);
-
-        // Track upload progress
-        await new Promise<void>((resolve, reject) => {
-          uploadTask.on(
-            "state_changed",
-            (snapshot) => {
-              const pct = Math.round(
-                (snapshot.bytesTransferred / snapshot.totalBytes) * 100
-              );
-              setProgress(pct);
-            },
-            (err) => reject(err),
-            () => resolve()
-          );
-        });
-
-        // Get download URL
-        const downloadUrl = await getDownloadURL(storageRef);
-
-        // Create file document in Firestore (with hash)
-        const fileId = await createFile(ctx, {
-          fileName: file.name,
-          fileType: file.type,
-          fileSize: file.size,
-          storagePath,
-          downloadUrl,
-          contentHash,
-        });
-
-        setCurrentFileName(null);
-        onUploadComplete?.(fileId);
-      } catch (err) {
-        console.error("File upload failed:", err);
-        setError(err instanceof Error ? err.message : "Upload failed");
-      } finally {
-        setUploading(false);
-        setProgress(0);
-      }
-    },
-    [ctx, onUploadComplete, calculateFileHash]
-  );
-
+/**
+ * The dialog's drop target — a target, and nothing else.
+ *
+ * It used to carry its own hash / duplicate-check / storage-upload / createFile
+ * sequence, a second copy of the one on the Files page that renders it. Two
+ * pipelines on one page is what wrote two Files for a single drop (#182): the
+ * event reached both. The page owns the pipeline now, including its progress
+ * reporting; this hands the files over.
+ */
+export function FileUploadZone({ onFilesAccepted, className }: FileUploadZoneProps) {
   const onDrop = useCallback(
     (acceptedFiles: File[]) => {
       if (acceptedFiles.length > 0) {
-        uploadFile(acceptedFiles[0]);
+        onFilesAccepted(acceptedFiles);
       }
     },
-    [uploadFile]
+    [onFilesAccepted]
   );
 
   const { getRootProps, getInputProps, isDragActive, fileRejections } = useDropzone({
     onDrop,
     accept: ACCEPTED_TYPES,
     maxSize: MAX_FILE_SIZE,
-    multiple: false,
-    disabled: uploading,
+    multiple: true,
   });
 
   // Show rejection error
@@ -136,8 +53,6 @@ export function FileUploadZone({ onUploadComplete, className }: FileUploadZonePr
         : "Invalid file type (only PDF, JPG, PNG, WebP)"
       : null;
 
-  const displayError = error || rejectionError;
-
   return (
     <div className={cn("space-y-2", className)}>
       <div
@@ -145,41 +60,29 @@ export function FileUploadZone({ onUploadComplete, className }: FileUploadZonePr
         className={cn(
           "border-2 border-dashed rounded-lg p-8 text-center transition-colors cursor-pointer",
           isDragActive && "border-primary bg-primary/5",
-          uploading && "cursor-not-allowed opacity-50",
-          displayError && "border-destructive",
-          !isDragActive && !displayError && "hover:border-primary/50 hover:bg-muted/50"
+          rejectionError && "border-destructive",
+          !isDragActive && !rejectionError && "hover:border-primary/50 hover:bg-muted/50"
         )}
       >
         <input {...getInputProps()} />
 
-        {uploading ? (
-          <div className="space-y-3">
-            <Loader2 className="h-8 w-8 animate-spin mx-auto text-muted-foreground" />
-            <div className="space-y-1">
-              <p className="text-sm font-medium">Uploading {currentFileName}</p>
-              <Progress value={progress} className="w-48 mx-auto" />
-              <p className="text-xs text-muted-foreground">{progress}%</p>
-            </div>
+        <div className="space-y-2">
+          <Upload className="h-8 w-8 mx-auto text-muted-foreground" />
+          <div>
+            <p className="text-sm font-medium">
+              {isDragActive ? "Drop file here" : "Drop file or click to upload"}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              PDF, JPG, PNG, or WebP up to 10MB
+            </p>
           </div>
-        ) : (
-          <div className="space-y-2">
-            <Upload className="h-8 w-8 mx-auto text-muted-foreground" />
-            <div>
-              <p className="text-sm font-medium">
-                {isDragActive ? "Drop file here" : "Drop file or click to upload"}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                PDF, JPG, PNG, or WebP up to 10MB
-              </p>
-            </div>
-          </div>
-        )}
+        </div>
       </div>
 
-      {displayError && (
+      {rejectionError && (
         <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 px-3 py-2 rounded">
           <X className="h-4 w-4 flex-shrink-0" />
-          {displayError}
+          {rejectionError}
         </div>
       )}
     </div>

@@ -12,6 +12,7 @@
 
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { buildDownloadUrl } from "../utils/buildDownloadUrl";
+import { toDateSafe } from "../utils/toDateSafe";
 import { isTransactionDismissed } from "../matching/dismissedTransactions";
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import { getFirestore, Timestamp, FieldValue } from "firebase-admin/firestore";
@@ -27,6 +28,7 @@ import {
 } from "./generateSearchQueries";
 import { ResolvedEffectiveCycle } from "../matching/billingCycle";
 import { convertHtmlToPdf } from "./htmlToPdf";
+import { createFileRecord } from "../files/createFileRecord";
 import {
   scoreAttachmentMatch,
   ScoreAttachmentInput,
@@ -720,10 +722,13 @@ async function createFileFromAttachment(
     fileData.precisionSearchHint = precisionSearchHint;
   }
 
-  const fileRef = await db.collection("files").add(fileData);
+  // Through the shared write point (#182): the duplicate branch above is a
+  // read taken before the download and the storage upload, so a concurrent
+  // search can create the File in between.
+  const { fileId } = await createFileRecord(db, fileData);
 
-  console.log(`[PrecisionSearch] Created file: ${attachment.filename} (${fileRef.id})${precisionSearchHint ? ` [hint: tx ${precisionSearchHint.transactionId}]` : ""}`);
-  return fileRef.id;
+  console.log(`[PrecisionSearch] Created file: ${attachment.filename} (${fileId})${precisionSearchHint ? ` [hint: tx ${precisionSearchHint.transactionId}]` : ""}`);
+  return fileId;
 }
 
 /**
@@ -844,10 +849,10 @@ async function createFileFromHtmlPdf(
     fileData.precisionSearchHint = precisionSearchHint;
   }
 
-  const fileRef = await db.collection("files").add(fileData);
+  const { fileId } = await createFileRecord(db, fileData);
 
-  console.log(`[PrecisionSearch] Created HTML-converted PDF: ${filename} (${fileRef.id})${precisionSearchHint ? ` [hint: tx ${precisionSearchHint.transactionId}]` : ""}`);
-  return fileRef.id;
+  console.log(`[PrecisionSearch] Created HTML-converted PDF: ${filename} (${fileId})${precisionSearchHint ? ` [hint: tx ${precisionSearchHint.transactionId}]` : ""}`);
+  return fileId;
 }
 
 // ============================================================================
@@ -1009,10 +1014,10 @@ async function executePartnerFilesStrategy(
         filename: file.fileName || "unknown",
         mimeType: file.fileType || "application/pdf",
         emailBodyText: file.extractedText, // Treat OCR text as body
-        emailDate: file.extractedDate?.toDate(),
+        emailDate: toDateSafe(file.extractedDate),
         // File extracted data for numeric comparison
         fileExtractedAmount: file.extractedAmount,
-        fileExtractedDate: file.extractedDate?.toDate(),
+        fileExtractedDate: toDateSafe(file.extractedDate),
         fileExtractedPartner: file.extractedPartner,
         // Transaction data
         transactionAmount: transaction.amount,
@@ -1169,10 +1174,10 @@ async function executeAmountFilesStrategy(
           filename: file.fileName || "unknown",
           mimeType: file.fileType || "application/pdf",
           emailBodyText: file.extractedText,
-          emailDate: file.extractedDate?.toDate(),
+          emailDate: toDateSafe(file.extractedDate),
           // File extracted data for numeric comparison
           fileExtractedAmount: file.extractedAmount,
-          fileExtractedDate: file.extractedDate?.toDate(),
+          fileExtractedDate: toDateSafe(file.extractedDate),
           fileExtractedPartner: file.extractedPartner,
           // Transaction data
           transactionAmount: transaction.amount,

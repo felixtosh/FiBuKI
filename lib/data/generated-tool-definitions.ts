@@ -587,7 +587,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
             "array",
             "null"
           ],
-          "description": "Replace the itemisation wholesale. Each item: description, amount (cents, GROSS — the amount includes its own VAT), vatPercent, vatAmount (cents), and optionally quantity and unitPrice.",
+          "description": "Replace the itemisation wholesale. A row is a rate group with a label, not a bill of goods — four fields, no quantity and no unit price. Each item: description, amount (cents, GROSS — the amount includes its own VAT), vatPercent, vatAmount (cents).",
           "items": {
             "type": "object",
             "properties": {
@@ -605,24 +605,23 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
               },
               "vatAmount": {
                 "type": "number"
-              },
-              "quantity": {
-                "type": [
-                  "number",
-                  "null"
-                ]
-              },
-              "unitPrice": {
-                "type": [
-                  "number",
-                  "null"
-                ]
               }
             },
             "required": [
               "amount"
             ]
           }
+        },
+        "tipAmount": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Freiwilliges Trinkgeld in cents that the document does NOT print — the terminal took it and the Beleg never says so, which is why the bank line is larger than the invoice. It is stored BESIDE the total and never taken out of it: on such a document the printed total already is the VAT-bearing figure, so subtracting the tip would shrink the VAT base and under-claim. Only a human sets it; it is never inferred from the bank/document gap. A tip the document DOES print is already extracted into this field and needs no correction. Zero and null both clear it; a negative is refused. It is also bounded: it must be less than the document total, or — with tipNotPrinted — less than the transaction total. An over-large tip is refused rather than clamped, because it makes the file unmatchable and nothing afterwards says why."
+        },
+        "tipNotPrinted": {
+          "type": "boolean",
+          "description": "The tip being set is not printed on the invoice, so it is measured against the TRANSACTION total instead of the document total: the terminal took it on top of an invoice that is complete without it, and the bank line is the only figure that knows how large it can be. It moves the bound, it does not lift one — a tip that is not less than the transaction total is still refused, and a file connected to no transaction has nothing to measure against. Which bound applied is stored on the file as extractedTipBound."
         },
         "invoiceDirection": {
           "type": [
@@ -701,7 +700,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "upload_file",
-    "description": "Upload a file from a URL or base64 data",
+    "description": "Upload a file from a URL or base64 data. Byte-identical re-uploads create nothing: the existing file is returned with duplicate: true.",
     "requiredFeature": "fileUpload",
     "inputSchema": {
       "type": "object",

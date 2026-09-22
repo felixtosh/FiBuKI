@@ -5,6 +5,7 @@
 import { Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { checkTransactionQuota, incrementTransactionCount } from "../billing/checkTransactionQuota";
+import { toDateSafe } from "../utils/toDateSafe";
 
 interface TransactionData {
   sourceId: string;
@@ -179,7 +180,7 @@ export const bulkCreateTransactionsCallable = createCallable<
     if (request.balanceInfo) {
       const { openingBalance, openingBalanceDate, latestBalance, latestBalanceDate } = request.balanceInfo;
       const sourceData = sourceSnap.data()!;
-      const existingOpeningDate = sourceData.openingBalanceDate?.toDate();
+      const existingOpeningDate = toDateSafe(sourceData.openingBalanceDate);
       const newOpeningDate = new Date(openingBalanceDate);
 
       // Only update opening balance if no existing one or this one is earlier

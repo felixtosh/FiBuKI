@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FileImage, FileText, Download, ExternalLink } from "lucide-react";
 import { useFileObjectUrl } from "@/hooks/use-file-object-url";
+import { classifyFileStrict } from "@/lib/files/file-kind";
 
 interface ReceiptListProps {
   receiptIds: string[];
@@ -51,8 +52,10 @@ function ReceiptPreview({ receiptId }: { receiptId: string }) {
 
   if (!receipt) return null;
 
-  const isImage = receipt.fileType.startsWith("image/");
-  const isPdf = receipt.fileType === "application/pdf";
+  // Some records were written without a fileType (#248) — normalised so a
+  // missing value falls through to the generic-file icon instead of
+  // crashing. See lib/files/file-kind.js.
+  const { isImage, isPdf } = classifyFileStrict(receipt.fileType);
 
   const formatFileSize = (bytes: number) => {
     if (bytes < 1024) return `${bytes} B`;

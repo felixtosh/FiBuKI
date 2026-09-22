@@ -8,6 +8,7 @@ import {
   FileArchive,
   Clock,
   AlertCircle,
+  AlertTriangle,
   CheckCircle2,
   Building2,
 } from "lucide-react";
@@ -294,61 +295,85 @@ function BmdCompletedExportRow({
 
   const dateFromStr = exp.dateFrom?.toDate?.()?.toLocaleDateString("de-DE");
   const dateToStr = exp.dateTo?.toDate?.()?.toLocaleDateString("de-DE");
+  const skipped = exp.skipped ?? [];
 
   return (
-    <div className="flex items-center justify-between rounded-lg border p-3">
-      <div className="flex items-center gap-3">
-        {isExpired ? (
-          <AlertCircle className="h-4 w-4 text-muted-foreground" />
-        ) : (
-          <CheckCircle2 className="h-4 w-4 text-green-600" />
-        )}
-        <div>
-          <div className="text-sm font-medium">{dateStr}</div>
-          <div className="text-xs text-muted-foreground">
-            {formatSize(exp.zipSize)} &middot; {exp.counts.transactions}{" "}
-            transactions
-            {dateFromStr && dateToStr && (
-              <span>
-                {" "}
-                &middot; {dateFromStr} - {dateToStr}
-              </span>
-            )}
+    <div className="rounded-lg border p-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          {isExpired ? (
+            <AlertCircle className="h-4 w-4 text-muted-foreground" />
+          ) : (
+            <CheckCircle2 className="h-4 w-4 text-green-600" />
+          )}
+          <div>
+            <div className="text-sm font-medium">{dateStr}</div>
+            <div className="text-xs text-muted-foreground">
+              {formatSize(exp.zipSize)} &middot; {exp.counts.transactions}{" "}
+              transactions
+              {dateFromStr && dateToStr && (
+                <span>
+                  {" "}
+                  &middot; {dateFromStr} - {dateToStr}
+                </span>
+              )}
+            </div>
           </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {isExpired ? (
+            <Badge variant="secondary" className="text-muted-foreground">
+              Expired
+            </Badge>
+          ) : (
+            <>
+              <Badge variant="outline" className="text-xs">
+                <Clock className="mr-1 h-3 w-3" />
+                {daysUntilExpiry} days left
+              </Badge>
+              {exp.downloadUrl && (
+                <Button size="sm" variant="outline" asChild>
+                  <a
+                    href={exp.downloadUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={storedDownload.onClick}
+                    aria-busy={storedDownload.pending}
+                  >
+                    <Download className="mr-1 h-3 w-3" />
+                    Download
+                  </a>
+                </Button>
+              )}
+              {storedDownload.error && (
+                <p className="text-xs text-destructive">{storedDownload.error}</p>
+              )}
+            </>
+          )}
         </div>
       </div>
 
-      <div className="flex items-center gap-2">
-        {isExpired ? (
-          <Badge variant="secondary" className="text-muted-foreground">
-            Expired
-          </Badge>
-        ) : (
-          <>
-            <Badge variant="outline" className="text-xs">
-              <Clock className="mr-1 h-3 w-3" />
-              {daysUntilExpiry} days left
-            </Badge>
-            {exp.downloadUrl && (
-              <Button size="sm" variant="outline" asChild>
-                <a
-                  href={exp.downloadUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={storedDownload.onClick}
-                  aria-busy={storedDownload.pending}
-                >
-                  <Download className="mr-1 h-3 w-3" />
-                  Download
-                </a>
-              </Button>
-            )}
-            {storedDownload.error && (
-              <p className="text-xs text-destructive">{storedDownload.error}</p>
-            )}
-          </>
-        )}
-      </div>
+      {/* Documents the run refused to book (#194). Skip and report: the export
+          completed without them, and the operator has to see which and why
+          before filing. */}
+      {skipped.length > 0 && (
+        <div className="mt-2 rounded-md bg-amber-50 p-2 text-xs text-amber-900">
+          <div className="flex items-center gap-1 font-medium">
+            <AlertTriangle className="h-3 w-3" />
+            {skipped.length} document{skipped.length === 1 ? "" : "s"} not
+            exported
+          </div>
+          <ul className="mt-1 space-y-0.5">
+            {skipped.map((doc) => (
+              <li key={`${doc.transactionId}:${doc.fileId}`}>
+                <span className="font-medium">{doc.fileName}</span> &mdash;{" "}
+                {doc.reason}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }

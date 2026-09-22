@@ -20,6 +20,7 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import {
   getFirestore,
+  getSqlClient,
   Timestamp,
   __resetFirestoreShim,
 } from "../firestore-shim";
@@ -77,6 +78,31 @@ async function expectSameSet(build: Build): Promise<string[]> {
   return a;
 }
 
+/**
+ * Records the SQL a block of shim queries actually issues. The compile-shape
+ * tests below pin what the compiler emits from given inputs; this pins that
+ * the shim FEEDS those inputs — a cursor whose value failed to resolve drops
+ * silently back to the JS path and still returns the right rows.
+ */
+async function capturedSql(fn: () => Promise<void>): Promise<string[]> {
+  const client = (await getSqlClient()) as any;
+  const tx = client.tx.bind(client);
+  const seen: string[] = [];
+  client.tx = (tenantId: any, run: any) =>
+    tx(tenantId, (q: any) =>
+      run((sql: string, params?: unknown[]) => {
+        seen.push(sql);
+        return q(sql, params);
+      }),
+    );
+  try {
+    await fn();
+  } finally {
+    client.tx = tx;
+  }
+  return seen;
+}
+
 describe("pushdown differential: flattened table vs JSONB reference", () => {
   beforeAll(async () => {
     await __resetFirestoreShim();
@@ -132,6 +158,120 @@ describe("pushdown differential: flattened table vs JSONB reference", () => {
     await expectSame((c) => c.orderBy("createdAt", "asc"));
     await expectSame((c) => c.orderBy("createdAt", "desc"));
     await expectSame((c) => c.orderBy("createdAt", "asc").orderBy("name", "desc"));
+  });
+
+  it("orderBy __name__ (the paged-sweep shape), asc and desc and mixed", async () => {
+    expect(await expectSame((c) => c.orderBy("__name__", "asc"))).toEqual(Object.keys(FIXTURES));
+    expect(await expectSame((c) => c.orderBy("__name__", "desc"))).toEqual(
+      [...Object.keys(FIXTURES)].reverse(),
+    );
+    await expectSame((c) => c.where("userId", "==", "u1").orderBy("__name__").limit(3));
+    await expectSame((c) => c.orderBy("createdAt", "asc").orderBy("__name__", "desc"));
+  });
+
+  it("paged sweep on __name__ returns every doc exactly once across page boundaries", async () => {
+    const page = async (col: any, after?: any) => {
+      let q = col.where("userId", "==", "u1").orderBy("__name__").limit(2);
+      if (after) q = q.startAfter(after);
+      return q.get();
+    };
+    const perBackend: string[][] = [];
+    for (const collection of [FLAT, REF]) {
+      const col = db.collection(collection);
+      const all: string[] = [];
+      let snap = await page(col);
+      while (snap.docs.length > 0) {
+        all.push(...snap.docs.map((d: any) => d.id));
+        snap = await page(col, snap.docs[snap.docs.length - 1]);
+      }
+      perBackend.push(all);
+    }
+    expect(perBackend[0]).toEqual(perBackend[1]);
+    // 5 docs over 3 pages: no skips, no repeats across either boundary.
+    expect(perBackend[0]).toEqual(["s01", "s02", "s03", "s07", "s09"]);
+  });
+
+  it("each page of the __name__ sweep is ONE bounded query, not a full collection read", async () => {
+    const col = db.collection(FLAT);
+    const sweep = (after?: any) => {
+      const q = col.where("userId", "==", "u1").orderBy("__name__").limit(2);
+      return after ? q.startAfter(after) : q;
+    };
+    const first = await sweep().get();
+    const sql = (
+      await capturedSql(async () => {
+        await sweep(first.docs[first.docs.length - 1]).get();
+      })
+    ).filter((s) => s.includes("FROM sources"));
+    expect(sql).toHaveLength(1);
+    expect(sql[0]).toContain(`ORDER BY id COLLATE "C" ASC`);
+    expect(sql[0]).toContain("LIMIT 2");
+    expect(sql[0]).toContain(`id COLLATE "C" >`); // keyset, not a full scan
+  });
+
+  it("the DESCENDING __name__ sweep pages the same way, on its own keyset branch", async () => {
+    const page = async (col: any, after?: any) => {
+      let q = col.where("userId", "==", "u1").orderBy("__name__", "desc").limit(2);
+      if (after) q = q.startAfter(after);
+      return q.get();
+    };
+    const perBackend: string[][] = [];
+    for (const collection of [FLAT, REF]) {
+      const col = db.collection(collection);
+      const all: string[] = [];
+      let snap = await page(col);
+      while (snap.docs.length > 0) {
+        all.push(...snap.docs.map((d: any) => d.id));
+        snap = await page(col, snap.docs[snap.docs.length - 1]);
+      }
+      perBackend.push(all);
+    }
+    expect(perBackend[0]).toEqual(perBackend[1]);
+    expect(perBackend[0]).toEqual(["s09", "s07", "s03", "s02", "s01"]);
+
+    // Descending compiles its own keyset comparator, so pin that it is bounded too.
+    const col = db.collection(FLAT);
+    const first = await page(col);
+    const sql = (
+      await capturedSql(async () => {
+        await page(col, first.docs[first.docs.length - 1]);
+      })
+    ).filter((s) => s.includes("FROM sources"));
+    expect(sql).toHaveLength(1);
+    expect(sql[0]).toContain(`ORDER BY id COLLATE "C" DESC`);
+    expect(sql[0]).toContain("LIMIT 2");
+    expect(sql[0]).toContain(`id COLLATE "C" <`);
+  });
+
+  it("a values-form __name__ cursor pages identically, bare or path-shaped", async () => {
+    // The compile-shape test pins that SQL resolves "sources/s02" to "s02";
+    // this pins that the JS pipeline resolves it the same way, so the two
+    // never disagree about where a page starts.
+    const bare = await expectSame((c) => c.orderBy("__name__").startAfter("s02").limit(3));
+    const path = await expectSame((c) => c.orderBy("__name__").startAfter("sources/s02").limit(3));
+    expect(bare).toEqual(["s03", "s04", "s05"]);
+    expect(path).toEqual(bare);
+  });
+
+  it("a sweep ordered by a genuinely unmapped field still pages correctly on the JS path", async () => {
+    const page = async (col: any, after?: any) => {
+      let q = col.orderBy("balance", "asc").limit(3); // balance has no column
+      if (after) q = q.startAfter(after);
+      return q.get();
+    };
+    const perBackend: string[][] = [];
+    for (const collection of [FLAT, REF]) {
+      const col = db.collection(collection);
+      const all: string[] = [];
+      let snap = await page(col);
+      while (snap.docs.length > 0) {
+        all.push(...snap.docs.map((d: any) => d.id));
+        snap = await page(col, snap.docs[snap.docs.length - 1]);
+      }
+      perBackend.push(all);
+    }
+    expect(perBackend[0]).toEqual(perBackend[1]);
+    expect(perBackend[0]).toHaveLength(Object.keys(FIXTURES).length);
   });
 
   it("limit/offset pushdown", async () => {
@@ -250,6 +390,56 @@ describe("compile shapes (the perf contract)", () => {
     expect(c.sql).toContain(`"name" = $2 AND id COLLATE "C" > $3`);
     expect(c.sql).toContain("LIMIT 2");
     expect(c.params).toEqual([tid, "dup", "s04"]);
+  });
+
+  it("pushes the paged sweep on __name__: id ORDER BY, keyset and LIMIT", () => {
+    const c = compileFlatQuery(
+      spec,
+      tid,
+      [{ field: "userId", op: "==", value: "u1" }],
+      [{ field: "__name__", dir: "asc" }],
+      500,
+      0,
+      { values: ["s03"], snapId: "s03" },
+    );
+    // No duplicate tiebreak: the ordering already names the id column.
+    expect(c.sql).toContain(`ORDER BY id COLLATE "C" ASC LIMIT 500`);
+    expect(c.sql).toContain(`id COLLATE "C" > $3`);
+    expect(c.params).toEqual([tid, "u1", "s03", "s03"]);
+  });
+
+  it("orders __name__ desc on the id column", () => {
+    const c = compileFlatQuery(spec, tid, [], [{ field: "__name__", dir: "desc" }], 2, 0, null);
+    expect(c.sql).toContain(`ORDER BY id COLLATE "C" DESC LIMIT 2`);
+  });
+
+  it("mixes __name__ with a mapped field in a multi-field ordering", () => {
+    const c = compileFlatQuery(
+      spec,
+      tid,
+      [],
+      [
+        { field: "createdAt", dir: "asc" },
+        { field: "__name__", dir: "desc" },
+      ],
+      3,
+      0,
+      null,
+    );
+    expect(c.sql).toContain(`ORDER BY "created_at" ASC NULLS FIRST, id COLLATE "C" DESC LIMIT 3`);
+  });
+
+  it("resolves a path-shaped __name__ cursor value to its last segment", () => {
+    const c = compileFlatQuery(
+      spec,
+      tid,
+      [],
+      [{ field: "__name__", dir: "asc" }],
+      2,
+      0,
+      { values: ["sources/s03"], snapId: null },
+    );
+    expect(c.params).toEqual([tid, "s03"]);
   });
 
   it("null cursor values disable LIMIT pushdown but keep the fetch valid", () => {

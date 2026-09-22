@@ -589,6 +589,170 @@ describe("amount reconciliation", () => {
 });
 
 // ---------------------------------------------------------------------------
+// An impossible Trinkgeld is not a partial payment (#317)
+// ---------------------------------------------------------------------------
+
+describe("impossible Trinkgeld (#317)", () => {
+  /** Summe 50,80 over two rates — the #172 restaurant Beleg, tip left open. */
+  const mealBeleg = (tipAmount: number) => ({
+    id: "f-meal",
+    totalGross: 5080,
+    tipAmount,
+    rateGroups: [
+      { rate: 10, net: 3500, vat: 350, gross: 3850 },
+      { rate: 20, net: 1025, vat: 205, gross: 1230 },
+    ],
+  });
+
+  const meal = (amount: number, tipAmount: number): UvaTransaction => ({
+    id: "t-meal",
+    date: "2026-02-20",
+    amount,
+    files: [mealBeleg(tipAmount)],
+  });
+
+  it("claims nothing when the tip EQUALS the bank amount", () => {
+    // 54,00 charged, 54,00 transcribed into the Trinkgeld field. The ladder
+    // used to read 108,00 as the invoice total, call the bank line a half
+    // payment and claim 2,86 — half the document's VAT, off a figure nobody
+    // can support. The BMD export refuses the same transaction (#194).
+    const r = run([meal(-5400, 5400)], Q1_2026);
+
+    expect(r.totalInputVat).toBe(0);
+    expect(kz(r, "060")).toBe(0);
+  });
+
+  it("names the tip in the review bucket instead of scaling a partial payment", () => {
+    const r = run([meal(-5400, 5400)], Q1_2026);
+
+    expect(r.unresolved).toHaveLength(1);
+    expect(r.unresolved[0].reason).toBe("impossible-tip");
+    expect(r.unresolved[0].transactionId).toBe("t-meal");
+    // Worth chasing: the correction is what puts the document's VAT back in
+    // reach, on the same 20% proxy amount-mismatch uses.
+    expect(r.unresolved[0].foregoneVat).toBe(900);
+    expect(r.derivations[0].reason).toBe("impossible-tip");
+    expect(r.derivations[0].inputVat).toBe(0);
+  });
+
+  it("claims nothing when the tip EXCEEDS the bank amount", () => {
+    // 20,00 off the card against a document whose Gesamt landed in the tip
+    // field: short of the total either way, so the old ladder scaled it.
+    const r = run([meal(-2000, 5400)], Q1_2026);
+
+    expect(r.totalInputVat).toBe(0);
+    expect(r.unresolved[0].reason).toBe("impossible-tip");
+  });
+
+  it("sums the tip across every document on the transaction", () => {
+    // Two Belege on one 54,00 card payment, 27,00 read as Trinkgeld on each.
+    // Neither reaches the charge alone; the figure the predicate judges is
+    // the SUM, as on the export side.
+    const half = (id: string) => ({
+      id,
+      totalGross: 2540,
+      tipAmount: 2700,
+      rateGroups: [
+        { rate: 10, net: 1750, vat: 175, gross: 1925 },
+        { rate: 20, net: 512, vat: 103, gross: 615 },
+      ],
+    });
+    const r = run([
+      {
+        id: "t-two",
+        date: "2026-02-20",
+        amount: -5400,
+        files: [half("f-a"), half("f-b")],
+      },
+    ]);
+
+    expect(r.totalInputVat).toBe(0);
+    expect(r.unresolved[0].reason).toBe("impossible-tip");
+  });
+});
+
+describe("impossible Trinkgeld (#317): what must not change", () => {
+  const meal = (amount: number, tipAmount: number): UvaTransaction => ({
+    id: "t-meal",
+    date: "2026-02-20",
+    amount,
+    files: [
+      {
+        id: "f-meal",
+        totalGross: 5080,
+        tipAmount,
+        rateGroups: [
+          { rate: 10, net: 3500, vat: 350, gross: 3850 },
+          { rate: 20, net: 1025, vat: 205, gross: 1230 },
+        ],
+      },
+    ],
+  });
+
+  it("claims 0 < tip < bankGross in full, exactly as #172 left it", () => {
+    // Summe 50,80 (10% + 20%), Trinkgeld 3,20, Gesamt 54,00: the reconcile
+    // comes out exact and the whole 5,55 is claimed.
+    const r = run([meal(-5400, 320)]);
+
+    expect(r.totalInputVat).toBe(555);
+    expect(r.unresolved).toHaveLength(0);
+  });
+
+  it("claims a tip one cent under the bank amount — the guard stops at `>=`", () => {
+    // The boundary from the safe side. 53,99 of a 54,00 charge read as
+    // Trinkgeld is nonsense too, but it is the conservative nonsense #194
+    // left alone: 50,80 + 53,99 is still short of the bank line, so this is
+    // the partial-payment branch and it under-claims rather than over-claims.
+    const r = run([meal(-5400, 5399)]);
+
+    expect(r.unresolved).toHaveLength(0);
+    expect(r.totalInputVat).toBeGreaterThan(0);
+    expect(r.totalInputVat).toBeLessThan(555);
+  });
+
+  it("keeps the D1 asymmetry on income: the full 20% is still owed, and flagged", () => {
+    // The predicate is the same on both sides of the ledger, but the outcome
+    // is not. Refusing an incoming payment would drop output VAT, which is the
+    // understating direction the module refuses everywhere (D1) — so an
+    // impossible tip joins every other underivable sale in the defaulted-20
+    // lane instead of being scaled as a part payment.
+    const r = run([
+      {
+        id: "t-in",
+        date: "2026-02-20",
+        amount: 5400,
+        files: [
+          {
+            id: "f-in",
+            totalGross: 5080,
+            tipAmount: 5400,
+            rateGroups: [{ rate: 20, net: 4233, vat: 847, gross: 5080 }],
+          },
+        ],
+      },
+    ]);
+
+    expect(r.totalOutputVat).toBe(900);
+    expect(r.unresolved[0].reason).toBe("impossible-tip");
+    expect(r.unresolved[0].defaultedOutputVat).toBe(900);
+  });
+
+  it("still scales a genuine partial payment with no tip on the document", () => {
+    const r = run([
+      {
+        id: "t-half",
+        date: "2026-02-20",
+        amount: -6000,
+        files: [{ id: "f-inv", totalGross: 12000, vatPercent: 20, vatAmount: 2000 }],
+      },
+    ]);
+
+    expect(r.totalInputVat).toBe(1000);
+    expect(r.unresolved).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Step 3 — manual override
 // ---------------------------------------------------------------------------
 

@@ -80,6 +80,11 @@ interface ScoreAttachmentRequest {
     fileExtractedPartner?: string | null;
   }>;
   transaction: {
+    /**
+     * The Transaction being scored against. The server derives Coverage from
+     * it (#239); nothing about the Remainder is computed on this side.
+     */
+    id?: string | null;
     amount?: number | null;
     date?: string | null;
     name?: string | null;
@@ -102,6 +107,8 @@ interface ScoreAttachmentResponse {
     score: number;
     label: "Strong" | "Likely" | null;
     reasons: string[];
+    /** Scored against the Transaction's Remainder — suggestion only (#239). */
+    scoredAgainstRemainder?: boolean;
   }>;
 }
 
@@ -610,6 +617,9 @@ export const searchLocalFilesTool = tool(
         {
           attachments: attachmentsToScore,
           transaction: {
+            // The server derives Coverage from the id (#239). Without it this
+            // path would score every candidate against the full amount.
+            id: transactionId,
             amount: tx.amount,
             date: txDate.toISOString(),
             name: tx.name,
@@ -1031,6 +1041,8 @@ export const searchGmailAttachmentsTool = tool(
                     } : undefined,
                   })),
                   transaction: {
+                    // The server derives Coverage from the id (#239).
+                    id: transactionId,
                     amount: tx.amount,
                     date: txDate.toISOString(),
                     name: tx.name,
@@ -1381,6 +1393,9 @@ export const searchGmailEmailsTool = tool(
           {
             attachments: emailsToScore,
             transaction: {
+              // The server derives Coverage from the id (#239). Non-null here:
+              // `tx` is only set when a transactionId was given and resolved.
+              id: transactionId,
               amount: tx.amount,
               date: txDate.toISOString(),
               name: tx.name,

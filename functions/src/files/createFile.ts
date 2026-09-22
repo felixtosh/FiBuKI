@@ -1,9 +1,14 @@
 /**
- * Create a new file record (after uploading to storage)
+ * Create a new file record (after uploading to storage).
+ *
+ * The duplicate check is not here: it is in `createFileRecord`, the write the
+ * ingestion paths share (#182). This callable's job is to shape the record the
+ * UI paths send.
  */
 
 import { Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
+import { createFileRecord, MissingContentHashError } from "./createFileRecord";
 
 interface CreateFileRequest {
   data: {
@@ -13,7 +18,8 @@ interface CreateFileRequest {
     storagePath: string;
     downloadUrl: string;
     thumbnailUrl?: string;
-    contentHash?: string;
+    /** SHA-256 of the stored bytes. Required — see createFileRecord. */
+    contentHash: string;
     // Source tracking
     sourceType?: string;
     sourceSearchPattern?: string;
@@ -37,7 +43,10 @@ interface CreateFileRequest {
 
 interface CreateFileResponse {
   success: boolean;
+  /** The new File, or the existing one carrying the same bytes. */
   fileId: string;
+  /** True when the bytes were already on file and nothing was written. */
+  duplicate: boolean;
 }
 
 export const createFileCallable = createCallable<
@@ -100,16 +109,32 @@ export const createFileCallable = createCallable<
       }
     }
 
-    const docRef = await ctx.db.collection("files").add(newFile);
+    let result;
+    try {
+      result = await createFileRecord(ctx.db, newFile);
+    } catch (err) {
+      if (err instanceof MissingContentHashError) {
+        throw new HttpsError("invalid-argument", err.message);
+      }
+      throw err;
+    }
 
-    console.log(`[createFile] Created file ${docRef.id}`, {
-      userId: ctx.userId,
-      fileName: data.fileName,
-    });
+    if (result.duplicate) {
+      console.log(`[createFile] Bytes already on file ${result.fileId}`, {
+        userId: ctx.userId,
+        fileName: data.fileName,
+      });
+    } else {
+      console.log(`[createFile] Created file ${result.fileId}`, {
+        userId: ctx.userId,
+        fileName: data.fileName,
+      });
+    }
 
     return {
       success: true,
-      fileId: docRef.id,
+      fileId: result.fileId,
+      duplicate: result.duplicate,
     };
   }
 );

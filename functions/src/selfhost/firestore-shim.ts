@@ -826,6 +826,11 @@ export class DocSnapshot {
     return this._data;
   }
   get(field: string): unknown {
+    // The document-id sentinel is not a field — it is the doc id, the same
+    // resolution matchesFilter() and the orderBy/cursor paths use. Without
+    // it a startAfter(snap) on orderBy("__name__") carries no value and the
+    // pushed keyset cannot compile.
+    if (field === "__name__") return this.id;
     return this._data ? deepGet(this._data, field) : undefined;
   }
   get createTime(): Timestamp {
@@ -878,19 +883,34 @@ function valueEquals(a: unknown, b: unknown): boolean {
   return a === b;
 }
 
+/**
+ * A "__name__" value resolves to a bare doc ID: app call sites pass bare IDs
+ * (learnBillingCycle.ts computeInvoiceDelays), path-shaped ones resolve to
+ * their last segment like the real backend.
+ */
+function toDocId(v: unknown): string {
+  return String(v).split("/").pop() as string;
+}
+
+/**
+ * orderBy / cursor value of a row. "__name__" is not a field — it is the doc
+ * id, matching how db/pushdown.ts orders on the table's id column, so both
+ * paths agree on where a document sits in the sort.
+ */
+function orderValue(row: { id: string; data: Record<string, unknown> }, field: string): unknown {
+  return field === "__name__" ? row.id : deepGet(row.data, field);
+}
+
 function matchesFilter(data: Record<string, unknown>, f: Filter, id?: string): boolean {
   // FieldPath.documentId() / "__name__" filters compare against the doc ID.
-  // App call site: learnBillingCycle.ts computeInvoiceDelays passes bare IDs;
-  // path-shaped values resolve to their last segment like the real backend.
   const v =
     f.field === "__name__" && id !== undefined ? id : deepGet(data, f.field);
   if (f.field === "__name__") {
-    const toId = (x: unknown) => String(x).split("/").pop();
     switch (f.op) {
       case "==":
-        return v === toId(f.value);
+        return v === toDocId(f.value);
       case "in":
-        return Array.isArray(f.value) && (f.value as unknown[]).some((fv) => v === toId(fv));
+        return Array.isArray(f.value) && (f.value as unknown[]).some((fv) => v === toDocId(fv));
       default:
         throw new Error(
           `selfhost firestore shim: unsupported operator '${f.op}' on __name__`,
@@ -1104,8 +1124,7 @@ export class Query {
     }
     for (const o of [...this.orders].reverse()) {
       rows.sort(
-        (a, b) =>
-          (o.dir === "desc" ? -1 : 1) * cmp(deepGet(a.data, o.field), deepGet(b.data, o.field)),
+        (a, b) => (o.dir === "desc" ? -1 : 1) * cmp(orderValue(a, o.field), orderValue(b, o.field)),
       );
     }
     if (this.after) {
@@ -1116,7 +1135,9 @@ export class Query {
       const pastCursor = (row: { id: string; data: Record<string, unknown> }): boolean => {
         for (let i = 0; i < Math.min(this.orders.length, values.length); i++) {
           const o = this.orders[i];
-          const c = (o.dir === "desc" ? -1 : 1) * cmp(deepGet(row.data, o.field), values[i]);
+          const cv = values[i];
+          const want = o.field === "__name__" && typeof cv === "string" ? toDocId(cv) : cv;
+          const c = (o.dir === "desc" ? -1 : 1) * cmp(orderValue(row, o.field), want);
           if (c !== 0) return c > 0;
         }
         if (snap) {

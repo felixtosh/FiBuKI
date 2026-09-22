@@ -17,8 +17,10 @@ export function toDateSafe(value: unknown): Date | null {
   }
   // Serialized Firestore Timestamp {seconds, nanoseconds}
   if (typeof value === "object" && "seconds" in value) {
-    const ts = value as { seconds: number; nanoseconds?: number };
-    return new Date(ts.seconds * 1000 + (ts.nanoseconds || 0) / 1000000);
+    const ts = value as { seconds: unknown; nanoseconds?: unknown };
+    if (typeof ts.seconds !== "number" || !Number.isFinite(ts.seconds)) return null;
+    const nanoseconds = typeof ts.nanoseconds === "number" && Number.isFinite(ts.nanoseconds) ? ts.nanoseconds : 0;
+    return new Date(ts.seconds * 1000 + nanoseconds / 1000000);
   }
   // Already a Date
   if (value instanceof Date) return value;

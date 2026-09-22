@@ -38,6 +38,8 @@ import { syncDocumentationStateForTransactions } from "../documents/syncDocument
 
 /** An extra field the extractor kept but nothing else reads structurally. */
 interface EditedAdditionalField {
+  /** Canonical key from the extraction vocabulary (#252); absent on a row a person added. */
+  key?: string;
   label: string;
   value: string;
   rawValue?: string;
@@ -60,6 +62,14 @@ interface UpdateFileExtractedFieldsRequest {
   fileId: string;
   /** Correctable values, already typed. Omitted is not null — see the builder. */
   correction?: FileExtractionCorrection;
+  /**
+   * The tip in this correction is not printed on the invoice (#310), so it is
+   * bounded by the transaction total rather than the document total. Sent
+   * beside `correction` rather than inside it because it is not a value the
+   * record keeps per field: it says how to read the tip, and what it decided
+   * is stored as `extractedTipBound`.
+   */
+  tipNotPrinted?: boolean;
   details?: ExtractedDetails;
 }
 
@@ -85,10 +95,14 @@ export const updateFileExtractedFieldsCallable = createCallable<
 >(
   { name: "updateFileExtractedFields" },
   async (ctx, request) => {
-    const { fileId, correction = {}, details = {} } = request;
+    const { fileId, correction = {}, details = {}, tipNotPrinted } = request;
 
     if (!fileId) {
       throw new HttpsError("invalid-argument", "fileId is required");
+    }
+
+    if (tipNotPrinted !== undefined && typeof tipNotPrinted !== "boolean") {
+      throw new HttpsError("invalid-argument", "tipNotPrinted must be a boolean");
     }
 
     const fileRef = ctx.db.collection("files").doc(fileId);
@@ -106,7 +120,9 @@ export const updateFileExtractedFieldsCallable = createCallable<
 
     if (Object.keys(moved).length > 0) {
       try {
-        const built = await buildCorrectedFileUpdate(ctx.db, moved, record);
+        const built = await buildCorrectedFileUpdate(ctx.db, moved, record, {
+          tipNotPrinted: tipNotPrinted === true,
+        });
         Object.assign(updates, built.updates);
         changed = built.changed;
       } catch (error) {
@@ -209,6 +225,9 @@ function normalizeAdditionalFields(value: unknown): Array<Record<string, string>
     .map((raw) => (raw ?? {}) as Partial<EditedAdditionalField>)
     .filter((field) => typeof field.label === "string" && typeof field.value === "string")
     .map((field) => ({
+      // The canonical key rides along unchanged: a save edits the value, it
+      // does not reclassify the field (#252). A row a person added has none.
+      ...(typeof field.key === "string" && field.key ? { key: field.key } : {}),
       label: (field.label as string).trim(),
       value: (field.value as string).trim(),
       rawValue:

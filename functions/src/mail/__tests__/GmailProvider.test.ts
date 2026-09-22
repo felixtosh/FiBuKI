@@ -71,6 +71,37 @@ describe("GmailProvider.search", () => {
     expect(q).toContain("pageToken=PREV");
   });
 
+  // ---- the shared search shape (#240) ---------------------------------------
+  //
+  // The same neutral terms ImapProvider.test.ts runs against an IMAP mailbox.
+  // Gmail executes all of them server-side, so nothing is reported back as
+  // unexecuted and nothing costs an extra round trip.
+  it("executes a provider-neutral search in one request, with no limitations", async () => {
+    handler = () => ({ ok: true, body: { messages: [{ id: "m1" }] } });
+
+    const page = await new GmailProvider("access-123").search({
+      keywords: ["netflix", "rechnung"],
+      from: "netflix.com",
+      dateFrom: new Date("2026-07-01T00:00:00Z"),
+      dateTo: new Date("2026-07-31T00:00:00Z"),
+      limit: 20,
+    });
+
+    const q = decodeURIComponent(calls[0].url).replace(/\+/g, " ");
+    // Both words, ANDed by juxtaposition — the string the attach path sent
+    // before its query was lowered to terms.
+    expect(q).toContain("netflix rechnung from:netflix.com has:attachment");
+    expect(q).toContain("after:2026/07/01");
+    expect(q).toContain("before:2026/08/01");
+    expect(q).toContain("maxResults=20");
+    // The invoice sweep's filename:pdf belongs to Sync, not to a named search.
+    expect(q).not.toContain("filename:pdf");
+
+    expect(page.messages).toEqual([{ id: "m1" }]);
+    expect(page.limitations).toBeUndefined();
+    expect(calls.length).toBe(1);
+  });
+
   it("passes the bearer token", async () => {
     handler = () => ({ ok: true, body: { messages: [] } });
     await new GmailProvider("secret-tok").search({

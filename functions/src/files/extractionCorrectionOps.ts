@@ -40,6 +40,22 @@ export interface FileExtractionCorrection {
    * picked the file up.
    */
   invoiceDirection?: InvoiceDirection | null;
+  /**
+   * Freiwilliges Trinkgeld in cents that the document does NOT print (#217).
+   *
+   * The printed case is settled at extraction: a rate-group block that proves
+   * the tip was inside the total has already had it stripped out by
+   * `totalWithoutPrintedTip`, so `extractedAmount` is the VAT-bearing figure
+   * and `extractedTipAmount` sits beside it. This is the opposite shape — the
+   * terminal took a tip the Beleg never mentions, so the invoice total already
+   * IS the VAT base and only the bank line is larger. Setting it here explains
+   * that gap and nothing else.
+   *
+   * **It is therefore never subtracted from `extractedAmount`.** Doing so
+   * would shrink the VAT base by the tip and under-claim the return, quietly.
+   * Zero and null both mean "no tip"; a negative one is refused.
+   */
+  tipAmount?: number | null;
 }
 
 /** Mirrors `InvoiceDirection` on the file record. */
@@ -49,6 +65,16 @@ const INVOICE_DIRECTIONS: InvoiceDirection[] = ["incoming", "outgoing", "unknown
 
 export class ExtractionCorrectionError extends Error {}
 
+/**
+ * The corrections that make the person the authority on the file's VAT.
+ *
+ * `tipAmount` is deliberately not one of them (#217). A Trinkgeld is outside
+ * the scope of VAT — 0 net, 0 VAT, never a rate group — so setting one says
+ * nothing about the rates the document prints. Listing it here would clear
+ * `extractedRateGroups`, which is exactly the evidence `totalWithoutPrintedTip`
+ * arbitrates on: recording the tip a Beleg omitted would destroy the printed
+ * block of one that did not.
+ */
 const VAT_BEARING: Array<keyof FileExtractionCorrection> = [
   "amount",
   "vatAmount",
@@ -61,6 +87,20 @@ function cents(value: unknown, field: string): number {
     throw new ExtractionCorrectionError(`${field} must be a finite number of cents`);
   }
   return Math.round(value);
+}
+
+/**
+ * A tip is a positive amount of money or it is nothing. A negative one is not
+ * a credit note — the tip follows the document total's sign wherever it is
+ * read — so it is refused rather than stored and quietly ignored downstream.
+ */
+function normalizeTip(value: unknown): number | null {
+  if (value === null) return null;
+  const amount = cents(value, "tipAmount");
+  if (amount < 0) {
+    throw new ExtractionCorrectionError("tipAmount must not be negative");
+  }
+  return amount === 0 ? null : amount;
 }
 
 function normalizeLineItems(lineItems: unknown, field: string): ExtractedLineItem[] {
@@ -86,12 +126,6 @@ function normalizeLineItems(lineItems: unknown, field: string): ExtractedLineIte
         typeof item.description === "string" && item.description.trim()
           ? item.description.trim()
           : `Item ${index + 1}`,
-      quantity:
-        typeof item.quantity === "number" && Number.isFinite(item.quantity) ? item.quantity : null,
-      unitPrice:
-        typeof item.unitPrice === "number" && Number.isFinite(item.unitPrice)
-          ? Math.round(item.unitPrice)
-          : null,
       vatPercent,
       vatAmount,
       amount,
@@ -182,6 +216,15 @@ export function buildExtractionCorrection(
     changed.push("vatPercent");
   }
 
+  if (fields.tipAmount !== undefined) {
+    // Stored beside the total, never taken out of it: on a document that never
+    // printed the tip the total already is the VAT base (#217). Zero stores as
+    // null so the record carries one spelling of "no tip", the one the
+    // extractor writes.
+    updates.extractedTipAmount = normalizeTip(fields.tipAmount);
+    changed.push("tipAmount");
+  }
+
   if (fields.date !== undefined) {
     updates.extractedDate = fields.date === null ? null : parseIsoDate(fields.date);
     changed.push("date");
@@ -213,7 +256,7 @@ export function buildExtractionCorrection(
   if (changed.length === 0) {
     throw new ExtractionCorrectionError(
       "Nothing to correct — pass at least one of amount, vatAmount, vatPercent, date, " +
-        "lineItems, invoiceDirection"
+        "lineItems, invoiceDirection, tipAmount"
     );
   }
 
@@ -273,6 +316,7 @@ const STORED_FIELD: Record<(typeof CORRECTABLE_FIELDS)[number], string> = {
   // Not an extracted figure and not stored under `extracted*`: the direction is
   // a read of the document, kept on the record itself (#233).
   invoiceDirection: "invoiceDirection",
+  tipAmount: "extractedTipAmount",
 };
 
 /**
@@ -318,6 +362,7 @@ function matchesStored(
   if (field === "date") return datesMatch(proposed, stored);
   if (field === "lineItems") return lineItemsMatch(proposed, stored);
   if (field === "invoiceDirection") return directionsMatch(proposed, stored);
+  if (field === "tipAmount") return tipsMatch(proposed, stored);
   return numbersMatch(proposed, stored, field !== "vatPercent");
 }
 
@@ -330,6 +375,19 @@ function matchesStored(
 function directionsMatch(proposed: unknown, stored: unknown): boolean {
   const settled = (value: unknown) => (isEmpty(value) || value === "unknown" ? "unknown" : value);
   return settled(proposed) === settled(stored);
+}
+
+/**
+ * A tip has two spellings of "none" — zero and absent — and the builder stores
+ * the absent one for both (#217). Comparing them as plain numbers would read a
+ * posted 0 on a document with no tip as a correction, and the panel posts every
+ * field on every save: opening a file and saving it would freeze it against
+ * re-extraction on a tip nobody set.
+ */
+function tipsMatch(proposed: unknown, stored: unknown): boolean {
+  const settled = (value: unknown) =>
+    isEmpty(value) || value === 0 ? null : value;
+  return numbersMatch(settled(proposed), settled(stored), true);
 }
 
 /** Absent and null are the same answer: the record holds no value. */
@@ -416,8 +474,6 @@ function lineItemsMatch(proposed: unknown, stored: unknown): boolean {
     const other = right[index];
     return (
       item.description === other.description &&
-      item.quantity === other.quantity &&
-      item.unitPrice === other.unitPrice &&
       item.vatPercent === other.vatPercent &&
       item.vatAmount === other.vatAmount &&
       item.amount === other.amount

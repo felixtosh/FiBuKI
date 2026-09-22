@@ -209,6 +209,18 @@ interface StoredTokens {
    * re-present the consumed one (fork #73).
    */
   rotates?: boolean;
+  /**
+   * The `refresh_token` that was presented to the provider without an answer
+   * ever coming back — "presented, outcome unknown" (#216). A rotating provider
+   * consumes the token when it ISSUES the response, not when we read it, so a
+   * lost response leaves this one possibly dead server-side. Stored so the state
+   * survives a reload and is visible to the other tabs on this origin.
+   *
+   * A 5xx on the grant is the same state reached through a different door: the
+   * answer may have been issued and then lost in the proxy, so it is marked too
+   * (#279). A 4xx is not — that is the provider answering about the grant.
+   */
+  refresh_unconfirmed?: string;
 }
 
 function loadTokens(): StoredTokens | null {
@@ -274,7 +286,19 @@ async function discover(): Promise<Discovery> {
     );
   }
   _discoveryInFlight = (async () => {
-    const res = await fetch(`${OIDC_ISSUER}/.well-known/openid-configuration`);
+    let res: Response;
+    try {
+      res = await fetch(`${OIDC_ISSUER}/.well-known/openid-configuration`);
+    } catch (err) {
+      // The other fetch on the refresh path, and it rejects for the same
+      // reasons as the token grant does. Nothing is spent here, so there is
+      // nothing to mark — but the rejection must not leave the refresh routine
+      // raw, because callers switch on `err.code` (#216).
+      throw new AuthError(
+        "auth/network-request-failed",
+        `OIDC discovery got no response (${rejectionMessage(err)}).`,
+      );
+    }
     if (!res.ok) {
       throw new AuthError("auth/network-request-failed", `OIDC discovery failed (${res.status}).`);
     }
@@ -567,7 +591,13 @@ function lockManager(): LockManagerLike | null {
 const LEASE_TTL_MS = 10_000; // a crashed holder's lease becomes stealable
 const LEASE_CONFIRM_MS = 40; // write-then-re-read settle window
 const LEASE_POLL_MS = 120;
-const LEASE_MAX_WAIT_MS = 5_000;
+/* MAX_WAIT is coupled to TTL and must stay longer than it: a waiter that
+ * gives up before a stale lease has actually crossed LEASE_TTL_MS can never
+ * steal it no matter how long it polls, so every peer of a tab that crashed
+ * mid-refresh would hard-fail with auth/timeout even though the lease was
+ * about to go stale. Wait a full TTL, then enough slack for one more poll
+ * plus a claim's confirm delay to land after that. */
+const LEASE_MAX_WAIT_MS = LEASE_TTL_MS + LEASE_POLL_MS + LEASE_CONFIRM_MS + 2_000;
 
 interface RefreshLease {
   owner: string;
@@ -622,10 +652,14 @@ async function withLeaseLock<T>(fn: () => Promise<T>): Promise<T> {
     }
     await delay(LEASE_POLL_MS);
   }
-  // Never acquired. Run unlocked rather than failing the caller: `fn` re-reads
-  // storage first, so if the holder did land a token we return it with no
-  // network call. Worst case is the pre-fix behavior, never worse.
-  return fn();
+  // Never acquired. Fail the caller rather than running `fn` unguarded: running
+  // it unlocked is exactly the unserialised refresh this lock exists to prevent,
+  // and a replayed refresh_token costs a session (#216). Nothing is lost by
+  // failing — the tokens are untouched, and the next getIdToken() retries.
+  throw new AuthError(
+    "auth/timeout",
+    `Could not acquire the cross-tab refresh lock within ${LEASE_MAX_WAIT_MS}ms.`,
+  );
 }
 
 /** Serialise `fn` across every tab on this origin. */
@@ -718,6 +752,33 @@ async function isSessionRefused(res: Response): Promise<boolean> {
   return code !== "temporarily_unavailable" && code !== "server_error";
 }
 
+/**
+ * Has another tab stored a set newer than the one we set out with?
+ *
+ * Any difference counts, not just a rotated refresh_token: a provider that does
+ * not rotate still leaves a peer's newer id_token in storage (fork #73).
+ */
+function supersedes(current: StoredTokens, ours: StoredTokens): boolean {
+  return current.id_token !== ours.id_token || current.refresh_token !== ours.refresh_token;
+}
+
+/**
+ * Record that `presented` went out and nothing came back (#216).
+ *
+ * Only stamps the set that still carries that token: once a peer has stored a
+ * newer one, that set is the truth and our doubt does not belong on it.
+ */
+function markRefreshUnconfirmed(presented: string): void {
+  const current = loadTokens();
+  if (!current || current.refresh_token !== presented) return;
+  saveTokens({ ...current, refresh_unconfirmed: presented });
+}
+
+/** A rejected fetch carries no status — say what it does carry. */
+function rejectionMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 /** Built-in mode refresh: re-mint the JWT from the Better Auth session. */
 async function refreshViaSession(tokens: StoredTokens): Promise<string> {
   let base: string;
@@ -728,14 +789,33 @@ async function refreshViaSession(tokens: StoredTokens): Promise<string> {
     // the host will 401 once it truly expires.
     return tokens.id_token;
   }
-  const res = await fetch(`${base}/token`, {
-    headers: { authorization: `Bearer ${tokens.session_token}` },
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${base}/token`, {
+      headers: { authorization: `Bearer ${tokens.session_token}` },
+    });
+  } catch (err) {
+    // No response at all. A session token is not single-use, so nothing is
+    // spent and there is nothing to mark — fail this attempt only (#216).
+    throw new AuthError(
+      "auth/network-request-failed",
+      `Session refresh got no response (${rejectionMessage(err)}).`,
+    );
+  }
   if (!res.ok) {
     if (!(await isSessionRefused(res))) {
       // The backend, or something in front of it, is having a moment. Keep the
       // session: the next call retries, and nothing is lost but this attempt
       // (fork #77).
+      if (res.status >= 500 && tokens.refresh_token) {
+        // A 5xx can just as well be an answer that WAS issued and then died on
+        // the way back, so anything single-use in this set may already be spent
+        // (#279) — the same reasoning the grant path applies below. The session
+        // token itself is not single-use, so re-presenting it costs nothing and
+        // it is never marked (#216); a refresh_token riding along in the same
+        // set is, and it gets the mark the grant path would stamp on it.
+        markRefreshUnconfirmed(tokens.refresh_token);
+      }
       throw new AuthError(
         "auth/network-request-failed",
         `Session refresh failed transiently (${res.status}).`,
@@ -777,27 +857,74 @@ async function refreshTokens(tokens: StoredTokens, attempt = 0): Promise<string>
     // onAuthStateChanged path handles re-login.
     return tokens.id_token;
   }
+  if (tokens.refresh_unconfirmed === tokens.refresh_token) {
+    // We presented this token once and never got an answer carrying a grant —
+    // the response was lost (#216), or a 5xx came back in its place (#279) — so
+    // it may already be spent: a rotating provider consumes it when it ISSUES
+    // the answer we never saw.
+    // Re-presenting it is the replay that fills the provider's log with
+    // suspicious_request until the session dies (#216). Whether the provider
+    // rotates is unknowable before the first rotation, so this holds for all.
+    //
+    // Nothing newer can be hiding in storage at this point: a peer's successful
+    // refresh rewrites the whole set — mark included — and refreshUnderLock
+    // re-read it under the lock on the way in. So the choice is only between
+    // the id_token we already hold and the login screen.
+    if (!isStale(tokens)) {
+      // Still valid: hand it back with no network call, so no replay. The
+      // refresh that finds it genuinely stale takes the branch below.
+      return tokens.id_token;
+    }
+    // Out of tokens we may use: sign out so the UI shows the login screen,
+    // rather than looping on a refresh_token we are not allowed to spend.
+    clearTokens();
+    _auth.currentUser = null;
+    notify();
+    throw new AuthError(
+      "auth/user-token-expired",
+      "The last token refresh was never answered, so its refresh_token cannot be presented again.",
+    );
+  }
   const { token_endpoint } = await discover();
-  const res = await fetch(token_endpoint, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "refresh_token",
-      client_id: OIDC_CLIENT_ID,
-      refresh_token: tokens.refresh_token,
-    }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(token_endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        client_id: OIDC_CLIENT_ID,
+        refresh_token: tokens.refresh_token,
+      }),
+    });
+  } catch (err) {
+    // The fetch rejected: connection dropped, TLS reset, laptop suspended
+    // mid-flight. There is no response, so every recovery path below is out of
+    // reach — which is how this rejection used to escape the refresh routine
+    // entirely, leaving a possibly-consumed token stored as if current (#216).
+    const current = loadTokens();
+    if (current && supersedes(current, tokens) && !isStale(current)) {
+      // A peer refreshed while we were in flight: its set is usable, take it.
+      setUserFromTokens(current);
+      notify();
+      return current.id_token;
+    }
+    // Keep the session — a lost response says nothing about it (fork #77) — but
+    // mark the token so the next refresh cannot spend it a second time.
+    markRefreshUnconfirmed(tokens.refresh_token);
+    throw new AuthError(
+      "auth/network-request-failed",
+      `Token refresh got no response (${rejectionMessage(err)}).`,
+    );
+  }
   if (!res.ok) {
     // A lost rotation race and a revoked session look identical from here, and
     // signing out on the former destroys a live one — the token set another tab
     // just wrote. Re-read before deciding (fork #73).
     const current = loadTokens();
-    // Any difference counts, not just a rotated refresh_token: a provider that
-    // does not rotate still leaves a peer's newer id_token in storage, and
-    // clearing it over a transient 5xx is the same destructive mistake.
-    const superseded =
-      !!current &&
-      (current.id_token !== tokens.id_token || current.refresh_token !== tokens.refresh_token);
+    // Clearing a peer's newer set over a transient 5xx is the same destructive
+    // mistake, so `supersedes` counts any difference, not just a rotation.
+    const superseded = !!current && supersedes(current, tokens);
     if (current && superseded && !isStale(current)) {
       // A peer won the race and stored a usable set: adopt it, no sign-out.
       setUserFromTokens(current);
@@ -814,6 +941,17 @@ async function refreshTokens(tokens: StoredTokens, attempt = 0): Promise<string>
       // Nothing here proves the session is dead — a 502 from the proxy in
       // front of the provider, a 503 while it restarts. Keep the tokens and
       // fail this attempt only; the next call retries (fork #77).
+      if (res.status >= 500) {
+        // But a 5xx does not prove the grant never happened either: the IdP
+        // rotates the token when it ISSUES the response, and that response can
+        // die in the proxy on the way back. Indistinguishable from "never
+        // processed" — the same irreducible ambiguity as a rejecting fetch, so
+        // the same answer: mark it, and never present it a second time (#279).
+        // 4xx stays unmarked: a 400/401 is the provider answering about the
+        // grant, not an answer that went missing (and `temporarily_unavailable`
+        // arriving with a 4xx is the provider saying it did not get that far).
+        markRefreshUnconfirmed(tokens.refresh_token);
+      }
       throw new AuthError(
         "auth/network-request-failed",
         `Token refresh failed transiently (${res.status}).`,

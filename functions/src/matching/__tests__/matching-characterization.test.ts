@@ -43,6 +43,7 @@ import {
   calculateReferenceScore,
   normalizeName,
   namesMatch,
+  SCORING_CONFIG,
   FileMatchingData,
   TransactionData as ScoringTxData,
 } from "../transactionScoring";
@@ -537,8 +538,14 @@ describe("calculateDateScore — sub-day floor asymmetry", () => {
 });
 
 describe("calculateReferenceScore", () => {
+  // #137 changed the signature: the File's extracted fields and the
+  // Transaction, not a pair of strings. The behaviours below are the pre-#137
+  // ones, which survive as the fallback direction — the reversed
+  // invoice-number search and its weight are covered in transactionScoring.test.ts.
   it("requires reference length >= 3", () => {
-    expect(calculateReferenceScore("text with ab inside", "ab", 0)).toEqual({
+    expect(
+      calculateReferenceScore({ extractedText: "text with ab inside" }, { reference: "ab" }, 0)
+    ).toEqual({
       score: 0,
       dateBonus: 0,
       source: null,
@@ -546,13 +553,31 @@ describe("calculateReferenceScore", () => {
   });
 
   it("case-insensitive containment scores 5 with a 10-point date bonus when date < 15", () => {
-    expect(calculateReferenceScore("Rechnung RG-2024-001 vom Juni", "rg-2024-001", 8)).toEqual({
+    const invoice = { extractedText: "Rechnung RG-2024-001 vom Juni" };
+    const tx = { reference: "rg-2024-001" };
+    expect(calculateReferenceScore(invoice, tx, 8)).toEqual({
       score: 5,
       dateBonus: 10,
       source: "reference",
     });
     // date score 15 or above → no bonus
-    expect(calculateReferenceScore("Rechnung RG-2024-001 vom Juni", "rg-2024-001", 15).dateBonus).toBe(0);
+    expect(calculateReferenceScore(invoice, tx, 15).dateBonus).toBe(0);
+  });
+
+  // #137: a qualified invoice number is proof, not a hint — 50 rather than 5,
+  // and found in the Transaction's text rather than the document's.
+  it("a qualified invoice number in the transaction's text scores 50", () => {
+    expect(
+      calculateReferenceScore(
+        { extractedInvoiceNumber: "4711000123" },
+        { name: "Magenta Mobil Rechnung 4711000123 vom 05.01.2026" },
+        0
+      )
+    ).toEqual({
+      score: SCORING_CONFIG.INVOICE_NUMBER_MATCH,
+      dateBonus: 10,
+      source: "reference",
+    });
   });
 });
 

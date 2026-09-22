@@ -8,6 +8,7 @@
 import { randomBytes, createHash } from "crypto";
 import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
+import { toDateSafe } from "../utils/toDateSafe";
 
 const API_KEYS_COLLECTION = "apiKeys";
 
@@ -121,7 +122,7 @@ export const createApiKeyCallable = createCallable<CreateApiKeyRequest, CreateAp
       name: name.trim(),
       keyPrefix: prefix,
       scopes,
-      expiresAt: expiresAt?.toDate().toISOString() || null,
+      expiresAt: toDateSafe(expiresAt)?.toISOString() || null,
     };
   }
 );
@@ -159,10 +160,10 @@ export const listApiKeysCallable = createCallable<void, ListApiKeysResponse>(
         name: data.name,
         keyPrefix: data.keyPrefix,
         scopes: data.scopes,
-        lastUsedAt: data.lastUsedAt?.toDate().toISOString() || null,
+        lastUsedAt: toDateSafe(data.lastUsedAt)?.toISOString() || null,
         usageCount: data.usageCount,
         createdAt: data.createdAt.toDate().toISOString(),
-        expiresAt: data.expiresAt?.toDate().toISOString() || null,
+        expiresAt: toDateSafe(data.expiresAt)?.toISOString() || null,
       };
     });
 

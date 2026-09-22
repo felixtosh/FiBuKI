@@ -103,12 +103,14 @@ export function useFiles(filters?: FileFilters) {
     []
   );
 
+  // Deleting hides the File and `restore` brings it back — for every File,
+  // whatever its source. There is no destroying variant to ask for.
   const remove = useCallback(
-    async (fileId: string, soft = false): Promise<{ deletedConnections: number }> => {
+    async (fileId: string): Promise<{ deletedConnections: number }> => {
       const result = await callFunction<
-        { fileId: string; hardDelete?: boolean },
+        { fileId: string },
         { deletedConnections: number }
-      >("deleteFile", { fileId, hardDelete: !soft });
+      >("deleteFile", { fileId });
       return { deletedConnections: result.deletedConnections };
     },
     []

@@ -9,12 +9,10 @@
  *
  * The AI/network boundary is stubbed:
  *  - `@google-cloud/vertexai` is mocked with a queue of canned responses
- *  - `@anthropic-ai/sdk` is mocked at the SDK boundary
- *  - `./visionApi` is mocked (Google Vision OCR)
- * Everything downstream of those boundaries is REAL application code.
+ * Everything downstream of that boundary is REAL application code.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 // The extractor reports whichever model the geminiLite ROLE names. Pinning the
 // literal here made a deliberate registry swap look like a regression; pinning the
@@ -51,20 +49,8 @@ vi.mock("@google-cloud/vertexai", () => ({
   },
 }));
 
-const anthropic = vi.hoisted(() => ({ create: vi.fn() }));
-vi.mock("@anthropic-ai/sdk", () => ({
-  default: class Anthropic {
-    messages = { create: anthropic.create };
-    constructor(_opts: unknown) {}
-  },
-}));
-
-const vision = vi.hoisted(() => ({ callVisionAPI: vi.fn() }));
-vi.mock("../visionApi", () => ({ callVisionAPI: vision.callVisionAPI }));
-
 // REAL application code under test:
 import { parseWithGemini, classifyDocument } from "../geminiParser";
-import { parseWithClaude } from "../claudeParser";
 import {
   extractDocument,
   getDefaultProvider,
@@ -83,10 +69,6 @@ beforeEach(() => {
   process.env.GCLOUD_PROJECT = "char-test-project";
   gemini.queue.length = 0;
   gemini.requests.length = 0;
-});
-
-afterEach(() => {
-  delete process.env.EXTRACTION_PROVIDER;
 });
 
 // ===========================================================================
@@ -212,6 +194,60 @@ describe("characterization: geminiParser.parseWithGemini", () => {
     expect(res2.extracted.issuer?.website).toBeNull();
   });
 
+  it("#299: decodes character references in issuer, recipient and the flat partner name", async () => {
+    // Entity normalisation is the one place the stored counterparty name is
+    // shaped, so extractedIssuer/extractedRecipient land decoded and every
+    // consumer — identity name-lane matching above all — reads one spelling.
+    q({
+      extracted: {
+        issuer: { name: "AL&amp;FA Taxi KG" },
+        recipient: { name: "M&#38;S Handels GmbH" },
+      },
+    });
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.issuer?.name).toBe("AL&FA Taxi KG");
+    expect(res.extracted.recipient?.name).toBe("M&S Handels GmbH");
+    // The flat legacy field is shaped here too, so it never carries an entity
+    // into extractedPartner on a response with no issuer block.
+    expect(res.extracted.partner).toBe("AL&FA Taxi KG");
+
+    q({ extracted: { partner: "Q &amp; A Solutions" } });
+    const res2 = await parseWithGemini(BUF, "application/pdf");
+    expect(res2.extracted.partner).toBe("Q & A Solutions");
+  });
+
+  it("#299: a name with no character reference in it, bare '&' included, is byte-identical", async () => {
+    q({
+      extracted: {
+        issuer: { name: "Q & A Solutions" },
+        recipient: { name: "AT&T" },
+        partner: "M & S",
+      },
+    });
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.issuer?.name).toBe("Q & A Solutions");
+    expect(res.extracted.recipient?.name).toBe("AT&T");
+    // issuer wins over the flat field, so assert the flat one on its own.
+    q({ extracted: { partner: "M & S" } });
+    const res2 = await parseWithGemini(BUF, "application/pdf");
+    expect(res2.extracted.partner).toBe("M & S");
+  });
+
+  it("#299: issuer_raw keeps the document's own characters, undecoded", async () => {
+    // The raw block is searched verbatim to highlight the PDF, so decoding it
+    // would make the highlight miss the very characters it is looking for.
+    q({
+      extracted: {
+        issuer: { name: "AL&amp;FA Taxi KG" },
+        issuer_raw: { name: "AL&amp;FA Taxi KG" },
+      },
+    });
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.issuer?.name).toBe("AL&FA Taxi KG");
+    expect(res.extractedRaw?.issuer?.name).toBe("AL&amp;FA Taxi KG");
+    expect(res.extractedRaw?.partner).toBe("AL&amp;FA Taxi KG");
+  });
+
   it("legacy flat fields are used only when no issuer entity exists; issuer wins otherwise", async () => {
     q({
       extracted: {
@@ -268,35 +304,38 @@ describe("characterization: geminiParser.parseWithGemini", () => {
     const res = await parseWithGemini(BUF, "application/pdf");
     expect(res.extracted.lineItems).toEqual([
       // characterization: "123,45" (cents string) → 123.45 → rounds to 123 cents
-      { description: "A", quantity: null, unitPrice: null, vatPercent: null, vatAmount: 0, amount: 123 },
+      { description: "A", vatPercent: null, vatAmount: 0, amount: 123 },
       // characterization: "1.234,56" → "1.234.56" → NaN → the whole item is dropped
       // characterization: "1,234" (German thousands) parses as 1.234 → 1 cent
-      { description: "C", quantity: null, unitPrice: null, vatPercent: null, vatAmount: 0, amount: 1 },
+      { description: "C", vatPercent: null, vatAmount: 0, amount: 1 },
       // characterization: empty description falls back to "Item N" using the
       // ORIGINAL index (4th input item), even though item B was dropped
-      { description: "Item 4", quantity: null, unitPrice: null, vatPercent: null, vatAmount: 0, amount: 500 },
+      { description: "Item 4", vatPercent: null, vatAmount: 0, amount: 500 },
     ]);
   });
 
-  it("derives missing vatAmount from gross amount and infers unit price (gross interpretation)", async () => {
-    q({ extracted: { lineItems: [{ description: "Cable", quantity: 2, amount: 1200, vatPercent: 20 }] } });
+  it("derives a missing vatAmount from the gross amount", async () => {
+    q({ extracted: { lineItems: [{ description: "Cable", amount: 1200, vatPercent: 20 }] } });
     const res = await parseWithGemini(BUF, "application/pdf");
-    // vatAmount = round(1200 * 20 / 120) = 200; net = 1000; unitPrice = 500
+    // vatAmount = round(1200 * 20 / 120) = 200
     expect(res.extracted.lineItems).toEqual([
-      { description: "Cable", quantity: 2, unitPrice: 500, vatPercent: 20, vatAmount: 200, amount: 1200 },
+      { description: "Cable", vatPercent: 20, vatAmount: 200, amount: 1200 },
     ]);
   });
 
-  it("infers unit price from net amount when vatAmount indicates the amount is net", async () => {
+  it("a row is four fields: a quantity and a unit price the model still sends are dropped (#252)", async () => {
+    // The prompt no longer asks for either, but a model that ignores the
+    // prompt must not put them back into the stored shape.
     q({
       extracted: {
-        lineItems: [{ description: "Hours", quantity: 4, amount: 1000, vatPercent: 20, vatAmount: 200 }],
+        lineItems: [
+          { description: "Cable", quantity: 2, unitPrice: 500, vatPercent: 20, vatAmount: 200, amount: 1200 },
+        ],
       },
     });
     const res = await parseWithGemini(BUF, "application/pdf");
-    // 200 == round(1000*20/100) → amount looks NET → unitPrice = 1000/4 = 250
     expect(res.extracted.lineItems).toEqual([
-      { description: "Hours", quantity: 4, unitPrice: 250, vatPercent: 20, vatAmount: 200, amount: 1000 },
+      { description: "Cable", vatPercent: 20, vatAmount: 200, amount: 1200 },
     ]);
   });
 
@@ -304,7 +343,7 @@ describe("characterization: geminiParser.parseWithGemini", () => {
     q({ extracted: { lineItems: [{ description: "X", amount: 999, vatPercent: 150 }] } });
     const res = await parseWithGemini(BUF, "application/pdf");
     expect(res.extracted.lineItems).toEqual([
-      { description: "X", quantity: null, unitPrice: null, vatPercent: null, vatAmount: 0, amount: 999 },
+      { description: "X", vatPercent: null, vatAmount: 0, amount: 999 },
     ]);
   });
 
@@ -312,7 +351,7 @@ describe("characterization: geminiParser.parseWithGemini", () => {
     q({ rawText: "", lineItems: [{ description: "top", amount: 100 }] });
     const res = await parseWithGemini(BUF, "application/pdf");
     expect(res.extracted.lineItems).toEqual([
-      { description: "top", quantity: null, unitPrice: null, vatPercent: null, vatAmount: 0, amount: 100 },
+      { description: "top", vatPercent: null, vatAmount: 0, amount: 100 },
     ]);
   });
 
@@ -427,6 +466,295 @@ describe("characterization: geminiParser.parseWithGemini", () => {
     expect(res.extracted.confidence).toBe(0.9);
   });
 
+  // The third defect the repair pass has always handled, and the only one of
+  // the three that had no test. The invalid-escape pass added for #231 now
+  // runs ahead of it over the same string content, so pin it rather than
+  // assume it.
+  it("repairs a raw newline inside a string value", async () => {
+    q('{"extracted": {"address": "Wien\nAustria", "amount": 5}}');
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.address).toBe("Wien\nAustria");
+    expect(res.extracted.amount).toBe(5);
+  });
+
+  // #157/#231: a backslash the model transcribed as data (a Windows path, a
+  // `\d` in a reference number, a hand-typed separator) is not a JSON escape.
+  // The old repair pass copied it through untouched and the second parse
+  // failed identically to the first — "Bad escaped character in JSON".
+  it("repairs an invalid escape sequence, and the backslash survives literally (#231)", async () => {
+    q('{"extracted": {"invoiceNumber": "RE-2024\\d001", "amount": 500}}');
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.invoiceNumber).toBe("RE-2024\\d001");
+    expect(res.extracted.amount).toBe(500);
+  });
+
+  it("leaves every JSON-defined escape untouched by the invalid-escape repair (#231)", async () => {
+    // Forces the repair path (invalid \d earlier in the payload) while also
+    // carrying every escape JSON itself defines, including an escaped quote
+    // and a \uXXXX sequence, to prove they aren't mangled along the way.
+    q(
+      '{"extracted": {"invoiceNumber": "bad\\zescape", ' +
+        '"address": "Say \\"hi\\", line1\\nline2, caf\\u00e9"}}',
+    );
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.invoiceNumber).toBe("bad\\zescape");
+    expect(res.extracted.address).toBe('Say "hi", line1\nline2, café');
+  });
+
+  // Reproduces the defect class from the report that opened #231: a stray
+  // backslash deep inside a transcribed field, not at a structural boundary.
+  // The original response lives only on the reporter's machine, so this pins
+  // the failure mode rather than the exact bytes.
+  it("extracts a response with a stray backslash deep inside a transcribed field (#231)", async () => {
+    q(
+      '{"extracted": {"partner": "Muster GmbH", ' +
+        '"address": "C:\\Users\\muster\\Rechnungen\\2024", "amount": 12345}}',
+    );
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.partner).toBe("Muster GmbH");
+    expect(res.extracted.amount).toBe(12345);
+    expect(res.extracted.address).toBe("C:\\Users\\muster\\Rechnungen\\2024");
+  });
+
+  it("does not touch an already-valid JSON response", async () => {
+    // A path-like value with correctly doubled backslashes must round-trip
+    // unchanged — the repair pass is never invoked when the first parse
+    // succeeds.
+    q({ extracted: { address: "C:\\Users\\muster", amount: 42 } });
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.address).toBe("C:\\Users\\muster");
+    expect(res.extracted.amount).toBe(42);
+  });
+
+  // The test above covers `\"`, `\n` and `\uXXXX`; the criterion is "every
+  // escape sequence JSON does define". `\\` matters most — a pass that doubled
+  // indiscriminately would turn one escaped backslash into two literal ones
+  // and corrupt the field silently, without ever failing the parse.
+  it("carries the remaining JSON-defined escapes through the repair intact (#231)", async () => {
+    q(
+      '{"extracted": {"invoiceNumber": "bad\\zescape", ' +
+        '"address": "C:\\\\Users\\\\muster\\ttab\\rcr\\bbs\\fff\\/slash"}}',
+    );
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.invoiceNumber).toBe("bad\\zescape");
+    expect(res.extracted.address).toBe("C:\\Users\\muster\ttab\rcr\bbs\fff/slash");
+  });
+
+  // `\u` only introduces an escape when four hex digits follow it. Anything
+  // else is a transcribed backslash like any other.
+  it("treats a malformed \\uXXXX sequence as a literal backslash (#231)", async () => {
+    q('{"extracted": {"address": "caf\\uZZZZ", "amount": 9}}');
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.address).toBe("caf\\uZZZZ");
+    expect(res.extracted.amount).toBe(9);
+  });
+
+  // -------------------------------------------------------------------------
+  // #283: a backslash of DATA immediately before a closing quote
+  //
+  // `\"` at the end of a value — a Windows path with a trailing separator — is
+  // byte-for-byte an escaped quote, so #231 left it alone, the walker never saw
+  // the string end, and extraction failed loudly. The reading is now settled by
+  // what FOLLOWS the quote; see `quoteClosesString`.
+  // -------------------------------------------------------------------------
+
+  it("rescues a value ending in a backslash when the object closes after it (#283)", async () => {
+    q('{"extracted": {"address": "C:\\Users\\"}}');
+    const res = await parseWithGemini(BUF, "application/pdf");
+    // One literal trailing backslash, not an escaped quote swallowing the rest.
+    expect(res.extracted.address).toBe("C:\\Users\\");
+  });
+
+  it("rescues it when another key follows the value (#283)", async () => {
+    q('{"extracted": {"address": "C:\\Users\\", "amount": 500}}');
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.address).toBe("C:\\Users\\");
+    expect(res.extracted.amount).toBe(500);
+  });
+
+  it("rescues it before a `]`, a `:` and the end of the response (#283)", async () => {
+    // Closing a bracket: the array is not an extracted field, so what is pinned
+    // is that the response parses at all and its siblings survive.
+    q('{"extracted": {"paths": ["C:\\Users\\"], "amount": 11}}');
+    expect((await parseWithGemini(BUF, "application/pdf")).extracted.amount).toBe(11);
+
+    // A KEY ending in a backslash, so the next structural character is `:`.
+    q('{"extracted": {"C:\\Users\\": 1, "amount": 22}}');
+    expect((await parseWithGemini(BUF, "application/pdf")).extracted.amount).toBe(22);
+
+    // Nothing at all follows the quote; the brace repair closes the object.
+    q('{"extracted": {"amount": 33, "address": "C:\\Users\\"');
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.amount).toBe(33);
+    expect(res.extracted.address).toBe("C:\\Users\\");
+  });
+
+  it("leaves a genuine escaped quote mid-string untouched (#283)", async () => {
+    // Forced down the repair path by the invalid escape in `invoiceNumber`: the
+    // quotes are followed by ordinary text, so neither closes the string.
+    q(
+      '{"extracted": {"invoiceNumber": "bad\\zescape", ' +
+        '"address": "he said \\"hi\\" once"}}',
+    );
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.address).toBe('he said "hi" once');
+    expect(res.extracted.invoiceNumber).toBe("bad\\zescape");
+  });
+
+  it("leaves an escaped quote that ENDS a value untouched (#283)", async () => {
+    // The boundary the lookahead sits on: here the `\"` is followed by the real
+    // closing quote, which is neither structural nor a token start, so the
+    // string runs on as it should. A rescue here would eat the rest of the
+    // response. The second case is the same `\"` before a `,` that #231 pins,
+    // with the next token an escaped quote rather than a key.
+    q(
+      '{"extracted": {"invoiceNumber": "bad\\zescape", ' +
+        '"address": "he said \\"hi\\""}}',
+    );
+    expect((await parseWithGemini(BUF, "application/pdf")).extracted.address).toBe(
+      'he said "hi"',
+    );
+
+    q(
+      '{"extracted": {"invoiceNumber": "bad\\zescape", ' +
+        '"address": "A\\", \\"B", "amount": 5}}',
+    );
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.address).toBe('A", "B');
+    expect(res.extracted.amount).toBe(5);
+  });
+
+  it("does not re-double a correctly escaped backslash before the close (#283)", async () => {
+    // `\\"` is the pair the lookahead must never split: the first backslash
+    // escapes the second, and only then does the quote close. Reading the
+    // second one as a data backslash would double it again and store TWO
+    // literal backslashes — a corruption that still parses, so nothing else
+    // would catch it. Nothing was guessed at either, so #275 stays quiet.
+    q('{"extracted": {"invoiceNumber": "bad\\zescape", "address": "C:\\\\temp\\\\"}}');
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.address).toBe("C:\\temp\\");
+    expect(res.repairAmbiguousFields).toEqual([]);
+  });
+
+  it("names the rescued field through #275's signal, with no second flag (#283)", async () => {
+    // The lookahead is a guess like the `\t` one, so it rides the same channel.
+    q('{"extracted": {"address": "C:\\Users\\", "amount": 500}}');
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.repairAmbiguousFields).toEqual(["address"]);
+  });
+
+  // characterization: the input the heuristic is wrong for, pinned so the trade
+  // is visible. Prose carrying an escaped quote followed by a structural
+  // character AND something that reads as a JSON token is taken for the end of
+  // the string. It fails loudly rather than storing a corrupted value — and it
+  // only arises once some OTHER defect has forced the repair pass to run.
+  it("mis-reads an escaped quote followed by a comma and a number (#283)", async () => {
+    q(
+      '{"extracted": {"invoiceNumber": "bad\\zescape", ' +
+        '"address": "he said \\"hi\\", 5 times"}}',
+    );
+    await expect(parseWithGemini(BUF, "application/pdf")).rejects.toThrow(
+      /JSON parse failed even after repair/,
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // #275: the repair pass says where it had to guess
+  //
+  // `\t` in a response is either an escape the model wrote or two characters
+  // the document prints, and those are the same two bytes. #231 settled that
+  // JSON's reading wins; what is pinned here is that the choice is RECORDED.
+  // The extracted values below are exactly what the repair produced before
+  // this — the flag is a signal alongside them, never a change to them.
+  // -------------------------------------------------------------------------
+
+  it("names the field when a \\t survives a string the pass had to modify (#275)", async () => {
+    q('{"extracted": {"address": "C:\\Users\\test", "amount": 5}}');
+    const res = await parseWithGemini(BUF, "application/pdf");
+
+    // Unchanged from #231: `\U` is not an escape and survives literally, `\t`
+    // is one and becomes a TAB. That is the corruption nobody could see.
+    expect(res.extracted.address).toBe("C:\\Users\test");
+    expect(res.extracted.amount).toBe(5);
+    expect(res.repairAmbiguousFields).toEqual(["address"]);
+  });
+
+  it("flags each of \\b \\f \\n \\r \\t the same way (#275)", async () => {
+    const ambiguous = [
+      ["b", "\b"],
+      ["f", "\f"],
+      ["n", "\n"],
+      ["r", "\r"],
+      ["t", "\t"],
+    ] as const;
+
+    for (const [letter, control] of ambiguous) {
+      q(`{"extracted": {"address": "C:\\zone\\${letter}wo"}}`);
+      const res = await parseWithGemini(BUF, "application/pdf");
+      expect(res.extracted.address).toBe(`C:\\zone${control}wo`);
+      expect(res.repairAmbiguousFields).toEqual(["address"]);
+    }
+  });
+
+  it("names every affected field, and only those (#275)", async () => {
+    q(
+      '{"extracted": {"address": "C:\\Users\\test", ' +
+        '"invoiceNumber": "RE-2024\\d001", "partner": "Muster GmbH"}}',
+    );
+    const res = await parseWithGemini(BUF, "application/pdf");
+
+    // invoiceNumber was modified but carries no ambiguous escape, and partner
+    // was never touched — neither was guessed at.
+    expect(res.extracted.invoiceNumber).toBe("RE-2024\\d001");
+    expect(res.extracted.partner).toBe("Muster GmbH");
+    expect(res.repairAmbiguousFields).toEqual(["address"]);
+  });
+
+  it("does not flag a \\t in a string the pass never had to modify (#275)", async () => {
+    // The repair path is forced by the invalid escape in `invoiceNumber`. The
+    // address escaped its tab correctly, so its `\t` is a real tab.
+    q('{"extracted": {"invoiceNumber": "bad\\zescape", "address": "col1\\tcol2"}}');
+    const res = await parseWithGemini(BUF, "application/pdf");
+
+    expect(res.extracted.address).toBe("col1\tcol2");
+    expect(res.repairAmbiguousFields).toEqual([]);
+  });
+
+  it("does not flag a response repaired only by the raw-newline heuristic (#275)", async () => {
+    // The false positive a detector reading the PARSED result produces: this
+    // value carries a control character too, and nothing was guessed at.
+    q('{"extracted": {"address": "Wien\nAustria", "amount": 5}}');
+    const res = await parseWithGemini(BUF, "application/pdf");
+
+    expect(res.extracted.address).toBe("Wien\nAustria");
+    expect(res.repairAmbiguousFields).toEqual([]);
+  });
+
+  it("does not flag a response repaired only for commas or braces (#275)", async () => {
+    q('{"extracted": {"amount": 500,}}');
+    expect((await parseWithGemini(BUF, "application/pdf")).repairAmbiguousFields).toEqual([]);
+
+    q('{"extracted": {"amount": 777, "confidence": 0.9');
+    expect((await parseWithGemini(BUF, "application/pdf")).repairAmbiguousFields).toEqual([]);
+  });
+
+  it("does not flag unambiguous invalid escapes — nothing was guessed (#275)", async () => {
+    q('{"extracted": {"address": "C:\\Rechnungen\\2024", "invoiceNumber": "RE\\d1"}}');
+    const res = await parseWithGemini(BUF, "application/pdf");
+
+    expect(res.extracted.address).toBe("C:\\Rechnungen\\2024");
+    expect(res.extracted.invoiceNumber).toBe("RE\\d1");
+    expect(res.repairAmbiguousFields).toEqual([]);
+  });
+
+  it("does not flag a response that parsed first time (#275)", async () => {
+    q({ extracted: { address: "C:\\Users\\muster\ttab", amount: 42 } });
+    const res = await parseWithGemini(BUF, "application/pdf");
+
+    expect(res.extracted.address).toBe("C:\\Users\\muster\ttab");
+    expect(res.repairAmbiguousFields).toEqual([]);
+  });
+
   it("rejects when no JSON object can be found or repaired", async () => {
     q("totally not json");
     await expect(parseWithGemini(BUF, "application/pdf")).rejects.toThrow(
@@ -434,6 +762,14 @@ describe("characterization: geminiParser.parseWithGemini", () => {
     );
 
     q('{"a": <<<}');
+    await expect(parseWithGemini(BUF, "application/pdf")).rejects.toThrow(
+      /JSON parse failed even after repair/,
+    );
+
+    // Truncated mid-string, so the response ends on a lone backslash.
+    // Doubling it does not terminate the string: the escape pass must not
+    // rescue this into something parseable-but-wrong (#231).
+    q('{"extracted": {"address": "C:\\Users\\x');
     await expect(parseWithGemini(BUF, "application/pdf")).rejects.toThrow(
       /JSON parse failed even after repair/,
     );
@@ -470,16 +806,66 @@ describe("characterization: geminiParser.parseWithGemini", () => {
     q({
       extracted: {},
       additionalFields: [
-        { label: "Invoice Number", value: "INV-1", rawValue: "No. INV-1" },
-        { label: "", value: "dropped" },
-        { label: "no-value" },
-        { label: "Due Date", value: "2025-01-01" },
+        { key: "invoiceNumber", label: "Invoice Number", value: "INV-1", rawValue: "No. INV-1" },
+        { key: "invoiceNumber", label: "", value: "dropped" },
+        { key: "invoiceNumber", label: "no-value" },
+        { key: "dueDate", label: "Due Date", value: "2025-01-01" },
       ],
     });
     const res = await parseWithGemini(BUF, "application/pdf");
     expect(res.additionalFields).toEqual([
-      { label: "Invoice Number", value: "INV-1", rawValue: "No. INV-1" },
-      { label: "Due Date", value: "2025-01-01", rawValue: "2025-01-01" },
+      { key: "invoiceNumber", label: "Invoice Number", value: "INV-1", rawValue: "No. INV-1" },
+      { key: "dueDate", label: "Due Date", value: "2025-01-01", rawValue: "2025-01-01" },
+    ]);
+  });
+
+  it("additionalFields: a key outside the closed vocabulary is dropped — Tischnummer (#252)", async () => {
+    q({
+      extracted: {},
+      additionalFields: [
+        { key: "tableNumber", label: "Tischnummer", value: "12" },
+        { key: "loyaltyNumber", label: "Kundenkarte", value: "778899" },
+        { key: "customerNumber", label: "Kundennummer", value: "K-42" },
+      ],
+    });
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.additionalFields).toEqual([
+      { key: "customerNumber", label: "Kundennummer", value: "K-42", rawValue: "K-42" },
+    ]);
+  });
+
+  it("additionalFields: a field with NO key is dropped — the vocabulary fails closed (#252)", async () => {
+    q({
+      extracted: {},
+      additionalFields: [
+        { label: "Tischnummer", value: "12" },
+        { label: "Rechnungsnummer", value: "2024-001" },
+      ],
+    });
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.additionalFields).toEqual([]);
+  });
+
+  it("additionalFields: a whitelisted key keeps the label the document PRINTS (#252)", async () => {
+    q({
+      extracted: {},
+      additionalFields: [
+        { key: "invoiceNumber", label: "Rechnungsnummer", value: "2024-001", rawValue: "Rechnungs-Nr. 2024-001" },
+        { key: "dueDate", label: "Fällig am", value: "2025-01-15", rawValue: "15.01.2025" },
+        { key: "paymentTerms", label: "Zahlungsziel", value: "30 Tage netto" },
+      ],
+    });
+    const res = await parseWithGemini(BUF, "application/pdf");
+    // The key is what is matched; the printed label is never translated or normalised.
+    expect(res.additionalFields).toEqual([
+      {
+        key: "invoiceNumber",
+        label: "Rechnungsnummer",
+        value: "2024-001",
+        rawValue: "Rechnungs-Nr. 2024-001",
+      },
+      { key: "dueDate", label: "Fällig am", value: "2025-01-15", rawValue: "15.01.2025" },
+      { key: "paymentTerms", label: "Zahlungsziel", value: "30 Tage netto", rawValue: "30 Tage netto" },
     ]);
   });
 
@@ -590,105 +976,19 @@ describe("characterization: geminiParser.classifyDocument", () => {
 });
 
 // ===========================================================================
-// claudeParser — parseWithClaude (legacy vision-claude path)
-// ===========================================================================
-
-describe("characterization: claudeParser.parseWithClaude", () => {
-  it("maps a fenced JSON response into ExtractedData with legacy nulls", async () => {
-    anthropic.create.mockResolvedValue({
-      usage: { input_tokens: 10, output_tokens: 5 },
-      content: [
-        {
-          type: "text",
-          text:
-            "```json\n" +
-            JSON.stringify({
-              date: "2024-02-01",
-              amount: 9999,
-              currency: "EUR",
-              vatPercent: 20,
-              partner: "ACME GmbH",
-              vatId: "ATU12345678",
-              iban: "AT123456789012345678",
-              address: "Musterstraße 123, 1010 Wien",
-              confidence: 0.92,
-              fieldSpans: { date: "01.02.2024", amount: "99,99 €" },
-            }) +
-            "\n```",
-        },
-      ],
-    });
-
-    const res = await parseWithClaude("OCR TEXT", "test-key");
-    expect(res.usage).toEqual({ inputTokens: 10, outputTokens: 5, model: "claude-3-haiku-20240307" });
-    expect(res.extracted).toEqual({
-      date: "2024-02-01",
-      amount: 9999,
-      payableAmount: null, // #206: prompted for, absent from this response
-      currency: "EUR",
-      vatPercent: 20,
-      lineItems: null, // characterization: legacy parser never extracts line items
-      selfDesignation: null, // #104: prompted for, absent from this response
-      invoiceNumber: null,
-      partner: "ACME GmbH",
-      vatId: "ATU12345678",
-      iban: "AT123456789012345678",
-      address: "Musterstraße 123, 1010 Wien",
-      website: null, // characterization: legacy parser never extracts website
-      confidence: 0.92,
-      fieldSpans: { date: "01.02.2024", amount: "99,99 €" },
-      issuer: null, // characterization: legacy parser never extracts entities
-      recipient: null,
-    });
-  });
-
-  it("discards string amounts/vatPercent and defaults confidence/fieldSpans", async () => {
-    anthropic.create.mockResolvedValue({
-      usage: { input_tokens: 1, output_tokens: 1 },
-      content: [{ type: "text", text: JSON.stringify({ amount: "9999", vatPercent: "20" }) }],
-    });
-    const res = await parseWithClaude("OCR", "k");
-    // characterization: strict typeof number check — numeric strings dropped
-    expect(res.extracted.amount).toBeNull();
-    expect(res.extracted.vatPercent).toBeNull();
-    expect(res.extracted.confidence).toBe(0.5);
-    expect(res.extracted.fieldSpans).toEqual({});
-    expect(res.extracted.date).toBeNull();
-    expect(res.extracted.partner).toBeNull();
-  });
-
-  it("throws when the response contains no text block", async () => {
-    anthropic.create.mockResolvedValue({
-      usage: { input_tokens: 1, output_tokens: 1 },
-      content: [{ type: "tool_use", id: "x", name: "n", input: {} }],
-    });
-    await expect(parseWithClaude("OCR", "k")).rejects.toThrow("No text response from Claude");
-  });
-
-  it("propagates a raw SyntaxError on invalid JSON (no repair attempt, unlike Gemini)", async () => {
-    anthropic.create.mockResolvedValue({
-      usage: { input_tokens: 1, output_tokens: 1 },
-      content: [{ type: "text", text: "not json at all" }],
-    });
-    // characterization: preserves current behavior — no JSON-repair fallback here
-    await expect(parseWithClaude("OCR", "k")).rejects.toThrow(SyntaxError);
-  });
-});
-
-// ===========================================================================
-// documentExtractor — provider selection, fallback chains, result shaping
+// documentExtractor — result shaping
 // ===========================================================================
 
 describe("characterization: documentExtractor", () => {
-  it("getDefaultProvider: env override honored, anything else falls back to gemini", () => {
+  it("getDefaultProvider: gemini, whatever EXTRACTION_PROVIDER says (#170)", () => {
+    // The legacy vision-claude branch is retired; the env var routes nowhere.
     delete process.env.EXTRACTION_PROVIDER;
     expect(getDefaultProvider()).toBe("gemini");
     process.env.EXTRACTION_PROVIDER = "vision-claude";
-    expect(getDefaultProvider()).toBe("vision-claude");
-    process.env.EXTRACTION_PROVIDER = "gemini";
     expect(getDefaultProvider()).toBe("gemini");
     process.env.EXTRACTION_PROVIDER = "something-else";
     expect(getDefaultProvider()).toBe("gemini");
+    delete process.env.EXTRACTION_PROVIDER;
   });
 
   it("generateTextBlocks splits on newlines, trims, and fakes full-confidence blocks", () => {
@@ -727,6 +1027,16 @@ describe("characterization: documentExtractor", () => {
       confidence: 0.66, // classification confidence is passed through
       fieldSpans: {},
     });
+  });
+
+  it("gemini: carries the repair-ambiguity field names up to the result (#275)", async () => {
+    q('{"extracted": {"address": "C:\\Users\\test", "amount": 5}}');
+    const res = await extractDocument(BUF, "image/jpeg", {
+      provider: "gemini",
+      skipClassification: true,
+    });
+
+    expect(res.repairAmbiguousFields).toEqual(["address"]);
   });
 
   it("gemini: skipClassification goes straight to extraction (single API call)", async () => {
@@ -778,39 +1088,6 @@ describe("characterization: documentExtractor", () => {
     expect(res.extracted.partner).toBeNull();
   });
 
-  it("vision-claude: missing Anthropic API key throws before any OCR", async () => {
-    await expect(
-      extractDocument(BUF, "application/pdf", { provider: "vision-claude" }),
-    ).rejects.toThrow("Anthropic API key required for vision-claude provider");
-  });
-
-  it("vision-claude: OCR text + Claude parse are stitched into the result", async () => {
-    const blocks = [{ text: "b1", boundingBox: { vertices: [] }, confidence: 0.7 }];
-    vision.callVisionAPI.mockResolvedValue({ text: "OCR FULL TEXT", blocks });
-    anthropic.create.mockResolvedValue({
-      usage: { input_tokens: 3, output_tokens: 4 },
-      content: [{ type: "text", text: JSON.stringify({ amount: 5000, confidence: 0.8 }) }],
-    });
-
-    const res = await extractDocument(BUF, "application/pdf", {
-      provider: "vision-claude",
-      anthropicApiKey: "key",
-    });
-    expect(res.provider).toBe("vision-claude");
-    expect(res.text).toBe("OCR FULL TEXT");
-    expect(res.blocks).toBe(blocks);
-    expect(res.extracted.amount).toBe(5000);
-    expect(res.usage).toEqual({ inputTokens: 3, outputTokens: 4, model: "claude-3-haiku-20240307" });
-    // vision-claude never sets classification flags
-    expect(res.isNotInvoice).toBeUndefined();
-  });
-
-  it("vision-claude: whitespace-only OCR text fails loudly", async () => {
-    vision.callVisionAPI.mockResolvedValue({ text: "   ", blocks: [] });
-    await expect(
-      extractDocument(BUF, "application/pdf", { provider: "vision-claude", anthropicApiKey: "key" }),
-    ).rejects.toThrow("No text extracted from document");
-  });
 });
 
 // ===========================================================================

@@ -170,7 +170,7 @@ branches.
 
 Decisions made before this log existed are recorded in their governing docs:
 
-- Product scope — Austria-only pre-accounting for EPUs; Steuerberater is
+- Product scope — Austria-only pre-accounting for EPUs; Tax Advisor (Steuerberater) is
   gatekeeper, not buyer; self-host and cloud ship the same features:
   [`who-is-this-for.md`](who-is-this-for.md).
 - Rebuild rules — port never regenerate; self-host is multi-tenant with one

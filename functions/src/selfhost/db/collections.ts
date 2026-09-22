@@ -205,6 +205,10 @@ export const FLATTENED: Readonly<Record<string, FlatSpec>> = {
       globalPartnerId: { col: "global_partner_id", kind: "text" },
       // listPartners workhorse orderBy asc (tools/handlers.ts:722).
       name: { col: "name", kind: "text" },
+      // Deliberately NOT a column: partners/mergeUserPartners.ts filters
+      // `mergedInto ==` to rewrite chained tombstones, but that runs once per
+      // loser per merge over one user's partner list, so the JS-side fallback
+      // costs nothing worth a migration for.
     },
     indexes: [
       ["tenant_id", "user_id"],

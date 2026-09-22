@@ -16,6 +16,7 @@ import { UserPartner, GlobalPartner } from "@/types/partner";
 import { useGmailSyncStatus } from "@/hooks/use-gmail-sync-status";
 import { useRunningWorkers } from "@/hooks/use-running-workers";
 import { SelectAllCheckedState } from "@/lib/selection/bulk-file-selection";
+import { SelectionChangeMeta } from "@/components/ui/data-table";
 
 export interface TransactionAmountData {
   amount: number;
@@ -42,7 +43,7 @@ interface FileTableProps {
   // Multi-select props
   enableMultiSelect?: boolean;
   selectedRowIds?: Set<string>;
-  onSelectionChange?: (selectedIds: Set<string>) => void;
+  onSelectionChange?: (selectedIds: Set<string>, meta: SelectionChangeMeta) => void;
   /** Callback with the row ids in displayed order (filtered rows, active sort) */
   onDisplayedOrderChange?: (orderedIds: string[]) => void;
   /** Checkbox column: toggling a single row's checkbox (independent of modifier-click) */

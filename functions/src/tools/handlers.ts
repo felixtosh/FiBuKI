@@ -51,8 +51,10 @@ import {
   retryExtractionForFile,
 } from "../extraction/retryExtractionOps";
 import { getStorage } from "firebase-admin/storage";
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
+import { createFileRecord, findFileByContentHash } from "../files/createFileRecord";
 import { syncDocumentationStateForTransactions } from "../documents/syncDocumentationState";
+import { assignNoReceiptCategoryToTransaction } from "../matching/assignNoReceiptCategory";
 import { TOOL_DEFINITIONS, TOOL_NAMES } from "./definitions";
 import type { ToolName } from "./definitions";
 import { readBankOriginalAmount } from "../fx/bankOriginalAmount";
@@ -862,6 +864,13 @@ export async function updateFileExtraction(userId: string, args: Record<string, 
     }
   }
 
+  // Not a correctable field and deliberately not one (#310): it states how to
+  // read the tip in this call, not a value the record keeps, so it is never
+  // stamped as hand-corrected. What it decided IS kept, as extractedTipBound.
+  if (args.tipNotPrinted !== undefined && typeof args.tipNotPrinted !== "boolean") {
+    throw new Error("tipNotPrinted must be a boolean");
+  }
+
   let built;
   try {
     // The stored record goes in so the correction's provenance stamp (#184)
@@ -870,7 +879,9 @@ export async function updateFileExtraction(userId: string, args: Record<string, 
     // rather than going stale: the § 11 classification (#104), the rate-review
     // flag (#203) and the direction review (#233). Shared with the UI's
     // correction callable since #149, so both surfaces write the same set.
-    built = await buildCorrectedFileUpdate(db, fields, fileSnap.data()!);
+    built = await buildCorrectedFileUpdate(db, fields, fileSnap.data()!, {
+      tipNotPrinted: args.tipNotPrinted === true,
+    });
   } catch (error) {
     if (error instanceof ExtractionCorrectionError) {
       throw new Error(error.message);
@@ -902,6 +913,11 @@ export async function updateFileExtraction(userId: string, args: Record<string, 
     file: {
       fileName: after.fileName ?? null,
       extractedAmount: after.extractedAmount ?? null,
+      // #217: reported beside the total precisely so a caller can see it was
+      // not taken out of it.
+      extractedTipAmount: after.extractedTipAmount ?? null,
+      // #310: which total that tip was measured against, and what it was.
+      extractedTipBound: after.extractedTipBound ?? null,
       extractedVatAmount: after.extractedVatAmount ?? null,
       extractedVatPercent: after.extractedVatPercent ?? null,
       lineItemsUnreconciled: after.lineItemsUnreconciled ?? false,
@@ -1012,8 +1028,10 @@ export async function unmarkFileAsNotInvoice(userId: string, args: Record<string
  * click have to land in the same state.
  *
  * Extraction runs inline here rather than being queued: the only trigger that
- * re-runs it fires on undelete, so there is nothing to hand the work to. That
- * is why mcpApi and mcpSse declare ANTHROPIC_API_KEY.
+ * re-runs it fires on undelete, so there is nothing to hand the work to.
+ * mcpApi and mcpSse declare ANTHROPIC_API_KEY for that inline run; since #170
+ * retired the vision-claude extraction path nothing reads it, so the secret is
+ * vestigial until the plumbing is unwired.
  *
  * The refusal codes are surfaced as message prefixes, matching the
  * PAIR_REJECTED convention the connect handler uses: an agent working a list
@@ -1411,37 +1429,20 @@ export async function assignNoReceiptCategory(userId: string, args: Record<strin
     throw new Error("transactionId and categoryId are required");
   }
 
-  const [txDoc, catDoc] = await Promise.all([
-    db.collection("transactions").doc(transactionId as string).get(),
-    db.collection("noReceiptCategories").doc(categoryId as string).get(),
-  ]);
-
-  if (!txDoc.exists || txDoc.data()?.userId !== userId) {
-    throw new Error("Transaction not found");
-  }
-  if (!catDoc.exists || catDoc.data()?.userId !== userId) {
-    throw new Error("Category not found");
-  }
-
-  const catData = catDoc.data()!;
-  const batch = db.batch();
-  const now = FieldValue.serverTimestamp();
-
-  batch.update(txDoc.ref, {
-    noReceiptCategoryId: categoryId,
-    noReceiptCategoryTemplateId: catData.templateId,
-    noReceiptCategoryMatchedBy: "api",
-    isComplete: true,
-    updatedAt: now,
+  // #164: delegates to the same writer the web path's callable uses, so an
+  // MCP assignment also teaches the category matcher via matchedPartnerIds.
+  const result = await assignNoReceiptCategoryToTransaction(db, userId, {
+    transactionId: transactionId as string,
+    categoryId: categoryId as string,
+    matchedBy: "manual",
   });
 
-  batch.update(catDoc.ref, {
-    transactionCount: FieldValue.increment(1),
-    updatedAt: now,
-  });
-
-  await batch.commit();
-  return { success: true, transactionId, categoryId, categoryName: catData.name };
+  return {
+    success: true,
+    transactionId: result.transactionId,
+    categoryId: result.categoryId,
+    categoryName: result.categoryName,
+  };
 }
 
 export async function removeNoReceiptCategory(userId: string, transactionId: string) {
@@ -2474,6 +2475,26 @@ export async function uploadFile(userId: string, args: Record<string, unknown>) 
     fileBuffer = Buffer.from(arrayBuffer);
   }
 
+  // Hash the bytes before touching storage (#182). This tool used to write a
+  // File with no hash at all, so the copy it created could never be recognised
+  // as one afterwards — and the only thing that noticed was the matcher, three
+  // layers and one paid extraction later. Asking the write point's own lookup
+  // here just saves uploading bytes we already hold; createFileRecord below is
+  // what actually refuses the duplicate.
+  const contentHash = createHash("sha256").update(fileBuffer).digest("hex");
+  const alreadyOnFile = await findFileByContentHash(db, userId, contentHash);
+  if (alreadyOnFile) {
+    const existing = alreadyOnFile.data();
+    return {
+      success: true,
+      fileId: alreadyOnFile.id,
+      fileName: existing.fileName ?? fileName,
+      storagePath: existing.storagePath ?? null,
+      fileSize: existing.fileSize ?? fileBuffer.length,
+      duplicate: true,
+    };
+  }
+
   // Upload to Storage with a Firebase download token (avoids signBlob IAM)
   const bucket = getStorage().bucket();
   const storagePath = `users/${userId}/files/${Date.now()}_${fileName}`;
@@ -2492,14 +2513,15 @@ export async function uploadFile(userId: string, args: Record<string, unknown>) 
 
   const downloadUrl = buildDownloadUrl(bucket.name, storagePath, downloadToken);
 
-  // Create file record in Firestore
+  // Create file record in Firestore, through the shared write point
   const now = FieldValue.serverTimestamp();
-  const fileDoc = await db.collection("files").add({
+  const { fileId, duplicate } = await createFileRecord(db, {
     userId,
     fileName: fileName as string,
     mimeType: mimeType as string,
     storagePath,
     downloadUrl,
+    contentHash,
     fileSize: fileBuffer.length,
     transactionIds: [],
     isNotInvoice: false,
@@ -2513,10 +2535,11 @@ export async function uploadFile(userId: string, args: Record<string, unknown>) 
 
   return {
     success: true,
-    fileId: fileDoc.id,
+    fileId,
     fileName,
     storagePath,
     fileSize: fileBuffer.length,
+    duplicate,
   };
 }
 
@@ -2547,11 +2570,19 @@ export async function scoreFileTransactionMatch(userId: string, args: Record<str
   const result = scoreTransaction(
     {
       extractedAmount: fileData.extractedAmount,
+      // #217/#172: the bank was charged the total PLUS the Trinkgeld, so a
+      // scorer that cannot see the tip reads the restaurant Beleg as an
+      // amount mismatch — the answer the UI's scorer stopped giving. Both
+      // surfaces have to score the same file the same way.
+      extractedTipAmount: fileData.extractedTipAmount,
       extractedCurrency: fileData.extractedCurrency,
       extractedDate: fileData.extractedDate,
       extractedPartner: fileData.extractedPartner,
       extractedIban: fileData.extractedIban,
       extractedText: fileData.extractedText,
+      // #137: the needle for the invoice-number match source. Both surfaces
+      // have to score the same file the same way.
+      extractedInvoiceNumber: fileData.extractedInvoiceNumber,
       partnerId: fileData.partnerId,
       documentType: fileData.documentType,
     },
@@ -2561,6 +2592,8 @@ export async function scoreFileTransactionMatch(userId: string, args: Record<str
       date: txData.date,
       currency: txData.currency,
       name: txData.name,
+      // #137: part of the text the invoice number is searched for in.
+      description: txData.description,
       partner: txData.partner,
       partnerName: txData.partnerName,
       partnerId: txData.partnerId,

@@ -5,6 +5,7 @@
 
 import { Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
+import { toDateSafe } from "../utils/toDateSafe";
 
 interface GetAccountBalancesRequest {
   date: string; // ISO string, e.g. "2025-12-31"
@@ -57,7 +58,7 @@ export const getAccountBalancesCallable = createCallable<
     for (const sourceDoc of sourcesSnap.docs) {
       const sourceData = sourceDoc.data();
       const openingBalance = sourceData.openingBalance ?? 0;
-      const openingBalanceDate = sourceData.openingBalanceDate?.toDate();
+      const openingBalanceDate = toDateSafe(sourceData.openingBalanceDate);
 
       // Query transactions up to targetDate
       let query = ctx.db

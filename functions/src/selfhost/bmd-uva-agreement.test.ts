@@ -21,6 +21,7 @@ import { describe, it, expect } from "vitest";
 import { Timestamp } from "./firestore-shim";
 import {
   generateBuchungenCsv,
+  generateBuchungenCsvWithReport,
   type FileForExport,
   type TransactionForExport,
 } from "../bmd-export/bmdCsvGenerators";
@@ -71,6 +72,26 @@ const FIXTURES: Fixture[] = [
   withFile("printed Trinkgeld on a restaurant Beleg", -5400, {
     extractedAmount: 5080,
     extractedTipAmount: 320,
+    extractedRateGroups: [
+      { rate: 10, net: 3500, vat: 350, gross: 3850 },
+      { rate: 20, net: 1025, vat: 205, gross: 1230 },
+    ],
+  }),
+  // #317: the Gesamt (54,00) transcribed into the Trinkgeld field of a 54,00
+  // charge. The export refuses the transaction (#194); the UVA used to read
+  // 108,00 as the invoice total, call the bank line a half payment and claim
+  // 2,86. Both now state nothing.
+  withFile("impossible Trinkgeld, tip EQUALS the bank amount", -5400, {
+    extractedAmount: 5080,
+    extractedTipAmount: 5400,
+    extractedRateGroups: [
+      { rate: 10, net: 3500, vat: 350, gross: 3850 },
+      { rate: 20, net: 1025, vat: 205, gross: 1230 },
+    ],
+  }),
+  withFile("impossible Trinkgeld, tip EXCEEDS the bank amount", -2000, {
+    extractedAmount: 5080,
+    extractedTipAmount: 5400,
     extractedRateGroups: [
       { rate: 10, net: 3500, vat: 350, gross: 3850 },
       { rate: 20, net: 1025, vat: 205, gross: 1230 },
@@ -140,8 +161,8 @@ function exportVatCents(f: Fixture): number {
     .reduce((sum, line) => sum + Math.round(Number(line.split(";")[8].replace(",", ".")) * 100), 0);
 }
 
-/** The same transaction's VAT as the UVA report states it, in cents. */
-function reportVatCents(f: Fixture): number {
+/** The UVA report for one fixture, run over the period it lands in. */
+function uvaReportFor(f: Fixture) {
   const filesById = new Map<string, FileRecord>(
     (f.files ?? []).map((file) => [file.id, file as FileRecord]),
   );
@@ -167,10 +188,15 @@ function reportVatCents(f: Fixture): number {
     },
     { filesById, categoriesById },
   );
-  const report = calculateUva({
+  return calculateUva({
     period: { year: 2026, period: 3, type: "monthly" },
     transactions: [uvaTx],
   });
+}
+
+/** The same transaction's VAT as the UVA report states it, in cents. */
+function reportVatCents(f: Fixture): number {
+  const report = uvaReportFor(f);
   // Reverse charge nets to zero on this line (owed and deducted in the same
   // breath), and the booking row likewise carries no tax — so comparing the
   // net figure is the right comparison for it too.
@@ -190,4 +216,38 @@ describe("bmd/uva agreement (#66)", () => {
     const nonZero = FIXTURES.filter((f) => exportVatCents(f) !== 0);
     expect(nonZero.length).toBeGreaterThanOrEqual(6);
   });
+});
+
+/**
+ * Equal totals are not enough for the impossible tip (#317): two zeroes agree
+ * by accident as easily as by construction. What the ticket is about is that
+ * the two sides REFUSE the same transaction, and say so — the export by
+ * withholding it and naming the document, the UVA by putting it on the review
+ * list as `impossible-tip` rather than scaling it as a partial payment.
+ */
+describe("bmd/uva agreement (#317): an impossible Trinkgeld", () => {
+  const impossible = FIXTURES.filter((f) => f.name.startsWith("impossible Trinkgeld"));
+
+  it("has fixtures on both sides of the boundary", () => {
+    expect(impossible.map((f) => f.tx.amount)).toEqual([-5400, -2000]);
+  });
+
+  for (const f of impossible) {
+    it(`is refused by both, not scaled: ${f.name}`, () => {
+      const files = new Map((f.files ?? []).map((file) => [file.id, file]));
+      const { csv, skipped } = generateBuchungenCsvWithReport([f.tx], files, new Map());
+      const report = uvaReportFor(f);
+
+      // The export: no booking rows at all, and the document named.
+      expect(csv.split("\n").filter(Boolean)).toHaveLength(1);
+      expect(skipped.map((s) => s.fileId)).toEqual(["f1"]);
+
+      // The UVA: nothing claimed, and the reason names the tip. Before #317
+      // this was the partial-payment branch — 2,86 of Vorsteuer on the 54,00
+      // fixture, from a bank/invoiceTotal fraction of 0,5.
+      expect(report.totalInputVat).toBe(0);
+      expect(report.unresolved.map((u) => u.reason)).toEqual(["impossible-tip"]);
+      expect(exportVatCents(f)).toBe(reportVatCents(f));
+    });
+  }
 });

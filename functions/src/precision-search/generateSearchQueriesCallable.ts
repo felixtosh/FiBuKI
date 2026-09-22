@@ -9,6 +9,7 @@ import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createHash } from "crypto";
 import { generateTypedQueriesWithGemini } from "./generateQueriesWithGemini";
 import {
+  suggestionTerms,
   QueryGenerationPartner,
   TypedSuggestion,
 } from "./generateSearchQueries";
@@ -158,10 +159,16 @@ export const generateSearchQueriesCallable = onCall<
           }
 
           if (cached && isCacheValid(cached, transaction.partnerId, partnerDataHash)) {
-            // Cache hit - return cached suggestions
+            // Cache hit. Suggestions cached before #240 carry no terms, and a
+            // 30-day TTL is a long time to serve a search the attach path
+            // cannot execute — so they are lowered on the way out.
+            const suggestions = cached.suggestions.map((s: TypedSuggestion) => ({
+              ...s,
+              terms: s.terms ?? suggestionTerms(s.query, s.type),
+            }));
             return {
-              queries: cached.suggestions.map((s: TypedSuggestion) => s.query),
-              suggestions: cached.suggestions,
+              queries: suggestions.map((s: TypedSuggestion) => s.query),
+              suggestions,
               fromCache: true,
             };
           }

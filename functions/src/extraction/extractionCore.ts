@@ -50,12 +50,18 @@ import { classifyDocumentType } from "../documents/classifyDocumentType";
 import { syncDocumentationStateForTransactions } from "../documents/syncDocumentationState";
 import { computeDirectionReviewFields } from "../documents/syncDirectionReview";
 import { directionReviewFields } from "../documents/directionReview";
+import { repairReviewFields, reviewRepair } from "../documents/repairReview";
 
 /**
  * Options for running extraction
  */
 export interface ExtractionOptions {
-  /** Anthropic API key (only needed for vision-claude provider) */
+  /**
+   * Anthropic API key. Unused by extraction since the legacy vision-claude
+   * provider was retired (#170) — nothing downstream of here reads it. The
+   * callables that run extraction still declare the secret and hand it down;
+   * unwiring that plumbing is a separate change.
+   */
   anthropicApiKey?: string;
   /** Skip two-phase classification (user has overridden AI classification) */
   skipClassification?: boolean;
@@ -160,18 +166,8 @@ function normalizeExtractedLineItems(
         ? Math.round(item.vatAmount)
         : 0;
 
-      const normalizedQuantity = typeof item.quantity === "number" && Number.isFinite(item.quantity)
-        ? item.quantity
-        : null;
-
-      const normalizedUnitPrice = typeof item.unitPrice === "number" && Number.isFinite(item.unitPrice)
-        ? Math.round(item.unitPrice)
-        : null;
-
       return {
         description: item.description?.trim() || `Item ${index + 1}`,
-        quantity: normalizedQuantity,
-        unitPrice: normalizedUnitPrice,
         vatPercent: normalizedVatPercent,
         vatAmount: normalizedVatAmount,
         amount: Math.round(item.amount),
@@ -221,7 +217,7 @@ export async function runExtraction(
   // ============================================================
   // PHASE 1: Classification (unless skipped by user override)
   // ============================================================
-  if (!options.skipClassification && provider === "gemini") {
+  if (!options.skipClassification) {
     const { classifyDocument, DEFAULT_GEMINI_MODEL } = await import("./geminiParser");
     type GeminiModel = import("./geminiParser").GeminiModel;
     const model = (geminiModel || DEFAULT_GEMINI_MODEL) as GeminiModel;
@@ -291,6 +287,9 @@ export async function runExtraction(
           conflictingTransactionIds: [],
           suggestedDirection: null,
         }),
+        // Nothing was transcribed on this pass, so no transcription was
+        // guessed at either — any flag an earlier pass left goes (#275).
+        ...repairReviewFields({ ambiguousFields: [], needsReview: false }),
         extractedText: "(classification only - not an invoice)",
         extractedFields: [],
         updatedAt: Timestamp.now(),
@@ -416,7 +415,6 @@ export async function runExtraction(
     // Store extracted entities for future re-calculation
     extractedIssuer: extractedIssuer || null,
     extractedRecipient: extractedRecipient || null,
-    // Ensure classificationComplete is set (for vision-claude provider which doesn't have separate classification)
     classificationComplete: true,
     isNotInvoice: false, // If we got here, it's confirmed to be an invoice
     notInvoiceReason: null,
@@ -431,6 +429,7 @@ export async function runExtraction(
     updateData.extractedDate = null;
     updateData.extractedAmount = null;
     updateData.extractedTipAmount = null;
+    updateData.extractedTipBound = null;
     updateData.extractedCurrency = null;
     updateData.extractedVatPercent = null;
     updateData.extractedVatAmount = null;
@@ -490,6 +489,12 @@ export async function runExtraction(
     // than leave a stale figure from an earlier pass standing.
     const tipAmount = extracted.tipAmount ?? null;
     updateData.extractedTipAmount = tipAmount;
+    // #310: the bound belongs to the tip it measured. This figure is the
+    // extractor's, so the record of what bounded a hand-set one goes with the
+    // figure it described — left standing it would say a tip transcribed from
+    // the page had been measured against a bank line, and the panel would
+    // re-offer "not printed" for a tip the page prints.
+    updateData.extractedTipBound = null;
     const documentTotal = totalWithoutPrintedTip(
       extracted.amount,
       tipAmount,
@@ -564,6 +569,11 @@ export async function runExtraction(
     if (counterparty) {
       // Use counterparty entity data
       if (counterparty.name) {
+        // Already decoded: #299 moved the character-reference decode to entity
+        // normalisation, so the counterparty this came from is one of the
+        // stored entities and its name carries no "&amp;". Decoding again here
+        // would be a second layer whose harmlessness depends on the decoder
+        // staying single-pass.
         updateData.extractedPartner = counterparty.name;
       }
       if (counterparty.vatId) {
@@ -581,6 +591,8 @@ export async function runExtraction(
     } else {
       // Fall back to legacy extracted fields (from Claude parser or when counterparty detection fails)
       if (extracted.partner) {
+        // Decoded at entity normalisation too (#299) — the flat legacy field
+        // is shaped in the same place the issuer/recipient entities are.
         updateData.extractedPartner = extracted.partner;
       }
       if (extracted.vatId) {
@@ -663,6 +675,23 @@ export async function runExtraction(
   // is already attached to. Folded into this write rather than run after it —
   // the record is in hand and a second write would re-fire every file trigger.
   Object.assign(updateData, await computeDirectionReviewFields(db, storedRecord));
+
+  // #275: the JSON repair is the only place that knows a value's escape was
+  // ambiguous, and it reports it here rather than leaving the guess invisible.
+  // Read off the parse result, not the stored record: what is stored is exactly
+  // the byte sequence the guess produced, and nothing in it says so.
+  const repairReview = reviewRepair({
+    ambiguousFields: result.repairAmbiguousFields,
+    isNotInvoice: updateData.isNotInvoice === true,
+  });
+  Object.assign(updateData, repairReviewFields(repairReview));
+  if (repairReview.needsReview) {
+    console.warn(
+      `[ExtractionCore] ${fileId} carries a repaired escape sequence in ` +
+      `${repairReview.ambiguousFields.join(", ")}; the stored text may not be ` +
+      "what the document prints. Flagged for review."
+    );
+  }
   if (rateReview.needsReview) {
     console.warn(
       `[ExtractionCore] ${fileId} prints VAT rate(s) outside the Austrian set: ` +

@@ -5,8 +5,10 @@
  * - calculateDateScore with and without billing cycle
  * - calculateAmountScore
  * - calculatePartnerScore
+ * - calculateReferenceScore (the invoice-number match source)
  * - scoreTransaction with and without scoring weights
  * - namesMatch fuzzy comparison
+ * - derivePartnerAliases pulling in the linked Global Partner (#138)
  */
 
 import { describe, it, expect } from "vitest";
@@ -15,16 +17,19 @@ import {
   calculateDateScore,
   calculateAmountScore,
   calculatePartnerScore,
+  calculateReferenceScore,
   scoreTransaction,
   namesMatch,
   normalizeName,
   normalizeIban,
+  derivePartnerAliases,
   formatScoreBreakdown,
   SCORING_CONFIG,
   BillingCycleHint,
   FileMatchingData,
   TransactionData,
 } from "../transactionScoring";
+import { PRESET_PARTNERS } from "../../../../lib/data/preset-partners";
 
 // Helper to create a Timestamp from a date string
 function ts(dateStr: string): Timestamp {
@@ -870,6 +875,42 @@ describe("scoreTransaction", () => {
       );
       expect(result.score).toBeGreaterThan(0);
     });
+
+    it("takes the best-scoring alias, not the first (#138): a later, stronger alias beats an earlier, weaker one", () => {
+      const txName = "Magenta Mobil Rechnung 08/2026";
+      // "T-Mobile Austria GmbH" (first) matches txName only through the
+      // "mobil" ⊂ "t-mobile" word-overlap accident; "Magenta" (later) matches
+      // through a real brand-name substring hit and scores higher.
+      const weakFirst = namesMatch("T-Mobile Austria GmbH", txName);
+      const strongLater = namesMatch("Magenta", txName);
+      expect(weakFirst.match).toBe(true);
+      expect(strongLater.match).toBe(true);
+      expect(strongLater.score).toBeGreaterThan(weakFirst.score);
+
+      const result = calculatePartnerScore(
+        { ...baseFileData, partnerId: null, extractedPartner: null },
+        { ...baseTxData, partnerId: undefined, name: txName },
+        ["T-Mobile Austria GmbH", "Magenta"]
+      );
+      expect(result).toEqual({ score: strongLater.score, source: "partner" });
+    });
+
+    it("takes the best across the extracted partner AND the aliases (#138), not the extracted partner first", () => {
+      const txName = "Magenta Mobil Rechnung 08/2026";
+      // The document's own extracted partner text reaches this bank line only
+      // through the "mobil" ⊂ "t-mobile" word-overlap accident (12); the brand
+      // alias is a real containment hit (18). The extracted-partner comparison
+      // used to return before the alias loop ran, so its weaker score stood.
+      expect(namesMatch("T-Mobile Austria GmbH", txName).score).toBe(12);
+      expect(namesMatch("Magenta", txName).score).toBe(18);
+
+      const result = calculatePartnerScore(
+        { ...baseFileData, partnerId: null, extractedPartner: "T-Mobile Austria GmbH" },
+        { ...baseTxData, partnerId: undefined, name: txName },
+        ["Magenta"]
+      );
+      expect(result).toEqual({ score: 18, source: "partner" });
+    });
   });
 
   describe("date-partner boost interaction", () => {
@@ -904,6 +945,241 @@ describe("scoreTransaction", () => {
       // Partner ID match = 25, but date = 0 → partner reduced to 60% = 15
       expect(result.breakdown.partner).toBe(15);
     });
+  });
+});
+
+// ============================================================================
+// derivePartnerAliases (#138)
+// ============================================================================
+
+describe("derivePartnerAliases", () => {
+  // Minimal fake covering only what derivePartnerAliases reads: a doc lookup
+  // by id, and a two-clause equality query (source + vatId) over
+  // globalPartners — the same shape generatePromotionCandidates.ts already
+  // queries with.
+  function fakeDb(
+    docs: Array<{ id: string; data: Record<string, unknown> }>,
+    /** Read counter, for the "once per matching run" shape. */
+    stats: { docGets: number; queries: number } = { docGets: 0, queries: 0 }
+  ) {
+    const globalPartners = {
+      doc: (id: string) => ({
+        get: async () => {
+          stats.docGets++;
+          const found = docs.find((d) => d.id === id);
+          return { exists: !!found, data: () => found?.data };
+        },
+      }),
+      where: (field: string, _op: string, value: unknown) => {
+        const filters: Array<[string, unknown]> = [[field, value]];
+        const query = {
+          where: (field2: string, _op2: string, value2: unknown) => {
+            filters.push([field2, value2]);
+            return query;
+          },
+          limit: () => query,
+          get: async () => ({
+            docs: (stats.queries++, docs)
+              .filter((d) => filters.every(([f, v]) => d.data[f] === v))
+              .map((d) => ({ id: d.id, data: () => d.data })),
+          }),
+        };
+        return query;
+      },
+    };
+    return {
+      collection: (name: string) => {
+        if (name !== "globalPartners") throw new Error(`fakeDb: unexpected collection "${name}"`);
+        return globalPartners;
+      },
+    } as unknown as FirebaseFirestore.Firestore;
+  }
+
+  it("behaves exactly as today for a Partner with no globalPartnerId", async () => {
+    const db = fakeDb([]);
+    const result = await derivePartnerAliases(db, { name: "Acme GmbH", aliases: ["Acme"] });
+    expect(result).toEqual(["Acme GmbH", "Acme"]);
+  });
+
+  it("folds in the linked Global Partner's name and aliases", async () => {
+    const db = fakeDb([
+      {
+        id: "gp-1",
+        data: { name: "Acme Corp", aliases: ["Acme International"], source: "manual" },
+      },
+    ]);
+    const result = await derivePartnerAliases(db, {
+      name: "Acme GmbH",
+      aliases: ["Acme"],
+      globalPartnerId: "gp-1",
+    });
+    expect(result).toEqual(["Acme GmbH", "Acme", "Acme Corp", "Acme International"]);
+  });
+
+  it("a Partner linked to a VIES-derived Global Partner reaches a curated preset's aliases sharing its VAT id (Magenta/T-Mobile)", async () => {
+    const db = fakeDb([
+      {
+        id: "vies_atu45011703",
+        data: {
+          name: "T-Mobile Austria GmbH",
+          aliases: [],
+          source: "external_registry",
+          vatId: "ATU45011703",
+        },
+      },
+      {
+        id: "preset_magenta_telekom",
+        data: {
+          name: "Magenta Telekom",
+          aliases: ["Magenta", "T-Mobile Austria"],
+          source: "preset",
+          vatId: "ATU45011703",
+        },
+      },
+    ]);
+
+    const aliases = await derivePartnerAliases(db, {
+      name: "T-Mobile Austria GmbH",
+      aliases: [],
+      globalPartnerId: "vies_atu45011703",
+    });
+
+    expect(aliases).toContain("Magenta");
+
+    // The right reason: a real substring hit on the brand name itself, not
+    // the "mobil" ⊂ "t-mobile" word-overlap accident this pair used to rely
+    // on (that accident is a separate failure surface, split out as #271).
+    const txName = "Magenta Mobil Rechnung 08/2026";
+    expect(namesMatch("Magenta", txName)).toEqual({ match: true, score: 18 });
+
+    // calculatePartnerScore takes the BEST-scoring alias, not the first
+    // (#138). The list starts with the user Partner's own name, which still
+    // matches this bank line at 12 through the "mobil" inside "t-mobile"
+    // word-overlap accident — but the later, stronger "Magenta" brand hit at
+    // 18 now wins, which is the right reason: the brand alias, not the
+    // substring accident.
+    const tx = {
+      id: "tx-magenta",
+      amount: -4990,
+      date: ts("2026-08-14"),
+      name: txName,
+      partnerId: undefined,
+    };
+    const file = { extractedPartner: null, partnerId: null };
+    expect(namesMatch("Magenta", txName).score).toBe(18);
+    expect(calculatePartnerScore(file, tx, aliases)).toEqual({ score: 18, source: "partner" });
+  });
+
+  it("a dangling globalPartnerId (preset partners toggled off) falls back to the user Partner's own aliases", async () => {
+    const db = fakeDb([]);
+    const result = await derivePartnerAliases(db, {
+      name: "Acme GmbH",
+      aliases: ["Acme"],
+      globalPartnerId: "preset_acme_gmbh",
+    });
+    expect(result).toEqual(["Acme GmbH", "Acme"]);
+  });
+
+  it("reads the Global Partner once and skips the preset lookup when the link is already a preset", async () => {
+    const stats = { docGets: 0, queries: 0 };
+    const db = fakeDb(
+      [
+        {
+          id: "preset_magenta_telekom",
+          data: {
+            name: "Magenta Telekom",
+            aliases: ["Magenta", "T-Mobile Austria"],
+            source: "preset",
+            vatId: "ATU62895668",
+          },
+        },
+      ],
+      stats
+    );
+
+    const aliases = await derivePartnerAliases(db, {
+      name: "Magenta Telekom",
+      aliases: [],
+      globalPartnerId: "preset_magenta_telekom",
+    });
+
+    expect(aliases).toContain("Magenta");
+    expect(stats).toEqual({ docGets: 1, queries: 0 });
+  });
+
+  it("a VIES-derived link with no preset sharing its VAT id still contributes its own name", async () => {
+    const stats = { docGets: 0, queries: 0 };
+    const db = fakeDb(
+      [
+        {
+          id: "vies_atu99999999",
+          data: {
+            name: "Musterfirma GmbH",
+            aliases: [],
+            source: "external_registry",
+            vatId: "ATU99999999",
+          },
+        },
+      ],
+      stats
+    );
+
+    const aliases = await derivePartnerAliases(db, {
+      name: "Musterfirma",
+      aliases: [],
+      globalPartnerId: "vies_atu99999999",
+    });
+
+    expect(aliases).toEqual(["Musterfirma", "Musterfirma GmbH"]);
+    expect(stats).toEqual({ docGets: 1, queries: 1 });
+  });
+
+  it("Yesss/A1: reaches an alias the substring accident would never have fired on", async () => {
+    const db = fakeDb([
+      {
+        id: "gp-a1",
+        data: { name: "A1 Telekom Austria AG", aliases: ["A1", "Yesss"], source: "preset" },
+      },
+    ]);
+
+    const aliases = await derivePartnerAliases(db, {
+      name: "A1 Telekom Austria AG",
+      aliases: [],
+      globalPartnerId: "gp-a1",
+    });
+
+    const txName = "YESSS SIM Aufladung 10 EUR";
+    // Confirms there is no accident here to confound the result: the
+    // partner's own name has no substring/word overlap with the bank line.
+    expect(namesMatch("A1 Telekom Austria AG", txName).match).toBe(false);
+
+    const result = calculatePartnerScore(
+      { extractedPartner: null, partnerId: null },
+      { id: "tx-yesss", amount: -1000, date: ts("2024-06-15"), name: txName, partnerId: undefined },
+      aliases
+    );
+    expect(result.source).toBe("partner");
+    expect(result.score).toBeGreaterThan(0);
+  });
+
+  it("the Austrian presets carry the brand aliases the alias derivation exists to reach (#138)", () => {
+    const aliasesOf = (name: string) =>
+      PRESET_PARTNERS.find((p) => p.name === name)?.aliases ?? [];
+    expect(aliasesOf("Magenta Telekom")).toEqual(
+      expect.arrayContaining(["Magenta", "T-Mobile Austria"])
+    );
+    expect(aliasesOf("A1 Telekom Austria AG")).toContain("Yesss");
+    expect(aliasesOf("Hutchison Drei Austria GmbH")).toEqual(
+      expect.arrayContaining(["Drei", "Hutchison"])
+    );
+    expect(aliasesOf("REWE International AG")).toContain("BILLA");
+  });
+
+  it("Wien Energie and EVN are separate companies: neither preset's aliases carry the other's name (#138)", () => {
+    const wienEnergie = PRESET_PARTNERS.find((p) => p.name === "Wien Energie GmbH");
+    const evn = PRESET_PARTNERS.find((p) => p.name === "EVN AG");
+    expect(wienEnergie?.aliases).toEqual(["Wien Energie"]);
+    expect(evn?.aliases).toEqual(["EVN"]);
   });
 });
 
@@ -1070,5 +1346,198 @@ describe("scoreTransaction — suppression against an already-documented target"
     );
 
     expect(weak.confidence).toBe(baseline.confidence);
+  });
+});
+
+// ============================================================================
+// calculateReferenceScore — the invoice-number match source (#137)
+// ============================================================================
+
+describe("calculateReferenceScore", () => {
+  const INVOICE_NUMBER = "4711000123";
+  /**
+   * The observed Austrian mobile-provider line. Two things matter about it:
+   * the bank's Payment Reference column landed in `name`, not `reference`,
+   * and the bank string is far longer than the number it carries.
+   */
+  const MAGENTA_LINE = `Magenta Mobil Rechnung ${INVOICE_NUMBER} vom 05.01.2026 - Details unter mein.magenta.at`;
+
+  const file = (o: Partial<FileMatchingData> = {}): FileMatchingData => ({
+    extractedInvoiceNumber: INVOICE_NUMBER,
+    ...o,
+  });
+
+  const tx = (o: Partial<TransactionData> = {}): TransactionData => ({
+    id: "tx-1",
+    amount: -10000,
+    date: ts("2026-01-05"),
+    currency: "EUR",
+    ...o,
+  });
+
+  it("scores the Magenta line whose payment reference landed in name", () => {
+    const result = calculateReferenceScore(file(), tx({ name: MAGENTA_LINE }), 0);
+
+    expect(result.score).toBe(SCORING_CONFIG.INVOICE_NUMBER_MATCH);
+    expect(result.source).toBe("reference");
+  });
+
+  it("searches from the transaction towards the file, not the other way round", () => {
+    // The pre-#137 test asked whether the document's text contained the WHOLE
+    // bank string. It is the longer of the two, so that could never fire.
+    expect(MAGENTA_LINE.length).toBeGreaterThan(INVOICE_NUMBER.length);
+    const invoice = file({ extractedText: `Rechnung Nr. ${INVOICE_NUMBER} — Magenta Telekom` });
+    expect(invoice.extractedText!.includes(MAGENTA_LINE)).toBe(false);
+
+    expect(calculateReferenceScore(invoice, tx({ name: MAGENTA_LINE }), 0).score).toBe(
+      SCORING_CONFIG.INVOICE_NUMBER_MATCH
+    );
+  });
+
+  it("reads every field the transaction states, including the preserved raw row", () => {
+    const carriers: TransactionData[] = [
+      tx({ name: MAGENTA_LINE }),
+      tx({ description: `Beleg ${INVOICE_NUMBER}` }),
+      tx({ partner: `Magenta ${INVOICE_NUMBER}` }),
+      tx({ reference: INVOICE_NUMBER }),
+      tx({ _original: { rawRow: { Zahlungsreferenz: MAGENTA_LINE } } }),
+    ];
+
+    for (const carrier of carriers) {
+      expect(calculateReferenceScore(file(), carrier, 0).score).toBe(
+        SCORING_CONFIG.INVOICE_NUMBER_MATCH
+      );
+    }
+  });
+
+  it("compares case-insensitively", () => {
+    const result = calculateReferenceScore(
+      file({ extractedInvoiceNumber: "RE-2026-0042" }),
+      tx({ name: "sepa lastschrift re-2026-0042" }),
+      0
+    );
+
+    expect(result.score).toBe(SCORING_CONFIG.INVOICE_NUMBER_MATCH);
+  });
+
+  it("does not award the high weight to a four-digit number inside a longer token", () => {
+    // "2145" is in "SG5RF2145", but not delimited by it — coincidence, not proof.
+    const result = calculateReferenceScore(
+      file({ extractedInvoiceNumber: "2145" }),
+      tx({ name: "Kartenzahlung SG5RF2145 Wien" }),
+      0
+    );
+
+    expect(result.score).toBe(5);
+    expect(result.source).toBe("reference");
+  });
+
+  it("keeps the old low score for a delimited number below the length floor", () => {
+    const result = calculateReferenceScore(
+      file({ extractedInvoiceNumber: "12345" }),
+      tx({ name: "Rechnung 12345 vom 05.01.2026" }),
+      0
+    );
+
+    expect(result.score).toBe(5);
+    expect(result.source).toBe("reference");
+  });
+
+  it("qualifies a number of exactly MIN_INVOICE_NUMBER_LENGTH characters", () => {
+    // The floor is inclusive: one character below it scores 5 (above), one
+    // character above it scores the high weight, and the boundary itself is
+    // the case an off-by-one in the comparison would move.
+    const atFloor = "A".repeat(SCORING_CONFIG.MIN_INVOICE_NUMBER_LENGTH - 1) + "7";
+    expect(atFloor.length).toBe(SCORING_CONFIG.MIN_INVOICE_NUMBER_LENGTH);
+
+    expect(
+      calculateReferenceScore(
+        file({ extractedInvoiceNumber: atFloor }),
+        tx({ name: `Rechnung ${atFloor} vom 05.01.2026` }),
+        0
+      ).score
+    ).toBe(SCORING_CONFIG.INVOICE_NUMBER_MATCH);
+  });
+
+  it("counts a string edge as a delimiter, an alphanumeric neighbour as not one", () => {
+    // Both edges
+    expect(calculateReferenceScore(file(), tx({ name: INVOICE_NUMBER }), 0).score).toBe(
+      SCORING_CONFIG.INVOICE_NUMBER_MATCH
+    );
+    // Punctuation on both sides
+    expect(
+      calculateReferenceScore(file(), tx({ name: `RG/${INVOICE_NUMBER}/2026` }), 0).score
+    ).toBe(SCORING_CONFIG.INVOICE_NUMBER_MATCH);
+    // Glued to letters on one side: the same token, not a match on it
+    expect(
+      calculateReferenceScore(file(), tx({ name: `RG${INVOICE_NUMBER} 2026` }), 0).score
+    ).toBe(5);
+    // Glued on the trailing side only — both neighbours have to be checked,
+    // not just the leading one.
+    expect(
+      calculateReferenceScore(file(), tx({ name: `RG ${INVOICE_NUMBER}A 2026` }), 0).score
+    ).toBe(5);
+  });
+
+  it("ignores whitespace around the extracted number", () => {
+    // Extractors hand back what the document printed, padding included.
+    expect(
+      calculateReferenceScore(
+        file({ extractedInvoiceNumber: `  ${INVOICE_NUMBER}\n` }),
+        tx({ name: MAGENTA_LINE }),
+        0
+      ).score
+    ).toBe(SCORING_CONFIG.INVOICE_NUMBER_MATCH);
+  });
+
+  it("scores nothing when the transaction's text does not carry the number", () => {
+    expect(calculateReferenceScore(file(), tx({ name: "Magenta Mobil Rechnung" }), 0)).toEqual({
+      score: 0,
+      dateBonus: 0,
+      source: null,
+    });
+  });
+
+  it("keeps the pre-#137 direction at its old weight, so no pair stops scoring", () => {
+    // No invoice number extracted; the bank's reference is printed on the document.
+    const result = calculateReferenceScore(
+      { extractedText: "Rechnung RG-2024-001 vom Juni" },
+      tx({ reference: "RG-2024-001" }),
+      0
+    );
+
+    expect(result.score).toBe(5);
+    expect(result.source).toBe("reference");
+  });
+
+  it("leaves the conditional date bonus exactly as it was", () => {
+    expect(calculateReferenceScore(file(), tx({ name: MAGENTA_LINE }), 8).dateBonus).toBe(10);
+    expect(calculateReferenceScore(file(), tx({ name: MAGENTA_LINE }), 15).dateBonus).toBe(0);
+  });
+
+  it("a qualified hit is a suggestion on its own", () => {
+    const result = scoreTransaction(
+      { extractedInvoiceNumber: INVOICE_NUMBER },
+      tx({ name: MAGENTA_LINE })
+    );
+
+    expect(result.breakdown.reference).toBe(SCORING_CONFIG.INVOICE_NUMBER_MATCH);
+    expect(result.matchSources).toEqual(["reference"]);
+    expect(result.confidence).toBeGreaterThanOrEqual(SCORING_CONFIG.SUGGESTION_THRESHOLD);
+  });
+
+  it("a qualified hit plus a cent-exact amount clears the auto-match threshold", () => {
+    const result = scoreTransaction(
+      {
+        extractedAmount: 10000,
+        extractedCurrency: "EUR",
+        extractedInvoiceNumber: INVOICE_NUMBER,
+      },
+      tx({ amount: -10000, name: MAGENTA_LINE })
+    );
+
+    // No date, no partner, no IBAN: amount 40 + reference 50 is the whole score.
+    expect(result.matchSources).toEqual(["amount_exact", "reference"]);
+    expect(result.confidence).toBeGreaterThanOrEqual(SCORING_CONFIG.AUTO_MATCH_THRESHOLD);
   });
 });

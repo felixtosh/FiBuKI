@@ -50,6 +50,10 @@ export function buildMarkNotInvoiceUpdates(
     // (#203), so the flag goes with them.
     needsVatRateReview: false,
     vatRatesOutsideSet: [],
+    // Likewise a repaired escape's flag (#275): the transcribed values it
+    // pointed at are among the fields cleared here, so nothing is left to doubt.
+    needsRepairReview: false,
+    repairAmbiguousFields: [],
     extractedPartner: null,
     extractedVatId: null,
     extractedIban: null,

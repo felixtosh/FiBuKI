@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { useFileObjectUrl } from "@/hooks/use-file-object-url";
 import { ContentOverlay } from "@/components/ui/content-overlay";
 import { PdfPageViewer } from "./pdf-page-viewer";
+import { classifyFileStrict } from "@/lib/files/file-kind";
 
 interface FileViewerOverlayProps {
   open: boolean;
@@ -35,8 +36,9 @@ export function FileViewerOverlay({
   const [zoom, setZoom] = useState(1);
   const [rotation, setRotation] = useState(0);
 
-  const isPdf = fileType === "application/pdf";
-  const isImage = fileType.startsWith("image/");
+  // Some file records were written without a fileType (#248) — normalised so
+  // this doesn't crash on `.startsWith`. See lib/files/file-kind.js.
+  const { isPdf, isImage } = classifyFileStrict(fileType);
 
   // Stored url -> renderable url. On the self-host stack the stored value needs
   // an Authorization header, so it cannot be an <img>/<iframe> src or a plain

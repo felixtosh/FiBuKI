@@ -37,6 +37,29 @@ Full suites and full builds go on **CT 999**, not the audit box.
 **Also:** no parallel sub-agents on the audit box. Fan-out is what OOMs it —
 run build agents one at a time.
 
+### The guard matches the command string, not the command
+
+The hook greps the whole command text for the tool names. It cannot tell the
+difference between *running* one and merely *mentioning* one, so these are all
+blocked even though none of them executes anything:
+
+```bash
+grep -n "vitest" .claude/hooks/guard-memory.sh     # reading about it
+cat > notes.md <<'EOF' ... vitest ... EOF          # writing a doc that names it
+gh issue comment 1 --body "we should run vitest"   # quoting it to a human
+```
+
+That is the safe direction to fail, and it is not worth loosening the pattern —
+a guard that tries to parse intent is a guard that eventually lets the real
+thing through. Work around it instead:
+
+- write file content with the **Write tool** rather than a heredoc
+- pass long text to `gh` with `--body-file`, never an inline `--body`
+- to inspect the hook itself, open it with Read rather than grepping for the name
+
+Hit twice in one session on 2026-09-10, both times on read-only or
+text-authoring commands.
+
 ## Bound your output
 
 Long command output is tokenized on entry **and replayed every turn after**. Cap it

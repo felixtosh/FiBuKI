@@ -36,6 +36,17 @@ export const INVOICE_KEYWORDS = [
   "Order confirmation",
 ];
 
+/**
+ * Ceiling on a bounded IMAP fetch-and-filter (#240).
+ *
+ * A mailbox whose server rejects the keyword SEARCH still has to be searchable,
+ * so the provider falls back to matching Subject/From itself — but only over
+ * the newest messages in the window. Walking an unbounded mailbox on a
+ * self-host box is a hang, not a slow search, and the caller is told the scan
+ * was bounded rather than left to assume the window was exhausted.
+ */
+export const MAX_IMAP_SCAN_MESSAGES = 200;
+
 /** MIME types we treat as invoice attachments. */
 export const INVOICE_MIME_TYPES = [
   "application/pdf",

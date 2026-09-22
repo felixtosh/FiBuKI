@@ -14,6 +14,8 @@ import { FileViewerOverlay } from "@/components/files/file-viewer-overlay";
 import { ConnectTransactionOverlay } from "@/components/files/connect-transaction-overlay";
 import { UploadProgress, FileUploadStatus } from "@/components/files/upload-progress";
 import { FilesDataTableHandle } from "@/components/files/files-data-table";
+import { SelectionChangeMeta } from "@/components/ui/data-table";
+import { useLatestCallback } from "@/hooks/use-latest-callback";
 import { useFiles } from "@/hooks/use-files";
 import {
   readBankOriginalAmount,
@@ -25,12 +27,18 @@ import { useTransactions } from "@/hooks/use-transactions";
 import { TaxFile, FileFilters } from "@/types/file";
 import { PartnerFormData } from "@/types/partner";
 import { parseFileFiltersFromUrl, buildFileSearchParams } from "@/lib/filters/file-url-params";
+import {
+  fileDeleteConfirmation,
+  bulkFileDeleteConfirmation,
+} from "@/lib/files/delete-confirmation";
+import { createDropReentryGuard } from "@/lib/files/drop-reentry-guard";
 import { getNeighbourRowId } from "@/lib/navigation/row-neighbour";
 import { useRowNavigationKeys } from "@/hooks/use-row-navigation-keys";
 import {
   toggleFileCheckbox,
   toggleSelectAll,
   getSelectAllCheckedState,
+  resolveSelectionChange,
 } from "@/lib/selection/bulk-file-selection";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SummaryToast, SummaryToastState } from "@/components/ui/summary-toast";
@@ -398,37 +406,52 @@ function FilesContent() {
     [ctx, calculateFileHash]
   );
 
+  // The page's one upload pipeline serves both drop targets — the full-page
+  // dropzone and the dialog's zone inside it — so a drop that reaches both
+  // arrives here twice. The guard is a ref because React state settles a
+  // render too late to refuse the second dispatch (#182).
+  const dropGuard = useRef(createDropReentryGuard()).current;
+
   // Handle multiple file drops
   const handleFileDrop = useCallback(
     async (acceptedFiles: File[]) => {
       if (acceptedFiles.length === 0) return;
 
-      // Create upload status entries
-      const newUploads: FileUploadStatus[] = acceptedFiles.map((file, index) => ({
-        id: `${Date.now()}-${index}`,
-        fileName: file.name,
-        progress: 0,
-        status: "uploading" as const,
-      }));
+      const claim = dropGuard.claim(acceptedFiles);
+      if (!claim) return;
 
-      setUploads(newUploads);
-      setShowUploadProgress(true);
+      try {
+        setIsUploadDialogOpen(false);
 
-      // Upload all files in parallel
-      const uploadPromises = acceptedFiles.map((file, index) =>
-        uploadSingleFile(file, newUploads[index].id)
-      );
+        // Create upload status entries
+        const newUploads: FileUploadStatus[] = acceptedFiles.map((file, index) => ({
+          id: `${Date.now()}-${index}`,
+          fileName: file.name,
+          progress: 0,
+          status: "uploading" as const,
+        }));
 
-      const results = await Promise.all(uploadPromises);
+        setUploads(newUploads);
+        setShowUploadProgress(true);
 
-      // Select first successfully uploaded file
-      const firstSuccessfulId = results.find((id) => id !== null);
-      if (firstSuccessfulId) {
-        const params = buildFileSearchParams(filters, searchValue, firstSuccessfulId);
-        router.push(`/files?${params.toString()}`, { scroll: false });
+        // Upload all files in parallel
+        const uploadPromises = acceptedFiles.map((file, index) =>
+          uploadSingleFile(file, newUploads[index].id)
+        );
+
+        const results = await Promise.all(uploadPromises);
+
+        // Select first successfully uploaded file
+        const firstSuccessfulId = results.find((id) => id !== null);
+        if (firstSuccessfulId) {
+          const params = buildFileSearchParams(filters, searchValue, firstSuccessfulId);
+          router.push(`/files?${params.toString()}`, { scroll: false });
+        }
+      } finally {
+        dropGuard.release(claim);
       }
     },
-    [uploadSingleFile, router, filters, searchValue]
+    [uploadSingleFile, router, filters, searchValue, dropGuard]
   );
 
   // Dismiss upload progress
@@ -606,7 +629,16 @@ function FilesContent() {
   // Checkbox column: independent of row-click selection, so it never opens or
   // navigates the detail panel — except unchecking the primary row's own
   // checkbox, which has no other representation than closing its panel.
-  const handleFileCheckboxChange = useCallback(
+  //
+  // The table's rows are virtualised and memoised, and the comparator ignores
+  // the callbacks a cell paints (see components/ui/data-table/virtual-row.tsx),
+  // so a row whose own selection state didn't change keeps the checkbox handler
+  // it last painted with. Toggling against that render's copy of
+  // additionalSelectedIds is what made the checkboxes act like a radio group:
+  // the second row ticked still saw an empty selection and replaced the first
+  // (#232). useLatestCallback keeps the identity the stale row holds but runs
+  // this render's closure, so the set read below is the live one.
+  const handleFileCheckboxChange = useLatestCallback(
     (fileId: string, checked: boolean) => {
       const result = toggleFileCheckbox({
         fileId,
@@ -618,8 +650,7 @@ function FilesContent() {
       if (result.closePrimary) {
         handleCloseDetail();
       }
-    },
-    [primarySelectedId, additionalSelectedIds, handleCloseDetail]
+    }
   );
 
   const handleToggleSelectAll = useCallback(() => {
@@ -701,13 +732,8 @@ function FilesContent() {
 
   const handleDelete = useCallback(async () => {
     if (!selectedFile) return;
-    const isGmailFile = selectedFile.sourceType?.startsWith("gmail");
-    const message = isGmailFile
-      ? `Delete "${selectedFile.fileName}"? It will be hidden but won't be re-imported from Gmail.`
-      : `Permanently delete "${selectedFile.fileName}"? This will also remove all connections.`;
-    if (!confirm(message)) return;
-    // Use soft delete for Gmail files to prevent re-import
-    await remove(selectedFile.id, isGmailFile);
+    if (!confirm(fileDeleteConfirmation(selectedFile.fileName))) return;
+    await remove(selectedFile.id);
     handleCloseDetail();
   }, [selectedFile, remove, handleCloseDetail]);
 
@@ -781,43 +807,25 @@ function FilesContent() {
     router.push(newUrl, { scroll: false });
   }, [router, searchParams]);
 
-  const handleUploadComplete = useCallback(
-    (fileId: string) => {
-      setIsUploadDialogOpen(false);
-      // Select the newly uploaded file
-      const params = buildFileSearchParams(filters, searchValue, fileId);
-      router.push(`/files?${params.toString()}`, { scroll: false });
-    },
-    [router, filters, searchValue]
-  );
-
-  // Multi-select: handle selection changes from table
-  // This receives: { primaryId, additionalIds } from the table
+  // Multi-select: handle selection changes from table. The table sends the
+  // full resulting set of selected IDs plus whether a plain (unmodified)
+  // click produced it; resolveSelectionChange decides what the primary (URL)
+  // and additional (bulk) selections should become from that - see its
+  // doc comment for why the resulting Set's size alone can't be trusted.
   const handleSelectionChange = useCallback(
-    (newSelectedIds: Set<string>) => {
-      // The table sends us the full set of selected IDs
-      // We need to figure out what changed
-
-      // If exactly one ID and it's different from current primary, it's a new primary click
-      if (newSelectedIds.size === 1) {
-        const [id] = newSelectedIds;
-        // Clear additional selections, update primary via URL
-        setAdditionalSelectedIds(new Set());
-        const params = buildFileSearchParams(filters, searchValue, id);
-        router.push(`/files?${params.toString()}`, { scroll: false });
-      } else if (newSelectedIds.size === 0) {
-        // Clear everything
-        setAdditionalSelectedIds(new Set());
-        const params = buildFileSearchParams(filters, searchValue, null);
+    (newSelectedIds: Set<string>, meta: SelectionChangeMeta) => {
+      const result = resolveSelectionChange({
+        newSelectedIds,
+        isPlainClick: meta.isPlainClick,
+        primarySelectedId,
+        clickedRowId: meta.clickedRowId,
+        isRangeClick: meta.isRangeClick,
+      });
+      setAdditionalSelectedIds(result.additionalSelectedIds);
+      if (result.primaryId !== primarySelectedId) {
+        const params = buildFileSearchParams(filters, searchValue, result.primaryId);
         const newUrl = params.toString() ? `/files?${params.toString()}` : "/files";
         router.push(newUrl, { scroll: false });
-      } else {
-        // Multiple selected - update additional selections (keep primary as-is)
-        const newAdditional = new Set(newSelectedIds);
-        if (primarySelectedId) {
-          newAdditional.delete(primarySelectedId); // Primary is in URL, not in additional
-        }
-        setAdditionalSelectedIds(newAdditional);
       }
     },
     [router, filters, searchValue, primarySelectedId]
@@ -832,7 +840,7 @@ function FilesContent() {
   const handleBulkDelete = useCallback(async () => {
     if (allSelectedIds.size === 0) return;
     const fileIds = Array.from(allSelectedIds);
-    if (!confirm(`Delete ${fileIds.length} files? This cannot be undone.`)) return;
+    if (!confirm(bulkFileDeleteConfirmation(fileIds.length))) return;
 
     setIsBulkDeleting(true);
     setBulkProgress({ completed: 0, total: fileIds.length });
@@ -840,10 +848,8 @@ function FilesContent() {
     let failureCount = 0;
     try {
       for (const fileId of fileIds) {
-        const file = files.find((f) => f.id === fileId);
-        const isGmailFile = file?.sourceType?.startsWith("gmail");
         try {
-          await remove(fileId, isGmailFile);
+          await remove(fileId);
           successCount++;
         } catch (error) {
           console.error(`Failed to delete file ${fileId}:`, error);
@@ -867,7 +873,7 @@ function FilesContent() {
       setIsBulkDeleting(false);
       setBulkProgress(null);
     }
-  }, [allSelectedIds, files, remove, router, filters, searchValue]);
+  }, [allSelectedIds, remove, router, filters, searchValue]);
 
   // Multi-select: bulk mark as not invoice
   const handleBulkMarkAsNotInvoice = useCallback(async () => {
@@ -1013,7 +1019,7 @@ function FilesContent() {
           <DialogHeader>
             <DialogTitle>Upload File</DialogTitle>
           </DialogHeader>
-          <FileUploadZone onUploadComplete={handleUploadComplete} />
+          <FileUploadZone onFilesAccepted={handleFileDrop} />
         </DialogContent>
       </Dialog>
 

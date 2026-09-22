@@ -166,6 +166,23 @@ export class InMemoryStore {
     this.getCollection(collection).delete(id);
   }
 
+  /**
+   * Resolve a dotted field path the way both the real backend and the selfhost
+   * shim's `deepGet` do. A mock that only looked at top-level keys would return
+   * zero rows for `where("recipient.partnerId", "==", x)` — a query that works
+   * in production — and so would silently pass a handler that never ran.
+   */
+  private static resolveFieldPath(
+    data: Record<string, unknown>,
+    path: string
+  ): unknown {
+    if (!path.includes(".")) return data[path];
+    return path.split(".").reduce<unknown>((acc, segment) => {
+      if (acc && typeof acc === "object") return (acc as Record<string, unknown>)[segment];
+      return undefined;
+    }, data);
+  }
+
   queryDocs(
     collection: string,
     filters?: Array<{ field: string; op: string; value: unknown }>
@@ -191,7 +208,8 @@ export class InMemoryStore {
         for (const filter of filters) {
           // __name__ is the document id, not a stored field — the only way to
           // filter a batch of ids, which is how the analytics exports fan out.
-          const fieldValue = filter.field === "__name__" ? id : data[filter.field];
+          const fieldValue =
+            filter.field === "__name__" ? id : InMemoryStore.resolveFieldPath(data, filter.field);
           switch (filter.op) {
             case "==":
               if (fieldValue !== filter.value) matches = false;

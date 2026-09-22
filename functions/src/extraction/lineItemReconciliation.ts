@@ -11,6 +11,27 @@
 
 import { ExtractedLineItem, ExtractedRateGroup } from "../types/extraction";
 
+/**
+ * Summary and header rows the model handed back as if they were billable,
+ * recognised by what they are CALLED (#252).
+ *
+ * This list was English-only, which on an Austrian Beleg means it matched
+ * nothing at all: Zwischensumme, Summe, Gesamt, MwSt. and Trinkgeld all
+ * survived as billable lines and doubled the sum. The German words are a
+ * cheap pre-filter for the degenerate cases the structural rule below
+ * cannot see — a zero-amount header, or a MwSt. row on a single-item
+ * receipt where the VAT equals no subtotal.
+ *
+ * Every pattern is anchored, so "Gesamtpaket Reinigung" is still a billable
+ * row and only a row that BEGINS with a summary word is dropped.
+ *
+ * "Begins with" stops at a hyphen (#318): `\b` alone treats the hyphen in
+ * "Steuer- und Wirtschaftsberatung" as a word boundary like any other, so
+ * the word list caught a Steuerberater's own fee line as a Steuer- row. A
+ * leading word matches only when it stands on its own — a `(?!-)` right
+ * after it excludes the case where a hyphen joins it to what follows —
+ * which is one rule for the whole list rather than a patch to two lines.
+ */
 function isLikelyNonBillableLine(description: string): boolean {
   const normalized = description.trim().toLowerCase();
   if (!normalized) {
@@ -18,21 +39,103 @@ function isLikelyNonBillableLine(description: string): boolean {
   }
 
   const patterns: RegExp[] = [
-    /^subtotal\b/,
-    /^total\b/,
-    /^total excluding tax\b/,
-    /^amount paid\b/,
-    /^payment history\b/,
-    /^vat\b/,
-    /^tax\b/,
+    /^subtotal(?!-)\b/,
+    /^total(?!-)\b/,
+    /^total excluding tax(?!-)\b/,
+    /^amount paid(?!-)\b/,
+    /^payment history(?!-)\b/,
+    /^vat(?!-)\b/,
+    /^tax(?!-)\b/,
     /^first\s+\d+/,
     /\band above\b/,
-    /^description\b/,
-    /^qty\b/,
-    /^unit price\b/,
+    /^description(?!-)\b/,
+    /^qty(?!-)\b/,
+    /^unit price(?!-)\b/,
+    // Summen- und Steuerzeilen auf einem österreichischen Beleg.
+    /^(zwischensumme|summe|gesamt|gesamtsumme|gesamtbetrag|gesamtpreis)(?!-)\b/,
+    /^(endsumme|endbetrag|rechnungsbetrag|zahlbetrag|zahlungsbetrag)(?!-)\b/,
+    /^zu\s+(zahlen|bezahlen)(?!-)\b/,
+    /^(netto|nettosumme|nettobetrag|brutto|bruttosumme|bruttobetrag)(?!-)\b/,
+    /^(mwst|ust|u-?st|umsatzsteuer|mehrwertsteuer|steuer)(?!-)\b/,
+    /^davon(?!-)\b/,
+    /^trinkgeld(?!-)\b/,
+    // Kopfzeilen der Positionstabelle, wie die englischen oben.
+    /^(bezeichnung|menge|einzelpreis|einzelbetrag)(?!-)\b/,
   ];
 
   return patterns.some((pattern) => pattern.test(normalized));
+}
+
+/**
+ * Summary rows recognised by ARITHMETIC rather than by wording (#252).
+ *
+ * A row whose amount is the document total is a total row; a row whose
+ * amount is the sum of the rows above it is a subtotal. Neither reading
+ * needs a word list, so neither rots when a document arrives in a language
+ * nobody enumerated.
+ *
+ * Three guards keep it from eating real rows:
+ *
+ *  1. a NEGATIVE row is never a summary — it is a printed discount or
+ *     credit line, and dropping it re-creates exactly the mismatch this
+ *     module exists to detect (#203);
+ *  2. a subtotal needs at least TWO rows above it, or a two-row receipt
+ *     whose second item happens to cost what the first one did would lose
+ *     its second item. The word list covers that degenerate case;
+ *  3. the drop has to PAY FOR ITSELF: the survivors must reconcile with
+ *     the document total, or nothing is dropped at all. A structural guess
+ *     that does not close the sum is just a guess — and a document whose
+ *     rows already add up is left alone before the pass even starts.
+ *
+ * Returns null when the rows are left alone.
+ */
+function dropSummaryRowsStructurally(
+  lineItems: ExtractedLineItem[],
+  extractedAmount: number
+): ExtractedLineItem[] | null {
+  if (lineItems.length < 2) {
+    return null;
+  }
+
+  const totalTolerance = amountTolerance(extractedAmount);
+
+  // A document that already adds up is never touched: whatever its rows are
+  // called, they are the itemisation the document prints.
+  const rawSum = lineItems.reduce((sum, item) => sum + item.amount, 0);
+  const rawVat = lineItems.reduce((sum, item) => sum + item.vatAmount, 0);
+  if (
+    Math.abs(rawSum - extractedAmount) <= totalTolerance ||
+    Math.abs(rawSum + rawVat - extractedAmount) <= totalTolerance
+  ) {
+    return null;
+  }
+
+  const kept: ExtractedLineItem[] = [];
+  let keptSum = 0;
+
+  for (const item of lineItems) {
+    const isTotalRow =
+      kept.length > 0 && Math.abs(item.amount - extractedAmount) <= totalTolerance;
+    const isSubtotalRow =
+      kept.length >= 2 && Math.abs(item.amount - keptSum) <= amountTolerance(item.amount);
+
+    if (item.amount > 0 && (isTotalRow || isSubtotalRow)) {
+      continue;
+    }
+    kept.push(item);
+    keptSum += item.amount;
+  }
+
+  if (kept.length === 0 || kept.length === lineItems.length) {
+    return null;
+  }
+
+  const keptVat = kept.reduce((sum, item) => sum + item.vatAmount, 0);
+  const closes =
+    Math.abs(keptSum - extractedAmount) <= totalTolerance ||
+    Math.abs(keptSum + keptVat - extractedAmount) <= totalTolerance;
+
+  return closes ? kept : null;
 }
 
 function inferLineItemAmountsAreNet(lineItems: ExtractedLineItem[]): boolean {
@@ -367,7 +470,7 @@ export function reconcileLineItemsWithDocumentTotal(
   const filtered = lineItems.filter((item) =>
     item.amount !== 0 && !isLikelyNonBillableLine(item.description)
   );
-  const candidateLineItems = filtered.length > 0 ? filtered : lineItems;
+  let candidateLineItems = filtered.length > 0 ? filtered : lineItems;
 
   if (typeof extractedAmount !== "number" || !Number.isFinite(extractedAmount) || extractedAmount <= 0) {
     return {
@@ -376,6 +479,17 @@ export function reconcileLineItemsWithDocumentTotal(
       unreconciledRates: [],
       rateGroups: validatedGroups,
     };
+  }
+
+  // #252: the structural pass, which is the primary rule — it needs the
+  // document total, so it runs once that total is known to be usable.
+  const structurallyFiltered = dropSummaryRowsStructurally(candidateLineItems, extractedAmount);
+  if (structurallyFiltered) {
+    console.log(
+      `[ExtractionCore] Dropped ${candidateLineItems.length - structurallyFiltered.length} ` +
+      "summary row(s) the document total identified; the remaining rows reconcile."
+    );
+    candidateLineItems = structurallyFiltered;
   }
 
   // Fork #137: the rows may be NET on a document whose total is gross. That

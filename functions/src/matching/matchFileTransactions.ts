@@ -32,12 +32,15 @@ import {
   TransactionMatchSource,
   ScoringOptions,
   buildScoringOptions,
-  filePaymentTotal,
+  isRemainderMatch,
   toFileMatchingData,
   toTransactionData,
   derivePartnerAliases,
   deriveScoringWeights,
 } from "./transactionScoring";
+import { deriveCoverage, isRemainderClosed, filePaymentTotal } from "./coverage";
+import { loadConnectedFiles, documentedAmountsOf } from "./documentedAmounts";
+import { isSameDayEvidence, hasUndocumentedRival } from "./remainderAutoConnect";
 import { readDismissedTransactionIds } from "./dismissedTransactions";
 import { isFileRejected } from "./rejectedFiles";
 import { ResolvedEffectiveCycle } from "./billingCycle";
@@ -493,7 +496,7 @@ export async function runTransactionMatching(
       const partnerDoc = await db.collection("partners").doc(fileData.partnerId).get();
       if (partnerDoc.exists) {
         const partnerData = partnerDoc.data()!;
-        partnerAliases = derivePartnerAliases(partnerData);
+        partnerAliases = await derivePartnerAliases(db, partnerData);
         console.log(`[TxMatch] Partner aliases: [${partnerAliases.map(a => `"${a}"`).join(", ")}]`);
 
         effectiveCycles = partnerData.billingCycle?.effective ?? [];
@@ -545,6 +548,18 @@ export async function runTransactionMatching(
       `${rejectedCount} rejected this file, ${dismissedCount} dismissed by this file)`
   );
 
+  // The Files already sitting on each candidate (#239). Only the candidates
+  // that hold Files cost a read; the rest are scored against their full amount
+  // exactly as before. The Files themselves, not just their total, because
+  // #242's same-day rule reads their extracted dates off the same read.
+  const connectedFiles = await loadConnectedFiles(eligibleTransactions.map((t) => t.id), fileId);
+  const documentedAmounts = documentedAmountsOf(connectedFiles);
+  if (documentedAmounts.size > 0) {
+    console.log(
+      `[TxMatch] ${documentedAmounts.size} candidate(s) already hold files — scoring those against their remainder`
+    );
+  }
+
   // Score each transaction — the billing-cycle band is selected per transaction, since which
   // recurrence a charge belongs to depends on that transaction's amount, not the file's.
   const fileMatchingData = toFileMatchingData(fileData);
@@ -555,7 +570,7 @@ export async function runTransactionMatching(
 
       return scoreTransaction(
         fileMatchingData,
-        toTransactionData(doc.id, txData),
+        toTransactionData(doc.id, txData, documentedAmounts.get(doc.id)),
         partnerAliases,
         scoringOptions
       );
@@ -655,15 +670,66 @@ export async function runTransactionMatching(
   // Filter out auto-matches for transactions that are already "covered"
   // This prevents over-matching (e.g., 6 monthly invoices all matching one transaction)
   const autoMatches: typeof potentialAutoMatches = [];
+  // The Remainder Matches among them, so the Connection each writes can say so
+  // (#242). A wrong same-day auto-connect has to be findable afterwards.
+  const sameDayRemainderMatches = new Set<string>();
+  const holdsFiles = (transactionId: string) => connectedFiles.has(transactionId);
+  // What the bank was charged for this File, the figure a Remainder is closed
+  // with (#172's Trinkgeld included, as the scorer counts it).
+  const candidatePayment = filePaymentTotal(
+    fileMatchingData.extractedAmount,
+    fileMatchingData.extractedTipAmount
+  );
   for (const match of potentialAutoMatches) {
-    const isCovered = await isTransactionCovered(
-      match.transactionId,
-      match.preview.amount
+    const coverage = deriveCoverage(
+      match.preview.amount,
+      documentedAmounts.get(match.transactionId) ?? 0
     );
-    if (isCovered) {
+    if (coverage.isCovered) {
       console.log(
-        `[TxMatch] Skipping auto-match for ${match.transactionId} (already covered by existing files)`
+        `[TxMatch] Skipping auto-match for ${match.transactionId} (already covered by existing files: ` +
+        `${(coverage.documentedAmount / 100).toFixed(2)} / ${(coverage.transactionAmount / 100).toFixed(2)}, ` +
+        `${(coverage.ratio * 100).toFixed(0)}%)`
       );
+    } else if (isRemainderMatch(match)) {
+      // #239 left every Remainder Match a suggestion: it says "this File
+      // explains what is left", which is a claim about a split the user has
+      // not confirmed. #242 opens the one case where it may connect itself —
+      // the documents are from the same day, the File closes what is open,
+      // and no Transaction holding nothing wants this File at least as much.
+      // See ADR-0008.
+      const connected = connectedFiles.get(match.transactionId) ?? [];
+      const sameDay = isSameDayEvidence(
+        fileData.extractedDate,
+        connected.map((f) => f.extractedDate)
+      );
+      // `isRemainderMatch` only says the pair was JUDGED against the
+      // Remainder — one found wanting is a Remainder Match too, and a
+      // Confidence built out of date, partner and an invoice number alone
+      // would otherwise connect a File that explains none of what is open.
+      const closes =
+        candidatePayment != null &&
+        isRemainderClosed(coverage.remainder - Math.abs(candidatePayment));
+      const rival =
+        sameDay && closes && hasUndocumentedRival(match, allScores, holdsFiles);
+
+      if (sameDay && closes && !rival) {
+        sameDayRemainderMatches.add(match.transactionId);
+        autoMatches.push(match);
+        console.log(
+          `[TxMatch] Remainder auto-connect for ${match.transactionId} at ${match.confidence}% ` +
+          `(closes ${(coverage.remainder / 100).toFixed(2)}, same day as the files already on it)`
+        );
+      } else {
+        let refusal: string;
+        if (!sameDay) refusal = "not same-day evidence";
+        else if (!closes) refusal = "does not close the remainder";
+        else refusal = "an undocumented transaction scores at least as well";
+        console.log(
+          `[TxMatch] Suggestion only for ${match.transactionId} at ${match.confidence}% ` +
+          `(scored against its remainder, not its full amount; ${refusal})`
+        );
+      }
     } else {
       autoMatches.push(match);
     }
@@ -693,6 +759,11 @@ export async function runTransactionMatching(
       matchSources: match.matchSources,
       matchConfidence: match.confidence,
       scoreBreakdown: match.breakdown,
+      // #242: only a same-day Remainder auto-connect carries this. A
+      // full-amount auto-connect writes the record it always wrote.
+      ...(sameDayRemainderMatches.has(match.transactionId)
+        ? { autoConnectReason: "remainder_same_day" as const }
+        : {}),
       createdAt: Timestamp.now(),
     });
 
@@ -1170,74 +1241,6 @@ async function hasManualTransactionConnections(fileId: string): Promise<boolean>
     .get();
 
   return !manualConnections.empty;
-}
-
-// === Helper: Check if transaction is already "covered" by existing files ===
-
-/**
- * Checks if a transaction already has enough files matched to cover its amount.
- * This prevents over-matching (e.g., 6 files matched to a single transaction
- * when only 1 file should match).
- *
- * @param transactionId - Transaction to check
- * @param transactionAmount - Transaction amount in cents (absolute value)
- * @param tolerance - Percentage tolerance (default 10% - transaction is "covered" if
- *                   sum of file amounts is within 10% of transaction amount)
- * @returns true if transaction is covered and shouldn't receive more files
- */
-async function isTransactionCovered(
-  transactionId: string,
-  transactionAmount: number,
-  tolerance: number = 0.1
-): Promise<boolean> {
-  // Get existing file connections for this transaction
-  const connectionsSnapshot = await db
-    .collection("fileConnections")
-    .where("transactionId", "==", transactionId)
-    .get();
-
-  if (connectionsSnapshot.empty) {
-    return false; // No files connected, not covered
-  }
-
-  // Get the connected files to sum their amounts
-  const fileIds = connectionsSnapshot.docs.map((doc) => doc.data().fileId);
-
-  // Firestore 'in' queries have a limit of 30, batch if needed
-  let totalFileAmount = 0;
-  for (let i = 0; i < fileIds.length; i += 30) {
-    const batch = fileIds.slice(i, i + 30);
-    const filesSnapshot = await db
-      .collection("files")
-      .where("__name__", "in", batch)
-      .get();
-
-    for (const fileDoc of filesSnapshot.docs) {
-      const fileData = fileDoc.data();
-      // Against the bank line, so a printed Trinkgeld counts (#172).
-      const payment = filePaymentTotal(fileData.extractedAmount, fileData.extractedTipAmount);
-      if (payment != null) {
-        totalFileAmount += Math.abs(payment);
-      }
-    }
-  }
-
-  const absTxAmount = Math.abs(transactionAmount);
-
-  // Transaction is "covered" if file total is within tolerance of transaction amount
-  // or exceeds it
-  const coverageRatio = totalFileAmount / absTxAmount;
-  const isCovered = coverageRatio >= (1 - tolerance);
-
-  if (isCovered) {
-    console.log(
-      `[TxMatch] Transaction ${transactionId} is already covered: ` +
-      `${(totalFileAmount / 100).toFixed(2)} / ${(absTxAmount / 100).toFixed(2)} ` +
-      `(${(coverageRatio * 100).toFixed(0)}%)`
-    );
-  }
-
-  return isCovered;
 }
 
 // === Firestore Trigger ===

@@ -30,6 +30,12 @@ interface AttachmentInput {
 }
 
 interface TransactionInput {
+  /**
+   * The Transaction being scored against. The server derives Coverage from it
+   * (#239); nothing about the Remainder is computed on this side. Absent for a
+   * Transaction with no id yet, which scores against the full amount.
+   */
+  id?: string | null;
   amount?: number | null;
   date?: string | null; // ISO string
   name?: string | null;
@@ -60,6 +66,8 @@ interface ScoreAttachmentResponse {
     score: number;
     label: "Strong" | "Likely" | null;
     reasons: string[];
+    /** Scored against the transaction's Remainder — suggestion only (#239). */
+    scoredAgainstRemainder?: boolean;
   }>;
 }
 
@@ -122,6 +130,7 @@ export async function POST(request: NextRequest) {
           classification: att.classification,
         })),
         transaction: {
+          id: transaction.id,
           amount: transaction.amount,
           date: transaction.date,
           name: transaction.name,

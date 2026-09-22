@@ -53,6 +53,27 @@ GitHub shares one number space across issues and PRs, so a bare `#42` may be eit
 
 Create a GitHub issue on `felixtosh/FiBuKI`.
 
+## A ticket may already exist — check before you create one
+
+`/to-tickets` and `/triage` say "publish one issue per ticket". Read that as *per ticket that
+does not already exist*. A grilling that resolves a decision spanning several known issues will
+routinely produce briefs for tickets already on the tracker, and filing them again splits the
+history: the original keeps the discussion and the labels, the duplicate keeps the decision, and
+neither is complete.
+
+Before creating, search the tracker for the work the brief describes — including the issues the
+grilling ticket itself cross-referenced, which are the likeliest matches. Where one exists:
+
+- **Record the decision as a comment on the existing issue**, not as a new issue. Say what was
+  decided, what was rejected and why, and add any acceptance criteria the decision implies.
+- **Read the existing body first** and say plainly whether the decision refines it, narrows it, or
+  contradicts it. A brief that silently contradicts the body it is commenting on is worse than a
+  duplicate, because nothing flags the disagreement.
+- Apply the triage label the ticket now earns.
+
+Only file a new issue for a brief with no home. The map's standing rule — duplicate pairs are
+folded, one survives with a pointer — is the remedy; this is the prevention.
+
 ## When a skill says "fetch the relevant ticket"
 
 Run `gh issue view <number> -R felixtosh/FiBuKI --comments`.

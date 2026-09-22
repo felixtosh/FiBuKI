@@ -38,7 +38,7 @@ chain suites pin stays byte-for-byte. Only retrieval plumbing is inventoried.
 
 | # | Code | Firestore-forced shape | Postgres-native shape | Verdict |
 |---|------|------------------------|------------------------|---------|
-| 1 | `matchFileTransactions.ts` — `isTransactionCovered()` | connections by transactionId, then `__name__ in` 30-chunks over files, sum in JS | one `SUM` over `file_connections ⋈ files` | **Phase 2** (enabler: case 8) |
+| 1 | `documentedAmounts.ts` — `loadDocumentedAmounts()` | transaction `fileIds`, then `__name__ in` 30-chunks over files, sum in JS | one `SUM` over `file_connections ⋈ files` | **Phase 2** (enabler: case 8) |
 | 2 | `matchFileTransactions.ts` — `transactionSuggestions` pre-computation | — | — | **Keep** (product behavior, not retrieval compensation) |
 | 3 | `findTransactionMatches.ts` — searchQuery path | fetch 1000 recent, substring-filter in JS | `ILIKE`/FTS in the WHERE | **Phase 2**, needs per-case OK (changes candidate set) |
 | 4 | `matchFilesForPartner.ts` — "unfiled"/"unconnected" filters | fetch by partner/date window, JS-filter on denormalized arrays | anti-join on `file_connections` | **Phase 2** + data reconciliation (see case 7) |
@@ -50,11 +50,14 @@ chain suites pin stays byte-for-byte. Only retrieval plumbing is inventoried.
 
 ## Case details
 
-### 1. `isTransactionCovered()` — `matching/matchFileTransactions.ts:1161`
+### 1. `loadDocumentedAmounts()` — `matching/documentedAmounts.ts`
 
-Per auto-match candidate: query `fileConnections` by `transactionId`, collect
-fileIds, then fetch the files in `__name__ in` 30-chunks to sum
-`extractedAmount` in JS. Also `hasManualTransactionConnections()`
+Was `isTransactionCovered()` in `matchFileTransactions.ts`, extracted in #239.
+The Firestore-forced shape survived the move, and the source of truth changed
+with it: it now reads the transaction's own `fileIds` array rather than querying
+the `fileConnections` collection, then fetches the files in `__name__ in`
+30-chunks to sum the payment total in JS. Batched across candidates rather than
+run per candidate, but still a JS-side sum. Also `hasManualTransactionConnections()`
 (`:1137`) — that one is already a fine indexed equality query and needs
 nothing.
 

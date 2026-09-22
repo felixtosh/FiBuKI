@@ -42,6 +42,13 @@ Multi-context repo (presence of `CONTEXT-MAP.md` at the root):
 
 When your output names a domain concept (in an issue title, a refactor proposal, a hypothesis, a test name), use the term as defined in `CONTEXT.md`. Don't drift to synonyms the glossary explicitly avoids.
 
+Every entry carries both languages (see "How to read an entry" in `CONTEXT.md` and
+[ADR-0007](../adr/0007-english-names-german-meaning.md)). German output — UI copy, a prompt
+that reads a document, a mail to a supplier — uses the `_Deutsch_` word and respects
+`_Avoid (de)_`. English output uses the headword; a term marked `_English_: none` is quoted
+verbatim once, never translated and never folded into the sentence. A concept with no
+entry gets its pair, and its class, settled in `CONTEXT.md` before code is written.
+
 If the concept you need isn't in the glossary yet, that's a signal — either you're inventing language the project doesn't use (reconsider) or there's a real gap (note it for `/domain-modeling`).
 
 ## Flag ADR conflicts

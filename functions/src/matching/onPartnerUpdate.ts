@@ -19,6 +19,7 @@ import {
   PartnerData,
 } from "../utils/filePartnerMatcher";
 import { AutomationMeta } from "../automation/types";
+import { MERGE_WRITE_ID_FIELD, isMergeWrite } from "../partners/mergeWriteMarker";
 
 // =============================================================================
 // AUTOMATION METADATA
@@ -310,6 +311,21 @@ export const onPartnerUpdate = onDocumentUpdated(
     if (!before || !after) return;
 
     const userId = after.userId;
+
+    // A Merge deliberately does not re-run the Match (#262, ADR-0005), and it
+    // writes BOTH sides: the survivor gains the losers' identifying data, each
+    // loser becomes a Merged Partner. Unguarded, the loser write would fire the
+    // post-deletion re-match (a merged-away partner is not a deleted one — its
+    // files were repointed to the survivor, not orphaned) and the survivor
+    // write would fire the 200-file identity re-match (#306). One marker, put
+    // on every Partner document the Merge writes, answers for both.
+    if (isMergeWrite(before, after)) {
+      console.log(
+        `[PartnerUpdate] Partner "${after.name}" (${partnerId}) was written by a ` +
+        `merge (${after[MERGE_WRITE_ID_FIELD]}), skipping re-matching`
+      );
+      return;
+    }
 
     // Check if partner was just deleted (soft-delete: isActive true -> false)
     const wasJustDeleted = before.isActive === true && after.isActive === false;

@@ -4,6 +4,7 @@ import { FileText, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
 import { useFileObjectUrl } from "@/hooks/use-file-object-url";
+import { classifyPreviewFile, previewFileExtensionLabel } from "@/lib/files/file-kind";
 
 interface FilePreviewProps {
   downloadUrl: string;
@@ -29,14 +30,10 @@ export function FilePreview({
   fullSize = false,
   active = false,
 }: FilePreviewProps) {
-  const lowerName = fileName.toLowerCase();
-  const isPdf =
-    fileType === "application/pdf" ||
-    (fileType === "application/octet-stream" && lowerName.endsWith(".pdf"));
-  const isImage =
-    fileType.startsWith("image/") ||
-    (fileType === "application/octet-stream" &&
-      /\.(png|jpe?g|gif|webp)$/.test(lowerName));
+  // Some file records were written without a fileType (#248) — normalised to
+  // the sentinel this component already treats as "trust the file extension
+  // instead". See lib/files/file-kind.js.
+  const { fileType: safeFileType, isPdf, isImage } = classifyPreviewFile(fileType, fileName);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
@@ -95,36 +92,12 @@ export function FilePreview({
           <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground">
             <FileText className="h-12 w-12 mb-2" />
             <p className="text-sm">{fileName}</p>
-            <p className="text-xs text-muted-foreground">{fileType}</p>
+            <p className="text-xs text-muted-foreground">{safeFileType}</p>
           </div>
         )}
       </div>
     );
   }
-
-  // Get file extension for badge
-  const getFileExtension = () => {
-    if (isPdf) return "PDF";
-    if (isImage) {
-      if (fileType.startsWith("image/")) {
-        const ext = fileType.split("/")[1]?.toUpperCase();
-        return ext === "JPEG" ? "JPG" : ext;
-      }
-      if (/\.(png|jpe?g|gif|webp)$/.test(lowerName)) {
-        const ext = lowerName.split(".").pop()?.toUpperCase();
-        return ext === "JPEG" ? "JPG" : ext || "IMG";
-      }
-      return "IMG";
-    }
-    if (fileType === "application/octet-stream" && lowerName.endsWith(".pdf")) {
-      return "PDF";
-    }
-    if (fileType.startsWith("image/")) {
-      const ext = fileType.split("/")[1]?.toUpperCase();
-      return ext === "JPEG" ? "JPG" : ext;
-    }
-    return fileType.split("/")[1]?.toUpperCase() || "FILE";
-  };
 
   // Thumbnail mode (original behavior)
   return (
@@ -171,7 +144,7 @@ export function FilePreview({
       )}
       {/* File type badge */}
       <div className="absolute bottom-1 right-1 px-1.5 py-0.5 text-[10px] font-medium bg-background/90 backdrop-blur-sm rounded border border-border/50 text-muted-foreground">
-        {getFileExtension()}
+        {previewFileExtensionLabel(fileType, fileName)}
       </div>
     </div>
   );

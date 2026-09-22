@@ -14,6 +14,8 @@ import {
   ImapErrorCode,
   FATAL_IMAP_ERROR_CODES,
 } from "../mail";
+import { imapConfigFromIntegration } from "../mail/imap/config";
+import { createFileRecord } from "../files/createFileRecord";
 
 // Define secrets for Google OAuth - set via Firebase CLI:
 // firebase functions:secrets:set GOOGLE_CLIENT_ID
@@ -249,27 +251,12 @@ export async function resolveMailProvider(
     // IMAP has one long-lived app-password (no refresh). Decrypt and hand the
     // connection config to the provider. Gmail's expiry/refresh dance below is
     // skipped entirely — the token doc has no expiresAt for IMAP.
-    const t = tokenData as { secret?: string; secretIv?: string };
-    if (!t.secret || !t.secretIv) {
-      throw new Error("IMAP integration is missing its stored app-password");
-    }
-    const host = integrationData?.imapHost as string | undefined;
-    const user = integrationData?.email as string | undefined;
-    if (!host || !user) {
-      throw new Error("IMAP integration is missing host or username");
-    }
-    const password = decrypt(t.secret, t.secretIv, options.encryptionKey);
     return makeProvider("imap", {
-      imap: {
-        host,
-        port: (integrationData?.imapPort as number) ?? 993,
-        secure: integrationData?.imapSecure !== false,
-        allowSelfSigned: Boolean(integrationData?.imapAllowSelfSigned),
-        mailbox: (integrationData?.imapMailbox as string) || "INBOX",
-        keywordPrefilter: integrationData?.imapKeywordPrefilter !== false,
-        user,
-        password,
-      },
+      imap: imapConfigFromIntegration(
+        integrationData,
+        tokenData,
+        options.encryptionKey
+      ),
     });
   }
 
@@ -512,9 +499,11 @@ export async function processQueueItem(
             // Generate download URL with token (works for both emulator and production)
             const downloadUrl = buildDownloadUrl(bucket.name, storagePath, downloadToken);
 
-            // Create file document
+            // Create file document, through the shared write point (#182):
+            // the hash check above races against a concurrent sync, and only
+            // the write itself can settle that.
             const now = Timestamp.now();
-            await db.collection("files").add({
+            const { duplicate } = await createFileRecord(db, {
               userId: queueItem.userId,
               fileName: attachment.filename,
               fileType: attachment.mimeType,
@@ -546,6 +535,11 @@ export async function processQueueItem(
               createdAt: now,
               updatedAt: now,
             });
+
+            if (duplicate) {
+              attachmentsSkipped++;
+              continue;
+            }
 
             filesCreated++;
             processedAttachments++;

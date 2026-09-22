@@ -278,7 +278,7 @@ Stated plainly so nobody mistakes the rebuild for progress on the business:
 
 **The stack was never the bottleneck.** No customer will ever notice it. The
 competition (BMD, sevDesk, lexoffice, FreeFinance) doesn't lose deals over their
-database — they compete on tax-compliance depth and Steuerberater trust.
+database — they compete on tax-compliance depth and Tax Advisor (Steuerberater) trust.
 
 The rebuild is justified by three things and no others:
 

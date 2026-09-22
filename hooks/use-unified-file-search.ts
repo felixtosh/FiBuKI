@@ -9,8 +9,10 @@ import { UserPartner } from "@/types/partner";
 import { useFiles } from "./use-files";
 import { useEmailIntegrations } from "./use-email-integrations";
 import { fetchWithAuth } from "@/lib/api/fetch-with-auth";
+import { termsFromQuery } from "@/functions/src/mail/search-terms";
 import { useAuth } from "@/components/auth";
 import { toDateSafe } from "@/lib/utils";
+import { classifyFileStrict } from "@/lib/files/file-kind";
 
 /**
  * Transaction info for smart search/ranking
@@ -332,6 +334,12 @@ export function useUnifiedFileSearch(
           body: JSON.stringify({
             attachments: itemsToScore.map((item) => item.apiInput),
             transaction: {
+              // The Transaction being scored against. The server derives
+              // Coverage from it (#239); nothing about the Remainder is
+              // computed on this side. Empty for the placeholder the overlay
+              // passes before a Transaction is selected, which scores against
+              // the full amount.
+              id: transactionInfo.id || null,
               amount: transactionInfo.amount,
               date: transactionInfo.date?.toISOString() ?? null,
               name: transactionInfo.partner ?? null,
@@ -419,12 +427,13 @@ export function useUnifiedFileSearch(
           });
         }
 
-        // Only include PDFs and images
-        filteredFiles = filteredFiles.filter(
-          (f) =>
-            f.fileType === "application/pdf" ||
-            f.fileType.startsWith("image/")
-        );
+        // Only include PDFs and images. Some records were written without a
+        // fileType (#248) — normalised so this doesn't crash on `.startsWith`.
+        // See lib/files/file-kind.js.
+        filteredFiles = filteredFiles.filter((f) => {
+          const { isPdf, isImage } = classifyFileStrict(f.fileType);
+          return isPdf || isImage;
+        });
 
         // Filter by search query and track matched fields
         let localFilesWithMatches: Array<{ file: TaxFile; matchedFields: string[] }>;
@@ -456,7 +465,11 @@ export function useUnifiedFileSearch(
                   method: "POST",
                   body: JSON.stringify({
                     integrationId: integration.id,
-                    query: query || undefined,
+                    // The typed term as terms, not as a query string: this
+                    // request names what to look for, not how a provider spells
+                    // it (#240). Word by word, so a two-word search stays two
+                    // words that must both appear rather than an exact phrase.
+                    ...termsFromQuery(query),
                     dateFrom: gmailDateFrom?.toISOString(),
                     dateTo: gmailDateTo?.toISOString(),
                     hasAttachments: true,

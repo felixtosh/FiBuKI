@@ -11,7 +11,8 @@
  *     comes back and JS drops it). Pushdown is a performance layer; the JS
  *     pipeline (pinned by the parity suite) stays the semantics referee.
  *   - LIMIT is only pushed when every filter compiled EXACTLY, every
- *     orderBy field is a generated column, and any cursor compiled — a
+ *     orderBy field is a generated column (or the __name__ sentinel, which
+ *     is the id column), and any cursor compiled — a
  *     truncated superset would otherwise lose rows the JS pipeline wanted.
  *
  * Comparison fidelity notes:
@@ -72,6 +73,15 @@ function toId(v: unknown): string {
   return String(v).split("/").pop() as string;
 }
 
+/**
+ * The document-id sentinel is not a field in any flat spec — it lives in the
+ * table's `id` column. Filtering, ORDERing and cursoring on it all resolve
+ * there, which is what keeps `.orderBy("__name__")` (the idiomatic paged
+ * sweep) on the pushdown path instead of reading the whole collection per
+ * page.
+ */
+const DOC_ID = "__name__";
+
 export function compileFlatQuery(
   spec: FlatSpec,
   tenantId: string,
@@ -86,15 +96,16 @@ export function compileFlatQuery(
     params.push(v);
     return `$${params.length}`;
   };
-  const colOf = (field: string): string => `"${spec.fields[field].col}"`;
+  const kindOf = (field: string): FlatKind => (field === DOC_ID ? "text" : spec.fields[field].kind);
+  const colOf = (field: string): string => (field === DOC_ID ? "id" : `"${spec.fields[field].col}"`);
   const cmpColOf = (field: string): string =>
-    spec.fields[field].kind === "text" ? `${colOf(field)} COLLATE "C"` : colOf(field);
+    kindOf(field) === "text" ? `${colOf(field)} COLLATE "C"` : colOf(field);
 
   let exact = true; // every filter compiled with exactly-JS semantics
   const conds: string[] = [`tenant_id = ${p(tenantId)}`];
 
   for (const f of filters) {
-    if (f.field === "__name__") {
+    if (f.field === DOC_ID) {
       if (f.op === "==") {
         conds.push(`id = ${p(toId(f.value))}`);
       } else if (f.op === "in" && Array.isArray(f.value) && f.value.length > 0) {
@@ -161,14 +172,20 @@ export function compileFlatQuery(
     }
   }
 
-  const allOrdersMapped = orders.every((o) => spec.fields[o.field] !== undefined);
+  const allOrdersMapped = orders.every((o) => o.field === DOC_ID || spec.fields[o.field] !== undefined);
   let orderSql = "";
   if (orders.length > 0 && allOrdersMapped) {
-    const parts = orders.map(
-      (o) => `${cmpColOf(o.field)} ${o.dir === "desc" ? "DESC NULLS LAST" : "ASC NULLS FIRST"}`,
+    const parts = orders.map((o) =>
+      o.field === DOC_ID
+        ? // id is NOT NULL, so no NULLS clause — and it is already total.
+          `${cmpColOf(o.field)} ${o.dir === "desc" ? "DESC" : "ASC"}`
+        : `${cmpColOf(o.field)} ${o.dir === "desc" ? "DESC NULLS LAST" : "ASC NULLS FIRST"}`,
     );
-    const lastDir = orders[orders.length - 1].dir;
-    parts.push(`id COLLATE "C" ${lastDir === "desc" ? "DESC" : "ASC"}`);
+    // Implicit __name__ tiebreak, unless the ordering already names it.
+    if (!orders.some((o) => o.field === DOC_ID)) {
+      const lastDir = orders[orders.length - 1].dir;
+      parts.push(`id COLLATE "C" ${lastDir === "desc" ? "DESC" : "ASC"}`);
+    }
     orderSql = ` ORDER BY ${parts.join(", ")}`;
   } else if (orders.length === 0) {
     // A query with NO orderBy still has a defined order in Firestore: ascending
@@ -194,7 +211,13 @@ export function compileFlatQuery(
     const resolved: unknown[] = [];
     let ok = true;
     for (let i = 0; i < n; i++) {
-      const pv = paramFor(spec.fields[orders[i].field].kind, cursor.values[i]);
+      const cv = cursor.values[i];
+      // Only a string cursor value can be path-shaped; anything else fails
+      // paramFor below and drops the whole cursor to the JS pipeline.
+      const pv = paramFor(
+        kindOf(orders[i].field),
+        orders[i].field === DOC_ID && typeof cv === "string" ? toId(cv) : cv,
+      );
       if (!pv.ok) {
         ok = false;
         break;

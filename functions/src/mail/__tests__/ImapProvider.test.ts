@@ -19,6 +19,12 @@ const { state } = vi.hoisted(() => {
     ctorOpts: null as Record<string, unknown> | null,
     searchQuery: null as unknown,
     searchResult: [] as number[] | false,
+    /** Make the next search() throw, as a server rejecting a BODY search does. */
+    searchThrows: false,
+    /** Sequence handed to fetch() by the bounded scan. */
+    fetchRange: null as unknown,
+    /** Envelopes the bounded scan walks. */
+    fetchList: [] as Array<Record<string, unknown>>,
     fetchResult: null as unknown,
     downloadPart: null as string | null,
     downloadBuffer: Buffer.from("PDFDATA"),
@@ -41,7 +47,15 @@ vi.mock("imapflow", async () => {
     }
     async search(query: unknown) {
       state.searchQuery = query;
+      if (state.searchThrows) {
+        state.searchThrows = false;
+        throw new Error("BAD SEARCH");
+      }
       return state.searchResult;
+    }
+    async *fetch(range: unknown) {
+      state.fetchRange = range;
+      for (const msg of state.fetchList) yield msg;
     }
     async fetchOne() {
       return state.fetchResult;
@@ -60,6 +74,7 @@ vi.mock("imapflow", async () => {
 
 import { ImapProvider, ImapConfig } from "../imap/ImapProvider";
 import { makeProvider } from "../index";
+import { MAX_IMAP_SCAN_MESSAGES } from "../constants";
 
 function cfg(over: Partial<ImapConfig> = {}): ImapConfig {
   return {
@@ -79,6 +94,9 @@ beforeEach(() => {
   state.ctorOpts = null;
   state.searchQuery = null;
   state.searchResult = [];
+  state.searchThrows = false;
+  state.fetchRange = null;
+  state.fetchList = [];
   state.fetchResult = null;
   state.downloadPart = null;
   state.mailboxOpened = null;
@@ -142,6 +160,123 @@ describe("ImapProvider.search", () => {
     expect(second.messages.length).toBe(10);
     expect(second.messages[0]).toEqual({ id: "10" });
     expect(second.nextPageToken).toBeUndefined();
+  });
+
+  // ---- the shared search shape (#240) ---------------------------------------
+  //
+  // The same neutral terms GmailProvider.test.ts runs against a Gmail mailbox.
+  // IMAP executes the keywords and the sender server-side and says so about the
+  // two it cannot: filenames (no SEARCH key) and the attachment flag
+  // (BODYSTRUCTURE is only visible after a fetch).
+  it("executes a provider-neutral search and reports what it cannot execute", async () => {
+    state.searchResult = [12, 31];
+    const provider = new ImapProvider(cfg());
+
+    const page = await provider.search({
+      keywords: ["netflix", "rechnung"],
+      from: "netflix.com",
+      filenames: ["pdf"],
+      dateFrom: new Date("2026-07-01T00:00:00Z"),
+      dateTo: new Date("2026-07-31T00:00:00Z"),
+      limit: 20,
+    });
+
+    const q = state.searchQuery as Record<string, unknown>;
+    expect(q.since).toBe("2026-07-01");
+    expect(q.before).toBe("2026-08-01");
+    expect(q.from).toBe("netflix.com");
+    // Both words must hit. IMAP has no `and` for two OR-clauses, so the
+    // conjunction is De Morgan's: NOT (NOT netflix OR NOT rechnung).
+    expect(q.not).toEqual({
+      or: [
+        { not: { or: [{ subject: "netflix" }, { body: "netflix" }] } },
+        { not: { or: [{ subject: "rechnung" }, { body: "rechnung" }] } },
+      ],
+    });
+    expect(q.or).toBeUndefined();
+    expect(page.messages).toEqual([{ id: "31" }, { id: "12" }]);
+
+    const reported = (page.limitations ?? []).map((l) => `${l.constraint}:${l.handling}`);
+    expect(reported).toContain("filenames:unsupported");
+    expect(reported).toContain("hasAttachment:scanned");
+    expect(reported).not.toContain("keywords:scanned");
+  });
+
+  it("sends one named keyword as a plain subject-or-body clause", async () => {
+    state.searchResult = [1];
+    await new ImapProvider(cfg()).search({
+      keywords: ["rechnung"],
+      dateFrom: new Date(),
+      dateTo: new Date(),
+    });
+    const q = state.searchQuery as Record<string, unknown>;
+    expect(q.or).toEqual([{ subject: "rechnung" }, { body: "rechnung" }]);
+    expect(q.not).toBeUndefined();
+  });
+
+  it("falls back to a bounded local scan when the server rejects the keywords", async () => {
+    // 260 messages in the window; the keyword search throws, so the scan walks
+    // the newest MAX_IMAP_SCAN_MESSAGES of them and matches Subject/From itself.
+    state.searchThrows = true;
+    state.searchResult = Array.from({ length: 260 }, (_, i) => i + 1);
+    state.fetchList = [
+      {
+        uid: 260,
+        envelope: { subject: "Ihre Rechnung", from: [{ address: "billing@netflix.com" }] },
+      },
+      // Only one of the two keywords — a named search means both.
+      { uid: 259, envelope: { subject: "Rechnung", from: [{ address: "billing@acme.example" }] } },
+    ];
+
+    const page = await new ImapProvider(cfg()).search({
+      keywords: ["netflix", "rechnung"],
+      dateFrom: new Date("2026-07-01T00:00:00Z"),
+      dateTo: new Date("2026-07-31T00:00:00Z"),
+    });
+
+    // The second search is the window alone — no keyword keys left to reject.
+    const q = state.searchQuery as Record<string, unknown>;
+    expect(q.not).toBeUndefined();
+    expect(q.or).toBeUndefined();
+
+    expect((state.fetchRange as number[]).length).toBe(MAX_IMAP_SCAN_MESSAGES);
+    expect((state.fetchRange as number[])[0]).toBe(260);
+    expect(page.messages).toEqual([{ id: "260" }]);
+
+    const reported = (page.limitations ?? []).map((l) => `${l.constraint}:${l.handling}`);
+    // Both halves of the bound: the keywords were matched locally, and the
+    // window held more than the scan reached.
+    expect(reported).toContain("keywords:scanned");
+    expect(reported).toContain("dateWindow:scanned");
+  });
+
+  it("reports every key the scan re-applied, not just the first", async () => {
+    // A search naming keywords AND a sender has both re-applied locally when
+    // the server rejects the query. Reporting only one left the other looking
+    // server-side (#240 review).
+    state.searchThrows = true;
+    state.searchResult = [12];
+    state.fetchList = [
+      {
+        uid: 12,
+        envelope: { subject: "Rechnung", from: [{ address: "billing@netflix.com" }] },
+      },
+    ];
+
+    const page = await new ImapProvider(cfg()).search({
+      keywords: ["rechnung"],
+      from: "netflix.com",
+      dateFrom: new Date("2026-07-01T00:00:00Z"),
+      dateTo: new Date("2026-07-31T00:00:00Z"),
+    });
+
+    const reported = (page.limitations ?? []).map((l) => `${l.constraint}:${l.handling}`);
+    expect(reported).toContain("keywords:scanned");
+    expect(reported).toContain("from:scanned");
+    // And the report says which fields the local pass could actually read, so
+    // the lost body match is not left implied by the scan bound alone.
+    const scanned = (page.limitations ?? []).find((l) => l.constraint === "keywords");
+    expect(scanned?.detail).toMatch(/Subject and From only/);
   });
 
   it("returns an empty page when the server matches nothing", async () => {

@@ -39,7 +39,7 @@ function parseRoles(file: string): Record<string, string> {
   const src = readFileSync(file, "utf8");
   const out: Record<string, string> = {};
   for (const m of src.matchAll(
-    /\b(geminiLite|geminiFlash|chatAgent|claudeHaiku):\s*"([^"]+)"/g,
+    /\b(geminiLite|geminiFlash|chatAgent):\s*"([^"]+)"/g,
   )) {
     out[m[1]] = m[2];
   }
@@ -76,9 +76,15 @@ describe("model registry: the two hand-duplicated copies agree", () => {
   });
 
   it("keeps retired ids priced, so historical aiUsage still costs correctly", () => {
-    // These are no longer selectable (Google 404s them for new API consumers) but
-    // existing aiUsage rows reference them forever.
-    for (const retired of ["gemini-2.5-flash", "gemini-2.5-flash-lite"]) {
+    // These are no longer selectable — Google 404s the Gemini ones for new API
+    // consumers, and claude-3-haiku-20240307 lost its role when #170 retired the
+    // vision-claude extraction path — but existing aiUsage rows reference them
+    // forever, and an unpriced row bills at the Sonnet fallback.
+    for (const retired of [
+      "gemini-2.5-flash",
+      "gemini-2.5-flash-lite",
+      "claude-3-haiku-20240307",
+    ]) {
       expect(bePrices[retired], `${retired} must stay priced`).toBeDefined();
     }
   });

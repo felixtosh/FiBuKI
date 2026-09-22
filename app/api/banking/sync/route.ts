@@ -19,6 +19,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { callCloudFunction, setAuthToken } from "@/lib/firebase/callable-server";
+import { toDateSafe } from "@/lib/utils";
 import {
   SyncBankTransactionsRequest,
   SyncBankTransactionsResponse,
@@ -112,8 +113,12 @@ export async function GET(request: NextRequest) {
     }
 
     const config = source.apiConfig;
-    const expiresAt = config.expiresAt?.toDate?.() || (config.expiresAt ? new Date(config.expiresAt) : null);
-    const lastSyncAt = config.lastSyncAt?.toDate?.() || (config.lastSyncAt ? new Date(config.lastSyncAt) : null);
+    // Same read as useSyncStatus, which already goes through toDateSafe: a
+    // stored expiry that is present but malformed must degrade to "no expiry",
+    // not to 1970 (a re-auth prompt the user can never clear) and not to an
+    // Invalid Date (a RangeError out of the toISOString below).
+    const expiresAt = toDateSafe(config.expiresAt);
+    const lastSyncAt = toDateSafe(config.lastSyncAt);
     const now = new Date();
     const daysRemaining = expiresAt
       ? Math.max(0, Math.floor((expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))

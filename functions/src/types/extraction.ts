@@ -14,11 +14,20 @@ export interface ExtractedEntity {
   website: string | null;
 }
 
+/**
+ * A Line Item is a rate-group fallback with a human label, not a bill of
+ * goods (#252). Every tax consumer collapses the rows to {rate, gross, vat}
+ * grouped by VAT rate — the UVA's line-item rung, and BMD downstream of it.
+ * `description` survives so a person can point at the row on the document.
+ *
+ * `quantity` and `unitPrice` were extracted, stored, editable and compared
+ * for equality on correction, and nothing ever computed with them. Their
+ * removal also makes the correction path's "did a human move this row?"
+ * check strictly more correct: a re-extraction that reads `2 x 9,99` as
+ * `1 x 19,98` for the identical money no longer reports a change.
+ */
 export interface ExtractedLineItem {
   description: string;
-  quantity?: number | null;
-  /** Net unit price before VAT (in cents) */
-  unitPrice?: number | null;
   /** VAT rate for this line item (0-100), null when unknown */
   vatPercent: number | null;
   /** VAT amount in cents */

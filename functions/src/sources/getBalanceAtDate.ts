@@ -5,6 +5,7 @@
 
 import { Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
+import { toDateSafe } from "../utils/toDateSafe";
 
 interface GetBalanceAtDateRequest {
   sourceId: string;
@@ -59,7 +60,7 @@ export const getBalanceAtDateCallable = createCallable<
     }
 
     const openingBalance = sourceData.openingBalance ?? 0;
-    const openingBalanceDate = sourceData.openingBalanceDate?.toDate();
+    const openingBalanceDate = toDateSafe(sourceData.openingBalanceDate);
 
     // Query transactions up to targetDate
     let query = ctx.db

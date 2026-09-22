@@ -71,6 +71,8 @@ export function getTransactionMatchSourceLabel(source: TransactionMatchSource): 
       return "IBAN Match";
     case "reference":
       return "Reference Match";
+    case "amount_remainder":
+      return "Remainder";
     default:
       return source;
   }
@@ -85,6 +87,7 @@ export function getTransactionMatchSourceIcon(
   switch (source) {
     case "amount_exact":
     case "amount_close":
+    case "amount_remainder":
       return "euro"; // or "dollar-sign" depending on locale
     case "date_exact":
     case "date_close":

@@ -117,6 +117,7 @@ const REASON_LABELS: Record<string, string> = {
   "foreign-or-invalid-rate": "Foreign or invalid VAT rate",
   "amount-mismatch": "Bank amount ≠ invoice total",
   "foreign-currency": "Foreign-currency receipt — no usable exchange rate",
+  "impossible-tip": "Trinkgeld ≥ bank amount — correct the tip on the receipt",
   "needs-receipt": "Receipt lost — needs documentation",
 };
 

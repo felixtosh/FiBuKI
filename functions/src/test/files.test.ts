@@ -34,6 +34,7 @@ vi.mock("../utils/cancelWorkers", () => ({
 // Import handlers after mocking
 const { updateFileCallable } = await import("../files/updateFile");
 const { deleteFileCallable } = await import("../files/deleteFile");
+const { restoreFileCallable } = await import("../files/restoreFile");
 const { connectFileToTransactionCallable } = await import("../files/connectFileToTransaction");
 const { disconnectFileFromTransactionCallable } = await import("../files/disconnectFileFromTransaction");
 const { markFileAsNotInvoiceCallable } = await import("../files/markFileAsNotInvoice");
@@ -112,8 +113,6 @@ describe("File Cloud Functions", () => {
             extractedLineItems: [
               {
                 description: "Consulting",
-                quantity: 1,
-                unitPrice: 50000,
                 vatPercent: 20,
                 vatAmount: 10000,
                 amount: 50000,
@@ -149,7 +148,7 @@ describe("File Cloud Functions", () => {
   });
 
   describe("deleteFile", () => {
-    it("should soft delete a file by default", async () => {
+    it("should hide the file and keep it restorable", async () => {
       const userId = "user-123";
       const fileId = "file-456";
       store.setDoc("files", fileId, createTestFile({ userId }));
@@ -161,10 +160,7 @@ describe("File Cloud Functions", () => {
         logAIUsage: vi.fn(),
       };
 
-      const result = await deleteFileCallable(ctx as any, {
-        fileId,
-        hardDelete: false,
-      });
+      const result = await deleteFileCallable(ctx as any, { fileId });
 
       expect(result.success).toBe(true);
       const file = store.getDoc("files", fileId);
@@ -172,10 +168,56 @@ describe("File Cloud Functions", () => {
       expect(file?.deletedAt).toBeDefined(); // But marked as deleted
     });
 
-    it("should hard delete a file when specified", async () => {
+    it("should leave the stored document alone, whatever the file's source", async () => {
+      const userId = "user-123";
+
+      for (const sourceType of ["upload", "gmail_attachment"]) {
+        const fileId = `file-${sourceType}`;
+        store.setDoc(
+          "files",
+          fileId,
+          createTestFile({
+            userId,
+            sourceType,
+            storagePath: `files/${userId}/${fileId}.pdf`,
+          })
+        );
+
+        const ctx = {
+          userId,
+          db: createMockFirestore(),
+          request: { auth: { uid: userId }, data: {} },
+          logAIUsage: vi.fn(),
+        };
+
+        await deleteFileCallable(ctx as any, { fileId });
+
+        // The row survives — a Sync-sourced file dedupes against it, and every
+        // file restores from it — and the bytes it points at are untouched.
+        const file = store.getDoc("files", fileId);
+        expect(file?.deletedAt).toBeDefined();
+        expect(file?.storagePath).toBe(`files/${userId}/${fileId}.pdf`);
+        expect(file?.downloadUrl).toBe("https://storage.example.com/test.pdf");
+      }
+    });
+
+    it("can be undone by restoreFile, though the File Connections stay gone", async () => {
       const userId = "user-123";
       const fileId = "file-456";
-      store.setDoc("files", fileId, createTestFile({ userId }));
+      const txId = "tx-789";
+
+      store.setDoc("files", fileId, createTestFile({ userId, transactionIds: [txId] }));
+      store.setDoc(
+        "transactions",
+        txId,
+        createTestTransaction({ userId, fileIds: [fileId], isComplete: true })
+      );
+      store.setDoc("fileConnections", "conn-1", {
+        userId,
+        fileId,
+        transactionId: txId,
+        connectionType: "manual",
+      });
 
       const ctx = {
         userId,
@@ -184,13 +226,24 @@ describe("File Cloud Functions", () => {
         logAIUsage: vi.fn(),
       };
 
-      const result = await deleteFileCallable(ctx as any, {
-        fileId,
-        hardDelete: true,
-      });
+      await deleteFileCallable(ctx as any, { fileId });
+      expect(store.getDoc("files", fileId)?.deletedAt).toBeDefined();
 
-      expect(result.success).toBe(true);
-      expect(store.getDoc("files", fileId)).toBeUndefined();
+      await restoreFileCallable(ctx as any, { fileId });
+
+      // The File is visible again, with everything it was stored with.
+      const file = store.getDoc("files", fileId);
+      expect(file?.deletedAt).toBeFalsy();
+      expect(file?.fileName).toBe("test-invoice.pdf");
+      expect(file?.storagePath).toBe("files/test-user/test.pdf");
+
+      // Its File Connections are not rebuilt, which is exactly what the delete
+      // confirmation warns about.
+      expect(file?.transactionIds).toEqual([]);
+      expect(
+        store.queryDocs("fileConnections", [{ field: "fileId", op: "==", value: fileId }])
+      ).toHaveLength(0);
+      expect(store.getDoc("transactions", txId)?.fileIds).toEqual([]);
     });
   });
 

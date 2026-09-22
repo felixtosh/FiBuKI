@@ -134,6 +134,14 @@ export interface DirectionReviewPresentation {
   suggestedDirection: InvoiceDirection | null;
 }
 
+export interface RepairAmbiguityPresentation {
+  label: string;
+  tone: DocumentTone;
+  text: string;
+  /** The fields to look at, so a caller can point at them directly. */
+  fields: string[];
+}
+
 export interface ForeignRecipientPresentation {
   label: string;
   tone: DocumentTone;
@@ -163,3 +171,13 @@ export declare function describeDirectionReview(
 export declare function describeForeignRecipient(
   foreignRecipient: boolean | null | undefined,
 ): ForeignRecipientPresentation | null;
+
+export declare function describeRepairAmbiguity(
+  review:
+    | {
+        needsRepairReview?: boolean;
+        repairAmbiguousFields?: string[] | null;
+      }
+    | null
+    | undefined,
+): RepairAmbiguityPresentation | null;

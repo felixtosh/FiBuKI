@@ -36,6 +36,14 @@ import { NoReceiptCategoryPopover } from "./no-receipt-category-popover";
 import { ReceiptLostDialog } from "./receipt-lost-dialog";
 import { useTransactionFiles, useFiles } from "@/hooks/use-files";
 import { useEcbConverter } from "@/lib/currency";
+// Coverage, the Remainder and the tolerance that decides whether it is closed
+// are derived in one place, shared with the scorers (#239).
+import {
+  deriveCoverage,
+  documentedAmountOf,
+  filePaymentTotal,
+  isRemainderClosed,
+} from "@/functions/src/matching/coverage";
 import { useNoReceiptCategories } from "@/hooks/use-no-receipt-categories";
 // Category suggestions now come from transaction.categorySuggestions (computed on backend)
 import { cn, toDateSafe } from "@/lib/utils";
@@ -117,34 +125,43 @@ interface TransactionFilesSectionProps {
   extensionInstalled?: boolean;
 }
 
-interface DifferenceLineProps {
+interface RemainderLineProps {
   transactionAmount: number;
   transactionCurrency: string;
   transactionDate: Date;
   files: TaxFile[];
 }
 
-function DifferenceLine({ transactionAmount, transactionCurrency, transactionDate, files }: DifferenceLineProps) {
+/**
+ * The Remainder: the part of this Transaction its connected Files do not yet
+ * explain (#239). Currency conversion happens here, because only the client
+ * holds the ECB table; the subtraction and the tolerance come from the shared
+ * Coverage helper, so this panel and the scorers cannot disagree.
+ */
+function RemainderLine({ transactionAmount, transactionCurrency, transactionDate, files }: RemainderLineProps) {
   const convert = useEcbConverter();
   // Calculate sum of file amounts (only files with extracted amounts), converting to transaction currency
   const filesWithAmounts = files.filter((f) => f.extractedAmount != null);
   const isExtracting = files.some((f) => !f.extractionComplete && !f.isNotInvoice);
 
-  // Convert all file amounts to transaction currency using payment date
-  let filesSum = 0;
+  // Convert each file's payment total — Summe plus printed Trinkgeld (#172),
+  // which is what the bank was actually charged — into transaction currency
+  // using the payment date.
+  const paymentTotals: Array<number | null> = [];
   let conversionFailed = false;
   for (const file of filesWithAmounts) {
+    const payment = filePaymentTotal(file.extractedAmount, file.extractedTipAmount)!;
     if (file.extractedCurrency === transactionCurrency) {
-      filesSum += file.extractedAmount!;
+      paymentTotals.push(payment);
     } else {
       const conversion = convert(
-        file.extractedAmount!,
+        payment,
         file.extractedCurrency || "EUR",
         transactionCurrency,
         transactionDate
       );
       if (conversion) {
-        filesSum += conversion.amount;
+        paymentTotals.push(conversion.amount);
       } else {
         conversionFailed = true;
       }
@@ -155,9 +172,11 @@ function DifferenceLine({ transactionAmount, transactionCurrency, transactionDat
 
   // Transaction amount is negative for expenses, positive for income
   // File amounts are always positive (invoice amounts)
-  const absTransactionAmount = Math.abs(transactionAmount);
-  const difference = absTransactionAmount - filesSum;
-  const isMatched = Math.abs(difference) < 100; // Allow 1 EUR/USD tolerance
+  const { remainder } = deriveCoverage(
+    transactionAmount,
+    documentedAmountOf(paymentTotals)
+  );
+  const isMatched = isRemainderClosed(remainder);
 
   // Don't show if extracting or no amounts yet
   if (isExtracting || filesWithAmounts.length === 0) {
@@ -166,7 +185,7 @@ function DifferenceLine({ transactionAmount, transactionCurrency, transactionDat
 
   return (
     <div className="flex items-center justify-between p-2 -mx-2 border-t">
-      <span className="text-sm text-muted-foreground">Difference</span>
+      <span className="text-sm text-muted-foreground">Remainder</span>
       {/* Right side with spacing to align with FileRow amounts (gap-2 + button + gap-2 + chevron) */}
       <div className="flex items-center gap-2 shrink-0">
         {!hasAllAmounts ? (
@@ -178,9 +197,9 @@ function DifferenceLine({ transactionAmount, transactionCurrency, transactionDat
         ) : (
           <span className={cn(
             "tabular-nums font-medium flex items-center gap-1 text-sm",
-            difference > 0 ? "text-amount-negative" : "text-amber-600"
+            remainder > 0 ? "text-amount-negative" : "text-amber-600"
           )}>
-            {difference > 0 ? "-" : "+"}{formatAmount(Math.abs(difference), transactionCurrency)}
+            {remainder > 0 ? "-" : "+"}{formatAmount(Math.abs(remainder), transactionCurrency)}
             <AlertTriangle className="h-3.5 w-3.5" />
           </span>
         )}
@@ -798,8 +817,8 @@ export function TransactionFilesSection({
                     </button>
                   )}
                 </div>
-                {/* Difference line - at bottom, aligned with file amounts */}
-                <DifferenceLine
+                {/* Remainder line - at bottom, aligned with file amounts */}
+                <RemainderLine
                   transactionAmount={transaction.amount}
                   transactionCurrency={transaction.currency}
                   transactionDate={toDateSafe(transaction.date) || new Date()}

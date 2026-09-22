@@ -21,6 +21,7 @@ import {
   ratesValidInPeriod,
   ratesValidOn,
 } from "./rateSet";
+import { assessTip } from "./tip";
 import { assessImpliedFx, isSameCurrency } from "../fx/fxPlausibility";
 import { ecbCrossRate, type EcbRateTable } from "../fx/ecbRates";
 import type {
@@ -564,9 +565,35 @@ export function deriveRateGroups(
       return { ok: false, reason: "no-vat-data", foregoneVat: guessVat20(bank), foreignVat, nonClaimableVat, fxConversions };
     }
 
+    // A tip that is not smaller than the bank line is not a tip (#317). It
+    // must be judged BEFORE it joins the reconcile total below, because there
+    // it is indistinguishable from an invoice the bank line only partly paid:
+    // the delta goes negative, the partial-payment branch scales the
+    // document's rates by bank/invoiceTotal, and a 54,00 charge carrying a
+    // 54,00 tip claims 2,86 of Vorsteuer off a figure nobody can support. The
+    // BMD export refuses the same transaction, on this same predicate (#194).
+    // Claim nothing and put it on the review list; the fix is to correct the
+    // Trinkgeld on the document (#217) and re-run.
+    const tipHere = assessTip(files, bank);
+    if (tipHere.impossible) {
+      return {
+        ok: false,
+        reason: "impossible-tip",
+        // What the correction is worth chasing, on the same 20% proxy the
+        // amount-mismatch branch this diverts from uses. The document's own
+        // VAT is not that figure: the tip is wrong, so the split between
+        // Summe and Trinkgeld it rests on is unknown until someone fixes it.
+        foregoneVat: guessVat20(bank),
+        foreignVat,
+        nonClaimableVat,
+        fxConversions,
+      };
+    }
+
     // Reconcile bank amount vs the SUM of the connected documents (R6).
-    // A printed Trinkgeld is part of what the card was charged and no part of
-    // the VAT base (#172), so it joins the total here and nowhere else: the
+    // A Trinkgeld is part of what the card was charged and no part of the VAT
+    // base — transcribed where the Beleg prints it (#172), hand-set where it
+    // does not (#217) — so it joins the total here and nowhere else: the
     // reconcile comes out exact and no tolerance rung is involved.
     const invoiceTotal =
       reconcileTotal ??
@@ -585,10 +612,11 @@ export function deriveRateGroups(
         // An overpay the connected documents do not account for. R5 used to
         // classify a small one at a restaurant-class partner as a tip and
         // claim the full invoice portion, but nothing ever wrote partnerClass
-        // — it read like coverage and provided none (#172). A tip the Beleg
-        // PRINTS is now its own extracted figure, already inside invoiceTotal
-        // above; an unexplained delta goes to the review bucket, which is
-        // where a cash tip nobody wrote on the document belongs.
+        // — it read like coverage and provided none (#172). A tip is now its
+        // own extracted figure, already inside invoiceTotal above, whether the
+        // Beleg printed it or a person recorded the one it never printed
+        // (#217). A delta nobody has explained still goes to the review
+        // bucket: a person says a tip was taken, this arithmetic never does.
         return {
           ok: false,
           reason: "amount-mismatch",

@@ -75,6 +75,13 @@ describe("updateFileCallable", () => {
       call({ extractedLineItems: [{ description: "row", amount: 9000, vatAmount: 1500, vatPercent: 20 }] })
     ).rejects.toThrow(/updateFileExtractedFields/);
 
+    // #217: the tip joined the correction vocabulary, so it joined the
+    // refusal with it — written here it would carry no stamp, and the next
+    // re-extraction would drop the only explanation the bank line had.
+    await expect(call({ extractedTipAmount: 320 })).rejects.toThrow(
+      /updateFileExtractedFields/
+    );
+
     // Refused loudly means refused entirely — nothing half-written.
     expect(file().extractedAmount).toBe(8100);
     expect(file().fileName).toBe("beleg.pdf");

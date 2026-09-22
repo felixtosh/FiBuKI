@@ -47,11 +47,11 @@ export interface UvaFile {
   /** Document total in cents (extractedAmount) */
   totalGross?: number | null;
   /**
-   * Freiwilliges Trinkgeld printed on the document (extractedTipAmount),
-   * cents (#172). Outside the scope of VAT — 0 net, 0 VAT — so it never
-   * becomes a rate group and never reaches a Kennzahl. Read in exactly one
-   * place: the R6 reconcile, where the bank line was charged
-   * `totalGross + tipAmount`.
+   * Freiwilliges Trinkgeld (extractedTipAmount), cents (#172) — printed on
+   * the document, or set by hand where the document prints none (#217).
+   * Outside the scope of VAT — 0 net, 0 VAT — so it never becomes a rate
+   * group and never reaches a Kennzahl. Read in exactly one place: the R6
+   * reconcile, where the bank line was charged `totalGross + tipAmount`.
    */
   tipAmount?: number | null;
   /** Top-level extracted VAT amount in cents (extractedVatAmount) */
@@ -241,6 +241,15 @@ export type UnresolvedReason =
    * the wrong unit.
    */
   | "foreign-currency"
+  /**
+   * The summed `tipAmount` is not less than the bank line (#317), so it is
+   * not a tip: a Gesamt transcribed into the Trinkgeld field, or a bank line
+   * that is not the whole payment. Read as a reconcile total it makes every
+   * such transaction look like a partial payment and claims a scaled slice of
+   * the document's VAT; the BMD export refuses the same transaction (#194).
+   * Nothing is claimed until the figure is corrected. See `./tip`.
+   */
+  | "impossible-tip"
   | "needs-receipt";
 
 /** The pre-filing human checklist (spec §5). */

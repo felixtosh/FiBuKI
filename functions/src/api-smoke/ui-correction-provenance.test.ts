@@ -82,6 +82,7 @@ function form(overrides: Record<string, unknown> = {}) {
   return {
     date: "2026-03-04",
     amount: "3180,00",
+    tipAmount: "",
     vatPercent: "20",
     partner: "ACME GmbH",
     vatId: "ATU12345678",
@@ -95,6 +96,7 @@ function form(overrides: Record<string, unknown> = {}) {
 const payload = () => callableInvoke.mock.calls[0][0] as unknown as {
   fileId: string;
   correction: Record<string, unknown>;
+  tipNotPrinted: boolean;
   details: Record<string, unknown>;
 };
 
@@ -138,6 +140,41 @@ describe("updateFileExtractedFields (client operation)", () => {
     expect(payload().correction).toMatchObject({ amount: null, vatPercent: null, date: null });
   });
 
+  it("sends a hand-set tip beside the amount, never out of it (#217)", async () => {
+    await updateFileExtractedFields(ctx, "file-1", form({ amount: "50,80", tipAmount: "3,20" }));
+
+    // The document printed no tip, so its total already is the VAT base: the
+    // amount goes over untouched and the tip goes over beside it.
+    expect(payload().correction).toMatchObject({ amount: 5080, tipAmount: 320 });
+  });
+
+  it("sends the not-printed declaration beside the correction, never inside it (#310)", async () => {
+    // 5,00 on a 3,00 Melange. The bound the server applies depends on it, and
+    // it has to arrive as its own key: a correction key is a field the record
+    // stamps as hand-set, and this is not a field at all.
+    await updateFileExtractedFields(
+      ctx,
+      "file-1",
+      form({ amount: "3,00", tipAmount: "5,00", tipNotPrinted: true })
+    );
+
+    expect(payload().tipNotPrinted).toBe(true);
+    expect(payload().correction).toMatchObject({ amount: 300, tipAmount: 500 });
+    expect(payload().correction).not.toHaveProperty("tipNotPrinted");
+  });
+
+  it("leaves the declaration off by default, so the document total bounds the tip", async () => {
+    await updateFileExtractedFields(ctx, "file-1", form({ tipAmount: "3,20" }));
+
+    expect(payload().tipNotPrinted).toBe(false);
+  });
+
+  it("sends an empty tip box as no tip, so a printed one can be removed", async () => {
+    await updateFileExtractedFields(ctx, "file-1", form());
+
+    expect(payload().correction).toMatchObject({ tipAmount: null });
+  });
+
   it("omits a value it could not parse rather than clearing the stored one", async () => {
     // The old client behaviour: an unreadable amount left `extractedAmount`
     // untouched. Sending null instead would delete a good figure.
@@ -159,8 +196,6 @@ describe("updateFileExtractedFields (client operation)", () => {
         lineItems: [
           {
             description: "Consulting",
-            quantity: "1",
-            unitPrice: "2650,00",
             vatPercent: "20",
             vatAmount: "530,00",
             amount: "3180,00",

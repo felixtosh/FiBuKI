@@ -6,6 +6,7 @@
 import { VertexAI } from "@google-cloud/vertexai";
 import {
   generateTypedSearchQueries,
+  suggestionTerms,
   QueryGenerationTransaction,
   QueryGenerationPartner,
   TypedSuggestion,
@@ -184,14 +185,26 @@ Return ONLY valid JSON:
           return normalized;
         };
 
-        const addIfNew = (suggestion: TypedSuggestion, score: number) => {
+        // Takes only the two fields it reads: Gemini's raw suggestions have no
+        // score of their own and no terms until they are lowered below.
+        const addIfNew = (
+          suggestion: { query: string; type: SuggestionType },
+          score: number
+        ) => {
           const normalized = normalizeQuery(suggestion.query);
           if (!normalized || seen.has(normalized)) return false;
           if (!isValidQuery(normalized)) return false;
 
           seen.add(normalized);
           const type = VALID_TYPES.includes(suggestion.type) ? suggestion.type : "fallback";
-          results.push({ query: normalized, type, score });
+          // Gemini is prompted in Gmail's dialect and answers in it; the terms
+          // are read back off its string so what leaves here is neutral (#240).
+          results.push({
+            query: normalized,
+            type,
+            score,
+            terms: suggestionTerms(normalized, type),
+          });
           return true;
         };
 
@@ -199,7 +212,7 @@ Return ONLY valid JSON:
         let score = 100;
         for (const s of geminiSuggestions) {
           if (s && typeof s === "object" && s.query) {
-            addIfNew({ query: s.query, type: s.type || "fallback", score }, score);
+            addIfNew({ query: s.query, type: s.type || "fallback" }, score);
             score -= 10;
           }
         }

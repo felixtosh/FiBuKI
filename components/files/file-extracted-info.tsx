@@ -10,6 +10,7 @@ import { EditableExtractedFields } from "@/lib/operations";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { cn, toDateSafe } from "@/lib/utils";
 import { useEcbConverter } from "@/lib/currency";
 import { useDocumentLabel } from "@/hooks/use-document-label";
@@ -29,9 +30,11 @@ import {
 import {
   describeDirectionReview,
   describeForeignRecipient,
+  describeRepairAmbiguity,
   describeInvoiceDirection,
   INVOICE_DIRECTIONS,
 } from "@/lib/documents/document-type-presentation";
+import { describeLineItemsUnreconciled } from "@/lib/documents/line-item-presentation";
 
 // Consistent field row component (matching transaction-details.tsx)
 // Uses container queries to stack vertically when panel is narrow (<340px)
@@ -143,6 +146,15 @@ function inferLineItemAmountsAreNet(lineItems: TaxFile["extractedLineItems"]): b
   return netInterpretationError < grossInterpretationError;
 }
 
+/** Mirrors `parseCurrencyToCents` in lib/operations/file-ops.ts — the delta
+ * shown here has to agree with what a save would actually compute. */
+function parseAmountToCents(value: string): number | null {
+  const normalized = value.trim().replace(",", ".");
+  if (!normalized) return null;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? Math.round(parsed * 100) : null;
+}
+
 function getEffectiveExtractedAmount(file: TaxFile): number | null {
   const lineItems = file.extractedLineItems;
   if (!Array.isArray(lineItems) || lineItems.length === 0) {
@@ -172,11 +184,14 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
   const directionPresentation = describeInvoiceDirection(file.invoiceDirection);
   const directionReview = describeDirectionReview(file);
   const foreignRecipient = describeForeignRecipient(file.foreignRecipient);
+  const repairAmbiguity = describeRepairAmbiguity(file);
   const [showMore, setShowMore] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editedFields, setEditedFields] = useState<EditableExtractedFields>({
     date: "",
     amount: "",
+    tipAmount: "",
+    tipNotPrinted: false,
     vatPercent: "",
     partner: "",
     vatId: "",
@@ -189,13 +204,12 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
   // Initialize edit fields from file data
   const startEditing = () => {
     const existingAdditional = (file.extractedAdditionalFields || []).map((f) => ({
+      key: f.key,
       label: f.label,
       value: f.value,
     }));
     const existingLineItems = (file.extractedLineItems || []).map((item) => ({
       description: item.description,
-      quantity: item.quantity != null ? item.quantity.toString() : "",
-      unitPrice: item.unitPrice != null ? (item.unitPrice / 100).toFixed(2) : "",
       vatPercent: item.vatPercent != null ? item.vatPercent.toString() : "",
       vatAmount: item.vatAmount != null ? (item.vatAmount / 100).toFixed(2) : "",
       amount: (item.amount / 100).toFixed(2),
@@ -209,6 +223,13 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
       // and seeding it with a derivation stamped the derived value as
       // hand-corrected on every save of a file whose rows disagree with it.
       amount: file.extractedAmount != null ? (file.extractedAmount / 100).toString() : "",
+      // #217: seeded from the stored figure so a printed Trinkgeld is not
+      // cleared by a save that never touched the box.
+      tipAmount: file.extractedTipAmount != null ? (file.extractedTipAmount / 100).toString() : "",
+      // #310: seeded from the bound the last correction recorded, so re-saving
+      // a tip that was accepted as unprinted does not re-measure it against a
+      // document total it was never meant to fit inside.
+      tipNotPrinted: file.extractedTipBound?.bound === "transaction",
       vatPercent: file.extractedVatPercent != null ? file.extractedVatPercent.toString() : "",
       partner: file.extractedPartner || "",
       vatId: file.extractedVatId || "",
@@ -261,7 +282,7 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
 
   const updateLineItemField = (
     index: number,
-    key: "description" | "quantity" | "unitPrice" | "vatPercent" | "vatAmount" | "amount",
+    key: "description" | "vatPercent" | "vatAmount" | "amount",
     value: string
   ) => {
     setEditedFields((prev) => ({
@@ -279,8 +300,6 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
         ...(prev.lineItems || []),
         {
           description: "",
-          quantity: "",
-          unitPrice: "",
           vatPercent: "",
           vatAmount: "",
           amount: "",
@@ -294,6 +313,18 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
       ...prev,
       lineItems: (prev.lineItems || []).filter((_, i) => i !== index),
     }));
+  };
+
+  /**
+   * The exit for a delta that will not close (#253). Some documents genuinely
+   * do not add up — a printed rounding line, a handwritten correction, an
+   * illegible row — and there is no override flag for that: clearing the
+   * rows in one action lets the file fall through to the top-level rung
+   * (`updateFileExtractedFields` sends `lineItems: null` for an empty array),
+   * which the UVA already trusts.
+   */
+  const removeAllLineItems = () => {
+    setEditedFields((prev) => ({ ...prev, lineItems: [] }));
   };
 
   const formatAmount = (amount: number | null | undefined, currency: string | null | undefined, direction?: string) => {
@@ -385,6 +416,21 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
   const editedLineItems = editedFields.lineItems || [];
   const hasEditableLineItems = isEditing && editedLineItems.length > 0;
   const effectiveAmount = getEffectiveExtractedAmount(file);
+  const rateGroups = file.extractedRateGroups || [];
+  const hasRateGroups = rateGroups.length > 0;
+  const lineItemsUnreconciledPresentation = describeLineItemsUnreconciled(file);
+
+  // The row editor's own delta (#253): the rows are the only editable side,
+  // the document total is fixed at whatever the Amount box holds (that box
+  // locks itself while these rows are non-empty), and the delta is just the
+  // difference between the two, recomputed on every keystroke.
+  const lineItemsSumCents = editedLineItems.reduce(
+    (sum, item) => sum + (parseAmountToCents(item.amount) ?? 0),
+    0
+  );
+  const documentTotalCents = parseAmountToCents(editedFields.amount);
+  const lineItemsDeltaCents =
+    documentTotalCents != null ? lineItemsSumCents - documentTotalCents : null;
 
   // Secondary fields (VAT ID, IBAN, Address) - shown in "Show more"
   const hasSecondaryFields = !!(file.extractedVatId || file.extractedIban || file.extractedAddress);
@@ -512,6 +558,16 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
         </div>
       )}
 
+      {/* A silent rewrite of extracted text is a finding, so it keeps its box. */}
+      {repairAmbiguity && (
+        <div className="rounded border border-amber-500/40 bg-amber-500/10 p-2 space-y-1">
+          <Badge variant="outline" className="text-xs">
+            {repairAmbiguity.label}
+          </Badge>
+          <p className="text-xs text-muted-foreground">{repairAmbiguity.text}</p>
+        </div>
+      )}
+
       {/*
         Only a CONFLICT still gets a callout of its own. A conflict is a
         finding: the document contradicts a transaction it is attached to, one
@@ -538,6 +594,19 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
             {directionReview.text}
             {directionReview.suggestion ? ` ${directionReview.suggestion}` : ""}
           </p>
+        </div>
+      )}
+
+      {/* Unreconciled line items (#253): a badge naming the failing rate
+          where the damage is localised, rather than rendering the rows
+          unmarked. Shown whenever the flag is set, not gated on "Show more" —
+          this is a finding, the same rank as the ones above. */}
+      {lineItemsUnreconciledPresentation && (
+        <div className="rounded border border-amber-500/40 bg-amber-500/10 p-2 space-y-1">
+          <Badge variant="outline" className="text-xs">
+            {lineItemsUnreconciledPresentation.label}
+          </Badge>
+          <p className="text-xs text-muted-foreground">{lineItemsUnreconciledPresentation.text}</p>
         </div>
       )}
 
@@ -622,6 +691,53 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
               return amountDisplay;
             })()}
           </FieldRow>
+
+          {/*
+            Trinkgeld (#217). The tip a card terminal took and the Beleg never
+            printed has no other writer: extraction can only transcribe what is
+            on the page, so without this box the bank line stays larger than the
+            document forever and the reconciliation refuses the file. Shown when
+            there is one to show, and whenever the form is open.
+
+            It sits BESIDE the amount above and is never taken out of it. On a
+            document that printed its own tip the extractor has already stripped
+            it from the total; on one that did not, the total IS the VAT base.
+          */}
+          {(isEditing || file.extractedTipAmount != null) && (
+            <FieldRow
+              label="Tip"
+              isEditing={isEditing}
+              editValue={editedFields.tipAmount}
+              onEditChange={updateField("tipAmount")}
+              inputType="number"
+              placeholder="Trinkgeld in EUR"
+            >
+              {formatDocumentAmount(file.extractedTipAmount, file.extractedCurrency)}
+            </FieldRow>
+          )}
+
+          {/*
+            #310. A hand-set tip is bounded, and which total bounds it depends
+            on something only the person knows: whether the document printed the
+            tip at all. Ticking this measures it against the bank line instead
+            of the invoice — which is the only way a 5,00 tip on a 3,00 coffee
+            can be recorded, and still no way to record one larger than the
+            payment itself.
+          */}
+          {isEditing && editedFields.tipAmount.trim() !== "" && (
+            <div className="flex items-center gap-4 field-row-responsive">
+              <span className="text-sm text-muted-foreground shrink-0 w-28 field-row-label" />
+              <label className="flex items-center gap-2 text-sm field-row-value">
+                <Checkbox
+                  checked={editedFields.tipNotPrinted === true}
+                  onCheckedChange={(checked) =>
+                    setEditedFields((prev) => ({ ...prev, tipNotPrinted: checked === true }))
+                  }
+                />
+                Not printed on the invoice
+              </label>
+            </div>
+          )}
 
           {/*
             Direction (#233). Until this row existed the field was rendered
@@ -723,7 +839,7 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
           </FieldRow>
 
           {/* Show more toggle - only if there are secondary or additional fields (hide when editing since all are shown) */}
-          {(hasSecondaryFields || hasAdditionalFields || hasLineItems) && !isEditing && (
+          {(hasSecondaryFields || hasAdditionalFields || hasLineItems || hasRateGroups) && !isEditing && (
             <ShowMoreButton
               expanded={showMore}
               onToggle={() => setShowMore(!showMore)}
@@ -826,11 +942,70 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
                 ))
               )}
 
+              {/*
+                The printed rate group block (#253). Read off the document,
+                shown as printed so a human can compare it against the Beleg
+                in one glance — and NOT editable: its authority comes from
+                being transcribed, and a hand-typed block would be
+                indistinguishable from a hallucinated one once stored. It
+                renders independently of the line items below, since a
+                document can carry one without the other.
+              */}
+              {hasRateGroups && (
+                <div className="space-y-2 pt-2">
+                  <div className="text-sm text-muted-foreground">Printed rate groups</div>
+                  <div className="rounded border p-2 space-y-1">
+                    {rateGroups.map((group, index) => (
+                      <div key={index} className="flex items-center justify-between gap-2 text-xs tabular-nums">
+                        <span className="font-medium">{group.rate}%</span>
+                        <span className="text-muted-foreground">
+                          Net {formatDocumentAmount(group.net, file.extractedCurrency)} · VAT{" "}
+                          {formatDocumentAmount(group.vat, file.extractedCurrency)}
+                        </span>
+                        <span>{formatDocumentAmount(group.gross, file.extractedCurrency)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {(hasLineItems || isEditing) && (
                 <div className="space-y-2 pt-2">
                   <div className="text-sm text-muted-foreground">Line items</div>
                   {isEditing ? (
                     <div className="space-y-2">
+                      {/*
+                        The live delta (#253): sum of the rows against the
+                        document total, which is fixed here — it is edited in
+                        its own "Amount" field higher up the form, not in this
+                        panel. Save is never gated on this reaching zero: a
+                        restaurant Beleg with an unprinted tip makes the
+                        document total the wrong number, and a hard gate would
+                        refuse a correct itemisation.
+                      */}
+                      {hasEditableLineItems && (
+                        <div className="rounded border p-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs tabular-nums">
+                          <span className="text-muted-foreground">Sum of rows</span>
+                          <span className="text-right">
+                            {formatDocumentAmount(lineItemsSumCents, file.extractedCurrency)}
+                          </span>
+                          <span className="text-muted-foreground">Document total</span>
+                          <span className="text-right">
+                            {formatDocumentAmount(documentTotalCents, file.extractedCurrency)}
+                          </span>
+                          <span className={cn("font-medium", lineItemsDeltaCents ? "text-amber-600" : undefined)}>
+                            Delta
+                          </span>
+                          <span
+                            className={cn(
+                              "text-right font-medium",
+                              lineItemsDeltaCents ? "text-amber-600" : undefined
+                            )}
+                          >
+                            {formatDocumentAmount(lineItemsDeltaCents, file.extractedCurrency)}
+                          </span>
+                        </div>
+                      )}
                       {editedLineItems.map((item, index) => (
                         <div key={index} className="rounded border p-2 space-y-2">
                           <Input
@@ -840,18 +1015,6 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
                             placeholder="Description"
                           />
                           <div className="grid grid-cols-2 gap-2">
-                            <Input
-                              value={item.quantity}
-                              onChange={(e) => updateLineItemField(index, "quantity", e.target.value)}
-                              className="h-8 text-sm"
-                              placeholder="Qty"
-                            />
-                            <Input
-                              value={item.unitPrice}
-                              onChange={(e) => updateLineItemField(index, "unitPrice", e.target.value)}
-                              className="h-8 text-sm"
-                              placeholder="Unit price"
-                            />
                             <Input
                               value={item.vatPercent}
                               onChange={(e) => updateLineItemField(index, "vatPercent", e.target.value)}
@@ -882,15 +1045,35 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
                           </Button>
                         </div>
                       ))}
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full"
-                        onClick={addLineItem}
-                      >
-                        <Plus className="h-4 w-4 mr-2" />
-                        Add line item
-                      </Button>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="flex-1"
+                          onClick={addLineItem}
+                        >
+                          <Plus className="h-4 w-4 mr-2" />
+                          Add line item
+                        </Button>
+                        {/*
+                          The exit for a delta that will not close (#253): some
+                          documents genuinely do not add up, and there is no
+                          override flag for that. Clearing every row in one
+                          action is the whole answer — the file falls through
+                          to the top-level rung instead.
+                        */}
+                        {editedLineItems.length > 0 && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="flex-1 text-muted-foreground hover:text-destructive"
+                            onClick={removeAllLineItems}
+                          >
+                            <Trash2 className="h-4 w-4 mr-2" />
+                            Remove all line items
+                          </Button>
+                        )}
+                      </div>
                     </div>
                   ) : (
                     <div className="space-y-2">
@@ -898,10 +1081,6 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
                         <div key={index} className="rounded border p-2">
                           <div className="text-sm">{item.description || "—"}</div>
                           <div className="text-xs text-muted-foreground flex flex-wrap gap-3 mt-1 tabular-nums">
-                            {item.quantity != null && <span>Qty: {item.quantity}</span>}
-                            {item.unitPrice != null && (
-                              <span>Unit: {formatDocumentAmount(item.unitPrice, file.extractedCurrency)}</span>
-                            )}
                             <span>VAT: {item.vatPercent != null ? `${item.vatPercent}%` : "—"}</span>
                             <span>Amount: {formatDocumentAmount(item.amount, file.extractedCurrency)}</span>
                           </div>

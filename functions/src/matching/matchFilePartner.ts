@@ -15,6 +15,7 @@ import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
 import { createLocalPartnerFromGlobal } from "./createLocalPartnerFromGlobal";
 import { isValidCompanyName } from "../utils/companyNameValidator";
+import { toDateSafe } from "../utils/toDateSafe";
 import {
   matchFileToAllPartners,
   shouldAutoApply,
@@ -1425,7 +1426,7 @@ export async function runPartnerMatching(
           fileName: fileData.fileName,
           extractedPartner,
           extractedAmount: fileData.extractedAmount,
-          extractedDate: fileData.extractedDate?.toDate().toISOString().split("T")[0],
+          extractedDate: toDateSafe(fileData.extractedDate)?.toISOString().split("T")[0],
           extractedVatId,
           gmailSenderDomain,
         },

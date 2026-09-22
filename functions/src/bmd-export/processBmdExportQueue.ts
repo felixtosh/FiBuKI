@@ -19,12 +19,13 @@ import { PassThrough } from "stream";
 import {
   BmdExport,
   BmdExportManifest,
+  BmdSkippedDocument,
   BMD_EXPORT_FORMAT_VERSION,
   BMD_EXPORT_EXPIRY_DAYS,
 } from "../types/bmd-export";
 import {
   generatePersonenkontenCsv,
-  generateBuchungenCsv,
+  generateBuchungenCsvWithReport,
   PartnerForExport,
   TransactionForExport,
   FileForExport,
@@ -268,13 +269,24 @@ async function processBmdExport(
       simpleFilesMap.set(id, forExport);
     });
 
-    const buchungenCsv = generateBuchungenCsv(
+    // A document whose figures cannot be booked honestly keeps its transaction
+    // out of the CSV rather than degrading into a wrong booking (#194). The run
+    // completes either way; what must not happen is that it completes quietly.
+    const { csv: buchungenCsv, skipped } = generateBuchungenCsvWithReport(
       transactionsForExport,
       simpleFilesMap,
       partnerIndex
     );
 
+    if (skipped.length > 0) {
+      console.warn(
+        `[processBmdExport] ${exportId}: ${skipped.length} document(s) not exported: ` +
+          skipped.map((s) => `${s.fileName} (${s.reason})`).join("; ")
+      );
+    }
+
     await exportRef.update({
+      skipped,
       "progress.phase": "packaging",
     });
 
@@ -296,7 +308,8 @@ async function processBmdExport(
         partners: partnersMap.size,
         kreditoren: kreditorenCount,
         debitoren: debitorenCount,
-      }
+      },
+      skipped
     );
 
     // Check timeout
@@ -348,7 +361,7 @@ async function processBmdExport(
     });
 
     console.log(
-      `[processBmdExport] Completed export ${exportId}, size: ${zipBuffer.length} bytes, ${transactions.length} transactions`
+      `[processBmdExport] Completed export ${exportId}, size: ${zipBuffer.length} bytes, ${transactions.length} transactions, ${skipped.length} skipped`
     );
   } catch (error) {
     const errorMessage =
@@ -396,7 +409,8 @@ async function createBmdZip(
     partners: number;
     kreditoren: number;
     debitoren: number;
-  }
+  },
+  skipped: BmdSkippedDocument[]
 ): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -423,6 +437,7 @@ async function createBmdZip(
       },
       counts,
       includesFiles: includeFiles,
+      skipped,
     };
     archive.append(JSON.stringify(manifest, null, 2), { name: "manifest.json" });
 

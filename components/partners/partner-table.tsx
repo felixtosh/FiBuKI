@@ -8,6 +8,8 @@ import { useUserData } from "@/hooks/use-user-data";
 import { PartnerToolbar } from "./partner-toolbar";
 import { PartnerDataTable } from "./partner-data-table";
 import { AddPartnerDialog } from "./add-partner-dialog";
+import { PartnerBulkActionBar } from "./partner-bulk-action-bar";
+import { MergePartnersDialog } from "./merge-partners-dialog";
 import { TableEmptyState, emptyStatePresets } from "@/components/ui/table-empty-state";
 import { UserPartner, PartnerFormData, PartnerFilters } from "@/types/partner";
 import { isRecurringPartner } from "@/lib/partners/billing-cycle-presentation";
@@ -32,6 +34,8 @@ export function PartnerTable({
 }: PartnerTableProps) {
   const router = useRouter();
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isMergeDialogOpen, setIsMergeDialogOpen] = useState(false);
 
   const { partners, loading, error, createPartner, deletePartner } = usePartners();
   const { markedAsMe } = useUserData();
@@ -81,6 +85,42 @@ export function PartnerTable({
 
     return data;
   }, [partners, searchValue, filters]);
+
+  const selectedPartners = useMemo(
+    () => partners.filter((p) => selectedIds.has(p.id)),
+    [partners, selectedIds]
+  );
+
+  const selectAllState = useMemo(() => {
+    if (filteredPartners.length === 0) return false;
+    const selectedCount = filteredPartners.filter((p) => selectedIds.has(p.id)).length;
+    if (selectedCount === 0) return false;
+    if (selectedCount === filteredPartners.length) return true;
+    return "indeterminate" as const;
+  }, [filteredPartners, selectedIds]);
+
+  const handleToggleRow = (partnerId: string, checked: boolean) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(partnerId);
+      else next.delete(partnerId);
+      return next;
+    });
+  };
+
+  const handleToggleSelectAll = () => {
+    setSelectedIds((prev) => {
+      const allSelected = filteredPartners.every((p) => prev.has(p.id));
+      if (allSelected) return new Set();
+      return new Set(filteredPartners.map((p) => p.id));
+    });
+  };
+
+  const handleClearSelection = () => setSelectedIds(new Set());
+
+  const handleMerged = () => {
+    setSelectedIds(new Set());
+  };
 
   // Determine which empty state to show
   const hasAnyFilters = searchValue || filters.hasVatId !== undefined ||
@@ -178,19 +218,40 @@ export function PartnerTable({
         onAddPartner={() => setIsAddDialogOpen(true)}
       />
 
-      <PartnerDataTable
-        data={filteredPartners}
-        onRowClick={onSelectPartner}
-        selectedRowId={selectedPartnerId}
-        onDelete={handleDeletePartner}
-        markedAsMe={markedAsMe}
-        emptyState={emptyState}
-      />
+      <div className="flex-1 relative overflow-hidden flex flex-col">
+        {selectedIds.size > 0 && (
+          <PartnerBulkActionBar
+            selectedCount={selectedIds.size}
+            onMerge={() => setIsMergeDialogOpen(true)}
+            onClearSelection={handleClearSelection}
+          />
+        )}
+        <PartnerDataTable
+          data={filteredPartners}
+          onRowClick={onSelectPartner}
+          selectedRowId={selectedPartnerId}
+          onDelete={handleDeletePartner}
+          markedAsMe={markedAsMe}
+          emptyState={emptyState}
+          enableSelection
+          selectedRowIds={selectedIds}
+          onToggleRow={handleToggleRow}
+          onToggleSelectAll={handleToggleSelectAll}
+          selectAllState={selectAllState}
+        />
+      </div>
 
       <AddPartnerDialog
         open={isAddDialogOpen}
         onClose={() => setIsAddDialogOpen(false)}
         onAdd={handleAddPartner}
+      />
+
+      <MergePartnersDialog
+        open={isMergeDialogOpen}
+        onClose={() => setIsMergeDialogOpen(false)}
+        partners={selectedPartners}
+        onMerged={handleMerged}
       />
     </div>
   );

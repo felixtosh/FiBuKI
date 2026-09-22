@@ -52,6 +52,10 @@ const CORRECTION_ONLY_FIELDS = [
   "extractedVatPercent",
   "extractedDate",
   "extractedLineItems",
+  // #217: a hand-set Trinkgeld is a correction like the figures beside it, and
+  // its door is the same one. Written here it would carry no stamp, so the next
+  // re-extraction would silently drop the only explanation the bank line had.
+  "extractedTipAmount",
 ] as const;
 
 /**

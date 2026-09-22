@@ -20,8 +20,6 @@ import { reconcileLineItemsWithDocumentTotal } from "../extractionCore";
 
 const item = (amount: number, vatPercent: number | null = null, vatAmount = 0) => ({
   description: "row",
-  quantity: null,
-  unitPrice: null,
   vatPercent,
   vatAmount,
   amount,
@@ -35,7 +33,7 @@ describe("net line items on a gross document total (fork #137)", () => {
 
     expect(r.unreconciled).toBe(false);
     expect(r.lineItems).toEqual([
-      { description: "row", quantity: null, unitPrice: null, vatPercent: 20, vatAmount: 53000, amount: 318000 },
+      { description: "row", vatPercent: 20, vatAmount: 53000, amount: 318000 },
     ]);
   });
 

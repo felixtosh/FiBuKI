@@ -13,7 +13,18 @@ import {
   type BankOriginalAmount,
 } from "../fx/bankOriginalAmount";
 import { selectEffectiveCycleForAmount, ResolvedEffectiveCycle } from "./billingCycle";
+import {
+  COVERAGE_RATIO,
+  REMAINDER_CLOSE_TOLERANCE,
+  deriveCoverage,
+  filePaymentTotal,
+  isRemainderClosed,
+} from "./coverage";
 import type { DocumentType, DocumentationState } from "../documents/types";
+
+// The payment total is Coverage's figure too, so it lives with Coverage (#239).
+// Re-exported here because this is where every caller already imports it from.
+export { filePaymentTotal } from "./coverage";
 
 // === Configuration ===
 
@@ -34,12 +45,42 @@ export const SCORING_CONFIG = {
   HARD_FACTS_BONUS_CLOSE: 15,
   /** Minimum confidence to show as suggestion */
   SUGGESTION_THRESHOLD: 50,
+  /**
+   * A qualified invoice-number hit (#137). An invoice number is a globally
+   * unique token, so a hit is proof rather than a hint: 50 is a suggestion on
+   * its own (SUGGESTION_THRESHOLD), and 40 + 50 = 90 carries a cent-exact
+   * amount past AUTO_MATCH_THRESHOLD with no other signal. Deliberately the
+   * floor that satisfies both and no more — the weight auto-connects, so what
+   * counts as "qualified" (MIN_INVOICE_NUMBER_LENGTH plus a delimited match)
+   * is what keeps it safe.
+   */
+  INVOICE_NUMBER_MATCH: 50,
+  /**
+   * Characters an extracted invoice number needs before it can earn
+   * INVOICE_NUMBER_MATCH (#137). Some issuers number invoices in four digits,
+   * and a four-digit token turning up somewhere in a bank string is
+   * coincidence. Below this it keeps the pre-#137 score of 5.
+   */
+  MIN_INVOICE_NUMBER_LENGTH: 6,
   /** Days to search before/after file date */
   DATE_RANGE_DAYS: 30,
   /** Max suggestions to store per file */
   MAX_SUGGESTIONS: 5,
   /** Max results to return from callable */
   MAX_RESULTS: 20,
+  /**
+   * Coverage: how much of a Transaction its connected Files must explain
+   * before it counts as documented and stops taking auto-connections (#239).
+   * A ratio, because it has to hold for a 12 EUR line and a 12 000 EUR line
+   * alike.
+   */
+  COVERAGE_RATIO,
+  /**
+   * Cents. Does a candidate File close a Transaction's Remainder? Absolute,
+   * because rounding and Trinkgeld are absolute (#239). The detail panels
+   * read this same number.
+   */
+  REMAINDER_CLOSE_TOLERANCE,
 };
 
 // === Types ===
@@ -52,7 +93,14 @@ export type TransactionMatchSource =
   | "partner"
   | "iban"
   | "reference"
-  | "precision_hint";
+  | "precision_hint"
+  /**
+   * The amount was judged against the Transaction's Remainder, not its full
+   * amount (#239). Never alone: it accompanies whatever the amount ladder
+   * said, so a 214,20 File on a 500,00 line reads as an exact hit against a
+   * 214,20 Remainder rather than as a scorer bug.
+   */
+  | "amount_remainder";
 
 export interface ScoreBreakdown {
   amount: number;
@@ -63,6 +111,13 @@ export interface ScoreBreakdown {
   hint: number;
   /** Combination bonus for exact amount + exact/close date (see HARD_FACTS_BONUS_*) */
   hardFacts: number;
+  /**
+   * Present only when `amount` above was scored against the Transaction's
+   * Remainder (#239); the figure it was scored against, in cents. Absent
+   * means the full amount, which is what every pre-#239 breakdown means.
+   * This is what makes a stored Match identifiable as a Remainder Match.
+   */
+  scoredAgainstRemainder?: number;
 }
 
 export interface TransactionPreview {
@@ -122,6 +177,12 @@ export interface FileMatchingData {
   extractedPartner?: string | null;
   extractedIban?: string | null;
   extractedText?: string | null;
+  /**
+   * The document's own invoice number (#137). The needle for the reference
+   * source: a globally unique token, so finding it in the bank's text
+   * identifies the pair rather than merely hinting at it.
+   */
+  extractedInvoiceNumber?: string | null;
   partnerId?: string | null;
   precisionSearchHint?: {
     transactionId: string;
@@ -147,6 +208,8 @@ export interface TransactionData {
    */
   _original?: { rawRow?: Record<string, string> | null } | null;
   name?: string;
+  /** The user's own booking text. Part of the reference haystack (#137). */
+  description?: string | null;
   partner?: string;
   partnerName?: string;
   partnerId?: string;
@@ -158,6 +221,13 @@ export interface TransactionData {
    * exact scores.
    */
   documentationState?: DocumentationState | null;
+  /**
+   * What the Files already connected to this transaction explain, in cents
+   * (#239) — `documentedAmountOf` over their payment totals. Absent means
+   * the caller does not know, which is scored exactly as "nothing connected",
+   * so every pre-#239 caller keeps its scores.
+   */
+  documentedAmount?: number | null;
 }
 
 // === Utility Functions ===
@@ -240,6 +310,38 @@ function scoreSameCurrencyLadder(
   if (difference <= tolerance * 0.01) return { score: 38, source: "amount_close" };
   if (difference <= tolerance * 0.05) return { score: 30, source: "amount_close" };
   if (difference <= tolerance * 0.1) return { score: 20, source: "amount_close" };
+  return { score: 0, source: null };
+}
+
+/**
+ * The amount ladder for a candidate File against a Transaction's Remainder
+ * (#239).
+ *
+ * Same relative ladder as a full-amount comparison, plus one absolute rung:
+ * a gap inside REMAINDER_CLOSE_TOLERANCE closes the Remainder. The absolute
+ * rung is what makes the small end work — a 5,00 File against a 5,80
+ * Remainder is 16% off and scores nothing relatively, while being exactly the
+ * rounding-or-Trinkgeld gap the tolerance exists to forgive. It is scored as
+ * `amount_close` (30) rather than as an exact hit, because it is not one.
+ *
+ * Currency is the caller's problem: a Remainder has no bank-stated original
+ * amount behind it, so `scoreTransaction` only takes this path when document
+ * and bank line already agree on currency.
+ */
+export function calculateRemainderAmountScore(
+  filePayment: number,
+  remainder: number
+): { score: number; source: TransactionMatchSource | null } {
+  const absFile = Math.abs(filePayment);
+  const absRemainder = Math.abs(remainder);
+  if (absFile === 0 || absRemainder === 0) return { score: 0, source: null };
+
+  const ladder = scoreSameCurrencyLadder(absFile, absRemainder);
+  if (ladder.source) return ladder;
+
+  if (isRemainderClosed(absRemainder - absFile)) {
+    return { score: 30, source: "amount_close" };
+  }
   return { score: 0, source: null };
 }
 
@@ -380,25 +482,108 @@ export function calculateDateScore(
   return { score: 0, source: null };
 }
 
+/** A token this short is a coincidence wherever it lands. Pre-#137 floor. */
+const MIN_REFERENCE_LENGTH = 3;
+
+/** Pre-#137 weight: a containment hit that nothing has qualified as proof. */
+const WEAK_REFERENCE_SCORE = 5;
+
+const ALPHANUMERIC = /[\p{L}\p{N}]/u;
+
+/** The fields a Transaction states about itself in words, for #137's search. */
+export type TransactionSearchFields = Pick<
+  TransactionData,
+  "name" | "description" | "partner" | "reference" | "_original"
+>;
+
+/**
+ * Everything the Transaction says about itself, lowercased into one haystack
+ * (#137). Not `reference` alone: on the observed Magenta line the bank's
+ * Payment Reference column landed in `name`, so the invoice number was on the
+ * record the whole time, in a field the scorer never read. The preserved raw
+ * row is in for the same reason — a column the import did not map to a field
+ * is still the bank's own text.
+ */
+export function transactionSearchText(txData: TransactionSearchFields): string {
+  const parts: (string | null | undefined)[] = [
+    txData.name,
+    txData.description,
+    txData.partner,
+    txData.reference,
+  ];
+  const rawRow = txData._original?.rawRow;
+  if (rawRow) parts.push(...Object.values(rawRow));
+  return parts
+    .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
+    .join(" ")
+    .toLowerCase();
+}
+
+/**
+ * Is `needle` in `haystack` bounded by a non-alphanumeric character or a
+ * string edge? `2145` sits inside `SG5RF2145` without being delimited by it,
+ * and a weight that auto-connects must not fire on an accident like that.
+ */
+function containsDelimited(haystack: string, needle: string): boolean {
+  for (let at = haystack.indexOf(needle); at !== -1; at = haystack.indexOf(needle, at + 1)) {
+    const before = at > 0 ? haystack[at - 1] : "";
+    const after = haystack[at + needle.length] ?? "";
+    if (!ALPHANUMERIC.test(before) && !ALPHANUMERIC.test(after)) return true;
+  }
+  return false;
+}
+
+/**
+ * The invoice-number Match Source (#137).
+ *
+ * Searches from the Transaction towards the File: does the Transaction's text
+ * contain the File's `extractedInvoiceNumber`? The pre-#137 test asked the
+ * opposite — does the document's text contain the whole bank string — which a
+ * line like "Magenta Mobil Rechnung 4711000123 vom 05.01.2026 - Details unter
+ * mein.magenta.at" can never satisfy, because no invoice prints the bank's
+ * marketing.
+ *
+ * A qualified hit scores INVOICE_NUMBER_MATCH. Qualified means BOTH bars:
+ * at least MIN_INVOICE_NUMBER_LENGTH characters, AND a delimited match. Below
+ * either bar the hit keeps the pre-#137 WEAK_REFERENCE_SCORE rather than
+ * scoring zero — it is still weak evidence, just not proof.
+ *
+ * The conditional date bonus is untouched by #137; #135 owns date scoring.
+ */
 export function calculateReferenceScore(
-  extractedText: string,
-  reference: string,
+  fileData: Pick<FileMatchingData, "extractedText" | "extractedInvoiceNumber">,
+  txData: TransactionSearchFields,
   currentDateScore: number
 ): {
   score: number;
   dateBonus: number;
   source: TransactionMatchSource | null;
 } {
-  if (!reference || reference.length < 3) {
-    return { score: 0, dateBonus: 0, source: null };
+  const dateBonus = currentDateScore < 15 ? 10 : 0;
+
+  const invoiceNumber = (fileData.extractedInvoiceNumber ?? "").trim().toLowerCase();
+  if (invoiceNumber.length >= MIN_REFERENCE_LENGTH) {
+    const txText = transactionSearchText(txData);
+    if (txText.includes(invoiceNumber)) {
+      const qualified =
+        invoiceNumber.length >= SCORING_CONFIG.MIN_INVOICE_NUMBER_LENGTH &&
+        containsDelimited(txText, invoiceNumber);
+      return {
+        score: qualified ? SCORING_CONFIG.INVOICE_NUMBER_MATCH : WEAK_REFERENCE_SCORE,
+        dateBonus,
+        source: "reference",
+      };
+    }
   }
 
-  const normalizedText = extractedText.toLowerCase();
-  const normalizedRef = reference.toLowerCase();
-
-  if (normalizedText.includes(normalizedRef)) {
-    const dateBonus = currentDateScore < 15 ? 10 : 0;
-    return { score: 5, dateBonus, source: "reference" };
+  // The pre-#137 direction, kept at its old weight. It cannot fire on the
+  // Magenta line, but a File extracted before the invoice-number field existed
+  // — or one the extractor found no number on — has nothing else, and #137 is
+  // meant to be monotone upward: no pair that scores today may stop scoring.
+  const reference = (txData.reference ?? "").trim().toLowerCase();
+  const extractedText = (fileData.extractedText ?? "").toLowerCase();
+  if (reference.length >= MIN_REFERENCE_LENGTH && extractedText.includes(reference)) {
+    return { score: WEAK_REFERENCE_SCORE, dateBonus, source: "reference" };
   }
 
   return { score: 0, dateBonus: 0, source: null };
@@ -430,25 +615,25 @@ export function calculatePartnerScore(
     return { score: 0, source: null };
   }
 
-  // 2. Check file's extracted partner text against transaction name
-  if (fileData.extractedPartner) {
-    const result = namesMatch(fileData.extractedPartner, txName);
-    if (result.match) {
-      return { score: result.score, source: "partner" };
+  // 2 & 3. Check the file's extracted partner text and every partner alias
+  // against the transaction name, taking the best-scoring match rather than
+  // the first (#138) — the alias list is not ordered by relevance, and the
+  // user Partner's own name sitting first must not shadow a stronger brand
+  // alias further down the list.
+  const candidates = [
+    ...(fileData.extractedPartner ? [fileData.extractedPartner] : []),
+    ...(partnerAliases || []),
+  ];
+
+  let best: { score: number; source: TransactionMatchSource | null } = { score: 0, source: null };
+  for (const candidate of candidates) {
+    const result = namesMatch(candidate, txName);
+    if (result.match && result.score > best.score) {
+      best = { score: result.score, source: "partner" };
     }
   }
 
-  // 3. Check partner aliases against transaction name
-  if (partnerAliases && partnerAliases.length > 0) {
-    for (const alias of partnerAliases) {
-      const result = namesMatch(alias, txName);
-      if (result.match) {
-        return { score: result.score, source: "partner" };
-      }
-    }
-  }
-
-  return { score: 0, source: null };
+  return best;
 }
 
 /**
@@ -550,29 +735,25 @@ export function buildScoringOptions(
 }
 
 /**
- * What the bank was charged for a document: the VAT-bearing total plus any
- * printed Trinkgeld (#172).
- *
- * `extractedAmount` is the Summe the printed rate groups add up to, which is
- * deliberately NOT the figure on the bank line for a restaurant Beleg with a
- * terminal-added tip. Every comparison against a bank amount goes through
- * here so the two readings cannot drift apart.
+ * Is this a Remainder Match — one whose amount was judged against what the
+ * Transaction still has open rather than against its full amount (#239)?
+ * Read off the stored breakdown, so a Match read back out of Firestore
+ * answers the same as one just scored.
  */
-export function filePaymentTotal(
-  extractedAmount: number | null | undefined,
-  extractedTipAmount: number | null | undefined
-): number | null {
-  if (extractedAmount == null) return null;
-  const tip = extractedTipAmount ?? 0;
-  if (tip <= 0) return extractedAmount;
-  // A credit note carries the sign on the document total; the tip follows it.
-  return extractedAmount < 0 ? extractedAmount - tip : extractedAmount + tip;
+export function isRemainderMatch(match: TransactionMatchScore): boolean {
+  return match.breakdown.scoredAgainstRemainder != null;
 }
 
-/** Map a transaction Firestore doc's data into the shape `scoreTransaction` expects. */
+/**
+ * Map a transaction Firestore doc's data into the shape `scoreTransaction`
+ * expects. `documentedAmount` is what the Files already connected to this
+ * transaction explain (#239); leave it out and the pair is scored against the
+ * full amount, as it was before Coverage reached the scorer.
+ */
 export function toTransactionData(
   id: string,
-  data: FirebaseFirestore.DocumentData
+  data: FirebaseFirestore.DocumentData,
+  documentedAmount?: number
 ): TransactionData {
   return {
     id,
@@ -582,6 +763,8 @@ export function toTransactionData(
     // Carries the bank-stated original amount for #112.
     _original: data._original,
     name: data.name,
+    // #137: part of the text the invoice number is searched for in.
+    description: data.description,
     partner: data.partner,
     partnerName: data.partnerName,
     partnerId: data.partnerId,
@@ -590,6 +773,7 @@ export function toTransactionData(
     // #104: what the target already holds decides whether this file is a
     // duplicate to suppress or the invoice that upgrades the line.
     documentationState: data.documentationState,
+    documentedAmount,
   };
 }
 
@@ -603,15 +787,62 @@ export function toFileMatchingData(data: FirebaseFirestore.DocumentData): FileMa
     extractedPartner: data.extractedPartner,
     extractedIban: data.extractedIban,
     extractedText: data.extractedText,
+    // #137: the needle for the reference source.
+    extractedInvoiceNumber: data.extractedInvoiceNumber,
     partnerId: data.partnerId,
     precisionSearchHint: data.precisionSearchHint,
     documentType: data.documentType,
   };
 }
 
-/** Partner name + aliases, as `calculatePartnerScore` wants them. */
-export function derivePartnerAliases(partnerData: FirebaseFirestore.DocumentData): string[] {
-  return [partnerData.name, ...(partnerData.aliases || [])].filter(Boolean);
+/**
+ * Partner name + aliases, as `calculatePartnerScore` wants them (#138).
+ *
+ * The brand knowledge that decides a pair like "Magenta Mobil" vs. "T-Mobile
+ * Austria GmbH" lives on the linked Global Partner, not the user's own
+ * Partner record, so it has to be read from there too. Fetch it once per
+ * matching run (both callers already await one partner fetch here) rather
+ * than per candidate transaction.
+ *
+ * A VIES-derived Global Partner and a curated preset can describe the same
+ * company under two different `globalPartners` docs — Global Partners are
+ * not merged (ADR-0005/#262 restricts merge to user Partners; a Global
+ * Partner is shared across tenants, so no single user's action may rewrite
+ * it). Where the linked doc isn't itself a preset but shares a VAT id with
+ * one, that preset's aliases are folded in too, so the brand knowledge it
+ * already carries reaches a Partner linked to the VIES duplicate.
+ */
+export async function derivePartnerAliases(
+  db: FirebaseFirestore.Firestore,
+  partnerData: FirebaseFirestore.DocumentData
+): Promise<string[]> {
+  const aliases = [partnerData.name, ...(partnerData.aliases || [])].filter(Boolean);
+
+  const globalPartnerId = partnerData.globalPartnerId;
+  if (!globalPartnerId) return aliases;
+
+  const globalPartnerSnap = await db.collection("globalPartners").doc(globalPartnerId).get();
+  if (!globalPartnerSnap.exists) return aliases;
+  const globalPartnerData = globalPartnerSnap.data()!;
+  aliases.push(
+    ...[globalPartnerData.name, ...(globalPartnerData.aliases || [])].filter(Boolean)
+  );
+
+  if (globalPartnerData.source !== "preset" && globalPartnerData.vatId) {
+    const normalizedVatId = String(globalPartnerData.vatId).replace(/\s+/g, "").toUpperCase();
+    const presetSnapshot = await db
+      .collection("globalPartners")
+      .where("source", "==", "preset")
+      .where("vatId", "==", normalizedVatId)
+      .limit(1)
+      .get();
+    const presetData = presetSnapshot.docs[0]?.data();
+    if (presetData) {
+      aliases.push(...[presetData.name, ...(presetData.aliases || [])].filter(Boolean));
+    }
+  }
+
+  return aliases;
 }
 
 /** A partner's learned per-factor weight multipliers, if any. */
@@ -654,7 +885,34 @@ export function scoreTransaction(
   // #172: the bank was charged Summe + Trinkgeld, so that is the figure the
   // bank line is scored against — not the VAT-bearing total on its own.
   const filePayment = filePaymentTotal(fileData.extractedAmount, fileData.extractedTipAmount);
-  if (filePayment != null) {
+
+  // #239: a Transaction that already holds Files is only unexplained up to its
+  // Remainder, so that is what a further candidate is judged against. The
+  // split part-invoice and the fee-plus-invoice pair used to read as amount
+  // mismatches against the full bank line and never cleared the threshold.
+  //
+  // Only when the two agree on currency: a Remainder is a derived figure with
+  // no bank-stated original behind it (#112), so the FX paths below have
+  // nothing to anchor on. A foreign-currency document keeps scoring against
+  // the full amount.
+  const coverage = deriveCoverage(txData.amount, txData.documentedAmount ?? 0);
+  const againstRemainder =
+    coverage.againstRemainder && isSameCurrency(fileData.extractedCurrency, txData.currency);
+
+  // Did this candidate actually explain what was left over? Used again by the
+  // documentation rule below, which was written for a candidate documenting
+  // the SAME payment.
+  let closesRemainder = false;
+  if (filePayment != null && againstRemainder) {
+    const result = calculateRemainderAmountScore(filePayment, coverage.remainder);
+    amountScore = result.score;
+    amountExact = result.source === "amount_exact";
+    closesRemainder = result.source !== null;
+    if (result.source) matchSources.push(result.source);
+    // Said whether or not it scored: a pair judged against the Remainder and
+    // found wanting is as much a Remainder Match as one that hit.
+    matchSources.push("amount_remainder");
+  } else if (filePayment != null) {
     const result = calculateAmountScore(
       filePayment,
       txData.amount,
@@ -724,13 +982,11 @@ export function scoreTransaction(
     }
   }
 
-  // 5. Reference scoring (0-5, with date bonus)
-  if (fileData.extractedText && txData.reference) {
-    const result = calculateReferenceScore(
-      fileData.extractedText,
-      txData.reference,
-      dateScore
-    );
+  // 5. Reference scoring: a qualified invoice number is worth
+  // INVOICE_NUMBER_MATCH (#137), anything weaker the pre-#137 5, both with the
+  // conditional date bonus.
+  if (fileData.extractedInvoiceNumber || (fileData.extractedText && txData.reference)) {
+    const result = calculateReferenceScore(fileData, txData, dateScore);
     referenceScore = result.score;
     if (result.dateBonus) {
       dateScore = Math.min(25, dateScore + result.dateBonus);
@@ -778,8 +1034,26 @@ export function scoreTransaction(
   let documentation: DocumentationAssessment | undefined;
   if (txData.documentationState) {
     const assessment = assessDocumentation(fileData.documentType, txData.documentationState);
-    confidence = applyDocumentationOutcome(scoredConfidence, assessment.outcome);
-    documentation = { ...assessment, confidenceBefore: scoredConfidence };
+    // #239 relaxes #104's rule here. That is a change to a DIFFERENT ticket's
+    // behaviour, so it was put to the maintainer in review rather than taken as
+    // read, and accepted on 2026-09-10: without it the pair this ticket exists
+    // to surface stays suppressed, so #239 cannot work while #104 stands as
+    // written.
+    //
+    // Redundancy asks "does the target already hold a document of this
+    // class?", which presumes this candidate would document the same payment.
+    // One that closes the Remainder documents a DIFFERENT part of the line —
+    // the second half of a split invoice is not a duplicate of the first — so
+    // suppressing it would keep the pair this ticket exists to surface off the
+    // list entirely. It is still not established enough to connect itself,
+    // which is exactly what "capped" says; and a Remainder Match is
+    // suggestion-only regardless. Only a candidate that actually closed the
+    // Remainder earns this: one merely scored against a Remainder and found
+    // wanting is redundant in the plain #104 sense.
+    const outcome =
+      closesRemainder && assessment.outcome === "suppressed" ? "capped" : assessment.outcome;
+    confidence = applyDocumentationOutcome(scoredConfidence, outcome);
+    documentation = { ...assessment, outcome, confidenceBefore: scoredConfidence };
   }
 
   return {
@@ -795,6 +1069,10 @@ export function scoreTransaction(
       reference: referenceScore,
       hint: hintScore,
       hardFacts: hardFactsScore,
+      // Conditional, not `undefined`: this breakdown is written to Firestore.
+      ...(filePayment != null && againstRemainder
+        ? { scoredAgainstRemainder: coverage.remainder }
+        : {}),
     },
     preview: {
       date: txData.date,
@@ -818,5 +1096,8 @@ export function formatScoreBreakdown(breakdown: ScoreBreakdown): string {
   if (breakdown.reference > 0) parts.push(`ref:${breakdown.reference}`);
   if (breakdown.hint > 0) parts.push(`hint:${breakdown.hint}`);
   if (breakdown.hardFacts > 0) parts.push(`facts:${breakdown.hardFacts}`);
+  if (breakdown.scoredAgainstRemainder != null) {
+    parts.push(`vs-remainder:${(breakdown.scoredAgainstRemainder / 100).toFixed(2)}`);
+  }
   return parts.join(" + ");
 }

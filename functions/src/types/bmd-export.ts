@@ -56,6 +56,23 @@ export interface BmdExportCounts {
 }
 
 /**
+ * A document the export refused to book, named in the run report (#194).
+ *
+ * Skip and report: an impossible tip is a data problem, not a formatting
+ * choice, so the transaction stays out of buchungen.csv, the run still
+ * completes, and the operator is handed the document's name and the reason
+ * instead of a well-formed CSV that states VAT the UVA does not.
+ */
+export interface BmdSkippedDocument {
+  /** The transaction whose booking rows were withheld. */
+  transactionId: string;
+  fileId: string;
+  fileName: string;
+  /** Operator-facing, and points at the field to correct. */
+  reason: string;
+}
+
+/**
  * A BMD export job record
  * Stored in the `bmdExports` collection
  */
@@ -82,6 +99,9 @@ export interface BmdExport {
   storagePath?: string;
   zipSize?: number;
   expiresAt?: Timestamp;
+
+  /** Documents the run refused to book, with the reason (#194). */
+  skipped?: BmdSkippedDocument[];
 
   // Error handling
   error?: string;
@@ -146,6 +166,8 @@ export interface BmdExportManifest {
   };
   counts: BmdExportCounts;
   includesFiles: boolean;
+  /** Empty on a clean run; one entry per document the export refused (#194). */
+  skipped: BmdSkippedDocument[];
 }
 
 /**

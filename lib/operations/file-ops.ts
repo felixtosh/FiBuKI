@@ -7,8 +7,6 @@ import {
   getDoc,
   doc,
   updateDoc,
-  addDoc,
-  deleteDoc,
   Timestamp,
   writeBatch,
   arrayUnion,
@@ -303,89 +301,32 @@ export async function checkFileDuplicate(
 }
 
 /**
- * Create a new file record (after uploading to storage)
+ * Create a new file record (after uploading to storage).
+ *
+ * Through the callable rather than straight to Firestore, because the write is
+ * where the duplicate check lives (#182). A client-side check-then-write holds
+ * the whole upload open between the read and the write, so two runs of the same
+ * drop both find nothing and both create a File. The server checks as it
+ * writes; when the bytes are already on file it creates nothing and hands back
+ * the File that has them, which is the id this returns.
  */
 export async function createFile(
   ctx: OperationsContext,
   data: FileCreateData
 ): Promise<string> {
-  const now = Timestamp.now();
+  const result = await callFunction<
+    { data: Record<string, unknown> },
+    { fileId: string; duplicate: boolean }
+  >("createFile", {
+    data: {
+      ...data,
+      // The callable takes the two date fields over the wire as ISO strings.
+      gmailEmailDate: data.gmailEmailDate?.toISOString(),
+      inboundReceivedAt: data.inboundReceivedAt?.toISOString(),
+    },
+  });
 
-  // Build file object, excluding undefined values (Firestore doesn't accept them)
-  const newFile: Record<string, unknown> = {
-    userId: ctx.userId,
-    fileName: data.fileName,
-    fileType: data.fileType,
-    fileSize: data.fileSize,
-    storagePath: data.storagePath,
-    downloadUrl: data.downloadUrl,
-    extractionComplete: false,
-    transactionIds: [],
-    uploadedAt: now,
-    createdAt: now,
-    updatedAt: now,
-  };
-
-  // Only add optional fields if they have values
-  if (data.thumbnailUrl) {
-    newFile.thumbnailUrl = data.thumbnailUrl;
-  }
-  if (data.contentHash) {
-    newFile.contentHash = data.contentHash;
-  }
-
-  // Source tracking
-  if (data.sourceType) {
-    newFile.sourceType = data.sourceType;
-  }
-  if (data.sourceSearchPattern) {
-    newFile.sourceSearchPattern = data.sourceSearchPattern;
-  }
-  if (data.sourceResultType) {
-    newFile.sourceResultType = data.sourceResultType;
-  }
-  if (data.sourceUrl) {
-    newFile.sourceUrl = data.sourceUrl;
-  }
-  if (data.sourceDomain) {
-    newFile.sourceDomain = data.sourceDomain;
-  }
-  if (data.sourceRunId) {
-    newFile.sourceRunId = data.sourceRunId;
-  }
-  if (data.sourceCollectorId) {
-    newFile.sourceCollectorId = data.sourceCollectorId;
-  }
-  if (data.gmailMessageId) {
-    newFile.gmailMessageId = data.gmailMessageId;
-  }
-  if (data.gmailIntegrationId) {
-    newFile.gmailIntegrationId = data.gmailIntegrationId;
-  }
-  if (data.gmailIntegrationEmail) {
-    newFile.gmailIntegrationEmail = data.gmailIntegrationEmail;
-  }
-  if (data.gmailSubject) {
-    newFile.gmailSubject = data.gmailSubject;
-  }
-  if (data.gmailAttachmentId) {
-    newFile.gmailAttachmentId = data.gmailAttachmentId;
-  }
-  if (data.gmailSenderEmail) {
-    newFile.gmailSenderEmail = data.gmailSenderEmail;
-  }
-  if (data.gmailSenderDomain) {
-    newFile.gmailSenderDomain = data.gmailSenderDomain;
-  }
-  if (data.gmailSenderName) {
-    newFile.gmailSenderName = data.gmailSenderName;
-  }
-  if (data.gmailEmailDate) {
-    newFile.gmailEmailDate = data.gmailEmailDate;
-  }
-
-  const docRef = await addDoc(collection(ctx.db, FILES_COLLECTION), newFile);
-  return docRef.id;
+  return result.fileId;
 }
 
 /**
@@ -434,15 +375,14 @@ export async function updateFileDirection(
  * Editable additional field (label + value pair)
  */
 export interface EditableAdditionalField {
+  /** Canonical extraction key (#252), carried through a save unchanged. */
+  key?: string;
   label: string;
   value: string;
 }
 
 export interface EditableLineItem {
   description: string;
-  quantity: string;
-  /** Currency units (not cents) */
-  unitPrice: string;
   vatPercent: string;
   /** Currency units (not cents) */
   vatAmount: string;
@@ -456,6 +396,18 @@ export interface EditableLineItem {
 export interface EditableExtractedFields {
   date: string; // yyyy-MM-dd format
   amount: string; // number as string (in currency units, not cents)
+  /**
+   * Trinkgeld the document does not print (#217), in currency units. Empty is
+   * "no tip" — and it is seeded from the stored value, so a tip the Beleg DID
+   * print survives a save that did not touch this box.
+   */
+  tipAmount: string;
+  /**
+   * The tip above is not printed on the invoice (#310), so the server measures
+   * it against the transaction total rather than the document total. Absent is
+   * false: the default bound is the document's own total.
+   */
+  tipNotPrinted?: boolean;
   vatPercent: string; // number as string
   partner: string;
   vatId: string;
@@ -489,9 +441,6 @@ function normalizeEditableLineItems(lineItems: EditableLineItem[] | undefined): 
         return null;
       }
 
-      const quantity = parseNumberInput(item.quantity);
-      let unitPrice = parseCurrencyToCents(item.unitPrice);
-
       const rawVatPercent = parseNumberInput(item.vatPercent);
       const vatPercent = rawVatPercent !== null && rawVatPercent >= 0 && rawVatPercent <= 100
         ? rawVatPercent
@@ -505,19 +454,8 @@ function normalizeEditableLineItems(lineItems: EditableLineItem[] | undefined): 
         vatAmount = 0;
       }
 
-      if (unitPrice === null && quantity && quantity !== 0) {
-        const amountLooksNet = vatPercent !== null && vatPercent > 0
-          ? Math.abs(Math.round((amount * vatPercent) / 100) - vatAmount) <
-            Math.abs(Math.round((amount * vatPercent) / (100 + vatPercent)) - vatAmount)
-          : false;
-        const netAmount = amountLooksNet ? amount : amount - vatAmount;
-        unitPrice = Math.round(netAmount / quantity);
-      }
-
       return {
         description: item.description.trim() || `Item ${index + 1}`,
-        quantity,
-        unitPrice,
         vatPercent,
         vatAmount,
         amount,
@@ -629,6 +567,18 @@ export async function updateFileExtractedFields(
     correction.amount = null;
   }
 
+  // #217: sent beside the amount, never taken out of it. On a document whose
+  // total never included the tip, that total already is the VAT base — a
+  // subtraction here would shrink it and under-claim the return.
+  if (fields.tipAmount) {
+    const tipNum = parseNumberInput(fields.tipAmount);
+    if (tipNum !== null) {
+      correction.tipAmount = Math.round(tipNum * 100);
+    }
+  } else {
+    correction.tipAmount = null;
+  }
+
   if (fields.vatPercent) {
     const vatNum = parseNumberInput(fields.vatPercent);
     if (vatNum !== null) {
@@ -641,6 +591,7 @@ export async function updateFileExtractedFields(
   const additionalFields = fields.additionalFields
     .filter((f) => f.label.trim() && f.value.trim())
     .map((f) => ({
+      ...(f.key ? { key: f.key } : {}),
       label: f.label.trim(),
       value: f.value.trim(),
       rawValue: f.value.trim(), // use edited value as raw
@@ -650,12 +601,16 @@ export async function updateFileExtractedFields(
     {
       fileId: string;
       correction: Record<string, unknown>;
+      tipNotPrinted: boolean;
       details: Record<string, unknown>;
     },
     { success: boolean; changed: string[]; correctedFields: string[] }
   >("updateFileExtractedFields", {
     fileId,
     correction,
+    // #310: beside the correction, not inside it — it says how to read the tip
+    // rather than being a value the record keeps per field.
+    tipNotPrinted: fields.tipNotPrinted === true,
     details: {
       partner: fields.partner || null,
       vatId: fields.vatId || null,
@@ -734,8 +689,10 @@ export async function reextractFilesForPartner(
 }
 
 /**
- * Soft delete a file (Gmail files) - marks as deleted but keeps for deduplication
- * This prevents the file from being re-imported from Gmail
+ * Delete a file: hide it, keep the record, leave the stored document alone.
+ * The record is what a later Sync deduplicates against, so a deleted Gmail file
+ * is not re-imported, and it is what `restoreFile` brings back.
+ * See docs/adr/0006-deleting-a-file-is-reversible.md.
  */
 export async function softDeleteFile(
   ctx: OperationsContext,
@@ -784,28 +741,6 @@ export async function restoreFile(
     deletedAt: null,
     updatedAt: Timestamp.now(),
   });
-}
-
-/**
- * Hard delete a file and all its connections (permanent deletion)
- */
-export async function deleteFile(
-  ctx: OperationsContext,
-  fileId: string
-): Promise<{ deletedConnections: number }> {
-  const existing = await getFile(ctx, fileId);
-  if (!existing) {
-    throw new Error(`File ${fileId} not found or access denied`);
-  }
-
-  // 1. Delete all connections and update transactions
-  const connectionsResult = await deleteFileConnections(ctx, fileId);
-
-  // 2. Delete the file document
-  const docRef = doc(ctx.db, FILES_COLLECTION, fileId);
-  await deleteDoc(docRef);
-
-  return { deletedConnections: connectionsResult.deleted };
 }
 
 /**

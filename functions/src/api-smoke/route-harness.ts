@@ -42,14 +42,29 @@ import { FakeFirestore } from "./fake-firestore";
 // The one shared data plane, in a box the vi.mock factory below can reach.
 const h = vi.hoisted(() => {
   const box: { db: unknown } = { db: undefined };
-  return { box, getDb: () => box.db };
+  return { box, getDb: () => box.db, uploads: [] as string[] };
 });
 
 vi.mock("@/lib/firebase/admin", () => ({
   getAdminDb: () => h.getDb(),
   getAdminApp: () => ({}),
   getAdminStorage: () => ({}),
-  getAdminBucket: () => ({}),
+  // Storage is a sink: routes that upload bytes record the path they wrote to
+  // and nothing else, so an upload route's assertions can stay on the record it
+  // writes next to them — and on whether it uploaded at all.
+  getAdminBucket: () => ({
+    name: "test-bucket",
+    file: (path: string) => ({
+      save: async () => {
+        h.uploads.push(path);
+      },
+      getMetadata: async () => [{ metadata: {} }],
+      setMetadata: async () => undefined,
+      delete: async () => undefined,
+    }),
+  }),
+  getFirebaseStorageDownloadUrl: (bucket: string, path: string, token: string) =>
+    `https://storage.test/${bucket}/${encodeURIComponent(path)}?token=${token}`,
 }));
 
 vi.mock("@/lib/auth/get-server-user", async (importActual) => {
@@ -84,6 +99,8 @@ export function authed(
 export interface RouteHarness {
   /** The instance every route under test sees through the mocked getAdminDb(). */
   store: FakeFirestore;
+  /** Storage paths written this test, in order — see the getAdminBucket mock. */
+  uploads: string[];
   authed: typeof authed;
 }
 
@@ -97,7 +114,8 @@ export function setupRouteHarness(): RouteHarness {
 
   beforeEach(() => {
     store.reset();
+    h.uploads.length = 0;
   });
 
-  return { store, authed };
+  return { store, uploads: h.uploads, authed };
 }

@@ -8,9 +8,11 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { readDismissedTransactionIds } from "./dismissedTransactions";
+import { loadDocumentedAmounts } from "./documentedAmounts";
 import {
   SCORING_CONFIG,
   scoreTransaction,
+  derivePartnerAliases,
   formatScoreBreakdown,
   TransactionMatchScore,
   TransactionMatchSource,
@@ -29,6 +31,8 @@ interface FileInfo {
   extractedPartner?: string | null;
   extractedIban?: string | null;
   extractedText?: string | null;
+  /** #137: the needle for the invoice-number match source. */
+  extractedInvoiceNumber?: string | null;
   partnerId?: string | null;
 }
 
@@ -134,6 +138,8 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
       extractedPartner?: string | null;
       extractedIban?: string | null;
       extractedText?: string | null;
+      /** #137: the needle for the invoice-number match source. */
+      extractedInvoiceNumber?: string | null;
       partnerId?: string | null;
       /** #104: absent on the raw fileInfo path, which has no stored record. */
       documentType?: DocumentType | null;
@@ -173,6 +179,7 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
         extractedPartner: docData.extractedPartner,
         extractedIban: docData.extractedIban,
         extractedText: docData.extractedText,
+        extractedInvoiceNumber: docData.extractedInvoiceNumber,
         partnerId: docData.partnerId,
         documentType: docData.documentType,
       };
@@ -187,6 +194,7 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
         extractedPartner: fileInfo!.extractedPartner,
         extractedIban: fileInfo!.extractedIban,
         extractedText: fileInfo!.extractedText,
+        extractedInvoiceNumber: fileInfo!.extractedInvoiceNumber,
         partnerId: fileInfo!.partnerId,
       };
     }
@@ -259,10 +267,10 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
           .get();
         if (partnerDoc.exists) {
           const partnerData = partnerDoc.data()!;
-          partnerAliases = [
-            partnerData.name,
-            ...(partnerData.aliases || []),
-          ].filter(Boolean);
+          // Same derivation as auto-matching, not a copy of it (#138): this
+          // dialog's scores have to be the ones matchFileTransactions
+          // produced, including the linked Global Partner's brand aliases.
+          partnerAliases = await derivePartnerAliases(db, partnerData);
         }
       } catch (error) {
         console.warn("[FindMatches] Failed to fetch partner aliases:", error);
@@ -291,6 +299,11 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
 
     const totalCandidates = candidates.length;
 
+    // What the Files already on each candidate explain (#239). The trigger
+    // resolves its Remainders through the same helper, so this dialog and the
+    // stored suggestions cannot disagree about which figure is open.
+    const documentedAmounts = await loadDocumentedAmounts(candidates.map((c) => c.id), fileId);
+
     // Score each transaction
     const allScores: TransactionMatchScore[] = candidates.map((doc) => {
       const txData = doc.data();
@@ -303,6 +316,8 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
           extractedPartner: fileData.extractedPartner,
           extractedIban: fileData.extractedIban,
           extractedText: fileData.extractedText,
+          // #137: the needle for the invoice-number match source.
+          extractedInvoiceNumber: fileData.extractedInvoiceNumber,
           partnerId: fileData.partnerId,
           documentType: fileData.documentType,
         },
@@ -314,12 +329,15 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
           // Carries the bank-stated original amount for #112.
           _original: txData._original,
           name: txData.name,
+          // #137: part of the text the invoice number is searched for in.
+          description: txData.description,
           partner: txData.partner,
           partnerName: txData.partnerName,
           partnerId: txData.partnerId,
           partnerIban: txData.partnerIban,
           reference: txData.reference,
           documentationState: txData.documentationState,
+          documentedAmount: documentedAmounts.get(doc.id),
         },
         partnerAliases
       );

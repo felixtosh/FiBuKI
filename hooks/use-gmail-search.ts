@@ -5,6 +5,7 @@ import { httpsCallable } from "firebase/functions";
 import { functions } from "@/lib/firebase/config";
 import { EmailMessage, EmailSearchParams, EmailAttachment } from "@/types/email-integration";
 import { fetchWithAuth } from "@/lib/api/fetch-with-auth";
+import type { MailSearchLimitation } from "@/functions/src/mail/provider";
 
 // ============================================================================
 // Cloud Function Types
@@ -12,10 +13,12 @@ import { fetchWithAuth } from "@/lib/api/fetch-with-auth";
 
 interface SearchGmailRequest {
   integrationId: string;
-  query?: string;
+  /** Provider-neutral search terms (#240). */
+  keywords?: string[];
+  from?: string;
+  filenames?: string[];
   dateFrom?: string;
   dateTo?: string;
-  from?: string;
   hasAttachments?: boolean;
   limit?: number;
   pageToken?: string;
@@ -47,6 +50,8 @@ interface SearchGmailResponse {
   messages: GmailMessageResult[];
   nextPageToken?: string;
   totalEstimate?: number;
+  /** Constraints the provider could not execute as asked (#240). */
+  limitations?: MailSearchLimitation[];
 }
 
 const searchGmailFn = httpsCallable<SearchGmailRequest, SearchGmailResponse>(
@@ -136,11 +141,12 @@ export function useGmailSearch(integrationId: string | null): UseGmailSearchResu
       try {
         const result = await searchGmailFn({
           integrationId,
-          query: params.query,
+          keywords: params.keywords,
+          filenames: params.filenames,
           dateFrom: params.dateFrom?.toISOString(),
           dateTo: params.dateTo?.toISOString(),
           from: params.from,
-          hasAttachments: params.hasAttachments,
+          hasAttachments: params.hasAttachment,
           limit: params.limit,
           expandThreads: params.expandThreads,
         });
@@ -179,11 +185,12 @@ export function useGmailSearch(integrationId: string | null): UseGmailSearchResu
     try {
       const result = await searchGmailFn({
         integrationId,
-        query: lastParams.query,
+        keywords: lastParams.keywords,
+        filenames: lastParams.filenames,
         dateFrom: lastParams.dateFrom?.toISOString(),
         dateTo: lastParams.dateTo?.toISOString(),
         from: lastParams.from,
-        hasAttachments: lastParams.hasAttachments,
+        hasAttachments: lastParams.hasAttachment,
         limit: lastParams.limit,
         expandThreads: lastParams.expandThreads,
         pageToken: nextPageToken,

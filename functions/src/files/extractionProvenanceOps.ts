@@ -46,6 +46,12 @@ export const CORRECTABLE_FIELDS = [
    * not have a re-extraction quietly put it back.
    */
   "invoiceDirection",
+  /**
+   * #217. The Trinkgeld the document never printed — the terminal took it, the
+   * Beleg does not say so, and until this existed the field had no writer but
+   * the extractor, so the bank line stayed unexplainable forever.
+   */
+  "tipAmount",
 ] as const;
 
 export type CorrectableField = (typeof CORRECTABLE_FIELDS)[number];

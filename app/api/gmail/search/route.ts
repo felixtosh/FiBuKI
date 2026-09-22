@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { callFirebaseFunction } from "@/lib/api/firebase-callable";
+import type { MailSearchLimitation } from "@/functions/src/mail/provider";
 
 // Types matching the callable response
 interface GmailAttachment {
@@ -37,20 +38,28 @@ interface SearchGmailResponse {
   messages: GmailMessage[];
   nextPageToken?: string;
   totalEstimate?: number;
+  /** Constraints the mailbox could not execute as asked (#240). */
+  limitations?: MailSearchLimitation[];
 }
 
 /**
  * POST /api/gmail/search
- * Search Gmail for emails with attachments
+ * Search a connected mailbox for messages with attachments
  *
  * Proxies to searchGmailCallable (single source of truth)
  *
+ * The search is stated in provider-neutral terms (#240) — keywords, a sender,
+ * filename fragments, a date window. `query` is the Gmail-only escape hatch the
+ * automation callers still use; the attach path does not send it.
+ *
  * Body: {
  *   integrationId: string;
- *   query?: string;
+ *   keywords?: string[];
+ *   from?: string;
+ *   filenames?: string[];
+ *   query?: string; // raw Gmail query, Gmail integrations only
  *   dateFrom?: string; // ISO date
  *   dateTo?: string; // ISO date
- *   from?: string;
  *   hasAttachments?: boolean;
  *   limit?: number;
  *   pageToken?: string;
@@ -63,6 +72,8 @@ export async function POST(request: NextRequest) {
     const {
       integrationId,
       query,
+      keywords,
+      filenames,
       dateFrom,
       dateTo,
       from,
@@ -75,6 +86,8 @@ export async function POST(request: NextRequest) {
     console.log("[Gmail Search] Request", {
       integrationId,
       query,
+      keywords,
+      filenames,
       dateFrom,
       dateTo,
       from,
@@ -100,6 +113,8 @@ export async function POST(request: NextRequest) {
       {
         integrationId: string;
         query?: string;
+        keywords?: string[];
+        filenames?: string[];
         dateFrom?: string;
         dateTo?: string;
         from?: string;
@@ -114,6 +129,8 @@ export async function POST(request: NextRequest) {
       {
         integrationId,
         query,
+        keywords,
+        filenames,
         dateFrom,
         dateTo,
         from,
@@ -136,6 +153,7 @@ export async function POST(request: NextRequest) {
       messages: result?.messages || [],
       nextPageToken: result?.nextPageToken,
       totalEstimate: result?.totalEstimate,
+      limitations: result?.limitations,
     });
   } catch (error) {
     console.error("Error searching Gmail:", error);
