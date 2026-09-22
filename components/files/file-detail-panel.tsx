@@ -1,5 +1,27 @@
 "use client";
 
+/**
+ * ## The two actions come first. Reasoning goes behind an info icon
+ *
+ * People open this panel to do two things: assign a Partner, and connect the
+ * file to a Transaction. Everything else is context for those decisions.
+ *
+ * Context has a way of growing into sections. The § 11 verdict was a heading, a
+ * summary sentence and a three-row basis table; the direction review was a
+ * bordered callout; both sat above the Partner control and pushed the actions
+ * below the fold on a laptop. Each was worth reading once and neither was worth
+ * the top of the panel on every visit.
+ *
+ * The pattern that replaced them: the field states the answer, and an
+ * `InfoPopover` on its label holds the argument. "Type: Invoice" is all most
+ * users need, and § 11 is one click away for the visit where somebody disagrees
+ * with it.
+ *
+ * So before adding a block here, ask whether it is a FINDING (something is
+ * wrong and a person must act) or an EXPLANATION (why we concluded what the
+ * field already says). Findings may take space. Explanations go in the popover.
+ */
+
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { format } from "date-fns";
 import { useRouter } from "next/navigation";
@@ -39,7 +61,8 @@ import {
 import { FilePreview } from "./file-preview";
 import { FileExtractedInfo } from "./file-extracted-info";
 import { FileConnectionsList } from "./file-connections-list";
-import { DocumentTypeSection } from "@/components/documents/section-11-details";
+import { DocumentTypeReasoning } from "@/components/documents/section-11-details";
+import { InfoPopover } from "@/components/ui/info-popover";
 import { AddPartnerDialog } from "@/components/partners/add-partner-dialog";
 import { PartnerPill } from "@/components/partners/partner-pill";
 import {
@@ -524,7 +547,21 @@ function FileDetailPanelInner({
                   </div>
                   {/* Invoice Type Classification */}
                   <div className="flex items-center gap-3 file-meta-row">
-                    <span className="text-muted-foreground w-16 shrink-0 file-meta-label">Type</span>
+                    <span className="text-muted-foreground w-16 shrink-0 file-meta-label flex items-center gap-1">
+                      Type
+                      {/*
+                        The § 11 test that produced this answer, one click away.
+                        "Type: Invoice" is all most users need; the statute is
+                        for the visit where somebody disagrees with it.
+                      */}
+                      <InfoPopover label="Why this document type">
+                        <DocumentTypeReasoning
+                          documentType={file.documentType}
+                          basis={file.documentTypeBasis}
+                          missingElements={file.documentTypeMissingElements}
+                        />
+                      </InfoPopover>
+                    </span>
                     <div className="flex-1 flex justify-end file-meta-value">
                       {(() => {
                         const status = getInvoiceTypeStatus(file);
@@ -585,14 +622,13 @@ function FileDetailPanelInner({
 
             <Separator />
 
-            {/* § 11 verdict: what the document is, why, and what it does not show */}
-            <DocumentTypeSection
-              documentType={file.documentType}
-              basis={file.documentTypeBasis}
-              missingElements={file.documentTypeMissingElements}
-            />
-
-            <Separator />
+            {/*
+              The § 11 verdict used to be a full section here, between the
+              extracted figures and the Partner control. It said the same thing
+              the Type field says, at four times the height, and it pushed the
+              two actions this panel exists for below the fold. It now lives in
+              the info popover on the Type label above.
+            */}
 
             {/* Partner Assignment Section */}
             <div className="space-y-3">

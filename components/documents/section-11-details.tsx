@@ -97,6 +97,48 @@ interface DocumentTypeSectionProps {
   className?: string;
 }
 
+/**
+ * The § 11 verdict without its own heading, for use inside the Type field's
+ * info popover (#206 discussion): the label already says what the document is,
+ * so this only has to say why. Exported separately from `DocumentTypeSection`
+ * so the two cannot drift into describing the same document differently.
+ */
+export function DocumentTypeReasoning({
+  documentType,
+  basis,
+  missingElements,
+  className,
+}: DocumentTypeSectionProps) {
+  const presentation = describeDocumentType(documentType);
+  const basisLines = describeDocumentTypeBasis(basis, documentType);
+
+  return (
+    <div className={cn("space-y-3", className)}>
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs font-medium text-muted-foreground">§ 11 UStG</span>
+        <DocumentTypeBadge type={documentType} withTooltip={false} />
+      </div>
+
+      <p className="text-sm text-muted-foreground">{presentation.summary}</p>
+
+      {/* The basis, so a borderline call can be judged instead of argued with. */}
+      <dl className="space-y-1.5">
+        {basisLines.map((line) => (
+          <div key={line.id} className="flex items-start gap-3">
+            <dt className="text-xs text-muted-foreground shrink-0 w-24">{line.label}</dt>
+            <dd className="text-xs leading-snug flex-1">{line.text}</dd>
+          </div>
+        ))}
+      </dl>
+
+      <Section11MissingElements
+        documentType={documentType}
+        elements={missingElements}
+      />
+    </div>
+  );
+}
+
 export function DocumentTypeSection({
   documentType,
   basis,

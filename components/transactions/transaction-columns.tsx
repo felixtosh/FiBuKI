@@ -1,5 +1,29 @@
 "use client";
 
+/**
+ * ## Before adding a column, read this
+ *
+ * A column is the most expensive way to say something. It costs width on every
+ * row forever, for a fact that is usually only interesting on a few of them.
+ * The `documentation` column was removed for exactly that: it carried a real
+ * fact (Documentation State, see CONTEXT.md and ADR-0004) as a fifth "how done
+ * is this line" signal on a table that already had four, and it said nothing on
+ * the rows where the answer was the expected one.
+ *
+ * So, in order of preference:
+ *
+ *   1. Enrich a cell that already exists. The File cell says a document is
+ *      attached; it is the right place to say what kind, and only when that
+ *      changes what the row is worth.
+ *   2. Put the account-wide version in the toolbar summary, next to the score
+ *      ring, where "how is this account doing" already lives.
+ *   3. A new column, last, and only when the fact is true and interesting on
+ *      most rows.
+ *
+ * And whatever you add here must exist in the detail panel too. A fact that can
+ * be sorted on but not inspected leaves the user with no way to ask why.
+ */
+
 import { ColumnDef } from "@tanstack/react-table";
 import { format } from "date-fns";
 import {
@@ -230,19 +254,33 @@ export function getTransactionColumns(
           const fileData = fileAmountsMap?.get(txId);
           // Use transaction/payment date for currency conversion
           const txDate = row.original.date?.toDate?.();
+          // WHAT the row is documented by, next to the cell that says THAT it
+          // is — and only when that changes its worth. An invoice is the case
+          // the green row already implies, so labelling it adds a mark to most
+          // rows and information to none. `receipt-only` (paid, not
+          // deductible) and `unknown` (attached, unclassified) are the two the
+          // reader cannot infer from anywhere else on the line.
+          const state = row.original.documentationState;
+          const worthSaying = state === "receipt-only" || state === "unknown";
           return (
-            <AmountMatchDisplay
-              count={fileCount}
-              countType="file"
-              primaryAmount={row.original.amount}
-              primaryCurrency={row.original.currency || "EUR"}
-              // #112: lets the pill compare in the document's currency when the
-              // bank stated what it charged before settling, instead of converting.
-              primaryOriginal={readBankOriginalAmount(row.original._original?.rawRow)}
-              secondaryAmounts={fileData?.amounts || []}
-              conversionDate={txDate}
-              isExtracting={fileData?.hasExtractingFiles}
-            />
+            <div className="flex items-center gap-1.5 min-w-0">
+              {worthSaying && (
+                <DocumentationStateBadge state={state} className="shrink-0" />
+              )}
+              <AmountMatchDisplay
+                count={fileCount}
+                countType="file"
+                primaryAmount={row.original.amount}
+                primaryCurrency={row.original.currency || "EUR"}
+                // #112: lets the pill compare in the document's currency when
+                // the bank stated what it charged before settling, instead of
+                // converting.
+                primaryOriginal={readBankOriginalAmount(row.original._original?.rawRow)}
+                secondaryAmounts={fileData?.amounts || []}
+                conversionDate={txDate}
+                isExtracting={fileData?.hasExtractingFiles}
+              />
+            </div>
           );
         }
 
@@ -308,28 +346,19 @@ export function getTransactionColumns(
         );
       },
     },
-    {
-      id: "documentation",
-      // WHAT the row is documented by, next to the File cell that says only
-      // THAT it is. A receipt-only line and an invoice-documented one are both
-      // green — `isComplete` is untouched by design — so this is the only
-      // thing on the row that tells them apart.
-      //
-      // Sorted on the RESOLVED state, so rows carrying no state at all group
-      // with the explicit `unknown` ones instead of forming a second,
-      // identical-looking bucket.
-      accessorFn: (row) => describeDocumentationState(row.documentationState).state,
-      size: 130,
-      header: ({ column }) => (
-        <SortableHeader column={column}>Documentation</SortableHeader>
-      ),
-      cell: ({ row }) => (
-        // Never an em-dash: a row with no derived state reads as "nicht
-        // bestimmt", which is what most of the corpus honestly is until the
-        // backfill runs.
-        <DocumentationStateBadge state={row.original.documentationState} />
-      ),
-    },
+    /*
+      The `documentation` column lived here. It existed because a receipt-only
+      line and an invoice-documented one are both green — `isComplete` is
+      untouched by design, per ADR-0004 — so nothing on the row told them
+      apart. That was true, but a whole sortable column to carry it put a fifth
+      "how done is this line" signal on a table that already had four, and its
+      values read in a different language to its header.
+
+      The fact now rides the File cell above, which is the cell that already
+      says a document is attached, and only when it changes what the row is
+      worth. The account-wide view of the same fact is the score ring in the
+      toolbar, and the work it implies is the chase queue next to it.
+    */
     {
       id: "reconciliation",
       size: 40,

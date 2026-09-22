@@ -14,6 +14,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { cn, toDateSafe } from "@/lib/utils";
 import { useEcbConverter } from "@/lib/currency";
 import { useDocumentLabel } from "@/hooks/use-document-label";
+import { InfoPopover } from "@/components/ui/info-popover";
 import {
   Tooltip,
   TooltipContent,
@@ -39,6 +40,7 @@ import { describeLineItemsUnreconciled } from "@/lib/documents/line-item-present
 // Uses container queries to stack vertically when panel is narrow (<340px)
 function FieldRow({
   label,
+  labelInfo,
   children,
   className,
   onClick,
@@ -50,6 +52,8 @@ function FieldRow({
   placeholder,
 }: {
   label: string;
+  /** Explanation for this field, one click away. See InfoPopover. */
+  labelInfo?: React.ReactNode;
   children: React.ReactNode;
   className?: string;
   onClick?: (text: string) => void;
@@ -64,7 +68,10 @@ function FieldRow({
 
   return (
     <div className={cn("flex items-baseline gap-4 field-row-responsive", className)}>
-      <span className="text-sm text-muted-foreground shrink-0 w-28 field-row-label">{label}</span>
+      <span className="text-sm text-muted-foreground shrink-0 w-28 field-row-label flex items-center gap-1">
+        {label}
+        {labelInfo}
+      </span>
       {isEditing && onEditChange ? (
         <Input
           type={inputType}
@@ -551,6 +558,7 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
         </div>
       )}
 
+      {/* A silent rewrite of extracted text is a finding, so it keeps its box. */}
       {repairAmbiguity && (
         <div className="rounded border border-amber-500/40 bg-amber-500/10 p-2 space-y-1">
           <Badge variant="outline" className="text-xs">
@@ -560,7 +568,17 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
         </div>
       )}
 
-      {directionReview && (
+      {/*
+        Only a CONFLICT still gets a callout of its own. A conflict is a
+        finding: the document contradicts a transaction it is attached to, one
+        of the two is wrong, and it was audited as producing only true
+        positives. "No direction was ever established" is not a finding, it is
+        an explanation, and it applied to a large minority of a real file set —
+        so as a permanent bordered box above the figures it was noise on most
+        files. It now hangs off the Direction label's info icon, where it is
+        one click from the field it is about.
+      */}
+      {directionReview && directionReview.reason === "conflict" && (
         <div
           className={cn(
             "rounded border p-2 space-y-1",
@@ -729,7 +747,24 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
             other way to move it was to edit identity data and hope the
             backfill picked the file up.
           */}
-          <FieldRow label="Direction">
+          <FieldRow
+            label="Direction"
+            labelInfo={
+              directionReview ? (
+                <InfoPopover label="Why this direction needs a look">
+                  <div className="space-y-2">
+                    <Badge variant="outline" className="text-xs">
+                      {documentLabel(directionReview)}
+                    </Badge>
+                    <p className="text-xs text-muted-foreground">
+                      {directionReview.text}
+                      {directionReview.suggestion ? ` ${directionReview.suggestion}` : ""}
+                    </p>
+                  </div>
+                </InfoPopover>
+              ) : undefined
+            }
+          >
             {onDirectionChange ? (
               <Select
                 value={directionPresentation.direction}
