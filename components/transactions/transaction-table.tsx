@@ -90,14 +90,29 @@ export function TransactionTable({
   );
 
   // Calculate assigned count and sum of amounts
-  const { assignedCount, totalCount, filteredSum, scorePercent } = useMemo(() => {
+  const { assignedCount, totalCount, filteredSum, scorePercent, deductiblePercent } =
+    useMemo(() => {
     const total = filteredTransactions.length;
     const assigned = filteredTransactions.filter(
       (tx) => (tx.fileIds && tx.fileIds.length > 0) || tx.noReceiptCategoryId
     ).length;
     const sum = filteredTransactions.reduce((acc, tx) => acc + (tx.amount || 0), 0);
     const score = total > 0 ? Math.round((assigned / total) * 100) : 0;
-    return { assignedCount: assigned, totalCount: total, filteredSum: sum, scorePercent: score };
+    // Documented is not the same as deductible. A line covered by a payment
+    // confirmation counts as assigned above and earns no Vorsteuer, so the ring
+    // draws the § 11 share as a second arc and the gap between them is the
+    // chase queue beside it.
+    const deductible = filteredTransactions.filter(
+      (tx) => tx.documentationState === "invoice"
+    ).length;
+    const deductibleScore = total > 0 ? Math.round((deductible / total) * 100) : 0;
+    return {
+      assignedCount: assigned,
+      totalCount: total,
+      filteredSum: sum,
+      scorePercent: score,
+      deductiblePercent: deductibleScore,
+    };
   }, [filteredTransactions]);
 
   // Scroll to and highlight a transaction by ID (uses virtualizer for off-screen items)
@@ -325,6 +340,7 @@ export function TransactionTable({
         totalCount={totalCount}
         filteredSum={filteredSum}
         scorePercent={scorePercent}
+        deductiblePercent={deductiblePercent}
         chaseQueueCount={chaseQueueCount}
       />
 
