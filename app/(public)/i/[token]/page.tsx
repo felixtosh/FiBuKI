@@ -60,12 +60,20 @@ export default async function ShareInvoicePage({ params }: PageProps) {
 
   if (invoice.status === "cancelled") notFound();
 
+  // Point the download button at our own token-authenticated route
+  // (./download) rather than the file's raw `downloadUrl`. The stored URL is a
+  // privileged `/__storage/download/<path>` route that requires a Bearer token
+  // an anonymous share visitor doesn't have, so it 401'd. The `/i/{token}/download`
+  // route re-verifies the share token server-side and streams the bytes.
+  // Only expose it once a PDF actually exists (storagePath is set at issue time).
   let downloadUrl: string | null = null;
   if (invoice.fileId) {
     const fileSnap = await db.collection("files").doc(invoice.fileId).get();
     if (fileSnap.exists) {
       const file = fileSnap.data() as TaxFile | undefined;
-      downloadUrl = file?.downloadUrl ?? null;
+      if (file?.storagePath) {
+        downloadUrl = `/i/${token}/download`;
+      }
     }
   }
 

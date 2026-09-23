@@ -11,7 +11,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { formatCurrency } from "@/lib/utils";
-import { computeLineItemTotals } from "@/types/invoice";
+import { lineItemColumnCents } from "@/lib/invoicing/invoice-totals";
 import { buildEpcPayload } from "@/lib/invoicing/epcPayload";
 
 import type { SerializedInvoice } from "./page";
@@ -209,7 +209,9 @@ export function PublicInvoiceView({
                 </thead>
                 <tbody>
                   {invoice.lineItems.map((item) => {
-                    const { grossCents } = computeLineItemTotals(item);
+                    // Per-line column is NET (Austrian convention), matching
+                    // the PDF renderers. USt is summed separately below.
+                    const lineCents = lineItemColumnCents(item);
                     return (
                       <tr key={item.id} className="border-b last:border-b-0">
                         <td className="py-3 pr-2 align-top">
@@ -225,7 +227,7 @@ export function PublicInvoiceView({
                           {item.vatRate}%
                         </td>
                         <td className="py-3 pl-2 text-right align-top tabular-nums font-medium">
-                          {formatCurrency(grossCents, invoice.currency)}
+                          {formatCurrency(lineCents, invoice.currency)}
                         </td>
                       </tr>
                     );
