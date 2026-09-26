@@ -197,6 +197,14 @@ service cloud.firestore {
         allow read: if request.auth != null && request.auth.uid == userId;
         allow write: if false; // Cloud Functions / API only
       }
+
+      // Invoice-direction sweep runs (#158) - what the identity-change sweep
+      // evaluated, wrote and skipped, kept so a surface that reads
+      // invoiceDirection can check whether its inputs are complete
+      match /directionSweeps/{runId} {
+        allow read: if request.auth != null && request.auth.uid == userId;
+        allow write: if false; // Cloud Functions / API only
+      }
     }
 
     // Admin-only collections
