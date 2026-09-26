@@ -23,6 +23,7 @@ export { matchCategories } from "./matching/matchCategories";
 export { onCategoryCreate } from "./matching/onCategoryCreate";
 export { onCategoryUpdate } from "./matching/onCategoryUpdate";
 export { onTransactionUpdate } from "./matching/onTransactionUpdate";
+export { assignNoReceiptCategoryCallable as assignNoReceiptCategory } from "./matching/assignNoReceiptCategory";
 
 // Export user data update/create triggers (re-calculates file counterparties & syncs identity partners)
 export { onUserDataUpdate, onUserDataCreated } from "./matching/onUserDataUpdate";
@@ -169,6 +170,7 @@ export {
   undismissTransactionSuggestionCallable as undismissTransactionSuggestion,
   unrejectFileFromTransactionCallable as unrejectFileFromTransaction,
   backfillFileTypesCallable as backfillFileTypes,
+  backfillFileEntityNamesCallable as backfillFileEntityNames,
 } from "./files";
 
 // Import operations

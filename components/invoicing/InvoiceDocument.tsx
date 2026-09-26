@@ -17,6 +17,7 @@ import {
   StyleSheet,
 } from "@react-pdf/renderer";
 import { Invoice } from "@/types/invoice";
+import { lineItemColumnCents } from "@/lib/invoicing/invoice-totals";
 import { PartnerAddress } from "@/types/partner";
 
 interface InvoiceDocumentProps {
@@ -223,7 +224,10 @@ const ItemsTable: React.FC<{ invoice: Invoice }> = ({ invoice }) => (
       <Text style={styles.colTotal}>Gesamt</Text>
     </View>
     {invoice.lineItems.map((item) => {
-      const lineNet = Math.round(item.quantity * item.unitPrice);
+      // Per-line column is NET (Austrian convention). Uses the shared helper
+      // so the app-side PDF preview, the HTML share view and the server PDF
+      // cannot drift on line-total semantics.
+      const lineNet = lineItemColumnCents(item);
       return (
         <View key={item.id} style={styles.itemsRow}>
           <Text style={styles.colDescription}>{item.description}</Text>

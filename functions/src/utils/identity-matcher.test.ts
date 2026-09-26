@@ -383,3 +383,49 @@ describe("determineCounterparty recipient identity verdict", () => {
     ).toBe("user");
   });
 });
+
+/**
+ * #299: the name lane compares a DOCUMENT entity against the user's own entity
+ * name. Both sides have to be spelled the same way, and until entity
+ * normalisation decoded character references the document side was encoded
+ * while the user side was as typed.
+ *
+ * The shape that breaks is the one the substring lane exists for: the identity
+ * holding the registered name and the document printing the shorter trade name.
+ * With the full name on both sides the token-subset lane still carries the
+ * match ("amp" is an extra token, and extra entity tokens are allowed), which
+ * is why this survived #233.
+ */
+describe("#299: the name lane sees a decoded entity name", () => {
+  const userData: UserIdentityData = {
+    companies: [{ name: "AL&FA Taxi KG", aliases: [], ibans: [] }],
+  };
+  const client = entity({ name: "Wiener Handels GmbH" });
+
+  it("matches the user's own company when the entity arrives decoded", () => {
+    expect(matchEntityToIdentity(entity({ name: "AL&FA" }), userData, [])).toEqual({
+      lane: "name",
+      entityValue: "AL&FA",
+      identityValue: "AL&FA Taxi KG",
+    });
+  });
+
+  it("does not match while the entity is still encoded", () => {
+    expect(matchEntityToIdentity(entity({ name: "AL&amp;FA" }), userData, [])).toBeNull();
+  });
+
+  it("carries to direction: the decoded issuer is the user, so the document is outgoing", () => {
+    expect(determineCounterparty(entity({ name: "AL&FA" }), client, userData, [])).toEqual({
+      counterparty: client,
+      matchedUserAccount: "issuer",
+      invoiceDirection: "outgoing",
+      recipientIdentityMatch: "third-party",
+    });
+  });
+
+  it("and the encoded spelling loses the direction, not just the string", () => {
+    const result = determineCounterparty(entity({ name: "AL&amp;FA" }), client, userData, []);
+    expect(result.matchedUserAccount).toBeNull();
+    expect(result.invoiceDirection).toBe("unknown");
+  });
+});

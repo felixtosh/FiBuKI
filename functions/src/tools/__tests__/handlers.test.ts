@@ -2015,7 +2015,7 @@ describe("Tool Registry Handlers", () => {
 
       await expect(
         handlers.assignNoReceiptCategory(userId, { transactionId: "tx-1", categoryId: "non-existent" })
-      ).rejects.toThrow("Category not found");
+      ).rejects.toThrow("Category non-existent not found or access denied");
     });
   });
 

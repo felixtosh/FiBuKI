@@ -394,6 +394,22 @@ async function getSourceIbans(userId: string): Promise<string[]> {
 // === Invoice Direction Sweep ===
 
 /**
+ * A stored entity with its name decoded (#299). Returns the entity unchanged
+ * when there is nothing to decode, so an already-decoded record keeps its
+ * identity and the sweep's skip comparison is untouched.
+ */
+function decodeEntityName(entity: ExtractedEntity | null): ExtractedEntity | null {
+  // `name` comes off a stored document, so it is data: a record written by an
+  // older path can hold a number, an object, anything. decodeHtmlEntities calls
+  // .replace on it, so guard the type here rather than letting a malformed
+  // record throw from inside a sweep.
+  if (typeof entity?.name !== "string" || !entity.name) return entity;
+  const decoded = decodeHtmlEntities(entity.name);
+  return decoded === entity.name ? entity : { ...entity, name: decoded };
+}
+
+
+/**
  * Re-derive one File, and either plan its write or record why it has none.
  *
  * Every path out of here records exactly one outcome, the throwing one
@@ -425,28 +441,36 @@ function planFileSweep(
     return;
   }
 
-  const issuer = fileData.extractedIssuer as ExtractedEntity | null;
-  const recipient = fileData.extractedRecipient as ExtractedEntity | null;
+  const storedIssuer = fileData.extractedIssuer as ExtractedEntity | null;
+  const storedRecipient = fileData.extractedRecipient as ExtractedEntity | null;
 
   // Nothing was read off either side of the document, so there is nothing to
   // compare the identity against.
-  if (!issuer && !recipient) {
+  if (!storedIssuer && !storedRecipient) {
     ledger.record(fileDoc.id, "no-entities");
     return;
   }
 
   try {
+    // #299/#336: decode BEFORE the match, not after it. This sweep both
+    // MATCHES these names against the user's identity and rewrites
+    // extractedPartner from them, so a record still holding "AL&amp;FA Taxi KG"
+    // must be compared as "AL&FA Taxi KG" or it reads as somebody else.
+    // Decoding only the result fixed the string that gets stored and left the
+    // comparison wrong.
+    //
+    // Inside the try on purpose: decoding reads a stored value, and this
+    // function's contract is that every File gets exactly one outcome. A throw
+    // out here would take the rest of the run with it, which is the defect
+    // #158 exists to close.
+    const issuer = decodeEntityName(storedIssuer);
+    const recipient = decodeEntityName(storedRecipient);
+
     const result = determineCounterparty(issuer, recipient, userData, sourceIbans);
 
-    // #233: extractedIssuer/extractedRecipient hold the RAW extraction, so a
-    // name that arrived as "AL&amp;FA Taxi KG" is still encoded here.
-    // extractionCore decodes on the way in and this sweep rewrites the same
-    // field, so it has to decode identically — otherwise editing identity
-    // data writes the entity back and partner matching, which re-runs
-    // below, splits the company into an encoded and a decoded Partner.
-    const counterpartyName = result.counterparty?.name
-      ? decodeHtmlEntities(result.counterparty.name)
-      : result.counterparty?.name;
+    // Decoded above, before the match, so the value written here and the one
+    // the skip comparison reads are the same string (#299).
+    const counterpartyName = result.counterparty?.name;
 
     // Check if anything changed
     const currentDirection = fileData.invoiceDirection as InvoiceDirection;

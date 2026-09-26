@@ -20,7 +20,8 @@
     "selfhost:verify": "vite-node --config vitest.selfhost.config.ts src/selfhost/migrate-cli-run.ts verify",
     "check:document-types": "vite-node scripts/check-document-type-corpus.ts",
     "selfhost:export": "vite-node scripts/export-firebase-dump.ts",
-    "selfhost:rewrite-urls": "vite-node --config vitest.selfhost.config.ts scripts/rewrite-download-urls.ts"
+    "selfhost:rewrite-urls": "vite-node --config vitest.selfhost.config.ts scripts/rewrite-download-urls.ts",
+    "selfhost:strip-line-item-fields": "vite-node --config vitest.selfhost.config.ts scripts/strip-line-item-fields.ts"
   },
   "engines": {
     "node": "22"

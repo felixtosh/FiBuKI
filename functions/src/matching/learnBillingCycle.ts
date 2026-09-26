@@ -130,7 +130,7 @@ export async function learnBillingCycleForPartner(
       txSnapshot.docs,
       effective,
       deriveScoringWeights(partnerData),
-      derivePartnerAliases(partnerData)
+      await derivePartnerAliases(db, partnerData)
     );
   } catch (error) {
     console.warn(`[BillingCycle] Re-score failed for partner ${partnerId}:`, error);

@@ -171,9 +171,10 @@ const TRANSACTION_FIELDS: FieldDefinition[] = [
 // pins rootDir: "src" and cannot reach the app tree. date-parsers.test.ts
 // fails the build if the two drift: an id missing here is a format the AI can
 // never suggest, and one that lingers here is a format it can suggest and no
-// parser can read (#167).
+// parser can read (#167, #303).
 export const DATE_FORMATS = [
-  "iso-datetime", "iso-datetime-t", "iso", "de", "de-short",
+  "iso-datetime", "iso-datetime-t", "iso",
+  "de", "de-mdy", "de-short", "de-mdy-short",
   "us", "us-short", "eu-slash", "eu-slash-short",
   "dash-dmy", "dash-mdy", "dash-dmy-short", "dash-mdy-short", "text-short", "text-long",
 ];
