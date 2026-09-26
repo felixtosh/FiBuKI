@@ -155,6 +155,15 @@ if [[ -n "$OFFSITE_CMD" ]]; then
   log "offsite: $OFFSITE_CMD"
   # shellcheck disable=SC2086
   eval "$OFFSITE_CMD \"$DEST\"" || die "offsite copy failed — NOT pruning old backups"
+  # The images live outside the dated run, because they are deduplicated across
+  # runs, so the line above does not carry them. Sending them separately is the
+  # whole point of saving them: an image mirror that dies with the box restores
+  # nothing, which is exactly the hole MinIO's withdrawal opened.
+  if [[ -d "$BACKUP_DIR/images" ]]; then
+    log "offsite: images"
+    # shellcheck disable=SC2086
+    eval "$OFFSITE_CMD \"$BACKUP_DIR/images\"" || die "offsite copy of images failed — NOT pruning old backups"
+  fi
 else
   log "WARNING: OFFSITE_CMD unset — this backup exists only on this disk."
   log "         e.g. OFFSITE_CMD='rclone copy --to-remote storagebox:fibuki/'"
