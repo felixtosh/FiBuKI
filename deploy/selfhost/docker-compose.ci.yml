@@ -1,12 +1,12 @@
 # CI slice of the self-host stack: just the real backing services (Postgres +
-# MinIO), same images as docker-compose.yml, with fixed throwaway credentials
-# and host-published ports so the selfhost vitest suite on the runner can hit
-# them (firestore-shim DATABASE_URL branch / blobstore-s3.ts).
+# an S3 server), same images as docker-compose.yml, with fixed throwaway
+# credentials and host-published ports so the selfhost vitest suite on the
+# runner can hit them (firestore-shim DATABASE_URL branch / blobstore-s3.ts).
 #
 #   docker compose -f deploy/selfhost/docker-compose.ci.yml up -d --wait
 #
 # Postgres publishes on 5433 to stay clear of the runner's preinstalled
-# PostgreSQL; MinIO uses its stock 9000.
+# PostgreSQL; the S3 server uses SeaweedFS's stock 8333.
 
 services:
   postgres:
@@ -23,23 +23,34 @@ services:
       timeout: 5s
       retries: 20
 
-  minio:
-    # Pinned, and pulled from MinIO's own registry: `minio/minio:latest` on
-    # Docker Hub stopped resolving on 2026-09-12 ("pull access denied ...
-    # repository does not exist") and took every PR's self-host job down with
-    # it, before a single test ran. A floating tag is what made an upstream
-    # registry change an outage here, so this is a release tag rather than
-    # `latest`. Multi-arch (amd64 runner + arm64 locally); carries the `mc`
-    # the healthcheck below calls.
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
-    command: server /data
-    environment:
-      MINIO_ROOT_USER: fibuki-ci
-      MINIO_ROOT_PASSWORD: fibuki-ci-secret
+  # SeaweedFS, not MinIO. MinIO's server repo is ARCHIVED upstream (read-only
+  # since 2026-04-24), its last release carrying binaries is the very tag this
+  # file used to pin, and the images then went from Docker Hub AND quay.io. So
+  # this is not another registry hiccup to re-pin around: the thing is no
+  # longer published, and staying on it means running an unmaintained store in
+  # front of customer documents.
+  #
+  # SeaweedFS is Apache-2.0, actively developed, and speaks the same S3 API, so
+  # blobstore-s3.ts and its `minio` npm client (also Apache-2.0, also still
+  # maintained) reach it unchanged. The protocol is the contract here, not the
+  # vendor — which is the whole reason this swap is a compose edit.
+  #
+  # Pinned to a release tag, not `latest` or `dev`, for exactly the reason the
+  # previous comment here gave: a floating tag is what turns an upstream change
+  # into an outage with no code change on our side.
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.47
+    # All-in-one (master + volume + filer + S3) in one process, which is what a
+    # CI backing service wants. `-s3.config` gives it the same fixed throwaway
+    # credentials the suite signs with; without it the gateway would accept
+    # anonymous writes and the tests would pass while proving less.
+    command: server -dir=/data -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/s3.json
+    volumes:
+      - ./seaweedfs-s3-ci.json:/etc/seaweedfs/s3.json:ro
     ports:
-      - "9000:9000"
+      - "8333:8333"
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8333/ || exit 1"]
       interval: 5s
       timeout: 5s
       retries: 20

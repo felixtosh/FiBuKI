@@ -1,0 +1,14 @@
+{
+  "identities": [
+    {
+      "name": "fibuki-ci",
+      "credentials": [
+        {
+          "accessKey": "fibuki-ci",
+          "secretKey": "fibuki-ci-secret"
+        }
+      ],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

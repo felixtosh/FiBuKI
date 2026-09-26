@@ -130,7 +130,7 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             functions/package-lock.json
-      - name: Start Postgres + MinIO (compose)
+      - name: Start Postgres + S3 (compose)
         run: docker compose -f deploy/selfhost/docker-compose.ci.yml up -d --wait
       # Root deps too — see the note on the PGlite job above.
       - run: npm ci
@@ -149,7 +149,8 @@ jobs:
           FIBUKI_AUTH_SECRET: fibuki-ci-auth-secret-not-for-production
           FIBUKI_STORAGE: s3
           FIBUKI_S3_ENDPOINT: localhost
-          FIBUKI_S3_PORT: "9000"
+          # SeaweedFS's S3 gateway port; MinIO's was 9000.
+          FIBUKI_S3_PORT: "8333"
           FIBUKI_S3_SSL: "false"
           FIBUKI_S3_ACCESS_KEY: fibuki-ci
           FIBUKI_S3_SECRET_KEY: fibuki-ci-secret
