@@ -134,26 +134,40 @@ export function InvoiceIssuerPicker({
       .map((s) => s.iban!.toUpperCase().replace(/\s/g, ""));
   }, [sources]);
 
-  // Map each entity to its effective IBAN list (own + inferred for personal).
-  // For non-personal entities, inferred IBANs are NOT auto-attached because
-  // we don't know which company owns which account.
+  // The user's own IBANs, regardless of which legal entity issues the invoice:
+  // bank-account-source IBANs plus any IBANs stored on the personal entity. A
+  // one-person business often keeps a single IBAN on their personal identity
+  // (or only as a connected bank account) and still issues invoices from a
+  // company (GmbH/FlexCo). Those IBANs belong to the same human, so we offer
+  // them as selectable options on EVERY entity, not just the personal one.
+  const userIbans = useMemo(() => {
+    const merged: string[] = [...inferredIbansFromSources];
+    const personalIbans = userData?.personalEntity?.ibans ?? [];
+    for (const raw of personalIbans) {
+      const norm = raw.toUpperCase().replace(/\s/g, "");
+      if (norm && !merged.includes(norm)) merged.push(norm);
+    }
+    return merged;
+  }, [inferredIbansFromSources, userData?.personalEntity]);
+
+  // Map each entity to its effective IBAN list (its own IBANs first, then the
+  // user's IBANs as additional options). Offering the user's IBANs on company
+  // entities is safe even when a bank account could belong to several
+  // companies, because the user still explicitly picks one; the choice is then
+  // promoted onto the chosen entity's `ibans` array (see persistIbanIfInferred)
+  // so backend validation passes.
   const ibansForEntity = useMemo(() => {
     const map = new Map<string, string[]>();
     for (const e of entities) {
       const own = e.ibans ?? [];
-      if (e.type === "person") {
-        // Merge inferred IBANs (dedup, own first)
-        const merged = [...own];
-        for (const inf of inferredIbansFromSources) {
-          if (!merged.includes(inf)) merged.push(inf);
-        }
-        map.set(e.id, merged);
-      } else {
-        map.set(e.id, own);
+      const merged = [...own];
+      for (const inf of userIbans) {
+        if (!merged.includes(inf)) merged.push(inf);
       }
+      map.set(e.id, merged);
     }
     return map;
-  }, [entities, inferredIbansFromSources]);
+  }, [entities, userIbans]);
 
   // Entity with at least one IBAN available (own or inferred-for-personal).
   const entitiesWithIban = useMemo(
