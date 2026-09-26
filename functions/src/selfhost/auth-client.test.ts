@@ -1231,7 +1231,7 @@ describe("selfhost auth-client — OIDC refresh serialisation (fork #73)", () =>
     try {
       const pending = tab.getAuth().currentUser!.getIdToken();
       const settled = expect(pending).rejects.toMatchObject({ code: "auth/timeout" });
-      await vi.advanceTimersByTimeAsync(6_000); // past LEASE_MAX_WAIT_MS
+      await vi.advanceTimersByTimeAsync(13_000); // past LEASE_MAX_WAIT_MS (#280 widened it past LEASE_TTL_MS)
       await settled;
     } finally {
       vi.useRealTimers();
@@ -1239,6 +1239,125 @@ describe("selfhost auth-client — OIDC refresh serialisation (fork #73)", () =>
 
     // Pre-fix the timeout ran the refresh unguarded — the unserialised replay
     // this ticket exists to remove. Nothing was spent, nothing was lost.
+    expect(spent).toEqual([]);
+    expect(tab.getAuth().currentUser?.uid).toBe(UID);
+    expect(readStored(w)).toMatchObject({ refresh_token: "rt-1" });
+  });
+
+  it("#280: steals a stale lease left by a holder that crashed before releasing it", async () => {
+    // Unlike the pinned-forever lease above, this claim ages exactly like a
+    // real one: nothing ever touches it again after the initial write, so it
+    // is stealable the moment LEASE_TTL_MS has actually elapsed. Pre-fix,
+    // LEASE_MAX_WAIT_MS (5s) was shorter than LEASE_TTL_MS (10s), so a waiting
+    // peer always gave up with auth/timeout before that moment arrived.
+    const nextIdToken = makeJwt({ sub: UID, email: "stefan@example.test", exp: IN_AN_HOUR() });
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/.well-known/openid-configuration")) return discoveryResponse();
+      if (url === TOKEN_ENDPOINT) {
+        return new Response(
+          JSON.stringify({ id_token: nextIdToken, refresh_token: "rt-2", expires_in: 3600 }),
+          { status: 200 },
+        );
+      }
+      return new Response("unexpected", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const w = installOidcEnv(fetchImpl);
+    seedTokens(w, staleSet("rt-1", { rotates: true }));
+    w.localStorage.setItem(LEASE_KEY, JSON.stringify({ owner: "peer-tab", at: Date.now() }));
+
+    const tab = await openTab();
+    await tick();
+
+    vi.useFakeTimers();
+    try {
+      const pending = tab.getAuth().currentUser!.getIdToken();
+      const settled = expect(pending).resolves.toBe(nextIdToken);
+      // Past LEASE_TTL_MS (10s), comfortably inside LEASE_MAX_WAIT_MS: long
+      // enough for the peer's claim to go stale and for our own poll to
+      // notice and steal it before we'd give up.
+      await vi.advanceTimersByTimeAsync(10_500);
+      await settled;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(tab.getAuth().currentUser?.uid).toBe(UID);
+    expect(readStored(w)).toMatchObject({ refresh_token: "rt-2", rotates: true });
+  });
+
+  it("#280: stealing a stale lease re-reads storage, so a dead holder's grant is not replayed", async () => {
+    // The crash that leaves a stale lease behind can happen either side of the
+    // token grant. Stealing the lease only became reachable with this ticket's
+    // wider wait, so the half where the holder died AFTER its grant landed is
+    // newly reachable: we must take the abandoned lease, find the peer's set
+    // already stored by the re-read inside the critical section, and present
+    // nothing. lostResponseFetch throws on any grant, so an empty `spent` here
+    // means no token endpoint call was made at all.
+    const peerIdToken = makeJwt({ sub: UID, email: "stefan@example.test", exp: IN_AN_HOUR() });
+    const spent: string[] = [];
+    const w = installOidcEnv(lostResponseFetch(spent));
+    seedTokens(w, staleSet("rt-1", { rotates: true }));
+    w.localStorage.setItem(LEASE_KEY, JSON.stringify({ owner: "peer-tab", at: Date.now() }));
+
+    const tab = await openTab();
+    await tick();
+
+    vi.useFakeTimers();
+    try {
+      const pending = tab.getAuth().currentUser!.getIdToken();
+      const settled = expect(pending).resolves.toBe(peerIdToken);
+      // The holder's grant had landed before it died — it just never got to
+      // release the lease, which now has to age out under us.
+      await vi.advanceTimersByTimeAsync(2_000);
+      seedTokens(w, {
+        id_token: peerIdToken,
+        refresh_token: "rt-2",
+        expires_at: Date.now() + 3_600_000,
+        rotates: true,
+      });
+      await vi.advanceTimersByTimeAsync(8_500);
+      await settled;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(spent).toEqual([]);
+    expect(tab.getAuth().currentUser?.uid).toBe(UID);
+    expect(readStored(w)).toMatchObject({ refresh_token: "rt-2", rotates: true });
+    // We held the stolen lease and released it, so the next tab is not stuck
+    // waiting out another TTL.
+    expect(w.localStorage.getItem(LEASE_KEY)).toBeNull();
+  });
+
+  it("#280: still times out against a peer that keeps its lease continuously fresh", async () => {
+    // The fail-shut behaviour #216 added must survive #280's wider wait: a
+    // peer that is genuinely alive and re-claims its lease well inside
+    // LEASE_TTL_MS never goes stale, so the timeout still has to fire.
+    const spent: string[] = [];
+    const w = installOidcEnv(lostResponseFetch(spent));
+    seedTokens(w, staleSet("rt-1", { rotates: true }));
+    w.localStorage.setItem(LEASE_KEY, JSON.stringify({ owner: "peer-tab", at: Date.now() }));
+
+    const tab = await openTab();
+    await tick();
+
+    vi.useFakeTimers();
+    try {
+      const pending = tab.getAuth().currentUser!.getIdToken();
+      const settled = expect(pending).rejects.toMatchObject({ code: "auth/timeout" });
+      // Re-claim every 4s — well under LEASE_TTL_MS (10s) — for longer than
+      // LEASE_MAX_WAIT_MS, so the lease is never once stale.
+      for (let elapsed = 0; elapsed < 14_000; elapsed += 4_000) {
+        w.localStorage.setItem(LEASE_KEY, JSON.stringify({ owner: "peer-tab", at: Date.now() }));
+        await vi.advanceTimersByTimeAsync(4_000);
+      }
+      await settled;
+    } finally {
+      vi.useRealTimers();
+    }
+
     expect(spent).toEqual([]);
     expect(tab.getAuth().currentUser?.uid).toBe(UID);
     expect(readStored(w)).toMatchObject({ refresh_token: "rt-1" });

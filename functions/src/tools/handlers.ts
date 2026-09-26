@@ -54,6 +54,7 @@ import { getStorage } from "firebase-admin/storage";
 import { createHash, randomUUID } from "crypto";
 import { createFileRecord, findFileByContentHash } from "../files/createFileRecord";
 import { syncDocumentationStateForTransactions } from "../documents/syncDocumentationState";
+import { assignNoReceiptCategoryToTransaction } from "../matching/assignNoReceiptCategory";
 import { TOOL_DEFINITIONS, TOOL_NAMES } from "./definitions";
 import type { ToolName } from "./definitions";
 import { readBankOriginalAmount } from "../fx/bankOriginalAmount";
@@ -863,6 +864,13 @@ export async function updateFileExtraction(userId: string, args: Record<string, 
     }
   }
 
+  // Not a correctable field and deliberately not one (#310): it states how to
+  // read the tip in this call, not a value the record keeps, so it is never
+  // stamped as hand-corrected. What it decided IS kept, as extractedTipBound.
+  if (args.tipNotPrinted !== undefined && typeof args.tipNotPrinted !== "boolean") {
+    throw new Error("tipNotPrinted must be a boolean");
+  }
+
   let built;
   try {
     // The stored record goes in so the correction's provenance stamp (#184)
@@ -871,7 +879,9 @@ export async function updateFileExtraction(userId: string, args: Record<string, 
     // rather than going stale: the § 11 classification (#104), the rate-review
     // flag (#203) and the direction review (#233). Shared with the UI's
     // correction callable since #149, so both surfaces write the same set.
-    built = await buildCorrectedFileUpdate(db, fields, fileSnap.data()!);
+    built = await buildCorrectedFileUpdate(db, fields, fileSnap.data()!, {
+      tipNotPrinted: args.tipNotPrinted === true,
+    });
   } catch (error) {
     if (error instanceof ExtractionCorrectionError) {
       throw new Error(error.message);
@@ -906,6 +916,8 @@ export async function updateFileExtraction(userId: string, args: Record<string, 
       // #217: reported beside the total precisely so a caller can see it was
       // not taken out of it.
       extractedTipAmount: after.extractedTipAmount ?? null,
+      // #310: which total that tip was measured against, and what it was.
+      extractedTipBound: after.extractedTipBound ?? null,
       extractedVatAmount: after.extractedVatAmount ?? null,
       extractedVatPercent: after.extractedVatPercent ?? null,
       lineItemsUnreconciled: after.lineItemsUnreconciled ?? false,
@@ -1417,37 +1429,20 @@ export async function assignNoReceiptCategory(userId: string, args: Record<strin
     throw new Error("transactionId and categoryId are required");
   }
 
-  const [txDoc, catDoc] = await Promise.all([
-    db.collection("transactions").doc(transactionId as string).get(),
-    db.collection("noReceiptCategories").doc(categoryId as string).get(),
-  ]);
-
-  if (!txDoc.exists || txDoc.data()?.userId !== userId) {
-    throw new Error("Transaction not found");
-  }
-  if (!catDoc.exists || catDoc.data()?.userId !== userId) {
-    throw new Error("Category not found");
-  }
-
-  const catData = catDoc.data()!;
-  const batch = db.batch();
-  const now = FieldValue.serverTimestamp();
-
-  batch.update(txDoc.ref, {
-    noReceiptCategoryId: categoryId,
-    noReceiptCategoryTemplateId: catData.templateId,
-    noReceiptCategoryMatchedBy: "api",
-    isComplete: true,
-    updatedAt: now,
+  // #164: delegates to the same writer the web path's callable uses, so an
+  // MCP assignment also teaches the category matcher via matchedPartnerIds.
+  const result = await assignNoReceiptCategoryToTransaction(db, userId, {
+    transactionId: transactionId as string,
+    categoryId: categoryId as string,
+    matchedBy: "manual",
   });
 
-  batch.update(catDoc.ref, {
-    transactionCount: FieldValue.increment(1),
-    updatedAt: now,
-  });
-
-  await batch.commit();
-  return { success: true, transactionId, categoryId, categoryName: catData.name };
+  return {
+    success: true,
+    transactionId: result.transactionId,
+    categoryId: result.categoryId,
+    categoryName: result.categoryName,
+  };
 }
 
 export async function removeNoReceiptCategory(userId: string, transactionId: string) {

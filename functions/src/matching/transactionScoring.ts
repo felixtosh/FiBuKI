@@ -615,25 +615,25 @@ export function calculatePartnerScore(
     return { score: 0, source: null };
   }
 
-  // 2. Check file's extracted partner text against transaction name
-  if (fileData.extractedPartner) {
-    const result = namesMatch(fileData.extractedPartner, txName);
-    if (result.match) {
-      return { score: result.score, source: "partner" };
+  // 2 & 3. Check the file's extracted partner text and every partner alias
+  // against the transaction name, taking the best-scoring match rather than
+  // the first (#138) — the alias list is not ordered by relevance, and the
+  // user Partner's own name sitting first must not shadow a stronger brand
+  // alias further down the list.
+  const candidates = [
+    ...(fileData.extractedPartner ? [fileData.extractedPartner] : []),
+    ...(partnerAliases || []),
+  ];
+
+  let best: { score: number; source: TransactionMatchSource | null } = { score: 0, source: null };
+  for (const candidate of candidates) {
+    const result = namesMatch(candidate, txName);
+    if (result.match && result.score > best.score) {
+      best = { score: result.score, source: "partner" };
     }
   }
 
-  // 3. Check partner aliases against transaction name
-  if (partnerAliases && partnerAliases.length > 0) {
-    for (const alias of partnerAliases) {
-      const result = namesMatch(alias, txName);
-      if (result.match) {
-        return { score: result.score, source: "partner" };
-      }
-    }
-  }
-
-  return { score: 0, source: null };
+  return best;
 }
 
 /**
@@ -795,9 +795,54 @@ export function toFileMatchingData(data: FirebaseFirestore.DocumentData): FileMa
   };
 }
 
-/** Partner name + aliases, as `calculatePartnerScore` wants them. */
-export function derivePartnerAliases(partnerData: FirebaseFirestore.DocumentData): string[] {
-  return [partnerData.name, ...(partnerData.aliases || [])].filter(Boolean);
+/**
+ * Partner name + aliases, as `calculatePartnerScore` wants them (#138).
+ *
+ * The brand knowledge that decides a pair like "Magenta Mobil" vs. "T-Mobile
+ * Austria GmbH" lives on the linked Global Partner, not the user's own
+ * Partner record, so it has to be read from there too. Fetch it once per
+ * matching run (both callers already await one partner fetch here) rather
+ * than per candidate transaction.
+ *
+ * A VIES-derived Global Partner and a curated preset can describe the same
+ * company under two different `globalPartners` docs — Global Partners are
+ * not merged (ADR-0005/#262 restricts merge to user Partners; a Global
+ * Partner is shared across tenants, so no single user's action may rewrite
+ * it). Where the linked doc isn't itself a preset but shares a VAT id with
+ * one, that preset's aliases are folded in too, so the brand knowledge it
+ * already carries reaches a Partner linked to the VIES duplicate.
+ */
+export async function derivePartnerAliases(
+  db: FirebaseFirestore.Firestore,
+  partnerData: FirebaseFirestore.DocumentData
+): Promise<string[]> {
+  const aliases = [partnerData.name, ...(partnerData.aliases || [])].filter(Boolean);
+
+  const globalPartnerId = partnerData.globalPartnerId;
+  if (!globalPartnerId) return aliases;
+
+  const globalPartnerSnap = await db.collection("globalPartners").doc(globalPartnerId).get();
+  if (!globalPartnerSnap.exists) return aliases;
+  const globalPartnerData = globalPartnerSnap.data()!;
+  aliases.push(
+    ...[globalPartnerData.name, ...(globalPartnerData.aliases || [])].filter(Boolean)
+  );
+
+  if (globalPartnerData.source !== "preset" && globalPartnerData.vatId) {
+    const normalizedVatId = String(globalPartnerData.vatId).replace(/\s+/g, "").toUpperCase();
+    const presetSnapshot = await db
+      .collection("globalPartners")
+      .where("source", "==", "preset")
+      .where("vatId", "==", normalizedVatId)
+      .limit(1)
+      .get();
+    const presetData = presetSnapshot.docs[0]?.data();
+    if (presetData) {
+      aliases.push(...[presetData.name, ...(presetData.aliases || [])].filter(Boolean));
+    }
+  }
+
+  return aliases;
 }
 
 /** A partner's learned per-factor weight multipliers, if any. */

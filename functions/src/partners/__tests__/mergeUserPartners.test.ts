@@ -256,6 +256,52 @@ describe("Partner Merge", () => {
       ).toBe("loser-a");
     });
 
+    /** A queue item as the scheduler writes it: no partnerType, no updatedAt. */
+    function seedQueueItem(id: string, data: Doc): void {
+      store.setDoc("invoiceFetchQueue", id, {
+        userId: USER,
+        invoiceSourceId: "src-1",
+        url: "https://acme.at/billing",
+        domain: "acme.at",
+        status: "pending",
+        filesDownloaded: 0,
+        fileIds: [],
+        retryCount: 0,
+        maxRetries: 3,
+        ...data,
+      });
+    }
+
+    it("repoints queued invoice-fetch work, at every status (#307)", async () => {
+      seedAllFourKinds();
+      seedQueueItem("q-pending", { partnerId: "loser-a" });
+      seedQueueItem("q-done", {
+        partnerId: "loser-b",
+        status: "completed",
+        filesDownloaded: 2,
+        fileIds: ["file-a", "file-b"],
+      });
+      seedQueueItem("q-elsewhere", { partnerId: "untouched" });
+      seedQueueItem("q-theirs", { userId: OTHER_USER, partnerId: "loser-a" });
+
+      const result = await merge("survivor", ["loser-a", "loser-b"]);
+
+      expect(result.repointed.invoiceFetchQueue).toBe(2);
+      expect(store.getDoc("invoiceFetchQueue", "q-pending")!.partnerId).toBe("survivor");
+
+      const done = store.getDoc("invoiceFetchQueue", "q-done")!;
+      expect(done.partnerId).toBe("survivor");
+      // What the fetch already did stays as it was, and the item gains no
+      // field the queue's own schema does not have.
+      expect(done.fileIds).toEqual(["file-a", "file-b"]);
+      expect(done.invoiceSourceId).toBe("src-1");
+      expect(done.partnerType).toBeUndefined();
+      expect(done.updatedAt).toBeUndefined();
+
+      expect(store.getDoc("invoiceFetchQueue", "q-elsewhere")!.partnerId).toBe("untouched");
+      expect(store.getDoc("invoiceFetchQueue", "q-theirs")!.partnerId).toBe("loser-a");
+    });
+
     it("repoints nothing belonging to another user", async () => {
       seedAllFourKinds();
       store.setDoc(
@@ -774,6 +820,122 @@ describe("Partner Merge", () => {
       expect(partnerDoc("loser").mergedInto).toBe("elsewhere");
       // The reference moved at the first merge and stays where it went.
       expect(store.getDoc("transactions", "tx-1")!.partnerId).toBe("survivor");
+    });
+  });
+
+  // ==========================================================================
+  // The identity marker (#307)
+  // ==========================================================================
+
+  /**
+   * `identitySourceField` decides where a Partner is edited — "Edit in
+   * Identity" instead of the Partner page — so it is not an ordinary single
+   * value the survivor fills from an empty slot. It moves only with the
+   * identity entity that produced it.
+   */
+  describe("the identity marker", () => {
+    function seedCompanyEntity(partnerId: string): void {
+      store.setDoc(`users/${USER}/settings`, "userData", {
+        companies: [{ id: "c1", type: "company", name: "Felix GmbH", partnerId }],
+      });
+    }
+
+    it("does not make an ordinary survivor identity-synced", async () => {
+      seedPartner("survivor", { name: "Acme GmbH" });
+      seedPartner("loser", { name: "Acme Gmbh", identitySourceField: "source:card-1" });
+
+      await merge("survivor", ["loser"]);
+
+      expect(partnerDoc("survivor").identitySourceField).toBeUndefined();
+      // It stays where it was: a Merged Partner reads back as itself.
+      expect(partnerDoc("loser").identitySourceField).toBe("source:card-1");
+    });
+
+    it("hands the marker over where the identity entity itself moves", async () => {
+      seedPartner("survivor", { name: "Felix GmbH" });
+      seedPartner("loser", { name: "Felix Gesellschaft", identitySourceField: "company:c1" });
+      seedCompanyEntity("loser");
+
+      const result = await merge("survivor", ["loser"]);
+
+      expect(result.repointed.identityReferences).toBe(1);
+      const companies = store.getDoc(`users/${USER}/settings`, "userData")!.companies as Doc[];
+      expect(companies[0].partnerId).toBe("survivor");
+      // The survivor IS that company's Partner now, so the marker is the
+      // entity repoint's own consequence, not an empty-value fill.
+      expect(partnerDoc("survivor").identitySourceField).toBe("company:c1");
+    });
+
+    it("marks the survivor for the personal entity it took over", async () => {
+      seedPartner("survivor", { name: "Felix Mustermann" });
+      seedPartner("loser", { name: "F. Mustermann" });
+      store.setDoc(`users/${USER}/settings`, "userData", {
+        personalEntity: { id: "pe", type: "person", name: "Felix", partnerId: "loser" },
+      });
+
+      await merge("survivor", ["loser"]);
+
+      expect(partnerDoc("survivor").identitySourceField).toBe("personalEntity");
+    });
+
+    it("marks a survivor that swallows two identity Partners for one of them", async () => {
+      seedPartner("survivor", { name: "Felix" });
+      seedPartner("loser-personal", { name: "F. Mustermann", identitySourceField: "personalEntity" });
+      seedPartner("loser-company", { name: "Felix GmbH", identitySourceField: "company:c1" });
+      store.setDoc(`users/${USER}/settings`, "userData", {
+        personalEntity: { id: "pe", type: "person", name: "Felix", partnerId: "loser-personal" },
+        companies: [{ id: "c1", type: "company", name: "Felix GmbH", partnerId: "loser-company" }],
+      });
+
+      const result = await merge("survivor", ["loser-personal", "loser-company"]);
+
+      // Both entities name the survivor now; the marker names the first of
+      // them rather than whichever entity the loop reached last.
+      expect(result.repointed.identityReferences).toBe(2);
+      expect(partnerDoc("survivor").identitySourceField).toBe("personalEntity");
+      // The marker the survivor did not take is a value its own beat, so it is
+      // recorded on that loser's Merged Partner.
+      expect(partnerDoc("loser-company").mergeConflicts).toEqual([
+        {
+          field: "identitySourceField",
+          value: "company:c1",
+          survivorValue: "personalEntity",
+        },
+      ]);
+    });
+
+    it("mints no marker for a deprecated identityPartnerIds pointer", async () => {
+      seedPartner("survivor", { name: "Acme GmbH" });
+      seedPartner("loser", { name: "Acme Gmbh", identitySourceField: "name" });
+      store.setDoc(`users/${USER}/settings`, "userData", {
+        identityPartnerIds: { name: "loser" },
+      });
+
+      const result = await merge("survivor", ["loser"]);
+
+      expect(result.repointed.identityReferences).toBe(1);
+      const userData = store.getDoc(`users/${USER}/settings`, "userData")!;
+      expect((userData.identityPartnerIds as Doc).name).toBe("survivor");
+      // The legacy spelling of a pointer is not an entity identity sync
+      // maintains, so nothing is minted from it.
+      expect(partnerDoc("survivor").identitySourceField).toBeUndefined();
+    });
+
+    it("keeps the survivor's own marker and records the loser's on the Merged Partner", async () => {
+      seedPartner("survivor", { name: "Felix GmbH", identitySourceField: "personalEntity" });
+      seedPartner("loser", { name: "Felix Gesellschaft", identitySourceField: "company:c1" });
+      seedCompanyEntity("loser");
+
+      await merge("survivor", ["loser"]);
+
+      expect(partnerDoc("survivor").identitySourceField).toBe("personalEntity");
+      expect(partnerDoc("loser").mergeConflicts).toEqual([
+        {
+          field: "identitySourceField",
+          value: "company:c1",
+          survivorValue: "personalEntity",
+        },
+      ]);
     });
   });
 

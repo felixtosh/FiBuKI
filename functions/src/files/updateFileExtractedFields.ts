@@ -62,6 +62,14 @@ interface UpdateFileExtractedFieldsRequest {
   fileId: string;
   /** Correctable values, already typed. Omitted is not null — see the builder. */
   correction?: FileExtractionCorrection;
+  /**
+   * The tip in this correction is not printed on the invoice (#310), so it is
+   * bounded by the transaction total rather than the document total. Sent
+   * beside `correction` rather than inside it because it is not a value the
+   * record keeps per field: it says how to read the tip, and what it decided
+   * is stored as `extractedTipBound`.
+   */
+  tipNotPrinted?: boolean;
   details?: ExtractedDetails;
 }
 
@@ -87,10 +95,14 @@ export const updateFileExtractedFieldsCallable = createCallable<
 >(
   { name: "updateFileExtractedFields" },
   async (ctx, request) => {
-    const { fileId, correction = {}, details = {} } = request;
+    const { fileId, correction = {}, details = {}, tipNotPrinted } = request;
 
     if (!fileId) {
       throw new HttpsError("invalid-argument", "fileId is required");
+    }
+
+    if (tipNotPrinted !== undefined && typeof tipNotPrinted !== "boolean") {
+      throw new HttpsError("invalid-argument", "tipNotPrinted must be a boolean");
     }
 
     const fileRef = ctx.db.collection("files").doc(fileId);
@@ -108,7 +120,9 @@ export const updateFileExtractedFieldsCallable = createCallable<
 
     if (Object.keys(moved).length > 0) {
       try {
-        const built = await buildCorrectedFileUpdate(ctx.db, moved, record);
+        const built = await buildCorrectedFileUpdate(ctx.db, moved, record, {
+          tipNotPrinted: tipNotPrinted === true,
+        });
         Object.assign(updates, built.updates);
         changed = built.changed;
       } catch (error) {

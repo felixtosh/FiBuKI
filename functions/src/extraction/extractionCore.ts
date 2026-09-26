@@ -51,7 +51,6 @@ import { syncDocumentationStateForTransactions } from "../documents/syncDocument
 import { computeDirectionReviewFields } from "../documents/syncDirectionReview";
 import { directionReviewFields } from "../documents/directionReview";
 import { repairReviewFields, reviewRepair } from "../documents/repairReview";
-import { decodeHtmlEntities } from "../utils/htmlEntities";
 
 /**
  * Options for running extraction
@@ -430,6 +429,7 @@ export async function runExtraction(
     updateData.extractedDate = null;
     updateData.extractedAmount = null;
     updateData.extractedTipAmount = null;
+    updateData.extractedTipBound = null;
     updateData.extractedCurrency = null;
     updateData.extractedVatPercent = null;
     updateData.extractedVatAmount = null;
@@ -489,6 +489,12 @@ export async function runExtraction(
     // than leave a stale figure from an earlier pass standing.
     const tipAmount = extracted.tipAmount ?? null;
     updateData.extractedTipAmount = tipAmount;
+    // #310: the bound belongs to the tip it measured. This figure is the
+    // extractor's, so the record of what bounded a hand-set one goes with the
+    // figure it described — left standing it would say a tip transcribed from
+    // the page had been measured against a bank line, and the panel would
+    // re-offer "not printed" for a tip the page prints.
+    updateData.extractedTipBound = null;
     const documentTotal = totalWithoutPrintedTip(
       extracted.amount,
       tipAmount,
@@ -563,11 +569,12 @@ export async function runExtraction(
     if (counterparty) {
       // Use counterparty entity data
       if (counterparty.name) {
-        // #233: a name that arrives as "AL&amp;FA Taxi KG" is decoded here,
-        // at the one point every provenance (manual upload, Gmail import) and
-        // every provider (Gemini entities, legacy Claude) funnels through
-        // before extractedPartner is persisted.
-        updateData.extractedPartner = decodeHtmlEntities(counterparty.name);
+        // Already decoded: #299 moved the character-reference decode to entity
+        // normalisation, so the counterparty this came from is one of the
+        // stored entities and its name carries no "&amp;". Decoding again here
+        // would be a second layer whose harmlessness depends on the decoder
+        // staying single-pass.
+        updateData.extractedPartner = counterparty.name;
       }
       if (counterparty.vatId) {
         updateData.extractedVatId = counterparty.vatId;
@@ -584,7 +591,9 @@ export async function runExtraction(
     } else {
       // Fall back to legacy extracted fields (from Claude parser or when counterparty detection fails)
       if (extracted.partner) {
-        updateData.extractedPartner = decodeHtmlEntities(extracted.partner);
+        // Decoded at entity normalisation too (#299) — the flat legacy field
+        // is shaped in the same place the issuer/recipient entities are.
+        updateData.extractedPartner = extracted.partner;
       }
       if (extracted.vatId) {
         updateData.extractedVatId = extracted.vatId;

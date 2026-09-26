@@ -24,6 +24,13 @@ import { ExtractedLineItem, ExtractedRateGroup } from "../types/extraction";
  *
  * Every pattern is anchored, so "Gesamtpaket Reinigung" is still a billable
  * row and only a row that BEGINS with a summary word is dropped.
+ *
+ * "Begins with" stops at a hyphen (#318): `\b` alone treats the hyphen in
+ * "Steuer- und Wirtschaftsberatung" as a word boundary like any other, so
+ * the word list caught a Steuerberater's own fee line as a Steuer- row. A
+ * leading word matches only when it stands on its own — a `(?!-)` right
+ * after it excludes the case where a hyphen joins it to what follows —
+ * which is one rule for the whole list rather than a patch to two lines.
  */
 function isLikelyNonBillableLine(description: string): boolean {
   const normalized = description.trim().toLowerCase();
@@ -32,28 +39,28 @@ function isLikelyNonBillableLine(description: string): boolean {
   }
 
   const patterns: RegExp[] = [
-    /^subtotal\b/,
-    /^total\b/,
-    /^total excluding tax\b/,
-    /^amount paid\b/,
-    /^payment history\b/,
-    /^vat\b/,
-    /^tax\b/,
+    /^subtotal(?!-)\b/,
+    /^total(?!-)\b/,
+    /^total excluding tax(?!-)\b/,
+    /^amount paid(?!-)\b/,
+    /^payment history(?!-)\b/,
+    /^vat(?!-)\b/,
+    /^tax(?!-)\b/,
     /^first\s+\d+/,
     /\band above\b/,
-    /^description\b/,
-    /^qty\b/,
-    /^unit price\b/,
+    /^description(?!-)\b/,
+    /^qty(?!-)\b/,
+    /^unit price(?!-)\b/,
     // Summen- und Steuerzeilen auf einem österreichischen Beleg.
-    /^(zwischensumme|summe|gesamt|gesamtsumme|gesamtbetrag|gesamtpreis)\b/,
-    /^(endsumme|endbetrag|rechnungsbetrag|zahlbetrag|zahlungsbetrag)\b/,
-    /^zu\s+(zahlen|bezahlen)\b/,
-    /^(netto|nettosumme|nettobetrag|brutto|bruttosumme|bruttobetrag)\b/,
-    /^(mwst|ust|u-?st|umsatzsteuer|mehrwertsteuer|steuer)\b/,
-    /^davon\b/,
-    /^trinkgeld\b/,
+    /^(zwischensumme|summe|gesamt|gesamtsumme|gesamtbetrag|gesamtpreis)(?!-)\b/,
+    /^(endsumme|endbetrag|rechnungsbetrag|zahlbetrag|zahlungsbetrag)(?!-)\b/,
+    /^zu\s+(zahlen|bezahlen)(?!-)\b/,
+    /^(netto|nettosumme|nettobetrag|brutto|bruttosumme|bruttobetrag)(?!-)\b/,
+    /^(mwst|ust|u-?st|umsatzsteuer|mehrwertsteuer|steuer)(?!-)\b/,
+    /^davon(?!-)\b/,
+    /^trinkgeld(?!-)\b/,
     // Kopfzeilen der Positionstabelle, wie die englischen oben.
-    /^(bezeichnung|menge|einzelpreis|einzelbetrag)\b/,
+    /^(bezeichnung|menge|einzelpreis|einzelbetrag)(?!-)\b/,
   ];
 
   return patterns.some((pattern) => pattern.test(normalized));

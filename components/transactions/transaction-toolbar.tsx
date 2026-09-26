@@ -1,10 +1,31 @@
 "use client";
 
+/**
+ * ## The filter row filters this table. Nothing else belongs in it
+ *
+ * Everything to the left of the counter narrows the rows below it: search, the
+ * date range, status, type, partner. That is the contract a user learns in the
+ * first minute, and it is what makes the row safe to click through.
+ *
+ * A control that navigates somewhere else breaks it. The chase-queue link used
+ * to sit among the filter popovers and read as a filter that did not filter; it
+ * now sits beside the score ring, which is where account-level summary and the
+ * actions on it live.
+ *
+ * So: narrowing the table goes left. Saying something about the whole account,
+ * or leaving for another surface, goes right, next to the ring.
+ */
+
 import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   Popover,
   PopoverContent,
@@ -44,12 +65,36 @@ interface TransactionToolbarProps {
   scorePercent?: number;
   /** Receipt-only transactions across the account, not the filtered view (#207) */
   chaseQueueCount?: number;
+  /** Share of the filtered rows documented by a § 11 invoice, i.e. deductible. */
+  deductiblePercent?: number;
 }
 
-function ScoreRing({ percent }: { percent: number }) {
+/**
+ * Documented, and of that, deductible.
+ *
+ * The outer arc is the old ring: rows carrying a file or a no-document
+ * category. The inner arc is the share that is documented by an invoice that
+ * satisfies § 11, which is the part that actually earns Vorsteuer.
+ *
+ * The gap between the two arcs is the chase queue, which is why the way into
+ * that queue sits immediately beside this. Before, the same fact was a fifth
+ * column on the table; here it is one mark that already existed, given a
+ * second reading.
+ */
+function ScoreRing({
+  percent,
+  deductiblePercent,
+}: {
+  percent: number;
+  deductiblePercent?: number;
+}) {
   const radius = 8;
+  const innerRadius = 5;
   const circumference = 2 * Math.PI * radius;
+  const innerCircumference = 2 * Math.PI * innerRadius;
   const offset = circumference - (percent / 100) * circumference;
+  const innerOffset =
+    innerCircumference - ((deductiblePercent ?? 0) / 100) * innerCircumference;
   const color =
     percent >= 100
       ? "text-yellow-500"
@@ -83,6 +128,21 @@ function ScoreRing({ percent }: { percent: number }) {
         transform="rotate(-90 10 10)"
         className={cn(color, "transition-[stroke-dashoffset] duration-500 ease-out")}
       />
+      {deductiblePercent !== undefined && (
+        <circle
+          cx="10"
+          cy="10"
+          r={innerRadius}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeDasharray={innerCircumference}
+          strokeDashoffset={innerOffset}
+          strokeLinecap="round"
+          transform="rotate(-90 10 10)"
+          className="text-green-600/70 transition-[stroke-dashoffset] duration-500 ease-out"
+        />
+      )}
     </svg>
   );
 }
@@ -99,6 +159,7 @@ export function TransactionToolbar({
   filteredSum,
   scorePercent,
   chaseQueueCount = 0,
+  deductiblePercent,
 }: TransactionToolbarProps) {
   const [datePopoverOpen, setDatePopoverOpen] = useState(false);
   const [statusPopoverOpen, setStatusPopoverOpen] = useState(false);
@@ -576,23 +637,6 @@ export function TransactionToolbar({
         </PopoverContent>
       </Popover>
 
-      {/*
-        The way into the chase queue (#207). Shown even at zero: before the
-        backfill runs every transaction reads as unset and the queue is empty
-        for everyone, and a link that only appears once there is work is a
-        feature nobody ever finds.
-      */}
-      <Button variant="outline" size="sm" className="h-9 gap-2" asChild>
-        <Link href="/transactions/chase">
-          <ReceiptText className="h-4 w-4" />
-          <span>Chase</span>
-          {chaseQueueCount > 0 && (
-            <Badge variant="warning" className="h-5 px-1.5 tabular-nums">
-              {chaseQueueCount}
-            </Badge>
-          )}
-        </Link>
-      </Button>
 
         {/* Import filter badge (if active) */}
         {filters.importId && (
@@ -615,7 +659,26 @@ export function TransactionToolbar({
       {showCounter && (
         <div className="flex flex-col items-end justify-center text-sm">
           <span className="flex items-center gap-1.5 text-muted-foreground">
-            {scorePercent !== undefined && <ScoreRing percent={scorePercent} />}
+            {scorePercent !== undefined && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="inline-flex">
+                    <ScoreRing
+                      percent={scorePercent}
+                      deductiblePercent={deductiblePercent}
+                    />
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="text-xs">
+                    {scorePercent}% documented
+                    {deductiblePercent !== undefined
+                      ? `, ${deductiblePercent}% by a § 11 invoice`
+                      : ""}
+                  </p>
+                </TooltipContent>
+              </Tooltip>
+            )}
             <span className={cn(
               "tabular-nums font-medium text-foreground inline-block",
               counterBumping && "animate-counter-bump"
@@ -623,6 +686,30 @@ export function TransactionToolbar({
             <span>/</span>
             <span className="tabular-nums">{totalCount}</span>
           </span>
+          {/*
+            The way into the chase queue (#207), beside the ring rather than in
+            the filter row. Every other control in that row narrows THIS table;
+            this one navigates to a different surface, so sitting among them
+            read as a filter that does not filter.
+            It belongs here because it is the same fact as the ring from the
+            other end: the ring says how much is documented and how much of
+            that is deductible, and the chase queue IS the gap between the two
+            arcs, as a work list.
+            Shown even at zero: before the backfill runs the queue is empty for
+            everyone, and a link that only appears once there is work is a
+            feature nobody ever finds.
+          */}
+          <Button variant="ghost" size="sm" className="h-6 gap-1.5 px-1.5 -mr-1.5" asChild>
+            <Link href="/transactions/chase">
+              <ReceiptText className="h-3.5 w-3.5" />
+              <span className="text-xs">Chase</span>
+              {chaseQueueCount > 0 && (
+                <Badge variant="warning" className="h-4 px-1 text-[10px] tabular-nums">
+                  {chaseQueueCount}
+                </Badge>
+              )}
+            </Link>
+          </Button>
           {filteredSum !== undefined && (
             <span
               className={cn(
