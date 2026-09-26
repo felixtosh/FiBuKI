@@ -480,6 +480,55 @@ describe("characterization: runExtraction extraction + counterparty", () => {
     expect(doc.extractedPartner).toBe("AL&FA Taxi KG");
   });
 
+  it("#299: the user's own company with an '&' matches their entity, and the direction follows", async () => {
+    // The registered name is what the user typed; the document's issuer block
+    // prints the shorter trade name. Encoded, the inserted "amp" token breaks
+    // the substring lane and the user does not match their own company — the
+    // document lands undirected. Decoded at entity normalisation, the issuer
+    // IS the user, so this is an outgoing invoice and the counterparty is the
+    // recipient, not the issuer.
+    await seedUserData({ companies: [{ name: "AL&FA Taxi KG" }] });
+    const fileData = await seedFile("f-own-amp-issuer");
+    q({
+      extracted: {
+        amount: 100,
+        confidence: 1,
+        issuer: { name: "AL&amp;FA" },
+        recipient: { name: "Wiener Handels GmbH" },
+      },
+    });
+    await runExtraction("f-own-amp-issuer", fileData, { skipClassification: true });
+
+    const doc = await fileDoc("f-own-amp-issuer");
+    expect(doc.invoiceDirection).toBe("outgoing");
+    expect(doc.matchedUserAccount).toBe("issuer");
+    expect(doc.extractedPartner).toBe("Wiener Handels GmbH");
+    // Stored decoded, so the next reader — the onUserDataUpdate sweep, export,
+    // Partner display — inherits the same spelling.
+    expect((doc.extractedIssuer as Record<string, unknown>).name).toBe("AL&FA");
+  });
+
+  it("#299: the same company as recipient makes the document incoming", async () => {
+    await seedUserData({ companies: [{ name: "AL&FA Taxi KG" }] });
+    const fileData = await seedFile("f-own-amp-recipient");
+    q({
+      extracted: {
+        amount: 100,
+        confidence: 1,
+        issuer: { name: "Wiener Handels GmbH" },
+        recipient: { name: "AL&amp;FA" },
+      },
+    });
+    await runExtraction("f-own-amp-recipient", fileData, { skipClassification: true });
+
+    const doc = await fileDoc("f-own-amp-recipient");
+    expect(doc.invoiceDirection).toBe("incoming");
+    expect(doc.matchedUserAccount).toBe("recipient");
+    expect(doc.recipientIdentityMatch).toBe("user");
+    expect(doc.extractedPartner).toBe("Wiener Handels GmbH");
+    expect((doc.extractedRecipient as Record<string, unknown>).name).toBe("AL&FA");
+  });
+
   it("#233: a name with no entity in it, including a bare ampersand, is unchanged", async () => {
     const fileData = await seedFile("f-bare-amp");
     q({

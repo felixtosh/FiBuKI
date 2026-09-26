@@ -12,6 +12,7 @@ import { loadDocumentedAmounts } from "./documentedAmounts";
 import {
   SCORING_CONFIG,
   scoreTransaction,
+  derivePartnerAliases,
   formatScoreBreakdown,
   TransactionMatchScore,
   TransactionMatchSource,
@@ -266,10 +267,10 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
           .get();
         if (partnerDoc.exists) {
           const partnerData = partnerDoc.data()!;
-          partnerAliases = [
-            partnerData.name,
-            ...(partnerData.aliases || []),
-          ].filter(Boolean);
+          // Same derivation as auto-matching, not a copy of it (#138): this
+          // dialog's scores have to be the ones matchFileTransactions
+          // produced, including the linked Global Partner's brand aliases.
+          partnerAliases = await derivePartnerAliases(db, partnerData);
         }
       } catch (error) {
         console.warn("[FindMatches] Failed to fetch partner aliases:", error);

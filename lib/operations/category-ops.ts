@@ -188,37 +188,22 @@ export async function assignCategoryToTransaction(
   }
 
   const txData = { id: transactionId, ...txSnapshot.data() } as Transaction;
-  const batch = writeBatch(ctx.db);
-
-  // Update transaction
-  batch.update(txDoc, {
-    noReceiptCategoryId: categoryId,
-    noReceiptCategoryTemplateId: category.templateId,
-    noReceiptCategoryMatchedBy: matchedBy,
-    noReceiptCategoryConfidence: confidence || (matchedBy === "manual" ? 100 : null),
-    isComplete: true,
-    updatedAt: Timestamp.now(),
-  });
-
-  // Increment category transaction count
   const categoryRef = doc(ctx.db, CATEGORIES_COLLECTION, categoryId);
-  batch.update(categoryRef, {
-    transactionCount: increment(1),
-    updatedAt: Timestamp.now(),
-  });
 
-  // If transaction has a partner and category doesn't have this partner, add it
-  // Auto-link partners to categories for both manual and auto matches
-  if (txData.partnerId && (matchedBy === "manual" || matchedBy === "auto")) {
-    if (!category.matchedPartnerIds.includes(txData.partnerId)) {
-      batch.update(categoryRef, {
-        matchedPartnerIds: arrayUnion(txData.partnerId),
-      });
-      console.log(`[Category] Added partner ${txData.partnerId} to category ${categoryId} (${matchedBy})`);
-    }
-  }
+  // The assignment itself (transaction fields, transactionCount,
+  // matchedPartnerIds) is a single Cloud Function shared with the MCP/tool
+  // surface (#164), so both surfaces teach the category matcher identically.
+  const assignNoReceiptCategory = httpsCallable<
+    {
+      transactionId: string;
+      categoryId: string;
+      matchedBy: "manual" | "suggestion" | "auto";
+      confidence?: number;
+    },
+    { success: boolean; transactionId: string; categoryId: string; categoryName: string }
+  >(functions, "assignNoReceiptCategory");
 
-  await batch.commit();
+  await assignNoReceiptCategory({ transactionId, categoryId, matchedBy, confidence });
 
   // Clear any manual removal entry for this transaction (user is re-adding it)
   if (category.manualRemovals?.some((r) => r.transactionId === transactionId)) {

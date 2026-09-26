@@ -77,6 +77,24 @@ function VirtualRowInner<TData extends { id: string }>({
 
 // Custom memo comparison for performance
 // Checks updatedAt (if present) to detect data changes while keeping memo lightweight
+//
+// It deliberately ignores `onClick` (and `dataAttributes`). Consumers pass an
+// inline `onRowClick` — the Transactions table does — so the table hands down a
+// fresh handler on every render; comparing it would bust every visible row's
+// memo on every render and cost the virtualised list the point of being
+// virtualised. The price is that a row which skips a render keeps the handler
+// it last painted with, so a raw closure over component state reads that state
+// as of the row's last render and not as of the click. Both of #232's bugs were
+// that: checkboxes toggling against an empty selection (a radio group) and
+// shift-click seeing a null anchor, each healing on scroll because scrolling
+// remounts the row.
+//
+// The constraint this puts on callers: any handler that reaches a row must have
+// a stable identity AND run the current render's closure. Wrap it in
+// `useLatestCallback` (hooks/use-latest-callback.ts) — never hand a row a raw
+// closure over state. The table already does this for its own row-click
+// handler, so `onRowClick`/`onSelectionChange` are safe to pass inline; column
+// cells that carry state, like the Files checkbox column, must do it too (#298).
 export const VirtualRow = memo(
   VirtualRowInner,
   (prevProps, nextProps) => {

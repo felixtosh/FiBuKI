@@ -14,7 +14,7 @@ import {
   Image,
   StyleSheet,
 } from "@react-pdf/renderer";
-import { Invoice, InvoicePartnerAddress } from "./types";
+import { Invoice, InvoicePartnerAddress, computeLineItemTotals } from "./types";
 
 interface InvoiceDocumentProps {
   invoice: Invoice;
@@ -220,7 +220,10 @@ const ItemsTable: React.FC<{ invoice: Invoice }> = ({ invoice }) => (
       <Text style={styles.colTotal}>Gesamt</Text>
     </View>
     {invoice.lineItems.map((item) => {
-      const lineNet = Math.round(item.quantity * item.unitPrice);
+      // Per-line column is NET (Austrian convention). Mirrors the app-side
+      // helper lib/invoicing/invoice-totals.ts#lineItemColumnCents; kept as a
+      // local call because functions/ (rootDir: "src") cannot import app lib/.
+      const lineNet = computeLineItemTotals(item).netCents;
       return (
         <View key={item.id} style={styles.itemsRow}>
           <Text style={styles.colDescription}>{item.description}</Text>

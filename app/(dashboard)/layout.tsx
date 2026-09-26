@@ -4,6 +4,7 @@ import { useEffect, useState, useRef, useCallback, useLayoutEffect, useMemo } fr
 import { usePathname, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -409,12 +410,14 @@ export default function DashboardLayout({
 }) {
   return (
     <ProtectedRoute>
-      <ChatProvider>
-        <OnboardingController />
-        <WorkerQueueProcessor />
-        <ChatSidebar />
-        <DashboardContent>{children}</DashboardContent>
-      </ChatProvider>
+      <TooltipProvider>
+        <ChatProvider>
+          <OnboardingController />
+          <WorkerQueueProcessor />
+          <ChatSidebar />
+          <DashboardContent>{children}</DashboardContent>
+        </ChatProvider>
+      </TooltipProvider>
     </ProtectedRoute>
   );
 }
