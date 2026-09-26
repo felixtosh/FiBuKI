@@ -60,7 +60,7 @@ const DISCOUNTED: UvaTransaction = {
   id: "t-discount-to-zero",
   date: "2026-01-09",
   amount: -12000,
-  partnerName: "FIBU 20260109-8624",
+  partnerName: "Rabatt GmbH",
   files: [
     {
       id: "f-discount-to-zero",
