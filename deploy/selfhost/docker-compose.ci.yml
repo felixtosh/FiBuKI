@@ -49,9 +49,11 @@ services:
       - ./seaweedfs-s3-ci.json:/etc/seaweedfs/s3.json:ro
     ports:
       - "8333:8333"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8333/ || exit 1"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-      start_period: 5s
+    # No healthcheck on purpose. MinIO's shipped `mc`, so a container-side probe
+    # was free; this image is a Go binary with no wget, curl or nc to call, and
+    # a healthcheck whose command does not exist is permanently unhealthy, which
+    # is what `--wait` then blocks on. Readiness is asserted from the runner
+    # instead (see "Wait for S3" in ci.yml), where curl certainly exists and
+    # where the thing being proven — that the port answers from outside the
+    # compose network, which is how the suite reaches it — is the thing being
+    # measured.

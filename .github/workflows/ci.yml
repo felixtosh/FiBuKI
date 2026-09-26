@@ -132,6 +132,19 @@ jobs:
             functions/package-lock.json
       - name: Start Postgres + S3 (compose)
         run: docker compose -f deploy/selfhost/docker-compose.ci.yml up -d --wait
+      # SeaweedFS carries no shell tools for a container-side healthcheck, so
+      # readiness is proven from here: any HTTP status means the gateway is
+      # listening, and 403 is the honest answer to an unsigned request.
+      - name: Wait for S3
+        run: |
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8333/ || true)
+            if [ "$code" != "000" ]; then echo "S3 up after ${i}s (HTTP $code)"; exit 0; fi
+            sleep 1
+          done
+          echo "S3 never answered on :8333" >&2
+          docker compose -f deploy/selfhost/docker-compose.ci.yml logs seaweedfs | tail -40 >&2
+          exit 1
       # Root deps too — see the note on the PGlite job above.
       - run: npm ci
       - run: npm ci
