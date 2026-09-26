@@ -42,9 +42,18 @@ if [[ -f "$SRC/postgres.dump.gpg" ]]; then
   log "decrypting"
   command -v gpg >/dev/null || die "gpg needed to read this backup"
   gpg --batch --yes --decrypt "$SRC/postgres.dump.gpg" > "$TMPD/postgres.dump"
-  gpg --batch --yes --decrypt "$SRC/minio-data.tar.gz.gpg" > "$TMPD/minio-data.tar.gz"
+  # blob-data is what backup.sh writes since the SeaweedFS migration; a backup
+  # taken before it is still a backup, and a restore test that cannot read the
+  # previous fortnight is not much of a test.
+  if [[ -f "$SRC/blob-data.tar.gz.gpg" ]]; then
+    gpg --batch --yes --decrypt "$SRC/blob-data.tar.gz.gpg" > "$TMPD/blob-data.tar.gz"
+  else
+    gpg --batch --yes --decrypt "$SRC/minio-data.tar.gz.gpg" > "$TMPD/blob-data.tar.gz"
+  fi
 elif [[ -f "$SRC/postgres.dump" ]]; then
-  cp "$SRC/postgres.dump" "$SRC/minio-data.tar.gz" "$TMPD/"
+  cp "$SRC/postgres.dump" "$TMPD/"
+  if [[ -f "$SRC/blob-data.tar.gz" ]]; then cp "$SRC/blob-data.tar.gz" "$TMPD/";
+  else cp "$SRC/minio-data.tar.gz" "$TMPD/blob-data.tar.gz"; fi
   # Only meaningful for unencrypted backups; the gpg path already authenticates.
   if [[ -f "$SRC/SHA256SUMS" ]]; then
     log "verifying checksums"
@@ -95,32 +104,44 @@ TOTAL="$(docker exec "$SCRATCH_PG" psql -U fibuki -d fibuki -tAc \
 log "total live tuples: $TOTAL"
 [[ "$TOTAL" -gt 0 ]] || { log "restore produced an EMPTY database"; FAIL=1; }
 
-# --- Verify the MinIO archive is readable ------------------------------------
-log "verifying minio archive"
+# --- Verify the blob archive is readable -------------------------------------
+log "verifying blob archive"
 docker volume create "$SCRATCH_VOL" >/dev/null
 if docker run --rm -v "$SCRATCH_VOL":/data -v "$TMPD":/b:ro alpine:3 \
-     tar xzf /b/minio-data.tar.gz -C /data 2>/dev/null; then
-  OBJS="$(docker run --rm -v "$SCRATCH_VOL":/data:ro alpine:3 \
-           sh -c 'find /data -type f ! -path "*/.minio.sys/*" | wc -l' | tr -d ' ')"
-  log "minio objects restored: $OBJS"
-  [[ "${OBJS:-0}" -gt 0 ]] || { log "minio archive extracted but contains no objects"; FAIL=1; }
+     tar xzf /b/blob-data.tar.gz -C /data 2>/dev/null; then
+  # Bytes, not a file count. MinIO wrote one file per object; SeaweedFS packs
+  # objects into a few .dat volume files, so counting files would report single
+  # digits for a healthy store and could not tell packed from empty.
+  BYTES="$(docker run --rm -v "$SCRATCH_VOL":/data:ro alpine:3 \
+           sh -c 'du -sb /data 2>/dev/null | cut -f1' | tr -d ' ')"
+  log "blob bytes restored: ${BYTES}"
+  [[ "${BYTES:-0}" -gt 1048576 ]] || { log "blob archive extracted but holds under 1 MiB"; FAIL=1; }
 
   # Cross-check against what the backup recorded. Catches an archive that is
   # internally valid but was taken against the wrong (or an empty) volume — the
-  # failure mode that a bytes-only check cannot see.
-  EXPECTED="$(sed -n 's/^minio_objects=//p' "$SRC/manifest.txt" 2>/dev/null)"
+  # failure mode that a bytes-only check on the ARCHIVE cannot see.
+  EXPECTED="$(sed -n 's/^blob_bytes=//p' "$SRC/manifest.txt" 2>/dev/null)"
   if [[ -n "$EXPECTED" ]]; then
-    if [[ "$OBJS" -ne "$EXPECTED" ]]; then
-      log "object count mismatch: archive has $OBJS, manifest recorded $EXPECTED"
+    # Within 1%: tar round-trips sparse regions and directory sizes slightly
+    # differently, and an exact match would fail for reasons that are not data
+    # loss. An empty or wrong-volume archive is off by orders of magnitude.
+    LOW=$(( EXPECTED - EXPECTED / 100 ))
+    if [[ "$BYTES" -lt "$LOW" ]]; then
+      log "blob size mismatch: archive restored $BYTES B, manifest recorded $EXPECTED B"
       FAIL=1
     else
-      log "object count matches the manifest ($EXPECTED)"
+      log "blob size matches the manifest (${EXPECTED} B recorded, ${BYTES} B restored)"
     fi
   else
-    log "note: manifest has no minio_objects line (backup predates that field)"
+    OLD="$(sed -n 's/^minio_objects=//p' "$SRC/manifest.txt" 2>/dev/null)"
+    if [[ -n "$OLD" ]]; then
+      log "note: pre-migration backup, manifest counts objects ($OLD) rather than bytes"
+    else
+      log "note: manifest has no blob_bytes line (backup predates that field)"
+    fi
   fi
 else
-  log "minio archive failed to extract"; FAIL=1
+  log "blob archive failed to extract"; FAIL=1
 fi
 
 if [[ "$FAIL" -ne 0 ]]; then

@@ -9,7 +9,7 @@ affects a normal Firebase build — it is only referenced by this compose file.
 | Service | Image | Role |
 |---|---|---|
 | `postgres` | `postgres:16-alpine` | Firestore-shim JSONB store (`DATABASE_URL`) |
-| `minio` | `minio/minio` | storage-shim S3 backend (bucket auto-created by the shim) |
+| `seaweedfs` | `chrislusf/seaweedfs` | storage-shim S3 backend (bucket auto-created by the shim). Replaced MinIO in September 2026, when MinIO's server was archived upstream and its images withdrawn from every registry |
 | `fibuki-api` | built (`api.Dockerfile`, Node 22) | selfhost host: callables + trigger bus + cron, over the shims; `:8788` |
 | `fibuki-web` | built (`web.Dockerfile`, Node 20) | Next frontend, `FIBUKI_BACKEND=selfhost` alias build; `:3000` |
 
@@ -29,7 +29,7 @@ curl -fsS http://localhost:8788/healthz    # ~112 callables / 12 scheduled
   Authentik). `FIBUKI_DEV_UID` is a dev-only bypass and must never be set here.
 - **NEXT_PUBLIC_\***: inlined at *build* time (Next + CSP), so they are compose
   `build.args`, not just runtime env — rebuild `fibuki-web` if they change.
-- **Data**: `fibuki-pgdata` / `fibuki-miniodata` named volumes (container-uid owned).
+- **Data**: `fibuki-pgdata` / `fibuki-seaweeddata` named volumes (`fibuki-miniodata` is kept as the pre-migration rollback) (container-uid owned).
 - **Reverse proxy**: put a TLS proxy in front of `:3000` (web) and `:8788` (api),
   one hostname each. The api's CORS layer (`FIBUKI_WEB_ORIGIN`) expects the split
   origin. Point `FIBUKI_PUBLIC_URL` / `NEXT_PUBLIC_FIBUKI_API_URL` at the api host.

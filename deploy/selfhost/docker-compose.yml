@@ -4,7 +4,7 @@
 # Postgres (Firestore-shim JSONB store) and MinIO (storage-shim S3 backend).
 #
 # Values come from ./.env (copy .env.example). Data lives in named volumes
-# (fibuki-pgdata / fibuki-miniodata) — container-uid owned.
+# (fibuki-pgdata / fibuki-seaweeddata) — container-uid owned.
 #
 # Build + run:  docker compose --env-file .env up -d --build
 
@@ -24,24 +24,43 @@ services:
       timeout: 5s
       retries: 20
 
-  minio:
-    image: minio/minio:latest
+  # SeaweedFS, not MinIO. MinIO's server repo went read-only upstream on
+  # 2026-04-24, its last release carrying binaries is RELEASE.2025-09-07, and
+  # the images were then withdrawn from Docker Hub AND quay.io. Nothing is
+  # being asked of us; it stopped being published. Running an unmaintained,
+  # unpullable store in front of customer documents is the actual risk, and a
+  # host rebuild could no longer pull it at all.
+  #
+  # SeaweedFS is Apache-2.0 and actively developed, and speaks the same S3 API,
+  # so blobstore-s3.ts and its `minio` npm client reach it unchanged. The
+  # protocol was always the contract; the vendor never was.
+  #
+  # Pinned to a release tag. A floating tag is what turned an upstream change
+  # into an outage here twice.
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.47
     restart: unless-stopped
-    command: server /data --console-address ":9001"
+    # The S3 gateway wants its identities in a file, and the only place the
+    # credentials live is .env. Rather than add a second secret file on the box
+    # for rsync --delete to threaten, the config is written at boot from the
+    # same two variables fibuki-api already uses, then exec's the real
+    # entrypoint so signals still reach weed.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        mkdir -p /etc/seaweedfs
+        printf '{"identities":[{"name":"fibuki","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","Write","List","Tagging"]}]}' \
+          "$$FIBUKI_S3_ACCESS_KEY" "$$FIBUKI_S3_SECRET_KEY" > /etc/seaweedfs/s3.json
+        exec /entrypoint.sh server -dir=/data -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/s3.json
     environment:
-      MINIO_ROOT_USER: ${FIBUKI_S3_ACCESS_KEY}
-      MINIO_ROOT_PASSWORD: ${FIBUKI_S3_SECRET_KEY}
+      FIBUKI_S3_ACCESS_KEY: ${FIBUKI_S3_ACCESS_KEY}
+      FIBUKI_S3_SECRET_KEY: ${FIBUKI_S3_SECRET_KEY}
     volumes:
-      - fibuki-miniodata:/data
-    # The storage shim (blobstore-s3.ts) creates the bucket on first use and
-    # retries transient outages, so a hard healthcheck gate isn't required; a
-    # readiness probe is still useful for `docker compose ps`.
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 10s
+      - fibuki-seaweeddata:/data
+    # No healthcheck: the image carries no shell tools to probe with, and a
+    # healthcheck whose command is missing is permanently unhealthy. Readiness
+    # is the api container's problem, and blobstore-s3.ts already retries.
 
   fibuki-api:
     build:
@@ -51,7 +70,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      minio:
+      seaweedfs:
         condition: service_started
     environment:
       PORT: "8788"
@@ -69,8 +88,8 @@ services:
       FIBUKI_NO_CRON: ${FIBUKI_NO_CRON:-}
       # storage-shim -> MinIO (blobstore-s3.ts)
       FIBUKI_STORAGE: s3
-      FIBUKI_S3_ENDPOINT: minio
-      FIBUKI_S3_PORT: "9000"
+      FIBUKI_S3_ENDPOINT: seaweedfs
+      FIBUKI_S3_PORT: "8333"
       FIBUKI_S3_SSL: "false"
       FIBUKI_S3_ACCESS_KEY: ${FIBUKI_S3_ACCESS_KEY}
       FIBUKI_S3_SECRET_KEY: ${FIBUKI_S3_SECRET_KEY}
@@ -353,4 +372,9 @@ services:
 
 volumes:
   fibuki-pgdata:
+  # Kept, deliberately, after the SeaweedFS migration: it still holds the
+  # pre-migration objects and is the rollback. Remove it only once SeaweedFS
+  # has been serving for long enough to trust, and never in the same change
+  # that moves the data.
   fibuki-miniodata:
+  fibuki-seaweeddata:
