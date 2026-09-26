@@ -251,6 +251,44 @@ export function identityNameMatches(identityName: string, entityName: string): b
   );
 }
 
+/**
+ * Are these two printed names the SAME business, rather than merely two names
+ * that overlap?
+ *
+ * `identityNameMatches` is deliberately generous — it answers "does the
+ * document name me?", and a two-way substring is what makes "Stefan Herbert"
+ * match "STEFAN YAZZIE HERBERT". That generosity is wrong for the opposite
+ * question, "is the business in this block the Invoicing Agent?" (#156): under
+ * a substring test an agent called "Uber" would swallow a supplier called
+ * "Uber Eats Kurier KG", and refusing the supplier is exactly the damage the
+ * Invoicing Agent field exists to prevent.
+ *
+ * So: equal token SETS, on the same normalisation (casefold, umlauts,
+ * diacritics, legal-form markers dropped) — "Uber Austria GmbH" is
+ * "UBER AUSTRIA G.M.B.H.", and nothing wider.
+ */
+export function printedNameEquals(
+  a: string | null | undefined,
+  b: string | null | undefined
+): boolean {
+  if (!a || !b) return false;
+
+  const aTokens = identityNameTokens(a);
+  const bTokens = identityNameTokens(b);
+
+  // A name that is nothing but legal-form markers leaves no tokens to compare;
+  // fall back to the normalised strings so "GmbH" still equals "gmbh".
+  if (aTokens.length === 0 || bTokens.length === 0) {
+    const aNormalized = normalizeIdentityName(a);
+    const bNormalized = normalizeIdentityName(b);
+    return Boolean(aNormalized) && aNormalized === bNormalized;
+  }
+
+  if (aTokens.length !== bTokens.length) return false;
+  const bSet = new Set(bTokens);
+  return aTokens.every((token) => bSet.has(token));
+}
+
 // === Identity accessors ===
 
 /** All names the user goes by: personal, companies, aliases, legacy fields. */

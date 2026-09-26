@@ -209,9 +209,10 @@ _Avoid (de)_: Inkasso (third-party collection), Mahnspesen (a fee it may carry),
 
 **Invoicing Agent**:
 A business that writes a File in the name of another, as § 11 Abs 2 UStG permits (Uber
-Austria GmbH for a taxi operator). Recorded on the Extraction under a fixed field name,
-UID and all. Never a Partner, never matched against a Transaction, never part of an
-input VAT trail.
+Austria GmbH for a taxi operator). Recorded on the Extraction as
+`extractedInvoicingAgent`, UID and all — one fixed name, so it cannot drift into the
+additional-fields bag under a label the model invents per run. Never a Partner, never
+matched against a Transaction, never part of an input VAT trail.
 _Deutsch (defining)_: Abrechnender Dritter (§ 11 Abs 2)
 _Avoid_: issuer platform, service provider, billing partner
 _Avoid (de)_: Rechnungsaussteller (every issuer, including the Partner), Plattform

@@ -116,4 +116,18 @@ export interface ExtractedData {
   // Entity fields for counterparty determination
   issuer: ExtractedEntity | null;
   recipient: ExtractedEntity | null;
+  /**
+   * The business that WROTE the document in another's name, as § 11 Abs 2
+   * UStG permits — Uber Austria GmbH for a licensed taxi operator (#156).
+   *
+   * It has a field of its own because the alternative was the free-form
+   * additional-fields bag, where nothing controlled the label: the same
+   * layout came back as `Issuer Platform` on one run and `Service Provider`
+   * on the next. Read, kept and never used: an Invoicing Agent is never a
+   * Partner, never matched against a Transaction and never part of a
+   * Vorsteuer trail (ADR-0003).
+   *
+   * Optional, and null on every single-party document.
+   */
+  invoicingAgent?: ExtractedEntity | null;
 }

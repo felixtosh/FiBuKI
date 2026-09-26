@@ -117,6 +117,9 @@ describe("characterization: geminiParser.parseWithGemini", () => {
       fieldSpans: {},
       issuer: null,
       recipient: null,
+      // #156: null, not absent — a single-party document records the absence
+      // of an Invoicing Agent under the same fixed field name.
+      invoicingAgent: null,
     });
     expect(res.extractedRaw).toEqual({
       date: null,
