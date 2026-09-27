@@ -27,6 +27,7 @@ import {
 } from "../bmd-export/bmdCsvGenerators";
 import { calculateUva } from "../uva/calculateUva";
 import { buildUvaTransaction, type CategoryRecord, type FileRecord } from "../uva/adapter";
+import { buildEcbRateTable, type EcbRateTable } from "../fx/ecbRates";
 
 const T = (iso: string) => Timestamp.fromDate(new Date(iso));
 /** Mid-March, so every fixture lands inside 2026-Q1 and 2026-03. */
@@ -153,16 +154,16 @@ const FIXTURES: Fixture[] = [
 ];
 
 /** Sum the `steuer` column of the export, in cents. */
-function exportVatCents(f: Fixture): number {
+function exportVatCents(f: Fixture, ecbRates: EcbRateTable | null = null): number {
   const files = new Map((f.files ?? []).map((file) => [file.id, file]));
-  const lines = generateBuchungenCsv([f.tx], files, new Map()).split("\n").slice(1);
+  const lines = generateBuchungenCsv([f.tx], files, new Map(), 1, ecbRates).split("\n").slice(1);
   return lines
     .filter(Boolean)
     .reduce((sum, line) => sum + Math.round(Number(line.split(";")[8].replace(",", ".")) * 100), 0);
 }
 
 /** The UVA report for one fixture, run over the period it lands in. */
-function uvaReportFor(f: Fixture) {
+function uvaReportFor(f: Fixture, ecbRates: EcbRateTable | null = null) {
   const filesById = new Map<string, FileRecord>(
     (f.files ?? []).map((file) => [file.id, file as FileRecord]),
   );
@@ -191,12 +192,13 @@ function uvaReportFor(f: Fixture) {
   return calculateUva({
     period: { year: 2026, period: 3, type: "monthly" },
     transactions: [uvaTx],
+    ecbRates,
   });
 }
 
 /** The same transaction's VAT as the UVA report states it, in cents. */
-function reportVatCents(f: Fixture): number {
-  const report = uvaReportFor(f);
+function reportVatCents(f: Fixture, ecbRates: EcbRateTable | null = null): number {
+  const report = uvaReportFor(f, ecbRates);
   // Reverse charge nets to zero on this line (owed and deducted in the same
   // breath), and the booking row likewise carries no tax — so comparing the
   // net figure is the right comparison for it too.
@@ -250,4 +252,81 @@ describe("bmd/uva agreement (#317): an impossible Trinkgeld", () => {
       expect(exportVatCents(f)).toBe(reportVatCents(f));
     });
   }
+});
+
+/**
+ * A foreign-currency Trinkgeld is judged in euros on both sides (#326).
+ *
+ * The UVA converts a foreign document before it reads a figure off it; the
+ * export used to hand `assessTip` the document as extracted, so it compared
+ * koruny or pounds against the euro bank line and could reach the opposite
+ * verdict. Both sides now read the same converted documents at the same rate,
+ * so the fixtures run with the rate table the UVA run loads.
+ */
+describe("bmd/uva agreement (#326): a foreign-currency Trinkgeld", () => {
+  /** 25 CZK and 0,80 GBP per euro, published the Friday before DATE. */
+  const ECB = buildEcbRateTable([{ date: "2026-03-13", rates: { CZK: 25, GBP: 0.8 } }]);
+
+  // 1.000,00 CZK at 20% and a 50,00 CZK tip on top, paid with 42,00 EUR:
+  // (1.000 + 50) / 25. Read as-is the tip, 50,00, is not less than the 42,00
+  // bank line and the export refused it, while the UVA converted it to 2,00
+  // and claimed the document's VAT.
+  const czkBooked = withFile("CZK tip, 2,00 converted, below the bank amount", -4200, {
+    extractedAmount: 100000,
+    extractedTipAmount: 5000,
+    extractedCurrency: "CZK",
+    extractedVatAmount: 16667,
+    extractedVatPercent: 20,
+  });
+
+  // 30,00 GBP at 20% and a 32,00 GBP tip, paid with 36,00 EUR. The tip is
+  // 40,00 in euros, not less than the bank line: both refuse. Read as-is it is
+  // 32,00, and the export's refusal said "32,00 is not less than 36,00".
+  const gbpRefused = withFile("GBP tip, 40,00 converted, above the bank amount", -3600, {
+    extractedAmount: 3000,
+    extractedTipAmount: 3200,
+    extractedCurrency: "GBP",
+    extractedVatAmount: 500,
+    extractedVatPercent: 20,
+  });
+
+  const exportOf = (f: Fixture) =>
+    generateBuchungenCsvWithReport(
+      [f.tx],
+      new Map((f.files ?? []).map((file) => [file.id, file])),
+      new Map(),
+      1,
+      ECB,
+    );
+
+  it("books a converted tip below the bank amount on both sides, with the same VAT", () => {
+    const { skipped } = exportOf(czkBooked);
+    const report = uvaReportFor(czkBooked, ECB);
+
+    expect(skipped).toEqual([]);
+    expect(report.unresolved).toEqual([]);
+    // 1.000,00 CZK at 0,04 is 40,00 EUR, 6,67 of it VAT. The export books
+    // 42,00 − 2,00 across the document's rate and the 2,00 tip at 0%.
+    expect(report.totalInputVat).toBe(667);
+    expect(exportVatCents(czkBooked, ECB)).toBe(reportVatCents(czkBooked, ECB));
+  });
+
+  it("refuses a converted tip not below the bank amount on both sides", () => {
+    const { csv, skipped } = exportOf(gbpRefused);
+    const report = uvaReportFor(gbpRefused, ECB);
+
+    expect(csv.split("\n").filter(Boolean)).toHaveLength(1);
+    expect(skipped.map((s) => s.fileId)).toEqual(["f1"]);
+    expect(report.totalInputVat).toBe(0);
+    expect(report.unresolved.map((u) => u.reason)).toEqual(["impossible-tip"]);
+  });
+
+  it("states the tip it compared, the converted one, in the refusal", () => {
+    const { skipped } = exportOf(gbpRefused);
+
+    expect(skipped[0].reason).toBe(
+      "tip (40,00, converted from 32,00 GBP) is not less than the bank amount (36,00); " +
+        "correct the tip on this document and re-run",
+    );
+  });
 });

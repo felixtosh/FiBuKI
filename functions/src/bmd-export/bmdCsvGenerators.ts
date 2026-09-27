@@ -14,6 +14,8 @@ import {
 import { buildUvaTransaction, type CategoryRecord, type FileRecord } from "../uva/adapter";
 import { deriveTransactionVat } from "../uva/transactionVat";
 import { assessTip } from "../uva/tip";
+import { documentsInBankCurrency } from "../uva/calculateUva";
+import type { EcbRateTable } from "../fx/ecbRates";
 import type { RateGroup } from "../uva/types";
 
 /**
@@ -281,7 +283,8 @@ type VatRowsResult =
  */
 function vatRowsFor(
   tx: TransactionForExport,
-  files: Map<string, FileForExport>
+  files: Map<string, FileForExport>,
+  ecbRates: EcbRateTable | null
 ): VatRowsResult {
   const bankGross = Math.abs(tx.amount);
 
@@ -318,7 +321,14 @@ function vatRowsFor(
     { filesById, categoriesById }
   );
 
-  const tip = assessTip(uvaTx.files, bankGross);
+  // The tip is judged in the bank's currency, on the same converted documents
+  // the ladder reads, at the same rate (#326). A foreign receipt's tip read
+  // as-is is dollars compared against euros: the export refused a 48,00 USD
+  // tip on a 46,00 EUR line that the UVA, converting it to 44,16, claimed.
+  // Documents with no figure in the bank's unit carry no tip here, because
+  // the ladder judges none on them either.
+  const inBank = documentsInBankCurrency(uvaTx, ecbRates);
+  const tip = assessTip(inBank?.files, bankGross);
 
   // A tip that is not smaller than the payment is impossible on the document —
   // a Gesamt transcribed into the Trinkgeld field, or a bank line smaller than
@@ -335,15 +345,26 @@ function vatRowsFor(
   // `groups` check below still stands because two lanes bypass the reconcile
   // and resolve anyway: an income line with `invoiceRateGroups`, and the D1
   // defaulted-20 fallback.
+  //
+  // The message states the figure that was compared — the converted one — so
+  // it never reads as a smaller number "not less than" a larger one; the
+  // receipt's own figure follows it so the person can find it on the page.
+  const tipAsCompared = (): string => {
+    const compared = formatBmdAmount(tip.tip);
+    if (!inBank?.conversion) return compared;
+    const { documentCurrency, fileId } = inBank.conversion;
+    const original = uvaTx.files?.find((f) => f.id === fileId)?.tipAmount ?? 0;
+    return `${compared}, converted from ${formatBmdAmount(original)} ${documentCurrency}`;
+  };
   const refuseImpossibleTip = (): VatRowsResult => ({
     kind: "refused",
     fileIds: tip.tipFiles.map((f) => f.id),
     reason:
-      `tip (${formatBmdAmount(tip.tip)}) is not less than the bank amount ` +
+      `tip (${tipAsCompared()}) is not less than the bank amount ` +
       `(${formatBmdAmount(bankGross)}); correct the tip on this document and re-run`,
   });
 
-  const derived = deriveTransactionVat(uvaTx);
+  const derived = deriveTransactionVat(uvaTx, ecbRates);
   if (derived.kind === "unresolved" && derived.reason === "impossible-tip") {
     return refuseImpossibleTip();
   }
@@ -389,9 +410,10 @@ export function generateBuchungenCsv(
   transactions: TransactionForExport[],
   files: Map<string, FileForExport>,
   partnerIndex: PartnerAccountIndex,
-  startBelegnr: number = 1
+  startBelegnr: number = 1,
+  ecbRates: EcbRateTable | null = null
 ): string {
-  return generateBuchungenCsvWithReport(transactions, files, partnerIndex, startBelegnr).csv;
+  return generateBuchungenCsvWithReport(transactions, files, partnerIndex, startBelegnr, ecbRates).csv;
 }
 
 /**
@@ -402,12 +424,18 @@ export function generateBuchungenCsv(
  * named, so the export run completes without the refusal being invisible.
  * Belegnummern still advance per transaction, refused ones included, so the
  * numbering agrees with `generateFileMapping`.
+ *
+ * `ecbRates` is the table the UVA run converts foreign-currency documents at
+ * (#92). Pass the same one, or the two sides convert at different rates and
+ * can disagree about a foreign tip (#326); without it the effective bank rate
+ * is used, as the UVA does where the table does not reach.
  */
 export function generateBuchungenCsvWithReport(
   transactions: TransactionForExport[],
   files: Map<string, FileForExport>,
   partnerIndex: PartnerAccountIndex,
-  startBelegnr: number = 1
+  startBelegnr: number = 1,
+  ecbRates: EcbRateTable | null = null
 ): BmdBuchungenResult {
   const headers = [
     "satzart",
@@ -470,7 +498,7 @@ export function generateBuchungenCsvWithReport(
     // booking row, all under this transaction's single Belegnummer — which is
     // how a split-rate receipt is booked, and why the counter advances per
     // transaction rather than per row.
-    const vat = vatRowsFor(tx, files);
+    const vat = vatRowsFor(tx, files, ecbRates);
 
     // Refused (#194): no rows for this transaction at all — a partial booking
     // would be the same silent half-truth — and one report entry per document
