@@ -308,3 +308,50 @@ describe("updateFileExtractedFieldsCallable", () => {
     await expect(call({ correction: {}, details: {} })).rejects.toThrow(/fileId/);
   });
 });
+
+describe("updateFileExtractedFieldsCallable — the repair warning (#301)", () => {
+  it("retires a flagged field per correction until the warning clears", async () => {
+    seedFile({
+      needsRepairReview: true,
+      repairAmbiguousFields: ["address", "date_raw"],
+      extractedAddress: "C:\\zone\tWien",
+    });
+
+    // A save that re-posts what is stored corrected nothing.
+    await call(unchangedSave({ details: { address: "C:\\zone\tWien" } }));
+    expect(file().needsRepairReview).toBe(true);
+    expect(file().repairAmbiguousFields).toEqual(["address", "date_raw"]);
+
+    // Correcting a field the list does not name leaves the flag alone.
+    await call(unchangedSave({ details: { address: "C:\\zone\tWien" }, correction: { amount: 636000 } }));
+    expect(file().needsRepairReview).toBe(true);
+    expect(file().repairAmbiguousFields).toEqual(["address", "date_raw"]);
+
+    await call(
+      unchangedSave({ details: { address: "C:\\zone\\tWien" }, correction: { amount: 636000 } })
+    );
+    expect(file().needsRepairReview).toBe(true);
+    // Stored as the response's keys, not the panel's labels.
+    expect(file().repairAmbiguousFields).toEqual(["date_raw"]);
+
+    await call(
+      unchangedSave({
+        details: { address: "C:\\zone\\tWien" },
+        correction: { amount: 636000, date: "2026-03-05" },
+      })
+    );
+    expect(file().needsRepairReview).toBe(false);
+    expect(file().repairAmbiguousFields).toEqual([]);
+  });
+
+  it("retires a figure and a detail corrected in the same save", async () => {
+    seedFile({ needsRepairReview: true, repairAmbiguousFields: ["partner", "date"] });
+
+    await call(
+      unchangedSave({ details: { partner: "ACME Handels GmbH" }, correction: { date: "2026-03-05" } })
+    );
+
+    expect(file().needsRepairReview).toBe(false);
+    expect(file().repairAmbiguousFields).toEqual([]);
+  });
+});

@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { repairReviewFields, reviewRepair } from "./repairReview";
+import { repairReviewFields, retireRepairAmbiguity, reviewRepair } from "./repairReview";
 
 describe("reviewRepair", () => {
   it("is silent when the pass had nothing to guess at", () => {
@@ -55,5 +55,57 @@ describe("repairReviewFields", () => {
       needsRepairReview: false,
       repairAmbiguousFields: [],
     });
+  });
+});
+
+describe("retireRepairAmbiguity (#301)", () => {
+  const flagged = {
+    needsRepairReview: true,
+    repairAmbiguousFields: ["address", "date_raw", "rawText"],
+  };
+
+  it("drops the response keys a corrected field was read from", () => {
+    expect(retireRepairAmbiguity(flagged, ["extractedAddress"])).toEqual({
+      needsRepairReview: true,
+      repairAmbiguousFields: ["date_raw", "rawText"],
+    });
+  });
+
+  it("clears the flag when the list empties", () => {
+    const record = { needsRepairReview: true, repairAmbiguousFields: ["address", "date"] };
+    expect(retireRepairAmbiguity(record, ["extractedAddress", "extractedDate"])).toEqual({
+      needsRepairReview: false,
+      repairAmbiguousFields: [],
+    });
+  });
+
+  it("writes nothing when the correction touches no flagged field", () => {
+    expect(retireRepairAmbiguity(flagged, ["extractedAmount", "extractedIban"])).toEqual({});
+    expect(retireRepairAmbiguity(flagged, ["updatedAt", "extractionCorrectedFields"])).toEqual({});
+  });
+
+  it("writes nothing for a record that was never flagged", () => {
+    expect(retireRepairAmbiguity({}, ["extractedAddress"])).toEqual({});
+    expect(
+      retireRepairAmbiguity({ needsRepairReview: false, repairAmbiguousFields: [] }, ["extractedAddress"])
+    ).toEqual({});
+  });
+
+  it("keeps a key no hand correction can reach", () => {
+    // `rawText` is not a field the panel edits, so nothing retires it.
+    const record = { needsRepairReview: true, repairAmbiguousFields: ["rawText"] };
+    expect(
+      retireRepairAmbiguity(record, [
+        "extractedAmount",
+        "extractedVatPercent",
+        "extractedDate",
+        "extractedTipAmount",
+        "extractedLineItems",
+        "extractedPartner",
+        "extractedVatId",
+        "extractedIban",
+        "extractedAddress",
+      ])
+    ).toEqual({});
   });
 });
