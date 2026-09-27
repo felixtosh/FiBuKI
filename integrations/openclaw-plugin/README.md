@@ -67,7 +67,7 @@ Tools are loaded dynamically from the API based on your plan.
 | **Browse transactions** | `list_transactions`, `get_transaction` |
 | **Find incomplete work** | `list_transactions_needing_files` |
 | **Categorize transactions** | `assign_no_receipt_category` |
-| **Manage partners** | `create_partner`, `assign_partner_to_transaction` |
+| **Manage partners** | `create_partner`, `update_partner`, `merge_partners`, `assign_partner_to_transaction`, `assign_partner_to_file` |
 | **Import data** | `import_transactions` |
 
 ### Smart & Pro Plans
