@@ -4,6 +4,7 @@
  * Tools for fetching data without modifications.
  */
 
+import { toDateSafe } from "@/lib/utils";
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 
@@ -215,8 +216,8 @@ export const listTransactionsTool = tool(
       const activeFileIds = (data.fileIds || []).filter((id: string) => !deletedFileIds.has(id));
       return {
         id: doc.id,
-        date: data.date?.toDate?.()?.toISOString() || data.date,
-        dateFormatted: data.date?.toDate?.()?.toLocaleDateString("de-DE") || "",
+        date: toDateSafe(data.date)?.toISOString() || data.date,
+        dateFormatted: toDateSafe(data.date)?.toLocaleDateString("de-DE") || "",
         amount: data.amount,
         amountFormatted: new Intl.NumberFormat("de-DE", {
           style: "currency",
@@ -395,8 +396,8 @@ export const getTransactionTool = tool(
 
     return {
       id: doc.id,
-      date: data.date?.toDate?.()?.toISOString() || data.date,
-      dateFormatted: data.date?.toDate?.()?.toLocaleDateString("de-DE") || "",
+      date: toDateSafe(data.date)?.toISOString() || data.date,
+      dateFormatted: toDateSafe(data.date)?.toLocaleDateString("de-DE") || "",
       amount: data.amount,
       amountFormatted: new Intl.NumberFormat("de-DE", {
         style: "currency",
@@ -451,7 +452,7 @@ export const listSourcesTool = tool(
         currency: data.currency || "EUR",
         isActive: data.isActive !== false,
         transactionCount: data.transactionCount || 0,
-        lastSync: data.lastSync?.toDate?.()?.toISOString(),
+        lastSync: toDateSafe(data.lastSync)?.toISOString(),
       };
     });
 
@@ -501,7 +502,7 @@ export const getSourceTool = tool(
       currency: data.currency || "EUR",
       isActive: data.isActive !== false,
       transactionCount: data.transactionCount || 0,
-      lastSync: data.lastSync?.toDate?.()?.toISOString(),
+      lastSync: toDateSafe(data.lastSync)?.toISOString(),
     };
   },
   {
@@ -770,7 +771,7 @@ export const getTransactionHistoryTool = tool(
       const data = doc.data();
       return {
         id: doc.id,
-        changedAt: data.changedAt?.toDate?.()?.toISOString(),
+        changedAt: toDateSafe(data.changedAt)?.toISOString(),
         changedBy: data.changedBy,
         previousValues: data.previousValues,
         newValues: data.newValues,
@@ -838,7 +839,7 @@ export const listFilesTool = tool(
     const files = activeDocs.map((doc) => {
       const data = doc.data();
       // Get extracted date if available
-      const extractedDate = data.extractedDate?.toDate?.() || data.uploadedAt?.toDate?.();
+      const extractedDate = toDateSafe(data.extractedDate) || toDateSafe(data.uploadedAt);
       // Get extracted amount - apply sign based on invoiceDirection
       // incoming = expense = negative, outgoing = income = positive
       // Convert from cents to whole currency units
@@ -877,7 +878,7 @@ export const listFilesTool = tool(
         // #229: this document names somebody else as the Leistungsempfänger,
         // so its VAT is not this user's Vorsteuer however good the invoice is.
         foreignRecipient: data.foreignRecipient === true,
-        uploadedAt: data.uploadedAt?.toDate?.()?.toISOString(),
+        uploadedAt: toDateSafe(data.uploadedAt)?.toISOString(),
       };
     });
 
@@ -968,8 +969,8 @@ export const getFileTool = tool(
     }
 
     // Get dates
-    const extractedDate = data.extractedDate?.toDate?.();
-    const uploadedAt = data.uploadedAt?.toDate?.();
+    const extractedDate = toDateSafe(data.extractedDate);
+    const uploadedAt = toDateSafe(data.uploadedAt);
 
     // Get amount with sign based on direction (convert from cents to whole units)
     const rawAmount = getEffectiveExtractedAmount(data);
@@ -1067,8 +1068,8 @@ export const waitForFileExtractionTool = tool(
       // Check if extraction is complete
       if (data.extractionComplete) {
         // Get dates
-        const extractedDate = data.extractedDate?.toDate?.();
-        const uploadedAt = data.uploadedAt?.toDate?.();
+        const extractedDate = toDateSafe(data.extractedDate);
+        const uploadedAt = toDateSafe(data.uploadedAt);
 
         // Get amount with sign based on direction (convert from cents to whole units)
         const rawAmount = getEffectiveExtractedAmount(data);
