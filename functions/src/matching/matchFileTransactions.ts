@@ -26,24 +26,19 @@ import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
 import {
   SCORING_CONFIG,
-  scoreTransaction,
   formatScoreBreakdown,
   TransactionMatchScore,
   TransactionMatchSource,
-  ScoringOptions,
-  buildScoringOptions,
   isRemainderMatch,
   toFileMatchingData,
-  toTransactionData,
-  derivePartnerAliases,
-  deriveScoringWeights,
+  loadPartnerScoringContext,
+  scoreFileAgainstTransactions,
 } from "./transactionScoring";
 import { deriveCoverage, isRemainderClosed, filePaymentTotal } from "./coverage";
 import { loadConnectedFiles, documentedAmountsOf } from "./documentedAmounts";
 import { isSameDayEvidence, hasUndocumentedRival } from "./remainderAutoConnect";
 import { readDismissedTransactionIds } from "./dismissedTransactions";
 import { isFileRejected } from "./rejectedFiles";
-import { ResolvedEffectiveCycle } from "./billingCycle";
 import { AutomationMeta } from "../automation/types";
 import { checkAIBudget } from "../billing/checkAIBudget";
 import { isPassiveMode } from "../utils/checkAutomationMode";
@@ -488,30 +483,16 @@ export async function runTransactionMatching(
   // Band selection happens per candidate transaction below (each charge can belong to a
   // different recurrence band, e.g. a weekly API charge vs. a monthly subscription), not once
   // here — a single upfront band would silently mis-score every candidate outside band 0.
-  let partnerAliases: string[] = [];
-  let effectiveCycles: ResolvedEffectiveCycle[] = [];
-  let baseWeights: ScoringOptions["weights"] | undefined;
-  if (fileData.partnerId) {
-    try {
-      const partnerDoc = await db.collection("partners").doc(fileData.partnerId).get();
-      if (partnerDoc.exists) {
-        const partnerData = partnerDoc.data()!;
-        partnerAliases = await derivePartnerAliases(db, partnerData);
-        console.log(`[TxMatch] Partner aliases: [${partnerAliases.map(a => `"${a}"`).join(", ")}]`);
-
-        effectiveCycles = partnerData.billingCycle?.effective ?? [];
-        if (effectiveCycles.length > 0) {
-          console.log(`[TxMatch] Partner has ${effectiveCycles.length} billing-cycle band(s)`);
-        }
-
-        baseWeights = deriveScoringWeights(partnerData);
-        if (baseWeights) {
-          console.log(`[TxMatch] Using scoring weights: amt=${baseWeights.amountWeight} date=${baseWeights.dateWeight} partner=${baseWeights.partnerWeight}`);
-        }
-      }
-    } catch (error) {
-      console.warn("[TxMatch] Failed to fetch partner data:", error);
-    }
+  const partner = await loadPartnerScoringContext(db, fileData.partnerId);
+  if (partner.aliases.length > 0) {
+    console.log(`[TxMatch] Partner aliases: [${partner.aliases.map(a => `"${a}"`).join(", ")}]`);
+  }
+  if (partner.effectiveCycles.length > 0) {
+    console.log(`[TxMatch] Partner has ${partner.effectiveCycles.length} billing-cycle band(s)`);
+  }
+  if (partner.weights) {
+    const w = partner.weights;
+    console.log(`[TxMatch] Using scoring weights: amt=${w.amountWeight} date=${w.dateWeight} partner=${w.partnerWeight}`);
   }
 
   // Exclude already connected transactions and transactions that rejected this file
@@ -560,21 +541,15 @@ export async function runTransactionMatching(
     );
   }
 
-  // Score each transaction — the billing-cycle band is selected per transaction, since which
-  // recurrence a charge belongs to depends on that transaction's amount, not the file's.
+  // Score each transaction. The same assembly the connect dialog and the
+  // agent's score_file_transaction_match use (#308, #327).
   const fileMatchingData = toFileMatchingData(fileData);
-  const allScores = eligibleTransactions
-    .map((doc) => {
-      const txData = doc.data();
-      const scoringOptions = buildScoringOptions(effectiveCycles, baseWeights, txData.amount);
-
-      return scoreTransaction(
-        fileMatchingData,
-        toTransactionData(doc.id, txData, documentedAmounts.get(doc.id)),
-        partnerAliases,
-        scoringOptions
-      );
-    });
+  const allScores = scoreFileAgainstTransactions(
+    fileData,
+    eligibleTransactions,
+    partner,
+    documentedAmounts
+  );
 
   const matches = allScores
     .filter((m) => m.confidence >= CONFIG.SUGGESTION_THRESHOLD)

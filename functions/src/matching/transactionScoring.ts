@@ -859,6 +859,77 @@ export function deriveScoringWeights(
 }
 
 /**
+ * What the file's assigned Partner contributes to scoring: its aliases (#138),
+ * its billing-cycle bands and its learned weights.
+ */
+export interface PartnerScoringContext {
+  aliases: string[];
+  effectiveCycles: ResolvedEffectiveCycle[];
+  weights?: ScoringOptions["weights"];
+}
+
+export const NO_PARTNER_SCORING_CONTEXT: PartnerScoringContext = {
+  aliases: [],
+  effectiveCycles: [],
+};
+
+/**
+ * Read a Partner's scoring context. A missing or unreadable Partner scores as
+ * no Partner at all, which is what the trigger has always done.
+ */
+export async function loadPartnerScoringContext(
+  db: FirebaseFirestore.Firestore,
+  partnerId: string | null | undefined
+): Promise<PartnerScoringContext> {
+  if (!partnerId) return NO_PARTNER_SCORING_CONTEXT;
+  try {
+    const partnerDoc = await db.collection("partners").doc(partnerId).get();
+    if (!partnerDoc.exists) return NO_PARTNER_SCORING_CONTEXT;
+    const partnerData = partnerDoc.data()!;
+    return {
+      aliases: await derivePartnerAliases(db, partnerData),
+      effectiveCycles: partnerData.billingCycle?.effective ?? [],
+      weights: deriveScoringWeights(partnerData),
+    };
+  } catch (error) {
+    console.warn(`[Scoring] Failed to fetch partner ${partnerId}:`, error);
+    return NO_PARTNER_SCORING_CONTEXT;
+  }
+}
+
+/**
+ * Score one File against candidate Transactions — the single place their
+ * scoring inputs are assembled (#308, #327).
+ *
+ * The matching trigger, the connect dialog and the agent's
+ * score_file_transaction_match all call this, so a field added to
+ * `toFileMatchingData` / `toTransactionData` reaches every surface at once
+ * instead of each hand-built copy having to remember it. The billing-cycle
+ * band is selected per transaction, since which recurrence a charge belongs
+ * to depends on that transaction's amount, not the file's.
+ *
+ * `documentedAmounts` is what the Files already on each candidate explain
+ * (#239), from `loadConnectedFiles` with the scored File excluded.
+ */
+export function scoreFileAgainstTransactions(
+  fileData: FirebaseFirestore.DocumentData,
+  transactions: Array<{ id: string; data(): FirebaseFirestore.DocumentData | undefined }>,
+  partner: PartnerScoringContext,
+  documentedAmounts: Map<string, number>
+): TransactionMatchScore[] {
+  const fileMatchingData = toFileMatchingData(fileData);
+  return transactions.map((doc) => {
+    const txData = doc.data() ?? {};
+    return scoreTransaction(
+      fileMatchingData,
+      toTransactionData(doc.id, txData, documentedAmounts.get(doc.id)),
+      partner.aliases,
+      buildScoringOptions(partner.effectiveCycles, partner.weights, txData.amount)
+    );
+  });
+}
+
+/**
  * Score a transaction against file data
  */
 export function scoreTransaction(
