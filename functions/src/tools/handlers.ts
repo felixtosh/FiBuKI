@@ -75,6 +75,7 @@ import {
 } from "../matching/billingCycle";
 import { PLANS } from "../billing/config";
 import { KNOWN_AUSTRIAN_RATES } from "../uva/rateSet";
+import { runUvaForPeriod } from "../reports/uvaPeriodRun";
 import type { PlanId, PlanFeatures } from "../billing/config";
 
 /**
@@ -267,6 +268,10 @@ export async function handleTool(
       return assignNoReceiptCategory(userId, args);
     case "remove_no_receipt_category":
       return removeNoReceiptCategory(userId, args.transactionId as string);
+
+    // UVA (read-only)
+    case "get_uva_report":
+      return getUvaReport(userId, args);
 
     // Invoicing
     case "create_invoice":
@@ -2738,4 +2743,39 @@ export async function cancelInvoice(userId: string, args: Record<string, unknown
     invoiceId: args.invoiceId as string,
   });
   return { invoiceId: result.invoiceId, status: result.status };
+}
+
+// ============================================================================
+// UVA (read-only, #160)
+// ============================================================================
+
+/**
+ * The UVA figures for one period, from the same run the reports page reads.
+ *
+ * `runUvaForPeriod` is the fetch-and-derive half of the `calculateUva`
+ * callable behind /api/reports/calculate. Calling it here, rather than a copy
+ * of it, is the point: a tool that computed its own numbers would let an agent
+ * confirm a figure the human never sees. Read-only by construction; nothing in
+ * the run writes.
+ */
+export async function getUvaReport(userId: string, args: Record<string, unknown>) {
+  const period = {
+    year: args.year,
+    period: args.period,
+    type: args.type,
+  } as Parameters<typeof runUvaForPeriod>[2];
+
+  const { result, stats } = await runUvaForPeriod(db, userId, period);
+
+  return {
+    period: result.period,
+    kennzahlen: Object.fromEntries(
+      Object.entries(result.kennzahlen).map(([kz, figure]) => [kz, figure.value])
+    ),
+    totalOutputVat: result.totalOutputVat,
+    totalInputVat: result.totalInputVat,
+    balance: result.balance,
+    unresolved: result.unresolved,
+    transactionCount: stats.total,
+  };
 }
