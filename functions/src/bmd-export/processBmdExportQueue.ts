@@ -13,7 +13,7 @@ import { buildDownloadUrl } from "../utils/buildDownloadUrl";
 import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import * as crypto from "crypto";
-import archiver from "archiver";
+import { Archiver, ZipArchive } from "archiver";
 import { PassThrough } from "stream";
 
 import {
@@ -420,7 +420,7 @@ async function createBmdZip(
     passThrough.on("end", () => resolve(Buffer.concat(chunks)));
     passThrough.on("error", reject);
 
-    const archive = archiver("zip", { zlib: { level: 9 } });
+    const archive = new ZipArchive({ zlib: { level: 9 } });
     archive.on("error", reject);
     archive.pipe(passThrough);
 
@@ -461,7 +461,7 @@ async function createBmdZip(
  * Add receipt files to the ZIP archive
  */
 async function addReceiptFiles(
-  archive: archiver.Archiver,
+  archive: Archiver,
   filesMap: Map<string, FileForExport & { storagePath?: string }>,
   storage: ReturnType<typeof getStorage>,
   exportRef: FirebaseFirestore.DocumentReference
