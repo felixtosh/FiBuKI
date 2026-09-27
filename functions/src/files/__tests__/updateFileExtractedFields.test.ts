@@ -276,6 +276,29 @@ describe("updateFileExtractedFieldsCallable", () => {
     ]);
   });
 
+  it("re-reads the typed Due Date from the rows a save writes (#236)", async () => {
+    seedFile();
+
+    await call(
+      unchangedSave({
+        details: {
+          additionalFields: [{ key: "dueDate", label: "Zahlungstermin", value: "2026-01-20" }],
+        },
+      })
+    );
+    // The mock store turns any Timestamp into "now", so only presence is
+    // observable here; the date itself is pinned in dueDateWindow.test.ts.
+    expect(file().extractedDueDate).toBeTruthy();
+
+    // Deleting the row deletes the window; a Zahlungsziel never becomes one.
+    await call(
+      unchangedSave({
+        details: { additionalFields: [{ label: "Zahlungsziel", value: "14 Tage" }] },
+      })
+    );
+    expect(file().extractedDueDate).toBeNull();
+  });
+
   it("refuses a value the builder cannot read instead of writing it", async () => {
     seedFile();
 

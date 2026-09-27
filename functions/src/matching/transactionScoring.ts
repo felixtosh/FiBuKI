@@ -21,6 +21,7 @@ import {
   isRemainderClosed,
 } from "./coverage";
 import type { DocumentType, DocumentationState } from "../documents/types";
+import { dueDateFromAdditionalFields } from "./dueDate";
 
 // The payment total is Coverage's figure too, so it lives with Coverage (#239).
 // Re-exported here because this is where every caller already imports it from.
@@ -64,6 +65,15 @@ export const SCORING_CONFIG = {
   MIN_INVOICE_NUMBER_LENGTH: 6,
   /** Days to search before/after file date */
   DATE_RANGE_DAYS: 30,
+  /**
+   * Widest payment window `[issueDate, dueDate]` scored as a window when no
+   * billing cycle is learned (#236). A wider one scores only its two
+   * endpoints: a wide window flattens the date as a discriminator, and
+   * without a learned `frequencyDays` nothing else stops a neighbouring
+   * period's same-amount charge from landing inside it. Austrian payment
+   * terms are almost always 14 or 30 days, so this rarely binds.
+   */
+  DUE_DATE_WINDOW_CAP_DAYS: 30,
   /** Max suggestions to store per file */
   MAX_SUGGESTIONS: 5,
   /** Max results to return from callable */
@@ -174,6 +184,13 @@ export interface FileMatchingData {
   extractedTipAmount?: number | null;
   extractedCurrency?: string | null;
   extractedDate?: Timestamp | null;
+  /**
+   * The Due Date the document states (#236). With `extractedDate` it spans
+   * the payment window the Transaction date is scored against. Absent or
+   * null collapses the window to the issue date, which scores exactly as
+   * before the field existed.
+   */
+  extractedDueDate?: Timestamp | null;
   extractedPartner?: string | null;
   extractedIban?: string | null;
   extractedText?: string | null;
@@ -419,14 +436,57 @@ export interface BillingCycleHint {
   frequencyDays?: number;
 }
 
+export interface DateScoreResult {
+  score: number;
+  source: TransactionMatchSource | null;
+  /**
+   * The same ladder scored on the nearer ENDPOINT of the payment window
+   * alone, never its interior (#236). What the hard-facts bonus reads:
+   * "cent-exact and literally the same day" is a strong coincidence,
+   * "cent-exact and somewhere in a 15-day window" is not. Equal to `score`
+   * whenever there is no window, and on the learned-delay path.
+   */
+  endpointScore: number;
+}
+
+const MS_PER_DAY = 1000 * 60 * 60 * 24;
+
+/** The standard proximity ladder, on a day distance. */
+function scoreDayDistance(daysDiff: number): { score: number; source: TransactionMatchSource | null } {
+  if (daysDiff === 0) return { score: 25, source: "date_exact" };
+  if (daysDiff <= 3) return { score: 22, source: "date_close" };
+  if (daysDiff <= 7) return { score: 15, source: "date_close" };
+  if (daysDiff <= 14) return { score: 8, source: "date_close" };
+  if (daysDiff <= 30) return { score: 3, source: "date_close" };
+  return { score: 0, source: null };
+}
+
+/**
+ * Score the Transaction date against the payment window `[fileDate, dueDate]`
+ * (#236), or against `fileDate` alone when there is no Due Date.
+ *
+ * Distance is zero anywhere inside the window and counts days from the
+ * nearer edge outside it, fed into the unchanged ladder. Because the issue
+ * date is always one edge, that distance is never greater than the distance
+ * to the issue date alone, so a Due Date can only raise a score: no existing
+ * Match regresses. A Due Date is not a replacement anchor. It is a deadline,
+ * and a User who pays on receipt is anchored by the issue date, which is why
+ * this is an interval and not a precedence rule.
+ *
+ * The learned `invoiceToTransactionDelay` is observed behaviour and stays
+ * stronger evidence than a stated intention, so it (and its frequencyDays
+ * period penalty) is consulted first, exactly as before. The window only
+ * replaces the fallback proximity check behind it.
+ */
 export function calculateDateScore(
   fileDate: Date,
   txDate: Date,
-  billingCycle?: BillingCycleHint
-): { score: number; source: TransactionMatchSource | null } {
+  billingCycle?: BillingCycleHint,
+  dueDate?: Date | null
+): DateScoreResult {
   const daysDiff = Math.abs(
     Math.floor(
-      (fileDate.getTime() - txDate.getTime()) / (1000 * 60 * 60 * 24)
+      (fileDate.getTime() - txDate.getTime()) / MS_PER_DAY
     )
   );
 
@@ -463,23 +523,39 @@ export function calculateDateScore(
           delayDiff - periodsAway * billingCycle.frequencyDays
         );
         if (distanceFromPeriod <= periodVariance) {
-          return { score: 0, source: null };
+          return { score: 0, source: null, endpointScore: 0 };
         }
       }
     }
 
-    if (delayDiff <= variance) return { score: 25, source: "date_exact" };
-    if (delayDiff <= variance * 2) return { score: 22, source: "date_close" };
+    if (delayDiff <= variance) return { score: 25, source: "date_exact", endpointScore: 25 };
+    if (delayDiff <= variance * 2) return { score: 22, source: "date_close", endpointScore: 22 };
   }
 
-  // Standard date proximity scoring
-  if (daysDiff === 0) return { score: 25, source: "date_exact" };
-  if (daysDiff <= 3) return { score: 22, source: "date_close" };
-  if (daysDiff <= 7) return { score: 15, source: "date_close" };
-  if (daysDiff <= 14) return { score: 8, source: "date_close" };
-  if (daysDiff <= 30) return { score: 3, source: "date_close" };
+  // Standard date proximity scoring, over the payment window when there is one.
+  // A Due Date on or before the issue date is no window: equal collapses to
+  // the point anyway, and an inverted one is a misread that would otherwise
+  // manufacture confident matches.
+  if (!dueDate || dueDate.getTime() <= fileDate.getTime()) {
+    const point = scoreDayDistance(daysDiff);
+    return { ...point, endpointScore: point.score };
+  }
 
-  return { score: 0, source: null };
+  const dueDiff = Math.abs(Math.floor((dueDate.getTime() - txDate.getTime()) / MS_PER_DAY));
+  const endpointDiff = Math.min(daysDiff, dueDiff);
+
+  // The bound: without a learned cycle there is no period penalty guarding a
+  // wide window, so past the cap only the endpoints count.
+  const cycleLearned =
+    billingCycle?.invoiceToTransactionDelay != null && Boolean(billingCycle.frequencyDays);
+  const windowDays = (dueDate.getTime() - fileDate.getTime()) / MS_PER_DAY;
+  const scoreInterior = cycleLearned || windowDays <= SCORING_CONFIG.DUE_DATE_WINDOW_CAP_DAYS;
+  const inside =
+    txDate.getTime() >= fileDate.getTime() && txDate.getTime() <= dueDate.getTime();
+
+  const endpoint = scoreDayDistance(endpointDiff);
+  const result = scoreInterior && inside ? scoreDayDistance(0) : endpoint;
+  return { ...result, endpointScore: endpoint.score };
 }
 
 /** A token this short is a coincidence wherever it lands. Pre-#137 floor. */
@@ -777,6 +853,11 @@ export function toTransactionData(
   };
 }
 
+function legacyDueDate(additionalFields: unknown): Timestamp | null {
+  const date = dueDateFromAdditionalFields(additionalFields);
+  return date ? Timestamp.fromDate(date) : null;
+}
+
 /** Map a file Firestore doc's data into the shape `scoreTransaction` expects. */
 export function toFileMatchingData(data: FirebaseFirestore.DocumentData): FileMatchingData {
   return {
@@ -784,6 +865,14 @@ export function toFileMatchingData(data: FirebaseFirestore.DocumentData): FileMa
     extractedTipAmount: data.extractedTipAmount,
     extractedCurrency: data.extractedCurrency,
     extractedDate: data.extractedDate,
+    // #236: the typed field where extraction wrote it; on a record written
+    // before it existed, read off the additional-fields bag instead, which
+    // is what backfills every legacy File without re-extraction. Null on the
+    // record means extraction looked and found none, and is kept.
+    extractedDueDate:
+      "extractedDueDate" in data
+        ? data.extractedDueDate ?? null
+        : legacyDueDate(data.extractedAdditionalFields),
     extractedPartner: data.extractedPartner,
     extractedIban: data.extractedIban,
     extractedText: data.extractedText,
@@ -996,16 +1085,18 @@ export function scoreTransaction(
     if (result.source) matchSources.push(result.source);
   }
 
-  // 2. Date scoring (0-25, boosted when partner matches)
-  let rawDateScore = 0;
+  // 2. Date scoring (0-25, boosted when partner matches), over the payment
+  // window when the File states a Due Date (#236).
+  let endpointDateScore = 0;
   if (fileData.extractedDate) {
     const result = calculateDateScore(
       fileData.extractedDate.toDate(),
       txData.date.toDate(),
-      options?.billingCycle
+      options?.billingCycle,
+      fileData.extractedDueDate?.toDate() ?? null
     );
     dateScore = result.score;
-    rawDateScore = result.score;
+    endpointDateScore = result.endpointScore;
     if (result.source) matchSources.push(result.source);
   }
 
@@ -1014,10 +1105,16 @@ export function scoreTransaction(
   // auto-connect was gated on partner identity rather than on the two facts that
   // actually identify a payment. Uses the RAW date score, before the partner
   // boost in 3b, so the bonus does not depend on partner signals.
+  //
+  // #236, the endpoint rule: the bonus is decided on the nearer endpoint of
+  // the payment window, never its interior. A Transaction on the Due Date
+  // keeps the same-day bonus; one somewhere inside the window scores
+  // date_exact but earns no bonus for it. Without a Due Date the endpoint IS
+  // the issue date, so this is the raw date score exactly as before.
   if (amountExact) {
-    if (rawDateScore >= 25) {
+    if (endpointDateScore >= 25) {
       hardFactsScore = SCORING_CONFIG.HARD_FACTS_BONUS_SAME_DAY;
-    } else if (rawDateScore >= 22) {
+    } else if (endpointDateScore >= 22) {
       hardFactsScore = SCORING_CONFIG.HARD_FACTS_BONUS_CLOSE;
     }
   }

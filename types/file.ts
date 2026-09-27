@@ -275,6 +275,15 @@ export interface TaxFile {
   /** AI-extracted document date (when the document was issued) */
   extractedDate?: Timestamp | null;
 
+  /**
+   * The Due Date (Fälligkeitsdatum) the document states, typed from the
+   * `dueDate` row of `extractedAdditionalFields` (#236). With `extractedDate`
+   * it spans the payment window a Transaction date is scored against. Never
+   * a Zahlungsziel, which is a period. Absent on records written before the
+   * field existed (the scorer reads the row itself); null when none stated.
+   */
+  extractedDueDate?: Timestamp | null;
+
   /** AI-extracted amount in cents */
   extractedAmount?: number | null;
 
