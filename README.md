@@ -73,7 +73,7 @@ Frontend reads use realtime Firestore listeners (`onSnapshot`) in React hooks. W
 
 ### Prerequisites
 
-- Node.js 20.x
+- Node.js 22.x
 - Firebase CLI (`npm install -g firebase-tools`)
 - A Firebase project with Firestore, Storage, and Auth enabled
 
