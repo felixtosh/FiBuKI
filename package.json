@@ -80,7 +80,7 @@
     "clsx": "^2.1.1",
     "date-fns": "^4.4.0",
     "firebase": "^12.19.0",
-    "firebase-admin": "^13.7.0",
+    "firebase-admin": "^14.5.0",
     "imapflow": "^1.4.7",
     "jose": "^4.15.9",
     "jszip": "^3.10.2",
