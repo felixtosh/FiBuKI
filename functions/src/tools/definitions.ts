@@ -203,6 +203,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           description:
             "true = only files whose document names a Leistungsempfänger who is not the user. Such a document can satisfy § 11 completely and still carry no Vorsteuer for this user (§ 12 Abs 1 Z 1): the supply was rendered to somebody else. Their VAT is excluded from the UVA and they are not offered as transaction matches. If the recipient IS the user under a different name, confirm_file_recipient_is_user lifts it.",
         },
+        includeDeleted: {
+          type: "boolean",
+          description:
+            "true = also return files that were deleted (each carries deletedAt). Deleted files are excluded by default. Restore one with restore_file.",
+        },
         handCorrected: {
           type: "boolean",
           description:
@@ -219,6 +224,29 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     inputSchema: {
       type: "object",
       properties: { fileId: { type: "string", description: "The file ID" } },
+      required: ["fileId"],
+    },
+  },
+  {
+    name: "delete_file",
+    description:
+      "Delete a file. The deletion is reversible: the file is hidden, its stored document is kept, and restore_file puts it back. Nothing on this surface destroys a document. The file is detached from every transaction it was connected to (no need to disconnect first); the response lists reopenedTransactions (now incomplete again, with date, amount and counterparty, so you can tell the user) separately from stillCompleteTransactions (another document or a no-receipt category keeps them complete). A document FiBuKI generated for an invoice is refused with GENERATED_INVOICE, naming the invoice; withdraw an issued invoice with cancel_invoice instead. Requires confirm: true.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fileId: { type: "string", description: "The file ID" },
+        confirm: { type: "boolean", description: "Must be true to confirm the (reversible) deletion" },
+      },
+      required: ["fileId", "confirm"],
+    },
+  },
+  {
+    name: "restore_file",
+    description:
+      "Restore a deleted file, making it visible again. Its previous transaction connections are NOT recreated; reconnect with connect_file_to_transaction where they still apply. Find deleted files with list_files includeDeleted: true.",
+    inputSchema: {
+      type: "object",
+      properties: { fileId: { type: "string", description: "The deleted file's ID" } },
       required: ["fileId"],
     },
   },

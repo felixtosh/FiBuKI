@@ -13,6 +13,33 @@ interface RestoreFileResponse {
   success: boolean;
 }
 
+/**
+ * The restore itself, shared by the callable and the tool surface (#267).
+ *
+ * Callers check existence and ownership first. Only the File comes back: the
+ * Transaction attachments the delete removed are not recreated.
+ */
+export async function performRestoreFile(
+  db: FirebaseFirestore.Firestore,
+  userId: string,
+  fileId: string,
+  fileData: FirebaseFirestore.DocumentData
+): Promise<{ success: boolean; restored: boolean }> {
+  if (!fileData.deletedAt) {
+    // File is not deleted, nothing to restore
+    return { success: true, restored: false };
+  }
+
+  await db.collection("files").doc(fileId).update({
+    deletedAt: null,
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+
+  console.log(`[restoreFile] Restored file ${fileId}`, { userId });
+
+  return { success: true, restored: true };
+}
+
 export const restoreFileCallable = createCallable<
   RestoreFileRequest,
   RestoreFileResponse
@@ -25,8 +52,7 @@ export const restoreFileCallable = createCallable<
       throw new HttpsError("invalid-argument", "fileId is required");
     }
 
-    const fileRef = ctx.db.collection("files").doc(fileId);
-    const fileSnap = await fileRef.get();
+    const fileSnap = await ctx.db.collection("files").doc(fileId).get();
 
     if (!fileSnap.exists) {
       throw new HttpsError("not-found", "File not found");
@@ -37,20 +63,7 @@ export const restoreFileCallable = createCallable<
       throw new HttpsError("permission-denied", "Access denied");
     }
 
-    if (!fileData.deletedAt) {
-      // File is not deleted, nothing to restore
-      return { success: true };
-    }
-
-    await fileRef.update({
-      deletedAt: null,
-      updatedAt: FieldValue.serverTimestamp(),
-    });
-
-    console.log(`[restoreFile] Restored file ${fileId}`, {
-      userId: ctx.userId,
-    });
-
+    await performRestoreFile(ctx.db, ctx.userId, fileId, fileData);
     return { success: true };
   }
 );

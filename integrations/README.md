@@ -91,6 +91,6 @@ Authorization: Bearer fk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ### Available Tools
 - `list_sources`, `get_source`
 - `list_transactions`, `get_transaction`, `update_transaction`
-- `list_files`, `get_file`, `connect_file_to_transaction`, `disconnect_file_from_transaction`
+- `list_files`, `get_file`, `connect_file_to_transaction`, `disconnect_file_from_transaction`, `delete_file` (reversible), `restore_file`
 - `list_transactions_needing_files`, `auto_connect_file_suggestions`
 - `list_no_receipt_categories`, `assign_no_receipt_category`, `remove_no_receipt_category`

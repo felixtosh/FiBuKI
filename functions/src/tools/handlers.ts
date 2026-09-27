@@ -52,6 +52,7 @@ import {
 import { getStorage } from "firebase-admin/storage";
 import { createHash, randomUUID } from "crypto";
 import { createFileRecord, findFileByContentHash } from "../files/createFileRecord";
+import { generatedInvoiceRefusal } from "../files/generatedInvoiceGuard";
 import { syncDocumentationStateForTransactions } from "../documents/syncDocumentationState";
 import { assignNoReceiptCategoryToTransaction } from "../matching/assignNoReceiptCategory";
 import { TOOL_DEFINITIONS, TOOL_NAMES } from "./definitions";
@@ -200,6 +201,10 @@ export async function handleTool(
       return listFiles(userId, args);
     case "get_file":
       return getFile(userId, args.fileId as string);
+    case "delete_file":
+      return deleteFile(userId, args);
+    case "restore_file":
+      return restoreFile(userId, args);
     case "connect_file_to_transaction":
       return connectFileToTransaction(userId, args);
     case "disconnect_file_from_transaction":
@@ -629,7 +634,10 @@ export async function listFiles(userId: string, args: Record<string, unknown>) {
   const snapshot = await query.get();
   const scanned = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as Record<string, unknown>);
 
-  let files = scanned.filter((f: Record<string, unknown>) => !f.deletedAt && !f.isNotInvoice);
+  // Deleted Files are hidden unless asked for (#267); restore_file brings one back.
+  let files = scanned.filter(
+    (f: Record<string, unknown>) => (args.includeDeleted === true || !f.deletedAt) && !f.isNotInvoice
+  );
 
   if (args.hasConnections !== undefined) {
     files = files.filter((f: Record<string, unknown>) =>
@@ -709,6 +717,80 @@ export async function getFile(userId: string, fileId: string) {
     throw new Error("File not found");
   }
   return { id: doc.id, ...doc.data() };
+}
+
+/**
+ * Delete a File, reversibly (#267, ADR-0006).
+ *
+ * Wraps the same delete the deleteFile callable runs: the File is hidden and
+ * detached from its Transactions, its row and stored bytes survive, and
+ * restore_file undoes it. No argument reaches a Purge; this surface has none.
+ * A FiBuKI-generated invoice document is refused, naming the invoice.
+ */
+export async function deleteFile(userId: string, args: Record<string, unknown>) {
+  const fileId = args.fileId as string;
+  if (!fileId) throw new Error("fileId is required");
+  if (args.confirm !== true) {
+    throw new Error(
+      "Must set confirm: true to delete a file. The delete is reversible with restore_file, " +
+        "but it detaches the file from every transaction it is connected to."
+    );
+  }
+
+  const fileSnap = await db.collection("files").doc(fileId).get();
+  const fileData = fileSnap.data();
+  if (!fileSnap.exists || !fileData || fileData.userId !== userId) {
+    throw new Error("File not found");
+  }
+
+  const refusal = await generatedInvoiceRefusal(db, userId, fileData);
+  if (refusal) throw new Error(refusal);
+
+  if (fileData.deletedAt) {
+    return { success: true, fileId, alreadyDeleted: true, reversible: true };
+  }
+
+  const { performDeleteFile } = await import("../files/deleteFile");
+  const result = await performDeleteFile(db, userId, fileId, fileData);
+
+  const summarize = (t: (typeof result.detachedTransactions)[number]) => ({
+    transactionId: t.transactionId,
+    date: toLocalDate(t.date as Parameters<typeof toLocalDate>[0]),
+    amount: t.amount,
+    currency: t.currency,
+    name: t.name,
+    partner: t.partner,
+  });
+
+  return {
+    success: true,
+    fileId,
+    fileName: fileData.fileName ?? null,
+    reversible: true,
+    reopenedTransactions: result.detachedTransactions.filter((t) => !t.isComplete).map(summarize),
+    stillCompleteTransactions: result.detachedTransactions
+      .filter((t) => t.isComplete)
+      .map(summarize),
+  };
+}
+
+/**
+ * Restore a deleted File (#267). Its previous Transaction attachments are not
+ * recreated; reconnect with connect_file_to_transaction where they still apply.
+ */
+export async function restoreFile(userId: string, args: Record<string, unknown>) {
+  const fileId = args.fileId as string;
+  if (!fileId) throw new Error("fileId is required");
+
+  const fileSnap = await db.collection("files").doc(fileId).get();
+  const fileData = fileSnap.data();
+  if (!fileSnap.exists || !fileData || fileData.userId !== userId) {
+    throw new Error("File not found");
+  }
+
+  const { performRestoreFile } = await import("../files/restoreFile");
+  const { restored } = await performRestoreFile(db, userId, fileId, fileData);
+  return { success: true, fileId, restored };
 }
 
 export async function connectFileToTransaction(userId: string, args: Record<string, unknown>) {
