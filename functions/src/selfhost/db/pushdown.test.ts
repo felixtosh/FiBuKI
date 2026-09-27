@@ -162,9 +162,14 @@ describe("pushdown differential: flattened table vs JSONB reference", () => {
 
   it("orderBy __name__ (the paged-sweep shape), asc and desc and mixed", async () => {
     expect(await expectSame((c) => c.orderBy("__name__", "asc"))).toEqual(Object.keys(FIXTURES));
-    expect(await expectSame((c) => c.orderBy("__name__", "desc"))).toEqual(
-      [...Object.keys(FIXTURES)].reverse(),
-    );
+    // Unfiltered desc is a descending key scan, which Firestore refuses (#311);
+    // behind a field filter it is an index scan and answers.
+    for (const collection of [FLAT, REF]) {
+      await expect(db.collection(collection).orderBy("__name__", "desc").get()).rejects.toThrow(
+        /does not support descending key scans/,
+      );
+    }
+    await expectSame((c) => c.where("userId", "==", "u1").orderBy("__name__", "desc"));
     await expectSame((c) => c.where("userId", "==", "u1").orderBy("__name__").limit(3));
     await expectSame((c) => c.orderBy("createdAt", "asc").orderBy("__name__", "desc"));
   });

@@ -901,6 +901,29 @@ function orderValue(row: { id: string; data: Record<string, unknown> }, field: s
   return field === "__name__" ? row.id : deepGet(row.data, field);
 }
 
+/**
+ * Real Firestore refuses a descending pure key scan: ordered by __name__ desc
+ * alone, with no filter on anything but __name__. Filter on a field and it is
+ * an index scan instead, which Firestore allows — so only the pure shape is
+ * refused here. Accepting it would let a sweep written against self-host pass
+ * locally and fail in production.
+ */
+function assertNotDescendingKeyScan(
+  filters: Filter[],
+  orders: Array<{ field: string; dir: "asc" | "desc" }>,
+): void {
+  const keyOnly = filters.every((f) => f.field === "__name__");
+  if (keyOnly && orders.length === 1 && orders[0].field === "__name__" && orders[0].dir === "desc") {
+    throw Object.assign(
+      new Error(
+        "selfhost firestore shim: FAILED_PRECONDITION: Firestore does not support descending key scans " +
+          '(orderBy("__name__", "desc") needs a filter on a field, or sort ascending)',
+      ),
+      { code: 9 },
+    );
+  }
+}
+
 function matchesFilter(data: Record<string, unknown>, f: Filter, id?: string): boolean {
   // FieldPath.documentId() / "__name__" filters compare against the doc ID.
   const v =
@@ -1045,6 +1068,7 @@ export class Query {
     // no-op-safe superset check; re-sorting is idempotent; re-limiting a
     // pre-limited page is a no-op. OFFSET is never pushed (SQL LIMIT covers
     // offset+limit), so the JS offset slice applies exactly once.
+    assertNotDescendingKeyScan(this.filters, this.orders);
     const tenantId = getTenantId();
     const spec = this.isGroup ? undefined : flatSpecFor(this.collectionPath);
     const fetched = await withTenant(async (q) => {
