@@ -45,6 +45,11 @@ wanted.
   decides where a Partner is edited — "Edit in Identity" rather than the Partner page — so
   it travels only with the identity entity that produced it, never as one more empty value
   filled from a loser (#307).
+- A source's own Partner — the one `createSource` marks `source:{id}`, which card-to-bank
+  reconciliation keys on — cannot be merged away; the merge is refused and names the
+  source. Carrying the marker would hand an ordinary survivor to the source's rename sync
+  and hard delete, and leaving it on the tombstone would stop reconciliation silently. It
+  can still be the survivor (#344).
 - A merge does not re-run the Match. It reports how many unmatched Transactions the
   survivor's new identifying data would now hit and leaves the existing reviewed rematch
   path to act on it, because silent re-attribution of bookings is what makes users stop
