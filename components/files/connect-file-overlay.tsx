@@ -39,6 +39,7 @@ import { isPdfAttachment } from "@/lib/email-providers/interface";
 import { termsFromQuery } from "@/functions/src/mail/search-terms";
 import type { MailSearchTerms } from "@/functions/src/mail/provider";
 import { ConnectResultRow } from "@/components/ui/connect-result-row";
+import { otherConnectionCount } from "@/lib/matching/connection-count";
 import { FilePreview } from "./file-preview";
 import { GmailAttachmentPreview } from "./gmail-attachment-preview";
 import {
@@ -1710,6 +1711,13 @@ export function ConnectFileOverlay({
                           }
                           isSelected={isSelected}
                           isConnected={isConnected}
+                          // Connections to Transactions other than this one (#241).
+                          // A count only: a split payment puts one File on two.
+                          connectionCount={otherConnectionCount(
+                            result.file?.transactionIds,
+                            transaction?.id
+                          )}
+                          connectionNoun="Transaction"
                           isHighlighted={isStrategyMatch}
                           highlightVariant="strategy"
                           confidence={result.score > 0 ? result.score : undefined}

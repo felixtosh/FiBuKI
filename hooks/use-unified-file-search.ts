@@ -13,6 +13,7 @@ import { termsFromQuery } from "@/functions/src/mail/search-terms";
 import { useAuth } from "@/components/auth";
 import { toDateSafe } from "@/lib/utils";
 import { classifyFileStrict } from "@/lib/files/file-kind";
+import { isConnectCandidateFile } from "@/lib/matching/connection-count";
 
 /**
  * Transaction info for smart search/ranking
@@ -412,9 +413,9 @@ export function useUnifiedFileSearch(
 
       try {
         // Get filtered local files
-        let filteredFiles = files.filter((f) =>
-          f.transactionIds.length === 0 && !f.isNotInvoice
-        );
+        // Files already connected elsewhere stay in, badged by the overlay with
+        // their Connection count (#241).
+        let filteredFiles = files.filter(isConnectCandidateFile);
 
         // Filter by date range ONLY if explicitly set by user
         if (dateFrom || dateTo) {
