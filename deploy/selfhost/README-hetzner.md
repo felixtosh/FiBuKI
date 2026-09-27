@@ -155,10 +155,12 @@ curl -fsSI https://fibuki.com | head -1
 curl -fsS  https://new-api.fibuki.com/healthz    # expect 404 — masked on purpose
 ```
 
-Confirm nothing else is exposed. Only 22, 80, 443 should answer:
+Confirm nothing else is exposed. Only 22, 80, 443 should answer. The list covers
+SeaweedFS (8080 volume, 8333 S3, 8888 filer, 9333 master) and the retired MinIO
+ports (9000, 9001), in case its container outlived the cutover:
 
 ```bash
-nmap -Pn -p 22,80,443,3000,5432,8788,9000,9001 fibuki.com
+nmap -Pn -p 22,80,443,3000,5432,8080,8333,8788,8888,9000,9001,9333 fibuki.com
 ```
 
 ## 6b. Prove mail works, before you need it
