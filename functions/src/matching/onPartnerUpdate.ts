@@ -9,6 +9,10 @@
  * - Unmatched files (check against the updated partner)
  *
  * Does NOT affect files manually assigned to this partner.
+ *
+ * Every affected file is considered, however many there are: both queries are
+ * paged through rather than capped (#329). A run that fails or is cut off part
+ * way has logged how far it got, so a partial re-match is never a silent one.
  */
 
 import { onDocumentUpdated } from "firebase-functions/v2/firestore";
@@ -49,7 +53,7 @@ export const AUTOMATION_META: AutomationMeta = {
   ],
   config: {
     autoMatchThreshold: 89,
-    maxFilesPerUpdate: 200,
+    filePageSize: 200,
   },
   icon: "FileText",
   category: "matching",
@@ -68,8 +72,11 @@ const CONFIG = {
   AUTO_MATCH_THRESHOLD: 89,
   /** Max suggestions to store per file */
   MAX_SUGGESTIONS: 3,
-  /** Maximum files to process per update */
-  MAX_FILES_PER_UPDATE: 200,
+  /**
+   * Files read per page. Not a cap: every page is processed before the next is
+   * read, so this bounds memory, not how many files an update reaches (#329).
+   */
+  FILE_PAGE_SIZE: 200,
 };
 
 // === Types ===
@@ -184,6 +191,94 @@ async function reMatchFilePartner(
 }
 
 /**
+ * Visit every file a query matches, one page at a time, in document id order.
+ *
+ * The visitor may move a file out of the query's result set (re-matching it
+ * changes `partnerId`); the cursor is the last document read, so the next page
+ * starts past it either way and no file is skipped or read twice.
+ */
+async function forEachFilePage(
+  query: FirebaseFirestore.Query,
+  visit: (fileDoc: FirebaseFirestore.QueryDocumentSnapshot) => Promise<void>,
+  onPage: (pageSize: number) => void = () => undefined
+): Promise<void> {
+  let cursor: FirebaseFirestore.QueryDocumentSnapshot | null = null;
+  for (;;) {
+    let page = query.orderBy("__name__").limit(CONFIG.FILE_PAGE_SIZE);
+    if (cursor) page = page.startAfter(cursor);
+    const snapshot = await page.get();
+    if (snapshot.empty) return;
+    for (const fileDoc of snapshot.docs) await visit(fileDoc);
+    onPage(snapshot.size);
+    if (snapshot.size < CONFIG.FILE_PAGE_SIZE) return;
+    cursor = snapshot.docs[snapshot.docs.length - 1];
+  }
+}
+
+/**
+ * Every active partner the file matcher compares against: the user's own, and
+ * the global ones the user has not localized. Read once per run, after the
+ * first file needing it, so an update with nothing to re-evaluate reads none.
+ */
+async function loadMatchingPartners(
+  userId: string
+): Promise<{ userPartners: PartnerData[]; globalPartners: PartnerData[] }> {
+  const [userPartnersSnapshot, globalPartnersSnapshot] = await Promise.all([
+    db.collection("partners")
+      .where("userId", "==", userId)
+      .where("isActive", "==", true)
+      .get(),
+    db.collection("globalPartners")
+      .where("isActive", "==", true)
+      .get(),
+  ]);
+
+  const userPartners: PartnerData[] = userPartnersSnapshot.docs.map((doc) => ({
+    id: doc.id,
+    name: doc.data().name,
+    aliases: doc.data().aliases || [],
+    ibans: doc.data().ibans || [],
+    vatId: doc.data().vatId,
+    website: doc.data().website || null,
+    emailDomains: doc.data().emailDomains || [],
+    globalPartnerId: doc.data().globalPartnerId || null,
+  }));
+
+  const globalPartners: PartnerData[] = globalPartnersSnapshot.docs.map((doc) => ({
+    id: doc.id,
+    name: doc.data().name,
+    aliases: doc.data().aliases || [],
+    ibans: doc.data().ibans || [],
+    vatId: doc.data().vatId,
+    website: doc.data().website || null,
+    emailDomains: doc.data().emailDomains || [],
+  }));
+  const localizedGlobalIds = new Set(
+    userPartnersSnapshot.docs
+      .map((doc) => doc.data().globalPartnerId)
+      .filter(Boolean) as string[]
+  );
+
+  return {
+    userPartners,
+    globalPartners: globalPartners.filter((partner) => !localizedGlobalIds.has(partner.id)),
+  };
+}
+
+/**
+ * Unmatched files that already went through matching once — the files a
+ * partner edit or deletion can newly claim.
+ */
+function unmatchedFilesQuery(userId: string): FirebaseFirestore.Query {
+  return db
+    .collection("files")
+    .where("userId", "==", userId)
+    .where("partnerId", "==", null)
+    .where("extractionComplete", "==", true)
+    .where("partnerMatchComplete", "==", true);
+}
+
+/**
  * Re-match orphaned files after a partner is deleted.
  * Finds all unmatched files for the user and re-runs partner matching.
  */
@@ -192,21 +287,47 @@ async function reMatchOrphanedFilesAfterDeletion(
   deletedPartnerId: string,
   deletedPartnerName: string
 ): Promise<void> {
-  try {
-    // Query unmatched files that have extraction complete
-    // These are files that either:
-    // 1. Were just orphaned by the deletion (partnerId was cleared by deleteUserPartner)
-    // 2. Were already unmatched before
-    const unmatchedFilesSnapshot = await db
-      .collection("files")
-      .where("userId", "==", userId)
-      .where("partnerId", "==", null)
-      .where("extractionComplete", "==", true)
-      .where("partnerMatchComplete", "==", true)
-      .limit(CONFIG.MAX_FILES_PER_UPDATE)
-      .get();
+  // These are files that either:
+  // 1. Were just orphaned by the deletion (partnerId was cleared by deleteUserPartner)
+  // 2. Were already unmatched before
+  let partners: Awaited<ReturnType<typeof loadMatchingPartners>> | null = null;
+  let considered = 0;
+  let reMatched = 0;
+  let stillUnmatched = 0;
 
-    if (unmatchedFilesSnapshot.empty) {
+  try {
+    await forEachFilePage(
+      unmatchedFilesQuery(userId),
+      async (fileDoc) => {
+        // Fetch all active partners for matching (excluding the deleted one)
+        partners ??= await loadMatchingPartners(userId);
+        considered++;
+        try {
+          const { action, newPartnerId } = await reMatchFilePartner(
+            fileDoc,
+            partners.userPartners,
+            partners.globalPartners
+          );
+
+          if (action === "rematched" && newPartnerId) {
+            reMatched++;
+          } else {
+            stillUnmatched++;
+          }
+        } catch (error) {
+          console.error(`[PartnerUpdate] Error re-matching orphaned file ${fileDoc.id}:`, error);
+          stillUnmatched++;
+        }
+      },
+      () => {
+        console.log(
+          `[PartnerUpdate] Re-matching after "${deletedPartnerName}" deletion: ` +
+          `${considered} orphaned files considered so far`
+        );
+      }
+    );
+
+    if (considered === 0) {
       console.log(
         `[PartnerUpdate] No orphaned files to re-match after deleting "${deletedPartnerName}"`
       );
@@ -214,81 +335,16 @@ async function reMatchOrphanedFilesAfterDeletion(
     }
 
     console.log(
-      `[PartnerUpdate] Found ${unmatchedFilesSnapshot.size} orphaned files to re-match ` +
-      `after deleting partner "${deletedPartnerName}" (${deletedPartnerId})`
-    );
-
-    // Fetch all active partners for matching (excluding the deleted one)
-    const [userPartnersSnapshot, globalPartnersSnapshot] = await Promise.all([
-      db.collection("partners")
-        .where("userId", "==", userId)
-        .where("isActive", "==", true)
-        .get(),
-      db.collection("globalPartners")
-        .where("isActive", "==", true)
-        .get(),
-    ]);
-
-    const userPartners: PartnerData[] = userPartnersSnapshot.docs.map((doc) => ({
-      id: doc.id,
-      name: doc.data().name,
-      aliases: doc.data().aliases || [],
-      ibans: doc.data().ibans || [],
-      vatId: doc.data().vatId,
-      website: doc.data().website || null,
-      emailDomains: doc.data().emailDomains || [],
-      globalPartnerId: doc.data().globalPartnerId || null,
-    }));
-
-    const globalPartners: PartnerData[] = globalPartnersSnapshot.docs.map((doc) => ({
-      id: doc.id,
-      name: doc.data().name,
-      aliases: doc.data().aliases || [],
-      ibans: doc.data().ibans || [],
-      vatId: doc.data().vatId,
-      website: doc.data().website || null,
-      emailDomains: doc.data().emailDomains || [],
-    }));
-    const localizedGlobalIds = new Set(
-      userPartnersSnapshot.docs
-        .map((doc) => doc.data().globalPartnerId)
-        .filter(Boolean) as string[]
-    );
-    const filteredGlobalPartners = globalPartners.filter(
-      (partner) => !localizedGlobalIds.has(partner.id)
-    );
-
-    // Process files
-    let reMatched = 0;
-    let stillUnmatched = 0;
-
-    for (const fileDoc of unmatchedFilesSnapshot.docs) {
-      try {
-        const { action, newPartnerId } = await reMatchFilePartner(
-          fileDoc,
-          userPartners,
-          filteredGlobalPartners
-        );
-
-        if (action === "rematched" && newPartnerId) {
-          reMatched++;
-        } else {
-          stillUnmatched++;
-        }
-      } catch (error) {
-        console.error(`[PartnerUpdate] Error re-matching orphaned file ${fileDoc.id}:`, error);
-        stillUnmatched++;
-      }
-    }
-
-    console.log(
       `[PartnerUpdate] Re-matching after "${deletedPartnerName}" deletion complete: ` +
+      `all ${considered} orphaned files considered, ` +
       `${reMatched} re-matched to new partners, ${stillUnmatched} still unmatched`
     );
 
   } catch (error) {
     console.error(
-      `[PartnerUpdate] Error re-matching files after partner ${deletedPartnerId} deletion:`,
+      `[PartnerUpdate] Error re-matching files after partner ${deletedPartnerId} deletion, ` +
+      `stopped after ${considered} files (${reMatched} re-matched); ` +
+      "the rest were not re-evaluated:",
       error
     );
   }
@@ -300,7 +356,10 @@ export const onPartnerUpdate = onDocumentUpdated(
   {
     document: "partners/{partnerId}",
     region: "europe-west1",
-    timeoutSeconds: 120,
+    // The most an event trigger gets: an update now reaches every affected
+    // file rather than the first 200 (#329). A run cut off anyway has logged
+    // its progress page by page.
+    timeoutSeconds: 540,
     memory: "512MiB",
   },
   async (event) => {
@@ -317,8 +376,9 @@ export const onPartnerUpdate = onDocumentUpdated(
     // loser becomes a Merged Partner. Unguarded, the loser write would fire the
     // post-deletion re-match (a merged-away partner is not a deleted one — its
     // files were repointed to the survivor, not orphaned) and the survivor
-    // write would fire the 200-file identity re-match (#306). One marker, put
-    // on every Partner document the Merge writes, answers for both.
+    // write would fire the identity re-match over every affected file (#306,
+    // #329). One marker, put on every Partner document the Merge writes,
+    // answers for both.
     if (isMergeWrite(before, after)) {
       console.log(
         `[PartnerUpdate] Partner "${after.name}" (${partnerId}) was written by a ` +
@@ -354,114 +414,87 @@ export const onPartnerUpdate = onDocumentUpdated(
       `[PartnerUpdate] Partner "${after.name}" (${partnerId}) updated, re-evaluating files`
     );
 
+    let partners: Awaited<ReturnType<typeof loadMatchingPartners>> | null = null;
+    // A file the first pass clears joins the unmatched set the second pass
+    // reads; it has been evaluated against the updated partner already.
+    const considered = new Set<string>();
+    let autoMatched = 0;
+    let reMatched = 0;
+    let cleared = 0;
+    let unchanged = 0;
+
+    const reEvaluate = async (fileDoc: FirebaseFirestore.QueryDocumentSnapshot) => {
+      if (considered.has(fileDoc.id)) return;
+      considered.add(fileDoc.id);
+      // Fetch all partners for matching (need fresh data including the updated partner)
+      partners ??= await loadMatchingPartners(userId);
+      try {
+        const { action } = await reMatchFilePartner(
+          fileDoc,
+          partners.userPartners,
+          partners.globalPartners
+        );
+
+        switch (action) {
+          case "rematched":
+            reMatched++;
+            break;
+          case "cleared":
+            cleared++;
+            break;
+          case "unchanged":
+            unchanged++;
+            break;
+        }
+      } catch (error) {
+        console.error(`[PartnerUpdate] Error re-matching file ${fileDoc.id}:`, error);
+      }
+    };
+
+    const logProgress = () => {
+      console.log(
+        `[PartnerUpdate] Partner "${after.name}" (${partnerId}): ` +
+        `${considered.size} files considered so far (${autoMatched} auto-matched)`
+      );
+    };
+
     try {
-      // Query 1: Files auto-matched to this partner (need re-evaluation)
-      const autoMatchedFilesSnapshot = await db
-        .collection("files")
-        .where("userId", "==", userId)
-        .where("partnerId", "==", partnerId)
-        .where("partnerMatchedBy", "==", "auto")
-        .where("extractionComplete", "==", true)
-        .limit(CONFIG.MAX_FILES_PER_UPDATE)
-        .get();
+      // Pass 1: Files auto-matched to this partner (need re-evaluation)
+      await forEachFilePage(
+        db
+          .collection("files")
+          .where("userId", "==", userId)
+          .where("partnerId", "==", partnerId)
+          .where("partnerMatchedBy", "==", "auto")
+          .where("extractionComplete", "==", true),
+        async (fileDoc) => {
+          autoMatched++;
+          await reEvaluate(fileDoc);
+        },
+        logProgress
+      );
 
-      // Query 2: Unmatched files (need to check against updated partner)
-      const unmatchedFilesSnapshot = await db
-        .collection("files")
-        .where("userId", "==", userId)
-        .where("partnerId", "==", null)
-        .where("extractionComplete", "==", true)
-        .where("partnerMatchComplete", "==", true) // Already went through matching once
-        .limit(CONFIG.MAX_FILES_PER_UPDATE)
-        .get();
+      // Pass 2: Unmatched files (need to check against updated partner)
+      await forEachFilePage(unmatchedFilesQuery(userId), reEvaluate, logProgress);
 
-      const filesToProcess = [
-        ...autoMatchedFilesSnapshot.docs,
-        ...unmatchedFilesSnapshot.docs,
-      ];
-
-      if (filesToProcess.length === 0) {
+      if (considered.size === 0) {
         console.log(`[PartnerUpdate] No files to re-evaluate for partner ${partnerId}`);
         return;
       }
 
       console.log(
-        `[PartnerUpdate] Found ${autoMatchedFilesSnapshot.size} auto-matched + ` +
-        `${unmatchedFilesSnapshot.size} unmatched = ${filesToProcess.length} files to process`
-      );
-
-      // Fetch all partners for matching (need fresh data including the updated partner)
-      const [userPartnersSnapshot, globalPartnersSnapshot] = await Promise.all([
-        db.collection("partners")
-          .where("userId", "==", userId)
-          .where("isActive", "==", true)
-          .get(),
-        db.collection("globalPartners")
-          .where("isActive", "==", true)
-          .get(),
-      ]);
-
-      const userPartners: PartnerData[] = userPartnersSnapshot.docs.map((doc) => ({
-        id: doc.id,
-        name: doc.data().name,
-        aliases: doc.data().aliases || [],
-        ibans: doc.data().ibans || [],
-        vatId: doc.data().vatId,
-        website: doc.data().website || null,
-        emailDomains: doc.data().emailDomains || [],
-        globalPartnerId: doc.data().globalPartnerId || null,
-      }));
-
-      const globalPartners: PartnerData[] = globalPartnersSnapshot.docs.map((doc) => ({
-        id: doc.id,
-        name: doc.data().name,
-        aliases: doc.data().aliases || [],
-        ibans: doc.data().ibans || [],
-        vatId: doc.data().vatId,
-        website: doc.data().website || null,
-        emailDomains: doc.data().emailDomains || [],
-      }));
-      const localizedGlobalIds = new Set(
-        userPartnersSnapshot.docs
-          .map((doc) => doc.data().globalPartnerId)
-          .filter(Boolean) as string[]
-      );
-      const filteredGlobalPartners = globalPartners.filter(
-        (partner) => !localizedGlobalIds.has(partner.id)
-      );
-
-      // Process files
-      let reMatched = 0;
-      let cleared = 0;
-      let unchanged = 0;
-
-      for (const fileDoc of filesToProcess) {
-        try {
-          const { action } = await reMatchFilePartner(fileDoc, userPartners, filteredGlobalPartners);
-
-          switch (action) {
-            case "rematched":
-              reMatched++;
-              break;
-            case "cleared":
-              cleared++;
-              break;
-            case "unchanged":
-              unchanged++;
-              break;
-          }
-        } catch (error) {
-          console.error(`[PartnerUpdate] Error re-matching file ${fileDoc.id}:`, error);
-        }
-      }
-
-      console.log(
         `[PartnerUpdate] Partner "${after.name}" update complete: ` +
+        `all ${considered.size} files considered (${autoMatched} auto-matched), ` +
         `${reMatched} re-matched, ${cleared} cleared, ${unchanged} unchanged`
       );
 
     } catch (error) {
-      console.error(`[PartnerUpdate] Error re-matching files for partner ${partnerId}:`, error);
+      console.error(
+        `[PartnerUpdate] Error re-matching files for partner ${partnerId}, ` +
+        `stopped after ${considered.size} files (${reMatched} re-matched, ${cleared} cleared); ` +
+        "the rest were not re-evaluated:",
+        error
+      );
     }
   }
 );
