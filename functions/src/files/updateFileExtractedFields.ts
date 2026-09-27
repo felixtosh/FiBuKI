@@ -35,6 +35,7 @@ import {
 import { buildCorrectedFileUpdate } from "./correctedFileUpdate";
 import { CORRECTABLE_FIELDS, correctedFieldsOf } from "./extractionProvenanceOps";
 import { syncDocumentationStateForTransactions } from "../documents/syncDocumentationState";
+import { retireRepairAmbiguity } from "../documents/repairReview";
 
 /** An extra field the extractor kept but nothing else reads structurally. */
 interface EditedAdditionalField {
@@ -160,6 +161,7 @@ export const updateFileExtractedFieldsCallable = createCallable<
       }
     }
 
+    const movedDetails: string[] = [];
     for (const [key, storedField] of Object.entries(DETAIL_FIELD)) {
       const value = details[key as keyof ExtractedDetails];
       if (value === undefined) continue;
@@ -167,6 +169,17 @@ export const updateFileExtractedFieldsCallable = createCallable<
         key === "additionalFields"
           ? normalizeAdditionalFields(value)
           : normalizeText(value, key);
+      if (key !== "additionalFields" && updates[storedField] !== (record[storedField] ?? null)) {
+        movedDetails.push(storedField);
+      }
+    }
+
+    // #301: a detail typed over retires the repair warning for that field, the
+    // same as a figure does inside the builder. Measured against what the
+    // builder already left, so a save that corrects both kinds retires both.
+    if (movedDetails.length > 0) {
+      const flagged = { ...record, ...updates };
+      Object.assign(updates, retireRepairAmbiguity(flagged, movedDetails));
     }
 
     if (Object.keys(updates).length === 0) {
