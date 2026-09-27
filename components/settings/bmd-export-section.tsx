@@ -1,5 +1,6 @@
 "use client";
 
+import { toDateSafe } from "@/lib/utils";
 import { useState } from "react";
 import { startOfYear, format } from "date-fns";
 import {
@@ -282,7 +283,7 @@ function BmdCompletedExportRow({
   daysUntilExpiry: number;
 }) {
   const storedDownload = useAuthenticatedDownload();
-  const completedDate = exp.completedAt?.toDate?.();
+  const completedDate = toDateSafe(exp.completedAt);
   const dateStr = completedDate
     ? completedDate.toLocaleDateString("de-DE", {
         year: "numeric",
@@ -293,8 +294,8 @@ function BmdCompletedExportRow({
       })
     : "Unknown date";
 
-  const dateFromStr = exp.dateFrom?.toDate?.()?.toLocaleDateString("de-DE");
-  const dateToStr = exp.dateTo?.toDate?.()?.toLocaleDateString("de-DE");
+  const dateFromStr = toDateSafe(exp.dateFrom)?.toLocaleDateString("de-DE");
+  const dateToStr = toDateSafe(exp.dateTo)?.toLocaleDateString("de-DE");
   const skipped = exp.skipped ?? [];
 
   return (

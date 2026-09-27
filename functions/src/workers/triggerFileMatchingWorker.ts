@@ -11,6 +11,7 @@
  * 4. Create a notification with the transcript
  */
 
+import { toDateSafe } from "../utils/toDateSafe";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 
@@ -76,7 +77,7 @@ export const triggerFileMatchingWorkerCallable = createCallable<
     const fileInfo = {
       fileName: fileData.fileName || fileData.name,
       amount: fileData.extractedAmount,
-      date: fileData.extractedDate?.toDate?.()?.toISOString?.()?.split("T")[0],
+      date: toDateSafe(fileData.extractedDate)?.toISOString?.()?.split("T")[0],
       partner: fileData.extractedPartner || fileData.partnerName,
     };
 

@@ -470,12 +470,17 @@ function planFileSweep(
 
     // Decoded above, before the match, so the value written here and the one
     // the skip comparison reads are the same string (#299).
-    const counterpartyName = result.counterparty?.name;
+    //
+    // An absent name is spelled null on both sides of the comparison (#341):
+    // `name` is optional on a stored entity, and `undefined !== null` read a
+    // nameless counterparty as a change on every sweep, re-arming partner
+    // matching and wiping a Partner the user had assigned by hand.
+    const counterpartyName = result.counterparty?.name ?? null;
 
     // Check if anything changed
     const currentDirection = fileData.invoiceDirection as InvoiceDirection;
     const currentMatchedAccount = fileData.matchedUserAccount as "issuer" | "recipient" | null;
-    const currentPartner = fileData.extractedPartner as string | null;
+    const currentPartner = (fileData.extractedPartner as string | null | undefined) ?? null;
     const currentRecipientIdentity = fileData.recipientIdentityMatch as RecipientIdentity | undefined;
 
     if (

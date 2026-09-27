@@ -11,14 +11,13 @@ import { readDismissedTransactionIds } from "./dismissedTransactions";
 import { loadDocumentedAmounts } from "./documentedAmounts";
 import {
   SCORING_CONFIG,
-  scoreTransaction,
-  derivePartnerAliases,
+  scoreFileAgainstTransactions,
+  loadPartnerScoringContext,
   formatScoreBreakdown,
   TransactionMatchScore,
   TransactionMatchSource,
   ScoreBreakdown,
 } from "./transactionScoring";
-import type { DocumentType } from "../documents/types";
 
 const db = getFirestore();
 
@@ -129,24 +128,10 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
     }
 
     // === Get File Data ===
-    let fileData: {
-      extractedAmount?: number | null;
-      /** #172: absent on the raw fileInfo path, which has no stored record. */
-      extractedTipAmount?: number | null;
-      extractedCurrency?: string | null;
-      extractedDate?: Timestamp | null;
-      extractedPartner?: string | null;
-      extractedIban?: string | null;
-      extractedText?: string | null;
-      /** #137: the needle for the invoice-number match source. */
-      extractedInvoiceNumber?: string | null;
-      partnerId?: string | null;
-      /** #104: absent on the raw fileInfo path, which has no stored record. */
-      documentType?: DocumentType | null;
-    };
+    // The stored File as-is on the fileId path, so every field
+    // toFileMatchingData reads reaches this scorer (#308, #327).
+    let fileData: FirebaseFirestore.DocumentData;
 
-    // Pairs the file has had dismissed. Only knowable on the fileId path — a
-    // caller passing raw fileInfo has no stored document to carry them.
     let dismissedIds = new Set<string>();
 
     if (fileId) {
@@ -171,18 +156,7 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
 
       dismissedIds = readDismissedTransactionIds(docData);
 
-      fileData = {
-        extractedAmount: docData.extractedAmount,
-        extractedTipAmount: docData.extractedTipAmount,
-        extractedCurrency: docData.extractedCurrency,
-        extractedDate: docData.extractedDate,
-        extractedPartner: docData.extractedPartner,
-        extractedIban: docData.extractedIban,
-        extractedText: docData.extractedText,
-        extractedInvoiceNumber: docData.extractedInvoiceNumber,
-        partnerId: docData.partnerId,
-        documentType: docData.documentType,
-      };
+      fileData = docData;
     } else {
       // Use provided fileInfo
       fileData = {
@@ -257,25 +231,10 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
     // === Filter and Score ===
     const excludeSet = new Set(excludeTransactionIds);
 
-    // Fetch partner aliases if file has an assigned partner
-    let partnerAliases: string[] = [];
-    if (fileData.partnerId) {
-      try {
-        const partnerDoc = await db
-          .collection("partners")
-          .doc(fileData.partnerId)
-          .get();
-        if (partnerDoc.exists) {
-          const partnerData = partnerDoc.data()!;
-          // Same derivation as auto-matching, not a copy of it (#138): this
-          // dialog's scores have to be the ones matchFileTransactions
-          // produced, including the linked Global Partner's brand aliases.
-          partnerAliases = await derivePartnerAliases(db, partnerData);
-        }
-      } catch (error) {
-        console.warn("[FindMatches] Failed to fetch partner aliases:", error);
-      }
-    }
+    // Same derivation as auto-matching, not a copy of it (#138): this
+    // dialog's scores have to be the ones matchFileTransactions produced,
+    // including the linked Global Partner's brand aliases.
+    const partner = await loadPartnerScoringContext(db, fileData.partnerId);
 
     // Filter candidates
     let candidates = transactions.filter((doc) => {
@@ -304,44 +263,13 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
     // stored suggestions cannot disagree about which figure is open.
     const documentedAmounts = await loadDocumentedAmounts(candidates.map((c) => c.id), fileId);
 
-    // Score each transaction
-    const allScores: TransactionMatchScore[] = candidates.map((doc) => {
-      const txData = doc.data();
-      return scoreTransaction(
-        {
-          extractedAmount: fileData.extractedAmount,
-          extractedTipAmount: fileData.extractedTipAmount,
-          extractedCurrency: fileData.extractedCurrency,
-          extractedDate: fileData.extractedDate,
-          extractedPartner: fileData.extractedPartner,
-          extractedIban: fileData.extractedIban,
-          extractedText: fileData.extractedText,
-          // #137: the needle for the invoice-number match source.
-          extractedInvoiceNumber: fileData.extractedInvoiceNumber,
-          partnerId: fileData.partnerId,
-          documentType: fileData.documentType,
-        },
-        {
-          id: doc.id,
-          amount: txData.amount,
-          date: txData.date,
-          currency: txData.currency,
-          // Carries the bank-stated original amount for #112.
-          _original: txData._original,
-          name: txData.name,
-          // #137: part of the text the invoice number is searched for in.
-          description: txData.description,
-          partner: txData.partner,
-          partnerName: txData.partnerName,
-          partnerId: txData.partnerId,
-          partnerIban: txData.partnerIban,
-          reference: txData.reference,
-          documentationState: txData.documentationState,
-          documentedAmount: documentedAmounts.get(doc.id),
-        },
-        partnerAliases
-      );
-    });
+    // Score each transaction — the trigger's own input assembly (#308, #327).
+    const allScores: TransactionMatchScore[] = scoreFileAgainstTransactions(
+      fileData,
+      candidates,
+      partner,
+      documentedAmounts
+    );
 
     // Sort by confidence and take top results
     // Include ALL results (not just above threshold) so UI can show full list

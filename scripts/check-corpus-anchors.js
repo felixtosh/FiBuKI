@@ -44,15 +44,30 @@ const SKIP_PREFIXES = ["functions/lib/", "lib/data/generated-"];
  * file does not trip its own check — which would be the fastest possible way
  * for the guard to be deleted rather than obeyed.
  */
+/**
+ * A leading zero is what makes a number obviously invented.
+ *
+ * Both id rules below used to read `1\d{3}`, which covers 1000-1999 and
+ * nothing else — so `paperless-ap-2003`, `IV-26-2001` and `paperless-ap-42`
+ * were all real-looking ids that passed clean. The narrowing was meant only to
+ * stop the guard rejecting invented fixtures like `-0042`, which is what both
+ * `fix` lines below tell people to write.
+ *
+ * `[1-9]\d+` says that directly: two or more digits that do not start with a
+ * zero. Invented ids keep passing, real ones are caught whatever range they
+ * fall in.
+ */
+const REAL_LOOKING_NUMBER = "[1-9]\\d+";
+
 const FORBIDDEN = [
   {
     name: "Paperless document id",
-    pattern: new RegExp(["paperless", "ap", "1\\d{3}"].join("-"), "i"),
+    pattern: new RegExp(["paperless", "ap", REAL_LOOKING_NUMBER].join("-"), "i"),
     fix: "use an obviously invented number (paperless-ap-0042) or describe the document",
   },
   {
     name: "outgoing invoice number",
-    pattern: new RegExp(["IV", "\\d{2}", "1\\d{3}"].join("-")),
+    pattern: new RegExp(["IV", "\\d{2}", REAL_LOOKING_NUMBER].join("-")),
     fix: "use an obviously invented number (IV-25-0042) or describe the document",
   },
   {
@@ -122,4 +137,11 @@ function main() {
   process.exit(1);
 }
 
-main();
+// Run as a CLI, but let a test import the patterns. `require.main` is the
+// guard: `node scripts/check-corpus-anchors.js` still scans and exits, while
+// `require()` from tests/ gets the table without the side effect.
+if (require.main === module) {
+  main();
+}
+
+module.exports = { FORBIDDEN };

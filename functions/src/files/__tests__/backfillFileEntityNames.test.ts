@@ -129,3 +129,67 @@ describe("backfillFileEntityNamesCallable", () => {
     expect(entity("f-other", "extractedIssuer")?.name).toBe("AL&amp;FA Taxi KG");
   });
 });
+
+describe("backfillFileEntityNamesCallable — extractedPartner (#300)", () => {
+  it("decodes the flat partner name, so the File agrees with its Partner", async () => {
+    // The Partner record as #233's backfill left it: decoded.
+    store.setDoc("partners", "p1", { userId, name: "AL&FA Taxi KG" });
+    store.setDoc(
+      "files",
+      "f1",
+      createTestFile({ userId, partnerId: "p1", extractedPartner: "AL&amp;FA Taxi KG" })
+    );
+
+    const result = await call();
+
+    expect(result.updated).toBe(1);
+    expect(file("f1").extractedPartner).toBe("AL&FA Taxi KG");
+    expect(file("f1").extractedPartner).toBe(
+      (store.getDoc("partners", "p1") as Record<string, unknown>).name
+    );
+  });
+
+  it("decodes the partner and the entities in one write", async () => {
+    store.setDoc(
+      "files",
+      "f1",
+      createTestFile({
+        userId,
+        extractedPartner: "Q &#38; A Solutions",
+        extractedIssuer: { name: "Q &amp; A Solutions" },
+      })
+    );
+
+    const result = await call();
+
+    expect(result.updated).toBe(1);
+    expect(file("f1").extractedPartner).toBe("Q & A Solutions");
+    expect(entity("f1", "extractedIssuer")?.name).toBe("Q & A Solutions");
+  });
+
+  it("leaves a partner name with a bare '&' byte-identical, and is re-runnable", async () => {
+    store.setDoc("files", "f1", createTestFile({ userId, extractedPartner: "AT&T" }));
+    store.setDoc("files", "f2", createTestFile({ userId, extractedPartner: "AL&amp;FA Taxi KG" }));
+
+    const first = await call();
+    expect(first.updated).toBe(1);
+    expect(file("f1").extractedPartner).toBe("AT&T");
+    // Not written at all: the backfill's own timestamp never reached it.
+    expect(file("f1").updatedAt).not.toEqual(new Date("2026-09-12T12:00:00Z"));
+
+    // The second run finds nothing left to decode.
+    const second = await call();
+    expect(second.updated).toBe(0);
+    expect(second.skipped).toBe(2);
+    expect(file("f2").extractedPartner).toBe("AL&FA Taxi KG");
+  });
+
+  it("skips a file whose partner name is not a string", async () => {
+    store.setDoc("files", "f1", createTestFile({ userId, extractedPartner: null }));
+
+    const result = await call();
+
+    expect(result.updated).toBe(0);
+    expect(result.skipped).toBe(1);
+  });
+});

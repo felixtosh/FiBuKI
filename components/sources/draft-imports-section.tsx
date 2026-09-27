@@ -1,5 +1,6 @@
 "use client";
 
+import { toDateSafe } from "@/lib/utils";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -46,8 +47,8 @@ export function DraftImportsSection({
       </CardHeader>
       <CardContent className="space-y-3">
         {drafts.map((draft) => {
-          const createdAt = draft.createdAt?.toDate?.();
-          const expiresAt = draft.expiresAt?.toDate?.();
+          const createdAt = toDateSafe(draft.createdAt);
+          const expiresAt = toDateSafe(draft.expiresAt);
 
           return (
             <div

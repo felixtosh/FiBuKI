@@ -11,7 +11,7 @@ affects a normal Firebase build — it is only referenced by this compose file.
 | `postgres` | `postgres:16-alpine` | Firestore-shim JSONB store (`DATABASE_URL`) |
 | `seaweedfs` | `chrislusf/seaweedfs` | storage-shim S3 backend (bucket auto-created by the shim). Replaced MinIO in September 2026, when MinIO's server was archived upstream and its images withdrawn from every registry |
 | `fibuki-api` | built (`api.Dockerfile`, Node 22) | selfhost host: callables + trigger bus + cron, over the shims; `:8788` |
-| `fibuki-web` | built (`web.Dockerfile`, Node 20) | Next frontend, `FIBUKI_BACKEND=selfhost` alias build; `:3000` |
+| `fibuki-web` | built (`web.Dockerfile`, Node 22) | Next frontend, `FIBUKI_BACKEND=selfhost` alias build; `:3000` |
 
 ## Run
 
@@ -22,6 +22,41 @@ docker compose --env-file .env up -d --build
 docker compose ps
 curl -fsS http://localhost:8788/healthz    # ~112 callables / 12 scheduled
 ```
+
+## Upgrading an existing deployment: MinIO to SeaweedFS
+
+**If your stack predates September 2026, do this before bringing the app up on
+the new code.** The blob store changed from MinIO to SeaweedFS, and the two do
+not share a volume: SeaweedFS starts empty.
+
+Nothing is deleted if you skip it. The MinIO volume stays exactly where it was
+and the app simply looks in the wrong place, so what a user sees is an account
+whose Files have all vanished, which is indistinguishable from data loss until
+somebody explains it.
+
+```bash
+git pull                              # or rsync, per README-hetzner.md
+./migrate-minio-to-seaweedfs.sh       # copies and verifies; app keeps serving
+docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+  --env-file .env up -d --build       # switches the app over
+```
+
+The script brings up only `seaweedfs`, mirrors the bucket with the `mc` already
+inside the MinIO image, and verifies object counts plus `mc diff` before
+reporting success. It refuses to run twice into a non-empty destination.
+
+Rollback is the same command with `FIBUKI_S3_ENDPOINT=minio` and
+`FIBUKI_S3_PORT=9000`: the MinIO service and its volume are left intact on
+purpose. Retire them only once SeaweedFS has served long enough to trust.
+
+**Save the MinIO image before it is pruned.** It can no longer be pulled from
+any registry, so the copy on your host is the only one you have:
+
+```bash
+docker save minio/minio:latest | gzip > minio-image-backup.tar.gz
+```
+
+A fresh install needs none of this.
 
 ## Notes
 

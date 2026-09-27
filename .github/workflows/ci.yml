@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       # Needs no dependencies, so it runs before the install and fails fast.
       # A build arg compose passes but web.Dockerfile does not declare is dropped
@@ -200,7 +200,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: extensions/taxstudio-browser/package-lock.json
       - run: npm ci

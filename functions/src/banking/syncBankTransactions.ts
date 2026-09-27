@@ -7,6 +7,7 @@
  * Replaces the logic from /app/api/banking/sync/route.ts
  */
 
+import { toDateSafe } from "../utils/toDateSafe";
 import { defineSecret } from "firebase-functions/params";
 import { Timestamp, FieldValue } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
@@ -216,7 +217,7 @@ export const syncBankTransactionsCallable = createCallable<
     // ========================================================================
     // 2. Check token expiry and re-auth status
     // ========================================================================
-    const expiresAt = config.expiresAt?.toDate?.() ||
+    const expiresAt = toDateSafe(config.expiresAt) ||
       (config.expiresAt ? new Date(config.expiresAt) : null);
 
     if (expiresAt && expiresAt < new Date()) {
@@ -234,7 +235,7 @@ export const syncBankTransactionsCallable = createCallable<
     // 3. Refresh token if needed
     // ========================================================================
     let userToken = config.userAccessToken;
-    const tokenExpiry = config.tokenExpiresAt?.toDate?.() ||
+    const tokenExpiry = toDateSafe(config.tokenExpiresAt) ||
       (config.tokenExpiresAt ? new Date(config.tokenExpiresAt) : null);
 
     if (tokenExpiry && Date.now() > tokenExpiry.getTime() - 5 * 60 * 1000) {

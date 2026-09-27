@@ -1,5 +1,6 @@
 "use client";
 
+import { toDateSafe } from "@/lib/utils";
 import { useMemo, useDeferredValue } from "react";
 import { Transaction, TransactionFilters } from "@/types/transaction";
 
@@ -59,7 +60,7 @@ export function useFilteredTransactions(
     if (effectiveDateFrom) {
       const fromTime = effectiveDateFrom.getTime();
       result = result.filter((t) => {
-        const txDate = t.date?.toDate?.();
+        const txDate = toDateSafe(t.date);
         return txDate ? txDate.getTime() >= fromTime : true;
       });
     }
@@ -67,7 +68,7 @@ export function useFilteredTransactions(
       // Add one day to include the end date fully
       const toTime = effectiveDateTo.getTime() + 24 * 60 * 60 * 1000;
       result = result.filter((t) => {
-        const txDate = t.date?.toDate?.();
+        const txDate = toDateSafe(t.date);
         return txDate ? txDate.getTime() < toTime : true;
       });
     }
