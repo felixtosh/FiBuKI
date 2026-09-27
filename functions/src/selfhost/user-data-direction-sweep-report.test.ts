@@ -166,6 +166,42 @@ describe("selfhost: onUserDataUpdate invoice-direction sweep accounting (#158)",
     expect(run.candidates).toBe(totalOutcomes(run));
   });
 
+  it("writes a counterparty that has no name at all, and does not take the batch with it", async () => {
+    // #341, the inverse of the case above: not a SPARSE entity but one with no
+    // `name` key. The name is what extractedPartner is written from, so it was
+    // the one copy the #294 guards did not cover, and `undefined` is rejected
+    // by the shim rather than stored — which used to abort the commit and cost
+    // every File behind it in the batch its write.
+    //
+    // `name` is optional on a stored entity, so this is an ordinary shape and
+    // not a corrupt one.
+    for (let i = 0; i < 6; i++) {
+      const id = `n-${String(i).padStart(2, "0")}`;
+      await seedFile(id, i === 2 ? { extractedIssuer: { vatId: "ATU00000000" } } : {});
+    }
+    await drainTriggers();
+
+    await editIdentity(["AT611904300234573201"]);
+
+    for (let i = 0; i < 6; i++) {
+      const id = `n-${String(i).padStart(2, "0")}`;
+      expect(await updatedAtOf(id), `${id} was never written`).not.toBe(
+        PRE_RUN.toDate().toISOString()
+      );
+    }
+
+    // The nameless one is written too, with the partner cleared rather than
+    // left pointing at the previous counterparty.
+    const nameless = await db.collection("files").doc("n-02").get();
+    expect(nameless.data()?.extractedPartner ?? null).toBeNull();
+
+    const run = workingRun(await sweepRuns());
+    expect(run.outcomes["write-rejected"]).toBe(0);
+    expect(run.outcomes.written).toBe(6);
+    expect(run.complete).toBe(true);
+    expect(run.candidates).toBe(totalOutcomes(run));
+  });
+
   it("gives every File a named outcome, and the outcomes add up to the candidates", async () => {
     // One File per reason a File can end a run without a write. The seventh,
     // `write-rejected`, cannot be provoked through a fixture — the store

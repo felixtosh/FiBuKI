@@ -162,9 +162,14 @@ describe("pushdown differential: flattened table vs JSONB reference", () => {
 
   it("orderBy __name__ (the paged-sweep shape), asc and desc and mixed", async () => {
     expect(await expectSame((c) => c.orderBy("__name__", "asc"))).toEqual(Object.keys(FIXTURES));
-    expect(await expectSame((c) => c.orderBy("__name__", "desc"))).toEqual(
-      [...Object.keys(FIXTURES)].reverse(),
-    );
+    // Unfiltered desc is a descending key scan, which Firestore refuses (#311);
+    // behind a field filter it is an index scan and answers.
+    for (const collection of [FLAT, REF]) {
+      await expect(db.collection(collection).orderBy("__name__", "desc").get()).rejects.toThrow(
+        /does not support descending key scans/,
+      );
+    }
+    await expectSame((c) => c.where("userId", "==", "u1").orderBy("__name__", "desc"));
     await expectSame((c) => c.where("userId", "==", "u1").orderBy("__name__").limit(3));
     await expectSame((c) => c.orderBy("createdAt", "asc").orderBy("__name__", "desc"));
   });
@@ -405,7 +410,84 @@ describe("compile shapes (the perf contract)", () => {
     // No duplicate tiebreak: the ordering already names the id column.
     expect(c.sql).toContain(`ORDER BY id COLLATE "C" ASC LIMIT 500`);
     expect(c.sql).toContain(`id COLLATE "C" > $3`);
-    expect(c.params).toEqual([tid, "u1", "s03", "s03"]);
+    expect(c.params).toEqual([tid, "u1", "s03"]);
+  });
+
+  // #312: with the id in the ordering, the snap-id tiebreak branch would read
+  // `id = $n AND id > <same id>` — never true — so it is not emitted at all.
+  it("a keyset ordered on __name__ emits no always-false snap-id branch", () => {
+    const where = [{ field: "userId", op: "==", value: "u1" }];
+    const snap = (values: unknown[]) => ({ values, snapId: "s03" });
+    const T3 = T(3000);
+    const at = new Date(3000);
+
+    const asc = compileFlatQuery(spec, "T", where, [{ field: "__name__", dir: "asc" }], 2, 0, snap(["s03"]));
+    expect(asc.sql).toBe(
+      `SELECT id, data FROM sources WHERE tenant_id = $1 AND "user_id" = $2 AND ((id COLLATE "C" > $3)) ORDER BY id COLLATE "C" ASC LIMIT 2`,
+    );
+    expect(asc.params).toEqual(["T", "u1", "s03"]);
+
+    const desc = compileFlatQuery(spec, "T", where, [{ field: "__name__", dir: "desc" }], 2, 0, snap(["s03"]));
+    expect(desc.sql).toBe(
+      `SELECT id, data FROM sources WHERE tenant_id = $1 AND "user_id" = $2 AND (((id COLLATE "C" < $3 OR id IS NULL))) ORDER BY id COLLATE "C" DESC LIMIT 2`,
+    );
+    expect(desc.params).toEqual(["T", "u1", "s03"]);
+
+    const mixed = compileFlatQuery(
+      spec,
+      "T",
+      where,
+      [
+        { field: "createdAt", dir: "asc" },
+        { field: "__name__", dir: "desc" },
+      ],
+      2,
+      0,
+      snap([T3, "s03"]),
+    );
+    expect(mixed.sql).toBe(
+      `SELECT id, data FROM sources WHERE tenant_id = $1 AND "user_id" = $2 AND (("created_at" > $3) OR ("created_at" = $3 AND (id COLLATE "C" < $4 OR id IS NULL))) ORDER BY "created_at" ASC NULLS FIRST, id COLLATE "C" DESC LIMIT 2`,
+    );
+    expect(mixed.params).toEqual(["T", "u1", at, "s03"]);
+  });
+
+  // The branch builder is shared: an ordinary multi-column keyset must compile
+  // byte-for-byte as it did before #312 (strings captured from main).
+  it("an ordinary multi-column keyset still ends in the snap-id tiebreak branch, unchanged", () => {
+    const where = [{ field: "userId", op: "==", value: "u1" }];
+    const withSnap = compileFlatQuery(
+      spec,
+      "T",
+      where,
+      [
+        { field: "createdAt", dir: "asc" },
+        { field: "name", dir: "desc" },
+      ],
+      2,
+      0,
+      { values: [T(3000), "dup"], snapId: "s04" },
+    );
+    expect(withSnap.sql).toBe(
+      `SELECT id, data FROM sources WHERE tenant_id = $1 AND "user_id" = $2 AND (("created_at" > $3) OR ("created_at" = $3 AND ("name" COLLATE "C" < $4 OR "name" IS NULL)) OR ("created_at" = $3 AND "name" = $4 AND id COLLATE "C" < $5)) ORDER BY "created_at" ASC NULLS FIRST, "name" COLLATE "C" DESC NULLS LAST, id COLLATE "C" DESC LIMIT 2`,
+    );
+    expect(withSnap.params).toEqual(["T", "u1", new Date(3000), "dup", "s04"]);
+
+    const values = compileFlatQuery(
+      spec,
+      "T",
+      where,
+      [
+        { field: "createdAt", dir: "desc" },
+        { field: "name", dir: "asc" },
+      ],
+      2,
+      0,
+      { values: [T(3000), "dup"], snapId: null },
+    );
+    expect(values.sql).toBe(
+      `SELECT id, data FROM sources WHERE tenant_id = $1 AND "user_id" = $2 AND ((("created_at" < $3 OR "created_at" IS NULL)) OR ("created_at" = $3 AND "name" COLLATE "C" > $4)) ORDER BY "created_at" DESC NULLS LAST, "name" COLLATE "C" ASC NULLS FIRST, id COLLATE "C" ASC LIMIT 2`,
+    );
+    expect(values.params).toEqual(["T", "u1", new Date(3000), "dup"]);
   });
 
   it("orders __name__ desc on the id column", () => {

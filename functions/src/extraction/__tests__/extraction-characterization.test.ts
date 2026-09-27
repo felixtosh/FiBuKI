@@ -646,15 +646,42 @@ describe("characterization: geminiParser.parseWithGemini", () => {
     expect(res.repairAmbiguousFields).toEqual(["address"]);
   });
 
-  // characterization: the input the heuristic is wrong for, pinned so the trade
-  // is visible. Prose carrying an escaped quote followed by a structural
-  // character AND something that reads as a JSON token is taken for the end of
-  // the string. It fails loudly rather than storing a corrupted value — and it
-  // only arises once some OTHER defect has forced the repair pass to run.
-  it("mis-reads an escaped quote followed by a comma and a number (#283)", async () => {
+  // #347 narrowed the lookahead after a comma to what can begin the next MEMBER
+  // (`"` `{` `[`). Prose after a comma starts with letters and digits that are
+  // also JSON token starts (`n`ull, `t`rue, `5`); reading those as a delimiter
+  // broke responses that repaired fine before #283.
+  it("keeps prose after an escaped quote and a comma as one string (#347)", async () => {
+    q(
+      '{"extracted": {"invoiceNumber": "bad\\zescape", ' +
+        '"address": "er sagte \\"hi\\", nach Wien"}}',
+    );
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.address).toBe('er sagte "hi", nach Wien');
+    expect(res.extracted.invoiceNumber).toBe("bad\\zescape");
+  });
+
+  it("keeps a number after an escaped quote and a comma in the string (#347)", async () => {
+    // The input #283 pinned as mis-read. #347 made it parse again, as it did
+    // before #283.
     q(
       '{"extracted": {"invoiceNumber": "bad\\zescape", ' +
         '"address": "he said \\"hi\\", 5 times"}}',
+    );
+    const res = await parseWithGemini(BUF, "application/pdf");
+    expect(res.extracted.address).toBe('he said "hi", 5 times');
+    // Nothing was guessed at in `address`: its quotes were read as escapes.
+    expect(res.repairAmbiguousFields).toEqual([]);
+  });
+
+  // characterization: the input the heuristic is still wrong for, pinned so
+  // the trade is visible. After a `:` every JSON token start still counts, so
+  // prose carrying an escaped quote, a colon and a token-like word is taken for
+  // the end of the string. It fails loudly rather than storing a corrupted
+  // value — and only once some OTHER defect has forced the repair pass to run.
+  it("mis-reads an escaped quote followed by a colon and a number (#283, #347)", async () => {
+    q(
+      '{"extracted": {"invoiceNumber": "bad\\zescape", ' +
+        '"address": "he said \\"hi\\": 5 times"}}',
     );
     await expect(parseWithGemini(BUF, "application/pdf")).rejects.toThrow(
       /JSON parse failed even after repair/,
