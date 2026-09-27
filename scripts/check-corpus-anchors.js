@@ -47,8 +47,12 @@ const SKIP_PREFIXES = ["functions/lib/", "lib/data/generated-"];
 const FORBIDDEN = [
   {
     name: "Paperless document id",
-    pattern: new RegExp(["paperless", "ap", "1\\d{3}"].join("-"), "i"),
-    fix: "use an obviously invented number (paperless-ap-0042) or describe the document",
+    // Any id of two or more digits, not only the 1NNN shape of the samples
+    // that happened to be quoted in tickets: the ids of a real instance are
+    // not confined to one range. A fixture that wants to look like a Paperless
+    // id trips this too, deliberately; name it for what it is instead.
+    pattern: new RegExp(["paperless", "ap", "\\d{2,}"].join("-"), "i"),
+    fix: "describe the document instead — f-vendor-invoice-11pct",
   },
   {
     name: "outgoing invoice number",
@@ -80,6 +84,11 @@ function trackedFiles() {
     .filter((file) => SCAN_EXTENSIONS.has(path.extname(file)))
     .filter((file) => !SKIP_PREFIXES.some((prefix) => file.startsWith(prefix)))
     .map((file) => path.join(ROOT, file));
+}
+
+/** Every rule a single line trips, by name. Exported for the guard's own tests. */
+function rulesTrippedBy(line) {
+  return FORBIDDEN.filter((rule) => rule.pattern.test(line)).map((rule) => rule.name);
 }
 
 function main() {
@@ -122,4 +131,6 @@ function main() {
   process.exit(1);
 }
 
-main();
+module.exports = { FORBIDDEN, rulesTrippedBy };
+
+if (require.main === module) main();
