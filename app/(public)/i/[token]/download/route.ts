@@ -23,6 +23,11 @@
  * - Missing invoice                  -> 404
  * - Cancelled invoice                -> 404
  * - Invoice without a rendered PDF   -> 404
+ * - Stored object unreadable         -> 404
+ *
+ * Every 404 carries the same body so a visitor cannot tell which check failed.
+ * The server log can: each branch logs its own reason (never the full token),
+ * which is what was missing when #372 had to be diagnosed from the outside.
  */
 
 export const dynamic = "force-dynamic";
@@ -37,33 +42,45 @@ interface RouteParams {
   params: Promise<{ token: string }>;
 }
 
-const NOT_FOUND = new NextResponse("Not found", { status: 404 });
+/**
+ * A fresh 404 per call. A Response body can be consumed once, so one shared
+ * module-level instance is not safe to hand to more than one request.
+ */
+function notFound(reason: string, token?: string, err?: unknown): NextResponse {
+  const tokenHint = token ? `${token.slice(0, 6)}…` : "(none)";
+  if (err !== undefined) {
+    console.error(`[i/download] 404 ${reason} token=${tokenHint}:`, err);
+  } else {
+    console.warn(`[i/download] 404 ${reason} token=${tokenHint}`);
+  }
+  return new NextResponse("Not found", { status: 404 });
+}
 
 export async function GET(_request: NextRequest, { params }: RouteParams) {
   const { token } = await params;
-  if (!token || token.length < 16) return NOT_FOUND;
+  if (!token || token.length < 16) return notFound("malformed-token");
 
   const db = getAdminDb();
 
   const shareSnap = await db.collection("invoiceShares").doc(token).get();
-  if (!shareSnap.exists) return NOT_FOUND;
+  if (!shareSnap.exists) return notFound("share-missing", token);
   const share = shareSnap.data() as InvoiceShare | undefined;
-  if (!share || share.revokedAt) return NOT_FOUND;
+  if (!share || share.revokedAt) return notFound("share-revoked", token);
 
   const invoiceSnap = await db.collection("invoices").doc(share.invoiceId).get();
-  if (!invoiceSnap.exists) return NOT_FOUND;
+  if (!invoiceSnap.exists) return notFound("invoice-missing", token);
   const invoice = {
     id: invoiceSnap.id,
     ...(invoiceSnap.data() as Omit<Invoice, "id">),
   } as Invoice;
-  if (invoice.status === "cancelled") return NOT_FOUND;
-  if (!invoice.fileId) return NOT_FOUND;
+  if (invoice.status === "cancelled") return notFound("invoice-cancelled", token);
+  if (!invoice.fileId) return notFound("invoice-without-file", token);
 
   const fileSnap = await db.collection("files").doc(invoice.fileId).get();
-  if (!fileSnap.exists) return NOT_FOUND;
+  if (!fileSnap.exists) return notFound("file-missing", token);
   const file = fileSnap.data() as TaxFile | undefined;
   const storagePath = file?.storagePath;
-  if (!file || !storagePath) return NOT_FOUND;
+  if (!file || !storagePath) return notFound("file-without-storage-path", token);
 
   try {
     const [data] = await getAdminBucket().file(storagePath).download();
@@ -89,7 +106,9 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       },
     });
   } catch (err) {
-    console.error("[i/download] failed to read invoice PDF:", err);
-    return NOT_FOUND;
+    // Covers both "object absent" and "blob store unreachable or unconfigured".
+    // The latter is what #372 was: fibuki-web had no storage configuration, so
+    // every read threw here and looked exactly like a missing share.
+    return notFound("storage-read-failed", token, err);
   }
 }
