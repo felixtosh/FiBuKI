@@ -1,3 +1,10 @@
+import {
+  deriveCoverage,
+  documentedAmountOf,
+  filePaymentTotal,
+  type Coverage,
+} from "@/functions/src/matching/coverage";
+
 /**
  * How many File Connections a row in a connect overlay already carries,
  * counting only the ones to something other than the item in hand.
@@ -42,4 +49,44 @@ export function isConnectCandidateFile(file: {
   isNotInvoice?: boolean | null;
 }): boolean {
   return !file.isNotInvoice;
+}
+
+/**
+ * The Remainder a Transaction row in the connect overlay prints (#243), or
+ * null when it prints none.
+ *
+ * Printed only when the pair is scored against the Remainder at all (some
+ * connected File explains part of the line and something is still open) and
+ * the Transaction is not yet documented (Coverage below COVERAGE_RATIO). A
+ * fully documented Transaction shows its File badge and no figure.
+ *
+ * Takes the Coverage the scorer returned with the Match. Only for a
+ * Transaction the scorer did not return is it derived here, and then through
+ * the same `deriveCoverage` the scorer uses, never a second subtraction.
+ */
+export function rowRemainder(
+  coverage: Pick<Coverage, "remainder" | "isCovered" | "againstRemainder"> | null | undefined
+): number | null {
+  if (!coverage) return null;
+  if (!coverage.againstRemainder || coverage.isCovered) return null;
+  return coverage.remainder;
+}
+
+/**
+ * Coverage for a Transaction the scorer did not return, from the payment
+ * totals of the Files connected to it (the File being matched left out, as the
+ * scorer leaves it out). Null when those Files explain nothing.
+ */
+export function coverageFromConnectedFiles(
+  transactionAmount: number,
+  connectedFiles: Array<{
+    extractedAmount?: number | null;
+    extractedTipAmount?: number | null;
+  }>
+): Coverage | null {
+  const documented = documentedAmountOf(
+    connectedFiles.map((f) => filePaymentTotal(f.extractedAmount, f.extractedTipAmount))
+  );
+  if (documented <= 0) return null;
+  return deriveCoverage(transactionAmount, documented);
 }

@@ -60,6 +60,11 @@ export interface ConnectResultRowProps {
   connectionCount?: number;
   /** What the Connections are to: a File row counts Transactions, and back. */
   connectionNoun?: "Transaction" | "File";
+  /**
+   * The Remainder still open on a Transaction row (#243), already formatted.
+   * Passed only while the connected Files do not document the Transaction.
+   */
+  remainder?: string;
   /** Click handler */
   onClick?: () => void;
   /** Whether the button is disabled */
@@ -89,6 +94,7 @@ export function ConnectResultRow({
   classificationBadges = [],
   connectionCount,
   connectionNoun = "Transaction",
+  remainder,
   onClick,
   disabled = false,
 }: ConnectResultRowProps) {
@@ -171,6 +177,11 @@ export function ConnectResultRow({
           )}
           {amount && meta && <span>·</span>}
           {meta && <span>{meta}</span>}
+          {showConnectionCount && remainder && (
+            <span className="tabular-nums" data-testid="row-remainder">
+              Remainder {remainder}
+            </span>
+          )}
           {labelBadge && (
             <Badge variant="secondary" className="text-xs py-0 h-4 text-green-600">
               {labelBadge}

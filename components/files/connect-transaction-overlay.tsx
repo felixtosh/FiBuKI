@@ -17,6 +17,12 @@ import { ContentOverlay } from "@/components/ui/content-overlay";
 import { Transaction } from "@/types/transaction";
 import { TaxFile, TransactionSuggestion } from "@/types/file";
 import { useTransactions } from "@/hooks/use-transactions";
+import { useFiles } from "@/hooks/use-files";
+import {
+  coverageFromConnectedFiles,
+  otherConnectionCount,
+  rowRemainder,
+} from "@/lib/matching/connection-count";
 import { useTransactionMatching } from "@/hooks/use-transaction-matching";
 import { cn, toDateSafe } from "@/lib/utils";
 import {
@@ -53,6 +59,16 @@ export function ConnectTransactionOverlay({
 
   // Get all transactions for display (server provides scoring)
   const { transactions, loading: transactionsLoading } = useTransactions();
+
+  // The Files already on each Transaction, for the rows the scorer did not
+  // return a Coverage for (#243). Keyed by id; the File in hand is skipped at
+  // lookup, as the scorer skips it.
+  const { files: allFiles } = useFiles();
+  const filesById = useMemo(() => {
+    const map = new Map<string, TaxFile>();
+    for (const f of allFiles) map.set(f.id, f);
+    return map;
+  }, [allFiles]);
 
   // Memoize the fileInfo object to prevent unnecessary re-renders
   const extractedDateValue = toDateSafe(file?.extractedDate);
@@ -170,6 +186,12 @@ export function ConnectTransactionOverlay({
     return map;
   }, [serverMatches, suggestions]);
 
+  // Transactions the scorer returned this time, whose Coverage it reported.
+  const scoredIds = useMemo(
+    () => new Set(serverMatches.map((m) => m.transactionId)),
+    [serverMatches]
+  );
+
   // Filter and sort transactions: when searching, only show matches
   const filteredTransactions = useMemo(() => {
     const trimmedSearch = search.trim().toLowerCase();
@@ -272,6 +294,28 @@ export function ConnectTransactionOverlay({
   const isTransactionConnected = (transactionId: string) =>
     connectedTransactionIds.includes(transactionId);
 
+  /**
+   * The Remainder this row prints (#243): the scorer's own Coverage when it
+   * returned one for the pair, otherwise the same derivation over the Files on
+   * the Transaction. Null for a Transaction that is documented or holds none.
+   */
+  const remainderFor = (
+    transaction: Transaction,
+    matchResult: TransactionMatchResult | undefined
+  ): string | undefined => {
+    let coverage = matchResult?.coverage ?? null;
+    // A stored suggestion standing in for the server carries no Coverage.
+    if (!matchResult || !scoredIds.has(transaction.id)) {
+      const connected = (transaction.fileIds ?? [])
+        .filter((id) => id !== file?.id)
+        .map((id) => filesById.get(id))
+        .filter((f): f is TaxFile => f !== undefined);
+      coverage = coverageFromConnectedFiles(transaction.amount, connected);
+    }
+    const remainder = rowRemainder(coverage);
+    return remainder == null ? undefined : formatAmount(remainder, transaction.currency);
+  };
+
   // Subtitle
   const subtitle = file ? (
     <>
@@ -357,6 +401,12 @@ export function ConnectTransactionOverlay({
                         subtitle={transaction.name && transaction.partner ? transaction.name : undefined}
                         isSelected={isSelected}
                         isConnected={isConnected}
+                        // Files already on this Transaction, and what is still
+                        // open on it (#243). Never hidden or disabled for it:
+                        // a split part-invoice belongs exactly here.
+                        connectionCount={otherConnectionCount(transaction.fileIds, file?.id)}
+                        connectionNoun="File"
+                        remainder={remainderFor(transaction, matchResult)}
                         isHighlighted={isSuggested}
                         highlightVariant="suggestion"
                         confidence={matchResult?.confidence}
