@@ -14,7 +14,8 @@
  *   KEY=... CUT=2026-07-29T00:00:00Z node scripts/drift-check.mjs
  */
 
-import admin from "firebase-admin";
+import { cert, initializeApp } from "firebase-admin/app";
+import { getFirestore } from "firebase-admin/firestore";
 import { readFileSync } from "node:fs";
 
 const keyPath = process.env.KEY;
@@ -23,10 +24,10 @@ if (!keyPath) {
   process.exit(1);
 }
 
-admin.initializeApp({
-  credential: admin.credential.cert(JSON.parse(readFileSync(keyPath, "utf8"))),
+initializeApp({
+  credential: cert(JSON.parse(readFileSync(keyPath, "utf8"))),
 });
-const db = admin.firestore();
+const db = getFirestore();
 
 // Default matches the newest auth session found in the migrated copy, which is the
 // best available marker for when the export ran.
