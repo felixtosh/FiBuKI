@@ -1,5 +1,6 @@
 "use client";
 
+import { toDateSafe } from "@/lib/utils";
 import { createContext, useContext, useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useChat as useVercelChat } from "@ai-sdk/react";
@@ -678,7 +679,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
 
       // Ignore stale notifications from older runs of the same entity.
       const triggeredAt = wandTriggeredAtRef.current.get(entityId);
-      const createdAt = notification.createdAt?.toDate?.().getTime();
+      const createdAt = toDateSafe(notification.createdAt)?.getTime();
       if (triggeredAt && createdAt && createdAt < triggeredAt - 5000) continue;
 
       const sessionKey = `${entityId}:${sessionId}`;
@@ -708,7 +709,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
       if (entityId && activeWandTargets.has(entityId)) {
         // Ignore stale completed notifications from older runs of the same entity.
         const triggeredAt = wandTriggeredAtRef.current.get(entityId);
-        const createdAt = notification.createdAt?.toDate?.().getTime();
+        const createdAt = toDateSafe(notification.createdAt)?.getTime();
         if (triggeredAt && createdAt && createdAt < triggeredAt - 5000) continue;
 
         wandTriggeredAtRef.current.delete(entityId);

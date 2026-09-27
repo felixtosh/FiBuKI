@@ -262,22 +262,36 @@ export function readDayMonthEvidence(values: string[]): {
 }
 
 /**
- * The parser that reads the same value shape in the opposite order, if the
- * set holds one — how `us` and `eu-slash` relate.
+ * The parser that reads the column in the opposite day/month order, if the
+ * set holds one that can — how `us` and `eu-slash` relate.
+ *
+ * Matching on the parser's own pattern alone offered a format that could not
+ * read the column: `dash-dmy` picked by hand for a two-digit-year column
+ * suggested `dash-mdy`, which reads four-digit years only (#305). So every
+ * opposite-order parser is scored against the values themselves: the one that
+ * reads the most wins, and a column none of them reads gets no suggestion — a
+ * missing suggestion is honest, a broken one is not. On a tie the table order
+ * decides, as it does in detection.
  */
-function oppositeOrderParser(parser: DateParser): DateParser | null {
+function oppositeOrderParser(parser: DateParser, values: string[]): DateParser | null {
   const order = dayMonthOrderOfFormat(parser.format);
   if (!order) return null;
 
-  return (
-    DATE_PARSERS.find(
-      (candidate) =>
-        candidate.id !== parser.id &&
-        candidate.pattern.source === parser.pattern.source &&
-        dayMonthOrderOfFormat(candidate.format) !== null &&
-        dayMonthOrderOfFormat(candidate.format) !== order
-    ) ?? null
-  );
+  let best: DateParser | null = null;
+  let bestScore = 0;
+
+  for (const candidate of DATE_PARSERS) {
+    const candidateOrder = dayMonthOrderOfFormat(candidate.format);
+    if (!candidateOrder || candidateOrder === order) continue;
+
+    const score = scoreParser(candidate, values);
+    if (score > bestScore) {
+      bestScore = score;
+      best = candidate;
+    }
+  }
+
+  return best;
 }
 
 /** Whether a parser reads one reading of a value as a plausible date. */
@@ -355,7 +369,7 @@ export function detectDateFormat(samples: string[]): string | null {
   if (evidence === "none" || evidence === "conflict") return null;
 
   const resolved = leaders.find((p) => dayMonthOrderOfFormat(p.format) === evidence);
-  return resolved?.id ?? oppositeOrderParser(winner)?.id ?? null;
+  return resolved?.id ?? oppositeOrderParser(winner, validSamples)?.id ?? null;
 }
 
 /**
@@ -405,7 +419,8 @@ export function findDateColumnConflict(
   return {
     evidence,
     expected,
-    suggestedParserId: evidence === "conflict" ? null : oppositeOrderParser(parser)?.id ?? null,
+    suggestedParserId:
+      evidence === "conflict" ? null : oppositeOrderParser(parser, values)?.id ?? null,
     offendingValue,
   };
 }

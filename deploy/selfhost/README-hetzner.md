@@ -65,7 +65,7 @@ Creates a `cx32` in `fsn1` (Falkenstein), a Cloud Firewall allowing only
 unattended security upgrades, and Hetzner server backups.
 
 8 GB is the floor, not headroom: Chromium sits around 400 MB resident plus 50 to
-100 MB per concurrent PDF page, on top of Postgres, MinIO, Next, and the API.
+100 MB per concurrent PDF page, on top of Postgres, SeaweedFS, Next, and the API.
 
 The firewall is the real boundary. Docker publishes ports by writing iptables
 rules that sit ahead of `ufw`, so a host firewall cannot be relied on to contain a
@@ -155,10 +155,12 @@ curl -fsSI https://fibuki.com | head -1
 curl -fsS  https://new-api.fibuki.com/healthz    # expect 404 — masked on purpose
 ```
 
-Confirm nothing else is exposed. Only 22, 80, 443 should answer:
+Confirm nothing else is exposed. Only 22, 80, 443 should answer. The list covers
+SeaweedFS (8080 volume, 8333 S3, 8888 filer, 9333 master) and the retired MinIO
+ports (9000, 9001), in case its container outlived the cutover:
 
 ```bash
-nmap -Pn -p 22,80,443,3000,5432,8788,9000,9001 fibuki.com
+nmap -Pn -p 22,80,443,3000,5432,8080,8333,8788,8888,9000,9001,9333 fibuki.com
 ```
 
 ## 6b. Prove mail works, before you need it
@@ -268,8 +270,13 @@ identical name set). To wipe only the application data:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml down
-docker volume rm selfhost_fibuki-pgdata selfhost_fibuki-miniodata
+docker volume rm selfhost_fibuki-pgdata selfhost_fibuki-seaweeddata
 ```
+
+`fibuki-seaweeddata` is the live blob store. Leave `selfhost_fibuki-miniodata`
+alone: it is not the current store but the pre-migration rollback from the
+MinIO to SeaweedFS move (see [`README.md`](README.md)), and removing it belongs
+to retiring MinIO, not to a data reset.
 
 ## Continuous deploy from main
 

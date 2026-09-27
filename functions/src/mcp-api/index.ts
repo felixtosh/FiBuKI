@@ -6,7 +6,6 @@
  */
 
 import { onRequest } from "firebase-functions/v2/https";
-import { defineSecret } from "firebase-functions/params";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { validateApiKey } from "../api-keys";
 import { handleToolInternal } from "./handlers";
@@ -15,9 +14,6 @@ import { PLANS } from "../billing/config";
 import type { PlanId, RateLimitConfig } from "../billing/config";
 
 const db = getFirestore();
-
-/** retry_file_extraction runs extraction inline, so the dispatcher carries the key. */
-const anthropicApiKey = defineSecret("ANTHROPIC_API_KEY");
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -91,8 +87,6 @@ export const mcpApi = onRequest(
     region: "europe-west1",
     memory: "512MiB",
     timeoutSeconds: 120,
-    // retry_file_extraction runs extraction inline (fork #74).
-    secrets: [anthropicApiKey],
   },
   async (req, res) => {
     if (req.method === "OPTIONS") {

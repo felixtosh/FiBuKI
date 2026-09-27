@@ -406,6 +406,10 @@ export class DocumentSnapshot {
     return this._exists ? this._data : undefined;
   }
   get(fieldPath: string): unknown {
+    // The document-id sentinel is the doc id, not a field — as the server
+    // shim's DocSnapshot.get resolves it, so a future startAfter(snap) on
+    // orderBy("__name__") carries a value instead of undefined.
+    if (fieldPath === "__name__") return this.id;
     return deepGet(this._data, fieldPath);
   }
   get metadata() {

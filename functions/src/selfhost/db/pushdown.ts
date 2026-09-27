@@ -237,7 +237,11 @@ export function compileFlatQuery(
         );
         branches.push(clauses.join(" AND "));
       }
-      if (cursor.snapId !== null) {
+      // The snap-id tiebreak branch, unless the cursor already pins the id: it
+      // would tie on `id = $n` and then compare id against the same doc id,
+      // which is never true (same condition as the ORDER BY tiebreak above).
+      const idPinned = orders.slice(0, n).some((o) => o.field === DOC_ID);
+      if (cursor.snapId !== null && !idPinned) {
         const clauses: string[] = [];
         for (let j = 0; j < n; j++) clauses.push(`${colOf(orders[j].field)} = ${ph[j]}`);
         const lastDir = orders[orders.length - 1].dir;

@@ -235,6 +235,42 @@ describe("bmd tip refusal (#194): what must not change", () => {
   });
 });
 
+describe("bmd tip refusal (#326): the lanes that bypass the reconcile", () => {
+  it("refuses an impossible tip on income the ladder defaults to 20%", () => {
+    // Since #317 the ladder stops on an impossible tip itself, but only after
+    // the document has shown VAT data. A sale whose document shows none never
+    // reaches that check: it resolves through the D1 defaulted-20 lane as
+    // `groups`, and only the export's own second `tip.impossible` check keeps
+    // it from being booked with the Gesamt in the Trinkgeld field.
+    const sale: FileForExport = {
+      id: "f-sale",
+      fileName: "ausgangsrechnung.pdf",
+      extractedAmount: 5080,
+      extractedTipAmount: 5400,
+    };
+    const income: TransactionForExport = {
+      id: "t-sale",
+      date: DATE,
+      amount: 5400,
+      fileIds: ["f-sale"],
+    };
+
+    const { csv, skipped } = run(income, sale);
+
+    expect(bookedRows(csv)).toEqual([]);
+    expect(skipped).toEqual([
+      {
+        transactionId: "t-sale",
+        fileId: "f-sale",
+        fileName: "ausgangsrechnung.pdf",
+        reason:
+          "tip (54,00) is not less than the bank amount (54,00); " +
+          "correct the tip on this document and re-run",
+      },
+    ]);
+  });
+});
+
 /* ------------------------------------------------------------------ */
 /* The run report, end to end                                          */
 /* ------------------------------------------------------------------ */

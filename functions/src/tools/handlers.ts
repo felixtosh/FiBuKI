@@ -45,7 +45,6 @@ import {
   isTransactionDismissedForFile,
   type DismissibleFileState,
 } from "../files/dismissSuggestionOps";
-import { defineSecret } from "firebase-functions/params";
 import {
   RetryExtractionError,
   retryExtractionForFile,
@@ -138,13 +137,6 @@ export async function startAfterCursor(
 
   return query.startAfter(cursorSnap);
 }
-
-/**
- * Extraction is the one tool on this surface that spends an AI call directly,
- * so the two functions that dispatch tools — mcpApi and mcpSse — declare this
- * secret. On self-host the params shim reads it from the environment.
- */
-const anthropicApiKey = defineSecret("ANTHROPIC_API_KEY");
 
 /**
  * Check if a tool requires a feature the user's plan doesn't have.
@@ -1029,9 +1021,6 @@ export async function unmarkFileAsNotInvoice(userId: string, args: Record<string
  *
  * Extraction runs inline here rather than being queued: the only trigger that
  * re-runs it fires on undelete, so there is nothing to hand the work to.
- * mcpApi and mcpSse declare ANTHROPIC_API_KEY for that inline run; since #170
- * retired the vision-claude extraction path nothing reads it, so the secret is
- * vestigial until the plumbing is unwired.
  *
  * The refusal codes are surfaced as message prefixes, matching the
  * PAIR_REJECTED convention the connect handler uses: an agent working a list
@@ -1051,7 +1040,6 @@ export async function retryFileExtractionTool(userId: string, args: Record<strin
       userId,
       force: args.force === true,
       overwriteCorrections: args.overwriteCorrections === true,
-      anthropicApiKey: anthropicApiKey.value(),
     });
 
     console.log(`[retryFileExtraction] Re-extracted file ${fileId}`, { userId, via: "tools" });
@@ -2561,48 +2549,23 @@ export async function scoreFileTransactionMatch(userId: string, args: Record<str
     throw new Error("Transaction not found");
   }
 
-  // Use the shared scoring logic
-  const { scoreTransaction, formatScoreBreakdown } = await import("../matching/transactionScoring");
+  // The same input assembly the matching trigger and the connect dialog use
+  // (#308, #327): the tip (#217), the Remainder (#239), the bank-stated
+  // original amount and raw row (#112, #137), the precision-search hint and
+  // the Partner's aliases, bands and weights all reach this scorer too.
+  const {
+    formatScoreBreakdown,
+    loadPartnerScoringContext,
+    scoreFileAgainstTransactions,
+  } = await import("../matching/transactionScoring");
+  const { loadDocumentedAmounts } = await import("../matching/documentedAmounts");
 
   const fileData = fileDoc.data()!;
-  const txData = txDoc.data()!;
-
-  const result = scoreTransaction(
-    {
-      extractedAmount: fileData.extractedAmount,
-      // #217/#172: the bank was charged the total PLUS the Trinkgeld, so a
-      // scorer that cannot see the tip reads the restaurant Beleg as an
-      // amount mismatch — the answer the UI's scorer stopped giving. Both
-      // surfaces have to score the same file the same way.
-      extractedTipAmount: fileData.extractedTipAmount,
-      extractedCurrency: fileData.extractedCurrency,
-      extractedDate: fileData.extractedDate,
-      extractedPartner: fileData.extractedPartner,
-      extractedIban: fileData.extractedIban,
-      extractedText: fileData.extractedText,
-      // #137: the needle for the invoice-number match source. Both surfaces
-      // have to score the same file the same way.
-      extractedInvoiceNumber: fileData.extractedInvoiceNumber,
-      partnerId: fileData.partnerId,
-      documentType: fileData.documentType,
-    },
-    {
-      id: transactionId as string,
-      amount: txData.amount,
-      date: txData.date,
-      currency: txData.currency,
-      name: txData.name,
-      // #137: part of the text the invoice number is searched for in.
-      description: txData.description,
-      partner: txData.partner,
-      partnerName: txData.partnerName,
-      partnerId: txData.partnerId,
-      partnerIban: txData.partnerIban,
-      reference: txData.reference,
-      documentationState: txData.documentationState,
-    },
-    []
-  );
+  const [partner, documentedAmounts] = await Promise.all([
+    loadPartnerScoringContext(db, fileData.partnerId),
+    loadDocumentedAmounts([txDoc.id], fileDoc.id),
+  ]);
+  const [result] = scoreFileAgainstTransactions(fileData, [txDoc], partner, documentedAmounts);
 
   return {
     fileId,

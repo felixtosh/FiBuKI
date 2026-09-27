@@ -850,12 +850,31 @@ function runParitySuite(
       const page2 = await base.limit(2).startAfter(page1.docs[1]).get();
       expect(page2.docs.map((doc: any) => doc.id)).toEqual(["d3"]);
 
-      // No descending case here on purpose: real Firestore answers
-      // orderBy("__name__", "desc") with FAILED_PRECONDITION ("does not
-      // support descending key scans"), so asserting it in the PARITY suite
-      // would pin the shim to something production cannot do. The shim's own
-      // descending keyset is covered in db/pushdown.test.ts instead.
     });
+
+    // Real Firestore refuses a descending PURE key scan (ordered by __name__
+    // desc alone, filtered on nothing but __name__) with FAILED_PRECONDITION.
+    // Filter on a field and it is an index scan, which it answers.
+    // firebase-admin retries the refusal for ~7s before rejecting, hence the
+    // timeout and only the two shapes either side of the boundary.
+    it('orderBy("__name__", "desc") is refused as a pure key scan, answered behind a field filter', async () => {
+      const col = freshCol("namedesc");
+      await seed(col, { d1: { userId: "u1" }, d2: { userId: "u1" }, d3: { userId: "u2" } });
+      const refused = [
+        col.orderBy("__name__", "desc").limit(2),
+        col.where("__name__", "in", ["d1", "d2"]).orderBy("__name__", "desc"),
+      ];
+      for (const q of refused) {
+        await expect(q.get()).rejects.toMatchObject({
+          code: 9,
+          message: expect.stringContaining("does not support descending key scans"),
+        });
+      }
+
+      const filtered = await col.where("userId", "==", "u1").orderBy("__name__", "desc").get();
+      expect(idsOf(filtered)).toEqual(["d2", "d1"]);
+      expect(idsOf(await col.orderBy("__name__", "asc").get())).toEqual(["d1", "d2", "d3"]);
+    }, 30_000);
 
     // The app never calls .settings(), so firebase-admin's default rejection
     // of undefined values applies to every write path with an optional TS

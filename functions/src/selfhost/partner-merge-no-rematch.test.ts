@@ -4,7 +4,7 @@
  * The real trigger and the real merge, side by side on the shim: merging two
  * Partners writes both of them — the survivor gains the loser's IBAN, the loser
  * becomes a Merged Partner — and each write reaches `onPartnerUpdate`, whose
- * job is to re-evaluate up to 200 Files whenever identifying data changes. A
+ * job is to re-evaluate every affected File whenever identifying data changes. A
  * Merge deliberately does not re-run the Match (#262, ADR-0005), so neither
  * write may set that off.
  *

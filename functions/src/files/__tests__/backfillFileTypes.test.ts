@@ -8,6 +8,9 @@
  * #281: only a magic-number match is persisted. Bytes the sniffer cannot name
  * keep no `fileType` and are counted separately, because the sniffer's
  * image/jpeg fallback is a guess and a persisted guess cannot be found again.
+ *
+ * #282: the same pass sweeps `receipts`, which carry their own `fileType` and
+ * were never repaired.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -51,11 +54,26 @@ function call() {
       updated: number;
       skipped: number;
       unidentified: number;
+      byCollection: Record<"files" | "receipts", { updated: number; skipped: number; unidentified: number }>;
     }>;
   }).run({ data: {}, auth: { uid: userId } } as never);
 }
 
 const file = (id: string) => store.getDoc("files", id) as Record<string, unknown>;
+const receipt = (id: string) => store.getDoc("receipts", id) as Record<string, unknown>;
+
+/** The fields hooks/use-file-upload.ts writes for a receipt, minus fileType. */
+function createTestReceipt(overrides: Record<string, unknown> = {}) {
+  return {
+    transactionId: "tx-1",
+    fileName: "receipt.pdf",
+    fileSize: 1234,
+    storagePath: "receipts/user-1/r.pdf",
+    downloadUrl: "https://example.test/r.pdf",
+    userId,
+    ...overrides,
+  };
+}
 
 const PDF_BYTES = Buffer.concat([Buffer.from("%PDF-1.4\n"), Buffer.alloc(20)]);
 const PNG_BYTES = Buffer.concat([Buffer.from([0x89]), Buffer.from("PNG"), Buffer.alloc(20)]);
@@ -248,5 +266,118 @@ describe("backfillFileTypesCallable", () => {
       .queryDocs("files", [{ field: "userId", op: "==", value: userId }])
       .filter((d) => !d.data.fileType);
     expect(remaining.length).toBe(0);
+  });
+});
+
+describe("backfillFileTypesCallable over receipts (#282)", () => {
+  it("sniffs a receipt missing fileType from its bytes", async () => {
+    store.setDoc("receipts", "r-pdf", createTestReceipt({ storagePath: "receipts/user-1/a.pdf" }));
+    blobs.set("receipts/user-1/a.pdf", PDF_BYTES);
+
+    const result = await call();
+
+    expect(result.updated).toBe(1);
+    expect(result.byCollection.receipts).toEqual({ updated: 1, skipped: 0, unidentified: 0 });
+    expect(result.byCollection.files).toEqual({ updated: 0, skipped: 0, unidentified: 0 });
+    expect(receipt("r-pdf").fileType).toBe("application/pdf");
+  });
+
+  it("leaves a receipt that already has a fileType alone", async () => {
+    store.setDoc(
+      "receipts",
+      "r-ok",
+      createTestReceipt({ storagePath: "receipts/user-1/a.pdf", fileType: "image/png" })
+    );
+    blobs.set("receipts/user-1/a.pdf", PDF_BYTES);
+
+    const result = await call();
+
+    expect(result.byCollection.receipts).toEqual({ updated: 0, skipped: 1, unidentified: 0 });
+    expect(receipt("r-ok").fileType).toBe("image/png");
+  });
+
+  it("treats the empty string a browser writes for an unknown type as missing", async () => {
+    store.setDoc(
+      "receipts",
+      "r-empty",
+      createTestReceipt({ storagePath: "receipts/user-1/b.png", fileType: "" })
+    );
+    blobs.set("receipts/user-1/b.png", PNG_BYTES);
+
+    const result = await call();
+
+    expect(result.byCollection.receipts.updated).toBe(1);
+    expect(receipt("r-empty").fileType).toBe("image/png");
+  });
+
+  it("a receipt whose storage object is gone does not abort the pass for the rest", async () => {
+    store.setDoc("receipts", "r-gone", createTestReceipt({ storagePath: "receipts/user-1/gone.pdf" }));
+    store.setDoc("receipts", "r-ok", createTestReceipt({ storagePath: "receipts/user-1/a.pdf" }));
+    blobs.set("receipts/user-1/a.pdf", PDF_BYTES);
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const result = await call();
+    warn.mockRestore();
+
+    expect(result.success).toBe(true);
+    expect(result.byCollection.receipts).toEqual({ updated: 1, skipped: 1, unidentified: 0 });
+    expect(receipt("r-ok").fileType).toBe("application/pdf");
+    expect(receipt("r-gone").fileType).toBeUndefined();
+  });
+
+  it("does not stamp a guess onto a receipt whose bytes match no magic number (#281)", async () => {
+    store.setDoc("receipts", "r-docx", createTestReceipt({ storagePath: "receipts/user-1/c.docx" }));
+    blobs.set("receipts/user-1/c.docx", DOCX_BYTES);
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const result = await call();
+    warn.mockRestore();
+
+    expect(result.byCollection.receipts).toEqual({ updated: 0, skipped: 0, unidentified: 1 });
+    expect(receipt("r-docx").fileType).toBeUndefined();
+  });
+
+  it("only touches the calling user's own receipts", async () => {
+    store.setDoc(
+      "receipts",
+      "r-other",
+      createTestReceipt({ userId: "someone-else", storagePath: "receipts/other/a.pdf" })
+    );
+    blobs.set("receipts/other/a.pdf", PDF_BYTES);
+
+    const result = await call();
+
+    expect(result.byCollection.receipts.updated).toBe(0);
+    expect(receipt("r-other").fileType).toBeUndefined();
+  });
+
+  it("reports each collection's counts and sums them at the top level", async () => {
+    store.setDoc(
+      "files",
+      "f-pdf",
+      createTestFile({ userId, storagePath: "files/user-1/a.pdf", fileType: undefined })
+    );
+    store.setDoc("receipts", "r-png", createTestReceipt({ storagePath: "receipts/user-1/b.png" }));
+    store.setDoc("receipts", "r-docx", createTestReceipt({ storagePath: "receipts/user-1/c.docx" }));
+    blobs.set("files/user-1/a.pdf", PDF_BYTES);
+    blobs.set("receipts/user-1/b.png", PNG_BYTES);
+    blobs.set("receipts/user-1/c.docx", DOCX_BYTES);
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const result = await call();
+    warn.mockRestore();
+
+    expect(result.byCollection.files).toEqual({ updated: 1, skipped: 0, unidentified: 0 });
+    expect(result.byCollection.receipts).toEqual({ updated: 1, skipped: 0, unidentified: 1 });
+    expect(result.updated).toBe(2);
+    expect(result.unidentified).toBe(1);
+
+    // After the pass, the only receipt still missing a fileType is the one
+    // left absent on purpose.
+    const remaining = store
+      .queryDocs("receipts", [{ field: "userId", op: "==", value: userId }])
+      .filter((d) => !d.data.fileType)
+      .map((d) => d.id);
+    expect(remaining).toEqual(["r-docx"]);
   });
 });

@@ -171,7 +171,9 @@ const TRANSACTION_FIELDS: FieldDefinition[] = [
 // pins rootDir: "src" and cannot reach the app tree. date-parsers.test.ts
 // fails the build if the two drift: an id missing here is a format the AI can
 // never suggest, and one that lingers here is a format it can suggest and no
-// parser can read (#167, #303).
+// parser can read (#167, #303). The broker-CSV matcher
+// (investments/matchInvestmentColumns.ts) uses this same list rather than a
+// copy of its own (#304).
 export const DATE_FORMATS = [
   "iso-datetime", "iso-datetime-t", "iso",
   "de", "de-mdy", "de-short", "de-mdy-short",
