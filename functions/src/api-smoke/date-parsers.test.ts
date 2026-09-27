@@ -289,6 +289,48 @@ describe("findDateColumnConflict", () => {
   it("passes an unknown parser id rather than throwing", () => {
     expect(findDateColumnConflict(["03/07/2026"], "no-such-parser")).toBeNull();
   });
+
+  // #305: the suggestion used to be the parser sharing the chosen one's
+  // pattern, so a four-digit-year format picked by hand for a two-digit-year
+  // column suggested another four-digit-year format that reads none of it.
+  it("suggests the two-digit dashed sibling for a two-digit column picked as dash-dmy", () => {
+    const conflict = findDateColumnConflict(["01-03-26", "01-15-26"], "dash-dmy");
+
+    expect(conflict?.evidence).toBe("month-first");
+    expect(conflict?.suggestedParserId).toBe("dash-mdy-short");
+    expect(parseDate("01-15-26", conflict!.suggestedParserId!)).not.toBeNull();
+  });
+
+  it("suggests the two-digit slash sibling for a two-digit column picked as eu-slash", () => {
+    const conflict = findDateColumnConflict(["07/03/26", "07/31/26"], "eu-slash");
+    expect(conflict?.suggestedParserId).toBe("us-short");
+
+    const reverse = findDateColumnConflict(["03/07/26", "31/07/26"], "us");
+    expect(reverse?.suggestedParserId).toBe("eu-slash-short");
+  });
+
+  it("suggests nothing when no opposite-order format reads the column", () => {
+    // Month-first by the evidence, but the year is out of every parser's
+    // range, so any format named here would fail if taken.
+    const conflict = findDateColumnConflict(["01-15-1850"], "dash-dmy");
+
+    expect(conflict?.evidence).toBe("month-first");
+    expect(conflict?.suggestedParserId).toBeNull();
+  });
+
+  it("only ever suggests a format that parses the column", () => {
+    const columns = [
+      ["01-15-26"], ["15-01-26"], ["01-15-2026"], ["15-01-2026"],
+      ["07/31/26"], ["31/07/26"], ["07/31/2026"], ["31/07/2026"],
+      ["07.31.26"], ["31.07.26"], ["07.31.2026"], ["31.07.2026"],
+    ];
+    for (const column of columns) {
+      for (const parser of DATE_PARSERS) {
+        const suggested = findDateColumnConflict(column, parser.id)?.suggestedParserId;
+        if (suggested) expect(parseDate(column[0], suggested), `${parser.id} on ${column[0]}`).not.toBeNull();
+      }
+    }
+  });
 });
 
 describe("parseDate still reads what detection selected", () => {
