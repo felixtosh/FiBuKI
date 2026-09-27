@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from "react";
 import { format } from "date-fns";
 import { fetchWithAuth } from "@/lib/api/fetch-with-auth";
 import {
@@ -49,6 +49,14 @@ import {
 } from "@/hooks/use-unified-file-search";
 import { usePartners } from "@/hooks/use-partners";
 import { useEmailIntegrations } from "@/hooks/use-email-integrations";
+import {
+  attachableMailboxes,
+  filterByMailbox,
+  mailboxLabel,
+  mailProviderLabel,
+  mailTabState,
+  showMailboxFilter,
+} from "@/lib/mail/mailbox-selection";
 import { useGmailSearchQueries, TypedSuggestion, SuggestionType } from "@/hooks/use-gmail-search-queries";
 import { useAttachmentScoring } from "@/hooks/use-attachment-scoring";
 import { addEmailDomainToPartner } from "@/lib/operations";
@@ -254,19 +262,22 @@ export function ConnectFileOverlay({
   // Hooks
   const { partners } = usePartners();
   const { scoreAttachments } = useAttachmentScoring();
-  const { integrations, hasGmailIntegration } = useEmailIntegrations();
+  const { integrations } = useEmailIntegrations();
   const { status: browserExtensionStatus } = useBrowserExtensionStatus();
-  const gmailIntegrations = useMemo(
-    () => integrations.filter((i) => i.provider === "gmail"),
-    [integrations]
-  );
+  // Every connected mailbox, whatever its Mail Provider (#245). Results from
+  // all of them land in one list per tab, each row naming its mailbox.
+  const mailIntegrations = useMemo(() => attachableMailboxes(integrations), [integrations]);
+  const hasMailIntegration = mailIntegrations.length > 0;
+  const mailState = mailTabState(mailIntegrations);
+  const [mailboxFilterChoice, setMailboxFilter] = useState<string>("all");
+  // A mailbox that has since gone away falls back to all of them.
+  const mailboxFilter = mailIntegrations.some((m) => m.id === mailboxFilterChoice)
+    ? mailboxFilterChoice
+    : "all";
   const integrationLabels = useMemo(() => {
     const map = new Map<string, string>();
     for (const integration of integrations) {
-      map.set(
-        integration.id,
-        integration.displayName || integration.email || integration.provider
-      );
+      map.set(integration.id, mailboxLabel(integration));
     }
     return map;
   }, [integrations]);
@@ -793,7 +804,7 @@ export function ConnectFileOverlay({
     authIssue?: { integrationId: string; code: string; message: string };
   }> => {
     try {
-      const response = await fetchWithAuth("/api/gmail/search", {
+      const response = await fetchWithAuth("/api/mail/search", {
         method: "POST",
         body: JSON.stringify({
           integrationId: integration.id,
@@ -823,7 +834,7 @@ export function ConnectFileOverlay({
             authIssue: {
               integrationId: integration.id,
               code: errorData.code,
-              message: errorData.error || "Reconnect Gmail to search this inbox.",
+              message: errorData.error || "Reconnect this mailbox to search it.",
             },
           };
         }
@@ -897,7 +908,7 @@ export function ConnectFileOverlay({
       searchLocalFiles(primaryQuery);
     }
 
-    if (!hasGmailIntegration || gmailIntegrations.length === 0 || allQueries.length === 0) {
+    if (!hasMailIntegration || mailIntegrations.length === 0 || allQueries.length === 0) {
       setStrategyGmailMessageIds(new Set());
       setStrategyEmailMessageIds(new Set());
       setStrategyQueryByMessageId(new Map());
@@ -914,8 +925,8 @@ export function ConnectFileOverlay({
 
       for (const entry of allQueries) {
         const targetIntegrations = entry.integrationId
-          ? gmailIntegrations.filter((integration) => integration.id === entry.integrationId)
-          : gmailIntegrations;
+          ? mailIntegrations.filter((integration) => integration.id === entry.integrationId)
+          : mailIntegrations;
 
         for (const integration of targetIntegrations) {
           const shouldSearchAttachments =
@@ -983,8 +994,8 @@ export function ConnectFileOverlay({
     partner?.emailDomains,
     simpleSearch,
     searchLocalFiles,
-    hasGmailIntegration,
-    gmailIntegrations,
+    hasMailIntegration,
+    mailIntegrations,
     searchMail,
   ]);
 
@@ -1048,7 +1059,7 @@ export function ConnectFileOverlay({
       searchLocalFiles(searchWith);
 
       // Search Gmail if integrations available
-      if (hasGmailIntegration && gmailIntegrations.length > 0) {
+      if (hasMailIntegration && mailIntegrations.length > 0) {
         // Build search variations to find more results
         // 1. The term itself (subject, body, ...)
         // 2. The term as a sender, when it looks like a domain or address
@@ -1058,7 +1069,7 @@ export function ConnectFileOverlay({
         // Search for attachments with all variations
         // expandThreads=true fetches all messages in matching threads for complete attachment coverage
         const attachmentResults = await Promise.all(
-          gmailIntegrations.flatMap((integration) =>
+          mailIntegrations.flatMap((integration) =>
             variants.flatMap((terms) => [
               searchMail(integration, terms, true, true, 50),
               searchMail(integration, terms, false, true, 20),
@@ -1071,7 +1082,7 @@ export function ConnectFileOverlay({
         // Search for emails with all variations
         // expandThreads=true ensures we see full thread context for email-to-PDF conversion
         const emailResults = await Promise.all(
-          gmailIntegrations.flatMap((integration) =>
+          mailIntegrations.flatMap((integration) =>
             variants.map((terms) => searchMail(integration, terms, false, true, 20))
           )
         );
@@ -1097,8 +1108,8 @@ export function ConnectFileOverlay({
   }, [
     searchQuery,
     searchLocalFiles,
-    hasGmailIntegration,
-    gmailIntegrations,
+    hasMailIntegration,
+    mailIntegrations,
     searchMail,
     buildSearchVariants,
   ]);
@@ -1172,12 +1183,10 @@ export function ConnectFileOverlay({
     if (Object.keys(gmailAuthIssues).length === 0) return [];
     return Object.entries(gmailAuthIssues).map(([integrationId, issue]) => {
       const integration = integrations.find((item) => item.id === integrationId);
-      const providerLabel = integration?.provider
-        ? `${integration.provider.charAt(0).toUpperCase()}${integration.provider.slice(1)}`
-        : "Email";
+      const providerLabel = mailProviderLabel(integration?.provider);
       return {
         integrationId,
-        email: integration?.email || integration?.displayName || "Gmail",
+        email: integration?.email || integration?.displayName || "Mailbox",
         providerLabel,
         message: issue.message,
       };
@@ -1209,7 +1218,7 @@ export function ConnectFileOverlay({
       const integrationEmail = integrationEmails.get(selectedAttachment.integrationId);
       const strategyPattern = strategyQueryByMessageId.get(selectedAttachment.message.messageId);
       const searchPattern = strategyPattern || lastSearchTerm || searchQuery || undefined;
-      const response = await fetchWithAuth("/api/gmail/attachment", {
+      const response = await fetchWithAuth("/api/mail/attachment", {
         method: "POST",
         body: JSON.stringify({
           integrationId: selectedAttachment.integrationId,
@@ -1274,7 +1283,7 @@ export function ConnectFileOverlay({
     ));
 
     try {
-      const response = await fetchWithAuth("/api/gmail/email-content", {
+      const response = await fetchWithAuth("/api/mail/email-content", {
         method: "POST",
         body: JSON.stringify({
           integrationId: email.integrationId,
@@ -1306,7 +1315,7 @@ export function ConnectFileOverlay({
       const integrationEmail = integrationEmails.get(selectedEmail.integrationId);
       const strategyPattern = strategyQueryByMessageId.get(selectedEmail.messageId);
       const searchPattern = strategyPattern || lastSearchTerm || searchQuery || undefined;
-      const response = await fetchWithAuth("/api/gmail/convert-to-pdf", {
+      const response = await fetchWithAuth("/api/mail/convert-to-pdf", {
         method: "POST",
         body: JSON.stringify({
           integrationId: selectedEmail.integrationId,
@@ -1365,7 +1374,7 @@ export function ConnectFileOverlay({
       const integrationEmail = integrationEmails.get(selectedEmail.integrationId);
       const strategyPattern = strategyQueryByMessageId.get(selectedEmail.messageId);
       const searchPattern = strategyPattern || lastSearchTerm || searchQuery || undefined;
-      const response = await fetchWithAuth("/api/gmail/attachment", {
+      const response = await fetchWithAuth("/api/mail/attachment", {
         method: "POST",
         body: JSON.stringify({
           integrationId: selectedEmail.integrationId,
@@ -1595,8 +1604,8 @@ export function ConnectFileOverlay({
                 <TooltipTrigger asChild>
                   <TabsTrigger
                     value="gmail-attachments"
-                    aria-label="Attachments"
-                    title="Attachments"
+                    aria-label="Mail attachments"
+                    title="Mail attachments"
                     className="gap-1 text-xs px-1 @min-[340px]:px-2 border border-transparent text-muted-foreground hover:text-foreground hover:bg-muted aria-[selected=true]:border-transparent aria-[selected=true]:bg-primary/10 aria-[selected=true]:text-primary aria-[selected=true]:shadow-none"
                   >
                     <Paperclip className="h-3.5 w-3.5 shrink-0" />
@@ -1606,24 +1615,24 @@ export function ConnectFileOverlay({
                     )}
                   </TabsTrigger>
                 </TooltipTrigger>
-                <TooltipContent side="bottom">Attachments</TooltipContent>
+                <TooltipContent side="bottom">Mail attachments</TooltipContent>
               </Tooltip>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <TabsTrigger
                     value="email-to-pdf"
-                    aria-label="Emails"
-                    title="Emails"
+                    aria-label="Mail to PDF"
+                    title="Mail to PDF"
                     className="gap-1 text-xs px-1 @min-[340px]:px-2 border border-transparent text-muted-foreground hover:text-foreground hover:bg-muted aria-[selected=true]:border-transparent aria-[selected=true]:bg-primary/10 aria-[selected=true]:text-primary aria-[selected=true]:shadow-none"
                   >
                     <Mail className="h-3.5 w-3.5 shrink-0" />
-                    <span className="hidden @min-[340px]:inline">Emails</span>
+                    <span className="hidden @min-[340px]:inline">To PDF</span>
                     {hasSearched && sortedEmails.length > 0 && (
                       <span className="text-[10px] text-muted-foreground">({sortedEmails.length})</span>
                     )}
                   </TabsTrigger>
                 </TooltipTrigger>
-                <TooltipContent side="bottom">Emails</TooltipContent>
+                <TooltipContent side="bottom">Mail to PDF</TooltipContent>
               </Tooltip>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -1643,6 +1652,32 @@ export function ConnectFileOverlay({
                 <TooltipContent side="bottom">Browser</TooltipContent>
               </Tooltip>
             </TabsList>
+
+            {/* Mailbox filter (#245): only once there is more than one mailbox */}
+            {showMailboxFilter(mailIntegrations) &&
+              (activeTab === "gmail-attachments" || activeTab === "email-to-pdf") && (
+                <div className="px-3 py-2 border-b flex flex-wrap items-center gap-1.5 shrink-0">
+                  <span className="text-xs text-muted-foreground">Mailbox</span>
+                  {[{ id: "all", label: "All" }, ...mailIntegrations.map((m) => ({ id: m.id, label: mailboxLabel(m) }))].map(
+                    (option) => {
+                      const active = mailboxFilter === option.id;
+                      return (
+                        <Button
+                          key={option.id}
+                          type="button"
+                          size="sm"
+                          variant={active ? "default" : "outline"}
+                          className="h-6 px-2 text-xs rounded-full max-w-[180px] truncate"
+                          aria-pressed={active}
+                          onClick={() => setMailboxFilter(option.id)}
+                        >
+                          {option.label}
+                        </Button>
+                      );
+                    }
+                  )}
+                </div>
+              )}
 
             {gmailAuthIssueList.length > 0 && (
               <div className="px-4 py-2 text-xs text-amber-700 bg-amber-50 border-b flex items-start gap-2">
@@ -1740,21 +1775,13 @@ export function ConnectFileOverlay({
             {/* Gmail Attachments Tab Results */}
             <TabsContent value="gmail-attachments" className="flex-1 min-h-0 mt-0 data-[state=inactive]:hidden overflow-hidden" forceMount>
               <ScrollArea className="h-full w-full">
-                {!hasGmailIntegration ? (
-                  <div className="p-6 space-y-4">
-                    <IntegrationStatusBanner
-                      integration={{
-                        id: "gmail",
-                        displayName: "Gmail",
-                        isConnected: false,
-                        needsReauth: false,
-                      }}
-                    />
-                    <div className="text-center text-muted-foreground">
-                      <Paperclip className="h-8 w-8 mx-auto mb-2 opacity-30" />
-                      <p className="text-sm">Connect Gmail to search email attachments</p>
-                    </div>
-                  </div>
+                {mailState !== "ready" ? (
+                  <MailTabEmptyState
+                    state={mailState}
+                    mailboxes={mailIntegrations}
+                    icon={<Paperclip className="h-8 w-8 mx-auto mb-2 opacity-30" />}
+                    purpose="search mail attachments"
+                  />
                 ) : !hasSearched ? (
                   <div className="p-8 text-center text-muted-foreground">
                     <Paperclip className="h-8 w-8 mx-auto mb-2 opacity-30" />
@@ -1767,7 +1794,7 @@ export function ConnectFileOverlay({
                   </div>
                 ) : (
                   <div className="p-2 space-y-1 overflow-hidden">
-                    {sortedAttachments.map((item) => {
+                    {filterByMailbox(sortedAttachments, mailboxFilter).map((item) => {
                       const isSelected = selectedAttachmentKey === item.key;
                       const isPdf =
                         item.attachment.mimeType === "application/pdf" ||
@@ -1805,7 +1832,7 @@ export function ConnectFileOverlay({
                           id={item.key}
                           title={item.attachment.filename}
                           subtitle={item.message.fromName || item.message.from}
-                          secondarySubtitle={integrationLabels.get(item.message.integrationId) || "Gmail"}
+                          secondarySubtitle={integrationLabels.get(item.message.integrationId) || "Mailbox"}
                           date={format(item.message.date, "MMM d, yyyy")}
                           meta={`${Math.round(item.attachment.size / 1024)} KB`}
                           labelBadge={signal?.label ?? undefined}
@@ -1832,21 +1859,13 @@ export function ConnectFileOverlay({
             {/* Email to PDF Tab Results */}
             <TabsContent value="email-to-pdf" className="flex-1 min-h-0 mt-0 data-[state=inactive]:hidden overflow-hidden" forceMount>
               <ScrollArea className="h-full w-full">
-                {!hasGmailIntegration ? (
-                  <div className="p-6 space-y-4">
-                    <IntegrationStatusBanner
-                      integration={{
-                        id: "gmail",
-                        displayName: "Gmail",
-                        isConnected: false,
-                        needsReauth: false,
-                      }}
-                    />
-                    <div className="text-center text-muted-foreground">
-                      <Mail className="h-8 w-8 mx-auto mb-2 opacity-30" />
-                      <p className="text-sm">Connect Gmail to convert emails to PDF</p>
-                    </div>
-                  </div>
+                {mailState !== "ready" ? (
+                  <MailTabEmptyState
+                    state={mailState}
+                    mailboxes={mailIntegrations}
+                    icon={<Mail className="h-8 w-8 mx-auto mb-2 opacity-30" />}
+                    purpose="turn a mail into a PDF"
+                  />
                 ) : !hasSearched ? (
                   <div className="p-8 text-center text-muted-foreground">
                     <Mail className="h-8 w-8 mx-auto mb-2 opacity-30" />
@@ -1859,7 +1878,7 @@ export function ConnectFileOverlay({
                   </div>
                 ) : (
                   <div className="p-2 space-y-1 overflow-hidden">
-                    {sortedEmails.map((email) => {
+                    {filterByMailbox(sortedEmails, mailboxFilter).map((email) => {
                       const isSelected = selectedEmail?.messageId === email.messageId;
                       const isStrategyMatch =
                         strategyMode && strategyEmailMessageIds.has(email.messageId);
@@ -1892,7 +1911,7 @@ export function ConnectFileOverlay({
                           id={email.messageId}
                           title={email.subject}
                           subtitle={email.fromName || email.from}
-                          secondarySubtitle={integrationLabels.get(email.integrationId) || "Gmail"}
+                          secondarySubtitle={integrationLabels.get(email.integrationId) || "Mailbox"}
                           date={format(email.date, "MMM d, yyyy")}
                           labelBadge={signal?.label ?? undefined}
                           icon={
@@ -2195,5 +2214,61 @@ export function ConnectFileOverlay({
       </div>
     </ContentOverlay>
     </TooltipProvider>
+  );
+}
+
+/**
+ * The mail tabs' empty state (#245). Says what is actually missing: no
+ * mailbox connected at all, versus mailboxes that need re-authentication.
+ */
+function MailTabEmptyState({
+  state,
+  mailboxes,
+  icon,
+  purpose,
+}: {
+  state: "none" | "reauth";
+  mailboxes: Array<{ id: string; provider: string; email?: string | null; displayName?: string | null }>;
+  icon: ReactNode;
+  purpose: string;
+}) {
+  if (state === "reauth") {
+    return (
+      <div className="p-6 space-y-3">
+        {mailboxes.map((mailbox) => (
+          <IntegrationStatusBanner
+            key={mailbox.id}
+            integration={{
+              id: mailbox.provider === "gmail" ? "gmail" : "imap",
+              displayName: mailboxLabel(mailbox),
+              isConnected: true,
+              needsReauth: true,
+              integrationId: mailbox.id,
+            }}
+          />
+        ))}
+        <div className="text-center text-muted-foreground">
+          {icon}
+          <p className="text-sm">Reconnect a mailbox to {purpose}</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-6 space-y-4">
+      <IntegrationStatusBanner
+        integration={{
+          id: "imap",
+          displayName: "Mail",
+          isConnected: false,
+          needsReauth: false,
+        }}
+      />
+      <div className="text-center text-muted-foreground">
+        {icon}
+        <p className="text-sm">Connect a mailbox to {purpose}</p>
+      </div>
+    </div>
   );
 }

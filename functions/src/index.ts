@@ -83,6 +83,8 @@ export { onMailServiceConnected, onMailServiceReconnected } from "./gmail/onMail
 export { onTransactionsImported } from "./gmail/onTransactionsImported";
 export { onTransactionsImportedCompanyCheck } from "./matching/onTransactionsImportedCompanyCheck";
 export { searchGmailCallable } from "./gmail/searchGmailCallable";
+// One IMAP attachment / message body for the manual attach path (#245)
+export { getMailAttachmentCallable, getMailBodyCallable } from "./mail/mailMessageCallables";
 
 // Export precision search functions
 export {

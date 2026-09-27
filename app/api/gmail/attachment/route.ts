@@ -6,6 +6,12 @@ import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/ge
 import { GmailClient } from "@/lib/email-providers/gmail-client";
 import { createHash, randomUUID } from "crypto";
 import { GmailResolutionError, resolveGmailIntegration } from "@/lib/gmail/resolve-integration";
+import {
+  fetchProviderAttachment,
+  ownedIntegrationProvider,
+  providerErrorResponse,
+  readsThroughProviderFactory,
+} from "@/lib/mail/provider-attach";
 
 const db = getAdminDb();
 
@@ -82,26 +88,42 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    let ctx;
-    try {
-      ctx = await resolveGmailIntegration({ integrationId, messageId }, userId);
-    } catch (err) {
-      if (err instanceof GmailResolutionError) {
-        return NextResponse.json({ error: err.message, code: err.code }, { status: err.status });
+    // Every mailbox but Gmail is read through the provider factory (#245).
+    const provider = await ownedIntegrationProvider(integrationId, userId);
+    let attachment: { data: Uint8Array; mimeType: string; filename: string; size: number };
+    if (integrationId && readsThroughProviderFactory(provider)) {
+      try {
+        attachment = await fetchProviderAttachment(request.headers.get("Authorization") || "", {
+          integrationId,
+          messageId,
+          attachmentId,
+        });
+      } catch (err) {
+        const { status, body } = providerErrorResponse(err);
+        return NextResponse.json(body, { status });
       }
-      throw err;
+    } else {
+      let ctx;
+      try {
+        ctx = await resolveGmailIntegration({ integrationId, messageId }, userId);
+      } catch (err) {
+        if (err instanceof GmailResolutionError) {
+          return NextResponse.json({ error: err.message, code: err.code }, { status: err.status });
+        }
+        throw err;
+      }
+
+      const gmailClient = new GmailClient(
+        ctx.integrationId,
+        ctx.accessToken,
+        ctx.refreshToken
+      );
+
+      attachment = await gmailClient.getAttachmentData(messageId, attachmentId, {
+        mimeType: mimeType || undefined,
+        filename: filename || undefined,
+      });
     }
-
-    const gmailClient = new GmailClient(
-      ctx.integrationId,
-      ctx.accessToken,
-      ctx.refreshToken
-    );
-
-    const attachment = await gmailClient.getAttachmentData(messageId, attachmentId, {
-      mimeType: mimeType || undefined,
-      filename: filename || undefined,
-    });
     const normalizedMimeType = normalizeMimeType(
       attachment.mimeType,
       attachment.filename
@@ -188,27 +210,50 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    let ctx;
-    try {
-      ctx = await resolveGmailIntegration({ integrationId, messageId }, userId);
-    } catch (err) {
-      if (err instanceof GmailResolutionError) {
-        return NextResponse.json({ error: err.message, code: err.code }, { status: err.status });
+    // Every mailbox but Gmail is read through the provider factory (#245);
+    // what happens to the bytes afterwards is the same for both.
+    const provider = await ownedIntegrationProvider(integrationId, userId);
+    let attachment: { data: Uint8Array; mimeType: string; filename: string; size: number };
+    let resolvedIntegrationId: string;
+    let integrationEmail: string | null;
+    if (integrationId && readsThroughProviderFactory(provider)) {
+      try {
+        const fetched = await fetchProviderAttachment(request.headers.get("Authorization") || "", {
+          integrationId,
+          messageId,
+          attachmentId,
+        });
+        attachment = fetched;
+        integrationEmail = fetched.integrationEmail;
+      } catch (err) {
+        const { status, body } = providerErrorResponse(err);
+        return NextResponse.json(body, { status });
       }
-      throw err;
+      resolvedIntegrationId = integrationId;
+    } else {
+      let ctx;
+      try {
+        ctx = await resolveGmailIntegration({ integrationId, messageId }, userId);
+      } catch (err) {
+        if (err instanceof GmailResolutionError) {
+          return NextResponse.json({ error: err.message, code: err.code }, { status: err.status });
+        }
+        throw err;
+      }
+
+      const gmailClient = new GmailClient(
+        ctx.integrationId,
+        ctx.accessToken,
+        ctx.refreshToken
+      );
+
+      attachment = await gmailClient.getAttachmentData(messageId, attachmentId, {
+        mimeType: mimeType || undefined,
+        filename: filename || undefined,
+      });
+      resolvedIntegrationId = ctx.integrationId;
+      integrationEmail = ctx.integration.email || null;
     }
-    const integration = ctx.integration;
-
-    const gmailClient = new GmailClient(
-      ctx.integrationId,
-      ctx.accessToken,
-      ctx.refreshToken
-    );
-
-    const attachment = await gmailClient.getAttachmentData(messageId, attachmentId, {
-      mimeType: mimeType || undefined,
-      filename: filename || undefined,
-    });
     const normalizedMimeType = normalizeMimeType(
       attachment.mimeType,
       attachment.filename
@@ -314,7 +359,7 @@ export async function POST(request: NextRequest) {
         metadata: {
           originalName: attachment.filename,
           gmailMessageId: messageId,
-          gmailIntegrationId: ctx.integrationId,
+          gmailIntegrationId: resolvedIntegrationId,
           firebaseStorageDownloadTokens: downloadToken,
         },
       },
@@ -348,8 +393,8 @@ export async function POST(request: NextRequest) {
       gmailMessageId: messageId,
       gmailAttachmentId: attachmentId,
       gmailThreadId: messageId,
-      gmailIntegrationId: ctx.integrationId,
-      gmailIntegrationEmail: integration.email || null,
+      gmailIntegrationId: resolvedIntegrationId,
+      gmailIntegrationEmail: integrationEmail,
       gmailSubject: gmailMessageSubject || null,
       gmailSenderEmail: senderEmail || null,
       gmailSenderName: senderName || null,

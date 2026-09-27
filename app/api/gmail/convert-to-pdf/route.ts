@@ -6,6 +6,12 @@ import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/ge
 import { createHash, randomUUID } from "crypto";
 import { callFirebaseFunction } from "@/lib/api/firebase-callable";
 import { GmailResolutionError, resolveGmailIntegration } from "@/lib/gmail/resolve-integration";
+import {
+  fetchProviderBody,
+  ownedIntegrationProvider,
+  providerErrorResponse,
+  readsThroughProviderFactory,
+} from "@/lib/mail/provider-attach";
 
 interface ConvertHtmlToPdfResponse {
   success: boolean;
@@ -91,66 +97,26 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    let ctx;
-    try {
-      ctx = await resolveGmailIntegration({ integrationId, messageId }, userId);
-    } catch (err) {
-      if (err instanceof GmailResolutionError) {
-        return NextResponse.json({ error: err.message, code: err.code }, { status: err.status });
-      }
-      throw err;
-    }
-    const integration = ctx.integration;
+    // Get auth token from request headers to pass to Firebase function
+    const authToken = request.headers.get("Authorization") || "";
 
-    // Fetch the message
-    const messageResponse = await fetch(
-      `${GMAIL_API_BASE}/users/me/messages/${encodeURIComponent(messageId)}?format=full`,
-      {
-        headers: {
-          Authorization: `Bearer ${ctx.accessToken}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
+    // Every mailbox but Gmail is read through the provider factory (#245).
+    // The conversion and the File written afterwards are the same for both.
+    const provider = await ownedIntegrationProvider(integrationId, userId);
+    const content =
+      integrationId && readsThroughProviderFactory(provider)
+        ? await readProviderMessage(authToken, integrationId, messageId)
+        : await readGmailMessage(integrationId, messageId, userId);
+    if ("response" in content) return content.response;
 
-    if (!messageResponse.ok) {
-      if (messageResponse.status === 401) {
-        return NextResponse.json(
-          { error: "Authentication expired", code: "AUTH_EXPIRED" },
-          { status: 403 }
-        );
-      }
-      throw new Error(`Gmail API error: ${messageResponse.status}`);
-    }
-
-    const message: GmailMessage = await messageResponse.json();
-
-    // Extract email content
-    const headers = message.payload?.headers || [];
-    const getHeader = (name: string): string => {
-      const header = headers.find(
-        (h) => h.name.toLowerCase() === name.toLowerCase()
-      );
-      return header?.value || "";
-    };
-
-    const subject = getHeader("Subject");
-    const from = getHeader("From");
-    const dateStr = getHeader("Date");
-    const emailDate = new Date(dateStr);
+    const { subject, from, emailDate, htmlBody, textBody, snippet, threadId } = content;
     const parsedFrom = parseFromHeader(gmailMessageFrom || from);
     const senderEmail = parsedFrom.email;
     const senderName = gmailMessageFromName || parsedFrom.name;
     const senderDomain = extractDomain(senderEmail);
 
-    // Extract body content
-    const { htmlBody, textBody } = extractBodyContent(message.payload);
-
-    // Get auth token from request headers to pass to Firebase function
-    const authToken = request.headers.get("Authorization") || "";
-
     // Convert to PDF
-    const html = htmlBody || textBody || message.snippet || "";
+    const html = htmlBody || textBody || snippet || "";
     const pdfResult = await convertHtmlToPdf(html, authToken, {
       subject,
       from,
@@ -183,7 +149,7 @@ export async function POST(request: NextRequest) {
         metadata: {
           originalName: filename,
           gmailMessageId: messageId,
-          gmailIntegrationId: ctx.integrationId,
+          gmailIntegrationId: content.integrationId,
           convertedFromEmail: "true",
           firebaseStorageDownloadTokens: downloadToken,
         },
@@ -211,9 +177,9 @@ export async function POST(request: NextRequest) {
       sourceSearchPattern: searchPattern || null,
       sourceResultType: "gmail_html_invoice",
       gmailMessageId: messageId,
-      gmailThreadId: message.threadId,
+      gmailThreadId: threadId,
       gmailIntegrationId: integrationId,
-      gmailIntegrationEmail: integration.email || null,
+      gmailIntegrationEmail: content.integrationEmail,
       gmailSubject: subject || null,
       gmailSenderEmail: senderEmail || null,
       gmailSenderName: senderName || null,
@@ -261,6 +227,112 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+/** What the PDF is made of, whichever mailbox it came from. */
+interface MessageContent {
+  subject: string;
+  from: string;
+  emailDate: Date;
+  htmlBody: string;
+  textBody: string;
+  snippet: string;
+  threadId: string;
+  integrationId: string;
+  integrationEmail: string | null;
+}
+
+/** A mailbox read through the provider factory (#245). */
+async function readProviderMessage(
+  authToken: string,
+  integrationId: string,
+  messageId: string
+): Promise<MessageContent | { response: NextResponse }> {
+  try {
+    const content = await fetchProviderBody(authToken, { integrationId, messageId });
+    return {
+      subject: content.subject,
+      from: content.from,
+      emailDate: new Date(content.date),
+      htmlBody: content.htmlBody,
+      textBody: content.textBody,
+      snippet: "",
+      // No threads outside Gmail; the message stands in for its own thread.
+      threadId: messageId,
+      integrationId,
+      integrationEmail: content.integrationEmail,
+    };
+  } catch (err) {
+    const { status, body } = providerErrorResponse(err);
+    return { response: NextResponse.json(body, { status }) };
+  }
+}
+
+/** A Gmail mailbox, read through Gmail's REST API as before. */
+async function readGmailMessage(
+  integrationId: string | undefined,
+  messageId: string,
+  userId: string
+): Promise<MessageContent | { response: NextResponse }> {
+  let ctx;
+  try {
+    ctx = await resolveGmailIntegration({ integrationId, messageId }, userId);
+  } catch (err) {
+    if (err instanceof GmailResolutionError) {
+      return {
+        response: NextResponse.json({ error: err.message, code: err.code }, { status: err.status }),
+      };
+    }
+    throw err;
+  }
+
+  // Fetch the message
+  const messageResponse = await fetch(
+    `${GMAIL_API_BASE}/users/me/messages/${encodeURIComponent(messageId)}?format=full`,
+    {
+      headers: {
+        Authorization: `Bearer ${ctx.accessToken}`,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+
+  if (!messageResponse.ok) {
+    if (messageResponse.status === 401) {
+      return {
+        response: NextResponse.json(
+          { error: "Authentication expired", code: "AUTH_EXPIRED" },
+          { status: 403 }
+        ),
+      };
+    }
+    throw new Error(`Gmail API error: ${messageResponse.status}`);
+  }
+
+  const message: GmailMessage = await messageResponse.json();
+
+  // Extract email content
+  const headers = message.payload?.headers || [];
+  const getHeader = (name: string): string => {
+    const header = headers.find(
+      (h) => h.name.toLowerCase() === name.toLowerCase()
+    );
+    return header?.value || "";
+  };
+
+  const { htmlBody, textBody } = extractBodyContent(message.payload);
+
+  return {
+    subject: getHeader("Subject"),
+    from: getHeader("From"),
+    emailDate: new Date(getHeader("Date")),
+    htmlBody,
+    textBody,
+    snippet: message.snippet || "",
+    threadId: message.threadId,
+    integrationId: ctx.integrationId,
+    integrationEmail: ctx.integration.email || null,
+  };
 }
 
 /**

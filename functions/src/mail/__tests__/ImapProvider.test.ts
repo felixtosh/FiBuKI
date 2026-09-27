@@ -28,6 +28,9 @@ const { state } = vi.hoisted(() => {
     fetchResult: null as unknown,
     downloadPart: null as string | null,
     downloadBuffer: Buffer.from("PDFDATA"),
+    /** Per-part bytes; a part named here wins over downloadBuffer. */
+    downloadBuffers: {} as Record<string, Buffer>,
+    downloadParts: [] as string[],
     mailboxOpened: null as string | string[] | null,
     loggedOut: false,
   };
@@ -62,7 +65,9 @@ vi.mock("imapflow", async () => {
     }
     async download(range: string, part: string) {
       state.downloadPart = part;
-      return { meta: {}, content: Readable.from([state.downloadBuffer]) };
+      state.downloadParts.push(part);
+      const bytes = state.downloadBuffers[part] ?? state.downloadBuffer;
+      return { meta: {}, content: Readable.from([bytes]) };
     }
     async logout() {
       state.loggedOut = true;
@@ -99,6 +104,8 @@ beforeEach(() => {
   state.fetchList = [];
   state.fetchResult = null;
   state.downloadPart = null;
+  state.downloadBuffers = {};
+  state.downloadParts = [];
   state.mailboxOpened = null;
   state.loggedOut = false;
 });
@@ -378,6 +385,60 @@ describe("ImapProvider.getAttachment", () => {
     );
     expect(state.downloadPart).toBe("2");
     expect(buf.toString()).toBe("%PDF-1.7 bytes");
+  });
+});
+
+// ---- getBody (#245) ---------------------------------------------------------
+
+describe("ImapProvider.getBody", () => {
+  it("reads the HTML and plain-text body parts, never an attachment", async () => {
+    state.fetchResult = {
+      uid: 42,
+      bodyStructure: {
+        type: "multipart/mixed",
+        childNodes: [
+          {
+            type: "multipart/alternative",
+            childNodes: [
+              { part: "1.1", type: "text/plain", size: 10 },
+              { part: "1.2", type: "text/html", size: 20 },
+            ],
+          },
+          {
+            part: "2",
+            type: "text/html",
+            disposition: "attachment",
+            dispositionParameters: { filename: "terms.html" },
+          },
+        ],
+      },
+    };
+    state.downloadBuffers = {
+      "1.1": Buffer.from("Rechnung 12,00"),
+      "1.2": Buffer.from("<p>Rechnung 12,00</p>"),
+    };
+
+    const provider = new ImapProvider(cfg());
+    const body = await provider.getBody({ id: "42" });
+
+    expect(body).toEqual({ html: "<p>Rechnung 12,00</p>", text: "Rechnung 12,00" });
+    expect(state.downloadParts.sort()).toEqual(["1.1", "1.2"]);
+  });
+
+  it("reads a single-part plain message as part 1", async () => {
+    state.fetchResult = { uid: 7, bodyStructure: { type: "text/plain", size: 5 } };
+    state.downloadBuffers = { "1": Buffer.from("hello") };
+
+    const provider = new ImapProvider(cfg());
+    const body = await provider.getBody({ id: "7" });
+
+    expect(body).toEqual({ html: null, text: "hello" });
+  });
+
+  it("throws when the message is gone", async () => {
+    state.fetchResult = null;
+    const provider = new ImapProvider(cfg());
+    await expect(provider.getBody({ id: "9" })).rejects.toThrow(/not found/);
   });
 });
 

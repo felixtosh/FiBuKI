@@ -4,6 +4,11 @@ import { getAdminDb } from "@/lib/firebase/admin";
 import { Timestamp } from "firebase-admin/firestore";
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { GmailClient } from "@/lib/email-providers/gmail-client";
+import {
+  fetchProviderBody,
+  providerErrorResponse,
+  readsThroughProviderFactory,
+} from "@/lib/mail/provider-attach";
 
 const db = getAdminDb();
 const INTEGRATIONS_COLLECTION = "emailIntegrations";
@@ -70,6 +75,24 @@ export async function POST(request: NextRequest) {
         },
         { status: 403 }
       );
+    }
+
+    // Every mailbox but Gmail is read through the provider factory (#245).
+    if (readsThroughProviderFactory((integration.provider as string) || "gmail")) {
+      try {
+        const content = await fetchProviderBody(request.headers.get("Authorization") || "", {
+          integrationId,
+          messageId,
+        });
+        return NextResponse.json({
+          success: true,
+          htmlBody: content.htmlBody,
+          textBody: content.textBody,
+        });
+      } catch (err) {
+        const { status, body } = providerErrorResponse(err);
+        return NextResponse.json(body, { status });
+      }
     }
 
     // Get tokens from secure storage

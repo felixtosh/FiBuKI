@@ -72,7 +72,7 @@ export function useAttachmentPreview(
         });
 
         const response = await fetchWithAuth(
-          `/api/gmail/attachment?${searchParams.toString()}`,
+          `/api/mail/attachment?${searchParams.toString()}`,
           { method: "GET" },
         );
 
@@ -145,7 +145,7 @@ export async function fetchAttachmentBlobUrl(
   });
 
   const response = await fetchWithAuth(
-    `/api/gmail/attachment?${searchParams.toString()}`,
+    `/api/mail/attachment?${searchParams.toString()}`,
     { method: "GET" },
   );
 
