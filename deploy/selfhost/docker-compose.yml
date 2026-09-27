@@ -277,6 +277,9 @@ services:
       # needs Postgres up, not just the api.
       postgres:
         condition: service_healthy
+      # ...and its own blob IO (see FIBUKI_STORAGE below), so the S3 store too.
+      seaweedfs:
+        condition: service_started
     environment:
       PORT: "3000"
       NODE_ENV: production
@@ -355,6 +358,20 @@ services:
       # Both containers must mint byte-identical /__storage/download links, since
       # one handler resolves whichever wrote them.
       FIBUKI_PUBLIC_URL: ${FIBUKI_PUBLIC_URL:-}
+      # Server-side blob IO. The same alias that gives this container getAdminDb()
+      # gives it getAdminBucket(), backed by functions/src/selfhost/storage-shim.ts.
+      # With none of these set that shim selects its "unconfigured" store and every
+      # read or write throws — the public invoice download (/i/{token}/download)
+      # caught that and answered 404 for every valid share (#372), and the browser
+      # upload and Gmail attachment/convert routes write through the same handle.
+      # Must match fibuki-api exactly: one bucket, one set of objects.
+      FIBUKI_STORAGE: s3
+      FIBUKI_S3_ENDPOINT: seaweedfs
+      FIBUKI_S3_PORT: "8333"
+      FIBUKI_S3_SSL: "false"
+      FIBUKI_S3_ACCESS_KEY: ${FIBUKI_S3_ACCESS_KEY}
+      FIBUKI_S3_SECRET_KEY: ${FIBUKI_S3_SECRET_KEY}
+      FIBUKI_STORAGE_BUCKET: ${FIBUKI_STORAGE_BUCKET}
       # Pool ceiling per container. Both share Postgres' max_connections, so this
       # is now split two ways rather than owned by fibuki-api alone.
       POSTGRES_MAX_CONNECTIONS: ${WEB_POSTGRES_MAX_CONNECTIONS:-10}
