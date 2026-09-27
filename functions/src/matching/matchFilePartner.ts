@@ -813,13 +813,32 @@ Rules:
 
 /**
  * Create a user partner from company lookup results
+ *
+ * Both alias writes here (folding into an existing Partner, and seeding a new
+ * Partner's aliases) refuse `invoicingAgentName`, for the same reason
+ * learnPartnerAlias does (#156, #265): an Invoicing Agent is never an alias of
+ * the Partner it issues for. A File extracted before the agent had a field of
+ * its own carries the agent in extractedPartner, and re-matching it would
+ * otherwise teach the agent's name here.
  */
 async function createUserPartnerFromLookup(
   userId: string,
   companyInfo: CompanyInfo,
   originalExtractedName: string,
-  options?: { viesVerified?: boolean; globalPartnerId?: string }
+  options?: {
+    viesVerified?: boolean;
+    globalPartnerId?: string;
+    invoicingAgentName?: string | null;
+  }
 ): Promise<string> {
+  const extractedNameIsAgent = printedNameEquals(originalExtractedName, options?.invoicingAgentName);
+  if (extractedNameIsAgent) {
+    console.log(
+      `[PartnerMatch] Will not learn "${originalExtractedName}" as an alias: ` +
+      "it is this file's Invoicing Agent (#265)"
+    );
+  }
+
   // === LLM-ASSISTED DEDUPLICATION ===
   // Before creating, check if this company already exists as a partner
   const existingPartnerId = await findExistingPartnerWithLLM(userId, companyInfo, originalExtractedName);
@@ -828,7 +847,7 @@ async function createUserPartnerFromLookup(
     // Add the extracted name as an alias to the existing partner
     const partnerRef = db.collection("partners").doc(existingPartnerId);
     const partnerSnap = await partnerRef.get();
-    if (partnerSnap.exists) {
+    if (partnerSnap.exists && !extractedNameIsAgent) {
       const existingAliases: string[] = partnerSnap.data()?.aliases || [];
       const normalizedExtracted = originalExtractedName.toLowerCase().trim();
 
@@ -852,7 +871,11 @@ async function createUserPartnerFromLookup(
 
   // Add original extracted name as alias if it's different from the official name
   // This ensures future invoices with the same extracted name will match
-  if (originalExtractedName && originalExtractedName.toLowerCase() !== officialName.toLowerCase()) {
+  if (
+    originalExtractedName &&
+    !extractedNameIsAgent &&
+    originalExtractedName.toLowerCase() !== officialName.toLowerCase()
+  ) {
     // Check if not already in aliases
     const normalizedOriginal = originalExtractedName.toLowerCase().trim();
     if (!aliases.some(a => a.toLowerCase().trim() === normalizedOriginal)) {
@@ -1188,7 +1211,7 @@ export async function runPartnerMatching(
             userId,
             companyInfo,
             extractedPartner || viesResult.name,
-            { viesVerified: true, globalPartnerId }
+            { viesVerified: true, globalPartnerId, invoicingAgentName }
           );
 
           await markPartnerMatchComplete(
@@ -1346,7 +1369,9 @@ export async function runPartnerMatching(
 
       if (companyInfo && companyInfo.name) {
         // Create new User Partner from lookup results
-        const newPartnerId = await createUserPartnerFromLookup(userId, companyInfo, extractedPartner);
+        const newPartnerId = await createUserPartnerFromLookup(userId, companyInfo, extractedPartner, {
+          invoicingAgentName,
+        });
 
         await markPartnerMatchComplete(
           fileId,
@@ -1400,7 +1425,8 @@ export async function runPartnerMatching(
       const newPartnerId = await createUserPartnerFromLookup(
         userId,
         basicCompanyInfo,
-        extractedPartner
+        extractedPartner,
+        { invoicingAgentName }
       );
 
       await markPartnerMatchComplete(
