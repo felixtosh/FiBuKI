@@ -18,13 +18,17 @@ import {
   Check,
   Filter,
   Trash2,
-  FileX,
-  EyeOff,
   UserCheck,
+  FileType,
 } from "lucide-react";
 import { SearchButton } from "@/components/ui/search-button";
 import { SearchInput } from "@/components/ui/search-input";
-import { FileFilters } from "@/types/file";
+import { FileFilters, DocumentType } from "@/types/file";
+import {
+  DOCUMENT_TYPE_FILTER_VALUES,
+  normalizeDocumentTypes,
+} from "@/lib/filters/file-url-params";
+import { describeDocumentType } from "@/lib/documents/document-type-presentation";
 import { cn } from "@/lib/utils";
 import { UserPartner } from "@/types/partner";
 
@@ -55,6 +59,7 @@ export function FileToolbar({
   const [partnerPopoverOpen, setPartnerPopoverOpen] = useState(false);
   const [partnerStatePopoverOpen, setPartnerStatePopoverOpen] = useState(false);
   const [statusPopoverOpen, setStatusPopoverOpen] = useState(false);
+  const [documentTypePopoverOpen, setDocumentTypePopoverOpen] = useState(false);
   const [partnerSearch, setPartnerSearch] = useState("");
   const [showFromCalendar, setShowFromCalendar] = useState(false);
   const [showToCalendar, setShowToCalendar] = useState(false);
@@ -70,8 +75,11 @@ export function FileToolbar({
   const partnerStateIgnored = hasPartnerFilter;
   const hasStatusFilter =
     filters.extractionComplete !== undefined ||
-    filters.isNotInvoice !== undefined ||
     filters.includeDeleted === true;
+  // Absent = every Document Type selected, the default.
+  const selectedDocumentTypes: readonly DocumentType[] =
+    filters.documentTypes ?? DOCUMENT_TYPE_FILTER_VALUES;
+  const hasDocumentTypeFilter = filters.documentTypes !== undefined;
 
   const handleDatePresetClick = (preset: string) => {
     const now = new Date();
@@ -134,9 +142,28 @@ export function FileToolbar({
     onFiltersChange({
       ...filters,
       extractionComplete: undefined,
-      isNotInvoice: undefined,
       includeDeleted: undefined,
     });
+  };
+
+  const clearDocumentTypeFilter = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onFiltersChange({ ...filters, documentTypes: undefined });
+  };
+
+  const toggleDocumentType = (type: DocumentType) => {
+    const next = selectedDocumentTypes.includes(type)
+      ? selectedDocumentTypes.filter((t) => t !== type)
+      : [...selectedDocumentTypes, type];
+    onFiltersChange({ ...filters, documentTypes: normalizeDocumentTypes(next) });
+  };
+
+  const getDocumentTypeLabel = () => {
+    if (!hasDocumentTypeFilter) return "Document";
+    if (selectedDocumentTypes.length === 1) {
+      return describeDocumentType(selectedDocumentTypes[0]).label;
+    }
+    return `Document (${selectedDocumentTypes.length})`;
   };
 
   const getDateLabel = () => {
@@ -170,8 +197,6 @@ export function FileToolbar({
   const getStatusLabel = () => {
     if (filters.extractionComplete === true) return "Extracted";
     if (filters.extractionComplete === false) return "Pending";
-    if (filters.isNotInvoice === true) return "Not invoices";
-    if (filters.isNotInvoice === false) return "Hide not invoices";
     if (filters.includeDeleted === true) return "Deleted";
     return "Status";
   };
@@ -616,6 +641,61 @@ export function FileToolbar({
         </PopoverContent>
       </Popover>
 
+      {/* Document Type filter (multi-select, every type selected by default) */}
+      <Popover open={documentTypePopoverOpen} onOpenChange={setDocumentTypePopoverOpen}>
+        <PopoverTrigger asChild>
+          <Button
+            variant={hasDocumentTypeFilter ? "secondary" : "outline"}
+            size="sm"
+            className="h-9 gap-2"
+          >
+            <FileType className="h-4 w-4" />
+            <span>{getDocumentTypeLabel()}</span>
+            {hasDocumentTypeFilter && (
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={clearDocumentTypeFilter}
+                onKeyDown={(e) => e.key === "Enter" && clearDocumentTypeFilter(e as unknown as React.MouseEvent)}
+                className="ml-1 hover:bg-muted rounded p-0.5 -mr-1 cursor-pointer"
+              >
+                <X className="h-3 w-3" />
+              </span>
+            )}
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="w-56 p-2" align="start">
+          <div className="flex flex-col gap-1">
+            {DOCUMENT_TYPE_FILTER_VALUES.map((type) => {
+              const checked = selectedDocumentTypes.includes(type);
+              return (
+                <button
+                  key={type}
+                  type="button"
+                  role="menuitemcheckbox"
+                  aria-checked={checked}
+                  onClick={() => toggleDocumentType(type)}
+                  className={cn(
+                    "w-full text-left flex items-center gap-2 rounded px-2 py-1.5 text-sm",
+                    checked ? "bg-muted" : "hover:bg-muted/50"
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "h-4 w-4 rounded border flex items-center justify-center",
+                      checked ? "border-primary text-primary" : "border-muted-foreground/40 text-transparent"
+                    )}
+                  >
+                    <Check className="h-3 w-3" />
+                  </span>
+                  <span className="truncate">{describeDocumentType(type).label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </PopoverContent>
+      </Popover>
+
       {/* Status filter */}
       <Popover open={statusPopoverOpen} onOpenChange={setStatusPopoverOpen}>
         <PopoverTrigger asChild>
@@ -644,7 +724,6 @@ export function FileToolbar({
             <Button
               variant={
                 filters.extractionComplete === undefined &&
-                filters.isNotInvoice === undefined &&
                 !filters.includeDeleted
                   ? "secondary"
                   : "ghost"
@@ -655,7 +734,6 @@ export function FileToolbar({
                 onFiltersChange({
                   ...filters,
                   extractionComplete: undefined,
-                  isNotInvoice: undefined,
                   includeDeleted: undefined,
                 });
                 setStatusPopoverOpen(false);
@@ -671,7 +749,6 @@ export function FileToolbar({
                 onFiltersChange({
                   ...filters,
                   extractionComplete: true,
-                  isNotInvoice: undefined,
                   includeDeleted: undefined,
                 });
                 setStatusPopoverOpen(false);
@@ -687,48 +764,12 @@ export function FileToolbar({
                 onFiltersChange({
                   ...filters,
                   extractionComplete: false,
-                  isNotInvoice: undefined,
                   includeDeleted: undefined,
                 });
                 setStatusPopoverOpen(false);
               }}
             >
               Pending extraction
-            </Button>
-            <div className="border-t my-1" />
-            <Button
-              variant={filters.isNotInvoice === true ? "secondary" : "ghost"}
-              size="sm"
-              className="justify-start h-8 gap-2"
-              onClick={() => {
-                onFiltersChange({
-                  ...filters,
-                  extractionComplete: undefined,
-                  isNotInvoice: true,
-                  includeDeleted: undefined,
-                });
-                setStatusPopoverOpen(false);
-              }}
-            >
-              <FileX className="h-4 w-4" />
-              Not invoices
-            </Button>
-            <Button
-              variant={filters.isNotInvoice === false ? "secondary" : "ghost"}
-              size="sm"
-              className="justify-start h-8 gap-2"
-              onClick={() => {
-                onFiltersChange({
-                  ...filters,
-                  extractionComplete: undefined,
-                  isNotInvoice: false,
-                  includeDeleted: undefined,
-                });
-                setStatusPopoverOpen(false);
-              }}
-            >
-              <EyeOff className="h-4 w-4" />
-              Hide not invoices
             </Button>
             <div className="border-t my-1" />
             <Button
@@ -739,7 +780,6 @@ export function FileToolbar({
                 onFiltersChange({
                   ...filters,
                   extractionComplete: undefined,
-                  isNotInvoice: undefined,
                   includeDeleted: true,
                 });
                 setStatusPopoverOpen(false);

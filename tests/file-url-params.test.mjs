@@ -5,6 +5,7 @@ import {
   buildFileSearchParams,
   hasActiveFileFilters,
   countActiveFileFilters,
+  hasFileUrlParams,
 } from "../lib/filters/file-url-params.js";
 
 /** Parse a query string, serialise it back, and return the resulting query string. */
@@ -13,34 +14,67 @@ function roundTrip(queryString, search = "") {
   return { filters, query: buildFileSearchParams(filters, search).toString() };
 }
 
-test("notInvoice=false parses as the hide toggle and round-trips", () => {
-  const { filters, query } = roundTrip("notInvoice=false");
-  assert.equal(filters.isNotInvoice, false);
-  assert.equal(query, "notInvoice=false");
+test("docType round-trips a multi-value selection", () => {
+  const { filters, query } = roundTrip("docType=invoice,receipt");
+  assert.deepEqual(filters.documentTypes, ["invoice", "receipt"]);
+  assert.equal(query, "docType=invoice%2Creceipt");
 });
 
-test("notInvoice=true is unchanged by the third state", () => {
-  const { filters, query } = roundTrip("notInvoice=true");
-  assert.equal(filters.isNotInvoice, true);
-  assert.equal(query, "notInvoice=true");
-});
-
-test("a missing notInvoice param means show all, and stays out of the URL", () => {
+test("a missing docType param means every type, and stays out of the URL", () => {
   const { filters, query } = roundTrip("");
-  assert.equal("isNotInvoice" in filters, false);
+  assert.equal("documentTypes" in filters, false);
   assert.equal(query, "");
+});
+
+test("selecting every type is the default and stays out of the URL", () => {
+  const params = buildFileSearchParams({ documentTypes: ["unknown", "other", "receipt", "invoice"] }, "");
+  assert.equal(params.toString(), "");
+  const { filters } = roundTrip("docType=invoice,receipt,other,unknown");
+  assert.equal("documentTypes" in filters, false);
+});
+
+test("an empty selection round-trips as docType=none", () => {
+  const params = buildFileSearchParams({ documentTypes: [] }, "");
+  assert.equal(params.get("docType"), "none");
+  assert.deepEqual(parseFileFiltersFromUrl(params).documentTypes, []);
+});
+
+test("unrecognised docType values are dropped", () => {
+  const filters = parseFileFiltersFromUrl(new URLSearchParams("docType=invoice,bogus"));
+  assert.deepEqual(filters.documentTypes, ["invoice"]);
+  assert.equal("documentTypes" in parseFileFiltersFromUrl(new URLSearchParams("docType=bogus")), false);
+});
+
+test("old URL notInvoice=true lands on Document = Other alone", () => {
+  const { filters, query } = roundTrip("notInvoice=true");
+  assert.deepEqual(filters.documentTypes, ["other"]);
+  assert.equal("isNotInvoice" in filters, false);
+  assert.equal(query, "docType=other");
+});
+
+test("old URL notInvoice=false lands on every Document Type except Other", () => {
+  const { filters, query } = roundTrip("notInvoice=false");
+  assert.deepEqual(filters.documentTypes, ["invoice", "receipt", "unknown"]);
+  assert.equal("isNotInvoice" in filters, false);
+  assert.equal(query, "docType=invoice%2Creceipt%2Cunknown");
 });
 
 test("an unrecognised notInvoice value is ignored", () => {
   const filters = parseFileFiltersFromUrl(new URLSearchParams("notInvoice=hide"));
-  assert.equal("isNotInvoice" in filters, false);
+  assert.equal("documentTypes" in filters, false);
 });
 
-test("the hide toggle round-trips alongside the other filters and the search term", () => {
-  const query = "search=acme&connected=true&extracted=false&notInvoice=false&partners=p1,p2&type=expense";
+test("docType wins over a stale notInvoice param", () => {
+  const filters = parseFileFiltersFromUrl(new URLSearchParams("notInvoice=true&docType=invoice"));
+  assert.deepEqual(filters.documentTypes, ["invoice"]);
+});
+
+test("the Document selection round-trips alongside the other filters and the search term", () => {
+  const query = "search=acme&connected=true&extracted=false&docType=invoice,unknown&partners=p1,p2&type=expense";
   const filters = parseFileFiltersFromUrl(new URLSearchParams(query));
   const rebuilt = buildFileSearchParams(filters, "acme", "file_1");
-  assert.equal(rebuilt.get("notInvoice"), "false");
+  assert.equal(rebuilt.get("docType"), "invoice,unknown");
+  assert.equal(rebuilt.has("notInvoice"), false);
   assert.equal(rebuilt.get("connected"), "true");
   assert.equal(rebuilt.get("extracted"), "false");
   assert.equal(rebuilt.get("partners"), "p1,p2");
@@ -100,18 +134,23 @@ test("date params round-trip as ISO strings", () => {
   assert.equal(rebuilt.get("extractedDateTo"), "2026-03-01T00:00:00.000Z");
 });
 
-test("the hide toggle counts as an active filter", () => {
-  assert.equal(hasActiveFileFilters({ isNotInvoice: false }), true);
-  assert.equal(countActiveFileFilters({ isNotInvoice: false }), 1);
-  assert.equal(hasActiveFileFilters({ isNotInvoice: true }), true);
-  assert.equal(countActiveFileFilters({ isNotInvoice: true }), 1);
+test("the Document selection counts as an active filter", () => {
+  assert.equal(hasActiveFileFilters({ documentTypes: ["other"] }), true);
+  assert.equal(countActiveFileFilters({ documentTypes: ["other"] }), 1);
+  assert.equal(countActiveFileFilters({ documentTypes: ["invoice", "receipt"] }), 1);
+  assert.equal(hasActiveFileFilters({ documentTypes: [] }), true);
   assert.equal(hasActiveFileFilters({}), false);
   assert.equal(countActiveFileFilters({}), 0);
 });
 
-test("clearing the toggle drops it from the badge count and the URL", () => {
-  const cleared = { ...parseFileFiltersFromUrl(new URLSearchParams("notInvoice=false")), isNotInvoice: undefined };
+test("clearing the Document selection drops it from the badge count and the URL", () => {
+  const cleared = { ...parseFileFiltersFromUrl(new URLSearchParams("notInvoice=false")), documentTypes: undefined };
   assert.equal(hasActiveFileFilters(cleared), false);
   assert.equal(countActiveFileFilters(cleared), 0);
   assert.equal(buildFileSearchParams(cleared, "").toString(), "");
+});
+
+test("an old notInvoice URL counts as having filter params", () => {
+  assert.equal(hasFileUrlParams(new URLSearchParams("notInvoice=true")), true);
+  assert.equal(hasFileUrlParams(new URLSearchParams("docType=other")), true);
 });

@@ -47,7 +47,7 @@ export function useFiles(filters?: FileFilters) {
   const search = filters?.search;
   const hasConnections = filters?.hasConnections;
   const extractionComplete = filters?.extractionComplete;
-  const isNotInvoice = filters?.isNotInvoice;
+  const documentTypes = filters?.documentTypes;
   const extractedDateFrom = filters?.extractedDateFrom;
   const extractedDateTo = filters?.extractedDateTo;
   const partnerIds = filters?.partnerIds;
@@ -62,7 +62,7 @@ export function useFiles(filters?: FileFilters) {
         search,
         hasConnections,
         extractionComplete,
-        isNotInvoice,
+        documentTypes,
         extractedDateFrom,
         extractedDateTo,
         partnerIds,
@@ -75,7 +75,7 @@ export function useFiles(filters?: FileFilters) {
       search,
       hasConnections,
       extractionComplete,
-      isNotInvoice,
+      documentTypes,
       extractedDateFrom,
       extractedDateTo,
       partnerIds,

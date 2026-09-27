@@ -824,8 +824,17 @@ export interface FileFilters {
   /** Include soft-deleted files (default: false) */
   includeDeleted?: boolean;
 
-  /** Show only "not invoice" files */
+  /**
+   * Operations layer (`listFiles`) only: true = only files marked not-invoice,
+   * false = hide them. The Files page filters on `documentTypes` instead.
+   */
   isNotInvoice?: boolean;
+
+  /**
+   * Files page Document chip (#250): keep only these Document Types. Absent =
+   * every type. A File with no stored type counts as `unknown`.
+   */
+  documentTypes?: DocumentType[];
 
   /** Filter by assigned partner IDs */
   partnerIds?: string[];

@@ -74,53 +74,66 @@ test("applyFileFilters: extractionComplete filter", () => {
   );
 });
 
-test("applyFileFilters: isNotInvoice filter shows only not-invoices when true, only invoices when false", () => {
+test("applyFileFilters: documentTypes keeps only the selected Document Types (#250)", () => {
   const files = [
-    makeFile({ id: "a", isNotInvoice: true }),
-    makeFile({ id: "b", isNotInvoice: false }),
+    makeFile({ id: "inv", documentType: "invoice" }),
+    makeFile({ id: "rec", documentType: "receipt" }),
+    makeFile({ id: "oth", documentType: "other", isNotInvoice: true }),
+    makeFile({ id: "unk", documentType: "unknown" }),
   ];
   assert.deepEqual(
-    applyFileFilters(files, { isNotInvoice: true }).rows.map((f) => f.id),
-    ["a"],
+    applyFileFilters(files, { documentTypes: ["other"] }).rows.map((f) => f.id),
+    ["oth"],
   );
   assert.deepEqual(
-    applyFileFilters(files, { isNotInvoice: false }).rows.map((f) => f.id),
-    ["b"],
+    applyFileFilters(files, { documentTypes: ["invoice", "receipt"] }).rows.map((f) => f.id),
+    ["inv", "rec"],
   );
   assert.deepEqual(
-    applyFileFilters(files, {}).rows.map((f) => f.id).sort(),
-    ["a", "b"],
+    applyFileFilters(files, { documentTypes: ["invoice", "receipt", "unknown"] }).rows.map((f) => f.id),
+    ["inv", "rec", "unk"],
   );
 });
 
-test("applyFileFilters: isNotInvoice=false hides not-invoice rows and the count follows", () => {
+test("applyFileFilters: no documentTypes selection shows every type", () => {
   const files = [
-    makeFile({ id: "a", isNotInvoice: false }),
-    makeFile({ id: "b", isNotInvoice: true }),
-    makeFile({ id: "c" }),
-    // A file uploaded before the flag existed has no isNotInvoice at all.
-    makeFile({ id: "d", isNotInvoice: undefined }),
+    makeFile({ id: "inv", documentType: "invoice" }),
+    makeFile({ id: "oth", documentType: "other" }),
   ];
-  const { rows, invoiceCount } = applyFileFilters(files, { isNotInvoice: false });
-  assert.deepEqual(rows.map((f) => f.id).sort(), ["a", "c", "d"]);
-  assert.equal(invoiceCount, 3);
+  assert.deepEqual(applyFileFilters(files, {}).rows.map((f) => f.id), ["inv", "oth"]);
 });
 
-test("applyFileFilters: isNotInvoice=false combines with the other filters", () => {
+test("applyFileFilters: a File with no Document Type filters as unknown", () => {
   const files = [
-    makeFile({ id: "connected-invoice", transactionIds: ["t1"] }),
-    makeFile({ id: "connected-not-invoice", transactionIds: ["t1"], isNotInvoice: true }),
-    makeFile({ id: "loose-invoice", transactionIds: [] }),
+    makeFile({ id: "legacy", documentType: undefined }),
+    makeFile({ id: "inv", documentType: "invoice" }),
   ];
-  const { rows } = applyFileFilters(files, { isNotInvoice: false, hasConnections: true });
+  assert.deepEqual(
+    applyFileFilters(files, { documentTypes: ["unknown"] }).rows.map((f) => f.id),
+    ["legacy"],
+  );
+  assert.deepEqual(
+    applyFileFilters(files, { documentTypes: ["invoice"] }).rows.map((f) => f.id),
+    ["inv"],
+  );
+});
+
+test("applyFileFilters: an empty documentTypes selection hides every row", () => {
+  const files = [makeFile({ id: "a", documentType: "invoice" })];
+  assert.deepEqual(applyFileFilters(files, { documentTypes: [] }).rows, []);
+});
+
+test("applyFileFilters: documentTypes combines with the other filters", () => {
+  const files = [
+    makeFile({ id: "connected-invoice", documentType: "invoice", transactionIds: ["t1"] }),
+    makeFile({ id: "connected-other", documentType: "other", transactionIds: ["t1"] }),
+    makeFile({ id: "loose-invoice", documentType: "invoice", transactionIds: [] }),
+  ];
+  const { rows } = applyFileFilters(files, {
+    documentTypes: ["invoice", "receipt", "unknown"],
+    hasConnections: true,
+  });
   assert.deepEqual(rows.map((f) => f.id), ["connected-invoice"]);
-});
-
-test("applyFileFilters: isNotInvoice=false can hide every row", () => {
-  const files = [makeFile({ id: "a", isNotInvoice: true }), makeFile({ id: "b", isNotInvoice: true })];
-  const { rows, invoiceCount } = applyFileFilters(files, { isNotInvoice: false });
-  assert.deepEqual(rows, []);
-  assert.equal(invoiceCount, 0);
 });
 
 test("applyFileFilters: extractedDateFrom/To range is inclusive of the end date", () => {
@@ -240,9 +253,9 @@ test("applyFileFilters: invoiceCount excludes not-invoices regardless of other a
   assert.equal(invoiceCount, 1);
 });
 
-test("applyFileFilters: invoiceCount is zero when the isNotInvoice=true filter shows only not-invoices", () => {
-  const files = [makeFile({ id: "a", isNotInvoice: true })];
-  const { rows, invoiceCount } = applyFileFilters(files, { isNotInvoice: true });
+test("applyFileFilters: invoiceCount is zero when only Document Type other is shown", () => {
+  const files = [makeFile({ id: "a", isNotInvoice: true, documentType: "other" })];
+  const { rows, invoiceCount } = applyFileFilters(files, { documentTypes: ["other"] });
   assert.equal(rows.length, 1);
   assert.equal(invoiceCount, 0);
 });

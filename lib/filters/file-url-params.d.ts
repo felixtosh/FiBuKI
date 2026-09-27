@@ -1,6 +1,12 @@
-import type { FileFilters } from "@/types/file";
+import type { FileFilters, DocumentType } from "@/types/file";
 
 export type { FileFilters };
+
+export const DOCUMENT_TYPE_FILTER_VALUES: readonly DocumentType[];
+
+export function normalizeDocumentTypes(
+  types: readonly DocumentType[] | undefined,
+): DocumentType[] | undefined;
 
 export function parseFileFiltersFromUrl(
   searchParams: URLSearchParams,
