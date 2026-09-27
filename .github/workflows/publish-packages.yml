@@ -42,7 +42,7 @@ jobs:
       cli_changed: ${{ steps.changes.outputs.cli }}
       openclaw_changed: ${{ steps.changes.outputs.openclaw }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 2
 
@@ -81,7 +81,7 @@ jobs:
         if: env.NPM_TOKEN == ''
         run: echo "::warning::NPM_TOKEN secret is not configured in this repository — skipping npm publish"
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v6
         with:
@@ -147,7 +147,7 @@ jobs:
           if [ -z "$NPM_TOKEN" ]; then echo "::warning::NPM_TOKEN secret is not configured in this repository — skipping npm publish"; fi
           if [ -z "$CLAWHUB_TOKEN" ]; then echo "::warning::CLAWHUB_TOKEN secret is not configured in this repository — skipping ClawHub publish"; fi
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v6
         with:
