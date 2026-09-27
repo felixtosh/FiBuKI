@@ -94,7 +94,7 @@
     "pdf-lib": "^1.17.1",
     "pg": "^8.23.0",
     "postcss": "^8.5.25",
-    "puppeteer": "^24.40.0",
+    "puppeteer": "^25.12.0",
     "qrcode": "^1.5.4",
     "qrcode.react": "^4.2.0",
     "react": "^19.3.0",
