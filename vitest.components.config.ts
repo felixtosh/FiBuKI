@@ -47,6 +47,11 @@ export default defineConfig({
     // as `@/components/...`, `@/lib/...`. If a new alias is ever added to
     // tsconfig.json it has to be added here too.
     alias: [{ find: /^@\//, replacement: `${repoRoot}/` }],
+    // TypeScript sources before .js, the order Next's resolver uses. Vite's
+    // default tries .js first, and types/ carries stale compiled siblings
+    // (types/billing.js next to types/billing.ts, among others), so without
+    // this a test imports an outdated build of the module the app really uses.
+    extensions: [".tsx", ".ts", ".mts", ".jsx", ".mjs", ".js", ".json"],
   },
   test: {
     environment: "jsdom",

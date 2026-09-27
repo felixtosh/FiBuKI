@@ -842,13 +842,15 @@ describe("Partner Merge", () => {
 
     it("does not make an ordinary survivor identity-synced", async () => {
       seedPartner("survivor", { name: "Acme GmbH" });
-      seedPartner("loser", { name: "Acme Gmbh", identitySourceField: "source:card-1" });
+      // A marker no identity entity backs any more: nothing repoints, so
+      // nothing is handed over.
+      seedPartner("loser", { name: "Acme Gmbh", identitySourceField: "company:gone" });
 
       await merge("survivor", ["loser"]);
 
       expect(partnerDoc("survivor").identitySourceField).toBeUndefined();
       // It stays where it was: a Merged Partner reads back as itself.
-      expect(partnerDoc("loser").identitySourceField).toBe("source:card-1");
+      expect(partnerDoc("loser").identitySourceField).toBe("company:gone");
     });
 
     it("hands the marker over where the identity entity itself moves", async () => {
@@ -936,6 +938,89 @@ describe("Partner Merge", () => {
           survivorValue: "personalEntity",
         },
       ]);
+    });
+  });
+
+  /**
+   * A `source:{id}` marker is neither an ordinary value nor an identity
+   * entity's: it is what card-to-bank reconciliation keys on. It cannot be
+   * carried onto an ordinary survivor and must not be left on a tombstone, so
+   * a merge that would move it is refused (#344).
+   */
+  describe("a source's Partner", () => {
+    function seedCardSource(): void {
+      store.setDoc("sources", "card-1", {
+        userId: USER,
+        name: "Amex Gold",
+        accountKind: "credit_card",
+        sourcePartnerId: "card-partner",
+        isActive: true,
+      });
+      seedPartner("card-partner", { name: "American Express", identitySourceField: "source:card-1" });
+      seedPartner("survivor", { name: "American Express Europe" });
+      store.setDoc(
+        "transactions",
+        "tx-card-payment",
+        createTestTransaction({ userId: USER, partnerId: "card-partner" })
+      );
+    }
+
+    it("is refused as a loser, naming the source, and nothing moves", async () => {
+      seedCardSource();
+
+      await expect(merge("survivor", ["card-partner"])).rejects.toThrow(
+        /source "Amex Gold" \(card-1\).*reconciliation/
+      );
+
+      // Reconciliation reads the transaction's Partner for the marker: the
+      // transaction still names the card Partner, which is live and marked.
+      expect(store.getDoc("transactions", "tx-card-payment")!.partnerId).toBe("card-partner");
+      expect(partnerDoc("card-partner").identitySourceField).toBe("source:card-1");
+      expect(partnerDoc("card-partner").isActive).toBe(true);
+      expect(partnerDoc("card-partner").mergedInto).toBeUndefined();
+      expect(partnerDoc("survivor").identitySourceField).toBeUndefined();
+      expect(partnerDoc("survivor").aliases).toBeUndefined();
+    });
+
+    it("is refused alongside other losers before anything is written", async () => {
+      seedCardSource();
+      seedPartner("plain", { name: "Amex" });
+
+      await expect(merge("survivor", ["plain", "card-partner"])).rejects.toThrow(/card-1/);
+
+      expect(partnerDoc("plain").mergedInto).toBeUndefined();
+      expect(partnerDoc("plain").isActive).toBe(true);
+    });
+
+    it("names the source by id when the source document is gone", async () => {
+      seedPartner("survivor", { name: "Amex" });
+      seedPartner("orphan", { name: "Amex Card", identitySourceField: "source:card-9" });
+
+      await expect(merge("survivor", ["orphan"])).rejects.toThrow(/source card-9,/);
+    });
+
+    it("can be the survivor, keeping the marker reconciliation keys on", async () => {
+      seedCardSource();
+
+      await merge("card-partner", ["survivor"]);
+
+      expect(partnerDoc("card-partner").identitySourceField).toBe("source:card-1");
+      expect(store.getDoc("transactions", "tx-card-payment")!.partnerId).toBe("card-partner");
+    });
+
+    it("does not block merging away a Merged Partner that still carries one", async () => {
+      seedPartner("survivor", { name: "Amex" });
+      seedPartner("old", {
+        name: "Amex Card",
+        identitySourceField: "source:card-1",
+        isActive: false,
+        mergedInto: "elsewhere",
+      });
+
+      const result = await merge("survivor", ["old"]);
+
+      expect(result.mergedPartnerIds).toEqual(["old"]);
+      expect(partnerDoc("survivor").identitySourceField).toBeUndefined();
     });
   });
 

@@ -11,6 +11,10 @@
  * trustworthy: this pass only ever writes a value derived from what is already
  * on the record, never a guess.
  *
+ * It also decodes the flat `extractedPartner` (#300) — the counterparty name the
+ * detail panel shows. #233 decoded the Partner records, so until this ran a
+ * File and the Partner it points at disagreed on the name.
+ *
  * Idempotent — a record whose entity names already decode to themselves is
  * skipped, and a name with no character reference in it (including one holding
  * a bare "&") comes back byte-identical, so it is skipped too.
@@ -71,8 +75,9 @@ export const backfillFileEntityNamesCallable = createCallable<
 
       const issuerName = decodedName(data.extractedIssuer);
       const recipientName = decodedName(data.extractedRecipient);
+      const partnerName = decodedName({ name: data.extractedPartner });
 
-      if (issuerName === null && recipientName === null) {
+      if (issuerName === null && recipientName === null && partnerName === null) {
         skipped++;
         continue;
       }
@@ -89,6 +94,10 @@ export const backfillFileEntityNamesCallable = createCallable<
           ...(data.extractedRecipient as StoredEntity),
           name: recipientName,
         };
+      }
+
+      if (partnerName !== null) {
+        update.extractedPartner = partnerName;
       }
 
       await fileDoc.ref.update(update);

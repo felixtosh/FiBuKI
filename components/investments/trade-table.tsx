@@ -4,7 +4,7 @@ import { useRef, useMemo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { InvestmentTrade } from "@/types/investment-trade";
 import { TradeTypeBadge } from "./trade-type-badge";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, toDateSafe } from "@/lib/utils";
 import { format } from "date-fns";
 import { ArrowUpRight, ArrowDownRight } from "lucide-react";
 
@@ -17,8 +17,8 @@ export function TradeTable({ trades }: TradeTableProps) {
 
   const sortedTrades = useMemo(
     () => [...trades].sort((a, b) => {
-      const da = a.date?.toDate?.() ?? new Date(0);
-      const db = b.date?.toDate?.() ?? new Date(0);
+      const da = toDateSafe(a.date) ?? new Date(0);
+      const db = toDateSafe(b.date) ?? new Date(0);
       return db.getTime() - da.getTime();
     }),
     [trades]
@@ -57,7 +57,7 @@ export function TradeTable({ trades }: TradeTableProps) {
         <div style={{ height: `${virtualizer.getTotalSize()}px`, position: "relative" }}>
           {virtualizer.getVirtualItems().map((virtualRow) => {
             const trade = sortedTrades[virtualRow.index];
-            const tradeDate = trade.date?.toDate?.();
+            const tradeDate = toDateSafe(trade.date);
             const hasGain = trade.tradeType === "sell" && trade.realizedGainEur != null;
             const gain = trade.realizedGainEur ?? 0;
 

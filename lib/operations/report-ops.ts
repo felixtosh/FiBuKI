@@ -1,3 +1,4 @@
+import { toDateSafe } from "@/lib/utils";
 import {
   collection,
   query,
@@ -72,7 +73,7 @@ async function getTransactionsForPeriod(
             id: d.id,
             date: data.date,
             dateType: typeof data.date,
-            dateToDate: data.date?.toDate?.(),
+            dateToDate: toDateSafe(data.date),
           };
         });
         console.log("[report-ops] Sample transaction dates:", sampleDates);

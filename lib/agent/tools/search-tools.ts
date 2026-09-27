@@ -4,6 +4,7 @@
  * Tools for searching files and receipts across local files and Gmail.
  */
 
+import { toDateSafe } from "@/lib/utils";
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { classifyEmail } from "@/lib/email-providers/interface";
@@ -194,7 +195,7 @@ export const generateSearchSuggestionsTool = tool(
     }
 
     const tx = txDoc.data()!;
-    const txDate = tx.date?.toDate?.() || new Date(tx.date);
+    const txDate = toDateSafe(tx.date) || new Date(tx.date);
 
     // Get partner info if available - includes all context useful for agent
     let partnerContext: {
@@ -431,7 +432,7 @@ export const searchLocalFilesTool = tool(
     }
 
     const tx = txDoc.data()!;
-    const txDate = tx.date?.toDate?.() || new Date(tx.date);
+    const txDate = toDateSafe(tx.date) || new Date(tx.date);
     const rejectedFileIds = new Set<string>(tx.rejectedFileIds || []);
 
     // Get partner info if available - includes all context useful for agent
@@ -591,7 +592,7 @@ export const searchLocalFilesTool = tool(
       mimeType: file.fileType,
       // Pass file extracted data for accurate scoring
       fileExtractedAmount: getFileAmountForValidation(file, tx.amount),
-      fileExtractedDate: file.extractedDate?.toDate?.()?.toISOString() ?? null,
+      fileExtractedDate: toDateSafe(file.extractedDate)?.toISOString() ?? null,
       fileExtractedPartner: file.extractedPartner ?? null,
     }));
 
@@ -670,7 +671,7 @@ export const searchLocalFilesTool = tool(
             // Convert from cents to whole units for display
             extractedAmount: candidateAmount != null ? candidateAmount / 100 : undefined,
             extractedCurrency: file.extractedCurrency || "EUR",
-            extractedDate: file.extractedDate?.toDate?.()?.toISOString() ?? undefined,
+            extractedDate: toDateSafe(file.extractedDate)?.toISOString() ?? undefined,
             extractedPartner: file.extractedPartner ?? undefined,
             isRejected: rejectedFileIds.has(file.id),
           });
@@ -774,7 +775,7 @@ export const searchGmailAttachmentsTool = tool(
     }
 
     const tx = txDoc.data()!;
-    const txDate = tx.date?.toDate?.() || new Date(tx.date);
+    const txDate = toDateSafe(tx.date) || new Date(tx.date);
     const rejectedFileIds = new Set<string>(tx.rejectedFileIds || []);
     const receiptWorkerDateFrom = new Date(txDate);
     receiptWorkerDateFrom.setDate(receiptWorkerDateFrom.getDate() - 180);
@@ -1239,7 +1240,7 @@ export const searchGmailEmailsTool = tool(
     let effectiveDateFrom = dateFrom;
     let effectiveDateTo = dateTo;
     if (workerType === "receipt_search" && tx?.date && !effectiveDateFrom && !effectiveDateTo) {
-      const txDate = tx.date?.toDate?.() || new Date(tx.date);
+      const txDate = toDateSafe(tx.date) || new Date(tx.date);
       const defaultFrom = new Date(txDate);
       defaultFrom.setDate(defaultFrom.getDate() - 180);
       const defaultTo = new Date(txDate);
@@ -1374,7 +1375,7 @@ export const searchGmailEmailsTool = tool(
 
     if (tx && dedupedEmails.length > 0) {
       try {
-        const txDate = tx.date?.toDate?.() || new Date(tx.date);
+        const txDate = toDateSafe(tx.date) || new Date(tx.date);
         const emailsToScore = dedupedEmails.map((email) => ({
           key: email.messageId,
           filename: `${email.subject}.pdf`,

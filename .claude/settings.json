@@ -15,13 +15,5 @@
       }
     ]
   },
-  "permissions": {
-    "allow": [
-      "Bash(git push fork *)",
-      "Bash(gh pr create *)"
-    ],
-    "ask": [
-      "Bash(gh pr merge *)"
-    ]
-  }
+  "permissions": {}
 }
