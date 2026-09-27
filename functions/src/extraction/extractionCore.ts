@@ -56,13 +56,6 @@ import { repairReviewFields, reviewRepair } from "../documents/repairReview";
  * Options for running extraction
  */
 export interface ExtractionOptions {
-  /**
-   * Anthropic API key. Unused by extraction since the legacy vision-claude
-   * provider was retired (#170) — nothing downstream of here reads it. The
-   * callables that run extraction still declare the secret and hand it down;
-   * unwiring that plumbing is a separate change.
-   */
-  anthropicApiKey?: string;
   /** Skip two-phase classification (user has overridden AI classification) */
   skipClassification?: boolean;
   /** Gemini model to use */
@@ -315,7 +308,6 @@ export async function runExtraction(
   const t3 = Date.now();
   const result = await extractDocument(fileBuffer, fileData.fileType as string, {
     provider,
-    anthropicApiKey: options.anthropicApiKey,
     geminiModel,
     skipClassification: true, // Already classified above
   });

@@ -1,9 +1,7 @@
 import { onDocumentCreated, onDocumentUpdated } from "firebase-functions/v2/firestore";
-import { defineSecret } from "firebase-functions/params";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { runExtraction } from "./extractionCore";
 
-const anthropicApiKey = defineSecret("ANTHROPIC_API_KEY");
 const db = getFirestore();
 
 /**
@@ -19,7 +17,6 @@ export const extractFileDataOnUndelete = onDocumentUpdated(
     timeoutSeconds: 120,
     memory: "512MiB",
     maxInstances: 10,
-    secrets: [anthropicApiKey],
   },
   async (event) => {
     const before = event.data?.before.data();
@@ -44,7 +41,6 @@ export const extractFileDataOnUndelete = onDocumentUpdated(
 
       try {
         await runExtraction(fileId, after, {
-          anthropicApiKey: anthropicApiKey.value(),
           skipClassification: false,
         });
       } catch (error) {
@@ -70,7 +66,6 @@ export const extractFileData = onDocumentCreated(
     timeoutSeconds: 120,
     memory: "512MiB",
     maxInstances: 10, // Limit concurrency to prevent Gemini API rate limits
-    secrets: [anthropicApiKey],
   },
   async (event) => {
     const snapshot = event.data;
@@ -106,7 +101,6 @@ export const extractFileData = onDocumentCreated(
       }
 
       await runExtraction(fileId, fileData, {
-        anthropicApiKey: anthropicApiKey.value(),
         skipClassification: false,
       });
     } catch (error) {

@@ -364,9 +364,22 @@ test("describeRepairAmbiguity: a flagged file names the fields to check (#275)",
 
   assert.equal(chip.tone, "warning");
   assert.deepEqual(chip.fields, ["address", "invoiceNumber"]);
-  assert.match(chip.text, /address and invoiceNumber/);
+  assert.match(chip.text, /Address and Invoice number/);
   // It has to say what was ambiguous, or the reader cannot judge the value.
   assert.match(chip.text, /b, f, n, r or t/);
+});
+
+test("describeRepairAmbiguity: names fields by the panel's labels, not response keys (#301)", () => {
+  const chip = describeRepairAmbiguity({
+    needsRepairReview: true,
+    repairAmbiguousFields: ["date", "date_raw", "vatId", "rawText"],
+  });
+
+  // The keys stay what the parse produced; only the text is translated.
+  assert.deepEqual(chip.fields, ["date", "date_raw", "vatId", "rawText"]);
+  // Two keys that land on one row are named once.
+  assert.match(chip.text, /in Document Date, VAT ID and Extracted text:/);
+  assert.doesNotMatch(chip.text, /date_raw|vatId|rawText/);
 });
 
 test("describeRepairAmbiguity: still speaks when the field names are missing", () => {
