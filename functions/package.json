@@ -35,7 +35,7 @@
     "@simplewebauthn/types": "^12.0.0",
     "@sparticuz/chromium": "^143.0.4",
     "archiver": "^7.0.1",
-    "better-auth": "^1.6.23",
+    "better-auth": "^1.7.6",
     "busboy": "^1.6.0",
     "cologne-phonetic": "^1.1.1",
     "drizzle-orm": "^0.45.3",
