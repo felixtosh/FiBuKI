@@ -8,10 +8,10 @@ import {
 
 interface UseRowNavigationKeysOptions {
   /**
-   * Whether the keys are live. Pass `true` only while a detail panel is open
-   * and none of the page's own inline overlays (the file viewer, the connect
-   * overlays) are covering the list — those render without a dialog role, so
-   * the guard inside cannot see them.
+   * Whether the keys are live. Compute it with `isRowNavigationEnabled`: true
+   * while a detail panel is open and no connect overlay covers the list (those
+   * render without a dialog role, so the guard inside cannot see them). The
+   * full-screen file viewer does not switch the keys off.
    */
   enabled: boolean;
   onPrevious: () => void;

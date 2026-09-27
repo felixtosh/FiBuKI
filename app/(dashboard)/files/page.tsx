@@ -34,6 +34,7 @@ import {
 import { createDropReentryGuard } from "@/lib/files/drop-reentry-guard";
 import { getNeighbourRowId } from "@/lib/navigation/row-neighbour";
 import { useRowNavigationKeys } from "@/hooks/use-row-navigation-keys";
+import { isRowNavigationEnabled } from "@/lib/navigation/arrow-key-navigation";
 import {
   toggleFileCheckbox,
   toggleSelectAll,
@@ -718,14 +719,18 @@ function FilesContent() {
     [navigateInvoiceBy]
   );
 
-  // Left/right walk the displayed order through the panel that is open — the
-  // invoice panel when ?invoiceId= is set, the file panel otherwise. The file
-  // viewer and the connect overlay render inline with no dialog role of their
-  // own, so they have to be named here; portalled dialogs and menus (upload,
-  // the bulk partner picker, any dropdown) the hook sees for itself.
-  const isFileOverlayOpen = viewerOpen || isConnectTransactionOpen;
+  // Left/right walk the displayed order through the panel that is open: the
+  // invoice panel when ?invoiceId= is set, the file panel otherwise. They stay
+  // live while the full-screen viewer is open, which follows the selection just
+  // as it does for the prev/next buttons (#234). The connect overlay renders
+  // inline with no dialog role of its own, so it has to be named here;
+  // portalled dialogs and menus (upload, the bulk partner picker, any
+  // dropdown) the hook sees for itself.
   useRowNavigationKeys({
-    enabled: Boolean(invoiceIdParam || selectedFile) && !isFileOverlayOpen,
+    enabled: isRowNavigationEnabled({
+      panelOpen: Boolean(invoiceIdParam || selectedFile),
+      connectOverlayOpen: isConnectTransactionOpen,
+    }),
     onPrevious: invoiceIdParam ? handleInvoiceNavigatePrevious : handleNavigatePrevious,
     onNext: invoiceIdParam ? handleInvoiceNavigateNext : handleNavigateNext,
   });
