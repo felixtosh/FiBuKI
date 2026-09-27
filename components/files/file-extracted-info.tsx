@@ -187,6 +187,8 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
   const repairAmbiguity = describeRepairAmbiguity(file);
   const [showMore, setShowMore] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  // Why the last save did not land, shown until the next attempt (#342).
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [editedFields, setEditedFields] = useState<EditableExtractedFields>({
     date: "",
     amount: "",
@@ -238,19 +240,31 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
       additionalFields: existingAdditional,
       lineItems: existingLineItems,
     });
+    setSaveError(null);
     setIsEditing(true);
     setShowMore(true); // Expand to show all fields when editing
   };
 
   const cancelEditing = () => {
+    setSaveError(null);
     setIsEditing(false);
   };
 
+  // A refused correction keeps the editor open with what was typed, so it can
+  // be fixed rather than retyped, and says why (#342). It used to close
+  // regardless, which made a refused tip indistinguishable from one accepted
+  // and then lost.
   const handleUpdate = async () => {
-    if (onUpdate) {
+    if (!onUpdate) return;
+    setSaveError(null);
+    try {
       await onUpdate(editedFields);
-      setIsEditing(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message.trim() : "";
+      setSaveError(message || "The correction could not be saved.");
+      return;
     }
+    setIsEditing(false);
   };
 
   const updateField = (field: keyof Omit<EditableExtractedFields, "additionalFields" | "lineItems">) => (value: string) => {
@@ -1090,6 +1104,13 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
                   )}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Why the last save was refused - same treatment as extractionError */}
+          {isEditing && saveError && (
+            <div role="alert" className="text-sm text-destructive bg-destructive/10 p-2 rounded">
+              Not saved: {saveError}
             </div>
           )}
 

@@ -405,6 +405,10 @@ function FileDetailPanelInner({
       await updateFileExtractedFields(ctx, file.id, fields);
     } catch (error) {
       console.error("Failed to update extracted fields:", error);
+      // Rethrown, not swallowed (#342): the editor shows the refusal and stays
+      // open. The callable's message is written for a person — it names the
+      // total a tip was measured against and the way out.
+      throw error;
     } finally {
       setIsUpdatingExtractedFields(false);
     }
