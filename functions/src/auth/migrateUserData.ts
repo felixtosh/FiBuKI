@@ -1,3 +1,4 @@
+import { toDateSafe } from "../utils/toDateSafe";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 
@@ -200,7 +201,7 @@ export const checkMigrationStatus = onCall(
         return {
           needsMigration: false,
           reason: "Already migrated",
-          migrationDate: migrationData.completedAt?.toDate?.()?.toISOString(),
+          migrationDate: toDateSafe(migrationData.completedAt)?.toISOString(),
           totalMigrated: migrationData.totalMigrated,
         };
       }

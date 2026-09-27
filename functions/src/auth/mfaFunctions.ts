@@ -1,3 +1,4 @@
+import { toDateSafe } from "../utils/toDateSafe";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore, Timestamp, FieldValue } from "firebase-admin/firestore";
@@ -289,8 +290,8 @@ export const getMfaStatus = onCall(
     const passkeys = passkeysSnapshot.docs.map((doc) => ({
       id: doc.id,
       deviceName: doc.data().deviceName,
-      createdAt: doc.data().createdAt?.toDate?.()?.toISOString() || null,
-      lastUsedAt: doc.data().lastUsedAt?.toDate?.()?.toISOString() || null,
+      createdAt: toDateSafe(doc.data().createdAt)?.toISOString() || null,
+      lastUsedAt: toDateSafe(doc.data().lastUsedAt)?.toISOString() || null,
     }));
 
     // Get remaining backup codes count

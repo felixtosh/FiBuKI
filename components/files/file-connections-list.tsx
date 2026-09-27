@@ -74,7 +74,7 @@ function SuggestionRow({
   disabled,
 }: SuggestionRowProps) {
   const { preview, confidence, matchSources } = suggestion;
-  const txDate = preview.date?.toDate?.() || (preview.date as unknown as { seconds: number })?.seconds
+  const txDate = toDateSafe(preview.date) || (preview.date as unknown as { seconds: number })?.seconds
     ? new Date((preview.date as unknown as { seconds: number }).seconds * 1000)
     : null;
 

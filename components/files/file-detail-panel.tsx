@@ -767,7 +767,7 @@ function FileDetailPanelInner({
                   fileName: file.fileName,
                   amount: file.extractedAmount ?? undefined,
                   currency: file.extractedCurrency ?? undefined,
-                  date: file.extractedDate?.toDate?.()?.toISOString().split("T")[0],
+                  date: toDateSafe(file.extractedDate)?.toISOString().split("T")[0],
                   partner: file.extractedPartner ?? undefined,
                 })
               }

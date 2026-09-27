@@ -21,6 +21,7 @@
  * - hooks/use-worker.ts (frontend hook)
  */
 
+import { toDateSafe } from "../utils/toDateSafe";
 import { onDocumentUpdated } from "firebase-functions/v2/firestore";
 import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
@@ -1134,7 +1135,7 @@ async function queueAgenticTransactionSearch(
     fileName: fileData.fileName || "Unknown",
     amount: fileData.extractedAmount,
     currency: fileData.extractedCurrency || "EUR",
-    date: fileData.extractedDate?.toDate?.()?.toISOString?.()?.split("T")[0],
+    date: toDateSafe(fileData.extractedDate)?.toISOString?.()?.split("T")[0],
     partner: fileData.extractedPartner || fileData.partnerName,
   };
 
