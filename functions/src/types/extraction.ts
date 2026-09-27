@@ -4,6 +4,19 @@
  */
 
 /**
+ * One OCR text block with its position on the page. Lived beside the Google
+ * Vision client until that path was retired (#170, #309); the Gemini result
+ * still carries the field, always empty.
+ */
+export interface OCRBlock {
+  text: string;
+  boundingBox: {
+    vertices: Array<{ x: number; y: number }>;
+  };
+  confidence: number;
+}
+
+/**
  * Normalized entity data (issuer or recipient)
  */
 export interface ExtractedEntity {

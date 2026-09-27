@@ -45,7 +45,6 @@ import {
   isTransactionDismissedForFile,
   type DismissibleFileState,
 } from "../files/dismissSuggestionOps";
-import { defineSecret } from "firebase-functions/params";
 import {
   RetryExtractionError,
   retryExtractionForFile,
@@ -138,13 +137,6 @@ export async function startAfterCursor(
 
   return query.startAfter(cursorSnap);
 }
-
-/**
- * Extraction is the one tool on this surface that spends an AI call directly,
- * so the two functions that dispatch tools — mcpApi and mcpSse — declare this
- * secret. On self-host the params shim reads it from the environment.
- */
-const anthropicApiKey = defineSecret("ANTHROPIC_API_KEY");
 
 /**
  * Check if a tool requires a feature the user's plan doesn't have.
@@ -1029,9 +1021,6 @@ export async function unmarkFileAsNotInvoice(userId: string, args: Record<string
  *
  * Extraction runs inline here rather than being queued: the only trigger that
  * re-runs it fires on undelete, so there is nothing to hand the work to.
- * mcpApi and mcpSse declare ANTHROPIC_API_KEY for that inline run; since #170
- * retired the vision-claude extraction path nothing reads it, so the secret is
- * vestigial until the plumbing is unwired.
  *
  * The refusal codes are surfaced as message prefixes, matching the
  * PAIR_REJECTED convention the connect handler uses: an agent working a list
@@ -1051,7 +1040,6 @@ export async function retryFileExtractionTool(userId: string, args: Record<strin
       userId,
       force: args.force === true,
       overwriteCorrections: args.overwriteCorrections === true,
-      anthropicApiKey: anthropicApiKey.value(),
     });
 
     console.log(`[retryFileExtraction] Re-extracted file ${fileId}`, { userId, via: "tools" });

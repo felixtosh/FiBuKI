@@ -13,8 +13,7 @@
  * EXTRACTION_PROVIDER is no longer read; nothing routes anywhere but Gemini.
  */
 
-import { ExtractedData } from "../types/extraction";
-import { OCRBlock } from "./visionApi";
+import { ExtractedData, OCRBlock } from "../types/extraction";
 import { GeminiBoundingBox, ExtractedRawText, ExtractedAdditionalField } from "./geminiParser";
 
 export type ExtractionProvider = "gemini";
@@ -46,13 +45,6 @@ export interface ExtractionResult {
 
 export interface ExtractionConfig {
   provider: ExtractionProvider;
-  /**
-   * Unused by extraction since the vision-claude path was retired (#170) —
-   * nothing downstream of here reads it. The callables that run extraction
-   * still declare the ANTHROPIC_API_KEY secret and hand it down; unwiring that
-   * plumbing is a separate change.
-   */
-  anthropicApiKey?: string;
   // Gemini uses service account auth via Vertex AI (no API key needed)
   geminiModel?: string;
   // Skip two-phase classification (user has overridden AI classification)
