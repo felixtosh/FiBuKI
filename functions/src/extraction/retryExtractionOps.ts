@@ -55,7 +55,6 @@ export interface RetryExtractionOptions {
    * A caller that means to overwrite a person's ruling says so per file.
    */
   overwriteCorrections?: boolean;
-  anthropicApiKey: string;
 }
 
 /**
@@ -130,7 +129,7 @@ export function buildRetryResetUpdates(fileData: {
  */
 export async function retryExtractionForFile(
   db: Firestore,
-  { fileId, userId, force, overwriteCorrections, anthropicApiKey }: RetryExtractionOptions
+  { fileId, userId, force, overwriteCorrections }: RetryExtractionOptions
 ): Promise<Awaited<ReturnType<typeof runExtraction>>> {
   const fileRef = db.collection("files").doc(fileId);
   const fileDoc = await fileRef.get();
@@ -178,7 +177,7 @@ export async function retryExtractionForFile(
   await fileRef.update(buildRetryResetUpdates(fileData));
 
   try {
-    return await runExtraction(fileId, fileData, { anthropicApiKey, skipClassification: isUserOverride });
+    return await runExtraction(fileId, fileData, { skipClassification: isUserOverride });
   } catch (error) {
     console.error(`Retry extraction failed for file ${fileId}:`, error);
 

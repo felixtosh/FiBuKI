@@ -6,6 +6,7 @@
  * atomically at issue time.
  */
 
+import { toDateSafe } from "../utils/toDateSafe";
 import { Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import {
@@ -201,7 +202,7 @@ export async function performCreateInvoice(
       // to parsing the year from the number string.
       let docYear: number | null = null;
       try {
-        docYear = data.issueDate?.toDate?.().getFullYear() ?? null;
+        docYear = toDateSafe(data.issueDate)?.getFullYear() ?? null;
       } catch {
         docYear = null;
       }
