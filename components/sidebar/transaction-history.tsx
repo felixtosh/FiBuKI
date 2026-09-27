@@ -21,7 +21,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { cn } from "@/lib/utils";
+import { cn, toDateSafe } from "@/lib/utils";
 import {
   Transaction,
   AutomationHistoryEntry,
@@ -204,8 +204,8 @@ export function TransactionHistory({
   const entries = useMemo(() => {
     const history = transaction.automationHistory || [];
     return [...history].sort((a, b) => {
-      const aTime = a.ranAt?.toDate?.()?.getTime() ?? 0;
-      const bTime = b.ranAt?.toDate?.()?.getTime() ?? 0;
+      const aTime = toDateSafe(a.ranAt)?.getTime() ?? 0;
+      const bTime = toDateSafe(b.ranAt)?.getTime() ?? 0;
       return bTime - aTime;
     });
   }, [transaction.automationHistory]);

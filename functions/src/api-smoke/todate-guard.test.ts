@@ -11,7 +11,11 @@
  * reintroduces the pattern. #112 closed two blind spots in the second half:
  * the match used to be line-scoped, so a chain the formatter wrapped across
  * lines was invisible to it, and the swept set stopped at the client — the
- * functions/ tree had 13 live `?.toDate()` call sites of its own.
+ * functions/ tree had 13 live `?.toDate()` call sites of its own. #302
+ * closed a third: `?.toDate?.()` was not matched, and 58 sites hid behind it.
+ * The second `?.` guards a missing method, not a wrong shape — a serialized
+ * `{seconds, nanoseconds}` bag has no `toDate`, so the chain quietly yields
+ * undefined for a value that holds a perfectly good date.
  *
  * Covers repo-root lib/, app/, components/, hooks/ and functions/src, so it
  * runs under the api-smoke profile (needs the root node_modules and the `@/`
@@ -40,13 +44,14 @@ function sourceFiles(dir: string): string[] {
 }
 
 /**
- * Line numbers (1-based) of every unguarded `?.toDate(` call in `content`.
- * `\s*` between the two tokens is what catches a chain the formatter wrapped
- * across lines — a single-line-scoped check would miss `foo?.\n  toDate()`.
+ * Line numbers (1-based) of every unguarded `?.toDate(` or `?.toDate?.(` call
+ * in `content`. `\s*` between the tokens is what catches a chain the
+ * formatter wrapped across lines — a single-line-scoped check would miss
+ * `foo?.\n  toDate()`.
  */
 function findUnguardedToDateCalls(content: string): number[] {
   const lines: number[] = [];
-  for (const match of content.matchAll(/\?\.\s*toDate\s*\(/g)) {
+  for (const match of content.matchAll(/\?\.\s*toDate\s*(?:\?\.\s*)?\(/g)) {
     lines.push(content.slice(0, match.index).split("\n").length);
   }
   return lines;
@@ -113,6 +118,11 @@ describe("findUnguardedToDateCalls", () => {
   it("catches a chain the formatter wrapped across lines", () => {
     const wrapped = "const d = value\n  ?.\n  toDate();";
     expect(findUnguardedToDateCalls(wrapped)).toEqual([2]);
+  });
+
+  it("catches the doubly optional form, which guards a missing method but not a wrong shape", () => {
+    expect(findUnguardedToDateCalls("const d = value?.toDate?.();")).toEqual([1]);
+    expect(findUnguardedToDateCalls("const d = value\n  ?.toDate\n  ?.();")).toEqual([2]);
   });
 
   it("does not flag a call already routed through toDateSafe", () => {

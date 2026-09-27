@@ -138,10 +138,17 @@ const JSON_SINGLE_CHAR_ESCAPES = new Set(['"', "\\", "/", "b", "f", "n", "r", "t
 // the same two bytes.
 const AMBIGUOUS_ESCAPES = new Set(["b", "f", "n", "r", "t"]);
 
-// What can begin the key or value that follows a `,` or a `:` in well-formed
-// JSON. A delimiter alone is not enough to conclude a string ended — prose
-// contains commas and colons too (#283).
+// What can begin the value that follows a `:` in well-formed JSON. A delimiter
+// alone is not enough to conclude a string ended — prose contains commas and
+// colons too (#283).
 const JSON_TOKEN_STARTS = /[-"{[\dtfn]/;
+
+// What can begin the next member after a `,` in the shapes the rescue exists
+// for (#347): a key is always a quoted string, and a nested object or array
+// opens with a bracket. The letters and digits in `JSON_TOKEN_STARTS` are left
+// out on purpose — `n`, `t`, `f`, `-` and the digits begin German and English
+// prose after a comma just as often as they begin `null`, `true`, a number.
+const MEMBER_STARTS = /["{[]/;
 
 function skipSpace(jsonStr: string, from: number): number {
   let i = from;
@@ -160,11 +167,18 @@ function skipSpace(jsonStr: string, from: number): number {
  * really ended is followed by `,` `}` `]` `:` or the end of the response, and
  * after a `,` or `:` by the start of the next key or value.
  *
- * It is wrong for a document whose own text carries an escaped quote followed
- * immediately by a structural character AND by something that reads as a JSON
- * token — the value `he said "hi", 5 times`. That input fails the parse loudly,
- * the same way it does today, rather than being corrupted quietly; it is rarer
- * than a trailing-separator path, which is why the trade goes this way.
+ * Decision (#347, option 2 of that ticket): after a `,` only `"` `{` `[`
+ * count as the next token. The first cut accepted every JSON token start there,
+ * and that turned prose which PARSED before #283 — `er sagte "hi", nach Wien`,
+ * `he said "hi", 5 times` — into a response that fails. Narrowing gives up the
+ * rescue only where a string-ending-in-a-backslash is followed by a bare
+ * number or literal in an ARRAY, which never parsed before #283 either.
+ *
+ * What it is still wrong for: prose whose escaped quote is followed by a `:`
+ * and a token start (`"Hinweis \"x\": nach Wien"`), or by a `,` and a quote or
+ * bracket. That input fails the parse loudly rather than being corrupted
+ * quietly; it is rarer than a trailing-separator path, which is why the trade
+ * goes this way.
  */
 function quoteClosesString(jsonStr: string, quoteEnd: number): boolean {
   const i = skipSpace(jsonStr, quoteEnd);
@@ -175,7 +189,8 @@ function quoteClosesString(jsonStr: string, quoteEnd: number): boolean {
   if (follower === "}" || follower === "]") return true;
   if (follower === "," || follower === ":") {
     const j = skipSpace(jsonStr, i + 1);
-    return j < jsonStr.length && JSON_TOKEN_STARTS.test(jsonStr[j]);
+    const starts = follower === "," ? MEMBER_STARTS : JSON_TOKEN_STARTS;
+    return j < jsonStr.length && starts.test(jsonStr[j]);
   }
   return false;
 }

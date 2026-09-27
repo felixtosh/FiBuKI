@@ -76,6 +76,16 @@
  *   the survivor that entity's Partner (#307). The deprecated
  *   `identityPartnerIds` pointers move without handing one over — they are the
  *   legacy spelling of a pointer, not an entity identity sync maintains.
+ * - It does not merge away a source's Partner. A live loser carrying a
+ *   `source:{id}` marker is refused, naming the source (#344). That marker is
+ *   what card-to-bank reconciliation keys on (`onTransactionUpdate`), and it
+ *   cannot be carried instead: the source's `sourcePartnerId` names that
+ *   Partner, `updateSource` rewrites its name, aliases and IBANs wholesale,
+ *   `deleteSource` hard-deletes it, and any marker shows the Partner as "From
+ *   Identity" — so carrying it would hand an ordinary survivor to all four.
+ *   Left on the tombstone, the marker would stop reconciliation silently. The
+ *   source's Partner can still be the survivor; a Merged Partner that already
+ *   carries a marker is not refused, because nothing points at it any more.
  * - It does not rewrite `partnerSuggestions` on Transactions or Files, or the
  *   `searchSuggestions.partnerId` cache key. Firestore cannot query an array of
  *   objects by member field, so repointing suggestions means a full scan of
@@ -100,6 +110,10 @@ const TRANSACTIONS = "transactions";
 const FILES = "files";
 const INVOICES = "invoices";
 const INVOICE_FETCH_QUEUE = "invoiceFetchQueue";
+const SOURCES = "sources";
+
+/** `createSource` marks a source's own Partner `source:{sourceId}`. */
+const SOURCE_MARKER_PREFIX = "source:";
 
 const BATCH_SIZE = 500;
 
@@ -949,6 +963,26 @@ export async function mergeUserPartnersInternal(
       "failed-precondition",
       `Partner ${survivorId} is a Merged Partner (merged into ${text(survivorDoc.mergedInto)}); ` +
         "merge into the survivor instead"
+    );
+  }
+
+  // A source's Partner cannot be a loser: the marker reconciliation keys on
+  // has nowhere safe to go (see the header, #344). A Merged Partner's marker
+  // governs nothing, since its references already moved.
+  for (const loser of loserDocs) {
+    const loserDoc: Doc = loser;
+    const marker = text(loserDoc.identitySourceField);
+    if (!marker.startsWith(SOURCE_MARKER_PREFIX) || !isEmptyValue(loserDoc.mergedInto)) continue;
+    const sourceId = marker.slice(SOURCE_MARKER_PREFIX.length);
+    const sourceSnapshot = await db.collection(SOURCES).doc(sourceId).get();
+    const sourceName = sourceSnapshot.exists ? text(sourceSnapshot.data()?.name) : "";
+    const named = sourceName ? `"${sourceName}" (${sourceId})` : sourceId;
+    throw new HttpsError(
+      "failed-precondition",
+      `Partner ${loser.id} is the Partner of source ${named}, and card-to-bank ` +
+        "reconciliation for that source keys on it, so it cannot be merged away. " +
+        "Merge into it instead, with it as the survivor.",
+      { partnerId: loser.id, sourceId }
     );
   }
 

@@ -431,7 +431,7 @@ export function getFileColumns(
         // Show connected count with amount matching info
         if (count > 0) {
           const txAmounts = transactionAmountsMap?.get(fileId) || [];
-          const fileDate = row.original.extractedDate?.toDate?.() || undefined;
+          const fileDate = toDateSafe(row.original.extractedDate) || undefined;
           return (
             <AmountMatchDisplay
               count={count}
