@@ -1,14 +1,16 @@
 # fibuki-web — the Next.js frontend built with FIBUKI_BACKEND=selfhost so the
 # next.config alias block swaps firebase/{app,firestore,storage,functions,auth}
-# for the lib/selfhost/* client shims. Node 20 (repo engines: node 20.x; Node 22
-# breaks Next dev/build on this app). Build context = repo root.
+# for the lib/selfhost/* client shims. Node 22, matching the repo engines and
+# api.Dockerfile. (An early note said Node 22 broke the Next build; that was not
+# true by Next 16.3, verified with a selfhost `next build` + `next start` on
+# 22.23.) Build context = repo root.
 #
 # NEXT_PUBLIC_* arrive as build args and are promoted to ENV BEFORE `next build`
 # because Next inlines them into the client bundle at build time and next.config
 # extends the CSP (connect/img/frame-src) from NEXT_PUBLIC_FIBUKI_API_URL +
 # NEXT_PUBLIC_OIDC_ISSUER. Setting them only at runtime would leave dead values.
 
-FROM node:20-slim AS build
+FROM node:22-slim AS build
 WORKDIR /app
 
 # Build can be memory-hungry; the LXC caps at 6 GB.

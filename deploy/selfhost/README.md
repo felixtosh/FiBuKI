@@ -11,7 +11,7 @@ affects a normal Firebase build — it is only referenced by this compose file.
 | `postgres` | `postgres:16-alpine` | Firestore-shim JSONB store (`DATABASE_URL`) |
 | `seaweedfs` | `chrislusf/seaweedfs` | storage-shim S3 backend (bucket auto-created by the shim). Replaced MinIO in September 2026, when MinIO's server was archived upstream and its images withdrawn from every registry |
 | `fibuki-api` | built (`api.Dockerfile`, Node 22) | selfhost host: callables + trigger bus + cron, over the shims; `:8788` |
-| `fibuki-web` | built (`web.Dockerfile`, Node 20) | Next frontend, `FIBUKI_BACKEND=selfhost` alias build; `:3000` |
+| `fibuki-web` | built (`web.Dockerfile`, Node 22) | Next frontend, `FIBUKI_BACKEND=selfhost` alias build; `:3000` |
 
 ## Run
 
