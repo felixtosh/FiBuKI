@@ -277,6 +277,9 @@ services:
       # needs Postgres up, not just the api.
       postgres:
         condition: service_healthy
+      # And its own BLOB io, for the same reason.
+      seaweedfs:
+        condition: service_started
     environment:
       PORT: "3000"
       NODE_ENV: production
@@ -352,6 +355,25 @@ services:
       # boots healthy and serves an empty dataset.
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       FIBUKI_TENANT_ID: ${FIBUKI_TENANT_ID:-}
+      # Server-side BLOB io, for the same reason DATABASE_URL is above it and
+      # missed when that was added. Four routes in this container reach storage
+      # through getAdminBucket(): the public invoice download
+      # (app/(public)/i/[token]/download), the browser-extension upload, the
+      # Gmail attachment import and the HTML-to-PDF conversion. Without these
+      # the storage shim has no backend to pick and throws "no blob store
+      # configured" the moment any of them runs — which is what #372 was: a
+      # valid share link that resolved its invoice, its file and its storage
+      # path, and then 404'd because the container could not open the store.
+      #
+      # Same values as fibuki-api, deliberately. Both halves of the app address
+      # one bucket, and a link minted by one must resolve for the other.
+      FIBUKI_STORAGE: s3
+      FIBUKI_S3_ENDPOINT: seaweedfs
+      FIBUKI_S3_PORT: "8333"
+      FIBUKI_S3_SSL: "false"
+      FIBUKI_S3_ACCESS_KEY: ${FIBUKI_S3_ACCESS_KEY}
+      FIBUKI_S3_SECRET_KEY: ${FIBUKI_S3_SECRET_KEY}
+      FIBUKI_STORAGE_BUCKET: ${FIBUKI_STORAGE_BUCKET}
       # Both containers must mint byte-identical /__storage/download links, since
       # one handler resolves whichever wrote them.
       FIBUKI_PUBLIC_URL: ${FIBUKI_PUBLIC_URL:-}
