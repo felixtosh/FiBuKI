@@ -47,6 +47,7 @@ import {
 import { useNoReceiptCategories } from "@/hooks/use-no-receipt-categories";
 // Category suggestions now come from transaction.categorySuggestions (computed on backend)
 import { cn, toDateSafe } from "@/lib/utils";
+import { fileDisplayName } from "@/lib/files/file-display-name";
 import Link from "next/link";
 import { useState } from "react";
 
@@ -259,7 +260,7 @@ function FileRow({ file, transactionCurrency, transactionDate, onDisconnect, dis
       className="flex items-center justify-between gap-2 p-2 -mx-2 rounded hover:bg-muted/50 transition-colors group overflow-hidden"
     >
       <div className="min-w-0 flex-1 overflow-hidden w-0">
-        <p className="text-sm truncate">{file.fileName}</p>
+        <p className="text-sm truncate">{fileDisplayName(file)}</p>
         <p className="text-xs text-muted-foreground">
           {toDateSafe(file.extractedDate)
             ? format(toDateSafe(file.extractedDate)!, "MMM d, yyyy")
@@ -325,7 +326,7 @@ function SuggestedFileRow({
   return (
     <div className="flex items-center justify-between gap-2 p-2 -mx-2 rounded bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200/50 dark:border-amber-800/30 group overflow-hidden">
       <div className="min-w-0 flex-1 overflow-hidden w-0">
-        <p className="text-sm truncate">{file.fileName}</p>
+        <p className="text-sm truncate">{fileDisplayName(file)}</p>
         <p className="text-xs text-muted-foreground">
           {toDateSafe(file.extractedDate)
             ? format(toDateSafe(file.extractedDate)!, "MMM d, yyyy")
@@ -847,7 +848,7 @@ export function TransactionFilesSection({
                         className="flex items-center justify-between gap-2 p-2 -mx-2 rounded bg-muted/30"
                       >
                         <div className="min-w-0 flex-1">
-                          <p className="text-sm truncate text-muted-foreground">{file.fileName}</p>
+                          <p className="text-sm truncate text-muted-foreground">{fileDisplayName(file)}</p>
                           <p className="text-xs text-muted-foreground/70">
                             {toDateSafe(file.extractedDate)
                               ? format(toDateSafe(file.extractedDate)!, "MMM d, yyyy")
@@ -931,7 +932,7 @@ export function TransactionFilesSection({
                       className="flex items-center justify-between gap-2 p-2 -mx-2 rounded bg-muted/30"
                     >
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm truncate text-muted-foreground">{file.fileName}</p>
+                        <p className="text-sm truncate text-muted-foreground">{fileDisplayName(file)}</p>
                         <p className="text-xs text-muted-foreground/70">
                           {toDateSafe(file.extractedDate)
                             ? format(toDateSafe(file.extractedDate)!, "MMM d, yyyy")

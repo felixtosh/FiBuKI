@@ -84,6 +84,7 @@ import { useFilePartnerSuggestions, PartnerSuggestionWithDetails } from "@/hooks
 import { shouldAutoApply } from "@/lib/matching/partner-matcher";
 import { db } from "@/lib/firebase/config";
 import { cn, toDateSafe } from "@/lib/utils";
+import { fileDisplayName } from "@/lib/files/file-display-name";
 import { useAuth } from "@/components/auth";
 import { useChat } from "@/components/chat/chat-provider";
 import { InvoiceDetailPanel } from "@/components/invoicing/InvoiceDetailPanel";
@@ -430,7 +431,7 @@ function FileDetailPanelInner({
       <div className="h-full flex flex-col">
         {/* Header */}
         <PanelHeader
-          title={file.fileName}
+          title={fileDisplayName(file)}
           onClose={onClose}
           onNavigatePrevious={onNavigatePrevious}
           onNavigateNext={onNavigateNext}
