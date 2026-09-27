@@ -361,7 +361,7 @@ export function TransactionToolbar({
                         onFiltersChange({ ...filters, dateFrom: date });
                         setShowFromCalendar(false);
                       }}
-                      initialFocus
+                      autoFocus
                     />
                   </PopoverContent>
                 </Popover>
@@ -390,7 +390,7 @@ export function TransactionToolbar({
                         onFiltersChange({ ...filters, dateTo: date });
                         setShowToCalendar(false);
                       }}
-                      initialFocus
+                      autoFocus
                     />
                   </PopoverContent>
                 </Popover>
