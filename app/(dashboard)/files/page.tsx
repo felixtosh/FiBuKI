@@ -33,6 +33,7 @@ import {
 } from "@/lib/files/delete-confirmation";
 import { createDropReentryGuard } from "@/lib/files/drop-reentry-guard";
 import { getNeighbourRowId } from "@/lib/navigation/row-neighbour";
+import { advanceAfterDisposition } from "@/lib/navigation/advance-after-disposition";
 import { useRowNavigationKeys } from "@/hooks/use-row-navigation-keys";
 import {
   toggleFileCheckbox,
@@ -742,10 +743,24 @@ function FilesContent() {
     await restore(selectedFile.id);
   }, [selectedFile, restore]);
 
+  // Marking not-invoice from the panel is queue triage: advance to the next
+  // row in the displayed order (#251). The next row, and the TaxFile behind
+  // it, are taken from the list as it stands BEFORE the write, because the
+  // write can drop the current row from the list (Document Type becomes
+  // `other`). Bulk marking and unmarking deliberately do not advance.
   const handleMarkAsNotInvoice = useCallback(async () => {
     if (!selectedFile) return;
-    await markAsNotInvoice(selectedFile.id);
-  }, [selectedFile, markAsNotInvoice]);
+    const filesBefore = files;
+    await advanceAfterDisposition({
+      orderedIds: orderedFileIds,
+      currentId: selectedFile.id,
+      mutate: () => markAsNotInvoice(selectedFile.id),
+      navigateTo: (id) => {
+        const target = filesBefore.find((f) => f.id === id);
+        if (target) handleSelectFile(target);
+      },
+    });
+  }, [selectedFile, files, orderedFileIds, markAsNotInvoice, handleSelectFile]);
 
   const handleUnmarkAsNotInvoice = useCallback(async () => {
     if (!selectedFile) return;
