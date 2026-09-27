@@ -29,6 +29,7 @@ import {
 import { autoMatchColumnsRuleBased } from "@/lib/import/field-matcher";
 import { detectCSVFormat, parseCSV } from "@/lib/import/csv-parser";
 import { DATE_FORMATS } from "../import/matchColumns";
+import { DATE_FORMATS as INVESTMENT_DATE_FORMATS } from "../investments/matchInvestmentColumns";
 
 describe("analyzeDayMonthOrder", () => {
   it("proves day-first when a first component exceeds 12", () => {
@@ -592,6 +593,15 @@ describe("dashed dates that are not DD-MM-YYYY", () => {
     // dashed rows would be dropdown-only. The list is hand-duplicated across
     // the rootDir boundary, so pin it to the table in both directions.
     expect([...DATE_FORMATS].sort()).toEqual(DATE_PARSERS.map((p) => p.id).sort());
+  });
+
+  it("is reachable by the broker-CSV column matcher too (#304)", () => {
+    // The investment import reads the suggested id with the same parseDate()
+    // and DATE_PARSERS, so it takes the full set, not a subset. Its own copy
+    // of this list had already drifted: no eu-slash-short, no dashed or dotted
+    // month-first ids, with nothing to fail.
+    expect(INVESTMENT_DATE_FORMATS).toBeDefined();
+    expect([...INVESTMENT_DATE_FORMATS].sort()).toEqual(DATE_PARSERS.map((p) => p.id).sort());
   });
 
   it("carries a time, as the slash formats do", () => {

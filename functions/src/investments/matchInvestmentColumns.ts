@@ -2,6 +2,7 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { VertexAI } from "@google-cloud/vertexai";
 import { logAIUsage } from "../utils/ai-usage-logger";
 import { MODELS } from "../utils/models";
+import { DATE_FORMATS } from "../import/matchColumns";
 
 const GEMINI_MODEL = MODELS.geminiLite;
 
@@ -170,10 +171,15 @@ const INVESTMENT_FIELDS: FieldDefinition[] = [
   },
 ];
 
-const DATE_FORMATS = [
-  "iso-datetime", "iso-datetime-t", "iso", "de", "de-short",
-  "us", "us-short", "eu-slash", "dash-dmy", "text-short", "text-long",
-];
+// Broker CSVs take the full date-format set bank CSVs take, not a subset: the
+// investment import reads the suggested id with the same parseDate() and the
+// same DATE_PARSERS as the transaction import (hooks/use-investment-import.ts),
+// so every id there is one it can parse. This list used to be a third
+// hand-kept copy and had gone stale — missing eu-slash-short, the dotted
+// month-first ids and three of the four dashed ids — with no test to notice
+// (#304). It now IS the transaction list, which date-parsers.test.ts pins to
+// DATE_PARSERS in both directions.
+export { DATE_FORMATS };
 
 const AMOUNT_FORMATS = [
   "de", "de-space", "us", "us-space",
