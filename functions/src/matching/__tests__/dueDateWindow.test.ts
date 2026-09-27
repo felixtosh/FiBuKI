@@ -20,6 +20,7 @@ import {
   TransactionData,
 } from "../transactionScoring";
 import { dueDateFromAdditionalFields, parseIsoDueDate } from "../dueDate";
+import { toDateSafe } from "../../utils/toDateSafe";
 
 function d(dateStr: string): Date {
   return new Date(dateStr);
@@ -86,7 +87,7 @@ describe("toFileMatchingData: extractedDueDate", () => {
       extractedDate: ts(ISSUE),
       extractedAdditionalFields: [{ label: "Due Date", value: DUE, rawValue: "20.01.2026" }],
     });
-    const due = data.extractedDueDate?.toDate();
+    const due = toDateSafe(data.extractedDueDate);
     expect(due).toBeDefined();
     expect([due!.getFullYear(), due!.getMonth(), due!.getDate()]).toEqual([2026, 0, 20]);
   });

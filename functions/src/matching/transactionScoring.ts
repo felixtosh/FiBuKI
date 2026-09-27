@@ -22,6 +22,7 @@ import {
 } from "./coverage";
 import type { DocumentType, DocumentationState } from "../documents/types";
 import { dueDateFromAdditionalFields } from "./dueDate";
+import { toDateSafe } from "../utils/toDateSafe";
 
 // The payment total is Coverage's figure too, so it lives with Coverage (#239).
 // Re-exported here because this is where every caller already imports it from.
@@ -1093,7 +1094,7 @@ export function scoreTransaction(
       fileData.extractedDate.toDate(),
       txData.date.toDate(),
       options?.billingCycle,
-      fileData.extractedDueDate?.toDate() ?? null
+      toDateSafe(fileData.extractedDueDate)
     );
     dateScore = result.score;
     endpointDateScore = result.endpointScore;
