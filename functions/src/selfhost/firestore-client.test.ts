@@ -154,6 +154,23 @@ describe("reads", () => {
     expect(snap.docs.map((d) => d.id)).toEqual(["t2"]);
   });
 
+  // #313: the client and the server shim must agree on what the __name__
+  // sentinel reads as, or a cursor built from a client snapshot pages wrong.
+  it('snapshot.get("__name__") is the doc id on the client, as on the server shim', async () => {
+    const clientDoc = await getDoc(doc(db, "transactions", "t1"));
+    const clientQueryDoc = (await getDocs(collection(db, "transactions"))).docs.find((d) => d.id === "t1")!;
+    const serverDoc = await serverDb.doc("transactions/t1").get();
+    expect(serverDoc.get("__name__")).toBe("t1");
+    expect(clientDoc.get("__name__")).toBe(serverDoc.get("__name__"));
+    expect(clientQueryDoc.get("__name__")).toBe(serverDoc.get("__name__"));
+    // Ordinary field paths are untouched.
+    expect(clientDoc.get("period.year")).toBe(serverDoc.get("period.year"));
+
+    const clientMissing = await getDoc(doc(db, "transactions", "nope"));
+    const serverMissing = await serverDb.doc("transactions/nope").get();
+    expect(clientMissing.get("__name__")).toBe(serverMissing.get("__name__"));
+  });
+
   it("getDoc: present, missing, and a foreign doc denied as FirebaseError", async () => {
     const present = await getDoc(doc(db, "transactions", "t1"));
     expect(present.exists()).toBe(true);

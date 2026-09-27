@@ -1,5 +1,6 @@
 "use client";
 
+import { toDateSafe } from "@/lib/utils";
 import { useState } from "react";
 import { formatDistanceToNow } from "date-fns";
 import { Mail, Trash2, Search, Loader2 } from "lucide-react";
@@ -83,7 +84,7 @@ interface EmailPatternCardProps {
 }
 
 function EmailPatternCard({ pattern, onRemove, onTest, removing }: EmailPatternCardProps) {
-  const lastUsed = pattern.lastUsedAt?.toDate?.() ?? new Date(pattern.lastUsedAt as unknown as string);
+  const lastUsed = toDateSafe(pattern.lastUsedAt) ?? new Date(pattern.lastUsedAt as unknown as string);
   const confidence = pattern.confidence;
 
   return (

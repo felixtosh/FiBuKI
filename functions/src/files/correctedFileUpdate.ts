@@ -20,6 +20,7 @@
 import type { Firestore } from "firebase-admin/firestore";
 import { classifyFileRecord, documentTypeFields, FileRecord } from "../documents/adapter";
 import { reviewFileRecordVatRates, vatRateReviewFields } from "../documents/vatRateReview";
+import { retireRepairAmbiguity } from "../documents/repairReview";
 import {
   computeDirectionReviewFields,
   readLinkedTransactions,
@@ -84,6 +85,10 @@ export async function buildCorrectedFileUpdate(
 
   Object.assign(built.updates, documentTypeFields(classifyFileRecord(corrected)));
   Object.assign(built.updates, vatRateReviewFields(reviewFileRecordVatRates(corrected)));
+
+  // The repair flag is not recomputed, it is retired per field (#301): a value
+  // a person typed replaces the guess the flag was warning about.
+  Object.assign(built.updates, retireRepairAmbiguity(record, Object.keys(built.updates)));
 
   // Setting the direction by hand has to clear the flag that said it was wrong,
   // which is the whole point of being able to set it (#233). It reads the

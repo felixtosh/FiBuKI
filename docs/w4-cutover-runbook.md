@@ -69,8 +69,8 @@ importing into the live target is configuration-consistent):
 | --- | --- |
 | `DATABASE_URL` | Postgres connection (node-postgres Pool). Unset ⇒ ephemeral in-memory PGlite — **never** for a real cutover. |
 | `FIBUKI_AUTH_SECRET` | Better Auth signing secret. `createSelfhostAuth` refuses to start when `DATABASE_URL` is set without it. |
-| `FIBUKI_STORAGE=s3` | Select the S3/MinIO blob store (not `memory`). |
-| `FIBUKI_S3_ENDPOINT` / `FIBUKI_S3_PORT` / `FIBUKI_S3_SSL` | MinIO/S3 endpoint. |
+| `FIBUKI_STORAGE=s3` | Select the S3 blob store (not `memory`); SeaweedFS in the self-host stack. |
+| `FIBUKI_S3_ENDPOINT` / `FIBUKI_S3_PORT` / `FIBUKI_S3_SSL` | S3 endpoint (the `seaweedfs` service, port 8333, in the self-host stack). |
 | `FIBUKI_S3_ACCESS_KEY` / `FIBUKI_S3_SECRET_KEY` | S3 credentials. |
 | `FIBUKI_STORAGE_BUCKET` | Target bucket (default `fibuki-selfhost`). |
 | `FIBUKI_AUTH_ISSUER` | Public URL of the deployment (also the OAuth redirect base if Google sign-in is enabled). |

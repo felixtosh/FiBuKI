@@ -441,17 +441,14 @@ export function deriveRateGroups(
     // Anything else — several files, no total, an unknown currency, or an
     // implied rate that is not a plausible FX rate (a partial payment in
     // disguise) — is surfaced instead of guessed.
-    const foreign = files.filter((f) => !isSameCurrency(f.currency, tx.currency));
-    if (foreign.length > 0) {
-      const converted =
-        files.length === 1
-          ? convertToBankCurrency(files[0], tx, ecbRates, isIncome)
-          : null;
-      if (!converted) {
-        return { ok: false, reason: "foreign-currency", foregoneVat: guessVat20(bank), foreignVat, nonClaimableVat, fxConversions };
-      }
-      fxConversions.push(converted.conversion);
-      files = [converted.file];
+    const inBank = documentsInBankCurrency(tx, ecbRates);
+    if (!inBank) {
+      return { ok: false, reason: "foreign-currency", foregoneVat: guessVat20(bank), foreignVat, nonClaimableVat, fxConversions };
+    }
+    const converted = inBank.conversion;
+    if (converted) {
+      fxConversions.push(converted);
+      files = inBank.files;
       // R6 compares the bank line against the document total, and at a
       // published rate those two no longer agree: the residual IS the markup
       // the method exists to strip. Read as a payment difference it would be
@@ -460,7 +457,7 @@ export function deriveRateGroups(
       // correct. So the converted document reconciles against the payment
       // itself; whether the bank line really is the whole payment was already
       // decided, in the document's own currency, by the plausibility gate.
-      reconcileTotal = converted.conversion.bankAmount;
+      reconcileTotal = converted.bankAmount;
     }
 
     // The extraction fix (§6) flags unreconciled line items instead of
@@ -763,6 +760,37 @@ function convertToBankCurrency(
       : f.rateGroups,
   };
   return { file, conversion };
+}
+
+/**
+ * A transaction's documents in the bank line's currency, or null when they
+ * cannot be put there (#326).
+ *
+ * The rule the ladder above applies before it reads a single figure, lifted
+ * out so the BMD export reads a document's tip in the same unit the UVA does.
+ * Before, the export judged a USD tip in dollars against a euro bank line
+ * while the UVA judged the converted figure, and the two could reach opposite
+ * verdicts on one transaction.
+ *
+ * Documents already in the bank's currency come back as they are, with no
+ * conversion. A single foreign document is converted (`convertToBankCurrency`,
+ * ECB rate preferred). Anything else foreign — several files, no total, an
+ * implausible implied rate — is null: there is no figure in the bank's unit to
+ * judge, and the ladder surfaces it as `foreign-currency`.
+ */
+export function documentsInBankCurrency(
+  tx: UvaTransaction,
+  ecbRates?: EcbRateTable | null
+): { files: UvaFile[]; conversion: FxConversionEntry | null } | null {
+  const files = tx.files ?? [];
+  if (files.every((f) => isSameCurrency(f.currency, tx.currency))) {
+    return { files, conversion: null };
+  }
+  const converted =
+    files.length === 1
+      ? convertToBankCurrency(files[0], tx, ecbRates, tx.amount > 0)
+      : null;
+  return converted ? { files: [converted.file], conversion: converted.conversion } : null;
 }
 
 /**

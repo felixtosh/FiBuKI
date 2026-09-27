@@ -31,6 +31,8 @@ import {
   FileForExport,
   PartnerAccountIndex,
 } from "./bmdCsvGenerators";
+import { loadEcbRateTable } from "../fx/ecbRateStore";
+import { toViennaCalendarDay } from "../uva/adapter";
 
 const PROCESSING_TIMEOUT_MS = 4 * 60 * 1000; // 4 minutes
 
@@ -269,13 +271,25 @@ async function processBmdExport(
       simpleFilesMap.set(id, forExport);
     });
 
+    // The same rate table the UVA run loads (#92), so a foreign-currency
+    // document is converted at the same rate on both sides and its tip reaches
+    // the same verdict (#326). Without it the export fell back to the
+    // effective bank rate where the UVA used the ECB's.
+    const ecbRates = await loadEcbRateTable(
+      db,
+      toViennaCalendarDay(dateFrom),
+      toViennaCalendarDay(dateTo)
+    );
+
     // A document whose figures cannot be booked honestly keeps its transaction
     // out of the CSV rather than degrading into a wrong booking (#194). The run
     // completes either way; what must not happen is that it completes quietly.
     const { csv: buchungenCsv, skipped } = generateBuchungenCsvWithReport(
       transactionsForExport,
       simpleFilesMap,
-      partnerIndex
+      partnerIndex,
+      1,
+      ecbRates
     );
 
     if (skipped.length > 0) {

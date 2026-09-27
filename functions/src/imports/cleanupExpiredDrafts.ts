@@ -4,6 +4,7 @@
  * Deletes both the import record and associated CSV file from storage.
  */
 
+import { toDateSafe } from "../utils/toDateSafe";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
@@ -70,8 +71,8 @@ export const cleanupExpiredDrafts = onSchedule(
           userId: data.userId,
           sourceId: data.sourceId,
           fileName: data.fileName,
-          createdAt: data.createdAt?.toDate?.()?.toISOString(),
-          expiresAt: data.expiresAt?.toDate?.()?.toISOString(),
+          createdAt: toDateSafe(data.createdAt)?.toISOString(),
+          expiresAt: toDateSafe(data.expiresAt)?.toISOString(),
         });
       } catch (error) {
         errorCount++;

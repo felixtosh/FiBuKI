@@ -25,7 +25,9 @@
  * The server renderer (functions/src/invoicing/invoiceDocument.tsx) therefore
  * uses the byte-identical copy of computeLineItemTotals that already lives in
  * functions/src/invoicing/types.ts. Keep the "line column = net" rule identical
- * in both places if either ever changes.
+ * in both places if either ever changes;
+ * functions/src/invoicing/invoice-totals.sync.test.ts fails the build if the two
+ * copies (or the net-column rule) drift.
  */
 
 import {

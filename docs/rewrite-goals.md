@@ -60,7 +60,7 @@ code that's subtly wrong on the edge cases nobody wrote down.
 | **Query** | Drizzle | TS-native, migrations are readable SQL, no engine binary | It's just SQL |
 | **API** | Hono on Node 22 | Light, portable across runtimes | Plain HTTP |
 | **Auth** | Better Auth, OIDC pluggable | Lives in the app, stores in our Postgres, **no auth container**. Org plugin gives multi-tenancy primitives. | OIDC means self-hosters can plug Authentik/Keycloak/Entra |
-| **Storage** | S3 API | MinIO or Garage self-host, any S3 in cloud | The API *is* the abstraction |
+| **Storage** | S3 API | SeaweedFS self-host (MinIO until September 2026), any S3 in cloud | The API *is* the abstraction |
 | **Jobs** | pg-boss | Postgres-backed queue. **No Redis.** Transactional with the data. | Graphile Worker |
 | **Realtime** | ElectricSQL | Apache-2.0, one container, reads the WAL, syncs reads. Writes still go through our API. | LISTEN/NOTIFY + own WebSocket |
 | **AI** | Provider interface | Same pattern as the existing MailProvider seam | BYO key, or local Ollama |
@@ -156,8 +156,8 @@ This phase is the whole argument. Everything after it is unsafe without it.
 - ✅ **Selfhost suite wired into CI** *(done 2026-07-17)* — `test:selfhost` npm
   script + `functions-selfhost` CI job (PGlite).
 - ✅ **Compose-backed CI job** *(done 2026-07-17)* — `functions-selfhost-compose`
-  runs the same suite against real Postgres + MinIO
-  (`deploy/selfhost/docker-compose.ci.yml`), sequential because the workers share
+  runs the same suite against real Postgres + S3 (MinIO then, SeaweedFS since
+  September 2026) (`deploy/selfhost/docker-compose.ci.yml`), sequential because the workers share
   one `docs` table.
 - ✅ **Firestore-API parity test** *(done 2026-07-17, green 2026-07-19)* —
   `functions/src/test/firestore-parity.test.ts`, same assertions against

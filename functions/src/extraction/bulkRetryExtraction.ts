@@ -1,5 +1,4 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
-import { defineSecret } from "firebase-functions/params";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { runExtraction } from "./extractionCore";
 
@@ -13,7 +12,6 @@ const CORS_ORIGINS = [
   "http://localhost:3000",
 ];
 
-const anthropicApiKey = defineSecret("ANTHROPIC_API_KEY");
 const db = getFirestore();
 
 const MAX_FILES_PER_CALL = 50;
@@ -55,7 +53,6 @@ export const bulkRetryExtraction = onCall<BulkRetryRequest, Promise<BulkRetryRes
     region: "europe-west1",
     timeoutSeconds: 540, // 9 min — close to GCF v2 cap; PARALLELISM keeps it bounded
     memory: "1GiB",
-    secrets: [anthropicApiKey],
     cors: CORS_ORIGINS,
   },
   async (request) => {
@@ -116,7 +113,6 @@ export const bulkRetryExtraction = onCall<BulkRetryRequest, Promise<BulkRetryRes
     let succeeded = 0;
     let failed = 0;
     const sampleErrors: string[] = [];
-    const apiKey = anthropicApiKey.value();
 
     // Simple concurrency limiter — chunk the work into waves of PARALLELISM.
     for (let i = 0; i < toProcess.length; i += PARALLELISM) {
@@ -153,7 +149,6 @@ export const bulkRetryExtraction = onCall<BulkRetryRequest, Promise<BulkRetryRes
 
           try {
             await runExtraction(fileId, fileData, {
-              anthropicApiKey: apiKey,
               skipClassification: isUserOverride,
             });
             return { ok: true as const };

@@ -1,5 +1,4 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
-import { defineSecret } from "firebase-functions/params";
 import { getFirestore } from "firebase-admin/firestore";
 import {
   RetryExtractionError,
@@ -15,7 +14,6 @@ const CORS_ORIGINS = [
   "http://localhost:3000",
 ];
 
-const anthropicApiKey = defineSecret("ANTHROPIC_API_KEY");
 const db = getFirestore();
 
 const ERROR_CODES: Record<RetryRefusalCode, "not-found" | "permission-denied" | "failed-precondition" | "internal"> = {
@@ -45,7 +43,6 @@ export const retryFileExtraction = onCall(
     region: "europe-west1",
     timeoutSeconds: 120,
     memory: "512MiB",
-    secrets: [anthropicApiKey],
     cors: CORS_ORIGINS,
   },
   async (request) => {
@@ -65,7 +62,6 @@ export const retryFileExtraction = onCall(
         userId: request.auth.uid,
         force: force === true,
         overwriteCorrections: overwriteCorrections === true,
-        anthropicApiKey: anthropicApiKey.value(),
       });
     } catch (error) {
       if (error instanceof RetryExtractionError) {

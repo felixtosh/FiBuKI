@@ -1,5 +1,6 @@
 "use client";
 
+import { toDateSafe } from "@/lib/utils";
 import { useMemo } from "react";
 import { InvestmentTrade } from "@/types/investment-trade";
 
@@ -26,8 +27,8 @@ export function usePortfolio(trades: InvestmentTrade[]) {
 
     // Process trades in date order (ascending)
     const sorted = [...trades].sort((a, b) => {
-      const da = a.date?.toDate?.() ?? new Date(0);
-      const db = b.date?.toDate?.() ?? new Date(0);
+      const da = toDateSafe(a.date) ?? new Date(0);
+      const db = toDateSafe(b.date) ?? new Date(0);
       return da.getTime() - db.getTime();
     });
 

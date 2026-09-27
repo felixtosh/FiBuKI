@@ -137,8 +137,9 @@ export interface DirectionReviewPresentation {
 export interface RepairAmbiguityPresentation {
   label: string;
   tone: DocumentTone;
+  /** Names the fields by the detail panel's labels, not response keys (#301). */
   text: string;
-  /** The fields to look at, so a caller can point at them directly. */
+  /** The fields to look at, as response keys, so a caller can point at them directly. */
   fields: string[];
 }
 
