@@ -21,7 +21,8 @@
     "check:document-types": "vite-node scripts/check-document-type-corpus.ts",
     "selfhost:export": "vite-node scripts/export-firebase-dump.ts",
     "selfhost:rewrite-urls": "vite-node --config vitest.selfhost.config.ts scripts/rewrite-download-urls.ts",
-    "selfhost:strip-line-item-fields": "vite-node --config vitest.selfhost.config.ts scripts/strip-line-item-fields.ts"
+    "selfhost:strip-line-item-fields": "vite-node --config vitest.selfhost.config.ts scripts/strip-line-item-fields.ts",
+    "selfhost:decode-partner-name-entities": "vite-node --config vitest.selfhost.config.ts scripts/decode-partner-name-entities.ts"
   },
   "engines": {
     "node": "22"

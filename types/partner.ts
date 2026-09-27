@@ -391,6 +391,13 @@ export interface UserPartner {
   /** When VAT ID was verified via VIES */
   viesVerifiedAt?: Timestamp;
 
+  /**
+   * Set by the Partner name backfill (#266) when it decoded a character
+   * reference in `name` or `aliases`. A marked Partner is never decoded
+   * again, so a double-encoded name loses exactly one layer.
+   */
+  nameEntitiesDecodedAt?: Timestamp;
+
   /** Known IBANs */
   ibans: string[];
 

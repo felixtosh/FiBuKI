@@ -72,6 +72,18 @@ describe("backfillPartnerNameEntitiesCallable", () => {
     expect(partner("p1").aliases).toEqual(["AT&T"]);
   });
 
+  it("#266: a double-encoded name loses one layer once, and a second run leaves it", async () => {
+    store.setDoc("partners", "p1", createTestPartner({ userId, name: "AL&amp;amp;FA Taxi KG", aliases: [] }));
+
+    const first = await call();
+    expect(first.updated).toBe(1);
+    expect(partner("p1").name).toBe("AL&amp;FA Taxi KG");
+
+    const second = await call();
+    expect(second.updated).toBe(0);
+    expect(partner("p1").name).toBe("AL&amp;FA Taxi KG");
+  });
+
   it("only touches the calling user's own partners", async () => {
     store.setDoc(
       "partners",
