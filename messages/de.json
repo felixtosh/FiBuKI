@@ -291,6 +291,17 @@
       "other": "Kein Beleg",
       "unknown": "Nicht bestimmt"
     },
+    "element": {
+      "issueDate": "Ausstellungsdatum",
+      "supplierName": "Name des liefernden Unternehmers",
+      "supplierAddress": "Anschrift des liefernden Unternehmers",
+      "description": "Handelsübliche Bezeichnung der Lieferung",
+      "steuersatz": "Steuersatz",
+      "invoiceNumber": "Fortlaufende Nummer",
+      "supplierVatId": "UID-Nummer des liefernden Unternehmers",
+      "recipient": "Name und Anschrift des Leistungsempfängers",
+      "recipientVatId": "UID-Nummer des Leistungsempfängers"
+    },
     "state": {
       "receiptOnly": "Nur Zahlungsbeleg",
       "noReceiptCategory": "Kategorie statt Beleg",

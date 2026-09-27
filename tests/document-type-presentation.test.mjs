@@ -11,6 +11,11 @@ import {
   describeMissingElements,
   describeSection11Element,
   buildSupplierRequestText,
+  describeSection11Consequence,
+  describeTerm,
+  TERM_GLOSSES,
+  DOCUMENT_TYPES,
+  DOCUMENTATION_STATES,
 } from "../lib/documents/document-type-presentation.js";
 
 function basis(overrides = {}) {
@@ -79,17 +84,43 @@ test("a corpus where most files are unknown renders every row", () => {
   assert.ok(rendered.every((r) => r.tone !== "warning" || r.type === "receipt"));
 });
 
-test("describeSection11Element: elements read in German with their statute reference", () => {
+test("describeSection11Element: elements read in English, with the German and the statute kept (#237)", () => {
+  // ADR-0007: the element names translate in the English UI. The German is
+  // kept for the supplier mail and for the bracket on first use; the citation
+  // is an audit reference behind the click.
   assert.deepEqual(describeSection11Element("invoice-number"), {
     element: "invoice-number",
-    label: "Fortlaufende Nummer",
+    label: "Sequential invoice number",
+    labelKey: "documents.element.invoiceNumber",
+    german: "Fortlaufende Nummer",
     citation: "§ 11 Abs 1 lit. h",
   });
   assert.deepEqual(describeSection11Element("supplier-vat-id"), {
     element: "supplier-vat-id",
-    label: "UID-Nummer des liefernden Unternehmers",
+    label: "Supplier VAT ID",
+    labelKey: "documents.element.supplierVatId",
+    german: "UID-Nummer des liefernden Unternehmers",
     citation: "§ 11 Abs 1 lit. i",
   });
+});
+
+test("every § 11 element has an English label distinct from its German name", () => {
+  for (const element of [
+    "issue-date",
+    "supplier-name",
+    "supplier-address",
+    "description",
+    "steuersatz",
+    "invoice-number",
+    "supplier-vat-id",
+    "recipient",
+    "recipient-vat-id",
+  ]) {
+    const described = describeSection11Element(element);
+    assert.ok(described.label.length > 0, element);
+    assert.ok(described.german.length > 0, element);
+    assert.notEqual(described.label, described.german, element);
+  }
 });
 
 test("describeSection11Element: an element this module cannot name still appears", () => {
@@ -128,8 +159,9 @@ test("a reverse-charge invoice reads as an invoice, not as a defective one", () 
 
   assert.equal(describeDocumentType(type).tone, "positive");
   assert.equal(missing.isDefect, false);
-  assert.equal(missing.tone, "neutral");
-  assert.notEqual(missing.heading, "Missing under § 11");
+  // #237: listing what a correct invoice lawfully leaves out argues with it,
+  // so an invoice lists nothing at all.
+  assert.deepEqual(missing.items, []);
   // Asking a reverse-charge supplier for a corrected invoice would be wrong.
   assert.equal(missing.requestText, null);
 
@@ -146,6 +178,7 @@ test("a reverse-charge invoice reads as an invoice, not as a defective one", () 
 test("buildSupplierRequestText: names the elements a mail has to name", () => {
   const text = buildSupplierRequestText(["invoice-number", "supplier-vat-id"]);
   assert.match(text, /§ 11 UStG/);
+  // German because its reader is an Austrian supplier, whatever the UI reads.
   assert.match(text, /- Fortlaufende Nummer \(§ 11 Abs 1 lit\. h\)/);
   assert.match(text, /- UID-Nummer des liefernden Unternehmers \(§ 11 Abs 1 lit\. i\)/);
   assert.equal(buildSupplierRequestText([]), null);
@@ -404,4 +437,112 @@ test("describeDocumentTypeBasis: says nothing about a recipient it could not pla
   const lines = describeDocumentTypeBasis(basis({ recipientIdentity: "unknown" }), "invoice");
 
   assert.equal(lines.some((line) => line.id === "recipient"), false);
+});
+
+test("describeMissingElements: an unknown File lists no elements and offers no mail (#237)", () => {
+  // Reporting elements missing from a document we have not classified states
+  // a defect we cannot stand behind.
+  for (const type of ["unknown", undefined, null, "other"]) {
+    const missing = describeMissingElements(type, ["supplier-vat-id", "steuersatz"]);
+    assert.deepEqual(missing.items, [], String(type));
+    assert.equal(missing.requestText, null, String(type));
+    assert.equal(missing.isDefect, false, String(type));
+  }
+});
+
+test("describeSection11Consequence: leads with the answer, then the reason, in one sentence (#237)", () => {
+  const invoice = describeSection11Consequence("invoice", basis());
+  assert.match(invoice, /^Input VAT \(Vorsteuer\) is deductible, because /);
+
+  const receipt = describeSection11Consequence("receipt", basis({ reason: "receipt-designation" }));
+  assert.match(receipt, /^No input VAT \(Vorsteuer\), because /);
+  assert.match(receipt, /§ 11/);
+
+  // The statute has nothing to say about a non-document, so neither does this.
+  const other = describeSection11Consequence("other", null);
+  assert.match(other, /^Not a financial document/);
+  assert.doesNotMatch(other, /§ ?11/);
+
+  // A state the record is honestly in, never a failure or an empty field.
+  const unknown = describeSection11Consequence("unknown", null);
+  assert.match(unknown, /^Not established/);
+  assert.doesNotMatch(unknown, /error|fail|missing/i);
+  assert.equal(describeSection11Consequence(undefined, undefined), unknown);
+
+  for (const sentence of [invoice, receipt, other, unknown]) {
+    // One sentence: a single terminal full stop and no second sentence.
+    assert.equal(sentence.split(/[.!?](\s|$)/).filter((s) => s && s.trim()).length, 1, sentence);
+    assert.doesNotMatch(sentence, /\u2014/, "no em dashes in UI copy");
+  }
+});
+
+test("describeSection11Consequence: an invoice addressed to somebody else is not your deduction", () => {
+  const sentence = describeSection11Consequence("invoice", basis({ reason: "foreign-recipient" }));
+  assert.match(sentence, /^No input VAT/);
+  assert.doesNotMatch(sentence, /is deductible/);
+});
+
+test("the consequence sentences read on a Transaction row as well as on a File (#237)", () => {
+  // No File-only phrasing: the Transaction surface borrows these words.
+  for (const entry of [...Object.values(DOCUMENT_TYPES), DOCUMENTATION_STATES.invoice]) {
+    assert.doesNotMatch(entry.summary, /\bthis document\b|\bthe document\b/i, entry.summary);
+  }
+  // A Transaction documented by an invoice reads identically to the File behind it.
+  assert.equal(DOCUMENTATION_STATES.invoice.summary, DOCUMENT_TYPES.invoice.summary);
+  assert.equal(
+    describeSection11Consequence("invoice", basis()),
+    describeDocumentationState("invoice").summary,
+  );
+});
+
+test("the summaries say input VAT in English and keep the German in brackets only (#237)", () => {
+  for (const entry of Object.values(DOCUMENT_TYPES)) {
+    assert.doesNotMatch(entry.summary, /Rechnung|Steuersatz|Leistungsempf/, entry.summary);
+    // Vorsteuer only ever as the bracketed citation after the English term.
+    for (const match of entry.summary.matchAll(/Vorsteuer/g)) {
+      assert.equal(entry.summary.slice(match.index - 1, match.index), "(", entry.summary);
+    }
+  }
+});
+
+test("the basis reads in English, with statutory German dosed into brackets (#237)", () => {
+  const lines = [
+    ...describeDocumentTypeBasis(
+      basis({ reason: "zero-vat-with-stated-regime", zeroVatReason: "reverse-charge" }),
+      "invoice",
+    ),
+    ...describeDocumentTypeBasis(
+      basis({ reason: "foreign-recipient", regime: "kleinbetrag", grossTotal: 3_000 }),
+      "invoice",
+    ),
+    ...describeDocumentTypeBasis(
+      basis({ reason: "receipt-designation", recipientIdentity: "third-party" }),
+      "receipt",
+    ),
+  ];
+  for (const line of lines) {
+    assert.doesNotMatch(line.label, /Steuersatz/, line.label);
+    assert.doesNotMatch(line.text, /(?<!\()Steuersatz|(?<!\()Leistungsempfänger|(?<!\()Vorsteuer/, line.text);
+  }
+});
+
+test("term glosses: each statutory term is written once and carries vocabulary only (#237)", () => {
+  const expected = [
+    "vorsteuer",
+    "section11",
+    "kleinbetragsrechnung",
+    "steuersatz",
+    "uid",
+    "leistungsempfaenger",
+    "reverseCharge",
+  ];
+  assert.deepEqual(Object.keys(TERM_GLOSSES).sort(), [...expected].sort());
+  for (const key of expected) {
+    const gloss = describeTerm(key);
+    assert.equal(gloss, TERM_GLOSSES[key], "one definition, reused by reference");
+    assert.ok(gloss.term.length > 0);
+    assert.ok(gloss.text.length > 0);
+    assert.ok(gloss.text.split(/\.(\s|$)/).filter((s) => s && s.trim()).length <= 2, key);
+  }
+  assert.equal(describeTerm("nonsense"), null);
 });
