@@ -1,5 +1,6 @@
 "use client";
 
+import { toDateSafe } from "@/lib/utils";
 import { useState } from "react";
 import {
   Download,
@@ -205,7 +206,7 @@ function CompletedExportRow({
   daysUntilExpiry: number;
 }) {
   const storedDownload = useAuthenticatedDownload();
-  const completedDate = exp.completedAt?.toDate?.();
+  const completedDate = toDateSafe(exp.completedAt);
   const dateStr = completedDate
     ? completedDate.toLocaleDateString("de-DE", {
         year: "numeric",

@@ -253,7 +253,7 @@ export function getTransactionColumns(
         if (hasFile) {
           const fileData = fileAmountsMap?.get(txId);
           // Use transaction/payment date for currency conversion
-          const txDate = row.original.date?.toDate?.();
+          const txDate = toDateSafe(row.original.date) ?? undefined;
           // WHAT the row is documented by, next to the cell that says THAT it
           // is — and only when that changes its worth. An invoice is the case
           // the green row already implies, so labelling it adds a mark to most

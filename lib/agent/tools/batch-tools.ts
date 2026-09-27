@@ -6,6 +6,7 @@
  * for a single partner.
  */
 
+import { toDateSafe } from "@/lib/utils";
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { Timestamp, FieldValue } from "firebase-admin/firestore";
@@ -172,7 +173,7 @@ export const loadPartnerBatchContextTool = tool(
           fileName: data.fileName,
           extractedAmount: data.extractedAmount,
           extractedCurrency: data.extractedCurrency,
-          extractedDate: data.extractedDate?.toDate?.()?.toISOString?.()?.split("T")[0],
+          extractedDate: toDateSafe(data.extractedDate)?.toISOString?.()?.split("T")[0],
           extractedPartner: data.extractedPartner,
           topSuggestion: data.transactionSuggestions?.[0] || null,
           status: "pending",
@@ -301,7 +302,7 @@ export const loadPartnerBatchContextTool = tool(
           transactionId: doc.id,
           amount: data.amount,
           currency: data.currency || "EUR",
-          date: data.date?.toDate?.()?.toISOString?.()?.split("T")[0],
+          date: toDateSafe(data.date)?.toISOString?.()?.split("T")[0],
           name: data.name,
           hasFiles: (data.fileIds?.length || 0) > 0,
           isComplete: data.isComplete,
@@ -512,7 +513,7 @@ export const searchLocalFilesForPartnerTool = tool(
         fileId: doc.id,
         fileName: data.fileName,
         extractedAmount: data.extractedAmount,
-        extractedDate: data.extractedDate?.toDate?.()?.toISOString?.()?.split("T")[0],
+        extractedDate: toDateSafe(data.extractedDate)?.toISOString?.()?.split("T")[0],
         extractedPartner: data.extractedPartner,
         connectedTransactionIds: conn?.transactionIds || data.transactionIds || [],
         autoConnectionCount: conn?.auto || 0,
