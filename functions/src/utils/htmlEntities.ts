@@ -12,6 +12,10 @@
  *
  * The two backfills — `backfillPartnerNameEntities` (#233) and
  * `backfillFileEntityNames` (#299) — use it to repair records written earlier.
+ * On the self-host store the Partner repair is
+ * `selfhost/migrate-decode-partner-name-entities.ts` (#266), through the plan
+ * in `partners/partnerNameEntities.ts`. The VIES response parser uses it too,
+ * since XML hands every "&" over as "&amp;".
  */
 
 const NAMED_ENTITIES: Record<string, string> = {
