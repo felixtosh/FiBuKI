@@ -25,6 +25,7 @@ import type { RateGroup } from "../uva/types";
 export const NO_RECEIPT_SACHKONTO_MAP: Record<string, { expense: string | null; income: string | null; symbol: string; name: string }> = {
   "bank-fees":                    { expense: "7780", income: null,   symbol: "BK", name: "Bankspesen" },
   "interest":                     { expense: "7810", income: "8100", symbol: "BK", name: "Zinsen" },
+  "bank-rewards":                 { expense: null,   income: "8100", symbol: "BK", name: "Bankbonus" },
   "internal-transfers":           { expense: "2800", income: "2800", symbol: "UM", name: "Umbuchung" },
   "payment-provider-settlements": { expense: "7780", income: null,   symbol: "BK", name: "PSP-Spesen" },
   "taxes-government":             { expense: "3520", income: null,   symbol: "BK", name: "Steuern/Abgaben" },

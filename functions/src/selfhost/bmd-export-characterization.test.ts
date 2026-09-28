@@ -504,6 +504,15 @@ describe("bmd characterization: generateBuchungenCsv no-receipt categories", () 
     );
   });
 
+  it("#169: bank-rewards income books Zinserträge 8100 at 0% with the BK symbol", () => {
+    // An interest-like bonus the bank pays (§ 6 (1) 8 UStG) is exempt-class:
+    // no output VAT, booked to the same revenue Sachkonto as credit interest.
+    const csv = generateBuchungenCsv([catTx("bank-rewards", 500, { name: "Treuebonus" })], new Map(), new Map());
+    expect(csv.split("\n")[1]).toBe(
+      "0;8100;;2026000001;20260315;20260315;5,00;2;0,00;0;Bankbonus: Treuebonus;;BK;",
+    );
+  });
+
   it("#66: receipt-lost now books 0% like every other category", () => {
     // An Eigenbeleg is a self-issued voucher and never creates a deduction
     // (spec §3 step 0, treatment "needs-receipt"), which is why the UVA leaves

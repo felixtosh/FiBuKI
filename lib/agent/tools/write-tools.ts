@@ -1043,6 +1043,7 @@ export const bulkUpdateTransactionsTool = tool(
         .enum([
           "bank-fees",
           "interest",
+          "bank-rewards",
           "internal-transfers",
           "payment-provider-settlements",
           "taxes-government",

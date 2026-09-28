@@ -194,9 +194,17 @@ describe("buildUvaTransaction", () => {
       "private-personal",
       "zero-value",
       "receipt-lost",
+      "bank-rewards",
     ]) {
       expect(TEMPLATE_VAT_TREATMENT[id], id).toBeDefined();
     }
+  });
+
+  it("bank-rewards is exempt-class, so the row drops out of the UVA (#169)", () => {
+    // A bank-paid, interest-like bonus (§ 6 (1) 8 UStG) carries no VAT in
+    // either direction; the class gate must drop the row before the income
+    // lane can default it to 20%.
+    expect(TEMPLATE_VAT_TREATMENT["bank-rewards"]).toBe("exempt-class");
   });
 });
 

@@ -52,6 +52,7 @@ export interface CategoryMatchRule {
 export type NoReceiptCategoryId =
   | "bank-fees"
   | "interest"
+  | "bank-rewards"
   | "internal-transfers"
   | "payment-provider-settlements"
   | "taxes-government"

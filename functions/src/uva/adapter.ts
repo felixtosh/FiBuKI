@@ -92,6 +92,10 @@ export interface TimestampLike {
 export const TEMPLATE_VAT_TREATMENT: Record<string, VatTreatment> = {
   "bank-fees": "exempt-class",
   interest: "exempt-class",
+  // Interest-like bonuses the bank itself pays (§ 6 (1) 8 UStG): the bank
+  // statement line is the document, and there is no VAT in either direction
+  // (#169). Cashback and referral bonuses stay on the default lane.
+  "bank-rewards": "exempt-class",
   "taxes-government": "exempt-class",
   payroll: "exempt-class",
   "internal-transfers": "documented-elsewhere",
