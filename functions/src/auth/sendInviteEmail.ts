@@ -4,7 +4,7 @@
  * Returns whether the mail was actually handed to the provider. The mailer
  * returns false instead of throwing when it is unconfigured or the send
  * fails, and swallowing that here is how invites sat "Pending" forever with
- * the UI reporting success (#159 finding 4) — callers that promise delivery
+ * the UI reporting success (#159 finding 4) - callers that promise delivery
  * must check the return value.
  */
 

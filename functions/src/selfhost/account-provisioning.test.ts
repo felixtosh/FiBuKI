@@ -5,11 +5,11 @@
  *     app assumes: an auth_users row and a subscriptions/<uid> document with
  *     the budget fields present.
  * (2) The plan on self-host comes from FIBUKI_PLAN, defaulting to the full
- *     (pro) plan — decision on #159 (Felix, 2026-09-27). No billing code is
+ *     (pro) plan - decision on #159 (Felix, 2026-09-27). No billing code is
  *     compiled out; the env var is only a lever. The cloud tier
  *     (FIBUKI_TIER=cloud) ignores it: there, Stripe owns the plan.
  * (3) One admin identity source: in OIDC mode the group claim is the guard's
- *     source, so ensureAccount materializes it into auth_users.customClaims —
+ *     source, so ensureAccount materializes it into auth_users.customClaims -
  *     the store listAdmins/listAllUsers read. Panel and guard then agree.
  */
 
@@ -83,7 +83,7 @@ describe("envPlanOverride (FIBUKI_PLAN, decision on #159)", () => {
     expect(envPlanOverride()).toBe("smart");
   });
 
-  it("is inert on the cloud tier — Stripe owns the plan there", () => {
+  it("is inert on the cloud tier - Stripe owns the plan there", () => {
     process.env.FIBUKI_TIER = "cloud";
     expect(envPlanOverride()).toBeNull();
     process.env.FIBUKI_PLAN = "free";
@@ -96,7 +96,7 @@ describe("envPlanOverride (FIBUKI_PLAN, decision on #159)", () => {
   });
 
   it("reaches billing/config through the alias seam: the env plan outranks a stored free plan", () => {
-    // billing/config imports "./planSource" — the alias must catch the
+    // billing/config imports "./planSource" - the alias must catch the
     // RELATIVE specifier too, or the gates silently run the Firebase no-op
     // module and a stale subscription row keeps gating features.
     expect(resolvePlanId("free")).toBe("pro");
@@ -121,7 +121,7 @@ describe("ensureAccount: first login provisions the account records (#159 findin
     // Plan from the env lever, defaulting to full.
     expect(data.plan).toBe("pro");
     expect(data.aiFairUseLimitEur).toBe(PLANS.pro.aiFairUseLimitEur);
-    // Budget fields present — the hand-inserted workaround row the issue
+    // Budget fields present - the hand-inserted workaround row the issue
     // describes is exactly these.
     expect(data.aiUsageCurrentPeriodEur).toBe(0);
     expect(data.aiCreditsEur).toBe(0);
@@ -143,7 +143,7 @@ describe("ensureAccount: first login provisions the account records (#159 findin
     const data = (await db.collection("subscriptions").doc("u-replan").get()).data()!;
     expect(data.plan).toBe("pro");
     expect(data.aiFairUseLimitEur).toBe(PLANS.pro.aiFairUseLimitEur);
-    // Usage counters are state, not config — never reset by the sync.
+    // Usage counters are state, not config - never reset by the sync.
     expect(data.aiUsageCurrentPeriodEur).toBe(1.25);
   });
 

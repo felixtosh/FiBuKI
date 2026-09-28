@@ -8,7 +8,7 @@
  * The self-host build swaps this module for
  * `selfhost/plan-source-shim.ts` (path-suffix alias in
  * functions/vitest.selfhost.config.ts, the same seam as utils/mailer),
- * where FIBUKI_PLAN — defaulting to the full plan — decides the plan on the
+ * where FIBUKI_PLAN - defaulting to the full plan - decides the plan on the
  * selfhost tier. Decision on #159 (Felix, 2026-09-27): no billing code is
  * compiled out; the env var is only a lever.
  */

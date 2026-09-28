@@ -3,7 +3,7 @@
  *
  * Before this, sendInviteNotification returned { success: true } while the
  * mailer shim logged "SMTP not configured … skipping email" and returned
- * false — the admin saw "Invitation sent" and the invite sat Pending forever.
+ * false - the admin saw "Invitation sent" and the invite sat Pending forever.
  * The callable now refuses up front (failed-precondition) when the mailer is
  * unconfigured, and reports a send failure instead of swallowing it.
  */

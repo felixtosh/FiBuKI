@@ -3,28 +3,28 @@
  *
  * A fresh self-host login used to leave nothing behind: no auth_users row in
  * OIDC mode (the verifier only maps sub -> uid) and never a subscriptions
- * document — so the plan resolved to free (every AI feature gated off, #159
+ * document - so the plan resolved to free (every AI feature gated off, #159
  * finding 2), the admin panel counted 0 users, and listAdmins found no
  * admins while the Admin menu rendered around it (finding 3).
  *
  * ensureAccount runs after every successful token verification, memoized per
  * (uid, admin) per process:
  *
- *  1. auth_users row — inserted when missing, so listAllUsers/listAdmins see
+ *  1. auth_users row - inserted when missing, so listAllUsers/listAdmins see
  *     every account that has ever authenticated, whichever mode created it.
- *  2. admin claim — in OIDC mode the group claim on the VERIFIED token is
+ *  2. admin claim - in OIDC mode the group claim on the VERIFIED token is
  *     the guard's identity source, so it is materialized into
  *     auth_users.customClaims, the store the admin panel reads: one source,
  *     panel and guard agree, and a group change at the IdP propagates on the
  *     next request. In Better Auth mode the claims store is already the
- *     source (the token was minted FROM it), so syncing is off — an old
+ *     source (the token was minted FROM it), so syncing is off - an old
  *     token must never write a stale admin bit back.
- *  3. subscriptions/<uid> document — created with the budget fields, plan
+ *  3. subscriptions/<uid> document - created with the budget fields, plan
  *     from the FIBUKI_PLAN lever (plan-source-shim, default: full). When the
  *     lever is set and the stored plan differs, the plan and its fair-use
  *     limit are re-pointed; usage counters are state, never touched.
  *
- * Failures here log loudly but never turn a valid token into a 401 — the
+ * Failures here log loudly but never turn a valid token into a 401 - the
  * ensure step retries on the next request instead of taking auth down.
  */
 
@@ -65,7 +65,7 @@ async function ensureUserRow(auth: AuthData, syncAdminClaim: boolean): Promise<v
 
   await client.tx(tenant, async (q) => {
     // Any conflict (uid already present, or the email taken by another row)
-    // means the account exists in some form — nothing to insert then.
+    // means the account exists in some form - nothing to insert then.
     await q(
       `INSERT INTO auth_users (tenant_id, id, name, email, "emailVerified", "customClaims", "createdAt", "updatedAt")
        VALUES ($1, $2, $3, $4, true, $5, now(), now())
@@ -119,7 +119,7 @@ async function ensureSubscription(uid: string): Promise<void> {
 
   // The lever moves both ways: a stored plan that disagrees with FIBUKI_PLAN
   // is re-pointed (plan + its fair-use limit). Usage counters are state, not
-  // config — they stay untouched. Without a lever (cloud tier / unset on the
+  // config - they stay untouched. Without a lever (cloud tier / unset on the
   // Firebase build's shim-free path) the stored plan rules.
   if (envPlan && snap.data()?.plan !== envPlan) {
     await ref.update({
@@ -159,7 +159,7 @@ export function withAccountProvisioning(
         await ensureAccount(auth, opts);
       } catch (err) {
         log(
-          `ensure-account: provisioning failed for uid ${auth.uid} — ` +
+          `ensure-account: provisioning failed for uid ${auth.uid} - ` +
             `${err instanceof Error ? err.message : String(err)}`,
         );
       }

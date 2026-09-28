@@ -31,7 +31,7 @@ export const sendInviteNotificationCallable = createCallable<
     }
 
     // #159 finding 4: an unconfigured mailer used to log "skipping email" and
-    // this callable still answered success — the invite sat Pending forever.
+    // this callable still answered success - the invite sat Pending forever.
     // Fail loudly instead, naming what to configure.
     if (!isMailerConfigured()) {
       throw new HttpsError(
@@ -46,7 +46,7 @@ export const sendInviteNotificationCallable = createCallable<
     if (!sent) {
       throw new HttpsError(
         "unavailable",
-        "The invite email was not sent — the mailer reported a send failure. Check the server logs."
+        "The invite email was not sent - the mailer reported a send failure. Check the server logs."
       );
     }
 

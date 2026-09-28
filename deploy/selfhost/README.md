@@ -64,7 +64,7 @@ Self-host has nobody to bill, so the plan is an env lever, not a Stripe
 subscription (#159):
 
 ```
-FIBUKI_PLAN=full   # default when unset — the whole feature surface
+FIBUKI_PLAN=full   # default when unset: the whole feature surface
 ```
 
 Accepted values: `full` (alias of `pro`), `free`, `data`, `smart`, `pro`.
@@ -72,7 +72,7 @@ Anything else refuses loudly instead of silently granting the default. First
 login provisions the account records (an auth user row and a `subscriptions`
 document with the budget fields); when `FIBUKI_PLAN` changes, restart
 `fibuki-api` and the stored plan is re-pointed on each user's next request.
-Plan limits (transaction quota, AI fair-use budget) still apply — they come
+Plan limits (transaction quota, AI fair-use budget) still apply; they come
 from the chosen plan.
 
 The lever only exists on the selfhost tier: with `FIBUKI_TIER=cloud` (hosted

@@ -38,7 +38,7 @@ async function resolveVerifier(): Promise<ResolvedAuth> {
   // #159 findings 1+3: every successfully verified request provisions its
   // account (auth_users row + subscriptions doc with budget fields). In OIDC
   // mode the token's group-derived admin flag is additionally mirrored into
-  // auth_users.customClaims — the one store the admin panel reads — so panel
+  // auth_users.customClaims (the one store the admin panel reads), so panel
   // and guard share a single identity source. Better Auth mode must NOT sync:
   // there the claims store is the token's source, and an old token would
   // write a stale admin bit back.

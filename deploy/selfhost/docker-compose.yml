@@ -176,7 +176,7 @@ services:
       FIBUKI_TIER: ${FIBUKI_TIER:-selfhost}
       # The plan every account resolves to on the selfhost tier (#159):
       # full (default, = pro), free, data, smart, pro. Ignored when
-      # FIBUKI_TIER=cloud — there Stripe owns the plan. See README.md "Plan".
+      # FIBUKI_TIER=cloud, where Stripe owns the plan. See README.md "Plan".
       FIBUKI_PLAN: ${FIBUKI_PLAN:-full}
       # AI routing (selfhost/ai/config.ts). @google-cloud/vertexai is aliased to
       # vertexai-adapter.ts, so Gemini runs on an API key and needs no GCP service

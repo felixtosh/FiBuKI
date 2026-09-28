@@ -319,7 +319,7 @@ export const TRIAL_TRANSACTION_LIMIT = 200;
  *
  * The environment may override the stored plan: on the self-host build the
  * planSource module is swapped for selfhost/plan-source-shim.ts, where
- * FIBUKI_PLAN (default: the full plan) decides — #159. On the Firebase build
+ * FIBUKI_PLAN (default: the full plan) decides - #159. On the Firebase build
  * and the cloud tier the override is always null and the stored plan rules.
  */
 export function resolvePlanId(storedPlan?: PlanId | null): PlanId {

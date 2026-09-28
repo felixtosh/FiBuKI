@@ -35,7 +35,7 @@ export interface SendEmailOptions {
 }
 
 export function isMailerConfigured(): boolean {
-  // An injected test transport counts as configured — same rule sendEmail()
+  // An injected test transport counts as configured - same rule sendEmail()
   // applies, so callers that hard-fail on !isMailerConfigured() (the invite
   // callable, #159) agree with what sendEmail() would actually do.
   return (

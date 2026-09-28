@@ -32,7 +32,7 @@ export default defineConfig({
       // plan is the FIBUKI_PLAN env lever (default: full), not a Stripe
       // subscription. Unlike the mailer, its one consumer imports it as
       // "./planSource" (billing/config.ts is a sibling), so the pattern must
-      // catch the RELATIVE specifier too — hence no "/billing/" anchor.
+      // catch the RELATIVE specifier too, hence no "/billing/" anchor.
       // Pinned by account-provisioning.test.ts ("alias seam").
       { find: /^.*planSource$/, replacement: shim("plan-source-shim.ts") },
       // Same whole-specifier swap for the download-URL helper: the self-host
