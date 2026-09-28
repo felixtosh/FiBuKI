@@ -26,7 +26,7 @@ import {
   withAccountProvisioning,
   __resetEnsureAccountForTests,
 } from "./ensure-account";
-import { PLANS } from "../billing/config";
+import { PLANS, resolvePlanId, hasFeature } from "../billing/config";
 
 const db = getFirestore();
 
@@ -93,6 +93,14 @@ describe("envPlanOverride (FIBUKI_PLAN, decision on #159)", () => {
   it("rejects an unknown value loudly rather than granting the default", () => {
     process.env.FIBUKI_PLAN = "premium";
     expect(() => envPlanOverride()).toThrow(/FIBUKI_PLAN/);
+  });
+
+  it("reaches billing/config through the alias seam: the env plan outranks a stored free plan", () => {
+    // billing/config imports "./planSource" — the alias must catch the
+    // RELATIVE specifier too, or the gates silently run the Firebase no-op
+    // module and a stale subscription row keeps gating features.
+    expect(resolvePlanId("free")).toBe("pro");
+    expect(hasFeature("free", "aiExtraction")).toBe(true);
   });
 });
 
