@@ -37,7 +37,7 @@ vi.mock("@google-cloud/vertexai", () => ({
 
 // REAL application code, unmodified:
 import { runExtraction } from "../extraction/extractionCore";
-import "../matching/matchFilePartner";
+import { runPartnerMatching } from "../matching/matchFilePartner";
 
 const db = getFirestore();
 const USER = "stefan-test";
@@ -234,5 +234,109 @@ describe("manual correction does not teach the agent's name as a supplier alias"
     await seedPartner();
     await correctByHand("f-variant", "AL&FA Taxi KG (Wien)");
     expect(await aliases()).toEqual(["AL&FA Taxi KG (Wien)"]);
+  });
+
+  // #213: the tool surface writes the same manual assignment, so the same
+  // trigger guard has to hold for it. This is the #156 repair path.
+  it("refuses the agent's name when the correction comes over assign_partner_to_file", async () => {
+    await seedPartner();
+    await seedFile("f-tool", {
+      extractionComplete: true,
+      partnerMatchComplete: true,
+      partnerId: null,
+      extractedPartner: AGENT.name,
+      extractedInvoicingAgent: { ...AGENT },
+      transactionIds: [],
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    });
+
+    const { handleTool } = await import("../tools/handlers");
+    await handleTool(USER, "assign_partner_to_file", { fileId: "f-tool", partnerId: "p-supplier" });
+    await drainTriggers();
+    await new Promise((r) => setTimeout(r, 100));
+
+    expect(await fileDoc("f-tool")).toMatchObject({
+      partnerId: "p-supplier",
+      partnerMatchedBy: "manual",
+    });
+    expect(await aliases()).toEqual([]);
+  });
+});
+
+describe("automatic matching does not fold the agent's name into a Partner (#265)", () => {
+  // A File extracted before the agent had a field of its own: its
+  // extractedPartner IS the agent, and matching re-runs on it. Automation is
+  // on, so the lookup and the LLM dedup behind it both run (mocked Gemini).
+  async function seedMatchableFile(
+    fileId: string,
+    extractedPartner: string,
+    invoicingAgent: typeof AGENT | null
+  ) {
+    await db.collection("subscriptions").doc(USER).set({
+      userId: USER,
+      automationMode: "active",
+      planId: "free",
+      // Unlimited AI budget, so the lookup runs instead of the basic fallback.
+      adminOverride: "free_plan",
+    });
+    return seedFile(fileId, {
+      extractionComplete: true,
+      partnerMatchComplete: false,
+      partnerId: null,
+      extractedPartner,
+      ...(invoicingAgent && { extractedInvoicingAgent: { ...invoicingAgent } }),
+      transactionIds: [],
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    });
+  }
+
+  async function allAliases(): Promise<string[]> {
+    const snap = await db.collection("partners").where("userId", "==", USER).get();
+    return snap.docs.flatMap((d) => (d.data().aliases as string[]) || []);
+  }
+
+  it("leaves the operator's aliases untouched when the extraction folds into it", async () => {
+    await db.collection("partners").doc("p-supplier").set({
+      userId: USER,
+      name: SUPPLIER.name,
+      vatId: SUPPLIER.vatId,
+      aliases: [],
+      ibans: [],
+      isActive: true,
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    });
+    const fileData = await seedMatchableFile("f-fold", AGENT.name, AGENT);
+    // Company lookup on the agent's name lands on the operator's VAT ID...
+    q({ name: SUPPLIER.name, vatId: SUPPLIER.vatId, country: "AT" });
+    // ...and the dedup folds the extraction into the existing Partner.
+    q({ match: true, matchIndex: 1, reason: "same VAT ID" });
+
+    await runPartnerMatching("f-fold", fileData);
+
+    expect((await fileDoc("f-fold")).partnerId).toBe("p-supplier");
+    const supplier = (await db.collection("partners").doc("p-supplier").get()).data()!;
+    expect(supplier.aliases).toEqual([]);
+  });
+
+  it("does not put the agent's name in the aliases of a newly created Partner", async () => {
+    const fileData = await seedMatchableFile("f-create", AGENT.name, AGENT);
+    q({ name: SUPPLIER.name, vatId: SUPPLIER.vatId, country: "AT" });
+
+    await runPartnerMatching("f-create", fileData);
+
+    expect((await fileDoc("f-create")).partnerId).toBeTruthy();
+    expect(await allAliases()).not.toContain(AGENT.name);
+  });
+
+  it("still learns the extracted name when the File has no agent", async () => {
+    const fileData = await seedMatchableFile("f-no-agent", AGENT.name, null);
+    q({ name: SUPPLIER.name, vatId: SUPPLIER.vatId, country: "AT" });
+
+    await runPartnerMatching("f-no-agent", fileData);
+
+    expect(await allAliases()).toContain(AGENT.name);
   });
 });

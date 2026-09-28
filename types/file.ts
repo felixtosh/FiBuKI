@@ -275,6 +275,15 @@ export interface TaxFile {
   /** AI-extracted document date (when the document was issued) */
   extractedDate?: Timestamp | null;
 
+  /**
+   * The Due Date (Fälligkeitsdatum) the document states, typed from the
+   * `dueDate` row of `extractedAdditionalFields` (#236). With `extractedDate`
+   * it spans the payment window a Transaction date is scored against. Never
+   * a Zahlungsziel, which is a period. Absent on records written before the
+   * field existed (the scorer reads the row itself); null when none stated.
+   */
+  extractedDueDate?: Timestamp | null;
+
   /** AI-extracted amount in cents */
   extractedAmount?: number | null;
 
@@ -804,7 +813,7 @@ export interface FileConnection {
  * Filters for file queries
  */
 export interface FileFilters {
-  /** Text search in filename, extracted partner */
+  /** Text search in file name, extracted partner, invoice number and amount */
   search?: string;
 
   /** Filter by connection status */
@@ -824,8 +833,17 @@ export interface FileFilters {
   /** Include soft-deleted files (default: false) */
   includeDeleted?: boolean;
 
-  /** Show only "not invoice" files */
+  /**
+   * Operations layer (`listFiles`) only: true = only files marked not-invoice,
+   * false = hide them. The Files page filters on `documentTypes` instead.
+   */
   isNotInvoice?: boolean;
+
+  /**
+   * Files page Document chip (#250): keep only these Document Types. Absent =
+   * every type. A File with no stored type counts as `unknown`.
+   */
+  documentTypes?: DocumentType[];
 
   /** Filter by assigned partner IDs */
   partnerIds?: string[];

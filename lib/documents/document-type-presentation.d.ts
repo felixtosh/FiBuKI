@@ -40,8 +40,12 @@ export interface DocumentationStatePresentation {
 
 export interface Section11ElementPresentation {
   element: Section11Element | string;
-  /** The element's German statutory name, for a mail to the supplier. */
+  /** English interface label (ADR-0007). The UI renders `labelKey`. */
   label: string;
+  /** Message-catalogue key; absent for an element this module cannot name. */
+  labelKey?: string;
+  /** The German statutory name: the supplier mail, and the bracket on first use. */
+  german: string;
   /** The statute reference that makes the request answerable. */
   citation: string;
 }
@@ -106,6 +110,35 @@ export declare function describeDocumentTypeBasis(
   basis: BasisInput | null | undefined,
   type: DocumentType | null | undefined,
 ): BasisLine[];
+
+/** The one at-rest sentence of the § 11 field: answer first, reason after (#237). */
+export declare function describeSection11Consequence(
+  type: DocumentType | null | undefined,
+  basis: BasisInput | null | undefined,
+): string;
+
+/** A statutory term, glossed once and reused on every screen (#237). */
+export interface TermGloss {
+  /** The interface word, e.g. "Input VAT". */
+  term: string;
+  /** The German statutory word, or null when the term is itself a citation. */
+  german: string | null;
+  /** One or two sentences of vocabulary. Never a finding. */
+  text: string;
+}
+
+export type TermGlossKey =
+  | "vorsteuer"
+  | "section11"
+  | "kleinbetragsrechnung"
+  | "steuersatz"
+  | "uid"
+  | "leistungsempfaenger"
+  | "reverseCharge";
+
+export declare const TERM_GLOSSES: Record<TermGlossKey, TermGloss>;
+
+export declare function describeTerm(key: string): TermGloss | null;
 
 export declare function buildSupplierRequestText(
   elements: Array<Section11Element | string> | null | undefined,

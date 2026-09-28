@@ -49,6 +49,8 @@ const OPENAPI_SPEC = {
                       "update_transaction",
                       "list_files",
                       "get_file",
+                      "delete_file",
+                      "restore_file",
                       "connect_file_to_transaction",
                       "disconnect_file_from_transaction",
                       "list_transactions_needing_files",
@@ -203,8 +205,12 @@ const OPENAPI_SPEC = {
     update_transaction:
       "Update transaction description or status. Args: transactionId (string), description? (string), isComplete? (boolean)",
     list_files:
-      "List uploaded files/receipts. Returns { files, nextCursor, count } — count is this page, not a total. Args: hasConnections? (boolean), hasSuggestions? (boolean), needsVatRateReview? (boolean), handCorrected? (boolean, true = only files a human corrected by hand, which is the exclusion list for a re-extraction sweep), limit? (number, max 500), cursor? (string, nextCursor from the previous page)",
+      "List uploaded files/receipts. Returns { files, nextCursor, count } — count is this page, not a total. Args: hasConnections? (boolean), hasSuggestions? (boolean), needsVatRateReview? (boolean), handCorrected? (boolean, true = only files a human corrected by hand, which is the exclusion list for a re-extraction sweep), includeDeleted? (boolean, also return deleted files; excluded by default), limit? (number, max 500), cursor? (string, nextCursor from the previous page)",
     get_file: "Get file details including suggestions. Args: fileId (string)",
+    delete_file:
+      "Delete a file, reversibly: it is hidden and its stored document kept; restore_file puts it back. Detaches it from its transactions and reports reopenedTransactions separately from stillCompleteTransactions (date, amount, counterparty each). A FiBuKI-generated invoice document is refused with GENERATED_INVOICE; use cancel_invoice. Args: fileId (string), confirm (boolean, must be true)",
+    restore_file:
+      "Restore a deleted file. Previous transaction connections are not recreated. Args: fileId (string)",
     connect_file_to_transaction:
       "Connect a file to a transaction (marks transaction complete). A pair previously rejected with dismiss_transaction_suggestion is refused with PAIR_REJECTED; lift it with undismiss_transaction_suggestion first if the connection is genuinely intended. Args: fileId (string), transactionId (string)",
     disconnect_file_from_transaction:

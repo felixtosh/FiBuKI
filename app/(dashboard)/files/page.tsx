@@ -33,7 +33,9 @@ import {
 } from "@/lib/files/delete-confirmation";
 import { createDropReentryGuard } from "@/lib/files/drop-reentry-guard";
 import { getNeighbourRowId } from "@/lib/navigation/row-neighbour";
+import { advanceAfterDisposition } from "@/lib/navigation/advance-after-disposition";
 import { useRowNavigationKeys } from "@/hooks/use-row-navigation-keys";
+import { isRowNavigationEnabled } from "@/lib/navigation/arrow-key-navigation";
 import {
   toggleFileCheckbox,
   toggleSelectAll,
@@ -718,14 +720,18 @@ function FilesContent() {
     [navigateInvoiceBy]
   );
 
-  // Left/right walk the displayed order through the panel that is open — the
-  // invoice panel when ?invoiceId= is set, the file panel otherwise. The file
-  // viewer and the connect overlay render inline with no dialog role of their
-  // own, so they have to be named here; portalled dialogs and menus (upload,
-  // the bulk partner picker, any dropdown) the hook sees for itself.
-  const isFileOverlayOpen = viewerOpen || isConnectTransactionOpen;
+  // Left/right walk the displayed order through the panel that is open: the
+  // invoice panel when ?invoiceId= is set, the file panel otherwise. They stay
+  // live while the full-screen viewer is open, which follows the selection just
+  // as it does for the prev/next buttons (#234). The connect overlay renders
+  // inline with no dialog role of its own, so it has to be named here;
+  // portalled dialogs and menus (upload, the bulk partner picker, any
+  // dropdown) the hook sees for itself.
   useRowNavigationKeys({
-    enabled: Boolean(invoiceIdParam || selectedFile) && !isFileOverlayOpen,
+    enabled: isRowNavigationEnabled({
+      panelOpen: Boolean(invoiceIdParam || selectedFile),
+      connectOverlayOpen: isConnectTransactionOpen,
+    }),
     onPrevious: invoiceIdParam ? handleInvoiceNavigatePrevious : handleNavigatePrevious,
     onNext: invoiceIdParam ? handleInvoiceNavigateNext : handleNavigateNext,
   });
@@ -742,10 +748,24 @@ function FilesContent() {
     await restore(selectedFile.id);
   }, [selectedFile, restore]);
 
+  // Marking not-invoice from the panel is queue triage: advance to the next
+  // row in the displayed order (#251). The next row, and the TaxFile behind
+  // it, are taken from the list as it stands BEFORE the write, because the
+  // write can drop the current row from the list (Document Type becomes
+  // `other`). Bulk marking and unmarking deliberately do not advance.
   const handleMarkAsNotInvoice = useCallback(async () => {
     if (!selectedFile) return;
-    await markAsNotInvoice(selectedFile.id);
-  }, [selectedFile, markAsNotInvoice]);
+    const filesBefore = files;
+    await advanceAfterDisposition({
+      orderedIds: orderedFileIds,
+      currentId: selectedFile.id,
+      mutate: () => markAsNotInvoice(selectedFile.id),
+      navigateTo: (id) => {
+        const target = filesBefore.find((f) => f.id === id);
+        if (target) handleSelectFile(target);
+      },
+    });
+  }, [selectedFile, files, orderedFileIds, markAsNotInvoice, handleSelectFile]);
 
   const handleUnmarkAsNotInvoice = useCallback(async () => {
     if (!selectedFile) return;

@@ -291,6 +291,17 @@
       "other": "Not a document",
       "unknown": "Not determined"
     },
+    "element": {
+      "issueDate": "Issue date",
+      "supplierName": "Supplier name",
+      "supplierAddress": "Supplier address",
+      "description": "Description of the goods or services",
+      "steuersatz": "VAT rate",
+      "invoiceNumber": "Sequential invoice number",
+      "supplierVatId": "Supplier VAT ID",
+      "recipient": "Recipient name and address",
+      "recipientVatId": "Recipient VAT ID"
+    },
     "state": {
       "receiptOnly": "Payment confirmation only",
       "noReceiptCategory": "Category instead of a document",

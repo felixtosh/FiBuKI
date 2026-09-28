@@ -25,6 +25,7 @@ import {
 } from "@/lib/matching/connection-count";
 import { useTransactionMatching } from "@/hooks/use-transaction-matching";
 import { cn, toDateSafe } from "@/lib/utils";
+import { matchesTransactionSearch } from "@/functions/src/matching/transactionSearch";
 import {
   TransactionMatchResult,
   getMatchSourceLabel,
@@ -194,22 +195,17 @@ export function ConnectTransactionOverlay({
 
   // Filter and sort transactions: when searching, only show matches
   const filteredTransactions = useMemo(() => {
-    const trimmedSearch = search.trim().toLowerCase();
+    const trimmedSearch = search.trim();
 
     // When searching, filter to only matching transactions
     const filtered = trimmedSearch
       ? transactions.filter((tx) => {
           // Include if server scored it
           if (matchMap.has(tx.id)) return true;
-          // Include if local text match on name/partner/reference
-          const name = (tx.name || "").toLowerCase();
-          const partner = (tx.partner || "").toLowerCase();
-          const reference = (tx.reference || "").toLowerCase();
-          return (
-            name.includes(trimmedSearch) ||
-            partner.includes(trimmedSearch) ||
-            reference.includes(trimmedSearch)
-          );
+          // Include on the server's own predicate (#183): text over
+          // name/partner/reference OR the amount. One function on both sides,
+          // so the list does not change as the debounce resolves.
+          return matchesTransactionSearch(tx, trimmedSearch);
         })
       : transactions;
 

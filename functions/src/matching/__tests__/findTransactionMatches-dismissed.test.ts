@@ -138,3 +138,32 @@ describe("findTransactionMatchesForFile: dismissed pairs", () => {
     expect(result.matches.map((m) => m.transactionId)).toEqual(["t1"]);
   });
 });
+
+describe("findTransactionMatchesForFile: search by amount (#183)", () => {
+  beforeEach(() => {
+    seed({ extractedAmount: 21420, extractedPartner: null });
+    h.state.transactions = [
+      {
+        id: "paid",
+        data: { userId: USER, date: Timestamp.fromDate(DATE), amount: -21420, currency: "EUR", name: "Card payment", fileIds: [] },
+      },
+      {
+        id: "other",
+        data: { userId: USER, date: Timestamp.fromDate(DATE), amount: -956, currency: "EUR", name: "Coffee", fileIds: [] },
+      },
+    ];
+  });
+
+  it.each(["214,20", "214.20", "€ 214,20", "21420", "214"])(
+    "%s passes the candidate gate for the -214,20 transaction only",
+    async (searchQuery) => {
+      const result = await call({ auth: { uid: USER }, data: { fileId: "f1", searchQuery } });
+      expect(result.matches.map((m) => m.transactionId)).toEqual(["paid"]);
+    }
+  );
+
+  it("a non-numeric query still filters by text", async () => {
+    const result = await call({ auth: { uid: USER }, data: { fileId: "f1", searchQuery: "coffee" } });
+    expect(result.matches.map((m) => m.transactionId)).toEqual(["other"]);
+  });
+});

@@ -52,6 +52,7 @@ import {
 import { getStorage } from "firebase-admin/storage";
 import { createHash, randomUUID } from "crypto";
 import { createFileRecord, findFileByContentHash } from "../files/createFileRecord";
+import { generatedInvoiceRefusal } from "../files/generatedInvoiceGuard";
 import { syncDocumentationStateForTransactions } from "../documents/syncDocumentationState";
 import { assignNoReceiptCategoryToTransaction } from "../matching/assignNoReceiptCategory";
 import { TOOL_DEFINITIONS, TOOL_NAMES } from "./definitions";
@@ -75,6 +76,7 @@ import {
 } from "../matching/billingCycle";
 import { PLANS } from "../billing/config";
 import { KNOWN_AUSTRIAN_RATES } from "../uva/rateSet";
+import { runUvaForPeriod } from "../reports/uvaPeriodRun";
 import type { PlanId, PlanFeatures } from "../billing/config";
 
 /**
@@ -200,6 +202,10 @@ export async function handleTool(
       return listFiles(userId, args);
     case "get_file":
       return getFile(userId, args.fileId as string);
+    case "delete_file":
+      return deleteFile(userId, args);
+    case "restore_file":
+      return restoreFile(userId, args);
     case "connect_file_to_transaction":
       return connectFileToTransaction(userId, args);
     case "disconnect_file_from_transaction":
@@ -255,6 +261,14 @@ export async function handleTool(
       return assignPartnerToTx(userId, args);
     case "remove_partner_from_transaction":
       return removePartnerFromTx(userId, args);
+    case "assign_partner_to_file":
+      return assignPartnerToFileTool(userId, args);
+    case "remove_partner_from_file":
+      return removePartnerFromFileTool(userId, args);
+    case "update_partner":
+      return updatePartnerTool(userId, args);
+    case "merge_partners":
+      return mergePartnersTool(userId, args);
     case "partner_rematch_report":
       return partnerRematchReport(userId, args);
     case "rematch_assigned_partners":
@@ -267,6 +281,10 @@ export async function handleTool(
       return assignNoReceiptCategory(userId, args);
     case "remove_no_receipt_category":
       return removeNoReceiptCategory(userId, args.transactionId as string);
+
+    // UVA (read-only)
+    case "get_uva_report":
+      return getUvaReport(userId, args);
 
     // Invoicing
     case "create_invoice":
@@ -629,7 +647,10 @@ export async function listFiles(userId: string, args: Record<string, unknown>) {
   const snapshot = await query.get();
   const scanned = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as Record<string, unknown>);
 
-  let files = scanned.filter((f: Record<string, unknown>) => !f.deletedAt && !f.isNotInvoice);
+  // Deleted Files are hidden unless asked for (#267); restore_file brings one back.
+  let files = scanned.filter(
+    (f: Record<string, unknown>) => (args.includeDeleted === true || !f.deletedAt) && !f.isNotInvoice
+  );
 
   if (args.hasConnections !== undefined) {
     files = files.filter((f: Record<string, unknown>) =>
@@ -709,6 +730,80 @@ export async function getFile(userId: string, fileId: string) {
     throw new Error("File not found");
   }
   return { id: doc.id, ...doc.data() };
+}
+
+/**
+ * Delete a File, reversibly (#267, ADR-0006).
+ *
+ * Wraps the same delete the deleteFile callable runs: the File is hidden and
+ * detached from its Transactions, its row and stored bytes survive, and
+ * restore_file undoes it. No argument reaches a Purge; this surface has none.
+ * A FiBuKI-generated invoice document is refused, naming the invoice.
+ */
+export async function deleteFile(userId: string, args: Record<string, unknown>) {
+  const fileId = args.fileId as string;
+  if (!fileId) throw new Error("fileId is required");
+  if (args.confirm !== true) {
+    throw new Error(
+      "Must set confirm: true to delete a file. The delete is reversible with restore_file, " +
+        "but it detaches the file from every transaction it is connected to."
+    );
+  }
+
+  const fileSnap = await db.collection("files").doc(fileId).get();
+  const fileData = fileSnap.data();
+  if (!fileSnap.exists || !fileData || fileData.userId !== userId) {
+    throw new Error("File not found");
+  }
+
+  const refusal = await generatedInvoiceRefusal(db, userId, fileData);
+  if (refusal) throw new Error(refusal);
+
+  if (fileData.deletedAt) {
+    return { success: true, fileId, alreadyDeleted: true, reversible: true };
+  }
+
+  const { performDeleteFile } = await import("../files/deleteFile");
+  const result = await performDeleteFile(db, userId, fileId, fileData);
+
+  const summarize = (t: (typeof result.detachedTransactions)[number]) => ({
+    transactionId: t.transactionId,
+    date: toLocalDate(t.date as Parameters<typeof toLocalDate>[0]),
+    amount: t.amount,
+    currency: t.currency,
+    name: t.name,
+    partner: t.partner,
+  });
+
+  return {
+    success: true,
+    fileId,
+    fileName: fileData.fileName ?? null,
+    reversible: true,
+    reopenedTransactions: result.detachedTransactions.filter((t) => !t.isComplete).map(summarize),
+    stillCompleteTransactions: result.detachedTransactions
+      .filter((t) => t.isComplete)
+      .map(summarize),
+  };
+}
+
+/**
+ * Restore a deleted File (#267). Its previous Transaction attachments are not
+ * recreated; reconnect with connect_file_to_transaction where they still apply.
+ */
+export async function restoreFile(userId: string, args: Record<string, unknown>) {
+  const fileId = args.fileId as string;
+  if (!fileId) throw new Error("fileId is required");
+
+  const fileSnap = await db.collection("files").doc(fileId).get();
+  const fileData = fileSnap.data();
+  if (!fileSnap.exists || !fileData || fileData.userId !== userId) {
+    throw new Error("File not found");
+  }
+
+  const { performRestoreFile } = await import("../files/restoreFile");
+  const { restored } = await performRestoreFile(db, userId, fileId, fileData);
+  return { success: true, fileId, restored };
 }
 
 export async function connectFileToTransaction(userId: string, args: Record<string, unknown>) {
@@ -1640,9 +1735,24 @@ export async function getPartner(userId: string, partnerId: string) {
     throw new Error("Partner not found");
   }
   const data = doc.data()!;
+  // A Merged Partner reads back as itself, never as a silent redirect, and
+  // names its survivor so a caller holding the stale id can update (#264).
+  let survivor: { id: string; name: string | null } | undefined;
+  if (data.mergedInto) {
+    const survivorDoc = await db.collection("partners").doc(data.mergedInto as string).get();
+    survivor = {
+      id: data.mergedInto as string,
+      name: survivorDoc.exists ? ((survivorDoc.data()?.name as string) ?? null) : null,
+    };
+  }
   // The stored cycle carries Timestamps, which do not survive JSON — the
   // billing cycle goes out in the same shape both partner tools return.
-  return { id: doc.id, ...data, billingCycle: toApiBillingCycle(data.billingCycle) };
+  return {
+    id: doc.id,
+    ...data,
+    billingCycle: toApiBillingCycle(data.billingCycle),
+    ...(survivor ? { survivor } : {}),
+  };
 }
 
 export async function createPartner(userId: string, args: Record<string, unknown>) {
@@ -2176,6 +2286,205 @@ export async function removePartnerFromTx(userId: string, args: Record<string, u
   });
 
   return { success: true, transactionId };
+}
+
+// ============================================================================
+// Partner on a File, Partner edit, Partner Merge (#213, #264)
+// ============================================================================
+
+/**
+ * A Partner id an agent may write onto a record: owned and not merged away.
+ * A Merged Partner is refused naming its survivor, so a caller holding a stale
+ * id corrects itself once instead of attaching records to a tombstone nothing
+ * lists (ADR-0005).
+ */
+async function loadWritablePartner(userId: string, partnerId: string) {
+  const partnerDoc = await db.collection("partners").doc(partnerId).get();
+  if (!partnerDoc.exists || partnerDoc.data()?.userId !== userId) {
+    throw new Error("Partner not found");
+  }
+  const mergedInto = partnerDoc.data()!.mergedInto as string | undefined;
+  if (mergedInto) {
+    throw new Error(
+      `Partner ${partnerId} is a Merged Partner (merged into ${mergedInto}); use ${mergedInto} instead`
+    );
+  }
+  return partnerDoc;
+}
+
+/**
+ * Attach a Partner to a File the way a person does in the UI
+ * (`assignPartnerToFile` in lib/operations/file-ops.ts): `partnerMatchedBy:
+ * "manual"`, confidence 100, and the File cleared from the Partner's
+ * `manualFileRemovals` if a person had pulled it off earlier. The File write
+ * goes through `updateFileInternal`, the same contract as the `updateFile`
+ * callable, which also cancels running partner workers for the File.
+ *
+ * Alias learning is not done here. `matchFilePartner` learns the File's
+ * extracted name on any manual assignment, and refuses the name the
+ * Extraction recorded as the Invoicing Agent (`learnPartnerAlias`, #156,
+ * #265), so this path inherits that guard rather than re-deciding it.
+ */
+export async function assignPartnerToFileTool(userId: string, args: Record<string, unknown>) {
+  const fileId = args.fileId as string;
+  const partnerId = args.partnerId as string;
+  if (!fileId) throw new Error("fileId is required");
+  if (!partnerId) throw new Error("partnerId is required");
+
+  const fileDoc = await db.collection("files").doc(fileId).get();
+  if (!fileDoc.exists || fileDoc.data()?.userId !== userId) {
+    throw new Error("File not found");
+  }
+
+  const partnerDoc = await loadWritablePartner(userId, partnerId);
+
+  const { updateFileInternal } = await import("../files/updateFile");
+  await updateFileInternal(db, userId, {
+    fileId,
+    data: {
+      partnerId,
+      partnerType: "user",
+      partnerMatchedBy: "manual",
+      partnerMatchConfidence: 100,
+    },
+  });
+
+  // A person changing their mind about a removal: the pair is no longer a
+  // false positive.
+  const removals = (partnerDoc.data()!.manualFileRemovals || []) as Array<{ fileId?: string }>;
+  if (removals.some((r) => r.fileId === fileId)) {
+    await partnerDoc.ref.update({
+      manualFileRemovals: removals.filter((r) => r.fileId !== fileId),
+      updatedAt: Timestamp.now(),
+    });
+  }
+
+  return {
+    success: true,
+    fileId,
+    partnerId,
+    partnerName: (partnerDoc.data()!.name as string) || null,
+    previousPartnerId: (fileDoc.data()!.partnerId as string | undefined) ?? null,
+  };
+}
+
+/**
+ * Detach a File's Partner the way the UI does (`removePartnerFromFile` in
+ * lib/operations/file-ops.ts). A system-recommended assignment (`auto` or
+ * `suggestion`) is recorded on the Partner's `manualFileRemovals`, so the
+ * matcher learns the pair was wrong; a manual one is simply cleared.
+ */
+export async function removePartnerFromFileTool(userId: string, args: Record<string, unknown>) {
+  const fileId = args.fileId as string;
+  if (!fileId) throw new Error("fileId is required");
+
+  const fileDoc = await db.collection("files").doc(fileId).get();
+  if (!fileDoc.exists || fileDoc.data()?.userId !== userId) {
+    throw new Error("File not found");
+  }
+  const fileData = fileDoc.data()!;
+  const previousPartnerId = (fileData.partnerId as string | undefined) ?? null;
+  const matchedBy = fileData.partnerMatchedBy as string | undefined;
+
+  const { updateFileInternal } = await import("../files/updateFile");
+  await updateFileInternal(db, userId, {
+    fileId,
+    data: {
+      partnerId: null,
+      partnerType: null,
+      partnerMatchedBy: null,
+      partnerMatchConfidence: null,
+    },
+  });
+
+  let recordedAsFalsePositive = false;
+  if (previousPartnerId && (matchedBy === "auto" || matchedBy === "suggestion")) {
+    const partnerRef = db.collection("partners").doc(previousPartnerId);
+    const partnerSnap = await partnerRef.get();
+    if (partnerSnap.exists && partnerSnap.data()?.userId === userId) {
+      const removals = (partnerSnap.data()!.manualFileRemovals || []) as Array<{ fileId?: string }>;
+      if (!removals.some((r) => r.fileId === fileId)) {
+        await partnerRef.update({
+          manualFileRemovals: FieldValue.arrayUnion({
+            fileId,
+            removedAt: Timestamp.now(),
+            extractedPartner: fileData.extractedPartner || null,
+            fileName: fileData.fileName,
+          }),
+          updatedAt: Timestamp.now(),
+        });
+      }
+      recordedAsFalsePositive = true;
+    }
+  }
+
+  return { success: true, fileId, previousPartnerId, recordedAsFalsePositive };
+}
+
+/** The fields `update_partner` writes: `create_partner`'s set, nothing else. */
+const UPDATE_PARTNER_FIELDS = ["name", "aliases", "vatId", "ibans", "website", "country"] as const;
+
+/**
+ * Edit a Partner through `updateUserPartnerInternal`, the Partners page's own
+ * edit. `aliases` and `ibans` replace the stored arrays wholesale: an agent
+ * reads them with get_partner or list_partners, changes them, writes them back.
+ */
+export async function updatePartnerTool(userId: string, args: Record<string, unknown>) {
+  const partnerId = args.partnerId as string;
+  if (!partnerId) throw new Error("partnerId is required");
+
+  const data: Record<string, unknown> = {};
+  for (const field of UPDATE_PARTNER_FIELDS) {
+    if (args[field] !== undefined) data[field] = args[field];
+  }
+  if (Object.keys(data).length === 0) {
+    throw new Error(`Nothing to update: pass at least one of ${UPDATE_PARTNER_FIELDS.join(", ")}`);
+  }
+  if (data.name !== undefined && (typeof data.name !== "string" || !data.name.trim())) {
+    throw new Error("name must be a non-empty string");
+  }
+  for (const field of ["aliases", "ibans"] as const) {
+    const value = data[field];
+    if (value !== undefined && (!Array.isArray(value) || value.some((v) => typeof v !== "string"))) {
+      throw new Error(`${field} must be an array of strings (it replaces the stored list)`);
+    }
+  }
+
+  await loadWritablePartner(userId, partnerId);
+
+  const { updateUserPartnerInternal } = await import("../partners/updateUserPartner");
+  await updateUserPartnerInternal(db, userId, { partnerId, data });
+
+  return getPartner(userId, partnerId);
+}
+
+/**
+ * Partner Merge over the tool surface (#264): the same operation as the
+ * Partners page (`mergeUserPartnersInternal`), so the same refusals: no merge
+ * into a Merged Partner, no source's Partner merged away, and differing VAT
+ * IDs only with `confirmVatIdConflict`. The tool adds one refusal of its own:
+ * a Merge cannot be undone, so it runs only with `confirm: true`, and the VAT
+ * affirmation is a separate field so a habitual `confirm` never carries it.
+ */
+export async function mergePartnersTool(userId: string, args: Record<string, unknown>) {
+  if (args.confirm !== true) {
+    throw new Error(
+      "A Partner Merge cannot be undone. Pass confirm: true to merge the losers into the survivor."
+    );
+  }
+  if (args.confirmVatIdConflict !== undefined && typeof args.confirmVatIdConflict !== "boolean") {
+    throw new Error("confirmVatIdConflict must be a boolean");
+  }
+  if (!Array.isArray(args.loserIds) || args.loserIds.some((id) => typeof id !== "string")) {
+    throw new Error("loserIds must be an array of partner ids");
+  }
+
+  const { mergeUserPartnersInternal } = await import("../partners/mergeUserPartners");
+  return mergeUserPartnersInternal(db, userId, {
+    survivorId: args.survivorId as string,
+    loserIds: args.loserIds as string[],
+    confirmVatIdConflict: args.confirmVatIdConflict === true,
+  });
 }
 
 /**
@@ -2738,4 +3047,39 @@ export async function cancelInvoice(userId: string, args: Record<string, unknown
     invoiceId: args.invoiceId as string,
   });
   return { invoiceId: result.invoiceId, status: result.status };
+}
+
+// ============================================================================
+// UVA (read-only, #160)
+// ============================================================================
+
+/**
+ * The UVA figures for one period, from the same run the reports page reads.
+ *
+ * `runUvaForPeriod` is the fetch-and-derive half of the `calculateUva`
+ * callable behind /api/reports/calculate. Calling it here, rather than a copy
+ * of it, is the point: a tool that computed its own numbers would let an agent
+ * confirm a figure the human never sees. Read-only by construction; nothing in
+ * the run writes.
+ */
+export async function getUvaReport(userId: string, args: Record<string, unknown>) {
+  const period = {
+    year: args.year,
+    period: args.period,
+    type: args.type,
+  } as Parameters<typeof runUvaForPeriod>[2];
+
+  const { result, stats } = await runUvaForPeriod(db, userId, period);
+
+  return {
+    period: result.period,
+    kennzahlen: Object.fromEntries(
+      Object.entries(result.kennzahlen).map(([kz, figure]) => [kz, figure.value])
+    ),
+    totalOutputVat: result.totalOutputVat,
+    totalInputVat: result.totalInputVat,
+    balance: result.balance,
+    unresolved: result.unresolved,
+    transactionCount: stats.total,
+  };
 }

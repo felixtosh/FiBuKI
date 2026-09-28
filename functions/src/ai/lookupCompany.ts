@@ -3,6 +3,7 @@ import { VertexAI } from "@google-cloud/vertexai";
 import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { logAIUsage } from "../utils/ai-usage-logger";
 import { MODELS } from "../utils/models";
+import { decodeHtmlEntities } from "../utils/htmlEntities";
 import { AutomationMeta } from "../automation/types";
 
 // =============================================================================
@@ -493,7 +494,7 @@ function normalizeViesText(text: string): string {
 /**
  * Parse VIES XML response
  */
-function parseViesResponse(xml: string): ViesResponse | ViesError {
+export function parseViesResponse(xml: string): ViesResponse | ViesError {
   // Check for SOAP Fault (errors like MS_MAX_CONCURRENT_REQ)
   const faultMatch = xml.match(/<(?:\w+:)?faultstring>([^<]+)<\/(?:\w+:)?faultstring>/);
   if (faultMatch) {
@@ -505,7 +506,10 @@ function parseViesResponse(xml: string): ViesResponse | ViesError {
   const extractValue = (tag: string): string | undefined => {
     // Match with optional namespace prefix (e.g., <ns2:valid> or <valid>)
     const match = xml.match(new RegExp(`<(?:\\w+:)?${tag}>([^<]*)</(?:\\w+:)?${tag}>`));
-    return match?.[1]?.trim() || undefined;
+    // XML text escapes "&" as "&amp;". Read by regex, the reference would
+    // survive into the Partner name and be title-cased to "&Amp;" (#266), so
+    // decode it with the decoder extraction uses.
+    return decodeHtmlEntities(match?.[1]?.trim()) || undefined;
   };
 
   const valid = extractValue("valid") === "true";

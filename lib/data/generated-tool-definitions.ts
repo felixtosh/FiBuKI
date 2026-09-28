@@ -310,6 +310,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           "type": "boolean",
           "description": "true = only files whose document names a Leistungsempfänger who is not the user. Such a document can satisfy § 11 completely and still carry no Vorsteuer for this user (§ 12 Abs 1 Z 1): the supply was rendered to somebody else. Their VAT is excluded from the UVA and they are not offered as transaction matches. If the recipient IS the user under a different name, confirm_file_recipient_is_user lifts it."
         },
+        "includeDeleted": {
+          "type": "boolean",
+          "description": "true = also return files that were deleted (each carries deletedAt). Deleted files are excluded by default. Restore one with restore_file."
+        },
         "handCorrected": {
           "type": "boolean",
           "description": "true = only files whose extracted record a human corrected by hand. Each such file reports the fields in extractionCorrectedFields (field name -> when it was set) and the newest of them in extractionCorrectedAt. This is the exclusion list for a re-extraction sweep — retry_file_extraction refuses these files unless overwriteCorrections is passed."
@@ -334,6 +338,43 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         "fileId": {
           "type": "string",
           "description": "The file ID"
+        }
+      },
+      "required": [
+        "fileId"
+      ]
+    }
+  },
+  {
+    "name": "delete_file",
+    "description": "Delete a file. The deletion is reversible: the file is hidden, its stored document is kept, and restore_file puts it back. Nothing on this surface destroys a document. The file is detached from every transaction it was connected to (no need to disconnect first); the response lists reopenedTransactions (now incomplete again, with date, amount and counterparty, so you can tell the user) separately from stillCompleteTransactions (another document or a no-receipt category keeps them complete). A document FiBuKI generated for an invoice is refused with GENERATED_INVOICE, naming the invoice; withdraw an issued invoice with cancel_invoice instead. Requires confirm: true.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "fileId": {
+          "type": "string",
+          "description": "The file ID"
+        },
+        "confirm": {
+          "type": "boolean",
+          "description": "Must be true to confirm the (reversible) deletion"
+        }
+      },
+      "required": [
+        "fileId",
+        "confirm"
+      ]
+    }
+  },
+  {
+    "name": "restore_file",
+    "description": "Restore a deleted file, making it visible again. Its previous transaction connections are NOT recreated; reconnect with connect_file_to_transaction where they still apply. Find deleted files with list_files includeDeleted: true.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "fileId": {
+          "type": "string",
+          "description": "The deleted file's ID"
         }
       },
       "required": [
@@ -839,7 +880,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "get_partner",
-    "description": "Get partner details by ID, including `billingCycle`: the effective cycle plus the learned and declared halves it was resolved from, one entry per recurrence (a partner can bill in more than one amount band).",
+    "description": "Get partner details by ID, including `billingCycle`: the effective cycle plus the learned and declared halves it was resolved from, one entry per recurrence (a partner can bill in more than one amount band). A partner merged away by merge_partners reads back as itself with isActive false, `mergedInto` and `survivor` ({ id, name }): switch to the survivor's id.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -982,6 +1023,85 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     }
   },
   {
+    "name": "update_partner",
+    "description": "Edit a user partner: the same fields create_partner takes. Only the fields you pass are written. `aliases` and `ibans` REPLACE the stored lists wholesale, so read the partner first (get_partner or list_partners), change the list, and write the whole list back; pass [] to clear it. Use this to strip a wrong alias, e.g. an Invoicing Agent's name a partner learned by mistake. To fold a duplicate partner into another, use merge_partners, not an alias copy. Returns the partner as get_partner does.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "partnerId": {
+          "type": "string",
+          "description": "The partner ID"
+        },
+        "name": {
+          "type": "string",
+          "description": "Partner/company name"
+        },
+        "aliases": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Alternative names. Replaces the stored list."
+        },
+        "vatId": {
+          "type": "string",
+          "description": "VAT ID (e.g. ATU12345678); empty string clears it"
+        },
+        "ibans": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Partner IBANs. Replaces the stored list."
+        },
+        "website": {
+          "type": "string",
+          "description": "Partner website; empty string clears it"
+        },
+        "country": {
+          "type": "string",
+          "description": "Country code (e.g. AT, DE)"
+        }
+      },
+      "required": [
+        "partnerId"
+      ]
+    }
+  },
+  {
+    "name": "merge_partners",
+    "description": "Merge duplicate partners: fold one or more losing partners into a named survivor. The same operation as the Partners page. Transactions, files and invoices pointing at a loser move to the survivor; each loser's name and aliases join the survivor's aliases; the losers become Merged Partners (inactive, gone from list_partners, get_partner names the survivor). CANNOT BE UNDONE: requires confirm: true. Partners holding different VAT IDs are refused unless you ALSO pass confirmVatIdConflict: true, a separate claim that the differing VAT IDs really are one business. Refused: merging into a Merged Partner, and merging away a bank account's own partner. Nothing is re-matched: `rematchPreview.newlyMatchable` counts unmatched transactions the survivor would now hit, and partner_rematch_report is the reviewed path to act on them. Returns mergedPartnerIds, aliasesAdded, repointed counts (transactions, files, invoices, ...), conflicts and rematchPreview.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "survivorId": {
+          "type": "string",
+          "description": "The partner that lives"
+        },
+        "loserIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The partners merged into the survivor (at most 50)"
+        },
+        "confirm": {
+          "type": "boolean",
+          "description": "Must be true: a merge cannot be undone"
+        },
+        "confirmVatIdConflict": {
+          "type": "boolean",
+          "description": "Set true only when the partners hold different VAT IDs and you have established they are still the same business (usually one VAT ID is a wrong extraction)"
+        }
+      },
+      "required": [
+        "survivorId",
+        "loserIds",
+        "confirm"
+      ]
+    }
+  },
+  {
     "name": "assign_partner_to_transaction",
     "description": "Assign a partner to a transaction for categorization",
     "inputSchema": {
@@ -1015,6 +1135,43 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       "required": [
         "transactionId"
+      ]
+    }
+  },
+  {
+    "name": "assign_partner_to_file",
+    "description": "Assign a partner to a file (receipt/invoice), as a person does in the UI: recorded as a manual assignment (partnerMatchedBy: \"manual\"), which automatic partner matching never overwrites. Replaces any partner the file had. The partner reaches connected transactions the same way a UI assignment does. The file's extracted name may be learned as an alias of the partner, except a name the extraction recorded as the Invoicing Agent.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "fileId": {
+          "type": "string",
+          "description": "The file ID"
+        },
+        "partnerId": {
+          "type": "string",
+          "description": "The partner ID"
+        }
+      },
+      "required": [
+        "fileId",
+        "partnerId"
+      ]
+    }
+  },
+  {
+    "name": "remove_partner_from_file",
+    "description": "Remove the partner assignment from a file. If the partner had been assigned automatically (auto or suggestion), the pair is recorded as a false positive on the partner so matching does not suggest it again; a manual assignment is simply cleared.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "fileId": {
+          "type": "string",
+          "description": "The file ID"
+        }
+      },
+      "required": [
+        "fileId"
       ]
     }
   },
@@ -1137,6 +1294,36 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       "required": [
         "transactionId"
+      ]
+    }
+  },
+  {
+    "name": "get_uva_report",
+    "description": "Read the UVA figures for one period: the same Kennzahlen, derived by the same calculation, that the reports page shows for that period. Read-only: FiBuKI derives and reconciles the UVA, it does not file it, and this tool changes nothing. Amounts in cents. Returns { period (with start/end calendar days, Europe/Vienna), kennzahlen (keyed by Kennzahl, e.g. \"000\", \"060\", \"095\"), totalOutputVat, totalInputVat, balance (KZ 095: >0 Zahllast, <0 Gutschrift), unresolved (transactions still needing a receipt or rate), transactionCount }. A period with no data returns zeroed figures.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "year": {
+          "type": "number",
+          "description": "Calendar year, e.g. 2026"
+        },
+        "period": {
+          "type": "number",
+          "description": "Month (1-12) when type is monthly, quarter (1-4) when type is quarterly"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "monthly",
+            "quarterly"
+          ],
+          "description": "The UVA period length"
+        }
+      },
+      "required": [
+        "year",
+        "period",
+        "type"
       ]
     }
   },

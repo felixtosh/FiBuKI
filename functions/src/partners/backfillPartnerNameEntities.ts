@@ -3,13 +3,17 @@
  *
  * One-time callable that decodes HTML character references (e.g. "&amp;")
  * left in Partner names and aliases by extraction before the fix in
- * extractionCore.ts started decoding on the way in. Idempotent — a Partner
- * whose name and aliases already decode to themselves is skipped.
+ * extractionCore.ts started decoding on the way in. Idempotent: a Partner
+ * whose name and aliases already decode to themselves is skipped, and so is
+ * one this backfill already rewrote (#266, see partnerNameEntities.ts).
+ *
+ * The self-host store is backfilled by
+ * selfhost/migrate-decode-partner-name-entities.ts, which shares the plan.
  */
 
 import { FieldValue } from "firebase-admin/firestore";
 import { createCallable } from "../utils/createCallable";
-import { decodeHtmlEntities } from "../utils/htmlEntities";
+import { PARTNER_NAME_DECODED_MARKER, planPartnerNameDecode } from "./partnerNameEntities";
 
 interface BackfillPartnerNameEntitiesRequest {
   // empty — operates on all partners for the calling user
@@ -36,25 +40,19 @@ export const backfillPartnerNameEntitiesCallable = createCallable<
     let skipped = 0;
 
     for (const partnerDoc of partnersSnap.docs) {
-      const data = partnerDoc.data();
+      const plan = planPartnerNameDecode(partnerDoc.data());
 
-      const name: string | undefined = data.name;
-      const aliases: string[] = Array.isArray(data.aliases) ? data.aliases : [];
-
-      const decodedName = name ? decodeHtmlEntities(name) : null;
-      const decodedAliases = aliases.map((alias) => decodeHtmlEntities(alias) ?? alias);
-
-      const nameChanged = !!name && decodedName !== name;
-      const aliasesChanged = decodedAliases.some((alias, i) => alias !== aliases[i]);
-
-      if (!nameChanged && !aliasesChanged) {
+      if (!plan) {
         skipped++;
         continue;
       }
 
-      const update: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
-      if (nameChanged) update.name = decodedName;
-      if (aliasesChanged) update.aliases = decodedAliases;
+      const update: Record<string, unknown> = {
+        [PARTNER_NAME_DECODED_MARKER]: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      };
+      if (plan.name !== undefined) update.name = plan.name;
+      if (plan.aliases !== undefined) update.aliases = plan.aliases;
 
       await partnerDoc.ref.update(update);
       console.log(`[backfillPartnerNameEntities] Decoded entities on partner ${partnerDoc.id}`);

@@ -19,9 +19,9 @@ import { cn } from "@/lib/utils";
  * file to a Transaction. The reasoning is worth keeping and worth reading once;
  * it is not worth the top of the panel on every visit.
  *
- * So the label states the answer, and this holds the argument. "Type: Invoice"
- * is the whole of what most users need, and the § 11 test that produced it is
- * behind the icon for the visit where somebody disagrees with it.
+ * So the label states the answer, and this holds the argument, for the visit
+ * where somebody disagrees with it. (The § 11 verdict used to live in one of
+ * these; since #237 it is its own field with an inline expand.)
  *
  * A button rather than a hover tooltip, deliberately: this content is a
  * paragraph and a definition list, it has to survive a touch device, and the
