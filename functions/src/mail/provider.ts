@@ -123,6 +123,15 @@ export interface MailSearchOptions extends MailSearchTerms {
 }
 
 /**
+ * A message's readable body, for turning a mail itself into a File (#245).
+ * Either half may be missing: plenty of invoices arrive as HTML only.
+ */
+export interface MailBody {
+  html: string | null;
+  text: string | null;
+}
+
+/**
  * A source of invoice-type attachments for one connected mailbox.
  * Implementations own their query dialect and message parsing.
  */
@@ -135,6 +144,12 @@ export interface MailProvider {
 
   /** Fetch one attachment's bytes. */
   getAttachment(message: MailMessage, attachment: MailAttachment): Promise<Buffer>;
+
+  /**
+   * Fetch the message's HTML and plain-text body, for Mail to PDF (#245).
+   * Optional: the Gmail attach path still reads bodies through its own client.
+   */
+  getBody?(ref: MailMessageRef): Promise<MailBody>;
 
   /** Release any held connections. No-op for stateless (fetch-based) providers. */
   close(): Promise<void>;

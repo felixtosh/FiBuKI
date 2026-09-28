@@ -16,6 +16,7 @@ import { ImapFlow, MessageStructureObject } from "imapflow";
 import { Readable } from "stream";
 import {
   MailAttachment,
+  MailBody,
   MailMessage,
   MailMessageRef,
   MailProvider,
@@ -120,6 +121,36 @@ function extractAttachments(root: MessageStructureObject | undefined): MailAttac
 
   walk(root);
   return out;
+}
+
+/**
+ * The first inline text/html and text/plain parts of a BODYSTRUCTURE tree:
+ * the message's own body, not a part attached to it (#245).
+ */
+function findBodyParts(
+  root: MessageStructureObject | undefined
+): { html?: string; text?: string } {
+  const found: { html?: string; text?: string } = {};
+
+  function walk(node: MessageStructureObject | undefined): void {
+    if (!node) return;
+    const type = (node.type || "").toLowerCase();
+    const isAttachment =
+      node.disposition?.toLowerCase() === "attachment" || Boolean(partFilename(node));
+
+    if (!isAttachment) {
+      // A single-part message carries no part number; its body is "1".
+      if (type === "text/html" && !found.html) found.html = node.part || "1";
+      if (type === "text/plain" && !found.text) found.text = node.part || "1";
+    }
+
+    for (const child of node.childNodes || []) {
+      walk(child);
+    }
+  }
+
+  walk(root);
+  return found;
 }
 
 /** Render an envelope address list as a raw `Name <addr>` From header. */
@@ -410,6 +441,33 @@ export class ImapProvider implements MailProvider {
     );
     // imapflow already decodes the transfer-encoding on the stream.
     return streamToBuffer(content);
+  }
+
+  async getBody(ref: MailMessageRef): Promise<MailBody> {
+    const client = await this.connect();
+    const uid = Number(ref.id);
+
+    const msg = await client.fetchOne(
+      String(uid),
+      { uid: true, bodyStructure: true },
+      { uid: true }
+    );
+    if (!msg) {
+      throw new Error(`IMAP message not found for UID ${uid}`);
+    }
+
+    const parts = findBodyParts(msg.bodyStructure);
+    // imapflow decodes the transfer-encoding and converts text parts to UTF-8.
+    const read = async (part: string | undefined): Promise<string | null> => {
+      if (!part) return null;
+      const { content } = await client.download(String(uid), part, { uid: true });
+      return (await streamToBuffer(content)).toString("utf-8");
+    };
+
+    // One connection, one command at a time.
+    const html = await read(parts.html);
+    const text = await read(parts.text);
+    return { html, text };
   }
 
   async close(): Promise<void> {
