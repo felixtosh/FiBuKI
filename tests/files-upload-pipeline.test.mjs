@@ -80,10 +80,14 @@ test("dropSignature separates files of the same name but different bytes", () =>
   );
 });
 
-test("the upload pipeline exists once across the Files page and its drop zone", () => {
+test("the upload pipeline exists once across the Files page, its drop zone and the connect overlay", () => {
+  // The sequence lives in lib/files/upload-file.ts; the Files page and the
+  // connect overlay's "Upload and connect" (#246) both call it.
   const sources = [
+    "lib/files/upload-file.ts",
     "app/(dashboard)/files/page.tsx",
     "components/files/file-upload-zone.tsx",
+    "components/files/connect-file-overlay.tsx",
   ].map((path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8"));
 
   const occurrences = (pattern) =>

@@ -10,7 +10,7 @@
  */
 
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
-import { documentedAmountOf, filePaymentTotal } from "./coverage";
+import { filePaymentTotal, isExtractionPending, summarizeConnectedFiles } from "./coverage";
 
 const db = getFirestore();
 
@@ -28,6 +28,11 @@ export interface ConnectedFile {
    * the same-day rule (#242); a File with no date is never same-day.
    */
   extractedDate: Timestamp | null;
+  /**
+   * The File's Extraction has not finished (#246). Read through
+   * `summarizeConnectedFiles`, the same helper the detail panels use.
+   */
+  extractionPending: boolean;
 }
 
 /**
@@ -95,6 +100,7 @@ export async function loadConnectedFiles(
         // Against the bank line, so a printed Trinkgeld counts (#172).
         payment: filePaymentTotal(fileData.extractedAmount, fileData.extractedTipAmount),
         extractedDate: fileData.extractedDate ?? null,
+        extractionPending: isExtractionPending(fileData),
       });
     }
   }
@@ -120,7 +126,11 @@ export function documentedAmountsOf(
 ): Map<string, number> {
   const documented = new Map<string, number>();
   for (const [transactionId, files] of connected) {
-    const total = documentedAmountOf(files.map((f) => f.payment));
+    // The panels' own reading of the same Files (#246): a File still being
+    // read with nothing to count yet adds nothing, one with an amount counts.
+    const total = summarizeConnectedFiles(
+      files.map((f) => ({ payment: f.payment, extractionPending: f.extractionPending }))
+    ).documentedAmount;
     if (total > 0) documented.set(transactionId, total);
   }
   return documented;

@@ -3,10 +3,10 @@
 import { Suspense, useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useDropzone } from "react-dropzone";
-import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import { FileText, Upload, Loader2 } from "lucide-react";
-import { storage, db } from "@/lib/firebase/config";
-import { createFile, checkFileDuplicate, retryFileExtraction, connectFileToTransaction, assignPartnerToFile, OperationsContext } from "@/lib/operations";
+import { db } from "@/lib/firebase/config";
+import { uploadFile, UPLOAD_ACCEPTED_TYPES, UPLOAD_MAX_FILE_SIZE } from "@/lib/files/upload-file";
+import { retryFileExtraction, connectFileToTransaction, assignPartnerToFile, OperationsContext } from "@/lib/operations";
 import { FileTable } from "@/components/files/file-table";
 import { FileDetailPanel } from "@/components/files/file-detail-panel";
 import { FileUploadZone } from "@/components/files/file-upload-zone";
@@ -56,13 +56,8 @@ import { usePageTitle } from "@/hooks/use-page-title";
 import { callFunction } from "@/lib/firebase/callable";
 import { InvoiceDetailPanel } from "@/components/invoicing/InvoiceDetailPanel";
 import { AddPartnerDialog } from "@/components/partners/add-partner-dialog";
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
-const ACCEPTED_TYPES = {
-  "image/jpeg": [".jpg", ".jpeg"],
-  "image/png": [".png"],
-  "image/webp": [".webp"],
-  "application/pdf": [".pdf"],
-};
+const MAX_FILE_SIZE = UPLOAD_MAX_FILE_SIZE;
+const ACCEPTED_TYPES = UPLOAD_ACCEPTED_TYPES;
 
 const PANEL_WIDTH_KEY = "fileDetailPanelWidth";
 const DEFAULT_PANEL_WIDTH = 600; // Larger for file preview
@@ -303,25 +298,20 @@ function FilesContent() {
   // Track file ID being parsed after user override (skips classification)
   const [parsingFileId, setParsingFileId] = useState<string | null>(null);
 
-  // Calculate SHA-256 hash of file content
-  const calculateFileHash = useCallback(async (file: File): Promise<string> => {
-    const buffer = await file.arrayBuffer();
-    const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
-    return Array.from(new Uint8Array(hashBuffer))
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
-  }, []);
-
-  // Upload a single file and track progress
+  // Upload a single file and track progress. The bytes, the duplicate check
+  // and the File record go through the one shared uploader (lib/files).
   const uploadSingleFile = useCallback(
     async (file: File, uploadId: string) => {
       try {
-        // Calculate hash first for duplicate detection
-        const contentHash = await calculateFileHash(file);
+        const result = await uploadFile(ctx, file, {
+          onProgress: (pct) =>
+            setUploads((prev) =>
+              prev.map((u) => (u.id === uploadId ? { ...u, progress: pct } : u))
+            ),
+        });
 
-        // Check for duplicate - handle gracefully without throwing
-        const existingFile = await checkFileDuplicate(ctx, contentHash);
-        if (existingFile) {
+        // Duplicate - handle gracefully without throwing
+        if (result.kind === "duplicate") {
           setUploads((prev) =>
             prev.map((u) =>
               u.id === uploadId
@@ -329,8 +319,8 @@ function FilesContent() {
                     ...u,
                     status: "error" as const,
                     progress: 100, // Mark as processed
-                    duplicateFileId: existingFile.id,
-                    duplicateFileName: existingFile.fileName,
+                    duplicateFileId: result.existing.id,
+                    duplicateFileName: result.existing.fileName,
                   }
                 : u
             )
@@ -338,44 +328,7 @@ function FilesContent() {
           return null;
         }
 
-        // Create storage path
-        const timestamp = Date.now();
-        const sanitizedName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
-        const storagePath = `files/${userId}/${timestamp}_${sanitizedName}`;
-
-        // Upload to Firebase Storage
-        const storageRef = ref(storage, storagePath);
-        const uploadTask = uploadBytesResumable(storageRef, file);
-
-        // Track upload progress
-        await new Promise<void>((resolve, reject) => {
-          uploadTask.on(
-            "state_changed",
-            (snapshot) => {
-              const pct = Math.round(
-                (snapshot.bytesTransferred / snapshot.totalBytes) * 100
-              );
-              setUploads((prev) =>
-                prev.map((u) => (u.id === uploadId ? { ...u, progress: pct } : u))
-              );
-            },
-            (err) => reject(err),
-            () => resolve()
-          );
-        });
-
-        // Get download URL
-        const downloadUrl = await getDownloadURL(storageRef);
-
-        // Create file document in Firestore (with hash)
-        const fileId = await createFile(ctx, {
-          fileName: file.name,
-          fileType: file.type,
-          fileSize: file.size,
-          storagePath,
-          downloadUrl,
-          contentHash,
-        });
+        const fileId = result.fileId;
 
         // Mark as complete
         setUploads((prev) =>
@@ -403,7 +356,7 @@ function FilesContent() {
         return null;
       }
     },
-    [ctx, calculateFileHash]
+    [ctx]
   );
 
   // The page's one upload pipeline serves both drop targets — the full-page
