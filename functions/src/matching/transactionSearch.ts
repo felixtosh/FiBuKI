@@ -4,10 +4,9 @@
  * The search box says "Search by name or amount (e.g. 123,45)". This module is
  * the only implementation of that promise, and it is called by BOTH halves of
  * the search: the server candidate gate in findTransactionMatches.ts and the
- * dialogs' client filter (connect-transaction-dialog.tsx,
- * connect-transaction-overlay.tsx). The dialog shows the union of the two, so a
- * predicate on only one side would make results appear and then disappear as
- * the debounce resolves. Same reason the scorer is single-source.
+ * overlay's client filter (connect-transaction-overlay.tsx). The overlay
+ * shows the union of the two, so a predicate on only one side would make
+ * results appear and then disappear as the debounce resolves. Same reason the scorer is single-source.
  *
  * This is a search filter, not a Match Source: an amount hit never contributes
  * to match confidence.

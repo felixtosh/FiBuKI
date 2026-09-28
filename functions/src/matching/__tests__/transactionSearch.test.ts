@@ -101,7 +101,6 @@ describe("one predicate, no copies", () => {
   const read = (rel: string) => readFileSync(path.join(repoRoot, rel), "utf8");
 
   it.each([
-    "components/files/connect-transaction-dialog.tsx",
     "components/files/connect-transaction-overlay.tsx",
     "functions/src/matching/findTransactionMatches.ts",
   ])("%s filters through matchesTransactionSearch and keeps no copy", (file) => {
