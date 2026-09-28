@@ -12,14 +12,15 @@
  * below the fold on a laptop. Each was worth reading once and neither was worth
  * the top of the panel on every visit.
  *
- * The pattern that replaced them: the field states the answer, and an
- * `InfoPopover` on its label holds the argument. "Type: Invoice" is all most
- * users need, and § 11 is one click away for the visit where somebody disagrees
- * with it.
+ * The pattern that replaced them: the field states the answer, and the
+ * argument is one click away. The § 11 field (#237) is the one control that
+ * says what a File is, and it sits at the bottom, after the two actions: at
+ * rest it shows the verdict and one sentence of consequence, and its basis
+ * expands on click. Quick Info keeps what a user scans.
  *
  * So before adding a block here, ask whether it is a FINDING (something is
  * wrong and a person must act) or an EXPLANATION (why we concluded what the
- * field already says). Findings may take space. Explanations go in the popover.
+ * field already says). Findings may take space. Explanations go behind a click.
  */
 
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
@@ -47,13 +48,6 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { PanelHeader, FieldRow } from "@/components/ui/detail-panel-primitives";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   Popover,
   PopoverContent,
   PopoverTrigger,
@@ -61,8 +55,7 @@ import {
 import { FilePreview } from "./file-preview";
 import { FileExtractedInfo } from "./file-extracted-info";
 import { FileConnectionsList } from "./file-connections-list";
-import { DocumentTypeReasoning } from "@/components/documents/section-11-details";
-import { InfoPopover } from "@/components/ui/info-popover";
+import { Section11Field } from "@/components/documents/section-11-details";
 import { AddPartnerDialog } from "@/components/partners/add-partner-dialog";
 import { PartnerPill } from "@/components/partners/partner-pill";
 import {
@@ -88,23 +81,6 @@ import { fileDisplayName } from "@/lib/files/file-display-name";
 import { useAuth } from "@/components/auth";
 import { useChat } from "@/components/chat/chat-provider";
 import { InvoiceDetailPanel } from "@/components/invoicing/InvoiceDetailPanel";
-
-// Helper to determine invoice type status for display
-type InvoiceTypeStatus = 'unknown' | 'analyzing' | 'invoice' | 'not_invoice';
-
-function getInvoiceTypeStatus(file: TaxFile): InvoiceTypeStatus {
-  // Classification not done yet - show "Analyzing..."
-  if (!file.classificationComplete) return 'analyzing';
-
-  // Classification done - show result
-  if (file.isNotInvoice === true) return 'not_invoice';
-  if (file.isNotInvoice === false) return 'invoice';
-
-  // Fallback for legacy files without classificationComplete
-  const hasData = !!(file.extractedAmount || file.extractedDate || file.extractedPartner);
-  if (hasData) return 'invoice';
-  return 'unknown';
-}
 
 interface FileDetailPanelProps {
   file: TaxFile;
@@ -550,63 +526,6 @@ function FileDetailPanelInner({
                     <span className="text-muted-foreground w-16 shrink-0 file-meta-label">Size</span>
                     <span className="flex-1 text-right file-meta-value">{formatFileSize(file.fileSize)}</span>
                   </div>
-                  {/* Invoice Type Classification */}
-                  <div className="flex items-center gap-3 file-meta-row">
-                    <span className="text-muted-foreground w-16 shrink-0 file-meta-label flex items-center gap-1">
-                      Type
-                      {/*
-                        The § 11 test that produced this answer, one click away.
-                        "Type: Invoice" is all most users need; the statute is
-                        for the visit where somebody disagrees with it.
-                      */}
-                      <InfoPopover label="Why this document type">
-                        <DocumentTypeReasoning
-                          documentType={file.documentType}
-                          basis={file.documentTypeBasis}
-                          missingElements={file.documentTypeMissingElements}
-                        />
-                      </InfoPopover>
-                    </span>
-                    <div className="flex-1 flex justify-end file-meta-value">
-                      {(() => {
-                        const status = getInvoiceTypeStatus(file);
-                        // Show "Analyzing..." only during classification phase
-                        // When isParsing is true, user already confirmed it's an invoice
-                        if (status === 'analyzing' && !isParsing) {
-                          return (
-                            <span className="flex items-center gap-1.5 text-muted-foreground">
-                              <Loader2 className="h-3 w-3 animate-spin" />
-                              Analyzing...
-                            </span>
-                          );
-                        }
-                        // When parsing after user override, show dropdown with "Invoice" selected
-                        const displayStatus = isParsing ? 'invoice' : status;
-                        return (
-                          <Select
-                            value={displayStatus === 'invoice' ? 'invoice' : displayStatus === 'not_invoice' ? 'not_invoice' : 'unknown'}
-                            onValueChange={(value) => {
-                              if (value === 'invoice' && onUnmarkAsNotInvoice) {
-                                onUnmarkAsNotInvoice();
-                              } else if (value === 'not_invoice' && onMarkAsNotInvoice) {
-                                onMarkAsNotInvoice();
-                              }
-                            }}
-                            disabled={isParsing}
-                          >
-                            <SelectTrigger className="h-7 w-[120px] text-xs">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="unknown" disabled>Unknown</SelectItem>
-                              <SelectItem value="invoice">Invoice</SelectItem>
-                              <SelectItem value="not_invoice">Not Invoice</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        );
-                      })()}
-                    </div>
-                  </div>
                 </div>
               </div>
             </div>
@@ -626,14 +545,6 @@ function FileDetailPanelInner({
             />
 
             <Separator />
-
-            {/*
-              The § 11 verdict used to be a full section here, between the
-              extracted figures and the Partner control. It said the same thing
-              the Type field says, at four times the height, and it pushed the
-              two actions this panel exists for below the fold. It now lives in
-              the info popover on the Type label above.
-            */}
 
             {/* Partner Assignment Section */}
             <div className="space-y-3">
@@ -773,6 +684,24 @@ function FileDetailPanelInner({
                 })
               }
               isAiSearching={isWandActive}
+            />
+
+            <Separator />
+
+            {/*
+              What this File is under § 11 (#237): the one control that sets
+              it, last, because it is what a user checks when something looks
+              off rather than what they come here to do.
+            */}
+            <Section11Field
+              documentType={file.documentType}
+              basis={file.documentTypeBasis}
+              missingElements={file.documentTypeMissingElements}
+              isNotInvoice={file.isNotInvoice}
+              classifying={!file.classificationComplete && !isParsing}
+              disabled={isParsing}
+              onMarkAsNotInvoice={onMarkAsNotInvoice}
+              onUnmarkAsNotInvoice={onUnmarkAsNotInvoice}
             />
           </div>
         </ScrollArea>

@@ -16,10 +16,10 @@ import { useTranslations } from "next-intl";
  * degrading, and these labels render on every row of two tables, so one absent
  * catalogue entry would blank a screen instead of one word.
  *
- * Only UI chrome comes through here. The § 11 element names stay German in
- * every locale because they are citations the user quotes to a supplier, and
- * the supplier request text stays German because its reader is an Austrian
- * supplier rather than the person using the app.
+ * The § 11 element names come through here too since #237: ADR-0007 made them
+ * interface words like any other, with the German kept beside them on first
+ * use. The supplier request text never does: it stays German because its
+ * reader is an Austrian supplier rather than the person using the app.
  */
 export interface LabelledPresentation {
   label: string;
