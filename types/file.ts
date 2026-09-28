@@ -804,7 +804,7 @@ export interface FileConnection {
  * Filters for file queries
  */
 export interface FileFilters {
-  /** Text search in filename, extracted partner */
+  /** Text search in file name, extracted partner, invoice number and amount */
   search?: string;
 
   /** Filter by connection status */

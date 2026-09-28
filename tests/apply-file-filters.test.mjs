@@ -44,6 +44,16 @@ test("applyFileFilters: search matches fileName or extractedPartner, case-insens
   assert.deepEqual(applyFileFilters(files, { search: "nomatch" }).rows, []);
 });
 
+test("applyFileFilters: search also matches the invoice number and the amount (#247)", () => {
+  const files = [
+    makeFile({ id: "a", extractedInvoiceNumber: "RE-2026-017", extractedAmount: 4299 }),
+    makeFile({ id: "b", extractedInvoiceNumber: null, extractedAmount: 144200 }),
+  ];
+  assert.deepEqual(applyFileFilters(files, { search: "re-2026" }).rows.map((f) => f.id), ["a"]);
+  assert.deepEqual(applyFileFilters(files, { search: "€42" }).rows.map((f) => f.id), ["a"]);
+  assert.deepEqual(applyFileFilters(files, { search: "1.442,00" }).rows.map((f) => f.id), ["b"]);
+});
+
 test("applyFileFilters: hasConnections true/false", () => {
   const files = [
     makeFile({ id: "a", transactionIds: ["t1"] }),
