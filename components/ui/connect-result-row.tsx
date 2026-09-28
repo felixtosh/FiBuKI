@@ -2,6 +2,7 @@
 
 import { ReactNode } from "react";
 import { Check, Link2 } from "lucide-react";
+import { connectionCountLabel } from "@/lib/matching/connection-count";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import {
@@ -52,6 +53,13 @@ export interface ConnectResultRowProps {
   matchSignals?: string[];
   /** Email classification badges with tooltips */
   classificationBadges?: ClassificationBadgeConfig[];
+  /**
+   * File Connections this row already has to something other than the item in
+   * hand (#241, #243). Shown as a badge when above zero; never disables the row.
+   */
+  connectionCount?: number;
+  /** What the Connections are to: a File row counts Transactions, and back. */
+  connectionNoun?: "Transaction" | "File";
   /** Click handler */
   onClick?: () => void;
   /** Whether the button is disabled */
@@ -79,10 +87,15 @@ export function ConnectResultRow({
   confidence,
   matchSignals = [],
   classificationBadges = [],
+  connectionCount,
+  connectionNoun = "Transaction",
   onClick,
   disabled = false,
 }: ConnectResultRowProps) {
   const showConfidence = confidence != null && confidence > 0 && !isConnected;
+  // A row connected to the item in hand keeps its "Connected" treatment instead.
+  const showConnectionCount =
+    connectionCount != null && connectionCount > 0 && !isConnected;
 
   return (
     <button
@@ -113,6 +126,16 @@ export function ConnectResultRow({
             <Badge variant="secondary" className="text-xs">
               <Link2 className="h-3 w-3 mr-1" />
               Connected
+            </Badge>
+          )}
+          {showConnectionCount && (
+            <Badge
+              variant="outline"
+              className="text-xs shrink-0"
+              data-testid="connection-count-badge"
+            >
+              <Link2 className="h-3 w-3 mr-1" />
+              {connectionCountLabel(connectionCount ?? 0, connectionNoun)}
             </Badge>
           )}
         </div>
