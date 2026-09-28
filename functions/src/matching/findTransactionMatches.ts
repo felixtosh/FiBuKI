@@ -248,7 +248,7 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
     // Same derivation as auto-matching, not a copy of it (#138): this
     // dialog's scores have to be the ones matchFileTransactions produced,
     // including the linked Global Partner's brand aliases.
-    const partner = await loadPartnerScoringContext(db, fileData.partnerId);
+    const partner = await loadPartnerScoringContext(db, fileData.partnerId, userId);
 
     // Filter candidates
     let candidates = transactions.filter((doc) => {

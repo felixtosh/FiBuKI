@@ -2871,7 +2871,7 @@ export async function scoreFileTransactionMatch(userId: string, args: Record<str
 
   const fileData = fileDoc.data()!;
   const [partner, documentedAmounts] = await Promise.all([
-    loadPartnerScoringContext(db, fileData.partnerId),
+    loadPartnerScoringContext(db, fileData.partnerId, userId),
     loadDocumentedAmounts([txDoc.id], fileDoc.id),
   ]);
   const [result] = scoreFileAgainstTransactions(fileData, [txDoc], partner, documentedAmounts);

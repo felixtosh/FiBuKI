@@ -966,16 +966,26 @@ export const NO_PARTNER_SCORING_CONTEXT: PartnerScoringContext = {
 /**
  * Read a Partner's scoring context. A missing or unreadable Partner scores as
  * no Partner at all, which is what the trigger has always done.
+ *
+ * `userId` is who the scoring is for. A Partner another User owns scores as no
+ * Partner too (#411): the connect dialog takes `partnerId` from the caller, so
+ * without this check that Partner's aliases, bands and weights, and the Global
+ * Partner it links to, would reach another tenant through the scores.
  */
 export async function loadPartnerScoringContext(
   db: FirebaseFirestore.Firestore,
-  partnerId: string | null | undefined
+  partnerId: string | null | undefined,
+  userId: string
 ): Promise<PartnerScoringContext> {
   if (!partnerId) return NO_PARTNER_SCORING_CONTEXT;
   try {
     const partnerDoc = await db.collection("partners").doc(partnerId).get();
     if (!partnerDoc.exists) return NO_PARTNER_SCORING_CONTEXT;
     const partnerData = partnerDoc.data()!;
+    if (partnerData.userId !== userId) {
+      console.warn(`[Scoring] Partner ${partnerId} is not the caller's, scoring without it`);
+      return NO_PARTNER_SCORING_CONTEXT;
+    }
     return {
       aliases: await derivePartnerAliases(db, partnerData),
       effectiveCycles: partnerData.billingCycle?.effective ?? [],
