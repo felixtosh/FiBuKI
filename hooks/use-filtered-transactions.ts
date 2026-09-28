@@ -3,6 +3,8 @@
 import { toDateSafe } from "@/lib/utils";
 import { useMemo, useDeferredValue } from "react";
 import { Transaction, TransactionFilters } from "@/types/transaction";
+import { matchesAmountQuery } from "@/functions/src/matching/transactionSearch";
+import { matchesDocumentationStates } from "@/lib/filters/documentation-state-filter";
 
 /**
  * Client-side filtering hook for transactions.
@@ -16,14 +18,16 @@ export function useFilteredTransactions(
   const filtered = useMemo(() => {
     let result = transactions;
 
-    // Text search
+    // Text search, with the amount as an OR beside it (#183): the same
+    // amount predicate the Connect dialog and its server gate use.
     if (searchValue.trim()) {
       const search = searchValue.toLowerCase();
       result = result.filter(
         (t) =>
           t.name?.toLowerCase().includes(search) ||
           t.description?.toLowerCase().includes(search) ||
-          t.partner?.toLowerCase().includes(search)
+          t.partner?.toLowerCase().includes(search) ||
+          matchesAmountQuery(t.amount, searchValue.trim())
       );
     }
 
@@ -83,6 +87,12 @@ export function useFilteredTransactions(
     // Completion status filter
     if (filters.isComplete !== undefined) {
       result = result.filter((t) => t.isComplete === filters.isComplete);
+    }
+
+    // Documentation State filter (#249): multi-select, undefined = all
+    if (filters.documentationStates) {
+      const selected = filters.documentationStates;
+      result = result.filter((t) => matchesDocumentationStates(t.documentationState, selected));
     }
 
     return result;

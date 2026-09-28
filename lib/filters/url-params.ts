@@ -1,4 +1,5 @@
 import { TransactionFilters } from "@/types/transaction";
+import { normalizeDocumentationStates } from "@/lib/filters/documentation-state-filter";
 
 const FILTERS_STORAGE_KEY = "transactionFilters";
 const SEARCH_STORAGE_KEY = "transactionSearch";
@@ -14,6 +15,7 @@ interface StoredFilters {
   amountType?: "income" | "expense" | "all";
   sourceId?: string;
   partnerIds?: string[];
+  documentationStates?: string[];
 }
 
 /**
@@ -33,6 +35,9 @@ export function saveFiltersToStorage(
   if (filters.sourceId) stored.sourceId = filters.sourceId;
   if (filters.partnerIds && filters.partnerIds.length > 0) {
     stored.partnerIds = filters.partnerIds;
+  }
+  if (filters.documentationStates) {
+    stored.documentationStates = filters.documentationStates;
   }
 
   localStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify(stored));
@@ -62,6 +67,8 @@ export function loadFiltersFromStorage(): {
       if (parsed.partnerIds && parsed.partnerIds.length > 0) {
         filters.partnerIds = parsed.partnerIds;
       }
+      const documentationStates = normalizeDocumentationStates(parsed.documentationStates);
+      if (documentationStates) filters.documentationStates = documentationStates;
     }
   } catch {
     // Ignore parse errors
@@ -91,6 +98,9 @@ export function buildSearchParamsString(
   if (filters.partnerIds && filters.partnerIds.length > 0) {
     params.set("partnerIds", filters.partnerIds.join(","));
   }
+  if (filters.documentationStates) {
+    params.set("documentation", filters.documentationStates.join(","));
+  }
 
   return params.toString();
 }
@@ -108,7 +118,8 @@ export function hasUrlParams(searchParams: URLSearchParams): boolean {
     searchParams.has("amountType") ||
     searchParams.has("sourceId") ||
     searchParams.has("partnerId") ||
-    searchParams.has("partnerIds")
+    searchParams.has("partnerIds") ||
+    searchParams.has("documentation")
   );
 }
 
@@ -150,6 +161,15 @@ export function parseFiltersFromUrl(
     filters.partnerId = partnerId;
   }
 
+  // Present but empty is the empty selection, not the default.
+  const documentation = searchParams.get("documentation");
+  if (documentation !== null) {
+    const documentationStates = normalizeDocumentationStates(
+      documentation.split(",").map((s) => s.trim()).filter(Boolean)
+    );
+    if (documentationStates) filters.documentationStates = documentationStates;
+  }
+
   return filters;
 }
 
@@ -173,6 +193,9 @@ export function buildFilterUrl(
   if (filters.partnerIds && filters.partnerIds.length > 0) {
     params.set("partnerIds", filters.partnerIds.join(","));
   }
+  if (filters.documentationStates) {
+    params.set("documentation", filters.documentationStates.join(","));
+  }
 
   const queryString = params.toString();
   return queryString ? `${basePath}?${queryString}` : basePath;
@@ -189,7 +212,8 @@ export function hasActiveFilters(filters: TransactionFilters): boolean {
     filters.dateTo ||
     (filters.amountType && filters.amountType !== "all") ||
     filters.sourceId ||
-    (filters.partnerIds && filters.partnerIds.length > 0)
+    (filters.partnerIds && filters.partnerIds.length > 0) ||
+    filters.documentationStates !== undefined
   );
 }
 
@@ -204,5 +228,6 @@ export function countActiveFilters(filters: TransactionFilters): number {
   if (filters.amountType && filters.amountType !== "all") count++;
   if (filters.sourceId) count++;
   if (filters.partnerIds && filters.partnerIds.length > 0) count++;
+  if (filters.documentationStates !== undefined) count++;
   return count;
 }
