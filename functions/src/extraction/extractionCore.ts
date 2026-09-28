@@ -52,6 +52,7 @@ import { computeDirectionReviewFields } from "../documents/syncDirectionReview";
 import { directionReviewFields } from "../documents/directionReview";
 import { repairReviewFields, reviewRepair } from "../documents/repairReview";
 import { dueDateFromAdditionalFields } from "../matching/dueDate";
+import { toDateSafe } from "../utils/toDateSafe";
 
 /**
  * Options for running extraction
@@ -646,8 +647,11 @@ export async function runExtraction(
       updateData.extractedAdditionalFields = result.additionalFields;
       // #236: the Due Date typed beside the bag it was read from, so the
       // Match scores the payment window. Written with the bag, never apart
-      // from it, so the two cannot disagree.
-      const dueDate = dueDateFromAdditionalFields(result.additionalFields);
+      // from it, so the two cannot disagree. The issue date this same pass
+      // read is handed along so a due date earlier than it is rejected
+      // rather than written, since it would invert the window (#135).
+      const issueDate = toDateSafe(updateData.extractedDate ?? fileData.extractedDate);
+      const dueDate = dueDateFromAdditionalFields(result.additionalFields, issueDate);
       updateData.extractedDueDate = dueDate ? Timestamp.fromDate(dueDate) : null;
       console.log(`[+${Date.now() - t0}ms] Stored ${result.additionalFields.length} additional fields`);
     }

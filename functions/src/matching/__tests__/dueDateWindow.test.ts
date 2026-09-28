@@ -66,8 +66,49 @@ describe("dueDateFromAdditionalFields", () => {
     ).toBeNull();
   });
 
-  it("does not widen to German headwords on a keyless row (that is #135)", () => {
-    expect(dueDateFromAdditionalFields([{ label: "Fällig am", value: "2026-01-20" }])).toBeNull();
+  it("reads a keyless row under any printed synonym of the Fälligkeitsdatum (#135)", () => {
+    for (const label of [
+      "Fälligkeitsdatum",
+      "Zahlungstermin",
+      "Fällig am",
+      "fällig am:",
+      "Zahlbar bis",
+      "Zahlbar ohne Abzug bis",
+    ]) {
+      expect(dueDateFromAdditionalFields([{ label, value: "2026-01-20" }])?.getDate()).toBe(20);
+    }
+  });
+
+  it("stays closed: a keyless row under any other label is not a Due Date", () => {
+    for (const label of ["Datum", "Leistungszeitraum", "Zahlung", "Frist"]) {
+      expect(dueDateFromAdditionalFields([{ label, value: "2026-01-20" }])).toBeNull();
+    }
+  });
+
+  it("rejects a Due Date earlier than the issue date, which inverts the window (#135)", () => {
+    const issue = new Date(2026, 0, 5);
+    expect(
+      dueDateFromAdditionalFields([{ key: "dueDate", label: "Fällig am", value: "2026-01-02" }], issue)
+    ).toBeNull();
+    // Equal is zahlbar sofort, a real document, and stays accepted.
+    expect(
+      dueDateFromAdditionalFields([{ key: "dueDate", label: "Fällig am", value: "2026-01-05" }], issue)
+        ?.getDate()
+    ).toBe(5);
+    // Day-level: an issue date carrying a time of day does not push the
+    // boundary past its own calendar day.
+    const issueWithTime = new Date(2026, 0, 5, 14, 30);
+    expect(
+      dueDateFromAdditionalFields(
+        [{ key: "dueDate", label: "Fällig am", value: "2026-01-05" }],
+        issueWithTime
+      )?.getDate()
+    ).toBe(5);
+    // Without an issue date there is nothing to reject against.
+    expect(
+      dueDateFromAdditionalFields([{ key: "dueDate", label: "Fällig am", value: "2026-01-02" }])
+        ?.getDate()
+    ).toBe(2);
   });
 
   it("rejects values that are not a real ISO date", () => {

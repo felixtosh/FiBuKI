@@ -37,6 +37,7 @@ import { CORRECTABLE_FIELDS, correctedFieldsOf } from "./extractionProvenanceOps
 import { syncDocumentationStateForTransactions } from "../documents/syncDocumentationState";
 import { retireRepairAmbiguity } from "../documents/repairReview";
 import { dueDateFromAdditionalFields } from "../matching/dueDate";
+import { toDateSafe } from "../utils/toDateSafe";
 
 /** An extra field the extractor kept but nothing else reads structurally. */
 interface EditedAdditionalField {
@@ -177,9 +178,14 @@ export const updateFileExtractedFieldsCallable = createCallable<
 
     // #236: the typed Due Date is read off these rows, so an edit to them
     // re-reads it. A person who corrects or deletes the Due Date row moves
-    // the payment window the Match scores against.
+    // the payment window the Match scores against. Read against the issue
+    // date this same save settles on, so a due date earlier than it is
+    // rejected rather than written, since it would invert the window (#135).
     if (details.additionalFields !== undefined) {
-      const dueDate = dueDateFromAdditionalFields(updates.extractedAdditionalFields);
+      const issueDate = toDateSafe(
+        updates.extractedDate !== undefined ? updates.extractedDate : record.extractedDate
+      );
+      const dueDate = dueDateFromAdditionalFields(updates.extractedAdditionalFields, issueDate);
       updates.extractedDueDate = dueDate ? Timestamp.fromDate(dueDate) : null;
     }
 

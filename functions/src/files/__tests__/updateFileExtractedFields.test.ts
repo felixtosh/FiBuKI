@@ -282,7 +282,9 @@ describe("updateFileExtractedFieldsCallable", () => {
     await call(
       unchangedSave({
         details: {
-          additionalFields: [{ key: "dueDate", label: "Zahlungstermin", value: "2026-01-20" }],
+          // After the record's issue date (2026-03-04), since #135 rejects an
+          // earlier one, which its own test below pins.
+          additionalFields: [{ key: "dueDate", label: "Zahlungstermin", value: "2026-03-20" }],
         },
       })
     );
@@ -294,6 +296,34 @@ describe("updateFileExtractedFieldsCallable", () => {
     await call(
       unchangedSave({
         details: { additionalFields: [{ label: "Zahlungsziel", value: "14 Tage" }] },
+      })
+    );
+    expect(file().extractedDueDate).toBeNull();
+  });
+
+  it("reads the typed Due Date from a keyless row under a German synonym (#135)", async () => {
+    seedFile();
+
+    await call(
+      unchangedSave({
+        details: {
+          additionalFields: [{ label: "Zahlbar bis", value: "2026-03-20", rawValue: "20.03.2026" }],
+        },
+      })
+    );
+    expect(file().extractedDueDate).toBeTruthy();
+  });
+
+  it("refuses a Due Date earlier than the issue date (#135)", async () => {
+    // The record's issue date is 2026-03-04. A due date before it inverts the
+    // payment window #236 scores against, so it is rejected, not written.
+    seedFile();
+
+    await call(
+      unchangedSave({
+        details: {
+          additionalFields: [{ key: "dueDate", label: "Fällig am", value: "2026-02-20" }],
+        },
       })
     );
     expect(file().extractedDueDate).toBeNull();
