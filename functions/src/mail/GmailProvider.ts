@@ -15,6 +15,7 @@ import {
   MailSearchOptions,
   MailSearchPage,
 } from "./provider";
+import { MailCredentials, MailProviderDescriptor } from "./registry";
 import { INVOICE_MIME_TYPES, MAX_EMAILS_PER_BATCH } from "./constants";
 import { buildGmailQuery } from "./gmail-query";
 
@@ -265,3 +266,40 @@ export class GmailProvider implements MailProvider {
     // Gmail is stateless (per-request fetch); nothing to release.
   }
 }
+
+// ============================================================================
+// Self-description (#102)
+// ============================================================================
+
+/**
+ * Gmail's entry in the Mail Provider register. The OAuth dance itself is not
+ * a credential field: the integration stores the refresh material, the caller
+ * refreshes and decrypts, and `create` receives the live access token —
+ * exactly the credential contract in registry.ts.
+ */
+export const gmailDescriptor: MailProviderDescriptor = {
+  id: "gmail",
+  label: "Gmail",
+  credentialFields: [
+    {
+      key: "accessToken",
+      label: "OAuth access token",
+      secret: true,
+      description:
+        "A valid (already refreshed) Gmail OAuth access token with gmail.readonly scope.",
+    },
+  ],
+  capabilities: {
+    // Gmail executes the whole search vocabulary server-side (see search()).
+    serverSearch: true,
+    filenameSearch: true,
+    // Sync re-walks date windows today; the history API is unused.
+    incrementalSync: false,
+  },
+  create(credentials: MailCredentials): MailProvider {
+    if (!credentials.accessToken) {
+      throw new Error("Gmail provider requires an access token");
+    }
+    return new GmailProvider(credentials.accessToken);
+  },
+};
