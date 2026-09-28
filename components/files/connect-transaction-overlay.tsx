@@ -13,6 +13,23 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ConnectResultRow } from "@/components/ui/connect-result-row";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  CONNECT_DATE_WINDOW_OPTIONS,
+  CONNECT_SORT_OPTIONS,
+  ConnectControls,
+  ConnectSortMode,
+  filterConnectCandidates,
+  rememberConnectControls,
+  rememberedConnectControls,
+  sortConnectCandidates,
+} from "@/lib/matching/connect-candidate-order";
 import { ContentOverlay } from "@/components/ui/content-overlay";
 import { Transaction } from "@/types/transaction";
 import { TaxFile, TransactionSuggestion } from "@/types/file";
@@ -227,6 +244,39 @@ export function ConnectTransactionOverlay({
     });
   }, [transactions, matchMap, search]);
 
+  // Sort and chips (#244). Remembered while the app is open, reset on reload.
+  const [controls, setControlsState] = useState<ConnectControls>(rememberedConnectControls);
+  const updateControls = useCallback((patch: Partial<ConnectControls>) => {
+    setControlsState((prev) => {
+      const next = { ...prev, ...patch };
+      rememberConnectControls(next);
+      return next;
+    });
+  }, []);
+  const fileDateMs = extractedDateValue?.getTime() ?? null;
+  const filePartnerId = file?.partnerId ?? null;
+
+  // Applied on top of the search result above, client-side over the
+  // candidates already loaded; the query the overlay issues is unchanged.
+  const visibleTransactions = useMemo(() => {
+    const candidates = filteredTransactions.map((tx) => ({
+      id: tx.id,
+      dateMs: tx.date.toMillis(),
+      partnerId: tx.partnerId ?? null,
+      tx,
+    }));
+    const narrowed = filterConnectCandidates(candidates, {
+      partnerId: controls.partnerOnly ? filePartnerId : null,
+      dateWindowDays: controls.dateWindowDays,
+      fileDateMs,
+    });
+    return sortConnectCandidates(narrowed, controls.sort, {
+      // Best match is the server's match confidence, never a local score.
+      confidenceOf: (c) => matchMap.get(c.id)?.confidence,
+      fileDateMs,
+    }).map((c) => c.tx);
+  }, [filteredTransactions, controls, filePartnerId, fileDateMs, matchMap]);
+
   // Combined loading state
   const loading = transactionsLoading || matchesLoading;
 
@@ -340,7 +390,7 @@ export function ConnectTransactionOverlay({
       >
         <div className="flex h-full">
           {/* Left sidebar: Search + Results */}
-          <div className="w-[35%] min-w-[200px] max-w-[420px] shrink-0 border-r flex flex-col min-h-0 overflow-hidden">
+          <div className="w-[35%] min-w-[280px] max-w-[420px] shrink-0 border-r flex flex-col min-h-0 overflow-hidden">
             {/* Search section */}
             <div className="p-4 border-b space-y-3">
               <div className="relative flex gap-1.5">
@@ -364,6 +414,63 @@ export function ConnectTransactionOverlay({
                   {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
                 </Button>
               </div>
+
+              {/* Sort and chips (#244): above the scroll area, never behind a disclosure */}
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground shrink-0">Sort</span>
+                <Select
+                  value={controls.sort}
+                  onValueChange={(value) => updateControls({ sort: value as ConnectSortMode })}
+                >
+                  <SelectTrigger className="h-8 text-xs" aria-label="Sort transactions">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {CONNECT_SORT_OPTIONS.map((option) => (
+                      <SelectItem
+                        key={option.value}
+                        value={option.value}
+                        disabled={option.value === "closest-date" && fileDateMs == null}
+                        className="text-xs"
+                      >
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {filePartnerId && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={controls.partnerOnly ? "default" : "outline"}
+                    className="h-6 px-2 text-xs rounded-full"
+                    aria-pressed={controls.partnerOnly}
+                    onClick={() => updateControls({ partnerOnly: !controls.partnerOnly })}
+                  >
+                    This Partner only
+                  </Button>
+                )}
+                {CONNECT_DATE_WINDOW_OPTIONS.map((option) => {
+                  const active = controls.dateWindowDays === option.value;
+                  return (
+                    <Button
+                      key={option.label}
+                      type="button"
+                      size="sm"
+                      variant={active ? "default" : "outline"}
+                      className="h-6 px-2 text-xs rounded-full"
+                      aria-pressed={active}
+                      // A window around the File's date needs a File date.
+                      disabled={option.value != null && fileDateMs == null}
+                      onClick={() => updateControls({ dateWindowDays: option.value })}
+                    >
+                      {option.label}
+                    </Button>
+                  );
+                })}
+              </div>
             </div>
 
             {/* Transaction list */}
@@ -373,14 +480,20 @@ export function ConnectTransactionOverlay({
                   <Loader2 className="h-6 w-6 mx-auto mb-2 animate-spin" />
                   {matchesLoading ? "Finding best matches..." : "Loading transactions..."}
                 </div>
-              ) : filteredTransactions.length === 0 ? (
+              ) : visibleTransactions.length === 0 ? (
                 <div className="p-8 text-sm text-muted-foreground text-center">
                   <Receipt className="h-8 w-8 mx-auto mb-2 opacity-30" />
-                  <p>{search ? "No transactions match your search" : "No transactions found"}</p>
+                  <p>
+                    {search
+                      ? "No transactions match your search"
+                      : controls.partnerOnly || controls.dateWindowDays != null
+                      ? "No transactions match these filters"
+                      : "No transactions found"}
+                  </p>
                 </div>
               ) : (
                 <div className="p-2 space-y-1 overflow-hidden">
-                  {filteredTransactions.map((transaction) => {
+                  {visibleTransactions.map((transaction) => {
                     const isConnected = isTransactionConnected(transaction.id);
                     const isSelected = selectedIds.has(transaction.id);
                     const matchResult = matchMap.get(transaction.id);
