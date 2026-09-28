@@ -35,10 +35,16 @@ export interface SendEmailOptions {
 }
 
 export function isMailerConfigured(): boolean {
-  return Boolean(
-    process.env.FIBUKI_SMTP_HOST &&
-      process.env.FIBUKI_SMTP_USER &&
-      process.env.FIBUKI_SMTP_PASS,
+  // An injected test transport counts as configured — same rule sendEmail()
+  // applies, so callers that hard-fail on !isMailerConfigured() (the invite
+  // callable, #159) agree with what sendEmail() would actually do.
+  return (
+    Boolean(transporter) ||
+    Boolean(
+      process.env.FIBUKI_SMTP_HOST &&
+        process.env.FIBUKI_SMTP_USER &&
+        process.env.FIBUKI_SMTP_PASS,
+    )
   );
 }
 
