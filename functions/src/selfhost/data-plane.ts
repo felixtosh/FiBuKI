@@ -7,8 +7,9 @@
  *   POST /__data/get    { path }                             -> { exists, id, data|null }
  *   POST /__data/write  { ops: [...] }                       -> { ids: [...] }
  *
- * All routes require a valid Bearer token (the data plane has no
- * anonymous surface). Owner-scoped queries get where("userId","==",uid)
+ * All routes require a valid Bearer token, with one exception mirroring
+ * firestore.rules: a tokenless /get of a doc in ANONYMOUS_READ_DOCS
+ * (config/openSeats, read by the register page before sign-in). Owner-scoped queries get where("userId","==",uid)
  * injected server-side. One write request = one shim batch; `ifUnchanged`
  * preconditions are checked against the validation-phase reads, then the
  * batch commits — no interleaving hazard in the single-process,
@@ -27,6 +28,7 @@ import type { AuthData } from "./https-shim";
 import type { TokenVerifier } from "./host";
 import {
   Access,
+  ANONYMOUS_READ_DOCS,
   CollectionPolicy,
   SUBTREE_POLICIES,
   TOP_LEVEL_POLICIES,
@@ -250,6 +252,10 @@ interface WriteOp {
 
 const MAX_OPS = 500;
 
+function isAnonymousReadable(path: unknown): path is string {
+  return typeof path === "string" && ANONYMOUS_READ_DOCS.has(path);
+}
+
 export function createDataPlane(
   verifyToken: TokenVerifier,
   options?: { jsonLimit?: string },
@@ -264,10 +270,26 @@ export function createDataPlane(
   // rate-limit.ts.
   router.use(makeRateLimiter(6000, "data"));
 
-  // Data plane always requires a verified identity.
+  // Data plane requires a verified identity, except a tokenless /get of an
+  // allowlisted public doc (firestore.rules config/* public read). A
+  // PRESENTED but invalid token still gets 401: we only open the no-token path.
   router.use(async (req: Request & { fibukiAuth?: AuthData }, res: Response, next: NextFunction) => {
     const header = req.headers.authorization;
     if (!header?.startsWith("Bearer ")) {
+      if (req.method === "POST" && req.path === "/get" && isAnonymousReadable((req.body ?? {}).path)) {
+        try {
+          const path = (req.body as { path: string }).path;
+          const snap = await getFirestore().doc(path).get();
+          res.json({
+            exists: snap.exists,
+            id: path.split("/").pop(),
+            data: snap.exists ? encodeWire(snap.data()) : null,
+          });
+        } catch (err) {
+          next(err);
+        }
+        return;
+      }
       sendError(res, "unauthenticated", "Data plane requires a Bearer token.");
       return;
     }

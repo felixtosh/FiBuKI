@@ -101,6 +101,16 @@ export const SUBTREE_POLICIES: Readonly<Record<string, CollectionPolicy>> = {
   system: denied, // learningQueue etc. — server-only
 };
 
+/**
+ * Documents a caller WITHOUT a token may read, via /__data/get only (never
+ * query, never write). firestore.rules makes all of config/* publicly
+ * readable "for open seats shown on registration"; the register page reads
+ * exactly config/openSeats before sign-in, so that is all we open. Other
+ * config docs (e.g. pricing caches) stay authed. Exact path strings: a new
+ * entry is a conscious widening of the only anonymous surface.
+ */
+export const ANONYMOUS_READ_DOCS: ReadonlySet<string> = new Set(["config/openSeats"]);
+
 /** The users/{uid} document itself: read/write when uid matches. */
 export const USER_DOC_POLICY: CollectionPolicy = {
   read: "authed",

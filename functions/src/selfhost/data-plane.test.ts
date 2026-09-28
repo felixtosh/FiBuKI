@@ -79,6 +79,59 @@ describe("data plane: auth", () => {
   });
 });
 
+describe("data plane: anonymous public reads (firestore.rules config/* exception)", () => {
+  beforeEach(async () => {
+    await db.collection("config").doc("openSeats").set({ totalSeats: 10, remainingSeats: 3, claimedSeats: 7 });
+    await db.collection("config").doc("pricing").set({ secret: "not for anonymous readers" });
+    await db.collection("transactions").doc("t-anon").set({ userId: USER, name: "REWE" });
+    await drainTriggers();
+  });
+
+  it("serves config/openSeats to a caller without a token (register page)", async () => {
+    const r = await call("get", { path: "config/openSeats" }, null);
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({
+      exists: true,
+      id: "openSeats",
+      data: { totalSeats: 10, remainingSeats: 3, claimedSeats: 7 },
+    });
+  });
+
+  it("reports a missing config/openSeats as not existing rather than 401", async () => {
+    await db.collection("config").doc("openSeats").delete();
+    const r = await call("get", { path: "config/openSeats" }, null);
+    expect(r.status).toBe(200);
+    expect(r.body.exists).toBe(false);
+  });
+
+  it("keeps every other document, query and write behind auth", async () => {
+    for (const [route, body] of [
+      ["get", { path: "config/pricing" }],
+      ["get", { path: "transactions/t-anon" }],
+      ["get", { path: "users/stefan-test" }],
+      ["query", { path: "config" }],
+      ["query", { path: "transactions" }],
+      ["write", { ops: [{ type: "set", path: "config/openSeats", data: { remainingSeats: 999 } }] }],
+    ] as const) {
+      const r = await call(route, body, null);
+      expect(r.status, `${route} ${JSON.stringify(body)}`).toBe(401);
+    }
+    const seats = await db.collection("config").doc("openSeats").get();
+    expect(seats.data()?.remainingSeats).toBe(3);
+  });
+
+  it("still rejects an invalid token on the public document", async () => {
+    const r = await call("get", { path: "config/openSeats" }, "nope");
+    expect(r.status).toBe(401);
+  });
+
+  it("serves the same document to a signed-in caller", async () => {
+    const r = await call("get", { path: "config/openSeats" });
+    expect(r.status).toBe(200);
+    expect(r.body.data.remainingSeats).toBe(3);
+  });
+});
+
 describe("data plane: query", () => {
   beforeEach(async () => {
     await db.collection("transactions").doc("t-mine-1").set({
