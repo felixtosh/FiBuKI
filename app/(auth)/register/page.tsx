@@ -21,8 +21,7 @@ import { logoFont } from "@/app/fonts";
 import { callFunction } from "@/lib/firebase/callable";
 import { githubSignInEnabled } from "@/lib/auth/social-providers";
 import { consumeSocialAccessRequest } from "@/lib/auth/social-access-request";
-import { doc, onSnapshot } from "firebase/firestore";
-import { db } from "@/lib/firebase/config";
+import { useOpenSeats } from "@/hooks/use-open-seats";
 
 export default function RegisterPage() {
   const [error, setError] = useState("");
@@ -34,7 +33,7 @@ export default function RegisterPage() {
   });
   const [referralApplied, setReferralApplied] = useState(false);
   const [hasReferral, setHasReferral] = useState(false);
-  const [openSeats, setOpenSeats] = useState<{ total: number; remaining: number; claimed: number } | null>(null);
+  const openSeats = useOpenSeats();
   // Self-host: a non-invited Google sign-in bounces back here via the auth
   // client's errorCallbackURL (the host already recorded the request). Show the
   // same banner the Firebase build shows via `accessRequested`; no-op there.
@@ -44,30 +43,6 @@ export default function RegisterPage() {
 
   useEffect(() => {
     if (consumeSocialAccessRequest()) setSocialAccessRequested(true);
-  }, []);
-
-  // Listen for open seats config (public read, no auth needed)
-  useEffect(() => {
-    const unsub = onSnapshot(
-      doc(db, "config", "openSeats"),
-      (snap) => {
-        if (snap.exists()) {
-          const data = snap.data();
-          const remaining = data.remainingSeats as number;
-          const total = data.totalSeats as number;
-          const claimed = (data.claimedSeats as number) || 0;
-          if (remaining > 0) {
-            setOpenSeats({ total, remaining, claimed });
-          } else {
-            setOpenSeats(null);
-          }
-        } else {
-          setOpenSeats(null);
-        }
-      },
-      () => setOpenSeats(null)
-    );
-    return () => unsub();
   }, []);
 
   // Store referral code from URL in localStorage for persistence across OAuth redirects

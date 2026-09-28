@@ -108,6 +108,7 @@ export {
 export { validateRegistration, markInviteUsed } from "./auth/validateRegistration";
 export { submitAccessRequest, approveAccessRequest, dismissAccessRequest } from "./auth/accessRequests";
 export { setOpenSeatsCallable as setOpenSeats } from "./auth/openSeats";
+export { getOpenSeatsCallable as getOpenSeats } from "./auth/getOpenSeats";
 export { sendInviteNotificationCallable as sendInviteNotification } from "./auth/sendInviteNotificationCallable";
 export { previewEmailCallable as previewEmail } from "./auth/previewEmail";
 export { sendTestEmailCallable as sendTestEmail } from "./auth/sendTestEmail";
