@@ -113,6 +113,8 @@ async function processBmdExport(
       currency?: string;
       /** Manual reverse-charge flag / veto, read by the D3 classifier (#66). */
       isReverseCharge?: boolean;
+      /** Goods/service answer to the foreign-regime review (#214). */
+      foreignSupplyKind?: "goods" | "service" | null;
       noReceiptCategoryId?: string | null;
       noReceiptCategoryTemplateId?: string | null;
     }
@@ -258,6 +260,7 @@ async function processBmdExport(
         vatId: tx.vatId as string | undefined,
         currency: tx.currency as string | undefined,
         isReverseCharge: tx.isReverseCharge as boolean | undefined,
+        foreignSupplyKind: tx.foreignSupplyKind ?? null,
         noReceiptCategoryId: tx.noReceiptCategoryId,
         noReceiptCategoryTemplateId: tx.noReceiptCategoryTemplateId,
       })

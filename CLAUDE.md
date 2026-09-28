@@ -183,6 +183,7 @@ export function useCategories() {
 - `updateTransactionCallable` - Update a single transaction
 - `bulkUpdateTransactionsCallable` - Update multiple transactions
 - `deleteTransactionsBySourceCallable` - Delete all transactions for a source
+- `acceptReceiptOnlyCallable` - Record or revoke an Accepted Receipt ruling on a receipt-only transaction (#165)
 
 **Files:**
 - `connectFileToTransactionCallable` - Connect file to transaction

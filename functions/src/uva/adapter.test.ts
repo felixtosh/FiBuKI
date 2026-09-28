@@ -115,6 +115,116 @@ describe("deriveForeignRegime", () => {
     };
     expect(deriveForeignRegime(tx, [anthropicFile])).toBeNull();
   });
+
+  // #214: foreignSupplyKind is the goods/service answer a person gives the
+  // heuristic's review flag. Unset keeps the service heuristic exactly as it
+  // was; set, the kind is the person's and the basis says so.
+  describe("foreignSupplyKind (#214)", () => {
+    const deGoodsFile = toUvaFile({
+      id: "f-de-goods",
+      extractedAmount: 7962,
+      extractedVatAmount: null,
+      extractedVatPercent: null,
+      extractedIssuer: { vatId: "DE123456789" },
+    });
+
+    it('classifies an EU goods purchase as ig. Erwerb when a person says "goods"', () => {
+      const tx: TransactionRecord = {
+        id: "t",
+        date: ts("2026-01-15T00:00:00Z"),
+        amount: -7962,
+        foreignSupplyKind: "goods",
+      };
+      expect(deriveForeignRegime(tx, [deGoodsFile])).toEqual({
+        kind: "goods",
+        origin: "eu",
+        basis: "override",
+      });
+    });
+
+    it('turns the heuristic service call into an override when a person confirms "service"', () => {
+      const tx: TransactionRecord = {
+        id: "t",
+        date: ts("2026-01-15T00:00:00Z"),
+        amount: -2160,
+        foreignSupplyKind: "service",
+      };
+      expect(deriveForeignRegime(tx, [anthropicFile])).toEqual({
+        kind: "service",
+        origin: "eu",
+        basis: "override",
+      });
+    });
+
+    it("null keeps the existing service heuristic, flagged for review", () => {
+      const tx: TransactionRecord = {
+        id: "t",
+        date: ts("2026-01-15T00:00:00Z"),
+        amount: -2160,
+        foreignSupplyKind: null,
+      };
+      expect(deriveForeignRegime(tx, [anthropicFile])).toEqual({
+        kind: "service",
+        origin: "eu",
+        basis: "heuristic",
+      });
+    });
+
+    it("combines with isReverseCharge = true so a file-less goods line is classifiable", () => {
+      const tx: TransactionRecord = {
+        id: "t",
+        date: ts("2026-01-15T00:00:00Z"),
+        amount: -7962,
+        isReverseCharge: true,
+        foreignSupplyKind: "goods",
+      };
+      expect(deriveForeignRegime(tx, [])).toEqual({
+        kind: "goods",
+        origin: "third-country",
+        basis: "override",
+      });
+    });
+
+    it("classifies third-country goods (the import lane the calculator leaves unresolved without EUSt)", () => {
+      const usFile = toUvaFile({
+        id: "f-us",
+        extractedAmount: 5000,
+        extractedIssuer: { vatId: "US123456" },
+      });
+      const tx: TransactionRecord = {
+        id: "t",
+        date: ts("2026-01-15T00:00:00Z"),
+        amount: -5000,
+        foreignSupplyKind: "goods",
+      };
+      expect(deriveForeignRegime(tx, [usFile])).toEqual({
+        kind: "goods",
+        origin: "third-country",
+        basis: "override",
+      });
+    });
+
+    it("still respects the isReverseCharge = false veto", () => {
+      const tx: TransactionRecord = {
+        id: "t",
+        date: ts("2026-01-15T00:00:00Z"),
+        amount: -7962,
+        isReverseCharge: false,
+        foreignSupplyKind: "goods",
+      };
+      expect(deriveForeignRegime(tx, [deGoodsFile])).toBeNull();
+    });
+
+    it("does not conjure a regime where nothing foreign was detected", () => {
+      const tx: TransactionRecord = {
+        id: "t",
+        date: ts("2026-01-15T00:00:00Z"),
+        amount: -7962,
+        foreignSupplyKind: "goods",
+      };
+      expect(deriveForeignRegime(tx, [])).toBeNull();
+    });
+  });
 });
 
 describe("buildUvaTransaction", () => {

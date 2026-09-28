@@ -191,6 +191,8 @@ export interface TransactionForExport {
   currency?: string | null;
   /** Manual reverse-charge flag / veto, read by the D3 classifier. */
   isReverseCharge?: boolean | null;
+  /** Goods/service answer to the foreign-regime review (#214), read by the D3 classifier. */
+  foreignSupplyKind?: "goods" | "service" | null;
   noReceiptCategoryId?: string | null;
   noReceiptCategoryTemplateId?: string | null;
 }
@@ -314,6 +316,7 @@ function vatRowsFor(
       partner: tx.partnerName ?? tx.partner ?? null,
       vatRate: tx.vatRate ?? null,
       isReverseCharge: tx.isReverseCharge ?? null,
+      foreignSupplyKind: tx.foreignSupplyKind ?? null,
       noReceiptCategoryId: tx.noReceiptCategoryId ?? null,
       noReceiptCategoryTemplateId: tx.noReceiptCategoryTemplateId ?? null,
       fileIds: tx.fileIds,
@@ -386,6 +389,11 @@ function vatRowsFor(
     }
     return { kind: "rows", rows: splitByRate(bankGross, derived.groups) };
   }
+  // TODO(#214, pending Tax Advisor confirmation): the BMD Steuercode for
+  // ig. Erwerb is NOT settled. Until it is confirmed, a goods/eu foreign
+  // regime (`deriveTransactionVat` → no-vat / eu-acquisition) books the same
+  // 0% catch-all row a reverse-charge service does. Do not invent a code
+  // here - the mapping lands once the Tax Advisor picks it.
   return { kind: "rows", rows: [{ rate: 0, gross: bankGross, vat: 0 }] };
 }
 

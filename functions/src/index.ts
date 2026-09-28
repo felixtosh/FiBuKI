@@ -139,6 +139,7 @@ export {
   updateTransactionCallable as updateTransaction,
   bulkUpdateTransactionsCallable as bulkUpdateTransactions,
   deleteTransactionsBySourceCallable as deleteTransactionsBySource,
+  acceptReceiptOnlyCallable as acceptReceiptOnly,
 } from "./transactions";
 
 // Invoicing operations

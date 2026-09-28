@@ -60,8 +60,17 @@ const INCOME_SOURCES = [
   { name: "Gutschrift", partner: null, amountRange: [1000, 10000] as const },
 ];
 
-// Edge case data
-const EDGE_CASES = [
+// Edge case data. `foreignSupplyKind` / `isReverseCharge` exercise the #214
+// foreign-regime fields; `receiptOnlyAcceptance` (#165) is left unset because
+// it presupposes a connected receipt File, which test data does not create.
+const EDGE_CASES: Array<{
+  name: string;
+  partner: string | null;
+  amount: number;
+  isReverseCharge?: boolean;
+  foreignSupplyKind?: "goods" | "service";
+  isEuTransaction?: boolean;
+}> = [
   { name: "Überweisung Müller & Söhne GmbH", partner: "Müller & Söhne GmbH", amount: 1523400 }, // Large + umlauts
   { name: "Kleinstbetrag Test", partner: "Test Partner", amount: 1 }, // 1 cent
   { name: "Zahlung für Büromöbel inkl. Lieferung, Montage und Entsorgung der alten Möbel sowie Beratungsgebühr", partner: "Möbelhaus Österreich", amount: 234567 }, // Long text
@@ -74,6 +83,10 @@ const EDGE_CASES = [
   { name: "Doppelte Buchung Test 1", partner: "Duplicate Corp", amount: -12345 },
   { name: "Doppelte Buchung Test 2", partner: "Duplicate Corp", amount: -12345 }, // Same day duplicate
   { name: "Referenz fehlt", partner: "Anonymous Ltd.", amount: -7890 }, // No reference
+  // #214: a foreign B2B service under reverse charge §19 ...
+  { name: "AWS Cloud Services", partner: "Amazon Web Services EMEA SARL", amount: -21600, isReverseCharge: true, foreignSupplyKind: "service", isEuTransaction: false },
+  // ... and an EU goods purchase (ig. Erwerb) a person classified as goods.
+  { name: "Marketplace Warenkauf", partner: "Gadget Versand DE", amount: -7962, foreignSupplyKind: "goods", isEuTransaction: true },
 ];
 
 function randomInt(min: number, max: number): number {
@@ -243,6 +256,10 @@ export async function generateTestTransactions(): Promise<
       partnerSuggestions: [],
       importJobId: "test-import-edge",
       userId: PLACEHOLDER_USER_ID,
+      // #214 foreign-regime fields, present only on the edge cases that set them
+      ...(edge.isReverseCharge !== undefined ? { isReverseCharge: edge.isReverseCharge } : {}),
+      ...(edge.foreignSupplyKind !== undefined ? { foreignSupplyKind: edge.foreignSupplyKind } : {}),
+      ...(edge.isEuTransaction !== undefined ? { isEuTransaction: edge.isEuTransaction } : {}),
       createdAt: now,
       updatedAt: now,
     });

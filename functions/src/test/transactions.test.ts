@@ -27,6 +27,7 @@ vi.mock("../utils/createCallable", () => ({
 // Import handlers after mocking
 const { updateTransactionCallable } = await import("../transactions/updateTransaction");
 const { bulkUpdateTransactionsCallable } = await import("../transactions/bulkUpdateTransactions");
+const { acceptReceiptOnlyCallable } = await import("../transactions/acceptReceiptOnly");
 
 describe("Transaction Cloud Functions", () => {
   setupTestHooks();
@@ -119,6 +120,138 @@ describe("Transaction Cloud Functions", () => {
       expect(updated?.partnerId).toBe("partner-789");
       expect(updated?.partnerType).toBe("user");
       expect(updated?.partnerMatchedBy).toBe("manual");
+    });
+
+    // #214: the goods/service answer to the foreign-regime review flag.
+    it("writes foreignSupplyKind and rejects values outside the set", async () => {
+      const userId = "user-123";
+      const txId = "tx-456";
+      store.setDoc("transactions", txId, createTestTransaction({ userId }));
+
+      const ctx = {
+        userId,
+        db: createMockFirestore(),
+        request: { auth: { uid: userId }, data: {} },
+        logAIUsage: vi.fn(),
+      };
+
+      await updateTransactionCallable(ctx as any, {
+        id: txId,
+        data: { foreignSupplyKind: "goods" },
+      });
+      expect(store.getDoc("transactions", txId)?.foreignSupplyKind).toBe("goods");
+
+      await updateTransactionCallable(ctx as any, {
+        id: txId,
+        data: { foreignSupplyKind: null },
+      });
+      expect(store.getDoc("transactions", txId)?.foreignSupplyKind).toBeNull();
+
+      await expect(
+        updateTransactionCallable(ctx as any, {
+          id: txId,
+          data: { foreignSupplyKind: "wares" as never },
+        })
+      ).rejects.toThrow(/goods.*service/);
+    });
+  });
+
+  describe("acceptReceiptOnly (#165)", () => {
+    const userId = "user-123";
+    const makeCtx = () => ({
+      userId,
+      db: createMockFirestore(),
+      request: { auth: { uid: userId }, data: {} },
+      logAIUsage: vi.fn(),
+    });
+
+    it("records the ruling on a receipt-only transaction", async () => {
+      store.setDoc(
+        "transactions",
+        "tx-1",
+        createTestTransaction({
+          userId,
+          fileIds: ["f-receipt"],
+          documentationState: "receipt-only",
+        })
+      );
+
+      const result = await acceptReceiptOnlyCallable(makeCtx() as any, {
+        id: "tx-1",
+        action: "accept",
+        reason: "Marketplace seller charges no VAT; no § 11 invoice obtainable",
+      });
+
+      expect(result.success).toBe(true);
+      const acceptance = store.getDoc("transactions", "tx-1")
+        ?.receiptOnlyAcceptance as Record<string, unknown>;
+      expect(acceptance.by).toBe(userId);
+      expect(acceptance.fileIds).toEqual(["f-receipt"]);
+      expect(acceptance.at).toBeDefined();
+    });
+
+    it("refuses a transaction that is not receipt-only", async () => {
+      store.setDoc(
+        "transactions",
+        "tx-1",
+        createTestTransaction({ userId, documentationState: "invoice" })
+      );
+
+      await expect(
+        acceptReceiptOnlyCallable(makeCtx() as any, {
+          id: "tx-1",
+          action: "accept",
+          reason: "x",
+        })
+      ).rejects.toThrow(/receipt-only/);
+    });
+
+    it("warns, never blocks, when the line claims input VAT", async () => {
+      store.setDoc(
+        "transactions",
+        "tx-1",
+        createTestTransaction({
+          userId,
+          fileIds: [],
+          documentationState: "receipt-only",
+          vatRate: 20,
+          vatAmount: 400,
+        })
+      );
+
+      const result = await acceptReceiptOnlyCallable(makeCtx() as any, {
+        id: "tx-1",
+        action: "accept",
+        reason: "ruled closed",
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.warning).toMatch(/input VAT|Vorsteuer/i);
+    });
+
+    it("revokes a recorded ruling", async () => {
+      store.setDoc(
+        "transactions",
+        "tx-1",
+        createTestTransaction({
+          userId,
+          documentationState: "receipt-only",
+          receiptOnlyAcceptance: {
+            by: userId,
+            at: new Date(),
+            reason: "ruled",
+            fileIds: [],
+          },
+        })
+      );
+
+      const result = await acceptReceiptOnlyCallable(makeCtx() as any, {
+        id: "tx-1",
+        action: "revoke",
+      });
+
+      expect(result.success).toBe(true);
+      expect(store.getDoc("transactions", "tx-1")?.receiptOnlyAcceptance).toBeNull();
     });
   });
 

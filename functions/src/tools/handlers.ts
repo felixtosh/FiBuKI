@@ -14,6 +14,12 @@
 import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { documentationStateChanged } from "../documents/documentationState";
 import { deriveForTransaction } from "../documents/syncDocumentationState";
+import {
+  isAcceptanceLive,
+  type AcceptanceSubject,
+  type ReceiptOnlyAcceptance,
+} from "../documents/receiptOnlyAcceptance";
+import { claimedVatWarning } from "../transactions/acceptReceiptOnly";
 import { buildDownloadUrl } from "../utils/buildDownloadUrl";
 import { dayStartUtc, dayEndExclusiveUtc } from "../uva/dateWindow";
 import { buildMarkNotInvoiceUpdates, buildUnmarkNotInvoiceUpdates } from "../files/notInvoiceOps";
@@ -190,6 +196,8 @@ export async function handleTool(
       return getTransaction(userId, args.transactionId as string);
     case "update_transaction":
       return updateTransaction(userId, args);
+    case "accept_receipt_only":
+      return acceptReceiptOnly(userId, args);
     case "list_transactions_needing_files":
       return listTransactionsNeedingFiles(userId, args);
     case "list_transactions_missing_invoice":
@@ -436,7 +444,8 @@ export async function getTransaction(userId: string, transactionId: string) {
 }
 
 export async function updateTransaction(userId: string, args: Record<string, unknown>) {
-  const { transactionId, description, isComplete, vatRate, isReverseCharge } = args;
+  const { transactionId, description, isComplete, vatRate, isReverseCharge, foreignSupplyKind } =
+    args;
   if (!transactionId) throw new Error("transactionId is required");
 
   // Manual override lane (fork #64, spec §3 step 3): the UVA calculation
@@ -455,6 +464,15 @@ export async function updateTransaction(userId: string, args: Record<string, unk
     typeof isReverseCharge !== "boolean"
   ) {
     throw new Error("isReverseCharge must be true, false, or null to clear");
+  }
+  // #214: the goods/service answer to the foreign-regime review flag.
+  if (
+    foreignSupplyKind !== undefined &&
+    foreignSupplyKind !== null &&
+    foreignSupplyKind !== "goods" &&
+    foreignSupplyKind !== "service"
+  ) {
+    throw new Error('foreignSupplyKind must be "goods", "service", or null to clear');
   }
 
   const docRef = db.collection("transactions").doc(transactionId as string);
@@ -479,9 +497,73 @@ export async function updateTransaction(userId: string, args: Record<string, unk
   }
   if (vatRate !== undefined) updates.vatRate = vatRate;
   if (isReverseCharge !== undefined) updates.isReverseCharge = isReverseCharge;
+  if (foreignSupplyKind !== undefined) updates.foreignSupplyKind = foreignSupplyKind;
 
   await docRef.update(updates);
   return { success: true, transactionId };
+}
+
+/**
+ * Accepted Receipt (#165): record - or revoke - the ruling that a
+ * receipt-only transaction's evidence is as good as it will ever get.
+ *
+ * Same rules as the acceptReceiptOnly callable: the ruling touches nothing
+ * else (not documentationState, not isComplete, not the UVA or BMD), the
+ * reason is required because it IS the record, and a claimed input VAT on
+ * the bare receipt earns a warning, never a refusal - deductibility stays
+ * the Tax Advisor's call. Liveness is derived on read, so the ruling goes
+ * stale by itself when the files or the documentation state change.
+ */
+export async function acceptReceiptOnly(userId: string, args: Record<string, unknown>) {
+  const { transactionId, reason, revoke } = args;
+  if (!transactionId) throw new Error("transactionId is required");
+
+  const docRef = db.collection("transactions").doc(transactionId as string);
+  const doc = await docRef.get();
+  if (!doc.exists || doc.data()?.userId !== userId) {
+    throw new Error("Transaction not found");
+  }
+  const data = doc.data()!;
+
+  if (revoke === true) {
+    if (!data.receiptOnlyAcceptance) {
+      throw new Error("No Accepted Receipt ruling is recorded on this transaction");
+    }
+    await docRef.update({
+      receiptOnlyAcceptance: null,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    return { success: true, transactionId };
+  }
+
+  if (data.documentationState !== "receipt-only") {
+    throw new Error(
+      `Only a receipt-only transaction can carry an Accepted Receipt ruling ` +
+        `(this one is ${data.documentationState ?? "not yet derived"})`
+    );
+  }
+  const trimmedReason = typeof reason === "string" ? reason.trim() : "";
+  if (!trimmedReason) {
+    throw new Error("A reason is required - the ruling IS the record");
+  }
+
+  const acceptance: ReceiptOnlyAcceptance = {
+    by: userId,
+    at: Timestamp.now(),
+    reason: trimmedReason,
+    fileIds: (data.fileIds as string[] | undefined) ?? [],
+  };
+
+  const warning = await claimedVatWarning(db, data);
+
+  await docRef.update({
+    receiptOnlyAcceptance: acceptance,
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+
+  return warning
+    ? { success: true, transactionId, warning }
+    : { success: true, transactionId };
 }
 
 /**
@@ -564,11 +646,20 @@ export async function listTransactionsNeedingFiles(userId: string, args: Record<
  * the same scan, with the same cursor semantics.
  */
 export async function listTransactionsMissingInvoice(userId: string, args: Record<string, unknown>) {
-  const { page, nextCursor } = await scanTransactionsPage(
-    userId,
-    args,
-    (t) => t.documentationState === "receipt-only"
-  );
+  // #165: a live Accepted Receipt ruling closes the queue entry - the line
+  // stays receipt-only, it just stops being work. `acceptedCount` reports how
+  // many the scan excluded; like `count`, it is scoped to this page's scan
+  // window, never a total of the account. A STALE ruling (files or state
+  // changed since) excludes nothing.
+  let acceptedCount = 0;
+  const { page, nextCursor } = await scanTransactionsPage(userId, args, (t) => {
+    if (t.documentationState !== "receipt-only") return false;
+    if (isAcceptanceLive(t as AcceptanceSubject)) {
+      acceptedCount++;
+      return false;
+    }
+    return true;
+  });
 
   // Only the page's own documents are read — the § 11 defect list is what
   // makes the row actionable, and reading it for rows nobody asked for would
@@ -609,7 +700,7 @@ export async function listTransactionsMissingInvoice(userId: string, args: Recor
     })
   );
 
-  return { transactions, nextCursor, count: transactions.length };
+  return { transactions, nextCursor, count: transactions.length, acceptedCount };
 }
 
 // ============================================================================

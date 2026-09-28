@@ -113,6 +113,8 @@ function ReportsContent() {
   const [exportError, setExportError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitResult, setSubmitResult] = useState<{ success: boolean; message: string } | null>(null);
+  // Bumped after a foreign-supply-kind answer so the calculation reruns (#214).
+  const [reloadKey, setReloadKey] = useState(0);
 
   // Account balances state
   interface AccountBalance {
@@ -188,7 +190,21 @@ function ReportsContent() {
     };
 
     loadData();
-  }, [ctx, userId, user, selectedPeriod, country]);
+  }, [ctx, userId, user, selectedPeriod, country, reloadKey]);
+
+  // #214: the goods/service answer to the reverse-charge review, written
+  // through the updateTransaction callable (never a direct Firestore write)
+  // and followed by a recalculation so the Kennzahlen move with the answer.
+  const handleSetForeignSupplyKind = async (
+    transactionId: string,
+    kind: "goods" | "service"
+  ) => {
+    await callFunction("updateTransaction", {
+      id: transactionId,
+      data: { foreignSupplyKind: kind },
+    });
+    setReloadKey((k) => k + 1);
+  };
 
   // Handle period type change
   const handlePeriodTypeChange = (type: "monthly" | "quarterly") => {
@@ -599,6 +615,7 @@ function ReportsContent() {
                     result={uvaResult}
                     period={selectedPeriod}
                     country={country}
+                    onSetForeignSupplyKind={handleSetForeignSupplyKind}
                   />
                 )}
               </TabsContent>

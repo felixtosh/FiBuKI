@@ -171,6 +171,42 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
             "null"
           ],
           "description": "Reverse-charge classification for UVA derivation: true forces the §19 service regime (KZ 057/066), false vetoes the automatic foreign-supplier heuristic, null clears and lets the heuristic decide."
+        },
+        "foreignSupplyKind": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "goods",
+            "service",
+            null
+          ],
+          "description": "Goods or service, for the foreign-regime classification: \"goods\" routes an EU acquisition to ig. Erwerb (KZ 070 + per-rate base + KZ 065) and a third-country one to the import lane (unresolved until EUSt is documented); \"service\" confirms reverse charge §19 (KZ 057/066). null clears, keeping the service heuristic flagged basis: \"heuristic\" for review. Applies only where a foreign supply is detected (isReverseCharge: true, or a foreign supplier UID on a zero-VAT document) - it never conjures a foreign regime on its own."
+        }
+      },
+      "required": [
+        "transactionId"
+      ]
+    }
+  },
+  {
+    "name": "accept_receipt_only",
+    "description": "Record - or revoke - an Accepted Receipt ruling on a receipt-only transaction: a standing, recorded ruling (who, when, why, over which files) that no § 11 invoice is obtainable and the receipt is as good as the evidence will ever get, so the chase queue stops holding the line. It changes nothing else: documentationState stays receipt-only, isComplete, the UVA and the BMD export are untouched, and no Vorsteuer becomes claimable. The ruling goes stale on its own when the connected files or the documentation state change; revoke with revoke: true reverses it explicitly. If input VAT appears to be claimed on the line, the response carries a warning - never a refusal; deductibility stays the Tax Advisor's call.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "transactionId": {
+          "type": "string",
+          "description": "The transaction ID"
+        },
+        "reason": {
+          "type": "string",
+          "description": "Why no § 11 invoice is obtainable (e.g. marketplace seller charges no VAT). Required unless revoking - the reason IS the record."
+        },
+        "revoke": {
+          "type": "boolean",
+          "description": "true removes the recorded ruling instead of making one"
         }
       },
       "required": [
@@ -201,7 +237,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "list_transactions_missing_invoice",
-    "description": "Find transactions documented by a receipt only — money moved, a document is attached, but no invoice satisfying § 11 UStG was ever received, so no Vorsteuer may be claimed. These lines look complete everywhere else. Returns { transactions, nextCursor, count } where each row carries the vendor, the amount, the date and the § 11 elements the attached document is missing, so a request to the supplier can name the defect. `count` is the size of this page, not a total — page with nextCursor until it comes back null.",
+    "description": "Find transactions documented by a receipt only - money moved, a document is attached, but no invoice satisfying § 11 UStG was ever received, so no Vorsteuer may be claimed. These lines look complete everywhere else. Returns { transactions, nextCursor, count, acceptedCount } where each row carries the vendor, the amount, the date and the § 11 elements the attached document is missing, so a request to the supplier can name the defect. Lines with a live Accepted Receipt ruling (accept_receipt_only) are excluded; `acceptedCount` says how many this page's scan excluded. Like `count`, both are per page, not totals - page with nextCursor until it comes back null.",
     "inputSchema": {
       "type": "object",
       "properties": {

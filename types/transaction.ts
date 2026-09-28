@@ -16,6 +16,33 @@ export type DocumentationState =
   | "unknown";
 
 /**
+ * Accepted Receipt (#165): the recorded ruling that a receipt-only
+ * transaction's evidence is as good as it will ever get - who ruled, when,
+ * why, over which files. Shape duplicated from
+ * `functions/src/documents/receiptOnlyAcceptance.ts` for the same
+ * `rootDir: "src"` reason as `DocumentationState` above; the backend module
+ * owns the liveness derivation.
+ */
+export interface ReceiptOnlyAcceptance {
+  /** Who ruled - the user id the acting party authenticated as. */
+  by: string;
+  /** When the ruling was made. */
+  at: Timestamp;
+  /** Why no § 11 invoice is obtainable. The reason IS the record. */
+  reason: string;
+  /** The connected file ids the ruling was made over. */
+  fileIds: string[];
+}
+
+/**
+ * Whether a foreign no-VAT purchase was goods or a service (#214). Decides
+ * the UVA lane: `service` is reverse charge § 19 (KZ 057/066), `goods` is
+ * ig. Erwerb (KZ 070 + base KZ + 065) or the import lane for third-country
+ * origins. Unset keeps the existing service heuristic, flagged for review.
+ */
+export type ForeignSupplyKind = "goods" | "service";
+
+/**
  * Entry in the automation history for a transaction.
  * Tracks what automated actions were performed and when.
  */
@@ -162,6 +189,16 @@ export interface Transaction {
    */
   documentationState?: DocumentationState;
 
+  /**
+   * Accepted Receipt (#165): a standing ruling that this receipt-only line
+   * is as documented as it will ever get, so the chase queue stops holding
+   * it. Written only by the acceptReceiptOnly callable / accept_receipt_only
+   * tool; `null` = revoked. Goes STALE (derived on read, never deleted) when
+   * `fileIds` or the documentation state change. Never touches
+   * `documentationState`, `isComplete`, the UVA or the BMD export.
+   */
+  receiptOnlyAcceptance?: ReceiptOnlyAcceptance | null;
+
   // === Metadata ===
 
   /** ID of the import job that created this transaction */
@@ -267,6 +304,16 @@ export interface Transaction {
 
   /** Whether reverse charge applies (B2B EU services) */
   isReverseCharge?: boolean | null;
+
+  /**
+   * Goods or service, for the foreign-regime classification (#214). A
+   * person's answer to the `basis: "heuristic"` review flag: `goods` routes
+   * an EU acquisition to KZ 070/072/065 (ig. Erwerb) and a third-country one
+   * to the import lane (unresolved until EUSt is documented); `service`
+   * confirms reverse charge § 19. Unset/null keeps the service heuristic,
+   * flagged for review.
+   */
+  foreignSupplyKind?: ForeignSupplyKind | null;
 
   /** Whether this transaction exceeds the plan's monthly quota (imported but limited) */
   quotaExceeded?: boolean;
