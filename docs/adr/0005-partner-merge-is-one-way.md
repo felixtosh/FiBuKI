@@ -49,7 +49,10 @@ wanted.
   reconciliation keys on — cannot be merged away; the merge is refused and names the
   source. Carrying the marker would hand an ordinary survivor to the source's rename sync
   and hard delete, and leaving it on the tombstone would stop reconciliation silently. It
-  can still be the survivor (#344).
+  cannot be the survivor either: the source owns that Partner's name, aliases and IBANs,
+  rewriting them on every source edit, and its lifetime, so what a merge folded in would
+  not last (#410). Deleting the source keeps the Partner, stripped of its marker, while
+  anything outside the source still points at it (#344, #410).
 - A merge does not re-run the Match. It reports how many unmatched Transactions the
   survivor's new identifying data would now hit and leaves the existing reviewed rematch
   path to act on it, because silent re-attribution of bookings is what makes users stop

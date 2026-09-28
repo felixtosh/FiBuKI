@@ -945,7 +945,8 @@ describe("Partner Merge", () => {
    * A `source:{id}` marker is neither an ordinary value nor an identity
    * entity's: it is what card-to-bank reconciliation keys on. It cannot be
    * carried onto an ordinary survivor and must not be left on a tombstone, so
-   * a merge that would move it is refused (#344).
+   * a merge that would move it is refused (#344). Nor is it a safe survivor,
+   * since the source owns its identity fields and its lifetime (#410).
    */
   describe("a source's Partner", () => {
     function seedCardSource(): void {
@@ -999,13 +1000,36 @@ describe("Partner Merge", () => {
       await expect(merge("survivor", ["orphan"])).rejects.toThrow(/source card-9,/);
     });
 
-    it("can be the survivor, keeping the marker reconciliation keys on", async () => {
+    it("does not steer the refusal towards merging into it", async () => {
       seedCardSource();
 
-      await merge("card-partner", ["survivor"]);
+      const error = await merge("survivor", ["card-partner"]).catch((e: Error) => e);
 
-      expect(partnerDoc("card-partner").identitySourceField).toBe("source:card-1");
-      expect(store.getDoc("transactions", "tx-card-payment")!.partnerId).toBe("card-partner");
+      expect((error as Error).message).not.toMatch(/merge into it/i);
+    });
+
+    /**
+     * Not the survivor either (#410): `updateSource` rewrites that Partner's
+     * name, aliases and IBANs wholesale on the next source edit, dropping what
+     * the Merge folded in, and `deleteSource` removes it along with the
+     * references the Merge moved onto it from other sources.
+     */
+    it("is refused as the survivor, naming the source, and nothing moves", async () => {
+      seedCardSource();
+      store.setDoc(
+        "transactions",
+        "tx-other",
+        createTestTransaction({ userId: USER, partnerId: "survivor" })
+      );
+
+      await expect(merge("card-partner", ["survivor"])).rejects.toThrow(
+        /source "Amex Gold" \(card-1\)/
+      );
+
+      expect(partnerDoc("survivor").mergedInto).toBeUndefined();
+      expect(partnerDoc("survivor").isActive).toBe(true);
+      expect(partnerDoc("card-partner").aliases).toBeUndefined();
+      expect(store.getDoc("transactions", "tx-other")!.partnerId).toBe("survivor");
     });
 
     it("does not block merging away a Merged Partner that still carries one", async () => {
