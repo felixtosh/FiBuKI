@@ -39,11 +39,15 @@ import { useEcbConverter } from "@/lib/currency";
 // Coverage, the Remainder and the tolerance that decides whether it is closed
 // are derived in one place, shared with the scorers (#239).
 import {
-  deriveCoverage,
-  documentedAmountOf,
   filePaymentTotal,
+  isExtractionPending,
   isRemainderClosed,
 } from "@/functions/src/matching/coverage";
+import {
+  pendingFilesLabel,
+  remainderLineState,
+  type RemainderLineFile,
+} from "@/lib/matching/remainder-line";
 import { useNoReceiptCategories } from "@/hooks/use-no-receipt-categories";
 // Category suggestions now come from transaction.categorySuggestions (computed on backend)
 import { cn, toDateSafe } from "@/lib/utils";
@@ -141,55 +145,48 @@ interface RemainderLineProps {
  */
 function RemainderLine({ transactionAmount, transactionCurrency, transactionDate, files }: RemainderLineProps) {
   const convert = useEcbConverter();
-  // Calculate sum of file amounts (only files with extracted amounts), converting to transaction currency
-  const filesWithAmounts = files.filter((f) => f.extractedAmount != null);
-  const isExtracting = files.some((f) => !f.extractionComplete && !f.isNotInvoice);
 
   // Convert each file's payment total — Summe plus printed Trinkgeld (#172),
   // which is what the bank was actually charged — into transaction currency
-  // using the payment date.
-  const paymentTotals: Array<number | null> = [];
-  let conversionFailed = false;
-  for (const file of filesWithAmounts) {
-    const payment = filePaymentTotal(file.extractedAmount, file.extractedTipAmount)!;
-    if (file.extractedCurrency === transactionCurrency) {
-      paymentTotals.push(payment);
-    } else {
-      const conversion = convert(
-        payment,
-        file.extractedCurrency || "EUR",
-        transactionCurrency,
-        transactionDate
-      );
-      if (conversion) {
-        paymentTotals.push(conversion.amount);
-      } else {
-        conversionFailed = true;
-      }
+  // using the payment date. A File still being read is passed through as
+  // such and left out of the sum by the shared helper (#246).
+  const lineFiles: RemainderLineFile[] = files.map((file) => {
+    const extractionPending = isExtractionPending(file);
+    const payment = filePaymentTotal(file.extractedAmount, file.extractedTipAmount);
+    if (payment == null || file.extractedCurrency === transactionCurrency) {
+      return { payment, extractionPending };
     }
-  }
+    const conversion = convert(
+      payment,
+      file.extractedCurrency || "EUR",
+      transactionCurrency,
+      transactionDate
+    );
+    return conversion
+      ? { payment: conversion.amount, extractionPending }
+      : { payment, extractionPending, conversionFailed: true };
+  });
 
-  const hasAllAmounts = filesWithAmounts.length === files.length && !conversionFailed;
-
-  // Transaction amount is negative for expenses, positive for income
-  // File amounts are always positive (invoice amounts)
-  const { remainder } = deriveCoverage(
-    transactionAmount,
-    documentedAmountOf(paymentTotals)
-  );
-  const isMatched = isRemainderClosed(remainder);
-
-  // Don't show if extracting or no amounts yet
-  if (isExtracting || filesWithAmounts.length === 0) {
+  const state = remainderLineState(transactionAmount, lineFiles);
+  if (state.kind === "hidden") {
     return null;
   }
+
+  const remainder = state.kind === "figure" ? state.remainder : 0;
+  const isMatched = isRemainderClosed(remainder);
 
   return (
     <div className="flex items-center justify-between p-2 -mx-2 border-t">
       <span className="text-sm text-muted-foreground">Remainder</span>
       {/* Right side with spacing to align with FileRow amounts (gap-2 + button + gap-2 + chevron) */}
       <div className="flex items-center gap-2 shrink-0">
-        {!hasAllAmounts ? (
+        {state.pendingCount > 0 && (
+          <span className="text-muted-foreground text-xs flex items-center gap-1">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            {pendingFilesLabel(state.pendingCount)}
+          </span>
+        )}
+        {state.kind === "pending" ? null : state.kind === "missing" ? (
           <span className="text-muted-foreground text-xs">Missing amounts</span>
         ) : isMatched ? (
           <span className="tabular-nums font-medium text-amount-positive flex items-center gap-1 text-sm">
@@ -271,7 +268,10 @@ function FileRow({ file, transactionCurrency, transactionDate, onDisconnect, dis
       </div>
       <div className="flex items-center gap-2 shrink-0">
         {isExtracting ? (
-          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+          <span className="flex items-center gap-1 text-xs text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Reading
+          </span>
         ) : file.extractedAmount != null && (
           <span className="text-sm font-medium tabular-nums text-foreground">
             {hasCurrencyMismatch && convertedAmount != null ? (

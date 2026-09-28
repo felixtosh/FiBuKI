@@ -129,3 +129,49 @@ export function filePaymentTotal(
   // A credit note carries the sign on the document total; the tip follows it.
   return extractedAmount < 0 ? extractedAmount - tip : extractedAmount + tip;
 }
+
+/**
+ * Has this File's Extraction not finished yet? A File marked as not an invoice
+ * is never waiting on one. Mirrors how both detail panels have always read
+ * "still extracting".
+ */
+export function isExtractionPending(file: {
+  extractionComplete?: boolean | null;
+  isNotInvoice?: boolean | null;
+}): boolean {
+  return !file.extractionComplete && !file.isNotInvoice;
+}
+
+/** One File connected to a Transaction, as Coverage reads it. */
+export interface ConnectedFileAmount {
+  /** `filePaymentTotal` for the File; null when it has no extracted amount. */
+  payment: number | null | undefined;
+  /** True while the File's Extraction has not finished (`isExtractionPending`). */
+  extractionPending: boolean;
+}
+
+/**
+ * What the Files on a Transaction explain, and how many could not be counted
+ * yet (#246).
+ *
+ * A File whose Extraction is still running is left out of the sum and counted
+ * in `pendingCount` instead, rather than read as a File that explains 0,00:
+ * a freshly uploaded File must not make a documented Transaction look wholly
+ * open. The panels print "1 File still being read"; the scorers read the same
+ * documented amount (`documentedAmountsOf`), so the two cannot disagree.
+ */
+export function summarizeConnectedFiles(files: ConnectedFileAmount[]): {
+  documentedAmount: number;
+  pendingCount: number;
+} {
+  let pendingCount = 0;
+  const finished: Array<number | null | undefined> = [];
+  for (const file of files) {
+    // Only a File with nothing to count yet is pending. One that already
+    // carries an amount counts as it always has, so the scorers' sums are
+    // unchanged by this split.
+    if (file.extractionPending && file.payment == null) pendingCount += 1;
+    else finished.push(file.payment);
+  }
+  return { documentedAmount: documentedAmountOf(finished), pendingCount };
+}

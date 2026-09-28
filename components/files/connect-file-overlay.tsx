@@ -18,7 +18,11 @@ import {
   Globe,
   ExternalLink,
   ChevronDown,
+  Upload,
+  Undo2,
+  CheckCircle2,
 } from "lucide-react";
+import { useDropzone, type FileRejection } from "react-dropzone";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -49,6 +53,18 @@ import {
 } from "@/hooks/use-unified-file-search";
 import { usePartners } from "@/hooks/use-partners";
 import { useEmailIntegrations } from "@/hooks/use-email-integrations";
+import { useTransactionFiles } from "@/hooks/use-files";
+import {
+  uploadFile,
+  UPLOAD_ACCEPTED_TYPES,
+  UPLOAD_MAX_FILE_SIZE,
+} from "@/lib/files/upload-file";
+import {
+  rejectedOutcome,
+  unlinkBatch,
+  uploadAndConnectBatch,
+  type DroppedFileOutcome,
+} from "@/lib/files/upload-and-connect";
 import {
   attachableMailboxes,
   filterByMailbox,
@@ -295,6 +311,89 @@ export function ConnectFileOverlay({
     () => (transaction?.partnerId ? partners.find((p) => p.id === transaction.partnerId) : null),
     [partners, transaction?.partnerId]
   );
+
+  // Upload and connect, in one step (#246). The Connection goes through the
+  // same connectFileToTransaction callable a picked File does; the upload is
+  // the Files page's own uploader.
+  const {
+    connectFile: connectToTransaction,
+    disconnectFile: unlinkFromTransaction,
+  } = useTransactionFiles(open && transaction?.id ? transaction.id : null);
+  const uploadCtx = useMemo(() => ({ db, userId: userId ?? "" }), [userId]);
+  const [dropOutcomes, setDropOutcomes] = useState<DroppedFileOutcome[] | null>(null);
+  const [isUploadingDrop, setIsUploadingDrop] = useState(false);
+  const [isUndoingDrop, setIsUndoingDrop] = useState(false);
+
+  // A new Transaction starts with no drop to report or undo.
+  useEffect(() => {
+    setDropOutcomes(null);
+  }, [transaction?.id]);
+
+  const handleDropFiles = useCallback(
+    async (accepted: File[], rejections: FileRejection[]) => {
+      if (!transaction?.id || !userId) return;
+      // Rejected types and oversized Files are reported, never connected.
+      const rejected = rejections.map((r) =>
+        rejectedOutcome(
+          r.file.name,
+          r.errors[0]?.code === "file-too-large"
+            ? "Larger than 10 MB"
+            : "Not a PDF, JPG, PNG or WebP"
+        )
+      );
+      if (accepted.length === 0) {
+        setDropOutcomes(rejected);
+        return;
+      }
+      setIsUploadingDrop(true);
+      setDropOutcomes(null);
+      try {
+        const outcomes = await uploadAndConnectBatch(accepted, {
+          transactionId: transaction.id,
+          upload: (file) => uploadFile(uploadCtx, file),
+          connect: (fileId) =>
+            connectToTransaction(fileId, { sourceType: "local", resultType: "local_file" }),
+        });
+        setDropOutcomes([...outcomes, ...rejected]);
+      } finally {
+        setIsUploadingDrop(false);
+      }
+    },
+    [transaction?.id, userId, uploadCtx, connectToTransaction]
+  );
+
+  const handleUndoDrop = useCallback(async () => {
+    if (!dropOutcomes) return;
+    setIsUndoingDrop(true);
+    try {
+      await unlinkBatch(dropOutcomes, (fileId) => unlinkFromTransaction(fileId));
+      setDropOutcomes(null);
+    } catch (err) {
+      console.error("Failed to undo upload and connect:", err);
+    } finally {
+      setIsUndoingDrop(false);
+    }
+  }, [dropOutcomes, unlinkFromTransaction]);
+
+  const {
+    getRootProps: getDropRootProps,
+    getInputProps: getDropInputProps,
+    isDragActive: isDropActive,
+    open: openFilePicker,
+  } = useDropzone({
+    onDrop: handleDropFiles,
+    accept: UPLOAD_ACCEPTED_TYPES,
+    maxSize: UPLOAD_MAX_FILE_SIZE,
+    multiple: true,
+    noClick: true,
+    noKeyboard: true,
+    // The pages under this overlay run their own drop zones; a drop here is
+    // this overlay's alone.
+    noDragEventsBubbling: true,
+    disabled: !transaction?.id || isUploadingDrop,
+  });
+
+  const connectedByDrop = dropOutcomes?.filter((o) => o.status === "connected").length ?? 0;
 
   // AI suggestions - pass full transaction and partner, only enabled when overlay is open
   const { queries: suggestedQueries, suggestions: typedSuggestions, isLoading: suggestionsLoading } = useGmailSearchQueries({
@@ -1452,7 +1551,17 @@ export function ConnectFileOverlay({
   return (
     <TooltipProvider>
       <ContentOverlay open={open} onClose={onClose} title="Connect File to Transaction" subtitle={subtitle}>
-      <div className="flex h-full">
+      <div {...getDropRootProps({ className: "relative flex h-full" })}>
+        <input {...getDropInputProps()} />
+        {isDropActive && (
+          <div className="absolute inset-0 z-50 bg-primary/10 border-2 border-dashed border-primary flex items-center justify-center pointer-events-none">
+            <div className="bg-background rounded-lg p-6 shadow-lg text-center">
+              <Upload className="h-12 w-12 mx-auto text-primary mb-2" />
+              <p className="text-lg font-medium">Drop to upload and connect</p>
+              <p className="text-sm text-muted-foreground">PDF, JPG, PNG or WebP up to 10 MB, several at once</p>
+            </div>
+          </div>
+        )}
         {/* Left sidebar: Search + Tabs + Results */}
         <div className="@container w-[35%] min-w-[200px] max-w-[420px] shrink-0 border-r flex flex-col min-h-0 overflow-hidden">
           {/* Search section */}
@@ -2210,6 +2319,69 @@ export function ConnectFileOverlay({
               </div>
             </div>
           )}
+
+          {/* Upload and connect (#246): an action, not a fifth tab */}
+          <div className="border-t px-4 py-2 flex flex-wrap items-center gap-2 shrink-0 bg-muted/30">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={openFilePicker}
+              disabled={!transaction?.id || isUploadingDrop}
+            >
+              {isUploadingDrop ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Upload className="h-4 w-4 mr-2" />
+              )}
+              Upload and connect
+            </Button>
+            {!dropOutcomes && !isUploadingDrop && (
+              <span className="text-xs text-muted-foreground">or drop Files anywhere here</span>
+            )}
+            {dropOutcomes && (
+              <div className="flex-1 min-w-0 space-y-0.5">
+                {dropOutcomes.map((outcome, idx) => (
+                  <p
+                    key={`${outcome.name}-${idx}`}
+                    className={cn(
+                      "text-xs truncate flex items-center gap-1",
+                      outcome.status === "failed" ? "text-red-600" : "text-muted-foreground"
+                    )}
+                  >
+                    {outcome.status === "failed" ? (
+                      <AlertCircle className="h-3 w-3 shrink-0" />
+                    ) : (
+                      <CheckCircle2 className="h-3 w-3 shrink-0 text-green-600" />
+                    )}
+                    <span className="truncate">
+                      {outcome.name}
+                      {outcome.status === "connected" &&
+                        (outcome.reusedExisting ? ": already in Files, connected" : ": connected, being read")}
+                      {outcome.status === "already-connected" && ": already on this Transaction"}
+                      {outcome.status === "failed" && `: ${outcome.error}`}
+                    </span>
+                  </p>
+                ))}
+              </div>
+            )}
+            {connectedByDrop > 0 && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={handleUndoDrop}
+                disabled={isUndoingDrop}
+              >
+                {isUndoingDrop ? (
+                  <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                ) : (
+                  <Undo2 className="h-4 w-4 mr-1" />
+                )}
+                Undo
+              </Button>
+            )}
+          </div>
         </div>
       </div>
     </ContentOverlay>
