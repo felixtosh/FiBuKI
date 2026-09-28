@@ -2,7 +2,7 @@
 
 **Application:** FiBuKI
 **Operator:** Infinity Vertigo GmbH
-**Last updated:** 2026-06-21
+**Last updated:** 2026-09-27
 
 This policy specifies how long FiBuKI retains each category of personal data, the trigger for deletion, and the technical procedure used to delete it.
 
@@ -11,7 +11,7 @@ This policy specifies how long FiBuKI retains each category of personal data, th
 1. **Minimisation.** We do not persist data we do not need. Email metadata and message bodies are processed in memory and discarded; only attachments the user chooses to keep are stored.
 2. **User control.** Users can delete any data class at any time from in-app settings; deletion is enforced server-side and not just hidden.
 3. **Legal basis aware.** Accounting documents may be subject to commercial-law retention obligations (e.g. Austrian §132 BAO: 7 years). FiBuKI surfaces this to the user but does not unilaterally retain past the user's explicit storage choice.
-4. **Defence in depth.** Two-stage deletion (soft + hard) protects against accidental loss, with a bounded hard-delete window.
+4. **Defence in depth.** Two-stage deletion protects against accidental loss: deleting a file hides it reversibly, and destruction happens only through an explicit, owner-initiated Purge (no automatic hard-delete window).
 
 ## 2. Retention table
 
@@ -21,9 +21,9 @@ This policy specifies how long FiBuKI retains each category of personal data, th
 | Gmail access token | End of each Cloud Function invocation | none | Immediate (memory only) | n/a |
 | Gmail message metadata in transit | Always | n/a | Not persisted | n/a |
 | Gmail message body | Always | n/a | Not persisted (in-memory inspection only) | n/a |
-| Downloaded attachment | User deletes file or account | 30 days | Storage + Firestore object purged | 7-day PITR rolls off |
+| Downloaded attachment | User deletes file (reversible), or purges it from the deleted-files view | Indefinite until user Purge or account deletion | On Purge: storage object destroyed, Firestore record reduced to dedup keys | 7-day PITR rolls off |
 | Bank transactions | User deletes source (bank account) | n/a (source-level delete) | Immediate | 7-day PITR rolls off |
-| Bank statement files | User deletes source | 30 days | Storage + Firestore purged | 7-day PITR rolls off |
+| Bank statement files | User deletes file (files survive source deletion), or purges it | Indefinite until user Purge or account deletion | On Purge: storage object destroyed, Firestore record reduced to dedup keys | 7-day PITR rolls off |
 | Partner records | User deletes partner | n/a | Immediate | 7-day PITR rolls off |
 | User account | User clicks Delete account | 30 days | All collections under the user's UID purged | 7-day PITR rolls off |
 | Firebase Auth credentials | Account deletion | n/a | Immediate via Auth API | n/a |
@@ -43,14 +43,31 @@ This policy specifies how long FiBuKI retains each category of personal data, th
 4. Files that were downloaded from Gmail and never connected to a transaction are soft-deleted; files in use are retained so the user does not lose attached invoices.
 5. Cloud Logging entries that referenced the integration roll off normally; tokens were never logged.
 
-### 3.2 File deletion
+### 3.2 File deletion and Purge
 
-1. User soft-deletes a file in the UI.
-2. Firestore document `files/{id}` flagged `deletedAt: <timestamp>`.
-3. Cloud Scheduler job runs daily and hard-deletes any file with `deletedAt < now - 30d`:
-   - Cloud Storage object removed.
-   - Firestore document removed.
-4. References from `transactions/{id}.fileIds` are pruned by Firestore trigger.
+1. User deletes a file in the UI (or via the tool surface). The Firestore document
+   `files/{id}` is flagged `deletedAt: <timestamp>`; the file is hidden, its
+   connections to transactions are removed (`transactions/{id}.fileIds` pruned in the
+   same operation), and the stored bytes are untouched. The delete is reversible via
+   restore.
+2. Deleted files are retained **indefinitely**. There is no scheduled hard-delete.
+   (An earlier revision of this policy described a daily Cloud Scheduler job
+   hard-deleting files 30 days after `deletedAt`. No such job was ever built, and the
+   decision on issue #296 (2026-09-27) is that none will be: accounting documents are
+   retention-relevant under § 132 BAO, and an automatic destroyer of such records is
+   the wrong default. The policy is corrected to describe the implemented control.)
+3. Destruction is the explicit, owner-initiated **Purge** (`purgeFiles` callable),
+   reachable only from the deleted-files view in the UI and from no API/tool surface:
+   - The Cloud Storage object is deleted and its absence verified.
+   - The Firestore document is reduced to deduplication keys (content hash, source
+     message/attachment IDs) so a purged file is not re-imported by a later sync;
+     all content-bearing fields are removed.
+   - Files that were attached to a transaction, or are classified invoice/receipt and
+     dated within 7 years, get an explicit § 132 BAO retention warning in the
+     confirmation; the user may proceed (retention is the taxpayer's duty, the
+     software informs rather than gatekeeps).
+   - Documents generated by FiBuKI for issued invoices are refused (see ADR-0006).
+4. See `docs/adr/0006-deleting-a-file-is-reversible.md` for the full decision record.
 
 ### 3.3 Account deletion
 
@@ -95,6 +112,7 @@ FiBuKI does not currently maintain a manual legal-hold mechanism. If an Austrian
 
 - `app/api/gmail/disconnect/route.ts` — Gmail disconnect (revokes tokens, soft-deletes orphaned files)
 - `functions/src/files/deleteFile.ts` — file delete: hides the file, leaves the stored object in place
+- `functions/src/files/purgeFiles.ts` — owner-initiated Purge: destroys the stored object (verified) and reduces the record to dedup keys
 - `functions/src/user/scheduleAccountDeletionCallable.ts` — initiate 30-day account deletion
 - `functions/src/user/cancelAccountDeletionCallable.ts` — abort deletion during grace period
 - `functions/src/user/processPendingDeletions.ts` — scheduled job that processes due deletions

@@ -102,12 +102,47 @@ export function getFileColumns(
    * taken from `useEcbConverter()` here — the hook lives in FileTable, whose
    * re-render is what puts a newly loaded rate on screen (#120).
    */
-  convert: EcbConverter = () => null
+  convert: EcbConverter = () => null,
+  /**
+   * The deleted-files view (#268): adds the "Deleted" column so the list can
+   * be read newest-deleted-first.
+   */
+  showDeletedColumn = false
 ): ColumnDef<TaxFile>[] {
   const userPartnerMap = new Map(userPartners.map((p) => [p.id, p]));
   const globalPartnerMap = new Map(globalPartners.map((p) => [p.id, p]));
 
+  const deletedColumn: ColumnDef<TaxFile>[] = showDeletedColumn
+    ? [
+        {
+          accessorKey: "deletedAt",
+          size: 100,
+          header: ({ column }) => (
+            <SortableHeader column={column}>Deleted</SortableHeader>
+          ),
+          sortingFn: (a, b) => {
+            const da = toDateSafe(a.original.deletedAt)?.getTime() ?? 0;
+            const db = toDateSafe(b.original.deletedAt)?.getTime() ?? 0;
+            return da - db;
+          },
+          cell: ({ row }) => {
+            const dateObj = toDateSafe(row.original.deletedAt);
+            if (!dateObj) {
+              return <span className="text-sm text-muted-foreground">—</span>;
+            }
+            return (
+              <div>
+                <p className="text-sm whitespace-nowrap">{format(dateObj, "MMM d, yyyy")}</p>
+                <p className="text-xs text-muted-foreground">{format(dateObj, "HH:mm")}</p>
+              </div>
+            );
+          },
+        },
+      ]
+    : [];
+
   return [
+    ...deletedColumn,
     {
       accessorKey: "uploadedAt",
       size: 100,

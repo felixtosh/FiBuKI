@@ -195,6 +195,10 @@ export async function listFiles(
     ...doc.data(),
   }) as TaxFile).map((file) => normalizeFileMonetaryFields(file));
 
+  // A purged File is destroyed (#268): its skeleton record exists only for
+  // deduplication and is never listed, whatever the filters say.
+  files = files.filter((f) => !f.purgedAt);
+
   // Filter out soft-deleted files by default (unless includeDeleted is true)
   if (!filters?.includeDeleted) {
     files = files.filter((f) => !f.deletedAt);

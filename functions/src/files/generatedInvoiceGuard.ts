@@ -4,8 +4,8 @@
  * Deleting the PDF under an issued invoice is not a cheaper cancellation;
  * cancelling is its own accounting act with its own writer. This module only
  * answers "is this File such a document, and what is the refusal"; each delete
- * door decides to call it. Today that is the tool surface (#267). Extending it
- * to the other doors is tracked in #297.
+ * door calls it: the tool surface (#267), `deleteFileCallable` behind the UI
+ * (#297), and the Purge (#268).
  */
 
 export const GENERATED_INVOICE_ERROR = "GENERATED_INVOICE";

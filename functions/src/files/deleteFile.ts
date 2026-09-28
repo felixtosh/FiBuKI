@@ -9,6 +9,7 @@
 
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
+import { generatedInvoiceRefusal } from "./generatedInvoiceGuard";
 
 interface DeleteFileRequest {
   fileId: string;
@@ -154,10 +155,15 @@ export async function performDeleteFile(
   // deduplicate against, and every File needs it to be restorable — and the
   // stored document is not touched at all.
   // Clear transactionIds so it stops showing in transaction file lists.
+  // A File that was attached when it was deleted is stamped as such, because
+  // the delete clears the attachment fields the Purge confirmation would
+  // otherwise read its retention warning from (#268).
+  const wasAttached = detachedTransactions.length > 0 || fileTransactionIds.length > 0;
   await fileRef.update({
     deletedAt: now,
     transactionIds: [],
     updatedAt: now,
+    ...(wasAttached ? { hadTransactionConnections: true } : {}),
   });
   console.log(`[deleteFile] Deleted file ${fileId} (reversible)`);
 
@@ -189,6 +195,13 @@ export const deleteFileCallable = createCallable<
     const fileData = fileSnap.data()!;
     if (fileData.userId !== ctx.userId) {
       throw new HttpsError("permission-denied", "Access denied");
+    }
+
+    // The document FiBuKI generated for an invoice cannot be deleted on any
+    // surface (ADR-0006, #297); withdrawing the invoice is cancel_invoice.
+    const refusal = await generatedInvoiceRefusal(ctx.db, ctx.userId, fileData);
+    if (refusal) {
+      throw new HttpsError("failed-precondition", refusal);
     }
 
     const { success, deletedConnections } = await performDeleteFile(

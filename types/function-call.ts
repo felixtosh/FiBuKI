@@ -32,6 +32,7 @@ export type CloudFunctionName =
   | "updateFileExtractedFields"
   | "deleteFile"
   | "restoreFile"
+  | "purgeFiles"
   | "markFileAsNotInvoice"
   | "unmarkFileAsNotInvoice"
   | "connectFileToTransaction"

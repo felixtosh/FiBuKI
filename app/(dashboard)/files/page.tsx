@@ -30,7 +30,9 @@ import { parseFileFiltersFromUrl, buildFileSearchParams } from "@/lib/filters/fi
 import {
   fileDeleteConfirmation,
   bulkFileDeleteConfirmation,
+  purgeConfirmation,
 } from "@/lib/files/delete-confirmation";
+import { isRetentionRelevant } from "@/lib/files/purge-policy";
 import { createDropReentryGuard } from "@/lib/files/drop-reentry-guard";
 import { getNeighbourRowId } from "@/lib/navigation/row-neighbour";
 import { advanceAfterDisposition } from "@/lib/navigation/advance-after-disposition";
@@ -120,7 +122,7 @@ function FilesContent() {
   // Get search value from URL
   const searchValue = searchParams.get("search") || "";
 
-  const { files, allFilesCount, invoiceCount, loading, remove, restore, markAsNotInvoice, unmarkAsNotInvoice } = useFiles({
+  const { files, allFilesCount, invoiceCount, loading, remove, restore, purge, markAsNotInvoice, unmarkAsNotInvoice } = useFiles({
     search: searchValue,
     ...filters,
   });
@@ -167,6 +169,7 @@ function FilesContent() {
   // - Additional selections: React state (CMD/Shift added, lighter highlight)
   const [additionalSelectedIds, setAdditionalSelectedIds] = useState<Set<string>>(new Set());
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const [isBulkPurging, setIsBulkPurging] = useState(false);
   const [isBulkUpdating, setIsBulkUpdating] = useState(false);
   const [isBulkAssigningPartner, setIsBulkAssigningPartner] = useState(false);
   const [isBulkPartnerPickerOpen, setIsBulkPartnerPickerOpen] = useState(false);
@@ -692,7 +695,15 @@ function FilesContent() {
   const handleDelete = useCallback(async () => {
     if (!selectedFile) return;
     if (!confirm(fileDeleteConfirmation(selectedFile.fileName))) return;
-    await remove(selectedFile.id);
+    try {
+      await remove(selectedFile.id);
+    } catch (error) {
+      // The refusal a generated invoice document gets names the invoice and
+      // points at cancellation (ADR-0006, #297) — show it, do not swallow it.
+      const message = error instanceof Error ? error.message : "Delete failed";
+      setBulkToast({ message, tone: "error" });
+      return;
+    }
     handleCloseDetail();
   }, [selectedFile, remove, handleCloseDetail]);
 
@@ -847,6 +858,46 @@ function FilesContent() {
       setBulkProgress(null);
     }
   }, [allSelectedIds, remove, router, filters, searchValue]);
+
+  // Multi-select: Purge (#268) — the deleted-files view's one bulk action and
+  // the only surface in the product that destroys anything. The confirmation
+  // names the count; when the selection holds business records it carries the
+  // BAO § 132 retention warning, a warning the user may proceed past. The
+  // server refuses generated invoice documents and reports which.
+  const handleBulkPurge = useCallback(async () => {
+    if (allSelectedIds.size === 0) return;
+    const selectedFiles = files.filter((f) => allSelectedIds.has(f.id));
+    const fileIds = selectedFiles.map((f) => f.id);
+    if (fileIds.length === 0) return;
+
+    const retentionRelevantCount = selectedFiles.filter((f) => isRetentionRelevant(f)).length;
+    if (!confirm(purgeConfirmation(fileIds.length, retentionRelevantCount))) return;
+
+    setIsBulkPurging(true);
+    try {
+      const result = await purge(fileIds);
+      setAdditionalSelectedIds(new Set());
+      const params = buildFileSearchParams(filters, searchValue, null);
+      const newUrl = params.toString() ? `/files?${params.toString()}` : "/files";
+      router.push(newUrl, { scroll: false });
+
+      const refusedNames = result.refused
+        .map((r) => r.fileName ?? r.fileId)
+        .join(", ");
+      setBulkToast({
+        message:
+          result.refused.length > 0
+            ? `Purged ${result.purged} of ${fileIds.length} files. Refused: ${refusedNames}`
+            : `Purged ${result.purged} file${result.purged === 1 ? "" : "s"}`,
+        tone: result.refused.length > 0 ? "error" : "success",
+      });
+    } catch (error) {
+      console.error("Purge failed:", error);
+      setBulkToast({ message: "Purge failed", tone: "error" });
+    } finally {
+      setIsBulkPurging(false);
+    }
+  }, [allSelectedIds, files, purge, router, filters, searchValue]);
 
   // Multi-select: bulk mark as not invoice
   const handleBulkMarkAsNotInvoice = useCallback(async () => {
@@ -1077,8 +1128,10 @@ function FilesContent() {
               onMarkAsNotInvoice: handleBulkMarkAsNotInvoice,
               onMarkAsInvoice: handleBulkMarkAsInvoice,
               onDelete: handleBulkDelete,
+              onPurge: handleBulkPurge,
               onClearSelection: handleClearSelection,
               isDeleting: isBulkDeleting,
+              isPurging: isBulkPurging,
               isUpdating: isBulkUpdating,
               isAssigningPartner: isBulkAssigningPartner,
               progress: bulkProgress,

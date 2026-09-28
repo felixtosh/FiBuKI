@@ -154,3 +154,23 @@ test("an old notInvoice URL counts as having filter params", () => {
   assert.equal(hasFileUrlParams(new URLSearchParams("notInvoice=true")), true);
   assert.equal(hasFileUrlParams(new URLSearchParams("docType=other")), true);
 });
+
+// --- The deleted-files view (#268) rides the existing ?deleted=true param ---
+
+test("parseFileFiltersFromUrl: deleted=true opens the deleted-files view", () => {
+  const filters = parseFileFiltersFromUrl(new URLSearchParams("deleted=true"));
+  assert.equal(filters.deletedOnly, true);
+  assert.equal(filters.includeDeleted, undefined);
+});
+
+test("buildFileSearchParams: the deleted view round-trips", () => {
+  const params = buildFileSearchParams({ deletedOnly: true }, "");
+  assert.equal(params.get("deleted"), "true");
+  const back = parseFileFiltersFromUrl(params);
+  assert.equal(back.deletedOnly, true);
+});
+
+test("hasActiveFileFilters and countActiveFileFilters see the deleted view", () => {
+  assert.equal(hasActiveFileFilters({ deletedOnly: true }), true);
+  assert.equal(countActiveFileFilters({ deletedOnly: true }), 1);
+});

@@ -10,6 +10,7 @@ export { updateFileCallable } from "./updateFile";
 export { updateFileExtractedFieldsCallable } from "./updateFileExtractedFields";
 export { deleteFileCallable } from "./deleteFile";
 export { restoreFileCallable } from "./restoreFile";
+export { purgeFilesCallable } from "./purgeFiles";
 export { markFileAsNotInvoiceCallable } from "./markFileAsNotInvoice";
 export { unmarkFileAsNotInvoiceCallable } from "./unmarkFileAsNotInvoice";
 export { connectFileToTransactionCallable } from "./connectFileToTransaction";

@@ -75,7 +75,7 @@ export function FileToolbar({
   const partnerStateIgnored = hasPartnerFilter;
   const hasStatusFilter =
     filters.extractionComplete !== undefined ||
-    filters.includeDeleted === true;
+    filters.deletedOnly === true;
   // Absent = every Document Type selected, the default.
   const selectedDocumentTypes: readonly DocumentType[] =
     filters.documentTypes ?? DOCUMENT_TYPE_FILTER_VALUES;
@@ -142,7 +142,7 @@ export function FileToolbar({
     onFiltersChange({
       ...filters,
       extractionComplete: undefined,
-      includeDeleted: undefined,
+      deletedOnly: undefined,
     });
   };
 
@@ -197,7 +197,7 @@ export function FileToolbar({
   const getStatusLabel = () => {
     if (filters.extractionComplete === true) return "Extracted";
     if (filters.extractionComplete === false) return "Pending";
-    if (filters.includeDeleted === true) return "Deleted";
+    if (filters.deletedOnly === true) return "Deleted";
     return "Status";
   };
 
@@ -724,7 +724,7 @@ export function FileToolbar({
             <Button
               variant={
                 filters.extractionComplete === undefined &&
-                !filters.includeDeleted
+                !filters.deletedOnly
                   ? "secondary"
                   : "ghost"
               }
@@ -734,7 +734,7 @@ export function FileToolbar({
                 onFiltersChange({
                   ...filters,
                   extractionComplete: undefined,
-                  includeDeleted: undefined,
+                  deletedOnly: undefined,
                 });
                 setStatusPopoverOpen(false);
               }}
@@ -749,7 +749,7 @@ export function FileToolbar({
                 onFiltersChange({
                   ...filters,
                   extractionComplete: true,
-                  includeDeleted: undefined,
+                  deletedOnly: undefined,
                 });
                 setStatusPopoverOpen(false);
               }}
@@ -764,7 +764,7 @@ export function FileToolbar({
                 onFiltersChange({
                   ...filters,
                   extractionComplete: false,
-                  includeDeleted: undefined,
+                  deletedOnly: undefined,
                 });
                 setStatusPopoverOpen(false);
               }}
@@ -773,20 +773,20 @@ export function FileToolbar({
             </Button>
             <div className="border-t my-1" />
             <Button
-              variant={filters.includeDeleted === true ? "secondary" : "ghost"}
+              variant={filters.deletedOnly === true ? "secondary" : "ghost"}
               size="sm"
               className="justify-start h-8 gap-2 text-muted-foreground"
               onClick={() => {
                 onFiltersChange({
                   ...filters,
                   extractionComplete: undefined,
-                  includeDeleted: true,
+                  deletedOnly: true,
                 });
                 setStatusPopoverOpen(false);
               }}
             >
               <Trash2 className="h-4 w-4" />
-              Include deleted
+              Deleted files
             </Button>
           </div>
         </PopoverContent>

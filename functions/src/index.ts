@@ -165,6 +165,7 @@ export {
   updateFileExtractedFieldsCallable as updateFileExtractedFields,
   deleteFileCallable as deleteFile,
   restoreFileCallable as restoreFile,
+  purgeFilesCallable as purgeFiles,
   markFileAsNotInvoiceCallable as markFileAsNotInvoice,
   unmarkFileAsNotInvoiceCallable as unmarkFileAsNotInvoice,
   connectFileToTransactionCallable as connectFileToTransaction,

@@ -44,6 +44,7 @@ export function useFiles(filters?: FileFilters) {
   const { data: rawFiles, loading, error } = useFirestoreCollection(q, mapFile);
 
   const includeDeleted = filters?.includeDeleted;
+  const deletedOnly = filters?.deletedOnly;
   const search = filters?.search;
   const hasConnections = filters?.hasConnections;
   const extractionComplete = filters?.extractionComplete;
@@ -59,6 +60,7 @@ export function useFiles(filters?: FileFilters) {
     () =>
       applyFileFilters(rawFiles, {
         includeDeleted,
+        deletedOnly,
         search,
         hasConnections,
         extractionComplete,
@@ -72,6 +74,7 @@ export function useFiles(filters?: FileFilters) {
     [
       rawFiles,
       includeDeleted,
+      deletedOnly,
       search,
       hasConnections,
       extractionComplete,
@@ -119,6 +122,22 @@ export function useFiles(filters?: FileFilters) {
   const restore = useCallback(
     async (fileId: string): Promise<void> => {
       await callFunction("restoreFile", { fileId });
+    },
+    []
+  );
+
+  // Purge destroys deleted Files for good (#268, ADR-0006). One call for the
+  // whole selection: the server purges what it may and reports what it
+  // refused — generated invoice documents, Files that are not deleted.
+  const purge = useCallback(
+    async (
+      fileIds: string[]
+    ): Promise<{
+      purged: number;
+      alreadyPurged: number;
+      refused: Array<{ fileId: string; fileName: string | null; reason: string; message: string }>;
+    }> => {
+      return callFunction("purgeFiles", { fileIds });
     },
     []
   );
@@ -235,6 +254,7 @@ export function useFiles(filters?: FileFilters) {
     update,
     remove,
     restore,
+    purge,
     markAsNotInvoice,
     unmarkAsNotInvoice,
     getFileById,

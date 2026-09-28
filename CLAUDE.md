@@ -188,7 +188,8 @@ export function useCategories() {
 - `connectFileToTransactionCallable` - Connect file to transaction
 - `disconnectFileFromTransactionCallable` - Disconnect file from transaction
 - `updateFileCallable` - Update file metadata
-- `deleteFileCallable` - Delete a file: hides it, undone by `restoreFile`, never touches the stored bytes
+- `deleteFileCallable` - Delete a file: hides it, undone by `restoreFile`, never touches the stored bytes. Refuses a FiBuKI-generated invoice document (ADR-0006)
+- `purgeFilesCallable` - Purge deleted files: destroys the stored bytes (verified) and reduces the record to dedup keys. Deleted-files view only; never on the MCP/tool surface
 
 **Imports:**
 - `bulkCreateTransactionsCallable` - Bulk create transactions from CSV
