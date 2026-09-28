@@ -159,6 +159,7 @@ export type CloudFunctionName =
   | "sendPasswordReset"
   // Open seats & invite emails
   | "setOpenSeats"
+  | "getOpenSeats"
   | "sendInviteNotification"
   | "previewEmail"
   | "sendTestEmail";

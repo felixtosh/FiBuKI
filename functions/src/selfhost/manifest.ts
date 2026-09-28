@@ -117,6 +117,8 @@ export const SEATS_AND_INVITES = [
   "approveAccessRequest",
   "dismissAccessRequest",
   "setOpenSeats",
+  // Public, read-only: the register page's seat counts (#415).
+  "getOpenSeats",
   "sendInviteNotification",
 ] as const;
 
