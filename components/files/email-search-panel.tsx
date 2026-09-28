@@ -323,7 +323,7 @@ export function EmailSearchPanel({
                   selected={dateFrom}
                   onSelect={setDateFrom}
                   defaultMonth={dateFrom || transactionInfo?.date}
-                  initialFocus
+                  autoFocus
                 />
               </PopoverContent>
             </Popover>
@@ -351,7 +351,7 @@ export function EmailSearchPanel({
                   selected={dateTo}
                   onSelect={setDateTo}
                   defaultMonth={dateTo || transactionInfo?.date}
-                  initialFocus
+                  autoFocus
                 />
               </PopoverContent>
             </Popover>

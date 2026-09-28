@@ -14,7 +14,7 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import * as crypto from "crypto";
-import archiver from "archiver";
+import { Archiver, ZipArchive } from "archiver";
 import { PassThrough } from "stream";
 
 import {
@@ -426,7 +426,7 @@ async function createExportZip(
     passThrough.on("end", () => resolve(Buffer.concat(chunks)));
     passThrough.on("error", reject);
 
-    const archive = archiver("zip", { zlib: { level: 9 } });
+    const archive = new ZipArchive({ zlib: { level: 9 } });
     archive.on("error", reject);
     archive.pipe(passThrough);
 
@@ -520,7 +520,7 @@ async function createExportZip(
  * Add actual storage files to the ZIP
  */
 async function addStorageFiles(
-  archive: archiver.Archiver,
+  archive: Archiver,
   files: Record<string, unknown>[],
   folderName: string,
   storage: ReturnType<typeof getStorage>,

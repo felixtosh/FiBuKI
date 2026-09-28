@@ -13,7 +13,7 @@ jobs:
     name: App (lint + typecheck + build)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -43,7 +43,7 @@ jobs:
     name: App (component tests)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           # 22, not 20. `test:node` was broken on node 21+ for a long time and
@@ -68,7 +68,7 @@ jobs:
       run:
         working-directory: functions
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -99,7 +99,7 @@ jobs:
       run:
         working-directory: functions
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -122,7 +122,7 @@ jobs:
     name: Self-host suite (real Postgres + real S3)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -176,7 +176,7 @@ jobs:
     name: App API routes (auth smoke)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -197,7 +197,7 @@ jobs:
       run:
         working-directory: extensions/taxstudio-browser
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -210,7 +210,7 @@ jobs:
     name: Firestore parity (firebase-admin vs shim)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 22
