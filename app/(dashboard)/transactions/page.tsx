@@ -20,6 +20,7 @@ import { useFilteredTransactions } from "@/hooks/use-filtered-transactions";
 import { useTransactionFiles } from "@/hooks/use-files";
 import { getNeighbourRowId } from "@/lib/navigation/row-neighbour";
 import { useRowNavigationKeys } from "@/hooks/use-row-navigation-keys";
+import { isRowNavigationEnabled } from "@/lib/navigation/arrow-key-navigation";
 import { functions, storage, db } from "@/lib/firebase/config";
 import { createFile, checkFileDuplicate, OperationsContext } from "@/lib/operations";
 import { useAuth } from "@/components/auth";
@@ -344,7 +345,10 @@ function TransactionsContent() {
   // The connect-file overlay renders inline with no dialog role of its own, so
   // it has to be named here; portalled dialogs and menus the hook sees itself.
   useRowNavigationKeys({
-    enabled: Boolean(selectedTransaction) && !isConnectFileOpen,
+    enabled: isRowNavigationEnabled({
+      panelOpen: Boolean(selectedTransaction),
+      connectOverlayOpen: isConnectFileOpen,
+    }),
     onPrevious: handleNavigatePrevious,
     onNext: handleNavigateNext,
   });

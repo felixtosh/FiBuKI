@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   getArrowNavigationStep,
   isOverlayOpen,
+  isRowNavigationEnabled,
   isTypingTarget,
 } from "../lib/navigation/arrow-key-navigation.js";
 
@@ -59,4 +60,25 @@ test("isOverlayOpen: true while a portalled surface is mounted", () => {
 test("isOverlayOpen: a document that cannot be queried blocks nothing", () => {
   assert.equal(isOverlayOpen(null), false);
   assert.equal(isOverlayOpen({}), false);
+});
+
+test("isRowNavigationEnabled: live while a detail panel is open", () => {
+  assert.equal(isRowNavigationEnabled({ panelOpen: true, connectOverlayOpen: false }), true);
+});
+
+test("isRowNavigationEnabled: dead without a detail panel", () => {
+  assert.equal(isRowNavigationEnabled({ panelOpen: false, connectOverlayOpen: false }), false);
+});
+
+test("isRowNavigationEnabled: a connect overlay keeps the keys switched off", () => {
+  assert.equal(isRowNavigationEnabled({ panelOpen: true, connectOverlayOpen: true }), false);
+});
+
+test("isRowNavigationEnabled: the full-screen viewer does not switch the keys off", () => {
+  // Reverses yazzbert/FiBuKI-selfhost#158 (felixtosh/FiBuKI#234): reading a
+  // stack of Files with the viewer open is the flow the keys matter most in.
+  assert.equal(
+    isRowNavigationEnabled({ panelOpen: true, connectOverlayOpen: false, viewerOpen: true }),
+    true
+  );
 });
