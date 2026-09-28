@@ -74,7 +74,7 @@ import {
   type ExpectedChargeWindow,
   type ResolvedEffectiveCycle,
 } from "../matching/billingCycle";
-import { PLANS } from "../billing/config";
+import { PLANS, resolvePlanId } from "../billing/config";
 import { KNOWN_AUSTRIAN_RATES } from "../uva/rateSet";
 import { runUvaForPeriod } from "../reports/uvaPeriodRun";
 import type { PlanId, PlanFeatures } from "../billing/config";
@@ -149,7 +149,8 @@ async function checkToolFeatureGate(userId: string, tool: string): Promise<strin
   if (!toolDef?.requiredFeature) return null;
 
   const subDoc = await db.collection("subscriptions").doc(userId).get();
-  const planId: PlanId = (subDoc.exists ? subDoc.data()!.plan : "free") || "free";
+  // The env plan lever (self-host FIBUKI_PLAN, #159) outranks the stored plan.
+  const planId: PlanId = resolvePlanId(subDoc.exists ? subDoc.data()!.plan : null);
   const plan = PLANS[planId] || PLANS.free;
 
   if (!plan.planFeatures[toolDef.requiredFeature]) {
@@ -2903,7 +2904,8 @@ function getAvailableTools(features: PlanFeatures) {
 export async function getAutomationStatus(userId: string) {
   const subDoc = await db.collection("subscriptions").doc(userId).get();
 
-  const planId: PlanId = (subDoc.exists ? subDoc.data()!.plan : "free") || "free";
+  // The env plan lever (self-host FIBUKI_PLAN, #159) outranks the stored plan.
+  const planId: PlanId = resolvePlanId(subDoc.exists ? subDoc.data()!.plan : null);
   const plan = PLANS[planId] || PLANS.free;
   const features = plan.planFeatures;
   const availableTools = getAvailableTools(features);
@@ -2911,7 +2913,7 @@ export async function getAutomationStatus(userId: string) {
   if (!subDoc.exists) {
     return {
       automationMode: "active",
-      plan: "free",
+      plan: planId,
       planFeatures: features,
       availableTools,
       rateLimit: plan.rateLimit,
@@ -2927,7 +2929,7 @@ export async function getAutomationStatus(userId: string) {
   const sub = subDoc.data()!;
   return {
     automationMode: sub.automationMode || "active",
-    plan: sub.plan || "free",
+    plan: planId,
     planFeatures: features,
     availableTools,
     rateLimit: plan.rateLimit,

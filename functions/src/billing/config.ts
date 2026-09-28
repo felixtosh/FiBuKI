@@ -6,6 +6,8 @@
  * Keep both in sync when making changes.
  */
 
+import { envPlanOverride } from "./planSource";
+
 // =============================================================================
 // Types (mirrored from /types/billing.ts)
 // =============================================================================
@@ -313,9 +315,22 @@ export const TRIAL_TRANSACTION_LIMIT = 200;
 // =============================================================================
 
 /**
+ * The effective plan for a user, given what their subscription document says.
+ *
+ * The environment may override the stored plan: on the self-host build the
+ * planSource module is swapped for selfhost/plan-source-shim.ts, where
+ * FIBUKI_PLAN (default: the full plan) decides — #159. On the Firebase build
+ * and the cloud tier the override is always null and the stored plan rules.
+ */
+export function resolvePlanId(storedPlan?: PlanId | null): PlanId {
+  return envPlanOverride() ?? storedPlan ?? "free";
+}
+
+/**
  * Check if a plan has a specific feature.
  * For legacy starter plans with grandfathering, checks the grandfatheredUntil date.
  * Accepts optional addons to check addon-based feature access.
+ * The env plan lever (see resolvePlanId) outranks the planId argument.
  */
 export function hasFeature(
   planId: PlanId,
@@ -323,6 +338,7 @@ export function hasFeature(
   grandfatheredUntil?: Date | null,
   addons?: { bmdExport?: { active?: boolean } } | null
 ): boolean {
+  planId = resolvePlanId(planId);
   const plan = PLANS[planId];
   if (!plan) return false;
 
