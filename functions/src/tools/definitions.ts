@@ -822,6 +822,37 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
 
   // =========================================================================
+  // UVA (read-only)
+  // =========================================================================
+  {
+    name: "get_uva_report",
+    description:
+      "Read the UVA figures for one period: the same Kennzahlen, derived by the same calculation, " +
+      "that the reports page shows for that period. Read-only: FiBuKI derives and reconciles the " +
+      "UVA, it does not file it, and this tool changes nothing. Amounts in cents. Returns " +
+      "{ period (with start/end calendar days, Europe/Vienna), kennzahlen (keyed by Kennzahl, " +
+      "e.g. \"000\", \"060\", \"095\"), totalOutputVat, totalInputVat, balance (KZ 095: " +
+      ">0 Zahllast, <0 Gutschrift), unresolved (transactions still needing a receipt or " +
+      "rate), transactionCount }. A period with no data returns zeroed figures.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        year: { type: "number", description: "Calendar year, e.g. 2026" },
+        period: {
+          type: "number",
+          description: "Month (1-12) when type is monthly, quarter (1-4) when type is quarterly",
+        },
+        type: {
+          type: "string",
+          enum: ["monthly", "quarterly"],
+          description: "The UVA period length",
+        },
+      },
+      required: ["year", "period", "type"],
+    },
+  },
+
+  // =========================================================================
   // Invoicing
   // =========================================================================
   {

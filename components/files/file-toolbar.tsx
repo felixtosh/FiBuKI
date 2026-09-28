@@ -297,7 +297,7 @@ export function FileToolbar({
                         onFiltersChange({ ...filters, extractedDateFrom: date });
                         setShowFromCalendar(false);
                       }}
-                      initialFocus
+                      autoFocus
                     />
                   </PopoverContent>
                 </Popover>
@@ -326,7 +326,7 @@ export function FileToolbar({
                         onFiltersChange({ ...filters, extractedDateTo: date });
                         setShowToCalendar(false);
                       }}
-                      initialFocus
+                      autoFocus
                     />
                   </PopoverContent>
                 </Popover>

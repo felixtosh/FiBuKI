@@ -23,7 +23,7 @@
  * sends typed values: cents, an ISO date, normalised line items.
  */
 
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import type { ExtractedLineItem, ExtractedRateGroup } from "../types/extraction";
 import { reconcileLineItemsWithDocumentTotal } from "../extraction/lineItemReconciliation";
@@ -36,6 +36,7 @@ import { buildCorrectedFileUpdate } from "./correctedFileUpdate";
 import { CORRECTABLE_FIELDS, correctedFieldsOf } from "./extractionProvenanceOps";
 import { syncDocumentationStateForTransactions } from "../documents/syncDocumentationState";
 import { retireRepairAmbiguity } from "../documents/repairReview";
+import { dueDateFromAdditionalFields } from "../matching/dueDate";
 
 /** An extra field the extractor kept but nothing else reads structurally. */
 interface EditedAdditionalField {
@@ -172,6 +173,14 @@ export const updateFileExtractedFieldsCallable = createCallable<
       if (key !== "additionalFields" && updates[storedField] !== (record[storedField] ?? null)) {
         movedDetails.push(storedField);
       }
+    }
+
+    // #236: the typed Due Date is read off these rows, so an edit to them
+    // re-reads it. A person who corrects or deletes the Due Date row moves
+    // the payment window the Match scores against.
+    if (details.additionalFields !== undefined) {
+      const dueDate = dueDateFromAdditionalFields(updates.extractedAdditionalFields);
+      updates.extractedDueDate = dueDate ? Timestamp.fromDate(dueDate) : null;
     }
 
     // #301: a detail typed over retires the repair warning for that field, the

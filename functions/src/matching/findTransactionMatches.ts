@@ -9,6 +9,7 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { readDismissedTransactionIds } from "./dismissedTransactions";
 import { loadDocumentedAmounts } from "./documentedAmounts";
+import { matchesTransactionSearch } from "./transactionSearch";
 import {
   SCORING_CONFIG,
   scoreFileAgainstTransactions,
@@ -81,25 +82,6 @@ function toISOString(timestamp: Timestamp): string {
  */
 function toTimestamp(isoString: string): Timestamp {
   return Timestamp.fromDate(new Date(isoString));
-}
-
-/**
- * Check if transaction name/partner matches search query
- */
-function matchesSearchQuery(
-  txData: FirebaseFirestore.DocumentData,
-  query: string
-): boolean {
-  const lowerQuery = query.toLowerCase();
-  const name = (txData.name || "").toLowerCase();
-  const partner = (txData.partner || "").toLowerCase();
-  const reference = (txData.reference || "").toLowerCase();
-
-  return (
-    name.includes(lowerQuery) ||
-    partner.includes(lowerQuery) ||
-    reference.includes(lowerQuery)
-  );
 }
 
 // === Main Callable Function ===
@@ -188,7 +170,7 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
         .collection("transactions")
         .where("userId", "==", userId)
         .orderBy("date", "desc")
-        .limit(1000) // Higher limit for search
+        .limit(1000) // Higher limit for search. Known limit (#183): an amount older than these 1000 cannot be found
         .get();
 
       transactions = snapshot.docs;
@@ -248,8 +230,9 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
       // irreversible.
       if (!searchQuery && dismissedIds.has(doc.id)) return false;
 
-      // Apply search query filter if provided
-      if (searchQuery && !matchesSearchQuery(doc.data(), searchQuery)) {
+      // Apply search query filter if provided: text OR amount (#183), the
+      // same predicate the dialogs filter with on the client.
+      if (searchQuery && !matchesTransactionSearch(doc.data(), searchQuery)) {
         return false;
       }
 

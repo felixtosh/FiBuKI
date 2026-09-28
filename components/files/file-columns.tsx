@@ -17,6 +17,7 @@ import {
   describeDocumentType,
   describeInvoiceDirection,
 } from "@/lib/documents/document-type-presentation";
+import { describeFileNameCell } from "@/lib/files/file-display-name";
 import { AmountMatchDisplay } from "@/components/ui/amount-match-display";
 import { cn, toDateSafe } from "@/lib/utils";
 import type { EcbConverter } from "@/lib/currency";
@@ -140,30 +141,19 @@ export function getFileColumns(
     },
     {
       accessorKey: "fileName",
-      header: "Filename",
+      header: "Name",
       cell: ({ row }) => {
-        const fileName = row.getValue("fileName") as string;
-        const { classificationComplete, extractionComplete, isNotInvoice } = row.original;
-
-        // Determine processing status
-        let statusText: string | null = null;
-        if (!classificationComplete) {
-          statusText = "Analyzing...";
-        } else if (!extractionComplete && !isNotInvoice) {
-          statusText = "Parsing...";
-        } else if (isNotInvoice) {
-          statusText = "Not an invoice";
-        }
+        const { name, secondLine } = describeFileNameCell(row.original);
 
         return (
           <div className="min-w-0">
-            <p className="text-sm truncate">{fileName}</p>
-            {statusText && (
-              <p className="text-xs text-muted-foreground flex items-center gap-1">
-                {(statusText === "Analyzing..." || statusText === "Parsing...") && (
+            <p className="text-sm truncate">{name}</p>
+            {secondLine && (
+              <p className="text-xs text-muted-foreground flex items-center gap-1 min-w-0">
+                {secondLine.kind === "status" && secondLine.busy && (
                   <Loader2 className="h-3 w-3 animate-spin" />
                 )}
-                {statusText}
+                <span className="truncate">{secondLine.text}</span>
               </p>
             )}
           </div>

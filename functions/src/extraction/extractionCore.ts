@@ -51,6 +51,7 @@ import { syncDocumentationStateForTransactions } from "../documents/syncDocument
 import { computeDirectionReviewFields } from "../documents/syncDirectionReview";
 import { directionReviewFields } from "../documents/directionReview";
 import { repairReviewFields, reviewRepair } from "../documents/repairReview";
+import { dueDateFromAdditionalFields } from "../matching/dueDate";
 
 /**
  * Options for running extraction
@@ -265,6 +266,7 @@ export async function runExtraction(
         extractedWebsite: null,
         extractedRaw: null,
         extractedAdditionalFields: null,
+        extractedDueDate: null,
         extractedSelfDesignation: null,
         extractedInvoiceNumber: null,
         extractedPayableAmount: null,
@@ -449,6 +451,7 @@ export async function runExtraction(
     updateData.extractedWebsite = null;
     updateData.extractedRaw = null;
     updateData.extractedAdditionalFields = null;
+    updateData.extractedDueDate = null;
     updateData.extractedSelfDesignation = null;
     updateData.extractedInvoiceNumber = null;
     updateData.extractedPayableAmount = null;
@@ -641,6 +644,11 @@ export async function runExtraction(
     // Store additional fields extracted from the document
     if (result.additionalFields && result.additionalFields.length > 0) {
       updateData.extractedAdditionalFields = result.additionalFields;
+      // #236: the Due Date typed beside the bag it was read from, so the
+      // Match scores the payment window. Written with the bag, never apart
+      // from it, so the two cannot disagree.
+      const dueDate = dueDateFromAdditionalFields(result.additionalFields);
+      updateData.extractedDueDate = dueDate ? Timestamp.fromDate(dueDate) : null;
       console.log(`[+${Date.now() - t0}ms] Stored ${result.additionalFields.length} additional fields`);
     }
   }

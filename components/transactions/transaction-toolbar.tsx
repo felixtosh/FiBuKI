@@ -40,10 +40,17 @@ import {
   CalendarIcon,
   Check,
   ReceiptText,
+  FileCheck,
 } from "lucide-react";
 import { SearchButton } from "@/components/ui/search-button";
 import { SearchInput } from "@/components/ui/search-input";
-import { TransactionFilters } from "@/types/transaction";
+import { DocumentationState, TransactionFilters } from "@/types/transaction";
+import {
+  ALL_DOCUMENTATION_STATES,
+  normalizeDocumentationStates,
+} from "@/lib/filters/documentation-state-filter";
+import { describeDocumentationState } from "@/lib/documents/document-type-presentation";
+import { useDocumentLabel } from "@/hooks/use-document-label";
 import { cn, formatCurrency } from "@/lib/utils";
 import { MOTION } from "@/design-system";
 import { UserPartner } from "@/types/partner";
@@ -165,6 +172,8 @@ export function TransactionToolbar({
   const [statusPopoverOpen, setStatusPopoverOpen] = useState(false);
   const [typePopoverOpen, setTypePopoverOpen] = useState(false);
   const [partnerPopoverOpen, setPartnerPopoverOpen] = useState(false);
+  const [documentationPopoverOpen, setDocumentationPopoverOpen] = useState(false);
+  const documentLabel = useDocumentLabel();
   const [partnerSearch, setPartnerSearch] = useState("");
   const [showFromCalendar, setShowFromCalendar] = useState(false);
   const [showToCalendar, setShowToCalendar] = useState(false);
@@ -188,6 +197,9 @@ export function TransactionToolbar({
   const hasAmountFilter = filters.amountType && filters.amountType !== "all";
   const selectedPartnerIds = filters.partnerIds || [];
   const hasPartnerFilter = selectedPartnerIds.length > 0;
+  // #249: undefined is "all five", the default.
+  const selectedDocumentationStates = filters.documentationStates ?? ALL_DOCUMENTATION_STATES;
+  const hasDocumentationFilter = filters.documentationStates !== undefined;
 
   const handleDatePresetClick = (preset: string) => {
     const now = new Date();
@@ -243,6 +255,24 @@ export function TransactionToolbar({
     e.stopPropagation();
     onFiltersChange({ ...filters, partnerIds: undefined });
   };
+
+  const clearDocumentationFilter = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onFiltersChange({ ...filters, documentationStates: undefined });
+  };
+
+  const toggleDocumentationState = (state: DocumentationState) => {
+    const next = selectedDocumentationStates.includes(state)
+      ? selectedDocumentationStates.filter((s) => s !== state)
+      : [...selectedDocumentationStates, state];
+    onFiltersChange({ ...filters, documentationStates: normalizeDocumentationStates(next) });
+  };
+
+  const documentationLabel = !hasDocumentationFilter
+    ? "Documentation"
+    : selectedDocumentationStates.length === 1
+      ? documentLabel(describeDocumentationState(selectedDocumentationStates[0]))
+      : `Documentation (${selectedDocumentationStates.length})`;
 
   const getDateLabel = () => {
     if (!hasDateFilter) return "Date";
@@ -361,7 +391,7 @@ export function TransactionToolbar({
                         onFiltersChange({ ...filters, dateFrom: date });
                         setShowFromCalendar(false);
                       }}
-                      initialFocus
+                      autoFocus
                     />
                   </PopoverContent>
                 </Popover>
@@ -390,7 +420,7 @@ export function TransactionToolbar({
                         onFiltersChange({ ...filters, dateTo: date });
                         setShowToCalendar(false);
                       }}
-                      initialFocus
+                      autoFocus
                     />
                   </PopoverContent>
                 </Popover>
@@ -508,6 +538,71 @@ export function TransactionToolbar({
             >
               Unassigned
             </Button>
+          </div>
+        </PopoverContent>
+      </Popover>
+
+      {/*
+        Documentation State filter (#249). Multi-select with every state
+        checked by default, unlike the single-select chips around it: the
+        useful questions here are often exclusions. Labels are the badge's own
+        (describeDocumentationState), so one state never reads two ways.
+        It sits beside Status and does not replace it: Status says whether
+        anything is attached, this says whether what is attached is enough.
+      */}
+      <Popover open={documentationPopoverOpen} onOpenChange={setDocumentationPopoverOpen}>
+        <PopoverTrigger asChild>
+          <Button
+            variant={hasDocumentationFilter ? "secondary" : "outline"}
+            size="sm"
+            className="h-9 gap-2"
+          >
+            <FileCheck className="h-4 w-4" />
+            <span>{documentationLabel}</span>
+            {hasDocumentationFilter && (
+              <span
+                role="button"
+                tabIndex={0}
+                aria-label="Clear documentation filter"
+                onClick={clearDocumentationFilter}
+                onKeyDown={(e) => e.key === "Enter" && clearDocumentationFilter(e as unknown as React.MouseEvent)}
+                className="ml-1 hover:bg-muted rounded p-0.5 -mr-1 cursor-pointer"
+              >
+                <X className="h-3 w-3" />
+              </span>
+            )}
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="w-auto p-2" align="start">
+          <div className="flex flex-col gap-1" role="menu">
+            {ALL_DOCUMENTATION_STATES.map((state) => {
+              const checked = selectedDocumentationStates.includes(state);
+              const presentation = describeDocumentationState(state);
+              return (
+                <button
+                  key={state}
+                  type="button"
+                  role="menuitemcheckbox"
+                  aria-checked={checked}
+                  title={presentation.summary}
+                  onClick={() => toggleDocumentationState(state)}
+                  className={cn(
+                    "w-full text-left flex items-center gap-2 rounded px-2 py-1.5 text-sm",
+                    checked ? "bg-muted" : "hover:bg-muted/50"
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "h-4 w-4 rounded border flex items-center justify-center",
+                      checked ? "border-primary text-primary" : "border-muted-foreground/40 text-transparent"
+                    )}
+                  >
+                    <Check className="h-3 w-3" />
+                  </span>
+                  <span className="whitespace-nowrap">{documentLabel(presentation)}</span>
+                </button>
+              );
+            })}
           </div>
         </PopoverContent>
       </Popover>

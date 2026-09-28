@@ -366,6 +366,12 @@ export interface TransactionFilters {
 
   /** Filter by partner match status */
   hasPartner?: boolean;
+
+  /**
+   * Documentation States to show (#249). `undefined` means all of them (the
+   * default); an empty array shows nothing.
+   */
+  documentationStates?: DocumentationState[];
 }
 
 export type TransactionSortField = "date" | "name" | "amount" | "partner";
