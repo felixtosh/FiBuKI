@@ -734,7 +734,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "survivor). CANNOT BE UNDONE: requires confirm: true. Partners holding different VAT IDs " +
       "are refused unless you ALSO pass confirmVatIdConflict: true, a separate claim that the " +
       "differing VAT IDs really are one business. Refused: merging into a Merged Partner, and " +
-      "merging away a bank account's own partner. Nothing is re-matched: " +
+      "merging a bank account's own partner in either role, loser or survivor. Nothing is re-matched: " +
       "`rematchPreview.newlyMatchable` counts unmatched transactions the survivor would now hit, " +
       "and partner_rematch_report is the reviewed path to act on them. Returns mergedPartnerIds, " +
       "aliasesAdded, repointed counts (transactions, files, invoices, ...), conflicts and " +

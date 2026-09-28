@@ -83,8 +83,10 @@
  *   Partner, `updateSource` rewrites its name, aliases and IBANs wholesale,
  *   `deleteSource` hard-deletes it, and any marker shows the Partner as "From
  *   Identity" — so carrying it would hand an ordinary survivor to all four.
- *   Left on the tombstone, the marker would stop reconciliation silently. The
- *   source's Partner can still be the survivor; a Merged Partner that already
+ *   Left on the tombstone, the marker would stop reconciliation silently. Nor
+ *   is it the survivor (#410): the same `updateSource` rewrite would drop the
+ *   aliases and IBANs the Merge folded in, and `deleteSource` would take the
+ *   references moved onto it from other sources. A Merged Partner that already
  *   carries a marker is not refused, because nothing points at it any more.
  * - It does not rewrite `partnerSuggestions` on Transactions or Files, or the
  *   `searchSuggestions.partnerId` cache key. Firestore cannot query an array of
@@ -966,23 +968,34 @@ export async function mergeUserPartnersInternal(
     );
   }
 
-  // A source's Partner cannot be a loser: the marker reconciliation keys on
-  // has nowhere safe to go (see the header, #344). A Merged Partner's marker
-  // governs nothing, since its references already moved.
-  for (const loser of loserDocs) {
-    const loserDoc: Doc = loser;
-    const marker = text(loserDoc.identitySourceField);
-    if (!marker.startsWith(SOURCE_MARKER_PREFIX) || !isEmptyValue(loserDoc.mergedInto)) continue;
+  // A source's Partner takes no part in a Merge (see the header). As a loser,
+  // the marker reconciliation keys on has nowhere safe to go (#344). As the
+  // survivor, the source owns its identity and its lifetime: `updateSource`
+  // rewrites its name, aliases and IBANs wholesale and `deleteSource` removes
+  // it, so what the Merge folded in would not last (#410). A Merged Partner's
+  // marker governs nothing, since its references already moved.
+  const participants: Array<{ id: string; doc: Doc; role: "survivor" | "loser" }> = [
+    { id: survivorId, doc: survivorDoc, role: "survivor" },
+    ...loserDocs.map((loser) => ({ id: loser.id, doc: loser as Doc, role: "loser" as const })),
+  ];
+  for (const { id, doc, role } of participants) {
+    const marker = text(doc.identitySourceField);
+    if (!marker.startsWith(SOURCE_MARKER_PREFIX) || !isEmptyValue(doc.mergedInto)) continue;
     const sourceId = marker.slice(SOURCE_MARKER_PREFIX.length);
     const sourceSnapshot = await db.collection(SOURCES).doc(sourceId).get();
     const sourceName = sourceSnapshot.exists ? text(sourceSnapshot.data()?.name) : "";
     const named = sourceName ? `"${sourceName}" (${sourceId})` : sourceId;
+    const why =
+      role === "loser"
+        ? "card-to-bank reconciliation for that source keys on it, so it cannot be merged away."
+        : "that source rewrites its name, aliases and IBANs on every edit and removes it " +
+          "when the source is deleted, so it cannot be a survivor.";
     throw new HttpsError(
       "failed-precondition",
-      `Partner ${loser.id} is the Partner of source ${named}, and card-to-bank ` +
-        "reconciliation for that source keys on it, so it cannot be merged away. " +
-        "Merge into it instead, with it as the survivor.",
-      { partnerId: loser.id, sourceId }
+      `Partner ${id} is the Partner of source ${named}, and ${why} ` +
+        "A source's Partner takes no part in a Merge: assign the Transactions and Files " +
+        "to the Partner you want instead.",
+      { partnerId: id, sourceId, role }
     );
   }
 

@@ -19,6 +19,35 @@ interface DeleteSourceResponse {
 const BATCH_SIZE = 500;
 
 /**
+ * Whether any of the user's records still point at a Partner: the pointers a
+ * Partner Merge repoints (`mergeUserPartners.ts`), plus Merged Partners whose
+ * `mergedInto` names it.
+ */
+async function isPartnerReferenced(
+  dbRef: FirebaseFirestore.Firestore,
+  userId: string,
+  partnerId: string
+): Promise<boolean> {
+  const pointers: Array<[string, string]> = [
+    ["transactions", "partnerId"],
+    ["files", "partnerId"],
+    ["invoiceFetchQueue", "partnerId"],
+    ["invoices", "recipient.partnerId"],
+    ["partners", "mergedInto"],
+  ];
+  for (const [collection, field] of pointers) {
+    const snapshot = await dbRef
+      .collection(collection)
+      .where("userId", "==", userId)
+      .where(field, "==", partnerId)
+      .limit(1)
+      .get();
+    if (!snapshot.empty) return true;
+  }
+  return false;
+}
+
+/**
  * Internal implementation for deleting a source.
  * Can be called directly from MCP handlers.
  */
@@ -239,14 +268,30 @@ export async function deleteSourceInternal(
     }
   }
 
-  // 6. Delete source partner if exists
+  // 6. Delete the source partner, unless records from elsewhere point at it.
+  // This source's own Transactions are gone by now, so anything still naming
+  // the Partner came from somewhere else: a bank Transaction reconciliation
+  // assigned it, a File, an Invoice, or a Merged Partner from an earlier merge
+  // (#410). Those keep their Partner; it only loses the source marker, which
+  // named a source that no longer exists.
   if (sourceData.sourcePartnerId) {
+    const sourcePartnerId = sourceData.sourcePartnerId as string;
     try {
-      const partnerRef = dbRef.collection("partners").doc(sourceData.sourcePartnerId);
+      const partnerRef = dbRef.collection("partners").doc(sourcePartnerId);
       const partnerSnap = await partnerRef.get();
       if (partnerSnap.exists && partnerSnap.data()?.userId === userId) {
-        await partnerRef.delete();
-        console.log(`[deleteSource] Deleted source partner ${sourceData.sourcePartnerId}`);
+        if (await isPartnerReferenced(dbRef, userId, sourcePartnerId)) {
+          await partnerRef.update({
+            identitySourceField: FieldValue.delete(),
+            updatedAt: now,
+          });
+          console.log(
+            `[deleteSource] Kept source partner ${sourcePartnerId}: records outside the source point at it`
+          );
+        } else {
+          await partnerRef.delete();
+          console.log(`[deleteSource] Deleted source partner ${sourcePartnerId}`);
+        }
       }
     } catch (err) {
       console.warn(`[deleteSource] Failed to delete source partner:`, err);

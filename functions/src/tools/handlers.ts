@@ -2461,7 +2461,7 @@ export async function updatePartnerTool(userId: string, args: Record<string, unk
 /**
  * Partner Merge over the tool surface (#264): the same operation as the
  * Partners page (`mergeUserPartnersInternal`), so the same refusals: no merge
- * into a Merged Partner, no source's Partner merged away, and differing VAT
+ * into a Merged Partner, no source's Partner as loser or survivor, and differing VAT
  * IDs only with `confirmVatIdConflict`. The tool adds one refusal of its own:
  * a Merge cannot be undone, so it runs only with `confirm: true`, and the VAT
  * affirmation is a separate field so a habitual `confirm` never carries it.
