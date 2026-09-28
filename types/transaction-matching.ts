@@ -70,6 +70,18 @@ export interface TransactionMatchResult {
   matchSources: TransactionMatchSource[];
   breakdown: ScoreBreakdown;
   preview: TransactionMatchPreview;
+  /**
+   * What the Files already on this Transaction explain, as the scorer read it
+   * (#239, #243). Absent when no connected File explains anything.
+   */
+  coverage?: TransactionMatchCoverage;
+}
+
+export interface TransactionMatchCoverage {
+  documentedAmount: number;
+  remainder: number;
+  isCovered: boolean;
+  againstRemainder: boolean;
 }
 
 export interface FindTransactionMatchesResponse {

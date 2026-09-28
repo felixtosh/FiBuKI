@@ -9,6 +9,7 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { readDismissedTransactionIds } from "./dismissedTransactions";
 import { loadDocumentedAmounts } from "./documentedAmounts";
+import { deriveCoverage } from "./coverage";
 import { matchesTransactionSearch } from "./transactionSearch";
 import {
   SCORING_CONFIG,
@@ -61,6 +62,20 @@ interface TransactionMatchResult {
     name: string;
     partner: string | null;
   };
+  /**
+   * What the Files already on this Transaction explain, as the scorer read it
+   * (#239, #243). The connect overlay prints the Remainder from here so the
+   * row shows the figure this pair was scored against, not a second sum.
+   * Absent when no connected File explains anything.
+   */
+  coverage?: MatchCoverage;
+}
+
+interface MatchCoverage {
+  documentedAmount: number;
+  remainder: number;
+  isCovered: boolean;
+  againstRemainder: boolean;
 }
 
 interface FindTransactionMatchesResponse {
@@ -69,6 +84,23 @@ interface FindTransactionMatchesResponse {
 }
 
 // === Helper Functions ===
+
+/** The scorer's own Coverage for one candidate, for the row to print (#243). */
+function coverageOf(
+  transactionAmount: number,
+  documentedAmount: number | undefined
+): { coverage?: MatchCoverage } {
+  if (!documentedAmount) return {};
+  const c = deriveCoverage(transactionAmount, documentedAmount);
+  return {
+    coverage: {
+      documentedAmount: c.documentedAmount,
+      remainder: c.remainder,
+      isCovered: c.isCovered,
+      againstRemainder: c.againstRemainder,
+    },
+  };
+}
 
 /**
  * Convert Firestore Timestamp to ISO string for JSON serialization
@@ -271,6 +303,7 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
           name: m.preview.name,
           partner: m.preview.partner,
         },
+        ...coverageOf(m.preview.amount, documentedAmounts.get(m.transactionId)),
       }));
 
     const elapsed = Date.now() - t0;
