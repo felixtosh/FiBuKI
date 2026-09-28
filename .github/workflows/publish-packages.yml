@@ -68,6 +68,9 @@ jobs:
     needs: [detect-changes]
     env:
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # setup-node v7 no longer exports a placeholder NODE_AUTH_TOKEN, and the
+      # .npmrc it writes references it, so the `npm view` probe needs it set too.
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
     if: >-
       always() && (
         (github.event_name == 'push' && needs.detect-changes.outputs.cli_changed == 'true')
@@ -83,7 +86,7 @@ jobs:
 
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           registry-url: "https://registry.npmjs.org"
@@ -131,6 +134,9 @@ jobs:
     needs: [detect-changes]
     env:
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # setup-node v7 no longer exports a placeholder NODE_AUTH_TOKEN, and the
+      # .npmrc it writes references it, so the `npm view` probe needs it set too.
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_TOKEN }}
     if: >-
       always() && (
@@ -149,7 +155,7 @@ jobs:
 
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           registry-url: "https://registry.npmjs.org"
