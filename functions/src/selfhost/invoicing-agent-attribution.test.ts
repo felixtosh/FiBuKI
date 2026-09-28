@@ -235,6 +235,33 @@ describe("manual correction does not teach the agent's name as a supplier alias"
     await correctByHand("f-variant", "AL&FA Taxi KG (Wien)");
     expect(await aliases()).toEqual(["AL&FA Taxi KG (Wien)"]);
   });
+
+  // #213: the tool surface writes the same manual assignment, so the same
+  // trigger guard has to hold for it. This is the #156 repair path.
+  it("refuses the agent's name when the correction comes over assign_partner_to_file", async () => {
+    await seedPartner();
+    await seedFile("f-tool", {
+      extractionComplete: true,
+      partnerMatchComplete: true,
+      partnerId: null,
+      extractedPartner: AGENT.name,
+      extractedInvoicingAgent: { ...AGENT },
+      transactionIds: [],
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    });
+
+    const { handleTool } = await import("../tools/handlers");
+    await handleTool(USER, "assign_partner_to_file", { fileId: "f-tool", partnerId: "p-supplier" });
+    await drainTriggers();
+    await new Promise((r) => setTimeout(r, 100));
+
+    expect(await fileDoc("f-tool")).toMatchObject({
+      partnerId: "p-supplier",
+      partnerMatchedBy: "manual",
+    });
+    expect(await aliases()).toEqual([]);
+  });
 });
 
 describe("automatic matching does not fold the agent's name into a Partner (#265)", () => {

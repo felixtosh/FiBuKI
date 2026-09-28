@@ -261,6 +261,14 @@ export async function handleTool(
       return assignPartnerToTx(userId, args);
     case "remove_partner_from_transaction":
       return removePartnerFromTx(userId, args);
+    case "assign_partner_to_file":
+      return assignPartnerToFileTool(userId, args);
+    case "remove_partner_from_file":
+      return removePartnerFromFileTool(userId, args);
+    case "update_partner":
+      return updatePartnerTool(userId, args);
+    case "merge_partners":
+      return mergePartnersTool(userId, args);
     case "partner_rematch_report":
       return partnerRematchReport(userId, args);
     case "rematch_assigned_partners":
@@ -1727,9 +1735,24 @@ export async function getPartner(userId: string, partnerId: string) {
     throw new Error("Partner not found");
   }
   const data = doc.data()!;
+  // A Merged Partner reads back as itself, never as a silent redirect, and
+  // names its survivor so a caller holding the stale id can update (#264).
+  let survivor: { id: string; name: string | null } | undefined;
+  if (data.mergedInto) {
+    const survivorDoc = await db.collection("partners").doc(data.mergedInto as string).get();
+    survivor = {
+      id: data.mergedInto as string,
+      name: survivorDoc.exists ? ((survivorDoc.data()?.name as string) ?? null) : null,
+    };
+  }
   // The stored cycle carries Timestamps, which do not survive JSON — the
   // billing cycle goes out in the same shape both partner tools return.
-  return { id: doc.id, ...data, billingCycle: toApiBillingCycle(data.billingCycle) };
+  return {
+    id: doc.id,
+    ...data,
+    billingCycle: toApiBillingCycle(data.billingCycle),
+    ...(survivor ? { survivor } : {}),
+  };
 }
 
 export async function createPartner(userId: string, args: Record<string, unknown>) {
@@ -2263,6 +2286,205 @@ export async function removePartnerFromTx(userId: string, args: Record<string, u
   });
 
   return { success: true, transactionId };
+}
+
+// ============================================================================
+// Partner on a File, Partner edit, Partner Merge (#213, #264)
+// ============================================================================
+
+/**
+ * A Partner id an agent may write onto a record: owned and not merged away.
+ * A Merged Partner is refused naming its survivor, so a caller holding a stale
+ * id corrects itself once instead of attaching records to a tombstone nothing
+ * lists (ADR-0005).
+ */
+async function loadWritablePartner(userId: string, partnerId: string) {
+  const partnerDoc = await db.collection("partners").doc(partnerId).get();
+  if (!partnerDoc.exists || partnerDoc.data()?.userId !== userId) {
+    throw new Error("Partner not found");
+  }
+  const mergedInto = partnerDoc.data()!.mergedInto as string | undefined;
+  if (mergedInto) {
+    throw new Error(
+      `Partner ${partnerId} is a Merged Partner (merged into ${mergedInto}); use ${mergedInto} instead`
+    );
+  }
+  return partnerDoc;
+}
+
+/**
+ * Attach a Partner to a File the way a person does in the UI
+ * (`assignPartnerToFile` in lib/operations/file-ops.ts): `partnerMatchedBy:
+ * "manual"`, confidence 100, and the File cleared from the Partner's
+ * `manualFileRemovals` if a person had pulled it off earlier. The File write
+ * goes through `updateFileInternal`, the same contract as the `updateFile`
+ * callable, which also cancels running partner workers for the File.
+ *
+ * Alias learning is not done here. `matchFilePartner` learns the File's
+ * extracted name on any manual assignment, and refuses the name the
+ * Extraction recorded as the Invoicing Agent (`learnPartnerAlias`, #156,
+ * #265), so this path inherits that guard rather than re-deciding it.
+ */
+export async function assignPartnerToFileTool(userId: string, args: Record<string, unknown>) {
+  const fileId = args.fileId as string;
+  const partnerId = args.partnerId as string;
+  if (!fileId) throw new Error("fileId is required");
+  if (!partnerId) throw new Error("partnerId is required");
+
+  const fileDoc = await db.collection("files").doc(fileId).get();
+  if (!fileDoc.exists || fileDoc.data()?.userId !== userId) {
+    throw new Error("File not found");
+  }
+
+  const partnerDoc = await loadWritablePartner(userId, partnerId);
+
+  const { updateFileInternal } = await import("../files/updateFile");
+  await updateFileInternal(db, userId, {
+    fileId,
+    data: {
+      partnerId,
+      partnerType: "user",
+      partnerMatchedBy: "manual",
+      partnerMatchConfidence: 100,
+    },
+  });
+
+  // A person changing their mind about a removal: the pair is no longer a
+  // false positive.
+  const removals = (partnerDoc.data()!.manualFileRemovals || []) as Array<{ fileId?: string }>;
+  if (removals.some((r) => r.fileId === fileId)) {
+    await partnerDoc.ref.update({
+      manualFileRemovals: removals.filter((r) => r.fileId !== fileId),
+      updatedAt: Timestamp.now(),
+    });
+  }
+
+  return {
+    success: true,
+    fileId,
+    partnerId,
+    partnerName: (partnerDoc.data()!.name as string) || null,
+    previousPartnerId: (fileDoc.data()!.partnerId as string | undefined) ?? null,
+  };
+}
+
+/**
+ * Detach a File's Partner the way the UI does (`removePartnerFromFile` in
+ * lib/operations/file-ops.ts). A system-recommended assignment (`auto` or
+ * `suggestion`) is recorded on the Partner's `manualFileRemovals`, so the
+ * matcher learns the pair was wrong; a manual one is simply cleared.
+ */
+export async function removePartnerFromFileTool(userId: string, args: Record<string, unknown>) {
+  const fileId = args.fileId as string;
+  if (!fileId) throw new Error("fileId is required");
+
+  const fileDoc = await db.collection("files").doc(fileId).get();
+  if (!fileDoc.exists || fileDoc.data()?.userId !== userId) {
+    throw new Error("File not found");
+  }
+  const fileData = fileDoc.data()!;
+  const previousPartnerId = (fileData.partnerId as string | undefined) ?? null;
+  const matchedBy = fileData.partnerMatchedBy as string | undefined;
+
+  const { updateFileInternal } = await import("../files/updateFile");
+  await updateFileInternal(db, userId, {
+    fileId,
+    data: {
+      partnerId: null,
+      partnerType: null,
+      partnerMatchedBy: null,
+      partnerMatchConfidence: null,
+    },
+  });
+
+  let recordedAsFalsePositive = false;
+  if (previousPartnerId && (matchedBy === "auto" || matchedBy === "suggestion")) {
+    const partnerRef = db.collection("partners").doc(previousPartnerId);
+    const partnerSnap = await partnerRef.get();
+    if (partnerSnap.exists && partnerSnap.data()?.userId === userId) {
+      const removals = (partnerSnap.data()!.manualFileRemovals || []) as Array<{ fileId?: string }>;
+      if (!removals.some((r) => r.fileId === fileId)) {
+        await partnerRef.update({
+          manualFileRemovals: FieldValue.arrayUnion({
+            fileId,
+            removedAt: Timestamp.now(),
+            extractedPartner: fileData.extractedPartner || null,
+            fileName: fileData.fileName,
+          }),
+          updatedAt: Timestamp.now(),
+        });
+      }
+      recordedAsFalsePositive = true;
+    }
+  }
+
+  return { success: true, fileId, previousPartnerId, recordedAsFalsePositive };
+}
+
+/** The fields `update_partner` writes: `create_partner`'s set, nothing else. */
+const UPDATE_PARTNER_FIELDS = ["name", "aliases", "vatId", "ibans", "website", "country"] as const;
+
+/**
+ * Edit a Partner through `updateUserPartnerInternal`, the Partners page's own
+ * edit. `aliases` and `ibans` replace the stored arrays wholesale: an agent
+ * reads them with get_partner or list_partners, changes them, writes them back.
+ */
+export async function updatePartnerTool(userId: string, args: Record<string, unknown>) {
+  const partnerId = args.partnerId as string;
+  if (!partnerId) throw new Error("partnerId is required");
+
+  const data: Record<string, unknown> = {};
+  for (const field of UPDATE_PARTNER_FIELDS) {
+    if (args[field] !== undefined) data[field] = args[field];
+  }
+  if (Object.keys(data).length === 0) {
+    throw new Error(`Nothing to update: pass at least one of ${UPDATE_PARTNER_FIELDS.join(", ")}`);
+  }
+  if (data.name !== undefined && (typeof data.name !== "string" || !data.name.trim())) {
+    throw new Error("name must be a non-empty string");
+  }
+  for (const field of ["aliases", "ibans"] as const) {
+    const value = data[field];
+    if (value !== undefined && (!Array.isArray(value) || value.some((v) => typeof v !== "string"))) {
+      throw new Error(`${field} must be an array of strings (it replaces the stored list)`);
+    }
+  }
+
+  await loadWritablePartner(userId, partnerId);
+
+  const { updateUserPartnerInternal } = await import("../partners/updateUserPartner");
+  await updateUserPartnerInternal(db, userId, { partnerId, data });
+
+  return getPartner(userId, partnerId);
+}
+
+/**
+ * Partner Merge over the tool surface (#264): the same operation as the
+ * Partners page (`mergeUserPartnersInternal`), so the same refusals: no merge
+ * into a Merged Partner, no source's Partner merged away, and differing VAT
+ * IDs only with `confirmVatIdConflict`. The tool adds one refusal of its own:
+ * a Merge cannot be undone, so it runs only with `confirm: true`, and the VAT
+ * affirmation is a separate field so a habitual `confirm` never carries it.
+ */
+export async function mergePartnersTool(userId: string, args: Record<string, unknown>) {
+  if (args.confirm !== true) {
+    throw new Error(
+      "A Partner Merge cannot be undone. Pass confirm: true to merge the losers into the survivor."
+    );
+  }
+  if (args.confirmVatIdConflict !== undefined && typeof args.confirmVatIdConflict !== "boolean") {
+    throw new Error("confirmVatIdConflict must be a boolean");
+  }
+  if (!Array.isArray(args.loserIds) || args.loserIds.some((id) => typeof id !== "string")) {
+    throw new Error("loserIds must be an array of partner ids");
+  }
+
+  const { mergeUserPartnersInternal } = await import("../partners/mergeUserPartners");
+  return mergeUserPartnersInternal(db, userId, {
+    survivorId: args.survivorId as string,
+    loserIds: args.loserIds as string[],
+    confirmVatIdConflict: args.confirmVatIdConflict === true,
+  });
 }
 
 /**

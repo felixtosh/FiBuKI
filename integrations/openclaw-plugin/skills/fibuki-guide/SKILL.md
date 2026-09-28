@@ -62,7 +62,7 @@ Start by calling `get_automation_status` to see the user's plan, available tools
 - Search and filter transactions (`list_transactions`, `get_transaction`, `update_transaction`)
 - Find transactions needing receipts (`list_transactions_needing_files`)
 - Import transactions (`import_transactions`)
-- Manage partners (`list_partners`, `create_partner`, `assign_partner_to_transaction`, `remove_partner_from_transaction`)
+- Manage partners (`list_partners`, `create_partner`, `update_partner`, `merge_partners`, `assign_partner_to_transaction`, `remove_partner_from_transaction`, `assign_partner_to_file`, `remove_partner_from_file`)
 - Categorize expenses (`list_no_receipt_categories`, `assign_no_receipt_category`, `remove_no_receipt_category`)
 - Check plan and usage (`get_automation_status`)
 

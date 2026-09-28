@@ -587,7 +587,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     description:
       "Get partner details by ID, including `billingCycle`: the effective cycle plus the learned " +
       "and declared halves it was resolved from, one entry per recurrence (a partner can bill in " +
-      "more than one amount band).",
+      "more than one amount band). A partner merged away by merge_partners reads back as itself " +
+      "with isActive false, `mergedInto` and `survivor` ({ id, name }): switch to the survivor's id.",
     inputSchema: {
       type: "object",
       properties: { partnerId: { type: "string", description: "The partner ID" } },
@@ -693,6 +694,75 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    name: "update_partner",
+    description:
+      "Edit a user partner: the same fields create_partner takes. Only the fields you pass are " +
+      "written. `aliases` and `ibans` REPLACE the stored lists wholesale, so read the partner " +
+      "first (get_partner or list_partners), change the list, and write the whole list back; " +
+      "pass [] to clear it. Use this to strip a wrong alias, e.g. an Invoicing Agent's name a " +
+      "partner learned by mistake. To fold a duplicate partner into another, use merge_partners, " +
+      "not an alias copy. Returns the partner as get_partner does.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        partnerId: { type: "string", description: "The partner ID" },
+        name: { type: "string", description: "Partner/company name" },
+        aliases: {
+          type: "array",
+          items: { type: "string" },
+          description: "Alternative names. Replaces the stored list.",
+        },
+        vatId: { type: "string", description: "VAT ID (e.g. ATU12345678); empty string clears it" },
+        ibans: {
+          type: "array",
+          items: { type: "string" },
+          description: "Partner IBANs. Replaces the stored list.",
+        },
+        website: { type: "string", description: "Partner website; empty string clears it" },
+        country: { type: "string", description: "Country code (e.g. AT, DE)" },
+      },
+      required: ["partnerId"],
+    },
+  },
+  {
+    name: "merge_partners",
+    description:
+      "Merge duplicate partners: fold one or more losing partners into a named survivor. The " +
+      "same operation as the Partners page. Transactions, files and invoices pointing at a loser " +
+      "move to the survivor; each loser's name and aliases join the survivor's aliases; the " +
+      "losers become Merged Partners (inactive, gone from list_partners, get_partner names the " +
+      "survivor). CANNOT BE UNDONE: requires confirm: true. Partners holding different VAT IDs " +
+      "are refused unless you ALSO pass confirmVatIdConflict: true, a separate claim that the " +
+      "differing VAT IDs really are one business. Refused: merging into a Merged Partner, and " +
+      "merging away a bank account's own partner. Nothing is re-matched: " +
+      "`rematchPreview.newlyMatchable` counts unmatched transactions the survivor would now hit, " +
+      "and partner_rematch_report is the reviewed path to act on them. Returns mergedPartnerIds, " +
+      "aliasesAdded, repointed counts (transactions, files, invoices, ...), conflicts and " +
+      "rematchPreview.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        survivorId: { type: "string", description: "The partner that lives" },
+        loserIds: {
+          type: "array",
+          items: { type: "string" },
+          description: "The partners merged into the survivor (at most 50)",
+        },
+        confirm: {
+          type: "boolean",
+          description: "Must be true: a merge cannot be undone",
+        },
+        confirmVatIdConflict: {
+          type: "boolean",
+          description:
+            "Set true only when the partners hold different VAT IDs and you have established they " +
+            "are still the same business (usually one VAT ID is a wrong extraction)",
+        },
+      },
+      required: ["survivorId", "loserIds", "confirm"],
+    },
+  },
+  {
     name: "assign_partner_to_transaction",
     description: "Assign a partner to a transaction for categorization",
     inputSchema: {
@@ -713,6 +783,37 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         transactionId: { type: "string", description: "The transaction ID" },
       },
       required: ["transactionId"],
+    },
+  },
+  {
+    name: "assign_partner_to_file",
+    description:
+      "Assign a partner to a file (receipt/invoice), as a person does in the UI: recorded as a " +
+      "manual assignment (partnerMatchedBy: \"manual\"), which automatic partner matching never " +
+      "overwrites. Replaces any partner the file had. The partner reaches connected transactions " +
+      "the same way a UI assignment does. The file's extracted name may be learned as an alias of " +
+      "the partner, except a name the extraction recorded as the Invoicing Agent.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fileId: { type: "string", description: "The file ID" },
+        partnerId: { type: "string", description: "The partner ID" },
+      },
+      required: ["fileId", "partnerId"],
+    },
+  },
+  {
+    name: "remove_partner_from_file",
+    description:
+      "Remove the partner assignment from a file. If the partner had been assigned automatically " +
+      "(auto or suggestion), the pair is recorded as a false positive on the partner so matching " +
+      "does not suggest it again; a manual assignment is simply cleared.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fileId: { type: "string", description: "The file ID" },
+      },
+      required: ["fileId"],
     },
   },
   {
