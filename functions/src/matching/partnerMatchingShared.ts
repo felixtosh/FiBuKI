@@ -336,8 +336,20 @@ export async function processPartnerMatchesForTransactions(
   };
 }
 
+/**
+ * Who the applied writes were for, so their Partners' Files can be re-scored
+ * (#139). The assigned Partners are read off the writes themselves;
+ * `extraPartnerIds` carries the ones the writes cannot name — the previous
+ * Partner of a reassign or clear.
+ */
+export interface PartnerFileRescoreContext {
+  userId: string;
+  extraPartnerIds?: Iterable<string>;
+}
+
 export async function applyPartnerMatchUpdates(
-  writeOperations: PartnerMatchWriteOperation[]
+  writeOperations: PartnerMatchWriteOperation[],
+  rescore?: PartnerFileRescoreContext
 ): Promise<void> {
   if (writeOperations.length === 0) {
     return;
@@ -359,6 +371,35 @@ export async function applyPartnerMatchUpdates(
 
   if (batchCount > 0) {
     await batch.commit();
+  }
+
+  if (!rescore) return;
+
+  // #139: a Transaction's Partner just changed, so the stored
+  // `transactionSuggestions` of that Partner's unconnected Files are stale —
+  // the pair now scores partner points the snapshot never saw. Once per
+  // affected Partner, suggestions only, never auto-connect. Derived data, so
+  // a failure here never fails the assignments that already committed.
+  const affectedPartnerIds = new Set<string>();
+  for (const operation of writeOperations) {
+    const partnerId = operation.updates.partnerId;
+    if (typeof partnerId === "string" && partnerId) {
+      affectedPartnerIds.add(partnerId);
+    }
+  }
+  for (const partnerId of rescore.extraPartnerIds ?? []) {
+    if (partnerId) affectedPartnerIds.add(partnerId);
+  }
+  if (affectedPartnerIds.size === 0) return;
+
+  try {
+    const { rescoreUnconnectedFilesForPartners } = await import("./rescorePartnerFiles");
+    await rescoreUnconnectedFilesForPartners(db, rescore.userId, affectedPartnerIds);
+  } catch (error) {
+    console.error(
+      "[PartnerMatch] File re-score after partner updates failed (assignments are applied):",
+      error
+    );
   }
 }
 

@@ -268,6 +268,24 @@ describe("rematchAssignedPartners", () => {
     expect(partnerUpdate).not.toHaveBeenCalled();
   });
 
+  it("hands the previous partner of every applied write to the file re-score (#139)", async () => {
+    stubScan([
+      evaluation("tx1", reassignTo("p-other")),
+      evaluation("tx2", { verdict: "no_candidates", candidates: [] }),
+    ]);
+
+    await rematchAssignedPartners("u1", { dryRun: false, clearUnconfirmed: true });
+
+    const [, rescore] = applyPartnerMatchUpdates.mock.calls[0] as [
+      unknown,
+      { userId: string; extraPartnerIds: Iterable<string> }
+    ];
+    expect(rescore.userId).toBe("u1");
+    // The old side of the reassign and of the clear; the new side ("p-other")
+    // travels on the write operations themselves.
+    expect([...rescore.extraPartnerIds]).toEqual(["p-stored"]);
+  });
+
   it("localises a global preset once, however many rows match it", async () => {
     stubScan([
       evaluation("tx1", reassignTo("g-1", { wouldCreateLocalPartner: true })),
