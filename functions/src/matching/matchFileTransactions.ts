@@ -484,7 +484,7 @@ export async function runTransactionMatching(
   // Band selection happens per candidate transaction below (each charge can belong to a
   // different recurrence band, e.g. a weekly API charge vs. a monthly subscription), not once
   // here — a single upfront band would silently mis-score every candidate outside band 0.
-  const partner = await loadPartnerScoringContext(db, fileData.partnerId);
+  const partner = await loadPartnerScoringContext(db, fileData.partnerId, userId);
   if (partner.aliases.length > 0) {
     console.log(`[TxMatch] Partner aliases: [${partner.aliases.map(a => `"${a}"`).join(", ")}]`);
   }
