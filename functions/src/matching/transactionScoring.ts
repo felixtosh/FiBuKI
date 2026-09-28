@@ -22,6 +22,7 @@ import {
 } from "./coverage";
 import type { DocumentType, DocumentationState } from "../documents/types";
 import { dueDateFromAdditionalFields } from "./dueDate";
+import { stripGenericBankingTerms } from "./genericBankingTerms";
 import { toDateSafe } from "../utils/toDateSafe";
 
 // The payment total is Coverage's figure too, so it lives with Coverage (#239).
@@ -704,7 +705,14 @@ export function calculatePartnerScore(
 
   let best: { score: number; source: TransactionMatchSource | null } = { score: 0, source: null };
   for (const candidate of candidates) {
-    const result = namesMatch(candidate, txName);
+    // #235/#271: banking boilerplate is stripped from the BANK-LINE side only,
+    // per candidate — a word the candidate name itself carries stays in the
+    // line, so a Partner legitimately named by one still matches. A line that
+    // is nothing but boilerplate scores 0: an empty string must never reach
+    // the substring comparison, where it would match everything.
+    const cleanedTxName = stripGenericBankingTerms(txName, candidate);
+    if (!cleanedTxName) continue;
+    const result = namesMatch(candidate, cleanedTxName);
     if (result.match && result.score > best.score) {
       best = { score: result.score, source: "partner" };
     }

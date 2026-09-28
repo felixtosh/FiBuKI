@@ -9,6 +9,10 @@
 
 import { matchPatternFlexible } from "../utils/pattern-utils";
 import type { GenerativeModel } from "@google-cloud/vertexai";
+import {
+  GENERIC_BANKING_TERMS_DE,
+  GENERIC_BANKING_TERMS_EN,
+} from "./genericBankingTerms";
 
 // ============================================================================
 // Types
@@ -97,23 +101,9 @@ interface DryRunMatch {
   otherName?: string;
 }
 
-// ============================================================================
-// Known Generic Banking Terms (context for AI, not auto-reject)
-// ============================================================================
-
-const GENERIC_BANKING_TERMS_DE = [
-  "rechnung", "rechner", "rechn", "ueberweisung", "überweisung",
-  "lastschrift", "gutschrift", "zahlung", "bezahlung", "abbuchung",
-  "einzahlung", "auszahlung", "konto", "sepa", "mandat",
-  "referenz", "verwendung", "betrag", "iban", "bic", "nr",
-];
-
-const GENERIC_BANKING_TERMS_EN = [
-  "transfer", "payment", "card", "direct", "debit", "credit",
-  "deposit", "withdrawal", "refund", "purchase", "transaction",
-  "topup", "top-up", "top up", "payout", "cashback", "fee",
-  "interest", "exchange",
-];
+// The generic banking term lists (context for AI, not auto-reject) live in
+// genericBankingTerms.ts since #235: the scorer strips them from bank lines,
+// so prompt and scorer must read the same module or they drift.
 
 // ============================================================================
 // Formatting Helpers
