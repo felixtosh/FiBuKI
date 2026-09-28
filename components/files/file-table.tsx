@@ -156,7 +156,7 @@ export const FileTable = forwardRef<FilesDataTableHandle, FileTableProps>(
     const hasAnyFilters = searchValue || filters.extractedDateFrom || filters.extractedDateTo ||
       filters.hasConnections !== undefined || filters.amountType || filters.partnerIds?.length ||
       filters.hasPartner !== undefined ||
-      filters.extractionComplete !== undefined || filters.isNotInvoice !== undefined || filters.includeDeleted;
+      filters.extractionComplete !== undefined || filters.documentTypes !== undefined || filters.includeDeleted;
 
     const emptyState = useMemo(() => {
       // Don't show empty state while still loading - prevents flicker
