@@ -267,8 +267,8 @@ export async function POST(request: NextRequest) {
     const existingByGmail = await db
       .collection(FILES_COLLECTION)
       .where("userId", "==", userId)
-      .where("gmailMessageId", "==", messageId)
-      .where("gmailAttachmentId", "==", attachmentId)
+      .where("mailMessageId", "==", messageId)
+      .where("mailAttachmentId", "==", attachmentId)
       .limit(1)
       .get();
 
@@ -358,7 +358,7 @@ export async function POST(request: NextRequest) {
         contentDisposition: "inline",
         metadata: {
           originalName: attachment.filename,
-          gmailMessageId: messageId,
+          mailMessageId: messageId,
           gmailIntegrationId: resolvedIntegrationId,
           firebaseStorageDownloadTokens: downloadToken,
         },
@@ -390,8 +390,8 @@ export async function POST(request: NextRequest) {
       sourceType: "gmail" as const,
       sourceSearchPattern: searchPattern || null,
       sourceResultType: resultType || "gmail_attachment",
-      gmailMessageId: messageId,
-      gmailAttachmentId: attachmentId,
+      mailMessageId: messageId,
+      mailAttachmentId: attachmentId,
       gmailThreadId: messageId,
       gmailIntegrationId: resolvedIntegrationId,
       gmailIntegrationEmail: integrationEmail,

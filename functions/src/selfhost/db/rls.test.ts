@@ -228,4 +228,45 @@ describe("migration runner on a fresh client", () => {
     expect(ledger.rows.length).toBeGreaterThan(0);
     await pg.close();
   });
+
+  it("renames the Gmail-named dedup payload keys to the neutral ones (#102)", async () => {
+    const pg = new PGlite();
+    const client = makeTestClient(pg);
+    // A pre-rename database: Files and File Connections written when the
+    // dedup fields still carried Gmail's names, for every provider.
+    await client.query(`CREATE TABLE docs (
+      path TEXT PRIMARY KEY, collection_path TEXT NOT NULL, id TEXT NOT NULL, data JSONB NOT NULL)`);
+    await client.query(
+      `INSERT INTO docs VALUES
+       ('files/f1', 'files', 'f1',
+        '{"userId": "u1", "gmailMessageId": "m-1", "gmailAttachmentId": "a-1", "contentHash": "h1"}'),
+       ('files/f2', 'files', 'f2', '{"userId": "u1", "contentHash": "h2"}'),
+       ('fileConnections/fc1', 'fileConnections', 'fc1',
+        '{"userId": "u1", "fileId": "f1", "transactionId": "t1", "gmailMessageId": "m-1"}')`,
+    );
+
+    await runMigrations(client);
+
+    const tid = getTenantId();
+    // The payload keys are renamed and the dedup index moved with them: the
+    // generated columns compute off the NEUTRAL keys.
+    const f1 = await client.tx(tid, (q) =>
+      q(`SELECT data, mail_message_id, mail_attachment_id FROM files WHERE id = 'f1'`));
+    expect(f1.rows[0].mail_message_id).toBe("m-1");
+    expect(f1.rows[0].mail_attachment_id).toBe("a-1");
+    const f1data = f1.rows[0].data as Record<string, unknown>;
+    expect(f1data.mailMessageId).toBe("m-1");
+    expect(f1data.mailAttachmentId).toBe("a-1");
+    expect(f1data).not.toHaveProperty("gmailMessageId");
+    expect(f1data).not.toHaveProperty("gmailAttachmentId");
+    // A File that never had the fields is untouched — no key invented.
+    const f2 = await client.tx(tid, (q) => q(`SELECT data FROM files WHERE id = 'f2'`));
+    expect(f2.rows[0].data).toEqual({ userId: "u1", contentHash: "h2" });
+    // The connection payload rides along.
+    const fc = await client.tx(tid, (q) =>
+      q(`SELECT data FROM file_connections WHERE id = 'fc1'`));
+    expect((fc.rows[0].data as Record<string, unknown>).mailMessageId).toBe("m-1");
+    expect(fc.rows[0].data).not.toHaveProperty("gmailMessageId");
+    await pg.close();
+  });
 });

@@ -160,10 +160,10 @@ export const FLATTENED: Readonly<Record<string, FlatSpec>> = {
       // precision-search/precisionSearchQueue.ts).
       contentHash: { col: "content_hash", kind: "text" },
       sourceType: { col: "source_type", kind: "text" },
-      // Gmail attachment dedupe: (gmailMessageId, gmailAttachmentId) == pairs
-      // and gmailMessageId `in` chunks (gmail/searchGmailCallable.ts).
-      gmailMessageId: { col: "gmail_message_id", kind: "text" },
-      gmailAttachmentId: { col: "gmail_attachment_id", kind: "text" },
+      // Mail attachment dedupe (#102, provider-neutral names): == pairs
+      // and mailMessageId `in` chunks (gmail/searchGmailCallable.ts).
+      mailMessageId: { col: "mail_message_id", kind: "text" },
+      mailAttachmentId: { col: "mail_attachment_id", kind: "text" },
       // Only queried as `!= null` (extraction/bulkRetryExtraction.ts), which
       // stays JS-side today — kept here so the spec is the complete queried-
       // field inventory and a future `!=` compiler needs no new migration.
@@ -181,7 +181,7 @@ export const FLATTENED: Readonly<Record<string, FlatSpec>> = {
     indexes: [
       ["tenant_id", "user_id", "uploaded_at"],
       ["tenant_id", "user_id", "content_hash"],
-      ["tenant_id", "user_id", "gmail_message_id"],
+      ["tenant_id", "user_id", "mail_message_id"],
       ["tenant_id", "partner_id"],
     ],
   },

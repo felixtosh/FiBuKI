@@ -155,6 +155,26 @@ export async function runMigrations(client: MigrationClient): Promise<void> {
       );
       await q(`DELETE FROM docs WHERE collection_path = $1`, [collection]);
     }
+
+    // #102 Mail Provider neutral field names: rename the Gmail-named payload
+    // keys to the provider-neutral ones on rows written before the rename.
+    // Runs after the flatten backfill so rows that just moved out of `docs`
+    // are covered too. The UPDATE recomputes the STORED GENERATED
+    // mail_message_id / mail_attachment_id columns (migrations 0007/0008),
+    // so the dedup index moves with the data. Idempotent: the WHERE clause
+    // makes every later boot a no-op. (jsonb_strip_nulls drops a key whose
+    // old value was JSON null — nothing ever wrote one; the writers only
+    // stored truthy ids.)
+    for (const table of ["files", "file_connections"]) {
+      await q(
+        `UPDATE ${table}
+         SET data = (data - 'gmailMessageId' - 'gmailAttachmentId') ||
+           jsonb_strip_nulls(jsonb_build_object(
+             'mailMessageId', data->'gmailMessageId',
+             'mailAttachmentId', data->'gmailAttachmentId'))
+         WHERE data ? 'gmailMessageId' OR data ? 'gmailAttachmentId'`,
+      );
+    }
   });
   // DDL cleanup runs as the owner, outside the app-role transaction.
   if (hasSpikeRows) await query(`DROP TABLE docs_spike_v0`);

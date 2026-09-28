@@ -220,6 +220,23 @@ describe("every ingestion path writes through it", () => {
     expect(filesOnRecord()).toHaveLength(0);
   });
 
+  it("a mail-sourced File stores the neutral field names, not Gmail's (#102)", async () => {
+    await callCreateFile(
+      uiUpload({
+        sourceType: "gmail",
+        mailMessageId: "msg-neutral-1",
+        mailAttachmentId: "att-neutral-1",
+      })
+    );
+
+    const [{ data: file }] = filesOnRecord();
+    expect(file.mailMessageId).toBe("msg-neutral-1");
+    expect(file.mailAttachmentId).toBe("att-neutral-1");
+    // The Gmail-named fields are gone: the dedup index rides the neutral pair.
+    expect(file).not.toHaveProperty("gmailMessageId");
+    expect(file).not.toHaveProperty("gmailAttachmentId");
+  });
+
   it("Gmail Sync: the same attachment synced twice creates one File", async () => {
     const attachment = (messageId: string) => ({
       userId: USER,
@@ -230,8 +247,8 @@ describe("every ingestion path writes through it", () => {
       downloadUrl: "https://example.test/invoice.pdf",
       contentHash: HASH,
       sourceType: "gmail",
-      gmailMessageId: messageId,
-      gmailAttachmentId: "att-1",
+      mailMessageId: messageId,
+      mailAttachmentId: "att-1",
       extractionComplete: false,
       transactionIds: [],
     });

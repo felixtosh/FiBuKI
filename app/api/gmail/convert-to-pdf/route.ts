@@ -148,7 +148,7 @@ export async function POST(request: NextRequest) {
         contentDisposition: "inline",
         metadata: {
           originalName: filename,
-          gmailMessageId: messageId,
+          mailMessageId: messageId,
           gmailIntegrationId: content.integrationId,
           convertedFromEmail: "true",
           firebaseStorageDownloadTokens: downloadToken,
@@ -176,7 +176,7 @@ export async function POST(request: NextRequest) {
       sourceType: "gmail_html_invoice" as const,
       sourceSearchPattern: searchPattern || null,
       sourceResultType: "gmail_html_invoice",
-      gmailMessageId: messageId,
+      mailMessageId: messageId,
       gmailThreadId: threadId,
       gmailIntegrationId: integrationId,
       gmailIntegrationEmail: content.integrationEmail,

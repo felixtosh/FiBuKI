@@ -17,7 +17,7 @@ interface FileConnectionSourceInfo {
   searchPattern?: string;
   gmailIntegrationId?: string;
   gmailIntegrationEmail?: string;
-  gmailMessageId?: string;
+  mailMessageId?: string;
   gmailMessageFrom?: string;
   gmailMessageFromName?: string;
   resultType?: string;
@@ -299,8 +299,8 @@ export const connectFileToTransactionCallable = createCallable<
     if (sourceInfo?.gmailIntegrationEmail) {
       connectionData.gmailIntegrationEmail = sourceInfo.gmailIntegrationEmail;
     }
-    if (sourceInfo?.gmailMessageId) {
-      connectionData.gmailMessageId = sourceInfo.gmailMessageId;
+    if (sourceInfo?.mailMessageId) {
+      connectionData.mailMessageId = sourceInfo.mailMessageId;
     }
     if (sourceInfo?.gmailMessageFrom) {
       connectionData.gmailMessageFrom = sourceInfo.gmailMessageFrom;

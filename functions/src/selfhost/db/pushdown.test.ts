@@ -668,7 +668,7 @@ describe("pushdown differential: files shapes", () => {
     f06: { userId: "u1", extractionComplete: true }, // updatedAt missing: excluded from `<` by both paths
     f07: { userId: "u2", extractionComplete: true, partnerMatchComplete: true, partnerId: null }, // other user
     f08: { userId: "u1", extractionComplete: "yes", updatedAt: T(1500), extractionError: "parse failed" }, // wrong-typed boolean
-    f09: { userId: "u1", extractionComplete: true, gmailMessageId: "m1", gmailAttachmentId: "a1", sourceType: "gmail_html_invoice", uploadedAt: T(4000), extractedDate: T(2000), transactionMatchComplete: true },
+    f09: { userId: "u1", extractionComplete: true, mailMessageId: "m1", mailAttachmentId: "a1", sourceType: "gmail_html_invoice", uploadedAt: T(4000), extractedDate: T(2000), transactionMatchComplete: true },
     f10: { userId: "u1", extractionComplete: true, partnerMatchComplete: true, updatedAt: T(5000) }, // past the stale cutoff
   };
 

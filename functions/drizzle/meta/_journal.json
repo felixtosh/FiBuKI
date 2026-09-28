@@ -50,6 +50,20 @@
       "when": 1786872082632,
       "tag": "0006_trigger_events",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1790562085172,
+      "tag": "0007_mail_field_rename_drop",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1790562106888,
+      "tag": "0008_mail_field_rename_add",
+      "breakpoints": true
     }
   ]
 }

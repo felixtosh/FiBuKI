@@ -680,7 +680,7 @@ async function createFileFromAttachment(
       contentDisposition: "inline",
       metadata: {
         originalName: attachment.filename,
-        gmailMessageId: messageId,
+        mailMessageId: messageId,
         gmailIntegrationId: integrationId,
         firebaseStorageDownloadTokens: downloadToken,
       },
@@ -701,11 +701,11 @@ async function createFileFromAttachment(
     downloadUrl,
     contentHash,
     sourceType: "gmail",
-    gmailMessageId: messageId,
+    mailMessageId: messageId,
     gmailIntegrationId: integrationId,
     gmailIntegrationEmail: integrationEmail,
     gmailSubject: subject,
-    gmailAttachmentId: attachment.attachmentId,
+    mailAttachmentId: attachment.attachmentId,
     gmailSenderEmail: senderEmail,
     gmailSenderDomain: senderDomain,
     gmailSenderName: senderName,
@@ -807,7 +807,7 @@ async function createFileFromHtmlPdf(
       contentDisposition: "inline",
       metadata: {
         originalName: filename,
-        gmailMessageId: message.id,
+        mailMessageId: message.id,
         gmailIntegrationId: integrationId,
         convertedFromHtml: "true",
         firebaseStorageDownloadTokens: downloadToken,
@@ -829,7 +829,7 @@ async function createFileFromHtmlPdf(
     downloadUrl,
     contentHash,
     sourceType: "gmail_html_invoice",
-    gmailMessageId: message.id,
+    mailMessageId: message.id,
     gmailIntegrationId: integrationId,
     gmailIntegrationEmail: integrationEmail,
     gmailSubject: subject,
@@ -1426,8 +1426,8 @@ async function executeEmailAttachmentStrategy(
                 const existingFileQuery = await db
                   .collection("files")
                   .where("userId", "==", userId)
-                  .where("gmailMessageId", "==", messageId)
-                  .where("gmailAttachmentId", "==", attachment.attachmentId)
+                  .where("mailMessageId", "==", messageId)
+                  .where("mailAttachmentId", "==", attachment.attachmentId)
                   .limit(1)
                   .get();
 
@@ -1878,7 +1878,7 @@ async function executeEmailInvoiceStrategy(
                 const existingFile = await db
                   .collection("files")
                   .where("userId", "==", userId)
-                  .where("gmailMessageId", "==", messageId)
+                  .where("mailMessageId", "==", messageId)
                   .where("sourceType", "==", "gmail_html_invoice")
                   .limit(1)
                   .get();

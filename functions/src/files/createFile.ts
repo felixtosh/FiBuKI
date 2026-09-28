@@ -29,11 +29,11 @@ interface CreateFileRequest {
     sourceRunId?: string;
     sourceCollectorId?: string;
     // Gmail source
-    gmailMessageId?: string;
+    mailMessageId?: string;
     gmailIntegrationId?: string;
     gmailIntegrationEmail?: string;
     gmailSubject?: string;
-    gmailAttachmentId?: string;
+    mailAttachmentId?: string;
     gmailSenderEmail?: string;
     gmailSenderDomain?: string;
     gmailSenderName?: string;
@@ -94,11 +94,11 @@ export const createFileCallable = createCallable<
     if (data.sourceDomain) newFile.sourceDomain = data.sourceDomain;
     if (data.sourceRunId) newFile.sourceRunId = data.sourceRunId;
     if (data.sourceCollectorId) newFile.sourceCollectorId = data.sourceCollectorId;
-    if (data.gmailMessageId) newFile.gmailMessageId = data.gmailMessageId;
+    if (data.mailMessageId) newFile.mailMessageId = data.mailMessageId;
     if (data.gmailIntegrationId) newFile.gmailIntegrationId = data.gmailIntegrationId;
     if (data.gmailIntegrationEmail) newFile.gmailIntegrationEmail = data.gmailIntegrationEmail;
     if (data.gmailSubject) newFile.gmailSubject = data.gmailSubject;
-    if (data.gmailAttachmentId) newFile.gmailAttachmentId = data.gmailAttachmentId;
+    if (data.mailAttachmentId) newFile.mailAttachmentId = data.mailAttachmentId;
     if (data.gmailSenderEmail) newFile.gmailSenderEmail = data.gmailSenderEmail;
     if (data.gmailSenderDomain) newFile.gmailSenderDomain = data.gmailSenderDomain;
     if (data.gmailSenderName) newFile.gmailSenderName = data.gmailSenderName;
