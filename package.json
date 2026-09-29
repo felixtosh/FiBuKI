@@ -37,7 +37,7 @@
     "check:corpus-anchors": "node scripts/check-corpus-anchors.js"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^3.0.85",
+    "@ai-sdk/anthropic": "^4.0.65",
     "@ai-sdk/google": "^3.0.83",
     "@ai-sdk/langchain": "^2.0.216",
     "@ai-sdk/react": "^3.0.210",
