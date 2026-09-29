@@ -310,6 +310,8 @@ export async function handleTool(
       return duplicateInvoice(userId, args);
     case "cancel_invoice":
       return cancelInvoice(userId, args);
+    case "undo_issue_invoice":
+      return undoIssueInvoice(userId, args);
 
     // Status
     case "get_automation_status":
@@ -3082,6 +3084,14 @@ export async function updateInvoice(userId: string, args: Record<string, unknown
     patch: args.patch as Record<string, unknown>,
   });
   return { invoiceId: result.invoiceId, status: result.status };
+}
+
+export async function undoIssueInvoice(userId: string, args: Record<string, unknown>) {
+  const { performUndoIssueInvoice } = await import("../invoicing/undoIssueInvoice");
+  const result = await performUndoIssueInvoice(db, userId, {
+    invoiceId: args.invoiceId as string,
+  });
+  return { invoiceId: result.invoiceId, status: result.status, numberSeq: result.numberSeq };
 }
 
 export async function issueInvoice(userId: string, args: Record<string, unknown>) {

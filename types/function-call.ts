@@ -119,6 +119,7 @@ export type CloudFunctionName =
   | "regenerateInvoicePdf"
   | "duplicateInvoice"
   | "cancelInvoice"
+  | "undoIssueInvoice"
   | "deleteInvoice"
   | "createInvoiceShareLink"
   | "revokeInvoiceShareLink"

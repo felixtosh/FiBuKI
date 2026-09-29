@@ -64,3 +64,20 @@ The whole rule:
   the UI is where someone is most likely to reach for the wrong one of the two.
 - Hard delete stops being a thing the word "delete" can mean anywhere in the UI copy, the
   API or the tool descriptions. The glossary lists it under _Avoid_.
+
+## Exception: un-issuing a misclicked invoice (#272)
+
+One path destroys a generated invoice document, and it is not a delete: **undo issue**
+(`undoIssueInvoice`, MCP `undo_issue_invoice`) returns an invoice to an editable draft and
+destroys the PDF the issue produced. It is allowed only while nobody outside can hold a
+copy and taking the number back leaves the § 11 UStG sequence gapless:
+
+- the invoice is `issued`, never sent and never paid (its document is connected to no
+  Transaction);
+- no share link of it was ever opened, revoked links included;
+- it was issued in the current year;
+- no invoice with a higher number was issued in that year. Drafts do not count, since they
+  hold no frozen number.
+
+The draft keeps its number, so issuing it again gives the same one. Every other case is a
+Storno through `cancel_invoice`. Decided by Felix on 2026-09-28.

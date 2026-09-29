@@ -29,6 +29,7 @@ import {
   InvoiceIssuerSnapshot,
   InvoiceRecipientSnapshot,
 } from "./types";
+import { draftFileStubFields, draftPlaceholderNumber } from "./buildInvoiceFileFields";
 
 function buildBlankIssuerSnapshot(): InvoiceIssuerSnapshot {
   return { entityId: "", name: "", iban: "" };
@@ -69,10 +70,6 @@ export interface CreateInvoiceResponse {
   invoiceId: string;
   /** The stub TaxFile id created alongside the draft invoice. */
   fileId: string;
-}
-
-function shortRandomId(): string {
-  return Math.random().toString(36).slice(2, 10).toUpperCase();
 }
 
 function genLineItemId(): string {
@@ -234,7 +231,7 @@ export async function performCreateInvoice(
 
   const invoiceData: Omit<Invoice, "id"> = {
     userId,
-    number: `DRAFT-${shortRandomId()}`,
+    number: draftPlaceholderNumber(),
     status: "draft",
     numberSeq,
     issuer,
@@ -257,26 +254,9 @@ export async function performCreateInvoice(
   }
 
   // Stub TaxFile so the draft invoice appears as a row in the files list.
-  // The PDF doesn't exist yet (storagePath/downloadUrl empty); issueInvoice
-  // updates this same doc in place once the PDF is rendered.
-  //
-  // extractionComplete=true + isFibukiGenerated=true short-circuits the
-  // extractFileData onCreate trigger (see functions/src/extraction/extractFileData.ts).
   const fileData: Record<string, unknown> = {
     userId,
-    fileName: "Rechnungsentwurf",
-    fileType: "application/pdf",
-    fileSize: 0,
-    storagePath: "",
-    downloadUrl: "",
-    extractionComplete: true,
-    classificationComplete: true,
-    isNotInvoice: false,
-    isFibukiGenerated: true,
-    sourceType: "fibuki_invoice",
-    invoiceId: docRef.id,
-    invoiceDirection: "outgoing",
-    matchedUserAccount: "issuer",
+    ...draftFileStubFields(docRef.id),
     transactionIds: [],
     uploadedAt: now,
     createdAt: now,

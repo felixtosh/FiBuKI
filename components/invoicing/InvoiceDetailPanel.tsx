@@ -18,6 +18,7 @@ import {
   Send,
   Share2,
   Trash2,
+  Undo2,
   X,
   XCircle,
 } from "lucide-react";
@@ -738,6 +739,7 @@ export function InvoiceDetailPanel({
   const ACTION_ERROR_LABELS: Record<string, string> = {
     issue: "Rechnung konnte nicht ausgestellt werden",
     cancel: "Rechnung konnte nicht storniert werden",
+    undoIssue: "Ausstellen konnte nicht rückgängig gemacht werden",
     duplicate: "Rechnung konnte nicht dupliziert werden",
     regen: "PDF konnte nicht neu erzeugt werden",
     save: "Änderungen konnten nicht gespeichert werden",
@@ -780,6 +782,15 @@ export function InvoiceDetailPanel({
         { invoiceId: string; status: string }
       >("cancelInvoice", { invoiceId });
       onClose();
+    });
+
+  const handleUndoIssue = () =>
+    doAction("undoIssue", async () => {
+      await callFunction<
+        { invoiceId: string },
+        { invoiceId: string; status: string; numberSeq: number }
+      >("undoIssueInvoice", { invoiceId });
+      setMode("edit");
     });
 
   const handleDuplicate = () =>
@@ -1132,6 +1143,47 @@ export function InvoiceDetailPanel({
                       <Copy className="h-4 w-4 mr-2" />
                       Duplizieren
                     </Button>
+                    {invoice.status === "issued" && !invoice.sentAt && (
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button
+                            variant="outline"
+                            className="col-span-2"
+                            disabled={actionBusy !== null}
+                          >
+                            <Undo2 className="h-4 w-4 mr-2" />
+                            Ausstellen rückgängig machen
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Ausstellen rückgängig machen?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              Die Rechnung wird wieder ein bearbeitbarer Entwurf
+                              mit derselben Nummer, das erzeugte PDF wird
+                              gelöscht. Das geht nur, solange sie die zuletzt
+                              ausgestellte Rechnung dieses Jahres ist und nie
+                              versendet, bezahlt oder über einen Link geöffnet
+                              wurde. Sonst bleibt nur die Stornierung.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel disabled={actionBusy === "undoIssue"}>
+                              Abbrechen
+                            </AlertDialogCancel>
+                            <AlertDialogAction
+                              onClick={handleUndoIssue}
+                              disabled={actionBusy !== null}
+                            >
+                              {actionBusy === "undoIssue" && (
+                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                              )}
+                              Rückgängig machen
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    )}
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     {hasIssuedPdf && (

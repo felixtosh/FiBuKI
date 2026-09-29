@@ -1621,6 +1621,22 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     }
   },
   {
+    "name": "undo_issue_invoice",
+    "description": "Undo a misclicked issue: the invoice returns to an editable draft with the same number, and its generated PDF is destroyed. Allowed only while it is the newest invoice issued this year, was never sent, never paid and never opened through a share link. Anything else is refused with a pointer to cancel_invoice (Storno).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "invoiceId": {
+          "type": "string",
+          "description": "Invoice ID"
+        }
+      },
+      "required": [
+        "invoiceId"
+      ]
+    }
+  },
+  {
     "name": "get_automation_status",
     "description": "Get user's automation mode, AI budget, and plan info",
     "inputSchema": {
