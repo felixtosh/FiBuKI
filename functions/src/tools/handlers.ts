@@ -739,9 +739,12 @@ export async function listFiles(userId: string, args: Record<string, unknown>) {
   const snapshot = await query.get();
   const scanned = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as Record<string, unknown>);
 
-  // Deleted Files are hidden unless asked for (#267); restore_file brings one back.
+  // Deleted Files are hidden unless asked for (#267); restore_file brings one
+  // back. A purged File is gone for good (#268): its skeleton record exists
+  // only for deduplication and is never listed, deleted view or not.
   let files = scanned.filter(
-    (f: Record<string, unknown>) => (args.includeDeleted === true || !f.deletedAt) && !f.isNotInvoice
+    (f: Record<string, unknown>) =>
+      (args.includeDeleted === true || !f.deletedAt) && !f.isNotInvoice && !f.purgedAt
   );
 
   if (args.hasConnections !== undefined) {

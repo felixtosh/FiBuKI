@@ -25,6 +25,8 @@ interface FilesDataTableProps {
   emptyState?: ReactNode;
   /** Set of file IDs that are currently being searched - used to bust row memo cache */
   searchingFileIds?: Set<string>;
+  /** Override the initial sort (the deleted-files view reads newest-deleted-first, #268) */
+  initialSorting?: SortingState;
 }
 
 export interface FilesDataTableHandle {
@@ -60,6 +62,7 @@ function FilesDataTableInner(
     onDisplayedOrderChange,
     emptyState,
     searchingFileIds,
+    initialSorting,
   }: FilesDataTableProps,
   ref: React.ForwardedRef<FilesDataTableHandle>
 ) {
@@ -116,7 +119,7 @@ function FilesDataTableInner(
       onRowClick={onRowClick}
       selectedRowId={selectedRowId}
       defaultColumnSizes={DEFAULT_FILE_COLUMN_SIZES}
-      initialSorting={DEFAULT_SORTING}
+      initialSorting={initialSorting ?? DEFAULT_SORTING}
       getRowClassName={getRowClassName}
       getRowDataAttributes={getRowDataAttributes}
       getRowStateKey={getRowStateKey}

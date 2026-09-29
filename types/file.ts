@@ -708,10 +708,27 @@ export interface TaxFile {
   /** When true, file was created by Fibuki (not uploaded). Bypasses extraction trigger. */
   isFibukiGenerated?: boolean;
 
-  // === Soft Delete (for Gmail imports) ===
+  // === Delete and Purge (ADR-0006, #268) ===
 
-  /** Soft deletion timestamp - file won't be re-imported if deleted */
+  /** Deleting hides the File: set on delete, cleared by restore. A deleted
+   * File is not re-imported by a Sync. */
   deletedAt?: Timestamp | null;
+
+  /**
+   * The File was attached to at least one Transaction when it was deleted.
+   * Stamped by the delete, because the delete clears `transactionIds` — the
+   * Purge confirmation reads its BAO § 132 retention warning from this.
+   * Absent on Files deleted before the field existed, and on Files that were
+   * not attached.
+   */
+  hadTransactionConnections?: boolean;
+
+  /**
+   * The File was purged: the document and its stored bytes are destroyed, and
+   * this record is a skeleton keeping only the keys deduplication needs.
+   * A purged File shows in no view and cannot be restored.
+   */
+  purgedAt?: Timestamp | null;
 
   // === Metadata ===
 
@@ -832,6 +849,13 @@ export interface FileFilters {
 
   /** Include soft-deleted files (default: false) */
   includeDeleted?: boolean;
+
+  /**
+   * The deleted-files view (#268): only deleted Files, in the same table with
+   * the same filters. Purge is reachable from this view and nowhere else.
+   * Wins over `includeDeleted`.
+   */
+  deletedOnly?: boolean;
 
   /**
    * Operations layer (`listFiles`) only: true = only files marked not-invoice,

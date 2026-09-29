@@ -34,6 +34,43 @@ test("applyFileFilters: includeDeleted keeps soft-deleted files", () => {
   assert.deepEqual(rows.map((f) => f.id).sort(), ["a", "b"]);
 });
 
+// --- The deleted-files view (#268): deleted rows shown instead of hidden ---
+
+test("applyFileFilters: deletedOnly shows only deleted files — the deleted-files view", () => {
+  const files = [
+    makeFile({ id: "live" }),
+    makeFile({ id: "gone", deletedAt: ts(new Date()) }),
+  ];
+  const { rows } = applyFileFilters(files, { deletedOnly: true });
+  assert.deepEqual(rows.map((f) => f.id), ["gone"]);
+});
+
+test("applyFileFilters: the page's other filters keep working on deleted rows", () => {
+  const files = [
+    makeFile({ id: "gone-acme", deletedAt: ts(new Date()), extractedPartner: "Acme" }),
+    makeFile({ id: "gone-beta", deletedAt: ts(new Date()), extractedPartner: "Beta" }),
+  ];
+  const { rows } = applyFileFilters(files, { deletedOnly: true, search: "acme" });
+  assert.deepEqual(rows.map((f) => f.id), ["gone-acme"]);
+});
+
+test("applyFileFilters: a purged skeleton never shows, in any view", () => {
+  const files = [
+    makeFile({ id: "live" }),
+    makeFile({ id: "gone", deletedAt: ts(new Date()) }),
+    { id: "purged", userId: "u", transactionIds: [], deletedAt: ts(new Date()), purgedAt: ts(new Date()) },
+  ];
+  assert.deepEqual(applyFileFilters(files, {}).rows.map((f) => f.id), ["live"]);
+  assert.deepEqual(
+    applyFileFilters(files, { deletedOnly: true }).rows.map((f) => f.id),
+    ["gone"]
+  );
+  assert.deepEqual(
+    applyFileFilters(files, { includeDeleted: true }).rows.map((f) => f.id).sort(),
+    ["gone", "live"]
+  );
+});
+
 test("applyFileFilters: search matches fileName or extractedPartner, case-insensitive", () => {
   const files = [
     makeFile({ id: "a", fileName: "Receipt.pdf", extractedPartner: "Acme" }),

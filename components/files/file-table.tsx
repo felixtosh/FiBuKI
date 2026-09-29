@@ -60,8 +60,11 @@ interface FileTableProps {
     onMarkAsNotInvoice: () => void;
     onMarkAsInvoice: () => void;
     onDelete: () => void;
+    /** Purge, the deleted-files view's one bulk action (#268) */
+    onPurge?: () => void;
     onClearSelection: () => void;
     isDeleting?: boolean;
+    isPurging?: boolean;
     isUpdating?: boolean;
     isAssigningPartner?: boolean;
     progress?: { completed: number; total: number } | null;
@@ -102,6 +105,10 @@ export const FileTable = forwardRef<FilesDataTableHandle, FileTableProps>(
     const convert = useEcbConverter();
     const { runningFileIds } = useRunningWorkers();
 
+    // The deleted-files view (#268): same table, same filters, deleted rows
+    // shown instead of hidden, a Deleted column, and Purge in the bulk bar.
+    const deletedView = filters.deletedOnly === true;
+
     const selectionColumn: ColumnDef<TaxFile> = useMemo(
       () => ({
         id: "select",
@@ -132,8 +139,8 @@ export const FileTable = forwardRef<FilesDataTableHandle, FileTableProps>(
     );
 
     const dataColumns = useMemo(
-      () => getFileColumns(userPartners, globalPartners, transactionAmountsMap, undefined, runningFileIds, convert),
-      [userPartners, globalPartners, transactionAmountsMap, runningFileIds, convert]
+      () => getFileColumns(userPartners, globalPartners, transactionAmountsMap, undefined, runningFileIds, convert, deletedView),
+      [userPartners, globalPartners, transactionAmountsMap, runningFileIds, convert, deletedView]
     );
 
     const columns = useMemo(
@@ -156,7 +163,7 @@ export const FileTable = forwardRef<FilesDataTableHandle, FileTableProps>(
     const hasAnyFilters = searchValue || filters.extractedDateFrom || filters.extractedDateTo ||
       filters.hasConnections !== undefined || filters.amountType || filters.partnerIds?.length ||
       filters.hasPartner !== undefined ||
-      filters.extractionComplete !== undefined || filters.documentTypes !== undefined || filters.includeDeleted;
+      filters.extractionComplete !== undefined || filters.documentTypes !== undefined || filters.deletedOnly;
 
     const emptyState = useMemo(() => {
       // Don't show empty state while still loading - prevents flicker
@@ -229,22 +236,29 @@ export const FileTable = forwardRef<FilesDataTableHandle, FileTableProps>(
         <div className="flex-1 relative overflow-hidden flex flex-col">
           {bulkActionBar?.visible && (
             <FileBulkActionBar
+              mode={deletedView ? "deleted" : "live"}
               selectedCount={bulkActionBar.selectedCount}
               onAssignPartner={bulkActionBar.onAssignPartner}
               onMarkAsNotInvoice={bulkActionBar.onMarkAsNotInvoice}
               onMarkAsInvoice={bulkActionBar.onMarkAsInvoice}
               onDelete={bulkActionBar.onDelete}
+              onPurge={bulkActionBar.onPurge}
               onClearSelection={bulkActionBar.onClearSelection}
               isDeleting={bulkActionBar.isDeleting}
+              isPurging={bulkActionBar.isPurging}
               isUpdating={bulkActionBar.isUpdating}
               isAssigningPartner={bulkActionBar.isAssigningPartner}
               progress={bulkActionBar.progress}
             />
           )}
           <FilesDataTable
+            // Remount on view switch so the deleted view opens sorted by when
+            // each File was deleted, newest first.
+            key={deletedView ? "deleted" : "live"}
             ref={ref}
             columns={columns}
             data={files}
+            initialSorting={deletedView ? [{ id: "deletedAt", desc: true }] : undefined}
             onRowClick={onSelectFile}
             selectedRowId={selectedFileId}
             enableMultiSelect={enableMultiSelect}

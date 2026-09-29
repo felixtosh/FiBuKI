@@ -34,3 +34,40 @@ test("bulkFileDeleteConfirmation: a single file reads as one file, not one files
   assert.match(message, /1 file\?/);
   assert.match(message, /It will be hidden/);
 });
+
+// --- Purge (#268): the one confirmation in the product that promises permanence ---
+
+import { purgeConfirmation } from "../lib/files/delete-confirmation.js";
+
+test("purgeConfirmation: names the count and states the documents are destroyed", () => {
+  const message = purgeConfirmation(3, 0);
+  assert.match(message, /3 files/);
+  assert.match(message, /destroyed/i);
+  assert.match(message, /cannot be undone/i);
+});
+
+test("purgeConfirmation: junk purges without ceremony — no retention warning", () => {
+  const message = purgeConfirmation(5, 0);
+  assert.doesNotMatch(message, /§ 132/);
+  assert.doesNotMatch(message, /legally required/i);
+});
+
+test("purgeConfirmation: retention-relevant Belege carry the BAO § 132 warning, and still ask rather than refuse", () => {
+  const message = purgeConfirmation(5, 2);
+  assert.match(message, /2 of them/);
+  assert.match(message, /legally required to keep/i);
+  assert.match(message, /7 years/);
+  assert.match(message, /BAO § 132/);
+  assert.match(message, /[Pp]urge anyway\?/);
+});
+
+test("purgeConfirmation: when every file is retention-relevant it says so plainly", () => {
+  const message = purgeConfirmation(2, 2);
+  assert.doesNotMatch(message, /2 of them/);
+  assert.match(message, /legally required to keep/i);
+});
+
+test("purgeConfirmation: one file reads as one file", () => {
+  const message = purgeConfirmation(1, 0);
+  assert.match(message, /1 file\?/);
+});
