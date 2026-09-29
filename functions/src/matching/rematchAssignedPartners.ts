@@ -367,6 +367,13 @@ export async function rematchAssignedPartners(
   const writeOperations: PartnerMatchWriteOperation[] = [];
   /** globalPartnerId -> local id, so two rows hitting the same preset localise once. */
   const localisedThisRun = new Map<string, string>();
+  /**
+   * The old side of every applied reassign or clear (#139): the writes name
+   * only the new Partner, but the previous Partner's unconnected Files hold
+   * stale suggestions too — pairs that scored partner points they no longer
+   * earn. Collected here, per write actually made, and handed to the re-score.
+   */
+  const previousPartnerIds = new Set<string>();
   let localPartnersCreated = 0;
   let localisationFailures = 0;
 
@@ -376,6 +383,7 @@ export async function rematchAssignedPartners(
       context.partnerContext.partnerNameMap.get(stored.partnerId) ?? null;
 
     if (action === "clear") {
+      previousPartnerIds.add(stored.partnerId);
       writeOperations.push({
         ref: txDoc.ref,
         updates: buildClearUpdates(
@@ -413,6 +421,7 @@ export async function rematchAssignedPartners(
       }
     }
 
+    previousPartnerIds.add(stored.partnerId);
     writeOperations.push({
       ref: txDoc.ref,
       updates: buildReassignUpdates(
@@ -426,7 +435,10 @@ export async function rematchAssignedPartners(
     });
   }
 
-  await applyPartnerMatchUpdates(writeOperations);
+  await applyPartnerMatchUpdates(writeOperations, {
+    userId,
+    extraPartnerIds: previousPartnerIds,
+  });
 
   console.log(
     `[rematchAssignedPartners] user=${userId} wrote ${writeOperations.length} transactions ` +

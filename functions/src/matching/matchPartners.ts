@@ -178,7 +178,9 @@ export const matchPartners = onCall<MatchPartnersRequest>(
       collectAgenticFallback: true,
     });
 
-    await applyPartnerMatchUpdates(matchResult.writeOperations);
+    // #139: assignments just changed which pairs score partner points, so the
+    // affected Partners' unconnected Files get their suggestions re-scored.
+    await applyPartnerMatchUpdates(matchResult.writeOperations, { userId });
 
     const {
       processed,
