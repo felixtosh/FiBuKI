@@ -2,6 +2,7 @@ import type { NextConfig } from "next";
 import path from "path";
 import { fileURLToPath } from "url";
 import createNextIntlPlugin from "next-intl/plugin";
+import { securityHeaderRules } from "./lib/security/headers.js";
 
 const withNextIntl = createNextIntlPlugin("./i18n/request.ts");
 
@@ -181,24 +182,8 @@ const CSP = Object.entries(CSP_DIRECTIVES)
   )
   .join("; ");
 
-const SECURITY_HEADERS = [
-  { key: "Cross-Origin-Opener-Policy", value: "same-origin-allow-popups" },
-  {
-    key: "Strict-Transport-Security",
-    value: "max-age=63072000; includeSubDomains; preload",
-  },
-  { key: "X-Frame-Options", value: "DENY" },
-  { key: "X-Content-Type-Options", value: "nosniff" },
-  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-  {
-    key: "Permissions-Policy",
-    value:
-      "camera=(), microphone=(), geolocation=(), payment=(self), interest-cohort=()",
-  },
-  { key: "Content-Security-Policy", value: CSP },
-];
-
 const nextConfig: NextConfig = {
+  poweredByHeader: false,
   // imapflow is a Node-only IMAP client used by /api/mail/imap/connect; keep it
   // out of the bundle so its dynamic requires resolve at runtime.
   // Node-only server packages: kept out of the bundle so their native/dynamic
@@ -226,12 +211,7 @@ const nextConfig: NextConfig = {
     return config;
   },
   async headers() {
-    return [
-      {
-        source: "/(.*)",
-        headers: SECURITY_HEADERS,
-      },
-    ];
+    return securityHeaderRules(CSP);
   },
   async rewrites() {
     // In dev the Firebase Auth emulator hosts its own /__/auth/ handler at
