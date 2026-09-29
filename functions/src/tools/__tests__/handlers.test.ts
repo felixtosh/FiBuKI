@@ -376,6 +376,34 @@ describe("Tool Registry Handlers", () => {
       const updated = store.getDoc("transactions", "tx-1");
       expect(updated?.documentationState).toBeUndefined();
     });
+
+    // #214: the goods/service answer to the foreign-regime review.
+    it("writes foreignSupplyKind and clears it with null", async () => {
+      store.setDoc("transactions", "tx-1", createTestTransaction({ userId }));
+
+      await handlers.updateTransaction(userId, {
+        transactionId: "tx-1",
+        foreignSupplyKind: "goods",
+      });
+      expect(store.getDoc("transactions", "tx-1")?.foreignSupplyKind).toBe("goods");
+
+      await handlers.updateTransaction(userId, {
+        transactionId: "tx-1",
+        foreignSupplyKind: null,
+      });
+      expect(store.getDoc("transactions", "tx-1")?.foreignSupplyKind).toBeNull();
+    });
+
+    it("rejects a foreignSupplyKind outside goods/service/null", async () => {
+      store.setDoc("transactions", "tx-1", createTestTransaction({ userId }));
+
+      await expect(
+        handlers.updateTransaction(userId, {
+          transactionId: "tx-1",
+          foreignSupplyKind: "wares",
+        })
+      ).rejects.toThrow(/goods.*service/);
+    });
   });
 
   describe("listTransactionsNeedingFiles", () => {
@@ -569,6 +597,216 @@ describe("Tool Registry Handlers", () => {
       };
 
       expect(result.count).toBe(1);
+    });
+
+    // #165: a live Accepted Receipt ruling closes the queue entry without
+    // touching the documentation state - the line stays receipt-only, it just
+    // stops being work.
+    describe("Accepted Receipt exclusion (#165)", () => {
+      const liveAcceptance = (fileIds: string[]) => ({
+        by: userId,
+        at: new Date("2026-09-27T10:00:00Z"),
+        reason: "Marketplace seller charges no VAT; nothing chaseable",
+        fileIds,
+      });
+
+      it("excludes a line with a live ruling and reports it in acceptedCount", async () => {
+        store.setDoc(
+          "transactions",
+          "tx-ruled",
+          createTestTransaction({
+            userId,
+            fileIds: ["f-1"],
+            documentationState: "receipt-only",
+            receiptOnlyAcceptance: liveAcceptance(["f-1"]),
+          })
+        );
+        store.setDoc(
+          "transactions",
+          "tx-open",
+          createTestTransaction({ userId, fileIds: ["f-2"], documentationState: "receipt-only" })
+        );
+
+        const result = await handlers.listTransactionsMissingInvoice(userId, {});
+
+        expect(result.transactions.map((t) => t.id)).toEqual(["tx-open"]);
+        expect(result.acceptedCount).toBe(1);
+      });
+
+      it("keeps a line whose ruling went stale because the files changed", async () => {
+        store.setDoc(
+          "transactions",
+          "tx-stale",
+          createTestTransaction({
+            userId,
+            fileIds: ["f-1", "f-new"],
+            documentationState: "receipt-only",
+            receiptOnlyAcceptance: liveAcceptance(["f-1"]),
+          })
+        );
+
+        const result = await handlers.listTransactionsMissingInvoice(userId, {});
+
+        expect(result.transactions.map((t) => t.id)).toEqual(["tx-stale"]);
+        expect(result.acceptedCount).toBe(0);
+      });
+    });
+  });
+
+  describe("acceptReceiptOnly (#165)", () => {
+    const receiptOnlyTx = (overrides: Record<string, unknown> = {}) =>
+      createTestTransaction({
+        userId,
+        fileIds: ["f-receipt"],
+        documentationState: "receipt-only",
+        ...overrides,
+      });
+
+    it("records who ruled, when, why, and over which files", async () => {
+      store.setDoc("transactions", "tx-1", receiptOnlyTx());
+
+      const result = await handlers.acceptReceiptOnly(userId, {
+        transactionId: "tx-1",
+        reason: "Marketplace seller charges no VAT; no § 11 invoice obtainable",
+      });
+
+      expect(result.success).toBe(true);
+      const updated = store.getDoc("transactions", "tx-1");
+      const acceptance = updated?.receiptOnlyAcceptance as Record<string, unknown>;
+      expect(acceptance.by).toBe(userId);
+      expect(acceptance.reason).toBe(
+        "Marketplace seller charges no VAT; no § 11 invoice obtainable"
+      );
+      expect(acceptance.fileIds).toEqual(["f-receipt"]);
+      expect(acceptance.at).toBeDefined();
+    });
+
+    it("never touches documentationState or isComplete", async () => {
+      store.setDoc("transactions", "tx-1", receiptOnlyTx({ isComplete: false }));
+
+      await handlers.acceptReceiptOnly(userId, { transactionId: "tx-1", reason: "ruled" });
+
+      const updated = store.getDoc("transactions", "tx-1");
+      expect(updated?.documentationState).toBe("receipt-only");
+      expect(updated?.isComplete).toBe(false);
+    });
+
+    it("refuses a transaction that is not receipt-only", async () => {
+      store.setDoc(
+        "transactions",
+        "tx-1",
+        createTestTransaction({ userId, documentationState: "invoice" })
+      );
+
+      await expect(
+        handlers.acceptReceiptOnly(userId, { transactionId: "tx-1", reason: "x" })
+      ).rejects.toThrow(/receipt-only/);
+    });
+
+    it("requires a reason - the ruling IS the record", async () => {
+      store.setDoc("transactions", "tx-1", receiptOnlyTx());
+
+      await expect(
+        handlers.acceptReceiptOnly(userId, { transactionId: "tx-1" })
+      ).rejects.toThrow(/reason/);
+      await expect(
+        handlers.acceptReceiptOnly(userId, { transactionId: "tx-1", reason: "   " })
+      ).rejects.toThrow(/reason/);
+    });
+
+    it("warns - never blocks - when input VAT is claimed on the bare receipt", async () => {
+      store.setDoc("transactions", "tx-1", receiptOnlyTx({ vatRate: 20, vatAmount: 400 }));
+
+      const result = await handlers.acceptReceiptOnly(userId, {
+        transactionId: "tx-1",
+        reason: "ruled closed",
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.warning).toMatch(/input VAT|Vorsteuer/i);
+      expect(store.getDoc("transactions", "tx-1")?.receiptOnlyAcceptance).toBeDefined();
+    });
+
+    it("warns when a connected receipt itself prints a VAT amount", async () => {
+      store.setDoc(
+        "files",
+        "f-receipt",
+        createTestFile({ userId, documentType: "receipt", extractedVatAmount: 360 })
+      );
+      store.setDoc("transactions", "tx-1", receiptOnlyTx());
+
+      const result = await handlers.acceptReceiptOnly(userId, {
+        transactionId: "tx-1",
+        reason: "ruled closed",
+      });
+
+      expect(result.warning).toMatch(/input VAT|Vorsteuer/i);
+    });
+
+    it("returns no warning when nothing claims VAT on the line", async () => {
+      store.setDoc("files", "f-receipt", createTestFile({ userId, documentType: "receipt" }));
+      store.setDoc("transactions", "tx-1", receiptOnlyTx());
+
+      const result = await handlers.acceptReceiptOnly(userId, {
+        transactionId: "tx-1",
+        reason: "ruled closed",
+      });
+
+      expect(result.warning).toBeUndefined();
+    });
+
+    it("revokes a recorded ruling", async () => {
+      store.setDoc(
+        "transactions",
+        "tx-1",
+        receiptOnlyTx({
+          receiptOnlyAcceptance: {
+            by: userId,
+            at: new Date(),
+            reason: "ruled",
+            fileIds: ["f-receipt"],
+          },
+        })
+      );
+
+      const result = await handlers.acceptReceiptOnly(userId, {
+        transactionId: "tx-1",
+        revoke: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(store.getDoc("transactions", "tx-1")?.receiptOnlyAcceptance).toBeNull();
+    });
+
+    it("refuses to revoke where nothing was recorded", async () => {
+      store.setDoc("transactions", "tx-1", receiptOnlyTx());
+
+      await expect(
+        handlers.acceptReceiptOnly(userId, { transactionId: "tx-1", revoke: true })
+      ).rejects.toThrow(/no Accepted Receipt/i);
+    });
+
+    it("never touches another user's transaction", async () => {
+      store.setDoc(
+        "transactions",
+        "tx-theirs",
+        createTestTransaction({ userId: otherUserId, documentationState: "receipt-only" })
+      );
+
+      await expect(
+        handlers.acceptReceiptOnly(userId, { transactionId: "tx-theirs", reason: "x" })
+      ).rejects.toThrow("Transaction not found");
+    });
+
+    it("is reachable through the dispatcher under its tool name", async () => {
+      store.setDoc("transactions", "tx-1", receiptOnlyTx());
+
+      const result = (await handlers.handleTool(userId, "accept_receipt_only", {
+        transactionId: "tx-1",
+        reason: "ruled closed",
+      })) as { success: boolean };
+
+      expect(result.success).toBe(true);
     });
   });
 

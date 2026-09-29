@@ -55,6 +55,7 @@ const OPENAPI_SPEC = {
                       "disconnect_file_from_transaction",
                       "list_transactions_needing_files",
                       "list_transactions_missing_invoice",
+                      "accept_receipt_only",
                       "mark_file_as_not_invoice",
                       "unmark_file_as_not_invoice",
                       "dismiss_transaction_suggestion",
@@ -203,7 +204,7 @@ const OPENAPI_SPEC = {
       "List transactions with filters. Args: sourceId?, dateFrom?, dateTo?, search?, isComplete? (boolean), limit? (number, max 100)",
     get_transaction: "Get full transaction details. Args: transactionId (string)",
     update_transaction:
-      "Update transaction description or status. Args: transactionId (string), description? (string), isComplete? (boolean)",
+      'Update transaction description, status, or the UVA overrides. Args: transactionId (string), description? (string), isComplete? (boolean), vatRate? (number|null), isReverseCharge? (boolean|null), foreignSupplyKind? ("goods"|"service"|null - goods routes an EU acquisition to ig. Erwerb / a third-country one to the import lane; null keeps the service heuristic flagged for review)',
     list_files:
       "List uploaded files/receipts. Returns { files, nextCursor, count } — count is this page, not a total. Args: hasConnections? (boolean), hasSuggestions? (boolean), needsVatRateReview? (boolean), handCorrected? (boolean, true = only files a human corrected by hand, which is the exclusion list for a re-extraction sweep), includeDeleted? (boolean, also return deleted files; excluded by default), limit? (number, max 500), cursor? (string, nextCursor from the previous page)",
     get_file: "Get file details including suggestions. Args: fileId (string)",
@@ -220,7 +221,9 @@ const OPENAPI_SPEC = {
     retry_file_extraction:
       "Re-run extraction on a file that extracted without erroring but produced nothing usable (no line items, no VAT amount). Runs synchronously, up to a minute. Resets partner and transaction matching for the file; a manual partner assignment is kept. A file whose record a human corrected is refused with HAND_CORRECTED, naming the corrected fields — overwriting them takes its own flag, decided per file. Args: fileId (string), force? (boolean, required for a file that already extracted cleanly), overwriteCorrections? (boolean, required for a hand-corrected file)",
     list_transactions_missing_invoice:
-      "Find transactions documented by a receipt only — a document is attached but no § 11 UStG invoice was ever received, so no Vorsteuer may be claimed. Each row carries the vendor, the amount, the date and the § 11 elements the attached document is missing. Returns { transactions, nextCursor, count } — count is this page, not a total. Args: minAmount? (number, in cents), limit? (number, max 500), cursor? (string, nextCursor from the previous page)",
+      "Find transactions documented by a receipt only - a document is attached but no § 11 UStG invoice was ever received, so no Vorsteuer may be claimed. Each row carries the vendor, the amount, the date and the § 11 elements the attached document is missing. Lines with a live Accepted Receipt ruling are excluded and reported in acceptedCount. Returns { transactions, nextCursor, count, acceptedCount } - count and acceptedCount are this page, not totals. Args: minAmount? (number, in cents), limit? (number, max 500), cursor? (string, nextCursor from the previous page)",
+    accept_receipt_only:
+      "Record - or revoke - an Accepted Receipt ruling on a receipt-only transaction: no § 11 invoice is obtainable and the receipt is as good as the evidence will ever get, so the chase queue stops holding the line. Touches nothing else (documentationState, isComplete, UVA, BMD all unchanged); goes stale on its own when files or documentation state change. A claimed input VAT earns a warning, never a refusal. Args: transactionId (string), reason? (string, required unless revoking), revoke? (boolean)",
     mark_file_as_not_invoice:
       "Flag a file as not an invoice (duplicate re-send, payment reminder, statement). Clears extracted data and removes it from the unmatched-file queue; refuses while the file is still connected to a transaction. Args: fileId (string), reason? (string)",
     unmark_file_as_not_invoice:

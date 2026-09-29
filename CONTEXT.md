@@ -392,6 +392,17 @@ kein Nachweis
 _Avoid_: complete, documented flag, status
 _Avoid (de)_: Status, Vollständigkeit, Belegstatus
 
+**Accepted Receipt**:
+A recorded ruling that a `receipt-only` Transaction's evidence is as good as it will
+ever get - who ruled, when, why, over which Files. It closes the chase-queue entry
+without touching the Documentation State, `isComplete`, the UVA or the BMD Export:
+the line stays receipt-only and still carries no input VAT. The ruling goes stale on
+its own (derived on read, never deleted) when the connected Files or the
+Documentation State change, and it is explicitly revocable. A ruling, never a hide.
+_Deutsch_: Akzeptierter Zahlungsbeleg
+_Avoid_: dismissed, hidden, resolved, snoozed, whitelisted
+_Avoid (de)_: Ausgeblendet, Erledigt, Ausnahme
+
 **UVA**:
 The Umsatzsteuervoranmeldung — the periodic VAT return the user's figures feed. FiBuKI
 derives and reconciles it; it does not file it.

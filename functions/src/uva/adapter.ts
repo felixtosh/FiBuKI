@@ -25,6 +25,11 @@ export interface TransactionRecord {
   partner?: string | null;
   vatRate?: number | null;
   isReverseCharge?: boolean | null;
+  /**
+   * A person's goods/service answer to the foreign-regime review (#214).
+   * Unset/null keeps the service heuristic below exactly as it was.
+   */
+  foreignSupplyKind?: "goods" | "service" | null;
   noReceiptCategoryId?: string | null;
   noReceiptCategoryTemplateId?: string | null;
   fileIds?: string[];
@@ -141,18 +146,20 @@ const EU_UID_PREFIXES = new Set([
 ]);
 
 /**
- * D3 classification. Only the service regime has a data source today:
- *  - tx.isReverseCharge === true is a manual/override signal;
- *  - tx.isReverseCharge === false is a manual VETO of the heuristic;
+ * D3 classification. The signals, in order:
+ *  - tx.isReverseCharge === true is a manual/override signal that a foreign
+ *    regime applies at all;
+ *  - tx.isReverseCharge === false is a manual VETO of everything foreign;
  *  - a foreign supplier UID on a document that charges no VAT is the
- *    heuristic signal (Anthropic pattern: US/IE supplier, 0% VAT line).
- * Goods regimes (ig. Erwerb, import) currently classify only via
- * override — nothing in the data model marks a purchase as goods, so an
- * EU GOODS purchase under the UID looks identical to the service
- * pattern. That is why every heuristic classification is flagged
- * basis: "heuristic" in the reverse-charge list for human review, and
- * why the veto lane exists: set isReverseCharge = false on the
- * transaction and classify goods regimes via override instead.
+ *    heuristic signal (Anthropic pattern: US/IE supplier, 0% VAT line);
+ *  - tx.foreignSupplyKind (#214) is a person's goods/service answer to
+ *    the review flag. It decides the KIND of an otherwise-detected foreign
+ *    supply and turns the basis into "override" - it never conjures a
+ *    regime where neither the override nor the heuristic found one.
+ * Unset foreignSupplyKind keeps the service heuristic exactly as it was,
+ * flagged basis: "heuristic" in the reverse-charge list for human review.
+ * A goods/third-country classification reaches the import lane, which the
+ * calculator leaves unresolved until EUSt is documented (`importVatPaid`).
  */
 export function deriveForeignRegime(
   tx: TransactionRecord,
@@ -169,10 +176,11 @@ export function deriveForeignRegime(
     uid && EU_UID_PREFIXES.has(uid.toUpperCase().slice(0, 2))
       ? "eu"
       : "third-country";
+  const kindOverride = tx.foreignSupplyKind ?? null;
 
   if (tx.isReverseCharge === true) {
     return {
-      kind: "service",
+      kind: kindOverride ?? "service",
       origin: origin(foreignUidFile?.supplierVatId),
       basis: "override",
     };
@@ -184,11 +192,17 @@ export function deriveForeignRegime(
         !(f.lineItems ?? []).some((li) => (li.vatPercent ?? 0) > 0 || li.vatAmount > 0)
     );
     if (chargesNoVat) {
-      return {
-        kind: "service",
-        origin: origin(foreignUidFile.supplierVatId),
-        basis: "heuristic",
-      };
+      return kindOverride
+        ? {
+            kind: kindOverride,
+            origin: origin(foreignUidFile.supplierVatId),
+            basis: "override",
+          }
+        : {
+            kind: "service",
+            origin: origin(foreignUidFile.supplierVatId),
+            basis: "heuristic",
+          };
     }
   }
   return null;

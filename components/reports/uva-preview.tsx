@@ -19,8 +19,10 @@
  * published rate from the one the card charged.
  */
 
+import { useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { ReportPeriod, formatPeriod } from "@/types/report";
@@ -36,6 +38,16 @@ interface UVAPreviewProps {
   result: UvaReportResult;
   period: ReportPeriod;
   country: TaxCountryCode;
+  /**
+   * Writer for the goods/service answer to the foreign-regime review (#214).
+   * Called with the transaction and the kind the person picked; the caller
+   * persists it (updateTransaction callable) and recalculates the period.
+   * Absent, the lists render read-only.
+   */
+  onSetForeignSupplyKind?: (
+    transactionId: string,
+    kind: "goods" | "service"
+  ) => Promise<void> | void;
 }
 
 function formatAmount(cents: number): string {
@@ -160,7 +172,7 @@ function KennzahlRow({
   );
 }
 
-export function UVAPreview({ result, period, country }: UVAPreviewProps) {
+export function UVAPreview({ result, period, country, onSetForeignSupplyKind }: UVAPreviewProps) {
   const codes = KZ_ORDER.filter(
     (code) => result.kennzahlen[code] && (result.kennzahlen[code].value !== 0 || code === "095")
   );
@@ -169,6 +181,25 @@ export function UVAPreview({ result, period, country }: UVAPreviewProps) {
   const exceptions = deriveFilingExceptions(result);
   const vorsteuer = buildVorsteuerTrace(result);
   const fxDeltas = deriveFxRateDeltas(result);
+
+  // #214: the goods lanes, for the flip-back direction of the toggle. Derived
+  // from the run's own trace - the reverse-charge list holds only services.
+  const goodsRows = result.derivations.filter(
+    (d) => d.step === "eu-acquisition" || d.step === "import"
+  );
+
+  // While one row's answer is being saved and the period recalculated, its
+  // buttons are disabled so a double click cannot race the recalculation.
+  const [savingKindFor, setSavingKindFor] = useState<string | null>(null);
+  const setKind = async (transactionId: string, kind: "goods" | "service") => {
+    if (!onSetForeignSupplyKind) return;
+    setSavingKindFor(transactionId);
+    try {
+      await onSetForeignSupplyKind(transactionId, kind);
+    } finally {
+      setSavingKindFor(null);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -453,6 +484,9 @@ export function UVAPreview({ result, period, country }: UVAPreviewProps) {
             </CardTitle>
             <CardDescription>
               Foreign B2B services: output VAT in KZ 057, same amount deducted in KZ 066.
+              A <em>heuristic</em> row is the classifier&apos;s guess and wants a human
+              answer: goods bought from the EU belong in the ig. Erwerb Kennzahlen
+              (070/072/065), not here - answer with the Goods/Service toggle.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -464,11 +498,86 @@ export function UVAPreview({ result, period, country }: UVAPreviewProps) {
                   <Badge variant={rc.basis === "override" ? "default" : "secondary"} className="text-xs">
                     {rc.basis}
                   </Badge>
+                  {onSetForeignSupplyKind && (
+                    <span className="flex items-center gap-1">
+                      {rc.basis === "heuristic" && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-6 px-2 text-xs"
+                          disabled={savingKindFor === rc.transactionId}
+                          onClick={() => setKind(rc.transactionId, "service")}
+                          title="Confirm: this was a service - keeps KZ 057/066 and clears the review flag"
+                        >
+                          Service
+                        </Button>
+                      )}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-6 px-2 text-xs"
+                        disabled={savingKindFor === rc.transactionId}
+                        onClick={() => setKind(rc.transactionId, "goods")}
+                        title="This was goods - EU: ig. Erwerb (KZ 070/072/065); third country: import lane, unresolved until EUSt is documented"
+                      >
+                        Goods
+                      </Button>
+                    </span>
+                  )}
                   <span className="w-28 text-right font-mono tabular-nums">
                     {formatAmount(rc.base)} EUR
                   </span>
                   <span className="w-24 text-right font-mono text-xs text-muted-foreground tabular-nums">
                     {formatAmount(rc.vat)} VAT
+                  </span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {goodsRows.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">
+              Goods from abroad - {goodsRows.length} transactions
+            </CardTitle>
+            <CardDescription>
+              Classified as goods (#214): an EU acquisition self-assesses in KZ 070/072
+              and deducts in KZ 065; a third-country import claims EUSt only once it is
+              documented. Wrongly classified? Flip the line back to Service.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-1">
+              {goodsRows.map((d) => (
+                <div
+                  key={d.transactionId}
+                  className="flex items-center gap-3 py-1.5 px-2 text-sm border-b last:border-b-0"
+                >
+                  <span className="w-24 font-mono text-xs text-muted-foreground">{d.date}</span>
+                  <span className="flex-1 truncate">{d.partner ?? "—"}</span>
+                  <Badge variant="outline" className="text-xs">
+                    {d.step === "eu-acquisition" ? "ig. Erwerb" : "import"}
+                  </Badge>
+                  {onSetForeignSupplyKind && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-6 px-2 text-xs"
+                      disabled={savingKindFor === d.transactionId}
+                      onClick={() => setKind(d.transactionId, "service")}
+                      title="This was a service - reverse charge §19 (KZ 057/066)"
+                    >
+                      Service
+                    </Button>
+                  )}
+                  <span className="w-28 text-right font-mono tabular-nums">
+                    {formatAmount(Math.abs(d.amount))} EUR
+                  </span>
+                  <span className="w-24 text-right font-mono text-xs text-muted-foreground tabular-nums">
+                    {formatAmount(d.inputVat)} VAT
                   </span>
                 </div>
               ))}

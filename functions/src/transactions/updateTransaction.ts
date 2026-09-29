@@ -36,6 +36,8 @@ interface UpdateTransactionRequest {
     vatAmount?: number | null;
     isEuTransaction?: boolean | null;
     isReverseCharge?: boolean | null;
+    /** Goods/service answer to the foreign-regime review (#214); null clears. */
+    foreignSupplyKind?: "goods" | "service" | null;
   };
 }
 
@@ -53,6 +55,18 @@ export const updateTransactionCallable = createCallable<
 
     if (!id) {
       throw new HttpsError("invalid-argument", "Transaction ID is required");
+    }
+
+    if (
+      data.foreignSupplyKind !== undefined &&
+      data.foreignSupplyKind !== null &&
+      data.foreignSupplyKind !== "goods" &&
+      data.foreignSupplyKind !== "service"
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        'foreignSupplyKind must be "goods", "service", or null to clear'
+      );
     }
 
     // Verify ownership

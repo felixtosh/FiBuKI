@@ -24,6 +24,8 @@ export type CloudFunctionName =
   | "updateTransaction"
   | "bulkUpdateTransactions"
   | "deleteTransactionsBySource"
+  // Accepted Receipt (#165): rule a receipt-only line closed, or revoke.
+  | "acceptReceiptOnly"
   // File operations
   | "createFile"
   | "updateFile"
