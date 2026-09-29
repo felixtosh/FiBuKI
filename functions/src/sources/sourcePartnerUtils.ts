@@ -107,3 +107,52 @@ function buildBankAccountPartnerData(
     ibans: iban ? [iban] : [],
   };
 }
+
+interface ExistingPartnerIdentity {
+  name?: string | null;
+  aliases?: string[] | null;
+  ibans?: string[] | null;
+}
+
+/**
+ * Merge freshly built source Partner data into what the Partner already
+ * carries — union, never overwrite (#445).
+ *
+ * A source Partner can hold more than its source currently says: aliases and
+ * IBANs folded in by a merge before #380/#410 refused them, and the previous
+ * card's identifiers after a card replacement. Overwriting loses them and
+ * their historical Transactions stop matching. So:
+ *
+ * - Name: keep the existing name unless `renamed` says the update explicitly
+ *   set one. Whichever name is displaced (or merely differs) stays findable
+ *   as an alias.
+ * - Aliases: union of existing and incoming; the Partner's name is never its
+ *   own alias.
+ * - IBANs: union of existing and incoming, so a replaced card's old IBAN
+ *   stays a live alias.
+ */
+export function mergeSourcePartnerData(
+  existing: ExistingPartnerIdentity,
+  incoming: SourcePartnerData,
+  renamed: boolean
+): SourcePartnerData {
+  const existingName = (existing.name || "").trim();
+  const incomingName = incoming.name.trim();
+  const name = renamed && incomingName ? incomingName : existingName || incomingName;
+
+  const aliases = new Set<string>();
+  for (const alias of [...(existing.aliases || []), ...incoming.aliases]) {
+    const trimmed = (alias || "").trim();
+    if (trimmed) aliases.add(trimmed);
+  }
+  if (existingName) aliases.add(existingName);
+  if (incomingName) aliases.add(incomingName);
+  aliases.delete(name);
+
+  const ibans = new Set<string>();
+  for (const iban of [...(existing.ibans || []), ...incoming.ibans]) {
+    if (iban) ibans.add(iban);
+  }
+
+  return { name, aliases: [...aliases], ibans: [...ibans] };
+}

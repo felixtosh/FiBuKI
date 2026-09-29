@@ -4,7 +4,7 @@
 
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
-import { buildSourcePartnerData } from "./sourcePartnerUtils";
+import { buildSourcePartnerData, mergeSourcePartnerData } from "./sourcePartnerUtils";
 
 interface SourceUpdateData {
   name?: string;
@@ -139,10 +139,23 @@ export const updateSourceCallable = createCallable<
           const partnerSnap = await partnerRef.get();
 
           if (partnerSnap.exists && partnerSnap.data()?.userId === ctx.userId) {
+            // Merge, never overwrite (#445): the Partner may carry aliases and
+            // IBANs from before this edit (a pre-#380 merge, a replaced card),
+            // and their historical Transactions must keep matching.
+            const existingPartner = partnerSnap.data()!;
+            const merged = mergeSourcePartnerData(
+              {
+                name: existingPartner.name as string | undefined,
+                aliases: existingPartner.aliases as string[] | undefined,
+                ibans: existingPartner.ibans as string[] | undefined,
+              },
+              partnerData,
+              data.name !== undefined
+            );
             await partnerRef.update({
-              name: partnerData.name,
-              aliases: partnerData.aliases,
-              ibans: partnerData.ibans,
+              name: merged.name,
+              aliases: merged.aliases,
+              ibans: merged.ibans,
               updatedAt: FieldValue.serverTimestamp(),
             });
             console.log(`[updateSource] Synced source partner ${sourcePartnerId}`, {
