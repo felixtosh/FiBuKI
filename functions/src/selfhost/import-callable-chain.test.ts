@@ -115,6 +115,25 @@ describe("selfhost hardening: bulkCreateTransactions callable via https-shim", (
     });
   });
 
+  it("derives the canonical transactionType from the bank's raw type (#136)", async () => {
+    const res = await call(
+      {
+        transactions: [
+          csvTx(1, { bankTransactionType: "SEPA-Lastschrift" }),
+          csvTx(2, { bankTransactionType: "Sonstiges" }),
+          csvTx(3),
+        ],
+        sourceId: "src-n26",
+      },
+      { uid: USER },
+    );
+
+    const types = await Promise.all(
+      res.transactionIds.map(async (id) => (await db.collection("transactions").doc(id).get()).data()!.transactionType),
+    );
+    expect(types).toEqual(["direct_debit", null, null]);
+  });
+
   it("imports past the soft quota, flags over-limit rows, bills only within-quota rows", async () => {
     await db.collection("subscriptions").doc(USER).set({
       userId: USER,

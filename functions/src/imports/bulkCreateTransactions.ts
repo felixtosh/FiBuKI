@@ -6,6 +6,7 @@ import { Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { checkTransactionQuota, incrementTransactionCount } from "../billing/checkTransactionQuota";
 import { toDateSafe } from "../utils/toDateSafe";
+import { normalizeTransactionType } from "./transactionType";
 
 interface TransactionData {
   sourceId: string;
@@ -17,6 +18,8 @@ interface TransactionData {
   partner?: string | null;
   reference?: string | null;
   partnerIban?: string | null;
+  /** The bank's own type wording from the mapped column, raw (#136). */
+  bankTransactionType?: string | null;
   dedupeHash: string;
   importJobId: string;
   csvRowIndex?: number;
@@ -141,6 +144,7 @@ export const bulkCreateTransactionsCallable = createCallable<
           partner: txData.partner ?? null,
           reference: txData.reference ?? null,
           partnerIban: txData.partnerIban ?? null,
+          transactionType: normalizeTransactionType(txData.bankTransactionType),
           dedupeHash: txData.dedupeHash,
           importJobId: txData.importJobId,
           csvRowIndex: txData.csvRowIndex,

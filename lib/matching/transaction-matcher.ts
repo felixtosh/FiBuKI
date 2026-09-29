@@ -73,6 +73,8 @@ export function getTransactionMatchSourceLabel(source: TransactionMatchSource): 
       return "Reference Match";
     case "amount_remainder":
       return "Remainder";
+    case "debit_date":
+      return "Debit Date";
     default:
       return source;
   }
@@ -91,6 +93,7 @@ export function getTransactionMatchSourceIcon(
       return "euro"; // or "dollar-sign" depending on locale
     case "date_exact":
     case "date_close":
+    case "debit_date":
       return "calendar";
     case "partner":
       return "building";

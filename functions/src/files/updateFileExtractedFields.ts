@@ -37,6 +37,7 @@ import { CORRECTABLE_FIELDS, correctedFieldsOf } from "./extractionProvenanceOps
 import { syncDocumentationStateForTransactions } from "../documents/syncDocumentationState";
 import { retireRepairAmbiguity } from "../documents/repairReview";
 import { dueDateFromAdditionalFields } from "../matching/dueDate";
+import { debitDateFromAdditionalFields } from "../matching/debitDate";
 import { toDateSafe } from "../utils/toDateSafe";
 
 /** An extra field the extractor kept but nothing else reads structurally. */
@@ -187,6 +188,8 @@ export const updateFileExtractedFieldsCallable = createCallable<
       );
       const dueDate = dueDateFromAdditionalFields(updates.extractedAdditionalFields, issueDate);
       updates.extractedDueDate = dueDate ? Timestamp.fromDate(dueDate) : null;
+      const debitDate = debitDateFromAdditionalFields(updates.extractedAdditionalFields, issueDate);
+      updates.extractedDebitDate = debitDate ? Timestamp.fromDate(debitDate) : null;
     }
 
     // #301: a detail typed over retires the repair warning for that field, the

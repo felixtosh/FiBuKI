@@ -668,6 +668,7 @@ export const ADDITIONAL_FIELD_KEYS = [
   "invoiceNumber",
   "customerNumber",
   "dueDate",
+  "debitDate",
   "paymentTerms",
   "orderNumber",
   "deliveryNoteNumber",
@@ -1100,7 +1101,7 @@ JSON structure:
 
 ADDITIONAL FIELDS ("additionalFields", IMPORTANT):
 - A CLOSED list. Return a field ONLY when its "key" is one of exactly these:
-  "invoiceNumber", "customerNumber", "dueDate", "paymentTerms",
+  "invoiceNumber", "customerNumber", "dueDate", "debitDate", "paymentTerms",
   "orderNumber", "deliveryNoteNumber", "referenceNumber", "poNumber"
 - "label" is the wording the DOCUMENT prints, in its own language
   ("Rechnungsnummer", "Kundennummer", "Zahlungsziel") - it is what a person
@@ -1126,6 +1127,19 @@ DUE DATE (key "dueDate", IMPORTANT):
   one and never reuse the invoice date as one
 - Never return a "dueDate" earlier than the invoice date - if your reading
   comes out earlier, it is a misread, so leave the field out
+
+DEBIT DATE (key "debitDate"):
+- The date the ISSUER states it will COLLECT the amount from the customer's
+  account under a SEPA direct-debit mandate (the Einzugsdatum). Usually
+  printed as a sentence, e.g. "Der Betrag wird am 20.01.2026 von Ihrem Konto
+  eingezogen", "wird frühestens am ... eingezogen", "Abbuchung erfolgt am",
+  "Einzug am", "Lastschrift am". Transcribe the date under "debitDate", with
+  "label" the printed wording (shortened to the phrase around the date)
+- It is NOT the due date: a due date is when the customer must pay, a debit
+  date is when the issuer will take the money. When a document prints both,
+  return both. When it prints only a due date, return no "debitDate"
+- If the document prints no debit date, return NO "debitDate" field
+- Never return a "debitDate" earlier than the invoice date
 
 JSON only, no markdown, no explanation.`;
 
