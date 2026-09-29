@@ -3,7 +3,8 @@
  * uses, which is what the adapter has to reproduce faithfully.
  *
  * Derived by auditing all 13 call sites (extraction/geminiParser,
- * import/matchColumns, matching/*, precision-search/*, ai/*). None of them use
+ * import/matchColumns, matching/*, precision-search/*, ai/*). The Extraction
+ * uses responseMimeType (#377). None of them use
  * responseSchema, systemInstruction, safetySettings, function declarations or
  * chat sessions, so those are deliberately not modelled — adding them later is
  * additive, whereas guessing at them now would be untested surface.
@@ -34,6 +35,12 @@ export interface GenerateContentRequest {
     maxOutputTokens?: number;
     topP?: number;
     topK?: number;
+    /**
+     * "application/json" asks for JSON mode (#377). Forwarded by every
+     * provider that has one; a provider without it ignores it, and the caller
+     * keeps its own fallback for malformed JSON.
+     */
+    responseMimeType?: "application/json" | "text/plain";
   };
 }
 

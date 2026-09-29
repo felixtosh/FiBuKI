@@ -110,6 +110,9 @@ export class OpenAiCompatibleProvider implements AiProvider {
         ...(request.generationConfig?.maxOutputTokens !== undefined
           ? { max_tokens: request.generationConfig.maxOutputTokens }
           : {}),
+        ...(request.generationConfig?.responseMimeType === "application/json"
+          ? { response_format: { type: "json_object" } }
+          : {}),
       }),
     });
 

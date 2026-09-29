@@ -1130,8 +1130,12 @@ DUE DATE (key "dueDate", IMPORTANT):
 JSON only, no markdown, no explanation.`;
 
   const apiStart = Date.now();
+  // JSON mode (#377): the model escapes string content itself, so a document
+  // printing "C:\temp" arrives intact instead of through repairJson's guess.
+  // repairJson below stays as the fallback for a provider without JSON mode.
   const result = await geminiModel.generateContent({
     contents: [{ role: "user", parts: [filePart, { text: prompt }] }],
+    generationConfig: { responseMimeType: "application/json" },
   });
   console.log(`  [Gemini] API call took ${Date.now() - apiStart}ms (region: ${VERTEX_LOCATION})`);
 
