@@ -6,6 +6,7 @@ import { Timestamp } from "firebase/firestore";
 export type NoReceiptCategoryId =
   | "bank-fees"
   | "interest"
+  | "bank-rewards"
   | "internal-transfers"
   | "payment-provider-settlements"
   | "taxes-government"

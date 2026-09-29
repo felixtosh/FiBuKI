@@ -20,6 +20,13 @@ export const NO_RECEIPT_CATEGORY_TEMPLATES: NoReceiptCategoryTemplate[] = [
     vatTreatment: "exempt-class",
   },
   {
+    id: "bank-rewards",
+    name: "Bank Rewards & Credits",
+    description: "Interest-like bonuses paid by the bank itself (§ 6 (1) 8 UStG)",
+    helperText: "Only for interest-like bonuses the bank pays on your account (e.g., welcome or loyalty interest bonuses). Cashback and referral bonuses do NOT belong here and still need a document.",
+    vatTreatment: "exempt-class",
+  },
+  {
     id: "internal-transfers",
     name: "Internal Transfers",
     description: "Money transfers between your own accounts",
