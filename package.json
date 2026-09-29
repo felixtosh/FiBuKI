@@ -40,7 +40,7 @@
     "@ai-sdk/anthropic": "^3.0.85",
     "@ai-sdk/google": "^3.0.83",
     "@ai-sdk/langchain": "^2.0.216",
-    "@ai-sdk/react": "^3.0.210",
+    "@ai-sdk/react": "^4.0.119",
     "@anthropic-ai/sdk": "^0.125.0",
     "@google-cloud/vertexai": "^1.12.0",
     "@langchain/anthropic": "^1.5.11",
