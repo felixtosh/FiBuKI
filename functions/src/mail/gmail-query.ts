@@ -49,6 +49,7 @@ export function buildGmailQuery(terms: MailSearchTerms): string {
   // sweep below. Only a caller that names nothing at all gets it.
   const namesATerm =
     terms.keywords !== undefined ||
+    terms.anyOf !== undefined ||
     terms.from !== undefined ||
     terms.filenames !== undefined;
 
@@ -58,10 +59,17 @@ export function buildGmailQuery(terms: MailSearchTerms): string {
   // two-word suggestion the pattern layer emits into "any invoice, or anything
   // from Netflix", which is the recall #240 protects (the sweep below is the
   // one place ANY is meant, and it says so).
-  const keywordClause = terms.keywords
-    ? terms.keywords.map(freeText).filter((t) => t.length > 0).join(" ")
-    : orClause(INVOICE_KEYWORDS.map((k) => `"${k}"`));
+  const keywordClause =
+    terms.keywords || terms.anyOf
+      ? (terms.keywords ?? []).map(freeText).filter((t) => t.length > 0).join(" ")
+      : orClause(INVOICE_KEYWORDS.map((k) => `"${k}"`));
   if (keywordClause) parts.push(keywordClause);
+
+  // Each any-of group is one ORed clause, ANDed with everything else (#274).
+  for (const group of terms.anyOf ?? []) {
+    const clause = orClause(group.map(freeText));
+    if (clause) parts.push(clause);
+  }
 
   if (terms.from) parts.push(`from:${terms.from}`);
 

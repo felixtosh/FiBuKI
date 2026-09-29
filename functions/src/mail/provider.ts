@@ -64,6 +64,13 @@ export interface MailSearchTerms {
    * and is the call the Sync worker has always made.
    */
   keywords?: string[];
+  /**
+   * Groups of alternatives (#274): a message must match at least one word of
+   * EACH group, and every group ANDs with `keywords`. `(rechnung OR invoice)`
+   * is `[["rechnung", "invoice"]]`. Naming a group opts out of the invoice
+   * sweep, as naming `keywords` does.
+   */
+  anyOf?: string[][];
   /** Sender address or domain, matched against the From header. */
   from?: string;
   /**

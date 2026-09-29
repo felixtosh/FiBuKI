@@ -46,23 +46,34 @@ const OPERATOR =
  * search. A negated term is dropped, because no provider term says "not" and a
  * literal "-word" would match nothing. Anything else is free text.
  *
- * Gmail's grouping punctuation (parens, a bare `OR`) is stripped, and the terms
- * it grouped become ordinary keywords — which `buildGmailQuery` then ANDs. That
- * NARROWS a query that meant "either word": `(rechnung OR invoice)` goes out as
- * `rechnung invoice`. Named keywords have to AND, because `${partner} rechnung`
- * is what the pattern layer emits constantly and it means both words; there is
- * no term in the vocabulary for "any of these" that would not also widen that.
- * Recording the trade rather than hiding it — see the discussion on #240.
+ * Juxtaposed words stay ANDed keywords, because `${partner} rechnung` is what
+ * the pattern layer emits constantly and it means both words. Words joined by a
+ * bare `OR` become one `anyOf` group instead (#274): `(rechnung OR invoice)`
+ * means either word, and ANDing it would miss every mail carrying only one.
+ * Parens are stripped; an OR only joins two free-text words, so an OR next to
+ * an operator or at either end of the query is dropped.
  */
 export function termsFromQuery(query: string): MailSearchTerms {
-  const keywords: string[] = [];
+  // Free-text words in order, each a list of alternatives: a word joined to the
+  // one before it by OR lands in that word's list.
+  const groups: string[][] = [];
   const filenames: string[] = [];
   let from: string | undefined;
   let hasAttachment: boolean | undefined;
+  // True right after an OR that follows a free-text word.
+  let joinNext = false;
+  let lastWasWord = false;
 
   for (const raw of query.match(TOKEN) ?? []) {
     const token = raw.replace(/^\(+|\)+$/g, "").trim();
-    if (!token || token === "OR" || token === "AND") continue;
+    if (!token || token === "AND") continue;
+    if (token === "OR") {
+      joinNext = lastWasWord;
+      continue;
+    }
+    const join = joinNext;
+    joinNext = false;
+    lastWasWord = false;
 
     // A leading `-` is Gmail's negation, and nothing in the neutral vocabulary
     // says "not". Kept as a keyword it would search for a literal "-word" and
@@ -73,7 +84,11 @@ export function termsFromQuery(query: string): MailSearchTerms {
     const operator = OPERATOR.exec(token);
     if (!operator) {
       const text = unquote(token);
-      if (text) keywords.push(text);
+      if (text) {
+        if (join) groups[groups.length - 1].push(text);
+        else groups.push([text]);
+        lastWasWord = true;
+      }
       continue;
     }
 
@@ -86,7 +101,11 @@ export function termsFromQuery(query: string): MailSearchTerms {
         filenames.push(value);
         break;
       case "subject":
-        if (value) keywords.push(value);
+        if (value) {
+          if (join) groups[groups.length - 1].push(value);
+          else groups.push([value]);
+          lastWasWord = true;
+        }
         break;
       case "has":
         // `has:attachment`; any other `has:` value is Gmail-only and dropped.
@@ -104,8 +123,12 @@ export function termsFromQuery(query: string): MailSearchTerms {
     }
   }
 
+  const keywords = groups.filter((g) => g.length === 1).map((g) => g[0]);
+  const anyOf = groups.filter((g) => g.length > 1);
+
   return {
     ...(keywords.length > 0 ? { keywords } : {}),
+    ...(anyOf.length > 0 ? { anyOf } : {}),
     ...(from ? { from } : {}),
     ...(filenames.length > 0 ? { filenames } : {}),
     ...(hasAttachment !== undefined ? { hasAttachment } : {}),

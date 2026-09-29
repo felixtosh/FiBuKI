@@ -908,6 +908,7 @@ export function ConnectFileOverlay({
         body: JSON.stringify({
           integrationId: integration.id,
           keywords: terms.keywords,
+          anyOf: terms.anyOf,
           from: terms.from,
           filenames: terms.filenames,
           // Named here rather than spread out of `terms`: the wire field is

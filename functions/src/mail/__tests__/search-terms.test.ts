@@ -48,18 +48,54 @@ describe("termsFromQuery", () => {
     });
   });
 
-  it("strips Gmail's grouping, which turns an OR query into an AND one", () => {
-    // Recorded rather than hidden: the parens and the bare OR are dropped and
-    // both words become ordinary keywords, which buildGmailQuery then ANDs. So
-    // this query NARROWS — a mail carrying only "rechnung" was returned before
-    // and is not returned now. Named keywords have to AND (see the AND test
-    // below), and nothing in the vocabulary says "any of these", so the two
-    // cannot both be had until that is decided. See #240.
+  it("reads an OR between words as one any-of group (#274)", () => {
+    // "(rechnung OR invoice)" means either word. Lowered to plain keywords it
+    // would AND and miss every mail carrying only one of them.
     expect(termsFromQuery("(rechnung OR invoice)")).toEqual({
-      keywords: ["rechnung", "invoice"],
+      anyOf: [["rechnung", "invoice"]],
     });
     expect(buildGmailQuery(termsFromQuery("(rechnung OR invoice)"))).toBe(
-      "rechnung invoice has:attachment"
+      "(rechnung OR invoice) has:attachment"
+    );
+  });
+
+  it("keeps juxtaposed words ANDed beside an any-of group", () => {
+    expect(termsFromQuery("amazon (rechnung OR invoice OR beleg)")).toEqual({
+      keywords: ["amazon"],
+      anyOf: [["rechnung", "invoice", "beleg"]],
+    });
+    expect(buildGmailQuery(termsFromQuery("amazon (rechnung OR invoice)"))).toBe(
+      "amazon (rechnung OR invoice) has:attachment"
+    );
+  });
+
+  it("reads two OR groups as two separate groups", () => {
+    expect(termsFromQuery("(a OR b) (c OR d)")).toEqual({ anyOf: [["a", "b"], ["c", "d"]] });
+  });
+
+  it("keeps a quoted phrase whole inside a group", () => {
+    expect(termsFromQuery('"Ihre Rechnung" OR invoice')).toEqual({
+      anyOf: [["Ihre Rechnung", "invoice"]],
+    });
+    expect(buildGmailQuery(termsFromQuery('"Ihre Rechnung" OR invoice'))).toBe(
+      '("Ihre Rechnung" OR invoice) has:attachment'
+    );
+  });
+
+  it("ignores an OR with no word on one side", () => {
+    expect(termsFromQuery("OR rechnung")).toEqual({ keywords: ["rechnung"] });
+    expect(termsFromQuery("rechnung OR")).toEqual({ keywords: ["rechnung"] });
+    expect(termsFromQuery("from:amazon.de OR rechnung")).toEqual({
+      from: "amazon.de",
+      keywords: ["rechnung"],
+    });
+  });
+
+  it("an any-of group alone opts out of the invoice sweep", () => {
+    // Naming a group is naming a term: the shared keyword list must not be
+    // ORed in beside it.
+    expect(buildGmailQuery({ anyOf: [["rechnung", "invoice"]] })).toBe(
+      "(rechnung OR invoice) has:attachment"
     );
   });
 
