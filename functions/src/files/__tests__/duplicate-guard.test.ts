@@ -361,17 +361,6 @@ describe("no path writes to files except through the write point", () => {
   const createsAFile = (source: string) =>
     CREATES_A_FILE_ADMIN.test(source) || CREATES_A_FILE_CLIENT.test(source);
 
-  // The two Gmail routes dedupe on a field called `fileHash`, not
-  // `contentHash`, so their records are invisible to the write point's lookup
-  // and routing them means first deciding what happens to that field — a
-  // rename with a data question attached. That is #328. Until it lands they
-  // are named here one by one, so the hole is exactly two files wide and a
-  // third writer cannot hide in it.
-  const ROUTED_BY_328 = [
-    join("app", "api", "gmail", "attachment", "route.ts"),
-    join("app", "api", "gmail", "convert-to-pdf", "route.ts"),
-  ];
-
   const repoRoot = join(__dirname, "..", "..", "..", "..");
 
   it("has exactly one `files` write across functions/src, app and the client trees", () => {
@@ -392,7 +381,6 @@ describe("no path writes to files except through the write point", () => {
         if (path.endsWith(join("files", "createFileRecord.ts"))) continue;
 
         const relative = path.slice(repoRoot.length + 1);
-        if (ROUTED_BY_328.includes(relative)) continue;
 
         const source = readFileSync(path, "utf8");
         if (createsAFile(source)) {
@@ -414,15 +402,6 @@ describe("no path writes to files except through the write point", () => {
 
     // A seventh path that writes its own way is a seventh path with no guard.
     expect(offenders).toEqual([]);
-  });
-
-  it("still sees the two writes #328 leaves out", () => {
-    // The allow-list is only honest if the files on it would otherwise fail.
-    // When one of them stops writing `files` itself, this fails and the entry
-    // comes off the list rather than quietly covering a path that moved.
-    for (const relative of ROUTED_BY_328) {
-      expect(createsAFile(readFileSync(join(repoRoot, relative), "utf8"))).toBe(true);
-    }
   });
 
   it("catches the write shapes it is meant to catch", () => {
