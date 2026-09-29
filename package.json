@@ -39,7 +39,7 @@
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.85",
     "@ai-sdk/google": "^3.0.83",
-    "@ai-sdk/langchain": "^2.0.216",
+    "@ai-sdk/langchain": "^3.0.116",
     "@ai-sdk/react": "^3.0.210",
     "@anthropic-ai/sdk": "^0.125.0",
     "@google-cloud/vertexai": "^1.12.0",
