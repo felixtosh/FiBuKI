@@ -26,6 +26,7 @@ import { resweepPendingExtractions } from "./extraction-resweep";
 import { createHost, type TokenVerifier } from "./host";
 import { createOidcVerifier } from "./oidc-verifier";
 import { createSelfhostAuth } from "./better-auth";
+import { withAccountProvisioning } from "./ensure-account";
 
 interface ResolvedAuth {
   verifyToken: TokenVerifier;
@@ -34,23 +35,37 @@ interface ResolvedAuth {
 }
 
 async function resolveVerifier(): Promise<ResolvedAuth> {
+  // #159 findings 1+3: every successfully verified request provisions its
+  // account (auth_users row + subscriptions doc with budget fields). In OIDC
+  // mode the token's group-derived admin flag is additionally mirrored into
+  // auth_users.customClaims (the one store the admin panel reads), so panel
+  // and guard share a single identity source. Better Auth mode must NOT sync:
+  // there the claims store is the token's source, and an old token would
+  // write a stale admin bit back.
   const devUid = process.env.FIBUKI_DEV_UID;
   if (devUid) {
     console.warn(`fibuki-api: DEV AUTH MODE — every bearer token authenticates as "${devUid}"`);
-    return { verifyToken: async () => ({ uid: devUid, token: {} }) };
+    return {
+      verifyToken: withAccountProvisioning(async () => ({ uid: devUid, token: {} }), {
+        syncAdminClaim: false,
+      }),
+    };
   }
 
   const issuer = process.env.OIDC_ISSUER;
   if (issuer) {
     console.log(`fibuki-api: external OIDC verification against issuer ${issuer}`);
     return {
-      verifyToken: createOidcVerifier({
-        issuer,
-        jwksUri: process.env.OIDC_JWKS_URI,
-        audience: process.env.OIDC_AUDIENCE,
-        adminGroup: process.env.OIDC_ADMIN_GROUP,
-        groupsClaim: process.env.OIDC_GROUPS_CLAIM,
-      }),
+      verifyToken: withAccountProvisioning(
+        createOidcVerifier({
+          issuer,
+          jwksUri: process.env.OIDC_JWKS_URI,
+          audience: process.env.OIDC_AUDIENCE,
+          adminGroup: process.env.OIDC_ADMIN_GROUP,
+          groupsClaim: process.env.OIDC_GROUPS_CLAIM,
+        }),
+        { syncAdminClaim: true },
+      ),
     };
   }
 
@@ -70,7 +85,10 @@ async function resolveVerifier(): Promise<ResolvedAuth> {
     );
   }
   const auth = await createSelfhostAuth();
-  return { verifyToken: auth.verifier, authHandler: auth.handler };
+  return {
+    verifyToken: withAccountProvisioning(auth.verifier, { syncAdminClaim: false }),
+    authHandler: auth.handler,
+  };
 }
 
 async function main() {

@@ -389,12 +389,20 @@ export default function AdminUsersPage() {
     try {
       const emailToInvite = newEmail.trim();
       await addAllowedEmail({ db, userId }, emailToInvite);
-      callFunction("sendInviteNotification", { email: emailToInvite }).catch(
-        () => {}
-      );
       setNewEmail("");
-      setSuccess(`Invitation sent to ${emailToInvite}`);
-      setTimeout(() => setSuccess(""), 3000);
+      try {
+        // #159 finding 4: this used to be fire-and-forget, so "Invitation
+        // sent" showed even when the mailer refused (e.g. SMTP unconfigured
+        // on self-host) and the invite sat Pending forever.
+        await callFunction("sendInviteNotification", { email: emailToInvite });
+        setSuccess(`Invitation sent to ${emailToInvite}`);
+        setTimeout(() => setSuccess(""), 3000);
+      } catch (mailErr) {
+        setError(
+          `${emailToInvite} was allowlisted, but the invite email was NOT sent: ` +
+            (mailErr instanceof Error ? mailErr.message : "unknown error")
+        );
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to send invite");
     } finally {

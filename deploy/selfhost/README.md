@@ -58,10 +58,37 @@ docker save minio/minio:latest | gzip > minio-image-backup.tar.gz
 
 A fresh install needs none of this.
 
+## Plan (feature surface)
+
+Self-host has nobody to bill, so the plan is an env lever, not a Stripe
+subscription (#159):
+
+```
+FIBUKI_PLAN=full   # default when unset: the whole feature surface
+```
+
+Accepted values: `full` (alias of `pro`), `free`, `data`, `smart`, `pro`.
+Anything else refuses loudly instead of silently granting the default. First
+login provisions the account records (an auth user row and a `subscriptions`
+document with the budget fields); when `FIBUKI_PLAN` changes, restart
+`fibuki-api` and the stored plan is re-pointed on each user's next request.
+Plan limits (transaction quota, AI fair-use budget) still apply; they come
+from the chosen plan.
+
+The lever only exists on the selfhost tier: with `FIBUKI_TIER=cloud` (hosted
+fibuki.com) it is ignored and Stripe owns the plan.
+
 ## Notes
 
 - **Auth**: production uses OIDC (`OIDC_ISSUER` → `oidc-verifier.ts`, tested with
   Authentik). `FIBUKI_DEV_UID` is a dev-only bypass and must never be set here.
+  On first login each user is provisioned automatically (see Plan above); in
+  OIDC mode the admin flag on the token (`OIDC_ADMIN_GROUP`) is mirrored into
+  the user record, so the admin panel shows the same admins the API enforces.
+- **Invites need a mailer**: the invite email goes over SMTP
+  (`FIBUKI_SMTP_HOST/USER/PASS`). Without one configured, sending an invite
+  now fails with a clear error instead of reporting success and sitting
+  "Pending" forever (#159).
 - **NEXT_PUBLIC_\***: inlined at *build* time (Next + CSP), so they are compose
   `build.args`, not just runtime env — rebuild `fibuki-web` if they change.
 - **Data**: `fibuki-pgdata` / `fibuki-seaweeddata` named volumes (`fibuki-miniodata` is kept as the pre-migration rollback) (container-uid owned).
