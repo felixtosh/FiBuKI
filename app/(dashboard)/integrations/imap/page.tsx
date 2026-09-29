@@ -248,7 +248,7 @@ export default function ImapIntegrationPage() {
                   <Check className="h-4 w-4" />
                   <AlertTitle>Mailbox connected</AlertTitle>
                   <AlertDescription>
-                    Syncing recent invoices now.
+                    Searching it for the receipts your open transactions are missing.
                   </AlertDescription>
                 </Alert>
               )}

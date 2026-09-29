@@ -1,9 +1,8 @@
 import { onDocumentCreated, onDocumentUpdated } from "firebase-functions/v2/firestore";
 import { FieldValue, getFirestore, Timestamp } from "firebase-admin/firestore";
-import {
-  getTransactionDateRange,
-  startImapInitialSync,
-} from "./startImapInitialSync";
+import { startImapInitialSync } from "./startImapInitialSync";
+import { firstSyncWindow } from "../mail/syncWindow";
+import { queueIncompleteTransactionSearch } from "../precision-search/queueIncompleteSearch";
 
 const db = getFirestore();
 
@@ -91,27 +90,11 @@ async function setupGmailIntegration(
   integrationId: string,
   userId: string
 ): Promise<void> {
-  // Get transaction date range for time-bounded sync
-  const dateRange = await getTransactionDateRange(userId);
+  // #103: today only. Per-Transaction search, queued when this first Sync
+  // completes, replaces the bulk pull over the whole transaction span.
+  const { dateFrom, dateTo } = firstSyncWindow();
 
-  let dateFrom: Date;
-  let dateTo: Date;
-
-  if (dateRange) {
-    // Extend range slightly to catch invoices for transactions
-    dateFrom = new Date(dateRange.minDate);
-    dateFrom.setDate(dateFrom.getDate() - 7); // 7 days before first transaction
-
-    dateTo = new Date(dateRange.maxDate);
-    dateTo.setDate(dateTo.getDate() + 7); // 7 days after last transaction
-  } else {
-    // No transactions, sync last 90 days
-    dateTo = new Date();
-    dateFrom = new Date();
-    dateFrom.setDate(dateFrom.getDate() - 90);
-  }
-
-  console.log(`[MailService] Gmail date range: ${dateFrom.toISOString()} to ${dateTo.toISOString()}`);
+  console.log(`[MailService] Gmail first-sync window: ${dateFrom.toISOString()} to ${dateTo.toISOString()}`);
 
   // Granting Gmail OAuth signals intent to sync. Start the initial sync
   // immediately so the user sees imports without a second manual click.
@@ -148,7 +131,7 @@ async function setupGmailIntegration(
     userId,
     type: "mail_service_connected",
     title: "Gmail Connected",
-    message: `${data.email} connected. Syncing recent invoices now.`,
+    message: `${data.email} connected. Searching it for the receipts your open transactions are missing.`,
     readAt: null,
     createdAt: now,
   });
@@ -272,59 +255,7 @@ export const onMailServiceReconnected = onDocumentUpdated(
 
       // Queue precision search for incomplete transactions that may have been
       // skipped while mail service was disconnected
-      const existingSearch = await db
-        .collection("precisionSearchQueue")
-        .where("userId", "==", userId)
-        .where("status", "in", ["pending", "processing"])
-        .limit(1)
-        .get();
-
-      if (existingSearch.empty) {
-        // Count incomplete transactions
-        const incompleteCount = await db
-          .collection("transactions")
-          .where("userId", "==", userId)
-          .where("isComplete", "==", false)
-          .count()
-          .get();
-
-        const transactionsToProcess = incompleteCount.data().count;
-
-        if (transactionsToProcess > 0) {
-          const now = Timestamp.now();
-          const queueItem = {
-            userId,
-            scope: "all_incomplete",
-            triggeredBy: "mail_service_reconnected",
-            triggeredByAuthor: {
-              type: "system",
-              userId: userId,
-            },
-            status: "pending",
-            transactionsToProcess,
-            transactionsProcessed: 0,
-            transactionsWithMatches: 0,
-            totalFilesConnected: 0,
-            strategies: [
-              "partner_files",
-              "amount_files",
-              "email_attachment",
-              "email_invoice",
-            ],
-            currentStrategyIndex: 0,
-            errors: [],
-            retryCount: 0,
-            maxRetries: 3,
-            createdAt: now,
-          };
-
-          const docRef = await db.collection("precisionSearchQueue").add(queueItem);
-          console.log(
-            `[MailService] Queued precision search ${docRef.id} for ${transactionsToProcess} ` +
-            `incomplete transactions after ${provider} reconnection`
-          );
-        }
-      }
+      await queueIncompleteTransactionSearch(db, userId, "mail_service_reconnected");
 
       // Create notification for user
       await db.collection(`users/${userId}/notifications`).add({

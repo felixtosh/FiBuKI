@@ -5,11 +5,11 @@ import { Timestamp } from "firebase-admin/firestore";
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { toDateSafe } from "@/lib/utils";
 import { MANUAL_SYNC_WINDOW_DAYS } from "@/functions/src/mail/constants";
+import { forwardSyncGaps } from "@/functions/src/mail/syncWindow";
 
 const db = getAdminDb();
 const INTEGRATIONS_COLLECTION = "emailIntegrations";
 const SYNC_QUEUE_COLLECTION = "gmailSyncQueue";
-const TRANSACTIONS_COLLECTION = "transactions";
 
 /** Thrown inside the enqueue transaction when a concurrent press won the race. */
 class ManualSyncRateLimitedError extends Error {}
@@ -154,7 +154,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Get date range from transactions
-    const gapsToSync = await getSyncDateRanges(userId, integrationId, integration);
+    const gapsToSync = getSyncDateRanges(integration);
 
     // A forced press always covers the trailing window as well, merged with the
     // gaps so an overlapping pair does not become two queue items.
@@ -336,70 +336,14 @@ export async function GET(request: NextRequest) {
 }
 
 /**
- * Get date ranges that need syncing
+ * Date ranges a press still has to fetch: forward from the synced range to
+ * now (#103). Mail older than the synced range is not bulk-pulled; receipts
+ * for older Transactions come from per-Transaction mail search.
  */
-async function getSyncDateRanges(
-  userId: string,
-  integrationId: string,
-  integration: FirebaseFirestore.DocumentData
-): Promise<DateRange[]> {
-  // Get transaction date range
-  const transactionsQuery = await db
-    .collection(TRANSACTIONS_COLLECTION)
-    .where("userId", "==", userId)
-    .orderBy("date", "asc")
-    .limit(1)
-    .get();
-
-  if (transactionsQuery.empty) {
-    // No transactions - sync last 90 days
-    const to = new Date();
-    const from = new Date();
-    from.setDate(from.getDate() - 90);
-    return [{ from, to }];
-  }
-
-  const oldestTransaction = transactionsQuery.docs[0].data();
-  const oldestDate = oldestTransaction.date.toDate();
-
-  // Get most recent transaction
-  const recentQuery = await db
-    .collection(TRANSACTIONS_COLLECTION)
-    .where("userId", "==", userId)
-    .orderBy("date", "desc")
-    .limit(1)
-    .get();
-
-  const newestTransaction = recentQuery.docs[0]?.data();
-  const newestDate = newestTransaction?.date.toDate() || new Date();
-
-  // Add buffer days
-  const from = new Date(oldestDate);
-  from.setDate(from.getDate() - 7);
-  const to = new Date(newestDate);
-  to.setDate(to.getDate() + 7);
-
-  // Check what's already synced (field is syncedDateRange.from/to, written by gmailSyncQueue.ts)
+function getSyncDateRanges(integration: FirebaseFirestore.DocumentData): DateRange[] {
   const syncedFrom = toDateSafe(integration.syncedDateRange?.from);
   const syncedTo = toDateSafe(integration.syncedDateRange?.to);
-
-  if (!syncedFrom || !syncedTo) {
-    // Nothing synced yet
-    return [{ from, to }];
-  }
-
-  // Find gaps
-  const gaps: DateRange[] = [];
-
-  if (from < syncedFrom) {
-    gaps.push({ from, to: new Date(syncedFrom.getTime() - 1) });
-  }
-
-  if (to > syncedTo) {
-    gaps.push({ from: new Date(syncedTo.getTime() + 1), to });
-  }
-
-  return gaps;
+  return forwardSyncGaps(syncedFrom && syncedTo ? { from: syncedFrom, to: syncedTo } : null);
 }
 
 /**

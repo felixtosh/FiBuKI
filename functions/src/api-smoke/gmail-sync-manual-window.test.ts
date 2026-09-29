@@ -76,12 +76,13 @@ function seed(fixture: Fixture) {
 }
 
 /** A fixture whose synced range fully covers the transaction range ± 7 days. */
+/** Synced up to now: nothing forward is left to fetch (#103). */
 function fullySynced(overrides: Partial<Fixture> = {}): Fixture {
   const transactionAt = new Date("2026-01-01T00:00:00Z");
   return {
     transactionAt,
     syncedFrom: new Date(transactionAt.getTime() - 8 * DAY_MS),
-    syncedTo: new Date(transactionAt.getTime() + 8 * DAY_MS),
+    syncedTo: new Date(Date.now() + 60_000),
     ...overrides,
   };
 }
@@ -140,9 +141,9 @@ describe("POST /api/gmail/sync — force", () => {
     expectTrailingWindow(ranges[0], before, after);
   });
 
-  it("queues the window IN ADDITION to a disjoint gap", async () => {
-    // Transactions in January, synced only to 2026-01-03 → a gap that closes
-    // long before the trailing window opens.
+  it("merges the window into the forward gap when the mailbox is far behind", async () => {
+    // Synced only to 2026-01-03: the forward gap runs from then to now and
+    // swallows the trailing window.
     const transactionAt = new Date("2026-01-01T00:00:00Z");
     seed({
       transactionAt,
@@ -152,21 +153,11 @@ describe("POST /api/gmail/sync — force", () => {
     const before = Date.now();
 
     const res = await callSync({ integrationId: INTEGRATION, force: true });
-    const after = Date.now();
     expect(res.status).toBe(200);
 
     const ranges = await queuedRanges();
-    expect(ranges).toHaveLength(2);
-    // The real gap: from just after the synced range out to transaction + 7 days.
-    expect(
-      covers(
-        ranges[0],
-        new Date(transactionAt.getTime() + 2 * DAY_MS + 1),
-        new Date(transactionAt.getTime() + 7 * DAY_MS)
-      )
-    ).toBe(true);
-    // …and the trailing window, separately.
-    expectTrailingWindow(ranges[1], before, after);
+    expect(ranges).toHaveLength(1);
+    expect(covers(ranges[0], new Date(transactionAt.getTime() + 2 * DAY_MS + 1), new Date(before))).toBe(true);
   });
 
   it("merges the window into an overlapping gap rather than queueing it twice", async () => {
@@ -198,28 +189,31 @@ describe("POST /api/gmail/sync — force", () => {
     expect(await queuedRanges()).toHaveLength(0);
   });
 
-  it("queues only the gap without the flag when one exists", async () => {
+  it("queues only the forward gap without the flag, from the synced range to now", async () => {
     const transactionAt = new Date("2026-01-01T00:00:00Z");
-    seed({
-      transactionAt,
-      syncedFrom: new Date(transactionAt.getTime() - 8 * DAY_MS),
-      syncedTo: new Date(transactionAt.getTime() + 2 * DAY_MS),
-    });
+    const syncedTo = new Date(transactionAt.getTime() + 2 * DAY_MS);
+    seed({ transactionAt, syncedFrom: new Date(transactionAt.getTime() - 8 * DAY_MS), syncedTo });
+    const before = Date.now();
 
     const res = await callSync({ integrationId: INTEGRATION });
     expect(res.status).toBe(200);
 
     const ranges = await queuedRanges();
     expect(ranges).toHaveLength(1);
-    expect(
-      covers(
-        ranges[0],
-        new Date(transactionAt.getTime() + 2 * DAY_MS + 1),
-        new Date(transactionAt.getTime() + 7 * DAY_MS)
-      )
-    ).toBe(true);
-    // No trailing window was added.
-    expect(ranges[0].to.getTime()).toBeLessThan(Date.now() - WINDOW_MS);
+    expect(ranges[0].from.getTime()).toBe(syncedTo.getTime() + 1);
+    expect(ranges[0].to.getTime()).toBeGreaterThanOrEqual(before);
+  });
+
+  it("never reaches back before the synced range for older transactions (#103)", async () => {
+    // Transactions a year before the synced range: that history is left to
+    // per-Transaction search, not bulk-pulled.
+    seed(fullySynced({ transactionAt: new Date("2025-01-01T00:00:00Z") }));
+
+    const res = await callSync({ integrationId: INTEGRATION });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ alreadySynced: true });
+    expect(await queuedRanges()).toHaveLength(0);
   });
 });
 

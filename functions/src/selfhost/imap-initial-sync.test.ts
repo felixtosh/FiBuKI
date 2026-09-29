@@ -79,21 +79,25 @@ describe("startImapInitialSync", () => {
     });
   });
 
-  it("pads the transaction span by seven days either side", async () => {
+  it("covers today only, however far back the transactions reach (#103)", async () => {
+    // Per-Transaction search replaces the bulk first Sync: the mailbox is
+    // searched per undocumented Transaction once this finishes, not pulled.
     await seedTransaction("2026-03-10T00:00:00Z");
     await seedTransaction("2026-06-20T00:00:00Z");
 
+    const before = new Date();
     const result = await startImapInitialSync({
       integrationId: INTEGRATION,
       userId: USER,
       email: "stefan@example.com",
     });
 
-    expect(result.dateFrom?.toISOString().slice(0, 10)).toBe("2026-03-03");
-    expect(result.dateTo?.toISOString().slice(0, 10)).toBe("2026-06-27");
+    const startOfToday = new Date(before.getFullYear(), before.getMonth(), before.getDate());
+    expect(result.dateFrom?.getTime()).toBe(startOfToday.getTime());
+    expect(result.dateTo!.getTime()).toBeGreaterThanOrEqual(before.getTime());
   });
 
-  it("falls back to a 90-day window when the user has no transactions", async () => {
+  it("covers today only when the user has no transactions either", async () => {
     const result = await startImapInitialSync({
       integrationId: INTEGRATION,
       userId: USER,
@@ -101,9 +105,8 @@ describe("startImapInitialSync", () => {
     });
 
     expect(result.queued).toBe(true);
-    const spanDays =
-      (result.dateTo!.getTime() - result.dateFrom!.getTime()) / (24 * 60 * 60 * 1000);
-    expect(Math.round(spanDays)).toBe(90);
+    const spanHours = (result.dateTo!.getTime() - result.dateFrom!.getTime()) / (60 * 60 * 1000);
+    expect(spanHours).toBeLessThanOrEqual(24);
   });
 
   it("marks the integration as started so the sync route stops double-queueing", async () => {
