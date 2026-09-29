@@ -12,6 +12,10 @@ import {
   providerErrorResponse,
   readsThroughProviderFactory,
 } from "@/lib/mail/provider-attach";
+import {
+  createFileRecord,
+  findFileByContentHash,
+} from "@/functions/src/files/createFileRecord";
 
 const db = getAdminDb();
 
@@ -259,8 +263,7 @@ export async function POST(request: NextRequest) {
       attachment.filename
     );
 
-    // Calculate file hash for deduplication
-    const fileHash = createHash("sha256").update(attachment.data).digest("hex");
+    const contentHash = createHash("sha256").update(attachment.data).digest("hex");
 
     // Check for existing file with same Gmail message + attachment ID
     // Query without deletedAt filter to catch soft-deleted files too
@@ -272,18 +275,10 @@ export async function POST(request: NextRequest) {
       .limit(1)
       .get();
 
-    // Fallback: check by file hash (catches duplicates from older uploads or different sources)
-    let existingByHash: FirebaseFirestore.QuerySnapshot | null = null;
-    if (existingByGmail.empty) {
-      existingByHash = await db
-        .collection(FILES_COLLECTION)
-        .where("userId", "==", userId)
-        .where("fileHash", "==", fileHash)
-        .limit(1)
-        .get();
-    }
-
-    const existingDoc = !existingByGmail.empty ? existingByGmail.docs[0] : existingByHash?.docs[0];
+    // Fallback: the same bytes from any other path (upload, email, extension).
+    const existingDoc = !existingByGmail.empty
+      ? existingByGmail.docs[0]
+      : await findFileByContentHash(db, userId, contentHash);
     if (existingDoc) {
       const existingFile = existingDoc;
       const existingData = existingFile.data();
@@ -292,7 +287,7 @@ export async function POST(request: NextRequest) {
       // Check if file was soft-deleted
       const wasSoftDeleted = !!existingData.deletedAt;
 
-      const foundBy = !existingByGmail.empty ? "gmailId" : "fileHash";
+      const foundBy = !existingByGmail.empty ? "gmailId" : "contentHash";
       console.log(`[Gmail Attachment] Found duplicate by ${foundBy}: ${existingFile.id}`);
 
       if (wasSoftDeleted) {
@@ -382,7 +377,7 @@ export async function POST(request: NextRequest) {
       fileSize: attachment.size,
       storagePath,
       downloadUrl,
-      fileHash,
+      contentHash,
       uploadedAt: now,
       createdAt: now,
       updatedAt: now,
@@ -404,8 +399,13 @@ export async function POST(request: NextRequest) {
       transactionIds: transactionId ? [transactionId] : [],
     };
 
-    const fileRef = await db.collection(FILES_COLLECTION).add(fileData);
-    const fileId = fileRef.id;
+    const { fileId, duplicate } = await createFileRecord(db, fileData);
+    if (duplicate && transactionId) {
+      await db.collection(FILES_COLLECTION).doc(fileId).update({
+        transactionIds: FieldValue.arrayUnion(transactionId),
+        updatedAt: now,
+      });
+    }
 
     // If transactionId provided, connect file to transaction
     if (transactionId) {

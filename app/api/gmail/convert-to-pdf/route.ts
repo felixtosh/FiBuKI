@@ -4,6 +4,7 @@ import { getAdminDb, getAdminBucket, getFirebaseStorageDownloadUrl } from "@/lib
 import { Timestamp, FieldValue } from "firebase-admin/firestore";
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { createHash, randomUUID } from "crypto";
+import { createFileRecord } from "@/functions/src/files/createFileRecord";
 import { callFirebaseFunction } from "@/lib/api/firebase-callable";
 import { GmailResolutionError, resolveGmailIntegration } from "@/lib/gmail/resolve-integration";
 import {
@@ -123,8 +124,7 @@ export async function POST(request: NextRequest) {
       date: emailDate,
     });
 
-    // Calculate file hash for deduplication
-    const fileHash = createHash("sha256").update(pdfResult.pdfBuffer).digest("hex");
+    const contentHash = createHash("sha256").update(pdfResult.pdfBuffer).digest("hex");
 
     // Generate filename from subject
     const sanitizedSubject = (subject || "email")
@@ -168,7 +168,7 @@ export async function POST(request: NextRequest) {
       fileSize: pdfResult.pdfBuffer.length,
       storagePath,
       downloadUrl,
-      fileHash,
+      contentHash,
       uploadedAt: now,
       createdAt: now,
       updatedAt: now,
@@ -189,8 +189,13 @@ export async function POST(request: NextRequest) {
       transactionIds: transactionId ? [transactionId] : [],
     };
 
-    const fileRef = await db.collection(FILES_COLLECTION).add(fileData);
-    const fileId = fileRef.id;
+    const { fileId, duplicate } = await createFileRecord(db, fileData);
+    if (duplicate && transactionId) {
+      await db.collection(FILES_COLLECTION).doc(fileId).update({
+        transactionIds: FieldValue.arrayUnion(transactionId),
+        updatedAt: now,
+      });
+    }
 
     // If transactionId provided, connect file to transaction
     if (transactionId) {
