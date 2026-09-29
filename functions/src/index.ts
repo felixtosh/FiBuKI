@@ -149,6 +149,7 @@ export {
   regenerateInvoicePdfCallable as regenerateInvoicePdf,
   duplicateInvoiceCallable as duplicateInvoice,
   cancelInvoiceCallable as cancelInvoice,
+  undoIssueInvoiceCallable as undoIssueInvoice,
   deleteInvoiceCallable as deleteInvoice,
   createInvoiceShareLinkCallable as createInvoiceShareLink,
   revokeInvoiceShareLinkCallable as revokeInvoiceShareLink,

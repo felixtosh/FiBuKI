@@ -3,6 +3,9 @@
  * TaxFile field set for a Fibuki-generated invoice file. Keeps the two
  * paths in lockstep so post-issue edits stay reflected on the file record
  * (fileName, extractedAmount, line items, etc.).
+ *
+ * `draftFileStubFields` is the other end: the TaxFile a draft carries before
+ * any PDF exists, written by createInvoice and restored by undoIssueInvoice.
  */
 
 import { Timestamp } from "firebase-admin/firestore";
@@ -18,6 +21,36 @@ function formatAddressOneLine(
   if (postalCity) parts.push(postalCity);
   if (addr.country) parts.push(addr.country);
   return parts.length > 0 ? parts.join(", ") : undefined;
+}
+
+/** The placeholder number a draft shows until it is issued. */
+export function draftPlaceholderNumber(): string {
+  return `DRAFT-${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
+}
+
+/**
+ * The stub TaxFile of a draft invoice. The PDF does not exist yet
+ * (storagePath/downloadUrl empty); issueInvoice fills this same doc in place.
+ *
+ * extractionComplete=true + isFibukiGenerated=true short-circuits the
+ * extractFileData onCreate trigger (see functions/src/extraction/extractFileData.ts).
+ */
+export function draftFileStubFields(invoiceId: string): Record<string, unknown> {
+  return {
+    fileName: "Rechnungsentwurf",
+    fileType: "application/pdf",
+    fileSize: 0,
+    storagePath: "",
+    downloadUrl: "",
+    extractionComplete: true,
+    classificationComplete: true,
+    isNotInvoice: false,
+    isFibukiGenerated: true,
+    sourceType: "fibuki_invoice",
+    invoiceId,
+    invoiceDirection: "outgoing",
+    matchedUserAccount: "issuer",
+  };
 }
 
 interface BuildOptions {
