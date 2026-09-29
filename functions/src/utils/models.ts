@@ -37,6 +37,15 @@ export const MODELS = {
 
   /** Main chat/agent reasoning model (Anthropic). */
   chatAgent: "claude-sonnet-4-20250514",
+
+  /**
+   * TypeSafe Jev, a "System One" decision model: typed Choice/Noul/Score answers
+   * with calibrated confidence, text-only, non-generative. Used where the answer
+   * set is enumerable (column matching). Opt-in per task via env, e.g.
+   * FIBUKI_COLUMN_MATCH_PROVIDER=typesafe; needs FIBUKI_TYPESAFE_API_KEY.
+   * Spike results: handoffs/2026-09-27-jev-decision-provider.md.
+   */
+  jevDecision: "jev-latest",
 } as const;
 
 export type KnownModel = (typeof MODELS)[keyof typeof MODELS];
@@ -52,6 +61,8 @@ export const MODEL_PRICING: Record<string, { input: number; output: number }> = 
   // No role points here since the legacy vision-claude extraction path was
   // retired (#170); kept so historical aiUsage rows still cost correctly.
   "claude-3-haiku-20240307": { input: 0.25, output: 1.25 },
+  // TypeSafe. Launch pricing 2026-09; output tokens are free by design.
+  "jev-latest": { input: 0.042, output: 0 },
   // Gemini. Prices are the paid-tier Standard rates from
   // https://ai.google.dev/gemini-api/docs/pricing; output INCLUDES thinking tokens,
   // so a reasoning model bills its scratchpad at the output rate.

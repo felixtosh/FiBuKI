@@ -87,6 +87,11 @@ export const MODELS = {
   geminiFlash: "gemini-3.5-flash-lite",
   /** Main chat/agent reasoning model. */
   chatAgent: "claude-sonnet-4-20250514",
+  /**
+   * TypeSafe Jev decision model (typed Choice/Noul/Score answers, calibrated
+   * confidence). Opt-in per task via env (FIBUKI_COLUMN_MATCH_PROVIDER=typesafe).
+   */
+  jevDecision: "jev-latest",
 } as const;
 
 export type KnownModel = (typeof MODELS)[keyof typeof MODELS];
@@ -100,6 +105,8 @@ export const AI_MODEL_PRICING: Record<string, { input: number; output: number }>
   // No role points here since the legacy vision-claude extraction path was
   // retired (#170); kept so historical aiUsage rows still cost correctly.
   "claude-3-haiku-20240307": { input: 0.25, output: 1.25 },
+  // TypeSafe. Launch pricing 2026-09; output tokens are free by design.
+  "jev-latest": { input: 0.042, output: 0 },
   // Gemini. Paid-tier Standard rates; output INCLUDES thinking tokens.
   "gemini-3.1-flash-lite": { input: 0.25, output: 1.50 },
   "gemini-3.5-flash-lite": { input: 0.30, output: 2.50 },

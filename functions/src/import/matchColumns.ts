@@ -2,6 +2,20 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { VertexAI } from "@google-cloud/vertexai";
 import { logAIUsage } from "../utils/ai-usage-logger";
 import { MODELS } from "../utils/models";
+import {
+  TRANSACTION_FIELDS,
+  DATE_FORMATS,
+  AMOUNT_FORMATS,
+  MatchColumnsResponse,
+} from "./columnFields";
+import {
+  columnMatchProvider,
+  matchColumnsViaJev,
+  typesafeAllowedFor,
+} from "./matchColumnsJev";
+
+// Re-export: matchInvestmentColumns.ts imports DATE_FORMATS from here (#304).
+export { DATE_FORMATS };
 
 const GEMINI_MODEL = MODELS.geminiLite;
 
@@ -19,172 +33,10 @@ function getProjectId(): string {
 
 const VERTEX_LOCATION = process.env.VERTEX_LOCATION || "europe-west1";
 
-// ============================================================================
-// Types
-// ============================================================================
-
 interface MatchColumnsRequest {
   headers: string[];
   sampleRows: Record<string, string>[];
 }
-
-interface ColumnMapping {
-  csvColumn: string;
-  targetField: string | null;
-  confidence: number;
-}
-
-interface MatchColumnsResponse {
-  mappings: ColumnMapping[];
-  suggestedDateFormat: string | null;
-  suggestedAmountFormat: string | null;
-  suggestedBalanceFormat: string | null;
-}
-
-// ============================================================================
-// Field Definitions (mirrored from frontend)
-// ============================================================================
-
-interface FieldDefinition {
-  key: string;
-  label: string;
-  description: string;
-  aliases: string[];
-  required: boolean;
-  type: "date" | "amount" | "text" | "iban";
-  examples: string[];
-}
-
-const TRANSACTION_FIELDS: FieldDefinition[] = [
-  {
-    key: "date",
-    label: "Transaction Date",
-    description:
-      "The date when the transaction was booked. Also known as booking date, value date, posting date.",
-    aliases: [
-      "Buchungsdatum", "Buchungstag", "Valuta", "Valutadatum", "Datum",
-      "Date", "Booking Date", "Value Date", "Posted Date", "Transaction Date",
-    ],
-    required: true,
-    type: "date",
-    examples: ["15.03.2024", "2024-03-15", "03/15/2024"],
-  },
-  {
-    key: "amount",
-    label: "Amount",
-    description:
-      "The transaction amount. Positive for income, negative for expenses. German format uses comma as decimal (1.234,56).",
-    aliases: [
-      "Betrag", "Summe", "Umsatz", "Soll", "Haben",
-      "Amount", "Value", "Total", "Debit", "Credit",
-    ],
-    required: true,
-    type: "amount",
-    examples: ["-1.234,56", "1234.56", "EUR 500,00"],
-  },
-  {
-    key: "name",
-    label: "Description / Booking Text",
-    description:
-      "The main description or booking text. Contains details about the purpose of the payment.",
-    aliases: [
-      "Buchungstext", "Verwendungszweck", "Text", "Beschreibung",
-      "Description", "Memo", "Narrative", "Details", "Reference",
-    ],
-    required: true,
-    type: "text",
-    examples: ["AMAZON EU SARL", "Gehalt März 2024", "SEPA Direct Debit"],
-  },
-  {
-    key: "partner",
-    label: "Counterparty / Partner",
-    description:
-      "The name of the other party - sender or receiver of the money.",
-    aliases: [
-      "Empfänger", "Auftraggeber", "Partner", "Name",
-      "Payee", "Payer", "Beneficiary", "Recipient", "Merchant",
-    ],
-    required: false,
-    type: "text",
-    examples: ["Max Mustermann", "Amazon EU S.a.r.l.", "Netflix Inc."],
-  },
-  {
-    key: "reference",
-    label: "Reference / Transaction ID",
-    description:
-      "A unique identifier for the transaction. Used for deduplication.",
-    aliases: [
-      "Referenz", "Transaktions-ID", "Buchungsreferenz", "End-to-End-Referenz",
-      "Reference", "Transaction ID", "ID", "Payment Reference",
-    ],
-    required: false,
-    type: "text",
-    examples: ["TXN123456789", "E2E-2024031512345"],
-  },
-  {
-    key: "partnerIban",
-    label: "Partner IBAN",
-    description:
-      "The IBAN of the counterparty's bank account. Starts with country code (AT, DE, CH).",
-    aliases: [
-      "IBAN", "Empfänger-IBAN", "Kontonummer", "Gegenkonto",
-      "Partner IBAN", "Account Number", "Beneficiary IBAN",
-    ],
-    required: false,
-    type: "iban",
-    examples: ["AT12 3456 7890 1234 5678", "DE89370400440532013000"],
-  },
-  {
-    key: "partnerBic",
-    label: "Partner BIC / SWIFT",
-    description: "The BIC/SWIFT code of the counterparty's bank.",
-    aliases: ["BIC", "SWIFT", "SWIFT-Code", "Bankleitzahl", "BLZ"],
-    required: false,
-    type: "text",
-    examples: ["GIBAATWWXXX", "DEUTDEFF"],
-  },
-  {
-    key: "category",
-    label: "Bank Category / Transaction Type",
-    description: "The bank's own categorization of the transaction type.",
-    aliases: [
-      "Kategorie", "Buchungsart", "Transaktionsart", "Typ",
-      "Category", "Type", "Transaction Type", "Payment Type",
-    ],
-    required: false,
-    type: "text",
-    examples: ["Überweisung", "Lastschrift", "Transfer", "Card Payment"],
-  },
-  {
-    key: "balance",
-    label: "Balance After Transaction",
-    description: "The account balance after this transaction. Usually not imported.",
-    aliases: ["Saldo", "Kontostand", "Balance", "Running Balance"],
-    required: false,
-    type: "amount",
-    examples: ["12.345,67", "1234.56 EUR"],
-  },
-];
-
-// Valid format IDs. The date ids are the ids of DATE_PARSERS in
-// lib/import/date-parsers.ts, hand-duplicated because functions/tsconfig.json
-// pins rootDir: "src" and cannot reach the app tree. date-parsers.test.ts
-// fails the build if the two drift: an id missing here is a format the AI can
-// never suggest, and one that lingers here is a format it can suggest and no
-// parser can read (#167, #303). The broker-CSV matcher
-// (investments/matchInvestmentColumns.ts) uses this same list rather than a
-// copy of its own (#304).
-export const DATE_FORMATS = [
-  "iso-datetime", "iso-datetime-t", "iso",
-  "de", "de-mdy", "de-short", "de-mdy-short",
-  "us", "us-short", "eu-slash", "eu-slash-short",
-  "dash-dmy", "dash-mdy", "dash-dmy-short", "dash-mdy-short", "text-short", "text-long",
-];
-
-const AMOUNT_FORMATS = [
-  "de", "de-space", "us", "us-space",
-  "accounting", "accounting-de", "simple", "simple-comma",
-];
 
 // ============================================================================
 // Prompt Builder
@@ -321,109 +173,36 @@ export const matchColumns = onCall<MatchColumnsRequest>(
 
     console.log(`Matching ${headers.length} columns with ${sampleRows.length} sample rows`);
 
-    try {
-      const projectId = getProjectId();
-      const vertexAI = new VertexAI({ project: projectId, location: VERTEX_LOCATION });
-      const model = vertexAI.getGenerativeModel({ model: GEMINI_MODEL });
-
-      const prompt = buildPrompt(headers, sampleRows);
-
-      const response = await model.generateContent({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-      });
-
-      const responseData = response.response;
-
-      // Log AI usage
-      const usageMetadata = responseData.usageMetadata;
-      await logAIUsage(userId, {
-        function: "columnMatching",
-        model: GEMINI_MODEL,
-        inputTokens: usageMetadata?.promptTokenCount || 0,
-        outputTokens: usageMetadata?.candidatesTokenCount || 0,
-      });
-
-      // Extract text from response
-      const text = responseData.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!text) {
-        throw new HttpsError("internal", "No text response from AI");
-      }
-
-      // Parse JSON response - handle markdown code blocks
-      let jsonText = text.trim();
-      if (jsonText.startsWith("```json")) {
-        jsonText = jsonText.slice(7);
-      } else if (jsonText.startsWith("```")) {
-        jsonText = jsonText.slice(3);
-      }
-      if (jsonText.endsWith("```")) {
-        jsonText = jsonText.slice(0, -3);
-      }
-      jsonText = jsonText.trim();
-      let result: MatchColumnsResponse;
-
+    // Jev is opt-in per deployment (FIBUKI_COLUMN_MATCH_PROVIDER=typesafe). A
+    // missing key is a config error and fails loudly; a runtime API failure
+    // falls back to Gemini so a vendor outage cannot break imports.
+    const email = typeof request.auth.token?.email === "string" ? request.auth.token.email : null;
+    if (columnMatchProvider() === "typesafe" && typesafeAllowedFor(userId, email)) {
       try {
-        result = JSON.parse(jsonText);
-      } catch (parseError) {
-        console.error("Failed to parse AI response:", jsonText);
-        throw new HttpsError("internal", "Failed to parse AI response as JSON");
-      }
-
-      // Validate response structure
-      if (!result.mappings || !Array.isArray(result.mappings)) {
-        throw new HttpsError("internal", "Invalid response structure from AI");
-      }
-
-      // Validate mappings
-      const validFieldKeys = new Set(TRANSACTION_FIELDS.map((f) => f.key));
-      result.mappings = result.mappings.map((m) => ({
-        csvColumn: m.csvColumn,
-        targetField: m.targetField && validFieldKeys.has(m.targetField) ? m.targetField : null,
-        confidence: typeof m.confidence === "number" ? Math.min(1, Math.max(0, m.confidence)) : 0,
-      }));
-
-      // Deduplicate: each target field can only be used once (keep highest confidence)
-      const usedFields = new Map<string, { csvColumn: string; confidence: number }>();
-      for (const mapping of result.mappings) {
-        if (!mapping.targetField) continue;
-
-        const existing = usedFields.get(mapping.targetField);
-        if (!existing || mapping.confidence > existing.confidence) {
-          usedFields.set(mapping.targetField, {
-            csvColumn: mapping.csvColumn,
-            confidence: mapping.confidence,
-          });
+        const jev = await matchColumnsViaJev(headers, sampleRows);
+        await logAIUsage(userId, {
+          function: "columnMatching",
+          model: jev.model,
+          inputTokens: jev.inputTokens,
+          outputTokens: jev.outputTokens,
+        });
+        const result = postProcessColumnResult(jev.result);
+        console.log(
+          `Successfully matched columns (typesafe):`,
+          result.mappings.filter((m) => m.targetField).length
+        );
+        return result;
+      } catch (error) {
+        if (error instanceof Error && error.message.includes("FIBUKI_TYPESAFE_API_KEY")) {
+          throw new HttpsError("failed-precondition", error.message);
         }
+        console.error("typesafe column matching failed, falling back to Gemini:", error);
       }
+    }
 
-      // Apply deduplication - only the winning column keeps the field
-      result.mappings = result.mappings.map((m) => {
-        if (!m.targetField) return m;
-
-        const winner = usedFields.get(m.targetField);
-        if (winner && winner.csvColumn !== m.csvColumn) {
-          // This column lost - remove the field assignment
-          return { ...m, targetField: null, confidence: 0 };
-        }
-        return m;
-      });
-
-      // Validate format suggestions
-      if (result.suggestedDateFormat && !DATE_FORMATS.includes(result.suggestedDateFormat)) {
-        result.suggestedDateFormat = "de"; // Default to German
-      }
-      if (result.suggestedAmountFormat && !AMOUNT_FORMATS.includes(result.suggestedAmountFormat)) {
-        result.suggestedAmountFormat = "de"; // Default to German
-      }
-      // For balance format, default to same as amount format if not specified
-      if (!result.suggestedBalanceFormat) {
-        result.suggestedBalanceFormat = result.suggestedAmountFormat;
-      } else if (!AMOUNT_FORMATS.includes(result.suggestedBalanceFormat)) {
-        result.suggestedBalanceFormat = result.suggestedAmountFormat || "de";
-      }
-
+    try {
+      const result = await matchViaGemini(userId, headers, sampleRows);
       console.log(`Successfully matched columns:`, result.mappings.filter((m) => m.targetField).length);
-
       return result;
     } catch (error) {
       if (error instanceof HttpsError) throw error;
@@ -436,3 +215,120 @@ export const matchColumns = onCall<MatchColumnsRequest>(
     }
   }
 );
+
+async function matchViaGemini(
+  userId: string,
+  headers: string[],
+  sampleRows: Record<string, string>[]
+): Promise<MatchColumnsResponse> {
+  const projectId = getProjectId();
+  const vertexAI = new VertexAI({ project: projectId, location: VERTEX_LOCATION });
+  const model = vertexAI.getGenerativeModel({ model: GEMINI_MODEL });
+
+  const prompt = buildPrompt(headers, sampleRows);
+
+  const response = await model.generateContent({
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+  });
+
+  const responseData = response.response;
+
+  // Log AI usage
+  const usageMetadata = responseData.usageMetadata;
+  await logAIUsage(userId, {
+    function: "columnMatching",
+    model: GEMINI_MODEL,
+    inputTokens: usageMetadata?.promptTokenCount || 0,
+    outputTokens: usageMetadata?.candidatesTokenCount || 0,
+  });
+
+  // Extract text from response
+  const text = responseData.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) {
+    throw new HttpsError("internal", "No text response from AI");
+  }
+
+  // Parse JSON response - handle markdown code blocks
+  let jsonText = text.trim();
+  if (jsonText.startsWith("```json")) {
+    jsonText = jsonText.slice(7);
+  } else if (jsonText.startsWith("```")) {
+    jsonText = jsonText.slice(3);
+  }
+  if (jsonText.endsWith("```")) {
+    jsonText = jsonText.slice(0, -3);
+  }
+  jsonText = jsonText.trim();
+  let result: MatchColumnsResponse;
+
+  try {
+    result = JSON.parse(jsonText);
+  } catch (parseError) {
+    console.error("Failed to parse AI response:", jsonText);
+    throw new HttpsError("internal", "Failed to parse AI response as JSON");
+  }
+
+  // Validate response structure
+  if (!result.mappings || !Array.isArray(result.mappings)) {
+    throw new HttpsError("internal", "Invalid response structure from AI");
+  }
+
+  return postProcessColumnResult(result);
+}
+
+/**
+ * Shared post-processing for both backends: drop unknown field keys, clamp
+ * confidence, enforce one column per target field (highest confidence wins),
+ * and fall back to sane format defaults. Exported for tests.
+ */
+export function postProcessColumnResult(result: MatchColumnsResponse): MatchColumnsResponse {
+  // Validate mappings
+  const validFieldKeys = new Set(TRANSACTION_FIELDS.map((f) => f.key));
+  result.mappings = result.mappings.map((m) => ({
+    csvColumn: m.csvColumn,
+    targetField: m.targetField && validFieldKeys.has(m.targetField) ? m.targetField : null,
+    confidence: typeof m.confidence === "number" ? Math.min(1, Math.max(0, m.confidence)) : 0,
+  }));
+
+  // Deduplicate: each target field can only be used once (keep highest confidence)
+  const usedFields = new Map<string, { csvColumn: string; confidence: number }>();
+  for (const mapping of result.mappings) {
+    if (!mapping.targetField) continue;
+
+    const existing = usedFields.get(mapping.targetField);
+    if (!existing || mapping.confidence > existing.confidence) {
+      usedFields.set(mapping.targetField, {
+        csvColumn: mapping.csvColumn,
+        confidence: mapping.confidence,
+      });
+    }
+  }
+
+  // Apply deduplication - only the winning column keeps the field
+  result.mappings = result.mappings.map((m) => {
+    if (!m.targetField) return m;
+
+    const winner = usedFields.get(m.targetField);
+    if (winner && winner.csvColumn !== m.csvColumn) {
+      // This column lost - remove the field assignment
+      return { ...m, targetField: null, confidence: 0 };
+    }
+    return m;
+  });
+
+  // Validate format suggestions
+  if (result.suggestedDateFormat && !DATE_FORMATS.includes(result.suggestedDateFormat)) {
+    result.suggestedDateFormat = "de"; // Default to German
+  }
+  if (result.suggestedAmountFormat && !AMOUNT_FORMATS.includes(result.suggestedAmountFormat)) {
+    result.suggestedAmountFormat = "de"; // Default to German
+  }
+  // For balance format, default to same as amount format if not specified
+  if (!result.suggestedBalanceFormat) {
+    result.suggestedBalanceFormat = result.suggestedAmountFormat;
+  } else if (!AMOUNT_FORMATS.includes(result.suggestedBalanceFormat)) {
+    result.suggestedBalanceFormat = result.suggestedAmountFormat || "de";
+  }
+
+  return result;
+}
