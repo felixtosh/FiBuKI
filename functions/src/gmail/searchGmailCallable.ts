@@ -167,6 +167,7 @@ function isLikelyReceiptAttachment(filename: string, mimeType: string): boolean 
 function buildGmailSearchQuery(params: {
   query?: string;
   keywords?: string[];
+  anyOf?: string[][];
   from?: string;
   filenames?: string[];
   dateFrom?: Date;
@@ -184,6 +185,7 @@ function buildGmailSearchQuery(params: {
   // for the sync worker.
   const terms = buildGmailQuery({
     keywords: params.keywords ?? [],
+    anyOf: params.anyOf,
     from: params.from,
     filenames: params.filenames ?? [],
     hasAttachment: params.hasAttachments === true,
@@ -623,6 +625,7 @@ export const searchGmailCallable = onCall<
       integrationId,
       query,
       keywords,
+      anyOf,
       filenames,
       dateFrom,
       dateTo,
@@ -642,6 +645,7 @@ export const searchGmailCallable = onCall<
       integrationId,
       query,
       keywords,
+      anyOf,
       filenames,
       dateFrom,
       dateTo,
@@ -706,6 +710,7 @@ export const searchGmailCallable = onCall<
         // not neutral.
         terms: {
           keywords: keywords ?? [],
+          anyOf,
           from,
           filenames: filenames ?? [],
           hasAttachment: hasAttachments,
@@ -761,6 +766,7 @@ export const searchGmailCallable = onCall<
     const searchQuery = buildGmailSearchQuery({
       query,
       keywords,
+      anyOf,
       from,
       filenames,
       dateFrom: dateFrom ? new Date(dateFrom) : undefined,

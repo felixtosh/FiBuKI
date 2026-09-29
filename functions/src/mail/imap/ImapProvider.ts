@@ -180,7 +180,7 @@ function anyKeyword(keywords: string[]): ImapSearchQuery {
 }
 
 /**
- * Keywords a caller named: ALL of them must hit, because "netflix rechnung"
+ * Terms a caller named: ALL of them must hit, because "netflix rechnung"
  * means both words (#240).
  *
  * IMAP ANDs juxtaposed keys, but a query object holds one `or`, so the
@@ -188,9 +188,17 @@ function anyKeyword(keywords: string[]): ImapSearchQuery {
  * It is core IMAP4rev1, and a server that still will not run it throws, which
  * drops the search to the bounded local scan.
  */
-function allKeywords(keywords: string[]): ImapSearchQuery {
-  if (keywords.length === 1) return keywordClause(keywords[0]);
-  return { not: { or: keywords.map((k) => ({ not: keywordClause(k) })) } };
+function allClauses(clauses: ImapSearchQuery[]): ImapSearchQuery {
+  if (clauses.length === 1) return clauses[0];
+  return { not: { or: clauses.map((c) => ({ not: c })) } };
+}
+
+/**
+ * Every named keyword AND at least one word of every any-of group (#274). A
+ * group is the same flat OR the invoice sweep sends, over its own words.
+ */
+function namedTerms(keywords: string[], anyOf: string[][]): ImapSearchQuery {
+  return allClauses([...keywords.map(keywordClause), ...anyOf.map(anyKeyword)]);
 }
 
 export class ImapProvider implements MailProvider {
@@ -255,9 +263,10 @@ export class ImapProvider implements MailProvider {
     // integration may have opted out of pre-filtering with. An explicitly named
     // keyword is never dropped for `keywordPrefilter`: that flag turns off an
     // optimisation, not the search the caller asked for.
-    const named = opts.keywords !== undefined;
+    const anyOf = (opts.anyOf ?? []).filter((g) => g.length > 0);
+    const named = opts.keywords !== undefined || opts.anyOf !== undefined;
     const keywords =
-      opts.keywords ?? (this.config.keywordPrefilter ? INVOICE_KEYWORDS : []);
+      opts.keywords ?? (named ? [] : this.config.keywordPrefilter ? INVOICE_KEYWORDS : []);
 
     if (opts.filenames?.length) {
       limitations.push({
@@ -277,8 +286,8 @@ export class ImapProvider implements MailProvider {
     }
 
     const query: ImapSearchQuery = { ...window };
-    if (keywords.length > 0) {
-      Object.assign(query, named ? allKeywords(keywords) : anyKeyword(keywords));
+    if (keywords.length > 0 || anyOf.length > 0) {
+      Object.assign(query, named ? namedTerms(keywords, anyOf) : anyKeyword(keywords));
     }
     if (opts.from) {
       query.from = opts.from;
@@ -289,7 +298,7 @@ export class ImapProvider implements MailProvider {
       const found = await client.search(query, { uid: true });
       uids = (found || []).slice().sort((a, b) => b - a); // newest UID first
     } catch (error) {
-      uids = await this.scanWindow(client, window, keywords, named, opts.from, limitations, error);
+      uids = await this.scanWindow(client, window, keywords, anyOf, named, opts.from, limitations, error);
     }
 
     // Cursor = last UID of the previous page; continue strictly below it.
@@ -321,6 +330,7 @@ export class ImapProvider implements MailProvider {
     client: ImapFlow,
     window: { since: string; before: string },
     keywords: string[],
+    anyOf: string[][],
     matchAll: boolean,
     from: string | undefined,
     limitations: MailSearchLimitation[],
@@ -353,6 +363,9 @@ export class ImapProvider implements MailProvider {
     if (keywords.length > 0) {
       limitations.push({ constraint: "keywords", handling: "scanned", detail: scannedNote });
     }
+    if (anyOf.length > 0) {
+      limitations.push({ constraint: "anyOf", handling: "scanned", detail: scannedNote });
+    }
     if (from) {
       limitations.push({ constraint: "from", handling: "scanned", detail: scannedNote });
     }
@@ -366,6 +379,7 @@ export class ImapProvider implements MailProvider {
     if (scanned.length === 0) return [];
 
     const needles = keywords.map((k) => k.toLowerCase());
+    const groups = anyOf.map((g) => g.map((k) => k.toLowerCase()));
     const sender = from?.toLowerCase();
     const matched: number[] = [];
 
@@ -385,8 +399,9 @@ export class ImapProvider implements MailProvider {
       const hit = (k: string) => subject.includes(k) || fromHeader.includes(k);
       const keywordHit =
         needles.length === 0 || (matchAll ? needles.every(hit) : needles.some(hit));
+      const groupsHit = groups.every((g) => g.some(hit));
       const senderHit = !sender || fromHeader.includes(sender);
-      if (keywordHit && senderHit) matched.push(uid);
+      if (keywordHit && groupsHit && senderHit) matched.push(uid);
     }
 
     return matched.sort((a, b) => b - a);

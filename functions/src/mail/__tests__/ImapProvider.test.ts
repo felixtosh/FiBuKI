@@ -221,6 +221,81 @@ describe("ImapProvider.search", () => {
     expect(q.not).toBeUndefined();
   });
 
+  it("sends an any-of group as one OR-clause over its words (#274)", async () => {
+    state.searchResult = [1];
+    await new ImapProvider(cfg()).search({
+      anyOf: [["rechnung", "invoice"]],
+      dateFrom: new Date(),
+      dateTo: new Date(),
+    });
+    const q = state.searchQuery as Record<string, unknown>;
+    expect(q.or).toEqual([
+      { subject: "rechnung" },
+      { body: "rechnung" },
+      { subject: "invoice" },
+      { body: "invoice" },
+    ]);
+    expect(q.not).toBeUndefined();
+  });
+
+  it("ANDs an any-of group with a named keyword", async () => {
+    state.searchResult = [1];
+    await new ImapProvider(cfg()).search({
+      keywords: ["amazon"],
+      anyOf: [["rechnung", "invoice"]],
+      dateFrom: new Date(),
+      dateTo: new Date(),
+    });
+    const q = state.searchQuery as Record<string, unknown>;
+    expect(q.not).toEqual({
+      or: [
+        { not: { or: [{ subject: "amazon" }, { body: "amazon" }] } },
+        {
+          not: {
+            or: [
+              { subject: "rechnung" },
+              { body: "rechnung" },
+              { subject: "invoice" },
+              { body: "invoice" },
+            ],
+          },
+        },
+      ],
+    });
+  });
+
+  it("an any-of group alone is not widened by the invoice prefilter", async () => {
+    state.searchResult = [1];
+    await new ImapProvider({ ...cfg(), keywordPrefilter: true }).search({
+      anyOf: [["beleg", "quittung"]],
+      dateFrom: new Date(),
+      dateTo: new Date(),
+    });
+    const q = state.searchQuery as Record<string, unknown>;
+    expect(JSON.stringify(q)).not.toMatch(/"rechnung"/);
+  });
+
+  it("matches an any-of group in the local scan when the server rejects it", async () => {
+    state.searchThrows = true;
+    state.searchResult = [3, 2, 1];
+    state.fetchList = [
+      { uid: 3, envelope: { subject: "Your invoice", from: [{ address: "a@amazon.de" }] } },
+      { uid: 2, envelope: { subject: "Ihre Rechnung", from: [{ address: "a@amazon.de" }] } },
+      { uid: 1, envelope: { subject: "Newsletter", from: [{ address: "a@amazon.de" }] } },
+    ];
+
+    const page = await new ImapProvider(cfg()).search({
+      keywords: ["amazon"],
+      anyOf: [["rechnung", "invoice"]],
+      dateFrom: new Date("2026-07-01T00:00:00Z"),
+      dateTo: new Date("2026-07-31T00:00:00Z"),
+    });
+
+    expect(page.messages).toEqual([{ id: "3" }, { id: "2" }]);
+    const reported = (page.limitations ?? []).map((l) => `${l.constraint}:${l.handling}`);
+    expect(reported).toContain("anyOf:scanned");
+  });
+
   it("falls back to a bounded local scan when the server rejects the keywords", async () => {
     // 260 messages in the window; the keyword search throws, so the scan walks
     // the newest MAX_IMAP_SCAN_MESSAGES of them and matches Subject/From itself.

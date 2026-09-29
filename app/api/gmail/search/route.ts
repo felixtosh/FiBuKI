@@ -55,6 +55,7 @@ interface SearchGmailResponse {
  * Body: {
  *   integrationId: string;
  *   keywords?: string[];
+ *   anyOf?: string[][]; // groups of alternatives, e.g. [["rechnung", "invoice"]]
  *   from?: string;
  *   filenames?: string[];
  *   query?: string; // raw Gmail query, Gmail integrations only
@@ -73,6 +74,7 @@ export async function POST(request: NextRequest) {
       integrationId,
       query,
       keywords,
+      anyOf,
       filenames,
       dateFrom,
       dateTo,
@@ -87,6 +89,7 @@ export async function POST(request: NextRequest) {
       integrationId,
       query,
       keywords,
+      anyOf,
       filenames,
       dateFrom,
       dateTo,
@@ -114,6 +117,7 @@ export async function POST(request: NextRequest) {
         integrationId: string;
         query?: string;
         keywords?: string[];
+        anyOf?: string[][];
         filenames?: string[];
         dateFrom?: string;
         dateTo?: string;
@@ -130,6 +134,7 @@ export async function POST(request: NextRequest) {
         integrationId,
         query,
         keywords,
+        anyOf,
         filenames,
         dateFrom,
         dateTo,
