@@ -34,6 +34,7 @@ import {
 } from "./transactionScoring";
 import { readDismissedTransactionIds } from "./dismissedTransactions";
 import { isFileRejected } from "./rejectedFiles";
+import { toDateSafe } from "../utils/toDateSafe";
 
 /** Firestore batch write cap is 500; chunk with headroom. */
 const BATCH_CHUNK_SIZE = 400;
@@ -170,7 +171,7 @@ export async function rescoreUnconnectedFilesForPartners(
         if (txData.quotaExceeded) return false;
         if (isFileRejected(txData, fileDoc.id)) return false;
         if (fileDate) {
-          const txDate = txData.date?.toDate?.();
+          const txDate = toDateSafe(txData.date);
           if (!txDate) return false;
           const daysDiff = Math.abs(txDate.getTime() - fileDate.getTime()) / MS_PER_DAY;
           if (daysDiff > SCORING_CONFIG.DATE_RANGE_DAYS) return false;
