@@ -1112,6 +1112,21 @@ ADDITIONAL FIELDS ("additionalFields", IMPORTANT):
   Invoicing Agent each have their own field above, and belong in no other
 - Never invent a key to make a field fit
 
+DUE DATE (key "dueDate", IMPORTANT):
+- The date by which the invoice must be PAID (the Fälligkeitsdatum).
+  Documents print it under several wordings - "Fälligkeitsdatum",
+  "Zahlungstermin", "fällig am", "zahlbar bis", "Zahlbar ohne Abzug bis",
+  "Due Date", "Payment due" - transcribe it under the key "dueDate"
+  whichever of these the document prints, with "label" as printed
+- "Zahlungsziel" is NOT a due date. It names a payment PERIOD ("14 Tage",
+  "30 Tage netto", "prompt"), goes under the key "paymentTerms", and its
+  value stays the printed period. NEVER add it to the invoice date to
+  construct a "dueDate" - a computed date is a made-up value
+- If the document prints no due date, return NO "dueDate" field. Never guess
+  one and never reuse the invoice date as one
+- Never return a "dueDate" earlier than the invoice date - if your reading
+  comes out earlier, it is a misread, so leave the field out
+
 JSON only, no markdown, no explanation.`;
 
   const apiStart = Date.now();
