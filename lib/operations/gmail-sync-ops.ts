@@ -426,18 +426,18 @@ export async function markInitialSyncComplete(
 
 /**
  * Check if a Gmail attachment has already been imported.
- * Uses gmailMessageId + gmailAttachmentId for deduplication.
+ * Uses mailMessageId + mailAttachmentId for deduplication.
  */
 export async function isGmailAttachmentImported(
   ctx: OperationsContext,
-  gmailMessageId: string,
+  mailMessageId: string,
   attachmentId: string
 ): Promise<boolean> {
   const q = query(
     collection(ctx.db, FILES_COLLECTION),
     where("userId", "==", ctx.userId),
-    where("gmailMessageId", "==", gmailMessageId),
-    where("gmailAttachmentId", "==", attachmentId),
+    where("mailMessageId", "==", mailMessageId),
+    where("mailAttachmentId", "==", attachmentId),
     limit(1)
   );
 

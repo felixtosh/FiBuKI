@@ -65,8 +65,8 @@
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "userId", "order": "ASCENDING" },
-        { "fieldPath": "gmailMessageId", "order": "ASCENDING" },
-        { "fieldPath": "gmailAttachmentId", "order": "ASCENDING" }
+        { "fieldPath": "mailMessageId", "order": "ASCENDING" },
+        { "fieldPath": "mailAttachmentId", "order": "ASCENDING" }
       ]
     },
     {

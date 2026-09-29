@@ -432,8 +432,8 @@ export async function processQueueItem(
           const existingFile = await db
             .collection("files")
             .where("userId", "==", queueItem.userId)
-            .where("gmailMessageId", "==", messageId)
-            .where("gmailAttachmentId", "==", attachment.attachmentId)
+            .where("mailMessageId", "==", messageId)
+            .where("mailAttachmentId", "==", attachment.attachmentId)
             .limit(1)
             .get();
 
@@ -474,7 +474,7 @@ export async function processQueueItem(
                 contentDisposition: "inline",
                 metadata: {
                   originalFilename: attachment.filename,
-                  gmailMessageId: messageId,
+                  mailMessageId: messageId,
                   gmailIntegrationId: queueItem.integrationId,
                 },
               },
@@ -514,11 +514,11 @@ export async function processQueueItem(
 
               // Gmail source tracking
               sourceType: "gmail",
-              gmailMessageId: messageId,
+              mailMessageId: messageId,
               gmailIntegrationId: queueItem.integrationId,
               gmailIntegrationEmail: integrationEmail,
               gmailSubject: subject,
-              gmailAttachmentId: attachment.attachmentId,
+              mailAttachmentId: attachment.attachmentId,
               gmailSenderEmail: senderEmail,
               gmailSenderDomain: senderDomain,
               gmailSenderName: senderName,

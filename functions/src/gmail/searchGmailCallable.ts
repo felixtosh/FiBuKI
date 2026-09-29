@@ -433,10 +433,10 @@ async function tryRefreshToken(
 /**
  * Files already imported from these messages, keyed `messageId:attachmentId`.
  *
- * The two stored fields still carry Gmail's names for every provider — an IMAP
- * File records its UID in `gmailMessageId` and its BODYSTRUCTURE part id in
- * `gmailAttachmentId`, because the dedup index rides them. Renaming them is
- * #102's, not this ticket's.
+ * The two stored fields are provider-neutral (#102): a Gmail File records its
+ * message id in `mailMessageId`, an IMAP File its UID; the attachment handle
+ * (Gmail attachmentId, IMAP BODYSTRUCTURE part id) lives in
+ * `mailAttachmentId`. The dedup index rides the pair.
  */
 async function findExistingFiles(
   userId: string,
@@ -450,13 +450,13 @@ async function findExistingFiles(
     const existingQuery = await db
       .collection("files")
       .where("userId", "==", userId)
-      .where("gmailMessageId", "in", batch)
+      .where("mailMessageId", "in", batch)
       .get();
 
     for (const doc of existingQuery.docs) {
       const data = doc.data();
-      if (data.gmailAttachmentId) {
-        const key = `${data.gmailMessageId}:${data.gmailAttachmentId}`;
+      if (data.mailAttachmentId) {
+        const key = `${data.mailMessageId}:${data.mailAttachmentId}`;
         existingFilesMap.set(key, doc.id);
       }
     }

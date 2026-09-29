@@ -279,7 +279,7 @@ export interface FileConnectionSourceInfo {
   /** For Gmail: integration email */
   gmailIntegrationEmail?: string;
   /** For Gmail: message ID */
-  gmailMessageId?: string;
+  mailMessageId?: string;
   /** For Gmail: sender email */
   gmailMessageFrom?: string;
   /** For Gmail: sender name */

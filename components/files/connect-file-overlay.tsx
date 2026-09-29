@@ -202,7 +202,7 @@ interface ConnectFileOverlayProps {
       searchPattern?: string;
       gmailIntegrationId?: string;
       gmailIntegrationEmail?: string;
-      gmailMessageId?: string;
+      mailMessageId?: string;
       gmailMessageFrom?: string;
       gmailMessageFromName?: string;
       resultType?: "local_file" | "gmail_attachment" | "gmail_html_invoice" | "gmail_invoice_link";
@@ -1344,7 +1344,7 @@ export function ConnectFileOverlay({
         searchPattern,
         gmailIntegrationId: selectedAttachment.integrationId,
         gmailIntegrationEmail: integrationEmail,
-        gmailMessageId: selectedAttachment.attachment.messageId,
+        mailMessageId: selectedAttachment.attachment.messageId,
         gmailMessageFrom: selectedAttachment.message.from,
         gmailMessageFromName: selectedAttachment.message.fromName,
         resultType: "gmail_attachment",
@@ -1436,7 +1436,7 @@ export function ConnectFileOverlay({
         searchPattern,
         gmailIntegrationId: selectedEmail.integrationId,
         gmailIntegrationEmail: integrationEmail,
-        gmailMessageId: selectedEmail.messageId,
+        mailMessageId: selectedEmail.messageId,
         gmailMessageFrom: selectedEmail.from,
         gmailMessageFromName: selectedEmail.fromName,
         resultType: "gmail_html_invoice",
@@ -1500,7 +1500,7 @@ export function ConnectFileOverlay({
         searchPattern,
         gmailIntegrationId: selectedEmail.integrationId,
         gmailIntegrationEmail: integrationEmail,
-        gmailMessageId: selectedEmail.messageId,
+        mailMessageId: selectedEmail.messageId,
         gmailMessageFrom: selectedEmail.from,
         gmailMessageFromName: selectedEmail.fromName,
         resultType: "gmail_attachment",

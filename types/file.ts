@@ -220,8 +220,8 @@ export interface TaxFile {
   /** For browser imports: collector ID */
   sourceCollectorId?: string;
 
-  /** For Gmail imports: Gmail message ID */
-  gmailMessageId?: string;
+  /** For mail imports: provider message id (Gmail message id, IMAP UID) — dedup key (#102) */
+  mailMessageId?: string;
 
   /** For Gmail imports: which integration (account) the file came from */
   gmailIntegrationId?: string;
@@ -232,8 +232,8 @@ export interface TaxFile {
   /** For Gmail imports: email subject */
   gmailSubject?: string;
 
-  /** For Gmail imports: attachment ID (for deduplication) */
-  gmailAttachmentId?: string;
+  /** For mail imports: provider attachment handle (Gmail attachmentId, IMAP BODYSTRUCTURE part id) — dedup key (#102) */
+  mailAttachmentId?: string;
 
   /** For Gmail imports: sender email address */
   gmailSenderEmail?: string;
@@ -811,8 +811,8 @@ export interface FileConnection {
   /** For Gmail: integration email */
   gmailIntegrationEmail?: string;
 
-  /** For Gmail: message ID containing the attachment */
-  gmailMessageId?: string;
+  /** For mail: provider message id containing the attachment */
+  mailMessageId?: string;
 
   /** For Gmail: sender email address */
   gmailMessageFrom?: string;
@@ -906,11 +906,11 @@ export interface FileCreateData {
   sourceDomain?: string;
   sourceRunId?: string;
   sourceCollectorId?: string;
-  gmailMessageId?: string;
+  mailMessageId?: string;
   gmailIntegrationId?: string;
   gmailIntegrationEmail?: string;
   gmailSubject?: string;
-  gmailAttachmentId?: string;
+  mailAttachmentId?: string;
   gmailSenderEmail?: string;
   gmailSenderDomain?: string;
   gmailSenderName?: string;

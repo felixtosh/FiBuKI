@@ -66,7 +66,7 @@ describe("storage shim surface semantics (memory backend)", () => {
       metadata: {
         contentType: "image/png",
         contentDisposition: "inline",
-        metadata: { originalFilename: "Rechnung Juli.png", gmailMessageId: "m-1" },
+        metadata: { originalFilename: "Rechnung Juli.png", mailMessageId: "m-1" },
       },
     });
 
@@ -75,7 +75,7 @@ describe("storage shim surface semantics (memory backend)", () => {
     expect(meta.contentDisposition).toBe("inline");
     expect(meta.metadata).toEqual({
       originalFilename: "Rechnung Juli.png",
-      gmailMessageId: "m-1",
+      mailMessageId: "m-1",
     });
   });
 

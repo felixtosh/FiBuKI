@@ -69,7 +69,7 @@ describe("S3 blob store header routing (no live MinIO)", () => {
   it("round-trips umlaut filenames and camelCase keys through the custom header", () => {
     const original = {
       originalFilename: "Rechnung Müller & Söhne — Juli.pdf",
-      gmailMessageId: "m-äöü-1",
+      mailMessageId: "m-äöü-1",
       firebaseStorageDownloadTokens: "tok-2",
     };
     const encoded = store.customHeader(meta({ metadata: original }));

@@ -45,7 +45,7 @@ export interface FileConnectionSourceInfo {
   /** For Gmail: integration email */
   gmailIntegrationEmail?: string;
   /** For Gmail: message ID */
-  gmailMessageId?: string;
+  mailMessageId?: string;
   /** For Gmail: sender email */
   gmailMessageFrom?: string;
   /** For Gmail: sender name */
@@ -927,8 +927,8 @@ export async function connectFileToTransaction(
   if (sourceInfo?.gmailIntegrationEmail) {
     connectionData.gmailIntegrationEmail = sourceInfo.gmailIntegrationEmail;
   }
-  if (sourceInfo?.gmailMessageId) {
-    connectionData.gmailMessageId = sourceInfo.gmailMessageId;
+  if (sourceInfo?.mailMessageId) {
+    connectionData.mailMessageId = sourceInfo.mailMessageId;
   }
   if (sourceInfo?.gmailMessageFrom) {
     connectionData.gmailMessageFrom = sourceInfo.gmailMessageFrom;
