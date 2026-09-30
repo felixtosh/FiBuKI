@@ -174,7 +174,7 @@ export default function SignInSecurityPage() {
   return (
     <>
       <SettingsPageHeader
-        title="Sign-in & Security"
+        title="General Settings"
         description="Manage how you sign in and protect your account"
       />
 

@@ -161,7 +161,7 @@
         },
         "retention": {
           "title": "Datenspeicherung & Löschung",
-          "content": "• Ihre Daten werden aufbewahrt, solange Ihr Konto aktiv ist\n• Sie können jederzeit einzelne Dateien, Transaktionen oder verbundene Konten löschen\n• Sie können Ihr Konto unter Einstellungen > Anmeldung & Sicherheit > Konto löschen entfernen\n• Die Kontolöschung beinhaltet eine 30-tägige Frist, in der Sie die Anfrage stornieren können\n• Nach Ablauf der Frist werden alle zugehörigen Daten dauerhaft entfernt\n• OAuth-Token für verbundene Dienste (z.B. Gmail) werden widerrufen und können nicht wiederhergestellt werden\n• Datenbank-Backups werden für bis zu 90 Tage zur Notfallwiederherstellung aufbewahrt und danach automatisch gelöscht"
+          "content": "• Ihre Daten werden aufbewahrt, solange Ihr Konto aktiv ist\n• Sie können jederzeit einzelne Dateien, Transaktionen oder verbundene Konten löschen\n• Sie können Ihr Konto unter Einstellungen > Allgemeine Einstellungen > Konto löschen entfernen\n• Die Kontolöschung beinhaltet eine 30-tägige Frist, in der Sie die Anfrage stornieren können\n• Nach Ablauf der Frist werden alle zugehörigen Daten dauerhaft entfernt\n• OAuth-Token für verbundene Dienste (z.B. Gmail) werden widerrufen und können nicht wiederhergestellt werden\n• Datenbank-Backups werden verschlüsselt für bis zu 14 Tage zur Notfallwiederherstellung aufbewahrt und danach automatisch gelöscht"
         }
       },
       "automatedProcessing": {

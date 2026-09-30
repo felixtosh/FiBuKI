@@ -681,7 +681,7 @@ export default function DesignSystemPage() {
               </p>
               <div className="space-y-6 border rounded-lg p-4 bg-background">
                 <SettingsPageHeader
-                  title="Sign-in & Security"
+                  title="General Settings"
                   description="Manage how you sign in and protect your account"
                 />
                 <SettingsPageHeader
