@@ -12,6 +12,7 @@ export { learnPartnerCategoryPatterns } from "./matching/learnPartnerCategoryPat
 export { searchExternalPartners } from "./matching/searchExternalPartners";
 export { learnBillingCycleCallable as learnBillingCycle } from "./matching/learnBillingCycle";
 export { scheduledLearnBillingCycles } from "./matching/scheduledBillingCycleLearn";
+export { scheduledMailHeaderScan } from "./precision-search/mailHeaderScan";
 export { scheduledTimedReceiptSearch } from "./precision-search/timedReceiptSearch";
 export { learnScoringWeightsCallable as learnScoringWeights } from "./matching/learnScoringWeights";
 

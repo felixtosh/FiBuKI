@@ -190,6 +190,23 @@ class GmailApiClient {
     return response.json();
   }
 
+  /** Headers only: no body, no parts. The cheap call the header scan makes. */
+  async getMessageMetadata(messageId: string): Promise<GmailMessage> {
+    await this.waitForRateLimit();
+    const params = new URLSearchParams({ format: "metadata" });
+    for (const h of ["From", "Subject", "Message-ID"]) params.append("metadataHeaders", h);
+    const response = await fetch(
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}?${params}`,
+      {
+        headers: { Authorization: `Bearer ${this.accessToken}` },
+      }
+    );
+    if (!response.ok) {
+      throw new Error(`Gmail get message metadata failed: ${response.status}`);
+    }
+    return response.json();
+  }
+
   async getAttachment(
     messageId: string,
     attachmentId: string
@@ -252,6 +269,18 @@ export class GmailProvider implements MailProvider {
       subject: extractHeader(message, "Subject") || "",
       date: new Date(parseInt(message.internalDate, 10)),
       attachments: extractAttachments(message),
+    };
+  }
+
+  async getHeaders(ref: MailMessageRef): Promise<MailMessage> {
+    const message = await this.client.getMessageMetadata(ref.id);
+    return {
+      id: message.id,
+      messageId: extractHeader(message, "Message-ID"),
+      from: extractHeader(message, "From") || "",
+      subject: extractHeader(message, "Subject") || "",
+      date: new Date(parseInt(message.internalDate, 10)),
+      attachments: [],
     };
   }
 
