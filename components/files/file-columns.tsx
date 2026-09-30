@@ -18,6 +18,7 @@ import {
   describeInvoiceDirection,
 } from "@/lib/documents/document-type-presentation";
 import { describeFileNameCell } from "@/lib/files/file-display-name";
+import { fileDocumentAmount } from "@/lib/files/document-amount";
 import { AmountMatchDisplay } from "@/components/ui/amount-match-display";
 import { cn, toDateSafe } from "@/lib/utils";
 import type { EcbConverter } from "@/lib/currency";
@@ -30,64 +31,6 @@ import {
 export interface TransactionAmountInfo {
   amount: number;
   currency: string;
-}
-
-function inferLineItemAmountsAreNet(file: TaxFile): boolean {
-  const lineItems = file.extractedLineItems;
-  if (!Array.isArray(lineItems) || lineItems.length === 0) {
-    return false;
-  }
-
-  let comparedItems = 0;
-  let netInterpretationError = 0;
-  let grossInterpretationError = 0;
-
-  for (const item of lineItems) {
-    if (
-      item.vatPercent == null ||
-      !Number.isFinite(item.vatPercent) ||
-      item.vatPercent <= 0 ||
-      !Number.isFinite(item.vatAmount)
-    ) {
-      continue;
-    }
-
-    const rate = item.vatPercent;
-    const expectedVatIfNet = Math.round((item.amount * rate) / 100);
-    const expectedVatIfGross = Math.round((item.amount * rate) / (100 + rate));
-
-    netInterpretationError += Math.abs(expectedVatIfNet - item.vatAmount);
-    grossInterpretationError += Math.abs(expectedVatIfGross - item.vatAmount);
-    comparedItems += 1;
-  }
-
-  if (comparedItems === 0) {
-    return false;
-  }
-
-  return netInterpretationError < grossInterpretationError;
-}
-
-function getEffectiveExtractedAmount(file: TaxFile): number | null {
-  if (!Array.isArray(file.extractedLineItems) || file.extractedLineItems.length === 0) {
-    return file.extractedAmount ?? null;
-  }
-
-  // #203: flagged items are exactly the ones whose sum contradicts the
-  // document — never derive the display figure from them.
-  if (file.lineItemsUnreconciled) {
-    return file.extractedAmount ?? null;
-  }
-
-  const amountFromItems = file.extractedLineItems.reduce((sum, item) => sum + item.amount, 0);
-  const vatFromItems = file.extractedLineItems.reduce((sum, item) => sum + item.vatAmount, 0);
-  const looksNet = vatFromItems > 0 && inferLineItemAmountsAreNet(file);
-
-  if (looksNet) {
-    return amountFromItems + vatFromItems;
-  }
-
-  return file.extractedAmount ?? amountFromItems;
 }
 
 export function getFileColumns(
@@ -245,12 +188,12 @@ export function getFileColumns(
     },
     {
       id: "extractedAmount",
-      accessorFn: (row) => getEffectiveExtractedAmount(row),
+      accessorFn: (row) => fileDocumentAmount(row),
       header: ({ column }) => (
         <SortableHeader column={column}>Amount</SortableHeader>
       ),
       cell: ({ row }) => {
-        const amount = getEffectiveExtractedAmount(row.original);
+        const amount = fileDocumentAmount(row.original);
         const currency = normalizeCurrencyForDisplay(row.original.extractedCurrency);
         const vatAmount = row.original.extractedVatAmount;
         const invoiceDirection = row.original.invoiceDirection;
