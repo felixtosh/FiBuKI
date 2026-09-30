@@ -142,6 +142,8 @@ export type TransactionMatchSource =
   | "partner"
   | "iban"
   | "reference"
+  /** Booked on the File's Debit Date or within its settlement lag (#136). */
+  | "debit_date"
   /** Scored against the Transaction's Remainder, not its full amount (#239). */
   | "amount_remainder";
 
@@ -283,6 +285,8 @@ export interface TaxFile {
    * field existed (the scorer reads the row itself); null when none stated.
    */
   extractedDueDate?: Timestamp | null;
+  /** The Debit Date (Einzugsdatum) a SEPA direct-debit invoice states (#136). */
+  extractedDebitDate?: Timestamp | null;
 
   /** AI-extracted amount in cents */
   extractedAmount?: number | null;

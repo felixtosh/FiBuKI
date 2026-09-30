@@ -87,6 +87,13 @@ export interface AutomationHistoryEntry {
 }
 
 /**
+ * Canonical bank-line kinds (#136). Mirrors TRANSACTION_TYPES in
+ * functions/src/imports/transactionType.ts; transactionType.sync.test.ts pins
+ * the two.
+ */
+export type TransactionType = "direct_debit" | "standing_order" | "transfer" | "card";
+
+/**
  * A financial transaction imported from a bank account.
  * All transactions must be associated with a source (bank account).
  */
@@ -135,6 +142,12 @@ export interface Transaction {
 
   /** Counterparty IBAN if available */
   partnerIban: string | null;
+
+  /**
+   * The canonical kind of the bank line, derived at Import from the bank's own
+   * wording (#136). Null when the source prints none or none this knows.
+   */
+  transactionType?: TransactionType | null;
 
   // === Deduplication ===
 

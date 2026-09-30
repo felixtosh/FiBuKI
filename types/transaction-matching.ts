@@ -16,6 +16,8 @@ export type TransactionMatchSource =
   | "iban"
   | "reference"
   | "precision_hint"
+  /** Booked on the File's Debit Date or within its settlement lag (#136). */
+  | "debit_date"
   /** Scored against the Transaction's Remainder, not its full amount (#239). */
   | "amount_remainder";
 
@@ -127,6 +129,8 @@ export function getMatchSourceLabel(source: TransactionMatchSource): string {
       return "Search Hint";
     case "amount_remainder":
       return "Remainder";
+    case "debit_date":
+      return "Debit Date";
     default:
       return source;
   }

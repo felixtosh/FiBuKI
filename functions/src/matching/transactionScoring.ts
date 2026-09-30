@@ -22,6 +22,12 @@ import {
 } from "./coverage";
 import type { DocumentType, DocumentationState } from "../documents/types";
 import { dueDateFromAdditionalFields } from "./dueDate";
+import {
+  DEBIT_DATE_SETTLEMENT_DAYS,
+  debitDateFromAdditionalFields,
+  isDebitDateHit,
+} from "./debitDate";
+import type { TransactionType } from "../imports/transactionType";
 import { stripGenericBankingTerms } from "./genericBankingTerms";
 import { toDateSafe } from "../utils/toDateSafe";
 
@@ -46,6 +52,18 @@ export const SCORING_CONFIG = {
    * text match >= 12 pushes it over 85).
    */
   HARD_FACTS_BONUS_CLOSE: 15,
+  /**
+   * Days after a Debit Date its collection may still be booked (#136). Inside
+   * that lag a Debit Date hit counts as a same-day endpoint, which a Due Date
+   * only earns on the exact day.
+   */
+  DEBIT_DATE_SETTLEMENT_DAYS,
+  /**
+   * On top of the same-day bonus when a Debit Date hit lands on a direct
+   * debit with a cent-exact amount (#136): the Partner said when it would
+   * collect, and the bank line says it collected. 40 + 25 + 20 + 10 = 95.
+   */
+  DEBIT_DATE_DIRECT_DEBIT_BONUS: 10,
   /** Minimum confidence to show as suggestion */
   SUGGESTION_THRESHOLD: 50,
   /**
@@ -106,6 +124,8 @@ export type TransactionMatchSource =
   | "iban"
   | "reference"
   | "precision_hint"
+  /** The Transaction was booked on the File's Debit Date or within its settlement lag (#136). */
+  | "debit_date"
   /**
    * The amount was judged against the Transaction's Remainder, not its full
    * amount (#239). Never alone: it accompanies whatever the amount ladder
@@ -193,6 +213,8 @@ export interface FileMatchingData {
    * before the field existed.
    */
   extractedDueDate?: Timestamp | null;
+  /** The Debit Date (Einzugsdatum) the File states, typed (#136). */
+  extractedDebitDate?: Timestamp | null;
   extractedPartner?: string | null;
   extractedIban?: string | null;
   extractedText?: string | null;
@@ -240,6 +262,8 @@ export interface TransactionData {
    * exact scores.
    */
   documentationState?: DocumentationState | null;
+  /** The canonical kind of the bank line, derived at Import (#136). */
+  transactionType?: TransactionType | null;
   /**
    * What the Files already connected to this transaction explain, in cents
    * (#239) — `documentedAmountOf` over their payment totals. Absent means
@@ -858,12 +882,18 @@ export function toTransactionData(
     // #104: what the target already holds decides whether this file is a
     // duplicate to suppress or the invoice that upgrades the line.
     documentationState: data.documentationState,
+    transactionType: data.transactionType ?? null,
     documentedAmount,
   };
 }
 
 function legacyDueDate(additionalFields: unknown): Timestamp | null {
   const date = dueDateFromAdditionalFields(additionalFields);
+  return date ? Timestamp.fromDate(date) : null;
+}
+
+function legacyDebitDate(additionalFields: unknown): Timestamp | null {
+  const date = debitDateFromAdditionalFields(additionalFields);
   return date ? Timestamp.fromDate(date) : null;
 }
 
@@ -882,6 +912,11 @@ export function toFileMatchingData(data: FirebaseFirestore.DocumentData): FileMa
       "extractedDueDate" in data
         ? data.extractedDueDate ?? null
         : legacyDueDate(data.extractedAdditionalFields),
+    // #136: same backfill rule as the Due Date.
+    extractedDebitDate:
+      "extractedDebitDate" in data
+        ? data.extractedDebitDate ?? null
+        : legacyDebitDate(data.extractedAdditionalFields),
     extractedPartner: data.extractedPartner,
     extractedIban: data.extractedIban,
     extractedText: data.extractedText,
@@ -1119,6 +1154,17 @@ export function scoreTransaction(
     if (result.source) matchSources.push(result.source);
   }
 
+  // 2a. Debit Date (#136). What the Partner said it would do, so a hit is a
+  // same-day endpoint across the settlement lag, and it overrides a learned
+  // cycle's period penalty: a stated collection date beats an inferred one.
+  const debitDate = toDateSafe(fileData.extractedDebitDate);
+  const debitHit = debitDate !== null && isDebitDateHit(debitDate, txData.date.toDate());
+  if (debitHit) {
+    dateScore = Math.max(dateScore, 25);
+    endpointDateScore = 25;
+    matchSources.push("debit_date");
+  }
+
   // 2b. Hard-facts combination bonus (#78)
   // Exact amount + exact date used to cap at 65 (< AUTO_MATCH_THRESHOLD 85), so
   // auto-connect was gated on partner identity rather than on the two facts that
@@ -1135,6 +1181,9 @@ export function scoreTransaction(
       hardFactsScore = SCORING_CONFIG.HARD_FACTS_BONUS_SAME_DAY;
     } else if (endpointDateScore >= 22) {
       hardFactsScore = SCORING_CONFIG.HARD_FACTS_BONUS_CLOSE;
+    }
+    if (debitHit && txData.transactionType === "direct_debit") {
+      hardFactsScore += SCORING_CONFIG.DEBIT_DATE_DIRECT_DEBIT_BONUS;
     }
   }
 

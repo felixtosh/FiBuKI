@@ -252,11 +252,22 @@ yields 1970 or today), Zahldatum, Valuta
 The date a Partner states it will collect under a SEPA mandate. An obligation on the
 Partner, where a Due Date is an obligation on the User; they coincide on many invoices and
 diverge on others, so they are two terms. Stronger Match evidence than a Due Date,
-because the bank line corroborates it. Tracked in #136.
+because the bank line corroborates it: a booking on the Debit Date or up to three days
+after it (the next banking day) scores as the same day, and on a direct debit as
+near-proof (#136).
 _Deutsch (defining)_: Einzugsdatum
 _Also printed as_: wird … eingezogen, Abbuchung erfolgt am, Einzug am, Lastschrift am
 _Avoid_: due date, collection date, direct-debit date
 _Avoid (de)_: Fälligkeitsdatum, Buchungsdatum (the bank's date, on the Transaction)
+
+**Transaction Type**:
+The canonical kind of a bank line: direct debit, standing order, transfer or card.
+Derived at Import from the bank's own wording ("SEPA-Lastschrift", "Einzugsermächtigung"
+and "Direct Debit" are one type), and left empty when the Source prints none or a wording
+nothing maps. Not a Category: it says how the money moved, never what it was for (#136).
+_Deutsch (defining)_: Buchungsart
+_Avoid_: bank category, payment method
+_Avoid (de)_: Kategorie
 
 ## Connecting the two
 

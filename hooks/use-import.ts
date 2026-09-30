@@ -480,7 +480,9 @@ export function useImport(
     let lastBalanceRow: { date: Date; balance: number; amount: number } | null = null;
 
     // Prepare transactions
-    const transactions: Omit<Transaction, "id">[] = [];
+    // bankTransactionType is the raw bank wording, sent for the callable to
+    // normalise into transactionType (#136); it is not stored as such.
+    const transactions: Array<Omit<Transaction, "id"> & { bankTransactionType: string | null }> = [];
     const hashes: string[] = [];
     const errors: { row: number; message: string; rowData: Record<string, string> }[] = [];
 
@@ -495,6 +497,7 @@ export function useImport(
         let referenceValue: string | null = null;
         let partnerIbanValue: string | null = null;
         let balanceValue: string | null = null;
+        let bankTypeValue: string | null = null;
 
         for (const [csvCol, targetField] of fieldMap) {
           const value = row[csvCol];
@@ -521,6 +524,9 @@ export function useImport(
               break;
             case "balance":
               balanceValue = value;
+              break;
+            case "category":
+              bankTypeValue = value;
               break;
           }
         }
@@ -594,6 +600,7 @@ export function useImport(
           partner: partnerValue,
           reference: referenceValue,
           partnerIban: partnerIbanValue,
+          bankTransactionType: bankTypeValue,
           dedupeHash: hash,
           fileIds: [],
           isComplete: false,

@@ -1,6 +1,14 @@
 import { Timestamp } from "firebase/firestore";
-import { Transaction } from "@/types/transaction";
+import { Transaction, TransactionType } from "@/types/transaction";
 import { TransactionSource } from "@/types/source";
+
+/** How an Austrian bank export words each type, for the raw "Buchungsart" column (#136). */
+const BANK_TYPE_WORDING: Record<TransactionType, string> = {
+  direct_debit: "SEPA-Lastschrift",
+  standing_order: "Dauerauftrag",
+  transfer: "Überweisung",
+  card: "Kartenzahlung",
+};
 
 export const TEST_SOURCE_ID = "test-source-dev";
 // Placeholder user ID - will be replaced with actual user ID in test-data-ops.ts
@@ -169,6 +177,9 @@ export async function generateTestTransactions(): Promise<
     }
 
     const dedupeHash = await generateDedupeHash(date, amount, reference);
+    // Income arrives as a transfer; expenses mix direct debits and card payments.
+    const transactionType: TransactionType =
+      amount > 0 ? "transfer" : i % 3 === 0 ? "direct_debit" : "card";
 
     transactions.push({
       id: `test-txn-${i.toString().padStart(3, "0")}`,
@@ -185,6 +196,7 @@ export async function generateTestTransactions(): Promise<
           "Empfänger/Auftraggeber": partner || "",
           Verwendungszweck: name,
           Referenz: reference,
+          Buchungsart: BANK_TYPE_WORDING[transactionType],
         },
       },
       name,
@@ -192,6 +204,7 @@ export async function generateTestTransactions(): Promise<
       partner,
       reference,
       partnerIban: partner ? `DE${randomInt(10, 99)}${randomInt(10000000, 99999999)}${randomInt(1000000000, 9999999999)}` : null,
+      transactionType,
       dedupeHash,
       fileIds: [],
       isComplete: false,
@@ -245,6 +258,8 @@ export async function generateTestTransactions(): Promise<
       partner: edge.partner,
       reference,
       partnerIban: edge.partner ? `DE${randomInt(10, 99)}${randomInt(10000000, 99999999)}${randomInt(1000000000, 9999999999)}` : null,
+      // Edge cases carry no bank type: the source printed none (#136).
+      transactionType: null,
       dedupeHash,
       fileIds: [],
       isComplete: false,

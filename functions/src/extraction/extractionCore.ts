@@ -52,6 +52,7 @@ import { computeDirectionReviewFields } from "../documents/syncDirectionReview";
 import { directionReviewFields } from "../documents/directionReview";
 import { repairReviewFields, reviewRepair } from "../documents/repairReview";
 import { dueDateFromAdditionalFields } from "../matching/dueDate";
+import { debitDateFromAdditionalFields } from "../matching/debitDate";
 import { toDateSafe } from "../utils/toDateSafe";
 
 /**
@@ -268,6 +269,7 @@ export async function runExtraction(
         extractedRaw: null,
         extractedAdditionalFields: null,
         extractedDueDate: null,
+        extractedDebitDate: null,
         extractedSelfDesignation: null,
         extractedInvoiceNumber: null,
         extractedPayableAmount: null,
@@ -453,6 +455,7 @@ export async function runExtraction(
     updateData.extractedRaw = null;
     updateData.extractedAdditionalFields = null;
     updateData.extractedDueDate = null;
+    updateData.extractedDebitDate = null;
     updateData.extractedSelfDesignation = null;
     updateData.extractedInvoiceNumber = null;
     updateData.extractedPayableAmount = null;
@@ -653,6 +656,9 @@ export async function runExtraction(
       const issueDate = toDateSafe(updateData.extractedDate ?? fileData.extractedDate);
       const dueDate = dueDateFromAdditionalFields(result.additionalFields, issueDate);
       updateData.extractedDueDate = dueDate ? Timestamp.fromDate(dueDate) : null;
+      // #136: the Debit Date under the same rule.
+      const debitDate = debitDateFromAdditionalFields(result.additionalFields, issueDate);
+      updateData.extractedDebitDate = debitDate ? Timestamp.fromDate(debitDate) : null;
       console.log(`[+${Date.now() - t0}ms] Stored ${result.additionalFields.length} additional fields`);
     }
   }
