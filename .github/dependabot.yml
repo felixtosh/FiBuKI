@@ -6,10 +6,21 @@ updates:
     schedule:
       interval: weekly
     groups:
+      # The chat stream only works when server (ai, @ai-sdk/langchain) and
+      # client (@ai-sdk/react) speak the same protocol, so they move together.
+      ai-sdk:
+        patterns:
+          - "ai"
+          - "@ai-sdk/*"
       minor-and-patch:
         update-types:
           - minor
           - patch
+    ignore:
+      # Types must describe the Node that runs production (node:22 images), or
+      # code type-checks against APIs that do not exist at runtime.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     open-pull-requests-limit: 10
 
   # Cloud Functions dependencies
@@ -22,6 +33,13 @@ updates:
         update-types:
           - minor
           - patch
+    ignore:
+      # better-auth 1.7 needs a schema migration and an auth_accounts backfill
+      # (#441). Remove this once #441 lands.
+      - dependency-name: "better-auth"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     open-pull-requests-limit: 5
 
   # GitHub Actions
