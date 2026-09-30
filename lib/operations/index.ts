@@ -41,7 +41,6 @@ export * from "./category-ops";
 export * from "./email-integration-ops";
 
 // Gmail Sync operations
-export * from "./gmail-sync-ops";
 
 // CSV Storage operations (for import re-mapping)
 export * from "./csv-storage-ops";
