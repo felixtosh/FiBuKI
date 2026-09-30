@@ -101,6 +101,11 @@ export interface EmailIntegration {
    */
   lastSyncErrorCode?: ImapErrorCode | null;
 
+  /** When the header scan (#103) last read this mailbox; it reads on from here. */
+  headerScanCursorAt?: Timestamp | null;
+  /** Headers the last scan read. */
+  headerScanLastCount?: number;
+
   /** Number of files pulled in last sync */
   lastSyncFileCount?: number;
 

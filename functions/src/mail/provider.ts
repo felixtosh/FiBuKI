@@ -148,6 +148,12 @@ export interface MailProvider {
 
   /** Fetch headers + attachment metadata (not bytes) for one message. */
   getMessage(ref: MailMessageRef): Promise<MailMessage>;
+  /**
+   * Fetch only the headers (From, Subject, date) of one message, for the
+   * header scan (#103). Optional: a provider whose getMessage is already
+   * header-cheap (IMAP's envelope fetch) leaves it out.
+   */
+  getHeaders?(ref: MailMessageRef): Promise<MailMessage>;
 
   /** Fetch one attachment's bytes. */
   getAttachment(message: MailMessage, attachment: MailAttachment): Promise<Buffer>;
