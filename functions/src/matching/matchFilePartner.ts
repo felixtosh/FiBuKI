@@ -1367,7 +1367,13 @@ export async function runPartnerMatching(
       const vertexAI = createVertexAI();
       const companyInfo = await searchByName(vertexAI, extractedPartner, userId);
 
-      if (companyInfo && companyInfo.name) {
+      if (companyInfo && companyInfo.name && printedNameEquals(companyInfo.name, invoicingAgentName)) {
+        // The lookup resolved the agent itself (#440): a Partner named after
+        // the Invoicing Agent would catch every later document it issues.
+        console.log(
+          `[PartnerMatch] Lookup for file ${fileId} answered with its Invoicing Agent; creating no Partner (#440)`
+        );
+      } else if (companyInfo && companyInfo.name) {
         // Create new User Partner from lookup results
         const newPartnerId = await createUserPartnerFromLookup(userId, companyInfo, extractedPartner, {
           invoicingAgentName,
@@ -1408,7 +1414,13 @@ export async function runPartnerMatching(
     // Fallback: If Gemini lookup failed/returned nothing but we have a valid company name,
     // create a basic partner with just the extracted name. This ensures we don't lose
     // valuable partner info when Gemini can't find additional data.
-    if (!geminiLookupSucceeded) {
+    if (!geminiLookupSucceeded && printedNameEquals(extractedPartner, invoicingAgentName)) {
+      // A File extracted before #356 carries the agent in extractedPartner.
+      // Creating a basic Partner from it would name a Partner after the agent (#440).
+      console.log(
+        `[PartnerMatch] Extracted name of file ${fileId} is its Invoicing Agent; creating no Partner (#440)`
+      );
+    } else if (!geminiLookupSucceeded) {
       console.log(
         `[PartnerMatch] Creating basic partner from extracted name: "${extractedPartner}"`
       );
