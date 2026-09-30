@@ -121,7 +121,7 @@
     "eslint-config-next": "^16.3.6",
     "jsdom": "^29.1.1",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.11"
+    "vitest": "^5.0.2"
   },
   "overrides": {
     "sharp": "^0.35.3",
