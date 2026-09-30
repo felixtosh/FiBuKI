@@ -331,6 +331,44 @@ describe("automatic matching does not fold the agent's name into a Partner (#265
     expect(await allAliases()).not.toContain(AGENT.name);
   });
 
+  async function partnerNames(): Promise<string[]> {
+    const snap = await db.collection("partners").where("userId", "==", USER).get();
+    return snap.docs.map((d) => d.data().name as string);
+  }
+
+  it("creates no Partner named after the agent when the lookup finds nothing (#440)", async () => {
+    const fileData = await seedMatchableFile("f-fallback", AGENT.name, AGENT);
+    // An empty lookup answer: the path that used to fall back to a basic
+    // Partner built from the extracted name, which here is the agent.
+    q({});
+
+    await runPartnerMatching("f-fallback", fileData);
+
+    expect(await partnerNames()).not.toContain(AGENT.name);
+    const file = await fileDoc("f-fallback");
+    expect(file.partnerId ?? null).toBeNull();
+    expect(file.partnerMatchComplete).toBe(true);
+  });
+
+  it("creates no Partner named after the agent when the lookup answers with the agent (#440)", async () => {
+    const fileData = await seedMatchableFile("f-agent-lookup", AGENT.name, AGENT);
+    q({ name: AGENT.name, vatId: AGENT.vatId, country: "AT" });
+
+    await runPartnerMatching("f-agent-lookup", fileData);
+
+    expect(await partnerNames()).not.toContain(AGENT.name);
+    expect((await fileDoc("f-agent-lookup")).partnerId ?? null).toBeNull();
+  });
+
+  it("creates a basic Partner from the extracted name as before when the File has no agent (#440)", async () => {
+    const fileData = await seedMatchableFile("f-plain-fallback", "Plain Supplier OG", null);
+    q({});
+
+    await runPartnerMatching("f-plain-fallback", fileData);
+
+    expect(await partnerNames()).toContain("Plain Supplier OG");
+  });
+
   it("still learns the extracted name when the File has no agent", async () => {
     const fileData = await seedMatchableFile("f-no-agent", AGENT.name, null);
     q({ name: SUPPLIER.name, vatId: SUPPLIER.vatId, country: "AT" });
