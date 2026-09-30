@@ -316,5 +316,12 @@
       "conflict": "Direction conflicts",
       "open": "Direction open"
     }
+  },
+  "settings": {
+    "language": {
+      "title": "Language",
+      "description": "The language FiBuKI's screens use. Screens not translated yet stay in English.",
+      "saveFailed": "Could not save the language."
+    }
   }
 }

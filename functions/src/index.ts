@@ -365,6 +365,9 @@ export {
   updateEmailPreferenceCallable as updateEmailPreference,
 } from "./digest";
 
+// UI language (#168)
+export { updateUserLocaleCallable as updateUserLocale } from "./users/updateUserLocale";
+
 // Budget warning unsubscribe
 export { unsubscribeBudgetWarnings } from "./billing/unsubscribeBudgetWarnings";
 

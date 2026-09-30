@@ -307,6 +307,16 @@ When modifying transaction-related types, also update the test data generator:
 - 85 realistic transactions (expenses: REWE, Amazon, Netflix, etc. / income: salary, freelance)
 - 15 edge cases (large amounts, special characters, missing fields, duplicates)
 
+## UI Text (#168)
+
+The UI is bilingual (German and English) through next-intl. **New UI text goes into
+`messages/en.json` and `messages/de.json`**, read with `useTranslations` /
+`getTranslations`, never as a literal in JSX. `npm run lint:strings` (in CI) fails when a
+`.tsx` file under `app/(dashboard)` or `components` gains a hardcoded string; after
+translating a screen, run `node scripts/check-ui-strings.mjs --update` to shrink its
+allowance. English is the fallback for a missing German key and for any browser language
+other than German. Vocabulary follows ADR-0007.
+
 ## Key Directories
 - `/app/(dashboard)/` - Main app pages (sources, transactions)
 - `/components/` - React components
