@@ -521,12 +521,12 @@ export function reconcileLineItemsWithDocumentTotal(
   const mismatch = Math.abs(consolidated.totalAmount - extractedAmount);
 
   if (mismatch <= amountTolerance(extractedAmount)) {
-    return {
-      lineItems: candidateLineItems,
-      unreconciled: false,
-      unreconciledRates: [],
-      rateGroups: validatedGroups,
-    };
+    return reconciledUnlessRowVatContradicts(
+      candidateLineItems,
+      validatedGroups,
+      extractedAmount,
+      documentVatPercent
+    );
   }
 
   // Fork #67 (spec §6 item 2): before giving up on the whole document, try
@@ -540,12 +540,12 @@ export function reconcileLineItemsWithDocumentTotal(
         "[ExtractionCore] Document total missed by the global item sum but " +
         "every printed rate group reconciles — treating as reconciled."
       );
-      return {
-        lineItems: candidateLineItems,
-        unreconciled: false,
-        unreconciledRates: [],
-        rateGroups: validatedGroups,
-      };
+      return reconciledUnlessRowVatContradicts(
+        candidateLineItems,
+        validatedGroups,
+        extractedAmount,
+        documentVatPercent
+      );
     }
     console.warn(
       `[ExtractionCore] Line items mismatch document total by ${mismatch} cents; ` +
@@ -578,6 +578,99 @@ export function reconcileLineItemsWithDocumentTotal(
     unreconciledRates: [],
     rateGroups: validatedGroups,
   };
+}
+
+/**
+ * The amounts reconcile; the rows' own VAT still has to (#504).
+ *
+ * A row's `vatAmount` is what UVA derivation subtracts to get its net, so a
+ * row set whose amounts sum to the total but whose VAT does not is not
+ * reconciled at all. The failure seen live: the model wrote the document's
+ * whole VAT onto every row, so two 9,50 € tickets carried 3,17 € each against
+ * a printed 3,17 € for both.
+ */
+function reconciledUnlessRowVatContradicts(
+  lineItems: ExtractedLineItem[],
+  validatedGroups: ExtractedRateGroup[] | null,
+  extractedAmount: number,
+  documentVatPercent: number | null | undefined
+): ReconciliationResult {
+  const contradictedRates = findContradictoryRowVat(
+    lineItems,
+    validatedGroups,
+    extractedAmount,
+    documentVatPercent
+  );
+  if (contradictedRates) {
+    console.warn(
+      "[ExtractionCore] Line item amounts reconcile but their VAT contradicts the " +
+      `document's${contradictedRates.length > 0 ? ` at ${contradictedRates.join(", ")}%` : ""}. ` +
+      "Keeping items and flagging lineItemsUnreconciled."
+    );
+  }
+  return {
+    lineItems,
+    unreconciled: contradictedRates !== null,
+    unreconciledRates: contradictedRates ?? [],
+    rateGroups: validatedGroups,
+  };
+}
+
+/**
+ * The rates at which the rows' summed VAT disagrees with the document's, or
+ * null when it agrees or there is nothing to hold it against. An empty array
+ * means the disagreement is with the document's single stated rate rather
+ * than with a printed group.
+ *
+ * Checked against the validated printed block when there is one, otherwise
+ * against the VAT the document total implies at its own stated rate — the
+ * latter only when every row sits at that rate, since a single top-level
+ * rate says nothing about a mixed-rate itemisation. Rows without a rate, or
+ * a rate with no VAT read off at all, are missing a reading rather than
+ * contradicting one, and are left alone. The tolerance widens with the row
+ * count because each row's VAT is rounded on its own.
+ */
+function findContradictoryRowVat(
+  lineItems: ExtractedLineItem[],
+  validatedGroups: ExtractedRateGroup[] | null,
+  extractedAmount: number,
+  documentVatPercent: number | null | undefined
+): number[] | null {
+  if (lineItems.some((item) => item.vatPercent === null)) {
+    return null;
+  }
+
+  const vatTolerance = (expected: number, rowCount: number) =>
+    Math.max(amountTolerance(expected), rowCount);
+
+  if (validatedGroups && validatedGroups.length > 0) {
+    const groupRates = new Set(validatedGroups.map((g) => g.rate));
+    if (lineItems.some((item) => !groupRates.has(item.vatPercent as number))) {
+      return null;
+    }
+    const contradicted = validatedGroups
+      .filter((group) => {
+        const itemsAtRate = lineItems.filter((item) => item.vatPercent === group.rate);
+        const rowVat = itemsAtRate.reduce((sum, item) => sum + item.vatAmount, 0);
+        return rowVat > 0 && Math.abs(rowVat - group.vat) > vatTolerance(group.vat, itemsAtRate.length);
+      })
+      .map((group) => group.rate);
+    return contradicted.length > 0 ? contradicted : null;
+  }
+
+  if (
+    typeof documentVatPercent !== "number" ||
+    !Number.isFinite(documentVatPercent) ||
+    documentVatPercent <= 0 ||
+    lineItems.some((item) => item.vatPercent !== documentVatPercent)
+  ) {
+    return null;
+  }
+  const rowVat = lineItems.reduce((sum, item) => sum + item.vatAmount, 0);
+  const impliedVat = Math.round((extractedAmount * documentVatPercent) / (100 + documentVatPercent));
+  return rowVat > 0 && Math.abs(rowVat - impliedVat) > vatTolerance(impliedVat, lineItems.length)
+    ? []
+    : null;
 }
 
 /**

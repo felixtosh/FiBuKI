@@ -5,6 +5,7 @@
  */
 
 import { toDateSafe } from "@/lib/utils";
+import { fileDocumentAmount } from "@/lib/files/document-amount";
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 
@@ -30,68 +31,17 @@ function toDateOrNull(value: unknown): Date | null {
   return value instanceof Date ? value : null;
 }
 
-function inferLineItemAmountsAreNet(
-  lineItems: Array<{ amount?: unknown; vatAmount?: unknown; vatPercent?: unknown }>
-): boolean {
-  let comparedItems = 0;
-  let netInterpretationError = 0;
-  let grossInterpretationError = 0;
-
-  for (const item of lineItems) {
-    const amount = toFiniteNumber(item.amount);
-    const vatAmount = toFiniteNumber(item.vatAmount);
-    const vatPercent = toFiniteNumber(item.vatPercent);
-    if (amount === null || vatAmount === null || vatPercent === null || vatPercent <= 0) {
-      continue;
-    }
-
-    const expectedVatIfNet = Math.round((amount * vatPercent) / 100);
-    const expectedVatIfGross = Math.round((amount * vatPercent) / (100 + vatPercent));
-
-    netInterpretationError += Math.abs(expectedVatIfNet - vatAmount);
-    grossInterpretationError += Math.abs(expectedVatIfGross - vatAmount);
-    comparedItems += 1;
-  }
-
-  if (comparedItems === 0) {
-    return false;
-  }
-
-  return netInterpretationError < grossInterpretationError;
-}
-
-
+// #504: the stored document total, the same figure matching and the File view
+// read. Values are coerced because the record comes through untyped.
 function getEffectiveExtractedAmount(data: any): number | null {
-  const extractedAmount = toFiniteNumber(data?.extractedAmount);
-  const lineItems = Array.isArray(data?.extractedLineItems)
-    ? data.extractedLineItems as Array<{ amount?: unknown; vatAmount?: unknown; vatPercent?: unknown }>
+  const lineItems: Array<{ amount?: unknown }> = Array.isArray(data?.extractedLineItems)
+    ? data.extractedLineItems
     : [];
-
-  if (lineItems.length === 0) {
-    return extractedAmount;
-  }
-
-  // #203: flagged items are exactly the ones whose sum contradicts the
-  // document — never derive the display figure from them.
-  if (data?.lineItemsUnreconciled) {
-    return extractedAmount;
-  }
-
-  const amountFromItems = lineItems.reduce((sum, item) => {
-    const amount = toFiniteNumber(item.amount);
-    return amount === null ? sum : sum + amount;
-  }, 0);
-  const vatFromItems = lineItems.reduce((sum, item) => {
-    const vatAmount = toFiniteNumber(item.vatAmount);
-    return vatAmount === null ? sum : sum + vatAmount;
-  }, 0);
-
-  const amountsLookNet = vatFromItems > 0 && inferLineItemAmountsAreNet(lineItems);
-  if (amountsLookNet) {
-    return amountFromItems + vatFromItems;
-  }
-
-  return extractedAmount ?? amountFromItems;
+  return fileDocumentAmount({
+    extractedAmount: toFiniteNumber(data?.extractedAmount),
+    extractedLineItems: lineItems.map((item) => ({ amount: toFiniteNumber(item.amount) ?? 0 })),
+    lineItemsUnreconciled: Boolean(data?.lineItemsUnreconciled),
+  });
 }
 
 // ============================================================================

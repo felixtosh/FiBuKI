@@ -35,6 +35,7 @@ import {
   INVOICE_DIRECTIONS,
 } from "@/lib/documents/document-type-presentation";
 import { describeLineItemsUnreconciled } from "@/lib/documents/line-item-presentation";
+import { fileDocumentAmount, fileDocumentVatAmount } from "@/lib/files/document-amount";
 
 // Consistent field row component (matching transaction-details.tsx)
 // Uses container queries to stack vertically when panel is narrow (<340px)
@@ -111,41 +112,6 @@ interface FileExtractedInfoProps {
   isUpdating?: boolean;
 }
 
-function inferLineItemAmountsAreNet(lineItems: TaxFile["extractedLineItems"]): boolean {
-  if (!Array.isArray(lineItems) || lineItems.length === 0) {
-    return false;
-  }
-
-  let comparedItems = 0;
-  let netInterpretationError = 0;
-  let grossInterpretationError = 0;
-
-  for (const item of lineItems) {
-    if (
-      item.vatPercent == null ||
-      !Number.isFinite(item.vatPercent) ||
-      item.vatPercent <= 0 ||
-      !Number.isFinite(item.vatAmount)
-    ) {
-      continue;
-    }
-
-    const rate = item.vatPercent;
-    const expectedVatIfNet = Math.round((item.amount * rate) / 100);
-    const expectedVatIfGross = Math.round((item.amount * rate) / (100 + rate));
-
-    netInterpretationError += Math.abs(expectedVatIfNet - item.vatAmount);
-    grossInterpretationError += Math.abs(expectedVatIfGross - item.vatAmount);
-    comparedItems += 1;
-  }
-
-  if (comparedItems === 0) {
-    return false;
-  }
-
-  return netInterpretationError < grossInterpretationError;
-}
-
 /** Mirrors `parseCurrencyToCents` in lib/operations/file-ops.ts — the delta
  * shown here has to agree with what a save would actually compute. */
 function parseAmountToCents(value: string): number | null {
@@ -153,29 +119,6 @@ function parseAmountToCents(value: string): number | null {
   if (!normalized) return null;
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? Math.round(parsed * 100) : null;
-}
-
-function getEffectiveExtractedAmount(file: TaxFile): number | null {
-  const lineItems = file.extractedLineItems;
-  if (!Array.isArray(lineItems) || lineItems.length === 0) {
-    return file.extractedAmount ?? null;
-  }
-
-  // #203: flagged items are exactly the ones whose sum contradicts the
-  // document — never derive the display figure from them.
-  if (file.lineItemsUnreconciled) {
-    return file.extractedAmount ?? null;
-  }
-
-  const lineAmountSum = lineItems.reduce((sum, item) => sum + item.amount, 0);
-  const lineVatSum = lineItems.reduce((sum, item) => sum + item.vatAmount, 0);
-  const looksNet = lineVatSum > 0 && inferLineItemAmountsAreNet(lineItems);
-
-  if (looksNet) {
-    return lineAmountSum + lineVatSum;
-  }
-
-  return file.extractedAmount ?? lineAmountSum;
 }
 
 export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsing, onFieldClick, onDirectionChange, onUpdate, isUpdating }: FileExtractedInfoProps) {
@@ -429,7 +372,7 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
   const hasLineItems = lineItems.length > 0;
   const editedLineItems = editedFields.lineItems || [];
   const hasEditableLineItems = isEditing && editedLineItems.length > 0;
-  const effectiveAmount = getEffectiveExtractedAmount(file);
+  const effectiveAmount = fileDocumentAmount(file);
   const rateGroups = file.extractedRateGroups || [];
   const hasRateGroups = rateGroups.length > 0;
   const lineItemsUnreconciledPresentation = describeLineItemsUnreconciled(file);
@@ -449,11 +392,7 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
   // Secondary fields (VAT ID, IBAN, Address) - shown in "Show more"
   const hasSecondaryFields = !!(file.extractedVatId || file.extractedIban || file.extractedAddress);
 
-  const vatTotal = file.extractedVatAmount != null
-    ? file.extractedVatAmount
-    : hasLineItems
-    ? lineItems.reduce((sum, item) => sum + item.vatAmount, 0)
-    : null;
+  const vatTotal = fileDocumentVatAmount(file);
 
   const vatBreakdown = lineItems.reduce((acc, item) => {
     const key = item.vatPercent == null ? "unknown" : item.vatPercent.toString();

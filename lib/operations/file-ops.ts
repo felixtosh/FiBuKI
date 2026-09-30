@@ -29,6 +29,7 @@ import {
 } from "./partner-ops";
 import { OperationsContext } from "./types";
 import { callFunction } from "@/lib/firebase/callable";
+import { fileDocumentAmount, fileDocumentVatAmount } from "@/lib/files/document-amount";
 
 const PARTNERS_COLLECTION = "partners";
 
@@ -132,42 +133,16 @@ export function resolvePartnerConflict(
   return { winnerId: txPid!, source: "transaction", shouldSync: true };
 }
 
-function getEffectiveExtractedAmount(file: TaxFile): number | null {
-  const lineItems = file.extractedLineItems;
-  if (!Array.isArray(lineItems) || lineItems.length === 0) {
-    return file.extractedAmount ?? null;
-  }
-
-  // #203: flagged items are exactly the ones whose sum contradicts the
-  // document — never derive the display figure from them.
-  if (file.lineItemsUnreconciled) {
-    return file.extractedAmount ?? null;
-  }
-
-  const amountFromItems = lineItems.reduce((sum, item) => sum + item.amount, 0);
-  const vatFromItems = lineItems.reduce((sum, item) => sum + item.vatAmount, 0);
-  const amountsLookNet = vatFromItems > 0 && inferLineItemAmountsAreNet(lineItems);
-
-  if (amountsLookNet) {
-    return amountFromItems + vatFromItems;
-  }
-
-  return file.extractedAmount ?? amountFromItems;
-}
-
 function normalizeFileMonetaryFields(file: TaxFile): TaxFile {
   const lineItems = file.extractedLineItems;
   if (!Array.isArray(lineItems) || lineItems.length === 0) {
     return file;
   }
 
-  const vatFromItems = lineItems.reduce((sum, item) => sum + item.vatAmount, 0);
-  const effectiveAmount = getEffectiveExtractedAmount(file);
-
   return {
     ...file,
-    extractedAmount: effectiveAmount,
-    extractedVatAmount: file.extractedVatAmount ?? vatFromItems,
+    extractedAmount: fileDocumentAmount(file),
+    extractedVatAmount: fileDocumentVatAmount(file),
   };
 }
 
@@ -466,37 +441,6 @@ function normalizeEditableLineItems(lineItems: EditableLineItem[] | undefined): 
       };
     })
     .filter((item): item is ExtractedLineItem => item !== null);
-}
-
-function inferLineItemAmountsAreNet(lineItems: ExtractedLineItem[]): boolean {
-  let comparedItems = 0;
-  let netInterpretationError = 0;
-  let grossInterpretationError = 0;
-
-  for (const item of lineItems) {
-    if (
-      item.vatPercent === null ||
-      !Number.isFinite(item.vatPercent) ||
-      item.vatPercent <= 0 ||
-      !Number.isFinite(item.vatAmount)
-    ) {
-      continue;
-    }
-
-    const rate = item.vatPercent;
-    const expectedVatIfNet = Math.round((item.amount * rate) / 100);
-    const expectedVatIfGross = Math.round((item.amount * rate) / (100 + rate));
-
-    netInterpretationError += Math.abs(expectedVatIfNet - item.vatAmount);
-    grossInterpretationError += Math.abs(expectedVatIfGross - item.vatAmount);
-    comparedItems += 1;
-  }
-
-  if (comparedItems === 0) {
-    return false;
-  }
-
-  return netInterpretationError < grossInterpretationError;
 }
 
 /**
