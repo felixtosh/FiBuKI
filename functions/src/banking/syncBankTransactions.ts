@@ -8,6 +8,7 @@
  */
 
 import { toDateSafe } from "../utils/toDateSafe";
+import { normalizeTransactionType } from "../imports/transactionType";
 import { defineSecret } from "firebase-functions/params";
 import { Timestamp, FieldValue } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
@@ -431,6 +432,7 @@ export const syncBankTransactionsCallable = createCallable<
       // Counterparty info
       partner: tx.counterpartName || null,
       partnerIban: tx.counterpartIban || null,
+      transactionType: normalizeTransactionType(tx.type),
 
       // Reference
       reference:

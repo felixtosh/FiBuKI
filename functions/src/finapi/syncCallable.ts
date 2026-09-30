@@ -6,6 +6,7 @@
  */
 
 import { onCall, HttpsError } from "firebase-functions/v2/https";
+import { normalizeTransactionType } from "../imports/transactionType";
 import { defineSecret } from "firebase-functions/params";
 import { getFirestore, Timestamp, FieldValue } from "firebase-admin/firestore";
 import { toDateSafe } from "../utils/toDateSafe";
@@ -259,6 +260,7 @@ export const syncFinapiTransactions = onCall(
         name: tx.counterpartName || tx.purpose || "Unknown",
         partner: tx.counterpartName || null,
         partnerIban: tx.counterpartIban || null,
+        transactionType: normalizeTransactionType(tx.type),
         reference: tx.endToEndReference || tx.mandateReference || null,
         description: tx.purpose || null,
         dedupeHash,

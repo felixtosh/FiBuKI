@@ -19,7 +19,7 @@ import {
 } from "../transactionScoring";
 import { debitDateFromAdditionalFields, isDebitDateHit } from "../debitDate";
 import { dueDateFromAdditionalFields } from "../dueDate";
-import { normalizeTransactionType } from "../../imports/transactionType";
+import { normalizeTransactionType, transactionTypeFromRawRow } from "../../imports/transactionType";
 import { toDateSafe } from "../../utils/toDateSafe";
 
 function ts(dateStr: string): Timestamp {
@@ -98,11 +98,48 @@ describe("normalizeTransactionType", () => {
     expect(normalizeTransactionType(raw)).toBe(expected);
   });
 
+  it.each([
+    ["DIRECT_DEBIT", "direct_debit"],
+    ["CARD_PAYMENT", "card"],
+    ["STANDING-ORDER", "standing_order"],
+    ["Debit Transfer", "transfer"],
+    ["Credit Transfer", "transfer"],
+  ])("reads bank-API spellings: %s -> %s", (raw, expected) => {
+    expect(normalizeTransactionType(raw)).toBe(expected);
+  });
+
+  it("leaves wordings that do not say how money moved unknown", () => {
+    // TrueLayer's PURCHASE and BILL_PAYMENT can be a card, a transfer or a debit.
+    expect(normalizeTransactionType("PURCHASE")).toBeNull();
+    expect(normalizeTransactionType("BILL_PAYMENT")).toBeNull();
+    expect(normalizeTransactionType("DEBIT")).toBeNull();
+    expect(normalizeTransactionType("CASHBACK")).toBeNull();
+  });
+
   it("returns null for anything it cannot name, rather than guessing", () => {
     expect(normalizeTransactionType("Sonstiges")).toBeNull();
     expect(normalizeTransactionType("")).toBeNull();
     expect(normalizeTransactionType(null)).toBeNull();
     expect(normalizeTransactionType(undefined)).toBeNull();
+  });
+});
+
+describe("transactionTypeFromRawRow", () => {
+  it("prefers the column the Source mapped", () => {
+    expect(transactionTypeFromRawRow({ Art: "Lastschrift", Type: "Card Payment" }, "Art")).toBe("direct_debit");
+  });
+
+  it("falls back to the headers banks and bank APIs use", () => {
+    expect(transactionTypeFromRawRow({ transaction_category: "DIRECT_DEBIT", transaction_type: "DEBIT" })).toBe("direct_debit");
+    expect(transactionTypeFromRawRow({ Type: "CARD_PAYMENT" })).toBe("card");
+    expect(transactionTypeFromRawRow({ type: "Überweisung" })).toBe("transfer");
+    expect(transactionTypeFromRawRow({ Buchungsart: "Dauerauftrag" })).toBe("standing_order");
+  });
+
+  it("is null for a row with no type column or none it can read", () => {
+    expect(transactionTypeFromRawRow({ Betrag: "-10,00" })).toBeNull();
+    expect(transactionTypeFromRawRow(undefined)).toBeNull();
+    expect(transactionTypeFromRawRow({ transaction_category: "PURCHASE" })).toBeNull();
   });
 });
 
