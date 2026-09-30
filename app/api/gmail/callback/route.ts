@@ -3,8 +3,33 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { Timestamp, FieldValue } from "firebase-admin/firestore";
 import { encrypt, getEncryptionKey } from "@/lib/crypto/encryption";
+import { activateMailIntegration } from "@/functions/src/mail/activateMailIntegration";
 
 const db = getAdminDb();
+
+/**
+ * On a self-host deployment this route runs in the web container, where the
+ * onMailServiceConnected/Reconnected triggers never see its writes, so the
+ * mailbox is activated here (#103). On Firebase the triggers do it.
+ */
+const IS_SELFHOST =
+  process.env.NEXT_PUBLIC_FIBUKI_BACKEND === "selfhost" ||
+  process.env.FIBUKI_BACKEND === "selfhost";
+
+async function activate(
+  integrationId: string,
+  userId: string,
+  email: string,
+  reason: "mail_service_connected" | "mail_service_reconnected"
+): Promise<void> {
+  if (!IS_SELFHOST) return;
+  try {
+    await activateMailIntegration({ integrationId, userId, email, reason }, db);
+  } catch (error) {
+    // The mailbox is connected either way; the search can be started by hand.
+    console.error("[Gmail OAuth] activation failed:", error);
+  }
+}
 const TOKENS_COLLECTION = "emailTokens";
 const INTEGRATIONS_COLLECTION = "emailIntegrations";
 const USERS_COLLECTION = "users";
@@ -164,6 +189,12 @@ export async function GET(request: NextRequest) {
         needsReauth: false,
         updatedAt: Timestamp.now(),
       });
+      // A mailbox that was never activated (connected under the old Sync flow
+      // and left paused) is activated now. An active one keeps its state, so
+      // re-authorising never unpauses a mailbox the user paused.
+      if (existing.data().initialSyncComplete !== true) {
+        await activate(existing.id, userId, userInfo.email.toLowerCase(), "mail_service_reconnected");
+      }
 
       return redirectWithParams(request, "/integrations/gmail", { success: "tokens_updated" });
     }
@@ -226,6 +257,8 @@ export async function GET(request: NextRequest) {
       // Add email to user's own emails
       await addOwnEmail(userId, userInfo.email);
 
+      await activate(disconnected.id, userId, userInfo.email.toLowerCase(), "mail_service_reconnected");
+
       return redirectWithParams(request, "/integrations/gmail", { success: "reconnected" });
     }
 
@@ -257,6 +290,8 @@ export async function GET(request: NextRequest) {
 
     // Add email to user's own emails
     await addOwnEmail(userId, userInfo.email);
+
+    await activate(newIntegrationRef.id, userId, userInfo.email.toLowerCase(), "mail_service_connected");
 
     console.log(`[Gmail OAuth] Created integration for ${userInfo.email} with refresh token: ${tokens.refresh_token ? "yes" : "no"}`);
 

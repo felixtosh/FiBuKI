@@ -146,17 +146,19 @@ describe("POST /api/gmail/sync", () => {
       initialSyncComplete: true,
     });
 
-  it("queues a sync for the owner (happy path)", async () => {
+  it("queues the owner's receipt search, never a sync (happy path, #103)", async () => {
     seedIntegration(USER_A);
+    store.seed("transactions", "tx-a", { userId: USER_A, isComplete: false });
     const { POST } = await import("@/app/api/gmail/sync/route");
     const res = await POST(authed(USER_A, "http://test.local/api/gmail/sync", "POST", { integrationId: "int-1" }));
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ success: true });
-    // A queue item owned by A was created.
-    const queue = await store.collection("gmailSyncQueue").where("integrationId", "==", "int-1").get();
-    expect(queue.size).toBeGreaterThan(0);
-    expect(queue.docs[0].data()!.userId).toBe(USER_A);
+    expect(await res.json()).toMatchObject({ success: true, searchQueued: true });
+    // A search owned by A was created, and no Sync.
+    const searches = await store.collection("precisionSearchQueue").where("userId", "==", USER_A).get();
+    expect(searches.size).toBe(1);
+    const syncs = await store.collection("gmailSyncQueue").where("integrationId", "==", "int-1").get();
+    expect(syncs.size).toBe(0);
   });
 
   it("does not queue a sync against another user's integration (owner-scoping → 404)", async () => {

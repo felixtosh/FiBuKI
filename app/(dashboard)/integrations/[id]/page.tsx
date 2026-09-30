@@ -91,37 +91,25 @@ export default function IntegrationDetailPage({ params }: IntegrationDetailPageP
     setSyncing(true);
     setSyncError(null);
     try {
-      // `force` covers a trailing window on top of any detected gap. Without
-      // it an integration whose synced range already runs to now — the normal
-      // state after a nightly sync — answers "already up to date" and the
-      // press does nothing. Matches the mailbox row's button.
+      // #103: queues the per-Transaction receipt search; nothing is synced.
       const response = await fetchWithAuth("/api/gmail/sync", {
         method: "POST",
-        body: JSON.stringify({ integrationId: id, force: true }),
+        body: JSON.stringify({ integrationId: id }),
       });
 
       const data = await response.json();
 
       if (!response.ok) {
-        // If sync is already in progress, show the indicator
-        if (data.code === "SYNC_IN_PROGRESS" || data.code === "INITIAL_SYNC_PENDING") {
-          setSyncKnownInProgress(true);
-          // Don't show error for this - just show the sync indicator
-          return;
-        }
-        setSyncError(data.error || "Failed to start sync");
+        setSyncError(data.error || "Failed to start the search");
         return;
       }
 
-      if (data.alreadySynced) {
-        setSyncError("Already up to date - no new date ranges to sync");
+      if (!data.searchQueued) {
+        setSyncError(data.message || "Nothing to start right now");
         return;
       }
-
-      // Sync started successfully
-      setSyncKnownInProgress(true);
     } catch {
-      setSyncError("Failed to start sync");
+      setSyncError("Failed to start the search");
     } finally {
       setSyncing(false);
     }
@@ -326,7 +314,7 @@ export default function IntegrationDetailPage({ params }: IntegrationDetailPageP
             </Button>
           )}
 
-          {/* Pull New Files Button - when connected and not syncing */}
+          {/* Search for missing receipts (#103) - when connected */}
           {!needsReauth && !isExpired && !isSyncingNow && !isPaused && (
             <Button
               variant="outline"
@@ -340,7 +328,7 @@ export default function IntegrationDetailPage({ params }: IntegrationDetailPageP
               ) : (
                 <Download className="h-4 w-4" />
               )}
-              <span className="ml-2">Pull New Files</span>
+              <span className="ml-2">Search for missing receipts</span>
             </Button>
           )}
 
