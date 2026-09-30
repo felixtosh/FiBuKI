@@ -3,7 +3,6 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { formatDistanceToNow } from "date-fns";
 import {
   Mail,
   ArrowLeft,
@@ -11,7 +10,6 @@ import {
   Check,
   AlertCircle,
   Trash2,
-  Download,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,10 +25,7 @@ import {
 } from "@/components/ui/card";
 import { ImapCredentialsDialog } from "@/components/integrations/imap-credentials-dialog";
 import { useEmailIntegrations } from "@/hooks/use-email-integrations";
-import { useActiveSyncForIntegration } from "@/hooks/use-integration-details";
 import { usePageTitle } from "@/hooks/use-page-title";
-import { fetchWithAuth } from "@/lib/api/fetch-with-auth";
-import { toDateSafe } from "@/lib/utils";
 import { EmailIntegration } from "@/types/email-integration";
 // Value import, not type-only: classify-error.ts has zero dependencies of its
 // own (no imapflow, no firebase-admin), so this stays a few literals in the
@@ -68,14 +63,6 @@ export default function ImapIntegrationPage() {
   // below is only ever used for genuinely new mailboxes.
   const [repairTarget, setRepairTarget] = useState<EmailIntegration | null>(null);
 
-  // Pull-New-Files state, per mailbox. This page has no toast surface, so the
-  // outcome is reported in an inline alert under the row, like the connect
-  // form above does.
-  const [pulling, setPulling] = useState<string | null>(null);
-  const [pullResult, setPullResult] = useState<
-    Record<string, { ok: boolean; text: string }>
-  >({});
-
   const handleConnect = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
@@ -101,67 +88,6 @@ export default function ImapIntegrationPage() {
       setFormError(err instanceof Error ? err.message : "Failed to connect mailbox");
     } finally {
       setConnecting(false);
-    }
-  };
-
-  /**
-   * Queue an immediate sync for one mailbox.
-   *
-   * `force` makes the endpoint cover a trailing window on top of any detected
-   * gap; without it a mailbox whose synced range already runs to now — the
-   * normal state after a nightly sync — answers "already up to date" and the
-   * press does nothing.
-   *
-   * The row disables the button itself for an active sync and for a fatal
-   * classified error (auth_failed, mailbox_not_found — see
-   * FATAL_IMAP_ERROR_CODES); anything else the endpoint still guards: a
-   * running sync it doesn't know about yet answers SYNC_IN_PROGRESS and a
-   * second press inside five minutes answers RATE_LIMITED, both reported in
-   * the alert below the row.
-   */
-  const handlePullFiles = async (id: string) => {
-    setPulling(id);
-    setPullResult((prev) => {
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
-
-    try {
-      const response = await fetchWithAuth("/api/gmail/sync", {
-        method: "POST",
-        body: JSON.stringify({ integrationId: id }),
-      });
-      const data = await response.json().catch(() => ({}));
-
-      if (!response.ok) {
-        // A sync that is already running is not a failure — it is the outcome
-        // the user wanted, just already under way.
-        if (data.code === "SYNC_IN_PROGRESS" || data.code === "INITIAL_SYNC_PENDING") {
-          setPullResult((prev) => ({
-            ...prev,
-            [id]: { ok: true, text: "A sync is already running for this mailbox." },
-          }));
-          return;
-        }
-        setPullResult((prev) => ({
-          ...prev,
-          [id]: { ok: false, text: data.error || "Failed to start sync" },
-        }));
-        return;
-      }
-
-      setPullResult((prev) => ({
-        ...prev,
-        [id]: { ok: true, text: data.message || "Searching this mailbox for the receipts your open transactions are missing." },
-      }));
-    } catch {
-      setPullResult((prev) => ({
-        ...prev,
-        [id]: { ok: false, text: "Failed to start sync" },
-      }));
-    } finally {
-      setPulling(null);
     }
   };
 
@@ -221,10 +147,7 @@ export default function ImapIntegrationPage() {
               <ImapMailboxRow
                 key={i.id}
                 integration={i}
-                pulling={pulling === i.id}
                 removing={removing === i.id}
-                result={pullResult[i.id]}
-                onPull={handlePullFiles}
                 onDisconnect={handleDisconnect}
                 onReconnect={handleReconnect}
               />
@@ -375,44 +298,27 @@ export default function ImapIntegrationPage() {
 
 interface ImapMailboxRowProps {
   integration: EmailIntegration;
-  pulling: boolean;
   removing: boolean;
-  result?: { ok: boolean; text: string };
-  onPull: (id: string) => void;
   onDisconnect: (id: string) => void;
   onReconnect: (integration: EmailIntegration) => void;
 }
 
 function ImapMailboxRow({
   integration,
-  pulling,
   removing,
-  result,
-  onPull,
   onDisconnect,
   onReconnect,
 }: ImapMailboxRowProps) {
-  // Own hook call per row (not inside the parent's .map()), matching the
-  // pattern GmailAccountCard uses for the same reason.
-  const activeSync = useActiveSyncForIntegration(integration.id);
-  const lastSyncAt = toDateSafe(integration.lastSyncAt);
-
   const errorCode = integration.lastSyncErrorCode;
   const errorMessage = errorCode ? IMAP_ERROR_MESSAGES[errorCode] : null;
-  // Disable rather than hide: an auth or missing-mailbox failure cannot
-  // resolve without reconnecting, so a press there is a promise the system
-  // cannot keep. Every other outcome (unreachable, TLS, generic) stays
-  // pressable — retrying is the correct response to those.
+  // An auth or missing-mailbox failure cannot resolve without reconnecting.
   const isFatalError = !!errorCode && FATAL_IMAP_ERROR_CODES.has(errorCode);
 
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between rounded-lg border p-3">
-        {/* The row body opens the mailbox's detail page — its import
-            statistics, sync history, and pause/resume controls, which were
-            reachable for Gmail accounts only because nothing linked here.
-            The buttons to the right stay in place rather than joining the
-            link, so a press does not navigate. */}
+        {/* The row body opens the mailbox's detail page. The buttons to the
+            right stay outside the link, so a press does not navigate. */}
         <Link href={`/integrations/${integration.id}`} className="min-w-0 group">
           <div className="font-medium truncate group-hover:underline">
             {integration.email}
@@ -421,41 +327,8 @@ function ImapMailboxRow({
             {integration.imapHost}:{integration.imapPort} ·{" "}
             {integration.imapMailbox || "INBOX"}
           </div>
-          <div className="text-xs mt-1">
-            {activeSync.isActive ? (
-              <span className="flex items-center gap-1.5 text-blue-600 dark:text-blue-400">
-                <Loader2 className="h-3 w-3 animate-spin" />
-                Syncing...
-                {activeSync.filesCreated > 0 && ` (${activeSync.filesCreated} files)`}
-              </span>
-            ) : lastSyncAt ? (
-              <span className="text-muted-foreground">
-                Last synced {formatDistanceToNow(lastSyncAt, { addSuffix: true })}
-              </span>
-            ) : (
-              <span className="text-muted-foreground">Not synced yet</span>
-            )}
-          </div>
         </Link>
         <div className="flex items-center gap-2">
-          {/* Hidden while paused or an active sync is running; disabled (not
-              hidden) for a fatal classified error, matching the Gmail integration. */}
-          {!integration.isPaused && !activeSync.isActive && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => onPull(integration.id)}
-              disabled={pulling || isFatalError}
-              title={isFatalError ? errorMessage ?? undefined : undefined}
-            >
-              {pulling ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Download className="h-4 w-4" />
-              )}
-              <span className="ml-2">Search for missing receipts</span>
-            </Button>
-          )}
           <Button
             variant="ghost"
             size="icon"
@@ -492,12 +365,6 @@ function ImapMailboxRow({
         </Alert>
       )}
 
-      {result && (
-        <Alert variant={result.ok ? "default" : "destructive"}>
-          {result.ok ? <Check className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
-          <AlertDescription>{result.text}</AlertDescription>
-        </Alert>
-      )}
     </div>
   );
 }

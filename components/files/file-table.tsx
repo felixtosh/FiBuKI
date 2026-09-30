@@ -13,7 +13,6 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { TableEmptyState, emptyStatePresets } from "@/components/ui/table-empty-state";
 import { TaxFile, FileFilters } from "@/types/file";
 import { UserPartner, GlobalPartner } from "@/types/partner";
-import { useGmailSyncStatus } from "@/hooks/use-gmail-sync-status";
 import { useRunningWorkers } from "@/hooks/use-running-workers";
 import { SelectAllCheckedState } from "@/lib/selection/bulk-file-selection";
 import { SelectionChangeMeta } from "@/components/ui/data-table";
@@ -205,8 +204,6 @@ export const FileTable = forwardRef<FilesDataTableHandle, FileTableProps>(
       );
     }, [loading, totalUnfilteredCount, hasAnyFilters, searchValue, router, onUploadClick]);
 
-    const syncStatus = useGmailSyncStatus();
-
     return (
       <div className="h-full flex flex-col overflow-hidden bg-card">
         <FileToolbar
@@ -218,21 +215,6 @@ export const FileTable = forwardRef<FilesDataTableHandle, FileTableProps>(
           connectedCount={connectedCount}
           totalCount={totalCount}
         />
-        {/* Gmail sync progress indicator */}
-        {syncStatus.isActive && (
-          <div className="flex items-center gap-2 px-4 py-2 bg-blue-50 dark:bg-blue-950/30 border-b text-sm text-blue-700 dark:text-blue-300">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            <Mail className="h-4 w-4" />
-            <span>
-              Syncing from Gmail
-              {syncStatus.filesCreated !== undefined && syncStatus.filesCreated > 0 && (
-                <span className="text-muted-foreground ml-1">
-                  ({syncStatus.filesCreated} files imported)
-                </span>
-              )}
-            </span>
-          </div>
-        )}
         <div className="flex-1 relative overflow-hidden flex flex-col">
           {bulkActionBar?.visible && (
             <FileBulkActionBar
