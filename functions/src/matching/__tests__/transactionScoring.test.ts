@@ -1090,7 +1090,7 @@ describe("derivePartnerAliases", () => {
             name: "Magenta Telekom",
             aliases: ["Magenta", "T-Mobile Austria"],
             source: "preset",
-            vatId: "ATU62895668",
+            vatId: "ATU45011703",
           },
         },
       ],
