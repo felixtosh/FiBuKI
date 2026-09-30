@@ -53,7 +53,10 @@ export function PdfPageViewer({
   const [numPages, setNumPages] = useState<number>(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [passwordProtected, setPasswordProtected] = useState(false);
+  // Keyed to the url, not a flag: the overlay keeps this viewer mounted while
+  // the user picks another File, and that File must load normally.
+  const [protectedUrl, setProtectedUrl] = useState<string | null>(null);
+  const passwordProtected = protectedUrl === url;
   const containerRef = useRef<HTMLDivElement>(null);
 
   const handleDocumentLoadSuccess = useCallback(
@@ -77,9 +80,9 @@ export function PdfPageViewer({
   // asks again, so the dialog can never be dismissed. Never answer instead:
   // flag the file and unmount <Document>, whose cleanup destroys the pending load.
   const handlePassword = useCallback(() => {
-    setPasswordProtected(true);
+    setProtectedUrl(url);
     setIsLoading(false);
-  }, []);
+  }, [url]);
 
   // Highlight text in the PDF text layer (searches all pages)
   useEffect(() => {

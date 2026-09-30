@@ -24,14 +24,16 @@ const pdf = vi.hoisted(() => ({
 vi.mock("react-pdf", () => ({
   pdfjs: { GlobalWorkerOptions: {} },
   Document: ({
+    file,
     onPassword,
     children,
   }: {
+    file?: string;
     onPassword?: (callback: (password: string | null) => void, reason: number) => void;
     children?: ReactNode;
   }) => {
     useEffect(() => {
-      onPassword?.(pdf.passwordCallback, NEED_PASSWORD);
+      if (file?.includes("locked")) onPassword?.(pdf.passwordCallback, NEED_PASSWORD);
       return () => pdf.documentUnmounted();
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
@@ -81,5 +83,15 @@ describe("PdfPageViewer on a password-protected PDF", () => {
 
     await waitFor(() => expect(pdf.documentUnmounted).toHaveBeenCalledTimes(1));
     expect(screen.queryByTestId("pdf-document")).toBeNull();
+  });
+
+  it("loads the next File normally when the viewer is reused", async () => {
+    const { rerender } = render(<PdfPageViewer url="https://example.test/locked.pdf" />);
+    await screen.findByText(/password-protected/i);
+
+    rerender(<PdfPageViewer url="https://example.test/open.pdf" />);
+
+    await screen.findByTestId("pdf-document");
+    expect(screen.queryByText(/password-protected/i)).toBeNull();
   });
 });
