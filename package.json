@@ -100,7 +100,7 @@
     "react-dom": "^19.3.0",
     "react-dropzone": "^20.1.2",
     "react-markdown": "^10.1.0",
-    "react-pdf": "^10.4.1",
+    "react-pdf": "^11.0.0",
     "react-plaid-link": "^5.0.0",
     "recharts": "^3.10.1",
     "tailwind-merge": "^3.7.0",
