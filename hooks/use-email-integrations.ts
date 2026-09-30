@@ -55,9 +55,7 @@ export interface UseEmailIntegrationsResult {
   /** Refresh an integration (reconnect OAuth) */
   refresh: (integrationId: string, returnTo?: string) => Promise<void>;
   /** Pause sync for an integration */
-  pauseSync: (integrationId: string) => Promise<void>;
   /** Resume sync for an integration */
-  resumeSync: (integrationId: string) => Promise<void>;
   /** Check if any Gmail integration is connected */
   hasGmailIntegration: boolean;
 }
@@ -231,50 +229,6 @@ export function useEmailIntegrations(): UseEmailIntegrationsResult {
     [integrations, userId]
   );
 
-  // Pause sync for an integration
-  const pauseSync = useCallback(async (integrationId: string) => {
-    try {
-      setError(null);
-
-      const response = await fetchWithAuth("/api/gmail/pause", {
-        method: "POST",
-        body: JSON.stringify({ integrationId }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to pause sync");
-      }
-    } catch (err) {
-      console.error("Failed to pause sync:", err);
-      const message = err instanceof Error ? err.message : "Failed to pause sync";
-      setError(message);
-      throw err;
-    }
-  }, []);
-
-  // Resume sync for an integration
-  const resumeSync = useCallback(async (integrationId: string) => {
-    try {
-      setError(null);
-
-      const response = await fetchWithAuth("/api/gmail/resume", {
-        method: "POST",
-        body: JSON.stringify({ integrationId }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to resume sync");
-      }
-    } catch (err) {
-      console.error("Failed to resume sync:", err);
-      const message = err instanceof Error ? err.message : "Failed to resume sync";
-      setError(message);
-      throw err;
-    }
-  }, []);
-
   // Check if any Gmail integration exists
   const hasGmailIntegration = useMemo(
     () => integrations.some((i) => i.provider === "gmail"),
@@ -290,8 +244,6 @@ export function useEmailIntegrations(): UseEmailIntegrationsResult {
     repairImapCredentials,
     disconnect,
     refresh,
-    pauseSync,
-    resumeSync,
     hasGmailIntegration,
   };
 }
