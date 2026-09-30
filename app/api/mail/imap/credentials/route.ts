@@ -35,13 +35,9 @@ const TOKENS_COLLECTION = "emailTokens";
  *   - Change the username or address. That is a different mailbox, and it
  *     stays disconnect-then-connect so the identity of an integration does not
  *     silently change underneath its files.
- *   - Enqueue a sync. Clearing the flag returns the mailbox to the nightly
- *     job's query, and Pull New Files covers the impatient case. Enqueueing
- *     here would give the repair path its own sync semantics to reason about,
- *     parallel to startImapInitialSync.
- *   - Resume queue items. An IMAP auth failure is classified fatal, so the
- *     worker fails the item outright rather than pausing it — unlike Gmail,
- *     whose paused items the reconnection trigger resumes.
+ *   - Start a search. Clearing the flag makes the mailbox usable again for
+ *     the per-Transaction receipt search (#103: there is no mailbox Sync), and
+ *     "Search for missing receipts" covers the impatient case.
  *
  * Body: { integrationId, password, host?, port?, secure?, mailbox?, allowSelfSigned? }
  */

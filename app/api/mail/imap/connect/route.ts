@@ -4,7 +4,7 @@ import { getAdminDb } from "@/lib/firebase/admin";
 import { Timestamp } from "firebase-admin/firestore";
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { encrypt, getEncryptionKey } from "@/lib/crypto/encryption";
-import { startImapInitialSync } from "@/functions/src/gmail/startImapInitialSync";
+import { activateMailIntegration } from "@/functions/src/mail/activateMailIntegration";
 import { verifyImapMailbox } from "@/lib/mail/verify-imap-mailbox";
 import {
   connectBodySchema,
@@ -39,7 +39,7 @@ const IS_SELFHOST =
  * call below is skipped. A self-host deployment gets no such trigger for this
  * write — it happens in the web container, and trigger delivery is in-process in
  * the API container — so the route enqueues it directly. See
- * functions/src/gmail/startImapInitialSync.ts.
+ * functions/src/mail/activateMailIntegration.ts.
  *
  * Body: { host, port?, secure?, user, password, mailbox?, allowSelfSigned?, keywordPrefilter? }
  */
@@ -148,18 +148,20 @@ export async function POST(request: NextRequest) {
       updatedAt: now,
     });
 
-    // 6. Start the initial sync ourselves when no trigger will do it for us.
-    //    Failure here must not fail the connect: the mailbox IS connected and
-    //    stored, and a sync can still be started by hand from the sync route.
+    // 6. Activate the mailbox ourselves when no trigger will do it for us
+    //    (#103: no Sync, a per-Transaction receipt search). Failure here must
+    //    not fail the connect: the mailbox IS connected and stored, and the
+    //    search can still be started from the mailbox page.
     if (IS_SELFHOST) {
       try {
-        await startImapInitialSync({
+        await activateMailIntegration({
           integrationId: integrationRef.id,
           userId,
           email,
+          reason: "mail_service_connected",
         });
       } catch (error) {
-        console.error("[IMAP connect] initial sync enqueue failed:", error);
+        console.error("[IMAP connect] activation failed:", error);
       }
     }
 

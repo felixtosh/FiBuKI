@@ -1,8 +1,6 @@
 import { onDocumentCreated, onDocumentUpdated } from "firebase-functions/v2/firestore";
 import { FieldValue, getFirestore, Timestamp } from "firebase-admin/firestore";
-import { startImapInitialSync } from "./startImapInitialSync";
-import { firstSyncWindow } from "../mail/syncWindow";
-import { queueIncompleteTransactionSearch } from "../precision-search/queueIncompleteSearch";
+import { activateMailIntegration } from "../mail/activateMailIntegration";
 
 const db = getFirestore();
 
@@ -82,67 +80,23 @@ export const onMailServiceConnected = onDocumentCreated(
 );
 
 /**
- * Gmail-specific integration setup
+ * Gmail setup: mark the mailbox ready and search it per Transaction (#103).
+ * No Sync is queued; see mail/activateMailIntegration.ts.
  */
 async function setupGmailIntegration(
-  event: Parameters<Parameters<typeof onDocumentCreated>[1]>[0],
+  _event: Parameters<Parameters<typeof onDocumentCreated>[1]>[0],
   data: EmailIntegration,
   integrationId: string,
   userId: string
 ): Promise<void> {
-  // #103: today only. Per-Transaction search, queued when this first Sync
-  // completes, replaces the bulk pull over the whole transaction span.
-  const { dateFrom, dateTo } = firstSyncWindow();
-
-  console.log(`[MailService] Gmail first-sync window: ${dateFrom.toISOString()} to ${dateTo.toISOString()}`);
-
-  // Granting Gmail OAuth signals intent to sync. Start the initial sync
-  // immediately so the user sees imports without a second manual click.
-  // (Was previously paused-by-default, which confused users adding a 2nd
-  // account: the "Pull New Files" button stays hidden while paused, so
-  // the only visible action was the less-obvious "Resume Sync".)
-  const now = Timestamp.now();
-  await event.data?.ref.update({
-    initialSyncStartedAt: now,
-    isPaused: false,
-    updatedAt: now,
-  });
-
-  await db.collection("gmailSyncQueue").add({
-    userId,
-    integrationId,
-    type: "initial",
-    status: "pending",
-    dateFrom: Timestamp.fromDate(dateFrom),
-    dateTo: Timestamp.fromDate(dateTo),
-    emailsProcessed: 0,
-    filesCreated: 0,
-    attachmentsSkipped: 0,
-    errors: [],
-    retryCount: 0,
-    maxRetries: 3,
-    processedMessageIds: [],
-    createdAt: now,
-  });
-
-  console.log(`[MailService] Gmail integration auto-started: ${data.email}`);
-
-  await db.collection(`users/${userId}/notifications`).add({
-    userId,
-    type: "mail_service_connected",
-    title: "Gmail Connected",
-    message: `${data.email} connected. Searching it for the receipts your open transactions are missing.`,
-    readAt: null,
-    createdAt: now,
-  });
+  await activateMailIntegration({ integrationId, userId, email: data.email, reason: "mail_service_connected" });
+  console.log(`[MailService] Gmail integration activated: ${data.email}`);
 }
 
 /**
- * IMAP-specific integration setup.
- *
- * Same time-bounded initial sync as Gmail (the queue worker and item shape are
- * provider-neutral); only the connect notification differs. The mailbox was
- * already verified by the connect route before this document was written.
+ * IMAP setup, same as Gmail. The connect route also activates the mailbox,
+ * because on a self-host deployment this trigger does not see a write made in
+ * the web container; activating twice is harmless (the search is deduped).
  */
 async function setupImapIntegration(
   _event: Parameters<Parameters<typeof onDocumentCreated>[1]>[0],
@@ -150,10 +104,7 @@ async function setupImapIntegration(
   integrationId: string,
   userId: string
 ): Promise<void> {
-  // Shared with the connect route, which has to do this itself on a self-host
-  // deployment — see startImapInitialSync.ts for why the trigger cannot be the
-  // only path. The helper is idempotent, so both firing is harmless.
-  await startImapInitialSync({ integrationId, userId, email: data.email });
+  await activateMailIntegration({ integrationId, userId, email: data.email, reason: "mail_service_connected" });
 }
 
 // ============================================================================
@@ -192,31 +143,9 @@ export const onMailServiceReconnected = onDocumentUpdated(
     const userId = afterData.userId;
     const provider = afterData.provider;
 
-    console.log(`[MailService] ${provider} reconnected: ${afterData.email}, resuming paused queues`);
+    console.log(`[MailService] ${provider} reconnected: ${afterData.email}`);
 
     try {
-      // Provider-specific queue resumption
-      if (provider === "gmail") {
-        // Resume paused gmailSyncQueue items for this integration
-        const pausedSyncItems = await db
-          .collection("gmailSyncQueue")
-          .where("integrationId", "==", integrationId)
-          .where("status", "==", "paused")
-          .get();
-
-        for (const doc of pausedSyncItems.docs) {
-          await doc.ref.update({
-            status: "pending",
-            lastError: null,
-          });
-          console.log(`[MailService] Resumed gmailSyncQueue item: ${doc.id}`);
-        }
-
-        console.log(
-          `[MailService] Resumed ${pausedSyncItems.size} paused sync items after ${provider} reconnection`
-        );
-      }
-
       // Resume paused precisionSearchQueue items for this user
       // (they might have been paused due to this integration needing reauth)
       const pausedSearchItems = await db
@@ -253,18 +182,13 @@ export const onMailServiceReconnected = onDocumentUpdated(
         console.log(`[MailService] Resumed workerRequest after reauth: ${doc.id}`);
       }
 
-      // Queue precision search for incomplete transactions that may have been
-      // skipped while mail service was disconnected
-      await queueIncompleteTransactionSearch(db, userId, "mail_service_reconnected");
-
-      // Create notification for user
-      await db.collection(`users/${userId}/notifications`).add({
+      // Mark the mailbox ready again and search it for the receipts that
+      // were missed while it was disconnected (#103: no Sync is resumed).
+      await activateMailIntegration({
+        integrationId,
         userId,
-        type: "mail_service_reconnected",
-        title: `${provider.charAt(0).toUpperCase() + provider.slice(1)} Reconnected`,
-        message: `${afterData.email} is reconnected. Paused syncs will resume automatically.`,
-        readAt: null,
-        createdAt: Timestamp.now(),
+        email: afterData.email,
+        reason: "mail_service_reconnected",
       });
     } catch (error) {
       console.error(`[MailService] Error resuming paused queues:`, error);

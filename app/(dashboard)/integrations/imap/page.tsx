@@ -130,7 +130,7 @@ export default function ImapIntegrationPage() {
     try {
       const response = await fetchWithAuth("/api/gmail/sync", {
         method: "POST",
-        body: JSON.stringify({ integrationId: id, force: true }),
+        body: JSON.stringify({ integrationId: id }),
       });
       const data = await response.json().catch(() => ({}));
 
@@ -153,7 +153,7 @@ export default function ImapIntegrationPage() {
 
       setPullResult((prev) => ({
         ...prev,
-        [id]: { ok: true, text: "Fetching new mail now. New invoices appear in Files." },
+        [id]: { ok: true, text: data.message || "Searching this mailbox for the receipts your open transactions are missing." },
       }));
     } catch {
       setPullResult((prev) => ({
@@ -453,7 +453,7 @@ function ImapMailboxRow({
               ) : (
                 <Download className="h-4 w-4" />
               )}
-              <span className="ml-2">Pull New Files</span>
+              <span className="ml-2">Search for missing receipts</span>
             </Button>
           )}
           <Button

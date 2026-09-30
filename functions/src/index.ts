@@ -78,7 +78,6 @@ export {
   processGmailSyncQueue,
   onSyncQueueCreated,
 } from "./gmail/gmailSyncQueue";
-export { scheduledGmailSync } from "./gmail/scheduledGmailSync";
 export { onMailServiceConnected, onMailServiceReconnected } from "./gmail/onMailServiceConnected";
 export { onTransactionsImported } from "./gmail/onTransactionsImported";
 export { onTransactionsImportedCompanyCheck } from "./matching/onTransactionsImportedCompanyCheck";
