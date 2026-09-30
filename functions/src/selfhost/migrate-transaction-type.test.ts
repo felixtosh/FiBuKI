@@ -65,16 +65,28 @@ describe("migrateTransactionType", () => {
     expect((await tx("t1")).transactionType).toBeUndefined();
   });
 
-  it("leaves a Transaction whose source mapped no type column untouched", async () => {
+  it("reads a known type header when the source mapped none (bank APIs, unmapped CSVs)", async () => {
     await db.collection("transactions").doc("t1").set({
       userId: "u1",
       sourceId: "s2",
-      _original: { rawRow: { Buchungsart: "Lastschrift" } },
+      _original: { rawRow: { transaction_category: "DIRECT_DEBIT", transaction_type: "DEBIT" } },
     });
 
     const report = await apply();
 
-    expect(report.noMapping).toBe(1);
+    expect(report.typed).toEqual([{ id: "t1", transactionType: "direct_debit" }]);
+  });
+
+  it("leaves a Transaction with no type column at all untouched", async () => {
+    await db.collection("transactions").doc("t1").set({
+      userId: "u1",
+      sourceId: "s2",
+      _original: { rawRow: { Betrag: "-10,00" } },
+    });
+
+    const report = await apply();
+
+    expect(report.noTypeColumn).toBe(1);
     expect("transactionType" in (await tx("t1"))).toBe(false);
   });
 

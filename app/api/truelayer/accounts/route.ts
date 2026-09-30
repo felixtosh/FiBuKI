@@ -1,5 +1,6 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
+import { transactionTypeFromRawRow } from "@/functions/src/imports/transactionType";
 import { initializeApp, getApps } from "firebase/app";
 import {
   getFirestore,
@@ -307,6 +308,7 @@ async function triggerInitialSync(
         name: tx.description,
         partner: tx.merchant_name || null,
         partnerIban: null,
+        transactionType: transactionTypeFromRawRow(tx as unknown as Record<string, unknown>),
         description: null,
         reference,
         isComplete: false,

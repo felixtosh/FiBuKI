@@ -68,7 +68,7 @@ async function main(): Promise<void> {
 
   console.log(
     `\ndone: ${report.typed.length} typed, ${report.unknown.length} unknown, ` +
-      `${report.noMapping} without a type column, ${report.transactionsScanned} scanned` +
+      `${report.noTypeColumn} without a type column, ${report.transactionsScanned} scanned` +
       (report.backupPath ? `, backup at ${report.backupPath}` : ""),
   );
   process.exit(0);
