@@ -20,6 +20,7 @@ import {
 import { debitDateFromAdditionalFields, isDebitDateHit } from "../debitDate";
 import { dueDateFromAdditionalFields } from "../dueDate";
 import { normalizeTransactionType } from "../../imports/transactionType";
+import { toDateSafe } from "../../utils/toDateSafe";
 
 function ts(dateStr: string): Timestamp {
   return Timestamp.fromDate(new Date(dateStr));
@@ -162,7 +163,7 @@ describe("scoreTransaction with a Debit Date", () => {
     const legacy = toFileMatchingData({
       extractedAdditionalFields: [{ key: "debitDate", label: "Einzugsdatum", value: DEBIT }],
     });
-    expect(legacy.extractedDebitDate?.toDate().getDate()).toBe(20);
+    expect(toDateSafe(legacy.extractedDebitDate)?.getDate()).toBe(20);
   });
 
   it("carries the Transaction's type into the scorer", () => {
