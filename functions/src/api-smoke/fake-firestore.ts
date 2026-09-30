@@ -181,6 +181,16 @@ export class FakeQuery {
     return new FakeQuery(this.db, this.collectionName, this.filters, this.orders, n);
   }
 
+  /** Firestore's aggregate count: `{ get() -> { data() -> { count } } }`. */
+  count() {
+    return {
+      get: async () => {
+        const size = (await this.get()).size;
+        return { data: () => ({ count: size }) };
+      },
+    };
+  }
+
   async get(): Promise<QuerySnapshot> {
     let rows = this.db._entries(this.collectionName);
     for (const filter of this.filters) {

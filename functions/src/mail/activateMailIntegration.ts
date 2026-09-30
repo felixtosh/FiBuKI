@@ -35,10 +35,10 @@ export interface ActivateMailIntegrationResult {
 }
 
 export async function activateMailIntegration(
-  params: ActivateMailIntegrationParams
+  params: ActivateMailIntegrationParams,
+  db: FirebaseFirestore.Firestore = getFirestore()
 ): Promise<ActivateMailIntegrationResult> {
   const { integrationId, userId, email, reason, notify = true } = params;
-  const db = getFirestore();
   const now = Timestamp.now();
 
   await db.collection("emailIntegrations").doc(integrationId).update({

@@ -69,7 +69,7 @@ export async function POST(request: NextRequest) {
       email: integration.email,
       reason: "mail_service_resumed",
       notify: false,
-    });
+    }, db);
     console.log(`[Gmail Resume] Resumed integration: ${integration.email}`);
 
     return NextResponse.json({

@@ -24,7 +24,7 @@ async function activate(
 ): Promise<void> {
   if (!IS_SELFHOST) return;
   try {
-    await activateMailIntegration({ integrationId, userId, email, reason });
+    await activateMailIntegration({ integrationId, userId, email, reason }, db);
   } catch (error) {
     // The mailbox is connected either way; the search can be started by hand.
     console.error("[Gmail OAuth] activation failed:", error);

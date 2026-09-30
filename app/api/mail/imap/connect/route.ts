@@ -159,7 +159,7 @@ export async function POST(request: NextRequest) {
           userId,
           email,
           reason: "mail_service_connected",
-        });
+        }, db);
       } catch (error) {
         console.error("[IMAP connect] activation failed:", error);
       }
