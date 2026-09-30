@@ -78,7 +78,7 @@
     "@types/soap": "^0.21.0",
     "@types/unzipper": "^0.10.11",
     "drizzle-kit": "^0.31.11",
-    "typescript": "^6.0.3",
+    "typescript": "^7.0.2",
     "vite-node": "^6.0.0",
     "vitest": "^4.1.9"
   },
