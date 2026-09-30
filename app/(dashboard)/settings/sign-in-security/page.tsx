@@ -44,6 +44,7 @@ import { httpsCallable } from "firebase/functions";
 import { functions } from "@/lib/firebase/config";
 import { MfaStatusCard } from "@/components/mfa";
 import { SettingsPageHeader } from "@/components/ui/settings-page-header";
+import { LanguageCard } from "@/components/settings/language-card";
 import { DeleteAccountSection } from "@/components/settings/delete-account-section";
 
 export default function SignInSecurityPage() {
@@ -184,6 +185,8 @@ export default function SignInSecurityPage() {
           <AlertDescription>{authError}</AlertDescription>
         </Alert>
       )}
+
+      <LanguageCard />
 
       {/* Sign-in Methods Section */}
       <Card className="mb-6">

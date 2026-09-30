@@ -1,36 +1,34 @@
 import { getRequestConfig } from "next-intl/server";
 import { cookies, headers } from "next/headers";
+import {
+  DEFAULT_LOCALE,
+  LOCALES,
+  isLocale,
+  localeFromAcceptLanguage,
+  withFallbackMessages,
+  type Locale,
+} from "@/lib/i18n/locale";
 
-export const locales = ["de", "en"] as const;
-export type Locale = (typeof locales)[number];
-export const defaultLocale: Locale = "de";
+export const locales = LOCALES;
+export type { Locale };
+export const defaultLocale: Locale = DEFAULT_LOCALE;
 
+/**
+ * The UI language (#168): the `locale` cookie, which LocaleSync keeps equal to
+ * the signed-in user's saved choice, else the browser's first supported
+ * language, else English. A German message that is missing shows in English.
+ */
 export default getRequestConfig(async () => {
-  // Try to get locale from cookie first
-  const cookieStore = await cookies();
-  const localeCookie = cookieStore.get("locale")?.value as Locale | undefined;
+  const cookieLocale = (await cookies()).get("locale")?.value;
+  const locale: Locale = isLocale(cookieLocale)
+    ? cookieLocale
+    : localeFromAcceptLanguage((await headers()).get("accept-language"));
 
-  if (localeCookie && locales.includes(localeCookie)) {
-    return {
-      locale: localeCookie,
-      messages: (await import(`../messages/${localeCookie}.json`)).default,
-    };
-  }
+  const english = (await import("../messages/en.json")).default;
+  const messages =
+    locale === "en"
+      ? english
+      : withFallbackMessages((await import(`../messages/${locale}.json`)).default, english);
 
-  // Fall back to Accept-Language header
-  const headersList = await headers();
-  const acceptLanguage = headersList.get("accept-language");
-  const browserLocale = acceptLanguage?.split(",")[0]?.split("-")[0] as
-    | Locale
-    | undefined;
-
-  const locale =
-    browserLocale && locales.includes(browserLocale)
-      ? browserLocale
-      : defaultLocale;
-
-  return {
-    locale,
-    messages: (await import(`../messages/${locale}.json`)).default,
-  };
+  return { locale, messages };
 });

@@ -26,6 +26,7 @@ import { useOnboarding } from "@/hooks/use-onboarding";
 import { useSubscription } from "@/hooks/use-subscription";
 import { BillingLimitBanner } from "@/components/billing/billing-limit-banner";
 import { ImpersonationBanner } from "@/components/admin/impersonation-banner";
+import { LocaleSync } from "@/components/i18n/locale-sync";
 import { logoFont } from "@/app/fonts";
 import type { PlanFeatureKey } from "@/types/billing";
 
@@ -413,6 +414,7 @@ export default function DashboardLayout({
       <TooltipProvider>
         <ChatProvider>
           <OnboardingController />
+          <LocaleSync />
           <WorkerQueueProcessor />
           <ChatSidebar />
           <DashboardContent>{children}</DashboardContent>

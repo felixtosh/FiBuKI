@@ -159,6 +159,8 @@ export type CloudFunctionName =
   // Digest / email preferences
   | "updateDigestPreference"
   | "updateEmailPreference"
+  // UI language (#168)
+  | "updateUserLocale"
   // Password reset
   | "sendPasswordReset"
   // Open seats & invite emails

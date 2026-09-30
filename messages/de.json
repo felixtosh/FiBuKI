@@ -316,5 +316,12 @@
       "conflict": "Richtung widerspricht",
       "open": "Richtung offen"
     }
+  },
+  "settings": {
+    "language": {
+      "title": "Sprache",
+      "description": "Die Sprache der FiBuKI-Oberfläche. Noch nicht übersetzte Seiten bleiben auf Englisch.",
+      "saveFailed": "Die Sprache konnte nicht gespeichert werden."
+    }
   }
 }

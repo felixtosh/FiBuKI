@@ -12,6 +12,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
+    "lint:strings": "node scripts/check-ui-strings.mjs",
     "test:chat-url": "node --test tests/chat-url-state.test.mjs",
     "test:file-filters": "node --test tests/apply-file-filters.test.mjs",
     "test:file-url-params": "node --test tests/file-url-params.test.mjs",
