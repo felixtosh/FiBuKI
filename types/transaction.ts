@@ -149,6 +149,12 @@ export interface Transaction {
    */
   transactionType?: TransactionType | null;
 
+  /**
+   * When the timed receipt search (#103) ran for this Transaction. Set once;
+   * the job never searches a stamped Transaction again.
+   */
+  timedReceiptSearchAt?: Timestamp | null;
+
   // === Deduplication ===
 
   /** SHA256 hash for deduplication: hash(date + amount + iban + reference) */
