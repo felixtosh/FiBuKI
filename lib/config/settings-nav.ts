@@ -22,7 +22,7 @@ export interface SettingsNavItem {
 }
 
 export const settingsNavItems: SettingsNavItem[] = [
-  { href: "/settings/sign-in-security", label: "Sign-in & Security", icon: Shield },
+  { href: "/settings/sign-in-security", label: "General Settings", icon: Shield },
   { href: "/settings/identity", label: "Your Identity", icon: User },
   { href: "/settings/billing", label: "Billing & Plan", icon: CreditCard },
   { href: "/settings/notifications", label: "Notifications", icon: Bell },

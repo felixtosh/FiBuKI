@@ -161,7 +161,7 @@
         },
         "retention": {
           "title": "Data Retention & Deletion",
-          "content": "• Your data is retained while your account is active\n• You can delete individual files, transactions, or connected accounts at any time\n• You can delete your account via Settings > Sign-in & Security > Delete Account\n• Account deletion includes a 30-day grace period during which you can cancel the request\n• After the grace period, all associated data is permanently removed\n• OAuth tokens for connected services (e.g., Gmail) are revoked and cannot be recovered\n• Database backups are retained for up to 90 days for disaster recovery, after which they are automatically purged"
+          "content": "• Your data is retained while your account is active\n• You can delete individual files, transactions, or connected accounts at any time\n• You can delete your account via Settings > General Settings > Delete Account\n• Account deletion includes a 30-day grace period during which you can cancel the request\n• After the grace period, all associated data is permanently removed\n• OAuth tokens for connected services (e.g., Gmail) are revoked and cannot be recovered\n• Database backups are encrypted and retained for up to 14 days for disaster recovery, after which they are automatically purged"
         }
       },
       "automatedProcessing": {
