@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
+import { useTranslations } from "next-intl";
 import { Loader2, Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -50,13 +51,10 @@ export function PdfPageViewer({
   highlightText,
   className,
 }: PdfPageViewerProps) {
+  const t = useTranslations("documents.viewer");
   const [numPages, setNumPages] = useState<number>(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  // Keyed to the url, not a flag: the overlay keeps this viewer mounted while
-  // the user picks another File, and that File must load normally.
-  const [protectedUrl, setProtectedUrl] = useState<string | null>(null);
-  const passwordProtected = protectedUrl === url;
   const containerRef = useRef<HTMLDivElement>(null);
 
   const handleDocumentLoadSuccess = useCallback(
@@ -75,10 +73,15 @@ export function PdfPageViewer({
     setIsLoading(false);
   }, []);
 
+  // Keyed to the url, not a flag: the overlay keeps this viewer mounted while
+  // the user picks another File, and that File must load normally.
+  const [protectedUrl, setProtectedUrl] = useState<string | null>(null);
+  const passwordProtected = protectedUrl === url;
+
   // react-pdf's default handler asks with window.prompt() and passes the answer
   // straight on. Cancel yields null, pdf.js rejects it as a wrong password and
   // asks again, so the dialog can never be dismissed. Never answer instead:
-  // flag the file and unmount <Document>, whose cleanup destroys the pending load.
+  // flag the file and unmount the Document, whose cleanup destroys the pending load.
   const handlePassword = useCallback(() => {
     setProtectedUrl(url);
     setIsLoading(false);
@@ -165,9 +168,7 @@ export function PdfPageViewer({
         {passwordProtected ? (
           <div className="flex flex-col items-center gap-3 p-8 text-center text-muted-foreground">
             <Lock className="h-10 w-10" />
-            <p className="text-sm">
-              This PDF is password-protected, so it cannot be previewed.
-            </p>
+            <p className="text-sm">{t("passwordProtected")}</p>
           </div>
         ) : (
           <Document

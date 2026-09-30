@@ -55,7 +55,15 @@ vi.mock("next/dynamic", () => ({
     },
 }));
 
+import { NextIntlClientProvider } from "next-intl";
+import messages from "@/messages/en.json";
 import { PdfPageViewer } from "@/components/files/pdf-page-viewer";
+
+const viewer = (url: string) => (
+  <NextIntlClientProvider locale="en" messages={messages} timeZone="Europe/Vienna">
+    <PdfPageViewer url={url} />
+  </NextIntlClientProvider>
+);
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -68,7 +76,7 @@ describe("PdfPageViewer on a password-protected PDF", () => {
     const prompt = vi.spyOn(window, "prompt").mockReturnValue(null);
 
     await act(async () => {
-      render(<PdfPageViewer url="https://example.test/locked.pdf" />);
+      render(viewer("https://example.test/locked.pdf"));
     });
 
     await screen.findByText(/password-protected/i);
@@ -78,7 +86,7 @@ describe("PdfPageViewer on a password-protected PDF", () => {
 
   it("unmounts the Document, which destroys the pending load", async () => {
     await act(async () => {
-      render(<PdfPageViewer url="https://example.test/locked.pdf" />);
+      render(viewer("https://example.test/locked.pdf"));
     });
 
     await waitFor(() => expect(pdf.documentUnmounted).toHaveBeenCalledTimes(1));
@@ -86,10 +94,10 @@ describe("PdfPageViewer on a password-protected PDF", () => {
   });
 
   it("loads the next File normally when the viewer is reused", async () => {
-    const { rerender } = render(<PdfPageViewer url="https://example.test/locked.pdf" />);
+    const { rerender } = render(viewer("https://example.test/locked.pdf"));
     await screen.findByText(/password-protected/i);
 
-    rerender(<PdfPageViewer url="https://example.test/open.pdf" />);
+    rerender(viewer("https://example.test/open.pdf"));
 
     await screen.findByTestId("pdf-document");
     expect(screen.queryByText(/password-protected/i)).toBeNull();

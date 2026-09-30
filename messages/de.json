@@ -315,6 +315,9 @@
     "directionReview": {
       "conflict": "Richtung widerspricht",
       "open": "Richtung offen"
+    },
+    "viewer": {
+      "passwordProtected": "Dieses PDF ist passwortgeschützt und kann nicht in der Vorschau angezeigt werden."
     }
   },
   "settings": {
