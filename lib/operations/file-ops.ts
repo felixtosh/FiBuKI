@@ -29,7 +29,7 @@ import {
 } from "./partner-ops";
 import { OperationsContext } from "./types";
 import { callFunction } from "@/lib/firebase/callable";
-import { fileDocumentAmount } from "@/lib/files/document-amount";
+import { fileDocumentAmount, fileDocumentVatAmount } from "@/lib/files/document-amount";
 
 const PARTNERS_COLLECTION = "partners";
 
@@ -139,12 +139,10 @@ function normalizeFileMonetaryFields(file: TaxFile): TaxFile {
     return file;
   }
 
-  const vatFromItems = lineItems.reduce((sum, item) => sum + item.vatAmount, 0);
-
   return {
     ...file,
     extractedAmount: fileDocumentAmount(file),
-    extractedVatAmount: file.extractedVatAmount ?? vatFromItems,
+    extractedVatAmount: fileDocumentVatAmount(file),
   };
 }
 

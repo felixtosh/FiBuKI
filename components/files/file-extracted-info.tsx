@@ -35,7 +35,7 @@ import {
   INVOICE_DIRECTIONS,
 } from "@/lib/documents/document-type-presentation";
 import { describeLineItemsUnreconciled } from "@/lib/documents/line-item-presentation";
-import { fileDocumentAmount } from "@/lib/files/document-amount";
+import { fileDocumentAmount, fileDocumentVatAmount } from "@/lib/files/document-amount";
 
 // Consistent field row component (matching transaction-details.tsx)
 // Uses container queries to stack vertically when panel is narrow (<340px)
@@ -392,11 +392,7 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
   // Secondary fields (VAT ID, IBAN, Address) - shown in "Show more"
   const hasSecondaryFields = !!(file.extractedVatId || file.extractedIban || file.extractedAddress);
 
-  const vatTotal = file.extractedVatAmount != null
-    ? file.extractedVatAmount
-    : hasLineItems
-    ? lineItems.reduce((sum, item) => sum + item.vatAmount, 0)
-    : null;
+  const vatTotal = fileDocumentVatAmount(file);
 
   const vatBreakdown = lineItems.reduce((acc, item) => {
     const key = item.vatPercent == null ? "unknown" : item.vatPercent.toString();
