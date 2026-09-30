@@ -2,7 +2,8 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
-import { Loader2 } from "lucide-react";
+import { useTranslations } from "next-intl";
+import { Loader2, Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // Import react-pdf styles for text layer
@@ -50,6 +51,7 @@ export function PdfPageViewer({
   highlightText,
   className,
 }: PdfPageViewerProps) {
+  const t = useTranslations("documents.viewer");
   const [numPages, setNumPages] = useState<number>(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -70,6 +72,20 @@ export function PdfPageViewer({
     setError("Failed to load PDF");
     setIsLoading(false);
   }, []);
+
+  // Keyed to the url, not a flag: the overlay keeps this viewer mounted while
+  // the user picks another File, and that File must load normally.
+  const [protectedUrl, setProtectedUrl] = useState<string | null>(null);
+  const passwordProtected = protectedUrl === url;
+
+  // react-pdf's default handler asks with window.prompt() and passes the answer
+  // straight on. Cancel yields null, pdf.js rejects it as a wrong password and
+  // asks again, so the dialog can never be dismissed. Never answer instead:
+  // flag the file and unmount the Document, whose cleanup destroys the pending load.
+  const handlePassword = useCallback(() => {
+    setProtectedUrl(url);
+    setIsLoading(false);
+  }, [url]);
 
   // Highlight text in the PDF text layer (searches all pages)
   useEffect(() => {
@@ -149,42 +165,50 @@ export function PdfPageViewer({
         ref={containerRef}
         className="flex-1 min-h-0 overflow-auto p-4"
       >
-        <Document
-          file={url}
-          onLoadSuccess={handleDocumentLoadSuccess}
-          onLoadError={handleDocumentLoadError}
-          loading={
-            <div className="flex items-center justify-center p-8">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
-          }
-          error={
-            <div className="text-destructive text-center p-8">
-              {error || "Failed to load PDF"}
-            </div>
-          }
-        >
-          {!isLoading && !error && (
-            <div className="flex flex-col items-center gap-4">
-              {Array.from({ length: numPages }, (_, index) => (
-                <Page
-                  key={index}
-                  pageNumber={index + 1}
-                  scale={scale}
-                  rotate={rotation}
-                  renderTextLayer={true}
-                  renderAnnotationLayer={false}
-                  loading={
-                    <div className="flex items-center justify-center p-8">
-                      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                    </div>
-                  }
-                  className="shadow-lg"
-                />
-              ))}
-            </div>
-          )}
-        </Document>
+        {passwordProtected ? (
+          <div className="flex flex-col items-center gap-3 p-8 text-center text-muted-foreground">
+            <Lock className="h-10 w-10" />
+            <p className="text-sm">{t("passwordProtected")}</p>
+          </div>
+        ) : (
+          <Document
+            file={url}
+            onLoadSuccess={handleDocumentLoadSuccess}
+            onLoadError={handleDocumentLoadError}
+            onPassword={handlePassword}
+            loading={
+              <div className="flex items-center justify-center p-8">
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+              </div>
+            }
+            error={
+              <div className="text-destructive text-center p-8">
+                {error || "Failed to load PDF"}
+              </div>
+            }
+          >
+            {!isLoading && !error && (
+              <div className="flex flex-col items-center gap-4">
+                {Array.from({ length: numPages }, (_, index) => (
+                  <Page
+                    key={index}
+                    pageNumber={index + 1}
+                    scale={scale}
+                    rotate={rotation}
+                    renderTextLayer={true}
+                    renderAnnotationLayer={false}
+                    loading={
+                      <div className="flex items-center justify-center p-8">
+                        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                      </div>
+                    }
+                    className="shadow-lg"
+                  />
+                ))}
+              </div>
+            )}
+          </Document>
+        )}
       </div>
 
       {/* Page count indicator */}
