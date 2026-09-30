@@ -1,10 +1,12 @@
 version: 2
 updates:
-  # Root npm dependencies
+  # Root npm dependencies. Monthly, few PRs: majors arrive as one grouped PR
+  # to review together, minors and patches as another. Libraries whose major
+  # needs a deliberate migration are ignored for majors and upgraded by hand.
   - package-ecosystem: npm
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
     groups:
       # The chat stream only works when server (ai, @ai-sdk/langchain) and
       # client (@ai-sdk/react) speak the same protocol, so they move together.
@@ -12,23 +14,39 @@ updates:
         patterns:
           - "ai"
           - "@ai-sdk/*"
+      majors:
+        update-types:
+          - major
       minor-and-patch:
         update-types:
           - minor
           - patch
     ignore:
-      # Types must describe the Node that runs production (node:22 images), or
-      # code type-checks against APIs that do not exist at runtime.
+      # Types must describe the Node that runs production (node:22 images).
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
-    open-pull-requests-limit: 10
+      # Deliberate upgrades, not bumps: build tooling and libraries wired by hand.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "vitest"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@tanstack/react-table"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-pdf"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@simplewebauthn/*"
+        update-types: ["version-update:semver-major"]
+    open-pull-requests-limit: 3
 
-  # Cloud Functions dependencies
+  # Cloud Functions dependencies, same shape.
   - package-ecosystem: npm
     directory: /functions
     schedule:
-      interval: weekly
+      interval: monthly
     groups:
+      majors:
+        update-types:
+          - major
       minor-and-patch:
         update-types:
           - minor
@@ -40,7 +58,16 @@ updates:
         update-types: ["version-update:semver-minor", "version-update:semver-major"]
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
-    open-pull-requests-limit: 5
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "vitest"
+        update-types: ["version-update:semver-major"]
+      # A Stripe major moves the pinned API version behind webhooks and Checkout.
+      - dependency-name: "stripe"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@simplewebauthn/*"
+        update-types: ["version-update:semver-major"]
+    open-pull-requests-limit: 2
 
   # GitHub Actions
   - package-ecosystem: github-actions
