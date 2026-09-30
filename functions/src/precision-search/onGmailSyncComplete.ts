@@ -6,17 +6,10 @@
  */
 
 import { onDocumentUpdated } from "firebase-functions/v2/firestore";
-import { getFirestore, Timestamp } from "firebase-admin/firestore";
+import { getFirestore } from "firebase-admin/firestore";
+import { queueIncompleteTransactionSearch } from "./queueIncompleteSearch";
 
 const db = getFirestore();
-
-// Default strategies for post-sync precision search
-const DEFAULT_STRATEGIES = [
-  "partner_files",
-  "amount_files",
-  "email_attachment",
-  "email_invoice",
-];
 
 /**
  * Triggered when Gmail sync completes.
@@ -50,65 +43,8 @@ export const onGmailSyncComplete = onDocumentUpdated(
     // 1. email_invoice strategy can find HTML invoices even without attachments
     // 2. This is the entry point for transactions that were skipped earlier
     //    due to no email integration being connected
-
-    // Check if there's already a pending precision search for this user
-    const existingSearch = await db
-      .collection("precisionSearchQueue")
-      .where("userId", "==", userId)
-      .where("status", "in", ["pending", "processing"])
-      .limit(1)
-      .get();
-
-    if (!existingSearch.empty) {
-      console.log(
-        "[PrecisionSearch] User already has a pending precision search, skipping"
-      );
-      return;
-    }
-
-    // Count incomplete transactions
-    const incompleteCount = await db
-      .collection("transactions")
-      .where("userId", "==", userId)
-      .where("isComplete", "==", false)
-      .count()
-      .get();
-
-    const transactionsToProcess = incompleteCount.data().count;
-
-    if (transactionsToProcess === 0) {
-      console.log("[PrecisionSearch] No incomplete transactions, skipping");
-      return;
-    }
-
-    // Queue precision search
-    const now = Timestamp.now();
-    const queueItem = {
-      userId,
-      scope: "all_incomplete",
-      triggeredBy: "gmail_sync",
-      triggeredByAuthor: {
-        type: "system",
-        userId: userId,
-      },
-      gmailSyncQueueId,
-      status: "pending",
-      transactionsToProcess,
-      transactionsProcessed: 0,
-      transactionsWithMatches: 0,
-      totalFilesConnected: 0,
-      strategies: DEFAULT_STRATEGIES,
-      currentStrategyIndex: 0,
-      errors: [],
-      retryCount: 0,
-      maxRetries: 3,
-      createdAt: now,
-    };
-
-    const docRef = await db.collection("precisionSearchQueue").add(queueItem);
-
-    console.log(
-      `[PrecisionSearch] Queued precision search ${docRef.id} for ${transactionsToProcess} transactions after Gmail sync`
-    );
+    // 3. Since #103 a first Sync covers today only, so this search is what
+    //    finds receipts for every older Transaction
+    await queueIncompleteTransactionSearch(db, userId, "gmail_sync", { gmailSyncQueueId });
   }
 );

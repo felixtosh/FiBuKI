@@ -1,6 +1,7 @@
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { SYNCABLE_MAIL_PROVIDERS } from "../mail/constants";
+import { forwardSyncGaps } from "../mail/syncWindow";
 
 const db = getFirestore();
 
@@ -24,97 +25,6 @@ interface EmailIntegration {
   };
 }
 
-interface DateRange {
-  from: Date;
-  to: Date;
-}
-
-// ============================================================================
-// Gap Detection Helpers
-// ============================================================================
-
-/**
- * Get the date range of the user's transactions.
- */
-async function getTransactionDateRange(userId: string): Promise<{ minDate: Date; maxDate: Date } | null> {
-  const [earliestSnapshot, latestSnapshot] = await Promise.all([
-    db.collection("transactions")
-      .where("userId", "==", userId)
-      .orderBy("date", "asc")
-      .limit(1)
-      .get(),
-    db.collection("transactions")
-      .where("userId", "==", userId)
-      .orderBy("date", "desc")
-      .limit(1)
-      .get(),
-  ]);
-
-  if (earliestSnapshot.empty || latestSnapshot.empty) {
-    return null;
-  }
-
-  const earliestDoc = earliestSnapshot.docs[0].data();
-  const latestDoc = latestSnapshot.docs[0].data();
-
-  const minDate = earliestDoc.date instanceof Timestamp
-    ? earliestDoc.date.toDate()
-    : new Date(earliestDoc.date);
-  const maxDate = latestDoc.date instanceof Timestamp
-    ? latestDoc.date.toDate()
-    : new Date(latestDoc.date);
-
-  return { minDate, maxDate };
-}
-
-/**
- * Calculate sync gaps between transaction range and synced range.
- */
-function calculateSyncGaps(
-  transactionRange: { minDate: Date; maxDate: Date } | null,
-  syncedRange: { from: Date; to: Date } | null,
-  bufferDays: number = 7
-): DateRange[] {
-  if (!transactionRange) {
-    return [];
-  }
-
-  // Apply buffer to transaction range
-  const transactionFrom = new Date(transactionRange.minDate);
-  transactionFrom.setDate(transactionFrom.getDate() - bufferDays);
-
-  const transactionTo = new Date(transactionRange.maxDate);
-  transactionTo.setDate(transactionTo.getDate() + bufferDays);
-
-  // For scheduled sync, also extend to now
-  const now = new Date();
-  const targetTo = transactionTo > now ? transactionTo : now;
-
-  if (!syncedRange) {
-    return [{ from: transactionFrom, to: targetTo }];
-  }
-
-  const gaps: DateRange[] = [];
-
-  // Gap BEFORE synced range (older transactions imported)
-  if (transactionFrom < syncedRange.from) {
-    gaps.push({
-      from: transactionFrom,
-      to: new Date(syncedRange.from.getTime() - 1),
-    });
-  }
-
-  // Gap AFTER synced range (newer transactions or time passing)
-  if (targetTo > syncedRange.to) {
-    gaps.push({
-      from: new Date(syncedRange.to.getTime() + 1),
-      to: targetTo,
-    });
-  }
-
-  return gaps;
-}
-
 // ============================================================================
 // Scheduled Daily Sync
 // ============================================================================
@@ -125,7 +35,7 @@ function calculateSyncGaps(
  *
  * For each active integration that has completed initial sync:
  * 1. Skips it while paused, needing re-auth, or already queued
- * 2. Queues one sync item per gap between the synced range and now
+ * 2. Queues one sync item from the end of the synced range to now
  *
  * Extracted from the scheduled handler so the self-host shim can exercise it
  * directly; the `onSchedule` export below only wraps it.
@@ -175,8 +85,7 @@ export async function queueScheduledMailSyncs(
         continue;
       }
 
-      // Get transaction date range and calculate gaps
-      const transactionRange = await getTransactionDateRange(integration.userId);
+      // Forward from the synced range to now (#103).
 
       // Convert synced range timestamps to dates
       const syncedRange = integration.syncedDateRange
@@ -186,7 +95,7 @@ export async function queueScheduledMailSyncs(
           }
         : null;
 
-      const gaps = calculateSyncGaps(transactionRange, syncedRange);
+      const gaps = forwardSyncGaps(syncedRange, now.toDate());
 
       if (gaps.length === 0) {
         console.log(`[GmailSync] Integration ${integration.id} fully synced, skipping`);

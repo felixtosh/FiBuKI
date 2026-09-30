@@ -1,4 +1,5 @@
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
+import { firstSyncWindow } from "../mail/syncWindow";
 
 /**
  * Kick off the initial IMAP sync for a freshly connected mailbox.
@@ -32,10 +33,6 @@ import { getFirestore, Timestamp } from "firebase-admin/firestore";
 const SYNC_QUEUE_COLLECTION = "gmailSyncQueue";
 const INTEGRATIONS_COLLECTION = "emailIntegrations";
 
-/** Days of slack added either side of the user's transaction span. */
-const DATE_RANGE_PADDING_DAYS = 7;
-/** Window used when the user has no transactions to bound the search with. */
-const FALLBACK_WINDOW_DAYS = 90;
 
 export interface StartImapInitialSyncParams {
   integrationId: string;
@@ -50,51 +47,6 @@ export interface StartImapInitialSyncResult {
   queueId?: string;
   dateFrom?: Date;
   dateTo?: Date;
-}
-
-function addDays(date: Date, days: number): Date {
-  const out = new Date(date);
-  out.setDate(out.getDate() + days);
-  return out;
-}
-
-/**
- * Widest span of the user's transactions, or null when they have none.
- *
- * Mail is only worth fetching around money that actually moved, so the search
- * window is derived from the transaction spine rather than from "recent".
- */
-export async function getTransactionDateRange(
-  userId: string
-): Promise<{ minDate: Date; maxDate: Date } | null> {
-  const db = getFirestore();
-
-  const [earliestQuery, latestQuery] = await Promise.all([
-    db
-      .collection("transactions")
-      .where("userId", "==", userId)
-      .orderBy("date", "asc")
-      .limit(1)
-      .get(),
-    db
-      .collection("transactions")
-      .where("userId", "==", userId)
-      .orderBy("date", "desc")
-      .limit(1)
-      .get(),
-  ]);
-
-  if (earliestQuery.empty || latestQuery.empty) return null;
-
-  const earliest = earliestQuery.docs[0].data();
-  const latest = latestQuery.docs[0].data();
-
-  // Historic rows carry a plain Date; anything written through the shim is a
-  // Timestamp. Both shapes are live in the same collection.
-  const toDate = (value: unknown): Date =>
-    value instanceof Timestamp ? value.toDate() : new Date(value as string | number | Date);
-
-  return { minDate: toDate(earliest.date), maxDate: toDate(latest.date) };
 }
 
 /**
@@ -122,11 +74,7 @@ export async function startImapInitialSync(
     return { queued: false };
   }
 
-  const range = await getTransactionDateRange(userId);
-  const dateFrom = range
-    ? addDays(range.minDate, -DATE_RANGE_PADDING_DAYS)
-    : addDays(new Date(), -FALLBACK_WINDOW_DAYS);
-  const dateTo = range ? addDays(range.maxDate, DATE_RANGE_PADDING_DAYS) : new Date();
+  const { dateFrom, dateTo } = firstSyncWindow();
 
   console.log(
     `[MailService] IMAP date range: ${dateFrom.toISOString()} to ${dateTo.toISOString()}`
@@ -163,7 +111,7 @@ export async function startImapInitialSync(
     userId,
     type: "mail_service_connected",
     title: "Mailbox Connected",
-    message: `${email} connected. Syncing recent invoices now.`,
+    message: `${email} connected. Searching it for the receipts your open transactions are missing.`,
     readAt: null,
     createdAt: now,
   });

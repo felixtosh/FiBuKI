@@ -96,6 +96,23 @@ describe("queueScheduledMailSyncs", () => {
     expect(await queueItems("gmail-1")).toHaveLength(1);
   });
 
+  it("never reaches back into history for transactions older than the synced range (#103)", async () => {
+    // The synced range starts 5 days ago; transactions go back 100 days. The
+    // old span is covered by per-Transaction search, not a bulk pull.
+    await seedIntegration("imap-recent", "imap", {
+      syncedDateRange: {
+        from: Timestamp.fromDate(new Date(Date.now() - 5 * DAY)),
+        to: Timestamp.fromDate(new Date(Date.now() - 3 * DAY)),
+      },
+    });
+
+    await queueScheduledMailSyncs();
+
+    const items = (await queueItems("imap-recent")) as Array<{ dateFrom: Timestamp }>;
+    expect(items).toHaveLength(1);
+    expect(items[0].dateFrom.toMillis()).toBeGreaterThan(Date.now() - 4 * DAY);
+  });
+
   it("leaves a mailbox alone while its initial sync is still running", async () => {
     await seedIntegration("imap-initial", "imap", { initialSyncComplete: false });
 
