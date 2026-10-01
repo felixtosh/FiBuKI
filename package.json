@@ -80,7 +80,7 @@
     "date-fns": "^4.4.0",
     "firebase": "^12.19.0",
     "firebase-admin": "^14.5.0",
-    "imapflow": "^2.0.7",
+    "imapflow": "^2.1.0",
     "jose": "^6.2.12",
     "jszip": "^3.10.2",
     "langfuse": "^3.39.2",
