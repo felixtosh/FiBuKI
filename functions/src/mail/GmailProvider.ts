@@ -57,12 +57,17 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * The calendar day as Gmail's YYYY/MM/DD. Stored dates are UTC midnight of
+ * the Vienna calendar day (uva/adapter.ts toViennaCalendarDay), so the day is
+ * the UTC date part. Read with local getters it depended on the host's time
+ * zone: a day early on any machine west of UTC.
+ */
 function formatGmailDate(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}/${month}/${day}`;
+  return date.toISOString().slice(0, 10).replace(/-/g, "/");
 }
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * The Gmail `q` for one search: the caller's terms, then the date window.
@@ -72,8 +77,8 @@ function formatGmailDate(date: Date): string {
  * Sync's query is unchanged by the terms vocabulary (#240).
  */
 function buildSearchQuery(opts: MailSearchOptions): string {
-  const nextDay = new Date(opts.dateTo);
-  nextDay.setDate(nextDay.getDate() + 1);
+  // A UTC day is always 24h, so adding one cannot be bent by a DST change.
+  const nextDay = new Date(opts.dateTo.getTime() + DAY_MS);
 
   // `before:` is exclusive, so the window ends on dateTo + 1 to stay inclusive.
   return `${buildGmailQuery(opts)} after:${formatGmailDate(opts.dateFrom)} before:${formatGmailDate(nextDay)}`;
