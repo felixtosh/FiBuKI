@@ -1026,12 +1026,18 @@ export const bulkUpdateTransactionsTool = tool(
       BulkUpdateTransactionsResponse
     >("bulkUpdateTransactions", { ids: transactionIds, data }, authHeader);
 
+    // Not "success" when nothing was updated: the chat showed a green
+    // "completed" for nine "Not found" rows.
     return {
-      success: true,
+      success: result.success > 0 || result.failed === 0,
       updatedCount: result.success,
       failedCount: result.failed,
       failed: result.failed > 0 ? result.errors : undefined,
-      message: `Updated ${result.success} transaction(s)${result.failed > 0 ? `, ${result.failed} failed` : ""}.`,
+      message:
+        `Updated ${result.success} transaction(s)${result.failed > 0 ? `, ${result.failed} failed` : ""}.` +
+        (result.failed > 0
+          ? " Tell the user. For \"Not found\", use the exact id values from listTransactions; never construct ids."
+          : ""),
     };
   },
   {
@@ -1039,7 +1045,10 @@ export const bulkUpdateTransactionsTool = tool(
     description:
       "Bulk-update many transactions (description, completion, partner assignment, or no-receipt category). Use after listTransactions has shown the user the candidate rows and they have confirmed the change. Pass clearNoReceiptCategory=true to remove an existing category (e.g. flipping 'private' → needs receipt). Requires user confirmation.",
     schema: z.object({
-      transactionIds: z.array(z.string()).min(1).describe("Transaction IDs to update (max 1000)"),
+      transactionIds: z
+        .array(z.string())
+        .min(1)
+        .describe("Transaction IDs to update (max 1000): the exact id values from listTransactions"),
       description: z.string().optional().describe("New description for all selected transactions"),
       isComplete: z.boolean().optional().describe("Mark all as complete/incomplete"),
       partnerId: z.string().optional().describe("Assign this partner to all selected transactions"),

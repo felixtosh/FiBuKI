@@ -442,5 +442,9 @@
       "delete": "{count} Partner löschen",
       "deleteConfirm": "{count} Partner löschen? Ihre Belege und Transaktionen bleiben, nur die Partnerzuordnung fällt weg."
     }
+  },
+  "chat": {
+    "toolCompleted": "{tool} erledigt",
+    "toolFailed": "{tool} fehlgeschlagen"
   }
 }
