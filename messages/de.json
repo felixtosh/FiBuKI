@@ -413,7 +413,10 @@
       "search": "Partner suchen...",
       "none": "Keine Partner gefunden",
       "clear": "Partnerfilter entfernen"
-    }
+    },
+    "more": "Mehr",
+    "panelTitle": "Weitere Filter",
+    "clearAll": "Alle entfernen"
   },
   "partners": {
     "bulk": {
