@@ -24,6 +24,7 @@
  */
 
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import { useTranslations } from "next-intl";
 import { format } from "date-fns";
 import { useRouter } from "next/navigation";
 import {
@@ -55,7 +56,9 @@ import {
 import { FilePreview } from "./file-preview";
 import { FileExtractedInfo } from "./file-extracted-info";
 import { FileConnectionsList } from "./file-connections-list";
-import { Section11Field } from "@/components/documents/section-11-details";
+import { FileTypeControl, Section11Reasoning } from "@/components/documents/section-11-details";
+import { InfoPopover } from "@/components/ui/info-popover";
+import { FileDirectionControl, FileDirectionInfo } from "./file-direction-control";
 import { AddPartnerDialog } from "@/components/partners/add-partner-dialog";
 import { PartnerPill } from "@/components/partners/partner-pill";
 import {
@@ -155,6 +158,7 @@ function FileDetailPanelInner({
   isConnectTransactionOpen = false,
 }: FileDetailPanelProps) {
   const router = useRouter();
+  const t = useTranslations("files.detail");
   const storedDownload = useAuthenticatedDownload();
   const { userId } = useAuth();
   const [isAddPartnerOpen, setIsAddPartnerOpen] = useState(false);
@@ -515,6 +519,42 @@ function FileDetailPanelInner({
                       <span className="flex-1 text-right file-meta-value">{sourceResultLabel}</span>
                     </div>
                   )}
+                  {/* What the File is, and which way it goes (#513) */}
+                  <div className="flex items-center gap-3 file-meta-row">
+                    <span className="text-muted-foreground w-16 shrink-0 file-meta-label flex items-center gap-1">
+                      {t("type")}
+                      {file.classificationComplete && (
+                        <InfoPopover label={t("whyType")}>
+                          <Section11Reasoning
+                            documentType={file.documentType}
+                            basis={file.documentTypeBasis}
+                            missingElements={file.documentTypeMissingElements}
+                          />
+                        </InfoPopover>
+                      )}
+                    </span>
+                    <div className="flex-1 flex justify-end file-meta-value">
+                      <FileTypeControl
+                        documentType={file.documentType}
+                        isNotInvoice={file.isNotInvoice}
+                        classifying={!file.classificationComplete && !isParsing}
+                        disabled={isParsing}
+                        onMarkAsNotInvoice={onMarkAsNotInvoice}
+                        onUnmarkAsNotInvoice={onUnmarkAsNotInvoice}
+                      />
+                    </div>
+                  </div>
+                  {!file.isNotInvoice && (
+                    <div className="flex items-center gap-3 file-meta-row">
+                      <span className="text-muted-foreground w-16 shrink-0 file-meta-label flex items-center gap-1">
+                        {t("direction")}
+                        <FileDirectionInfo file={file} />
+                      </span>
+                      <div className="flex-1 flex justify-end file-meta-value">
+                        <FileDirectionControl file={file} onDirectionChange={handleDirectionChange} />
+                      </div>
+                    </div>
+                  )}
                   {/* File metadata */}
                   <div className="flex items-start gap-3 file-meta-row">
                     <span className="text-muted-foreground w-16 shrink-0 file-meta-label">Uploaded</span>
@@ -539,7 +579,6 @@ function FileDetailPanelInner({
               isRetrying={isRetryingExtraction}
               isParsing={isParsing}
               onFieldClick={onHighlightField}
-              onDirectionChange={handleDirectionChange}
               onUpdate={handleUpdateExtractedFields}
               isUpdating={isUpdatingExtractedFields}
             />
@@ -686,23 +725,6 @@ function FileDetailPanelInner({
               isAiSearching={isWandActive}
             />
 
-            <Separator />
-
-            {/*
-              What this File is under § 11 (#237): the one control that sets
-              it, last, because it is what a user checks when something looks
-              off rather than what they come here to do.
-            */}
-            <Section11Field
-              documentType={file.documentType}
-              basis={file.documentTypeBasis}
-              missingElements={file.documentTypeMissingElements}
-              isNotInvoice={file.isNotInvoice}
-              classifying={!file.classificationComplete && !isParsing}
-              disabled={isParsing}
-              onMarkAsNotInvoice={onMarkAsNotInvoice}
-              onUnmarkAsNotInvoice={onUnmarkAsNotInvoice}
-            />
           </div>
         </ScrollArea>
 
