@@ -400,6 +400,7 @@ export async function learnPatterns(input: PatternLearningInput): Promise<Patter
   // ── Step 1: Generate patterns ──────────────────────────────────────────
   const prompt = buildGenerationPrompt(input);
   const response = await model.generateContent({
+    generationConfig: { responseMimeType: "application/json" },
     contents: [{ role: "user", parts: [{ text: prompt }] }],
   });
   trackUsage(response.response);
@@ -495,6 +496,7 @@ export async function learnPatterns(input: PatternLearningInput): Promise<Patter
   );
 
   const verifyResponse = await model.generateContent({
+    generationConfig: { responseMimeType: "application/json" },
     contents: [{ role: "user", parts: [{ text: verifyPrompt }] }],
   });
   trackUsage(verifyResponse.response);
@@ -559,6 +561,7 @@ If no additional patterns needed: {"patterns": []}`;
 
       try {
         const retryResponse = await model.generateContent({
+          generationConfig: { responseMimeType: "application/json" },
           contents: [{ role: "user", parts: [{ text: coveragePrompt }] }],
         });
         trackUsage(retryResponse.response);

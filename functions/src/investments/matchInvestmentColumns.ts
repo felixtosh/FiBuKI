@@ -290,6 +290,7 @@ export const matchInvestmentColumns = onCall<MatchInvestmentColumnsRequest>(
       const prompt = buildPrompt(headers, sampleRows);
 
       const response = await model.generateContent({
+        generationConfig: { responseMimeType: "application/json" },
         contents: [{ role: "user", parts: [{ text: prompt }] }],
       });
 

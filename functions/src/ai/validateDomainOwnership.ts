@@ -69,6 +69,7 @@ Examples:
     // Race between API call and timeout
     const result = await Promise.race([
       model.generateContent({
+        generationConfig: { responseMimeType: "application/json" },
         contents: [{
           role: "user",
           parts: [{ text: prompt }],
