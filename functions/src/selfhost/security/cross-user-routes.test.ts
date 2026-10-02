@@ -16,6 +16,7 @@ import { __resetFirestoreShim, getFirestore, Timestamp } from "../firestore-shim
 import { __resetTriggerShim } from "../trigger-shim";
 import {
   ATTACKER,
+  VICTIM,
   A,
   V,
   CANARY,
@@ -25,7 +26,6 @@ import {
   assertNoLeak,
 } from "./victim";
 import { asUser, enableInternalAuth } from "./routes";
-import { VICTIM } from "./victim";
 
 vi.mock("@/lib/gmail/resolve-integration", () => {
   class GmailResolutionError extends Error {
@@ -86,6 +86,59 @@ vi.mock("@/lib/agent/graph", () => ({
     resumed.push({ ...(input.pendingToolCall as object), confirmed: input.confirmed });
     return { messages: [], pendingConfirmation: null };
   },
+}));
+
+// The TrueLayer routes use the client Firestore SDK server-side. Here it is
+// pointed at the same shim database, with no rules in between, so what is
+// tested is the routes' own checks rather than the indirect protection a
+// rules engine happens to give them today.
+vi.mock("firebase/app", () => ({ initializeApp: () => ({}), getApps: () => [] }));
+vi.mock("firebase/firestore", async () => {
+  const shim = await import("../firestore-shim");
+  const db = () => shim.getFirestore();
+  const wrap = (snap: { id: string; exists: boolean; data: () => Record<string, unknown> | undefined }) => ({
+    id: snap.id,
+    exists: () => snap.exists,
+    data: () => snap.data(),
+  });
+  return {
+    getFirestore: () => ({}),
+    connectFirestoreEmulator: () => {},
+    Timestamp: shim.Timestamp,
+    doc: (_db: unknown, coll: string, id: string) => db().collection(coll).doc(id),
+    collection: (_db: unknown, coll: string) => db().collection(coll),
+    getDoc: async (ref: { get: () => Promise<never> }) => wrap(await ref.get()),
+    updateDoc: (ref: { update: (d: unknown) => Promise<unknown> }, d: unknown) => ref.update(d),
+    addDoc: (coll: { add: (d: unknown) => Promise<unknown> }, d: unknown) => coll.add(d),
+    where: (f: string, op: string, v: unknown) => ({ f, op, v }),
+    query: (coll: { where: (...a: unknown[]) => unknown }, ...ws: Array<{ f: string; op: string; v: unknown }>) =>
+      ws.reduce((q: { where: (...a: unknown[]) => unknown }, w) => q.where(w.f, w.op, w.v) as never, coll),
+    getDocs: async (q: { get: () => Promise<{ docs: unknown[] }> }) => q.get(),
+  };
+});
+
+// The real module pulls in the browser Firebase config; only the hash is used.
+vi.mock("@/lib/import/deduplication", () => ({
+  generateDedupeHash: async (...parts: unknown[]) => parts.map(String).join("|"),
+  normalizeIban: (iban: string) => iban.replace(/\s/g, "").toUpperCase(),
+}));
+
+const trueLayerTokensUsed: string[] = [];
+vi.mock("@/lib/truelayer", () => ({
+  getAccountIban: (account: { account_number?: { iban?: string } }) => account.account_number?.iban,
+  getTrueLayerClient: () => ({
+    getTransactions: async (token: string) => {
+      trueLayerTokensUsed.push(token);
+      return [{ transaction_id: "tl-1", timestamp: "2026-09-01T10:00:00Z", amount: 12.5, currency: "EUR", transaction_type: "DEBIT", description: "planted" }];
+    },
+    getAccount: async (token: string) => {
+      trueLayerTokensUsed.push(token);
+      return { account_id: "acc-1", currency: "EUR", account_number: { iban: "AT483200000012345864" } };
+    },
+    refreshToken: async () => {
+      throw new Error("no refresh in tests");
+    },
+  }),
 }));
 
 beforeAll(() => {
@@ -322,5 +375,63 @@ describe("/api/agent confirmations run only what the server proposed", () => {
     const own = await confirm(VICTIM, { confirmed: true, token });
     expect(own.status).toBe(200);
     expect(resumed).toHaveLength(1);
+  });
+});
+
+describe("TrueLayer routes check source and connection ownership", () => {
+  let snapshot: Map<string, string>;
+  const future = () => Timestamp.fromMillis(Date.now() + 3_600_000);
+
+  beforeEach(async () => {
+    trueLayerTokensUsed.length = 0;
+    const db = getFirestore();
+    const api = (connectionId: string) => ({ type: "api", apiConfig: { provider: "truelayer", connectionId, accountId: "acc-1" } });
+    await db.doc(`truelayerConnections/v-tl-1`).set({ userId: VICTIM, accessToken: CANARY, refreshToken: CANARY, tokenExpiresAt: future(), providerId: "tl-bank", providerName: CANARY, providerLogo: "logo.png" });
+    await db.doc(`truelayerConnections/a-tl-1`).set({ userId: ATTACKER, accessToken: "mine", refreshToken: "mine", tokenExpiresAt: future(), providerId: "tl-bank", providerName: "Mine", providerLogo: "logo.png" });
+    await db.doc(`sources/${V.source}`).update(api("v-tl-1"));
+    snapshot = await victimRows();
+  });
+
+  it("positive control: syncing my own TrueLayer source imports into it", async () => {
+    await getFirestore().doc(`sources/${A.source}`).update({ type: "api", apiConfig: { provider: "truelayer", connectionId: "a-tl-1", accountId: "acc-1" } });
+    const { POST } = await import("@/app/api/truelayer/sync/route");
+    const res = await POST(asUser(ATTACKER, "/api/truelayer/sync", { body: { sourceId: A.source } }));
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect(trueLayerTokensUsed).toEqual(["mine"]);
+  });
+
+  it("positive control: linking my connection to my own source rewrites it", async () => {
+    const { POST } = await import("@/app/api/truelayer/accounts/route");
+    const res = await POST(
+      asUser(ATTACKER, "/api/truelayer/accounts", { body: { connectionId: "a-tl-1", accountId: "acc-1", sourceId: A.source } }),
+    );
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect((await getFirestore().doc(`sources/${A.source}`).get()).data()?.type).toBe("api");
+  });
+
+  it("sync refuses another user's source", async () => {
+    const { POST } = await import("@/app/api/truelayer/sync/route");
+    const res = await POST(asUser(ATTACKER, "/api/truelayer/sync", { body: { sourceId: V.source } }));
+    before = snapshot;
+    await expectRefused(res, "truelayer/sync(victim source)");
+    expect(trueLayerTokensUsed).toEqual([]);
+  });
+
+  it("sync refuses my source pointing at another user's connection", async () => {
+    await getFirestore().doc(`sources/${A.source}`).update({ type: "api", apiConfig: { provider: "truelayer", connectionId: "v-tl-1", accountId: "acc-1" } });
+    const { POST } = await import("@/app/api/truelayer/sync/route");
+    const res = await POST(asUser(ATTACKER, "/api/truelayer/sync", { body: { sourceId: A.source } }));
+    before = snapshot;
+    await expectRefused(res, "truelayer/sync(victim connection)");
+    expect(trueLayerTokensUsed).not.toContain(CANARY);
+  });
+
+  it("linking my connection to another user's source is refused", async () => {
+    const { POST } = await import("@/app/api/truelayer/accounts/route");
+    const res = await POST(
+      asUser(ATTACKER, "/api/truelayer/accounts", { body: { connectionId: "a-tl-1", accountId: "acc-1", sourceId: V.source } }),
+    );
+    before = snapshot;
+    await expectRefused(res, "truelayer/accounts(victim source)");
   });
 });
