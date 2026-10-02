@@ -51,7 +51,7 @@ vi.mock("../utils/encryption", () => ({
   encrypt: (plaintext: string) => ({ encrypted: `enc:${plaintext}`, iv: "iv" }),
 }));
 
-import { getFirestore, Timestamp, __resetFirestoreShim } from "./firestore-shim";
+import { getFirestore, Timestamp, __resetFirestoreShim, __whenShimIdle } from "./firestore-shim";
 import { processQueueItem } from "../gmail/gmailSyncQueue";
 
 const db = getFirestore();
@@ -135,8 +135,11 @@ async function queueDocs() {
 const pendingRetries = (docs: Record<string, unknown>[]) =>
   docs.filter((d) => d.status === "pending");
 
-beforeEach(() => {
-  __resetFirestoreShim();
+beforeEach(async () => {
+  // Awaited: on real Postgres the reset is a TRUNCATE that otherwise lands
+  // after the test's own seed and wipes it (needsReauth read back undefined).
+  await __whenShimIdle();
+  await __resetFirestoreShim();
   h.box.searchError = undefined;
 });
 
