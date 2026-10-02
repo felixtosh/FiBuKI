@@ -5,7 +5,7 @@
 `claude/sharp-meitner-w8f2qf`. Not yet run in a real Codex, ChatGPT or Claude session, and the web
 changes of phases 3 and 4 were not clicked through in a browser (they are covered by component tests and
 an end-to-end test with the official MCP SDK client). The `upload_file` SSRF guard is done (below). Next:
-the Chromium finding below, then widgets.
+widgets (phase 4). The Chromium renderer is fixed (below).
 
 Felix's brief: fewer features, great embedded execution, use the mail and file
 services the user already connected, maybe the browser, onboarding parity between
@@ -187,7 +187,7 @@ Not done / follow-ups:
 6. `oauthToken` / `oauthRegister` rate limiting is only the host's general per-IP limiter.
 7. Docs: `deploy/selfhost/README-hetzner.md` should say `FIBUKI_WEB_ORIGIN` is now also the OAuth issuer.
 
-## SSRF (DONE for fetches, OPEN for the PDF renderer)
+## SSRF (DONE: fetches and the PDF renderer)
 
 `functions/src/utils/safeFetch.ts` is the one way to fetch a URL a user supplied: https only, port 443, no
 credentials; the host must resolve ONLY to public addresses, checked inside the connection's own DNS lookup (the
@@ -202,20 +202,23 @@ fibuki-api, Postgres and SeaweedFS), and the `lookupCompany` callable, which fet
 `https://<whatever the user typed before the first "/">/impressum` with a plain `fetch` (found while checking
 for the same pattern). Everything else that calls `fetch` uses fixed hosts (Google, Stripe, FinAPI, ...).
 
-**Open: `convertHtmlToPdf` (functions/src/precision-search/htmlToPdf.ts).** It renders caller-supplied HTML in
-Chromium with JavaScript on and no network restrictions. Callers: the `convertHtmlToPdfCallable` (HTML from the
-authenticated caller), `email-inbound/receiveEmail.ts` (HTML from anyone who can email a user's inbound
-address), precision search (email bodies) and the UVA PDF. HTML can point an iframe or image at an internal
-address (`http://fibuki-api:8788/...`, the metadata address) and the response is rendered into the returned/stored
-PDF. Fix: `page.setJavaScriptEnabled(false)`, `page.setRequestInterception(true)` and abort every request that is
-not data:/about: or http(s) to a public address (reuse `isPublicAddress` / the name rules; resolve in the
-handler), keep remote images from public hosts working. Needs a real-browser check, so it is its own change.
-Chromium resolves DNS itself, so rebinding stays partly open unless the container's egress is also restricted.
+**Fixed: `convertHtmlToPdf` (functions/src/precision-search/htmlToPdf.ts, guard in `renderGuard.ts`).** It
+rendered caller-supplied HTML in Chromium with script on and no network limits (callers: the callable, inbound
+email from anyone, precision search, the UVA PDF). Reproduced first in a real Chromium against a loopback
+"internal service": an iframe, image, stylesheet, CSS background, @import, object, meta refresh, form post and
+script fetch/Image all reached it. Now the page has script off and request interception on: only image,
+stylesheet and font requests are served, everything else (documents/iframes/navigations, fetch, websocket,
+media, POST, file:, cid:, plain http) is aborted. A remote https subresource is fetched BY US through
+`fetchPublicUrl` and handed to the browser with `respond()`, so Chromium never opens a connection and DNS
+rebinding has nothing to rebind (the earlier "partly open" caveat is gone). Caps: 40 subresources, 5 MB each,
+15 MB total, 8 s each. `<meta http-equiv=refresh>` is stripped first, otherwise the refused navigation replaces
+the page with an error page. Cost: plain-http images no longer load (https only), and no script runs.
+Tests: `htmlToPdf.integration.test.ts` (10 attacks, real Chromium, skipped when none is installed; set
+`FIBUKI_CHROME_PATH`) and `renderGuard.test.ts` (unit).
 
 Also: `docs/casa/05-tier2-checklist.md` row 12.6 says "SSRF protection: MET - all outbound HTTP uses fixed
-hostnames; no user-controlled URL fetch". That was not true before this change (and is not fully true while the
-renderer is open). Proposed edit, for a human to make: restate it as met by `safeFetch.ts`, with the renderer as
-an exception until fixed.
+hostnames; no user-controlled URL fetch". That was not true before this change (it is true now). Proposed edit, for a human to make: restate it as met by `safeFetch.ts` (user URLs) and
+`renderGuard.ts` (the PDF renderer).
 
 ## Sign in with ChatGPT / Claude (checked 2026-10-02, optional, not needed for phase 4)
 
