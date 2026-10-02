@@ -12,8 +12,8 @@
  *
  * The run is claimed BEFORE it starts, with an atomic create() of a claim
  * document named after exactly what it catches up to, so two tabs opening at
- * once start it once. (A read-then-write transaction is not enough here: the
- * self-host runTransaction does not isolate.) A run that fails after claiming
+ * once start it once, and the claims double as a record of past runs. A run
+ * that fails after claiming
  * is not retried until something changes again; every Transaction is still
  * matched on open, as before.
  */
