@@ -9,16 +9,9 @@
 // TELEGRAM_ANNOUNCEMENTS_CHAT_ID. DRY_RUN=1 prints instead of posting.
 // SINCE=<ISO date> overrides the window start.
 
-import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { gh, REPO, windowStart, geminiJson, escapeHtml, viennaDay, postTelegram } from "./lib/telegram.mjs";
 
-const REPO = process.env.GITHUB_REPOSITORY || "felixtosh/FiBuKI";
 const WORKFLOW = "changelog-telegram.yml";
-const DRY_RUN = process.env.DRY_RUN === "1" || process.env.DRY_RUN === "true";
-// The geminiLite role, read from the one place model ids live (CLAUDE.md:
-// never inline a model id). A digest of a dozen PR titles needs no more.
-const MODEL = readFileSync(new URL("../functions/src/utils/models.ts", import.meta.url), "utf8")
-  .match(/geminiLite:\s*"([^"]+)"/)[1];
 const MAX_BODY_CHARS = 1500;
 
 // PRs that never reach the channel, before the model sees them.
@@ -28,21 +21,6 @@ const SKIP_LABEL = /security|internal|no-changelog/i;
 // security, even if the prompt was ignored.
 const UNSAFE_ITEM =
   /secur|vulnerab|exploit|\bcve\b|xss|csrf|inject|\brls\b|token|secret|password|credential|leak|attack|bypass|privilege|exposure|pentest|encrypt/i;
-
-function gh(args) {
-  return execFileSync("gh", args, { encoding: "utf8", maxBuffer: 32 * 1024 * 1024 });
-}
-
-// Window start: the last successful scheduled run, so a failed day is caught
-// up the next day. Manual (dry) runs never move the window.
-function windowStart() {
-  if (process.env.SINCE) return new Date(process.env.SINCE);
-  const out = gh([
-    "run", "list", "-R", REPO, "--workflow", WORKFLOW, "--event", "schedule",
-    "--status", "success", "-L", "1", "--json", "createdAt", "--jq", ".[0].createdAt // empty",
-  ]).trim();
-  return out ? new Date(out) : new Date(Date.now() - 24 * 3600 * 1000);
-}
 
 function mergedPrs(since) {
   const out = gh([
@@ -72,48 +50,15 @@ async function summarize(prs) {
   const list = prs
     .map((pr) => `### ${pr.title}\n${(pr.body || "").slice(0, MAX_BODY_CHARS)}`)
     .join("\n\n");
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "x-goog-api-key": process.env.GEMINI_API_KEY, "content-type": "application/json" },
-    body: JSON.stringify({
-      systemInstruction: { parts: [{ text: PROMPT }] },
-      contents: [{ role: "user", parts: [{ text: list }] }],
-      generationConfig: { responseMimeType: "application/json", maxOutputTokens: 1024 },
-    }),
-  });
-  if (!res.ok) throw new Error(`Gemini ${res.status}: ${await res.text()}`);
-  const data = await res.json();
-  const text = data.candidates?.[0]?.content?.parts?.map((p) => p.text || "").join("") || "{}";
-  return JSON.parse(text).items || [];
+  return (await geminiJson(PROMPT, list)).items || [];
 }
-
-const escapeHtml = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 function format(items) {
-  const day = new Date().toLocaleDateString("en-GB", {
-    timeZone: "Europe/Vienna", day: "numeric", month: "long",
-  });
   const lines = items.map((i) => `${i.emoji} ${escapeHtml(i.text.replace(/\s*—\s*/g, ", "))}`);
-  return `🚀 <b>New in FiBuKI</b> · ${day}\n\n${lines.join("\n")}`;
+  return `🚀 <b>New in FiBuKI</b> · ${viennaDay()}\n\n${lines.join("\n")}`;
 }
 
-async function post(text) {
-  const res = await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      chat_id: process.env.TELEGRAM_ANNOUNCEMENTS_CHAT_ID,
-      text,
-      parse_mode: "HTML",
-      link_preview_options: { is_disabled: true },
-    }),
-  });
-  const data = await res.json();
-  if (!data.ok) throw new Error(`Telegram: ${data.description}`);
-}
-
-const since = windowStart();
+const since = windowStart(WORKFLOW);
 const prs = mergedPrs(since);
 console.log(`Window from ${since.toISOString()}: ${prs.length} candidate PRs`);
 prs.forEach((pr) => console.log(`  #${pr.number} ${pr.title}`));
@@ -129,11 +74,4 @@ if (items.length === 0) {
   process.exit(0);
 }
 
-const message = format(items);
-console.log(`\n${message}\n`);
-if (DRY_RUN) {
-  console.log("DRY_RUN: not posted.");
-} else {
-  await post(message);
-  console.log("Posted.");
-}
+await postTelegram(process.env.TELEGRAM_ANNOUNCEMENTS_CHAT_ID, format(items));

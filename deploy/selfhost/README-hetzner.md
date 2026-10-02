@@ -227,6 +227,26 @@ GPG_RECIPIENT=you@fibuki.com /opt/fibuki/deploy/selfhost/backup.sh
 /opt/fibuki/deploy/selfhost/restore-test.sh
 ```
 
+## 8b. Alerts to the Development Telegram group
+
+`alert-watch.py` checks every 5 minutes: the four containers, `fibuki.com` and
+the API's `/healthz`, disk (from 90%), 5xx bursts (20 in 5 minutes) and the
+backup (newest older than 26 h, or a failed restore test). A check has to fail
+twice in a row before it posts, so a deploy's minute of 502s stays quiet. Each
+problem posts once, and once more when it clears.
+
+It reads `TELEGRAM_BOT_TOKEN` and `TELEGRAM_DEV_CHAT_ID` from `.env`. Install:
+
+```bash
+cat > /etc/cron.d/fibuki-alerts <<'CRON'
+*/5 * * * * root /opt/fibuki/deploy/selfhost/alert-watch.py >> /var/log/fibuki-alerts.log 2>&1
+CRON
+/opt/fibuki/deploy/selfhost/alert-watch.py --dry-run   # prints, posts nothing
+```
+
+A failed deploy is reported by the `notify-failure` job in
+`deploy-hetzner.yml` (GitHub secrets `TELEGRAM_BOT_TOKEN`, `TELEGRAM_DEV_CHAT_ID`).
+
 ## 9. Then, and only then, migrate
 
 Back to [`w4-cutover-runbook.md`](../../docs/w4-cutover-runbook.md) from step 2.

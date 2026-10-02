@@ -182,6 +182,9 @@ jobs:
           # Two Node images per deploy fills a 160 GB disk eventually. Dangling
           # layers only, so nothing in use is touched.
           docker image prune -f > /dev/null
+          # The build cache is the bigger part: it held 108 GB of a 150 GB disk
+          # on 2026-10-02. Keep a week of it so builds stay fast.
+          docker builder prune -f --filter until=168h > /dev/null
           printf '%s\n' "$SHA" > /opt/fibuki/.deployed-sha
           REMOTE
 
@@ -210,3 +213,26 @@ jobs:
           docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env \
             logs --tail 200 fibuki-api fibuki-web
           REMOTE
+
+  # A failed gate or deploy tells the Development Telegram group. Cancelled runs
+  # (a newer push superseded them) are normal and stay quiet.
+  notify-failure:
+    name: Tell the dev group
+    needs: [gate-app, gate-selfhost, deploy]
+    if: ${{ failure() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_DEV_CHAT_ID: ${{ secrets.TELEGRAM_DEV_CHAT_ID }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SUBJECT: ${{ github.event.head_commit.message }}
+        run: |
+          [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_DEV_CHAT_ID" ] || exit 0
+          subject=$(printf '%s' "${SUBJECT%%$'\n'*}" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
+          text=$(printf '🔥 <b>Deploy fehlgeschlagen</b>\n\n<code>%s</code> %s\n\nfibuki.com läuft auf dem vorherigen Stand weiter, außer der Fehler kam nach dem Neustart.\n<a href="%s">Zum Run</a>' "${GITHUB_SHA:0:8}" "$subject" "$RUN_URL")
+          jq -n --arg chat "$TELEGRAM_DEV_CHAT_ID" --arg text "$text" \
+            '{chat_id: $chat, text: $text, parse_mode: "HTML", link_preview_options: {is_disabled: true}}' |
+            curl -fsS -o /dev/null -H 'content-type: application/json' -d @- \
+              "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage"
