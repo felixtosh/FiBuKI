@@ -542,6 +542,7 @@ export async function matchFilesForPartnerInternal(
       const matchedFileData = fileMap.get(match.fileId)?.data();
       batch.update(txRef, {
         fileIds: FieldValue.arrayUnion(match.fileId),
+        isComplete: true,
         updatedAt: Timestamp.now(),
         automationHistory: FieldValue.arrayUnion({
           type: "file_connected",
@@ -641,6 +642,7 @@ export async function matchFilesForPartnerInternal(
           const aiMatchedFileData = fileMap.get(match.fileId)?.data();
           aiBatch.update(txRef, {
             fileIds: FieldValue.arrayUnion(match.fileId),
+            isComplete: true,
             updatedAt: Timestamp.now(),
             automationHistory: FieldValue.arrayUnion({
               type: "file_connected",
