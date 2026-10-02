@@ -434,6 +434,12 @@ function FilesContent() {
     return files.find((f) => f.id === primarySelectedId) || null;
   }, [primarySelectedId, files]);
 
+  // A bulk selection is about several Files at once, so the one-File detail
+  // panel (and the viewer and connect overlay that hang off it) steps aside
+  // while it is active. The primary stays selected; clearing the bulk
+  // selection brings its panel back.
+  const detailFile = showBulkActionBar ? null : selectedFile;
+
   // Locate the file that backs the current invoice (if any) so we can pass
   // its id down to InvoiceDetailPanel for issued-invoice preview rendering.
   const invoiceFileId = useMemo(() => {
@@ -685,7 +691,7 @@ function FilesContent() {
   // dropdown) the hook sees for itself.
   useRowNavigationKeys({
     enabled: isRowNavigationEnabled({
-      panelOpen: Boolean(invoiceIdParam || selectedFile),
+      panelOpen: Boolean(invoiceIdParam || detailFile),
       connectOverlayOpen: isConnectTransactionOpen,
     }),
     onPrevious: invoiceIdParam ? handleInvoiceNavigatePrevious : handleNavigatePrevious,
@@ -1054,7 +1060,7 @@ function FilesContent() {
       <div
         className="relative h-full flex flex-col transition-[margin] duration-200 ease-in-out"
         style={{
-          marginRight: selectedFile || invoiceIdParam ? panelWidth : 0,
+          marginRight: detailFile || invoiceIdParam ? panelWidth : 0,
         }}
       >
         {/* FABs — anchored to the content column so they live within the
@@ -1142,7 +1148,7 @@ function FilesContent() {
           {/* File viewer overlay - positioned over table area only.
               Used for both regular files (via selectedFile) and invoices
               (via invoicePreviewSource lifted from InvoiceDetailPanel). */}
-          {viewerOpen && (selectedFile || (invoiceIdParam && invoicePreviewSource)) && (
+          {viewerOpen && (detailFile || (invoiceIdParam && invoicePreviewSource)) && (
             <FileViewerOverlay
               open={viewerOpen}
               onClose={() => {
@@ -1152,31 +1158,31 @@ function FilesContent() {
               downloadUrl={
                 invoiceIdParam && invoicePreviewSource
                   ? invoicePreviewSource.downloadUrl
-                  : selectedFile!.downloadUrl
+                  : detailFile!.downloadUrl
               }
               fileType={
                 invoiceIdParam && invoicePreviewSource
                   ? invoicePreviewSource.fileType
-                  : selectedFile!.fileType
+                  : detailFile!.fileType
               }
               fileName={
                 invoiceIdParam && invoicePreviewSource
                   ? invoicePreviewSource.fileName
-                  : selectedFile!.fileName
+                  : detailFile!.fileName
               }
               highlightText={highlightText}
             />
           )}
 
           {/* Connect transaction overlay - positioned over table area */}
-          {selectedFile && (
+          {detailFile && (
             <ConnectTransactionOverlay
               open={isConnectTransactionOpen}
               onClose={closeConnectTransactionOverlay}
               onSelect={handleConnectTransactions}
-              connectedTransactionIds={selectedFile.transactionIds}
-              file={selectedFile}
-              suggestions={selectedFile.transactionSuggestions}
+              connectedTransactionIds={detailFile.transactionIds}
+              file={detailFile}
+              suggestions={detailFile.transactionSuggestions}
             />
           )}
         </div>
@@ -1216,7 +1222,7 @@ function FilesContent() {
             />
           </div>
         </div>
-      ) : selectedFile && (
+      ) : detailFile && (
         <div
           ref={panelRef}
           className="fixed right-0 top-14 bottom-0 z-50 bg-background border-l flex"
@@ -1233,7 +1239,7 @@ function FilesContent() {
           {/* Panel content */}
           <div className="flex-1 overflow-hidden detail-panel-container">
             <FileDetailPanel
-              file={selectedFile}
+              file={detailFile}
               onClose={handleCloseDetail}
               onNavigatePrevious={handleNavigatePrevious}
               onNavigateNext={handleNavigateNext}
@@ -1243,7 +1249,7 @@ function FilesContent() {
               onRestore={handleRestore}
               onMarkAsNotInvoice={handleMarkAsNotInvoice}
               onUnmarkAsNotInvoice={handleUnmarkAsNotInvoice}
-              isParsing={parsingFileId === selectedFile.id}
+              isParsing={parsingFileId === detailFile.id}
               userPartners={userPartners}
               globalPartners={globalPartners}
               onCreatePartner={createPartner}

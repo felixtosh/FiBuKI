@@ -4,7 +4,7 @@ import { useMemo, forwardRef } from "react";
 import { ColumnDef } from "@tanstack/react-table";
 import { useRouter } from "next/navigation";
 import { Loader2, Mail, FileText, Search, Upload } from "lucide-react";
-import { FilesDataTable, FilesDataTableHandle } from "./files-data-table";
+import { FilesDataTable, FilesDataTableHandle, SELECT_COLUMN_WIDTH } from "./files-data-table";
 import { FileToolbar } from "./file-toolbar";
 import { getFileColumns } from "./file-columns";
 import { useEcbConverter } from "@/lib/currency";
@@ -111,12 +111,12 @@ export const FileTable = forwardRef<FilesDataTableHandle, FileTableProps>(
     const selectionColumn: ColumnDef<TaxFile> = useMemo(
       () => ({
         id: "select",
-        size: 36,
-        minSize: 36,
-        maxSize: 36,
+        size: SELECT_COLUMN_WIDTH,
+        minSize: SELECT_COLUMN_WIDTH,
+        maxSize: SELECT_COLUMN_WIDTH,
         enableResizing: false,
         header: () => (
-          <div onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center" onClick={(e) => e.stopPropagation()}>
             <Checkbox
               checked={selectAllState === "indeterminate" ? "indeterminate" : selectAllState === "checked"}
               onCheckedChange={() => onToggleSelectAll?.()}
@@ -125,7 +125,7 @@ export const FileTable = forwardRef<FilesDataTableHandle, FileTableProps>(
           </div>
         ),
         cell: ({ row }) => (
-          <div onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center" onClick={(e) => e.stopPropagation()}>
             <Checkbox
               checked={selectedRowIds?.has(row.original.id) ?? false}
               onCheckedChange={(checked) => onToggleFileSelection?.(row.original.id, checked === true)}

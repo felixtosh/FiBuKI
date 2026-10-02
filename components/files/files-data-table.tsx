@@ -33,9 +33,16 @@ export interface FilesDataTableHandle {
   scrollToIndex: (index: number) => void;
 }
 
+/**
+ * The checkbox column is fixed: 16px left padding, a 16px box, and 16px to the
+ * column line (8px of slack plus the cell's 8px right padding). Any narrower
+ * and the header's overflow clip cuts the select-all box off.
+ */
+export const SELECT_COLUMN_WIDTH = 48;
+
 // Default column sizes for files table
 const DEFAULT_FILE_COLUMN_SIZES: Record<string, number> = {
-  select: 36,
+  select: SELECT_COLUMN_WIDTH,
   extractedDate: 110,
   extractedAmount: 90,
   extractedVatPercent: 55,
