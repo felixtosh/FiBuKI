@@ -148,6 +148,32 @@ export async function updateFileInternal(
     );
   }
 
+  // The Partner a File points at must be one the caller may use: their own
+  // user Partner or a Global Partner. Every user shares one database, so
+  // without this a File could name another user's Partner, and everything
+  // that later resolves it (names in the UI, matching, the agent's replies)
+  // would read that user's record. Not usable answers like not found.
+  if (data.partnerId !== undefined || data.partnerType !== undefined) {
+    const current = fileSnap.data()!;
+    const partnerId = data.partnerId !== undefined ? data.partnerId : current.partnerId;
+    const partnerType = data.partnerType !== undefined ? data.partnerType : current.partnerType;
+    if (partnerId !== null && partnerId !== undefined) {
+      if (typeof partnerId !== "string" || !partnerId || partnerId.includes("/")) {
+        throw new HttpsError("invalid-argument", "partnerId must be a document id");
+      }
+      const partnerSnap = await ctx.db
+        .collection(partnerType === "global" ? "globalPartners" : "partners")
+        .doc(partnerId)
+        .get();
+      const usable =
+        partnerSnap.exists &&
+        (partnerType === "global" || partnerSnap.data()?.userId === ctx.userId);
+      if (!usable) {
+        throw new HttpsError("not-found", "Partner not found");
+      }
+    }
+  }
+
   // Build update object, filtering undefined
   const updateData: Record<string, unknown> = {};
 

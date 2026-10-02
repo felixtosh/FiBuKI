@@ -79,6 +79,16 @@ export async function POST(request: NextRequest) {
 
     const source = { id: sourceSnap.id, ...sourceSnap.data() } as TransactionSource;
 
+    // Every user shares one database, so the source must be the caller's
+    // before its tokens are used or transactions are written into it. Not
+    // yours answers like not found.
+    if (source.userId !== userId) {
+      return NextResponse.json(
+        { error: "Source not found" },
+        { status: 404 }
+      );
+    }
+
     if (source.type !== "api" || !source.apiConfig) {
       return NextResponse.json(
         { error: "Source is not API-connected" },
@@ -106,6 +116,15 @@ export async function POST(request: NextRequest) {
     }
 
     const connection = connectionSnap.data() as TrueLayerConnection;
+
+    // The connection id comes from the source's config; check it anyway, so
+    // a source pointing at someone else's connection cannot use its tokens.
+    if (connection.userId !== userId) {
+      return NextResponse.json(
+        { error: "TrueLayer connection not found" },
+        { status: 404 }
+      );
+    }
 
     // Check if token needs refresh
     const now = new Date();

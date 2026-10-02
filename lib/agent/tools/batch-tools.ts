@@ -41,7 +41,8 @@ function pairKey(fileId: string, transactionId: string): string {
  * M transactions, so the pair list is the product while the file list is not.
  */
 async function dismissedPairsAmong(
-  pairs: Array<{ fileId: string; transactionId: string }>
+  pairs: Array<{ fileId: string; transactionId: string }>,
+  userId: unknown
 ): Promise<Set<string>> {
   const fileIds = [...new Set(pairs.map((p) => p.fileId).filter(Boolean))];
   if (fileIds.length === 0) return new Set<string>();
@@ -53,7 +54,10 @@ async function dismissedPairsAmong(
 
   const dismissedByFile = new Map<string, Set<string>>();
   for (const snap of snaps) {
-    if (!snap.exists) continue;
+    // Only the caller's own files: whether another user's file rejected a
+    // pair is that user's data, and the connect it would gate is refused
+    // downstream anyway.
+    if (!snap.exists || !userId || snap.data()?.userId !== userId) continue;
     dismissedByFile.set(snap.id, readDismissedTransactionIds(snap.data()));
   }
 
@@ -553,7 +557,7 @@ export const scoreBatchMatchesTool = tool(
     // them (fork #101). A dismissed pair that reaches the matrix is worse than
     // wasted work: the Hungarian assignment can hand it the optimal slot, and
     // it arrives at bulkConnectFiles as a recommendation.
-    const dismissedPairs = await dismissedPairsAmong(pairs);
+    const dismissedPairs = await dismissedPairsAmong(pairs, config?.configurable?.userId);
     const scorablePairs = pairs.filter(
       (p) => !dismissedPairs.has(pairKey(p.fileId, p.transactionId))
     );
@@ -701,7 +705,7 @@ export const bulkConnectFilesTool = tool(
     // it — including one assembled from an earlier turn, or from a search
     // result that predates the rejection. A gate that only exists upstream of
     // the model is a suggestion.
-    const dismissedPairs = await dismissedPairsAmong(dedupedConnections);
+    const dismissedPairs = await dismissedPairsAmong(dedupedConnections, config?.configurable?.userId);
 
     const results = [];
     let reassignedConnections = 0;

@@ -327,5 +327,26 @@
       "description": "Die Sprache der FiBuKI-Oberfläche. Noch nicht übersetzte Seiten bleiben auf Englisch.",
       "saveFailed": "Die Sprache konnte nicht gespeichert werden."
     }
+  },
+  "files": {
+    "bulk": {
+      "title": "{count, plural, one {# Beleg ausgewählt} other {# Belege ausgewählt}}",
+      "total": "Summe",
+      "withoutAmount": "{count, plural, one {# ohne Betrag} other {# ohne Betrag}}",
+      "documentDates": "Belegdaten",
+      "connected": "Verknüpft",
+      "withPartner": "Mit Partner",
+      "notInvoice": "Keine Rechnung",
+      "ofCount": "{part} von {count}",
+      "assigningProgress": "Weise zu {completed} / {total}…",
+      "updatingProgress": "Aktualisiere {completed} / {total}…",
+      "assignPartner": "Partner zuweisen",
+      "markAsInvoice": "Als Rechnung markieren",
+      "markAsNotInvoice": "Als keine Rechnung markieren",
+      "delete": "{count, plural, one {# Beleg löschen} other {# Belege löschen}}",
+      "deleting": "Lösche…",
+      "purge": "{count, plural, one {# Beleg endgültig löschen} other {# Belege endgültig löschen}}",
+      "purging": "Lösche endgültig…"
+    }
   }
 }

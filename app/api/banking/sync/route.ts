@@ -18,7 +18,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
-import { callCloudFunction, setAuthToken } from "@/lib/firebase/callable-server";
+import { callCloudFunction } from "@/lib/firebase/callable-server";
 import { toDateSafe } from "@/lib/utils";
 import {
   SyncBankTransactionsRequest,
@@ -32,8 +32,8 @@ import {
  * Proxies to syncBankTransactions Cloud Function
  */
 export async function POST(request: NextRequest) {
-  // Set auth token for Cloud Function calls
-  setAuthToken(request.headers.get("Authorization"));
+  // The caller's token, passed to each Cloud Function call explicitly
+  const authHeader = request.headers.get("Authorization");
 
   try {
     const userId = await getServerUserIdWithFallback(request);
@@ -58,7 +58,7 @@ export async function POST(request: NextRequest) {
     >("syncBankTransactions", {
       sourceId,
       fromYear,
-    });
+    }, authHeader);
 
     return NextResponse.json(result);
   } catch (error) {

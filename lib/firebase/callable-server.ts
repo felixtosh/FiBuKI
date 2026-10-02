@@ -5,6 +5,8 @@
  *
  * In production: Uses Google Auth for service-to-service authentication.
  * In development/emulator: Forwards the user's auth token from the request.
+ *
+ * Every call takes the caller's Authorization header as an argument.
  */
 
 import { CloudFunctionName } from "@/types/function-call";
@@ -66,45 +68,37 @@ function getFunctionUrl(name: string): string {
   throw new Error(FUNCTIONS_URL_UNSET_ERROR);
 }
 
-// Store for current request's auth token
-let currentAuthToken: string | null = null;
-
-/**
- * Set the auth token for the current request.
- * Call this at the beginning of your API route with the Authorization header value.
- *
- * @example
- * ```typescript
- * setAuthToken(request.headers.get("Authorization"));
- * ```
- */
-export function setAuthToken(authHeader: string | null): void {
-  if (authHeader?.startsWith("Bearer ")) {
-    currentAuthToken = authHeader.substring(7);
-  } else {
-    currentAuthToken = authHeader;
-  }
+/** The bare token from an Authorization header value (with or without "Bearer "). */
+function tokenOf(authHeader: string | null | undefined): string | null {
+  if (!authHeader) return null;
+  return authHeader.startsWith("Bearer ") ? authHeader.substring(7) : authHeader;
 }
 
 /**
- * Call a Cloud Function from server-side code (API routes).
+ * Call a Cloud Function from server-side code (API routes), as the caller
+ * whose Authorization header is passed.
  *
- * IMPORTANT: Call setAuthToken() first with the request's Authorization header.
+ * The header is a parameter, not module state, on purpose. It used to be
+ * set once per request into a module-level variable and read here later;
+ * one server process handles many users' requests concurrently, so a
+ * request that awaited in between could send its call with another user's
+ * token, running its arguments as that user.
  *
  * @example
  * ```typescript
- * // In your API route:
- * setAuthToken(request.headers.get("Authorization"));
  * const result = await callCloudFunction<CreateRequest, CreateResponse>(
  *   "createBankingConnection",
- *   { providerId: "finapi", ... }
+ *   { providerId: "finapi", ... },
+ *   request.headers.get("Authorization")
  * );
  * ```
  */
 export async function callCloudFunction<TRequest, TResponse>(
   name: CloudFunctionName,
-  data: TRequest
+  data: TRequest,
+  authHeader: string | null
 ): Promise<TResponse> {
+  const authToken = tokenOf(authHeader);
   const functionUrl = getFunctionUrl(name);
   const useEmulator = isEmulator();
 
@@ -115,14 +109,14 @@ export async function callCloudFunction<TRequest, TResponse>(
   if (useEmulator) {
     console.log(`[callCloudFunction] Emulator mode - calling ${name}`);
     // For emulator: forward the user's auth token
-    if (currentAuthToken) {
-      headers["Authorization"] = `Bearer ${currentAuthToken}`;
+    if (authToken) {
+      headers["Authorization"] = `Bearer ${authToken}`;
     } else {
-      console.warn(`[callCloudFunction] No auth token set - call setAuthToken() first`);
+      console.warn(`[callCloudFunction] No auth token passed for ${name}`);
     }
-  } else if (currentAuthToken) {
+  } else if (authToken) {
     // Production with user auth: Forward the Firebase ID token
-    headers["Authorization"] = `Bearer ${currentAuthToken}`;
+    headers["Authorization"] = `Bearer ${authToken}`;
   }
   // If no auth token is set, don't add any auth header (for public endpoints)
 
@@ -162,9 +156,10 @@ export async function callCloudFunction<TRequest, TResponse>(
  */
 export function callCloudFunctionBackground<TRequest>(
   name: CloudFunctionName,
-  data: TRequest
+  data: TRequest,
+  authHeader: string | null
 ): void {
-  callCloudFunction(name, data).catch((err) => {
+  callCloudFunction(name, data, authHeader).catch((err) => {
     console.error(`[callCloudFunctionBackground] ${name} failed:`, err);
   });
 }

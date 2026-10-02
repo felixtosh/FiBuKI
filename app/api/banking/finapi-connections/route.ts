@@ -16,7 +16,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { FinapiClient, FinapiEnvironment } from "@/lib/finapi/client";
-import { callCloudFunction, setAuthToken } from "@/lib/firebase/callable-server";
+import { callCloudFunction } from "@/lib/firebase/callable-server";
 import {
   UpdateSourceApiConfigRequest,
   UpdateSourceApiConfigResponse,
@@ -53,8 +53,8 @@ interface FinapiConnectionInfo {
  * Fetches all finAPI connections and identifies orphaned ones
  */
 export async function GET(request: NextRequest) {
-  // Set auth token for Cloud Function calls
-  setAuthToken(request.headers.get("Authorization"));
+  // The caller's token, passed to each Cloud Function call explicitly
+  const authHeader = request.headers.get("Authorization");
 
   try {
     const userId = await getServerUserIdWithFallback(request);
@@ -164,7 +164,7 @@ export async function GET(request: NextRequest) {
             userRefreshToken: tokenResponse.refresh_token || userRefreshToken,
             tokenExpiresAt: new Date(Date.now() + tokenResponse.expires_in * 1000).toISOString(),
           },
-        });
+        }, authHeader);
       }
     } catch (err) {
       console.error("[finAPI Connections] Failed to refresh token, trying with existing token:", err);
@@ -323,8 +323,8 @@ export async function GET(request: NextRequest) {
  * Delete an orphaned connection from finAPI
  */
 export async function DELETE(request: NextRequest) {
-  // Set auth token for Cloud Function calls
-  setAuthToken(request.headers.get("Authorization"));
+  // The caller's token, passed to each Cloud Function call explicitly
+  const authHeader = request.headers.get("Authorization");
 
   try {
     const userId = await getServerUserIdWithFallback(request);
@@ -430,7 +430,7 @@ export async function DELETE(request: NextRequest) {
             userRefreshToken: tokenResponse.refresh_token || userRefreshToken,
             tokenExpiresAt: new Date(Date.now() + tokenResponse.expires_in * 1000).toISOString(),
           },
-        });
+        }, authHeader);
       }
     } catch (err) {
       console.error("[finAPI Connections] Failed to refresh token, trying with existing:", err);
@@ -466,8 +466,8 @@ export async function DELETE(request: NextRequest) {
  * Reset finAPI user (delete and recreate) - use when finAPI is in an inconsistent state
  */
 export async function PATCH(request: NextRequest) {
-  // Set auth token for Cloud Function calls
-  setAuthToken(request.headers.get("Authorization"));
+  // The caller's token, passed to each Cloud Function call explicitly
+  const authHeader = request.headers.get("Authorization");
 
   try {
     const userId = await getServerUserIdWithFallback(request);
@@ -526,7 +526,7 @@ export async function PATCH(request: NextRequest) {
         DeleteBankingConnectionResponse
       >("deleteBankingConnection", {
         connectionId: doc.id,
-      });
+      }, authHeader);
     }
     console.log(`[finAPI Connections] Deleted ${connectionsQuery.docs.length} banking connections`);
 

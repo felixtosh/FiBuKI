@@ -43,7 +43,8 @@ async function getDb() {
 async function dismissedFileIdsFor(
   db: Awaited<ReturnType<typeof getDb>>,
   fileIds: string[],
-  transactionId: string
+  transactionId: string,
+  userId: unknown
 ): Promise<Set<string>> {
   const unique = [...new Set(fileIds.filter(Boolean))];
   if (unique.length === 0) return new Set<string>();
@@ -54,7 +55,8 @@ async function dismissedFileIdsFor(
 
   const dismissed = new Set<string>();
   for (const snap of snaps) {
-    if (!snap.exists) continue;
+    // Only the caller's own files: another user's rejections are their data.
+    if (!snap.exists || !userId || snap.data()?.userId !== userId) continue;
     if (readDismissedTransactionIds(snap.data()).has(transactionId)) {
       dismissed.add(snap.id);
     }
@@ -1126,7 +1128,8 @@ export const searchGmailAttachmentsTool = tool(
       dedupedCandidates
         .map((c) => c.existingFileId)
         .filter((id): id is string => Boolean(id)),
-      transactionId
+      transactionId,
+      userId
     );
     const offerableCandidates = dedupedCandidates.filter(
       (c) => !(c.existingFileId && dismissedExistingFileIds.has(c.existingFileId))

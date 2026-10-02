@@ -327,5 +327,26 @@
       "description": "The language FiBuKI's screens use. Screens not translated yet stay in English.",
       "saveFailed": "Could not save the language."
     }
+  },
+  "files": {
+    "bulk": {
+      "title": "{count, plural, one {# file selected} other {# files selected}}",
+      "total": "Total",
+      "withoutAmount": "{count, plural, one {# without an amount} other {# without an amount}}",
+      "documentDates": "Document dates",
+      "connected": "Connected",
+      "withPartner": "With partner",
+      "notInvoice": "Not an invoice",
+      "ofCount": "{part} of {count}",
+      "assigningProgress": "Assigning {completed} / {total}…",
+      "updatingProgress": "Updating {completed} / {total}…",
+      "assignPartner": "Assign partner",
+      "markAsInvoice": "Mark as invoice",
+      "markAsNotInvoice": "Mark as not invoice",
+      "delete": "{count, plural, one {Delete # file} other {Delete # files}}",
+      "deleting": "Deleting…",
+      "purge": "{count, plural, one {Purge # file} other {Purge # files}}",
+      "purging": "Purging…"
+    }
   }
 }

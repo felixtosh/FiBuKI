@@ -193,6 +193,15 @@ export async function POST(request: NextRequest) {
       }
 
       const existingSource = sourceSnap.data();
+
+      // Linking rewrites the source's type, apiConfig and IBAN and imports
+      // into it: it must be the caller's. Not yours answers like not found.
+      if (existingSource.userId !== userId) {
+        return NextResponse.json(
+          { error: "Source not found" },
+          { status: 404 }
+        );
+      }
       const sourceIban = iban ? normalizeIban(iban) : existingSource.iban || "";
 
       await updateDoc(sourceRef, {

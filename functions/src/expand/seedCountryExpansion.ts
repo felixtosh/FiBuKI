@@ -4,6 +4,7 @@
  */
 
 import { createCallable, HttpsError } from "../utils/createCallable";
+import { isAdminCaller } from "../utils/adminCaller";
 import { FieldValue } from "firebase-admin/firestore";
 
 const COUNTRIES = [
@@ -38,9 +39,8 @@ export const seedCountryExpansionCallable = createCallable<
   { name: "seedCountryExpansion" },
   async (ctx) => {
     // Admin check
-    const isAdmin = ctx.request.auth?.token?.admin === true;
-    const isSuperAdmin = ctx.request.auth?.token?.email === process.env.SUPER_ADMIN_EMAIL;
-    if (!isAdmin && !isSuperAdmin) {
+    // Unset SUPER_ADMIN_EMAIL used to match a token with no email.
+    if (!isAdminCaller(ctx.request.auth)) {
       throw new HttpsError("permission-denied", "Admin access required");
     }
 

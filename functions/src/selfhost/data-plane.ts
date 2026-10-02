@@ -79,6 +79,12 @@ interface Resolved {
   policy: CollectionPolicy;
   /** doc id must equal uid (subscriptions/{uid}) */
   uidKeyed: boolean;
+  /**
+   * A parent document the caller must own (transactions/{id} for its
+   * history). The entries carry no userId of their own, so without this any
+   * user could read or append to any Transaction's history.
+   */
+  ownedParent?: string;
 }
 
 function splitPath(path: unknown): string[] {
@@ -86,7 +92,9 @@ function splitPath(path: unknown): string[] {
     throw new DataPlaneError("invalid-argument", "path must be a non-empty string");
   }
   const segments = path.split("/");
-  if (segments.some((s) => s.length === 0)) {
+  // "." and ".." mean nothing to the store (paths are matched literally), but
+  // a path that reads as a traversal is never a legitimate request.
+  if (segments.some((s) => s.length === 0 || s === "." || s === "..")) {
     throw new DataPlaneError("invalid-argument", `malformed path "${path}"`);
   }
   return segments;
@@ -114,7 +122,7 @@ function resolveCollection(segments: string[], uid: string): Resolved {
   }
 
   if (segments.length === 3 && segments[0] === "transactions" && segments[2] === "history") {
-    return { policy: TRANSACTION_HISTORY_POLICY, uidKeyed: false };
+    return { policy: TRANSACTION_HISTORY_POLICY, uidKeyed: false, ownedParent: `transactions/${segments[1]}` };
   }
 
   if (segments.length !== 1) {
@@ -165,6 +173,15 @@ function requireAccess(access: Access, auth: AuthData, what: string): void {
   }
 }
 
+/** Refuses unless the resolved path's owning parent (if any) is the caller's. */
+async function requireOwnedParent(resolved: Resolved, auth: AuthData): Promise<void> {
+  if (!resolved.ownedParent) return;
+  const parent = await getFirestore().doc(resolved.ownedParent).get();
+  if (!parent.exists || parent.data()?.userId !== auth.uid) {
+    throw new DataPlaneError("permission-denied", "parent document belongs to another user");
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */
@@ -183,14 +200,16 @@ function deepGet(data: unknown, dotted: string): unknown {
 // Object.prototype — reject any path segment that names a prototype hook.
 const FORBIDDEN_SEGMENTS = new Set(["__proto__", "prototype", "constructor"]);
 
-function assertSafeFieldPaths(record: Record<string, unknown>): void {
-  for (const key of Object.keys(record)) {
-    for (const segment of key.split(".")) {
-      if (FORBIDDEN_SEGMENTS.has(segment)) {
-        throw new DataPlaneError("invalid-argument", `unsafe field path "${key}"`);
-      }
+function assertSafeFieldPath(key: string): void {
+  for (const segment of key.split(".")) {
+    if (FORBIDDEN_SEGMENTS.has(segment)) {
+      throw new DataPlaneError("invalid-argument", `unsafe field path "${key}"`);
     }
   }
+}
+
+function assertSafeFieldPaths(record: Record<string, unknown>): void {
+  for (const key of Object.keys(record)) assertSafeFieldPath(key);
 }
 
 /** Precondition check shared by update/set/delete — 409 aborts on mismatch. */
@@ -320,6 +339,7 @@ export function createDataPlane(
       const segments = splitPath(path);
       const resolved = resolveCollection(segments, auth.uid);
       requireAccess(resolved.policy.read, auth, `read on ${segments.join("/")}`);
+      await requireOwnedParent(resolved, auth);
 
       let q: Query = getFirestore().collection(segments.join("/"));
       if (resolved.policy.read === "owner") q = q.where("userId", "==", auth.uid);
@@ -328,6 +348,7 @@ export function createDataPlane(
         if (typeof w?.field !== "string" || !WHERE_OPS.has(w?.op)) {
           throw new DataPlaneError("invalid-argument", `bad where clause ${JSON.stringify(w)}`);
         }
+        assertSafeFieldPath(w.field);
         if (w.field === "__name__") {
           if (w.op !== "==" && w.op !== "in") {
             throw new DataPlaneError("invalid-argument", `__name__ only supports == and in, got ${w.op}`);
@@ -347,6 +368,7 @@ export function createDataPlane(
         if (typeof o?.field !== "string" || (o.dir !== "asc" && o.dir !== "desc")) {
           throw new DataPlaneError("invalid-argument", `bad orderBy ${JSON.stringify(o)}`);
         }
+        assertSafeFieldPath(o.field);
         q = q.orderBy(o.field, o.dir);
       }
       // A limit at the query level would slice BEFORE the uidKey post-filter
@@ -389,6 +411,7 @@ export function createDataPlane(
       if (resolved.uidKeyed && segments[segments.length - 1] !== auth.uid) {
         throw new DataPlaneError("permission-denied", "document is keyed to another user");
       }
+      await requireOwnedParent(resolved, auth);
 
       const snap = await getFirestore().doc(segments.join("/")).get();
       const data = snap.exists ? (snap.data() as Record<string, unknown>) : undefined;
@@ -428,6 +451,7 @@ export function createDataPlane(
         if (op.type === "add") {
           const resolved = resolveCollection(segments, auth.uid);
           requireAccess(resolved.policy.create, auth, `create in ${segments.join("/")}`);
+          await requireOwnedParent(resolved, auth);
           const data = decodeWire(op.data, true);
           if (typeof data !== "object" || data === null || Array.isArray(data)) {
             throw new DataPlaneError("invalid-argument", "add op needs an object data payload");
@@ -448,6 +472,7 @@ export function createDataPlane(
         if (resolved.uidKeyed && id !== auth.uid) {
           throw new DataPlaneError("permission-denied", "document is keyed to another user");
         }
+        await requireOwnedParent(resolved, auth);
         const ref = db.doc(docPath);
         const snap = await ref.get();
         const existing = snap.exists ? (snap.data() as Record<string, unknown>) : undefined;
@@ -490,13 +515,16 @@ export function createDataPlane(
           prepared.push({ kind: "update", ref, data: record, id });
         } else if (op.type === "delete") {
           requireAccess(resolved.policy.delete, auth, `delete on ${docPath}`);
+          // Ownership before the precondition: a precondition compares a
+          // stored value, so checked first it would answer "aborted" or
+          // "denied" depending on another user's data.
+          if (existing && resolved.policy.delete === "owner" && !ownsRow(existing, auth.uid)) {
+            throw new DataPlaneError("permission-denied", "document belongs to another user");
+          }
           checkPrecondition(existing, op.ifUnchanged, docPath);
           if (!existing) {
             prepared.push({ kind: "skip", id }); // Firestore deletes are idempotent
             continue;
-          }
-          if (resolved.policy.delete === "owner" && !ownsRow(existing, auth.uid)) {
-            throw new DataPlaneError("permission-denied", "document belongs to another user");
           }
           prepared.push({ kind: "delete", ref, id });
         } else {

@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { VertexAI } from "@google-cloud/vertexai";
 import { MODELS } from "@/types/ai-usage";
+import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 
 const GEMINI_MODEL = MODELS.geminiLite;
 const PROJECT_ID = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "taxstudio-f12fb";
@@ -26,6 +27,8 @@ interface PartnerInfo {
 
 export async function POST(request: Request) {
   try {
+    // Every call is a paid model call; only signed-in users may make one.
+    await getServerUserIdWithFallback(request);
     const body = await request.json();
     const { transaction, partnerInfo } = body as {
       transaction: TransactionInfo;
@@ -100,6 +103,8 @@ Return ONLY valid JSON:
       queries: parsed.queries || [],
     });
   } catch (error) {
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
     console.error("[generate-queries] Error:", error);
     return NextResponse.json({ queries: [] });
   }

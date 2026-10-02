@@ -1,5 +1,6 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
+import { isAdminCaller } from "../utils/adminCaller";
 import {
   normalizeIban,
   normalizeCompanyName,
@@ -70,7 +71,17 @@ export const generatePromotionCandidates = onCall(
     region: "europe-west1",
     cors: CORS_ORIGINS,
   },
-  async () => {
+  async (request) => {
+    // Admin-only: it reads every user's Partners and promotes some into the
+    // Global Partners every user can read. It had no check at all, so any
+    // caller (signed in or not) could run it.
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Must be logged in");
+    }
+    if (!isAdminCaller(request.auth)) {
+      throw new HttpsError("permission-denied", "Admin access required");
+    }
+
     console.log("Starting promotion candidates generation...");
 
     try {

@@ -148,9 +148,14 @@ export function useBrowserReplayMode(): ReplayModeState {
             }
           : undefined;
 
+        // The route spends model money, so it requires the signed-in user.
+        const token = auth.currentUser ? await auth.currentUser.getIdToken() : null;
         const response = await fetch("/api/browser/replay-agent", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
           body: JSON.stringify({
             pageSnapshot: data.snapshot,
             currentUrl: (data.snapshot as { url?: string }).url || "",

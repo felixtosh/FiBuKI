@@ -148,8 +148,11 @@ export const listTransactionsTool = tool(
         fileChunks.push(fileIdArray.slice(i, i + 10));
       }
       for (const chunk of fileChunks) {
+        // Scoped to the caller: a fileId on their transaction is just an id,
+        // and another user's file (even only its deleted state) is not theirs to read.
         const filesSnapshot = await db
           .collection("files")
+          .where("userId", "==", userId)
           .where("__name__", "in", chunk)
           .get();
         filesSnapshot.docs.forEach((fileDoc) => {

@@ -16,6 +16,7 @@ import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/ge
 const getLangChainMessages = async () => import("@langchain/core/messages");
 const getAgentGraph = async () => import("@/lib/agent/graph");
 const getLangfuse = async () => import("@/lib/agent/langfuse");
+const getPendingConfirmation = async () => import("@/lib/agent/pending-confirmation");
 
 // ============================================================================
 // Types
@@ -39,9 +40,8 @@ interface RequestBody {
   messages: MessageInput[];
   confirmation?: {
     confirmed: boolean;
-    toolName: string;
-    toolCallId: string;
-    args: Record<string, unknown>;
+    /** The token issued with pendingConfirmation; the tool and args are the server's. */
+    token: string;
   };
 }
 
@@ -130,6 +130,7 @@ export async function POST(request: NextRequest) {
     // Dynamic imports at runtime
     const { runAgentGraph, continueAfterConfirmation } = await getAgentGraph();
     const { createLangfuseHandler, flushLangfuse } = await getLangfuse();
+    const { issueConfirmation, consumeConfirmation } = await getPendingConfirmation();
 
     const authHeader = request.headers.get("Authorization") || "";
     const body: RequestBody = await request.json();
@@ -150,16 +151,21 @@ export async function POST(request: NextRequest) {
 
     // Check if this is a confirmation response
     if (body.confirmation) {
+      // Only a call the server itself paused on can run, exactly as proposed:
+      // a client-chosen tool name or args never reach a tool.
+      const pendingToolCall = await consumeConfirmation(body.confirmation.token, userId);
+      if (!pendingToolCall) {
+        return NextResponse.json(
+          { error: "Confirmation expired or unknown" },
+          { status: 409 }
+        );
+      }
       result = await continueAfterConfirmation({
         messages,
         userId,
         authHeader,
-        confirmed: body.confirmation.confirmed,
-        pendingToolCall: {
-          toolName: body.confirmation.toolName,
-          toolCallId: body.confirmation.toolCallId,
-          args: body.confirmation.args,
-        },
+        confirmed: body.confirmation.confirmed === true,
+        pendingToolCall,
       });
     } else {
       // Regular message handling
@@ -174,9 +180,16 @@ export async function POST(request: NextRequest) {
     await flushLangfuse();
 
     // Serialize response
+    const pendingConfirmation = result.pendingConfirmation
+      ? {
+          ...result.pendingConfirmation,
+          token: await issueConfirmation(userId, result.pendingConfirmation),
+        }
+      : null;
+
     return NextResponse.json({
       messages: await serializeMessages(result.messages),
-      pendingConfirmation: result.pendingConfirmation,
+      pendingConfirmation,
     });
   } catch (error) {
     const unauthorized = unauthorizedResponse(error);

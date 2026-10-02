@@ -6,6 +6,7 @@
  */
 
 import { createCallable, HttpsError } from "../utils/createCallable";
+import { isAdminCaller } from "../utils/adminCaller";
 import type {
   CleanupOrphanedTransactionsRequest,
   CleanupOrphanedTransactionsResponse,
@@ -28,22 +29,14 @@ export const cleanupOrphanedTransactionsCallable = createCallable<
     let cleanupUserId = ctx.userId;
 
     if (targetUserId && targetUserId !== ctx.userId) {
-      // Verify admin status
-      const userDoc = await db.collection("users").doc(ctx.userId).get();
-      const isAdmin = userDoc.data()?.isAdmin === true;
-
-      if (!isAdmin) {
-        // Also check custom claims via auth token
-        const adminClaimsDoc = await db
-          .collection("adminClaims")
-          .doc(ctx.userId)
-          .get();
-        if (!adminClaimsDoc.exists || !adminClaimsDoc.data()?.admin) {
-          throw new HttpsError(
-            "permission-denied",
-            "Only admins can cleanup other users' transactions"
-          );
-        }
+      // The admin bit comes from the verified token only. This used to read
+      // users/{uid}.isAdmin, which the caller can write on the data plane, so
+      // any user could delete another user's transactions.
+      if (!isAdminCaller(ctx.request.auth)) {
+        throw new HttpsError(
+          "permission-denied",
+          "Only admins can cleanup other users' transactions"
+        );
       }
 
       cleanupUserId = targetUserId;

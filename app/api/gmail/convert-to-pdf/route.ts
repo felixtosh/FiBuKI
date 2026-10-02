@@ -5,6 +5,7 @@ import { Timestamp, FieldValue } from "firebase-admin/firestore";
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { createHash, randomUUID } from "crypto";
 import { createFileRecord } from "@/functions/src/files/createFileRecord";
+import { getOwnedDoc } from "@/lib/auth/owned-doc";
 import { callFirebaseFunction } from "@/lib/api/firebase-callable";
 import { GmailResolutionError, resolveGmailIntegration } from "@/lib/gmail/resolve-integration";
 import {
@@ -96,6 +97,13 @@ export async function POST(request: NextRequest) {
         { error: "messageId is required" },
         { status: 400 }
       );
+    }
+
+    // The Transaction is written to below, so it must be the caller's before
+    // any mail is read: all users share one database. Not yours answers like
+    // not found.
+    if (transactionId && !(await getOwnedDoc(db, TRANSACTIONS_COLLECTION, transactionId, userId))) {
+      return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
     }
 
     // Get auth token from request headers to pass to Firebase function

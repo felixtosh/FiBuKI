@@ -85,7 +85,6 @@
   "components/files/connect-file-overlay.tsx": 88,
   "components/files/connect-transaction-overlay.tsx": 22,
   "components/files/email-search-panel.tsx": 14,
-  "components/files/file-bulk-action-bar.tsx": 4,
   "components/files/file-columns.tsx": 24,
   "components/files/file-connections-list.tsx": 22,
   "components/files/file-detail-panel.tsx": 34,
