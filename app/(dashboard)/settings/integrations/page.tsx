@@ -15,9 +15,12 @@ import {
   Code,
   BookOpen,
   Terminal,
+  Cloud,
 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { useTranslations } from "next-intl";
 import { useEmailIntegrations } from "@/hooks/use-email-integrations";
+import { useFolderIntegrations } from "@/hooks/use-folder-integrations";
 import { useBrowserExtensionStatus } from "@/hooks/use-browser-extension";
 import { useEmailInbound } from "@/hooks/use-email-inbound";
 import { useAuth } from "@/components/auth/auth-provider";
@@ -34,6 +37,9 @@ interface AttentionItem {
 }
 
 function IntegrationsContent() {
+  const tFolder = useTranslations("folderIntegrations");
+  const { integrations: dropboxIntegrations, loading: dropboxLoading } = useFolderIntegrations("dropbox");
+  const { integrations: gdriveIntegrations, loading: gdriveLoading } = useFolderIntegrations("gdrive");
   const extension = useBrowserExtensionStatus();
   const { integrations, loading: gmailLoading } = useEmailIntegrations();
   const { primaryAddress } = useEmailInbound();
@@ -88,6 +94,34 @@ function IntegrationsContent() {
   const imapBadge = imapNeedsAttention
     ? ({ label: "Action needed", variant: "destructive" as const })
     : imapIntegrations.length > 0
+      ? ({ label: "Connected", variant: "success" as const })
+      : undefined;
+
+  const dropboxStatus = dropboxLoading
+    ? "Loading..."
+    : dropboxIntegrations.length === 0
+      ? tFolder("subtitle", { provider: tFolder("providerNames.dropbox") })
+      : dropboxIntegrations.length === 1
+        ? dropboxIntegrations[0].accountEmail
+        : `${dropboxIntegrations.length} accounts`;
+
+  const dropboxBadge = dropboxIntegrations.some((i) => i.needsReauth || i.pausedReason)
+    ? ({ label: "Action needed", variant: "destructive" as const })
+    : dropboxIntegrations.length > 0
+      ? ({ label: "Connected", variant: "success" as const })
+      : undefined;
+
+  const gdriveStatus = gdriveLoading
+    ? "Loading..."
+    : gdriveIntegrations.length === 0
+      ? tFolder("subtitle", { provider: tFolder("providerNames.gdrive") })
+      : gdriveIntegrations.length === 1
+        ? gdriveIntegrations[0].accountEmail
+        : `${gdriveIntegrations.length} accounts`;
+
+  const gdriveBadge = gdriveIntegrations.some((i) => i.needsReauth || i.pausedReason)
+    ? ({ label: "Action needed", variant: "destructive" as const })
+    : gdriveIntegrations.length > 0
       ? ({ label: "Connected", variant: "success" as const })
       : undefined;
 
@@ -230,6 +264,22 @@ function IntegrationsContent() {
               status={imapStatus}
               badge={imapBadge}
               href="/integrations/imap"
+            />
+            <IntegrationCard
+              icon={<Cloud className="h-4 w-4 text-sky-600 dark:text-sky-400" />}
+              iconBg="bg-sky-100 dark:bg-sky-900/40"
+              name={tFolder("providerNames.dropbox")}
+              status={dropboxStatus}
+              badge={dropboxBadge}
+              href="/integrations/dropbox"
+            />
+            <IntegrationCard
+              icon={<Cloud className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />}
+              iconBg="bg-emerald-100 dark:bg-emerald-900/40"
+              name={tFolder("providerNames.gdrive")}
+              status={gdriveStatus}
+              badge={gdriveBadge}
+              href="/integrations/gdrive"
             />
             <IntegrationCard
               icon={<Inbox className="h-4 w-4 text-purple-600 dark:text-purple-400" />}

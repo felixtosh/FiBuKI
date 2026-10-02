@@ -32,6 +32,9 @@ Application: Firebase Cloud Functions (`europe-west1`), Firebase App Hosting (`e
 **B1. Which Google OAuth scopes do you request?**
 `gmail.readonly`, `userinfo.email`, `userinfo.profile`. See [03-oauth-scope-justification.md](./03-oauth-scope-justification.md).
 
+**B1a. Do you request Drive scopes?** (draft)
+`drive.readonly` and `userinfo.email` for the Google Drive Folder Integration. Not yet submitted for verification. See [03 §8](./03-oauth-scope-justification.md).
+
 **B2. Why is `gmail.readonly` necessary?**
 It is the minimum scope that grants attachment-byte download. `gmail.metadata` does not allow attachment access. See [03 §2.2](./03-oauth-scope-justification.md).
 
@@ -46,6 +49,9 @@ Held in Cloud Function memory for a single invocation. Never persisted.
 
 **B6. Is the OAuth flow protected from CSRF?**
 Yes — random `state` parameter generated in `app/api/gmail/authorize/route.ts` and verified in `app/api/gmail/callback/route.ts`.
+
+**B6a. How is the Drive flow protected from CSRF and from connecting to the wrong account?**
+A random `state` is stored server-side bound to the signed-in user and checked against a cookie; the callback takes the user from the state record only (`app/api/gdrive/callback/route.ts`). Covered by `functions/src/selfhost/security/gdrive-oauth.test.ts`.
 
 **B7. Can the user revoke access?**
 Yes, two paths: in-app Disconnect (`/settings/integrations`) and Google's permissions page (https://myaccount.google.com/permissions). In-app revocation is processed by `app/api/gmail/disconnect/route.ts`.

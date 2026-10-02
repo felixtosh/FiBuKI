@@ -73,6 +73,12 @@ export type CloudFunctionName =
   | "searchExternalPartners"
   | "matchCategories"
   | "searchGmailCallable"
+  // Folder Integrations (ADR-0009)
+  | "listFolderChoices"
+  | "setFolderIntegrationFolder"
+  | "updateFolderIntegrationSettings"
+  | "syncFolderIntegration"
+  | "disconnectFolderIntegration"
   | "generateSearchQueriesCallable"
   | "scoreAttachmentMatchCallable"
   | "findTransactionMatchesForFile"

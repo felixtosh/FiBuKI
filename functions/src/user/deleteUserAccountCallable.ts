@@ -8,6 +8,8 @@
  */
 
 import { createCallable, HttpsError } from "../utils/createCallable";
+import { revokeUserFolderGrants } from "../folder-sync/revoke";
+import { folderSecretParams, tryReadFolderSecrets } from "../folder-sync/folderSecrets";
 import { getAuth } from "firebase-admin/auth";
 import { getStorage } from "firebase-admin/storage";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
@@ -247,6 +249,7 @@ export async function deleteUserData(
   // === 1. Revoke OAuth tokens and delete token documents ===
   console.log("[DeleteAccount] Revoking OAuth tokens...");
   await revokeGmailTokens(db, userId);
+  await revokeUserFolderGrants(db, userId, tryReadFolderSecrets());
 
   // === 2. Delete user data collections ===
   const collectionsToDelete = [
@@ -258,6 +261,9 @@ export async function deleteUserData(
     "noReceiptCategories",
     "sources",
     "emailIntegrations",
+    "folderIntegrations",
+    "folderTokens",
+    "folderEntries",
     "gmailSyncQueue",
     "gmailSyncHistory",
     "userImports",
@@ -355,6 +361,7 @@ export const deleteUserAccountCallable = createCallable<
     name: "deleteUserAccount",
     memory: "1GiB",
     timeoutSeconds: 540, // 9 minutes for large accounts
+    secrets: folderSecretParams,
   },
   async (ctx, request) => {
     const { confirmationPhrase } = request;

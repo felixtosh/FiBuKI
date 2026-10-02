@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { initializeApp, getApps } from "firebase/app";
-import { getFirestore, connectFirestoreEmulator, collection, addDoc, Timestamp } from "firebase/firestore";
+import { getFirestore, collection, addDoc, Timestamp } from "firebase/firestore";
 import { getTrueLayerClient } from "@/lib/truelayer";
 import { TrueLayerConnection } from "@/types/truelayer";
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
@@ -19,16 +19,6 @@ const firebaseConfig = {
 const appName = "truelayer-callback";
 const app = getApps().find(a => a.name === appName) || initializeApp(firebaseConfig, appName);
 const db = getFirestore(app);
-
-// Connect to emulator in development
-if (process.env.NODE_ENV === "development" && process.env.NEXT_PUBLIC_USE_EMULATORS !== "false") {
-  try {
-    connectFirestoreEmulator(db, "localhost", 8080);
-    console.log("[TrueLayer Callback] Connected to Firestore emulator");
-  } catch {
-    // Already connected
-  }
-}
 
 const CONNECTIONS_COLLECTION = "truelayerConnections";
 
