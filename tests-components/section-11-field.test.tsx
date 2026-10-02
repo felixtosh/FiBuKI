@@ -63,7 +63,7 @@ describe("Section11Reasoning", () => {
 
   it("carries the basis and the citations, and never the supplier mail", () => {
     const { container } = renderReasoning();
-    expect(screen.getByText("Verdict")).toBeTruthy();
+    expect(screen.getByText("Result")).toBeTruthy();
     expect(container.textContent).toMatch(/§ 11 Abs 1 lit\. i/);
     // The paste-ready mail stays on the chase queue.
     expect(screen.queryByRole("button", { name: /copy/i })).toBeNull();

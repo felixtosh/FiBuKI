@@ -227,14 +227,14 @@ test("describeDocumentTypeBasis: the regime names the threshold that picked it",
   ).find((l) => l.id === "regime");
   assert.match(kleinbetrag.text, /Kleinbetragsrechnung/);
   assert.match(kleinbetrag.text, /Abs 6/);
-  assert.match(kleinbetrag.text, /Gross total read/);
+  assert.match(kleinbetrag.text, /This document's total/);
 
   const standard = describeDocumentTypeBasis(
     basis({ regime: "standard", grossTotal: null }),
     "invoice",
   ).find((l) => l.id === "regime");
   assert.match(standard.text, /Abs 1/);
-  assert.doesNotMatch(standard.text, /Gross total read/);
+  assert.doesNotMatch(standard.text, /This document's total/);
 });
 
 test("describeDocumentTypeBasis: a degraded record explains itself instead of blaming the document", () => {

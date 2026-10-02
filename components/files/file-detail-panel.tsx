@@ -31,16 +31,11 @@ import {
   Download,
   Trash2,
   Plus,
-  Upload,
-  Mail,
   RotateCcw,
   Loader2,
-  ExternalLink,
   Info,
   Search,
-  FileText,
 } from "lucide-react";
-import Link from "next/link";
 import { TaxFile, TransactionSuggestion } from "@/types/file";
 import { UserPartner, GlobalPartner, PartnerSuggestion } from "@/types/partner";
 import { Button } from "@/components/ui/button";
@@ -59,6 +54,7 @@ import { FileConnectionsList } from "./file-connections-list";
 import { FileTypeControl, Section11Reasoning } from "@/components/documents/section-11-details";
 import { InfoPopover } from "@/components/ui/info-popover";
 import { FileDirectionControl, FileDirectionInfo } from "./file-direction-control";
+import { FileMailDetailsInfo, FileSourceLabel, useFileMailDetails } from "./file-source-label";
 import { AddPartnerDialog } from "@/components/partners/add-partner-dialog";
 import { PartnerPill } from "@/components/partners/partner-pill";
 import {
@@ -79,7 +75,7 @@ import { InvoiceDirection } from "@/types/user-data";
 import { useFilePartnerSuggestions, PartnerSuggestionWithDetails } from "@/hooks/use-partner-suggestions";
 import { shouldAutoApply } from "@/lib/matching/partner-matcher";
 import { db } from "@/lib/firebase/config";
-import { cn, toDateSafe } from "@/lib/utils";
+import { cn, formatFileSize, toDateSafe } from "@/lib/utils";
 import { fileDisplayName } from "@/lib/files/file-display-name";
 import { useAuth } from "@/components/auth";
 import { useChat } from "@/components/chat/chat-provider";
@@ -159,6 +155,7 @@ function FileDetailPanelInner({
 }: FileDetailPanelProps) {
   const router = useRouter();
   const t = useTranslations("files.detail");
+  const tSource = useTranslations("files.source");
   const storedDownload = useAuthenticatedDownload();
   const { userId } = useAuth();
   const [isAddPartnerOpen, setIsAddPartnerOpen] = useState(false);
@@ -197,32 +194,11 @@ function FileDetailPanelInner({
   // Get partner suggestions based on extracted data
   const suggestions = useFilePartnerSuggestions(file, userPartners, globalPartners);
 
-  const isGmailSource = file.sourceType?.startsWith("gmail");
-  const isEmailInboundSource = file.sourceType?.startsWith("email_inbound");
-  const isFibukiInvoice = file.sourceType === "fibuki_invoice";
-  const sourceResultLabel = useMemo(() => {
-    switch (file.sourceResultType) {
-      case "gmail_attachment":
-        return "Attachment";
-      case "gmail_html_invoice":
-        return "HTML Invoice";
-      case "gmail_invoice_link":
-        return "Invoice Link";
-      case "local_file":
-        return "Local File";
-      default:
-        return null;
-    }
-  }, [file.sourceResultType]);
+  const mailDetails = useFileMailDetails(file);
 
   // Track which files have been auto-applied to prevent repeated auto-applies
   const autoAppliedRef = useRef<Set<string>>(new Set());
 
-  const formatFileSize = (bytes: number) => {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  };
 
   const handleAssignPartner = useCallback(
     async (
@@ -439,84 +415,34 @@ function FileDetailPanelInner({
               <div className="flex-1 space-y-2">
                 {/* Quick file info - fixed label width for alignment */}
                 <div className="text-sm space-y-1">
-                  {/* Source & From at top */}
+                  {/* Uploaded, file name, size and source first, then what the File is (#515) */}
                   <div className="flex items-start gap-3 file-meta-row">
-                    <span className="text-muted-foreground w-16 shrink-0 file-meta-label">Source</span>
-                    <div className="flex-1 text-right file-meta-value">
-                      {isGmailSource ? (
-                        file.gmailIntegrationId ? (
-                          <Link
-                            href={`/integrations/${file.gmailIntegrationId}`}
-                            className="inline-flex items-center gap-1 hover:text-foreground transition-colors"
-                          >
-                            <Mail className="h-3 w-3" />
-                            {file.gmailIntegrationEmail || "Gmail"}
-                            <ExternalLink className="h-3 w-3" />
-                          </Link>
-                        ) : (
-                          <span className="inline-flex items-center gap-1">
-                            <Mail className="h-3 w-3" />
-                            {file.gmailIntegrationEmail || "Gmail"}
-                          </span>
-                        )
-                      ) : isEmailInboundSource ? (
-                        <Link
-                          href="/integrations/email-inbound"
-                          className="inline-flex items-center gap-1 hover:text-foreground transition-colors"
-                        >
-                          <Mail className="h-3 w-3" />
-                          Email Forwarding
-                          <ExternalLink className="h-3 w-3" />
-                        </Link>
-                      ) : isFibukiInvoice ? (
-                        <span className="inline-flex items-center gap-1">
-                          <FileText className="h-3 w-3" />
-                          Rechnungserstellung
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1">
-                          <Upload className="h-3 w-3" />
-                          Upload
-                        </span>
-                      )}
+                    <span className="text-muted-foreground w-16 shrink-0 file-meta-label">{t("uploaded")}</span>
+                    <span className="flex-1 text-right file-meta-value">
+                      {toDateSafe(file.uploadedAt) ? format(toDateSafe(file.uploadedAt)!, "MMM d, yyyy") : "—"}
+                    </span>
+                  </div>
+                  <div className="flex items-start gap-3 file-meta-row">
+                    <span className="text-muted-foreground w-16 shrink-0 file-meta-label">{t("fileName")}</span>
+                    <span className="flex-1 text-right break-all file-meta-value">{file.fileName}</span>
+                  </div>
+                  <div className="flex items-start gap-3 file-meta-row">
+                    <span className="text-muted-foreground w-16 shrink-0 file-meta-label">{t("size")}</span>
+                    <span className="flex-1 text-right file-meta-value">{formatFileSize(file.fileSize)}</span>
+                  </div>
+                  <div className="flex items-start gap-3 file-meta-row">
+                    <span className="text-muted-foreground w-16 shrink-0 file-meta-label">{t("source")}</span>
+                    <div className="flex-1 flex justify-end min-w-0 file-meta-value">
+                      <FileSourceLabel file={file} linked />
                     </div>
                   </div>
-                  {isGmailSource && file.gmailSenderEmail && (
+                  {mailDetails && (
                     <div className="flex items-start gap-3 file-meta-row">
-                      <span className="text-muted-foreground w-16 shrink-0 file-meta-label">From</span>
-                      <span className="flex-1 text-right break-all file-meta-value">
-                        {file.gmailSenderEmail}
+                      <span className="text-muted-foreground w-16 shrink-0 file-meta-label flex items-center gap-1">
+                        {tSource("details")}
+                        <FileMailDetailsInfo />
                       </span>
-                    </div>
-                  )}
-                  {isEmailInboundSource && file.inboundFrom && (
-                    <div className="flex items-start gap-3 file-meta-row">
-                      <span className="text-muted-foreground w-16 shrink-0 file-meta-label">From</span>
-                      <span className="flex-1 text-right break-all file-meta-value">
-                        {file.inboundFromName ? `${file.inboundFromName} <${file.inboundFrom}>` : file.inboundFrom}
-                      </span>
-                    </div>
-                  )}
-                  {isEmailInboundSource && file.inboundSubject && (
-                    <div className="flex items-start gap-3 file-meta-row">
-                      <span className="text-muted-foreground w-16 shrink-0 file-meta-label">Subject</span>
-                      <span className="flex-1 text-right break-all file-meta-value">
-                        {file.inboundSubject}
-                      </span>
-                    </div>
-                  )}
-                  {file.sourceSearchPattern && (
-                    <div className="flex items-start gap-3 file-meta-row">
-                      <span className="text-muted-foreground w-16 shrink-0 file-meta-label">Search</span>
-                      <span className="flex-1 text-right break-all file-meta-value">
-                        {file.sourceSearchPattern}
-                      </span>
-                    </div>
-                  )}
-                  {sourceResultLabel && (
-                    <div className="flex items-start gap-3 file-meta-row">
-                      <span className="text-muted-foreground w-16 shrink-0 file-meta-label">Result</span>
-                      <span className="flex-1 text-right file-meta-value">{sourceResultLabel}</span>
+                      <span className="flex-1 text-right break-all file-meta-value">{mailDetails}</span>
                     </div>
                   )}
                   {/* What the File is, and which way it goes (#513) */}
@@ -555,17 +481,6 @@ function FileDetailPanelInner({
                       </div>
                     </div>
                   )}
-                  {/* File metadata */}
-                  <div className="flex items-start gap-3 file-meta-row">
-                    <span className="text-muted-foreground w-16 shrink-0 file-meta-label">Uploaded</span>
-                    <span className="flex-1 text-right file-meta-value">
-                      {toDateSafe(file.uploadedAt) ? format(toDateSafe(file.uploadedAt)!, "MMM d, yyyy") : "—"}
-                    </span>
-                  </div>
-                  <div className="flex items-start gap-3 file-meta-row">
-                    <span className="text-muted-foreground w-16 shrink-0 file-meta-label">Size</span>
-                    <span className="flex-1 text-right file-meta-value">{formatFileSize(file.fileSize)}</span>
-                  </div>
                 </div>
               </div>
             </div>
