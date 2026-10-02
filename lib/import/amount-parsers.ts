@@ -160,6 +160,7 @@ export function detectAmountFormat(samples: string[]): string | null {
 
   let bestParser: string | null = null;
   let bestScore = 0;
+  let tied: string[] = [];
 
   for (const parser of AMOUNT_PARSERS) {
     let score = 0;
@@ -173,11 +174,22 @@ export function detectAmountFormat(samples: string[]): string | null {
     if (score > bestScore) {
       bestScore = score;
       bestParser = parser.id;
+      tied = [parser.id];
+    } else if (score === bestScore && score > 0) {
+      tied.push(parser.id);
     }
   }
 
   // Require at least 70% match rate for amounts
   if (bestScore >= validSamples.length * 0.7) {
+    // Several parsers can read the same column without error ("-89.99" parses
+    // under German rules too, as -8999). The first in the list used to win such
+    // a tie, which read a US-style column 100 times too large. Break the tie on
+    // where the separators actually sit.
+    if (tied.length > 1) {
+      const byPattern = detectAmountFormatFromPatterns(validSamples);
+      if (byPattern && tied.includes(byPattern)) return byPattern;
+    }
     return bestParser;
   }
 

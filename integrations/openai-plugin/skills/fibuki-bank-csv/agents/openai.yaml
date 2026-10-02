@@ -1,0 +1,4 @@
+interface:
+  display_name: "Bank-CSV importieren"
+  short_description: "Import a bank CSV into FiBuKI"
+  default_prompt: "Import my bank CSV into FiBuKI."

@@ -73,6 +73,11 @@ export const TOP_LEVEL_POLICIES: Readonly<Record<string, CollectionPolicy>> = {
   // Explicitly denied (rules: allow read, write: if false) — listed so a
   // future edit consciously flips them instead of "fixing" a 403.
   emailTokens: denied,
+  // OAuth for connected apps (functions/src/oauth): registered clients and one-time
+  // authorization codes. Server-only; the grants themselves live in apiKeys.
+  oauthClients: denied,
+  oauthCodes: denied,
+  oauthRateLimits: denied,
   folderTokens: denied,
   folderEntries: denied,
   invoiceShares: denied,
@@ -91,6 +96,17 @@ export const TRANSACTION_HISTORY_POLICY: CollectionPolicy = {
   create: "authed",
   update: "none",
   delete: "none",
+};
+
+/**
+ * Single documents inside a users/{uid}/<subtree> that are stricter than the subtree, keyed
+ * "<subtree>/<docId>". Checked before SUBTREE_POLICIES.
+ */
+export const SUBTREE_DOC_POLICIES: Readonly<Record<string, CollectionPolicy>> = {
+  // Onboarding state is decided on the server (onboarding/onboardingState.ts) and changed through
+  // callables. The client only reads it: a client write could mark steps done or change where the
+  // user came from.
+  "settings/onboarding": { read: "authed", create: "none", update: "none", delete: "none" },
 };
 
 /** users/{uid}/<name>/... — uid must equal auth.uid, then this table. */

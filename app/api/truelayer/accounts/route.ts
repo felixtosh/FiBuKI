@@ -14,6 +14,7 @@ import {
 import { getTrueLayerClient, getAccountIban } from "@/lib/truelayer";
 import { TrueLayerConnection, TrueLayerApiConfig } from "@/types/truelayer";
 import { normalizeIban } from "@/lib/import/deduplication";
+import { computeDedupeHash } from "@/functions/src/imports/dedupe";
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 
 // Initialize Firebase for server-side
@@ -285,7 +286,6 @@ async function triggerInitialSync(
     }
 
     // Import transactions
-    const { generateDedupeHash } = await import("@/lib/import/deduplication");
     const nowTs = Timestamp.now();
 
     for (const tx of transactions) {
@@ -294,7 +294,7 @@ async function triggerInitialSync(
       const txDate = new Date(tx.timestamp);
       const reference = tx.meta?.provider_reference || tx.transaction_id;
 
-      const dedupeHash = await generateDedupeHash(txDate, amount, sourceIban, reference);
+      const dedupeHash = computeDedupeHash({ date: txDate, amount, sourceIdentifier: sourceIban, reference });
 
       const transactionDoc = {
         sourceId,

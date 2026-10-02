@@ -45,27 +45,22 @@ const navItems: { href: string; label: string; icon: typeof Receipt; feature?: P
  * and renders onboarding-related overlays
  */
 function OnboardingController() {
-  const { state, loading, isOnboarding, needsWelcome, showCompletion, dismissCompletion } = useOnboarding();
+  const { loading, isOnboarding, needsWelcome, showCompletion, dismissCompletion } = useOnboarding();
   const { setSidebarMode, toggleSidebar, isSidebarOpen } = useChat();
   const pathname = usePathname();
   const router = useRouter();
 
-  // Redirect to /welcome if track isn't set yet (and not already there)
+  // A fresh account sees the welcome screen once (not again after it is acknowledged)
   useEffect(() => {
     if (loading) return;
-    if (
-      state &&
-      !state.track &&
-      !state.isComplete &&
-      pathname !== "/welcome"
-    ) {
+    if (needsWelcome && pathname !== "/welcome") {
       router.replace("/welcome");
     }
-  }, [state, loading, pathname, router]);
+  }, [needsWelcome, loading, pathname, router]);
 
   // Sync sidebar mode with onboarding state
   useEffect(() => {
-    // Don't show onboarding sidebar until track is selected
+    // Don't show the onboarding sidebar before the welcome screen is done
     if (needsWelcome || pathname === "/welcome") return;
 
     if (isOnboarding) {

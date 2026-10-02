@@ -1,0 +1,4 @@
+interface:
+  display_name: "FiBuKI einrichten"
+  short_description: "Set up FiBuKI: identity, bank data, mailbox"
+  default_prompt: "Set me up with FiBuKI."

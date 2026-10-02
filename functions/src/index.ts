@@ -195,6 +195,7 @@ export {
 export {
   bulkCreateTransactionsCallable as bulkCreateTransactions,
   createImportRecordCallable as createImportRecord,
+  applyImportRemapCallable as applyImportRemap,
   createDraftImportCallable as createDraftImport,
   updateDraftMappingsCallable as updateDraftMappings,
   deleteDraftImportCallable as deleteDraftImport,
@@ -233,6 +234,7 @@ export { findReceiptForTransactionCallable as findReceiptForTransaction } from "
 
 // FX reference rates (ECB feed refresh — § 20 Abs 6 UStG method 2)
 export { scheduledRefreshEcbRates } from "./fx/refreshEcbRates";
+export { cleanupOAuth } from "./oauth/cleanupOAuth";
 
 // Report operations
 export {
@@ -361,7 +363,11 @@ export {
 } from "./community/telegramCommunity";
 
 // Onboarding operations
-export { setOnboardingTrackCallable as setOnboardingTrack } from "./onboarding/setOnboardingTrackCallable";
+export {
+  initOnboardingCallable as initOnboarding,
+  syncOnboardingCallable as syncOnboarding,
+  updateOnboardingCallable as updateOnboarding,
+} from "./onboarding/onboardingCallables";
 
 // Country expansion operations
 export {
@@ -397,4 +403,6 @@ export { sendPasswordResetCallable as sendPasswordReset } from "./auth/sendPassw
 
 // MCP HTTP API (for OpenClaw, Claude Desktop, ChatGPT, etc.)
 export { mcpApi, mcpToolsList, mcpSse } from "./mcp-api";
+export { oauthMetadata, oauthRegister, oauthToken, oauthClientInfo } from "./oauth/oauthHttp";
+export { createOAuthAuthorizationCallable as createOAuthAuthorization } from "./oauth/oauthCallable";
 export { openApiSpec, aiPluginManifest } from "./mcp-api/openapi";

@@ -17,7 +17,7 @@ import {
 import { getTrueLayerClient } from "@/lib/truelayer";
 import { TrueLayerConnection, TrueLayerApiConfig } from "@/types/truelayer";
 import { TransactionSource } from "@/types/source";
-import { generateDedupeHash } from "@/lib/import/deduplication";
+import { computeDedupeHash } from "@/functions/src/imports/dedupe";
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 
 // Initialize Firebase for server-side
@@ -189,12 +189,12 @@ export async function POST(request: NextRequest) {
       const reference = tx.meta?.provider_reference || tx.transaction_id;
 
       // Generate dedupe hash (use sourceId as fallback for sources without IBAN)
-      const dedupeHash = await generateDedupeHash(
-        txDate,
+      const dedupeHash = computeDedupeHash({
+        date: txDate,
         amount,
-        source.iban ?? source.id,
-        reference
-      );
+        sourceIdentifier: source.iban ?? source.id,
+        reference,
+      });
 
       // Skip if duplicate
       if (existingHashes.has(dedupeHash)) {

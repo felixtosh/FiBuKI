@@ -434,6 +434,115 @@
     "transactionsDeductible": "{percent} % sind mit einer Rechnung belegt, die zum Vorsteuerabzug berechtigt (§ 11 UStG). Eine reine Zahlungsbestätigung reicht dafür nicht.",
     "followsFilters": "Die Zahl folgt den Filtern und der Suche oben."
   },
+  "onboarding": {
+    "welcome": {
+      "title": "Willkommen bei FiBuKI",
+      "intro": "FiBuKI macht aus deinen Bankbuchungen, Belegen und Rechnungen saubere Daten für deinen Steuerberater. Du sortierst einmal im Monat statt einmal im Quartal.",
+      "identityWhy": "Wir beginnen damit, wer du bist, damit deine eigenen Rechnungen nie mit Ausgaben verwechselt werden.",
+      "start": "Mit deinen Angaben beginnen",
+      "alsoElsewhere": "FiBuKI funktioniert auch in ChatGPT, Claude und Codex.",
+      "connectedTitle": "Du bist mit {app} verbunden",
+      "connectedBody": "Arbeite weiter in {app}, dort werden deine Belege für dich zugeordnet, oder mach hier in FiBuKI weiter. Beide sehen dieselben Daten, du kannst jederzeit wechseln.",
+      "continueHere": "In FiBuKI weitermachen",
+      "backToApp": "Zurück zu {app}"
+    },
+    "completion": {
+      "title": "Alles eingerichtet!",
+      "description": "Glückwunsch, die Einrichtung ist abgeschlossen. Dein Konto hilft dir jetzt bei Buchungen und Belegen.",
+      "next": "Wie es weitergeht:",
+      "assistant": "KI-Assistent hilft beim Kategorisieren von Buchungen",
+      "matching": "Automatische Beleg-Zuordnung ist aktiv",
+      "partners": "Partner-Vorschläge für schnelleres Buchen",
+      "start": "Los geht's mit FiBuKI"
+    },
+    "sidebar": {
+      "title": "Erste Schritte",
+      "subtitle": "Schließe diese Schritte ab, um dein Konto einzurichten"
+    },
+    "telegram": {
+      "title": "Sag Hallo auf Telegram",
+      "text": "Stell Fragen, gib Feedback und sprich direkt mit Felix und Stefan in der FiBuKI-Community.",
+      "cta": "Zum Chat"
+    }
+  },
+  "oauth": {
+    "authorize": {
+      "loading": "Einen Moment…",
+      "thisApp": "diese App",
+      "returnsTo": "Kehrt zurück zu {host}",
+      "unverified": "FiBuKI konnte diese App nicht verifizieren. Mach nur weiter, wenn du die Verbindung selbst gestartet hast. Du wirst zu {host} weitergeleitet.",
+      "invalid": {
+        "title": "Diese Verbindungsanfrage kann nicht verwendet werden",
+        "body": "Der Link ist unvollständig oder abgelaufen. Starte die Verbindung in der App neu.",
+        "back": "Zurück zu {app}"
+      },
+      "signIn": {
+        "title": "{app} mit FiBuKI verbinden",
+        "body": "Melde dich an oder erstelle dein FiBuKI-Konto, um fortzufahren.",
+        "hint": "{app} hat {email} vorgeschlagen.",
+        "signIn": "Anmelden",
+        "create": "Konto erstellen",
+        "finish": "Anmeldung abschließen"
+      },
+      "accountChoice": {
+        "title": "Welches Konto?",
+        "body": "Du bist als {current} angemeldet, {app} hat aber {suggested} vorgeschlagen.",
+        "continueAs": "Als {current} fortfahren",
+        "useOther": "{suggested} verwenden"
+      },
+      "identity": {
+        "title": "Zuerst: Wer bist du?",
+        "body": "FiBuKI braucht das, um deine eigenen Rechnungen von denen zu unterscheiden, die du erhältst. Mehr kannst du später in den Einstellungen ergänzen.",
+        "name": "Name wie auf deinen Rechnungen",
+        "vatId": "UID (optional)",
+        "iban": "Deine IBAN (optional)",
+        "save": "Weiter",
+        "saving": "Speichere…",
+        "error": "Speichern fehlgeschlagen. Bitte versuche es erneut."
+      },
+      "consent": {
+        "title": "{app} verbinden?",
+        "canDo": "{app} kann dann:",
+        "seeData": "Deine Bankkonten, Buchungen, Belege und Partner ansehen",
+        "organise": "Belege den Buchungen zuordnen und sie kategorisieren",
+        "upload": "Belege hochladen und Buchungen importieren",
+        "cannot": "Einzelne Buchungen kann sie nicht löschen.",
+        "disconnect": "Du kannst die Verbindung jederzeit trennen unter",
+        "settings": "Einstellungen, Integrationen",
+        "signedInAs": "Angemeldet als {email}.",
+        "switchAccount": "Anderes Konto verwenden",
+        "allow": "Erlauben",
+        "cancel": "Abbrechen",
+        "working": "Verbinde…",
+        "error": "Etwas ist schiefgelaufen. Bitte versuche es erneut."
+      }
+    }
+  },
+  "integrations": {
+    "connect": {
+      "title": "Mit einem Klick verbinden (empfohlen)",
+      "description": "Kein API-Key zum Kopieren. Du meldest dich bei FiBuKI an und bestätigst die Verbindung.",
+      "signInStep": "Bei FiBuKI anmelden und Erlauben wählen",
+      "signInDetail": "Ein FiBuKI-Fenster öffnet sich. Melde dich an oder erstelle dein Konto und bestätige dann. Die Verbindung erscheint unten in der Liste der API-Keys als verbundene App, und wenn du sie dort trennst, endet der Zugriff.",
+      "chatgpt": {
+        "step1": "Entwicklermodus einschalten",
+        "step1Detail": "Öffne in ChatGPT Einstellungen, dann Sicherheit und Anmeldung, und schalte den Entwicklermodus ein. Gehe dann zu ChatGPT Plugins und wähle das Plus.",
+        "step2": "FiBuKI als Verbindung hinzufügen"
+      },
+      "claude": {
+        "step1": "Benutzerdefinierten Connector hinzufügen",
+        "step1Detail": "Öffne in Claude Einstellungen, dann Connectors, und füge einen benutzerdefinierten Connector hinzu.",
+        "step2": "Server-URL einfügen"
+      }
+    }
+  },
+  "auth": {
+    "accessRequested": {
+      "default": "Zugangsanfrage gesendet! Ein Admin prüft sie in Kürze.",
+      "connectingTitle": "Zugang angefragt.",
+      "connectingBody": "FiBuKI ist vorerst nur mit Einladung nutzbar. Wir schreiben dir per E-Mail, sobald du freigeschaltet bist. Verbinde FiBuKI dann in deinem Assistenten erneut."
+    }
+  },
   "filters": {
     "all": "Alle",
     "assigned": "Zugeordnet",
@@ -479,13 +588,6 @@
   "chat": {
     "toolCompleted": "{tool} erledigt",
     "toolFailed": "{tool} fehlgeschlagen"
-  },
-  "onboarding": {
-    "telegram": {
-      "title": "Sag Hallo auf Telegram",
-      "text": "Stell Fragen, gib Feedback und sprich direkt mit Felix und Stefan in der FiBuKI-Community.",
-      "cta": "Zum Chat"
-    }
   },
   "folderIntegrations": {
     "title": "{provider}",

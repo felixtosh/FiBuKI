@@ -434,6 +434,115 @@
     "transactionsDeductible": "{percent}% are documented by an invoice that allows the VAT deduction (§ 11 UStG). A payment confirmation alone does not.",
     "followsFilters": "The count follows the filters and search above."
   },
+  "onboarding": {
+    "welcome": {
+      "title": "Welcome to FiBuKI",
+      "intro": "FiBuKI turns your bank lines, receipts and invoices into clean data for your Steuerberater. You do the sorting once a month instead of once a quarter.",
+      "identityWhy": "We start with who you are, so your own invoices are never mistaken for expenses.",
+      "start": "Start with who you are",
+      "alsoElsewhere": "FiBuKI also works from ChatGPT, Claude and Codex.",
+      "connectedTitle": "You're connected to {app}",
+      "connectedBody": "Keep working in {app} and it will match your documents for you, or continue here in FiBuKI. Both see the same data, so you can switch any time.",
+      "continueHere": "Continue in FiBuKI",
+      "backToApp": "Back to {app}"
+    },
+    "completion": {
+      "title": "You're all set!",
+      "description": "Congratulations! You've completed the setup. Your account is now ready to help you manage your transactions and receipts.",
+      "next": "What's next:",
+      "assistant": "AI assistant ready to help categorize transactions",
+      "matching": "Automatic receipt matching enabled",
+      "partners": "Partner suggestions for faster bookkeeping",
+      "start": "Start using FiBuKI"
+    },
+    "sidebar": {
+      "title": "Getting Started",
+      "subtitle": "Complete these steps to set up your account"
+    },
+    "telegram": {
+      "title": "Come say hi on Telegram",
+      "text": "Ask questions, share feedback and talk to Felix and Stefan directly in the FiBuKI community.",
+      "cta": "Join the chat"
+    }
+  },
+  "oauth": {
+    "authorize": {
+      "loading": "One moment…",
+      "thisApp": "this app",
+      "returnsTo": "Returns to {host}",
+      "unverified": "FiBuKI could not verify this app. Only continue if you started this connection yourself. It will send you to {host}.",
+      "invalid": {
+        "title": "This connection request can't be used",
+        "body": "The link is incomplete or has expired. Start the connection again from the app.",
+        "back": "Back to {app}"
+      },
+      "signIn": {
+        "title": "Connect {app} to FiBuKI",
+        "body": "Sign in or create your FiBuKI account to continue.",
+        "hint": "{app} suggested {email}.",
+        "signIn": "Sign in",
+        "create": "Create account",
+        "finish": "Finish signing in"
+      },
+      "accountChoice": {
+        "title": "Which account?",
+        "body": "You're signed in as {current}, but {app} suggested {suggested}.",
+        "continueAs": "Continue as {current}",
+        "useOther": "Use {suggested}"
+      },
+      "identity": {
+        "title": "First, who are you?",
+        "body": "FiBuKI uses this to tell your own invoices from the ones you receive. You can add more later in Settings.",
+        "name": "Name as on your invoices",
+        "vatId": "UID (optional)",
+        "iban": "Your IBAN (optional)",
+        "save": "Continue",
+        "saving": "Saving…",
+        "error": "Could not save. Please try again."
+      },
+      "consent": {
+        "title": "Connect {app}?",
+        "canDo": "{app} will be able to:",
+        "seeData": "See your bank accounts, transactions, documents and partners",
+        "organise": "Match documents to transactions and categorise them",
+        "upload": "Upload documents and import transactions",
+        "cannot": "It cannot delete individual transactions.",
+        "disconnect": "You can disconnect it at any time in",
+        "settings": "Settings, Integrations",
+        "signedInAs": "Signed in as {email}.",
+        "switchAccount": "Use another account",
+        "allow": "Allow",
+        "cancel": "Cancel",
+        "working": "Connecting…",
+        "error": "Something went wrong. Please try again."
+      }
+    }
+  },
+  "integrations": {
+    "connect": {
+      "title": "Connect with one click (recommended)",
+      "description": "No API key to copy. You sign in to FiBuKI and approve the connection.",
+      "signInStep": "Sign in to FiBuKI and choose Allow",
+      "signInDetail": "A FiBuKI window opens. Sign in or create your account, then approve. The connection appears in the API keys list below as a connected app, and disconnecting it there ends access.",
+      "chatgpt": {
+        "step1": "Turn on Developer mode",
+        "step1Detail": "In ChatGPT open Settings, then Security and login, and turn on Developer mode. Then go to ChatGPT Plugins and select the plus button.",
+        "step2": "Add FiBuKI as the connection"
+      },
+      "claude": {
+        "step1": "Add a custom connector",
+        "step1Detail": "In Claude open Settings, then Connectors, and add a custom connector.",
+        "step2": "Paste the server URL"
+      }
+    }
+  },
+  "auth": {
+    "accessRequested": {
+      "default": "Access request submitted! An admin will review it shortly.",
+      "connectingTitle": "Access requested.",
+      "connectingBody": "FiBuKI is invite-only for now. We will email you as soon as you are approved. Then go back to your assistant and connect FiBuKI again."
+    }
+  },
   "filters": {
     "all": "All",
     "assigned": "Assigned",
@@ -479,13 +588,6 @@
   "chat": {
     "toolCompleted": "{tool} completed",
     "toolFailed": "{tool} failed"
-  },
-  "onboarding": {
-    "telegram": {
-      "title": "Come say hi on Telegram",
-      "text": "Ask questions, share feedback and talk to Felix and Stefan directly in the FiBuKI community.",
-      "cta": "Join the chat"
-    }
   },
   "folderIntegrations": {
     "title": "{provider}",

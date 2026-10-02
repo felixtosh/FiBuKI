@@ -1,33 +1,25 @@
 "use client";
 
-import { WelcomeChoice } from "@/components/onboarding/welcome-choice";
-import { useOnboarding } from "@/hooks/use-onboarding";
-import { useRouter } from "next/navigation";
 import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { Welcome } from "@/components/onboarding/welcome";
+import { useOnboarding } from "@/hooks/use-onboarding";
 
 export default function WelcomePage() {
-  const { state, loading } = useOnboarding();
+  const { needsWelcome, loading } = useOnboarding();
   const router = useRouter();
 
-  // If track is already set or onboarding is complete, redirect to first step
+  // Nothing to welcome: onboarding is done, or the welcome was already seen.
   useEffect(() => {
     if (loading) return;
-    if (state?.isComplete) {
-      router.replace("/transactions");
-    } else if (state?.track === "data_only") {
-      router.replace("/sources");
-    } else if (state?.track === "full_service") {
-      router.replace("/settings/identity");
-    }
-  }, [state, loading, router]);
+    if (!needsWelcome) router.replace("/transactions");
+  }, [needsWelcome, loading, router]);
 
-  if (loading || state?.track || state?.isComplete) {
-    return null;
-  }
+  if (loading || !needsWelcome) return null;
 
   return (
     <div className="h-full flex items-center justify-center p-4">
-      <WelcomeChoice />
+      <Welcome />
     </div>
   );
 }

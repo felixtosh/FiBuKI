@@ -64,7 +64,6 @@ export * from "./email-inbound-ops";
 export * from "./invite-ops";
 
 // Onboarding operations (for new user onboarding flow)
-export * from "./onboarding-ops";
 
 // MFA operations (for multi-factor authentication)
 export * from "./mfa-ops";

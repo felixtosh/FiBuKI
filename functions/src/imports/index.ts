@@ -7,6 +7,7 @@
 
 export { bulkCreateTransactionsCallable } from "./bulkCreateTransactions";
 export { createImportRecordCallable } from "./createImportRecord";
+export { applyImportRemapCallable } from "./applyImportRemap";
 
 // Draft import functions
 export { createDraftImportCallable } from "./createDraftImport";

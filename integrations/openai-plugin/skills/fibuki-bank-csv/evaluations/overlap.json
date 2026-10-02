@@ -1,0 +1,17 @@
+{
+  "name": "Export overlaps what is already imported",
+  "skills": [
+    "fibuki-bank-csv"
+  ],
+  "query": "Ich lade nochmal den ganzen September hoch, ich hab vorige Woche schon bis 15.9. importiert.",
+  "expected_behavior": [
+    "Explains that FiBuKI skips lines it already has for that Bank Account, so uploading the whole month again is safe",
+    "Does not call list_transactions to compare, and does not filter rows itself",
+    "Runs the dry run without --after (or with --after only if the user wants a period), then imports with --import",
+    "Reports imported and alreadyImported from the result, e.g. the rows up to 15 September counted as already imported"
+  ],
+  "success_criteria": [
+    "No client-side duplicate filtering happens in the model or the script call",
+    "The user is told how many lines were skipped as already imported"
+  ]
+}

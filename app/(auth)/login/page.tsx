@@ -24,10 +24,14 @@ import { useMfaChallenge } from "@/hooks/use-mfa-challenge";
 import { usePasskeys } from "@/hooks/use-passkeys";
 import { githubSignInEnabled } from "@/lib/auth/social-providers";
 import { consumeSocialAccessRequest } from "@/lib/auth/social-access-request";
+import { AccessRequestedNotice } from "@/components/auth/access-requested-notice";
+import { hintedEmail, safeRedirectPath } from "@/lib/auth/safe-redirect";
 import { logoFont } from "@/app/fonts";
 
 export default function LoginPage() {
-  const [email, setEmail] = useState("");
+  const searchParams = useSearchParams();
+  // A connecting app (ChatGPT, Claude) can suggest which account to use as ?email=
+  const [email, setEmail] = useState(() => hintedEmail(searchParams.get("email")));
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -67,8 +71,9 @@ export default function LoginPage() {
   const { handleMfaRequired, handleCustomMfaRequired } = useMfaChallenge();
   const { hasPasskeys } = usePasskeys();
   const router = useRouter();
-  const searchParams = useSearchParams();
   const redirect = searchParams.get("redirect");
+  // Connecting an assistant (ChatGPT, Claude, Codex): a blocked sign-in has to say how to finish later.
+  const connectingAssistant = safeRedirectPath(redirect).startsWith("/oauth/authorize");
 
   // Store referral code from URL in localStorage for persistence across OAuth redirects
   useEffect(() => {
@@ -125,8 +130,7 @@ export default function LoginPage() {
     // 3. No custom MFA challenge is pending
     // 4. Not currently loading
     if (user && !mfaRequired && !customMfaRequired && !accessRequested && !isLoading) {
-      const target = redirect && redirect.startsWith("/") ? redirect : "/transactions";
-      router.push(target);
+      router.push(safeRedirectPath(redirect));
     }
   }, [user, mfaRequired, customMfaRequired, accessRequested, isLoading, router, redirect]);
 
@@ -187,12 +191,7 @@ export default function LoginPage() {
       </CardHeader>
       <CardContent className="space-y-4">
         {(accessRequested || socialAccessRequested) && (
-          <Alert className="border-green-200 bg-green-50 text-green-900">
-            <CheckCircle className="h-4 w-4 text-green-600" />
-            <AlertDescription>
-              Access request submitted! An admin will review it shortly.
-            </AlertDescription>
-          </Alert>
+          <AccessRequestedNotice connecting={connectingAssistant} />
         )}
 
         {pendingLink && oauthError && (

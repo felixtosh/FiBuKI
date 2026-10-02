@@ -1,0 +1,16 @@
+{
+  "name": "Assistant without a shell",
+  "skills": [
+    "fibuki-bank-csv"
+  ],
+  "query": "(ChatGPT chat, no shell tool) Here is my N26 CSV, please import it.",
+  "expected_behavior": [
+    "Does not convert amounts or dates by hand and does not call import_transactions with rows it computed itself",
+    "Sends the user to https://fibuki.com/sources for the web import",
+    "Offers to continue with fibuki-belege once the lines are in"
+  ],
+  "success_criteria": [
+    "No import_transactions call is made",
+    "The user is told why (the parsing is done by FiBuKI's import, not by the model)"
+  ]
+}

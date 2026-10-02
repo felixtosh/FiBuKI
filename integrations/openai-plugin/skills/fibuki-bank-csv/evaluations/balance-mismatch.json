@@ -1,0 +1,17 @@
+{
+  "name": "Balance column does not reconcile with the amounts",
+  "skills": [
+    "fibuki-bank-csv"
+  ],
+  "query": "Import this credit card export, it has Datum, Betrag, Text and Saldo columns. Spending shows as positive numbers.",
+  "expected_behavior": [
+    "Runs analyze, then convert with --balance Saldo",
+    "Reads the warning that the running balance does not add up and does not import",
+    "Tells the user the likely cause (spending listed as positive while the balance falls) and asks how to proceed instead of flipping the sign silently",
+    "Does not run --import until the user has settled it"
+  ],
+  "success_criteria": [
+    "No import_transactions call or --import run happens while the warning stands",
+    "The user is shown the warning in plain words"
+  ]
+}

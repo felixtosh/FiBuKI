@@ -7,7 +7,6 @@ import { TransactionSource } from "@/types/source";
 import { FieldMapping, CSVAnalysis } from "@/types/import";
 import { parseDate } from "@/lib/import/date-parsers";
 import { parseAmount, getAmountParserConfig } from "@/lib/import/amount-parsers";
-import { generateDedupeHash } from "@/lib/import/deduplication";
 import { parseCSV } from "@/lib/import/csv-parser";
 import { normalizeTradeType, detectAssetType } from "@/lib/import/investment-trade-utils";
 import { useAuth } from "@/components/auth";
@@ -239,13 +238,6 @@ export function useInvestmentImport(source: TransactionSource | null) {
           values.assetName
         );
 
-        const hash = await generateDedupeHash(
-          parsedDate,
-          grossAmount,
-          source.id,
-          `${values.ticker}_${tradeType}_${quantity}`
-        );
-
         trades.push({
           sourceId: source.id,
           date: parsedDate.toISOString(),
@@ -260,7 +252,6 @@ export function useInvestmentImport(source: TransactionSource | null) {
           fees,
           netAmount: Math.abs(netAmount),
           currency: values.currency || source.currency,
-          dedupeHash: hash,
           importJobId,
           csvRowIndex: i,
           _original: {

@@ -1,8 +1,14 @@
 /**
- * MCP SSE Proxy (for Anthropic Claude MCP Connect)
+ * MCP proxy (Streamable HTTP)
  *
- * Proxies MCP protocol requests:
- * https://fibuki.com/api/mcp/sse → Cloud Functions mcpSse
+ * https://fibuki.com/api/mcp/sse -> mcpSse on fibuki-api / Cloud Functions.
+ * Used by ChatGPT, Codex, Claude and any other remote MCP client.
+ *
+ * The proxy is transparent: it forwards the MCP headers and passes the
+ * upstream status, headers and body through untouched. That includes the 401 and its
+ * WWW-Authenticate challenge, which points clients at the OAuth metadata, so a request
+ * without a token is forwarded too. Notifications are answered with 202 and an empty
+ * body, so the body is never parsed here.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -10,69 +16,62 @@ import { resolveFunctionsUrl, FUNCTIONS_URL_UNSET_ERROR } from "@/lib/api/functi
 
 const CF_URL = resolveFunctionsUrl("mcpSse");
 
-export async function POST(request: NextRequest) {
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+  "Access-Control-Allow-Headers":
+    "Content-Type, Authorization, Accept, Mcp-Session-Id, MCP-Protocol-Version, Last-Event-ID",
+  "Access-Control-Expose-Headers": "Mcp-Session-Id, WWW-Authenticate",
+};
+
+/** Request headers the MCP transport reads. */
+const FORWARD_REQUEST_HEADERS = [
+  "authorization",
+  "content-type",
+  "accept",
+  "mcp-protocol-version",
+  "mcp-session-id",
+  "last-event-id",
+];
+
+/** Response headers a client needs back. */
+const FORWARD_RESPONSE_HEADERS = ["content-type", "mcp-session-id", "www-authenticate", "allow"];
+
+async function proxy(request: NextRequest): Promise<NextResponse> {
   if (!CF_URL) {
     return NextResponse.json({ error: FUNCTIONS_URL_UNSET_ERROR }, { status: 500 });
   }
 
-  const authHeader = request.headers.get("authorization");
-
-  if (!authHeader) {
-    return NextResponse.json({ error: "Missing Authorization header" }, { status: 401 });
+  const headers = new Headers();
+  for (const name of FORWARD_REQUEST_HEADERS) {
+    const value = request.headers.get(name);
+    if (value) headers.set(name, value);
   }
 
   try {
-    const body = await request.json();
-
-    const response = await fetch(CF_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: authHeader,
-      },
-      body: JSON.stringify(body),
+    const upstream = await fetch(CF_URL, {
+      method: request.method,
+      headers,
+      body: request.method === "POST" ? await request.text() : undefined,
     });
 
-    const data = await response.json();
-    return NextResponse.json(data, { status: response.status });
-  } catch (error) {
-    return NextResponse.json({ error: "Proxy error" }, { status: 500 });
+    const responseHeaders = new Headers(CORS_HEADERS);
+    for (const name of FORWARD_RESPONSE_HEADERS) {
+      const value = upstream.headers.get(name);
+      if (value) responseHeaders.set(name, value);
+    }
+
+    const body = await upstream.text();
+    return new NextResponse(body || null, { status: upstream.status, headers: responseHeaders });
+  } catch {
+    return NextResponse.json({ error: "Proxy error" }, { status: 502, headers: CORS_HEADERS });
   }
 }
 
-export async function GET(request: NextRequest) {
-  if (!CF_URL) {
-    return NextResponse.json({ error: FUNCTIONS_URL_UNSET_ERROR }, { status: 500 });
-  }
-
-  const authHeader = request.headers.get("authorization");
-
-  if (!authHeader) {
-    return NextResponse.json({ error: "Missing Authorization header" }, { status: 401 });
-  }
-
-  try {
-    const response = await fetch(CF_URL, {
-      method: "GET",
-      headers: {
-        Authorization: authHeader,
-      },
-    });
-
-    const data = await response.json();
-    return NextResponse.json(data, { status: response.status });
-  } catch (error) {
-    return NextResponse.json({ error: "Proxy error" }, { status: 500 });
-  }
-}
+export const POST = proxy;
+export const GET = proxy;
+export const DELETE = proxy;
 
 export async function OPTIONS() {
-  return new NextResponse(null, {
-    status: 204,
-    headers: {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, Authorization",
-    },
-  });
+  return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
 }

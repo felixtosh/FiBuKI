@@ -4,6 +4,7 @@
 
 import { Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
+import { computeDedupeHash } from "../imports/dedupe";
 
 interface TradeData {
   sourceId: string;
@@ -21,7 +22,8 @@ interface TradeData {
   currency: string;
   exchangeRateToEur?: number | null;
   netAmountEur?: number | null;
-  dedupeHash: string;
+  /** Ignored: the hash is computed here (imports/dedupe.ts), so no client can disagree with it. */
+  dedupeHash?: string;
   importJobId: string;
   csvRowIndex?: number;
   _original: {
@@ -145,7 +147,12 @@ export const bulkCreateTradesCallable = createCallable<
           currency: tradeData.currency,
           exchangeRateToEur: tradeData.exchangeRateToEur ?? null,
           netAmountEur: tradeData.netAmountEur ?? null,
-          dedupeHash: tradeData.dedupeHash,
+          dedupeHash: computeDedupeHash({
+            date,
+            amount: tradeData.grossAmount,
+            sourceIdentifier: tradeData.sourceId,
+            reference: `${tradeData.ticker}_${tradeData.tradeType}_${tradeData.quantity}`,
+          }),
           importJobId: tradeData.importJobId,
           csvRowIndex: tradeData.csvRowIndex,
           _original: tradeData._original,

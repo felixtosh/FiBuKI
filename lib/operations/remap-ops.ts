@@ -5,8 +5,6 @@ import {
   getDocs,
   doc,
   updateDoc,
-  writeBatch,
-  Timestamp,
 } from "firebase/firestore";
 import { Transaction } from "@/types/transaction";
 import {
@@ -24,10 +22,11 @@ import {
   getDateParserName,
 } from "@/lib/import/date-parsers";
 import { parseAmount, getAmountParserConfig } from "@/lib/import/amount-parsers";
-import { generateDedupeHash } from "@/lib/import/deduplication";
+import { callFunction } from "@/lib/firebase/callable";
 
 const TRANSACTIONS_COLLECTION = "transactions";
-const BATCH_SIZE = 500;
+/** Rows per request: each carries its raw CSV line. */
+const BATCH_SIZE = 200;
 
 /**
  * Fields that are preserved during remapping (user-provided data)
@@ -422,7 +421,6 @@ export async function applyRemapping(
   parsedRows: Record<string, string>[],
   sourceIban: string | null,
   sourceId: string,
-  currency: string,
   onProgress?: (progress: number) => void
 ): Promise<{
   updated: number;
@@ -432,14 +430,21 @@ export async function applyRemapping(
   // Get existing transactions
   const existingTransactions = await getTransactionsByImport(ctx, importJobId);
 
-  const updates: {
-    txId: string;
-    data: Partial<Transaction>;
-  }[] = [];
+  const rows: Array<{
+    transactionId: string;
+    date: string;
+    amount: number;
+    name: string;
+    partner: string | null;
+    reference: string | null;
+    partnerIban: string | null;
+    original: { date: string; amount: string; rawRow: Record<string, string> };
+  }> = [];
   const errors: { row: number; message: string }[] = [];
   let skipped = 0;
 
-  // Process each CSV row
+  // Parse each CSV row with the new mapping. Parsing stays here (the mapping UI and the parsers are
+  // client code); the hash and the write are the server's (applyImportRemap).
   for (let i = 0; i < parsedRows.length; i++) {
     const row = parsedRows[i];
     const existingTx = existingTransactions.get(i);
@@ -450,7 +455,6 @@ export async function applyRemapping(
       continue;
     }
 
-    // Parse the row with new mappings
     const parsed = parseRowWithMappings(row, newMappings, sourceIban, sourceId);
 
     if (parsed.error || !parsed.date || parsed.amount === null) {
@@ -458,55 +462,38 @@ export async function applyRemapping(
       continue;
     }
 
-    // Generate new dedupe hash
-    const dedupeHash = await generateDedupeHash(
-      parsed.date,
-      parsed.amount,
-      sourceIban ?? sourceId,
-      parsed.reference
-    );
-
-    // Build update data (only fields that change)
-    const updateData: Partial<Transaction> = {
-      date: Timestamp.fromDate(parsed.date),
+    rows.push({
+      transactionId: existingTx.id,
+      date: parsed.date.toISOString(),
       amount: parsed.amount,
-      currency,
       name: parsed.name,
       partner: parsed.partner,
       reference: parsed.reference,
       partnerIban: parsed.partnerIban,
-      dedupeHash,
-      _original: {
+      original: {
         date: row[newMappings.find((m) => m.targetField === "date")?.csvColumn || ""] || "",
         amount: row[newMappings.find((m) => m.targetField === "amount")?.csvColumn || ""] || "",
         rawRow: row,
       },
-      updatedAt: Timestamp.now(),
-    };
-
-    updates.push({ txId: existingTx.id, data: updateData });
+    });
 
     if (onProgress) {
       onProgress(Math.round((i / parsedRows.length) * 50));
     }
   }
 
-  // Batch update transactions
   let updated = 0;
-  for (let i = 0; i < updates.length; i += BATCH_SIZE) {
-    const batch = writeBatch(ctx.db);
-    const chunk = updates.slice(i, i + BATCH_SIZE);
-
-    for (const { txId, data } of chunk) {
-      const docRef = doc(ctx.db, TRANSACTIONS_COLLECTION, txId);
-      batch.update(docRef, data);
-    }
-
-    await batch.commit();
-    updated += chunk.length;
+  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+    const chunk = rows.slice(i, i + BATCH_SIZE);
+    const result = await callFunction<
+      { importJobId: string; sourceId: string; rows: typeof chunk },
+      { updated: number; skipped: number }
+    >("applyImportRemap", { importJobId, sourceId, rows: chunk });
+    updated += result.updated;
+    skipped += result.skipped;
 
     if (onProgress) {
-      onProgress(50 + Math.round((updated / updates.length) * 50));
+      onProgress(50 + Math.round((Math.min(i + chunk.length, rows.length) / rows.length) * 50));
     }
   }
 

@@ -258,13 +258,17 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "import_transactions",
-    "description": "Import pre-mapped transactions into a source. Transactions must include date, amount, name, and currency.",
+    "description": "Import pre-mapped transactions into a source. Transactions must include date, amount, name, and currency. Lines an earlier import already stored for the same bank account are skipped (same date, amount and reference), so re-sending an overlapping export is safe; the response says how many in duplicateCount. When a file is sent in several calls, pass the same importJobId on each so identical lines of that file are all kept.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "sourceId": {
           "type": "string",
           "description": "The source/bank account ID to import into"
+        },
+        "importJobId": {
+          "type": "string",
+          "description": "Optional. One id per file, repeated on every call that carries a chunk of it. Without it each call is its own import."
         },
         "transactions": {
           "type": "array",
@@ -784,7 +788,24 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "properties": {
         "url": {
           "type": "string",
-          "description": "URL to download file from"
+          "description": "Public https URL to download the file from (port 443, up to 25 MB). Private, local and non-https addresses are refused; use base64 for those."
+        },
+        "file": {
+          "type": "object",
+          "description": "A file the user attached in the chat (ChatGPT fills this in). Alternative to url and base64.",
+          "properties": {
+            "download_url": {
+              "type": "string",
+              "description": "Short-lived https link to the file."
+            },
+            "file_id": {
+              "type": "string",
+              "description": "The chat platform's id for the file."
+            }
+          },
+          "required": [
+            "download_url"
+          ]
         },
         "base64": {
           "type": "string",
@@ -803,6 +824,40 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         "fileName",
         "mimeType"
       ]
+    }
+  },
+  {
+    "name": "get_period_status",
+    "description": "How far the bookkeeping for a period is: per month, how many Transactions are covered (a File connected or a No-document Category), still missing a receipt, or parked on the plan limit, plus the newest missing lines and how many Matches wait for a yes. Defaults to the last three months. Shows a progress board in clients that support widgets. Read-only; the coverage rules are the same ones list_transactions_needing_files uses.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "dateFrom": {
+          "type": "string",
+          "description": "First day, YYYY-MM-DD. Defaults to the first of the month two months ago."
+        },
+        "dateTo": {
+          "type": "string",
+          "description": "Last day, YYYY-MM-DD. Defaults to today."
+        }
+      }
+    }
+  },
+  {
+    "name": "list_pending_matches",
+    "description": "Files FiBuKI has matched to a Transaction but nobody has connected yet, best first, with FiBuKI's own confidence. Shows a review list in clients that support widgets. Connect one with connect_file_to_transaction, refuse one with dismiss_transaction_suggestion, or connect all at the bar with auto_connect_file_suggestions. Read-only; never re-score.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "minConfidence": {
+          "type": "number",
+          "description": "Lowest confidence to list (0-100). Default 85."
+        },
+        "limit": {
+          "type": "number",
+          "description": "Rows to return, 1-50. Default 20."
+        }
+      }
     }
   },
   {
@@ -890,6 +945,112 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "required": [
         "entityId",
         "patch"
+      ]
+    }
+  },
+  {
+    "name": "create_identity_entity",
+    "description": "Create the user's identity: their personal entity (a freelancer) or a company they run. Use it when list_identity_entities is empty, then update_identity_entity for later changes. FiBuKI needs it to tell the user's own issued invoices from the invoices they receive, so ask for the name, the UID (vatId, like ATU12345678), their own IBANs and any other names the business uses, and show what you will save before saving. Refuses a second personal entity or a company with the same name.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "person",
+            "company"
+          ],
+          "description": "person = the user as an individual, company = a business they run"
+        },
+        "name": {
+          "type": "string",
+          "description": "Name as it appears on invoices"
+        },
+        "vatId": {
+          "type": "string",
+          "description": "UID, e.g. ATU12345678 (optional)"
+        },
+        "ibans": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The user's own IBANs, so transfers between their accounts are recognised (optional)"
+        },
+        "aliases": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Other names or spellings the business uses (optional)"
+        },
+        "address": {
+          "type": "object",
+          "description": "Postal address for issued invoices (optional)",
+          "properties": {
+            "street": {
+              "type": "string"
+            },
+            "postalCode": {
+              "type": "string"
+            },
+            "city": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string",
+              "description": "ISO 3166-1 alpha-2, e.g. AT"
+            }
+          }
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    }
+  },
+  {
+    "name": "get_onboarding_status",
+    "description": "Where the user is in setting up FiBuKI: identity, mailbox, bank account, transactions, first partner, first document. Each step is done, skipped or open, with the page on fibuki.com where it is done. Records any step the user's data has completed since the last look, using the same rules as the web app, so call it at the start of a session and after the user finished something. Starts onboarding for a user who has none.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "origin": {
+          "type": "string",
+          "enum": [
+            "web",
+            "chatgpt",
+            "codex",
+            "claude",
+            "api"
+          ],
+          "description": "Which assistant is calling. Only used the first time, to remember where the user came from."
+        }
+      }
+    }
+  },
+  {
+    "name": "skip_onboarding_step",
+    "description": "Skip one onboarding step the user does not want (for example the mailbox step when they prefer to use their assistant's mail). Only on the user's say-so. Returns the new status.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "step": {
+          "type": "string",
+          "enum": [
+            "set_identity",
+            "connect_email",
+            "add_bank_account",
+            "import_transactions",
+            "assign_partner",
+            "attach_file"
+          ],
+          "description": "The step to skip"
+        }
+      },
+      "required": [
+        "step"
       ]
     }
   },
@@ -1639,6 +1800,14 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     "name": "get_automation_status",
     "description": "Get user's automation mode, AI budget, and plan info",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "get_profile",
+    "description": "A stable, opaque identifier for the signed-in FiBuKI user. Lets an assistant recognise the same person across conversations without learning their email or user id. Read-only.",
     "inputSchema": {
       "type": "object",
       "properties": {}
