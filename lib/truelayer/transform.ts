@@ -5,7 +5,7 @@
 import { Timestamp } from "firebase/firestore";
 import { TrueLayerTransaction, TrueLayerAccount } from "@/types/truelayer";
 import { Transaction } from "@/types/transaction";
-import { generateDedupeHash } from "@/lib/import/deduplication";
+import { computeDedupeHash } from "@/functions/src/imports/dedupe";
 
 /**
  * Transform TrueLayer transactions to our Transaction format
@@ -37,12 +37,12 @@ export async function transformTransactions(
     const reference = tx.meta?.provider_reference || tx.transaction_id;
 
     // Generate dedupe hash
-    const dedupeHash = await generateDedupeHash(
-      txDate,
-      isCredit ? amount : -amount,
-      sourceIban,
-      reference
-    );
+    const dedupeHash = computeDedupeHash({
+      date: txDate,
+      amount: isCredit ? amount : -amount,
+      sourceIdentifier: sourceIban,
+      reference,
+    });
 
     // Build original data
     const _original = {

@@ -7,18 +7,18 @@ goes (`privacy.sections.*` keys; the German text is formal "Sie", like the rest 
 `[CONFIRM]` marks a statement of fact I could not verify from the code; answer each before applying. `[DECISION]` marks
 something that needs a choice, not a lookup.
 
-## Questions to answer first
+## Answers received (2026-10-02)
 
-1. `[CONFIRM]` Hosting. The page says Firebase / Google Cloud europe-west1. fibuki.com has run on a Hetzner server in
-   Nuremberg (`nbg1`) since the W4 cutover, per `deploy/selfhost/README-hetzner.md`. Which processors still apply
-   (Firebase retained for rollback only?), and where are files and the database stored today? This changes
-   `services`, `internationalTransfers`, `dataProtection.*` and the encryption sentence, not just the new blocks.
-2. `[CONFIRM]` Does a user see and revoke an assistant connection under Settings > API keys? (The code revokes by key; I did
-   not check that OAuth connections are listed there.) Block C names the path.
-3. `[DECISION]` Retention for access requests (block D). Code keeps them until an admin acts or the person registers;
-   nothing deletes them. Proposed: 90 days after they are resolved or, if never resolved, 12 months. Needs a job.
-4. `[CONFIRM]` Is OpenAI a processor you have a DPA with for this, or is the assistant provider simply the user's own
-   counterparty (the user chose to send their data there)? Block A assumes the second.
+1. Hosting is Hetzner. Block F below corrects the existing text. What the repo can prove is stated; what only the server
+   knows is `[CONFIRM]`.
+2. Revoking a connection: checked in code. Each connection is an `apiKeys` record named `<assistant> (connected app)`,
+   listed by `listApiKeys` and revoked by `revokeApiKey`; it appears under Integrations > API keys (card "AI Agents").
+   Revoking also stops the refresh token, so the connection ends. Block C uses that path.
+3. No data processing agreement with OpenAI or Anthropic for connected assistants: they are the user's own provider.
+   Block A and C already say this; nothing to change.
+4. Access requests are kept for now, no deletion period. The draft says so plainly instead of promising one (block D).
+   Note for review: GDPR storage limitation still applies, so "kept until you ask us to delete them" with a stated
+   deletion route is the honest minimum. A retention job can follow.
 
 ## A. New third parties: assistants (add to `services` and `internationalTransfers`)
 
@@ -86,7 +86,7 @@ What the assistant can do: it uses the same functions as the FiBuKI app, such as
 partners, bank accounts and invoices. Individual transactions cannot be deleted. FiBuKI does not decide what the assistant
 sends on to its provider.
 
-Ending a connection: remove it under Settings > API keys [CONFIRM]. Its tokens stop working immediately. Deleting your
+Ending a connection: remove it under Integrations > API keys, where it is listed as "<assistant> (connected app)". Its tokens stop working immediately. Deleting your
 account removes all connections and their records.
 ```
 
@@ -107,7 +107,7 @@ Was der Assistent kann: Er nutzt dieselben Funktionen wie die FiBuKI-App, etwa T
 und Rechnungen auflisten und ändern. Einzelne Transaktionen lassen sich nicht löschen. Was der Assistent an seinen Anbieter
 weitergibt, bestimmt FiBuKI nicht.
 
-Verbindung beenden: Entfernen Sie sie unter Einstellungen > API-Schlüssel [CONFIRM]. Die Token funktionieren sofort nicht mehr.
+Verbindung beenden: Entfernen Sie sie unter Integrationen > API-Schlüssel, wo sie als "<Assistent> (connected app)" aufgeführt ist. Die Token funktionieren sofort nicht mehr.
 Beim Löschen Ihres Kontos werden alle Verbindungen und ihre Datensätze entfernt.
 ```
 
@@ -123,14 +123,63 @@ URL (from Google) and the time, so an admin can invite them.
 
 EN, dataCollection: `• Access requests: If you try to sign in without an invitation, we store your email address, the name
 and profile picture your sign-in provider gave us, and the time of your request, so we can invite you.`
-EN, retention: `• Access requests are deleted 90 days after they are answered, and after 12 months at the latest. [DECISION]`
+EN, retention: `• Access requests are kept until you ask us to delete them (privacy@fibuki.com). Once you register, your request is closed.`
 
 DE, dataCollection: `• Zugangsanfragen: Wenn Sie versuchen, sich ohne Einladung anzumelden, speichern wir Ihre E-Mail-Adresse,
 den Namen und das Profilbild, die Ihr Anmeldeanbieter uns übergibt, sowie den Zeitpunkt, um Sie einladen zu können.`
-DE, retention: `• Zugangsanfragen werden 90 Tage nach ihrer Beantwortung gelöscht, spätestens nach 12 Monaten. [DECISION]`
+DE, retention: `• Zugangsanfragen werden aufbewahrt, bis Sie uns um Löschung bitten (privacy@fibuki.com). Sobald Sie sich registrieren, wird Ihre Anfrage geschlossen.`
 
 Legal basis for D: legitimate interest (Art. 6(1)(f)), handling a request the person made themselves; add to
 `legalBasis` or cover it under the existing legitimate-interest bullet.
+
+## F. Correction: the page still describes Firebase / Google Cloud (production is Hetzner)
+
+Replace, key by key (`privacy.sections.*`). Sourced from `deploy/selfhost/README-hetzner.md`, `backup.sh`, the compose files.
+
+`services.firebase` (rename the entry, keep the key or change the key and the page that renders it)
+- EN name `Hetzner Online GmbH (hosting)`; purpose `Hosting of the application, the database and the file storage on servers in
+  Nuremberg, Germany.`
+- DE name `Hetzner Online GmbH (Hosting)`; purpose `Hosting der Anwendung, der Datenbank und der Dateispeicherung auf Servern in
+  Nürnberg, Deutschland.`
+
+`internationalTransfers.content`, first sentence
+- EN `Your data is stored on servers in Germany (Hetzner, Nuremberg). Some processing involves transfers to the United States:`
+- DE `Ihre Daten werden auf Servern in Deutschland gespeichert (Hetzner, Nürnberg). Einige Verarbeitungen umfassen jedoch
+  Übermittlungen in die Vereinigten Staaten:`
+
+`dataProtection.content`
+- Line "Encryption in transit ... TLS 1.3": change to `TLS` (Caddy terminates TLS with Let's Encrypt certificates; the repo does
+  not pin 1.3). `[CONFIRM]` if you want to keep "1.3".
+- Line "Encryption at rest ... Google Cloud Firestore ... Cloud Storage ... AES-256": NOT TRUE as written for Hetzner. The repo
+  configures no disk encryption (no LUKS); the database is Postgres on the server disk and files are in SeaweedFS. `[DECISION]`
+  either enable disk encryption on the server and keep an at-rest sentence, or replace it with only what is true:
+  EN `Backups are encrypted (GPG) before they leave the server.` / DE `Backups werden vor dem Verlassen des Servers
+  verschlüsselt (GPG).`
+- Line "Our services run on Google Cloud Platform ... SOC 2, ISO 27001": EN `Our services run on servers of Hetzner Online
+  GmbH in Germany.` / DE `Unsere Dienste laufen auf Servern der Hetzner Online GmbH in Deutschland.` Add Hetzner's
+  certifications only after you confirm them. `[CONFIRM]`
+
+`dataProtection.retention.content`, backups line
+- Local backups are GPG-encrypted and pruned after 14 days (`backup.sh`, `RETAIN_DAYS=14`), so "retained for up to 14 days"
+  holds for the local copy. `[CONFIRM]` the cron is installed (the Hetzner README said it was not at the time it was
+  written) and what an offsite copy (rclone to a storage box) retains, since that is also a backup.
+
+Services whose status only the server knows (set in its `.env`; the repo supports them but cannot say they are on) `[CONFIRM]`:
+- Gemini for extraction and matching: via Vertex AI (EU) or the Gemini API with an API key? The page says Vertex AI. They
+  differ in where data goes and in the contract that covers it.
+- Anthropic: the page says it powers the in-app chat. On self-host the documented chat model is Gemini
+  (`FIBUKI_CHAT_MODEL`); is Anthropic still used in production?
+- Google Cloud Vision (OCR), LangFuse: still in use after the move?
+- Missing from the page today: Stripe (payments), the outbound mail provider behind `FIBUKI_SMTP_*` (name it), FinAPI
+  (bank connection, if live; TrueLayer is listed), Google sign-in. Each needs an entry if it is active.
+
+## D2. Rate limiting of connection registration (one line for `dataCollection`, optional)
+
+To limit abuse of the open registration endpoint we keep a hash of the caller's IP address for at most the current one-hour
+window and then delete it. EN: `• Security: a short-lived hash of your IP address when an app registers a connection, kept
+for up to an hour to prevent abuse.` DE: `• Sicherheit: ein kurzlebiger Hashwert Ihrer IP-Adresse, wenn eine App eine Verbindung
+registriert, höchstens eine Stunde gespeichert, um Missbrauch zu verhindern.` The host's general rate limiter and Caddy's
+access log also see IP addresses; check whether the page already covers server logs. `[CONFIRM]`
 
 ## E. Page housekeeping
 

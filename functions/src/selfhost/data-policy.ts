@@ -75,6 +75,7 @@ export const TOP_LEVEL_POLICIES: Readonly<Record<string, CollectionPolicy>> = {
   // authorization codes. Server-only; the grants themselves live in apiKeys.
   oauthClients: denied,
   oauthCodes: denied,
+  oauthRateLimits: denied,
   invoiceShares: denied,
   // ECB reference rates (#92): server-side only, and not user data at all.
   fxReferenceRates: denied,
@@ -91,6 +92,17 @@ export const TRANSACTION_HISTORY_POLICY: CollectionPolicy = {
   create: "authed",
   update: "none",
   delete: "none",
+};
+
+/**
+ * Single documents inside a users/{uid}/<subtree> that are stricter than the subtree, keyed
+ * "<subtree>/<docId>". Checked before SUBTREE_POLICIES.
+ */
+export const SUBTREE_DOC_POLICIES: Readonly<Record<string, CollectionPolicy>> = {
+  // Onboarding state is decided on the server (onboarding/onboardingState.ts) and changed through
+  // callables. The client only reads it: a client write could mark steps done or change where the
+  // user came from.
+  "settings/onboarding": { read: "authed", create: "none", update: "none", delete: "none" },
 };
 
 /** users/{uid}/<name>/... — uid must equal auth.uid, then this table. */

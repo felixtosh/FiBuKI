@@ -378,6 +378,21 @@ Plus, outside the box: the `fibuki.com` A/AAAA records, and **re-registering the
 Gmail OAuth redirect** at Google — that one lives on the web host, unlike the Better
 Auth sign-in callback which lives on the API host and does not move.
 
+### Connected apps (ChatGPT, Claude, Codex)
+
+`FIBUKI_WEB_ORIGIN` is also the **OAuth issuer** and the MCP resource URL for connected
+apps. The first non-`*` entry wins (the same value that feeds CORS and Better Auth), and with
+none set it falls back to `https://fibuki.com`, so a deployment on another domain must set it
+or its apps will discover the wrong server. Apps cache what they discovered, so change it before
+anyone connects, not after.
+
+The web host has to reach, through Caddy to `fibuki-web`: `/.well-known/oauth-authorization-server`,
+`/.well-known/oauth-protected-resource/*`, `/api/oauth/*`, `/oauth/authorize` and `/api/mcp/sse`.
+Registration (`/api/oauth/register`) is rate limited per caller address and globally; the address is the
+first `X-Forwarded-For` entry, which Caddy sets and `fibuki-web` passes on, so do not put another proxy in
+front that appends client-supplied values. A daily job (`cleanupOAuth`) removes expired authorization codes,
+finished rate-limit windows and registered clients that were never given a grant.
+
 `fibuki-web` must be rebuilt, not merely restarted: every `NEXT_PUBLIC_*` is inlined
 at build time, so a runtime change to them is silently ignored.
 

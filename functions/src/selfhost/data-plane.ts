@@ -36,6 +36,7 @@ import type { TokenVerifier } from "./host";
 import {
   Access,
   CollectionPolicy,
+  SUBTREE_DOC_POLICIES,
   SUBTREE_POLICIES,
   TOP_LEVEL_POLICIES,
   TRANSACTION_HISTORY_POLICY,
@@ -149,6 +150,10 @@ function resolveDoc(segments: string[], uid: string): Resolved {
       throw new DataPlaneError("permission-denied", "cannot access another user's document");
     }
     return { policy: USER_DOC_POLICY, uidKeyed: false };
+  }
+  if (segments[0] === "users" && segments.length === 4 && segments[1] === uid) {
+    const strict = SUBTREE_DOC_POLICIES[`${segments[2]}/${segments[3]}`];
+    if (strict) return { policy: strict, uidKeyed: false };
   }
   return resolveCollection(segments.slice(0, -1), uid);
 }

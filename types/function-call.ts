@@ -61,6 +61,7 @@ export type CloudFunctionName =
   // Import operations
   | "bulkCreateTransactions"
   | "createImportRecord"
+  | "applyImportRemap"
   | "createDraftImport"
   | "updateDraftMappings"
   | "deleteDraftImport"

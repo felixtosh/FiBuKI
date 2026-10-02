@@ -412,6 +412,33 @@ describe("data plane: write", () => {
     expect((await db.collection(`users/${USER}/workerRequests`).doc("wr-2").get()).exists).toBe(true);
   });
 
+  it("the onboarding record is readable by its owner but never writable from the client", async () => {
+    await db.doc(`users/${USER}/settings/onboarding`).set({ isComplete: false, currentStep: "set_identity" });
+    await drainTriggers();
+    const path = `users/${USER}/settings/onboarding`;
+
+    expect((await call("get", { path })).status).toBe(200);
+    for (const op of [
+      { type: "set", path, data: { isComplete: true } },
+      { type: "set", path, data: { isComplete: true }, merge: true },
+      { type: "update", path, data: { origin: "chatgpt" } },
+      { type: "delete", path },
+    ]) {
+      const r = await call("write", { ops: [op] });
+      expect(r.status, `${op.type}`).toBe(403);
+    }
+    const stored = (await db.doc(path).get()).data()!;
+    expect(stored.isComplete).toBe(false);
+
+    // Neighbouring settings documents are unaffected.
+    const other = await call("write", {
+      ops: [{ type: "set", path: `users/${USER}/settings/userData`, data: { theme: "dark" } }],
+    });
+    expect(other.status).toBe(200);
+    // And it is still the caller's own: another user's is out of reach.
+    expect((await call("get", { path: `users/${OTHER}/settings/onboarding` })).status).toBe(403);
+  });
+
   it("rejects a malformed __ts value as 400, not 500", async () => {
     const r = await call("write", {
       ops: [{ type: "add", path: "partners", data: { userId: USER, at: { __ts: [1, 9_999_999_999] } } }],

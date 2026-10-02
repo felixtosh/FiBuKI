@@ -97,6 +97,13 @@ describe("tools/list", () => {
     });
   });
 
+  it("marks get_profile as ChatGPT's profile tool", async () => {
+    const { result } = await (await post(rpc("tools/list"))).json();
+    const profile = result.tools.find((t: { name: string }) => t.name === "get_profile");
+    expect(profile._meta["openai/profile"]).toBe(true);
+    expect(profile.annotations.readOnlyHint).toBe(true);
+  });
+
   it("attaches each widget to the tool whose result it renders", async () => {
     const { result } = await (await post(rpc("tools/list"))).json();
     const byName = Object.fromEntries(result.tools.map((t: { name: string }) => [t.name, t]));

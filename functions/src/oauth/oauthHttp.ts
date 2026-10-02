@@ -13,6 +13,7 @@ import {
   parseClientRegistration,
   protectedResourceMetadata,
 } from "./oauthCore";
+import { clientAddress, takeRegistrationSlot } from "./oauthRateLimit";
 import {
   exchangeAuthorizationCode,
   refreshGrant,
@@ -30,6 +31,7 @@ const CORS = {
 
 interface Req {
   method: string;
+  headers?: Record<string, unknown>;
   query: Record<string, unknown>;
   body?: unknown;
 }
@@ -95,7 +97,14 @@ export const oauthMetadata = endpoint("GET", async (req, res) => {
 /** RFC 7591 dynamic client registration. Open, because ChatGPT and Claude register themselves. */
 export const oauthRegister = endpoint("POST", async (req, res) => {
   const registration = parseClientRegistration(req.body);
-  const client = await registerClient(getFirestore(), registration);
+  const db = getFirestore();
+  const slot = await takeRegistrationSlot(db, clientAddress(req.headers));
+  if (!slot.allowed) {
+    res.set({ "Retry-After": String(slot.retryAfterSeconds) });
+    res.status(429).json({ error: "temporarily_unavailable", error_description: "Too many registrations, try again later" });
+    return;
+  }
+  const client = await registerClient(db, registration);
   res.status(201).json({
     client_id: client.id,
     client_id_issued_at: Math.floor(Date.now() / 1000),

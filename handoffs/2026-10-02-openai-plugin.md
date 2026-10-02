@@ -468,3 +468,41 @@ for a policy URL covering what the app collects) and before more people connect 
 
 I can draft the EN and DE wording for 1 to 3 as a commit for review once you confirm point 4's facts (hosting region,
 processors in use); a lawyer or the data protection contact should sign off before it goes live.
+
+
+## Follow-ups (done 2026-10-02, after phase 4)
+
+- **OAuth housekeeping** (`functions/src/oauth/cleanupOAuth.ts`, daily 04:20 UTC, found by the self-host host like any
+  scheduled export): authorization codes go a day after they expire (a used code keeps detecting reuse until then);
+  registered clients that were never given a grant go after 90 days (one that ever had a grant stays: apps cache their
+  client_id); finished rate-limit windows go.
+- **Registration rate limit** (`oauthRateLimit.ts`): 20 registrations per address per hour and 300 globally, counters in
+  `oauthRateLimits` (server-only in data-policy), 429 + `Retry-After`. The address is the first `X-Forwarded-For` entry:
+  `lib/api/oauth-proxy.ts` now passes it, Caddy sets it, and it is stored only as a 24-hex-char hash for the window. Token
+  exchange is not limited here (inputs are 256-bit secrets; the host's per-address limiter bounds its cost).
+- **Onboarding record is server-written** (`SUBTREE_DOC_POLICIES` in `selfhost/data-policy.ts`, used by `data-plane.ts`):
+  `users/{uid}/settings/onboarding` is readable by its owner, never writable from the client. Other settings docs unchanged.
+  `firestore.rules` (frozen rollback project) already denies everything.
+- **`get_profile`**: read-only, returns a stable opaque `fbp_...` id (sha256 of a fixed prefix and the user id), marked
+  `openai/profile`.
+- **Deploy README**: `FIBUKI_WEB_ORIGIN` is the OAuth issuer / MCP resource; routes that must reach the web host; the
+  forwarded-address assumption; the cleanup job (`deploy/selfhost/README-hetzner.md`, "Connected apps").
+- **Dedupe has one copy** (`functions/src/imports/dedupe.ts`): investment import (`bulkCreateTrades` computes the hash,
+  ignores the client's; nothing reads a trade's hash back, so it is computed on the stored absolute values), remap
+  (`applyImportRemap` callable: the browser parses with the new mapping and sends values, the server checks ownership,
+  hashes and writes; was a client-side batch write), TrueLayer routes (import `computeDedupeHash` from the functions),
+  and the dead client `syncBankTransactions` / `checkDuplicatesBatch` / `generateDedupeHash` are deleted.
+  `tests/dedupe-single-copy.test.mjs` fails if a client copy returns.
+  Left on purpose: `lib/test-data/generate-test-transactions.ts` (test-data generator, its own private hash),
+  `hooks/use-import.ts` `computeCsvHash` (hash of the whole file, a different thing), and the provider-id hashes in
+  `functions/src/banking` / `finapi` (the bank's transaction id, not content).
+- **Also fixed on the way**: `tests-components/plugin-widgets.test.tsx` failed the root typecheck (jsdom has no types);
+  added `tests-components/jsdom.d.ts`. Account deletion now deletes `apiKeys` (see the privacy draft).
+
+Still open, and why:
+- Real-client testing in ChatGPT / Claude / Codex and the OpenAI submission (need accounts and a person).
+- CIMD client registration (optional; DCR works for all three).
+- "Sign in with ChatGPT" waitlist (a request to OpenAI, not code).
+- `docs/casa/05-tier2-checklist.md` row 12.6 wording (human edit).
+- Re-entering the connect flow after an access request is approved (the person restarts it from the assistant).
+- Privacy page: draft in `handoffs/2026-10-02-privacy-draft.md` is waiting on the `[CONFIRM]` items there.

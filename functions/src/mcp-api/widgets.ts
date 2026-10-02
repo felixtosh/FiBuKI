@@ -41,6 +41,8 @@ export function toolMeta(toolName: string): Record<string, unknown> | undefined 
     meta["openai/outputTemplate"] = WIDGET_URIS[widget];
   }
   if (toolName === "upload_file") meta["openai/fileParams"] = ["file"];
+  // ChatGPT asks the app for who the user is through the tool marked as the profile.
+  if (toolName === "get_profile") meta["openai/profile"] = true;
   return Object.keys(meta).length ? meta : undefined;
 }
 

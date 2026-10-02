@@ -170,3 +170,16 @@ describe("list_pending_matches", () => {
     expect(limited.total).toBe(2);
   });
 });
+
+describe("get_profile", () => {
+  it("returns a stable opaque id that differs per user and does not contain the user id", async () => {
+    const { handleTool } = await import("../handlers");
+    const a1 = (await handleTool("user-a-secret-uid", "get_profile", {})) as { profileId: string };
+    const a2 = (await handleTool("user-a-secret-uid", "get_profile", {})) as { profileId: string };
+    const b = (await handleTool("user-b", "get_profile", {})) as { profileId: string };
+    expect(a1.profileId).toBe(a2.profileId);
+    expect(a1.profileId).not.toBe(b.profileId);
+    expect(a1.profileId).toMatch(/^fbp_[0-9a-f]{32}$/);
+    expect(a1.profileId).not.toContain("secret");
+  });
+});

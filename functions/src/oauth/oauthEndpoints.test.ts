@@ -51,7 +51,7 @@ interface FakeRes {
   body: unknown;
 }
 
-async function call(fn: unknown, method: string, opts: { query?: Record<string, unknown>; body?: unknown } = {}): Promise<FakeRes> {
+async function call(fn: unknown, method: string, opts: { query?: Record<string, unknown>; body?: unknown; headers?: Record<string, string> } = {}): Promise<FakeRes> {
   const out: FakeRes = { statusCode: 200, headers: {}, body: undefined };
   const res = {
     set(h: Record<string, string>) {
@@ -78,7 +78,7 @@ async function call(fn: unknown, method: string, opts: { query?: Record<string, 
       return res;
     },
   };
-  await (fn as (req: unknown, res: unknown) => Promise<void>)({ method, query: opts.query ?? {}, body: opts.body, headers: {} }, res);
+  await (fn as (req: unknown, res: unknown) => Promise<void>)({ method, query: opts.query ?? {}, body: opts.body, headers: opts.headers ?? {} }, res);
   return out;
 }
 
@@ -151,6 +151,34 @@ describe("registration", () => {
 
     const secret = await call(http.oauthRegister, "POST", { body: { redirect_uris: [REDIRECT], token_endpoint_auth_method: "client_secret_post" } });
     expect(secret.body).toMatchObject({ error: "invalid_client_metadata" });
+  });
+});
+
+describe("registration limit", () => {
+  const register = (ip: string) =>
+    call(http.oauthRegister, "POST", {
+      body: { client_name: "Spam", redirect_uris: ["http://127.0.0.1:4321/cb"] },
+      headers: { "x-forwarded-for": `${ip}, 10.0.0.1` },
+    });
+
+  it("answers 429 with Retry-After once one address has used its registrations, and only that address", async () => {
+    for (let i = 0; i < 20; i++) expect((await register("203.0.113.9")).statusCode).toBe(201);
+
+    const blocked = await register("203.0.113.9");
+    expect(blocked.statusCode).toBe(429);
+    expect(Number(blocked.headers["retry-after"])).toBeGreaterThan(0);
+    expect(blocked.body).toMatchObject({ error: "temporarily_unavailable" });
+
+    expect((await register("198.51.100.4")).statusCode).toBe(201);
+  });
+
+  it("rejects bad input before a slot is spent", async () => {
+    const bad = await call(http.oauthRegister, "POST", {
+      body: { redirect_uris: ["http://evil.example/cb"] },
+      headers: { "x-forwarded-for": "203.0.113.50" },
+    });
+    expect(bad.statusCode).toBe(400);
+    expect(store.queryDocs("oauthRateLimits", [])).toHaveLength(0);
   });
 });
 

@@ -1804,6 +1804,14 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "type": "object",
       "properties": {}
     }
+  },
+  {
+    "name": "get_profile",
+    "description": "A stable, opaque identifier for the signed-in FiBuKI user. Lets an assistant recognise the same person across conversations without learning their email or user id. Read-only.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
   }
 ];
 

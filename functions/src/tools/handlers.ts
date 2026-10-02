@@ -331,6 +331,8 @@ export async function handleTool(
       return undoIssueInvoice(userId, args);
 
     // Status
+    case "get_profile":
+      return { profileId: `fbp_${createHash("sha256").update(`fibuki-profile:${userId}`).digest("hex").slice(0, 32)}` };
     case "get_automation_status":
       return getAutomationStatus(userId);
 

@@ -9,7 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { functionsUrl, FUNCTIONS_URL_UNSET_ERROR } from "@/lib/api/functions-origin";
 
 /** Response headers worth passing back from the function. */
-const PASS_THROUGH = ["content-type", "cache-control", "pragma", "allow", "access-control-allow-origin", "access-control-allow-methods", "access-control-allow-headers"];
+const PASS_THROUGH = ["content-type", "cache-control", "pragma", "allow", "retry-after", "access-control-allow-origin", "access-control-allow-methods", "access-control-allow-headers"];
 
 export async function proxyOAuth(
   request: NextRequest,
@@ -26,10 +26,16 @@ export async function proxyOAuth(
   for (const [key, value] of Object.entries(extraQuery)) target.searchParams.set(key, value);
 
   const hasBody = request.method === "POST";
+  // The function sits behind this proxy, so the caller's address is only known here. Caddy replaces any
+  // forwarded address a client sent, so the first entry is the real one; the backend rate-limits on it.
+  const client = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+  const outgoing: Record<string, string> = {};
+  if (hasBody) outgoing["Content-Type"] = request.headers.get("content-type") ?? "application/json";
+  if (client) outgoing["X-Forwarded-For"] = client;
   try {
     const upstream = await fetch(target, {
       method: request.method,
-      headers: hasBody ? { "Content-Type": request.headers.get("content-type") ?? "application/json" } : undefined,
+      headers: outgoing,
       body: hasBody ? await request.text() : undefined,
       cache: "no-store",
     });

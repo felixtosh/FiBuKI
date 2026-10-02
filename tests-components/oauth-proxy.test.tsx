@@ -35,6 +35,21 @@ describe("proxyOAuth", () => {
     expect(await res.text()).toBe('{"access_token":"fk_x"}');
   });
 
+  it("passes the caller's address on (first forwarded entry only) so the backend can rate-limit it, and passes Retry-After back", async () => {
+    fetchMock.mockResolvedValue(upstream('{"error":"temporarily_unavailable"}', { status: 429, headers: { "content-type": "application/json", "retry-after": "120" } }));
+    const res = await proxyOAuth(
+      new NextRequest("https://fibuki.com/api/oauth/register", {
+        method: "POST",
+        body: "{}",
+        headers: { "content-type": "application/json", "x-forwarded-for": "203.0.113.7, 10.0.0.2" },
+      }),
+      "oauthRegister"
+    );
+    expect(fetchMock.mock.calls[0][1].headers).toEqual({ "Content-Type": "application/json", "X-Forwarded-For": "203.0.113.7" });
+    expect(res.status).toBe(429);
+    expect(res.headers.get("retry-after")).toBe("120");
+  });
+
   it("passes a GET's query through and adds the document the route stands for", async () => {
     fetchMock.mockResolvedValue(upstream("{}"));
     await proxyOAuth(new NextRequest("https://fibuki.com/oauth?client_id=oc_1&state=a%2Fb"), "oauthMetadata", { doc: "protected-resource" });

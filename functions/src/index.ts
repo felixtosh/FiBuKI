@@ -187,6 +187,7 @@ export {
 export {
   bulkCreateTransactionsCallable as bulkCreateTransactions,
   createImportRecordCallable as createImportRecord,
+  applyImportRemapCallable as applyImportRemap,
   createDraftImportCallable as createDraftImport,
   updateDraftMappingsCallable as updateDraftMappings,
   deleteDraftImportCallable as deleteDraftImport,
@@ -225,6 +226,7 @@ export { findReceiptForTransactionCallable as findReceiptForTransaction } from "
 
 // FX reference rates (ECB feed refresh — § 20 Abs 6 UStG method 2)
 export { scheduledRefreshEcbRates } from "./fx/refreshEcbRates";
+export { cleanupOAuth } from "./oauth/cleanupOAuth";
 
 // Report operations
 export {
