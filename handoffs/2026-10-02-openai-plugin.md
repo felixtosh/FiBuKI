@@ -1,8 +1,9 @@
 # Workstream: FiBuKI as an OpenAI plugin (ChatGPT + Codex)
 
-**Status (2026-10-02, v3):** Phase 1 (MCP server modernised) is DONE on branch
-`claude/sharp-meitner-w8f2qf`. Felix's decisions are recorded below. Next: Phase 2
-(Codex plugin, skills only) and Phase 3 (onboarding simplification), one session each.
+**Status (2026-10-02, v4):** Phase 1 (MCP server modernised) and Phase 2 (plugin package
+with three skills, scripts, evaluations) are DONE on branch `claude/sharp-meitner-w8f2qf`,
+plus the server-side dedupe below. Not yet run in a real Codex or ChatGPT session. Next:
+Phase 3 (onboarding simplification) and Phase 4 (OAuth, widgets), one session each.
 
 Felix's brief: fewer features, great embedded execution, use the mail and file
 services the user already connected, maybe the browser, onboarding parity between
@@ -39,6 +40,8 @@ or VAT logic anywhere.
    those also run async now. Both are fine; the skill offers the choice.
 4. **Everyone is full service.** The track choice (`full_service` / `data_only`)
    goes away. One onboarding.
+5. **Dedupe is server side, always.** No client (web hook, plugin script, skill) may carry
+   its own duplicate check or hash formula; two copies drift.
 
 ## Phase 1 (DONE): MCP server modernised
 
@@ -64,6 +67,38 @@ What changed:
   `next build` was not run.
 
 Still open on the server (Phase 4): OAuth, widgets, profile tool, SSRF guard.
+
+## Phase 2 (DONE): plugin package + server-side dedupe
+
+`integrations/openai-plugin/` (portable Agent Plugins layout, `plugin.json` and `mcp.json`
+validated against the published schemas): skills `fibuki-onboarding`, `fibuki-belege`,
+`fibuki-bank-csv` (each with `agents/openai.yaml` and evaluations, 9 in total), references for
+invoice hunting and bank CSV layouts, and two scripts: `fibuki-csv.mjs` (generated bundle of
+`lib/import` parsers + `src/csv-cli.ts`, rebuilt by `build.mjs`, staleness-checked by a test) and
+`fibuki-upload.mjs`. Tests: `tests/openai-plugin-csv.test.mjs`, `tests/openai-plugin-upload.test.mjs`
+(18, against fixtures and a fake API). README has the Codex install steps.
+
+Found and fixed on the way:
+- **`detectAmountFormat` read dot-decimal columns 100x too large.** `-89.99` parses under
+  German rules too (as -8999), the first parser won the tie, so an N26 export would have been
+  imported as -899900 cents. Ties are now broken by where the separators sit
+  (`lib/import/amount-parsers.ts`). This affects the web import as well.
+- **Dedupe moved to the server.** `functions/src/imports/dedupe.ts` owns the hash formula
+  (pinned to the client function's output by a test) and "already imported by an earlier import".
+  `import_transactions` (it never deduped before, and used another hash) and the web import's
+  `bulkCreateTransactions` both use it, derive the hash themselves, and return `duplicateCount`.
+  Identical lines of one file are kept, across chunks, via a shared `importJobId`.
+  `hooks/use-import.ts` no longer hashes or checks. Rows imported through the API tool before
+  this change carry the old hash and are not recognised.
+- Default import ids are now unique (two calls in the same millisecond used to be "siblings").
+
+**Still client-side (follow-up, same rule applies):** `lib/operations/banking-ops.ts`
+(`checkDuplicatesBatch`, its own `generateDedupeHash`), `app/api/truelayer/{sync,accounts}/route.ts`,
+`lib/truelayer/transform.ts`, `lib/operations/remap-ops.ts`, `hooks/use-investment-import.ts`
+(all call `lib/import/deduplication.ts`), and `functions/src/finapi/syncCallable.ts` with
+`banking/syncBankTransactions.ts` which have their own hash copies. Move each onto
+`imports/dedupe.ts` (the hash formulas differ per provider today; check before unifying) and
+delete `generateDedupeHash` / `checkDuplicatesBatch` from `lib/import/deduplication.ts` when none is left.
 
 ## What the docs confirmed (curl, 2026-10-02)
 
@@ -177,10 +212,10 @@ Check how the portable format declares optional apps (the examples use `.app.jso
 ## Phases
 
 - **Phase 1: MCP modernisation.** DONE (above).
-- **Phase 2: plugin package, skills only.** Works in Codex now with an `fk_` key
-  (`npx @fibukiapp/cli auth --format env`). Test with MCP Inspector and Codex. Evaluations:
-  month close with 3 mail hits + 1 bank fee; plan without `fileUpload`; George CSV in
-  Windows-1252; a request to delete a Transaction.
+- **Phase 2: plugin package, skills only.** DONE (above). Still to do by hand: run it in
+  Codex (first check: the bundled `mcp.json` server against a `config.toml` entry), run the
+  evaluations, test with MCP Inspector, add real anonymised bank exports to
+  `tests/fixtures/openai-plugin`.
 - **Phase 3: onboarding simplification (web, useful without the plugin).**
   - Remove the track choice (`components/onboarding/welcome-choice.tsx`, `types/onboarding.ts`).
   - Trial start: `setOnboardingTrackCallable.ts` starts the trial and derives

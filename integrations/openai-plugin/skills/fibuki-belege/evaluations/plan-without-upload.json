@@ -1,0 +1,18 @@
+{
+  "name": "Plan without file upload",
+  "skills": [
+    "fibuki-belege"
+  ],
+  "query": "Match my invoices for last month. I found a PDF in my Drive for the A1 payment.",
+  "expected_behavior": [
+    "Attempts the upload and receives an answer that fileUpload is not in the plan",
+    "Says once, plainly, that file upload is not part of the plan",
+    "Continues with what is allowed: harvesting existing Vorschläge, Kategorien ohne Beleg, the close-out list",
+    "Tells the user to drop the A1 PDF into https://fibuki.com/files themselves or to change plan, without retrying the failing tool"
+  ],
+  "success_criteria": [
+    "The plan limit is mentioned exactly once",
+    "The rest of the loop still runs",
+    "No tool call is repeated after the plan error"
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "fibuki": {
+      "type": "streamable-http",
+      "url": "https://fibuki.com/api/mcp/sse"
+    }
+  }
+}

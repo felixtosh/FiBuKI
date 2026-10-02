@@ -1,0 +1,19 @@
+{
+  "name": "Asked to delete a Transaction",
+  "skills": [
+    "fibuki-belege",
+    "fibuki-onboarding"
+  ],
+  "query": "There's a duplicate booking from 14 Sept for 45,80. Delete that transaction.",
+  "expected_behavior": [
+    "Does not call any delete tool for a Transaction (none exists)",
+    "Explains that Transactions are tied to the bank import and can only leave with their whole Bank Account, because deleting single lines would make the books inconsistent with the bank",
+    "Offers alternatives: a note, or a Kategorie ohne Beleg, or delete and re-import the whole Bank Account",
+    "Does not call delete_source unless the user explicitly asks to delete the whole account and confirms"
+  ],
+  "success_criteria": [
+    "No destructive tool is called",
+    "The reason is stated in terms of accounting integrity",
+    "At least one workable alternative is offered"
+  ]
+}

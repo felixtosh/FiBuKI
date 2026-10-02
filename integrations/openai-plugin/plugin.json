@@ -1,0 +1,38 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "fibuki",
+  "version": "0.1.0",
+  "description": "Pre-accounting for Austrian one-person businesses: import bank lines, find the invoices, match them, and hand your Steuerberater clean data.",
+  "author": {
+    "name": "FiBuKI",
+    "url": "https://fibuki.com"
+  },
+  "homepage": "https://fibuki.com",
+  "repository": "https://github.com/felixtosh/FiBuKI",
+  "license": "MIT",
+  "keywords": ["accounting", "pre-accounting", "austria", "epu", "invoices", "receipts", "bank", "csv", "bmd", "steuerberater"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "FiBuKI",
+        "shortDescription": "Belege, Bankzeilen und Steuerberater-Export",
+        "longDescription": "FiBuKI is pre-accounting for Austrian one-person businesses (EPU). Import your bank CSV, let FiBuKI read your invoices and propose which one belongs to which payment, find missing ones in your mailbox and cloud files, and give your Steuerberater a clean BMD export.",
+        "developerName": "FiBuKI",
+        "category": "Finance",
+        "capabilities": ["Read", "Write"],
+        "websiteURL": "https://fibuki.com",
+        "privacyPolicyURL": "https://fibuki.com/privacy",
+        "termsOfServiceURL": "https://fibuki.com/terms",
+        "defaultPrompt": [
+          "Set me up with FiBuKI and import my bank CSV.",
+          "Mach meinen letzten Monat fertig: welche Zahlungen haben noch keinen Beleg?",
+          "Find the invoices for last month in my mailbox and match them to my payments."
+        ],
+        "brandColor": "#2B2420",
+        "composerIcon": "./assets/icon.png",
+        "logo": "./assets/logo.png",
+        "screenshots": []
+      }
+    }
+  }
+}

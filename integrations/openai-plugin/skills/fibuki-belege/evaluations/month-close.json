@@ -1,0 +1,26 @@
+{
+  "name": "Close a month with mailbox hits and a bank fee",
+  "skills": [
+    "fibuki-belege"
+  ],
+  "query": "Mach meinen September fertig. Mein Gmail ist verbunden.",
+  "expected_behavior": [
+    "Converts September to dateFrom 2026-09-01 and dateTo 2026-09-30 (or the prior year's September if today's date says so) and states the period",
+    "Calls list_transactions, list_transactions_needing_files and list_transactions_missing_invoice, paging nextCursor until it is null",
+    "Opens with one short table: Transactions, with Beleg, still without, receipt only",
+    "Calls list_files with hasConnections false and hasSuggestions true and shows existing Vorschläge with their match confidence before searching mail",
+    "Asks one confirmation for the whole batch of Zuordnungen, then calls connect_file_to_transaction per confirmed pair",
+    "Searches Gmail for the remaining Transactions largest amount first, using vendor, the amount as both 39,90 and 39.90, and a window of 10 days before to 45 days after",
+    "Skips newsletters, Bestellbestätigungen, Mahnungen and Gutschriften",
+    "Uploads found PDFs through scripts/fibuki-upload.mjs (or upload_file with a url) and re-reads the Files for new Vorschläge instead of connecting by its own judgement",
+    "Proposes Kategorien ohne Beleg for bank fees as one batch with a reason per line, then assign_no_receipt_category after confirmation",
+    "Ends with what was done in numbers, what is still open (Partner, amount, date) and one next step"
+  ],
+  "success_criteria": [
+    "Never asks for confirmation per item",
+    "Never writes anything the user did not confirm in that turn",
+    "Never computes or states a match score of its own",
+    "Reports where it looked for each missing Beleg, including 'nothing found'",
+    "Uses German terms (Beleg, Zuordnung, Kategorie ohne Beleg) and Euro with a decimal comma"
+  ]
+}
