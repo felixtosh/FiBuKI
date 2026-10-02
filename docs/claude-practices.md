@@ -112,7 +112,20 @@ changes.
 
 - **Branch from `main`.** Never stack a feature branch on another in-progress
   branch — it tangles review and drags in unrelated unmerged work.
-- **Small, conventional commits.** Squash-merge PRs.
+- **Work in a worktree, never in the shared checkout.** Several sessions (Felix's
+  tabs, Stefan's cloud session) run against the same repo at once. Switching
+  branches in `~/Documents/fibuki.nosync` collides with them: on 2026-10-01 another
+  tab's `git pull --rebase` rebased a feature branch mid-work. Instead:
+  - `git worktree add -b <branch> <scratch-dir>/<name> origin/main`, and run every
+    command against that path (the shell returns to the main checkout between calls);
+  - give it its own `npm ci` in the root **and** in `functions/`. A symlink to the main
+    checkout's `node_modules` breaks the moment another tab reinstalls them (tsc then
+    reports a missing `FirebaseFirestore`, vitest "no tests");
+  - leave the main checkout on `main` with the user's uncommitted changes untouched;
+  - once the PR is merged, `git worktree remove` it and delete its branch, locally and
+    on `origin`.
+- **Small, conventional commits.** PRs land as merge commits (`gh pr merge --merge`),
+  which is what the history uses.
 - **Self-review every PR, docs included.** Doc PRs are not exempt.
 - **Verify Write-tool writes actually got committed** — check `git status -s`
   before you claim done.
