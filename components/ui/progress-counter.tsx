@@ -93,7 +93,7 @@ function ProgressRing({ percent }: { percent: number }) {
 
   return (
     <svg width="20" height="20" viewBox="0 0 20 20" className="flex-shrink-0" aria-hidden="true">
-      <circle cx="10" cy="10" r={radius} fill="none" stroke="currentColor" strokeWidth="2.5" className="text-muted/40" />
+      <circle cx="10" cy="10" r={radius} fill="none" stroke="currentColor" strokeWidth="2.5" className="text-muted-foreground/25" />
       <circle
         cx="10"
         cy="10"
