@@ -76,7 +76,9 @@ export const TOP_LEVEL_POLICIES: Readonly<Record<string, CollectionPolicy>> = {
 
 /**
  * transactions/{id}/history is the only client-visible subcollection outside
- * users/: readable/creatable when authenticated (rules), entries immutable.
+ * users/: readable/creatable when authenticated, entries immutable. The
+ * entries carry no userId, so data-plane.ts additionally requires the parent
+ * transaction to be the caller's (firestore.rules never did).
  */
 export const TRANSACTION_HISTORY_POLICY: CollectionPolicy = {
   read: "authed",
@@ -132,6 +134,7 @@ export function isAdminToken(token: Record<string, unknown> | undefined): boolea
  *   admin                             admins
  *   authed                            everyone in the tenant
  *   none, unlisted, other subtrees    nobody (no client can read it)
+ *   transactions/{id}/history         nobody (owner is the parent, see below)
  */
 export type ReadAudience =
   | { kind: "users"; uids: string[] }
@@ -152,7 +155,10 @@ export function readAudience(
     return { kind: "users", uids: [uid] };
   }
   if (segs.length === 3 && segs[0] === "transactions" && segs[2] === "history") {
-    return audienceFor(TRANSACTION_HISTORY_POLICY.read, id, versions);
+    // Readable only by the parent transaction's owner (data-plane.ts), and an
+    // entry carries no userId to name them. "Everyone" announced every edit
+    // to every user; nobody costs only freshness, and no client listens here.
+    return { kind: "nobody" };
   }
   if (segs.length !== 1) return { kind: "nobody" };
 
