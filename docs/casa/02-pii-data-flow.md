@@ -11,7 +11,7 @@ This document maps every category of personal data FiBuKI handles: where it ente
 | Class | Examples | Sensitivity |
 | --- | --- | --- |
 | **A — Authentication secrets** | Firebase password hashes, OAuth refresh tokens, encryption key | Critical |
-| **B — Google user data** | Gmail message headers, attachments, sender info | High (restricted scope) |
+| **B: Google user data** | Gmail message headers, attachments, sender info; Google Drive file names and contents from the chosen folder | High (restricted scope) |
 | **C — Financial data** | Bank-transaction records, partner names, amounts, IBANs | High |
 | **D — Account identity** | Email address, display name, locale | Medium |
 | **E — Behavioural** | Usage logs (function calls), AI usage logs | Low |
@@ -24,6 +24,9 @@ This document maps every category of personal data FiBuKI handles: where it ente
 | Google Sign-In | D | Google OIDC | OAuth 2.0, `id_token` verified server-side |
 | Gmail consent (`/api/gmail/authorize`) | A, B | Google OAuth | Random `state`, server-side callback |
 | Gmail API calls (`searchGmailCallable`, `downloadAttachmentCallable`) | B | Google Gmail | App Check + ID token, per-request authz |
+| Drive consent (`/api/gdrive/authorize`) | A, B | Google OAuth | Server-bound random `state` + cookie, server-side callback |
+| Drive folder sync (`syncFolderIntegrations`, `syncFolderIntegration`) | B | Google Drive | Scheduled / owner-only callable, per-request ownership check |
+| Dropbox consent and sync (same shape as Drive) | A, C | Dropbox | Server-bound `state`, read-only scopes |
 | Open Banking aggregation (TrueLayer/finAPI) | C | Bank | PSD2-licensed aggregator, OAuth |
 | CSV bank import | C | User upload | Server-side validation, per-user storage path |
 | Receipt upload | C | User | Mime sniff, AV scan (Cloud Storage), per-user path |
@@ -63,6 +66,8 @@ Firestore rules enforce this at the database layer; bypassing the rules is not p
 | Destination | Data class | Purpose | Legal basis |
 | --- | --- | --- | --- |
 | Google Gmail API | A (token), B (request) | Fulfil user-initiated search | User consent (OAuth) |
+| Google Drive API | A (token), B (request) | Import the documents of the folder the user chose | User consent (OAuth) |
+| Dropbox API | A (token), C (request) | Import the documents of the folder the user chose | User consent (OAuth) |
 | Google Vertex AI (Gemini) | B (attachment bytes), C (transaction text) | Document extraction, CSV column matching, partner matching | Legitimate interest; DPA in place with Google |
 | Anthropic Claude API | B (chat content), C (transaction text) | Chat / agent feature | Consent; Anthropic DPA in place |
 | LangFuse | Trace metadata (redacted) | Observability | Legitimate interest; EU-hosted |

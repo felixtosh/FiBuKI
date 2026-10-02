@@ -451,6 +451,20 @@ _Deutsch_: Synchronisierung (the act: synchronisieren — Gmail's own word)
 _Avoid_: fetch, poll, import (an **Import** is the bank side)
 _Avoid (de)_: Abruf, Import, Laden
 
+**Folder Integration**:
+A folder in a cloud store (Dropbox, Google Drive) the user connected so Files arrive on their
+own: one per folder, holding its credentials, the chosen folder and sync state. Read-only
+toward the store (ADR-0009).
+_Deutsch_: Ordner-Anbindung
+_Avoid_: cloud sync, storage connector, drive integration
+
+**Gone at Source**:
+A File whose original was deleted from, or moved out of, its Folder Integration's folder.
+Unconnected Files follow into the deleted state; connected ones stay unless the integration
+says otherwise (ADR-0009).
+_Deutsch_: Im Ordner nicht mehr vorhanden
+_Avoid_: orphaned, removed upstream, desynced
+
 ## Where it runs
 
 **Cloud**:

@@ -2,29 +2,21 @@
 
 import Link from "next/link";
 import { useTranslations } from "next-intl";
-import { ExternalLink, FileText, Mail, Upload } from "lucide-react";
+import { Cloud, ExternalLink, FileText, Globe, Mail, Upload } from "lucide-react";
 import { InfoPopover } from "@/components/ui/info-popover";
+import { fileSourceKind, fileSourceView, type FileSourceIcon } from "@/lib/files/file-source";
 import { cn } from "@/lib/utils";
 import type { TaxFile } from "@/types/file";
 
-type FileSourceKind = "gmail" | "forwarding" | "invoicing" | "upload";
-
-function fileSourceKind(file: TaxFile): FileSourceKind {
-  if (file.sourceType?.startsWith("gmail")) return "gmail";
-  if (file.sourceType?.startsWith("email_inbound")) return "forwarding";
-  if (file.sourceType === "fibuki_invoice" || file.invoiceId || file.isFibukiGenerated) {
-    return "invoicing";
-  }
-  return "upload";
-}
-
-const ICONS = { gmail: Mail, forwarding: Mail, invoicing: FileText, upload: Upload };
+const ICONS = { mail: Mail, file: FileText, globe: Globe, cloud: Cloud, upload: Upload };
 
 /**
  * Where a File came from, worded and iconed the same in the Files list and the
  * File detail panel: the mailbox address for a mail import, "Email
- * forwarding", "Rechnungserstellung" for a FiBuKI-issued invoice, or "Upload".
- * `linked` makes a mail source a link to its integration (the detail panel).
+ * forwarding", "Rechnungserstellung" for a FiBuKI-issued invoice, the domain
+ * of a browser pull, or "Upload". What each source shows is one table in
+ * `lib/files/file-source`. `linked` makes a source with a page of its own a
+ * link to it (the detail panel).
  */
 export function FileSourceLabel({
   file,
@@ -36,38 +28,25 @@ export function FileSourceLabel({
   className?: string;
 }) {
   const t = useTranslations("files.source");
-  const kind = fileSourceKind(file);
-  const text =
-    kind === "gmail"
-      ? file.gmailIntegrationEmail || t("gmail")
-      : kind === "forwarding"
-        ? t("forwarding")
-        : kind === "invoicing"
-          ? t("invoicing")
-          : t("upload");
-  const href =
-    kind === "gmail" && file.gmailIntegrationId
-      ? `/integrations/${file.gmailIntegrationId}`
-      : kind === "forwarding"
-        ? "/integrations/email-inbound"
-        : null;
+  const view = fileSourceView(file);
+  const text = view.text ?? t(view.labelKey);
 
   const classes = cn("inline-flex items-center gap-1.5 min-w-0", className);
-  const asLink = linked && href !== null;
+  const asLink = linked && view.href !== null;
 
   return asLink ? (
-    <Link href={href as string} className={cn(classes, "hover:text-foreground transition-colors")}>
-      <SourceContent kind={kind} text={text} external />
+    <Link href={view.href as string} className={cn(classes, "hover:text-foreground transition-colors")}>
+      <SourceContent icon={view.icon} text={text} external />
     </Link>
   ) : (
     <span className={classes}>
-      <SourceContent kind={kind} text={text} />
+      <SourceContent icon={view.icon} text={text} />
     </span>
   );
 }
 
-function SourceContent({ kind, text, external = false }: { kind: FileSourceKind; text: string; external?: boolean }) {
-  const Icon = ICONS[kind];
+function SourceContent({ icon, text, external = false }: { icon: FileSourceIcon; text: string; external?: boolean }) {
+  const Icon = ICONS[icon];
   return (
     <>
       <Icon className="h-3.5 w-3.5 shrink-0" />

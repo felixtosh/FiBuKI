@@ -120,6 +120,26 @@ FiBuKI is a bookkeeping pre-accounting application that helps small business own
      • Stored in Cloud Storage under /users/{uid}/files/{id}
 ```
 
+## 8a. Defence in depth: Folder Integration data flow (Drive, Dropbox)
+
+```
+1. User clicks "Connect" on /integrations/gdrive (or /dropbox)
+2. /api/gdrive/authorize (session-authenticated) stores a server-side state bound to the
+   user, sets a CSRF cookie, returns the consent URL; scope drive.readonly (read-only)
+3. Google consent screen
+4. /api/gdrive/callback:
+     • Verifies the cookie against state, then consumes the server-side state (one use)
+       to learn the user; the uid never comes from the browser
+     • Exchanges code → tokens server side; refuses a grant without the scope
+     • Encrypts the refresh token (AES-256-GCM); refuses to store one it cannot encrypt
+     • Writes folderIntegrations/{id} (client-readable) and folderTokens/{id} (server-only)
+5. User picks one folder → setFolderIntegrationFolder (callable, owner-only)
+6. Sync (every 15 min, or on demand): lists only that folder's tree, downloads PDFs and
+   images, stores them as Files, applies the removal policy (ADR-0009) with a circuit breaker
+```
+
+Access control: `folderIntegrations` is readable by its owner and written only by server code; `folderTokens` and `folderEntries` are denied to clients (`functions/src/selfhost/data-policy.ts`). Both OAuth routes and every callable are covered by the cross-user security suite (`functions/src/selfhost/security/`).
+
 ## 9. Logging and monitoring
 
 | Signal | Destination | Retention |
