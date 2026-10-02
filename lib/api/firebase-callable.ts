@@ -33,14 +33,17 @@ export async function callFirebaseFunction<TRequest, TResponse>(
   // that has not said where its backend lives must fail here rather than post the
   // caller's bearer token to a project it does not own.
   const configured = functionsUrl(functionName);
-  const url = USE_EMULATOR
-    ? `http://${EMULATOR_HOST}/${FIREBASE_PROJECT_ID}/${FIREBASE_REGION}/${functionName}`
-    : configured;
+  // The emulator is only the fallback, as in lib/firebase/callable-server.ts: in
+  // dev it used to win, so local chat tools posted to a dead :5001.
+  const url =
+    configured ??
+    (USE_EMULATOR
+      ? `http://${EMULATOR_HOST}/${FIREBASE_PROJECT_ID}/${FIREBASE_REGION}/${functionName}`
+      : null);
   if (!url) throw new Error(FUNCTIONS_URL_UNSET_ERROR);
 
   console.log(`[Firebase Callable] Calling ${functionName} at ${url}`);
   console.log(`[Firebase Callable] Auth token present:`, !!authToken);
-  console.log(`[Firebase Callable] Using emulator:`, USE_EMULATOR);
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
