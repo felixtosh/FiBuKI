@@ -1,9 +1,15 @@
 "use client";
 
-import { useId, useState } from "react";
-import { Check, ChevronDown, Copy, Loader2 } from "lucide-react";
+import { useState } from "react";
+import { Check, Copy, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { DocumentTypeBadge } from "./document-type-badge";
 import { TermGloss } from "./term-gloss";
 import { cn } from "@/lib/utils";
@@ -125,83 +131,97 @@ export function Section11MissingElements({
   );
 }
 
-interface Section11FieldProps {
-  documentType: DocumentType | null | undefined;
-  basis: DocumentTypeBasis | null | undefined;
-  missingElements: Section11Element[] | null | undefined;
-  /** The stored user override. An input to the classifier, never a rival verdict. */
-  isNotInvoice: boolean | null | undefined;
-  /** The File is still being classified; the verdict is not in yet. */
-  classifying?: boolean;
-  /** Blocks the control, e.g. while the File is re-extracted after an undo. */
-  disabled?: boolean;
-  onMarkAsNotInvoice?: () => void;
-  onUnmarkAsNotInvoice?: () => void;
-  className?: string;
-}
-
 /**
- * The § 11 field on the File detail panel (#237).
+ * What a File is, in the File detail panel's top block (#237, #513).
  *
- * At rest it says two things: the verdict, and one sentence that leads with
- * the consequence (can I deduct this) and follows with the reason. On a
- * receipt it also lists the missing elements, because that is the defect to
- * chase; an invoice and an unknown File list none.
- *
- * Everything explaining HOW the verdict was reached (basis, regime, heading,
- * zero-VAT reason, recipient, record quality, citations) is behind a click,
- * not a hover: it is a finding a user may need to act on, and hover is
- * unreachable on touch and invisible to a keyboard.
+ * The § 11 verdict is a dropdown beside Source and Uploaded, and its reasoning
+ * (`Section11Reasoning`) sits behind the info button on the label. It used to
+ * be its own section at the bottom of the panel, with a "Not a financial
+ * document" switch that repeated what the type already says.
  *
  * The one control is the user's override, `isNotInvoice`, and it reaches "not
  * a financial document" and no further. There is deliberately no way to mark a
  * File as satisfying § 11: that is the judgement the classifier exists to
  * make, and a wrong override would be a wrong input VAT claim in the user's
- * own name. It calls the same two handlers the old Quick Info dropdown did, so
- * what is stored does not move.
+ * own name. It calls the same two handlers as before, so what is stored does
+ * not move.
  */
-export function Section11Field({
+interface FileTypeControlProps {
+  documentType: DocumentType | null | undefined;
+  isNotInvoice: boolean | null | undefined;
+  /** Classification is still running: the verdict is not in yet. */
+  classifying?: boolean;
+  disabled?: boolean;
+  onMarkAsNotInvoice?: () => void;
+  onUnmarkAsNotInvoice?: () => void;
+}
+
+export function FileTypeControl({
   documentType,
-  basis,
-  missingElements,
   isNotInvoice,
   classifying = false,
   disabled = false,
   onMarkAsNotInvoice,
   onUnmarkAsNotInvoice,
-  className,
-}: Section11FieldProps) {
-  const [expanded, setExpanded] = useState(false);
-  const headingId = useId();
-  const basisId = useId();
-  const switchId = useId();
+}: FileTypeControlProps) {
+  const labelFor = useDocumentLabel();
 
+  if (classifying) {
+    return (
+      <span className="flex items-center gap-1.5 text-muted-foreground">
+        <Loader2 className="h-3 w-3 animate-spin" />
+        Analyzing...
+      </span>
+    );
+  }
+
+  const markedNotADocument = isNotInvoice === true;
+  return (
+    <Select
+      value={markedNotADocument ? "not-a-document" : "document"}
+      onValueChange={(value) => {
+        if (value === "not-a-document") onMarkAsNotInvoice?.();
+        else onUnmarkAsNotInvoice?.();
+      }}
+      disabled={disabled || (markedNotADocument ? !onUnmarkAsNotInvoice : !onMarkAsNotInvoice)}
+    >
+      <SelectTrigger className="h-7 w-auto min-w-[140px] text-sm">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="document">{labelFor(describeDocumentType(documentType))}</SelectItem>
+        <SelectItem value="not-a-document">Not a financial document</SelectItem>
+      </SelectContent>
+    </Select>
+  );
+}
+
+/**
+ * Why the File is what its Type says (#237): the consequence for input VAT
+ * first, then the missing elements on a receipt, then the basis and the
+ * paragraph citations. The content of the info button on the Type label.
+ */
+export function Section11Reasoning({
+  documentType,
+  basis,
+  missingElements,
+}: {
+  documentType: DocumentType | null | undefined;
+  basis: DocumentTypeBasis | null | undefined;
+  missingElements: Section11Element[] | null | undefined;
+}) {
   const { type: resolvedType } = describeDocumentType(documentType);
   const consequence = describeSection11Consequence(documentType, basis);
   const basisLines = describeDocumentTypeBasis(basis, documentType);
-  const markedNotADocument = isNotInvoice === true;
-  const controlDisabled =
-    disabled ||
-    classifying ||
-    (markedNotADocument ? !onUnmarkAsNotInvoice : !onMarkAsNotInvoice);
 
   return (
-    <section aria-labelledby={headingId} className={cn("space-y-3", className)}>
+    <div className="space-y-3">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1">
-          <h3 id={headingId} className="text-sm font-medium">
-            § 11 UStG
-          </h3>
+          <h3 className="text-sm font-medium">§ 11 UStG</h3>
           <TermGloss term="section11" />
         </div>
-        {classifying ? (
-          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Loader2 className="h-3 w-3 animate-spin" />
-            Analyzing...
-          </span>
-        ) : (
-          <DocumentTypeBadge type={documentType} withTooltip={false} />
-        )}
+        <DocumentTypeBadge type={documentType} withTooltip={false} />
       </div>
 
       <p className="text-sm text-muted-foreground" data-testid="section-11-consequence">
@@ -214,7 +234,6 @@ export function Section11Field({
         )}
       </p>
 
-      {/* A finding, so it stays at rest: only a receipt has one. */}
       <Section11MissingElements
         documentType={documentType}
         elements={missingElements}
@@ -222,55 +241,18 @@ export function Section11Field({
         withCitations={false}
       />
 
-      <div className="flex items-center justify-between gap-3">
-        <label htmlFor={switchId} className="text-sm">
-          Not a financial document
-        </label>
-        <Switch
-          id={switchId}
-          checked={markedNotADocument}
-          disabled={controlDisabled}
-          onCheckedChange={(checked) => {
-            if (checked) onMarkAsNotInvoice?.();
-            else onUnmarkAsNotInvoice?.();
-          }}
-        />
-      </div>
-
-      <div>
-        <button
-          type="button"
-          aria-expanded={expanded}
-          aria-controls={basisId}
-          onClick={() => setExpanded((open) => !open)}
-          className={cn(
-            "inline-flex items-center gap-1 rounded text-xs text-muted-foreground",
-            "hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          )}
-        >
-          How this was decided
-          <ChevronDown
-            className={cn("h-3 w-3 transition-transform", expanded && "rotate-180")}
-          />
-        </button>
-
-        {expanded && (
-          <div id={basisId} className="mt-2 space-y-3">
-            {/* The basis, so a borderline call can be judged instead of argued with. */}
-            <dl className="space-y-1.5">
-              {basisLines.map((line) => (
-                <div key={line.id} className="flex items-start gap-3">
-                  <dt className="text-xs text-muted-foreground shrink-0 w-24">{line.label}</dt>
-                  <dd className="text-xs leading-snug flex-1">{line.text}</dd>
-                </div>
-              ))}
-            </dl>
-            {/* The audit reference for the defects listed above. */}
-            <Section11CitationList documentType={documentType} elements={missingElements} />
+      {/* The basis, so a borderline call can be judged instead of argued with. */}
+      <dl className="space-y-1.5">
+        {basisLines.map((line) => (
+          <div key={line.id} className="flex items-start gap-3">
+            <dt className="text-xs text-muted-foreground shrink-0 w-24">{line.label}</dt>
+            <dd className="text-xs leading-snug flex-1">{line.text}</dd>
           </div>
-        )}
-      </div>
-    </section>
+        ))}
+      </dl>
+      {/* The audit reference for the defects listed above. */}
+      <Section11CitationList documentType={documentType} elements={missingElements} />
+    </div>
   );
 }
 

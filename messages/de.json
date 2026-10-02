@@ -347,6 +347,12 @@
       "deleting": "Lösche…",
       "purge": "{count, plural, one {# Beleg endgültig löschen} other {# Belege endgültig löschen}}",
       "purging": "Lösche endgültig…"
+    },
+    "detail": {
+      "type": "Belegart",
+      "whyType": "Warum diese Belegart",
+      "direction": "Richtung",
+      "whyDirection": "Warum die Richtung geprüft werden sollte"
     }
   }
 }

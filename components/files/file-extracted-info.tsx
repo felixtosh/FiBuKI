@@ -32,9 +32,7 @@ import {
   describeForeignRecipient,
   describeRepairAmbiguity,
   describeInvoiceDirection,
-  INVOICE_DIRECTIONS,
 } from "@/lib/documents/document-type-presentation";
-import { describeLineItemsUnreconciled } from "@/lib/documents/line-item-presentation";
 import { fileDocumentAmount, fileDocumentVatAmount } from "@/lib/files/document-amount";
 
 // Consistent field row component (matching transaction-details.tsx)
@@ -104,8 +102,6 @@ interface FileExtractedInfoProps {
   isParsing?: boolean;
   /** Called when user clicks a field value to search for it */
   onFieldClick?: (searchText: string) => void;
-  /** Called when user changes invoice direction */
-  onDirectionChange?: (direction: InvoiceDirection) => void;
   /** Called when user updates extracted fields */
   onUpdate?: (fields: EditableExtractedFields) => Promise<void>;
   /** True when update is in progress */
@@ -121,7 +117,7 @@ function parseAmountToCents(value: string): number | null {
   return Number.isFinite(parsed) ? Math.round(parsed * 100) : null;
 }
 
-export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsing, onFieldClick, onDirectionChange, onUpdate, isUpdating }: FileExtractedInfoProps) {
+export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsing, onFieldClick, onUpdate, isUpdating }: FileExtractedInfoProps) {
   const convert = useEcbConverter();
   const documentLabel = useDocumentLabel();
   const directionPresentation = describeInvoiceDirection(file.invoiceDirection);
@@ -375,7 +371,6 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
   const effectiveAmount = fileDocumentAmount(file);
   const rateGroups = file.extractedRateGroups || [];
   const hasRateGroups = rateGroups.length > 0;
-  const lineItemsUnreconciledPresentation = describeLineItemsUnreconciled(file);
 
   // The row editor's own delta (#253): the rows are the only editable side,
   // the document total is fixed at whatever the Amount box holds (that box
@@ -550,25 +545,6 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
         </div>
       )}
 
-      {/* Unreconciled line items (#253): a badge naming the failing rate
-          where the damage is localised, rather than rendering the rows
-          unmarked. Shown whenever the flag is set, not gated on "Show more" —
-          this is a finding, the same rank as the ones above. */}
-      {lineItemsUnreconciledPresentation && (
-        <div
-          className={cn(
-            "rounded border p-2 space-y-1",
-            lineItemsUnreconciledPresentation.tone === "warning"
-              ? "border-amber-500/40 bg-amber-500/10"
-              : "border-border bg-muted/40"
-          )}
-        >
-          <Badge variant="outline" className="text-xs">
-            {lineItemsUnreconciledPresentation.label}
-          </Badge>
-          <p className="text-xs text-muted-foreground">{lineItemsUnreconciledPresentation.text}</p>
-        </div>
-      )}
 
       {/* Fields - only show for invoices (not-invoice toggle is in Quick Info now) */}
       {file.extractionComplete && !file.extractionError && !file.isNotInvoice && (
@@ -698,59 +674,6 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
               </label>
             </div>
           )}
-
-          {/*
-            Direction (#233). Until this row existed the field was rendered
-            only as the SIGN of the amount above, where `unknown` fell through
-            to a positive figure — so an undirected purchase read as income and
-            nothing in the product said so. Editable here because the only
-            other way to move it was to edit identity data and hope the
-            backfill picked the file up.
-          */}
-          <FieldRow
-            label="Direction"
-            labelInfo={
-              directionReview ? (
-                <InfoPopover label="Why this direction needs a look">
-                  <div className="space-y-2">
-                    <Badge variant="outline" className="text-xs">
-                      {documentLabel(directionReview)}
-                    </Badge>
-                    <p className="text-xs text-muted-foreground">
-                      {directionReview.text}
-                      {directionReview.suggestion ? ` ${directionReview.suggestion}` : ""}
-                    </p>
-                  </div>
-                </InfoPopover>
-              ) : undefined
-            }
-          >
-            {onDirectionChange ? (
-              <Select
-                value={directionPresentation.direction}
-                onValueChange={(value) => onDirectionChange(value as InvoiceDirection)}
-              >
-                <SelectTrigger className="h-7 w-full text-sm">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {(Object.keys(INVOICE_DIRECTIONS) as InvoiceDirection[]).map((direction) => (
-                    <SelectItem key={direction} value={direction}>
-                      {documentLabel(INVOICE_DIRECTIONS[direction])}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            ) : (
-              <span
-                className={cn(
-                  directionPresentation.direction === "unknown" && "text-muted-foreground"
-                )}
-              >
-                {documentLabel(directionPresentation)}
-              </span>
-            )}
-          </FieldRow>
 
           <FieldRow
             label="VAT"

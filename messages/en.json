@@ -347,6 +347,12 @@
       "deleting": "Deleting…",
       "purge": "{count, plural, one {Purge # file} other {Purge # files}}",
       "purging": "Purging…"
+    },
+    "detail": {
+      "type": "Type",
+      "whyType": "Why this document type",
+      "direction": "Direction",
+      "whyDirection": "Why this direction needs a look"
     }
   }
 }
