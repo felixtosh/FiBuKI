@@ -537,7 +537,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     inputSchema: {
       type: "object",
       properties: {
-        url: { type: "string", description: "URL to download file from" },
+        url: { type: "string", description: "Public https URL to download the file from (port 443, up to 25 MB). Private, local and non-https addresses are refused; use base64 for those." },
         base64: { type: "string", description: "Base64-encoded file content (alternative to url)" },
         fileName: { type: "string", description: "File name with extension" },
         mimeType: { type: "string", description: "MIME type (e.g. application/pdf, image/jpeg)" },

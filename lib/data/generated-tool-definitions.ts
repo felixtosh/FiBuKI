@@ -788,7 +788,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "properties": {
         "url": {
           "type": "string",
-          "description": "URL to download file from"
+          "description": "Public https URL to download the file from (port 443, up to 25 MB). Private, local and non-https addresses are refused; use base64 for those."
         },
         "base64": {
           "type": "string",

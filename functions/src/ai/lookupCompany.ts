@@ -4,6 +4,7 @@ import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { logAIUsage } from "../utils/ai-usage-logger";
 import { MODELS } from "../utils/models";
 import { decodeHtmlEntities } from "../utils/htmlEntities";
+import { fetchPublicUrl } from "../utils/safeFetch";
 import { AutomationMeta } from "../automation/types";
 
 // =============================================================================
@@ -84,25 +85,17 @@ interface LookupCompanyRequest {
   name?: string;
 }
 
-// Try to fetch a page and return its text content
-async function fetchPageContent(url: string): Promise<string | null> {
+/** An impressum page is a few KB of text; anything near this is not one. */
+const COMPANY_PAGE_MAX_BYTES = 1024 * 1024;
+
+// Try to fetch a page and return its text content.
+// The host comes from what the user typed, so it is fetched under the SSRF rules in
+// utils/safeFetch.ts (public https only): a "website" of fibuki-api:8788 or
+// 169.254.169.254 must not make us read our own network and hand it to a model.
+export async function fetchPageContent(url: string): Promise<string | null> {
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
-
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        "User-Agent": "Mozilla/5.0 (compatible; FiBuKI/1.0)",
-        Accept: "text/html,application/xhtml+xml",
-      },
-    });
-
-    clearTimeout(timeoutId);
-
-    if (!response.ok) return null;
-
-    const html = await response.text();
+    const { buffer } = await fetchPublicUrl(url, { maxBytes: COMPANY_PAGE_MAX_BYTES, timeoutMs: 5000 });
+    const html = buffer.toString("utf8");
     // Basic HTML to text conversion - strip tags until stable so split tags
     // (e.g. <scr<b>ipt>) cannot survive one pass
     let text = html;

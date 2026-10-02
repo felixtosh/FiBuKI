@@ -4,8 +4,8 @@
 3 (one onboarding, decided on the server) and the OAuth part of 4 are DONE on branch
 `claude/sharp-meitner-w8f2qf`. Not yet run in a real Codex, ChatGPT or Claude session, and the web
 changes of phases 3 and 4 were not clicked through in a browser (they are covered by component tests and
-an end-to-end test with the official MCP SDK client). Next: the `upload_file` SSRF guard (do first),
-then widgets.
+an end-to-end test with the official MCP SDK client). The `upload_file` SSRF guard is done (below). Next:
+the Chromium finding below, then widgets.
 
 Felix's brief: fewer features, great embedded execution, use the mail and file
 services the user already connected, maybe the browser, onboarding parity between
@@ -187,6 +187,36 @@ Not done / follow-ups:
 6. `oauthToken` / `oauthRegister` rate limiting is only the host's general per-IP limiter.
 7. Docs: `deploy/selfhost/README-hetzner.md` should say `FIBUKI_WEB_ORIGIN` is now also the OAuth issuer.
 
+## SSRF (DONE for fetches, OPEN for the PDF renderer)
+
+`functions/src/utils/safeFetch.ts` is the one way to fetch a URL a user supplied: https only, port 443, no
+credentials; the host must resolve ONLY to public addresses, checked inside the connection's own DNS lookup (the
+address checked is the address connected to, so a rebinding host cannot answer differently); IP literals
+(any spelling the URL parser normalises, plus IPv4-mapped / NAT64 / 6to4 IPv6) checked directly; trailing-dot and
+single-label names (compose services such as `fibuki-api`, `postgres`, `seaweedfs`) refused; every redirect
+re-checked; 25 MB, 30 s and 3-redirect caps, with an absolute deadline so a slow-drip server cannot hold a request.
+136 tests, including the real socket and resolver.
+
+Used by: `upload_file` with a `url` (the hole flagged since phase 1: on the Hetzner box it could reach
+fibuki-api, Postgres and SeaweedFS), and the `lookupCompany` callable, which fetched
+`https://<whatever the user typed before the first "/">/impressum` with a plain `fetch` (found while checking
+for the same pattern). Everything else that calls `fetch` uses fixed hosts (Google, Stripe, FinAPI, ...).
+
+**Open: `convertHtmlToPdf` (functions/src/precision-search/htmlToPdf.ts).** It renders caller-supplied HTML in
+Chromium with JavaScript on and no network restrictions. Callers: the `convertHtmlToPdfCallable` (HTML from the
+authenticated caller), `email-inbound/receiveEmail.ts` (HTML from anyone who can email a user's inbound
+address), precision search (email bodies) and the UVA PDF. HTML can point an iframe or image at an internal
+address (`http://fibuki-api:8788/...`, the metadata address) and the response is rendered into the returned/stored
+PDF. Fix: `page.setJavaScriptEnabled(false)`, `page.setRequestInterception(true)` and abort every request that is
+not data:/about: or http(s) to a public address (reuse `isPublicAddress` / the name rules; resolve in the
+handler), keep remote images from public hosts working. Needs a real-browser check, so it is its own change.
+Chromium resolves DNS itself, so rebinding stays partly open unless the container's egress is also restricted.
+
+Also: `docs/casa/05-tier2-checklist.md` row 12.6 says "SSRF protection: MET - all outbound HTTP uses fixed
+hostnames; no user-controlled URL fetch". That was not true before this change (and is not fully true while the
+renderer is open). Proposed edit, for a human to make: restate it as met by `safeFetch.ts`, with the renderer as
+an exception until fixed.
+
 ## Sign in with ChatGPT / Claude (checked 2026-10-02, optional, not needed for phase 4)
 
 Two different things get called "OAuth with these services". The connect flow needs the first;
@@ -343,7 +373,7 @@ Check how the portable format declares optional apps (the examples use `.app.jso
   - Authorize page = sign-in / sign-up + identity step + handshake page; rebuild
     `integrations/chatgpt` around it.
   - Profile tool with `_meta["openai/profile"]`.
-  - **SSRF guard on `upload_file`** (unrestricted `fetch(url)` at
+  - **SSRF guard on `upload_file`** DONE, see the SSRF section (was: unrestricted `fetch(url)` at
     `functions/src/tools/handlers.ts:2864`; on Hetzner it reaches fibuki-api, Postgres,
     SeaweedFS). https only, public IPs after DNS resolve, size cap, timeout. Do this
     before anything sends it third-party URLs; it is a real finding today.

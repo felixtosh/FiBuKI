@@ -59,6 +59,7 @@ import { getStorage } from "firebase-admin/storage";
 import { createHash, randomUUID } from "crypto";
 import { createFileRecord, findFileByContentHash } from "../files/createFileRecord";
 import { computeDedupeHash, splitDuplicates } from "../imports/dedupe";
+import { fetchPublicUrl, UnsafeUrlError } from "../utils/safeFetch";
 import { syncOnboarding, toStatus, updateOnboarding } from "../onboarding/onboardingState";
 import { isOnboardingOrigin, isOnboardingStep } from "../onboarding/onboardingRules";
 import { generatedInvoiceRefusal } from "../files/generatedInvoiceGuard";
@@ -2978,13 +2979,17 @@ export async function uploadFile(userId: string, args: Record<string, unknown>) 
   if (base64) {
     fileBuffer = Buffer.from(base64 as string, "base64");
   } else {
-    // Download from URL
-    const response = await fetch(url as string);
-    if (!response.ok) {
-      throw new Error(`Failed to download file: ${response.status} ${response.statusText}`);
+    // The URL comes from whoever called the tool, so it is fetched under the SSRF rules in
+    // utils/safeFetch.ts: public https only, checked at connect time, size and time capped.
+    if (typeof url !== "string") throw new Error("url must be a string");
+    try {
+      ({ buffer: fileBuffer } = await fetchPublicUrl(url));
+    } catch (error) {
+      if (error instanceof UnsafeUrlError) {
+        throw new Error(`${error.message}. upload_file downloads public https URLs only; send the file as base64 instead.`);
+      }
+      throw error;
     }
-    const arrayBuffer = await response.arrayBuffer();
-    fileBuffer = Buffer.from(arrayBuffer);
   }
 
   // Hash the bytes before touching storage (#182). This tool used to write a
