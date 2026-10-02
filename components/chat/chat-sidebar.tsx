@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { useTranslations } from "next-intl";
 import { useChat } from "./chat-provider";
 import { MessageBubble } from "./message-bubble";
 import { ConfirmationCard } from "./confirmation-card";
@@ -22,6 +23,7 @@ const MIN_SIDEBAR_WIDTH = 280;
 const MAX_SIDEBAR_WIDTH = 600;
 
 export function ChatSidebar() {
+  const tCommon = useTranslations("common");
   const {
     messages,
     isLoading,
@@ -217,6 +219,20 @@ export function ChatSidebar() {
 
   return (
     <>
+      {/* Floating opener, bottom-right, only while the chat is closed */}
+      {!isSidebarOpen && (
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={toggleSidebar}
+          className="fixed right-4 bottom-4 z-[60] h-12 w-12 rounded-full shadow-lg"
+          title={tCommon("openChat")}
+          aria-label={tCommon("openChat")}
+        >
+          <MessageSquare className="h-5 w-5" />
+        </Button>
+      )}
+
       {/* Sidebar */}
       <div
         ref={panelRef}
