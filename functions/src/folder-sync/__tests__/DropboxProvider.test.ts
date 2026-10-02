@@ -129,3 +129,14 @@ describe("refreshDropboxAccessToken", () => {
     await expect(refreshDropboxAccessToken("rt", "k", "s", fetchImpl)).rejects.toBeInstanceOf(DropboxAuthError);
   });
 });
+
+describe("first use", () => {
+  it("mints an access token when none was given", async () => {
+    const fetchImpl = vi.fn(async () => json({ cursor: "c", has_more: false, entries: [] })) as unknown as typeof fetch;
+    const refresh = vi.fn(async () => "minted");
+    const provider = new DropboxProvider({ accessToken: "", refreshAccessToken: refresh, fetchImpl });
+    await provider.listFolder("");
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect((fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0][1].headers.Authorization).toBe("Bearer minted");
+  });
+});

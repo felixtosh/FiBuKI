@@ -30,6 +30,7 @@ export class FolderMissingError extends Error {
 }
 
 export interface DropboxProviderOptions {
+  /** Empty to mint one on first use. */
   accessToken: string;
   /** Mint a new access token from the refresh token. Called once per 401. */
   refreshAccessToken: () => Promise<string>;
@@ -92,6 +93,7 @@ export class DropboxProvider implements FolderProvider {
 
   async download(entry: FolderListingEntry): Promise<Buffer> {
     if (!entry.id) throw new Error("Cannot download an entry without an id");
+    await this.ensureToken();
     const send = () =>
       this.fetchImpl(`${CONTENT}/files/download`, {
         method: "POST",
@@ -135,7 +137,12 @@ export class DropboxProvider implements FolderProvider {
     };
   }
 
+  private async ensureToken(): Promise<void> {
+    if (!this.accessToken) await this.refresh();
+  }
+
   private async rpc(endpoint: string, body: unknown): Promise<unknown> {
+    await this.ensureToken();
     const send = () =>
       this.fetchImpl(`${API}${endpoint}`, {
         method: "POST",
