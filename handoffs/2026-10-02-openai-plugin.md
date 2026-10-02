@@ -1,269 +1,218 @@
 # Workstream: FiBuKI as an OpenAI plugin (ChatGPT + Codex)
 
-**Status:** Scoped 2026-10-02 (v2, after Felix's onboarding notes), not started.
-Written to be handed to a cheaper model session, one phase per session.
+**Status (2026-10-02, v3):** Phase 1 (MCP server modernised) is DONE on branch
+`claude/sharp-meitner-w8f2qf`. Felix's decisions are recorded below. Next: Phase 2
+(Codex plugin, skills only) and Phase 3 (onboarding simplification), one session each.
 
-Felix's brief: "rather less features but great embedded execution over complex
-logic", a great pre-accounting experience, use the mail and file services the user
-already connected, maybe the browser, and **onboarding parity** between fibuki.com
-and the plugin.
+Felix's brief: fewer features, great embedded execution, use the mail and file
+services the user already connected, maybe the browser, onboarding parity between
+fibuki.com and the plugin.
 
 **Scope rule.** The plugin is skills + widgets on top of FiBuKI's existing tools.
-FiBuKI changes are limited to (a) MCP plumbing (transport, auth, widget resources)
-and (b) a short list of thin onboarding tools that Felix decides on first (see
-"Decisions"). No new scoring, matching, extraction or VAT logic anywhere.
+FiBuKI changes are limited to MCP plumbing (transport, auth, widget resources) and
+the onboarding simplification Felix asked for. No new scoring, matching, extraction
+or VAT logic anywhere.
 
 ## Read first
 
 1. [`docs/who-is-this-for.md`](../docs/who-is-this-for.md): Austrian EPU, pre-accounting
-   only, the Tax Advisor is a gatekeeper. Same features on self-host and cloud.
+   only, Tax Advisor is a gatekeeper, same features on self-host and cloud.
 2. [`CONTEXT.md`](../CONTEXT.md): use its terms (File, Transaction, Match, Partner,
-   No-document Category, Coverage, Documentation State, Mail Integration, Sync).
+   No-document Category, Coverage, Mail Integration, Sync).
 3. [`integrations/openclaw-plugin/skills/fibuki-guide/SKILL.md`](../integrations/openclaw-plugin/skills/fibuki-guide/SKILL.md):
-   the existing OpenClaw skill. Reuse its rules (cents, sign, no Transaction
-   deletion, trust server scores).
-4. OpenAI plugin examples: `git clone --depth 1 https://github.com/openai/plugins`.
-   Study `plugins/notion` (skills + own MCP + app), `plugins/data-analytics`
-   (optional third-party apps in `.app.json`), `plugins/codex-security`
-   (bundled `scripts/`, `app://` links inside a SKILL.md). `developers.openai.com`
-   was blocked from the scoping session's network: everything below about the plugin
-   format was read off those examples, and everything about widgets and auth is from
-   the MCP spec and Apps SDK as known in mid 2026. **Verify both in Phase 0.**
+   existing OpenClaw skill; reuse its rules.
+4. OpenAI docs. `developers.openai.com` is blocked for the WebFetch tool in the
+   cloud environment but **reachable with `curl`**. Read at least:
+   `/plugins/build/plugins`, `/plugins/build/mcp-server`, `/plugins/build/auth`,
+   `/plugins/build/chatgpt-ui`, `/plugins/build/extensions`,
+   `/plugins/guides/submit-claude-plugin`. Examples: `git clone --depth 1 https://github.com/openai/plugins`.
 
-## Where things stand today (verified in code)
+## Decisions (Felix, 2026-10-02)
 
-| Area | Today | Gap for ChatGPT |
-|---|---|---|
-| MCP endpoint | `functions/src/mcp-api/mcp-sse.ts`, hand-rolled JSON-RPC over POST, no SDK, protocol `2024-11-05`. Handles `initialize`, `tools/list`, `tools/call`, `ping`. Errors on `notifications/initialized`. Results are one text block of `JSON.stringify`. | Current spec is Streamable HTTP (2025-06-18 / 2025-11-25): `structuredContent` + `outputSchema`, tool `annotations` (`readOnlyHint`, `destructiveHint`), `resources/*` for widgets, `isError`, notifications answered with 202. |
-| Auth | `fk_` API keys only (`functions/src/api-keys/index.ts`). CLI device flow at `app/api/auth/device/*`, approve page `app/auth/device/page.tsx`. | ChatGPT needs OAuth 2.1: protected-resource metadata, an authorization server, client registration (DCR or client metadata documents), PKCE. None exists. Better Auth (`functions/src/selfhost/better-auth.ts`) has JWT/JWKS on but no OAuth provider plugin. |
-| Signup | Invite-only. Cloud: `validateRegistration` checks `allowedEmails`, else claims an open seat (`functions/src/auth/openSeats.ts`), else an access request. Self-host: `disableSignUp: true`, `assertInvited` hook. | A stranger clicking "Connect" in ChatGPT hits a wall unless we decide a policy (Decision 1). |
-| Onboarding | State in `users/{uid}/settings/onboarding` (`types/onboarding.ts`). Tracks `full_service` (`set_identity`, `connect_email`, `add_bank_account`, `import_transactions`, `assign_partner`, `attach_file`) and `data_only`. Only `setOnboardingTrack` is a callable; step completion is **derived in the client hook** `hooks/use-onboarding.ts` from the user's data, and step writes are direct client Firestore writes (`lib/operations/onboarding-ops.ts`). | The plugin cannot see or advance onboarding. The derivation must move server side so both surfaces read one truth. |
-| Identity | `users/{uid}/settings/userData` (`personalEntity`, `companies[]`, `ownEmails[]`). `onUserDataUpdate` creates identity Partners and recomputes invoice direction. MCP has `list_identity_entities` and `update_identity_entity` (patch only, fails if userData is missing). | No tool **creates** the identity, so a plugin-first user cannot set it up. |
-| Accounting period | No user-level concept. Only per bank source `ApiSourceConfig.syncFromYear` (`types/banking-sync.ts:99`, default current year). CSV import keeps every row. | Felix wants a chosen year with a smart cutoff (Decision 2). |
-| Upload | `upload_file` takes `url` or `base64`, does an **unrestricted `fetch(url)`** (`functions/src/tools/handlers.ts:2864`). | SSRF on the Hetzner compose network (fibuki-api, Postgres, SeaweedFS). Must be guarded before ChatGPT sends it file URLs. A real finding today, independent of the plugin. |
+1. **Signup via Connect.** The OAuth authorize page is FiBuKI's normal sign-in /
+   sign-up. Build it from the existing ChatGPT integration page
+   (`app/(dashboard)/integrations/chatgpt/page.tsx`, today an outdated OpenAPI
+   "Actions" guide) and the Claude one (`integrations/claude-mcp`).
+2. **No accounting year.** Dropped.
+3. **Mail:** suggest FiBuKI's own Mail Integration (it runs async in the background);
+   the user may instead let ChatGPT / Claude fetch from their connected mail, since
+   those also run async now. Both are fine; the skill offers the choice.
+4. **Everyone is full service.** The track choice (`full_service` / `data_only`)
+   goes away. One onboarding.
+
+## Phase 1 (DONE): MCP server modernised
+
+What changed:
+- `functions/src/mcp-api/mcp-server.ts` (new): official `@modelcontextprotocol/sdk`
+  1.31, low-level `Server` + `WebStandardStreamableHTTPServerTransport`, stateless,
+  JSON responses. Protocol 2025-11-25 with fallback to every older version the SDK
+  supports, including the 2024-11-05 the old server spoke. Server `instructions`
+  (book-protecting rules in the first 512 chars), tool `title` + `annotations`,
+  `structuredContent` next to the text block, tool failures as `isError` (model can
+  recover), unknown tool as `-32602`. `requiredFeature` moved to
+  `_meta["fibuki/requiredFeature"]`.
+- `functions/src/mcp-api/tool-annotations.ts` (new): every tool classified read-only /
+  write / destructive; a test fails when a new tool is added without a decision.
+- `functions/src/mcp-api/mcp-sse.ts`: now only the HTTP edge (CORS incl. MCP headers,
+  API-key auth with `WWW-Authenticate` on 401, GET event stream -> 405, DELETE -> 405,
+  plain GET info kept, Accept header filled in for old clients).
+- `app/api/mcp/sse/route.ts`: transparent proxy; forwards MCP headers, passes status,
+  headers and body through (the old proxy turned the empty 202 for notifications into a 500).
+- URL unchanged: `https://fibuki.com/api/mcp/sse`. Tools, handlers, auth unchanged.
+- Tests: `mcp-server.test.ts`, `mcp-sse.test.ts` (20, incl. a real SDK client over
+  Express). Functions suite 2271 passed, self-host suite 991 passed, both tsc clean, lint clean.
+  `next build` was not run.
+
+Still open on the server (Phase 4): OAuth, widgets, profile tool, SSRF guard.
+
+## What the docs confirmed (curl, 2026-10-02)
+
+- **Packaging.** Portable Agent Plugins format: `plugin.json` at the root with
+  `"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"`, skills
+  under `skills/<name>/SKILL.md`, `mcp.json` (own schema, not a renamed `.mcp.json`),
+  OpenAI-specific bits under `extensions.com.openai`. `.codex-plugin/plugin.json`
+  is the older compatibility form. One package can hold skills + MCP server, and the
+  submit guide covers converting a Claude plugin, so **one package can serve Claude and OpenAI**.
+- **MCP server requirements.** Streamable HTTP at a stable public URL, explicit
+  schemas, accurate annotations, server instructions. Phase 1 covers these.
+- **Auth.** OAuth 2.1 per MCP spec: `/.well-known/oauth-protected-resource` on the
+  MCP server, authorization server metadata with `code_challenge_methods_supported: ["S256"]`,
+  client registration by CIMD (preferred, `client_id_metadata_document_supported: true`,
+  token auth `none` or `private_key_jwt`) or DCR, echo the `resource` parameter into
+  the token `aud`, RFC 9207 `iss` in authorization responses for the stable redirect
+  `https://chatgpt.com/connector_platform_oauth_redirect`. Recommended: a profile tool
+  marked `_meta["openai/profile"]: true` returning a stable opaque id.
+- **Widgets (MCP Apps).** Tool `_meta.ui.resourceUri` -> a `ui://` resource with mime
+  `text/html;profile=mcp-app` (`openai/outputTemplate` is a compatibility alias).
+  Bridge is `ui/*` JSON-RPC over postMessage; `window.openai` adds `callTool`,
+  `sendFollowUpMessage`, `widgetState`, **`uploadFile`, `selectFiles`,
+  `getFileDownloadUrl`**, `requestModal`. Display modes: inline, fullscreen,
+  picture-in-picture. UI kit: `@openai/apps-sdk-ui`.
+- **Extensions** (`@openai/mcp-extensions`): sidebar apps, conversation side panel,
+  plugin settings, **file viewers** (open a file type in our UI), deep links, rich
+  forms, and **plugin onboarding** ("guide users through setup in a new or existing
+  conversation"). Read that extension's spec before designing Phase 4's onboarding card.
 
 ## The experience
 
-### Registration: what "click the plugin" does
+### Registration (Decision 1)
 
-The common pattern for ChatGPT apps (Notion, Linear, Stripe all do this):
+1. User installs the plugin and clicks **Connect** (ChatGPT), or the Claude connector.
+2. OAuth popup opens FiBuKI's sign-in. New users sign up there (Google one-click).
+   No account is ever created by a tool call.
+3. **Onboarding inside the popup runs only until identity is set** (name, company,
+   UID, own IBANs, own emails), because without identity the user's own issued
+   invoices get matched as incoming.
+4. Consent, then the **handshake page**: "Connected to ChatGPT. Go back to ChatGPT, or
+   stay in FiBuKI." Back returns to the OAuth redirect; Stay lands in the dashboard
+   with the rest of the onboarding checklist.
+5. FiBuKI records `origin` (`chatgpt`, `codex`, `claude`, `web`) on the onboarding doc,
+   taken from the OAuth client that started the flow (not the Referer header).
 
-1. User installs the FiBuKI plugin and clicks **Connect**.
-2. ChatGPT opens FiBuKI's OAuth authorize page on fibuki.com in a popup.
-3. That page **is** FiBuKI's normal sign-in. A new user signs up there (Google
-   one-click or email), an existing user signs in. No account is ever created by a
-   tool call.
-4. A consent screen ("ChatGPT wants to read and organise your Belege"), scopes map
-   onto the existing API-key scopes.
-5. Back in ChatGPT with a token. The first tool call is `get_onboarding_status`, and
-   the onboarding card renders.
+Signup policy for strangers: FiBuKI is invite-only (`allowedEmails`, open seats in
+`functions/src/auth/openSeats.ts`, access requests). Recommended: plugin-origin
+signups claim an open seat, else a friendly access-request page. Confirm with Felix in Phase 4.
 
-Codex is the same with the CLI device flow instead of the popup, until Codex can do
-the OAuth flow too.
+### Onboarding (Decision 4)
 
-Self-host: the plugin's `.mcp.json` points at fibuki.com. Self-hosters override the
-URL in their Codex / ChatGPT developer-mode config; the OAuth server is the same code
-on their box. Document it, do not build anything special.
+One checklist, same state and same completion rules on both surfaces:
 
-### Onboarding: one checklist, two surfaces
+| Step (existing id) | In ChatGPT / Claude | On fibuki.com |
+|---|---|---|
+| `set_identity` | done in the OAuth popup | settings/identity |
+| `add_bank_account` + `import_transactions` | drop a CSV (skill `fibuki-bank-csv`), or deep link for PSD2 | sources |
+| `connect_email` | offer the choice: FiBuKI Mail Integration (recommended, async) or let the assistant fetch from its own connected mail | integrations/gmail |
+| `assign_partner` + `attach_file` | the Belege loop with the progress widget | transactions |
 
-Same steps, same state, same completion rules in the web app and in the plugin.
-
-**Simplify first (Felix, 2026-10-02):** the track choice (`full_service` vs
-`data_only`, `components/onboarding/welcome-choice.tsx`) goes away in both
-surfaces. There is one onboarding, and identity is its first real step. Watch out:
-`setOnboardingTrackCallable.ts` also starts the trial and picks `trialTier` ("data"
-or "smart") from the track. Removing the choice means the trial start moves to
-onboarding init with a single tier (Felix to confirm which), and existing users with
-`track: "data_only"` keep working (read it as "onboarding done or skipped").
-
-**Honor where the user came from.** Record an `origin` on the onboarding doc at
-signup: `chatgpt`, `codex`, `claude`, or `web`. Take it from the OAuth client that
-started the signup (reliable), not from the HTTP Referer (often stripped); for plain
-web signups a `?ref=` parameter is enough. The welcome screen then adapts:
-- Came from ChatGPT / Codex: "You're set up. You can keep working in ChatGPT, it will
-  match your Belege for you, or do it here in FiBuKI. Both see the same data." Two
-  buttons: "Back to ChatGPT" and "Continue here". The remaining checklist is the same
-  either way.
-- Came from the web: today's flow, minus the track choice, plus one line that FiBuKI
-  also works from ChatGPT, Claude and Codex.
-
-Order (Felix's flow, mapped to existing step ids):
-
-| # | Step | In ChatGPT | Hands off to fibuki.com when |
-|---|---|---|---|
-| 1 | Account | OAuth popup (above) | always (that is the popup) |
-| 2 | **Identity** (`set_identity`) | Ask for name, company, UID (ATU...), own IBANs, own email addresses. Offer to read them off one of the user's **own issued invoices** (attached or from Drive) and confirm. Explain why in one line: "so your own invoices are never matched as incoming". | never |
-| 3 | **Accounting year** (new, Decision 2) | "Which year are we preparing? 2025 or 2026?" Sets the cutoff. | never |
-| 4 | **Bank data** (`add_bank_account`, `import_transactions`) | Either drop a CSV (skill `fibuki-bank-csv`, rows before the cutoff dropped) or connect the bank. | Bank connection (PSD2) needs a redirect: deep link to `/sources`, `syncFromYear` preset to the chosen year. |
-| 5 | **Mailbox** (`connect_email`) | Recommend FiBuKI's own Mail Integration, because it keeps syncing in the background after the chat ends. ChatGPT's own Gmail / Outlook / Drive apps are the **gap filler** during a session (Decision 3). | Gmail OAuth / IMAP setup: deep link to `/integrations/gmail`. |
-| 6 | **First matches** (`assign_partner`, `attach_file`) | The Belege loop below, with the progress widget. | never |
-
-Each deep link returns the user to the chat. The checklist card re-reads
-`get_onboarding_status` when it gets focus, so a step done on fibuki.com ticks itself.
-
-### The working loop (after onboarding)
+### The working loop
 
 Skill `fibuki-belege`, "Mach meinen September fertig":
-
-1. **Status:** progress widget for the period (Coverage, missing, waiting suggestions).
-2. **Harvest:** suggestions FiBuKI already computed at Confidence >= 85 shown in the
-   match-review widget, accepted in one batch. Never re-scored in the plugin.
-3. **Hunt the gaps** in connected apps: Gmail / Outlook (Partner name, amount as
-   `12,34` and `12.34`, date window -7..+30 days, "Rechnung", "Invoice", "Beleg"),
-   then Drive / OneDrive / Dropbox. Recipe in `references/invoice-hunting.md`.
-   Login-only portals (A1, Magenta, Wiener Netze, AWS): point to the FiBuKI browser
-   extension (`/integrations/browser`), or in Codex use its browser to download.
-4. **Upload** found documents; FiBuKI's pipeline extracts and suggests; accept in the widget.
-5. **No-document lines:** bank fees, own transfers, taxes via No-document Categories,
-   proposed as a batch, never silently.
-6. **Close-out:** what is still missing, with Partner, amount, date.
+1. Status (progress widget): covered, missing, waiting suggestions.
+2. Harvest FiBuKI's suggestions at Confidence >= 85, accepted in one batch. Never re-scored.
+3. Hunt gaps in connected mail and file apps (Gmail / Outlook: Partner name, amount
+   `12,34` and `12.34`, date -7..+30 days, "Rechnung", "Invoice", "Beleg"; then Drive /
+   OneDrive / Dropbox). Login-only portals: the FiBuKI browser extension, or Codex's browser.
+4. Upload; FiBuKI extracts and suggests; accept.
+5. No-document lines via No-document Categories, proposed as a batch.
+6. Close-out: what is still missing.
 
 UX rules: one confirmation per batch; Euro with comma for German users; reply in the
-user's language with ADR-0007 vocabulary; never delete a Transaction (explain why);
-on a plan-gate error (`fileUpload`, `aiMatching`) explain once and continue with what
-is allowed.
+user's language, ADR-0007 vocabulary; never delete a Transaction; on a plan-gate error
+explain once and continue.
 
-### Widgets: yes, ChatGPT renders our own UI inline
+### Widgets (Phase 4, three only)
 
-ChatGPT apps can return a **widget**: an HTML bundle the MCP server serves as a
-`ui://` resource, linked from a tool via `_meta` (MCP Apps: `_meta.ui.resourceUri`
-with mime `text/html;profile=mcp-app`; the older ChatGPT form is
-`openai/outputTemplate` with `text/html+skybridge`; support both if cheap). It renders
-in a sandboxed iframe, inline in the chat, and can ask for **fullscreen** or
-**picture-in-picture**. It gets the tool's `structuredContent`, can call our tools
-itself, keep widget state, and post a follow-up message into the chat. Verify the
-exact API names in Phase 0.
+| Widget | Does |
+|---|---|
+| Onboarding card | the checklist; "do it here" or "open in FiBuKI" per row |
+| Progress board | Coverage per month; fullscreen shows the missing list; picture-in-picture while the agent hunts. Includes a drop zone via `window.openai.uploadFile` / `selectFiles`, so "add files" is one drag. |
+| Match review | File thumbnail, Partner, amount, date, Transaction, server Confidence; accept / reject per row and "accept all >= 85", calling the existing tools directly |
 
-Three widgets, no more. Built with the FiBuKI design system tokens so it looks like FiBuKI:
+Possible later: a **file viewer** extension for `.csv` so opening a bank export in
+ChatGPT shows FiBuKI's import preview.
 
-| Widget | Shown by | Does |
-|---|---|---|
-| **Onboarding card** | `get_onboarding_status` | The checklist above. Each row: done tick, "do it here" (sends a follow-up message that starts the step in chat) or "open in FiBuKI" (deep link). |
-| **Progress board** | `get_period_status` (see tools) | The pop-out moment. Per month of the accounting year: Coverage ring, counts (covered / missing / waiting). Fullscreen shows the missing list. Pinned in picture-in-picture while the agent hunts, so the user watches the numbers move. |
-| **Match review** | after a harvest or upload | Rows: File thumbnail, Partner, amount, date, the Transaction, server Confidence. Per row accept / reject, plus "accept all >= 85". Calls `connect_file_to_transaction` / `dismiss_transaction_suggestion` directly, no model round trip. |
-
-Widgets are presentation only: they show what tools return and call existing tools.
-
-### Tools: what changes on the MCP surface
-
-All existing 59 tools stay, same names, same handlers. Additions, all thin:
-
-| Tool | Kind | Notes |
-|---|---|---|
-| `get_onboarding_status` | read | Ports the completion rules from `hooks/use-onboarding.ts` to the server (port, never regenerate; a shared test pins both to the same answers). Returns steps, done/skipped, deep links. Then the web hook reads this too, so parity is structural. |
-| `complete_onboarding_step` / `skip_onboarding_step` | write | Callables replacing the direct client writes in `onboarding-ops.ts` (CLAUDE.md: all mutations through callables). |
-| `create_identity_entity` | write | Today only `update_identity_entity` exists. Writes the same `userData` shape the settings page writes, so `onUserDataUpdate` does the rest. |
-| `set_accounting_period` | write | Only if Decision 2 is "yes". |
-| `get_period_status` | read | Counts per month for the progress board. Built from existing queries (`list_transactions_needing_files` logic), no new rules. If it needs new domain rules, stop and ask. |
-
-Plus on every tool: `annotations` (`readOnlyHint` on reads, `destructiveHint` on
-`delete_source`, `delete_file`, `merge_partners`, `cancel_invoice`), so ChatGPT asks for
-confirmation on the right ones; `structuredContent` alongside the text block.
-
-### How bytes move
-
-| Surface | Source | Path |
-|---|---|---|
-| ChatGPT | file the user attaches | Apps SDK file params on `upload_file`: tool gets a short-lived download URL, passed to the (guarded) `url` fetch. |
-| ChatGPT | Gmail / Drive via ChatGPT's apps | Spike. If no fetchable URL, the skill recommends FiBuKI's own Mail Integration instead, which is the stronger path anyway. |
-| Codex | local file, CSV, browser download | `scripts/fibuki-upload.mjs <path...>` posts base64 with the API key. |
-| Both | CSV | Amounts and dates are parsed by FiBuKI's own `lib/import` parsers (bundled into `scripts/csv-to-transactions.mjs` for Codex; for ChatGPT, Phase 4 decides between the model mapping rows or a server `import_csv` that reuses the same parsers). Never model arithmetic on money. |
-
-## Plugin layout
+## Plugin layout (Phase 2)
 
 ```
-integrations/openai-plugin/
-  .codex-plugin/plugin.json   name, version, description, interface{displayName,
-                              shortDescription, longDescription, category: "Finance",
-                              capabilities, defaultPrompt[], brandColor, logo,
-                              composerIcon, privacyPolicyURL, termsOfServiceURL,
-                              websiteURL}, "skills", "mcpServers", "apps"
-  .mcp.json                   {"mcpServers": {"fibuki": {"type": "http", "url": "https://fibuki.com/api/mcp/sse"}}}
-  .app.json                   optional apps, ids copied from the examples repo:
-                              gmail connector_2128aebfecb84f64a069897515042a44
-                              outlook-email connector_4aaab2856305417b993eca9a216aaf6e
-                              google_drive connector_5f3c8c41a1e54ad7a76272c89e2554fa
-                              sharepoint connector_1e4f6a44acf14e3ca1d96672f8c945bc
-                              dropbox asdk_app_69b31dc2110c8191b8b47dc98fe5a052
-  skills/fibuki-onboarding/   steps 1-5, owns the onboarding card
-  skills/fibuki-belege/       the working loop
-  skills/fibuki-bank-csv/     CSV import, references/austrian-bank-csvs.md
-                              (George, ELBA, Bank Austria, BAWAG, N26, Revolut, Wise:
-                              encoding, delimiter, decimal comma, date format, columns)
-  each skill: SKILL.md, agents/openai.yaml, references/, evaluations/*.json
-  scripts/                    fibuki-upload.mjs, csv-to-transactions.mjs (Codex)
+integrations/openai-plugin/          (portable Agent Plugins package)
+  plugin.json                        $schema agent-plugins 1.0.0, name "fibuki",
+                                     extensions.com.openai for interface metadata
+  mcp.json                           fibuki -> https://fibuki.com/api/mcp/sse
+  skills/fibuki-onboarding/          steps above
+  skills/fibuki-belege/              the working loop, references/invoice-hunting.md
+  skills/fibuki-bank-csv/            references/austrian-bank-csvs.md (George, ELBA,
+                                     Bank Austria, BAWAG, N26, Revolut, Wise)
+  each skill: SKILL.md, references/, evaluations/*.json
+  scripts/fibuki-upload.mjs          Codex: local files -> upload_file (base64)
+  scripts/csv-to-transactions.mjs    Codex: bundles lib/import parsers (port, never regenerate)
 ```
 
-Widgets live server side (they are MCP resources), e.g. `functions/src/mcp-api/widgets/`,
-built from a small React or plain-TS bundle into one HTML file each.
+Optional apps the skills may use (ids from the examples repo): Gmail
+`connector_2128aebfecb84f64a069897515042a44`, Outlook Email
+`connector_4aaab2856305417b993eca9a216aaf6e`, Google Drive
+`connector_5f3c8c41a1e54ad7a76272c89e2554fa`, SharePoint/OneDrive
+`connector_1e4f6a44acf14e3ca1d96672f8c945bc`, Dropbox `asdk_app_69b31dc2110c8191b8b47dc98fe5a052`.
+Check how the portable format declares optional apps (the examples use `.app.json`).
 
-## Decisions Felix makes before Phase 3
+## Phases
 
-1. **Signup from ChatGPT.** Invite-only blocks strangers. Options: (a) plugin-origin
-   signups claim an open seat (`openSeats` exists already) and fall back to an access
-   request with a friendly page; (b) open signup on the free plan for OAuth-origin
-   users; (c) stay invite-only, the plugin is for existing users. Recommendation: (a).
-2. **Accounting year as a concept.** Proposed: one setting per user, "the year we are
-   preparing" (plus optional start date for a mid-year business start). It presets
-   `syncFromYear`, drops older CSV rows, bounds mail search, and scopes the progress
-   board. Needs a `CONTEXT.md` entry and probably an ADR (what happens at year end,
-   can there be two open years in January?). Also lands in the web welcome flow.
-3. **Mail source of truth.** Recommendation: FiBuKI's own Mail Integration primary
-   (persistent, CASA-verified, background Sync); ChatGPT's apps only fill gaps inside a session.
-4. **Trial tier without tracks.** The track choice is dropped (decided). Which single
-   trial tier does every new user get, "smart" or "data"? Recommendation: "smart",
-   since matching is the product.
-
-## Phases (each one a separate small session)
-
-### Phase 0: spike (half a day, no product code)
-- Read the current Apps SDK / MCP Apps docs (widget `_meta` keys, display modes,
-  file params, window bridge API, auth requirements: DCR vs client metadata documents).
-- Point Codex at `https://fibuki.com/api/mcp/sse` with an `fk_` key; note what breaks.
-- Find out what ChatGPT's Gmail and Drive apps return for an attachment.
-- Output: outcome note appended here, with the verified API names.
-
-### Phase 1: MCP server on the official SDK (plumbing, no behaviour change)
-- Re-host the endpoint on `@modelcontextprotocol/sdk` Streamable HTTP, stateless mode,
-  inside the existing `mcpSse` request function so the Next proxy and the self-host
-  shim stay unchanged. Same `TOOL_DEFINITIONS`, same `handleToolInternal`, same API-key auth.
-- Add `annotations`, `structuredContent`, `isError`.
-- Contract test: same tool names and same `tools/call` results as before for a fixture user.
-- SSRF guard on `upload_file` (https only, public IPs only after DNS resolve, size cap, timeout), with a test.
-
-### Phase 2: Codex plugin, skills only
-- `integrations/openai-plugin/` with the three skills, scripts, evaluations, README.
-  Works against Phase 1 with an `fk_` key. Real use by Felix on his own last month;
-  fix prompts, not the server.
-
-### Phase 3: onboarding parity (after Decisions 2 and 4)
-- Web first: remove the track choice, move trial start to onboarding init, add
-  `origin` and the origin-aware welcome copy (en + de messages).
-- `get_onboarding_status` (ported rules + shared test), step callables,
-  `create_identity_entity`, `set_accounting_period`. Switch `hooks/use-onboarding.ts`
-  and `onboarding-ops.ts` to them. Web welcome flow gains the accounting-year step.
-
-### Phase 4: ChatGPT (after Decision 1)
-- OAuth: Better Auth's OAuth provider / MCP plugin on fibuki-api, protected-resource
-  metadata, consent page, tokens mapped to the same user + scopes as `validateApiKey`.
-  Same feature on self-host.
-- Signup policy from Decision 1 wired into the authorize page.
-- Widgets (onboarding card, progress board, match review) + `get_period_status`.
-- File params on `upload_file`.
-- Submission: privacy policy, screenshots, review.
+- **Phase 1: MCP modernisation.** DONE (above).
+- **Phase 2: plugin package, skills only.** Works in Codex now with an `fk_` key
+  (`npx @fibukiapp/cli auth --format env`). Test with MCP Inspector and Codex. Evaluations:
+  month close with 3 mail hits + 1 bank fee; plan without `fileUpload`; George CSV in
+  Windows-1252; a request to delete a Transaction.
+- **Phase 3: onboarding simplification (web, useful without the plugin).**
+  - Remove the track choice (`components/onboarding/welcome-choice.tsx`, `types/onboarding.ts`).
+  - Trial start: `setOnboardingTrackCallable.ts` starts the trial and derives
+    `trialTier` from the track. Move the trial start to onboarding init with tier
+    "smart" (everyone is full service). Existing `data_only` users keep working.
+  - Move step completion from the client hook `hooks/use-onboarding.ts` to a server
+    `get_onboarding_status` (ported rules + a shared test); step writes via callables
+    instead of the direct client writes in `lib/operations/onboarding-ops.ts`.
+  - Add `create_identity_entity` (only `update_identity_entity` exists).
+  - Add `origin` and the origin-aware welcome copy (en + de).
+- **Phase 4: ChatGPT / Claude connect.**
+  - OAuth per the auth section above. Better Auth is the self-host auth
+    (`functions/src/selfhost/better-auth.ts`); check its OAuth provider / MCP plugin
+    for CIMD + DCR + `resource` + `iss` support before writing anything by hand. Same
+    feature on self-host.
+  - Authorize page = sign-in / sign-up + identity step + handshake page; rebuild
+    `integrations/chatgpt` around it.
+  - Profile tool with `_meta["openai/profile"]`.
+  - **SSRF guard on `upload_file`** (unrestricted `fetch(url)` at
+    `functions/src/tools/handlers.ts:2864`; on Hetzner it reaches fibuki-api, Postgres,
+    SeaweedFS). https only, public IPs after DNS resolve, size cap, timeout. Do this
+    before anything sends it third-party URLs; it is a real finding today.
+  - Widgets + `get_period_status` (built from existing queries) + file params.
+  - Submission.
 
 ## Non-goals
-- No scoring, matching, Category or VAT logic in the plugin or widgets (CLAUDE.md,
-  "Server-Side Scoring Only").
-- No exposing `lib/agent/tools/*` (Gmail search, convertEmailToPdf) over MCP.
-- No outgoing invoices, no BMD export from the plugin, no Kanzlei flows.
-- No more than three widgets.
+- No scoring, matching, Category or VAT logic in the plugin or widgets.
+- No exposing `lib/agent/tools/*` over MCP. No outgoing invoices, no BMD export from
+  the plugin, no Kanzlei flows. No more than three widgets.
 
-## Guardrails for the implementing session
-- Host safety from CLAUDE.md: no full vitest, no project-wide tsc, no `next build`.
+## Guardrails
+- Host safety from CLAUDE.md on small hosts.
 - Branch from `main`, small commits, self-review the PR.
-- Every write the skills make must be one the user confirmed in that turn's batch.
+- Every write a skill makes is one the user confirmed in that turn's batch.
 - If a step seems to need domain logic, stop and write it down here instead.
-</content>
-</invoke>
