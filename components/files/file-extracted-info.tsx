@@ -555,7 +555,14 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
           unmarked. Shown whenever the flag is set, not gated on "Show more" —
           this is a finding, the same rank as the ones above. */}
       {lineItemsUnreconciledPresentation && (
-        <div className="rounded border border-amber-500/40 bg-amber-500/10 p-2 space-y-1">
+        <div
+          className={cn(
+            "rounded border p-2 space-y-1",
+            lineItemsUnreconciledPresentation.tone === "warning"
+              ? "border-amber-500/40 bg-amber-500/10"
+              : "border-border bg-muted/40"
+          )}
+        >
           <Badge variant="outline" className="text-xs">
             {lineItemsUnreconciledPresentation.label}
           </Badge>
