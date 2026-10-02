@@ -88,3 +88,25 @@ test("refuses to run without an API key", async () => {
   assert.equal(code, 1);
   assert.match(json.error, /FIBUKI_API_KEY/);
 });
+
+test("files that cannot be sent are reported per file and never reach the API", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "fibuki-upload-"));
+  writeFileSync(join(dir, "huge.pdf"), Buffer.alloc(16 * 1024 * 1024)); // over the script's 15 MB limit
+  writeFileSync(join(dir, "notes.txt"), "not a receipt");
+  writeFileSync(join(dir, "ok.pdf"), "%PDF-1.4 fine");
+  const api = await fakeApi(() => ({ status: 200, json: { success: true, result: { success: true, fileId: "id-ok" } } }));
+  try {
+    const { json } = await run(
+      [join(dir, "huge.pdf"), join(dir, "notes.txt"), join(dir, "missing.pdf"), join(dir, "ok.pdf")],
+      { FIBUKI_API_KEY: "fk_test", FIBUKI_BASE_URL: api.url }
+    );
+    const byFile = Object.fromEntries(json.results.map((r) => [r.file.split("/").pop(), r]));
+    assert.match(byFile["huge.pdf"].error, /larger than 15 MB/);
+    assert.match(byFile["notes.txt"].error, /unsupported type/);
+    assert.equal(byFile["missing.pdf"].error, "cannot read file");
+    assert.equal(byFile["ok.pdf"].ok, true);
+    assert.equal(api.calls.length, 1); // only the good file was sent
+  } finally {
+    api.server.close();
+  }
+});

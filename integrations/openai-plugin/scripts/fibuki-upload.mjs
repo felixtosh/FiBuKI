@@ -12,7 +12,7 @@
  * Env: FIBUKI_API_KEY (required), FIBUKI_BASE_URL (default https://fibuki.com).
  */
 
-import { readFileSync, statSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readFileSync } from "node:fs";
 import { basename, extname } from "node:path";
 
 const BASE_URL = (process.env.FIBUKI_BASE_URL ?? "https://fibuki.com").replace(/\/$/, "");
@@ -41,20 +41,28 @@ async function upload(path, apiKey) {
   const mimeType = MIME[extname(path).toLowerCase()];
   if (!mimeType) return { file: path, ok: false, error: "unsupported type (PDF or image only)" };
 
-  let size;
+  // One open file: the size that is checked is the size that is read.
+  let bytes;
   try {
-    size = statSync(path).size;
+    const fd = openSync(path, "r");
+    try {
+      if (fstatSync(fd).size > MAX_BYTES) {
+        return { file: path, ok: false, error: `larger than ${MAX_BYTES / 1024 / 1024} MB` };
+      }
+      bytes = readFileSync(fd);
+    } finally {
+      closeSync(fd);
+    }
   } catch {
     return { file: path, ok: false, error: "cannot read file" };
   }
-  if (size > MAX_BYTES) return { file: path, ok: false, error: `larger than ${MAX_BYTES / 1024 / 1024} MB` };
 
   const response = await fetch(`${BASE_URL}/api/mcp`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
       tool: "upload_file",
-      arguments: { fileName, mimeType, base64: readFileSync(path).toString("base64") },
+      arguments: { fileName, mimeType, base64: bytes.toString("base64") },
     }),
   });
   const body = await response.json().catch(() => ({}));
