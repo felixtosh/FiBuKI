@@ -2,7 +2,7 @@
 
 import { ColumnDef } from "@tanstack/react-table";
 import { format } from "date-fns";
-import { Upload, Mail, Loader2, FileText } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { TaxFile } from "@/types/file";
 // The one normalizer, shared with the extraction path that wrote this value.
 // functions/tsconfig.json sets rootDir "src", so the shared module has to live
@@ -16,7 +16,8 @@ import { describeInvoiceDirection } from "@/lib/documents/document-type-presenta
 import { describeFileNameCell } from "@/lib/files/file-display-name";
 import { fileDocumentAmount } from "@/lib/files/document-amount";
 import { AmountMatchDisplay } from "@/components/ui/amount-match-display";
-import { cn, toDateSafe } from "@/lib/utils";
+import { cn, formatFileSize, toDateSafe } from "@/lib/utils";
+import { FileSourceLabel } from "./file-source-label";
 import type { EcbConverter } from "@/lib/currency";
 import {
   Tooltip,
@@ -97,16 +98,23 @@ export function getFileColumns(
         }
 
         const timeStr = format(dateObj, "HH:mm");
-        const showTime = timeStr !== "00:00";
+        // Time and size share the second line, with a pipe only when both are
+        // there (#515). A midnight time is a date-only import, so it is left out.
+        const secondLine = [
+          timeStr !== "00:00" ? timeStr : null,
+          row.original.fileSize ? formatFileSize(row.original.fileSize) : null,
+        ]
+          .filter(Boolean)
+          .join(" | ");
 
         return (
           <div>
             <p className="text-sm whitespace-nowrap">
               {format(dateObj, "MMM d, yyyy")}
             </p>
-            {showTime && (
-              <p className="text-xs text-muted-foreground">
-                {timeStr}
+            {secondLine && (
+              <p className="text-xs text-muted-foreground whitespace-nowrap">
+                {secondLine}
               </p>
             )}
           </div>
@@ -406,45 +414,12 @@ export function getFileColumns(
     },
     {
       accessorKey: "sourceType",
-      size: 80,
+      size: 180,
       header: "Source",
-      cell: ({ row }) => {
-        const sourceType = row.original.sourceType;
-
-        if (sourceType?.startsWith("gmail")) {
-          return (
-            <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
-              <Mail className="h-3.5 w-3.5" />
-              <span>Gmail</span>
-            </div>
-          );
-        }
-
-        if (sourceType?.startsWith("email_inbound")) {
-          return (
-            <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
-              <Mail className="h-3.5 w-3.5" />
-              <span>Email</span>
-            </div>
-          );
-        }
-
-        if (sourceType === "fibuki_invoice" || row.original.invoiceId || row.original.isFibukiGenerated) {
-          return (
-            <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
-              <FileText className="h-3.5 w-3.5" />
-              <span>Rechnungserstellung</span>
-            </div>
-          );
-        }
-
-        return (
-          <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
-            <Upload className="h-3.5 w-3.5" />
-            <span>Upload</span>
-          </div>
-        );
-      },
+      // The same icon and wording as the File detail panel (#515).
+      cell: ({ row }) => (
+        <FileSourceLabel file={row.original} className="text-sm text-muted-foreground max-w-full" />
+      ),
     },
   ];
 }

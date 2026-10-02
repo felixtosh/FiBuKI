@@ -352,7 +352,28 @@
       "type": "Belegart",
       "whyType": "Warum diese Belegart",
       "direction": "Richtung",
-      "whyDirection": "Warum die Richtung geprüft werden sollte"
+      "whyDirection": "Warum die Richtung geprüft werden sollte",
+      "fileName": "Dateiname",
+      "uploaded": "Hochgeladen",
+      "size": "Größe",
+      "source": "Quelle"
+    },
+    "source": {
+      "gmail": "Gmail",
+      "forwarding": "E-Mail-Weiterleitung",
+      "invoicing": "Rechnungserstellung",
+      "upload": "Upload",
+      "search": "Suche „{pattern}“",
+      "resultAttachment": "Anhang",
+      "resultMailBody": "Mail als PDF gespeichert",
+      "resultLink": "über einen Link geladen",
+      "resultLocalFile": "lokale Datei",
+      "details": "Mail",
+      "detailsInfoLabel": "Was diese Mail-Angaben bedeuten",
+      "detailsInfoIntro": "So hat FiBuKI diesen Beleg in deinen Mails gefunden:",
+      "detailsInfoSender": "Wer die Mail geschickt hat.",
+      "detailsInfoSearch": "Die Suche, mit der FiBuKI dein Postfach nach einem Beleg für eine offene Transaktion durchsucht hat, z. B. der Name des Partners.",
+      "detailsInfoResult": "Welcher Teil der Mail dieser Beleg ist: ein Anhang, die Mail selbst als PDF gespeichert, oder eine Datei, die über einen Link in der Mail geladen wurde."
     }
   }
 }

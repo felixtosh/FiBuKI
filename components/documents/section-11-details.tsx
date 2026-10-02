@@ -11,7 +11,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { DocumentTypeBadge } from "./document-type-badge";
-import { TermGloss } from "./term-gloss";
 import { cn } from "@/lib/utils";
 import { useDocumentLabel } from "@/hooks/use-document-label";
 import type { DocumentType, DocumentTypeBasis, Section11Element } from "@/types/file";
@@ -210,28 +209,25 @@ export function Section11Reasoning({
   basis: DocumentTypeBasis | null | undefined;
   missingElements: Section11Element[] | null | undefined;
 }) {
-  const { type: resolvedType } = describeDocumentType(documentType);
   const consequence = describeSection11Consequence(documentType, basis);
   const basisLines = describeDocumentTypeBasis(basis, documentType);
 
+  // One popover and nothing that opens another inside it: the term glosses
+  // this used to carry were hover tooltips that opened on the focus the
+  // popover hands its first button, so a click showed two layers at once.
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1">
-          <h3 className="text-sm font-medium">§ 11 UStG</h3>
-          <TermGloss term="section11" />
-        </div>
-        <DocumentTypeBadge type={documentType} withTooltip={false} />
+      <div className="flex items-start justify-between gap-3">
+        <p className="text-sm font-medium" data-testid="section-11-consequence">
+          {consequence}
+        </p>
+        <DocumentTypeBadge type={documentType} withTooltip={false} className="shrink-0" />
       </div>
 
-      <p className="text-sm text-muted-foreground" data-testid="section-11-consequence">
-        {consequence}
-        {(resolvedType === "invoice" || resolvedType === "receipt") && (
-          <>
-            {" "}
-            <TermGloss term="vorsteuer" />
-          </>
-        )}
+      <p className="text-xs text-muted-foreground">
+        § 11 UStG is the part of the Austrian VAT Act that lists what an invoice has to
+        show before you can deduct its VAT (Vorsteuer). FiBuKI checks the document
+        against that list.
       </p>
 
       <Section11MissingElements
