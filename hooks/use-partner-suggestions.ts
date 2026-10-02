@@ -6,6 +6,7 @@ import { TaxFile } from "@/types/file";
 import { UserPartner, GlobalPartner, PartnerSuggestion, PartnerMatchResult } from "@/types/partner";
 import { normalizeIban } from "@/lib/import/deduplication";
 import { calculateCompanyNameSimilarity, vatIdsMatch } from "@/lib/matching/fuzzy-match";
+import { createPartnerSuggestionResolver } from "@/lib/partners/partner-suggestions";
 
 export interface PartnerSuggestionWithDetails extends PartnerSuggestion {
   partner: UserPartner | GlobalPartner;
@@ -21,52 +22,13 @@ export function usePartnerSuggestions(
   userPartners: UserPartner[],
   globalPartners: GlobalPartner[]
 ): PartnerSuggestionWithDetails[] {
-  return useMemo(() => {
-    if (!transaction) return [];
-    if (!transaction.partnerSuggestions || transaction.partnerSuggestions.length === 0) {
-      return [];
-    }
-
-    const results: PartnerSuggestionWithDetails[] = [];
-    const seenPartnerIds = new Set<string>();
-
-    for (const suggestion of transaction.partnerSuggestions) {
-      if (seenPartnerIds.has(suggestion.partnerId)) continue;
-
-      let partner: UserPartner | GlobalPartner | undefined;
-      if (suggestion.partnerType === "user") {
-        partner = userPartners.find((p) => p.id === suggestion.partnerId);
-      } else {
-        partner = globalPartners.find((p) => p.id === suggestion.partnerId);
-      }
-
-      if (!partner) continue;
-
-      // CRITICAL: Check if user manually removed this transaction from this partner
-      if (suggestion.partnerType === "user") {
-        const userPartner = partner as UserPartner;
-        const isManuallyRemoved = userPartner.manualRemovals?.some(
-          (r) => r.transactionId === transaction.id
-        );
-        if (isManuallyRemoved) continue;
-      }
-
-      // Filter out global partners where user already has a local copy
-      if (suggestion.partnerType === "global") {
-        const hasLocalCopy = userPartners.some((up) => up.globalPartnerId === suggestion.partnerId);
-        if (hasLocalCopy) continue;
-      }
-
-      seenPartnerIds.add(suggestion.partnerId);
-      results.push({
-        ...suggestion,
-        partner,
-      });
-    }
-
-    // Sort by confidence (highest first)
-    return results.sort((a, b) => b.confidence - a.confidence);
-  }, [transaction, userPartners, globalPartners]);
+  // Shared with the list's Partner cell, so the row and the panel always show
+  // the same suggestions (lib/partners/partner-suggestions.ts).
+  const resolve = useMemo(
+    () => createPartnerSuggestionResolver(userPartners, globalPartners),
+    [userPartners, globalPartners]
+  );
+  return useMemo(() => (transaction ? resolve(transaction) : []), [transaction, resolve]);
 }
 
 /**

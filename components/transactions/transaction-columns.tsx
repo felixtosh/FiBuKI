@@ -43,6 +43,7 @@ import { readBankOriginalAmount } from "@/functions/src/fx/bankOriginalAmount";
 import { isAcceptanceLive } from "@/functions/src/documents/receiptOnlyAcceptance";
 import { SortableHeader } from "@/components/ui/data-table";
 import { PartnerPill } from "@/components/partners/partner-pill";
+import { createPartnerSuggestionResolver } from "@/lib/partners/partner-suggestions";
 import {
   findMissingChargeCycle,
   RecurringChargeMarker,
@@ -136,6 +137,7 @@ export function getTransactionColumns(
   const userPartnerMap = new Map(userPartners.map((p) => [p.id, p]));
   const globalPartnerMap = new Map(globalPartners.map((p) => [p.id, p]));
   const categoryMap = new Map(categories.map((c) => [c.id, c]));
+  const resolveSuggestions = createPartnerSuggestionResolver(userPartners, globalPartners);
 
   return [
     {
@@ -209,23 +211,15 @@ export function getTransactionColumns(
       header: "Partner",
       cell: ({ row }) => {
         const { partnerId, partnerType, partnerMatchConfidence } = row.original;
-        const serverSuggestions = row.original.partnerSuggestions || [];
 
-        // Find top suggestion (first with a resolvable partner)
-        let topSuggestionId: string | null = null;
-        let topSuggestionType: "global" | "user" | null = null;
-        let topSuggestionConfidence: number | null = null;
-        for (const s of serverSuggestions) {
-          const p = s.partnerType === "global"
-            ? globalPartnerMap.get(s.partnerId)
-            : userPartnerMap.get(s.partnerId);
-          if (p) {
-            topSuggestionId = s.partnerId;
-            topSuggestionType = s.partnerType;
-            topSuggestionConfidence = s.confidence;
-            break;
-          }
-        }
+        // The top suggestion as the detail panel sees it: same filtering, same
+        // order (lib/partners/partner-suggestions.ts). Reading them differently
+        // made a row show a suggestion the panel did not, and opening it then
+        // re-ran matching and rewrote the row.
+        const top = resolveSuggestions(row.original)[0];
+        const topSuggestionId: string | null = top?.partnerId ?? null;
+        const topSuggestionType: "global" | "user" | null = top?.partnerType ?? null;
+        const topSuggestionConfidence: number | null = top?.confidence ?? null;
 
         // Determine what to display: assigned partner wins, else top suggestion
         const isAssigned = !!partnerId;
