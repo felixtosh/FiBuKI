@@ -22,8 +22,8 @@ let browserInstance: Browser | null = null;
 let browserLaunchPromise: Promise<Browser> | null = null;
 
 // How long a launch may take to report Chrome's DevTools endpoint. Puppeteer's own default is
-// 30s, and a cold start (binary not yet in the page cache) on a loaded host can take longer
-// while being perfectly healthy: the next launch on the same host takes well under a second.
+// 30s, and the first launch on a fresh, loaded host can take longer while being perfectly
+// healthy: the next launch on the same host takes well under a second.
 const LAUNCH_TIMEOUT_MS = 60_000;
 
 async function getBrowser(): Promise<Browser> {
