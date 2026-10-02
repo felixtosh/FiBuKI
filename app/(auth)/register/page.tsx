@@ -21,6 +21,7 @@ import { logoFont } from "@/app/fonts";
 import { callFunction } from "@/lib/firebase/callable";
 import { githubSignInEnabled } from "@/lib/auth/social-providers";
 import { consumeSocialAccessRequest } from "@/lib/auth/social-access-request";
+import { AccessRequestedNotice } from "@/components/auth/access-requested-notice";
 import { safeRedirectPath } from "@/lib/auth/safe-redirect";
 import { useOpenSeats } from "@/hooks/use-open-seats";
 
@@ -68,6 +69,8 @@ export default function RegisterPage() {
   // Once signed up (or already signed in), go where the visitor was headed, e.g. back to a
   // connecting app's authorize page; otherwise the dashboard.
   const redirect = searchParams.get("redirect");
+  // Connecting an assistant (ChatGPT, Claude, Codex): a blocked sign-in has to say how to finish later.
+  const connectingAssistant = safeRedirectPath(redirect).startsWith("/oauth/authorize");
   useEffect(() => {
     if (user && !accessRequested) {
       router.push(safeRedirectPath(redirect));
@@ -203,12 +206,7 @@ export default function RegisterPage() {
             )}
 
             {accessRequested || socialAccessRequested ? (
-              <Alert className="border-green-200 bg-green-50 text-green-900">
-                <CheckCircle className="h-4 w-4 text-green-600" />
-                <AlertDescription>
-                  Access request submitted! An admin will review it shortly.
-                </AlertDescription>
-              </Alert>
+              <AccessRequestedNotice connecting={connectingAssistant} />
             ) : (
               <>
                 {!openSeats && (

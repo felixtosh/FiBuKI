@@ -478,5 +478,12 @@
         "step2": "Server-URL einfügen"
       }
     }
+  },
+  "auth": {
+    "accessRequested": {
+      "default": "Zugangsanfrage gesendet! Ein Admin prüft sie in Kürze.",
+      "connectingTitle": "Zugang angefragt.",
+      "connectingBody": "FiBuKI ist vorerst nur mit Einladung nutzbar. Wir schreiben dir per E-Mail, sobald du freigeschaltet bist. Verbinde FiBuKI dann in deinem Assistenten erneut."
+    }
   }
 }

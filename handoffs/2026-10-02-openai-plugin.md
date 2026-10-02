@@ -183,7 +183,7 @@ Not done / follow-ups:
 3. **No client ID Metadata Documents (CIMD)**; not advertised, DCR is. Add if a client needs it.
 4. **No profile tool** (`_meta["openai/profile"]`, multi-account). Optional.
 5. Users whose signup is blocked by the invite gate never reach consent (they get the access-request flow).
-   The signup-policy decision (open seat for app-origin signups) is still open.
+   The signup policy is decided and built (see "Signup policy").
 6. `oauthToken` / `oauthRegister` rate limiting is only the host's general per-IP limiter.
 7. Docs: `deploy/selfhost/README-hetzner.md` should say `FIBUKI_WEB_ORIGIN` is now also the OAuth issuer.
 
@@ -419,3 +419,52 @@ Check how the portable format declares optional apps (the examples use `.app.jso
   review were left out (file name only) to avoid a download-URL surface in the widget.
 - Not done: widget CSP declaration in the resource `_meta` (widgets load nothing external, so the host default
   applies), the `openai/profile` tool, submission.
+
+
+## Signup policy (DONE)
+
+Decision (the recommendation in the plan, taken as given): ONE rule for every origin. An email may open an account if it
+is the super admin, is in `allowedEmails`, or can claim an open seat from `config/openSeats`; otherwise an access request
+is filed for an admin. ChatGPT / Claude / Codex signups get no special lane and no special block.
+
+Found while building it: on self-host (what fibuki.com runs) open seats never worked. The register page advertised them
+("Sign in to claim yours") but `assertInvited` only read `allowedEmails`, and `markInviteUsed` / `validateRegistration` are
+excluded there as "owned by auth", so no seat was ever claimed and `usedAt` / `claimedSeats` were never written.
+
+- `functions/src/auth/registrationGate.ts`: `admitEmail` (super admin, invite, atomic seat claim that also writes the
+  `allowedEmails` row) and `recordRegistration` (invite `usedAt`, `claimedSeats`, closes the person's pending access
+  request). The Firebase callables now call these (behaviour unchanged, `rejectUsedInvite` keeps their used-invite check)
+  and the self-host create hook calls them too (`before` -> `admitEmail`, new `after` -> `recordRegistration`).
+- Tests: `registrationGate.test.ts`; `better-auth-social.test.ts` (real store): stranger claims a seat via Google, no seat
+  left -> refused + access request, two strangers race for the last seat -> one account, one seat spent.
+- Connect flow: a blocked person on login/register now sees `AccessRequestedNotice`; when they came from
+  `/oauth/authorize` it says to wait for the approval email and connect again from the assistant (the authorize request
+  is not kept). `messages/*.json` `auth.accessRequested`.
+- Not done: nothing re-sends the user back into the connect flow after approval (they restart it from the assistant);
+  the admin approval email is the generic invite email.
+
+## Privacy policy (proposal, NOT edited: legal text for the GmbH)
+
+`/privacy` (messages `privacy.*`, "Last updated: Februar 2026") needs a review before the plugin is submitted (OpenAI asks
+for a policy URL covering what the app collects) and before more people connect assistants. Proposed changes:
+
+1. **Assistants as recipients (new).** When a user connects ChatGPT, Claude or Codex, FiBuKI returns the user's data
+   (Transactions, Partners, File names and extracted fields, import results) to that assistant when it calls a tool, and
+   files the user attaches go the other way. OpenAI / Anthropic process that under their own terms; FiBuKI starts the
+   transfer only at the user's request. Add OpenAI to "Third-Party Services" and to "International Data Transfers"
+   (Anthropic is listed only for the in-app chat today). Say the user can disconnect at any time.
+2. **Connection data (new).** What the OAuth connection stores: a hashed access token and refresh token per connection,
+   the client's registered name and redirect URIs, short-lived authorization codes, and the assistant the user came from
+   (`origin` on the onboarding record). Verify and state how a user revokes a connection (the integrations page shows the
+   key; confirm the revoke path and its wording).
+3. **Access requests (existing gap).** A sign-in turned away for lack of an invite stores email, name, photo URL and
+   provider of someone who is not a user. Needs a line under "Data We Collect" and a retention period (none exists in code).
+4. **Hosting is stale (existing gap).** The page says Firebase / Google Cloud europe-west1; fibuki.com now runs on a Hetzner
+   box in Nuremberg (`nbg1`, deploy/selfhost/README-hetzner.md). Storage location, "Firebase" as processor, the Firestore
+   encryption sentence and the sub-processor list all need a check against what actually serves production. Not a
+   plugin matter, but the page cannot be extended coherently until it is true.
+5. Both languages: `messages/en.json` and `messages/de.json` (`privacy.sections.*`), plus the date in
+   `app/(marketing)/privacy/page.tsx`.
+
+I can draft the EN and DE wording for 1 to 3 as a commit for review once you confirm point 4's facts (hosting region,
+processors in use); a lawyer or the data protection contact should sign off before it goes live.

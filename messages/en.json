@@ -478,5 +478,12 @@
         "step2": "Paste the server URL"
       }
     }
+  },
+  "auth": {
+    "accessRequested": {
+      "default": "Access request submitted! An admin will review it shortly.",
+      "connectingTitle": "Access requested.",
+      "connectingBody": "FiBuKI is invite-only for now. We will email you as soon as you are approved. Then go back to your assistant and connect FiBuKI again."
+    }
   }
 }
