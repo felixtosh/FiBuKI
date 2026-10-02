@@ -7,6 +7,9 @@ import type { PlanFeatureKey } from "@/types/billing";
 interface FeatureGateResult {
   /** Whether the feature is allowed for the current plan */
   allowed: boolean;
+  /** Plan known and the feature not in it. False while loading or after a
+   * read error, when `allowed` is only the "free" fallback. */
+  denied: boolean;
   /** Show the upgrade prompt dialog */
   showUpgrade: () => void;
   /** Hide the upgrade prompt dialog */
@@ -28,16 +31,18 @@ interface FeatureGateResult {
  * ```
  */
 export function useFeatureGate(feature: PlanFeatureKey): FeatureGateResult {
-  const { hasFeature } = useSubscription();
+  const { hasFeature, loading, error } = useSubscription();
   const [upgradeVisible, setUpgradeVisible] = useState(false);
 
   const allowed = hasFeature(feature);
+  const denied = !allowed && !loading && !error;
 
   const showUpgrade = useCallback(() => setUpgradeVisible(true), []);
   const hideUpgrade = useCallback(() => setUpgradeVisible(false), []);
 
   return {
     allowed,
+    denied,
     showUpgrade,
     hideUpgrade,
     upgradeVisible,
