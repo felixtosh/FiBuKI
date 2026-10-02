@@ -180,6 +180,43 @@ describe("selfhost get-server-user shim", () => {
   });
 });
 
+/** Local dev login: the web side of the api's FIBUKI_DEV_UID bypass. */
+describe("selfhost get-server-user shim — dev login", () => {
+  const env = process.env as Record<string, string | undefined>;
+  const saved = { uid: env.FIBUKI_DEV_UID, admin: env.NEXT_PUBLIC_FIBUKI_DEV_ADMIN, node: env.NODE_ENV };
+  const restore = (key: string, value: string | undefined) => {
+    if (value === undefined) delete env[key];
+    else env[key] = value;
+  };
+  afterAll(() => {
+    restore("FIBUKI_DEV_UID", saved.uid);
+    restore("NEXT_PUBLIC_FIBUKI_DEV_ADMIN", saved.admin);
+    restore("NODE_ENV", saved.node);
+  });
+
+  it("accepts any bearer as FIBUKI_DEV_UID outside production", async () => {
+    env.FIBUKI_DEV_UID = "dev-felix";
+    env.NEXT_PUBLIC_FIBUKI_DEV_ADMIN = "true";
+    env.NODE_ENV = "development";
+    await expect(getServerUserIdWithFallback(req("dev-felix"))).resolves.toBe("dev-felix");
+    await expect(isServerUserAdmin(req("dev-felix"))).resolves.toBe(true);
+  });
+
+  it("still needs a bearer at all", async () => {
+    env.FIBUKI_DEV_UID = "dev-felix";
+    env.NODE_ENV = "development";
+    await expect(getServerUserIdWithFallback(req())).rejects.toBeInstanceOf(UnauthorizedError);
+  });
+
+  it("is ignored in a production build", async () => {
+    env.FIBUKI_DEV_UID = "dev-felix";
+    env.NODE_ENV = "production";
+    await expect(getServerUserIdWithFallback(req("dev-felix"))).rejects.toBeInstanceOf(
+      UnauthorizedError,
+    );
+  });
+});
+
 /**
  * External-IdP mode. The api selects it from OIDC_ISSUER (server.ts); this shim
  * must follow, or the browser holds an IdP token the api accepts and every

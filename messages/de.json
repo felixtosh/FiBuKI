@@ -204,8 +204,7 @@
     "german": "Deutsch",
     "english": "English",
     "back": "Zurück",
-    "openChat": "Chat öffnen",
-    "closeChat": "Chat schließen"
+    "openChat": "Chat öffnen"
   },
   "billingCycle": {
     "title": "Abrechnungszyklus",

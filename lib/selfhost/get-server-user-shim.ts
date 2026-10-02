@@ -186,12 +186,27 @@ function deriveAdmin(payload: JWTPayload, cfg: VerifierConfig): boolean {
   return false;
 }
 
+/**
+ * Local dev login, the web side of the API's FIBUKI_DEV_UID bypass: the dev
+ * client sends its uid as the bearer, which is no JWT, so without this every
+ * app/api route (chat included) answers 401 locally. Never in a production
+ * build, whatever the environment says.
+ */
+function devBypassPayload(): JWTPayload | null {
+  const devUid = process.env.FIBUKI_DEV_UID;
+  if (!devUid || process.env.NODE_ENV === "production") return null;
+  return { sub: devUid, admin: process.env.NEXT_PUBLIC_FIBUKI_DEV_ADMIN === "true" };
+}
+
 async function verifyBearerToken(request: Request): Promise<JWTPayload | null> {
   const authHeader = request.headers.get("Authorization");
   if (!authHeader?.startsWith("Bearer ")) return null;
 
   const token = authHeader.substring(7).trim();
   if (!token) return null;
+
+  const dev = devBypassPayload();
+  if (dev) return dev;
 
   const cfg = resolveVerifierConfig();
   if (!cfg) {
