@@ -408,7 +408,8 @@ export const lookupCompany = onCall<LookupCompanyRequest>(
       // Step 2: Fallback to Google Search grounding
       return await searchByUrl(vertexAI, normalizedUrl, domain, userId);
     } catch (error) {
-      console.error("Company lookup error:", error);
+      // The error can carry the user's URL; log its type only (CodeQL js/log-injection).
+      console.error("Company lookup error:", error instanceof Error ? error.name : typeof error);
 
       // Try to at least return the domain
       if (url) {

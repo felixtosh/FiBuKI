@@ -44,7 +44,10 @@ beforeAll(async () => {
   });
   await new Promise<void>((resolve) => internal.listen(0, "127.0.0.1", resolve));
   base = `http://127.0.0.1:${(internal.address() as AddressInfo).port}`;
-});
+  // Start Chromium here, not inside the first case: on a busy CI runner the launch alone can
+  // outlast a case's 30s timeout, which failed whichever attack happened to run first.
+  await render("<p>warm-up</p>");
+}, 120_000);
 
 afterAll(async () => {
   if (!CHROME) return;

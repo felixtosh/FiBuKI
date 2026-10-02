@@ -142,7 +142,10 @@ export const mcpApi = onRequest(
       res.status(200).json({ success: true, result });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
-      console.error(`[MCP API] Error in ${body.tool}:`, message);
+      // No request value in the log line (CodeQL js/log-injection; see selfhost/rate-limit.ts):
+      // the tool's name comes from our own definitions, the error only by its type.
+      const toolName = TOOL_DEFINITIONS.find((t) => t.name === body.tool)?.name ?? "unknown tool";
+      console.error(`[MCP API] Error in ${toolName}:`, error instanceof Error ? error.name : typeof error);
       res.status(400).json({ success: false, error: message });
     }
   }
