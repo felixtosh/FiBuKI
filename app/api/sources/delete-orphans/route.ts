@@ -3,7 +3,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { initializeApp, getApps } from "firebase/app";
 import {
   getFirestore,
-  connectFirestoreEmulator,
   collection,
   query,
   where,
@@ -26,16 +25,6 @@ const firebaseConfig = {
 const appName = "delete-orphans";
 const app = getApps().find(a => a.name === appName) || initializeApp(firebaseConfig, appName);
 const db = getFirestore(app);
-
-// Connect to emulator in development
-if (process.env.NODE_ENV === "development" && process.env.NEXT_PUBLIC_USE_EMULATORS !== "false") {
-  try {
-    connectFirestoreEmulator(db, "localhost", 8080);
-    console.log("[Delete Orphans] Connected to Firestore emulator");
-  } catch {
-    // Already connected
-  }
-}
 
 const TRUELAYER_CONNECTIONS_COLLECTION = "truelayerConnections";
 

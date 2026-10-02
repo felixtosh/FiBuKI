@@ -2,9 +2,8 @@
  * Server-side authentication helpers
  *
  * Verifies Firebase ID tokens (RS256 signature, expiry, issuer, audience) via
- * the Admin SDK before trusting any identity claim. In dev the Admin app is
- * pointed at the Auth emulator (lib/firebase/admin.ts sets
- * FIREBASE_AUTH_EMULATOR_HOST at module load), so emulator tokens verify too.
+ * the Admin SDK before trusting any identity claim. The self-host build swaps
+ * this module for lib/selfhost/get-server-user-shim.ts.
  *
  * SECURITY: never decode-without-verify a JWT for authorization. A decoded-only
  * token lets any caller forge `{ user_id: <any> }` / `{ admin: true }` and act
@@ -85,8 +84,7 @@ function getInternalUserId(request: Request): string | null {
  * Returns null when there is no Bearer token or verification fails.
  *
  * `verifyIdToken` checks the signature against Google's public keys plus
- * expiry / issuer / audience. It transparently uses the Auth emulator when
- * FIREBASE_AUTH_EMULATOR_HOST is set (see lib/firebase/admin.ts).
+ * expiry / issuer / audience.
  */
 async function verifyBearerToken(
   request: Request

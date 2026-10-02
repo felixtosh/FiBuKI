@@ -11,7 +11,6 @@ export const dynamic = "force-dynamic";
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { Timestamp } from "firebase-admin/firestore";
-import type { UsageMetadata } from "@langchain/core/messages";
 
 // Dynamic imports to avoid build-time analysis issues
 const getAI = async () => import("ai");
@@ -20,6 +19,7 @@ const getAgentGraph = async () => import("@/lib/agent/graph");
 const getAgentModel = async () => import("@/lib/agent/model");
 const getLangfuse = async () => import("@/lib/agent/langfuse");
 const getUiMessages = async () => import("@/lib/agent/ui-messages");
+const getUsageTracker = async () => import("@/lib/agent/usage-tracker");
 
 const db = getAdminDb();
 
@@ -77,27 +77,9 @@ export async function POST(req: Request) {
   // Build the graph
   const graph = buildAgentGraph();
 
-  // Track token usage. Counted when each model call ends, not from the stream:
-  // LangGraph rebuilds streamed chunks from text alone for Gemini, so they never
-  // carry usage, and chat cost was logged as nothing at all.
-  let totalInputTokens = 0;
-  let totalOutputTokens = 0;
-  const usageHandler = {
-    handleLLMEnd(output: {
-      generations?: Array<Array<{ message?: { usage_metadata?: UsageMetadata } }>>;
-    }) {
-      for (const gen of output.generations?.flat() ?? []) {
-        const usage = gen.message?.usage_metadata;
-        if (!usage) continue;
-        const input = usage.input_tokens || 0;
-        totalInputTokens += input;
-        // total minus input, so a thinking model's reasoning (billed as output,
-        // missing from output_tokens on Gemini) is counted too.
-        totalOutputTokens += Math.max(usage.output_tokens || 0, (usage.total_tokens || 0) - input);
-        console.log("[Token Usage]", usage);
-      }
-    },
-  };
+  // Token usage, counted when each model call ends (see lib/agent/usage-tracker.ts).
+  const { createUsageTracker } = await getUsageTracker();
+  const usage = createUsageTracker();
 
   // Use graph.stream with messages streamMode for best compatibility with toUIMessageStream
   const graphStream = await graph.stream(
@@ -111,7 +93,7 @@ export async function POST(req: Request) {
     },
     {
       streamMode: ["messages"] as const,
-      callbacks: langfuseHandler ? [usageHandler, langfuseHandler] : [usageHandler],
+      callbacks: langfuseHandler ? [usage.handler, langfuseHandler] : [usage.handler],
     }
   );
 
@@ -215,26 +197,26 @@ export async function POST(req: Request) {
       console.log("[UI Stream] onText:", JSON.stringify(text.slice(0, 50)));
     },
     onFinal: async () => {
-      console.log("[Stream] Complete, tokens:", { totalInputTokens, totalOutputTokens });
+      console.log("[Stream] Complete, tokens:", usage.totals);
 
       // Log AI usage inline
-      if (userId && (totalInputTokens > 0 || totalOutputTokens > 0)) {
-        const cost = calculateCost(modelProvider, totalInputTokens, totalOutputTokens);
+      if (userId && (usage.totals.input > 0 || usage.totals.output > 0)) {
+        const cost = calculateCost(modelProvider, usage.totals.input, usage.totals.output);
         try {
           await db.collection("aiUsage").add({
             userId,
             function: "chat",
             model: getModelId(modelProvider),
-            inputTokens: totalInputTokens,
-            outputTokens: totalOutputTokens,
+            inputTokens: usage.totals.input,
+            outputTokens: usage.totals.output,
             estimatedCost: cost,
             createdAt: Timestamp.now(),
             metadata: null,
           });
           console.log(`[AI Usage] chat`, {
             model: getModelId(modelProvider),
-            inputTokens: totalInputTokens,
-            outputTokens: totalOutputTokens,
+            inputTokens: usage.totals.input,
+            outputTokens: usage.totals.output,
             estimatedCost: `$${cost.toFixed(4)}`,
           });
         } catch (error) {

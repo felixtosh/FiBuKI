@@ -118,8 +118,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (firebaseUser) {
         // Get cached token first (no network call if valid)
         // Only force refresh if we need fresh claims.
-        // Network may be unavailable during dev when emulators boot after the
-        // app — fall back to false rather than throwing an unhandled rejection.
+        // The network may be unavailable (e.g. the API still starting in dev):
+        // fall back to false rather than throwing an unhandled rejection.
         try {
           const token = await firebaseUser.getIdTokenResult(false);
           setIsAdmin(!!token.claims.admin);
@@ -326,8 +326,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // Use signInWithPopup in both dev and prod:
-  // - Dev: Firebase Auth Emulator + signInWithRedirect can't complete the
-  //   apis.google.com iframe handshake against localhost.
   // - Prod: since Chrome M115/Firefox 109/Safari 16.1 (June 2024) blocked
   //   third-party cookies in cross-site iframes, signInWithRedirect needs a
   //   custom authDomain or reverse proxy. Popup sidesteps that entirely.
