@@ -28,6 +28,8 @@ const DEFAULT_SECTION_HEADER_HEIGHT = 48;
 const DEFAULT_OVERSCAN = 10;
 const HEADER_HEIGHT = 56; // h-14 = 3.5rem = 56px
 const SCROLL_RENDER_DELAY = 150;
+/** A long description must not fit its column wider than a screen */
+const MAX_AUTOFIT_WIDTH = 640;
 
 /**
  * Data table item - either a section header or a data row
@@ -110,16 +112,6 @@ function ResizableDataTableInner<TData extends { id: string }>(
     []
   );
   const [columnSizing, setColumnSizing] = React.useState<ColumnSizingState>({});
-  // Track which columns have been manually resized by user
-  const [userResizedColumns, setUserResizedColumns] = React.useState<
-    Set<string>
-  >(new Set());
-  // Container width for proportional scaling
-  const [containerWidth, setContainerWidth] = React.useState<number | null>(
-    null
-  );
-  // Flag to track if we're auto-scaling (to avoid marking as user-resized)
-  const isAutoScalingRef = React.useRef(false);
 
   const table = useReactTable({
     data: flatData,
@@ -143,24 +135,7 @@ function ResizableDataTableInner<TData extends { id: string }>(
     getSortedRowModel: getSortedRowModel(),
     onColumnFiltersChange: setColumnFilters,
     getFilteredRowModel: getFilteredRowModel(),
-    onColumnSizingChange: (updater) => {
-      const newSizing =
-        typeof updater === "function" ? updater(columnSizing) : updater;
-      setColumnSizing(newSizing);
-      // Only mark as user-resized if not auto-scaling
-      if (!isAutoScalingRef.current) {
-        const changedColumns = Object.keys(newSizing).filter(
-          (colId) => newSizing[colId] !== columnSizing[colId]
-        );
-        if (changedColumns.length > 0) {
-          setUserResizedColumns((prev) => {
-            const next = new Set(prev);
-            changedColumns.forEach((col) => next.add(col));
-            return next;
-          });
-        }
-      }
-    },
+    onColumnSizingChange: setColumnSizing,
     columnResizeMode: "onChange",
     state: {
       sorting,
@@ -393,124 +368,54 @@ function ResizableDataTableInner<TData extends { id: string }>(
   // Calculate total table width
   const totalTableWidth = columnSizes.reduce((sum, w) => sum + w, 0);
 
-  // Observe container width changes (debounced - only after resize ends)
-  React.useEffect(() => {
-    if (!parentRef.current) return;
-
-    let resizeTimeout: NodeJS.Timeout | null = null;
-
-    const observer = new ResizeObserver((entries) => {
-      // Debounce - wait for resize to settle
-      if (resizeTimeout) clearTimeout(resizeTimeout);
-      resizeTimeout = setTimeout(() => {
-        const entry = entries[0];
-        if (entry) {
-          setContainerWidth(entry.contentRect.width);
-        }
-      }, 150); // Wait 150ms after last resize event
-    });
-
-    observer.observe(parentRef.current);
-    // Set initial width
-    setContainerWidth(parentRef.current.clientWidth);
-
-    return () => {
-      if (resizeTimeout) clearTimeout(resizeTimeout);
-      observer.disconnect();
-    };
-  }, []);
-
-  // Track previous container width to detect actual container resizes
-  const prevContainerWidthRef = React.useRef<number | null>(null);
-
-  // Auto-scale columns proportionally when container size changes (not on column resize)
-  React.useEffect(() => {
-    if (containerWidth === null) return;
-
-    // Skip if this is not a container resize (first render or same width)
-    const isFirstRender = prevContainerWidthRef.current === null;
-    const containerSizeChanged = prevContainerWidthRef.current !== containerWidth;
-    prevContainerWidthRef.current = containerWidth;
-
-    // Only auto-scale on actual container resize, not on initial render with existing sizes
-    if (!containerSizeChanged && !isFirstRender) return;
-
-    const allColumns = table.getAllColumns();
-
-    // Calculate default total width
-    const defaultTotalWidth = allColumns.reduce((sum, col) => {
-      return sum + (defaultColumnSizes[col.id] || 150);
-    }, 0);
-
-    // Only scale if container is larger than default total
-    if (containerWidth <= defaultTotalWidth) return;
-
-    // Calculate scale factor
-    const scaleFactor = containerWidth / defaultTotalWidth;
-
-    // Build new column sizes - scale all columns proportionally
-    const newSizing: ColumnSizingState = {};
-    allColumns.forEach((col) => {
-      const defaultSize = defaultColumnSizes[col.id] || 150;
-      newSizing[col.id] = Math.round(defaultSize * scaleFactor);
-    });
-
-    // Set flag to prevent marking these as user-resized
-    isAutoScalingRef.current = true;
-    setColumnSizing(newSizing);
-    // Also clear user-resized set on container resize
-    setUserResizedColumns(new Set());
-    // Reset flag after state update
-    requestAnimationFrame(() => {
-      isAutoScalingRef.current = false;
-    });
-  }, [containerWidth, table, defaultColumnSizes]);
-
-  // Get column size helper
-  const getColumnSize = React.useCallback(
-    (colId: string) => {
-      return columnSizing[colId] ?? (defaultColumnSizes[colId] || 150);
-    },
-    [columnSizing, defaultColumnSizes]
-  );
-
-  // Get last column ID
-  const lastColumnId = React.useMemo(() => {
-    const allColumns = table.getAllColumns();
-    return allColumns[allColumns.length - 1]?.id || "";
-  }, [table]);
-
-  // Reset column to default size (and adjust last column to compensate)
-  const resetColumnToDefault = React.useCallback(
+  // Columns keep their recommended widths whatever the container does. The
+  // table never stretches or squeezes them to fit: when the container is wider
+  // than the columns, an unlabelled filler column takes the rest, and when it
+  // is narrower, the table scrolls sideways.
+  //
+  // Double-clicking a column edge fits the column to its content, as in
+  // spreadsheets and file managers: as wide as its widest cell, header
+  // included, but never narrower than the column's default: the default is
+  // the recommended width, and a column that happens to show only "—" on
+  // screen should not collapse to nothing. Only rendered rows can be measured, so on a virtualised list
+  // "widest" means widest among the rows on screen and the overscan.
+  const fitColumnToContent = React.useCallback(
     (columnId: string) => {
-      const defaultSize = defaultColumnSizes[columnId] || 150;
-      const currentSize = columnSizing[columnId] ?? defaultSize;
-      const delta = currentSize - defaultSize;
+      const root = parentRef.current;
+      if (!root) return;
+      const cells = root.querySelectorAll<HTMLElement>(
+        `[data-col-id="${CSS.escape(columnId)}"]`
+      );
+      if (cells.length === 0) return;
 
-      if (columnId === lastColumnId) {
-        // If resetting last column, just set to default
-        setColumnSizing((prev) => ({
-          ...prev,
-          [columnId]: defaultSize,
-        }));
-      } else {
-        // Adjust last column to compensate
-        const lastColCurrentSize =
-          columnSizing[lastColumnId] ?? (defaultColumnSizes[lastColumnId] || 150);
-        setColumnSizing((prev) => ({
-          ...prev,
-          [columnId]: defaultSize,
-          [lastColumnId]: lastColCurrentSize + delta,
-        }));
-      }
-      // Remove from user-resized set
-      setUserResizedColumns((prev) => {
-        const next = new Set(prev);
-        next.delete(columnId);
-        return next;
+      // Each cell is cloned into a probe that lays it out at its natural
+      // width. Cells truncate inside the table, so their rendered width
+      // says nothing about how wide their content wants to be.
+      const probe = document.createElement("div");
+      probe.style.cssText =
+        "position:absolute;top:0;left:0;visibility:hidden;pointer-events:none;width:max-content;";
+      root.appendChild(probe);
+      let widest = 0;
+      cells.forEach((cell) => {
+        const clone = cell.cloneNode(true) as HTMLElement;
+        clone.style.width = "auto";
+        clone.style.display = "block";
+        clone.style.whiteSpace = "nowrap";
+        probe.appendChild(clone);
+        widest = Math.max(widest, clone.getBoundingClientRect().width);
+        probe.removeChild(clone);
       });
+      probe.remove();
+
+      setColumnSizing((prev) => ({
+        ...prev,
+        [columnId]: Math.min(
+          MAX_AUTOFIT_WIDTH,
+          Math.max(defaultColumnSizes[columnId] || 150, Math.ceil(widest))
+        ),
+      }));
     },
-    [columnSizing, lastColumnId, defaultColumnSizes]
+    [defaultColumnSizes]
   );
 
   // Row click handler with multi-select support.
@@ -592,23 +497,29 @@ function ResizableDataTableInner<TData extends { id: string }>(
           <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
         </div>
       )}
+      {/* Separate, not collapsed, borders: a collapsed border belongs to the
+          table grid rather than the cell, so on the sticky header it would
+          scroll away while the cell stays put */}
       <table
-        className="border-collapse"
-        style={{ width: totalTableWidth, tableLayout: "fixed" }}
+        className="border-separate border-spacing-0"
+        style={{ width: "100%", minWidth: totalTableWidth, tableLayout: "fixed" }}
       >
         <colgroup>
           {table.getAllColumns().map((col, i) => (
             <col key={col.id} style={{ width: columnSizes[i] }} />
           ))}
+          {/* Filler: absorbs whatever width the columns leave over */}
+          <col />
         </colgroup>
         <thead className="sticky top-0 z-10 bg-muted">
           {table.getHeaderGroups().map((headerGroup) => (
-            <tr key={headerGroup.id} className="border-b relative">
+            <tr key={headerGroup.id} className="relative">
               {headerGroup.headers.map((header, index) => (
                 <th
                   key={header.id}
+                  data-col-id={header.column.id}
                   className={cn(
-                    "h-10 px-2 text-left text-sm font-medium text-muted-foreground relative",
+                    "h-10 px-2 text-left text-sm font-medium text-muted-foreground relative border-r border-b border-border",
                     index === 0 && "pl-4",
                     index === headerGroup.headers.length - 1 && "pr-4"
                   )}
@@ -622,18 +533,19 @@ function ResizableDataTableInner<TData extends { id: string }>(
                           header.getContext()
                         )}
                   </div>
-                  {/* Custom resize handle with double-click reset (skip last column) */}
-                  {header.column.getCanResize() && index !== headerGroup.headers.length - 1 && (
+                  {/* Custom resize handle; double-click fits the column to its content */}
+                  {header.column.getCanResize() && (
                     <ResizeHandle
                       header={header as Header<unknown, unknown>}
-                      onResetToDefault={() => resetColumnToDefault(header.column.id)}
-                      lastColumnId={lastColumnId}
-                      getColumnSize={getColumnSize}
+                      onAutoFit={() => fitColumnToContent(header.column.id)}
+                      currentSize={columnSizes[index]}
+                      isLastColumn={index === headerGroup.headers.length - 1}
                       minColumnWidth={minColumnWidth}
                     />
                   )}
                 </th>
               ))}
+              <th aria-hidden="true" className="border-b border-border" />
             </tr>
           ))}
         </thead>
@@ -660,11 +572,7 @@ function ResizableDataTableInner<TData extends { id: string }>(
                       transform: `translateY(${visibleRow.start}px)`,
                     }}
                   >
-                    <td
-                      colSpan={columns.length}
-                      className="py-3 px-4"
-                      style={{ width: totalTableWidth }}
-                    >
+                    <td colSpan={columns.length + 1} className="py-3 px-4">
                       {item.title}
                     </td>
                   </tr>
@@ -703,7 +611,7 @@ function ResizableDataTableInner<TData extends { id: string }>(
             })
           ) : (
             <tr>
-              <td colSpan={columns.length}>
+              <td colSpan={columns.length + 1}>
                 {emptyState || (
                   <div className="h-24 flex items-center justify-center text-muted-foreground">
                     {emptyMessage}

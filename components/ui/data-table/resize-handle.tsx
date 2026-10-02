@@ -6,43 +6,46 @@ import { cn } from "@/lib/utils";
 
 interface ResizeHandleProps {
   header: Header<unknown, unknown>;
-  onResetToDefault: () => void;
-  lastColumnId: string;
-  getColumnSize: (colId: string) => number;
+  /** Double-click: fit the column to its content */
+  onAutoFit: () => void;
+  /** The width the column renders at, which header.getSize() does not know */
+  currentSize: number;
+  /**
+   * The handle straddles the column edge, reaching 8px into the next column.
+   * Past the last column there is no next column, so that overhang would widen
+   * the scroll area and leave a gap; there it stays inside its own column.
+   */
+  isLastColumn?: boolean;
   minColumnWidth: number;
 }
 
 export function ResizeHandle({
   header,
-  onResetToDefault,
-  lastColumnId,
-  getColumnSize,
+  onAutoFit,
+  currentSize,
+  isLastColumn = false,
   minColumnWidth,
 }: ResizeHandleProps) {
   const [isResizing, setIsResizing] = React.useState(false);
   const startXRef = React.useRef(0);
   const startWidthRef = React.useRef(0);
-  const startLastColWidthRef = React.useRef(0);
-  const isLastColumn = header.column.id === lastColumnId;
 
   const handleMouseDown = React.useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
+      e.stopPropagation();
+      // A double-click is read off the second mousedown, not a dblclick
+      // listener: the first mousedown puts up the full-screen resize overlay,
+      // so the second click lands on that and dblclick never reaches here.
+      if (e.detail >= 2) {
+        onAutoFit();
+        return;
+      }
       setIsResizing(true);
       startXRef.current = e.clientX;
-      startWidthRef.current = header.getSize();
-      startLastColWidthRef.current = getColumnSize(lastColumnId);
+      startWidthRef.current = currentSize;
     },
-    [header, lastColumnId, getColumnSize]
-  );
-
-  const handleDoubleClick = React.useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      onResetToDefault();
-    },
-    [onResetToDefault]
+    [currentSize, onAutoFit]
   );
 
   React.useEffect(() => {
@@ -51,26 +54,11 @@ export function ResizeHandle({
     const handleMouseMove = (e: MouseEvent) => {
       const delta = e.clientX - startXRef.current;
       const newSize = Math.max(minColumnWidth, startWidthRef.current + delta);
-      const table = header.getContext().table;
-
-      if (isLastColumn) {
-        // Last column: just resize itself
-        table.setColumnSizing((old) => ({
-          ...old,
-          [header.column.id]: newSize,
-        }));
-      } else {
-        // Other columns: resize this column and compensate with last column
-        const lastColNewSize = Math.max(
-          minColumnWidth,
-          startLastColWidthRef.current - delta
-        );
-        table.setColumnSizing((old) => ({
-          ...old,
-          [header.column.id]: newSize,
-          [lastColumnId]: lastColNewSize,
-        }));
-      }
+      // Only this column changes; the table grows or shrinks with it
+      header.getContext().table.setColumnSizing((old) => ({
+        ...old,
+        [header.column.id]: newSize,
+      }));
     };
 
     const handleMouseUp = () => {
@@ -84,14 +72,16 @@ export function ResizeHandle({
       document.removeEventListener("mousemove", handleMouseMove);
       document.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [isResizing, header, isLastColumn, lastColumnId, minColumnWidth]);
+  }, [isResizing, header, minColumnWidth]);
 
   return (
     <>
       <div
         onMouseDown={handleMouseDown}
-        onDoubleClick={handleDoubleClick}
-        className="absolute right-0 top-0 h-full w-4 -mr-2 cursor-col-resize select-none touch-none flex items-center justify-center group"
+        className={cn(
+          "absolute right-0 top-0 h-full cursor-col-resize select-none touch-none flex items-center group",
+          isLastColumn ? "w-2 justify-end" : "w-4 -mr-2 justify-center"
+        )}
         style={{ touchAction: "none" }}
       >
         <div

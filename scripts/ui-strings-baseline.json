@@ -42,7 +42,6 @@
   "app/(dashboard)/sources/connect/error/page.tsx": 3,
   "app/(dashboard)/sources/connect/page.tsx": 63,
   "app/(dashboard)/sources/page.tsx": 5,
-  "app/(dashboard)/transactions/chase/page.tsx": 6,
   "app/(dashboard)/transactions/page.tsx": 9,
   "components/admin/add-global-partner-dialog.tsx": 19,
   "components/admin/admin-partners-columns.tsx": 3,

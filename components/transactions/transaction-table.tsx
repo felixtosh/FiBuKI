@@ -2,6 +2,7 @@
 
 import { useMemo, useEffect, useCallback, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useTranslations } from "next-intl";
 import Link from "next/link";
 import { Receipt, Search, Building2 } from "lucide-react";
 import { useTransactions } from "@/hooks/use-transactions";
@@ -10,7 +11,6 @@ import { useNoReceiptCategories } from "@/hooks/use-no-receipt-categories";
 import { useFiles } from "@/hooks/use-files";
 import { useFilteredTransactions } from "@/hooks/use-filtered-transactions";
 import { parseFiltersFromUrl, buildFilterUrl } from "@/lib/filters/url-params";
-import { countChaseQueue } from "@/lib/documents/chase-queue";
 // Category suggestions come from transaction.categorySuggestions (computed on backend)
 import { DataTable, DataTableHandle } from "./data-table";
 import { getTransactionColumns } from "./transaction-columns";
@@ -45,6 +45,7 @@ export function TransactionTable({
   onDisplayedOrderChange,
 }: TransactionTableProps) {
   const router = useRouter();
+  const t = useTranslations("documents.state");
   const searchParams = useSearchParams();
 
   const { transactions, loading, error } = useTransactions();
@@ -81,14 +82,6 @@ export function TransactionTable({
     searchValue
   );
 
-  // The chase queue is counted across the whole account, not the filtered
-  // view: a filter narrowing the table must not make outstanding work look
-  // smaller than it is.
-  const chaseQueueCount = useMemo(
-    () => countChaseQueue(transactions),
-    [transactions]
-  );
-
   // Calculate assigned count and sum of amounts
   const { assignedCount, totalCount, filteredSum, scorePercent, deductiblePercent } =
     useMemo(() => {
@@ -101,7 +94,7 @@ export function TransactionTable({
     // Documented is not the same as deductible. A line covered by a payment
     // confirmation counts as assigned above and earns no Vorsteuer, so the ring
     // draws the § 11 share as a second arc and the gap between them is the
-    // chase queue beside it.
+    // receipt-only rows, each flagged on its own File pill.
     const deductible = filteredTransactions.filter(
       (tx) => tx.documentationState === "invoice"
     ).length;
@@ -270,9 +263,10 @@ export function TransactionTable({
       categories,
       categorySuggestions,
       fileAmountsMap,
-      searchingTransactions
+      searchingTransactions,
+      { receiptOnlyWarning: t("receiptOnlyWarning") }
     ),
-    [sources, userPartners, globalPartners, categories, categorySuggestions, fileAmountsMap, searchingTransactions]
+    [sources, userPartners, globalPartners, categories, categorySuggestions, fileAmountsMap, searchingTransactions, t]
   );
 
   const handleRowClick = (transaction: Transaction) => {
@@ -341,7 +335,6 @@ export function TransactionTable({
         filteredSum={filteredSum}
         scorePercent={scorePercent}
         deductiblePercent={deductiblePercent}
-        chaseQueueCount={chaseQueueCount}
       />
 
       {/* Scrollable table area */}

@@ -1,6 +1,7 @@
 "use client";
 
-import { FileText, Check, Loader2 } from "lucide-react";
+import type * as React from "react";
+import { FileText, Check, Loader2, TriangleAlert } from "lucide-react";
 import { cn, formatCurrency } from "@/lib/utils";
 import {
   Tooltip,
@@ -48,6 +49,12 @@ interface AmountMatchDisplayProps {
    * transaction (countType "file"). Same purpose as AmountInfo.original (#112).
    */
   primaryOriginal?: BankOriginalAmount | null;
+  /**
+   * Something is attached but it does not do the job, e.g. a payment
+   * confirmation where a § 11 invoice is needed. Turns the pill amber and
+   * becomes its tooltip, so the File cell stays one pill whatever it says.
+   */
+  warning?: string;
 }
 
 /**
@@ -65,6 +72,7 @@ export function AmountMatchDisplay({
   isExtracting,
   className,
   primaryOriginal,
+  warning,
 }: AmountMatchDisplayProps) {
   const convert = useEcbConverter();
   const Icon = FileText;
@@ -112,7 +120,7 @@ export function AmountMatchDisplay({
   // Icon with optional count badge
   const IconWithBadge = (
     <div className="relative flex-shrink-0">
-      <Icon className="h-4 w-4 text-muted-foreground" />
+      <Icon className={cn("h-4 w-4", warning ? "text-amber-600" : "text-muted-foreground")} />
       {count > 1 && (
         <span className="absolute -bottom-1 -right-1.5 flex items-center justify-center h-3.5 min-w-3.5 px-1 text-[10px] font-medium bg-muted text-muted-foreground rounded-full">
           {count}
@@ -121,14 +129,32 @@ export function AmountMatchDisplay({
     </div>
   );
 
+  const pillClassName = cn(
+    "inline-flex items-center h-7 px-3 gap-2 rounded-md border text-sm bg-background",
+    warning ? "border-amber-400 dark:border-amber-500/60" : "border-input",
+    className
+  );
+  const warningMark = warning && (
+    <TriangleAlert className="h-3.5 w-3.5 flex-shrink-0 text-amber-600" />
+  );
+  const withWarningTooltip = (pill: React.ReactNode) =>
+    warning ? (
+      <Tooltip>
+        <TooltipTrigger asChild>{pill}</TooltipTrigger>
+        <TooltipContent className="max-w-[260px]">
+          <p className="text-xs">{warning}</p>
+        </TooltipContent>
+      </Tooltip>
+    ) : (
+      pill
+    );
+
   // If no secondary amounts, show icon (with spinner if extracting)
   if (secondaryAmounts.length === 0) {
-    return (
-      <div className={cn(
-        "inline-flex items-center h-7 px-3 gap-2 rounded-md border text-sm bg-background border-input",
-        className
-      )}>
+    return withWarningTooltip(
+      <div className={pillClassName}>
         {IconWithBadge}
+        {warningMark}
         {isExtracting && (
           <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
         )}
@@ -263,11 +289,9 @@ export function AmountMatchDisplay({
   }
 
   const pillContent = (
-    <div className={cn(
-      "inline-flex items-center h-7 px-3 gap-2 rounded-md border text-sm bg-background border-input",
-      className
-    )}>
+    <div className={pillClassName}>
       {IconWithBadge}
+      {warningMark}
       {isExtracting ? (
         <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
       ) : (rightText || showCheck) && (
@@ -294,7 +318,8 @@ export function AmountMatchDisplay({
         <TooltipTrigger asChild>
           {pillContent}
         </TooltipTrigger>
-        <TooltipContent>
+        <TooltipContent className="max-w-[260px]">
+          {warning && <p className="text-xs mb-1.5">{warning}</p>}
           <p className="text-xs font-medium">Currency mismatch</p>
           <p className="text-xs text-muted-foreground">
             {countType === "file" ? "Transaction" : "File"}: {formatCurrency(Math.abs(primaryAmount), primaryCurrency)}
@@ -321,5 +346,5 @@ export function AmountMatchDisplay({
     );
   }
 
-  return pillContent;
+  return withWarningTooltip(pillContent);
 }

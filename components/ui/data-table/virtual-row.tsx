@@ -51,7 +51,10 @@ function VirtualRowInner<TData extends { id: string }>({
         position: "absolute",
         top: 0,
         left: 0,
-        width: totalWidth,
+        // Spans the table, filler included, so the row's background and
+        // bottom border run to the edge even when the columns stop short
+        width: "100%",
+        minWidth: totalWidth,
         height: virtualSize,
         transform: `translateY(${virtualStart}px)`,
         display: "table",
@@ -61,8 +64,9 @@ function VirtualRowInner<TData extends { id: string }>({
       {row.getVisibleCells().map((cell, index) => (
         <td
           key={cell.id}
+          data-col-id={cell.column.id}
           className={cn(
-            "px-2 py-2.5 overflow-hidden",
+            "px-2 py-2.5 overflow-hidden border-r border-border/25",
             index === 0 && "pl-4",
             index === row.getVisibleCells().length - 1 && "pr-4"
           )}
@@ -71,6 +75,7 @@ function VirtualRowInner<TData extends { id: string }>({
           {flexRender(cell.column.columnDef.cell, cell.getContext())}
         </td>
       ))}
+      <td aria-hidden="true" />
     </tr>
   );
 }

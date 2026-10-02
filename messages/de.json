@@ -304,6 +304,7 @@
     },
     "state": {
       "receiptOnly": "Nur Zahlungsbeleg",
+      "receiptOnlyWarning": "Nur ein Zahlungsbeleg, keine Rechnung. Die Vorsteuer ist so nicht abziehbar. Fordere beim Lieferanten eine ordentliche Rechnung an.",
       "noReceiptCategory": "Kategorie statt Beleg",
       "undocumented": "Kein Dokument"
     },

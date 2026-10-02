@@ -40,10 +40,9 @@ import { getCategoryTemplate } from "@/lib/data/no-receipt-category-templates";
 import { Pill } from "@/components/ui/pill";
 import { AmountMatchDisplay } from "@/components/ui/amount-match-display";
 import { readBankOriginalAmount } from "@/functions/src/fx/bankOriginalAmount";
+import { isAcceptanceLive } from "@/functions/src/documents/receiptOnlyAcceptance";
 import { SortableHeader } from "@/components/ui/data-table";
 import { PartnerPill } from "@/components/partners/partner-pill";
-import { DocumentationStateBadge } from "@/components/documents/document-type-badge";
-import { describeDocumentationState } from "@/lib/documents/document-type-presentation";
 import {
   findMissingChargeCycle,
   RecurringChargeMarker,
@@ -73,6 +72,55 @@ export interface TransactionColumnOptions {
   searchingTransactionIds?: Set<string>;
 }
 
+/**
+ * Card-to-bank reconciliation, shown in front of the account name. It used to
+ * be a column of its own with no header, empty on almost every row.
+ */
+function ReconciliationMarker({ tx }: { tx: Transaction }) {
+  const suggestions = tx.reconciliationSuggestions;
+  const reconciledBy = tx.reconciledByBankTxId;
+
+  // Card transaction that's been reconciled
+  if (reconciledBy) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="flex shrink-0">
+            <Link2 className="h-3.5 w-3.5 text-green-600" />
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>
+          <p className="text-xs">Reconciled with bank payment</p>
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  // Bank transaction with pending reconciliation suggestions
+  if (suggestions && suggestions.length > 0) {
+    const topSuggestion = suggestions[0];
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="flex shrink-0">
+            <CreditCard className="h-3.5 w-3.5 text-blue-500 animate-pulse" />
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>
+          <p className="text-xs font-medium">
+            {topSuggestion.chargeCount} card charge{topSuggestion.chargeCount !== 1 ? "s" : ""} detected
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Click to review reconciliation
+          </p>
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  return null;
+}
+
 export function getTransactionColumns(
   sources: TransactionSource[],
   userPartners: UserPartner[] = [],
@@ -80,7 +128,9 @@ export function getTransactionColumns(
   categories: UserNoReceiptCategory[] = [],
   categorySuggestions?: Map<string, CategorySuggestion>,
   fileAmountsMap?: Map<string, FileAmountData>,
-  searchingTransactionIds?: Set<string>
+  searchingTransactionIds?: Set<string>,
+  /** Translated text the cells need; the columns are built outside React. */
+  labels: { receiptOnlyWarning: string } = { receiptOnlyWarning: "" }
 ): ColumnDef<Transaction>[] {
   const sourceMap = new Map(sources.map((s) => [s.id, s]));
   const userPartnerMap = new Map(userPartners.map((p) => [p.id, p]));
@@ -254,19 +304,15 @@ export function getTransactionColumns(
           const fileData = fileAmountsMap?.get(txId);
           // Use transaction/payment date for currency conversion
           const txDate = toDateSafe(row.original.date) ?? undefined;
-          // WHAT the row is documented by, next to the cell that says THAT it
-          // is — and only when that changes its worth. An invoice is the case
-          // the green row already implies, so labelling it adds a mark to most
-          // rows and information to none. `receipt-only` (paid, not
-          // deductible) and `unknown` (attached, unclassified) are the two the
-          // reader cannot infer from anywhere else on the line.
-          const state = row.original.documentationState;
-          const worthSaying = state === "receipt-only" || state === "unknown";
+          // A payment confirmation is not a § 11 invoice: the row is green
+          // but earns no Vorsteuer. The pill says so itself, so the cell stays
+          // one pill. An accepted receipt (#165) is a ruling that nothing
+          // better will come, so it stops warning.
+          const receiptOnly =
+            row.original.documentationState === "receipt-only" &&
+            !isAcceptanceLive(row.original);
           return (
             <div className="flex items-center gap-1.5 min-w-0">
-              {worthSaying && (
-                <DocumentationStateBadge state={state} className="shrink-0" />
-              )}
               <AmountMatchDisplay
                 count={fileCount}
                 countType="file"
@@ -279,6 +325,7 @@ export function getTransactionColumns(
                 secondaryAmounts={fileData?.amounts || []}
                 conversionDate={txDate}
                 isExtracting={fileData?.hasExtractingFiles}
+                warning={receiptOnly ? labels.receiptOnlyWarning : undefined}
               />
             </div>
           );
@@ -354,60 +401,12 @@ export function getTransactionColumns(
       "how done is this line" signal on a table that already had four, and its
       values read in a different language to its header.
 
-      The fact now rides the File cell above, which is the cell that already
-      says a document is attached, and only when it changes what the row is
-      worth. The account-wide view of the same fact is the score ring in the
-      toolbar, and the work it implies is the chase queue next to it.
+      The fact now rides the File pill above, as its warning state, which is
+      the cell that already says a document is attached, and only when it
+      changes what the row is worth. The account-wide view of the same fact is
+      the score ring in the toolbar. A separate chase queue page was removed
+      for the same reason: a list of rows the table already flags.
     */
-    {
-      id: "reconciliation",
-      size: 40,
-      header: "",
-      cell: ({ row }) => {
-        const suggestions = row.original.reconciliationSuggestions;
-        const reconciledBy = row.original.reconciledByBankTxId;
-
-        // Card transaction that's been reconciled
-        if (reconciledBy) {
-          return (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <div className="flex items-center justify-center">
-                  <Link2 className="h-3.5 w-3.5 text-green-600" />
-                </div>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p className="text-xs">Reconciled with bank payment</p>
-              </TooltipContent>
-            </Tooltip>
-          );
-        }
-
-        // Bank transaction with pending reconciliation suggestions
-        if (suggestions && suggestions.length > 0) {
-          const topSuggestion = suggestions[0];
-          return (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <div className="flex items-center justify-center">
-                  <CreditCard className="h-3.5 w-3.5 text-blue-500 animate-pulse" />
-                </div>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p className="text-xs font-medium">
-                  {topSuggestion.chargeCount} card charge{topSuggestion.chargeCount !== 1 ? "s" : ""} detected
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  Click to review reconciliation
-                </p>
-              </TooltipContent>
-            </Tooltip>
-          );
-        }
-
-        return null;
-      },
-    },
     {
       accessorKey: "sourceId",
       size: 120,
@@ -422,15 +421,18 @@ export function getTransactionColumns(
           return <span className="text-muted-foreground text-xs">{sourceId.slice(0, 8)}...</span>;
         }
         return (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span className="text-sm truncate block">{source.name}</span>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p className="font-medium">{source.name}</p>
-              <p className="text-xs text-muted-foreground font-mono">{source.iban}</p>
-            </TooltipContent>
-          </Tooltip>
+          <div className="flex items-center gap-1.5 min-w-0">
+            <ReconciliationMarker tx={row.original} />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="text-sm truncate block">{source.name}</span>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p className="font-medium">{source.name}</p>
+                <p className="text-xs text-muted-foreground font-mono">{source.iban}</p>
+              </TooltipContent>
+            </Tooltip>
+          </div>
         );
       },
     },

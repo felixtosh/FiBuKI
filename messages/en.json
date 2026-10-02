@@ -304,6 +304,7 @@
     },
     "state": {
       "receiptOnly": "Payment confirmation only",
+      "receiptOnlyWarning": "Only a payment confirmation, not an invoice, so no Vorsteuer can be claimed. Ask the supplier for a proper invoice.",
       "noReceiptCategory": "Category instead of a document",
       "undocumented": "No document"
     },

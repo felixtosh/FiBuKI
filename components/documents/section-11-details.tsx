@@ -21,8 +21,8 @@ import {
  * is.
  *
  * `Section11MissingElements` is exported on its own because the transaction
- * surfaces and the chase queue list the same defects for the file behind a
- * receipt-only transaction, and the operator has to be able to name the same
+ * surfaces list the same defects for the file behind a receipt-only
+ * transaction, and the operator has to be able to name the same
  * elements in the same words in every place.
  */
 
