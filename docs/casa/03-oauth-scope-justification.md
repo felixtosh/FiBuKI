@@ -109,5 +109,5 @@ The same statement is also reproduced verbatim on the public Limited Use Disclos
 - `app/api/gmail/authorize/route.ts:GMAIL_SCOPES` — exact scope list
 - `app/api/gmail/callback/route.ts` — code exchange + encryption + persistence
 - `lib/crypto/encryption.ts` — AES-256-GCM implementation
-- `firestore.rules` — `emailTokens` / `emailIntegrations` server-only access
+- `functions/src/selfhost/data-policy.ts` — `emailTokens` server-only access; `emailIntegrations` owner-only
 - `https://fibuki.com/casa` — public mirror of this justification

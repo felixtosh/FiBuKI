@@ -52,10 +52,24 @@ describe("vatSourceOf", () => {
     expect(vatSourceOf({})).toBe("none");
   });
 
-  it("treats an unreconciled file with no printed block as yielding nothing", () => {
+  it("treats an unreconciled mixed-rate file with no printed block as yielding nothing", () => {
     // The UVA calculation drops such a transaction outright
-    // ("amount-mismatch"), so the surviving top-level rate buys it nothing.
-    expect(vatSourceOf(weakRecord)).toBe("none");
+    // ("amount-mismatch"), so a surviving top-level rate buys it nothing.
+    expect(
+      vatSourceOf({
+        ...weakRecord,
+        extractedLineItems: [
+          { description: "Pasta", vatPercent: 10, vatAmount: 350, amount: 3850 },
+          { description: "Wein", vatPercent: 20, vatAmount: 150, amount: 900 },
+        ],
+      })
+    ).toBe("none");
+    expect(vatSourceOf({ ...weakRecord, extractedVatPercent: null })).toBe("none");
+  });
+
+  it("ranks an unreconciled single-rate file at the top-level rung the UVA derives it from (#511)", () => {
+    expect(vatSourceOf(weakRecord)).toBe("rate-only");
+    expect(vatSourceOf({ ...weakRecord, extractedVatAmount: 53000 })).toBe("top-level");
   });
 });
 
@@ -65,7 +79,7 @@ describe("applyVatDowngradeGuard", () => {
 
     const report = applyVatDowngradeGuard(strongRecord, updateData);
 
-    expect(report).toMatchObject({ from: "line-items", to: "none", downgraded: true, preserved: true });
+    expect(report).toMatchObject({ from: "line-items", to: "rate-only", downgraded: true, preserved: true });
     for (const field of VAT_FIELDS) {
       expect(updateData[field]).toEqual(strongRecord[field as keyof typeof strongRecord]);
     }

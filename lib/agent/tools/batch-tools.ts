@@ -566,11 +566,15 @@ export const scoreBatchMatchesTool = tool(
     const results = [];
     for (const pair of scorablePairs) {
       try {
+        // By id, through the same scorer and input assembly the matching
+        // trigger and the connect dialog use. This called scoreAttachmentMatch
+        // with ids it does not take (it wants attachment and transaction
+        // objects), so every pair failed and scored 0.
         const result = await callFirebaseFunction<
           { fileId: string; transactionId: string },
           { confidence?: number; breakdown?: unknown }
         >(
-          "scoreAttachmentMatch",
+          "scoreFileTransactionMatch",
           {
             fileId: pair.fileId,
             transactionId: pair.transactionId,

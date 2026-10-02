@@ -699,15 +699,38 @@ describe("bmd #66: VAT is derived from the connected documents", () => {
     expect(row[9]).toBe("20");
   });
 
-  it("refuses a document whose line items did not reconcile", () => {
+  it("refuses a mixed-rate document whose line items did not reconcile", () => {
     const files = new Map([
-      ["f1", file({ extractedAmount: 12000, extractedVatPercent: 20, extractedVatAmount: 2000, lineItemsUnreconciled: true })],
+      [
+        "f1",
+        file({
+          extractedAmount: 12000,
+          extractedVatPercent: 20,
+          extractedVatAmount: 2000,
+          lineItemsUnreconciled: true,
+          extractedLineItems: [
+            { description: "Speisen", vatPercent: 10, vatAmount: 500, amount: 5500 },
+            { description: "Getränke", vatPercent: 20, vatAmount: 1500, amount: 9000 },
+          ],
+        }),
+      ],
     ]);
     const row = generateBuchungenCsv([tx({ amount: -12000, fileIds: ["f1"] })], files, new Map())
       .split("\n")[1]
       .split(";");
     expect(row[8]).toBe("0,00");
     expect(row[9]).toBe("0");
+  });
+
+  it("books a single-rate document from its total even when its line items did not reconcile (#511)", () => {
+    const files = new Map([
+      ["f1", file({ extractedAmount: 12000, extractedVatPercent: 20, extractedVatAmount: 2000, lineItemsUnreconciled: true })],
+    ]);
+    const row = generateBuchungenCsv([tx({ amount: -12000, fileIds: ["f1"] })], files, new Map())
+      .split("\n")[1]
+      .split(";");
+    expect(row[8]).toBe("20,00");
+    expect(row[9]).toBe("20");
   });
 
   it("books no VAT on a reverse-charge purchase, where the supplier charged none", () => {

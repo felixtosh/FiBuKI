@@ -12,6 +12,8 @@
  * stronger record with a weaker one.
  */
 
+import { singleDocumentRate } from "./lineItemReconciliation";
+
 /** Ladder positions, strongest first. Mirrors `fileRateGroups` in uva/calculateUva.ts. */
 export type VatSource = "rate-groups" | "line-items" | "top-level" | "rate-only" | "none";
 
@@ -53,14 +55,23 @@ function asFiniteNumber(value: unknown): number | null {
  * dropped outright by the UVA calculation ("amount-mismatch"), so such a record
  * yields nothing at all even when it still has a top-level rate. Ranking it any
  * higher than "none" would let the guard wave through exactly the write that
- * cost the figure.
+ * cost the figure. A single-rate document is the one exception (#511): the
+ * UVA derives it at the top-level rung, so that is where it ranks.
  */
 export function vatSourceOf(record: Record<string, unknown>): VatSource {
   if (isNonEmptyArray(record.extractedRateGroups)) {
     return "rate-groups";
   }
   if (record.lineItemsUnreconciled === true) {
-    return "none";
+    // #511: a single-rate document is the exception; the UVA derives it from
+    // the top-level figure and never reads the flagged rows.
+    const lineItems = Array.isArray(record.extractedLineItems)
+      ? (record.extractedLineItems as Array<{ vatPercent?: number | null }>)
+      : null;
+    if (singleDocumentRate(lineItems, null, asFiniteNumber(record.extractedVatPercent)) === null) {
+      return "none";
+    }
+    return asFiniteNumber(record.extractedVatAmount) !== null ? "top-level" : "rate-only";
   }
 
   const lineItems = record.extractedLineItems;

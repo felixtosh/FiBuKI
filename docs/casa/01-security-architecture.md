@@ -73,7 +73,7 @@ FiBuKI is a bookkeeping pre-accounting application that helps small business own
 | Layer | Mechanism |
 | --- | --- |
 | API surface | Every callable in `functions/src/**` is wrapped by `createCallable()`, which throws `UNAUTHENTICATED` if `ctx.userId` is missing |
-| Database | Firestore rules in `firestore.rules` enforce `request.auth.uid == resource.data.userId` on every user-scoped collection; sensitive collections (`emailTokens`, `passkeys`) are server-only (`allow read, write: if false`) |
+| Database | The API enforces per-user isolation (`functions/src/selfhost/data-policy.ts`, applied by `functions/src/selfhost/data-plane.ts`): every query on a user-scoped collection gets the owner filter injected server-side, every write is checked against the verified uid, and another user's document answers exactly like a missing one. Sensitive collections (`emailTokens`, `passkeys`, `passkeyChallenge`, `backupCodes`) are server-only. The cross-user attack suite in `functions/src/selfhost/security/` pins this for every callable, AI tool and data-plane route |
 | File storage | Cloud Storage rules enforce per-user path isolation |
 | Admin operations | Gated by Firebase custom claim `admin: true`; super admin grant flows through `SUPER_ADMIN_EMAIL` env var |
 
@@ -166,7 +166,8 @@ This document covers the application-tier architecture. The following are inheri
 
 - `lib/crypto/encryption.ts` — AES-256-GCM implementation
 - `functions/src/utils/createCallable.ts` — auth/usage/error wrapper
-- `firestore.rules` — per-user data isolation
+- `functions/src/selfhost/data-policy.ts` — per-user data isolation (the client access policy)
+- `functions/src/selfhost/security/` — cross-user attack suite
 - `app/api/gmail/authorize/route.ts` — OAuth state generation
 - `app/api/gmail/callback/route.ts` — code exchange + token encryption
 - `next.config.ts` — security response headers

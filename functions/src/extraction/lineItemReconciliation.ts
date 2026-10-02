@@ -438,7 +438,9 @@ function grossUpNetLineItems(
     if (Math.abs(netSum + vatSum - extractedAmount) > amountTolerance(extractedAmount)) continue;
 
     vats[largest] += extractedAmount - (netSum + vatSum);
-    if (vats.some((vat) => vat < 0)) continue;
+    // A discount row is negative, so its share of the VAT is too; only a VAT
+    // whose sign disagrees with its own row is a reading that failed.
+    if (vats.some((vat, i) => vat * lineItems[i].amount < 0)) continue;
 
     return lineItems.map((item, i) => ({
       ...item,
@@ -595,6 +597,11 @@ function reconciledUnlessRowVatContradicts(
   extractedAmount: number,
   documentVatPercent: number | null | undefined
 ): ReconciliationResult {
+  const resplit = resplitSingleRateVat(lineItems, validatedGroups, extractedAmount, documentVatPercent);
+  if (resplit) {
+    return { lineItems: resplit, unreconciled: false, unreconciledRates: [], rateGroups: validatedGroups };
+  }
+
   const contradictedRates = findContradictoryRowVat(
     lineItems,
     validatedGroups,
@@ -614,6 +621,116 @@ function reconciledUnlessRowVatContradicts(
     unreconciledRates: contradictedRates ?? [],
     rateGroups: validatedGroups,
   };
+}
+
+/**
+ * The one VAT rate a document carries, or null when it carries several or
+ * states none (#511).
+ *
+ * The rate is the document's own: its single printed rate group when it
+ * printed a block, otherwise its single stated rate. Rows may leave the rate
+ * blank, but a row at any OTHER rate makes the document mixed-rate, and then
+ * the rows are the only thing that says how the VAT splits.
+ */
+export function singleDocumentRate(
+  lineItems: ReadonlyArray<{ vatPercent?: number | null }> | null | undefined,
+  rateGroups: ReadonlyArray<{ rate: number }> | null | undefined,
+  documentVatPercent: number | null | undefined
+): number | null {
+  let rate: number | null = null;
+  if (rateGroups && rateGroups.length > 0) {
+    if (rateGroups.length !== 1) return null;
+    rate = rateGroups[0].rate;
+  } else if (typeof documentVatPercent === "number" && Number.isFinite(documentVatPercent)) {
+    rate = documentVatPercent;
+  }
+  if (rate === null || rate <= 0) {
+    return null;
+  }
+  return (lineItems ?? []).every((item) => item.vatPercent == null || item.vatPercent === rate)
+    ? rate
+    : null;
+}
+
+/**
+ * On a single-rate document the rows' VAT is not evidence of anything (#511).
+ *
+ * The document's VAT is fixed by its own figures: the printed group's VAT, or
+ * the gross total at its one rate. Splitting that across the rows is
+ * arithmetic, not a reading, so a row VAT that disagrees with it is a model
+ * slip to correct rather than a contradiction to flag. #504 flagged it
+ * instead, and a flagged file without a printed block is refused by the UVA
+ * outright, which made the most common invoice there is (one rate, VAT once
+ * at the bottom) fail on a row figure nothing needed.
+ *
+ * Returns the re-split rows, or null when the rows' VAT already agrees, the
+ * document is mixed-rate, or the rows are not gross (net rows whose VAT sits
+ * on top reconcile through their own VAT, and are left to the #504 check).
+ * The split is proportional to each row's amount, so a negative discount row
+ * takes a negative share; the rounding residual lands on the largest row.
+ */
+function resplitSingleRateVat(
+  lineItems: ExtractedLineItem[],
+  validatedGroups: ExtractedRateGroup[] | null,
+  extractedAmount: number,
+  documentVatPercent: number | null | undefined
+): ExtractedLineItem[] | null {
+  const rate = singleDocumentRate(lineItems, validatedGroups, documentVatPercent);
+  if (rate === null) {
+    return null;
+  }
+  const rowSum = lineItems.reduce((sum, item) => sum + item.amount, 0);
+  if (rowSum <= 0 || Math.abs(rowSum - extractedAmount) > amountTolerance(extractedAmount)) {
+    return null;
+  }
+
+  const documentVat =
+    validatedGroups && validatedGroups.length === 1
+      ? validatedGroups[0].vat
+      : Math.round((extractedAmount * rate) / (100 + rate));
+  const rowVat = lineItems.reduce((sum, item) => sum + item.vatAmount, 0);
+  const everyRowRated = lineItems.every((item) => item.vatPercent === rate);
+  if (
+    everyRowRated &&
+    Math.abs(rowVat - documentVat) <= Math.max(amountTolerance(documentVat), lineItems.length)
+  ) {
+    return null;
+  }
+
+  const vats = lineItems.map((item) => Math.round((documentVat * item.amount) / rowSum));
+  let largest = 0;
+  for (let i = 1; i < lineItems.length; i++) {
+    if (lineItems[i].amount > lineItems[largest].amount) largest = i;
+  }
+  vats[largest] += documentVat - vats.reduce((sum, vat) => sum + vat, 0);
+
+  console.log(
+    `[ExtractionCore] Single-rate document (${rate}%): row VAT ${rowVat} re-split ` +
+    `from the document's ${documentVat}.`
+  );
+  return lineItems.map((item, i) => ({ ...item, vatPercent: rate, vatAmount: vats[i] }));
+}
+
+/**
+ * The document's own VAT when its line items failed to reconcile but it
+ * carries a single rate (#511): the gross total at that rate. Line items are a
+ * rate-group fallback (#252), and a single-rate document needs no fallback,
+ * so broken rows cost it nothing. Null for a mixed-rate or rate-less
+ * document, whose VAT the broken rows were the only reading of.
+ */
+export function singleRateDocumentVat(
+  lineItems: ExtractedLineItem[],
+  extractedAmount: number | null | undefined,
+  documentVatPercent: number | null | undefined
+): { rate: number; vatAmount: number } | null {
+  if (typeof extractedAmount !== "number" || !Number.isFinite(extractedAmount) || extractedAmount <= 0) {
+    return null;
+  }
+  const rate = singleDocumentRate(lineItems, null, documentVatPercent);
+  if (rate === null) {
+    return null;
+  }
+  return { rate, vatAmount: Math.round((extractedAmount * rate) / (100 + rate)) };
 }
 
 /**

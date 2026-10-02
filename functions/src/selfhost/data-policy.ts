@@ -1,6 +1,8 @@
 /**
- * Client data-plane access policy — machine-readable mirror of
- * firestore.rules (repo root), enforced server-side by data-plane.ts.
+ * Client data-plane access policy, enforced server-side by data-plane.ts.
+ * This is the source of truth for what a browser may read or write. It began
+ * as a mirror of firestore.rules; those now only lock the retained Firebase
+ * project (the frozen rollback anchor) to deny-all.
  * Sibling of manifest.ts: additive, loud on anything unlisted.
  *
  * Access levels:
@@ -93,9 +95,15 @@ export const SUBTREE_POLICIES: Readonly<Record<string, CollectionPolicy>> = {
   notifications: { read: "authed", create: "authed", update: "authed", delete: "authed" },
   chatSessions: { read: "authed", create: "authed", update: "authed", delete: "authed" },
   reports: { read: "authed", create: "authed", update: "authed", delete: "authed" },
-  passkeyChallenge: { read: "authed", create: "authed", update: "authed", delete: "authed" },
+  // The WebAuthn challenge a passkey signature is verified against. Written
+  // only by generatePasskey*Options; a client that could write it could set it
+  // to the challenge of an assertion it captured earlier and replay that.
+  passkeyChallenge: denied,
   workerRequests: { read: "authed", create: "authed", update: "authed", delete: "authed" },
-  mfaSettings: { read: "authed", create: "authed", update: "authed", delete: "authed" },
+  // Read by the settings screen; changed only by the MFA callables, which
+  // verify the factor first. A client write here would let a signed-in session
+  // switch the account's MFA off without ever presenting it.
+  mfaSettings: { read: "authed", create: "none", update: "none", delete: "none" },
   workerRuns: { read: "authed", create: "none", update: "none", delete: "none" },
   directionSweeps: { read: "authed", create: "none", update: "none", delete: "none" },
   passkeys: { read: "authed", create: "none", update: "none", delete: "none" },

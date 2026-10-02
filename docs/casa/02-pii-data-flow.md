@@ -127,7 +127,7 @@ Per GDPR, users can exercise access, rectification, erasure, restriction, portab
 
 ## Evidence pointers
 
-- `firestore.rules` — access matrix enforcement
+- `functions/src/selfhost/data-policy.ts` — access matrix enforcement
 - `lib/crypto/encryption.ts`, `functions/src/utils/encryption.ts` — refresh-token encryption
 - `app/api/gmail/callback/route.ts` — token-encryption write path
 - `functions/src/utils/createCallable.ts` — per-user authz injection

@@ -118,4 +118,4 @@ FiBuKI does not currently maintain a manual legal-hold mechanism. If an Austrian
 - `functions/src/user/processPendingDeletions.ts` — scheduled job that processes due deletions
 - `functions/src/user/deleteUserAccountCallable.ts` — actual user-scoped purge
 - `functions/src/transactions/deleteTransactionsBySource.ts` — bank-source cascade delete
-- `firestore.rules` — proves the user-scoped delete operations are gated by ownership
+- `functions/src/selfhost/data-policy.ts` and `functions/src/selfhost/security/` — user-scoped deletes are gated by ownership, and the attack suite proves it

@@ -415,13 +415,13 @@ export function createDataPlane(
 
       const snap = await getFirestore().doc(segments.join("/")).get();
       const data = snap.exists ? (snap.data() as Record<string, unknown>) : undefined;
-      if (snap.exists && resolved.policy.read === "owner" && !ownsRow(data, auth.uid)) {
-        throw new DataPlaneError("permission-denied", "document belongs to another user");
-      }
+      // Another user's document reads exactly like a missing one. Answering
+      // "denied" instead would confirm the id exists to anyone holding it.
+      const visible = snap.exists && !(resolved.policy.read === "owner" && !ownsRow(data, auth.uid));
       res.json({
-        exists: snap.exists,
+        exists: visible,
         id: segments[segments.length - 1],
-        data: snap.exists ? encodeWire(data) : null,
+        data: visible ? encodeWire(data) : null,
       });
     } catch (err) {
       next(err);
@@ -490,6 +490,10 @@ export function createDataPlane(
         }
 
         if (op.type === "set") {
+          // The one shape that still tells "taken" from "free": a set on a
+          // free id creates it, on another user's it cannot. Ids are random
+          // (about 119 bits), so this confirms only an id the caller already
+          // holds; it cannot be used to discover one.
           if (existing) {
             requireAccess(resolved.policy.update, auth, `update on ${docPath}`);
             if (resolved.policy.update === "owner" && !ownsRow(existing, auth.uid)) {
@@ -506,9 +510,10 @@ export function createDataPlane(
           prepared.push({ kind: "set", ref, data: record, merge: op.merge === true, id });
         } else if (op.type === "update") {
           requireAccess(resolved.policy.update, auth, `update on ${docPath}`);
-          if (!existing) throw new DataPlaneError("not-found", `update on missing doc ${docPath}`);
-          if (resolved.policy.update === "owner" && !ownsRow(existing, auth.uid)) {
-            throw new DataPlaneError("permission-denied", "document belongs to another user");
+          // Missing and foreign give one answer, so an update cannot be used
+          // to learn whether someone else's id exists.
+          if (!existing || (resolved.policy.update === "owner" && !ownsRow(existing, auth.uid))) {
+            throw new DataPlaneError("not-found", `update on missing doc ${docPath}`);
           }
           if (!record) throw new DataPlaneError("invalid-argument", "update op needs data");
           checkPrecondition(existing, op.ifUnchanged, docPath);
@@ -518,11 +523,13 @@ export function createDataPlane(
           // Ownership before the precondition: a precondition compares a
           // stored value, so checked first it would answer "aborted" or
           // "denied" depending on another user's data.
-          if (existing && resolved.policy.delete === "owner" && !ownsRow(existing, auth.uid)) {
-            throw new DataPlaneError("permission-denied", "document belongs to another user");
-          }
-          checkPrecondition(existing, op.ifUnchanged, docPath);
-          if (!existing) {
+          //
+          // Another user's document is treated as absent: the delete is the
+          // same idempotent no-op it is for a missing id, and touches nothing.
+          const deletable =
+            existing && !(resolved.policy.delete === "owner" && !ownsRow(existing, auth.uid)) ? existing : undefined;
+          checkPrecondition(deletable, op.ifUnchanged, docPath);
+          if (!deletable) {
             prepared.push({ kind: "skip", id }); // Firestore deletes are idempotent
             continue;
           }

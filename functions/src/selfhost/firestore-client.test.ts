@@ -185,7 +185,7 @@ describe("reads", () => {
     expect(clientMissing.get("__name__")).toBe(serverMissing.get("__name__"));
   });
 
-  it("getDoc: present, missing, and a foreign doc denied as FirebaseError", async () => {
+  it("getDoc: present, missing, and a foreign doc that reads exactly like a missing one", async () => {
     const present = await getDoc(doc(db, "transactions", "t1"));
     expect(present.exists()).toBe(true);
     expect(present.id).toBe("t1");
@@ -195,10 +195,11 @@ describe("reads", () => {
     expect(missing.exists()).toBe(false);
     expect(missing.data()).toBeUndefined();
 
-    await expect(getDoc(doc(db, "transactions", "t3"))).rejects.toMatchObject({
-      name: "FirebaseError",
-      code: "permission-denied",
-    });
+    // Another user's document: indistinguishable from a missing one, so a
+    // held id never confirms that it exists.
+    const foreign = await getDoc(doc(db, "transactions", "t3"));
+    expect(foreign.exists()).toBe(false);
+    expect(foreign.data()).toBeUndefined();
   });
 });
 
@@ -244,7 +245,7 @@ describe("writes", () => {
     expect("stale" in stored).toBe(false);
   });
 
-  it("setDoc merge patches; a foreign write rejects as permission-denied", async () => {
+  it("setDoc merge patches; a foreign update is refused like a missing one", async () => {
     await seed("sources/s1", { userId: USER, name: "N26", isActive: true });
     await drainTriggers();
     await setDoc(doc(db, "sources", "s1"), { name: "N26 v2" }, { merge: true });
@@ -255,8 +256,12 @@ describe("writes", () => {
     await seed("files/fx", { userId: OTHER, fileName: "x.pdf" });
     await drainTriggers();
     await expect(updateDoc(doc(db, "files", "fx"), { fileName: "mine.pdf" })).rejects.toMatchObject({
-      code: "permission-denied",
+      code: "not-found",
     });
+    await expect(updateDoc(doc(db, "files", "no-such"), { fileName: "mine.pdf" })).rejects.toMatchObject({
+      code: "not-found",
+    });
+    expect((await serverDb.collection("files").doc("fx").get()).data()!.fileName).toBe("x.pdf");
   });
 
   it("deleteDoc works through a query snapshot's .ref", async () => {
