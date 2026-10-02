@@ -44,6 +44,7 @@ import { useDocumentLabel } from "@/hooks/use-document-label";
 import { useTranslations } from "next-intl";
 import { ProgressCounter } from "@/components/ui/progress-counter";
 import { ChoiceFilter } from "@/components/ui/choice-filter";
+import { OverflowFilterRow } from "@/components/ui/overflow-filter-row";
 import { PartnerFilter } from "@/components/partners/partner-filter";
 import { cn, formatCurrency } from "@/lib/utils";
 import { MOTION } from "@/design-system";
@@ -190,15 +191,56 @@ function TransactionToolbarInner({
   const showCounter = totalCount !== undefined && totalCount > 0;
 
   return (
-    <div className="grid grid-cols-[1fr_minmax(0,auto)] gap-2 px-4 py-2 border-b bg-background items-start">
-      {/* Filters - takes available space */}
-      <div className="flex items-center gap-2 flex-wrap min-w-0">
-        <SearchButton
-          value={searchValue}
-          onSearch={onSearchChange}
-          placeholder="Search transactions..."
-        />
-
+    <div className="grid grid-cols-[1fr_minmax(0,auto)] gap-2 px-4 py-2 border-b bg-background items-center">
+      {/* Filters: one line, in column order; what does not fit goes behind
+          More (#522). Search and a deep-linked import always stay. */}
+      <OverflowFilterRow
+        moreLabel={tFilters("more")}
+        panelTitle={tFilters("panelTitle")}
+        clearLabel={tFilters("clearAll")}
+        onClearAll={() =>
+          onFiltersChange({
+            ...filters,
+            dateFrom: undefined,
+            dateTo: undefined,
+            amountType: undefined,
+            partnerIds: undefined,
+            partnerId: undefined,
+            hasPartner: undefined,
+            isComplete: undefined,
+            documentationStates: undefined,
+          })
+        }
+        leading={
+          <div className="flex items-center gap-2">
+            <SearchButton
+              value={searchValue}
+              onSearch={onSearchChange}
+              placeholder="Search transactions..."
+            />
+        {/* Import filter badge (if active) */}
+        {filters.importId && (
+          <Badge variant="secondary" className="gap-1 h-8">
+            Import: {importFileName || "Selected"}
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={clearImportFilter}
+              onKeyDown={(e) => e.key === "Enter" && clearImportFilter()}
+              className="ml-1 hover:bg-muted rounded cursor-pointer"
+            >
+              <X className="h-3 w-3" />
+            </span>
+          </Badge>
+        )}
+          </div>
+        }
+        items={[
+          {
+            key: "date",
+            active: Boolean(hasDateFilter),
+            node: (
+              <>
       {/* Date filter */}
       <Popover open={datePopoverOpen} onOpenChange={setDatePopoverOpen}>
         <PopoverTrigger asChild>
@@ -337,7 +379,97 @@ function TransactionToolbarInner({
           </div>
         </PopoverContent>
       </Popover>
-
+              </>
+            ),
+          },
+          {
+            key: "type",
+            active: Boolean(hasAmountFilter),
+            node: (
+              <>
+      {/* Amount type filter */}
+      <Popover open={typePopoverOpen} onOpenChange={setTypePopoverOpen}>
+        <PopoverTrigger asChild>
+          <Button
+            variant={hasAmountFilter ? "secondary" : "outline"}
+            size="sm"
+            className="h-9 gap-2"
+          >
+            <ArrowUpDown className="h-4 w-4" />
+            <span>{getAmountLabel()}</span>
+            {hasAmountFilter && (
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={clearAmountFilter}
+                onKeyDown={(e) => e.key === "Enter" && clearAmountFilter(e as unknown as React.MouseEvent)}
+                className="ml-1 hover:bg-muted rounded p-0.5 -mr-1 cursor-pointer"
+              >
+                <X className="h-3 w-3" />
+              </span>
+            )}
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="w-auto p-2" align="start">
+          <div className="flex flex-col gap-1">
+            <Button
+              variant={!filters.amountType || filters.amountType === "all" ? "secondary" : "ghost"}
+              size="sm"
+              className="justify-start h-8"
+              onClick={() => {
+                onFiltersChange({ ...filters, amountType: undefined });
+                setTypePopoverOpen(false);
+              }}
+            >
+              All
+            </Button>
+            <Button
+              variant={filters.amountType === "income" ? "secondary" : "ghost"}
+              size="sm"
+              className="justify-start h-8"
+              onClick={() => {
+                onFiltersChange({ ...filters, amountType: "income" });
+                setTypePopoverOpen(false);
+              }}
+            >
+              Income
+            </Button>
+            <Button
+              variant={filters.amountType === "expense" ? "secondary" : "ghost"}
+              size="sm"
+              className="justify-start h-8"
+              onClick={() => {
+                onFiltersChange({ ...filters, amountType: "expense" });
+                setTypePopoverOpen(false);
+              }}
+            >
+              Expenses
+            </Button>
+          </div>
+        </PopoverContent>
+      </Popover>
+              </>
+            ),
+          },
+          {
+            key: "partner",
+            active: Boolean(filters.partnerIds?.length) || filters.hasPartner !== undefined,
+            node: (
+              <>
+      <PartnerFilter
+        userPartners={userPartners}
+        partnerIds={filters.partnerIds}
+        hasPartner={filters.hasPartner}
+        onChange={(next) => onFiltersChange({ ...filters, ...next })}
+      />
+              </>
+            ),
+          },
+          {
+            key: "files",
+            active: filters.isComplete !== undefined,
+            node: (
+              <>
       {/* Files: the File column, assigned = a File or a no-receipt category (#519) */}
       <ChoiceFilter
         label={tFilters("files.label")}
@@ -361,7 +493,14 @@ function TransactionToolbarInner({
           { value: "unassigned", label: tFilters("unassigned") },
         ]}
       />
-
+              </>
+            ),
+          },
+          {
+            key: "documentation",
+            active: hasDocumentationFilter,
+            node: (
+              <>
       {/*
         Documentation State filter (#249). Multi-select with every state
         checked by default, unlike the single-select chips around it: the
@@ -426,92 +565,11 @@ function TransactionToolbarInner({
           </div>
         </PopoverContent>
       </Popover>
-
-      {/* Amount type filter */}
-      <Popover open={typePopoverOpen} onOpenChange={setTypePopoverOpen}>
-        <PopoverTrigger asChild>
-          <Button
-            variant={hasAmountFilter ? "secondary" : "outline"}
-            size="sm"
-            className="h-9 gap-2"
-          >
-            <ArrowUpDown className="h-4 w-4" />
-            <span>{getAmountLabel()}</span>
-            {hasAmountFilter && (
-              <span
-                role="button"
-                tabIndex={0}
-                onClick={clearAmountFilter}
-                onKeyDown={(e) => e.key === "Enter" && clearAmountFilter(e as unknown as React.MouseEvent)}
-                className="ml-1 hover:bg-muted rounded p-0.5 -mr-1 cursor-pointer"
-              >
-                <X className="h-3 w-3" />
-              </span>
-            )}
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="w-auto p-2" align="start">
-          <div className="flex flex-col gap-1">
-            <Button
-              variant={!filters.amountType || filters.amountType === "all" ? "secondary" : "ghost"}
-              size="sm"
-              className="justify-start h-8"
-              onClick={() => {
-                onFiltersChange({ ...filters, amountType: undefined });
-                setTypePopoverOpen(false);
-              }}
-            >
-              All
-            </Button>
-            <Button
-              variant={filters.amountType === "income" ? "secondary" : "ghost"}
-              size="sm"
-              className="justify-start h-8"
-              onClick={() => {
-                onFiltersChange({ ...filters, amountType: "income" });
-                setTypePopoverOpen(false);
-              }}
-            >
-              Income
-            </Button>
-            <Button
-              variant={filters.amountType === "expense" ? "secondary" : "ghost"}
-              size="sm"
-              className="justify-start h-8"
-              onClick={() => {
-                onFiltersChange({ ...filters, amountType: "expense" });
-                setTypePopoverOpen(false);
-              }}
-            >
-              Expenses
-            </Button>
-          </div>
-        </PopoverContent>
-      </Popover>
-
-      <PartnerFilter
-        userPartners={userPartners}
-        partnerIds={filters.partnerIds}
-        hasPartner={filters.hasPartner}
-        onChange={(next) => onFiltersChange({ ...filters, ...next })}
+              </>
+            ),
+          },
+        ]}
       />
-
-        {/* Import filter badge (if active) */}
-        {filters.importId && (
-          <Badge variant="secondary" className="gap-1 h-8">
-            Import: {importFileName || "Selected"}
-            <span
-              role="button"
-              tabIndex={0}
-              onClick={clearImportFilter}
-              onKeyDown={(e) => e.key === "Enter" && clearImportFilter()}
-              className="ml-1 hover:bg-muted rounded cursor-pointer"
-            >
-              <X className="h-3 w-3" />
-            </span>
-          </Badge>
-        )}
-      </div>
 
       {/* Counter and sum - always stacked vertically */}
       {showCounter && (

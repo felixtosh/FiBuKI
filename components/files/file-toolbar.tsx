@@ -14,6 +14,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { CalendarDays, Link2, ArrowUpDown, X, CalendarIcon, Trash2 } from "lucide-react";
 import { SearchButton } from "@/components/ui/search-button";
 import { ChoiceFilter } from "@/components/ui/choice-filter";
+import { OverflowFilterRow } from "@/components/ui/overflow-filter-row";
 import { PartnerFilter } from "@/components/partners/partner-filter";
 import { FileFilters } from "@/types/file";
 import { cn } from "@/lib/utils";
@@ -108,15 +109,37 @@ export function FileToolbar({
 
   return (
     <div className="flex items-center gap-2 px-4 py-2 border-b bg-background">
-      {/* Left side: filters */}
-      <div className="flex items-center gap-2 flex-wrap flex-1">
-        {/* Search button */}
-        <SearchButton
-          value={searchValue}
-          onSearch={onSearchChange}
-          placeholder="Search files..."
-        />
-
+      {/* Left side: one line of filters; what does not fit goes behind
+          More (#522). Search always stays. */}
+      <OverflowFilterRow
+        moreLabel={t("more")}
+        panelTitle={t("panelTitle")}
+        clearLabel={t("clearAll")}
+        onClearAll={() =>
+          onFiltersChange({
+            ...filters,
+            extractedDateFrom: undefined,
+            extractedDateTo: undefined,
+            amountType: undefined,
+            deletedOnly: undefined,
+            partnerIds: undefined,
+            hasPartner: undefined,
+            hasConnections: undefined,
+          })
+        }
+        leading={
+          <SearchButton
+            value={searchValue}
+            onSearch={onSearchChange}
+            placeholder="Search files..."
+          />
+        }
+        items={[
+          {
+            key: "date",
+            active: Boolean(hasDateFilter),
+            node: (
+              <>
       {/* Date filter (Invoice Date) */}
       <Popover open={datePopoverOpen} onOpenChange={setDatePopoverOpen}>
         <PopoverTrigger asChild>
@@ -255,7 +278,14 @@ export function FileToolbar({
           </div>
         </PopoverContent>
       </Popover>
-
+              </>
+            ),
+          },
+          {
+            key: "type",
+            active: typeValue !== undefined,
+            node: (
+              <>
       {/* Type: the Amount column's sign, or not an invoice at all (#519).
           The deleted-files view (#268) sits below a line, as the one bucket
           that is not a kind of document. */}
@@ -283,14 +313,26 @@ export function FileToolbar({
           },
         ]}
       />
-
+              </>
+            ),
+          },
+          {
+            key: "partner",
+            active: Boolean(filters.partnerIds?.length) || filters.hasPartner !== undefined,
+            node: (
       <PartnerFilter
         userPartners={userPartners}
         partnerIds={filters.partnerIds}
         hasPartner={filters.hasPartner}
         onChange={(next) => onFiltersChange({ ...filters, ...next })}
       />
-
+            ),
+          },
+          {
+            key: "transactions",
+            active: filters.hasConnections !== undefined,
+            node: (
+              <>
       {/* Transactions: the Transactions column (#519) */}
       <ChoiceFilter
         label={t("transactions.label")}
@@ -314,7 +356,11 @@ export function FileToolbar({
           { value: "unassigned", label: t("unassigned") },
         ]}
       />
-      </div>
+              </>
+            ),
+          },
+        ]}
+      />
 
       {/* Right side: counter */}
       {showCounter && (
