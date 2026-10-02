@@ -219,13 +219,13 @@ export function ChatSidebar() {
 
   return (
     <>
-      {/* Floating opener, bottom-right, only while the chat is closed */}
+      {/* Floating opener, bottom-left (the chat opens on this side), only while the chat is closed */}
       {!isSidebarOpen && (
         <Button
           variant="outline"
           size="icon"
           onClick={toggleSidebar}
-          className="fixed right-4 bottom-4 z-[60] h-12 w-12 rounded-full shadow-lg"
+          className="fixed left-4 bottom-4 z-[60] h-12 w-12 rounded-full shadow-lg"
           title={tCommon("openChat")}
           aria-label={tCommon("openChat")}
         >
