@@ -8,8 +8,9 @@ import { cn } from "@/lib/utils";
 /**
  * "done / total" with a progress ring, the same on the Files and the
  * Transactions list (#517). One ring, no inner arc. The explanation opens as
- * a popover when the counter is hovered (or tapped), and an info icon shows
- * on hover so the counter reads as something you can ask about.
+ * a popover when the counter is hovered (or tapped), and an info icon fades
+ * in at the centre of the ring on hover, so the counter reads as something you
+ * can ask about without taking any extra width.
  *
  * The explanation is passed in already translated: this primitive knows
  * nothing about what is being counted.
@@ -44,11 +45,14 @@ export function ProgressCounter({
           onMouseEnter={() => setOpen(true)}
           onMouseLeave={() => setOpen(false)}
         >
-          <Info
-            className="h-3.5 w-3.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
-            aria-hidden="true"
-          />
-          <ProgressRing percent={percent} />
+          <span className="relative inline-flex">
+            <ProgressRing percent={percent} />
+            <Info
+              className="absolute inset-0 m-auto h-2.5 w-2.5 text-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+              strokeWidth={3}
+              aria-hidden="true"
+            />
+          </span>
           <span
             className={cn(
               "tabular-nums font-medium text-foreground inline-block",
