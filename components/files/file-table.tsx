@@ -8,7 +8,6 @@ import { FilesDataTable, FilesDataTableHandle, SELECT_COLUMN_WIDTH } from "./fil
 import { FileToolbar } from "./file-toolbar";
 import { getFileColumns } from "./file-columns";
 import { useEcbConverter } from "@/lib/currency";
-import { FileBulkActionBar } from "./file-bulk-action-bar";
 import { Checkbox } from "@/components/ui/checkbox";
 import { TableEmptyState, emptyStatePresets } from "@/components/ui/table-empty-state";
 import { TaxFile, FileFilters } from "@/types/file";
@@ -51,23 +50,6 @@ interface FileTableProps {
   onToggleSelectAll?: () => void;
   /** Checkbox column: checked/unchecked/indeterminate state for the header checkbox */
   selectAllState?: SelectAllCheckedState;
-  /** Floating bulk-action bar, shown above the table when a bulk selection is active */
-  bulkActionBar?: {
-    selectedCount: number;
-    visible: boolean;
-    onAssignPartner: () => void;
-    onMarkAsNotInvoice: () => void;
-    onMarkAsInvoice: () => void;
-    onDelete: () => void;
-    /** Purge, the deleted-files view's one bulk action (#268) */
-    onPurge?: () => void;
-    onClearSelection: () => void;
-    isDeleting?: boolean;
-    isPurging?: boolean;
-    isUpdating?: boolean;
-    isAssigningPartner?: boolean;
-    progress?: { completed: number; total: number } | null;
-  };
   /** Callback to trigger file upload dialog */
   onUploadClick?: () => void;
 }
@@ -95,7 +77,6 @@ export const FileTable = forwardRef<FilesDataTableHandle, FileTableProps>(
       onToggleFileSelection,
       onToggleSelectAll,
       selectAllState = "unchecked",
-      bulkActionBar,
       onUploadClick,
     },
     ref
@@ -216,23 +197,6 @@ export const FileTable = forwardRef<FilesDataTableHandle, FileTableProps>(
           totalCount={totalCount}
         />
         <div className="flex-1 relative overflow-hidden flex flex-col">
-          {bulkActionBar?.visible && (
-            <FileBulkActionBar
-              mode={deletedView ? "deleted" : "live"}
-              selectedCount={bulkActionBar.selectedCount}
-              onAssignPartner={bulkActionBar.onAssignPartner}
-              onMarkAsNotInvoice={bulkActionBar.onMarkAsNotInvoice}
-              onMarkAsInvoice={bulkActionBar.onMarkAsInvoice}
-              onDelete={bulkActionBar.onDelete}
-              onPurge={bulkActionBar.onPurge}
-              onClearSelection={bulkActionBar.onClearSelection}
-              isDeleting={bulkActionBar.isDeleting}
-              isPurging={bulkActionBar.isPurging}
-              isUpdating={bulkActionBar.isUpdating}
-              isAssigningPartner={bulkActionBar.isAssigningPartner}
-              progress={bulkActionBar.progress}
-            />
-          )}
           <FilesDataTable
             // Remount on view switch so the deleted view opens sorted by when
             // each File was deleted, newest first.

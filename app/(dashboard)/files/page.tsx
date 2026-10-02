@@ -9,6 +9,7 @@ import { uploadFile, UPLOAD_ACCEPTED_TYPES, UPLOAD_MAX_FILE_SIZE } from "@/lib/f
 import { retryFileExtraction, connectFileToTransaction, assignPartnerToFile, OperationsContext } from "@/lib/operations";
 import { FileTable } from "@/components/files/file-table";
 import { FileDetailPanel } from "@/components/files/file-detail-panel";
+import { FileBulkPanel } from "@/components/files/file-bulk-panel";
 import { FileUploadZone } from "@/components/files/file-upload-zone";
 import { FileViewerOverlay } from "@/components/files/file-viewer-overlay";
 import { ConnectTransactionOverlay } from "@/components/files/connect-transaction-overlay";
@@ -434,11 +435,15 @@ function FilesContent() {
     return files.find((f) => f.id === primarySelectedId) || null;
   }, [primarySelectedId, files]);
 
-  // A bulk selection is about several Files at once, so the one-File detail
-  // panel (and the viewer and connect overlay that hang off it) steps aside
-  // while it is active. The primary stays selected; clearing the bulk
-  // selection brings its panel back.
+  // A bulk selection takes over the sidebar: the bulk panel replaces the
+  // one-File detail panel (and the viewer and connect overlay that hang off
+  // it). The primary stays selected; clearing the bulk selection brings its
+  // panel back.
   const detailFile = showBulkActionBar ? null : selectedFile;
+  const bulkSelectedFiles = useMemo(
+    () => (showBulkActionBar ? files.filter((f) => allSelectedIds.has(f.id)) : []),
+    [showBulkActionBar, files, allSelectedIds]
+  );
 
   // Locate the file that backs the current invoice (if any) so we can pass
   // its id down to InvoiceDetailPanel for issued-invoice preview rendering.
@@ -1060,7 +1065,7 @@ function FilesContent() {
       <div
         className="relative h-full flex flex-col transition-[margin] duration-200 ease-in-out"
         style={{
-          marginRight: detailFile || invoiceIdParam ? panelWidth : 0,
+          marginRight: showBulkActionBar || detailFile || invoiceIdParam ? panelWidth : 0,
         }}
       >
         {/* FABs — anchored to the content column so they live within the
@@ -1127,21 +1132,6 @@ function FilesContent() {
             onToggleFileSelection={handleFileCheckboxChange}
             onToggleSelectAll={handleToggleSelectAll}
             selectAllState={selectAllState}
-            bulkActionBar={{
-              selectedCount: allSelectedIds.size,
-              visible: showBulkActionBar,
-              onAssignPartner: () => setIsBulkPartnerPickerOpen(true),
-              onMarkAsNotInvoice: handleBulkMarkAsNotInvoice,
-              onMarkAsInvoice: handleBulkMarkAsInvoice,
-              onDelete: handleBulkDelete,
-              onPurge: handleBulkPurge,
-              onClearSelection: handleClearSelection,
-              isDeleting: isBulkDeleting,
-              isPurging: isBulkPurging,
-              isUpdating: isBulkUpdating,
-              isAssigningPartner: isBulkAssigningPartner,
-              progress: bulkProgress,
-            }}
             onUploadClick={() => setIsUploadDialogOpen(true)}
           />
 
@@ -1193,8 +1183,42 @@ function FilesContent() {
         )}
       </div>
 
-      {/* Right sidebar - Invoice editor takes priority when invoiceId param set */}
-      {invoiceIdParam ? (
+      {/* Right sidebar - a bulk selection takes priority, then the invoice
+          editor when the invoiceId param is set, then the File's details */}
+      {showBulkActionBar && (
+        <div
+          ref={panelRef}
+          className="fixed right-0 top-14 bottom-0 z-50 bg-background border-l flex"
+          style={{ width: panelWidth }}
+        >
+          <div
+            className={cn(
+              "w-1 cursor-col-resize bg-border hover:bg-primary/20 active:bg-primary/30 flex-shrink-0",
+              isResizing && "bg-primary/30"
+            )}
+            onMouseDown={handleResizeStart}
+          />
+          <div className="flex-1 overflow-hidden detail-panel-container">
+            <FileBulkPanel
+              mode={filters.deletedOnly === true ? "deleted" : "live"}
+              files={bulkSelectedFiles}
+              onDeselect={(fileId) => handleFileCheckboxChange(fileId, false)}
+              onClearSelection={handleClearSelection}
+              onAssignPartner={() => setIsBulkPartnerPickerOpen(true)}
+              onMarkAsNotInvoice={handleBulkMarkAsNotInvoice}
+              onMarkAsInvoice={handleBulkMarkAsInvoice}
+              onDelete={handleBulkDelete}
+              onPurge={handleBulkPurge}
+              isDeleting={isBulkDeleting}
+              isPurging={isBulkPurging}
+              isUpdating={isBulkUpdating}
+              isAssigningPartner={isBulkAssigningPartner}
+              progress={bulkProgress}
+            />
+          </div>
+        </div>
+      )}
+      {!showBulkActionBar && invoiceIdParam ? (
         <div
           ref={panelRef}
           className="fixed right-0 top-14 bottom-0 z-50 bg-background border-l flex"
