@@ -105,6 +105,9 @@ function FileTableFallback() {
   );
 }
 
+/** Nothing ticked: a browsed File is highlighted, not checked (#517). */
+const NO_FILE_IDS: string[] = [];
+
 function FilesContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -210,9 +213,17 @@ function FilesContent() {
     [tableOrderedFileIds, displayedFileIds]
   );
 
+  // Ticked boxes: the bulk selection only. A File opened by a plain click is
+  // browsed, not checked, so its box stays empty until a bulk selection
+  // exists (#517).
+  const checkedFileIds = useMemo(
+    () => (showBulkActionBar ? allSelectedIds : new Set(NO_FILE_IDS)),
+    [showBulkActionBar, allSelectedIds]
+  );
+
   const selectAllState = useMemo(
-    () => getSelectAllCheckedState({ displayedFileIds, selectedIds: allSelectedIds }),
-    [displayedFileIds, allSelectedIds]
+    () => getSelectAllCheckedState({ displayedFileIds, selectedIds: checkedFileIds }),
+    [displayedFileIds, checkedFileIds]
   );
 
   // Auto-dismiss the bulk-action summary toast
@@ -624,16 +635,24 @@ function FilesContent() {
   );
 
   const handleToggleSelectAll = useCallback(() => {
+    // While only browsing, the header box is empty, so it selects every
+    // displayed File as a fresh bulk selection rather than reading the
+    // browsed File as already ticked (#517).
     const result = toggleSelectAll({
       displayedFileIds,
-      primarySelectedId,
+      primarySelectedId: showBulkActionBar ? primarySelectedId : null,
       additionalSelectedIds,
     });
+    if (!showBulkActionBar && primarySelectedId) {
+      setAdditionalSelectedIds(result.additionalSelectedIds);
+      if (result.additionalSelectedIds.size > 0) handleCloseDetail();
+      return;
+    }
     setAdditionalSelectedIds(result.additionalSelectedIds);
     if (result.closePrimary) {
       handleCloseDetail();
     }
-  }, [displayedFileIds, primarySelectedId, additionalSelectedIds, handleCloseDetail]);
+  }, [displayedFileIds, primarySelectedId, additionalSelectedIds, showBulkActionBar, handleCloseDetail]);
 
   // Step through the displayed order (-1 previous, 1 next)
   const navigateFileBy = useCallback(
@@ -1128,6 +1147,7 @@ function FilesContent() {
             transactionAmountsMap={transactionAmountsMap}
             enableMultiSelect={true}
             selectedRowIds={allSelectedIds}
+            checkedRowIds={checkedFileIds}
             onSelectionChange={handleSelectionChange}
             onDisplayedOrderChange={setTableOrderedFileIds}
             onToggleFileSelection={handleFileCheckboxChange}

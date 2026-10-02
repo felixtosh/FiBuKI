@@ -19,11 +19,6 @@ import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import {
   Popover,
   PopoverContent,
   PopoverTrigger,
@@ -47,6 +42,8 @@ import {
 } from "@/lib/filters/documentation-state-filter";
 import { describeDocumentationState } from "@/lib/documents/document-type-presentation";
 import { useDocumentLabel } from "@/hooks/use-document-label";
+import { useTranslations } from "next-intl";
+import { ProgressCounter } from "@/components/ui/progress-counter";
 import { cn, formatCurrency } from "@/lib/utils";
 import { MOTION } from "@/design-system";
 import { UserPartner } from "@/types/partner";
@@ -64,86 +61,8 @@ interface TransactionToolbarProps {
   totalCount?: number;
   /** Sum of amounts for filtered transactions (in cents) */
   filteredSum?: number;
-  /** Completion percentage (0-100) for the progress ring */
-  scorePercent?: number;
   /** Share of the filtered rows documented by a § 11 invoice, i.e. deductible. */
   deductiblePercent?: number;
-}
-
-/**
- * Documented, and of that, deductible.
- *
- * The outer arc is the old ring: rows carrying a file or a no-document
- * category. The inner arc is the share that is documented by an invoice that
- * satisfies § 11, which is the part that actually earns Vorsteuer.
- *
- * The gap between the two arcs is the rows documented only by a payment
- * confirmation; each of those carries a warning on its own File pill.
- */
-function ScoreRing({
-  percent,
-  deductiblePercent,
-}: {
-  percent: number;
-  deductiblePercent?: number;
-}) {
-  const radius = 8;
-  const innerRadius = 5;
-  const circumference = 2 * Math.PI * radius;
-  const innerCircumference = 2 * Math.PI * innerRadius;
-  const offset = circumference - (percent / 100) * circumference;
-  const innerOffset =
-    innerCircumference - ((deductiblePercent ?? 0) / 100) * innerCircumference;
-  const color =
-    percent >= 100
-      ? "text-yellow-500"
-      : percent >= 67
-        ? "text-green-500"
-        : percent >= 33
-          ? "text-amber-500"
-          : "text-red-500";
-
-  return (
-    <svg width="20" height="20" viewBox="0 0 20 20" className="flex-shrink-0">
-      <circle
-        cx="10"
-        cy="10"
-        r={radius}
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2.5"
-        className="text-muted/40"
-      />
-      <circle
-        cx="10"
-        cy="10"
-        r={radius}
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2.5"
-        strokeDasharray={circumference}
-        strokeDashoffset={offset}
-        strokeLinecap="round"
-        transform="rotate(-90 10 10)"
-        className={cn(color, "transition-[stroke-dashoffset] duration-500 ease-out")}
-      />
-      {deductiblePercent !== undefined && (
-        <circle
-          cx="10"
-          cy="10"
-          r={innerRadius}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeDasharray={innerCircumference}
-          strokeDashoffset={innerOffset}
-          strokeLinecap="round"
-          transform="rotate(-90 10 10)"
-          className="text-green-600/70 transition-[stroke-dashoffset] duration-500 ease-out"
-        />
-      )}
-    </svg>
-  );
 }
 
 function TransactionToolbarInner({
@@ -156,7 +75,6 @@ function TransactionToolbarInner({
   assignedCount,
   totalCount,
   filteredSum,
-  scorePercent,
   deductiblePercent,
 }: TransactionToolbarProps) {
   const [datePopoverOpen, setDatePopoverOpen] = useState(false);
@@ -165,6 +83,7 @@ function TransactionToolbarInner({
   const [partnerPopoverOpen, setPartnerPopoverOpen] = useState(false);
   const [documentationPopoverOpen, setDocumentationPopoverOpen] = useState(false);
   const documentLabel = useDocumentLabel();
+  const tProgress = useTranslations("progress");
   const [partnerSearch, setPartnerSearch] = useState("");
   const [showFromCalendar, setShowFromCalendar] = useState(false);
   const [showToCalendar, setShowToCalendar] = useState(false);
@@ -744,34 +663,27 @@ function TransactionToolbarInner({
       {/* Counter and sum - always stacked vertically */}
       {showCounter && (
         <div className="flex flex-col items-end justify-center text-xs leading-4">
-          <span className="flex items-center gap-1.5 text-muted-foreground">
-            {scorePercent !== undefined && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span className="inline-flex">
-                    <ScoreRing
-                      percent={scorePercent}
-                      deductiblePercent={deductiblePercent}
-                    />
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p className="text-xs">
-                    {scorePercent}% documented
-                    {deductiblePercent !== undefined
-                      ? `, ${deductiblePercent}% by a § 11 invoice`
-                      : ""}
+          <ProgressCounter
+            done={assignedCount ?? 0}
+            total={totalCount ?? 0}
+            bump={counterBumping}
+            explanation={
+              <div className="space-y-1.5">
+                <p>
+                  {tProgress("transactions", {
+                    done: assignedCount ?? 0,
+                    total: totalCount ?? 0,
+                  })}
+                </p>
+                {deductiblePercent !== undefined && (
+                  <p className="text-muted-foreground">
+                    {tProgress("transactionsDeductible", { percent: deductiblePercent })}
                   </p>
-                </TooltipContent>
-              </Tooltip>
-            )}
-            <span className={cn(
-              "tabular-nums font-medium text-foreground inline-block",
-              counterBumping && "animate-counter-bump"
-            )}>{assignedCount ?? 0}</span>
-            <span>/</span>
-            <span className="tabular-nums">{totalCount}</span>
-          </span>
+                )}
+                <p className="text-muted-foreground">{tProgress("followsFilters")}</p>
+              </div>
+            }
+          />
           {filteredSum !== undefined && (
             <span
               className={cn(

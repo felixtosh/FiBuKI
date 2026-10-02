@@ -375,5 +375,11 @@
       "detailsInfoSearch": "The search FiBuKI ran in your mailbox when it looked for a document for an open Transaction, e.g. the Partner's name.",
       "detailsInfoResult": "Which part of the mail became this File: an attachment, the mail itself saved as a PDF, or a file downloaded from a link in the mail."
     }
+  },
+  "progress": {
+    "files": "{done} of {total} Files are connected to a Transaction. Files marked as not a financial document are not counted.",
+    "transactions": "{done} of {total} Transactions are documented: they have a File, or a no-receipt category instead.",
+    "transactionsDeductible": "{percent}% are documented by an invoice that allows the VAT deduction (§ 11 UStG). A payment confirmation alone does not.",
+    "followsFilters": "The count follows the filters and search above."
   }
 }

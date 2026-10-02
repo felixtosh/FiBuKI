@@ -10,6 +10,8 @@
 import * as React from "react";
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
+import { NextIntlClientProvider } from "next-intl";
+import messages from "@/messages/en.json";
 
 vi.mock("@/hooks/use-document-label", () => ({
   useDocumentLabel: () => (presentation: { label?: string }) => presentation.label ?? "",
@@ -122,14 +124,16 @@ describe("Documentation filter in the URL", () => {
 describe("Documentation chip on the toolbar", () => {
   function renderToolbar(filters: TransactionFilters, onFiltersChange = vi.fn()) {
     render(
-      <TooltipProvider>
-        <TransactionToolbar
-          searchValue=""
-          onSearchChange={() => {}}
-          filters={filters}
-          onFiltersChange={onFiltersChange}
-        />
-      </TooltipProvider>
+      <NextIntlClientProvider locale="en" messages={messages} timeZone="Europe/Vienna">
+        <TooltipProvider>
+          <TransactionToolbar
+            searchValue=""
+            onSearchChange={() => {}}
+            filters={filters}
+            onFiltersChange={onFiltersChange}
+          />
+        </TooltipProvider>
+      </NextIntlClientProvider>
     );
     return onFiltersChange;
   }
