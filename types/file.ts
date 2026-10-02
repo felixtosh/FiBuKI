@@ -905,9 +905,10 @@ export interface FileFilters {
   /**
    * The Files page Type chip (#519): income = outgoing invoices, expense =
    * incoming ones, not-invoice = Files marked not a financial document. Income
-   * and expense never include a not-invoice File.
+   * and expense never include a not-invoice File. undetermined = Files not
+   * marked not-an-invoice whose direction or Document Type is still unknown.
    */
-  amountType?: "all" | "income" | "expense" | "not-invoice";
+  amountType?: "all" | "income" | "expense" | "not-invoice" | "undetermined";
 }
 
 /**

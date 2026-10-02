@@ -295,6 +295,21 @@ test("applyFileFilters: Type not-invoice keeps only not-invoices, income/expense
   );
 });
 
+test("applyFileFilters: Type undetermined keeps Files whose direction or document type is open", () => {
+  const files = [
+    makeFile({ id: "settled", invoiceDirection: "incoming", documentType: "invoice" }),
+    makeFile({ id: "no-direction", documentType: "invoice" }),
+    makeFile({ id: "bad-direction", invoiceDirection: "sideways", documentType: "receipt" }),
+    makeFile({ id: "no-doc-type", invoiceDirection: "outgoing" }),
+    makeFile({ id: "unknown-doc-type", invoiceDirection: "incoming", documentType: "unknown" }),
+    makeFile({ id: "not-invoice", isNotInvoice: true }),
+  ];
+  assert.deepEqual(
+    applyFileFilters(files, { amountType: "undetermined" }).rows.map((f) => f.id),
+    ["no-direction", "bad-direction", "no-doc-type", "unknown-doc-type"],
+  );
+});
+
 test("applyFileFilters: invoiceCount excludes not-invoices with no filters applied", () => {
   const files = [
     makeFile({ id: "a", isNotInvoice: false }),

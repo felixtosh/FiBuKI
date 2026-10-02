@@ -60,7 +60,7 @@ export function FileToolbar({
   const t = useTranslations("filters");
   // The Type chip is one choice across two stored fields: the deleted-files
   // view wins, since it changes which rows exist at all.
-  const typeValue: "income" | "expense" | "not-invoice" | "deleted" | undefined =
+  const typeValue: "income" | "expense" | "not-invoice" | "undetermined" | "deleted" | undefined =
     filters.deletedOnly === true
       ? "deleted"
       : filters.amountType && filters.amountType !== "all"
@@ -120,7 +120,8 @@ export function FileToolbar({
             active: typeValue !== undefined,
             node: (
               <>
-      {/* Type: the Amount column's sign, or not an invoice at all (#519).
+      {/* Type: the Amount column's sign, not an invoice at all (#519), or
+          not determined yet (direction or Document Type still open).
           The deleted-files view (#268) sits below a line, as the one bucket
           that is not a kind of document. */}
       <ChoiceFilter
@@ -139,6 +140,7 @@ export function FileToolbar({
           { value: "income", label: t("type.income") },
           { value: "expense", label: t("type.expense") },
           { value: "not-invoice", label: t("type.notInvoice") },
+          { value: "undetermined", label: t("type.undetermined") },
           {
             value: "deleted",
             label: t("type.deleted"),
