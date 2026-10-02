@@ -4,6 +4,7 @@ import { Mail, Paperclip, Check, AlertCircle, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { SearchedQueries } from "./searched-queries";
 import { IntegrationStatusBanner } from "@/components/automations/integration-status-banner";
 import { GmailAttachmentsSearchResult, GmailAttachmentCandidate, ToolResultUIActions } from "./types";
 import { ScoreBadge } from "./classification-badges";
@@ -95,19 +96,7 @@ export function GmailAttachmentsResult({
         </div>
 
         {/* Search queries used - show even with no results */}
-        {queriesUsed.length > 0 && (
-          <div className="px-3 py-1.5 bg-muted/20 border-b flex items-center gap-1.5 flex-wrap">
-            <span className="text-[10px] text-muted-foreground">Searched:</span>
-            {queriesUsed.slice(0, 3).map((query, idx) => (
-              <Badge key={idx} variant="outline" className="text-[10px] px-1.5 py-0 h-4 font-mono">
-                {query}
-              </Badge>
-            ))}
-            {queriesUsed.length > 3 && (
-              <span className="text-[10px] text-muted-foreground">+{queriesUsed.length - 3} more</span>
-            )}
-          </div>
-        )}
+        <SearchedQueries queries={queriesUsed} />
 
         {/* Warning banner for integrations needing reauth */}
         {integrationsNeedingReauth && integrationsNeedingReauth.length > 0 && (
@@ -167,19 +156,7 @@ export function GmailAttachmentsResult({
       </div>
 
       {/* Search queries used */}
-      {queriesUsed.length > 0 && (
-        <div className="px-3 py-1.5 bg-muted/20 border-b flex items-center gap-1.5 flex-wrap">
-          <span className="text-[10px] text-muted-foreground">Searched:</span>
-          {queriesUsed.slice(0, 3).map((query, idx) => (
-            <Badge key={idx} variant="outline" className="text-[10px] px-1.5 py-0 h-4 font-mono">
-              {query}
-            </Badge>
-          ))}
-          {queriesUsed.length > 3 && (
-            <span className="text-[10px] text-muted-foreground">+{queriesUsed.length - 3} more</span>
-          )}
-        </div>
-      )}
+      <SearchedQueries queries={queriesUsed} />
 
       {/* Warning banner for integrations needing reauth */}
       {integrationsNeedingReauth && integrationsNeedingReauth.length > 0 && (

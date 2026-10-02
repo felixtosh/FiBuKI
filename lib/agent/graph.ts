@@ -20,6 +20,7 @@ import { ToolNode } from "@langchain/langgraph/prebuilt";
 import { ALL_TOOLS, TOOLS_REQUIRING_CONFIRMATION } from "./tools";
 import { SYSTEM_PROMPT } from "@/lib/chat/system-prompt";
 import { createChatModel, ModelProvider } from "./model";
+import { endedSilentlyAfterTools, SILENT_TURN_NUDGE } from "./silent-turn";
 
 // ============================================================================
 // State Definition
@@ -111,6 +112,18 @@ async function agentNode(state: AgentState): Promise<Partial<AgentState>> {
       authHeader,
     },
   });
+
+  // Gemini sometimes ends a tool run with an empty turn: the tools ran, the
+  // cards rendered, and the user is left with no word from BuKI. Ask once more
+  // for the reply. The nudge is not kept in state, and the empty turn is dropped.
+  if (endedSilentlyAfterTools(messages, response)) {
+    console.warn("[Agent] Empty reply after tool results, asking for the reply");
+    const retry = await model.invoke(
+      [...messagesWithSystem, new HumanMessage(SILENT_TURN_NUDGE)],
+      { configurable: { userId, authHeader } },
+    );
+    return { messages: [retry] };
+  }
 
   // Debug: log response type
   console.log("[Agent] Response has tool_calls:", !!(response as AIMessage).tool_calls?.length);
