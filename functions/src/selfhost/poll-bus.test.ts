@@ -9,13 +9,9 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
-import express from "express";
-import http from "node:http";
-import type { AddressInfo } from "node:net";
 
 import { getFirestore as getServerDb, __resetFirestoreShim } from "./firestore-shim";
 import { __resetTriggerShim } from "./trigger-shim";
-import { createDataPlane } from "./data-plane";
 import {
   pokePollers,
   registerPoller,
@@ -32,6 +28,7 @@ import {
   setDoc,
   getFirestore,
 } from "../../../lib/selfhost/firestore-client";
+import { startTestDataPlane, type TestServer } from "./test-helpers";
 
 // Pokes coalesce inside a 400ms window, and the window is module state — without
 // this, a case that pokes shortly after the previous one gets the previous case's
@@ -114,27 +111,14 @@ describe("poll bus: end-to-end through the client shim", () => {
   const db = getFirestore();
   const USER = "poll-user";
   const GOOD_TOKEN = "tok-poll";
-  let server: http.Server;
+  let server: TestServer;
 
   beforeAll(async () => {
-    const app = express();
-    app.use(
-      "/__data",
-      createDataPlane(async (token) =>
-        token === GOOD_TOKEN ? { uid: USER, token: {} } : null,
-      ),
-    );
-    server = http.createServer(app);
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-    __configureFirestoreClient({ apiUrl: base, getToken: () => GOOD_TOKEN });
+    server = await startTestDataPlane(async (token) => (token === GOOD_TOKEN ? { uid: USER, token: {} } : null));
+    __configureFirestoreClient({ apiUrl: server.base, getToken: () => GOOD_TOKEN });
   });
 
-  afterAll(async () => {
-    await new Promise<void>((resolve, reject) =>
-      server.close((err) => (err ? reject(err) : resolve())),
-    );
-  });
+  afterAll(() => server.close());
 
   beforeEach(async () => {
     await __resetFirestoreShim();

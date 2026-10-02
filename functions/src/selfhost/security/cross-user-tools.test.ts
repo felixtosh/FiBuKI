@@ -23,7 +23,7 @@ process.env.FIBUKI_STORAGE = "memory";
 process.env.FIBUKI_PLAN = "full";
 
 import { describe, it, expect, beforeAll, vi } from "vitest";
-import { __resetFirestoreShim } from "../firestore-shim";
+import { __resetFirestoreShim, __whenShimIdle } from "../firestore-shim";
 import { drainTriggers, __resetTriggerShim } from "../trigger-shim";
 import {
   ATTACKER,
@@ -49,7 +49,7 @@ beforeAll(async () => {
 }, 120_000);
 
 async function freshAccounts(): Promise<Map<string, string>> {
-  await new Promise((r) => setTimeout(r, 20));
+  await __whenShimIdle(); // the previous test's fire-and-forget writes, finished
   await __resetFirestoreShim();
   __resetTriggerShim();
   await seedAccounts();

@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, beforeEach, beforeAll, vi } from "vitest";
-import { getFirestore, Timestamp, __resetFirestoreShim } from "./firestore-shim";
+import { getFirestore, Timestamp, __resetFirestoreShim, __whenShimIdle } from "./firestore-shim";
 import { drainTriggers, __resetTriggerShim } from "./trigger-shim";
 import { getStorage } from "./storage-shim";
 
@@ -85,7 +85,7 @@ beforeAll(() => {
 });
 
 beforeEach(async () => {
-  await new Promise((r) => setTimeout(r, 20));
+  await __whenShimIdle(); // the previous test's fire-and-forget writes, finished
   await __resetFirestoreShim();
   __resetTriggerShim();
   gemini.queue.length = 0;
@@ -212,8 +212,8 @@ describe("manual correction does not teach the agent's name as a supplier alias"
     });
     await drainTriggers();
     // The trigger learns the alias without awaiting it (fire-and-forget with a
-    // .catch), so give that write a beat to land before reading it back.
-    await new Promise((r) => setTimeout(r, 100));
+    // .catch): wait for that write to finish before reading it back.
+    await __whenShimIdle();
   }
 
   async function aliases(): Promise<string[]> {
@@ -254,7 +254,7 @@ describe("manual correction does not teach the agent's name as a supplier alias"
     const { handleTool } = await import("../tools/handlers");
     await handleTool(USER, "assign_partner_to_file", { fileId: "f-tool", partnerId: "p-supplier" });
     await drainTriggers();
-    await new Promise((r) => setTimeout(r, 100));
+    await __whenShimIdle();
 
     expect(await fileDoc("f-tool")).toMatchObject({
       partnerId: "p-supplier",

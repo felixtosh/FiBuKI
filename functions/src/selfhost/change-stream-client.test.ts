@@ -90,18 +90,22 @@ describe("change stream client", () => {
     const client = startChangeStream({
       apiUrl: "http://api.test",
       getToken: () => "tok",
-      fetchImpl: streamingFetch([": connected\n\n", ": ping\n\n", ": ping\n\n"], {
-        keepOpen: true,
-      }),
+      fetchImpl: streamingFetch(
+        [": connected\n\n", ": ping\n\n", ": ping\n\n", 'data: {"collection":"marker","id":"m","op":"w"}\n\n'],
+        { keepOpen: true },
+      ),
     });
     stops.push(client.stop);
 
-    // Give it room to misbehave, then assert it did not. The one poke is the
-    // revalidation every connect makes (it heals whatever changed while there
-    // was no stream), and it carries no hint. The pings add nothing.
-    await new Promise((r) => setTimeout(r, 150));
-    expect(poked).toHaveBeenCalledTimes(1);
-    expect(poked).toHaveBeenCalledWith(null);
+    // The marker frame comes after the pings, so once it has poked, the pings
+    // have been read: no waiting a guessed number of milliseconds. Exactly two
+    // pokes: the hint-less revalidation every connect makes (it heals what
+    // changed while there was no stream) and the marker. The pings add none.
+    await vi.waitFor(() => expect(poked).toHaveBeenCalledWith([{ collection: "marker", id: "m" }]), {
+      timeout: 2000,
+    });
+    expect(poked).toHaveBeenCalledTimes(2);
+    expect(poked).toHaveBeenNthCalledWith(1, null);
     off();
   });
 

@@ -1,7 +1,7 @@
 /**
  * The undismiss callable (fork #95).
  *
- * The MCP tool of the same name is covered in tools/__tests__/handlers.test.ts.
+ * The MCP tool of the same name is covered in tools/__tests__/handlers.files.test.ts.
  * What this file is for is the other half of the acceptance criterion: the two
  * surfaces must land the same field set for the same input, and the only way to
  * show that is to drive them both and compare the documents they leave behind.

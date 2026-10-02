@@ -17,19 +17,42 @@ beforeEach(async () => {
   __resetTriggerShim();
 });
 
-/** Read, yield (so other callers interleave), write: the shape that loses updates. */
-async function incrementInTx(path: string): Promise<void> {
+/**
+ * A barrier: resolves for everyone once `count` callers have arrived. Used so
+ * every transaction has READ before any of them writes, the interleaving that
+ * loses updates, guaranteed instead of hoped for with a delay.
+ */
+function barrier(count: number): () => Promise<void> {
+  let waiting: Array<() => void> = [];
+  return () =>
+    new Promise<void>((release) => {
+      waiting.push(release);
+      if (waiting.length === count) {
+        const all = waiting;
+        waiting = [];
+        all.forEach((r) => r());
+      }
+    });
+}
+
+/** Read, wait for every other caller to have read too, write. */
+async function incrementInTx(path: string, allHaveRead: () => Promise<void>): Promise<void> {
+  let first = true;
   await db.runTransaction(async (tx) => {
     const snap = (await tx.get(db.doc(path))) as { data(): { n?: number } | undefined };
     const n = snap.data()?.n ?? 0;
-    await new Promise((r) => setTimeout(r, 5));
+    if (first) {
+      first = false; // only the first attempt waits: retries run as they come
+      await allHaveRead();
+    }
     tx.set(db.doc(path), { n: n + 1 });
   });
 }
 
 describe("isolation", () => {
   it("concurrent read-modify-write transactions lose no update", async () => {
-    await Promise.all(Array.from({ length: 6 }, () => incrementInTx("config/counter")));
+    const allHaveRead = barrier(6);
+    await Promise.all(Array.from({ length: 6 }, () => incrementInTx("config/counter", allHaveRead)));
     expect((await db.doc("config/counter").get()).data()).toEqual({ n: 6 });
   });
 

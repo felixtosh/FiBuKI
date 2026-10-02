@@ -17,12 +17,8 @@
 process.env.FIBUKI_STORAGE = "memory";
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import express from "express";
-import http from "node:http";
-import type { AddressInfo } from "node:net";
-import { __resetFirestoreShim, getFirestore, Timestamp, __rawSqlForTest } from "../firestore-shim";
+import { __resetFirestoreShim, getFirestore, Timestamp, __rawSqlForTest, __whenShimIdle } from "../firestore-shim";
 import { drainTriggers, __resetTriggerShim } from "../trigger-shim";
-import { createDataPlane } from "../data-plane";
 import { TOP_LEVEL_POLICIES, SUBTREE_POLICIES } from "../data-policy";
 import {
   ATTACKER,
@@ -36,32 +32,25 @@ import {
   assertVictimUntouched,
   assertNoLeak,
 } from "./victim";
+import { startTestDataPlane, type TestServer } from "../test-helpers";
 
 const ATTACKER_TOKEN = "tok-attacker";
 const VICTIM_TOKEN = "tok-victim";
 
-let server: http.Server;
+let server: TestServer;
 let base: string;
 let before: Map<string, string>;
 
 beforeAll(async () => {
-  const app = express();
-  app.use(
-    "/__data",
-    createDataPlane(async (token) => {
+  server = await startTestDataPlane(async (token) => {
       if (token === ATTACKER_TOKEN) return { uid: ATTACKER, token: {} };
       if (token === VICTIM_TOKEN) return { uid: VICTIM, token: {} };
       return null;
-    }),
-  );
-  server = http.createServer(app);
-  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
-  base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    });
+  base = server.base;
 });
 
-afterAll(async () => {
-  await new Promise<void>((res, rej) => server.close((e) => (e ? rej(e) : res())));
-});
+afterAll(() => server.close());
 
 /** Rows outside victimRows' net that are still the victim's: their Transaction's history. */
 async function victimHistory(): Promise<string> {
@@ -74,7 +63,7 @@ async function victimHistory(): Promise<string> {
 let historyBefore: string;
 
 beforeEach(async () => {
-  await new Promise((r) => setTimeout(r, 20));
+  await __whenShimIdle(); // the previous test's fire-and-forget writes, finished
   await __resetFirestoreShim();
   __resetTriggerShim();
   await seedAccounts();

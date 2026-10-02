@@ -21,7 +21,7 @@
 
 import { describe, it, expect, beforeEach, beforeAll, vi } from "vitest";
 import { MODELS } from "../utils/models";
-import { getFirestore, Timestamp, __resetFirestoreShim } from "./firestore-shim";
+import { getFirestore, Timestamp, __resetFirestoreShim, __whenShimIdle } from "./firestore-shim";
 import { drainTriggers, __resetTriggerShim } from "./trigger-shim";
 import { getStorage } from "./storage-shim";
 
@@ -102,7 +102,7 @@ beforeAll(() => {
 
 beforeEach(async () => {
   // Let stragglers from the previous test land before the reset.
-  await new Promise((r) => setTimeout(r, 20));
+  await __whenShimIdle(); // the previous test's fire-and-forget writes, finished
   await __resetFirestoreShim();
   __resetTriggerShim();
   gemini.queue.length = 0;

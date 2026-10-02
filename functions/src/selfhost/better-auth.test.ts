@@ -38,15 +38,12 @@
  */
 
 import { describe, it, expect } from "vitest";
-import express from "express";
-import http from "node:http";
-import type { AddressInfo } from "node:net";
 import { getFirestore, __rawSqlForTest } from "./firestore-shim";
 import { getTenantId } from "./db/tenant";
 import { getAuth as getAdminAuth } from "./auth-shim";
-import { createDataPlane } from "./data-plane";
 import type { TokenVerifier } from "./host";
 import { createSelfhostAuth } from "./better-auth";
+import { startTestDataPlane } from "./test-helpers";
 
 /* The seam contract, restated locally ON PURPOSE: loadAuth() assigning the
  * real module's return value to this interface is the compile-time proof
@@ -274,11 +271,8 @@ describe("Better Auth server acceptance — server core + auth-shim over the rea
     const tokenA = (await auth.signInEmail(emailA, "user a password")).token;
     const tokenB = (await auth.signInEmail(emailB, "user b password")).token;
 
-    const app = express();
-    app.use("/__data", createDataPlane(auth.verifier));
-    const server = http.createServer(app);
-    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
-    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const server = await startTestDataPlane(auth.verifier);
+    const base = server.base;
     try {
       const write = await fetch(`${base}/__data/write`, {
         method: "POST",
@@ -318,7 +312,7 @@ describe("Better Auth server acceptance — server core + auth-shim over the rea
       expect(bodyA.docs.length).toBeGreaterThan(0);
       void b; // B's uid only matters as "not A" — the token is the assertion
     } finally {
-      await new Promise<void>((resolve, reject) => server.close((e) => (e ? reject(e) : resolve())));
+      await server.close();
     }
   });
 });

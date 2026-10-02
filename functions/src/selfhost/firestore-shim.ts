@@ -225,9 +225,38 @@ export function getSqlClient(): Promise<SqlClient> {
 }
 
 /** Every document read/write runs tenant-scoped: one transaction, SET LOCAL app.tenant_id. */
+/** Document IO started and not yet finished, so tests can wait for "quiet" instead of sleeping. */
+let inFlight = 0;
+let idleWaiters: Array<() => void> = [];
+
 async function withTenant<T>(fn: (q: QueryFn) => Promise<T>): Promise<T> {
-  const pg = await getPg();
-  return pg.tx(getTenantId(), fn);
+  inFlight++;
+  try {
+    const pg = await getPg();
+    return await pg.tx(getTenantId(), fn);
+  } finally {
+    inFlight--;
+    if (inFlight === 0) {
+      const waiters = idleWaiters;
+      idleWaiters = [];
+      for (const w of waiters) w();
+    }
+  }
+}
+
+/**
+ * Test helper: resolve once no document IO is in flight and none started in
+ * the following macrotask either. For a test's setup to wait out the
+ * fire-and-forget writes (usage logs, billing increments) the previous test
+ * set off, deterministically, instead of sleeping a fixed number of
+ * milliseconds and hoping that was long enough.
+ */
+export async function __whenShimIdle(): Promise<void> {
+  for (;;) {
+    if (inFlight > 0) await new Promise<void>((r) => idleWaiters.push(r));
+    await new Promise<void>((r) => setImmediate(r));
+    if (inFlight === 0) return;
+  }
 }
 
 /** Flattened-table spec for a TOP-LEVEL collection path, if that collection has one. */

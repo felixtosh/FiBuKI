@@ -19,7 +19,7 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import * as unzipper from "unzipper";
-import { getFirestore, Timestamp, __resetFirestoreShim } from "./firestore-shim";
+import { getFirestore, Timestamp, __resetFirestoreShim, __whenShimIdle } from "./firestore-shim";
 import { __resetTriggerShim } from "./trigger-shim";
 import { getStorage, _resetStorageForTests } from "./storage-shim";
 import { waitFor } from "./test-helpers";
@@ -276,7 +276,7 @@ describe("bmd tip refusal (#326): the lanes that bypass the reconcile", () => {
 /* ------------------------------------------------------------------ */
 
 beforeEach(async () => {
-  await new Promise((r) => setTimeout(r, 20));
+  await __whenShimIdle(); // the previous test's fire-and-forget writes, finished
   await __resetFirestoreShim();
   __resetTriggerShim();
   process.env.FIBUKI_STORAGE = "memory";
