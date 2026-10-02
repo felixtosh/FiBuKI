@@ -229,16 +229,26 @@ describe("mail attach routes: a Transaction id must be the caller's", () => {
     expect(tx?.fileIds?.length).toBe(1);
   });
 
+  // Static imports per name: both the /gmail and the provider-neutral /mail twin.
+  const ATTACH = {
+    gmail: () => import("@/app/api/gmail/attachment/route"),
+    mail: () => import("@/app/api/mail/attachment/route"),
+  };
+  const CONVERT = {
+    gmail: () => import("@/app/api/gmail/convert-to-pdf/route"),
+    mail: () => import("@/app/api/mail/convert-to-pdf/route"),
+  };
+
   for (const route of ["gmail", "mail"] as const) {
     it(`/api/${route}/attachment refuses the victim's Transaction`, async () => {
-      const { POST } = await import(`@/app/api/${route}/attachment/route`);
+      const { POST } = await ATTACH[route]();
       const res = await POST(asUser(ATTACKER, `/api/${route}/attachment`, { body: attachBody(V.transaction) }));
       await expectRefused(res, `${route}/attachment`);
     });
 
     it(`/api/${route}/attachment refuses the victim's Transaction for an already-stored File`, async () => {
       // The dedup branch connects an existing File; it had its own unchecked write.
-      const { POST } = await import(`@/app/api/${route}/attachment/route`);
+      const { POST } = await ATTACH[route]();
       const first = await POST(asUser(ATTACKER, `/api/${route}/attachment`, { body: { ...attachBody(A.transaction), attachmentId: "same" } }));
       expect(first.status).toBe(200);
       const res = await POST(asUser(ATTACKER, `/api/${route}/attachment`, { body: { ...attachBody(V.transaction), attachmentId: "same" } }));
@@ -246,7 +256,7 @@ describe("mail attach routes: a Transaction id must be the caller's", () => {
     });
 
     it(`/api/${route}/convert-to-pdf refuses the victim's Transaction`, async () => {
-      const { POST } = await import(`@/app/api/${route}/convert-to-pdf/route`);
+      const { POST } = await CONVERT[route]();
       const res = await POST(
         asUser(ATTACKER, `/api/${route}/convert-to-pdf`, { body: { integrationId: A.integration, messageId: "m-1", transactionId: V.transaction } }),
       );
