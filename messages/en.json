@@ -173,7 +173,7 @@
         },
         "cloudStorageData": {
           "title": "Cloud Storage Data (Dropbox and Google Drive)",
-          "content": "When you connect Dropbox or Google Drive:\n\n• You choose one folder. FiBuKI reads only that folder and its subfolders and imports the PDF and image files in it\n• Access is read-only: FiBuKI never changes, moves or deletes anything in your Dropbox or Google Drive\n• Imported documents are copied into your FiBuKI files and processed like documents you upload yourself (text recognition and AI-based extraction of amounts, dates and vendors)\n• The access token FiBuKI stores for the connection is encrypted (AES-256-GCM) and is never sent to your browser\n• If you delete a document in your Dropbox or Google Drive, FiBuKI deletes its copy as well, unless the document is connected to a transaction. In the integration settings you can choose to delete connected documents too. Deleted documents can be restored in FiBuKI\n• If a very large number of documents disappears from the folder at once, FiBuKI pauses and asks you before deleting anything\n• When you disconnect, the stored access token is deleted. Documents already imported remain in your FiBuKI files until you delete them"
+          "content": "When you connect Dropbox or Google Drive:\n\n• You choose one folder. FiBuKI reads only that folder and its subfolders and imports the PDF and image files in it\n• Access is read-only: FiBuKI never changes, moves or deletes anything in your Dropbox or Google Drive\n• Imported documents are copied into your FiBuKI files and processed like documents you upload yourself (text recognition and AI-based extraction of amounts, dates and vendors)\n• The access token FiBuKI stores for the connection is encrypted (AES-256-GCM) and is never sent to your browser\n• If you delete a document in your Dropbox or Google Drive, FiBuKI deletes its copy as well, unless the document is connected to a transaction. In the integration settings you can choose to delete connected documents too. Deleted documents can be restored in FiBuKI\n• If a very large number of documents disappears from the folder at once, FiBuKI pauses and asks you before deleting anything\n• When you disconnect, FiBuKI revokes its access with Dropbox or Google and deletes the stored access token. Documents already imported remain in your FiBuKI files until you delete them"
         }
       },
       "automatedProcessing": {
@@ -490,7 +490,7 @@
     "syncDone": "{imported, plural, =0 {Nothing new} one {# new File} other {# new Files}}",
     "disconnect": "Disconnect",
     "disconnectTitle": "Disconnect this {provider} account?",
-    "disconnectBody": "FiBuKI stops syncing. Files that were already imported stay in FiBuKI.",
+    "disconnectBody": "FiBuKI stops syncing and its access to your {provider} account is revoked. Files that were already imported stay in FiBuKI.",
     "cancel": "Cancel",
     "reconnect": "Reconnect",
     "needsReauthTitle": "{provider} access needs to be renewed",
@@ -518,6 +518,8 @@
     "providerNames": {
       "dropbox": "Dropbox",
       "gdrive": "Google Drive"
-    }
+    },
+    "disconnectRevoked": "{provider} disconnected. FiBuKI's access to your account was revoked.",
+    "disconnectNotRevoked": "{provider} was disconnected in FiBuKI, but we could not revoke the access at {provider}. You can remove FiBuKI under the connected apps in your {provider} account settings."
   }
 }

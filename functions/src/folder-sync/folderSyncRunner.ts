@@ -185,6 +185,14 @@ export function buildProvider(
   refreshToken: string,
   secrets: FolderRunnerSecrets
 ): FolderProvider & { listSubfolders(path: string): Promise<Array<{ name: string; path: string }>> } {
+  const needed =
+    provider === "gdrive"
+      ? [secrets.googleClientId, secrets.googleClientSecret]
+      : [secrets.dropboxAppKey, secrets.dropboxAppSecret];
+  if (needed.some((v) => !v)) {
+    // A server problem, not the user's grant: it must not read as "reconnect".
+    throw new Error(`${provider === "gdrive" ? "Google Drive" : "Dropbox"} is not configured on this server`);
+  }
   if (provider === "gdrive") {
     return new GoogleDriveProvider({
       accessToken: "",

@@ -56,6 +56,8 @@ function FolderIntegrationContent({ provider }: { provider: FolderProvider }) {
   }));
   const [error, setError] = useState(landing.error ? errorText(t, landing.error) : null);
   const justConnected = landing.connected;
+  // The panel unmounts once disconnected, so the outcome is shown from here.
+  const [disconnectNotice, setDisconnectNotice] = useState(null as "revoked" | "notRevoked" | null);
 
   useEffect(() => {
     if (searchParams.get("success") || searchParams.get("error")) {
@@ -107,6 +109,20 @@ function FolderIntegrationContent({ provider }: { provider: FolderProvider }) {
           </Alert>
         ) : null}
 
+        {disconnectNotice === "notRevoked" ? (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>{t("disconnectNotRevoked")}</AlertDescription>
+          </Alert>
+        ) : null}
+
+        {disconnectNotice === "revoked" ? (
+          <Alert>
+            <Check className="h-4 w-4" />
+            <AlertDescription>{t("disconnectRevoked")}</AlertDescription>
+          </Alert>
+        ) : null}
+
         {justConnected ? (
           <Alert>
             <Check className="h-4 w-4" />
@@ -141,6 +157,7 @@ function FolderIntegrationContent({ provider }: { provider: FolderProvider }) {
               hook={hook}
               provider={provider}
               onReconnect={handleConnect}
+              onDisconnected={(revoked) => setDisconnectNotice(revoked ? "revoked" : "notRevoked")}
               autoOpenPicker={justConnected && integration.folderPath === null}
             />
           ))}
@@ -160,12 +177,14 @@ function IntegrationPanel({
   hook,
   provider,
   onReconnect,
+  onDisconnected,
   autoOpenPicker,
 }: {
   integration: FolderIntegration;
   hook: Hook;
   provider: FolderProvider;
   onReconnect: () => void;
+  onDisconnected: (revoked: boolean) => void;
   autoOpenPicker: boolean;
 }) {
   const t = useProviderT(provider);
@@ -186,6 +205,15 @@ function IntegrationPanel({
       setMessage(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(null);
+    }
+  };
+
+  const disconnect = async () => {
+    try {
+      const res = await hook.disconnect(integration.id);
+      onDisconnected(res.revoked);
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -333,7 +361,7 @@ function IntegrationPanel({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{t("cancel")}</AlertDialogCancel>
-            <AlertDialogAction onClick={() => hook.disconnect(integration.id)}>{t("disconnect")}</AlertDialogAction>
+            <AlertDialogAction onClick={() => disconnect()}>{t("disconnect")}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

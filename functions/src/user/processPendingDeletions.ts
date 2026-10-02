@@ -5,6 +5,8 @@
  */
 
 import { onSchedule } from "firebase-functions/v2/scheduler";
+import { revokeUserFolderGrants } from "../folder-sync/revoke";
+import { folderSecretParams, tryReadFolderSecrets } from "../folder-sync/folderSecrets";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
 import { getStorage } from "firebase-admin/storage";
@@ -203,6 +205,7 @@ async function deleteUserAccount(
 
   // 1. Revoke OAuth tokens
   await revokeGmailTokens(db, userId);
+  await revokeUserFolderGrants(db, userId, tryReadFolderSecrets());
 
   // 2. Delete user data collections
   const collectionsToDelete = [
@@ -282,6 +285,7 @@ export const processPendingDeletions = onSchedule(
     region: REGION,
     timeoutSeconds: 540,
     memory: "1GiB",
+    secrets: folderSecretParams,
   },
   async () => {
     const db = getFirestore();

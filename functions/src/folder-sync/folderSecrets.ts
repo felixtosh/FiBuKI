@@ -11,12 +11,34 @@ export const folderTokenKey = defineSecret("GMAIL_TOKEN_ENCRYPTION_KEY");
 
 export const folderSecretParams = [dropboxAppKey, dropboxAppSecret, googleClientId, googleClientSecret, folderTokenKey];
 
+/**
+ * A deployment may configure Dropbox, Drive or both, so one missing secret must
+ * not take the other provider down. A secret that is not set reads as "" and
+ * `buildProvider` refuses to build a provider that lacks its own.
+ */
+function optional(secret: { value(): string }): string {
+  try {
+    return secret.value() ?? "";
+  } catch {
+    return "";
+  }
+}
+
 export function readFolderSecrets(): FolderRunnerSecrets {
   return {
-    dropboxAppKey: dropboxAppKey.value(),
-    dropboxAppSecret: dropboxAppSecret.value(),
-    googleClientId: googleClientId.value(),
-    googleClientSecret: googleClientSecret.value(),
-    encryptionKey: folderTokenKey.value(),
+    dropboxAppKey: optional(dropboxAppKey),
+    dropboxAppSecret: optional(dropboxAppSecret),
+    googleClientId: optional(googleClientId),
+    googleClientSecret: optional(googleClientSecret),
+    encryptionKey: optional(folderTokenKey),
   };
+}
+
+/** For callers that can run without the secrets (account deletion must not fail on them). */
+export function tryReadFolderSecrets(): FolderRunnerSecrets | null {
+  try {
+    return readFolderSecrets();
+  } catch {
+    return null;
+  }
 }

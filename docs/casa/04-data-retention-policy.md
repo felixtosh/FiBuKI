@@ -50,9 +50,9 @@ This policy specifies how long FiBuKI retains each category of personal data, th
 ### 3.1a Folder Integration disconnect (Drive, Dropbox)
 
 1. User clicks Disconnect on the integration page; `disconnectFolderIntegration` (callable, owner-only) runs.
-2. The encrypted refresh token and sync cursor (`folderTokens/{id}`) and the per-file sync state (`folderEntries`) are deleted; the integration is marked inactive.
-3. Imported Files are **kept**. Gone-at-source handling stops with the sync. A deleted-at-source File is only ever deleted reversibly, never purged, and a connected File is kept unless the owner turned on "also delete connected Files" (ADR-0009).
-4. Known gap: the grant is not revoked at the provider; the user can revoke it in their Google or Dropbox account.
+2. The grant is revoked at the provider first (Google `oauth2/revoke`, Dropbox `auth/token/revoke`), best effort: an unreachable provider does not block the disconnect and the user is told to remove FiBuKI in their account settings. Account deletion does the same for every integration of the user.
+3. The encrypted refresh token and sync cursor (`folderTokens/{id}`) and the per-file sync state (`folderEntries`) are deleted; the integration is marked inactive.
+4. Imported Files are **kept**. Gone-at-source handling stops with the sync. A deleted-at-source File is only ever deleted reversibly, never purged, and a connected File is kept unless the owner turned on "also delete connected Files" (ADR-0009).
 
 ### 3.2 File deletion and Purge
 

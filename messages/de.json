@@ -173,7 +173,7 @@
         },
         "cloudStorageData": {
           "title": "Cloud-Speicher-Daten (Dropbox und Google Drive)",
-          "content": "Wenn Sie Dropbox oder Google Drive verbinden:\n\n• Sie wählen einen Ordner. FiBuKI liest nur diesen Ordner und seine Unterordner und importiert die darin enthaltenen PDF- und Bilddateien\n• Der Zugriff ist lesend: FiBuKI verändert, verschiebt oder löscht nichts in Ihrer Dropbox oder Ihrem Google Drive\n• Importierte Dokumente werden in Ihre FiBuKI-Belege kopiert und wie von Ihnen hochgeladene Dokumente verarbeitet (Texterkennung und KI-gestützte Extraktion von Beträgen, Daten und Händlern)\n• Das für die Verbindung gespeicherte Zugriffstoken ist verschlüsselt (AES-256-GCM) und wird nie an Ihren Browser gesendet\n• Löschen Sie ein Dokument in Ihrer Dropbox oder Ihrem Google Drive, löscht FiBuKI auch seine Kopie, sofern das Dokument nicht mit einer Transaktion verknüpft ist. In den Integrationseinstellungen können Sie festlegen, dass auch verknüpfte Dokumente gelöscht werden. Gelöschte Dokumente können in FiBuKI wiederhergestellt werden\n• Verschwinden auf einmal sehr viele Dokumente aus dem Ordner, pausiert FiBuKI und fragt Sie, bevor etwas gelöscht wird\n• Wenn Sie die Verbindung trennen, wird das gespeicherte Zugriffstoken gelöscht. Bereits importierte Dokumente bleiben in Ihren FiBuKI-Belegen, bis Sie sie löschen"
+          "content": "Wenn Sie Dropbox oder Google Drive verbinden:\n\n• Sie wählen einen Ordner. FiBuKI liest nur diesen Ordner und seine Unterordner und importiert die darin enthaltenen PDF- und Bilddateien\n• Der Zugriff ist lesend: FiBuKI verändert, verschiebt oder löscht nichts in Ihrer Dropbox oder Ihrem Google Drive\n• Importierte Dokumente werden in Ihre FiBuKI-Belege kopiert und wie von Ihnen hochgeladene Dokumente verarbeitet (Texterkennung und KI-gestützte Extraktion von Beträgen, Daten und Händlern)\n• Das für die Verbindung gespeicherte Zugriffstoken ist verschlüsselt (AES-256-GCM) und wird nie an Ihren Browser gesendet\n• Löschen Sie ein Dokument in Ihrer Dropbox oder Ihrem Google Drive, löscht FiBuKI auch seine Kopie, sofern das Dokument nicht mit einer Transaktion verknüpft ist. In den Integrationseinstellungen können Sie festlegen, dass auch verknüpfte Dokumente gelöscht werden. Gelöschte Dokumente können in FiBuKI wiederhergestellt werden\n• Verschwinden auf einmal sehr viele Dokumente aus dem Ordner, pausiert FiBuKI und fragt Sie, bevor etwas gelöscht wird\n• Wenn Sie die Verbindung trennen, widerruft FiBuKI seinen Zugriff bei Dropbox bzw. Google und löscht das gespeicherte Zugriffstoken. Bereits importierte Dokumente bleiben in Ihren FiBuKI-Belegen, bis Sie sie löschen"
         }
       },
       "automatedProcessing": {
@@ -490,7 +490,7 @@
     "syncDone": "{imported, plural, =0 {Nichts Neues} one {# neuer Beleg} other {# neue Belege}}",
     "disconnect": "Trennen",
     "disconnectTitle": "Dieses {provider}-Konto trennen?",
-    "disconnectBody": "FiBuKI hört auf zu synchronisieren. Bereits importierte Belege bleiben in FiBuKI.",
+    "disconnectBody": "FiBuKI hört auf zu synchronisieren und der Zugriff auf Ihr {provider}-Konto wird widerrufen. Bereits importierte Belege bleiben in FiBuKI.",
     "cancel": "Abbrechen",
     "reconnect": "Neu verbinden",
     "needsReauthTitle": "Der {provider}-Zugriff muss erneuert werden",
@@ -518,6 +518,8 @@
     "providerNames": {
       "dropbox": "Dropbox",
       "gdrive": "Google Drive"
-    }
+    },
+    "disconnectRevoked": "{provider} getrennt. Der Zugriff von FiBuKI auf Ihr Konto wurde widerrufen.",
+    "disconnectNotRevoked": "{provider} wurde in FiBuKI getrennt, aber der Zugriff bei {provider} konnte nicht widerrufen werden. Sie können FiBuKI in den Einstellungen Ihres {provider}-Kontos unter den verbundenen Apps entfernen."
   }
 }

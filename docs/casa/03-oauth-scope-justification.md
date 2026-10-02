@@ -144,7 +144,7 @@ The table in §5 applies unchanged with "Drive files" for "Gmail data". Imported
 - In app: Settings > Integrations > Google Drive > Disconnect. This deletes the stored token and the sync state and marks the integration inactive. **Documents already imported are kept** (unlike Gmail disconnect, which soft-deletes unconnected files): they are the user's records, and the user deletes them in the Files list.
 - At Google: https://myaccount.google.com/permissions.
 - If Google returns `invalid_grant`, the integration is marked `needsReauth` and the page asks the user to reconnect.
-- **Known gap:** disconnect and account deletion delete the token on our side but do not call Google's token revocation endpoint. The user can revoke at Google. Consider closing this gap before submission.
+- **Revocation at Google:** disconnect and account deletion call Google's revocation endpoint (`https://oauth2.googleapis.com/revoke`) with the refresh token before deleting it, which ends every access token minted from it (`functions/src/folder-sync/revoke.ts`). This is best effort: if Google cannot be reached the integration is still disconnected, the token is still deleted, and the user is told to remove FiBuKI under their Google account permissions. A token Google already invalidated counts as revoked. Covered by `functions/src/selfhost/security/folder-disconnect.test.ts`.
 
 ## Evidence pointers
 

@@ -96,7 +96,11 @@ export function useFolderIntegrations(provider: FolderProvider) {
   );
 
   const disconnect = useCallback(
-    (integrationId: string) => callFunction("disconnectFolderIntegration", { integrationId }),
+    (integrationId: string) =>
+      callFunction<{ integrationId: string }, { success: boolean; revoked: boolean }>(
+        "disconnectFolderIntegration",
+        { integrationId }
+      ),
     []
   );
 

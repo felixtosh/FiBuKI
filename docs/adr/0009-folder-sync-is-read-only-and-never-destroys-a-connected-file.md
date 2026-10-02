@@ -85,5 +85,6 @@ never "the files are gone".
 - A Folder Integration is its own register, beside the Mail Provider one: a provider says how
   to list changes since a cursor and how to download a file. The Sync worker and the removal
   policy are shared, so Drive adds a provider and no policy.
+- Disconnecting, and deleting the account, revoke the grant at the provider before the token is deleted (Google `oauth2/revoke`, Dropbox `auth/token/revoke`). It is best effort: a provider that cannot be reached never blocks the disconnect, and the owner is told to remove FiBuKI in their provider account.
 - The removal policy is a pure function (file state, integration settings, run size in; mark,
   delete or keep out), covered by tests before any provider exists.

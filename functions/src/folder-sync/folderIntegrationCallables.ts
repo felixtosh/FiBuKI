@@ -15,7 +15,8 @@ import {
   buildProvider,
   syncFolderIntegration,
 } from "./folderSyncRunner";
-import { folderSecretParams, readFolderSecrets } from "./folderSecrets";
+import { folderSecretParams, readFolderSecrets, tryReadFolderSecrets } from "./folderSecrets";
+import { readStoredRefreshToken, revokeGrant, type RevokeOutcome } from "./revoke";
 
 type Db = FirebaseFirestore.Firestore;
 
@@ -151,20 +152,35 @@ export const syncFolderIntegrationCallable = createCallable<
 
 export const disconnectFolderIntegrationCallable = createCallable<
   { integrationId: string },
-  { success: boolean }
->({ name: "disconnectFolderIntegration" }, async (ctx, request) => {
-  const { ref } = await ownedIntegration(ctx.db, ctx.userId, request.integrationId);
-  // Files stay: disconnecting stops the sync, it does not unimport anything.
-  await ctx.db.collection(FOLDER_TOKENS).doc(request.integrationId).delete();
-  const entries = await ctx.db.collection(FOLDER_ENTRIES).where("integrationId", "==", request.integrationId).get();
-  for (let i = 0; i < entries.docs.length; i += 400) {
-    const batch = ctx.db.batch();
-    entries.docs.slice(i, i + 400).forEach((d) => batch.delete(d.ref));
-    await batch.commit();
+  { success: boolean; revoked: boolean }
+>(
+  { name: "disconnectFolderIntegration", timeoutSeconds: 60, secrets: folderSecretParams },
+  async (ctx, request) => {
+    const { ref, data } = await ownedIntegration(ctx.db, ctx.userId, request.integrationId);
+
+    // End FiBuKI's access at the provider first, while we still hold the token.
+    // A provider that is down must not stop the disconnect; the user is told.
+    const tokenSnap = await ctx.db.collection(FOLDER_TOKENS).doc(request.integrationId).get();
+    const tokens = tokenSnap.exists && tokenSnap.data()?.userId === ctx.userId ? tokenSnap.data() : undefined;
+    let outcome: RevokeOutcome = "already-invalid";
+    if (tokens) {
+      const secrets = tryReadFolderSecrets();
+      const refreshToken = secrets ? readStoredRefreshToken(tokens, secrets) : null;
+      outcome = secrets && refreshToken ? await revokeGrant(data.provider, refreshToken, secrets) : "failed";
+    }
+
+    // Files stay: disconnecting stops the sync, it does not unimport anything.
+    await ctx.db.collection(FOLDER_TOKENS).doc(request.integrationId).delete();
+    const entries = await ctx.db.collection(FOLDER_ENTRIES).where("integrationId", "==", request.integrationId).get();
+    for (let i = 0; i < entries.docs.length; i += 400) {
+      const batch = ctx.db.batch();
+      entries.docs.slice(i, i + 400).forEach((d) => batch.delete(d.ref));
+      await batch.commit();
+    }
+    await ref.update({ isActive: false, syncStartedAt: null, updatedAt: Timestamp.now() });
+    return { success: true, revoked: outcome !== "failed" };
   }
-  await ref.update({ isActive: false, syncStartedAt: null, updatedAt: Timestamp.now() });
-  return { success: true };
-});
+);
 
 /** Keep every connected folder current. One at a time: a failure in one never blocks the rest. */
 export const syncFolderIntegrations = onSchedule(
