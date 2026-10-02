@@ -349,3 +349,33 @@ describe("data plane: writes", () => {
     expect(Object.prototype).not.toHaveProperty("polluted");
   });
 });
+
+describe("data plane: a session cannot rewrite its own second factor", () => {
+  // Not cross-user, but the same failure: a stolen session (password, no
+  // second factor) must not be able to switch MFA off or plant a passkey
+  // challenge it holds a captured assertion for.
+  it("mfaSettings is readable but never writable from the client", async () => {
+    await getFirestore().doc(`users/${ATTACKER}/mfaSettings/config`).set({ totpEnabled: true, passkeysEnabled: true });
+    const read = await call("get", { path: `users/${ATTACKER}/mfaSettings/config` });
+    expect(read.status).toBe(200);
+    for (const op of [
+      { type: "set", path: `users/${ATTACKER}/mfaSettings/config`, data: { totpEnabled: false }, merge: true },
+      { type: "update", path: `users/${ATTACKER}/mfaSettings/config`, data: { passkeysEnabled: false } },
+      { type: "delete", path: `users/${ATTACKER}/mfaSettings/config` },
+    ]) {
+      const r = await call("write", { ops: [op] });
+      expect(r.status, `${op.type} -> ${r.text}`).toBe(403);
+    }
+    const after = await getFirestore().doc(`users/${ATTACKER}/mfaSettings/config`).get();
+    expect(after.data()).toMatchObject({ totpEnabled: true, passkeysEnabled: true });
+  });
+
+  it("passkeyChallenge is server-only", async () => {
+    const write = await call("write", {
+      ops: [{ type: "set", path: `users/${ATTACKER}/passkeyChallenge/current`, data: { challenge: "replayed" }, merge: false }],
+    });
+    expect(write.status).toBe(403);
+    const read = await call("get", { path: `users/${ATTACKER}/passkeyChallenge/current` });
+    expect(read.status).toBe(403);
+  });
+});
