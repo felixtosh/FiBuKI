@@ -25,7 +25,7 @@ import {
   assertVictimUntouched,
   assertNoLeak,
 } from "./victim";
-import { asUser, enableInternalAuth } from "./routes";
+import { asUser, anonymous, enableInternalAuth } from "./routes";
 
 vi.mock("@/lib/gmail/resolve-integration", () => {
   class GmailResolutionError extends Error {
@@ -139,6 +139,21 @@ vi.mock("@/lib/truelayer", () => ({
       throw new Error("no refresh in tests");
     },
   }),
+}));
+
+// The two model-calling routes: count calls instead of spending money.
+const modelCalls: string[] = [];
+vi.mock("@google-cloud/vertexai", () => ({
+  VertexAI: class {
+    getGenerativeModel() {
+      return {
+        generateContent: async () => {
+          modelCalls.push("generateContent");
+          return { response: { candidates: [{ content: { parts: [{ text: '{"queries":["probe"],"commands":[],"isDone":true}' }] } }] } };
+        },
+      };
+    }
+  },
 }));
 
 beforeAll(() => {
@@ -434,4 +449,32 @@ describe("TrueLayer routes check source and connection ownership", () => {
     before = snapshot;
     await expectRefused(res, "truelayer/accounts(victim source)");
   });
+});
+
+describe("routes that spend model money require a signed-in user", () => {
+  const routes: Array<[string, string, Record<string, unknown>]> = [
+    ["@/app/api/gmail/generate-queries/route", "/api/gmail/generate-queries", { transaction: { name: "probe", amount: -1, date: "2026-01-01" } }],
+    [
+      "@/app/api/browser/replay-agent/route",
+      "/api/browser/replay-agent",
+      { pageSnapshot: { url: "https://x.test", title: "t", buttons: [], links: [], headings: [], tables: 0, visibleText: "" }, currentUrl: "https://x.test", transactionInfo: { amount: 1, date: "2026-01-01", currency: "EUR" }, goal: "find_invoice" },
+    ],
+  ];
+  for (const [mod, url, body] of routes) {
+    it(`${url} answers 401 without a user and never calls the model`, async () => {
+      modelCalls.length = 0;
+      const { POST } = await import(mod);
+      const res = await POST(anonymous(url, body));
+      expect(res.status).toBe(401);
+      expect(modelCalls).toEqual([]);
+    });
+
+    it(`${url} still works for a signed-in user`, async () => {
+      modelCalls.length = 0;
+      const { POST } = await import(mod);
+      const res = await POST(asUser(ATTACKER, url, { body }));
+      expect(res.status, await res.clone().text()).toBe(200);
+      expect(modelCalls.length).toBe(1);
+    });
+  }
 });

@@ -1,5 +1,6 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
+import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { VertexAI } from "@google-cloud/vertexai";
 import { MODELS } from "@/types/ai-usage";
 
@@ -41,6 +42,8 @@ interface AgentResponse {
 
 export async function POST(request: Request) {
   try {
+    // Every call is a paid model call; only signed-in users may make one.
+    await getServerUserIdWithFallback(request);
     const body = await request.json();
     const {
       pageSnapshot,
@@ -104,6 +107,8 @@ export async function POST(request: Request) {
 
     return NextResponse.json(parsed);
   } catch (err) {
+    const unauthorized = unauthorizedResponse(err);
+    if (unauthorized) return unauthorized;
     console.error("Replay agent error:", err);
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Agent failed" },
