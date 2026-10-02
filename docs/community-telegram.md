@@ -34,7 +34,7 @@ comes after the account proof.
 ## One-time setup (Felix, about 15 minutes)
 
 1. **Bot.** Already created: the bot `@bukibukibukibot`. Its token lives only in
-   `/opt/fibuki/.env`, never in the repo. If it was ever pasted into a chat or
+   `/opt/fibuki/deploy/selfhost/.env`, never in the repo. If it was ever pasted into a chat or
    ticket, regenerate it with BotFather `/revoke` and use the new one below.
 2. **Announcements channel.** Exists. Its invite link goes into
    `TELEGRAM_ANNOUNCEMENTS_URL`. Optional: add the bot as admin if it should
@@ -58,7 +58,7 @@ comes after the account proof.
       and read the group's `chat.id` (negative, like `-100…`): that is
       `TELEGRAM_COMMUNITY_CHAT_ID`. (Staff ids, if you want them, are the
       `from.id` of anyone who sends `/start` to the bot.)
-7. **Put the values on the box** in `/opt/fibuki/.env` (the deploy never
+7. **Put the values on the box** in `/opt/fibuki/deploy/selfhost/.env` (the deploy never
    overwrites it):
 
    ```
@@ -74,9 +74,11 @@ comes after the account proof.
    `docker compose up -d --build fibuki-api` on the box.
 8. **Register the webhook** (once):
 
+   On the box, reading the values from the `.env`:
+
    ```
-   TELEGRAM_BOT_TOKEN=... TELEGRAM_WEBHOOK_SECRET=... \
-   FIBUKI_API_HOST=new-api.fibuki.com deploy/selfhost/register-telegram-webhook.sh
+   cd /opt/fibuki/deploy/selfhost && set -a && . ./.env && set +a && \
+   FIBUKI_API_HOST=new-api.fibuki.com ./register-telegram-webhook.sh
    ```
 
    `getWebhookInfo` at the end should show the URL and no `last_error_message`.
