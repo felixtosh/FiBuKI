@@ -2,7 +2,14 @@
 
 import { useTranslations } from "next-intl";
 import { ProgressCounter } from "@/components/ui/progress-counter";
-import { Link2, ArrowUpDown, Trash2 } from "lucide-react";
+import { Link2, ArrowUpDown, Trash2, Plus, Upload, FileText, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { SearchButton } from "@/components/ui/search-button";
 import { ChoiceFilter } from "@/components/ui/choice-filter";
 import { DateRangeFilter } from "@/components/ui/date-range-filter";
@@ -21,6 +28,12 @@ interface FileToolbarProps {
   connectedCount?: number;
   /** Total number of files in current filter view */
   totalCount?: number;
+  /** "New" menu: upload a file */
+  onUploadClick?: () => void;
+  /** "New" menu: create an invoice */
+  onCreateInvoice?: () => void;
+  /** An invoice is being created; the menu shows a spinner and is disabled */
+  creatingInvoice?: boolean;
 }
 
 export function FileToolbar({
@@ -31,6 +44,9 @@ export function FileToolbar({
   userPartners = [],
   connectedCount,
   totalCount,
+  onUploadClick,
+  onCreateInvoice,
+  creatingInvoice,
 }: FileToolbarProps) {
 
   const hasDateFilter = filters.extractedDateFrom || filters.extractedDateTo;
@@ -54,6 +70,7 @@ export function FileToolbar({
   // Show counter only when there are files
   const tProgress = useTranslations("progress");
   const showCounter = totalCount !== undefined && totalCount > 0;
+  const tNew = useTranslations("files.new");
 
   return (
     <div className="flex items-center gap-2 px-4 py-2 border-b bg-background">
@@ -192,6 +209,36 @@ export function FileToolbar({
             </div>
           }
         />
+      )}
+
+      {/* Right side: one primary "New" menu for the ways a File appears */}
+      {(onUploadClick || onCreateInvoice) && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button size="sm" className="shrink-0 gap-1" disabled={creatingInvoice}>
+              {tNew("button")}
+              {creatingInvoice ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Plus className="h-4 w-4" />
+              )}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {onUploadClick && (
+              <DropdownMenuItem onSelect={onUploadClick}>
+                <Upload className="h-4 w-4" />
+                {tNew("upload")}
+              </DropdownMenuItem>
+            )}
+            {onCreateInvoice && (
+              <DropdownMenuItem onSelect={onCreateInvoice}>
+                <FileText className="h-4 w-4" />
+                {tNew("invoice")}
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
       )}
     </div>
   );
