@@ -16,11 +16,15 @@ This happened three times before it was enforced.
 `.claude/hooks/guard-memory.sh` (wired via `.claude/settings.json`) blocks these
 shapes as a `PreToolUse` hook. It is **host-aware**:
 
-- `MemTotal < 8 GiB` → this host can never run the full thing
+- `MemTotal <= 8 GiB` → this host can never run the full thing
 - `MemAvailable < 4 GiB` → this host is too loaded right now
 
 On a normal workstation both checks pass and the hook is invisible. It only ever
 fires where it's needed.
+
+It matches a command that runs the tool, not the tool's name in the text:
+`grep -i vitest package.json` passes, `cd functions && npx vitest run` without a
+worker cap does not.
 
 **Scoped forms that work on a small host:**
 

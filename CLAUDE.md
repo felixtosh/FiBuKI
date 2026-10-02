@@ -46,7 +46,7 @@ See [`docs/agents/domain.md`](docs/agents/domain.md).
 **Never run a full `vitest`, a project-wide `tsc`, or `next build` on a small host.**
 Each spawns per-CPU workers with their own V8 heaps and OOM-freezes a 4 GiB box hard
 enough to need a reset. `.claude/hooks/guard-memory.sh` blocks these shapes via a
-`PreToolUse` hook when `MemTotal < 8 GiB` or `MemAvailable < 4 GiB`; on a normal
+`PreToolUse` hook when `MemTotal <= 8 GiB` or `MemAvailable < 4 GiB`; on a normal
 workstation it never fires. Use the scoped forms instead:
 
 ```bash
