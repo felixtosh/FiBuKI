@@ -1,3 +1,5 @@
+import type { ParsedQrCode } from "../extraction/qrCodes";
+
 /**
  * Shared extraction types for document processing.
  * Used by both Gemini and legacy Claude parsers.
@@ -25,6 +27,12 @@ export interface ExtractedEntity {
   address: string | null;
   iban: string | null;
   website: string | null;
+  /**
+   * ISO 3166-1 alpha-2 country of the party's address (#540): which tax
+   * rules the document falls under. From the printed address, else from the
+   * VAT ID prefix. Optional: entities stored before it existed have none.
+   */
+  country?: string | null;
 }
 
 /**
@@ -101,6 +109,16 @@ export interface ExtractedData {
   payableAmount: number | null;
   currency: string | null;
   vatPercent: number | null;
+  /**
+   * The document's printed TOTAL VAT, cents (#540): "davon 20% USt 11,25",
+   * "Tax 11,25", "GST 4,50". Transcribed, never computed. It is how a
+   * document that prints a VAT amount but no rate gets a rate at all
+   * (`rateFromDocumentVat`), and the VAT of a document with neither rows nor
+   * a printed block. null when the document prints no VAT total.
+   */
+  documentVatAmount?: number | null;
+  /** Decoded QR codes, parsed by format (#540). Empty when the page has none. */
+  qrCodes?: ParsedQrCode[];
   lineItems?: ExtractedLineItem[] | null;
   /** Printed per-rate VAT summary block, when the document shows one */
   rateGroups?: ExtractedRateGroup[] | null;

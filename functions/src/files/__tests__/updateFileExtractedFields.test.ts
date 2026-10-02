@@ -238,7 +238,7 @@ describe("updateFileExtractedFieldsCallable", () => {
   });
 
   it("takes the descriptive boxes as text and nothing else", async () => {
-    seedFile();
+    seedFile({ extractedAdditionalFields: [{ label: "Nr", value: "R-0" }] });
 
     await expect(
       call(unchangedSave({ details: { partner: { name: "ACME" } } }))
@@ -256,10 +256,11 @@ describe("updateFileExtractedFieldsCallable", () => {
   });
 
   it("carries the canonical additional-field key through a save (#252)", async () => {
-    seedFile();
+    // A legacy keyless row, stored before the vocabulary closed (#540).
+    seedFile({ extractedAdditionalFields: [{ label: "Notiz", value: "alt" }] });
 
-    // A save edits the value; it never reclassifies the field. A row a person
-    // typed into the panel has no key and does not acquire one.
+    // A save edits the value; it never reclassifies the field. A legacy row
+    // has no key and does not acquire one.
     await call(
       unchangedSave({
         details: {
@@ -273,6 +274,37 @@ describe("updateFileExtractedFieldsCallable", () => {
     expect(file().extractedAdditionalFields).toEqual([
       { key: "invoiceNumber", label: "Rechnungsnummer", value: "2024-001", rawValue: "2024-001" },
       { label: "Notiz", value: "Beleg nachgereicht", rawValue: "Beleg nachgereicht" },
+    ]);
+  });
+
+  it("refuses a key outside the vocabulary and drops a new keyless row (#540)", async () => {
+    seedFile({ extractedAdditionalFields: [{ label: "Tisch", value: "5" }] });
+
+    await expect(
+      call(
+        unchangedSave({
+          details: { additionalFields: [{ key: "tableNumber", label: "Tisch", value: "5" }] },
+        })
+      )
+    ).rejects.toThrow(/unknown key/);
+
+    // The stored legacy row survives a save; a keyless row a client invents
+    // does not, so the open bag cannot be rebuilt by hand.
+    await call(
+      unchangedSave({
+        details: {
+          additionalFields: [
+            { label: "Tisch", value: "5" },
+            { label: "Kassen-ID", value: "221430a" },
+            { key: "paymentMethod", label: "Zahlungsart", value: "Barzahlung" },
+          ],
+        },
+      })
+    );
+    expect(file().extractedAdditionalFields).toEqual([
+      { label: "Tisch", value: "5", rawValue: "5" },
+      // A value outside the fixed list is "other", never free text.
+      { key: "paymentMethod", label: "Zahlungsart", value: "other", rawValue: "Barzahlung" },
     ]);
   });
 
@@ -302,7 +334,7 @@ describe("updateFileExtractedFieldsCallable", () => {
   });
 
   it("reads the typed Due Date from a keyless row under a German synonym (#135)", async () => {
-    seedFile();
+    seedFile({ extractedAdditionalFields: [{ label: "Zahlbar bis", value: "2026-03-19" }] });
 
     await call(
       unchangedSave({

@@ -21,6 +21,8 @@ export interface ExtractedEntity {
   iban?: string | null;
   /** Website domain */
   website?: string | null;
+  /** ISO 3166-1 alpha-2 country of the party (#540) */
+  country?: string | null;
 }
 
 /**
@@ -356,6 +358,15 @@ export interface TaxFile {
    * document designates no figure as due.
    */
   extractedPayableAmount?: number | null;
+  /**
+   * The document's printed TOTAL VAT, cents (#540): "davon 20% USt 11,25",
+   * "Tax 11,25". Transcribed, never computed; null when none is printed.
+   */
+  extractedDocumentVatAmount?: number | null;
+  /** ISO 3166-1 alpha-2 country of the counterparty (#540). */
+  extractedCountry?: string | null;
+  /** Decoded QR codes, parsed by format (RKSV, EPC GiroCode, Swiss QR-bill) (#540). */
+  extractedQrCodes?: ExtractedQrCode[] | null;
 
   /** AI-extracted currency code */
   extractedCurrency?: string | null;
@@ -975,9 +986,28 @@ export interface ExtractedFieldLocation {
  * a person typed into the panel by hand, and rows stored before the vocabulary
  * closed.
  */
+/**
+ * A QR code on the document, decoded by the model and parsed by format
+ * (#540). Mirrors `ParsedQrCode` in functions/src/extraction/qrCodes.ts.
+ */
+export interface ExtractedQrCode {
+  format: "rksv" | "epc" | "swissQr" | "url" | "unknown";
+  payload: string;
+  cashRegisterId?: string;
+  receiptNumber?: string;
+  date?: string;
+  grossByRate?: Array<{ rate: number; gross: number }>;
+  payeeName?: string;
+  iban?: string;
+  amount?: number;
+  currency?: string;
+  reference?: string;
+  country?: string;
+}
+
 export interface ExtractedAdditionalField {
   /**
-   * Canonical key from the extraction vocabulary — "invoiceNumber",
+   * Canonical key from the extraction vocabulary (types/extraction-fields.ts) — "invoiceNumber",
    * "customerNumber", "dueDate", "paymentTerms", "orderNumber",
    * "deliveryNoteNumber", "referenceNumber", "poNumber".
    */

@@ -122,7 +122,8 @@ describe("runExtraction: a document written im Namen von the supplier", () => {
     const doc = await fileDoc("f-agent");
 
     expect(doc.extractedInvoicingAgent).toEqual(AGENT);
-    expect(doc.extractedIssuer).toEqual(SUPPLIER);
+    // #540: the country follows from the supplier's ATU prefix.
+    expect(doc.extractedIssuer).toEqual({ ...SUPPLIER, country: "AT" });
     expect(doc.invoiceDirection).toBe("incoming");
     // The Vorsteuer trail follows the Leistungserbringer (ADR-0003).
     expect(doc.extractedPartner).toBe(SUPPLIER.name);

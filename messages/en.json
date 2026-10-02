@@ -426,6 +426,55 @@
       "button": "New",
       "upload": "Upload",
       "invoice": "Invoice"
+    },
+    "extracted": {
+      "fields": {
+        "invoiceNumber": "Invoice number",
+        "customerNumber": "Customer number",
+        "dueDate": "Due date",
+        "debitDate": "Debit date",
+        "serviceDate": "Service date",
+        "paymentTerms": "Payment terms",
+        "paymentMethod": "Payment method",
+        "orderNumber": "Order number",
+        "deliveryNoteNumber": "Delivery note number",
+        "referenceNumber": "Reference",
+        "poNumber": "PO number"
+      },
+      "paymentMethods": {
+        "cash": "Cash",
+        "card": "Card",
+        "bankTransfer": "Bank transfer",
+        "directDebit": "Direct debit",
+        "paypal": "PayPal",
+        "other": "Other"
+      },
+      "country": "Country",
+      "addField": "Add field",
+      "chooseField": "Choose a field",
+      "value": "Value",
+      "removeField": "Remove field",
+      "legacyFields": "Other (older extraction)",
+      "legacyFieldsInfo": "Read before the field list was fixed. They stay readable but cannot be added again.",
+      "lineItems": {
+        "title": "Line items",
+        "description": "Description",
+        "vatPercent": "VAT %",
+        "vatAmount": "VAT amount",
+        "grossAmount": "Gross amount",
+        "vat": "VAT: {rate}",
+        "amount": "Amount: {amount}",
+        "removeItem": "Remove line item",
+        "addItem": "Add line item",
+        "removeAll": "Remove all line items",
+        "coupledHint": "VAT % and VAT amount follow each other and the gross amount.",
+        "problems": {
+          "vatNotInsideAmount": "The VAT must be smaller than the gross amount and have the same sign.",
+          "rateOutOfRange": "The VAT rate must be between 0 and 100 %.",
+          "rateUnusual": "No EU country charges more than 27 % VAT. Check the rate."
+        },
+        "fixRows": "Fix the marked line items before saving."
+      }
     }
   },
   "progress": {

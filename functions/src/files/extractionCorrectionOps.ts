@@ -15,6 +15,7 @@
 import { Timestamp } from "firebase-admin/firestore";
 import { ExtractedLineItem } from "../types/extraction";
 import { reconcileLineItemsWithDocumentTotal } from "../extraction/lineItemReconciliation";
+import { enforceLineItemVat } from "../extraction/taxFacts";
 import { buildCorrectionProvenance, CORRECTABLE_FIELDS } from "./extractionProvenanceOps";
 
 /**
@@ -231,8 +232,29 @@ export function buildExtractionCorrection(
   }
 
   if (fields.lineItems !== undefined) {
-    updates.extractedLineItems =
-      fields.lineItems === null ? null : normalizeLineItems(fields.lineItems, "lineItems");
+    // #540: a row's VAT, rate and amount must agree with each other, whatever
+    // surface posted them (the editor, an MCP tool, an agent). Measured
+    // against the total as it will be after this write, so an itemisation
+    // that is net with its VAT on top is recognised and left as it is.
+    const documentTotal =
+      fields.amount !== undefined
+        ? (updates.extractedAmount as number | null)
+        : (previous.extractedAmount as number | null | undefined);
+    if (fields.lineItems === null) {
+      updates.extractedLineItems = null;
+    } else {
+      try {
+        updates.extractedLineItems = enforceLineItemVat(
+          normalizeLineItems(fields.lineItems, "lineItems"),
+          documentTotal
+        );
+      } catch (error) {
+        if (error instanceof RangeError) {
+          throw new ExtractionCorrectionError(`lineItems: ${error.message}`);
+        }
+        throw error;
+      }
+    }
     changed.push("lineItems");
   }
 

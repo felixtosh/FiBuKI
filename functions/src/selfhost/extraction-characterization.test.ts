@@ -270,6 +270,8 @@ describe("characterization: runExtraction extraction + counterparty", () => {
       address: "Musterstr. 1, Berlin",
       iban: "DE89 3704 0044 0532 0130 00",
       website: "vendor.de",
+      // #540: from the VAT ID prefix
+      country: "DE",
     });
     expect(doc.extractedRecipient).toEqual({
       name: "House of Bandits GmbH",
@@ -277,7 +279,9 @@ describe("characterization: runExtraction extraction + counterparty", () => {
       address: null,
       iban: null,
       website: null,
+      country: "AT",
     });
+    expect(doc.extractedCountry).toBe("DE");
 
     // line items reconcile exactly with the document total
     expect(doc.extractedLineItems).toEqual([
@@ -784,6 +788,98 @@ describe("runExtraction: printed rate groups", () => {
 // ===========================================================================
 // runExtraction — the document's own designated payable amount (#206)
 // ===========================================================================
+
+describe("runExtraction: fixed fields for every VAT layout (#540)", () => {
+  it("spreads a VAT printed only under the total across the rows (Needle Vinyl Bar)", async () => {
+    const fileData = await seedFile("f-540-bar");
+    q({
+      extracted: {
+        amount: 6750,
+        documentVatAmount: 1125,
+        confidence: 0.9,
+        lineItems: [
+          { description: "Mexican Sling", amount: 3100, vatPercent: null, vatAmount: null },
+          { description: "Misty Wood", amount: 1550, vatPercent: null, vatAmount: null },
+          { description: "San Cosme Mezcal 4cl", amount: 2100, vatPercent: null, vatAmount: null },
+        ],
+        issuer: { name: "Needle Vinyl Bar", vatId: "ATU71726304" },
+      },
+      additionalFields: [
+        { key: "tableNumber", label: "Tisch", value: "5" },
+        { key: "paymentMethod", label: "Zahlungsart", value: "cash" },
+      ],
+    });
+    await runExtraction("f-540-bar", fileData, { skipClassification: true });
+
+    const doc = await fileDoc("f-540-bar");
+    const items = doc.extractedLineItems as Array<{ vatPercent: number; vatAmount: number }>;
+    expect(items.map((item) => item.vatPercent)).toEqual([20, 20, 20]);
+    expect(items.reduce((sum, item) => sum + item.vatAmount, 0)).toBe(1125);
+    expect(doc.lineItemsUnreconciled).toBe(false);
+    expect(doc.extractedVatAmount).toBe(1125);
+    expect(doc.extractedVatPercent).toBe(20);
+    expect(doc.extractedDocumentVatAmount).toBe(1125);
+    expect(doc.extractedCountry).toBe("AT");
+    // The table number has no key and never reaches the record.
+    expect(doc.extractedAdditionalFields).toEqual([
+      { key: "paymentMethod", label: "Zahlungsart", value: "cash", rawValue: "cash" },
+    ]);
+  });
+
+  it("keeps a printed VAT total on a document with neither rows nor a block", async () => {
+    const fileData = await seedFile("f-540-tax");
+    q({ extracted: { amount: 11900, documentVatAmount: 1900, confidence: 0.9 } });
+    await runExtraction("f-540-tax", fileData, { skipClassification: true });
+
+    const doc = await fileDoc("f-540-tax");
+    expect(doc.extractedVatAmount).toBe(1900);
+    expect(doc.extractedVatPercent).toBe(19);
+  });
+
+  it("takes the per-rate block from an RKSV code that adds up to the total", async () => {
+    const fileData = await seedFile("f-540-rksv");
+    q({
+      extracted: { amount: 1750, confidence: 0.9 },
+      qrCodes: ["_R1-AT0_K1_42_2026-01-02T10:00:00_12,00_5,50_0,00_0,00_0,00_x_y_z_sig"],
+    });
+    await runExtraction("f-540-rksv", fileData, { skipClassification: true });
+
+    const doc = await fileDoc("f-540-rksv");
+    expect(doc.extractedRateGroups).toEqual([
+      { rate: 20, net: 1000, vat: 200, gross: 1200 },
+      { rate: 10, net: 500, vat: 50, gross: 550 },
+    ]);
+    expect(doc.extractedVatAmount).toBe(250);
+    expect((doc.extractedQrCodes as Array<{ format: string }>)[0].format).toBe("rksv");
+  });
+
+  it("fills a missing IBAN and payable amount from a valid Payment Code", async () => {
+    const fileData = await seedFile("f-540-epc");
+    q({
+      extracted: { amount: 12345, confidence: 0.9, issuer: { name: "Lieferant GmbH" } },
+      qrCodes: ["BCD\n002\n1\nSCT\n\nLieferant GmbH\nAT611904300234573201\nEUR123.45\n"],
+    });
+    await runExtraction("f-540-epc", fileData, { skipClassification: true });
+
+    const doc = await fileDoc("f-540-epc");
+    expect(doc.extractedIban).toBe("AT611904300234573201");
+    expect(doc.extractedPayableAmount).toBe(12345);
+    expect((doc.extractedQrCodes as Array<{ format: string }>)[0].format).toBe("epc");
+  });
+
+  it("ignores an RKSV code that does not add up to the total", async () => {
+    const fileData = await seedFile("f-540-rksv-bad");
+    q({
+      extracted: { amount: 1790, confidence: 0.9 },
+      qrCodes: ["_R1-AT0_K1_42_2026-01-02T10:00:00_12,00_5,50_0,00_0,00_0,00_x_y_z_sig"],
+    });
+    await runExtraction("f-540-rksv-bad", fileData, { skipClassification: true });
+
+    const doc = await fileDoc("f-540-rksv-bad");
+    expect(doc.extractedRateGroups).toBeNull();
+    expect(doc.extractedVatAmount).toBeNull();
+  });
+});
 
 describe("runExtraction: designated payable amount", () => {
   it("stores the demanded figure beside the document total, moving neither", async () => {

@@ -426,6 +426,55 @@
       "button": "Neu",
       "upload": "Hochladen",
       "invoice": "Rechnung"
+    },
+    "extracted": {
+      "fields": {
+        "invoiceNumber": "Rechnungsnummer",
+        "customerNumber": "Kundennummer",
+        "dueDate": "Fälligkeitsdatum",
+        "debitDate": "Abbuchungsdatum",
+        "serviceDate": "Leistungsdatum",
+        "paymentTerms": "Zahlungsziel",
+        "paymentMethod": "Zahlungsart",
+        "orderNumber": "Bestellnummer",
+        "deliveryNoteNumber": "Lieferscheinnummer",
+        "referenceNumber": "Referenz",
+        "poNumber": "Auftragsnummer"
+      },
+      "paymentMethods": {
+        "cash": "Bar",
+        "card": "Karte",
+        "bankTransfer": "Überweisung",
+        "directDebit": "Lastschrift",
+        "paypal": "PayPal",
+        "other": "Andere"
+      },
+      "country": "Land",
+      "addField": "Feld hinzufügen",
+      "chooseField": "Feld wählen",
+      "value": "Wert",
+      "removeField": "Feld entfernen",
+      "legacyFields": "Sonstige (ältere Auslesung)",
+      "legacyFieldsInfo": "Ausgelesen, bevor die Feldliste festgelegt wurde. Sie bleiben lesbar, können aber nicht neu angelegt werden.",
+      "lineItems": {
+        "title": "Positionen",
+        "description": "Bezeichnung",
+        "vatPercent": "USt. %",
+        "vatAmount": "USt.-Betrag",
+        "grossAmount": "Bruttobetrag",
+        "vat": "USt.: {rate}",
+        "amount": "Betrag: {amount}",
+        "removeItem": "Position entfernen",
+        "addItem": "Position hinzufügen",
+        "removeAll": "Alle Positionen entfernen",
+        "coupledHint": "USt. % und USt.-Betrag rechnen sich gegenseitig und aus dem Bruttobetrag.",
+        "problems": {
+          "vatNotInsideAmount": "Die USt. muss kleiner als der Bruttobetrag sein und dasselbe Vorzeichen haben.",
+          "rateOutOfRange": "Der USt.-Satz muss zwischen 0 und 100 % liegen.",
+          "rateUnusual": "Kein EU-Land verlangt mehr als 27 % USt. Bitte den Satz prüfen."
+        },
+        "fixRows": "Bitte die markierten Positionen vor dem Speichern korrigieren."
+      }
     }
   },
   "progress": {
