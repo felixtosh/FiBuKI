@@ -162,6 +162,9 @@ export type CloudFunctionName =
   | "updateEmailPreference"
   // UI language (#168)
   | "updateUserLocale"
+  | "getTelegramLinkStatus"
+  | "createTelegramLink"
+  | "unlinkTelegram"
   // Password reset
   | "sendPasswordReset"
   // Open seats & invite emails

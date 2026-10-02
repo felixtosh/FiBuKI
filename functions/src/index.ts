@@ -343,6 +343,15 @@ export {
   deactivatePrioritySupportAddonCallable as deactivatePrioritySupportAddon,
 } from "./billing/prioritySupportAddon";
 
+// Community chat (Telegram): membership gated on a paying, linked account
+export {
+  telegramWebhook,
+  communityMembershipSweep,
+  getTelegramLinkStatusCallable as getTelegramLinkStatus,
+  createTelegramLinkCallable as createTelegramLink,
+  unlinkTelegramCallable as unlinkTelegram,
+} from "./community/telegramCommunity";
+
 // Onboarding operations
 export { setOnboardingTrackCallable as setOnboardingTrack } from "./onboarding/setOnboardingTrackCallable";
 

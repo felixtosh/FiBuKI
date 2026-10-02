@@ -156,6 +156,13 @@ services:
       # delivered to this deployment's api host — that needs its own endpoint registered in
       # the Stripe dashboard, which issues a different whsec_.
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      # Community chat (Telegram), see docs/community-telegram.md. All five unset =
+      # the feature is off and the bot webhook answers 404.
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
+      TELEGRAM_COMMUNITY_CHAT_ID: ${TELEGRAM_COMMUNITY_CHAT_ID:-}
+      TELEGRAM_STAFF_IDS: ${TELEGRAM_STAFF_IDS:-}
       # Decrypts users' stored Gmail OAuth tokens. With this present and cron enabled,
       # the box can read the mailboxes of every migrated user.
       GMAIL_TOKEN_ENCRYPTION_KEY: ${GMAIL_TOKEN_ENCRYPTION_KEY:-}

@@ -334,6 +334,21 @@
         "tax": "Steuerdaten",
         "names": "Namen"
       }
+    },
+    "community": {
+      "title": "Community",
+      "description": "Sprich auf Telegram mit dem FiBuKI-Team und anderen Nutzern.",
+      "cardTitle": "Telegram-Community",
+      "unavailable": "Der Community-Chat ist noch nicht geöffnet.",
+      "paidOnly": "Der Community-Chat ist für zahlende Abonnenten. Wechsle auf einen bezahlten Tarif, um beizutreten.",
+      "intro": "Verbinde dein Telegram-Konto, damit der FiBuKI-Bot prüfen kann, dass du Abonnent bist, und dich in den privaten Chat lässt.",
+      "connect": "Telegram verbinden",
+      "connecting": "Link wird vorbereitet...",
+      "connectedAs": "Verbunden als {name}",
+      "connectedAnonymous": "Dein Telegram-Konto ist verbunden.",
+      "disconnect": "Trennen",
+      "openBot": "Falls Telegram sich nicht geöffnet hat, nutze diesen Link:",
+      "failed": "Etwas ist schiefgelaufen. Bitte versuche es erneut."
     }
   },
   "files": {
