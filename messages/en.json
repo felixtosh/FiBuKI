@@ -21,7 +21,8 @@
       "contribute": "Contribute",
       "impressum": "Legal Notice",
       "privacy": "Privacy Policy",
-      "terms": "Terms of Service"
+      "terms": "Terms of Service",
+      "telegram": "Join us on Telegram"
     }
   },
   "terms": {
@@ -346,6 +347,23 @@
         "tax": "Tax details",
         "names": "Names"
       }
+    },
+    "community": {
+      "title": "Support & Community",
+      "description": "Talk to the FiBuKI team and other users on Telegram.",
+      "cardTitle": "Telegram community",
+      "unavailable": "The community chat is not open yet.",
+      "intro": "Connect your Telegram account so the FiBuKI bot can check that you are a subscriber and let you into the private chat.",
+      "connect": "Connect Telegram",
+      "connecting": "Preparing link...",
+      "connectedAs": "Connected as {name}",
+      "connectedAnonymous": "Your Telegram account is connected.",
+      "disconnect": "Disconnect",
+      "openBot": "If Telegram did not open, use this link:",
+      "announcements": "Open the announcements channel (open to everyone)",
+      "failed": "Something went wrong. Please try again.",
+      "githubText": "Found a bug or want to contribute?",
+      "githubLink": "Open GitHub"
     }
   },
   "files": {
@@ -461,6 +479,13 @@
   "chat": {
     "toolCompleted": "{tool} completed",
     "toolFailed": "{tool} failed"
+  },
+  "onboarding": {
+    "telegram": {
+      "title": "Come say hi on Telegram",
+      "text": "Ask questions, share feedback and talk to Felix and Stefan directly in the FiBuKI community.",
+      "cta": "Join the chat"
+    }
   },
   "folderIntegrations": {
     "title": "{provider}",
