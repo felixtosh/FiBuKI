@@ -8,6 +8,7 @@ import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { Timestamp } from "firebase-admin/firestore";
 import { lookupCompany, lookupByVatId, callFirebaseFunction } from "@/lib/api/firebase-callable";
+import { getOwnedDoc } from "@/lib/auth/owned-doc";
 
 // Lazy-load admin DB to avoid initialization at build time
 let _db: ReturnType<typeof import("@/lib/firebase/admin").getAdminDb> | null = null;
@@ -17,6 +18,17 @@ async function getDb() {
     _db = getAdminDb();
   }
   return _db;
+}
+
+/**
+ * The name of one of the caller's own user Partners, or null. These tools
+ * always assign `partnerType: "user"`, and every user shares one database,
+ * so a Partner id from the model is only read once it is known to be theirs.
+ */
+async function ownedPartnerName(partnerId: unknown, userId: unknown): Promise<string | null> {
+  if (typeof userId !== "string" || !userId) return null;
+  const snap = await getOwnedDoc(await getDb(), "partners", partnerId, userId);
+  return snap ? ((snap.data()?.name as string) || "Unknown") : null;
 }
 
 // ============================================================================
@@ -224,12 +236,16 @@ export const rollbackTransactionTool = tool(
 
 export const assignPartnerToTransactionTool = tool(
   async ({ transactionId, partnerId }, config) => {
+    const userId = config?.configurable?.userId;
     const authHeader = config?.configurable?.authHeader;
     if (!authHeader) {
       return { error: "Auth header not provided" };
     }
 
-    const db = await getDb();
+    const partnerName = await ownedPartnerName(partnerId, userId);
+    if (partnerName === null) {
+      return { error: "Partner not found" };
+    }
 
     try {
       // Call Cloud Function - handles validation, pattern learning, and receipt search
@@ -250,10 +266,6 @@ export const assignPartnerToTransactionTool = tool(
       if (!result.success) {
         return { error: "Failed to assign partner" };
       }
-
-      // Get partner name for response
-      const partnerDoc = await db.collection("partners").doc(partnerId).get();
-      const partnerName = partnerDoc.exists ? partnerDoc.data()?.name : "Unknown";
 
       return {
         success: true,
@@ -291,12 +303,16 @@ export const assignPartnerToTransactionTool = tool(
 
 export const assignPartnerToFileTool = tool(
   async ({ fileId, partnerId }, config) => {
+    const userId = config?.configurable?.userId;
     const authHeader = config?.configurable?.authHeader;
     if (!authHeader) {
       return { error: "Auth header not provided" };
     }
 
-    const db = await getDb();
+    const partnerName = await ownedPartnerName(partnerId, userId);
+    if (partnerName === null) {
+      return { error: "Partner not found" };
+    }
 
     try {
       // Call updateFile Cloud Function to assign the partner
@@ -319,10 +335,6 @@ export const assignPartnerToFileTool = tool(
       if (!result.success) {
         return { error: "Failed to assign partner to file" };
       }
-
-      // Get partner name for response
-      const partnerDoc = await db.collection("partners").doc(partnerId).get();
-      const partnerName = partnerDoc.exists ? partnerDoc.data()?.name : "Unknown";
 
       return {
         success: true,
@@ -541,14 +553,10 @@ export const bulkAssignPartnerToTransactionsTool = tool(
       return { error: "No transaction IDs provided" };
     }
 
-    const db = await getDb();
-
-    // Get partner name for response
-    const partnerDoc = await db.collection("partners").doc(partnerId).get();
-    if (!partnerDoc.exists) {
+    const partnerName = await ownedPartnerName(partnerId, config?.configurable?.userId);
+    if (partnerName === null) {
       return { error: "Partner not found" };
     }
-    const partnerName = partnerDoc.data()?.name || "Unknown";
 
     // Call Cloud Function for each transaction (ensures pattern learning + receipt search triggers)
     const results = {

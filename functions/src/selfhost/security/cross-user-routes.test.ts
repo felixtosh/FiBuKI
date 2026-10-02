@@ -64,7 +64,6 @@ vi.mock("@/lib/api/firebase-callable", () => ({
 // The worker's agent loop needs a model; what is under test is everything the
 // route does around it, so the loop finishes at once with no messages.
 vi.mock("@/lib/agent/worker-graph", () => ({
-  // eslint-disable-next-line require-yield
   streamWorkerGraph: async function* () {
     return;
   },
