@@ -21,6 +21,11 @@ export interface PdfConversionResult {
 let browserInstance: Browser | null = null;
 let browserLaunchPromise: Promise<Browser> | null = null;
 
+// How long a launch may take to report Chrome's DevTools endpoint. Puppeteer's own default is
+// 30s, and a cold start (binary not yet in the page cache) on a loaded host can take longer
+// while being perfectly healthy: the next launch on the same host takes well under a second.
+const LAUNCH_TIMEOUT_MS = 60_000;
+
 async function getBrowser(): Promise<Browser> {
   if (browserInstance && browserInstance.connected) {
     return browserInstance;
@@ -45,6 +50,7 @@ async function getBrowser(): Promise<Browser> {
     browserLaunchPromise = puppeteer.launch({
       executablePath: explicitChrome,
       headless: true,
+      timeout: LAUNCH_TIMEOUT_MS,
       // --no-sandbox: the container is already the isolation boundary and it runs
       // without CAP_SYS_ADMIN, so Chromium's own sandbox cannot initialise.
       // --disable-dev-shm-usage: Docker caps /dev/shm at 64 MB by default, which
@@ -88,6 +94,7 @@ async function getBrowser(): Promise<Browser> {
     browserLaunchPromise = puppeteer.launch({
       executablePath: execPath,
       headless: true,
+      timeout: LAUNCH_TIMEOUT_MS,
       args: ["--no-sandbox", "--disable-setuid-sandbox"],
     });
   } else {
@@ -98,11 +105,17 @@ async function getBrowser(): Promise<Browser> {
       args: chromium.args,
       executablePath: await chromium.executablePath(),
       headless: "shell",
+      timeout: LAUNCH_TIMEOUT_MS,
     });
   }
 
-  browserInstance = await browserLaunchPromise;
-  browserLaunchPromise = null;
+  // Cleared on failure too: a rejected launch kept here would be handed to every later caller,
+  // and no PDF would render again until the process restarted.
+  try {
+    browserInstance = await browserLaunchPromise;
+  } finally {
+    browserLaunchPromise = null;
+  }
 
   // Handle browser disconnect
   browserInstance.on("disconnected", () => {
@@ -114,7 +127,7 @@ async function getBrowser(): Promise<Browser> {
 
 /** Shut the shared browser down (tests, and anything that must not leave Chromium running). */
 export async function closeBrowser(): Promise<void> {
-  const browser = browserInstance ?? (browserLaunchPromise ? await browserLaunchPromise : null);
+  const browser = browserInstance ?? (browserLaunchPromise ? await browserLaunchPromise.catch(() => null) : null);
   browserInstance = null;
   if (!browser) return;
   // close() can wait on a wedged renderer; kill the process if it does not return.
