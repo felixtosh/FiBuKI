@@ -135,6 +135,28 @@ signup (phase 4), not from the Referer header; until then web signups are `web` 
 so a browser could still write the onboarding document; it holds UX state only (the trial is in
 `subscriptions`, server-only), but a per-document rule would be cleaner.
 
+## Sign in with ChatGPT / Claude (checked 2026-10-02, optional, not needed for phase 4)
+
+Two different things get called "OAuth with these services". The connect flow needs the first;
+the second is a convenience.
+
+1. **FiBuKI as the OAuth server (required).** ChatGPT and Claude are OAuth clients of FiBuKI.
+   The user signs in to FiBuKI the way they do today (Google or email), then consents. Phase 4 builds this.
+2. **ChatGPT or Claude as the identity provider ("Continue with ChatGPT").**
+   - OpenAI has **Sign in with ChatGPT** (OIDC, scopes `openid profile email`, stable account id, no access to
+     conversations): https://developers.openai.com/siwc/quickstart.md . **Limited trial for selected commercial
+     partners; waitlist** via https://openai.com/form/sign-in-with-chatgpt-interest/ . It has a plugin variant
+     (`/siwc/chatgpt-plugin.md`): ChatGPT's connect modal shows "Continue with ChatGPT", and ChatGPT calls our
+     `/oauth/authorize` with `target_flow=chatgpt_siwc` and `login_hint=<email>`. Our authorize page then runs a
+     second, inner OIDC flow against OpenAI, verifies the ID token and issues its own connector code. Two
+     independent OAuth transactions; keep state, PKCE and codes separate.
+   - Anthropic: no equivalent "Sign in with Claude" for third-party apps found in the docs index
+     (docs.claude.com/llms.txt). Claude's connector flow is the same remote-MCP OAuth with FiBuKI as server.
+
+Consequence for phase 4: build (1) so that it already accepts `login_hint` (prefill / account chooser) and
+ignores `target_flow` it does not know. Add "Continue with ChatGPT" only if OpenAI admits FiBuKI to the trial;
+it would also give a verified email, which helps the signup-policy decision (invite-only vs open seat).
+
 ## What the docs confirmed (curl, 2026-10-02)
 
 - **Packaging.** Portable Agent Plugins format: `plugin.json` at the root with
