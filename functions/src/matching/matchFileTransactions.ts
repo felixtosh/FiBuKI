@@ -745,8 +745,11 @@ export async function runTransactionMatching(
 
     // Update transaction's fileIds array
     const txRef = db.collection("transactions").doc(match.transactionId);
+    // isComplete is set here, not left to onTransactionUpdate: that trigger
+    // only syncs it when fileIds change, so a lost delivery never heals.
     batch.update(txRef, {
       fileIds: FieldValue.arrayUnion(fileId),
+      isComplete: true,
       updatedAt: Timestamp.now(),
     });
 

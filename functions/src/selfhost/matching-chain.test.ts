@@ -23,6 +23,7 @@ import { drainTriggers, __resetTriggerShim } from "./trigger-shim";
 // REAL trigger modules, unmodified:
 import "../matching/matchFilePartner";
 import "../matching/matchFileTransactions";
+import { matchFilesForPartnerInternal } from "../matching/matchFilesForPartner";
 
 const db = getFirestore();
 const USER = "stefan-test";
@@ -144,6 +145,54 @@ describe("selfhost spike GATE 3: matching engine chain on firestore-pg shim", ()
       const tx = (await db.collection("transactions").doc("t-hetzner").get()).data()!;
       expect((tx.fileIds as string[]).includes("f-invoice")).toBe(true);
     }
+  });
+
+  it("an auto-connect marks the transaction complete in the same write", async () => {
+    // onTransactionUpdate is deliberately NOT loaded here: on self-host its
+    // delivery can be lost (in-memory bus, restart or per-path cap), and it
+    // only resyncs isComplete when fileIds CHANGE, so nothing heals the flag
+    // later. The writer has to set it, like connectFileToTransaction does.
+    // Active mode: passive stores suggestions only and never auto-connects.
+    await db.collection("subscriptions").doc(USER).update({ automationMode: "active" });
+    await completeExtraction();
+
+    const connections = await db
+      .collection("fileConnections")
+      .where("fileId", "==", "f-invoice")
+      .get();
+    expect(connections.empty).toBe(false);
+
+    const tx = (await db.collection("transactions").doc("t-hetzner").get()).data()!;
+    expect((tx.fileIds as string[]).includes("f-invoice")).toBe(true);
+    expect(tx.isComplete).toBe(true);
+  });
+
+  it("a partner-run auto-connect marks the transaction complete too", async () => {
+    // Same invariant for the partner-driven path (matchFilesForPartner), which
+    // runs after partner assignment rather than off the file trigger.
+    await db.collection("transactions").doc("t-hetzner").update({ partnerId: "p-hetzner" });
+    await db.collection("files").doc("f-invoice").set({
+      userId: USER,
+      fileName: "hetzner-r0011223344.pdf",
+      extractionComplete: true,
+      extractedPartner: "Hetzner Online GmbH",
+      extractedIban: IBAN,
+      extractedAmount: 119.0,
+      extractedCurrency: "EUR",
+      extractedDate: Timestamp.fromDate(new Date("2026-07-01")),
+      extractedText: "Hetzner Online GmbH Rechnung R0011223344 119,00 EUR",
+      partnerId: "p-hetzner",
+      transactionIds: [],
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    });
+
+    const result = await matchFilesForPartnerInternal(USER, "p-hetzner");
+    expect(result.autoMatched).toBe(1);
+
+    const tx = (await db.collection("transactions").doc("t-hetzner").get()).data()!;
+    expect((tx.fileIds as string[]).includes("f-invoice")).toBe(true);
+    expect(tx.isComplete).toBe(true);
   });
 
   it("does not re-run matching when unrelated file fields change", async () => {
