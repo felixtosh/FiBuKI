@@ -6,6 +6,7 @@ This directory contains the security artifacts required for the Google Cloud App
 | --- | --- |
 | Operator | Infinity Vertigo GmbH (FN571837m, ATU77919424) |
 | Restricted scope under review | `https://www.googleapis.com/auth/gmail.readonly` |
+| Restricted scope drafted, not yet submitted | `https://www.googleapis.com/auth/drive.readonly` (see [03 §8](./03-oauth-scope-justification.md)) |
 | Assessment tier | CASA Tier 2 |
 | Framework | OWASP ASVS v4.0 (134 requirements) |
 | Document set version | 2.0 |

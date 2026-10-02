@@ -90,7 +90,7 @@
       },
       "dataCollection": {
         "title": "Data We Collect",
-        "content": "We collect and process the following categories of personal data:\n\n• Account data: Name, email address for authentication\n• Financial data: Bank transactions, receipts, invoices you upload or connect\n• Email data: Gmail messages and attachments (only with your explicit consent)\n• Usage data: Interactions with the application for improvements"
+        "content": "We collect and process the following categories of personal data:\n\n• Account data: Name, email address for authentication\n• Financial data: Bank transactions, receipts, invoices you upload or connect\n• Email data: Gmail messages and attachments (only with your explicit consent)\n• Cloud storage data: Documents and file names from the Dropbox or Google Drive folder you choose (only with your explicit consent)\n• Usage data: Interactions with the application for improvements"
       },
       "legalBasis": {
         "title": "Legal Basis for Processing",
@@ -126,18 +126,26 @@
         "langfuse": {
           "name": "LangFuse",
           "purpose": "Analysis and optimization of AI interactions for quality improvement."
+        },
+        "googleDrive": {
+          "name": "Google Drive API (Google)",
+          "purpose": "Read-only access to the one folder you choose, to import the documents in it. Only active when you connect your Google Drive via OAuth. You can revoke access at any time."
+        },
+        "dropbox": {
+          "name": "Dropbox API",
+          "purpose": "Read-only access to the one folder you choose, to import the documents in it. Only active when you connect your Dropbox. You can revoke access at any time."
         }
       },
       "googleUserData": {
         "title": "Google User Data",
-        "content": "FiBuKI accesses Google user data through the Gmail API to help you find and match receipts and invoices to your bank transactions.",
+        "content": "FiBuKI accesses Google user data through the Gmail API and the Google Drive API to help you find and match receipts and invoices to your bank transactions.",
         "whatWeAccess": {
           "title": "What We Access",
-          "content": "• Gmail messages: Subject lines, sender information, dates, and body content of emails that may contain receipts or invoices\n• Gmail attachments: PDF, image, and document attachments for receipt extraction\n• Google account profile: Name and email address for authentication"
+          "content": "• Gmail messages: Subject lines, sender information, dates, and body content of emails that may contain receipts or invoices\n• Gmail attachments: PDF, image, and document attachments for receipt extraction\n• Google Drive files: The names, folder structure and contents of the PDF and image files, and of Google Docs, Sheets and Slides (exported as PDF), in the one folder you choose and its subfolders. FiBuKI only reads; it never changes, moves or deletes anything in your Google Drive. While you pick the folder, FiBuKI shows the names of your Drive folders; they are not stored, except the folder you pick\n• Google account profile: Name and email address for authentication"
         },
         "howWeUse": {
           "title": "How We Use This Data",
-          "content": "• Receipt search: We scan your emails for receipts and invoices matching your bank transactions\n• Data extraction: We extract amounts, dates, and vendor information from email content and attachments\n• Matching: Extracted data is compared against your bank transactions for automatic matching"
+          "content": "• Receipt search: We scan your emails for receipts and invoices matching your bank transactions\n• Data extraction: We extract amounts, dates, and vendor information from email content and attachments\n• Matching: Extracted data is compared against your bank transactions for automatic matching\n• Folder import: We copy the documents in your chosen Google Drive folder into your FiBuKI files and regularly check the folder for new, changed or removed documents"
         },
         "limitedUse": {
           "title": "Limited Use Disclosure",
@@ -145,12 +153,12 @@
         },
         "revocation": {
           "title": "Revoking Access",
-          "content": "You can revoke FiBuKI's access to your Google data at any time:\n\n• In FiBuKI: Go to Settings > Integrations and disconnect your Gmail account\n• In Google: Visit your Google Account permissions at myaccount.google.com/permissions\n\nWhen you revoke access, all stored email data and OAuth tokens are deleted within 24 hours."
+          "content": "You can revoke FiBuKI's access to your Google data at any time:\n\n• In FiBuKI: Go to Settings > Integrations and disconnect your Gmail or Google Drive account\n• In Google: Visit your Google Account permissions at myaccount.google.com/permissions\n\nWhen you revoke access, all stored email data and OAuth tokens are deleted within 24 hours. Documents already imported from Google Drive stay in your FiBuKI files until you delete them."
         }
       },
       "internationalTransfers": {
         "title": "International Data Transfers",
-        "content": "Your data is primarily stored within the European Union (Google Cloud, region europe-west1). However, some processing involves transfers to the United States:\n\n• Anthropic (Claude AI): Your chat messages and accounting queries are processed by Anthropic's servers in the US. This transfer is based on standard contractual clauses (SCCs) pursuant to Art. 46(2)(c) GDPR\n• Google Cloud AI (Vertex AI, Cloud Vision): Document analysis may be processed in Google's global infrastructure, covered by Google's Data Processing Amendment and SCCs\n\nAll international data transfers are protected by appropriate safeguards as required by Chapter V of the GDPR."
+        "content": "Your data is primarily stored within the European Union (Google Cloud, region europe-west1). However, some processing involves transfers to the United States:\n\n• Anthropic (Claude AI): Your chat messages and accounting queries are processed by Anthropic's servers in the US. This transfer is based on standard contractual clauses (SCCs) pursuant to Art. 46(2)(c) GDPR\n• Google Cloud AI (Vertex AI, Cloud Vision): Document analysis may be processed in Google's global infrastructure, covered by Google's Data Processing Amendment and SCCs\n• Dropbox: If you connect Dropbox, FiBuKI retrieves documents from your Dropbox account at your request. Dropbox processes your data under its own terms and may do so in the US\n\nAll international data transfers are protected by appropriate safeguards as required by Chapter V of the GDPR."
       },
       "dataProtection": {
         "title": "Data Protection Mechanisms",
@@ -161,7 +169,11 @@
         },
         "retention": {
           "title": "Data Retention & Deletion",
-          "content": "• Your data is retained while your account is active\n• You can delete individual files, transactions, or connected accounts at any time\n• You can delete your account via Settings > General Settings > Delete Account\n• Account deletion includes a 30-day grace period during which you can cancel the request\n• After the grace period, all associated data is permanently removed\n• OAuth tokens for connected services (e.g., Gmail) are revoked and cannot be recovered\n• Database backups are encrypted and retained for up to 14 days for disaster recovery, after which they are automatically purged"
+          "content": "• Your data is retained while your account is active\n• You can delete individual files, transactions, or connected accounts at any time\n• You can delete your account via Settings > General Settings > Delete Account\n• Account deletion includes a 30-day grace period during which you can cancel the request\n• After the grace period, all associated data is permanently removed\n• OAuth tokens for connected services (e.g., Gmail, Google Drive, Dropbox) are revoked and cannot be recovered\n• Database backups are encrypted and retained for up to 14 days for disaster recovery, after which they are automatically purged"
+        },
+        "cloudStorageData": {
+          "title": "Cloud Storage Data (Dropbox and Google Drive)",
+          "content": "When you connect Dropbox or Google Drive:\n\n• You choose one folder. FiBuKI reads only that folder and its subfolders and imports the PDF and image files in it\n• Access is read-only: FiBuKI never changes, moves or deletes anything in your Dropbox or Google Drive\n• Imported documents are copied into your FiBuKI files and processed like documents you upload yourself (text recognition and AI-based extraction of amounts, dates and vendors)\n• The access token FiBuKI stores for the connection is encrypted (AES-256-GCM) and is never sent to your browser\n• If you delete a document in your Dropbox or Google Drive, FiBuKI deletes its copy as well, unless the document is connected to a transaction. In the integration settings you can choose to delete connected documents too. Deleted documents can be restored in FiBuKI\n• If a very large number of documents disappears from the folder at once, FiBuKI pauses and asks you before deleting anything\n• When you disconnect, the stored access token is deleted. Documents already imported remain in your FiBuKI files until you delete them"
         }
       },
       "automatedProcessing": {

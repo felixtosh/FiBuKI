@@ -2,7 +2,7 @@
 
 **Application:** FiBuKI
 **Operator:** Infinity Vertigo GmbH
-**Last updated:** 2026-06-21
+**Last updated:** 2026-10-02 (Google Drive added; DRAFT for review, see §8)
 
 This document justifies each Google OAuth scope FiBuKI requests, demonstrates that no narrower scope is sufficient, and confirms compliance with the Google API Services User Data Policy (including the Limited Use requirements).
 
@@ -13,6 +13,8 @@ This document justifies each Google OAuth scope FiBuKI requests, demonstrates th
 | `https://www.googleapis.com/auth/gmail.readonly` | Restricted | `app/api/gmail/authorize/route.ts` |
 | `https://www.googleapis.com/auth/userinfo.email` | Non-sensitive | `app/api/gmail/authorize/route.ts` |
 | `https://www.googleapis.com/auth/userinfo.profile` | Non-sensitive | `app/api/gmail/authorize/route.ts` |
+| `https://www.googleapis.com/auth/drive.readonly` | Restricted | `app/api/gdrive/authorize/route.ts` (see §8) |
+| `https://www.googleapis.com/auth/userinfo.email` (Drive flow) | Non-sensitive | `app/api/gdrive/authorize/route.ts` |
 
 No other Google scopes are requested. No Google Workspace admin scopes are used.
 
@@ -104,10 +106,53 @@ The same statement is also reproduced verbatim on the public Limited Use Disclos
 | Token storage | `emailIntegrations/{id}` (refresh) — access tokens not persisted |
 | Token transmission to client | **Never** |
 
+## 8. `drive.readonly`: Google Drive Folder Integration (DRAFT)
+
+_Status: drafted alongside ADR-0009. Not yet submitted for Google verification. Review the "narrower scope" claims in §8.2 against Google's current scope documentation before submitting._
+
+### 8.1 User-visible feature it enables
+
+The user connects Google Drive and chooses **one folder**. FiBuKI imports the receipts and invoices in it (PDF, images, and Google Docs, Sheets and Slides exported as PDF), checks it every 15 minutes for new, changed or removed documents, and matches the imported documents to bank transactions. Many users already collect invoices in a Drive folder (scanned paper, files shared by a bookkeeper, forwarded PDFs); without this, they download and re-upload every document by hand.
+
+### 8.2 Why a narrower scope is insufficient
+
+| Candidate | Why it does not work |
+| --- | --- |
+| `drive.file` | Covers only files the user opens or picks one by one with the Google Picker, or files the app created. It cannot enumerate a folder or see documents added later, which is the feature. (Verify before submission whether a folder picked in the Picker grants access to its children. Our understanding is that it does not.) |
+| `drive.metadata.readonly` | Names and metadata only, no file content. The content is what FiBuKI needs. |
+| `drive.appdata` | The app's own hidden folder. The user's documents are not in it. |
+| Share a folder with a FiBuKI service account | Considered. Rejected: it needs a Google identity operated by FiBuKI that holds access to many users' folders, which is a larger blast radius than per-user tokens, and it is a harder setup for the user than a consent screen. |
+| Have the user upload manually | The status quo. This integration exists to remove that step. |
+
+`drive.readonly` is the narrowest scope that lists a folder and reads the files in it. FiBuKI makes no write, move, rename or delete call to Drive.
+
+### 8.3 In-product minimisation
+
+- **One folder.** Only the descendants of the chosen folder are listed and downloaded (`functions/src/folder-sync/gdrive/GoogleDriveProvider.ts`). The scope technically allows more; the code does not use it.
+- **Only readable documents.** PDFs and images (and Docs, Sheets and Slides as PDF). Everything else is skipped and only counted. Files over 25 MB are skipped.
+- **Folder picker.** While the user picks a folder, FiBuKI lists subfolder names one level at a time and returns them to that user only. They are not stored. Only the chosen folder's id and name are stored.
+- **Tokens.** The refresh token is AES-256-GCM-encrypted before storage (`folderTokens/{id}`, server-only: the data policy denies clients). Access tokens are minted per sync run and live in memory only.
+- **Isolation.** Every callable loads the integration by id and refuses one the caller does not own, with the same answer as for one that does not exist. The OAuth callback learns the user from a server-side state record, never from the browser.
+- **Deletes.** Removing a document in Drive reversibly deletes FiBuKI's copy only if it is not connected to a transaction; a run that would remove many documents at once pauses for the owner's confirmation. See ADR-0009.
+
+### 8.4 Limited Use compliance (Drive)
+
+The table in §5 applies unchanged with "Drive files" for "Gmail data". Imported documents are processed like uploaded ones (text recognition and AI extraction via Vertex AI, Google DPA, EU region) and are not used to train models.
+
+### 8.5 Revocation and known gaps
+
+- In app: Settings > Integrations > Google Drive > Disconnect. This deletes the stored token and the sync state and marks the integration inactive. **Documents already imported are kept** (unlike Gmail disconnect, which soft-deletes unconnected files): they are the user's records, and the user deletes them in the Files list.
+- At Google: https://myaccount.google.com/permissions.
+- If Google returns `invalid_grant`, the integration is marked `needsReauth` and the page asks the user to reconnect.
+- **Known gap:** disconnect and account deletion delete the token on our side but do not call Google's token revocation endpoint. The user can revoke at Google. Consider closing this gap before submission.
+
 ## Evidence pointers
 
 - `app/api/gmail/authorize/route.ts:GMAIL_SCOPES` — exact scope list
 - `app/api/gmail/callback/route.ts` — code exchange + encryption + persistence
 - `lib/crypto/encryption.ts` — AES-256-GCM implementation
 - `functions/src/selfhost/data-policy.ts` — `emailTokens` server-only access; `emailIntegrations` owner-only
+- `app/api/gdrive/authorize/route.ts:GDRIVE_SCOPES`, `app/api/gdrive/callback/route.ts`: Drive scope list, code exchange, encryption
+- `functions/src/folder-sync/`: folder-restricted listing, removal policy and circuit breaker
+- `docs/adr/0009-folder-sync-is-read-only-and-never-destroys-a-connected-file.md`
 - `https://fibuki.com/casa` — public mirror of this justification

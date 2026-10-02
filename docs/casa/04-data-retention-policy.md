@@ -21,6 +21,10 @@ This policy specifies how long FiBuKI retains each category of personal data, th
 | Gmail access token | End of each Cloud Function invocation | none | Immediate (memory only) | n/a |
 | Gmail message metadata in transit | Always | n/a | Not persisted | n/a |
 | Gmail message body | Always | n/a | Not persisted (in-memory inspection only) | n/a |
+| Drive / Dropbox refresh token | User clicks Disconnect or account deletion | none | Immediate (`folderTokens/{id}`) | n/a |
+| Drive / Dropbox access token | End of each sync run | none | Immediate (memory only) | n/a |
+| Folder sync state (`folderEntries`) | Disconnect, folder change or account deletion | none | Immediate | n/a |
+| Document imported from Drive / Dropbox | Same as any File: user deletes (reversible) or purges; disconnecting does **not** delete it | Indefinite until user Purge or account deletion | On Purge | as for any File |
 | Downloaded attachment | User deletes file (reversible), or purges it from the deleted-files view | Indefinite until user Purge or account deletion | On Purge: storage object destroyed, Firestore record reduced to dedup keys | 7-day PITR rolls off |
 | Bank transactions | User deletes source (bank account) | n/a (source-level delete) | Immediate | 7-day PITR rolls off |
 | Bank statement files | User deletes file (files survive source deletion), or purges it | Indefinite until user Purge or account deletion | On Purge: storage object destroyed, Firestore record reduced to dedup keys | 7-day PITR rolls off |
@@ -42,6 +46,13 @@ This policy specifies how long FiBuKI retains each category of personal data, th
 3. OAuth tokens (encrypted refresh token + IV) are deleted from `emailTokens/{id}` and the integration is marked disconnected in `emailIntegrations/{id}`.
 4. Files that were downloaded from Gmail and never connected to a transaction are soft-deleted; files in use are retained so the user does not lose attached invoices.
 5. Cloud Logging entries that referenced the integration roll off normally; tokens were never logged.
+
+### 3.1a Folder Integration disconnect (Drive, Dropbox)
+
+1. User clicks Disconnect on the integration page; `disconnectFolderIntegration` (callable, owner-only) runs.
+2. The encrypted refresh token and sync cursor (`folderTokens/{id}`) and the per-file sync state (`folderEntries`) are deleted; the integration is marked inactive.
+3. Imported Files are **kept**. Gone-at-source handling stops with the sync. A deleted-at-source File is only ever deleted reversibly, never purged, and a connected File is kept unless the owner turned on "also delete connected Files" (ADR-0009).
+4. Known gap: the grant is not revoked at the provider; the user can revoke it in their Google or Dropbox account.
 
 ### 3.2 File deletion and Purge
 

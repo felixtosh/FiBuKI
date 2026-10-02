@@ -147,6 +147,9 @@ export default function CasaPage() {
               <p className="font-mono text-sm">
                 gmail.readonly (CASA Tier 2 in progress)
               </p>
+              <p className="font-mono text-sm">
+                drive.readonly (verification not yet requested)
+              </p>
             </div>
           </div>
         </section>
@@ -177,6 +180,23 @@ export default function CasaPage() {
             <div className="border rounded-lg p-4">
               <div className="flex items-start justify-between mb-2">
                 <code className="text-sm bg-muted px-2 py-1 rounded">
+                  https://www.googleapis.com/auth/drive.readonly
+                </code>
+                <span className="text-xs bg-amber-50 text-amber-900 border border-amber-300 px-2 py-1 rounded">
+                  Restricted
+                </span>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Used to read the one Google Drive folder the user chooses
+                (including subfolders) and import the PDF and image files in it,
+                plus Google Docs, Sheets and Slides exported as PDF. FiBuKI
+                never writes to Drive. Justification in the OAuth Scope
+                Justification document below.
+              </p>
+            </div>
+            <div className="border rounded-lg p-4">
+              <div className="flex items-start justify-between mb-2">
+                <code className="text-sm bg-muted px-2 py-1 rounded">
                   https://www.googleapis.com/auth/userinfo.email
                 </code>
                 <span className="text-xs bg-green-50 text-green-900 border border-green-300 px-2 py-1 rounded">
@@ -184,8 +204,8 @@ export default function CasaPage() {
                 </span>
               </div>
               <p className="text-sm text-muted-foreground">
-                Identify and display the connected Gmail account in the
-                integration settings.
+                Identify and display the connected Gmail or Google Drive
+                account in the integration settings.
               </p>
             </div>
             <div className="border rounded-lg p-4">
@@ -226,21 +246,25 @@ export default function CasaPage() {
           <p className="text-sm text-muted-foreground">Specifically, we:</p>
           <ul className="list-disc pl-6 mt-2 space-y-1 text-sm text-muted-foreground">
             <li>
-              Only use Gmail data for the email-search and attachment-download
-              features the user initiated.
+              Only use Gmail and Google Drive data for the email-search,
+              attachment-download and folder-import features the user
+              initiated.
             </li>
-            <li>Do not use Gmail data for advertising purposes.</li>
+            <li>Do not use Gmail or Google Drive data for advertising purposes.</li>
             <li>
-              Do not transfer Gmail data to third parties except as strictly
+              Do not transfer Gmail or Google Drive data to third parties except as strictly
               necessary to provide the service.
             </li>
             <li>
-              Do not use Gmail data for training AI/ML models unrelated to the
+              Do not use Gmail or Google Drive data for training AI/ML models unrelated to the
               user&apos;s direct benefit.
             </li>
-            <li>Allow users to delete their Gmail-derived data at any time.</li>
             <li>
-              Humans do not access user mail except for security or legal
+              Allow users to delete their Gmail- and Drive-derived data at any
+              time.
+            </li>
+            <li>
+              Humans do not access user mail or Drive files except for security or legal
               purposes, or with explicit consent.
             </li>
           </ul>

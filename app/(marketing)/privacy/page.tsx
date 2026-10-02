@@ -8,6 +8,8 @@ import { ArrowLeft } from "lucide-react";
 const SERVICES = [
   "firebase",
   "gmailApi",
+  "googleDrive",
+  "dropbox",
   "cloudVision",
   "vertexAi",
   "anthropic",
@@ -164,6 +166,14 @@ export default async function PrivacyPage() {
                   </h3>
                   <p className="text-sm text-muted-foreground whitespace-pre-line">
                     {t("sections.dataProtection.emailData.content")}
+                  </p>
+                </div>
+                <div className="border-l-2 border-muted pl-4">
+                  <h3 className="font-medium">
+                    {t("sections.dataProtection.cloudStorageData.title")}
+                  </h3>
+                  <p className="text-sm text-muted-foreground whitespace-pre-line">
+                    {t("sections.dataProtection.cloudStorageData.content")}
                   </p>
                 </div>
                 <div className="border-l-2 border-muted pl-4">
