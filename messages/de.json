@@ -326,6 +326,13 @@
       "title": "Sprache",
       "description": "Die Sprache der FiBuKI-Oberfläche. Noch nicht übersetzte Seiten bleiben auf Englisch.",
       "saveFailed": "Die Sprache konnte nicht gespeichert werden."
+    },
+    "identity": {
+      "intro": "Wir brauchen all diese Angaben, um Ihre Rechnungen richtig zuzuordnen: So wissen wir, welcher Name, welche Firma oder welches Konto auf einer Rechnung Sie sind und welches zu einem Partner gehört.",
+      "groups": {
+        "tax": "Steuerdaten",
+        "names": "Namen"
+      }
     }
   },
   "files": {

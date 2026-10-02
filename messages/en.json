@@ -326,6 +326,13 @@
       "title": "Language",
       "description": "The language FiBuKI's screens use. Screens not translated yet stay in English.",
       "saveFailed": "Could not save the language."
+    },
+    "identity": {
+      "intro": "We need all of this to match your invoices correctly: it tells us which name, company or account on an invoice is you and which belongs to a partner.",
+      "groups": {
+        "tax": "Tax details",
+        "names": "Names"
+      }
     }
   },
   "files": {
