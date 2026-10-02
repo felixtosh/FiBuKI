@@ -12,6 +12,7 @@
 
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
+import { isAdminCaller } from "../utils/adminCaller";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 
 const db = getFirestore();
@@ -38,11 +39,9 @@ export const aggregateGlobalInsightsCallable = createCallable<
 >(
   { name: "aggregateGlobalInsights" },
   async (ctx, request) => {
-    // Verify admin
-    // Note: createCallable handles auth, but this is admin-only
-    const userDoc = await ctx.db.collection("users").doc(ctx.userId).get();
-    const isAdmin = userDoc.data()?.admin === true || ctx.request.auth?.token?.email === process.env.SUPER_ADMIN_EMAIL;
-    if (!isAdmin) {
+    // Admin-only, decided from the verified token: users/{uid}.admin (read
+    // here before) is writable by the caller on the data plane.
+    if (!isAdminCaller(ctx.request.auth)) {
       throw new HttpsError("permission-denied", "Admin only");
     }
 
