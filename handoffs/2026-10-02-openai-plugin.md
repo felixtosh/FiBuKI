@@ -1,9 +1,11 @@
 # Workstream: FiBuKI as an OpenAI plugin (ChatGPT + Codex)
 
-**Status (2026-10-02, v5):** Phases 1 (MCP server), 2 (plugin package + server-side dedupe)
-and 3 (one onboarding, decided on the server) are DONE on branch `claude/sharp-meitner-w8f2qf`.
-Not yet run in a real Codex or ChatGPT session, and the web changes of phase 3 were not
-clicked through in a browser. Next: Phase 4 (OAuth, widgets, `upload_file` SSRF guard).
+**Status (2026-10-02, v6):** Phases 1 (MCP server), 2 (plugin package + server-side dedupe),
+3 (one onboarding, decided on the server) and the OAuth part of 4 are DONE on branch
+`claude/sharp-meitner-w8f2qf`. Not yet run in a real Codex, ChatGPT or Claude session, and the web
+changes of phases 3 and 4 were not clicked through in a browser (they are covered by component tests and
+an end-to-end test with the official MCP SDK client). Next: the `upload_file` SSRF guard (do first),
+then widgets.
 
 Felix's brief: fewer features, great embedded execution, use the mail and file
 services the user already connected, maybe the browser, onboarding parity between
@@ -134,6 +136,56 @@ signup (phase 4), not from the Referer header; until then web signups are `web` 
 (2) `functions/src/selfhost/data-policy.ts` makes the whole `users/{uid}/settings` subtree client-writable,
 so a browser could still write the onboarding document; it holds UX state only (the trial is in
 `subscriptions`, server-only), but a per-document rule would be cleaner.
+
+## Phase 4a (DONE): OAuth for connected apps
+
+FiBuKI is the OAuth authorization server for its MCP endpoint; ChatGPT, Claude and Codex are public clients.
+
+- **Server** `functions/src/oauth/`: authorization code + PKCE (S256 only), dynamic client registration
+  (RFC 7591, public clients, https or loopback redirects only), refresh with rotation and reuse detection,
+  discovery documents (RFC 8414 / 9728) built in one place, `iss` on authorization responses (RFC 9207).
+  Collections `oauthClients` and `oauthCodes` (server-only in `data-policy.ts`, codes stored hashed).
+  **Access tokens are API keys** (`fk_...`, 1 hour; refresh token 30 days, rotated), so `validateApiKey`, the MCP
+  endpoint, expiry, revocation and the key list in Settings stay one mechanism: a connected app appears there
+  as "ChatGPT (connected app)" and revoking it ends the grant. A code used twice revokes what it handed out.
+- **MCP 401** now carries `resource_metadata="https://fibuki.com/.well-known/oauth-protected-resource/api/mcp/sse"`
+  (`invalid_token` when a token was presented), which is how clients find the rest.
+- **Public origin** is `FIBUKI_WEB_ORIGIN` (first non-`*` entry; fibuki.com in production), NOT `FIBUKI_PUBLIC_URL`
+  (that is the API host). Self-hosters must set it to the address users reach the web app at; it is the issuer
+  and the base of the MCP resource URL. Helper is `webOrigin()` (named to avoid `utils/publicOrigin.ts`).
+- **Web** (Next, on the public origin): `/.well-known/oauth-authorization-server`,
+  `/.well-known/oauth-protected-resource/[[...path]]`, `/api/oauth/{register,token,client}` are thin proxies
+  (`lib/api/oauth-proxy.ts`); `/oauth/authorize` is the page.
+- **The authorize page works for every visitor** (`lib/oauth/authorize-step.ts` decides, tested as a matrix):
+  signed out -> sign in or create an account, back to the same request, `login_hint` prefilled on sign-in;
+  signed in as the suggested account (or no hint) -> consent; signed in as another account -> asks which, never
+  silently picks (and can sign out and return with the suggested email); a second factor still pending counts as
+  signed out; a user FiBuKI does not know yet is asked who they are before consent (name, UID, IBAN); an
+  unusable request is explained and never offers consent; a callback on a host that is not chatgpt.com /
+  claude.ai / claude.com is shown with a warning, because registration is open.
+- **Origin** of a user who signs up through an app is recorded from the registered client's callback host when they
+  consent (only by the call that creates the onboarding record); loopback apps are `api` (Codex and Claude
+  Code look alike). Never from the Referer.
+- `/login` honours `?email=`; `/login` and `/register` now accept only a same-site `?redirect`
+  (`lib/auth/safe-redirect.ts`; the old `startsWith("/")` check let `//host` through) and `/register` honours it.
+- Integration pages (ChatGPT, Claude) lead with the one-click steps; the plugin README connects Codex with
+  `codex mcp login fibuki`. The plugin scripts still need an API key (they call FiBuKI directly).
+
+Verified: 49 server tests, 15 + 14 + 6 component tests, and `oauthSdkInterop.test.ts`, which runs the official
+MCP SDK OAuth client through discovery, registration, the authorize URL, code exchange, a tool call as the
+consenting user, and a refresh after the access token expired. `next build` passes with the new routes.
+
+Not done / follow-ups:
+1. **Real clients.** Try ChatGPT developer mode and Claude custom connector against a deployed build.
+   ChatGPT may send `login_hint` / `target_flow`; both are handled (hint) or ignored (flow).
+2. **Open registration grows `oauthClients` forever, and unused `oauthCodes` expire but are never deleted.**
+   Add a scheduled cleanup (clients never used for a token after N days, codes past expiry).
+3. **No client ID Metadata Documents (CIMD)**; not advertised, DCR is. Add if a client needs it.
+4. **No profile tool** (`_meta["openai/profile"]`, multi-account). Optional.
+5. Users whose signup is blocked by the invite gate never reach consent (they get the access-request flow).
+   The signup-policy decision (open seat for app-origin signups) is still open.
+6. `oauthToken` / `oauthRegister` rate limiting is only the host's general per-IP limiter.
+7. Docs: `deploy/selfhost/README-hetzner.md` should say `FIBUKI_WEB_ORIGIN` is now also the OAuth issuer.
 
 ## Sign in with ChatGPT / Claude (checked 2026-10-02, optional, not needed for phase 4)
 
