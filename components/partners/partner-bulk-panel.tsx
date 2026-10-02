@@ -1,7 +1,7 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { GitMerge } from "lucide-react";
+import { GitMerge, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { FieldRow, PanelHeader } from "@/components/ui/detail-panel-primitives";
@@ -12,15 +12,18 @@ import type { UserPartner } from "@/types/partner";
  * The detail sidebar while several Partners are selected (#524), the same
  * pattern as the Files bulk panel: a summary of the selection on top (the
  * rows themselves are highlighted in the list), the bulk action in the footer
- * where a single Partner's actions sit.
+ * where a single Partner's actions sit: Merge and Delete (#526). It only
+ * shows from two Partners up; one ticked Partner shows its detail panel.
  */
 export function PartnerBulkPanel({
   partners,
   onMerge,
+  onDelete,
   onClearSelection,
 }: {
   partners: UserPartner[];
   onMerge: () => void;
+  onDelete: () => void;
   onClearSelection: () => void;
 }) {
   const t = useTranslations("partners.bulk");
@@ -46,10 +49,17 @@ export function PartnerBulkPanel({
       </ScrollArea>
 
       <div className="p-4 border-t flex flex-col gap-2">
-        {count < 2 && <p className="text-xs text-muted-foreground">{t("mergeNeedsTwo")}</p>}
-        <Button variant="outline" onClick={onMerge} disabled={count < 2}>
+        <Button variant="outline" onClick={onMerge}>
           <GitMerge className="h-4 w-4 mr-2" />
           {t("merge", { count })}
+        </Button>
+        <Button
+          variant="outline"
+          className="text-destructive hover:text-destructive hover:bg-destructive/10"
+          onClick={onDelete}
+        >
+          <Trash2 className="h-4 w-4 mr-2" />
+          {t("delete", { count })}
         </Button>
       </div>
     </div>

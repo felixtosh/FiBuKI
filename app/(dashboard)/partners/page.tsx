@@ -6,6 +6,7 @@ import { doc, getDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
 import { PartnerTable } from "@/components/partners/partner-table";
 import { PartnerDetailPanel } from "@/components/partners/partner-detail-panel";
+import { useTranslations } from "next-intl";
 import { PartnerBulkPanel } from "@/components/partners/partner-bulk-panel";
 import { MergePartnersDialog } from "@/components/partners/merge-partners-dialog";
 import { MergedPartnerNotice } from "@/components/partners/merged-partner-notice";
@@ -53,7 +54,8 @@ function PartnersContent() {
   const searchParams = useSearchParams();
   const { userId } = useAuth();
 
-  const { partners, loading } = usePartners();
+  const { partners, loading, deletePartner } = usePartners();
+  const tBulk = useTranslations("partners.bulk");
 
   const [panelWidth, setPanelWidth] = useState<number>(DEFAULT_PANEL_WIDTH);
   const [isResizing, setIsResizing] = useState(false);
@@ -92,18 +94,35 @@ function PartnersContent() {
   const [additionalSelectedIds, setAdditionalSelectedIds] = useState<Set<string>>(new Set());
   const [isMergeDialogOpen, setIsMergeDialogOpen] = useState(false);
   const bulkActive = additionalSelectedIds.size > 0;
-  const bulkPartners = useMemo(() => {
-    if (!bulkActive) return [];
+  const bulkIds = useMemo(() => {
     const ids = new Set(additionalSelectedIds);
-    if (selectedId) ids.add(selectedId);
-    return partners.filter((p) => ids.has(p.id));
-  }, [bulkActive, additionalSelectedIds, selectedId, partners]);
+    if (bulkActive && selectedId) ids.add(selectedId);
+    return ids;
+  }, [bulkActive, additionalSelectedIds, selectedId]);
+  // One ticked Partner is still one Partner (#526): the sidebar shows its
+  // details, and the bulk panel takes over from two.
+  const singleCheckedId = bulkActive && bulkIds.size === 1 ? [...bulkIds][0] : null;
+  const showBulkPanel = bulkActive && bulkIds.size >= 2;
+  const bulkPartners = useMemo(
+    () => (showBulkPanel ? partners.filter((p) => bulkIds.has(p.id)) : []),
+    [showBulkPanel, bulkIds, partners]
+  );
 
-  // Find selected partner
+  // The Partner the detail panel is about: the browsed one (?id=) or the one
+  // ticked Partner.
+  const panelPartnerId = singleCheckedId ?? selectedId;
   const selectedPartner = useMemo(() => {
-    if (!selectedId || !partners.length) return null;
-    return partners.find((p) => p.id === selectedId) || null;
-  }, [selectedId, partners]);
+    if (!panelPartnerId || !partners.length) return null;
+    return partners.find((p) => p.id === panelPartnerId) || null;
+  }, [panelPartnerId, partners]);
+
+  // Bulk delete (#526): every selected Partner, after one confirmation.
+  const handleBulkDelete = useCallback(async () => {
+    const ids = [...bulkIds];
+    if (ids.length === 0 || !confirm(tBulk("deleteConfirm", { count: ids.length }))) return;
+    for (const id of ids) await deletePartner(id);
+    setAdditionalSelectedIds(new Set());
+  }, [bulkIds, deletePartner, tBulk]);
 
   // Set page title
   usePageTitle("Partners", selectedPartner?.name);
@@ -199,6 +218,8 @@ function PartnersContent() {
 
   // Close detail panel (remove ID from URL)
   const handleCloseDetail = useCallback(() => {
+    // Closing the panel on the one ticked Partner unticks it too (#526).
+    setAdditionalSelectedIds((prev) => (prev.size === 1 ? new Set() : prev));
     const params = new URLSearchParams(searchParams.toString());
     params.delete("id");
     const newUrl = params.toString()
@@ -222,8 +243,8 @@ function PartnersContent() {
   }
 
   const showMergedNotice = !bulkActive && !selectedPartner && !!mergedAwaySurvivorId;
-  const showDetail = !bulkActive && !!selectedPartner;
-  const sidebarOpen = bulkActive || showDetail || showMergedNotice;
+  const showDetail = !showBulkPanel && !!selectedPartner;
+  const sidebarOpen = showBulkPanel || showDetail || showMergedNotice;
 
   return (
     <div className="h-full overflow-hidden">
@@ -260,10 +281,11 @@ function PartnersContent() {
           />
           {/* Panel content */}
           <div className="flex-1 overflow-hidden detail-panel-container">
-            {bulkActive ? (
+            {showBulkPanel ? (
               <PartnerBulkPanel
                 partners={bulkPartners}
                 onMerge={() => setIsMergeDialogOpen(true)}
+                onDelete={handleBulkDelete}
                 onClearSelection={() => setAdditionalSelectedIds(new Set())}
               />
             ) : null}

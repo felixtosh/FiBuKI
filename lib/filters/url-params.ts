@@ -1,5 +1,4 @@
 import { TransactionFilters } from "@/types/transaction";
-import { normalizeDocumentationStates } from "@/lib/filters/documentation-state-filter";
 
 const FILTERS_STORAGE_KEY = "transactionFilters";
 const SEARCH_STORAGE_KEY = "transactionSearch";
@@ -70,8 +69,6 @@ export function loadFiltersFromStorage(): {
         filters.partnerIds = parsed.partnerIds;
       }
       if (parsed.hasPartner !== undefined) filters.hasPartner = parsed.hasPartner;
-      const documentationStates = normalizeDocumentationStates(parsed.documentationStates);
-      if (documentationStates) filters.documentationStates = documentationStates;
     }
   } catch {
     // Ignore parse errors
@@ -186,14 +183,8 @@ export function parseFiltersFromUrl(
   if (hasPartner === "true") filters.hasPartner = true;
   if (hasPartner === "false") filters.hasPartner = false;
 
-  // Present but empty is the empty selection, not the default.
-  const documentation = searchParams.get("documentation");
-  if (documentation !== null) {
-    const documentationStates = normalizeDocumentationStates(
-      documentation.split(",").map((s) => s.trim()).filter(Boolean)
-    );
-    if (documentationStates) filters.documentationStates = documentationStates;
-  }
+  // The Documentation chip is gone (#526): an old link's `documentation=` is
+  // ignored rather than applied as a filter nothing on screen can clear.
 
   return filters;
 }

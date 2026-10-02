@@ -426,7 +426,8 @@
       "recurring": "Wiederkehrend",
       "ofCount": "{part} von {count}",
       "merge": "{count} Partner zusammenführen",
-      "mergeNeedsTwo": "Wähle mindestens zwei Partner aus, um sie zusammenzuführen."
+      "delete": "{count} Partner löschen",
+      "deleteConfirm": "{count} Partner löschen? Ihre Belege und Transaktionen bleiben, nur die Partnerzuordnung fällt weg."
     }
   }
 }
