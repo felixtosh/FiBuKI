@@ -1,5 +1,6 @@
 "use client";
 
+import { useRememberedListQuery } from "@/hooks/use-remembered-list-query";
 import { Suspense, useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { doc, getDoc } from "firebase/firestore";
@@ -52,6 +53,8 @@ function PartnerTableFallback() {
 function PartnersContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  // Filters survive a trip to another page (#530).
+  useRememberedListQuery("partners", "/partners");
   const { userId } = useAuth();
 
   const { partners, loading, deletePartner } = usePartners();
