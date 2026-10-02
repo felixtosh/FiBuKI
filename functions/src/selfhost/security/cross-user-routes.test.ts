@@ -25,6 +25,7 @@ import {
   assertNoLeak,
 } from "./victim";
 import { asUser, enableInternalAuth } from "./routes";
+import { VICTIM } from "./victim";
 
 vi.mock("@/lib/gmail/resolve-integration", () => {
   class GmailResolutionError extends Error {
@@ -66,6 +67,24 @@ vi.mock("@/lib/api/firebase-callable", () => ({
 vi.mock("@/lib/agent/worker-graph", () => ({
   streamWorkerGraph: async function* () {
     return;
+  },
+}));
+
+// /api/agent's graph needs a model. The stub proposes one confirmation-gated
+// call and records what a confirmation actually resumes with.
+const resumed: unknown[] = [];
+vi.mock("@/lib/agent/graph", () => ({
+  runAgentGraph: async () => ({
+    messages: [],
+    pendingConfirmation: {
+      toolName: "updateTransaction",
+      toolCallId: "call-1",
+      args: { transactionId: "a-tx-1", description: "as proposed" },
+    },
+  }),
+  continueAfterConfirmation: async (input: { pendingToolCall: unknown; confirmed: boolean }) => {
+    resumed.push({ ...(input.pendingToolCall as object), confirmed: input.confirmed });
+    return { messages: [], pendingConfirmation: null };
   },
 }));
 
@@ -251,5 +270,57 @@ describe("worker trigger context", () => {
     const res = await run({ partnerId: A.partner, fileIds: [A.file] }, "partner_file_batch");
     await expectRefused(res, "worker(planted batch state)");
     assertNoLeak(await attackerNotifications(), "worker(planted batch state) notifications");
+  });
+});
+
+describe("/api/agent confirmations run only what the server proposed", () => {
+  beforeEach(() => {
+    resumed.length = 0;
+  });
+
+  async function propose(uid: string): Promise<string> {
+    const { POST } = await import("@/app/api/agent/route");
+    const res = await POST(asUser(uid, "/api/agent", { body: { messages: [{ role: "user", content: "hi" }] } }));
+    const body = await res.json();
+    expect(body.pendingConfirmation?.token).toMatch(/^[0-9a-f]{64}$/);
+    return body.pendingConfirmation.token;
+  }
+
+  async function confirm(uid: string, confirmation: Record<string, unknown>) {
+    const { POST } = await import("@/app/api/agent/route");
+    return POST(asUser(uid, "/api/agent", { body: { messages: [], confirmation } }));
+  }
+
+  it("a client-chosen tool and args are never run", async () => {
+    const res = await confirm(ATTACKER, {
+      confirmed: true,
+      toolName: "createSource",
+      toolCallId: "forged",
+      args: { name: "forged", iban: "AT00" },
+    });
+    expect(res.status).toBe(409);
+    expect(resumed).toEqual([]);
+  });
+
+  it("an issued token resumes the proposed call, ignoring args in the body, exactly once", async () => {
+    const token = await propose(ATTACKER);
+    const res = await confirm(ATTACKER, { confirmed: true, token, toolName: "createSource", args: { name: "forged" } });
+    expect(res.status).toBe(200);
+    expect(resumed).toEqual([
+      { toolName: "updateTransaction", toolCallId: "call-1", args: { transactionId: "a-tx-1", description: "as proposed" }, confirmed: true },
+    ]);
+    const replay = await confirm(ATTACKER, { confirmed: true, token });
+    expect(replay.status).toBe(409);
+    expect(resumed).toHaveLength(1);
+  });
+
+  it("another user's token is refused and stays usable by its owner", async () => {
+    const token = await propose(VICTIM);
+    const stolen = await confirm(ATTACKER, { confirmed: true, token });
+    expect(stolen.status).toBe(409);
+    expect(resumed).toEqual([]);
+    const own = await confirm(VICTIM, { confirmed: true, token });
+    expect(own.status).toBe(200);
+    expect(resumed).toHaveLength(1);
   });
 });

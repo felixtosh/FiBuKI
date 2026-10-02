@@ -357,7 +357,11 @@ export async function continueAfterConfirmation(
 
   if (input.confirmed) {
     // Execute the tool
-    const tool = ALL_TOOLS.find((t) => t.name === input.pendingToolCall.toolName);
+    // Only tools that pause for confirmation are ever resumed here; anything
+    // else would be a way to run a tool the model did not propose.
+    const tool = TOOLS_REQUIRING_CONFIRMATION.includes(input.pendingToolCall.toolName)
+      ? ALL_TOOLS.find((t) => t.name === input.pendingToolCall.toolName)
+      : undefined;
     if (tool) {
       try {
 
