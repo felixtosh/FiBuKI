@@ -1,21 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { Check, Copy, Loader2 } from "lucide-react";
+import { Check, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { DocumentTypeBadge } from "./document-type-badge";
 import { cn } from "@/lib/utils";
 import { useDocumentLabel } from "@/hooks/use-document-label";
 import type { DocumentType, DocumentTypeBasis, Section11Element } from "@/types/file";
 import {
-  describeDocumentType,
   describeDocumentTypeBasis,
   describeMissingElements,
   describeSection11Consequence,
@@ -127,71 +119,6 @@ export function Section11MissingElements({
         <p className="text-xs text-muted-foreground">{missing.note}</p>
       )}
     </div>
-  );
-}
-
-/**
- * What a File is, in the File detail panel's top block (#237, #513).
- *
- * The § 11 verdict is a dropdown beside Source and Uploaded, and its reasoning
- * (`Section11Reasoning`) sits behind the info button on the label. It used to
- * be its own section at the bottom of the panel, with a "Not a financial
- * document" switch that repeated what the type already says.
- *
- * The one control is the user's override, `isNotInvoice`, and it reaches "not
- * a financial document" and no further. There is deliberately no way to mark a
- * File as satisfying § 11: that is the judgement the classifier exists to
- * make, and a wrong override would be a wrong input VAT claim in the user's
- * own name. It calls the same two handlers as before, so what is stored does
- * not move.
- */
-interface FileTypeControlProps {
-  documentType: DocumentType | null | undefined;
-  isNotInvoice: boolean | null | undefined;
-  /** Classification is still running: the verdict is not in yet. */
-  classifying?: boolean;
-  disabled?: boolean;
-  onMarkAsNotInvoice?: () => void;
-  onUnmarkAsNotInvoice?: () => void;
-}
-
-export function FileTypeControl({
-  documentType,
-  isNotInvoice,
-  classifying = false,
-  disabled = false,
-  onMarkAsNotInvoice,
-  onUnmarkAsNotInvoice,
-}: FileTypeControlProps) {
-  const labelFor = useDocumentLabel();
-
-  if (classifying) {
-    return (
-      <span className="flex items-center gap-1.5 text-muted-foreground">
-        <Loader2 className="h-3 w-3 animate-spin" />
-        Analyzing...
-      </span>
-    );
-  }
-
-  const markedNotADocument = isNotInvoice === true;
-  return (
-    <Select
-      value={markedNotADocument ? "not-a-document" : "document"}
-      onValueChange={(value) => {
-        if (value === "not-a-document") onMarkAsNotInvoice?.();
-        else onUnmarkAsNotInvoice?.();
-      }}
-      disabled={disabled || (markedNotADocument ? !onUnmarkAsNotInvoice : !onMarkAsNotInvoice)}
-    >
-      <SelectTrigger className="h-7 w-auto min-w-[140px] text-sm">
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value="document">{labelFor(describeDocumentType(documentType))}</SelectItem>
-        <SelectItem value="not-a-document">Not a financial document</SelectItem>
-      </SelectContent>
-    </Select>
   );
 }
 

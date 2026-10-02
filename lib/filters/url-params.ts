@@ -15,6 +15,7 @@ interface StoredFilters {
   amountType?: "income" | "expense" | "all";
   sourceId?: string;
   partnerIds?: string[];
+  hasPartner?: boolean;
   documentationStates?: string[];
 }
 
@@ -36,6 +37,7 @@ export function saveFiltersToStorage(
   if (filters.partnerIds && filters.partnerIds.length > 0) {
     stored.partnerIds = filters.partnerIds;
   }
+  if (filters.hasPartner !== undefined) stored.hasPartner = filters.hasPartner;
   if (filters.documentationStates) {
     stored.documentationStates = filters.documentationStates;
   }
@@ -67,6 +69,7 @@ export function loadFiltersFromStorage(): {
       if (parsed.partnerIds && parsed.partnerIds.length > 0) {
         filters.partnerIds = parsed.partnerIds;
       }
+      if (parsed.hasPartner !== undefined) filters.hasPartner = parsed.hasPartner;
       const documentationStates = normalizeDocumentationStates(parsed.documentationStates);
       if (documentationStates) filters.documentationStates = documentationStates;
     }
@@ -98,6 +101,7 @@ export function buildSearchParamsString(
   if (filters.partnerIds && filters.partnerIds.length > 0) {
     params.set("partnerIds", filters.partnerIds.join(","));
   }
+  if (filters.hasPartner !== undefined) params.set("hasPartner", String(filters.hasPartner));
   if (filters.documentationStates) {
     params.set("documentation", filters.documentationStates.join(","));
   }
@@ -119,6 +123,7 @@ export function hasUrlParams(searchParams: URLSearchParams): boolean {
     searchParams.has("sourceId") ||
     searchParams.has("partnerId") ||
     searchParams.has("partnerIds") ||
+    searchParams.has("hasPartner") ||
     searchParams.has("documentation")
   );
 }
@@ -176,6 +181,11 @@ export function parseFiltersFromUrl(
     filters.partnerId = partnerId;
   }
 
+  // "No partner assigned" (#519). A specific partner pick wins over it.
+  const hasPartner = searchParams.get("hasPartner");
+  if (hasPartner === "true") filters.hasPartner = true;
+  if (hasPartner === "false") filters.hasPartner = false;
+
   // Present but empty is the empty selection, not the default.
   const documentation = searchParams.get("documentation");
   if (documentation !== null) {
@@ -208,6 +218,7 @@ export function buildFilterUrl(
   if (filters.partnerIds && filters.partnerIds.length > 0) {
     params.set("partnerIds", filters.partnerIds.join(","));
   }
+  if (filters.hasPartner !== undefined) params.set("hasPartner", String(filters.hasPartner));
   if (filters.documentationStates) {
     params.set("documentation", filters.documentationStates.join(","));
   }
@@ -228,6 +239,7 @@ export function hasActiveFilters(filters: TransactionFilters): boolean {
     (filters.amountType && filters.amountType !== "all") ||
     filters.sourceId ||
     (filters.partnerIds && filters.partnerIds.length > 0) ||
+    filters.hasPartner !== undefined ||
     filters.documentationStates !== undefined
   );
 }
@@ -242,7 +254,8 @@ export function countActiveFilters(filters: TransactionFilters): number {
   if (filters.dateFrom || filters.dateTo) count++;
   if (filters.amountType && filters.amountType !== "all") count++;
   if (filters.sourceId) count++;
-  if (filters.partnerIds && filters.partnerIds.length > 0) count++;
+  // One Partner chip carries both the partner picks and "No partner assigned".
+  if ((filters.partnerIds && filters.partnerIds.length > 0) || filters.hasPartner !== undefined) count++;
   if (filters.documentationStates !== undefined) count++;
   return count;
 }

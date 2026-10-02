@@ -34,7 +34,6 @@ import {
   FileCheck,
 } from "lucide-react";
 import { SearchButton } from "@/components/ui/search-button";
-import { SearchInput } from "@/components/ui/search-input";
 import { DocumentationState, TransactionFilters } from "@/types/transaction";
 import {
   ALL_DOCUMENTATION_STATES,
@@ -44,6 +43,8 @@ import { describeDocumentationState } from "@/lib/documents/document-type-presen
 import { useDocumentLabel } from "@/hooks/use-document-label";
 import { useTranslations } from "next-intl";
 import { ProgressCounter } from "@/components/ui/progress-counter";
+import { ChoiceFilter } from "@/components/ui/choice-filter";
+import { PartnerFilter } from "@/components/partners/partner-filter";
 import { cn, formatCurrency } from "@/lib/utils";
 import { MOTION } from "@/design-system";
 import { UserPartner } from "@/types/partner";
@@ -78,13 +79,11 @@ function TransactionToolbarInner({
   deductiblePercent,
 }: TransactionToolbarProps) {
   const [datePopoverOpen, setDatePopoverOpen] = useState(false);
-  const [statusPopoverOpen, setStatusPopoverOpen] = useState(false);
   const [typePopoverOpen, setTypePopoverOpen] = useState(false);
-  const [partnerPopoverOpen, setPartnerPopoverOpen] = useState(false);
   const [documentationPopoverOpen, setDocumentationPopoverOpen] = useState(false);
   const documentLabel = useDocumentLabel();
   const tProgress = useTranslations("progress");
-  const [partnerSearch, setPartnerSearch] = useState("");
+  const tFilters = useTranslations("filters");
   const [showFromCalendar, setShowFromCalendar] = useState(false);
   const [showToCalendar, setShowToCalendar] = useState(false);
 
@@ -103,10 +102,7 @@ function TransactionToolbarInner({
   }, [assignedCount]);
 
   const hasDateFilter = filters.dateFrom || filters.dateTo;
-  const hasStatusFilter = filters.isComplete !== undefined;
   const hasAmountFilter = filters.amountType && filters.amountType !== "all";
-  const selectedPartnerIds = filters.partnerIds || [];
-  const hasPartnerFilter = selectedPartnerIds.length > 0;
   // #249: undefined is "all five", the default.
   const selectedDocumentationStates = filters.documentationStates ?? ALL_DOCUMENTATION_STATES;
   const hasDocumentationFilter = filters.documentationStates !== undefined;
@@ -151,19 +147,9 @@ function TransactionToolbarInner({
     onFiltersChange({ ...filters, dateFrom: undefined, dateTo: undefined });
   };
 
-  const clearStatusFilter = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    onFiltersChange({ ...filters, isComplete: undefined });
-  };
-
   const clearAmountFilter = (e: React.MouseEvent) => {
     e.stopPropagation();
     onFiltersChange({ ...filters, amountType: undefined });
-  };
-
-  const clearPartnerFilter = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    onFiltersChange({ ...filters, partnerIds: undefined });
   };
 
   const clearDocumentationFilter = (e: React.MouseEvent) => {
@@ -194,48 +180,10 @@ function TransactionToolbarInner({
     return "Date";
   };
 
-  const getStatusLabel = () => {
-    if (filters.isComplete === true) return "Assigned";
-    if (filters.isComplete === false) return "Unassigned";
-    return "Status";
-  };
-
   const getAmountLabel = () => {
     if (filters.amountType === "income") return "Income";
     if (filters.amountType === "expense") return "Expenses";
     return "Type";
-  };
-
-  const partnerNameMap = new Map(userPartners.map((partner) => [partner.id, partner.name]));
-  const selectedPartnerNames = selectedPartnerIds
-    .map((id) => partnerNameMap.get(id))
-    .filter(Boolean) as string[];
-  const partnerLabel = hasPartnerFilter
-    ? selectedPartnerNames.length === 1
-      ? selectedPartnerNames[0]
-      : `Partner (${selectedPartnerIds.length})`
-    : "Partner";
-
-  const filteredPartners = userPartners.filter((partner) => {
-    if (!partnerSearch.trim()) return true;
-    const search = partnerSearch.toLowerCase();
-    return (
-      partner.name.toLowerCase().includes(search) ||
-      partner.aliases?.some((alias) => alias.toLowerCase().includes(search)) ||
-      partner.vatId?.toLowerCase().includes(search) ||
-      partner.website?.toLowerCase().includes(search)
-    );
-  });
-
-  const togglePartner = (partnerId: string) => {
-    const next = new Set(selectedPartnerIds);
-    if (next.has(partnerId)) {
-      next.delete(partnerId);
-    } else {
-      next.add(partnerId);
-    }
-    const nextIds = Array.from(next);
-    onFiltersChange({ ...filters, partnerIds: nextIds.length > 0 ? nextIds : undefined });
   };
 
   // Show counter only when there are transactions
@@ -390,67 +338,29 @@ function TransactionToolbarInner({
         </PopoverContent>
       </Popover>
 
-      {/* Status filter (assigned = has file or no-receipt category) */}
-      <Popover open={statusPopoverOpen} onOpenChange={setStatusPopoverOpen}>
-        <PopoverTrigger asChild>
-          <Button
-            variant={hasStatusFilter ? "secondary" : "outline"}
-            size="sm"
-            className="h-9 gap-2"
-          >
-            <CircleCheck className="h-4 w-4" />
-            <span>{getStatusLabel()}</span>
-            {hasStatusFilter && (
-              <span
-                role="button"
-                tabIndex={0}
-                onClick={clearStatusFilter}
-                onKeyDown={(e) => e.key === "Enter" && clearStatusFilter(e as unknown as React.MouseEvent)}
-                className="ml-1 hover:bg-muted rounded p-0.5 -mr-1 cursor-pointer"
-              >
-                <X className="h-3 w-3" />
-              </span>
-            )}
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="w-auto p-2" align="start">
-          <div className="flex flex-col gap-1">
-            <Button
-              variant={filters.isComplete === undefined ? "secondary" : "ghost"}
-              size="sm"
-              className="justify-start h-8"
-              onClick={() => {
-                onFiltersChange({ ...filters, isComplete: undefined });
-                setStatusPopoverOpen(false);
-              }}
-            >
-              All
-            </Button>
-            <Button
-              variant={filters.isComplete === true ? "secondary" : "ghost"}
-              size="sm"
-              className="justify-start h-8"
-              onClick={() => {
-                onFiltersChange({ ...filters, isComplete: true });
-                setStatusPopoverOpen(false);
-              }}
-            >
-              Assigned
-            </Button>
-            <Button
-              variant={filters.isComplete === false ? "secondary" : "ghost"}
-              size="sm"
-              className="justify-start h-8"
-              onClick={() => {
-                onFiltersChange({ ...filters, isComplete: false });
-                setStatusPopoverOpen(false);
-              }}
-            >
-              Unassigned
-            </Button>
-          </div>
-        </PopoverContent>
-      </Popover>
+      {/* Files: the File column, assigned = a File or a no-receipt category (#519) */}
+      <ChoiceFilter
+        label={tFilters("files.label")}
+        icon={<CircleCheck className="h-4 w-4" />}
+        allLabel={tFilters("all")}
+        value={
+          filters.isComplete === true
+            ? "assigned"
+            : filters.isComplete === false
+              ? "unassigned"
+              : undefined
+        }
+        onChange={(value) =>
+          onFiltersChange({
+            ...filters,
+            isComplete: value === undefined ? undefined : value === "assigned",
+          })
+        }
+        options={[
+          { value: "assigned", label: tFilters("assigned") },
+          { value: "unassigned", label: tFilters("unassigned") },
+        ]}
+      />
 
       {/*
         Documentation State filter (#249). Multi-select with every state
@@ -579,69 +489,12 @@ function TransactionToolbarInner({
         </PopoverContent>
       </Popover>
 
-      {/* Partner filter */}
-      <Popover open={partnerPopoverOpen} onOpenChange={setPartnerPopoverOpen}>
-        <PopoverTrigger asChild>
-          <Button
-            variant={hasPartnerFilter ? "secondary" : "outline"}
-            size="sm"
-            className="h-9 gap-2"
-          >
-            <span>{partnerLabel}</span>
-            {hasPartnerFilter && (
-              <span
-                role="button"
-                tabIndex={0}
-                onClick={clearPartnerFilter}
-                onKeyDown={(e) => e.key === "Enter" && clearPartnerFilter(e as unknown as React.MouseEvent)}
-                className="ml-1 hover:bg-muted rounded p-0.5 -mr-1 cursor-pointer"
-              >
-                <X className="h-3 w-3" />
-              </span>
-            )}
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="w-72 p-3" align="start">
-          <div className="space-y-3">
-            <SearchInput
-              placeholder="Search partners..."
-              value={partnerSearch}
-              onChange={setPartnerSearch}
-            />
-            <div className="max-h-56 overflow-y-auto space-y-1">
-              {filteredPartners.length === 0 ? (
-                <p className="text-xs text-muted-foreground py-2 text-center">No partners found</p>
-              ) : (
-                filteredPartners.map((partner) => {
-                  const checked = selectedPartnerIds.includes(partner.id);
-                  return (
-                    <button
-                      key={partner.id}
-                      type="button"
-                      onClick={() => togglePartner(partner.id)}
-                      className={cn(
-                        "w-full text-left flex items-center gap-2 rounded px-2 py-1.5 text-sm",
-                        checked ? "bg-muted" : "hover:bg-muted/50"
-                      )}
-                    >
-                      <span
-                        className={cn(
-                          "h-4 w-4 rounded border flex items-center justify-center",
-                          checked ? "border-primary text-primary" : "border-muted-foreground/40 text-transparent"
-                        )}
-                      >
-                        <Check className="h-3 w-3" />
-                      </span>
-                      <span className="truncate">{partner.name}</span>
-                    </button>
-                  );
-                })
-              )}
-            </div>
-          </div>
-        </PopoverContent>
-      </Popover>
-
+      <PartnerFilter
+        userPartners={userPartners}
+        partnerIds={filters.partnerIds}
+        hasPartner={filters.hasPartner}
+        onChange={(next) => onFiltersChange({ ...filters, ...next })}
+      />
 
         {/* Import filter badge (if active) */}
         {filters.importId && (

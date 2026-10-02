@@ -356,7 +356,13 @@
       "fileName": "File name",
       "uploaded": "Uploaded",
       "size": "Size",
-      "source": "Source"
+      "source": "Source",
+      "analyzing": "Analyzing...",
+      "notDetermined": "Not determined",
+      "vatDeductible": "VAT deductible",
+      "whyVatDeductible": "Why the VAT is or is not deductible",
+      "vatDeductibleYes": "Yes",
+      "vatDeductibleNo": "No, ask the supplier for an invoice"
     },
     "source": {
       "gmail": "Gmail",
@@ -381,5 +387,32 @@
     "transactions": "{done} of {total} Transactions are documented: they have a File, or a no-receipt category instead.",
     "transactionsDeductible": "{percent}% are documented by an invoice that allows the VAT deduction (§ 11 UStG). A payment confirmation alone does not.",
     "followsFilters": "The count follows the filters and search above."
+  },
+  "filters": {
+    "all": "All",
+    "assigned": "Assigned",
+    "unassigned": "Unassigned",
+    "type": {
+      "label": "Type",
+      "income": "Income",
+      "expense": "Expense",
+      "notInvoice": "Not an invoice",
+      "deleted": "Deleted files"
+    },
+    "transactions": {
+      "label": "Transactions"
+    },
+    "files": {
+      "label": "Files"
+    },
+    "partner": {
+      "label": "Partner",
+      "labelCount": "Partner ({count})",
+      "noPartner": "No partner assigned",
+      "noPartnerShort": "No partner",
+      "search": "Search partners...",
+      "none": "No partners found",
+      "clear": "Clear partner filter"
+    }
   }
 }

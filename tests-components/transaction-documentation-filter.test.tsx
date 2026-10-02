@@ -171,9 +171,9 @@ describe("Documentation chip on the toolbar", () => {
     expect(onFiltersChange).toHaveBeenCalledWith({ documentationStates: undefined });
   });
 
-  it("leaves the Status chip as it was", () => {
+  it("names the assigned/unassigned chip after the File column (#519)", () => {
     renderToolbar({});
-    fireEvent.click(screen.getByRole("button", { name: "Status" }));
+    fireEvent.click(screen.getByRole("button", { name: "Files" }));
     for (const name of ["All", "Assigned", "Unassigned"]) {
       expect(screen.getByRole("button", { name })).toBeTruthy();
     }

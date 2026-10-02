@@ -174,3 +174,9 @@ test("hasActiveFileFilters and countActiveFileFilters see the deleted view", () 
   assert.equal(hasActiveFileFilters({ deletedOnly: true }), true);
   assert.equal(countActiveFileFilters({ deletedOnly: true }), 1);
 });
+
+test("Type not-invoice round-trips through the URL (#519)", () => {
+  const params = buildFileSearchParams({ amountType: "not-invoice" }, "");
+  assert.equal(params.get("type"), "not-invoice");
+  assert.equal(parseFileFiltersFromUrl(params).amountType, "not-invoice");
+});
