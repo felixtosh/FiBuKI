@@ -112,7 +112,20 @@ changes.
 
 - **Branch from `main`.** Never stack a feature branch on another in-progress
   branch — it tangles review and drags in unrelated unmerged work.
-- **Small, conventional commits.** Squash-merge PRs.
+- **Work in a worktree, never in the shared checkout.** Several sessions (Felix's
+  tabs, Stefan's cloud session) run against the same repo at once. Switching
+  branches in `~/Documents/fibuki.nosync` collides with them: on 2026-10-01 another
+  tab's `git pull --rebase` rebased a feature branch mid-work. Instead:
+  - `git worktree add -b <branch> <scratch-dir>/<name> origin/main`, and run every
+    command against that path (the shell returns to the main checkout between calls);
+  - give it its own `npm ci` in the root **and** in `functions/`. A symlink to the main
+    checkout's `node_modules` breaks the moment another tab reinstalls them (tsc then
+    reports a missing `FirebaseFirestore`, vitest "no tests");
+  - leave the main checkout on `main` with the user's uncommitted changes untouched;
+  - once the PR is merged, `git worktree remove` it and delete its branch, locally and
+    on `origin`.
+- **Small, conventional commits.** PRs land as merge commits (`gh pr merge --merge`),
+  which is what the history uses.
 - **Self-review every PR, docs included.** Doc PRs are not exempt.
 - **Verify Write-tool writes actually got committed** — check `git status -s`
   before you claim done.
@@ -136,3 +149,28 @@ waste is re-deriving a decision that's already written down — see
 Supabase; port not rewrite; Austria only; same features both tiers).
 </content>
 </invoke>
+
+## Writing tests
+
+Keep the suite cheap to maintain. Four rules:
+
+- **Prefer the self-host suite** (`functions/src/selfhost/`, run with
+  `vitest.selfhost.config.ts`). It runs the real code against a real Postgres
+  engine (PGlite), so a test breaks when behaviour changes, not when an
+  internal is renamed. Reach for `vi.mock` only at a true boundary: a model
+  call, a third-party API, a secret.
+- **Never sleep a fixed time to wait for something.** Wait for the thing:
+  `__whenShimIdle()` for fire-and-forget writes, `drainTriggers()` for
+  triggers, `__whenListensIdle()` for realtime listens, `vi.waitFor` for a
+  condition, a barrier when a test needs concurrent callers to interleave.
+  A fixed delay is only right when the timer itself is under test (backoff,
+  watchdog), and then say so in a comment.
+- **Use the shared setup.** `startTestServer` / `startTestDataPlane`
+  (`selfhost/test-helpers.ts`) for an HTTP surface; `security/victim.ts` for
+  anything about one user reaching another's data; `tools/__tests__/
+  handlers-harness.ts` for tool-handler mocks.
+- **Cross-user isolation is covered generically.** The suites in
+  `selfhost/security/` attack every callable, AI tool and data-plane route from
+  the registries; a new one is attacked without anyone adding it. A new
+  surface that does not come from a registry (a Next API route) needs a case
+  in `cross-user-routes.test.ts`.

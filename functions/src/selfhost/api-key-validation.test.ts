@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { __resetFirestoreShim, __rawSqlForTest } from "./firestore-shim";
+import { __resetFirestoreShim, __rawSqlForTest, __whenShimIdle } from "./firestore-shim";
 import { __resetTriggerShim } from "./trigger-shim";
 
 // REAL application code, unmodified:
@@ -25,7 +25,7 @@ function createKey(data: unknown = { name: "audit-key" }) {
 }
 
 beforeEach(async () => {
-  await new Promise((r) => setTimeout(r, 20));
+  await __whenShimIdle(); // the previous test's fire-and-forget writes, finished
   await __resetFirestoreShim();
   __resetTriggerShim();
 });

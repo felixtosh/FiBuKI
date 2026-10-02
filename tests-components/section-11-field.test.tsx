@@ -1,11 +1,10 @@
 /**
- * #237, #513: what a File is sits in the File detail panel's top block as a
- * Type dropdown, and the § 11 reasoning is the content of the info button on
- * its label.
+ * #237, #513, #519: the § 11 reasoning is the content of the info button on
+ * the File detail panel's "VAT deductible" label.
  *
  * What the reasoning says comes from lib/documents/document-type-presentation.js,
  * which has its own node suite; these tests pin what the popover content
- * shows, and what the dropdown offers and reaches.
+ * shows.
  */
 
 import * as React from "react";
@@ -17,7 +16,7 @@ vi.mock("@/hooks/use-document-label", () => ({
 }));
 
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { FileTypeControl, Section11Reasoning } from "@/components/documents/section-11-details";
+import { Section11Reasoning } from "@/components/documents/section-11-details";
 import type { DocumentTypeBasis } from "@/types/file";
 
 const BASIS: DocumentTypeBasis = {
@@ -83,43 +82,5 @@ describe("Section11Reasoning", () => {
       expect(screen.queryByText("Supplier VAT ID")).toBeNull();
       unmount();
     }
-  });
-});
-
-describe("FileTypeControl", () => {
-  function renderControl(props: Partial<React.ComponentProps<typeof FileTypeControl>> = {}) {
-    const onMarkAsNotInvoice = vi.fn();
-    const onUnmarkAsNotInvoice = vi.fn();
-    render(
-      <FileTypeControl
-        documentType="receipt"
-        isNotInvoice={false}
-        onMarkAsNotInvoice={onMarkAsNotInvoice}
-        onUnmarkAsNotInvoice={onUnmarkAsNotInvoice}
-        {...props}
-      />
-    );
-    return { onMarkAsNotInvoice, onUnmarkAsNotInvoice };
-  }
-
-  it("shows the classifier's verdict as the selected type", () => {
-    renderControl();
-    expect(screen.getByRole("combobox").textContent).toBe("Payment confirmation");
-  });
-
-  it("shows 'Not a financial document' once the user marked it so", () => {
-    renderControl({ documentType: "other", isNotInvoice: true });
-    expect(screen.getByRole("combobox").textContent).toBe("Not a financial document");
-  });
-
-  it("cannot be changed while the File is being parsed", () => {
-    renderControl({ disabled: true });
-    expect(screen.getByRole("combobox").hasAttribute("disabled")).toBe(true);
-  });
-
-  it("says it is analyzing while classification runs, with no control", () => {
-    renderControl({ classifying: true });
-    expect(screen.queryByRole("combobox")).toBeNull();
-    expect(screen.getByText("Analyzing...")).toBeTruthy();
   });
 });

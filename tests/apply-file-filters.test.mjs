@@ -279,6 +279,22 @@ test("applyFileFilters: amountType income/expense maps to invoiceDirection", () 
   );
 });
 
+test("applyFileFilters: Type not-invoice keeps only not-invoices, income/expense drop them (#519)", () => {
+  const files = [
+    makeFile({ id: "in", invoiceDirection: "incoming" }),
+    makeFile({ id: "in-not", invoiceDirection: "incoming", isNotInvoice: true }),
+    makeFile({ id: "not", isNotInvoice: true }),
+  ];
+  assert.deepEqual(
+    applyFileFilters(files, { amountType: "not-invoice" }).rows.map((f) => f.id),
+    ["in-not", "not"],
+  );
+  assert.deepEqual(
+    applyFileFilters(files, { amountType: "expense" }).rows.map((f) => f.id),
+    ["in"],
+  );
+});
+
 test("applyFileFilters: invoiceCount excludes not-invoices with no filters applied", () => {
   const files = [
     makeFile({ id: "a", isNotInvoice: false }),

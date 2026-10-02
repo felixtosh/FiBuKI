@@ -13,7 +13,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Receipt, Building2, Users, Settings, Activity, Globe, Files, Tag, Link2, User, LogOut, UserPlus, Palette, Shield, Zap, FileText, FlaskConical, Download, CreditCard, Mail, Bell } from "lucide-react";
+import { MessageSquare, Receipt, Building2, Users, Settings, Activity, Globe, Files, Tag, Link2, User, LogOut, UserPlus, Palette, Shield, Zap, FileText, FlaskConical, Download, CreditCard, Mail, Bell } from "lucide-react";
 import { settingsNavItems } from "@/lib/config/settings-nav";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
 import Link from "next/link";
@@ -28,9 +28,11 @@ import { BillingLimitBanner } from "@/components/billing/billing-limit-banner";
 import { ImpersonationBanner } from "@/components/admin/impersonation-banner";
 import { LocaleSync } from "@/components/i18n/locale-sync";
 import { logoFont } from "@/app/fonts";
+import { useTranslations } from "next-intl";
 import type { PlanFeatureKey } from "@/types/billing";
 
-const NAV_COMPACT_BREAKPOINT = 635;
+// Measured across logo, chat toggle and nav.
+const NAV_COMPACT_BREAKPOINT = 671;
 
 const navItems: { href: string; label: string; icon: typeof Receipt; feature?: PlanFeatureKey }[] = [
   { href: "/transactions", label: "Transactions", icon: Receipt },
@@ -94,7 +96,8 @@ function OnboardingController() {
 function DashboardContent({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { isSidebarOpen, sidebarWidth } = useChat();
+  const { isSidebarOpen, sidebarWidth, toggleSidebar } = useChat();
+  const tCommon = useTranslations("common");
   const { user, isAdmin, signOut } = useAuth();
   const { hasFeature, loading: subLoading } = useSubscription();
   const [isLogoJumping, setIsLogoJumping] = useState(false);
@@ -228,18 +231,34 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
       <header className="border-b bg-card flex-shrink-0 z-50 px-4 h-14 flex items-center">
           <div className="flex w-full min-w-0 items-center justify-between gap-3">
           <div ref={navContainerRef} className="flex min-w-0 flex-1 items-center gap-6">
-            <button
-              onClick={handleLogoClick}
-              className={cn(
-                "flex items-center gap-2 hover:opacity-80 logo-wrapper flex-shrink-0",
-                isLogoJumping && "is-jumping"
+            {/* Chat opener sits by the logo, on the side the chat opens from; the
+                open chat closes itself. */}
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {!isSidebarOpen && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={toggleSidebar}
+                  className="h-8 w-8 -ml-1"
+                  title={tCommon("openChat")}
+                  aria-label={tCommon("openChat")}
+                >
+                  <MessageSquare className="h-4 w-4" />
+                </Button>
               )}
-            >
-              <FibukiMascot size={28} className="-my-1" isJumping={isLogoJumping} />
-              <span className={cn("font-semibold text-lg mascot-text", logoFont.className)}>
-                FiBuKI
-              </span>
-            </button>
+              <button
+                onClick={handleLogoClick}
+                className={cn(
+                  "flex items-center gap-2 hover:opacity-80 logo-wrapper flex-shrink-0",
+                  isLogoJumping && "is-jumping"
+                )}
+              >
+                <FibukiMascot size={28} className="-my-1" isJumping={isLogoJumping} />
+                <span className={cn("font-semibold text-lg mascot-text", logoFont.className)}>
+                  FiBuKI
+                </span>
+              </button>
+            </div>
             <nav ref={navRef} className="relative flex min-w-0 items-center gap-1">
               {/* Sliding active indicator */}
               <div

@@ -13,7 +13,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { getFirestore, Timestamp, __resetFirestoreShim } from "./firestore-shim";
+import { getFirestore, Timestamp, __resetFirestoreShim, __whenShimIdle } from "./firestore-shim";
 import { drainTriggers, __resetTriggerShim } from "./trigger-shim";
 import { createHost, type HostInventory } from "./host";
 import { EXCLUDED_EXPORTS } from "./manifest";
@@ -44,7 +44,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await new Promise((r) => setTimeout(r, 20));
+  await __whenShimIdle(); // the previous test's fire-and-forget writes, finished
   await __resetFirestoreShim();
   __resetTriggerShim();
   await db.collection("sources").doc("src-n26").set({

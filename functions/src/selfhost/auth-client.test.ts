@@ -463,15 +463,20 @@ describe("selfhost auth-client — firebase/auth surface (W1 spec)", () => {
       await client.signOut(client.getAuth());
       await tick();
       expect(client.getAuth().currentUser).toBeNull();
-      // Give the fire-and-forget sign-out a beat, then prove the session row
-      // is gone — deleting it is what revokes every JWT minted from it.
-      await new Promise((r) => setTimeout(r, 200));
-      const rows = await __rawSqlForTest(
-        `SELECT 1 FROM auth_sessions WHERE id = $1`,
-        [sid],
-        getTenantId(),
+      // Sign-out deletes the session row without the caller awaiting it; wait
+      // for that to happen (deleting it is what revokes every JWT minted from
+      // it) rather than for a guessed delay.
+      await vi.waitFor(
+        async () => {
+          const rows = await __rawSqlForTest(
+            `SELECT 1 FROM auth_sessions WHERE id = $1`,
+            [sid],
+            getTenantId(),
+          );
+          expect(rows.rows).toHaveLength(0);
+        },
+        { timeout: 3000, interval: 10 },
       );
-      expect(rows.rows).toHaveLength(0);
     });
   });
 

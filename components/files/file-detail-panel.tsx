@@ -51,9 +51,10 @@ import {
 import { FilePreview } from "./file-preview";
 import { FileExtractedInfo } from "./file-extracted-info";
 import { FileConnectionsList } from "./file-connections-list";
-import { FileTypeControl, Section11Reasoning } from "@/components/documents/section-11-details";
+import { Section11Reasoning } from "@/components/documents/section-11-details";
+import { describeInvoiceDirection } from "@/lib/documents/document-type-presentation";
 import { InfoPopover } from "@/components/ui/info-popover";
-import { FileDirectionControl, FileDirectionInfo } from "./file-direction-control";
+import { FileDirectionInfo, FileKindControl, useVatDeductible } from "./file-direction-control";
 import { FileMailDetailsInfo, FileSourceLabel, useFileMailDetails } from "./file-source-label";
 import { AddPartnerDialog } from "@/components/partners/add-partner-dialog";
 import { PartnerPill } from "@/components/partners/partner-pill";
@@ -195,6 +196,11 @@ function FileDetailPanelInner({
   const suggestions = useFilePartnerSuggestions(file, userPartners, globalPartners);
 
   const mailDetails = useFileMailDetails(file);
+  const vatDeductible = useVatDeductible(file);
+  const showVatDeductible =
+    file.classificationComplete === true &&
+    !file.isNotInvoice &&
+    describeInvoiceDirection(file.invoiceDirection).direction === "incoming";
 
   // Track which files have been auto-applied to prevent repeated auto-applies
   const autoAppliedRef = useRef<Set<string>>(new Set());
@@ -445,40 +451,45 @@ function FileDetailPanelInner({
                       <span className="flex-1 text-right break-all file-meta-value">{mailDetails}</span>
                     </div>
                   )}
-                  {/* What the File is, and which way it goes (#513) */}
+                  {/* What the File is and which way it goes, as one field (#519) */}
                   <div className="flex items-center gap-3 file-meta-row">
                     <span className="text-muted-foreground w-16 shrink-0 file-meta-label flex items-center gap-1">
                       {t("type")}
-                      {file.classificationComplete && (
-                        <InfoPopover label={t("whyType")}>
+                      {!file.isNotInvoice && <FileDirectionInfo file={file} />}
+                    </span>
+                    <div className="flex-1 flex justify-end file-meta-value">
+                      <FileKindControl
+                        file={file}
+                        classifying={!file.classificationComplete && !isParsing}
+                        disabled={isParsing}
+                        onDirectionChange={handleDirectionChange}
+                        onMarkAsNotInvoice={onMarkAsNotInvoice}
+                        onUnmarkAsNotInvoice={onUnmarkAsNotInvoice}
+                      />
+                    </div>
+                  </div>
+                  {/* The § 11 verdict as its consequence, on Expenses only (#519) */}
+                  {showVatDeductible && (
+                    <div className="flex items-start gap-3 file-meta-row">
+                      <span className="text-muted-foreground w-16 shrink-0 file-meta-label flex items-center gap-1">
+                        {t("vatDeductible")}
+                        <InfoPopover label={t("whyVatDeductible")}>
                           <Section11Reasoning
                             documentType={file.documentType}
                             basis={file.documentTypeBasis}
                             missingElements={file.documentTypeMissingElements}
                           />
                         </InfoPopover>
-                      )}
-                    </span>
-                    <div className="flex-1 flex justify-end file-meta-value">
-                      <FileTypeControl
-                        documentType={file.documentType}
-                        isNotInvoice={file.isNotInvoice}
-                        classifying={!file.classificationComplete && !isParsing}
-                        disabled={isParsing}
-                        onMarkAsNotInvoice={onMarkAsNotInvoice}
-                        onUnmarkAsNotInvoice={onUnmarkAsNotInvoice}
-                      />
-                    </div>
-                  </div>
-                  {!file.isNotInvoice && (
-                    <div className="flex items-center gap-3 file-meta-row">
-                      <span className="text-muted-foreground w-16 shrink-0 file-meta-label flex items-center gap-1">
-                        {t("direction")}
-                        <FileDirectionInfo file={file} />
                       </span>
-                      <div className="flex-1 flex justify-end file-meta-value">
-                        <FileDirectionControl file={file} onDirectionChange={handleDirectionChange} />
-                      </div>
+                      <span
+                        className={cn(
+                          "flex-1 text-right file-meta-value",
+                          vatDeductible.tone === "no" && "text-amber-600 dark:text-amber-500",
+                          vatDeductible.tone === "unknown" && "text-muted-foreground"
+                        )}
+                      >
+                        {vatDeductible.text}
+                      </span>
                     </div>
                   )}
                 </div>

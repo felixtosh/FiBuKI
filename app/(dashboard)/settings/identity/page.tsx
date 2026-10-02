@@ -9,7 +9,7 @@ import { Pill } from "@/components/ui/pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useUserData } from "@/hooks/use-user-data";
 import { useSources } from "@/hooks/use-sources";
-import { useOnboarding } from "@/hooks/use-onboarding";
+import { useTranslations } from "next-intl";
 import { IdentityEntityFormData, TaxCountryCode } from "@/types/user-data";
 import { useAuth } from "@/components/auth";
 import { generateEntityId } from "@/lib/operations";
@@ -71,8 +71,7 @@ export default function IdentityPage() {
   const { user } = useAuth();
   const { userData, loading: userDataLoading, saving, save } = useUserData();
   const { sources } = useSources();
-  const { isStepCompleted } = useOnboarding();
-  const showIdentityHint = !isStepCompleted("set_identity");
+  const t = useTranslations("settings.identity");
 
   // Global settings
   const [country, setCountry] = useState<TaxCountryCode>("AT");
@@ -326,14 +325,11 @@ export default function IdentityPage() {
         description="Manage your personal and business identities for invoice matching"
       />
 
-      {showIdentityHint && (
-        <div className="mt-4 mb-2 flex items-start gap-3 rounded-lg border border-info-border bg-info px-4 py-3">
-          <p className="flex-1 text-sm text-info-foreground">
-            Fill in as much detail as you can — your name, company, VAT ID, and email addresses help our automation identify invoices addressed to you or issued by you.
-          </p>
-          <Info className="h-5 w-5 flex-shrink-0 text-info-foreground animate-info-icon-in" />
-        </div>
-      )}
+      {/* Why the page exists: matching tells your side of an invoice from the partner's. */}
+      <div className="mt-4 mb-2 flex items-start gap-3 rounded-lg border border-info-border bg-info px-4 py-3">
+        <p className="flex-1 text-sm text-info-foreground">{t("intro")}</p>
+        <Info className="h-5 w-5 flex-shrink-0 text-info-foreground animate-info-icon-in" />
+      </div>
 
       {userDataLoading ? (
         <div className="space-y-4">
@@ -342,52 +338,145 @@ export default function IdentityPage() {
           <Skeleton className="h-64 w-full" />
         </div>
       ) : (
-        <div className="space-y-8">
-          {/* Tax Country + Tax Number (two-column) */}
-          <div className="grid grid-cols-2 gap-6 max-w-lg">
-            <div className="space-y-2">
-              <Label htmlFor="country">Tax Residence Country</Label>
-              <Select value={country} onValueChange={(v) => setCountry(v as TaxCountryCode)}>
-                <SelectTrigger id="country">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {TAX_COUNTRIES.map((c) => (
-                    <SelectItem key={c.value} value={c.value}>
-                      <span className="flex items-center gap-2">
-                        <span>{c.flag}</span>
-                        <span>{c.label}</span>
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {country === "AT" && (
+        // The onboarding step highlights the whole form, not just one part of it.
+        <div className="space-y-4" data-onboarding="identity-form">
+          <IdentitySection title={t("groups.tax")}>
+            <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="taxNumber">Steuernummer</Label>
+                <Label htmlFor="country">Tax Residence Country</Label>
+                <Select value={country} onValueChange={(v) => setCountry(v as TaxCountryCode)}>
+                  <SelectTrigger id="country">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {TAX_COUNTRIES.map((c) => (
+                      <SelectItem key={c.value} value={c.value}>
+                        <span className="flex items-center gap-2">
+                          <span>{c.flag}</span>
+                          <span>{c.label}</span>
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {country === "AT" && (
+                <div className="space-y-2">
+                  <Label htmlFor="taxNumber">Steuernummer</Label>
+                  <Input
+                    id="taxNumber"
+                    placeholder="e.g., 29 209/0289"
+                    value={formatAustrianTaxNumber(taxNumber)}
+                    onChange={(e) => {
+                      const value = e.target.value.replace(/\D/g, "").slice(0, 9);
+                      setTaxNumber(value);
+                    }}
+                    className="font-mono"
+                  />
+                  {taxNumber && taxNumber.length !== 9 && (
+                    <p className="text-sm text-amber-600">
+                      Must be 9 digits
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="personal-vat">Personal VAT ID</Label>
                 <Input
-                  id="taxNumber"
-                  placeholder="e.g., 29 209/0289"
-                  value={formatAustrianTaxNumber(taxNumber)}
+                  id="personal-vat"
+                  placeholder="e.g., ATU12345678"
+                  value={personalEntity.vatId || ""}
+                  onChange={(e) => handleUpdatePersonal({ vatId: e.target.value })}
+                  className="font-mono"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="company-vat">Company VAT ID</Label>
+                <Input
+                  id="company-vat"
+                  placeholder="e.g., ATU12345678"
+                  value={companies[0]?.vatId ?? ""}
                   onChange={(e) => {
-                    const value = e.target.value.replace(/\D/g, "").slice(0, 9);
-                    setTaxNumber(value);
+                    if (companies.length === 0) {
+                      setCompanies([{ ...createDefaultCompany(), vatId: e.target.value }]);
+                    } else {
+                      handleUpdateCompany(0, { vatId: e.target.value });
+                    }
                   }}
                   className="font-mono"
                 />
-                {taxNumber && taxNumber.length !== 9 && (
-                  <p className="text-sm text-amber-600">
-                    Must be 9 digits
-                  </p>
-                )}
               </div>
-            )}
-          </div>
+            </div>
+          </IdentitySection>
 
-          {/* Emails */}
-          <div className="space-y-3">
+          <IdentitySection title={t("groups.names")}>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="personal-name">Your Name</Label>
+                <Input
+                  id="personal-name"
+                  placeholder="Your full name"
+                  value={personalEntity.name}
+                  onChange={(e) => handleUpdatePersonal({ name: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="company-name">Company Name</Label>
+                <Input
+                  id="company-name"
+                  placeholder="Optional"
+                  value={companies[0]?.name ?? ""}
+                  onChange={(e) => {
+                    if (companies.length === 0) {
+                      setCompanies([{ ...createDefaultCompany(), name: e.target.value }]);
+                    } else {
+                      handleUpdateCompany(0, { name: e.target.value });
+                    }
+                  }}
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Aliases</Label>
+              <p className="text-xs text-muted-foreground">
+                Other names you or your company appear as on invoices
+              </p>
+              <div className="flex gap-2">
+                <Input
+                  placeholder="Add alias..."
+                  value={newAlias}
+                  onChange={(e) => setNewAlias(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleAddAlias(); } }}
+                  className="flex-1"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  onClick={handleAddAlias}
+                  disabled={!newAlias.trim()}
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </div>
+              {allAliases.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {allAliases.map((alias) => (
+                    <Pill
+                      key={alias}
+                      label={alias}
+                      onRemove={() => handleRemoveAlias(alias)}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          </IdentitySection>
+
+          <IdentitySection>
             <div>
               <Label className="text-base">Email Addresses</Label>
               <p className="text-sm text-muted-foreground">
@@ -431,106 +520,9 @@ export default function IdentityPage() {
                 ))}
               </div>
             )}
-          </div>
+          </IdentitySection>
 
-          {/* Identity */}
-          <div className="space-y-6 rounded-lg border p-6" data-onboarding="identity-form">
-            {/* Name + Company Name */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="personal-name">Your Name</Label>
-                <Input
-                  id="personal-name"
-                  placeholder="Your full name"
-                  value={personalEntity.name}
-                  onChange={(e) => handleUpdatePersonal({ name: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="company-name">Company Name</Label>
-                <Input
-                  id="company-name"
-                  placeholder="Optional"
-                  value={companies[0]?.name ?? ""}
-                  onChange={(e) => {
-                    if (companies.length === 0) {
-                      setCompanies([{ ...createDefaultCompany(), name: e.target.value }]);
-                    } else {
-                      handleUpdateCompany(0, { name: e.target.value });
-                    }
-                  }}
-                />
-              </div>
-            </div>
-
-            {/* VAT IDs */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="personal-vat">Personal VAT ID</Label>
-                <Input
-                  id="personal-vat"
-                  placeholder="e.g., ATU12345678"
-                  value={personalEntity.vatId || ""}
-                  onChange={(e) => handleUpdatePersonal({ vatId: e.target.value })}
-                  className="font-mono"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="company-vat">Company VAT ID</Label>
-                <Input
-                  id="company-vat"
-                  placeholder="e.g., ATU12345678"
-                  value={companies[0]?.vatId ?? ""}
-                  onChange={(e) => {
-                    if (companies.length === 0) {
-                      setCompanies([{ ...createDefaultCompany(), vatId: e.target.value }]);
-                    } else {
-                      handleUpdateCompany(0, { vatId: e.target.value });
-                    }
-                  }}
-                  className="font-mono"
-                />
-              </div>
-            </div>
-
-            {/* Aliases */}
-            <div className="space-y-2">
-              <Label>Aliases</Label>
-              <p className="text-xs text-muted-foreground">
-                Other names you or your company appear as on invoices
-              </p>
-              <div className="flex gap-2">
-                <Input
-                  placeholder="Add alias..."
-                  value={newAlias}
-                  onChange={(e) => setNewAlias(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleAddAlias(); } }}
-                  className="flex-1"
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  onClick={handleAddAlias}
-                  disabled={!newAlias.trim()}
-                >
-                  <Plus className="h-4 w-4" />
-                </Button>
-              </div>
-              {allAliases.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
-                  {allAliases.map((alias) => (
-                    <Pill
-                      key={alias}
-                      label={alias}
-                      onRemove={() => handleRemoveAlias(alias)}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* IBANs */}
+          <IdentitySection>
             <div className="space-y-2">
               <Label>IBANs</Label>
               <div className="flex gap-2">
@@ -585,8 +577,9 @@ export default function IdentityPage() {
                 );
               })()}
             </div>
+          </IdentitySection>
 
-            {/* Address (shown on issued invoices) */}
+          <IdentitySection>
             <div className="space-y-2">
               <Label>Address</Label>
               <p className="text-xs text-muted-foreground">
@@ -622,8 +615,7 @@ export default function IdentityPage() {
                 />
               </div>
             </div>
-          </div>
-
+          </IdentitySection>
         </div>
       )}
 
@@ -644,5 +636,15 @@ export default function IdentityPage() {
         </div>
       )}
     </div>
+  );
+}
+
+/** One bordered group of fields that belong together. */
+function IdentitySection({ title, children }: { title?: string; children: React.ReactNode }) {
+  return (
+    <section className="space-y-4 rounded-lg border p-6">
+      {title && <h2 className="text-base font-medium">{title}</h2>}
+      {children}
+    </section>
   );
 }

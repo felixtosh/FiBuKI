@@ -12,6 +12,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { useRouter } from "next/navigation";
+import { TelegramLogo } from "@/components/ui/telegram-logo";
+import { COMMUNITY_SETTINGS_PATH } from "@/lib/config/community";
 
 interface OnboardingCompletionProps {
   open: boolean;
@@ -24,6 +27,8 @@ export function OnboardingCompletion({
 }: OnboardingCompletionProps) {
   const t = useTranslations("onboarding.completion");
   const [showConfetti, setShowConfetti] = useState(false);
+  const router = useRouter();
+  const telegram = useTranslations("onboarding.telegram");
 
   useEffect(() => {
     if (open) {
@@ -35,6 +40,11 @@ export function OnboardingCompletion({
 
   const handleDismiss = () => {
     onDismiss();
+  };
+
+  const joinTelegram = () => {
+    onDismiss();
+    router.push(COMMUNITY_SETTINGS_PATH);
   };
 
   return (
@@ -109,6 +119,18 @@ export function OnboardingCompletion({
               <span>{t("partners")}</span>
             </li>
           </ul>
+        </div>
+
+        {/* Friendly invite to the Telegram community */}
+        <div className="flex items-center gap-3 rounded-lg border p-3">
+          <TelegramLogo className="h-9 w-9 flex-shrink-0" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium">{telegram("title")}</p>
+            <p className="text-xs text-muted-foreground">{telegram("text")}</p>
+          </div>
+          <Button variant="outline" size="sm" onClick={joinTelegram}>
+            {telegram("cta")}
+          </Button>
         </div>
 
         {/* Action button */}

@@ -150,6 +150,7 @@ Return ONLY valid JSON:
 {"suggestions": [{"query": "r-2024.014", "type": "invoice_number"}, {"query": "ouster", "type": "company_name"}]}`;
 
     const result = await model.generateContent({
+      generationConfig: { responseMimeType: "application/json" },
       contents: [{ role: "user", parts: [{ text: prompt }] }],
     });
 

@@ -57,6 +57,41 @@ npx tsc --noEmit --max-old-space-size=900 <explicit files>
 Full suites belong on CT 999. Also: **no parallel sub-agents on the audit box** —
 fan-out is what OOMs it. Details in [`docs/claude-practices.md`](docs/claude-practices.md).
 
+## Self-host realities (read before debugging)
+
+Things that cost real time to find. All of `fibuki.com` runs the self-host stack.
+
+- **Node 22, not 20.** `package.json` says `22.x`. On Node 20, npm silently
+  skips optional deps that need 22 (`@google-cloud/firestore` and ~70 others)
+  and tests fail far from the cause. `node -v` first.
+- **Local dev = the self-host stack, not Firebase emulators.** API:
+  `cd functions && npm run selfhost:api` (port 8788); web: `npx next dev -p 3000`
+  with `FIBUKI_BACKEND=selfhost`, `NEXT_PUBLIC_FIBUKI_API_URL=http://localhost:8788`
+  and `NEXT_PUBLIC_FUNCTIONS_URL=http://localhost:8788` (server-side callables, e.g.
+  the chat's tools; without it they fall back to a dead Firebase emulator).
+  Dev login: `FIBUKI_DEV_UID` (API) plus `NEXT_PUBLIC_FIBUKI_DEV_UID` /
+  `NEXT_PUBLIC_FIBUKI_DEV_EMAIL` (web). AI keys and `GOOGLE_CLOUD_PROJECT` go in
+  `functions/.env.local` (gitignored); without them CSV import's AI column
+  matching fails. The API loads code at start: restart it after a pull.
+- **One tenant, many users.** `getTenantId()` is per deployment, so every
+  fibuki.com user shares a tenant and RLS does not separate them; only the
+  app's ownership checks do. The client access policy is
+  `functions/src/selfhost/data-policy.ts` (not `firestore.rules`). Never take a
+  uid from a body, query, header or cookie. A new Next API route checks
+  ownership of every id it is given and gets a case in
+  `functions/src/selfhost/security/cross-user-routes.test.ts`; callables, AI
+  tools and data-plane routes are attacked generically by that folder already.
+- **List-page URL state:** change the query with `pushQuery` / `replaceQuery`
+  (`lib/navigation/query-url.ts`), never `router.push`: a soft navigation is an
+  RSC round trip (~600ms on fibuki.com) before the selection even renders.
+- **Dates:** stored dates are UTC midnight of the Vienna calendar day. Read the
+  day from the UTC date part (`toISOString().slice(0, 10)`), never
+  `getDate()` / `getFullYear()` / `setDate()`: those depend on the host's zone.
+- **`runTransaction` is optimistic, like Firestore:** the callback can run more
+  than once, so no side effects inside it, and all reads before any write.
+- **Deploys:** a newer push cancels a pending deploy run. "cancelled" is normal;
+  watch the latest run for the commit you care about.
+
 ## Architecture: Cloud Functions Pattern
 
 **IMPORTANT**: All data mutations go through Cloud Functions. This ensures:
@@ -257,7 +292,7 @@ External AI integrations (OpenClaw, Claude Desktop, ChatGPT) use a shared tool r
 
 **Rules**:
 1. **Frontend scoring**: Call `/api/matching/score-files` which proxies to `scoreAttachmentMatchCallable`
-2. **Agent tools**: Call `scoreAttachmentMatchCallable` directly via `callFirebaseFunction`
+2. **Agent tools**: Score a File/Transaction pair by id with the `scoreFileTransactionMatch` callable (same scorer and input assembly as the matching trigger and MCP's `score_file_transaction_match`) via `callFirebaseFunction`
 3. **Pre-computed scores**: Stored in `file.transactionSuggestions` (computed by `matchFileTransactions` trigger)
 4. **NEVER** implement local `scoreResult()` or similar functions in hooks/components
 
@@ -266,6 +301,7 @@ External AI integrations (OpenClaw, Claude Desktop, ChatGPT) use a shared tool r
 - `functions/src/precision-search/scoreAttachmentMatchCallable.ts` - Callable wrapper
 - `app/api/matching/score-files/route.ts` - API route for frontend
 - `functions/src/matching/matchFileTransactions.ts` - Pre-computes suggestions on file upload
+- `lib/partners/partner-suggestions.ts` - Which stored Partner suggestions a surface shows (list cell and detail panel use the same one; it filters, it never scores)
 
 **Claude Code Hook**: `.claude/hooks/check-cloud-function-pattern.sh` warns if local scoring is detected.
 
@@ -317,6 +353,35 @@ translating a screen, run `node scripts/check-ui-strings.mjs --update` to shrink
 allowance. English is the fallback for a missing German key and for any browser language
 other than German. Vocabulary follows ADR-0007.
 
+`lint:strings` is a regex, not a parser: anything between a `>` and the next `<` that
+holds letters and no braces counts as text. So an arrow (`=>`), a generic
+(`Set<string>`) or a chained JSX ternary (`) : other ? (`) between two JSX blocks reads
+as a hardcoded string. Don't raise the allowance for these; reshape the code instead:
+a type alias (`type IdSet = Set<string>`), `{cond ? (<A />) : null}` blocks instead of
+chained ternaries, counts or helpers moved below the component.
+
+## List pages (Files, Transactions, Partners)
+
+The lists share one pattern (noted where one differs); a new list reuses it rather
+than reinventing it.
+
+- **Filters: one per column, named like the column.** `ChoiceFilter` (single choice),
+  `PartnerFilter` (search, "No partner assigned", the partners) and `DateRangeFilter`,
+  laid out by `OverflowFilterRow`: what doesn't fit goes behind "More", and More lists
+  every filter. A chip can be on screen twice (row and panel), so every chip owns its
+  popover state; never keep a chip's open state in the toolbar.
+- **Selection (Files, Partners): `lib/selection/bulk-file-selection.js`.** A plain
+  click browses (opens the detail panel, box stays empty); checkboxes and
+  cmd/shift-click build a bulk selection. One ticked item still shows its detail panel; from two, the sidebar shows
+  the list's bulk panel with the actions in its footer. The checkbox column is
+  `SELECT_COLUMN_WIDTH`. Pass the selection to the table (`enableMultiSelect` +
+  `selectedRowIds`) and route row handlers through `useLatestCallback`, or the
+  memoised rows keep stale state (#232).
+- **Counter: `ProgressCounter`** (ring, done / total, explanation popover on hover).
+- **Remembered filters: `useRememberedListQuery`** (Files, Partners; Transactions keeps
+  its own in `lib/filters/url-params.ts`), per browser, never server-side, so two
+  screens don't overwrite each other's view (#530).
+
 ## Key Directories
 - `/app/(dashboard)/` - Main app pages (sources, transactions)
 - `/components/` - React components
@@ -363,7 +428,7 @@ silent failure mode is mis-billing, not a crash.
 | Document extraction | `geminiLite` | `gemini-3.1-flash-lite` | Native PDF/image support |
 | Partner matching / company lookup | `geminiFlash` | `gemini-3.5-flash-lite` | Priced identically to the 2.5-flash it replaces |
 | Chat/Agent (cloud) | `chatAgent` | Anthropic Claude | Complex reasoning, multi-step tasks |
-| Chat/Agent (self-host) | `FIBUKI_CHAT_MODEL` | `gemini-3.6-flash` | Runs in fibuki-web via API key, not Vertex |
+| Chat/Agent (self-host) | `FIBUKI_CHAT_MODEL` | `gemini-3.8-flash` | Runs in fibuki-web via API key, not Vertex |
 
 Google **retires model ids for new API-key consumers while Vertex keeps serving
 them** — `gemini-2.5-flash` returns 404 on a current key but works on Vertex. So a
@@ -443,6 +508,11 @@ retained `taxstudio-f12fb` project, which is the rollback anchor until the soak
 window closes (see [`docs/w4-cutover-runbook.md`](docs/w4-cutover-runbook.md)
 step 9), and NOT to what serves `fibuki.com` today.
 
+**Never delete `taxstudio-f12fb`:** it owns the Google OAuth client
+(`GOOGLE_CLIENT_ID`) that Gmail connections on fibuki.com use. Its Firestore and
+Storage rules are deny-all for clients (the frozen data copy serves no one);
+they are not the access policy, `data-policy.ts` is.
+
 ### Cloud Functions
 - Deploy manually: `firebase deploy --only functions`
 - Region: `europe-west1`
@@ -454,10 +524,13 @@ step 9), and NOT to what serves `fibuki.com` today.
 - CORS origins are configured in `createCallable()` wrapper (`functions/src/utils/createCallable.ts`). New callables using `createCallable()` inherit CORS automatically. Standalone `onCall()` functions must include the same CORS origins array.
 
 ### Firestore Rules & Indexes
-- **NOT auto-deployed on push**. When modifying `firestore.rules` or `firestore.indexes.json`, deploy after pushing:
+- `firestore.rules` and `storage.rules` are deny-all on purpose (see above).
+  They only change if the project is ever used again; a rollback restores the
+  pre-cutover rules from git history.
+- **NOT auto-deployed on push**. When modifying them, deploy after pushing:
   ```bash
-  firebase deploy --only firestore:rules
-  firebase deploy --only firestore:indexes
+  firebase deploy --only firestore:rules,storage --project taxstudio-f12fb
+  firebase deploy --only firestore:indexes --project taxstudio-f12fb
   ```
 
 <!-- BEGIN:nextjs-agent-rules -->

@@ -15,35 +15,16 @@
  */
 
 import { useState, useRef, useEffect, memo } from "react";
-import { format } from "date-fns";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { Calendar } from "@/components/ui/calendar";
-import {
-  CalendarDays,
-  CircleCheck,
-  ArrowUpDown,
-  X,
-  CalendarIcon,
-  Check,
-  FileCheck,
-} from "lucide-react";
+import { CircleCheck, ArrowUpDown, X } from "lucide-react";
 import { SearchButton } from "@/components/ui/search-button";
-import { SearchInput } from "@/components/ui/search-input";
-import { DocumentationState, TransactionFilters } from "@/types/transaction";
-import {
-  ALL_DOCUMENTATION_STATES,
-  normalizeDocumentationStates,
-} from "@/lib/filters/documentation-state-filter";
-import { describeDocumentationState } from "@/lib/documents/document-type-presentation";
-import { useDocumentLabel } from "@/hooks/use-document-label";
+import { TransactionFilters } from "@/types/transaction";
 import { useTranslations } from "next-intl";
 import { ProgressCounter } from "@/components/ui/progress-counter";
+import { ChoiceFilter } from "@/components/ui/choice-filter";
+import { DateRangeFilter } from "@/components/ui/date-range-filter";
+import { OverflowFilterRow } from "@/components/ui/overflow-filter-row";
+import { PartnerFilter } from "@/components/partners/partner-filter";
 import { cn, formatCurrency } from "@/lib/utils";
 import { MOTION } from "@/design-system";
 import { UserPartner } from "@/types/partner";
@@ -77,16 +58,8 @@ function TransactionToolbarInner({
   filteredSum,
   deductiblePercent,
 }: TransactionToolbarProps) {
-  const [datePopoverOpen, setDatePopoverOpen] = useState(false);
-  const [statusPopoverOpen, setStatusPopoverOpen] = useState(false);
-  const [typePopoverOpen, setTypePopoverOpen] = useState(false);
-  const [partnerPopoverOpen, setPartnerPopoverOpen] = useState(false);
-  const [documentationPopoverOpen, setDocumentationPopoverOpen] = useState(false);
-  const documentLabel = useDocumentLabel();
   const tProgress = useTranslations("progress");
-  const [partnerSearch, setPartnerSearch] = useState("");
-  const [showFromCalendar, setShowFromCalendar] = useState(false);
-  const [showToCalendar, setShowToCalendar] = useState(false);
+  const tFilters = useTranslations("filters");
 
   // Counter bump animation when assignedCount changes
   const prevAssignedRef = useRef(assignedCount);
@@ -103,546 +76,54 @@ function TransactionToolbarInner({
   }, [assignedCount]);
 
   const hasDateFilter = filters.dateFrom || filters.dateTo;
-  const hasStatusFilter = filters.isComplete !== undefined;
   const hasAmountFilter = filters.amountType && filters.amountType !== "all";
-  const selectedPartnerIds = filters.partnerIds || [];
-  const hasPartnerFilter = selectedPartnerIds.length > 0;
-  // #249: undefined is "all five", the default.
-  const selectedDocumentationStates = filters.documentationStates ?? ALL_DOCUMENTATION_STATES;
-  const hasDocumentationFilter = filters.documentationStates !== undefined;
 
-  const handleDatePresetClick = (preset: string) => {
-    const now = new Date();
-    let dateFrom: Date | undefined;
-    let dateTo: Date | undefined;
 
-    switch (preset) {
-      case "30d":
-        dateFrom = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-        dateTo = now;
-        break;
-      case "3m":
-        dateFrom = new Date(now.getFullYear(), now.getMonth() - 3, now.getDate());
-        dateTo = now;
-        break;
-      case "thisYear":
-        dateFrom = new Date(now.getFullYear(), 0, 1);
-        dateTo = now;
-        break;
-      case "lastYear":
-        dateFrom = new Date(now.getFullYear() - 1, 0, 1);
-        dateTo = new Date(now.getFullYear() - 1, 11, 31);
-        break;
-      default:
-        dateFrom = undefined;
-        dateTo = undefined;
-    }
-
-    onFiltersChange({ ...filters, dateFrom, dateTo });
-    setDatePopoverOpen(false);
-  };
 
   const clearImportFilter = () => {
     onFiltersChange({ ...filters, importId: undefined });
   };
 
-  const clearDateFilter = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    onFiltersChange({ ...filters, dateFrom: undefined, dateTo: undefined });
-  };
 
-  const clearStatusFilter = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    onFiltersChange({ ...filters, isComplete: undefined });
-  };
 
-  const clearAmountFilter = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    onFiltersChange({ ...filters, amountType: undefined });
-  };
 
-  const clearPartnerFilter = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    onFiltersChange({ ...filters, partnerIds: undefined });
-  };
 
-  const clearDocumentationFilter = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    onFiltersChange({ ...filters, documentationStates: undefined });
-  };
 
-  const toggleDocumentationState = (state: DocumentationState) => {
-    const next = selectedDocumentationStates.includes(state)
-      ? selectedDocumentationStates.filter((s) => s !== state)
-      : [...selectedDocumentationStates, state];
-    onFiltersChange({ ...filters, documentationStates: normalizeDocumentationStates(next) });
-  };
 
-  const documentationLabel = !hasDocumentationFilter
-    ? "Documentation"
-    : selectedDocumentationStates.length === 1
-      ? documentLabel(describeDocumentationState(selectedDocumentationStates[0]))
-      : `Documentation (${selectedDocumentationStates.length})`;
 
-  const getDateLabel = () => {
-    if (!hasDateFilter) return "Date";
-    if (filters.dateFrom && filters.dateTo) {
-      return `${format(filters.dateFrom, "MMM d")} - ${format(filters.dateTo, "MMM d")}`;
-    }
-    if (filters.dateFrom) return `From ${format(filters.dateFrom, "MMM d")}`;
-    if (filters.dateTo) return `Until ${format(filters.dateTo, "MMM d")}`;
-    return "Date";
-  };
 
-  const getStatusLabel = () => {
-    if (filters.isComplete === true) return "Assigned";
-    if (filters.isComplete === false) return "Unassigned";
-    return "Status";
-  };
-
-  const getAmountLabel = () => {
-    if (filters.amountType === "income") return "Income";
-    if (filters.amountType === "expense") return "Expenses";
-    return "Type";
-  };
-
-  const partnerNameMap = new Map(userPartners.map((partner) => [partner.id, partner.name]));
-  const selectedPartnerNames = selectedPartnerIds
-    .map((id) => partnerNameMap.get(id))
-    .filter(Boolean) as string[];
-  const partnerLabel = hasPartnerFilter
-    ? selectedPartnerNames.length === 1
-      ? selectedPartnerNames[0]
-      : `Partner (${selectedPartnerIds.length})`
-    : "Partner";
-
-  const filteredPartners = userPartners.filter((partner) => {
-    if (!partnerSearch.trim()) return true;
-    const search = partnerSearch.toLowerCase();
-    return (
-      partner.name.toLowerCase().includes(search) ||
-      partner.aliases?.some((alias) => alias.toLowerCase().includes(search)) ||
-      partner.vatId?.toLowerCase().includes(search) ||
-      partner.website?.toLowerCase().includes(search)
-    );
-  });
-
-  const togglePartner = (partnerId: string) => {
-    const next = new Set(selectedPartnerIds);
-    if (next.has(partnerId)) {
-      next.delete(partnerId);
-    } else {
-      next.add(partnerId);
-    }
-    const nextIds = Array.from(next);
-    onFiltersChange({ ...filters, partnerIds: nextIds.length > 0 ? nextIds : undefined });
-  };
 
   // Show counter only when there are transactions
   const showCounter = totalCount !== undefined && totalCount > 0;
 
   return (
-    <div className="grid grid-cols-[1fr_minmax(0,auto)] gap-2 px-4 py-2 border-b bg-background items-start">
-      {/* Filters - takes available space */}
-      <div className="flex items-center gap-2 flex-wrap min-w-0">
-        <SearchButton
-          value={searchValue}
-          onSearch={onSearchChange}
-          placeholder="Search transactions..."
-        />
-
-      {/* Date filter */}
-      <Popover open={datePopoverOpen} onOpenChange={setDatePopoverOpen}>
-        <PopoverTrigger asChild>
-          <Button
-            variant={hasDateFilter ? "secondary" : "outline"}
-            size="sm"
-            className="h-9 gap-2"
-          >
-            <CalendarDays className="h-4 w-4" />
-            <span>{getDateLabel()}</span>
-            {hasDateFilter && (
-              <span
-                role="button"
-                tabIndex={0}
-                onClick={clearDateFilter}
-                onKeyDown={(e) => e.key === "Enter" && clearDateFilter(e as unknown as React.MouseEvent)}
-                className="ml-1 hover:bg-muted rounded p-0.5 -mr-1 cursor-pointer"
-              >
-                <X className="h-3 w-3" />
-              </span>
-            )}
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="w-auto p-4" align="start">
-          <div className="space-y-4">
-            {/* From/To date pickers on top */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-muted-foreground">From</label>
-                <Popover open={showFromCalendar} onOpenChange={setShowFromCalendar}>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      className={cn(
-                        "w-full justify-start text-left font-normal h-9",
-                        !filters.dateFrom && "text-muted-foreground"
-                      )}
-                    >
-                      <CalendarIcon className="mr-2 h-4 w-4" />
-                      {filters.dateFrom ? format(filters.dateFrom, "PP") : "Pick date"}
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0" align="start">
-                    <Calendar
-                      mode="single"
-                      selected={filters.dateFrom}
-                      onSelect={(date) => {
-                        onFiltersChange({ ...filters, dateFrom: date });
-                        setShowFromCalendar(false);
-                      }}
-                      autoFocus
-                    />
-                  </PopoverContent>
-                </Popover>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-muted-foreground">To</label>
-                <Popover open={showToCalendar} onOpenChange={setShowToCalendar}>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      className={cn(
-                        "w-full justify-start text-left font-normal h-9",
-                        !filters.dateTo && "text-muted-foreground"
-                      )}
-                    >
-                      <CalendarIcon className="mr-2 h-4 w-4" />
-                      {filters.dateTo ? format(filters.dateTo, "PP") : "Pick date"}
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0" align="start">
-                    <Calendar
-                      mode="single"
-                      selected={filters.dateTo}
-                      onSelect={(date) => {
-                        onFiltersChange({ ...filters, dateTo: date });
-                        setShowToCalendar(false);
-                      }}
-                      autoFocus
-                    />
-                  </PopoverContent>
-                </Popover>
-              </div>
-            </div>
-
-            {/* Separator */}
-            <div className="border-t" />
-
-            {/* Quick presets as buttons */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Quick select</label>
-              <div className="flex flex-wrap gap-1.5">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-8"
-                  onClick={() => handleDatePresetClick("all")}
-                >
-                  All time
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-8"
-                  onClick={() => handleDatePresetClick("30d")}
-                >
-                  30 days
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-8"
-                  onClick={() => handleDatePresetClick("3m")}
-                >
-                  3 months
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-8"
-                  onClick={() => handleDatePresetClick("thisYear")}
-                >
-                  This year
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-8"
-                  onClick={() => handleDatePresetClick("lastYear")}
-                >
-                  Last year
-                </Button>
-              </div>
-            </div>
-          </div>
-        </PopoverContent>
-      </Popover>
-
-      {/* Status filter (assigned = has file or no-receipt category) */}
-      <Popover open={statusPopoverOpen} onOpenChange={setStatusPopoverOpen}>
-        <PopoverTrigger asChild>
-          <Button
-            variant={hasStatusFilter ? "secondary" : "outline"}
-            size="sm"
-            className="h-9 gap-2"
-          >
-            <CircleCheck className="h-4 w-4" />
-            <span>{getStatusLabel()}</span>
-            {hasStatusFilter && (
-              <span
-                role="button"
-                tabIndex={0}
-                onClick={clearStatusFilter}
-                onKeyDown={(e) => e.key === "Enter" && clearStatusFilter(e as unknown as React.MouseEvent)}
-                className="ml-1 hover:bg-muted rounded p-0.5 -mr-1 cursor-pointer"
-              >
-                <X className="h-3 w-3" />
-              </span>
-            )}
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="w-auto p-2" align="start">
-          <div className="flex flex-col gap-1">
-            <Button
-              variant={filters.isComplete === undefined ? "secondary" : "ghost"}
-              size="sm"
-              className="justify-start h-8"
-              onClick={() => {
-                onFiltersChange({ ...filters, isComplete: undefined });
-                setStatusPopoverOpen(false);
-              }}
-            >
-              All
-            </Button>
-            <Button
-              variant={filters.isComplete === true ? "secondary" : "ghost"}
-              size="sm"
-              className="justify-start h-8"
-              onClick={() => {
-                onFiltersChange({ ...filters, isComplete: true });
-                setStatusPopoverOpen(false);
-              }}
-            >
-              Assigned
-            </Button>
-            <Button
-              variant={filters.isComplete === false ? "secondary" : "ghost"}
-              size="sm"
-              className="justify-start h-8"
-              onClick={() => {
-                onFiltersChange({ ...filters, isComplete: false });
-                setStatusPopoverOpen(false);
-              }}
-            >
-              Unassigned
-            </Button>
-          </div>
-        </PopoverContent>
-      </Popover>
-
-      {/*
-        Documentation State filter (#249). Multi-select with every state
-        checked by default, unlike the single-select chips around it: the
-        useful questions here are often exclusions. Labels are the badge's own
-        (describeDocumentationState), so one state never reads two ways.
-        It sits beside Status and does not replace it: Status says whether
-        anything is attached, this says whether what is attached is enough.
-      */}
-      <Popover open={documentationPopoverOpen} onOpenChange={setDocumentationPopoverOpen}>
-        <PopoverTrigger asChild>
-          <Button
-            variant={hasDocumentationFilter ? "secondary" : "outline"}
-            size="sm"
-            className="h-9 gap-2"
-          >
-            <FileCheck className="h-4 w-4" />
-            <span>{documentationLabel}</span>
-            {hasDocumentationFilter && (
-              <span
-                role="button"
-                tabIndex={0}
-                aria-label="Clear documentation filter"
-                onClick={clearDocumentationFilter}
-                onKeyDown={(e) => e.key === "Enter" && clearDocumentationFilter(e as unknown as React.MouseEvent)}
-                className="ml-1 hover:bg-muted rounded p-0.5 -mr-1 cursor-pointer"
-              >
-                <X className="h-3 w-3" />
-              </span>
-            )}
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="w-auto p-2" align="start">
-          <div className="flex flex-col gap-1" role="menu">
-            {ALL_DOCUMENTATION_STATES.map((state) => {
-              const checked = selectedDocumentationStates.includes(state);
-              const presentation = describeDocumentationState(state);
-              return (
-                <button
-                  key={state}
-                  type="button"
-                  role="menuitemcheckbox"
-                  aria-checked={checked}
-                  title={presentation.summary}
-                  onClick={() => toggleDocumentationState(state)}
-                  className={cn(
-                    "w-full text-left flex items-center gap-2 rounded px-2 py-1.5 text-sm",
-                    checked ? "bg-muted" : "hover:bg-muted/50"
-                  )}
-                >
-                  <span
-                    className={cn(
-                      "h-4 w-4 rounded border flex items-center justify-center",
-                      checked ? "border-primary text-primary" : "border-muted-foreground/40 text-transparent"
-                    )}
-                  >
-                    <Check className="h-3 w-3" />
-                  </span>
-                  <span className="whitespace-nowrap">{documentLabel(presentation)}</span>
-                </button>
-              );
-            })}
-          </div>
-        </PopoverContent>
-      </Popover>
-
-      {/* Amount type filter */}
-      <Popover open={typePopoverOpen} onOpenChange={setTypePopoverOpen}>
-        <PopoverTrigger asChild>
-          <Button
-            variant={hasAmountFilter ? "secondary" : "outline"}
-            size="sm"
-            className="h-9 gap-2"
-          >
-            <ArrowUpDown className="h-4 w-4" />
-            <span>{getAmountLabel()}</span>
-            {hasAmountFilter && (
-              <span
-                role="button"
-                tabIndex={0}
-                onClick={clearAmountFilter}
-                onKeyDown={(e) => e.key === "Enter" && clearAmountFilter(e as unknown as React.MouseEvent)}
-                className="ml-1 hover:bg-muted rounded p-0.5 -mr-1 cursor-pointer"
-              >
-                <X className="h-3 w-3" />
-              </span>
-            )}
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="w-auto p-2" align="start">
-          <div className="flex flex-col gap-1">
-            <Button
-              variant={!filters.amountType || filters.amountType === "all" ? "secondary" : "ghost"}
-              size="sm"
-              className="justify-start h-8"
-              onClick={() => {
-                onFiltersChange({ ...filters, amountType: undefined });
-                setTypePopoverOpen(false);
-              }}
-            >
-              All
-            </Button>
-            <Button
-              variant={filters.amountType === "income" ? "secondary" : "ghost"}
-              size="sm"
-              className="justify-start h-8"
-              onClick={() => {
-                onFiltersChange({ ...filters, amountType: "income" });
-                setTypePopoverOpen(false);
-              }}
-            >
-              Income
-            </Button>
-            <Button
-              variant={filters.amountType === "expense" ? "secondary" : "ghost"}
-              size="sm"
-              className="justify-start h-8"
-              onClick={() => {
-                onFiltersChange({ ...filters, amountType: "expense" });
-                setTypePopoverOpen(false);
-              }}
-            >
-              Expenses
-            </Button>
-          </div>
-        </PopoverContent>
-      </Popover>
-
-      {/* Partner filter */}
-      <Popover open={partnerPopoverOpen} onOpenChange={setPartnerPopoverOpen}>
-        <PopoverTrigger asChild>
-          <Button
-            variant={hasPartnerFilter ? "secondary" : "outline"}
-            size="sm"
-            className="h-9 gap-2"
-          >
-            <span>{partnerLabel}</span>
-            {hasPartnerFilter && (
-              <span
-                role="button"
-                tabIndex={0}
-                onClick={clearPartnerFilter}
-                onKeyDown={(e) => e.key === "Enter" && clearPartnerFilter(e as unknown as React.MouseEvent)}
-                className="ml-1 hover:bg-muted rounded p-0.5 -mr-1 cursor-pointer"
-              >
-                <X className="h-3 w-3" />
-              </span>
-            )}
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="w-72 p-3" align="start">
-          <div className="space-y-3">
-            <SearchInput
-              placeholder="Search partners..."
-              value={partnerSearch}
-              onChange={setPartnerSearch}
+    <div className="grid grid-cols-[1fr_minmax(0,auto)] gap-2 px-4 py-2 border-b bg-background items-center">
+      {/* Filters: one line, in column order; what does not fit goes behind
+          More (#522). Search and a deep-linked import always stay. */}
+      <OverflowFilterRow
+        moreLabel={tFilters("more")}
+        panelTitle={tFilters("panelTitle")}
+        clearLabel={tFilters("clearAll")}
+        onClearAll={() =>
+          onFiltersChange({
+            ...filters,
+            dateFrom: undefined,
+            dateTo: undefined,
+            amountType: undefined,
+            partnerIds: undefined,
+            partnerId: undefined,
+            hasPartner: undefined,
+            isComplete: undefined,
+            documentationStates: undefined,
+          })
+        }
+        leading={
+          <div className="flex items-center gap-2">
+            <SearchButton
+              value={searchValue}
+              onSearch={onSearchChange}
+              placeholder="Search transactions..."
             />
-            <div className="max-h-56 overflow-y-auto space-y-1">
-              {filteredPartners.length === 0 ? (
-                <p className="text-xs text-muted-foreground py-2 text-center">No partners found</p>
-              ) : (
-                filteredPartners.map((partner) => {
-                  const checked = selectedPartnerIds.includes(partner.id);
-                  return (
-                    <button
-                      key={partner.id}
-                      type="button"
-                      onClick={() => togglePartner(partner.id)}
-                      className={cn(
-                        "w-full text-left flex items-center gap-2 rounded px-2 py-1.5 text-sm",
-                        checked ? "bg-muted" : "hover:bg-muted/50"
-                      )}
-                    >
-                      <span
-                        className={cn(
-                          "h-4 w-4 rounded border flex items-center justify-center",
-                          checked ? "border-primary text-primary" : "border-muted-foreground/40 text-transparent"
-                        )}
-                      >
-                        <Check className="h-3 w-3" />
-                      </span>
-                      <span className="truncate">{partner.name}</span>
-                    </button>
-                  );
-                })
-              )}
-            </div>
-          </div>
-        </PopoverContent>
-      </Popover>
-
-
         {/* Import filter badge (if active) */}
         {filters.importId && (
           <Badge variant="secondary" className="gap-1 h-8">
@@ -658,7 +139,88 @@ function TransactionToolbarInner({
             </span>
           </Badge>
         )}
-      </div>
+          </div>
+        }
+        items={[
+          {
+            key: "date",
+            active: Boolean(hasDateFilter),
+            node: (
+              <>
+      <DateRangeFilter
+        from={filters.dateFrom}
+        to={filters.dateTo}
+        onChange={(dateFrom, dateTo) => onFiltersChange({ ...filters, dateFrom, dateTo })}
+      />
+              </>
+            ),
+          },
+          {
+            key: "type",
+            active: Boolean(hasAmountFilter),
+            node: (
+              <>
+      <ChoiceFilter
+        label={tFilters("type.label")}
+        icon={<ArrowUpDown className="h-4 w-4" />}
+        allLabel={tFilters("all")}
+        value={filters.amountType && filters.amountType !== "all" ? filters.amountType : undefined}
+        onChange={(amountType) => onFiltersChange({ ...filters, amountType })}
+        options={[
+          { value: "income", label: tFilters("type.income") },
+          { value: "expense", label: tFilters("type.expense") },
+        ]}
+      />
+              </>
+            ),
+          },
+          {
+            key: "partner",
+            active: Boolean(filters.partnerIds?.length) || filters.hasPartner !== undefined,
+            node: (
+              <>
+      <PartnerFilter
+        userPartners={userPartners}
+        partnerIds={filters.partnerIds}
+        hasPartner={filters.hasPartner}
+        onChange={(next) => onFiltersChange({ ...filters, ...next })}
+      />
+              </>
+            ),
+          },
+          {
+            key: "files",
+            active: filters.isComplete !== undefined,
+            node: (
+              <>
+      {/* Files: the File column, assigned = a File or a no-receipt category (#519) */}
+      <ChoiceFilter
+        label={tFilters("files.label")}
+        icon={<CircleCheck className="h-4 w-4" />}
+        allLabel={tFilters("all")}
+        value={
+          filters.isComplete === true
+            ? "assigned"
+            : filters.isComplete === false
+              ? "unassigned"
+              : undefined
+        }
+        onChange={(value) =>
+          onFiltersChange({
+            ...filters,
+            isComplete: value === undefined ? undefined : value === "assigned",
+          })
+        }
+        options={[
+          { value: "assigned", label: tFilters("assigned") },
+          { value: "unassigned", label: tFilters("unassigned") },
+        ]}
+      />
+              </>
+            ),
+          },
+        ]}
+      />
 
       {/* Counter and sum - always stacked vertically */}
       {showCounter && (

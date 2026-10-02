@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { getFirestore, __resetFirestoreShim } from "./firestore-shim";
+import { getFirestore, __resetFirestoreShim, __whenShimIdle } from "./firestore-shim";
 import { __resetTriggerShim } from "./trigger-shim";
 import { createHost } from "./host";
 import { getOpenSeatsCallable } from "../auth/getOpenSeats";
@@ -36,7 +36,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await new Promise((r) => setTimeout(r, 20));
+  await __whenShimIdle(); // the previous test's fire-and-forget writes, finished
   await __resetFirestoreShim();
   __resetTriggerShim();
 });

@@ -53,6 +53,8 @@ export const TOP_LEVEL_POLICIES: Readonly<Record<string, CollectionPolicy>> = {
   functionCalls: ownerReadOnly,
   gmailSyncQueue: ownerReadOnly,
   gmailSyncHistory: ownerReadOnly,
+  // Folder Integrations (ADR-0009): the screen reads them, only callables write.
+  folderIntegrations: ownerReadOnly,
   inboundEmailLogs: ownerReadOnly,
   userExports: ownerReadOnly,
   userImports: ownerReadOnly,
@@ -76,6 +78,8 @@ export const TOP_LEVEL_POLICIES: Readonly<Record<string, CollectionPolicy>> = {
   oauthClients: denied,
   oauthCodes: denied,
   oauthRateLimits: denied,
+  folderTokens: denied,
+  folderEntries: denied,
   invoiceShares: denied,
   // ECB reference rates (#92): server-side only, and not user data at all.
   fxReferenceRates: denied,

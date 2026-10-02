@@ -12,12 +12,9 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import express from "express";
-import http from "node:http";
-import type { AddressInfo } from "node:net";
-import { getFirestore, Timestamp, __resetFirestoreShim } from "./firestore-shim";
+import { getFirestore, Timestamp, __resetFirestoreShim, __whenShimIdle } from "./firestore-shim";
 import { drainTriggers, __resetTriggerShim, onDocumentCreated } from "./trigger-shim";
-import { createDataPlane } from "./data-plane";
+import { startTestDataPlane, type TestServer } from "./test-helpers";
 
 const db = getFirestore();
 const USER = "stefan-test";
@@ -25,32 +22,22 @@ const OTHER = "someone-else";
 const GOOD_TOKEN = "tok-stefan";
 const ADMIN_TOKEN = "tok-admin";
 
-let server: http.Server;
+let server: TestServer;
 let base: string;
 
 beforeAll(async () => {
-  const app = express();
-  app.use(
-    "/__data",
-    createDataPlane(async (token) => {
+  server = await startTestDataPlane(async (token) => {
       if (token === GOOD_TOKEN) return { uid: USER, token: {} };
       if (token === ADMIN_TOKEN) return { uid: "admin-user", token: { admin: true } };
       return null;
-    }),
-  );
-  server = http.createServer(app);
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    });
+  base = server.base;
 });
 
-afterAll(async () => {
-  await new Promise<void>((resolve, reject) =>
-    server.close((err) => (err ? reject(err) : resolve())),
-  );
-});
+afterAll(() => server.close());
 
 beforeEach(async () => {
-  await new Promise((r) => setTimeout(r, 20));
+  await __whenShimIdle(); // the previous test's fire-and-forget writes, finished
   await __resetFirestoreShim();
   __resetTriggerShim();
 });

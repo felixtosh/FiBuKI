@@ -19,7 +19,7 @@
 
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import * as unzipper from "unzipper";
-import { getFirestore, Timestamp, __resetFirestoreShim } from "./firestore-shim";
+import { getFirestore, Timestamp, __resetFirestoreShim, __whenShimIdle } from "./firestore-shim";
 import { drainTriggers, __resetTriggerShim, __registeredTriggers } from "./trigger-shim";
 import { getStorage, _resetStorageForTests } from "./storage-shim";
 import { waitFor } from "./test-helpers";
@@ -70,7 +70,7 @@ beforeAll(() => {
 beforeEach(async () => {
   // Let fire-and-forget writes from the previous test (usage logs) land
   // BEFORE the reset, so they can't bleed into this test.
-  await new Promise((r) => setTimeout(r, 20));
+  await __whenShimIdle(); // the previous test's fire-and-forget writes, finished
   await __resetFirestoreShim();
   __resetTriggerShim();
   process.env.FIBUKI_STORAGE = "memory";

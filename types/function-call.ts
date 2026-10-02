@@ -74,6 +74,12 @@ export type CloudFunctionName =
   | "searchExternalPartners"
   | "matchCategories"
   | "searchGmailCallable"
+  // Folder Integrations (ADR-0009)
+  | "listFolderChoices"
+  | "setFolderIntegrationFolder"
+  | "updateFolderIntegrationSettings"
+  | "syncFolderIntegration"
+  | "disconnectFolderIntegration"
   | "generateSearchQueriesCallable"
   | "scoreAttachmentMatchCallable"
   | "findTransactionMatchesForFile"
@@ -167,6 +173,9 @@ export type CloudFunctionName =
   | "updateEmailPreference"
   // UI language (#168)
   | "updateUserLocale"
+  | "getTelegramLinkStatus"
+  | "createTelegramLink"
+  | "unlinkTelegram"
   // Password reset
   | "sendPasswordReset"
   // Open seats & invite emails

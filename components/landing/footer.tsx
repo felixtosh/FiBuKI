@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { useTranslations } from "next-intl";
+import { TelegramLogo } from "@/components/ui/telegram-logo";
+import { TELEGRAM_ANNOUNCEMENTS_URL } from "@/lib/config/community";
 
 export function LandingFooter() {
   const t = useTranslations("landing.footer");
@@ -18,6 +20,15 @@ export function LandingFooter() {
             className="hover:text-foreground transition-colors"
           >
             {t("contribute")}
+          </a>
+          <a
+            href={TELEGRAM_ANNOUNCEMENTS_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 hover:text-foreground transition-colors"
+          >
+            <TelegramLogo className="h-4 w-4" />
+            {t("telegram")}
           </a>
           <Link
             href="/terms"

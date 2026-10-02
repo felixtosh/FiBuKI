@@ -13,6 +13,10 @@ import { asUser, enableInternalAuth } from "./routes";
 import { ATTACKER, VICTIM, A, V } from "./victim";
 
 const sent: Array<{ auth: string | null; body: string }> = [];
+const ROUNDS = 5;
+const IN_FLIGHT = ROUNDS * 2;
+/** Holds every request until all of them are in flight, then lets them land at once. */
+let parked: Array<() => void> = [];
 
 beforeAll(() => {
   enableInternalAuth();
@@ -20,8 +24,17 @@ beforeAll(() => {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (_url: string, init: RequestInit) => {
-      // Slow enough that both requests are in flight before either call lands.
-      await new Promise((r) => setTimeout(r, 20));
+      // No response until every request is in flight, so the token of each
+      // one is read while the others are mid-call: the interleaving the bug
+      // needed, guaranteed rather than hoped for with a delay.
+      await new Promise<void>((release) => {
+        parked.push(release);
+        if (parked.length === IN_FLIGHT) {
+          const all = parked;
+          parked = [];
+          all.forEach((r) => r());
+        }
+      });
       const headers = new Headers(init.headers);
       sent.push({ auth: headers.get("Authorization"), body: String(init.body) });
       return new Response(JSON.stringify({ result: { success: true } }), {
@@ -45,14 +58,13 @@ describe("callable-server under concurrency", () => {
         body: { sourceId },
         headers: { Authorization: `Bearer ${token}` },
       });
-    const rounds = 5;
     await Promise.all(
-      Array.from({ length: rounds }, () => [
+      Array.from({ length: ROUNDS }, () => [
         POST(req(ATTACKER, "token-attacker", A.source)),
         POST(req(VICTIM, "token-victim", V.source)),
       ]).flat(),
     );
-    expect(sent).toHaveLength(rounds * 2);
+    expect(sent).toHaveLength(IN_FLIGHT);
     for (const call of sent) {
       const expected = call.body.includes(A.source) ? "Bearer token-attacker" : "Bearer token-victim";
       expect(call.auth, call.body).toBe(expected);

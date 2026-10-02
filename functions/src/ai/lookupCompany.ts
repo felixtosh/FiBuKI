@@ -124,6 +124,7 @@ async function extractFromContent(
 ): Promise<CompanyInfo | null> {
   try {
     const result = await model.generateContent({
+      generationConfig: { responseMimeType: "application/json" },
       contents: [{
         role: "user",
         parts: [{

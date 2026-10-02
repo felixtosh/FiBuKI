@@ -13,18 +13,18 @@
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import express from "express";
-import http from "node:http";
-import type { AddressInfo } from "node:net";
 import {
   getFirestore as getServerDb,
   Timestamp as ServerTimestamp,
   __resetFirestoreShim,
+  __whenShimIdle,
 } from "./firestore-shim";
 import { drainTriggers, __resetTriggerShim, onDocumentCreated } from "./trigger-shim";
 import { createDataPlane } from "./data-plane";
 import {
   __configureFirestoreClient,
   __resetListens,
+  __whenListensIdle,
   collection,
   doc,
   query,
@@ -51,6 +51,7 @@ import {
   getFirestore,
 } from "../../../lib/selfhost/firestore-client";
 import { pokePollers, __resetPokeWindow, setStreamHealthy } from "../../../lib/selfhost/poll-bus";
+import { startTestServer, type TestServer } from "./test-helpers";
 
 const serverDb = getServerDb();
 const db = getFirestore(); // client-shim Firestore handle
@@ -58,37 +59,28 @@ const USER = "stefan-test";
 const OTHER = "someone-else";
 const GOOD_TOKEN = "tok-stefan";
 
-let server: http.Server;
+let server: TestServer;
 let baseUrl = "";
 /** Every /__data/query body the client sent, in order. */
 const queryLog: Array<Record<string, unknown>> = [];
 
 beforeAll(async () => {
-  const app = express();
-  app.use("/__data/query", express.json(), (req, _res, next) => {
-    queryLog.push(req.body);
-    next();
+  server = await startTestServer((app) => {
+    // Logs every query body the client sends, before the data plane answers it.
+    app.use("/__data/query", express.json(), (req, _res, next) => {
+      queryLog.push(req.body);
+      next();
+    });
+    app.use("/__data", createDataPlane(async (token) => (token === GOOD_TOKEN ? { uid: USER, token: {} } : null)));
   });
-  app.use(
-    "/__data",
-    createDataPlane(async (token) => {
-      if (token === GOOD_TOKEN) return { uid: USER, token: {} };
-      return null;
-    }),
-  );
-  server = http.createServer(app);
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  baseUrl = base;
-  __configureFirestoreClient({ apiUrl: base, getToken: () => GOOD_TOKEN });
+  baseUrl = server.base;
+  __configureFirestoreClient({ apiUrl: server.base, getToken: () => GOOD_TOKEN });
 });
 
-afterAll(async () => {
-  await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
-});
+afterAll(() => server.close());
 
 beforeEach(async () => {
-  await new Promise((r) => setTimeout(r, 20));
+  await __whenShimIdle(); // the previous test's fire-and-forget writes, finished
   await __resetFirestoreShim();
   __resetTriggerShim();
   __resetListens();
@@ -352,7 +344,10 @@ describe("onSnapshot (poll)", () => {
     unsub();
     const countAfterUnsub = seen.length;
     await seed("partners/p3", { userId: USER, name: "C" });
-    await new Promise((r) => setTimeout(r, 120));
+    // Pull the (now unsubscribed) listen forward and let it finish: anything
+    // it delivered would show up below.
+    pokePollers();
+    await __whenListensIdle();
     expect(seen.length).toBe(countAfterUnsub); // no more callbacks after unsubscribe
     delete process.env.NEXT_PUBLIC_FIBUKI_POLL_MS;
   });
@@ -545,7 +540,7 @@ describe("onSnapshot (shared listens)", () => {
 
     frame("f3"); // a receipt: not in this query, before or after
     await waitFor(() => deltaRequests().length === 1);
-    await new Promise((r) => setTimeout(r, 50));
+    await __whenListensIdle();
 
     expect(seen).toHaveLength(1);
     off();
@@ -582,7 +577,7 @@ describe("onSnapshot (shared listens)", () => {
     const before = queryLog.length;
 
     frame("f1");
-    await new Promise((r) => setTimeout(r, 80));
+    await __whenListensIdle();
 
     expect(queryLog.length).toBe(before);
     off();
@@ -598,13 +593,13 @@ describe("onSnapshot (shared listens)", () => {
     __resetPokeWindow();
     pokePollers();
     await waitFor(() => fullRequests().length === 2);
-    await new Promise((r) => setTimeout(r, 50));
+    await __whenListensIdle();
     expect(seen).toHaveLength(1);
     expect(typeof fullRequests()[1].ifHash).toBe("string");
 
     // A change the client is never told about: the frame is lost.
     await seed("files/f4", { userId: USER, kind: "invoice", uploadedAt: 4, name: "four" });
-    await new Promise((r) => setTimeout(r, 50));
+    await __whenListensIdle();
     expect(seen).toHaveLength(1);
 
     // Any full revalidation (timer, reconnect, tab shown, callable) repairs it.
@@ -645,7 +640,7 @@ describe("onSnapshot (shared listens)", () => {
 
     frame("foreign");
     await waitFor(() => deltaRequests().length === 1);
-    await new Promise((r) => setTimeout(r, 50));
+    await __whenListensIdle();
 
     expect(seen).toHaveLength(1);
     expect(seen[0]).not.toContain("foreign");

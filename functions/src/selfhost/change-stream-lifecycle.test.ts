@@ -15,21 +15,19 @@
 
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import express from "express";
-import http from "node:http";
-import type { AddressInfo } from "node:net";
 import { createChangeStream, changeStreamAuth } from "./change-stream";
 import { createDataPlane } from "./data-plane";
+import { startTestServer, type TestServer } from "./test-helpers";
 
 const GOOD = "tok-good";
 const verify = async (t: string) => (t === GOOD ? { uid: "u1", token: {} } : null);
 
 describe("change stream behind the data plane (production mount order)", () => {
-  let server: http.Server;
+  let server: TestServer;
   let base: string;
   let stream: ReturnType<typeof createChangeStream>;
 
   beforeAll(async () => {
-    const app = express();
     stream = createChangeStream({
       authOf: (req) => {
         const a = (req as express.Request & { fibukiAuth?: { uid: string } }).fibukiAuth;
@@ -37,17 +35,16 @@ describe("change stream behind the data plane (production mount order)", () => {
       },
       listen: undefined,
     });
-    app.use("/__data", createDataPlane(verify));
-    app.use("/__data", changeStreamAuth(verify), stream.router);
-
-    server = http.createServer(app);
-    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
-    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    server = await startTestServer((app) => {
+      app.use("/__data", createDataPlane(verify));
+      app.use("/__data", changeStreamAuth(verify), stream.router);
+    });
+    base = server.base;
   });
 
   afterAll(async () => {
     await stream.close();
-    await new Promise<void>((res, rej) => server.close((e) => (e ? rej(e) : res())));
+    await server.close();
   });
 
   it("opens for an authenticated client even with the data plane in front", async () => {

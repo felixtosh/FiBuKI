@@ -401,18 +401,16 @@ export default function TestingPage() {
           {showCloudFunctions && (
             <div className="space-y-4">
               <p className="text-sm text-muted-foreground">
-                Unit and integration tests for Cloud Functions. Run via CLI with Firebase Emulators.
+                Unit and integration tests for the backend (functions/). Run via CLI.
               </p>
               <div className="p-4 bg-muted rounded-lg font-mono text-sm space-y-2">
                 <div className="text-muted-foreground"># Run tests</div>
                 <div className="text-foreground">cd functions && npm test</div>
-                <div className="text-muted-foreground mt-3"># Watch mode</div>
-                <div className="text-foreground">npm run test:watch</div>
-                <div className="text-muted-foreground mt-3"># With emulators</div>
-                <div className="text-foreground">firebase emulators:start</div>
+                <div className="text-muted-foreground mt-3"># Self-host suite</div>
+                <div className="text-foreground">npm run test:selfhost</div>
               </div>
               <p className="text-xs text-muted-foreground">
-                Uses Vitest with mocked Firestore. For integration tests, start Firebase Emulators first.
+                Uses Vitest. On a small host, run one file at a time (see CLAUDE.md).
               </p>
             </div>
           )}

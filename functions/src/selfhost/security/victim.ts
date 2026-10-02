@@ -104,6 +104,11 @@ export async function seedAccounts(): Promise<void> {
   await db.doc(`noReceiptCategories/${V.category}`).set({ ...owned, name: CANARY, templateId: "bank-fees", isActive: true });
   await db.doc(`imports/${V.import}`).set({ ...owned, fileName: CANARY, sourceId: V.source });
   await db.doc(`emailIntegrations/${V.integration}`).set({ ...owned, email: `${CANARY}@mail.test`, isActive: true, provider: "gmail" });
+  // Folder Integrations (ADR-0009) share the mail integration's id so the
+  // generic `integrationId` attack reaches them too.
+  await db.doc(`folderIntegrations/${V.integration}`).set({ ...owned, provider: "dropbox", accountEmail: `${CANARY}@dropbox.test`, folderPath: `/${CANARY}`, isActive: true, needsReauth: false, removeConnectedFiles: false });
+  await db.doc(`folderTokens/${V.integration}`).set({ ...owned, refreshToken: CANARY, refreshTokenIv: CANARY, cursor: CANARY });
+  await db.doc(`folderEntries/${V.integration}_e1`).set({ ...owned, integrationId: V.integration, externalId: "id:v1", pathLower: `/${CANARY}`, pathDisplay: `/${CANARY}`, rev: "r1", fileId: V.file, status: "imported" });
   await db.doc(`invoices/${V.invoice}`).set({ ...owned, number: CANARY, recipientName: CANARY, status: "draft" });
   await db.doc(`fileConnections/${V.connection}`).set({ ...owned, fileId: V.file, transactionId: V.transaction, note: CANARY });
   await db.doc(`apiKeys/${V.apiKey}`).set({ ...owned, name: CANARY, keyHash: CANARY });
@@ -122,6 +127,8 @@ export async function seedAccounts(): Promise<void> {
   await db.doc(`noReceiptCategories/${A.category}`).set({ ...mine, name: "Mine", templateId: "bank-fees", isActive: true });
   await db.doc(`imports/${A.import}`).set({ ...mine, fileName: "mine.csv", sourceId: A.source });
   await db.doc(`emailIntegrations/${A.integration}`).set({ ...mine, email: "attacker@mail.test", isActive: true, provider: "gmail" });
+  await db.doc(`folderIntegrations/${A.integration}`).set({ ...mine, provider: "dropbox", accountEmail: "attacker@dropbox.test", folderPath: null, isActive: true, needsReauth: false, removeConnectedFiles: false });
+  await db.doc(`folderTokens/${A.integration}`).set({ ...mine, refreshToken: "mine", refreshTokenIv: "mine", cursor: null });
   await db.doc(`invoices/${A.invoice}`).set({ ...mine, number: "A-1", recipientName: "Mine", status: "draft" });
   await db.doc(`fileConnections/${A.connection}`).set({ ...mine, fileId: A.file, transactionId: A.transaction });
   await db.doc(`apiKeys/${A.apiKey}`).set({ ...mine, name: "Mine", keyHash: "mine" });

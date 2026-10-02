@@ -84,6 +84,14 @@ export { onMailServiceConnected, onMailServiceReconnected } from "./gmail/onMail
 export { onTransactionsImported } from "./gmail/onTransactionsImported";
 export { onTransactionsImportedCompanyCheck } from "./matching/onTransactionsImportedCompanyCheck";
 export { searchGmailCallable } from "./gmail/searchGmailCallable";
+export {
+  listFolderChoicesCallable,
+  setFolderIntegrationFolderCallable,
+  updateFolderIntegrationSettingsCallable,
+  syncFolderIntegrationCallable,
+  disconnectFolderIntegrationCallable,
+  syncFolderIntegrations,
+} from "./folder-sync/folderIntegrationCallables";
 // One IMAP attachment / message body for the manual attach path (#245)
 export { getMailAttachmentCallable, getMailBodyCallable } from "./mail/mailMessageCallables";
 
@@ -344,6 +352,15 @@ export {
   activatePrioritySupportAddonCallable as activatePrioritySupportAddon,
   deactivatePrioritySupportAddonCallable as deactivatePrioritySupportAddon,
 } from "./billing/prioritySupportAddon";
+
+// Community chat (Telegram): membership gated on a paying, linked account
+export {
+  telegramWebhook,
+  communityMembershipSweep,
+  getTelegramLinkStatusCallable as getTelegramLinkStatus,
+  createTelegramLinkCallable as createTelegramLink,
+  unlinkTelegramCallable as unlinkTelegram,
+} from "./community/telegramCommunity";
 
 // Onboarding operations
 export {

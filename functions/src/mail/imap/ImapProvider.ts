@@ -51,10 +51,14 @@ export interface ImapConfig {
   password: string;
 }
 
+/**
+ * Whole calendar days, in UTC like imapDate below (stored dates are UTC
+ * midnight of the Vienna day). setDate() counted in the host's time zone, so
+ * on a non-UTC host a DST change moved the result an hour and the window lost
+ * its last day.
+ */
 function addDays(date: Date, days: number): Date {
-  const d = new Date(date);
-  d.setDate(d.getDate() + days);
-  return d;
+  return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
 }
 
 /**

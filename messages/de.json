@@ -21,7 +21,8 @@
       "contribute": "Mitwirken",
       "impressum": "Impressum",
       "privacy": "Datenschutz",
-      "terms": "AGB"
+      "terms": "AGB",
+      "telegram": "Komm zu uns auf Telegram"
     }
   },
   "terms": {
@@ -90,7 +91,7 @@
       },
       "dataCollection": {
         "title": "Erhobene Daten",
-        "content": "Wir erheben und verarbeiten folgende Kategorien personenbezogener Daten:\n\n• Kontodaten: Name, E-Mail-Adresse für die Authentifizierung\n• Finanzdaten: Banktransaktionen, Belege, Rechnungen die Sie hochladen oder verbinden\n• E-Mail-Daten: Gmail-Nachrichten und Anhänge (nur mit Ihrer ausdrücklichen Einwilligung)\n• Nutzungsdaten: Interaktionen mit der Anwendung für Verbesserungen"
+        "content": "Wir erheben und verarbeiten folgende Kategorien personenbezogener Daten:\n\n• Kontodaten: Name, E-Mail-Adresse für die Authentifizierung\n• Finanzdaten: Banktransaktionen, Belege, Rechnungen die Sie hochladen oder verbinden\n• E-Mail-Daten: Gmail-Nachrichten und Anhänge (nur mit Ihrer ausdrücklichen Einwilligung)\n• Cloud-Speicher-Daten: Dokumente und Dateinamen aus dem Dropbox- oder Google-Drive-Ordner, den Sie auswählen (nur mit Ihrer ausdrücklichen Einwilligung)\n• Nutzungsdaten: Interaktionen mit der Anwendung für Verbesserungen"
       },
       "legalBasis": {
         "title": "Rechtsgrundlagen der Verarbeitung",
@@ -126,18 +127,26 @@
         "langfuse": {
           "name": "LangFuse",
           "purpose": "Analyse und Optimierung der KI-Interaktionen zur Qualitätsverbesserung."
+        },
+        "googleDrive": {
+          "name": "Google Drive API (Google)",
+          "purpose": "Lesender Zugriff auf den einen Ordner, den Sie auswählen, um die darin enthaltenen Dokumente zu importieren. Nur aktiv, wenn Sie Ihr Google Drive über OAuth verbinden. Sie können den Zugriff jederzeit widerrufen."
+        },
+        "dropbox": {
+          "name": "Dropbox API",
+          "purpose": "Lesender Zugriff auf den einen Ordner, den Sie auswählen, um die darin enthaltenen Dokumente zu importieren. Nur aktiv, wenn Sie Ihre Dropbox verbinden. Sie können den Zugriff jederzeit widerrufen."
         }
       },
       "googleUserData": {
         "title": "Google-Nutzerdaten",
-        "content": "FiBuKI greift über die Gmail API auf Google-Nutzerdaten zu, um Ihnen beim Auffinden und Zuordnen von Belegen und Rechnungen zu Ihren Banktransaktionen zu helfen.",
+        "content": "FiBuKI greift über die Gmail API und die Google Drive API auf Google-Nutzerdaten zu, um Ihnen beim Auffinden und Zuordnen von Belegen und Rechnungen zu Ihren Banktransaktionen zu helfen.",
         "whatWeAccess": {
           "title": "Worauf wir zugreifen",
-          "content": "• Gmail-Nachrichten: Betreffzeilen, Absenderinformationen, Daten und Textinhalte von E-Mails, die Belege oder Rechnungen enthalten können\n• Gmail-Anhänge: PDF-, Bild- und Dokumentanhänge zur Belegextraktion\n• Google-Kontoprofil: Name und E-Mail-Adresse zur Authentifizierung"
+          "content": "• Gmail-Nachrichten: Betreffzeilen, Absenderinformationen, Daten und Textinhalte von E-Mails, die Belege oder Rechnungen enthalten können\n• Gmail-Anhänge: PDF-, Bild- und Dokumentanhänge zur Belegextraktion\n• Google-Drive-Dateien: Namen, Ordnerstruktur und Inhalte der PDF- und Bilddateien sowie der Google Docs, Tabellen und Präsentationen (als PDF exportiert) in dem einen Ordner, den Sie auswählen, und seinen Unterordnern. FiBuKI liest nur; es verändert, verschiebt oder löscht nichts in Ihrem Google Drive. Während Sie den Ordner auswählen, zeigt FiBuKI die Namen Ihrer Drive-Ordner an; sie werden nicht gespeichert, außer dem Ordner, den Sie auswählen\n• Google-Kontoprofil: Name und E-Mail-Adresse zur Authentifizierung"
         },
         "howWeUse": {
           "title": "Wie wir diese Daten verwenden",
-          "content": "• Belegsuche: Wir durchsuchen Ihre E-Mails nach Belegen und Rechnungen, die zu Ihren Banktransaktionen passen\n• Datenextraktion: Wir extrahieren Beträge, Daten und Händlerinformationen aus E-Mail-Inhalten und Anhängen\n• Zuordnung: Extrahierte Daten werden mit Ihren Banktransaktionen zur automatischen Zuordnung verglichen"
+          "content": "• Belegsuche: Wir durchsuchen Ihre E-Mails nach Belegen und Rechnungen, die zu Ihren Banktransaktionen passen\n• Datenextraktion: Wir extrahieren Beträge, Daten und Händlerinformationen aus E-Mail-Inhalten und Anhängen\n• Zuordnung: Extrahierte Daten werden mit Ihren Banktransaktionen zur automatischen Zuordnung verglichen\n• Ordner-Import: Wir kopieren die Dokumente aus Ihrem gewählten Google-Drive-Ordner in Ihre FiBuKI-Belege und prüfen den Ordner regelmäßig auf neue, geänderte oder entfernte Dokumente"
         },
         "limitedUse": {
           "title": "Eingeschränkte Nutzung (Limited Use Disclosure)",
@@ -145,12 +154,12 @@
         },
         "revocation": {
           "title": "Zugriff widerrufen",
-          "content": "Sie können den Zugriff von FiBuKI auf Ihre Google-Daten jederzeit widerrufen:\n\n• In FiBuKI: Gehen Sie zu Einstellungen > Integrationen und trennen Sie Ihr Gmail-Konto\n• Bei Google: Besuchen Sie Ihre Google-Kontoberechtigungen unter myaccount.google.com/permissions\n\nBei Widerruf des Zugriffs werden alle gespeicherten E-Mail-Daten und OAuth-Token innerhalb von 24 Stunden gelöscht."
+          "content": "Sie können den Zugriff von FiBuKI auf Ihre Google-Daten jederzeit widerrufen:\n\n• In FiBuKI: Gehen Sie zu Einstellungen > Integrationen und trennen Sie Ihr Gmail- oder Google-Drive-Konto\n• Bei Google: Besuchen Sie Ihre Google-Kontoberechtigungen unter myaccount.google.com/permissions\n\nBei Widerruf des Zugriffs werden alle gespeicherten E-Mail-Daten und OAuth-Token innerhalb von 24 Stunden gelöscht. Bereits aus Google Drive importierte Dokumente bleiben in Ihren FiBuKI-Belegen, bis Sie sie löschen."
         }
       },
       "internationalTransfers": {
         "title": "Internationale Datenübermittlung",
-        "content": "Ihre Daten werden primär innerhalb der Europäischen Union gespeichert (Google Cloud, Region europe-west1). Einige Verarbeitungen umfassen jedoch Übermittlungen in die Vereinigten Staaten:\n\n• Anthropic (Claude AI): Ihre Chat-Nachrichten und Buchhaltungsanfragen werden von Anthropic-Servern in den USA verarbeitet. Diese Übermittlung basiert auf Standardvertragsklauseln (SCCs) gemäß Art. 46 Abs. 2 lit. c DSGVO\n• Google Cloud AI (Vertex AI, Cloud Vision): Dokumentenanalysen können in Googles globaler Infrastruktur verarbeitet werden, abgedeckt durch Googles Datenverarbeitungszusatz und SCCs\n\nAlle internationalen Datenübermittlungen sind durch angemessene Garantien gemäß Kapitel V der DSGVO geschützt."
+        "content": "Ihre Daten werden primär innerhalb der Europäischen Union gespeichert (Google Cloud, Region europe-west1). Einige Verarbeitungen umfassen jedoch Übermittlungen in die Vereinigten Staaten:\n\n• Anthropic (Claude AI): Ihre Chat-Nachrichten und Buchhaltungsanfragen werden von Anthropic-Servern in den USA verarbeitet. Diese Übermittlung basiert auf Standardvertragsklauseln (SCCs) gemäß Art. 46 Abs. 2 lit. c DSGVO\n• Google Cloud AI (Vertex AI, Cloud Vision): Dokumentenanalysen können in Googles globaler Infrastruktur verarbeitet werden, abgedeckt durch Googles Datenverarbeitungszusatz und SCCs\n• Dropbox: Wenn Sie Dropbox verbinden, ruft FiBuKI auf Ihren Wunsch Dokumente aus Ihrem Dropbox-Konto ab. Dropbox verarbeitet Ihre Daten nach eigenen Bedingungen und möglicherweise in den USA\n\nAlle internationalen Datenübermittlungen sind durch angemessene Garantien gemäß Kapitel V der DSGVO geschützt."
       },
       "dataProtection": {
         "title": "Datenschutzmaßnahmen",
@@ -161,7 +170,11 @@
         },
         "retention": {
           "title": "Datenspeicherung & Löschung",
-          "content": "• Ihre Daten werden aufbewahrt, solange Ihr Konto aktiv ist\n• Sie können jederzeit einzelne Dateien, Transaktionen oder verbundene Konten löschen\n• Sie können Ihr Konto unter Einstellungen > Allgemeine Einstellungen > Konto löschen entfernen\n• Die Kontolöschung beinhaltet eine 30-tägige Frist, in der Sie die Anfrage stornieren können\n• Nach Ablauf der Frist werden alle zugehörigen Daten dauerhaft entfernt\n• OAuth-Token für verbundene Dienste (z.B. Gmail) werden widerrufen und können nicht wiederhergestellt werden\n• Datenbank-Backups werden verschlüsselt für bis zu 14 Tage zur Notfallwiederherstellung aufbewahrt und danach automatisch gelöscht"
+          "content": "• Ihre Daten werden aufbewahrt, solange Ihr Konto aktiv ist\n• Sie können jederzeit einzelne Dateien, Transaktionen oder verbundene Konten löschen\n• Sie können Ihr Konto unter Einstellungen > Allgemeine Einstellungen > Konto löschen entfernen\n• Die Kontolöschung beinhaltet eine 30-tägige Frist, in der Sie die Anfrage stornieren können\n• Nach Ablauf der Frist werden alle zugehörigen Daten dauerhaft entfernt\n• OAuth-Token für verbundene Dienste (z.B. Gmail, Google Drive, Dropbox) werden widerrufen und können nicht wiederhergestellt werden\n• Datenbank-Backups werden verschlüsselt für bis zu 14 Tage zur Notfallwiederherstellung aufbewahrt und danach automatisch gelöscht"
+        },
+        "cloudStorageData": {
+          "title": "Cloud-Speicher-Daten (Dropbox und Google Drive)",
+          "content": "Wenn Sie Dropbox oder Google Drive verbinden:\n\n• Sie wählen einen Ordner. FiBuKI liest nur diesen Ordner und seine Unterordner und importiert die darin enthaltenen PDF- und Bilddateien\n• Der Zugriff ist lesend: FiBuKI verändert, verschiebt oder löscht nichts in Ihrer Dropbox oder Ihrem Google Drive\n• Importierte Dokumente werden in Ihre FiBuKI-Belege kopiert und wie von Ihnen hochgeladene Dokumente verarbeitet (Texterkennung und KI-gestützte Extraktion von Beträgen, Daten und Händlern)\n• Das für die Verbindung gespeicherte Zugriffstoken ist verschlüsselt (AES-256-GCM) und wird nie an Ihren Browser gesendet\n• Löschen Sie ein Dokument in Ihrer Dropbox oder Ihrem Google Drive, löscht FiBuKI auch seine Kopie, sofern das Dokument nicht mit einer Transaktion verknüpft ist. In den Integrationseinstellungen können Sie festlegen, dass auch verknüpfte Dokumente gelöscht werden. Gelöschte Dokumente können in FiBuKI wiederhergestellt werden\n• Verschwinden auf einmal sehr viele Dokumente aus dem Ordner, pausiert FiBuKI und fragt Sie, bevor etwas gelöscht wird\n• Wenn Sie die Verbindung trennen, widerruft FiBuKI seinen Zugriff bei Dropbox bzw. Google und löscht das gespeicherte Zugriffstoken. Bereits importierte Dokumente bleiben in Ihren FiBuKI-Belegen, bis Sie sie löschen"
         }
       },
       "automatedProcessing": {
@@ -203,7 +216,8 @@
     "language": "Sprache",
     "german": "Deutsch",
     "english": "English",
-    "back": "Zurück"
+    "back": "Zurück",
+    "openChat": "Chat öffnen"
   },
   "billingCycle": {
     "title": "Abrechnungszyklus",
@@ -326,6 +340,30 @@
       "title": "Sprache",
       "description": "Die Sprache der FiBuKI-Oberfläche. Noch nicht übersetzte Seiten bleiben auf Englisch.",
       "saveFailed": "Die Sprache konnte nicht gespeichert werden."
+    },
+    "identity": {
+      "intro": "Wir brauchen all diese Angaben, um Ihre Rechnungen richtig zuzuordnen: So wissen wir, welcher Name, welche Firma oder welches Konto auf einer Rechnung Sie sind und welches zu einem Partner gehört.",
+      "groups": {
+        "tax": "Steuerdaten",
+        "names": "Namen"
+      }
+    },
+    "community": {
+      "title": "Support & Community",
+      "description": "Sprich auf Telegram mit dem FiBuKI-Team und anderen Nutzern.",
+      "cardTitle": "Telegram-Community",
+      "unavailable": "Der Community-Chat ist noch nicht geöffnet.",
+      "intro": "Verbinde dein Telegram-Konto, damit der FiBuKI-Bot prüfen kann, dass du Abonnent bist, und dich in den privaten Chat lässt.",
+      "connect": "Telegram verbinden",
+      "connecting": "Link wird vorbereitet...",
+      "connectedAs": "Verbunden als {name}",
+      "connectedAnonymous": "Dein Telegram-Konto ist verbunden.",
+      "disconnect": "Trennen",
+      "openBot": "Falls Telegram sich nicht geöffnet hat, nutze diesen Link:",
+      "announcements": "Ankündigungskanal öffnen (für alle offen)",
+      "failed": "Etwas ist schiefgelaufen. Bitte versuche es erneut.",
+      "githubText": "Bug gefunden oder mitentwickeln?",
+      "githubLink": "GitHub öffnen"
     }
   },
   "files": {
@@ -356,7 +394,13 @@
       "fileName": "Dateiname",
       "uploaded": "Hochgeladen",
       "size": "Größe",
-      "source": "Quelle"
+      "source": "Quelle",
+      "analyzing": "Wird analysiert...",
+      "notDetermined": "Nicht bestimmt",
+      "vatDeductible": "Vorsteuer abziehbar",
+      "whyVatDeductible": "Warum die Vorsteuer abziehbar ist oder nicht",
+      "vatDeductibleYes": "Ja",
+      "vatDeductibleNo": "Nein, beim Lieferanten eine Rechnung anfordern"
     },
     "source": {
       "gmail": "Gmail",
@@ -373,7 +417,15 @@
       "detailsInfoIntro": "So hat FiBuKI diesen Beleg in deinen Mails gefunden:",
       "detailsInfoSender": "Wer die Mail geschickt hat.",
       "detailsInfoSearch": "Die Suche, mit der FiBuKI dein Postfach nach einem Beleg für eine offene Transaktion durchsucht hat, z. B. der Name des Partners.",
-      "detailsInfoResult": "Welcher Teil der Mail dieser Beleg ist: ein Anhang, die Mail selbst als PDF gespeichert, oder eine Datei, die über einen Link in der Mail geladen wurde."
+      "detailsInfoResult": "Welcher Teil der Mail dieser Beleg ist: ein Anhang, die Mail selbst als PDF gespeichert, oder eine Datei, die über einen Link in der Mail geladen wurde.",
+      "browser": "Browser",
+      "dropbox": "Dropbox",
+      "gdrive": "Google Drive"
+    },
+    "new": {
+      "button": "Neu",
+      "upload": "Hochladen",
+      "invoice": "Rechnung"
     }
   },
   "progress": {
@@ -406,6 +458,11 @@
     "sidebar": {
       "title": "Erste Schritte",
       "subtitle": "Schließe diese Schritte ab, um dein Konto einzurichten"
+    },
+    "telegram": {
+      "title": "Sag Hallo auf Telegram",
+      "text": "Stell Fragen, gib Feedback und sprich direkt mit Felix und Stefan in der FiBuKI-Community.",
+      "cta": "Zum Chat"
     }
   },
   "oauth": {
@@ -485,5 +542,111 @@
       "connectingTitle": "Zugang angefragt.",
       "connectingBody": "FiBuKI ist vorerst nur mit Einladung nutzbar. Wir schreiben dir per E-Mail, sobald du freigeschaltet bist. Verbinde FiBuKI dann in deinem Assistenten erneut."
     }
+  },
+  "filters": {
+    "all": "Alle",
+    "assigned": "Zugeordnet",
+    "unassigned": "Nicht zugeordnet",
+    "type": {
+      "label": "Typ",
+      "income": "Einnahme",
+      "expense": "Ausgabe",
+      "notInvoice": "Keine Rechnung",
+      "deleted": "Gelöschte Belege"
+    },
+    "transactions": {
+      "label": "Transaktionen"
+    },
+    "files": {
+      "label": "Belege"
+    },
+    "partner": {
+      "label": "Partner",
+      "labelCount": "Partner ({count})",
+      "noPartner": "Kein Partner zugeordnet",
+      "noPartnerShort": "Kein Partner",
+      "search": "Partner suchen...",
+      "none": "Keine Partner gefunden",
+      "clear": "Partnerfilter entfernen"
+    },
+    "more": "Mehr",
+    "panelTitle": "Filter",
+    "clearAll": "Alle entfernen"
+  },
+  "partners": {
+    "bulk": {
+      "title": "{count, plural, one {# Partner ausgewählt} other {# Partner ausgewählt}}",
+      "withVatId": "Mit UID",
+      "withIban": "Mit IBAN",
+      "recurring": "Wiederkehrend",
+      "ofCount": "{part} von {count}",
+      "merge": "{count} Partner zusammenführen",
+      "delete": "{count} Partner löschen",
+      "deleteConfirm": "{count} Partner löschen? Ihre Belege und Transaktionen bleiben, nur die Partnerzuordnung fällt weg."
+    }
+  },
+  "chat": {
+    "toolCompleted": "{tool} erledigt",
+    "toolFailed": "{tool} fehlgeschlagen"
+  },
+  "folderIntegrations": {
+    "title": "{provider}",
+    "subtitle": "Belege aus einem {provider}-Ordner importieren",
+    "connect": "{provider} verbinden",
+    "addAccount": "Konto hinzufügen",
+    "emptyTitle": "Kein {provider}-Konto verbunden",
+    "emptyHint": "FiBuKI liest einen Ordner, den du auswählst, und importiert alle PDFs und Bilder darin, jetzt und sobald neue dazukommen. In deiner {provider} wird nie etwas verändert.",
+    "loading": "Lädt...",
+    "folder": "Ordner",
+    "noFolder": "Noch kein Ordner gewählt",
+    "chooseFolder": "Ordner wählen",
+    "changeFolder": "Ordner ändern",
+    "pickerTitle": "{provider}-Ordner wählen",
+    "pickerHint": "FiBuKI importiert alles in diesem Ordner, auch aus Unterordnern.",
+    "pickerHere": "Diesen Ordner verwenden",
+    "pickerUp": "Nach oben",
+    "pickerLoading": "Ordner werden geladen...",
+    "pickerEmpty": "Hier gibt es keine Unterordner",
+    "pickerFailed": "Die Ordner konnten nicht geladen werden. Bitte versuche es erneut.",
+    "imported": "{count, plural, one {# Beleg importiert} other {# Belege importiert}}",
+    "unsupported": "{count, plural, one {# andere Datei übersprungen} other {# andere Dateien übersprungen}}",
+    "lastSync": "Zuletzt synchronisiert {time}",
+    "neverSynced": "Noch nicht synchronisiert",
+    "syncNow": "Jetzt synchronisieren",
+    "syncing": "Synchronisiert...",
+    "syncDone": "{imported, plural, =0 {Nichts Neues} one {# neuer Beleg} other {# neue Belege}}",
+    "disconnect": "Trennen",
+    "disconnectTitle": "Dieses {provider}-Konto trennen?",
+    "disconnectBody": "FiBuKI hört auf zu synchronisieren und der Zugriff auf Ihr {provider}-Konto wird widerrufen. Bereits importierte Belege bleiben in FiBuKI.",
+    "cancel": "Abbrechen",
+    "reconnect": "Neu verbinden",
+    "needsReauthTitle": "Der {provider}-Zugriff muss erneuert werden",
+    "needsReauthBody": "{provider} akzeptiert den gespeicherten Zugriff nicht mehr. Verbinde neu, um weiter zu synchronisieren.",
+    "pausedRemovalsTitle": "Die Synchronisierung ist pausiert",
+    "pausedRemovalsBody": "{count, plural, one {# Beleg ist} other {# Belege sind}} auf einmal aus deinem {provider}-Ordner verschwunden. Das kann heißen, dass der Ordner versehentlich umbenannt oder geleert wurde. Deshalb wurde in FiBuKI noch nichts entfernt.",
+    "confirmRemovals": "In FiBuKI entfernen",
+    "folderMissingTitle": "Der gewählte Ordner existiert nicht mehr",
+    "folderMissingBody": "In FiBuKI wurde nichts entfernt. Wähle einen Ordner, um fortzufahren.",
+    "removeConnectedLabel": "Auch Belege löschen, die mit einer Transaktion verknüpft sind",
+    "removeConnectedHelp": "Wird ein Beleg in {provider} gelöscht, löscht FiBuKI ihn ebenfalls, wenn er mit keiner Transaktion verknüpft ist. Verknüpfte Belege bleiben und werden als nicht mehr in {provider} markiert.",
+    "removeConnectedWarn": "Ist das aktiv, werden auch verknüpfte Belege gelöscht. Du kannst sie unter den gelöschten Belegen wiederherstellen. Aufzeichnungen zu Einkäufen musst du 7 Jahre aufbewahren (BAO § 132).",
+    "lastError": "Letzter Fehler: {message}",
+    "connected": "{provider} verbunden. Wähle jetzt den Ordner, der importiert werden soll.",
+    "errors": {
+      "access_denied": "Der {provider}-Zugriff wurde nicht erteilt.",
+      "invalid_state": "Die Anmeldung ist abgelaufen. Bitte versuche es erneut.",
+      "missing_scope": "FiBuKI braucht die Erlaubnis, deine Dateien zu lesen. Bitte versuche es erneut und erlaube es.",
+      "oauth_not_configured": "{provider} ist auf diesem Server nicht eingerichtet.",
+      "encryption_not_configured": "Dieser Server kann Zugangsdaten noch nicht sicher speichern.",
+      "token_exchange_failed": "{provider} hat die Anmeldung nicht akzeptiert. Bitte versuche es erneut.",
+      "default": "{provider} konnte nicht verbunden werden. Bitte versuche es erneut."
+    },
+    "wholeStore": "Alles in {provider}",
+    "providerNames": {
+      "dropbox": "Dropbox",
+      "gdrive": "Google Drive"
+    },
+    "disconnectRevoked": "{provider} getrennt. Der Zugriff von FiBuKI auf Ihr Konto wurde widerrufen.",
+    "disconnectNotRevoked": "{provider} wurde in FiBuKI getrennt, aber der Zugriff bei {provider} konnte nicht widerrufen werden. Sie können FiBuKI in den Einstellungen Ihres {provider}-Kontos unter den verbundenen Apps entfernen."
   }
 }

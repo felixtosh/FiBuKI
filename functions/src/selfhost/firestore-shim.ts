@@ -14,7 +14,7 @@
  */
 
 import { FieldValue, Timestamp, VectorValue } from "@google-cloud/firestore";
-import { emitChange } from "./bus";
+import { emitChange, type DocChange } from "./bus";
 import { enqueueTriggerEvent, usesDurableTriggerQueue } from "./trigger-queue";
 import { audienceWire, notifyChange } from "./change-notify";
 import { readAudience } from "./data-policy";
@@ -225,9 +225,38 @@ export function getSqlClient(): Promise<SqlClient> {
 }
 
 /** Every document read/write runs tenant-scoped: one transaction, SET LOCAL app.tenant_id. */
+/** Document IO started and not yet finished, so tests can wait for "quiet" instead of sleeping. */
+let inFlight = 0;
+let idleWaiters: Array<() => void> = [];
+
 async function withTenant<T>(fn: (q: QueryFn) => Promise<T>): Promise<T> {
-  const pg = await getPg();
-  return pg.tx(getTenantId(), fn);
+  inFlight++;
+  try {
+    const pg = await getPg();
+    return await pg.tx(getTenantId(), fn);
+  } finally {
+    inFlight--;
+    if (inFlight === 0) {
+      const waiters = idleWaiters;
+      idleWaiters = [];
+      for (const w of waiters) w();
+    }
+  }
+}
+
+/**
+ * Test helper: resolve once no document IO is in flight and none started in
+ * the following macrotask either. For a test's setup to wait out the
+ * fire-and-forget writes (usage logs, billing increments) the previous test
+ * set off, deterministically, instead of sleeping a fixed number of
+ * milliseconds and hoping that was long enough.
+ */
+export async function __whenShimIdle(): Promise<void> {
+  for (;;) {
+    if (inFlight > 0) await new Promise<void>((r) => idleWaiters.push(r));
+    await new Promise<void>((r) => setImmediate(r));
+    if (inFlight === 0) return;
+  }
 }
 
 /** Flattened-table spec for a TOP-LEVEL collection path, if that collection has one. */
@@ -693,10 +722,25 @@ function applySentinelsInPlace(value: unknown): unknown {
 // Low-level doc IO (all writes emit bus changes)
 // ---------------------------------------------------------------------------
 
-async function rawGet(path: string): Promise<Record<string, unknown> | undefined> {
+/**
+ * Serialise every writer of these documents for the rest of the enclosing
+ * Postgres transaction. A transaction-scoped advisory lock per document path
+ * (it also covers documents that do not exist yet, which a row lock cannot):
+ * plain writes take it for their single statement, a Firestore transaction
+ * takes it for all its documents at commit. Sorted, so two commits over the
+ * same documents always lock in the same order and cannot deadlock.
+ */
+async function lockPaths(q: QueryFn, paths: Iterable<string>): Promise<void> {
+  const tenant = getTenantId();
+  for (const path of [...new Set(paths)].sort()) {
+    await q(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [`${tenant}|${path}`]);
+  }
+}
+
+async function rawGet(path: string, inTx?: QueryFn): Promise<Record<string, unknown> | undefined> {
   const segs = path.split("/");
   const spec = segs.length === 2 ? flatSpecFor(segs[0]) : undefined;
-  const res = await withTenant((q) =>
+  const read = (q: QueryFn) =>
     spec
       ? q<{ data: unknown }>(`SELECT data FROM ${spec.table} WHERE tenant_id = $1 AND id = $2`, [
           getTenantId(),
@@ -705,8 +749,8 @@ async function rawGet(path: string): Promise<Record<string, unknown> | undefined
       : q<{ data: unknown }>(`SELECT data FROM docs WHERE tenant_id = $1 AND path = $2`, [
           getTenantId(),
           path,
-        ]),
-  );
+        ]);
+  const res = inTx ? await read(inTx) : await withTenant(read);
   if (res.rows.length === 0) return undefined;
   return decodeValue(res.rows[0].data) as Record<string, unknown>;
 }
@@ -722,11 +766,14 @@ async function rawPut(
    * create() Firestore guarantees. "upsert" is every other write.
    */
   mode: "upsert" | "insert" = "upsert",
+  /** Run inside this open transaction (a Firestore transaction's commit) instead of a new one. */
+  inTx?: QueryFn,
 ): Promise<boolean> {
   const spec = flatSpecFor(collectionPath);
   const path = `${collectionPath}/${id}`;
   const json = JSON.stringify(encodeValue(data));
-  return withTenant(async (q) => {
+  const write = async (q: QueryFn): Promise<boolean> => {
+    await lockPaths(q, [path]);
     const onConflict = mode === "insert" ? "DO NOTHING" : "DO UPDATE SET data = EXCLUDED.data";
     const res = spec
       ? await q(
@@ -766,16 +813,19 @@ async function rawPut(
       });
     }
     return true;
-  });
+  };
+  return inTx ? write(inTx) : withTenant(write);
 }
 
 async function rawDelete(
   path: string,
   before: Record<string, unknown> | undefined,
+  inTx?: QueryFn,
 ): Promise<void> {
   const segs = path.split("/");
   const spec = segs.length === 2 ? flatSpecFor(segs[0]) : undefined;
-  await withTenant(async (q) => {
+  const remove = async (q: QueryFn): Promise<void> => {
+    await lockPaths(q, [path]);
     if (spec) {
       await q(`DELETE FROM ${spec.table} WHERE tenant_id = $1 AND id = $2`, [getTenantId(), segs[1]]);
     } else {
@@ -800,7 +850,8 @@ async function rawDelete(
         after: undefined,
       });
     }
-  });
+  };
+  await (inTx ? remove(inTx) : withTenant(remove));
 }
 
 async function writeDoc(
@@ -824,6 +875,95 @@ async function writeDoc(
   if (!usesDurableTriggerQueue()) {
     emitChange({ collectionPath, id, path, before, after: next });
   }
+}
+
+
+// ---------------------------------------------------------------------------
+// One write, as data: what DocRef, WriteBatch and a transaction all apply
+// ---------------------------------------------------------------------------
+
+type WriteOp =
+  | { kind: "set"; ref: DocRef; data: Record<string, unknown>; merge: boolean }
+  | { kind: "update"; ref: DocRef; data: Record<string, unknown> }
+  | { kind: "create"; ref: DocRef; data: Record<string, unknown> }
+  | { kind: "delete"; ref: DocRef };
+
+/** Refuse a malformed write when it is made, as firebase-admin does, not at commit. */
+function validateWrite(op: WriteOp): void {
+  if (op.kind === "delete") return;
+  if (op.kind === "update") {
+    for (const [key, value] of Object.entries(op.data)) {
+      // update() keys are dot-paths — every segment must be a valid name,
+      // like firebase-admin's FieldPath validation.
+      for (const seg of key.split(".")) assertValidFieldName(seg, key);
+      assertNoUndefined(value, key);
+    }
+    return;
+  }
+  assertNoUndefined(op.data, "");
+}
+
+function alreadyExists(path: string): Error {
+  return Object.assign(new Error(`selfhost firestore shim: create() on existing doc ${path}`), { code: 6 });
+}
+
+/**
+ * The document after `op`, given what is stored (undefined: nothing, or a
+ * delete). The one place a write's result is computed, so a plain write, a
+ * batch and a transaction cannot disagree on it.
+ */
+function nextState(op: WriteOp, existing: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  switch (op.kind) {
+    case "delete":
+      return undefined;
+    case "create":
+      if (existing !== undefined) throw alreadyExists(op.ref.path);
+      return applySentinelsInPlace(op.data) as Record<string, unknown>;
+    case "update":
+      if (existing === undefined) {
+        throw new Error(`selfhost firestore shim: update() on missing doc ${op.ref.path}`);
+      }
+      return applyUpdate(existing, op.data);
+    case "set": {
+      if (!op.merge) return applySentinelsInPlace(op.data) as Record<string, unknown>;
+      // Top-level transforms resolve against the stored document, as in
+      // Firestore: set({ n: increment(1) }, { merge: true }) adds one. Nested
+      // values keep the existing (shallow) merge.
+      const top: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(op.data)) {
+        top[key] = sentinelKind(value) ? value : applySentinelsInPlace(value);
+      }
+      return applyUpdate(existing || {}, flattenForMerge(top));
+    }
+  }
+}
+
+/**
+ * Apply writes inside one open Postgres transaction, in order, each against
+ * the state the previous one left (the connection sees its own uncommitted
+ * writes). Returns the changes for the in-process trigger bus, which the
+ * caller emits only after COMMIT, so a rolled-back write triggers nothing.
+ */
+async function applyWritesInTx(q: QueryFn, ops: WriteOp[]): Promise<DocChange[]> {
+  const changes: DocChange[] = [];
+  for (const op of ops) {
+    const { collectionPath, id, path } = op.ref;
+    const before = await rawGet(path, q);
+    const after = nextState(op, before);
+    if (after === undefined) {
+      if (before === undefined) continue; // deleting nothing, as Firestore allows
+      await rawDelete(path, before, q);
+    } else {
+      await rawPut(collectionPath, id, after, before, "upsert", q);
+    }
+    changes.push({ collectionPath, id, path, before, after });
+  }
+  return changes;
+}
+
+function emitCommitted(changes: DocChange[]): void {
+  if (usesDurableTriggerQueue()) return; // already enqueued inside the transaction
+  for (const change of changes) emitChange(change);
 }
 
 // ---------------------------------------------------------------------------
@@ -1090,7 +1230,8 @@ export class Query {
     return this; // projection ignored — full docs returned
   }
 
-  async get(): Promise<QuerySnapshot> {
+  /** `inTx`: run inside this open transaction (a Firestore transaction's commit). */
+  async get(inTx?: QueryFn): Promise<QuerySnapshot> {
     // Flattened collections compile filters/order/cursor/limit to SQL against
     // their real table (db/pushdown.ts); everything else fetches its docs
     // rows. Either way the FULL JS pipeline below re-runs on the fetched
@@ -1103,7 +1244,7 @@ export class Query {
     assertNotDescendingKeyScan(this.filters, this.orders);
     const tenantId = getTenantId();
     const spec = this.isGroup ? undefined : flatSpecFor(this.collectionPath);
-    const fetched = await withTenant(async (q) => {
+    const fetchRows = async (q: QueryFn) => {
       if (this.isGroup) {
         const res = await q<{ id: string; collection_path: string; data: unknown }>(
           // Escape LIKE wildcards in the collection ID — the segment match
@@ -1170,7 +1311,8 @@ export class Query {
             [tenantId, this.collectionPath],
           );
       return res.rows.map((r) => ({ id: r.id, collectionPath: r.collection_path, data: r.data }));
-    });
+    };
+    const fetched = inTx ? await fetchRows(inTx) : await withTenant(fetchRows);
     let rows = fetched.map((r) => ({
       id: r.id,
       collectionPath: r.collectionPath,
@@ -1284,39 +1426,18 @@ export class DocRef {
     data: Record<string, unknown>,
     opts?: { merge?: boolean },
   ): Promise<{ writeTime: Timestamp }> {
-    assertNoUndefined(data, "");
-    let next: Record<string, unknown>;
-    if (opts?.merge) {
-      // Top-level transforms resolve against the stored document, as in
-      // Firestore: set({ n: increment(1) }, { merge: true }) adds one. They
-      // used to be resolved here first, against nothing, so every such counter
-      // was written back as 1. Nested values keep the existing (shallow) merge.
-      const existing = (await rawGet(this.path)) || {};
-      const top: Record<string, unknown> = {};
-      for (const [key, value] of Object.entries(data)) {
-        top[key] = sentinelKind(value) ? value : applySentinelsInPlace(value);
-      }
-      next = applyUpdate(existing, flattenForMerge(top));
-    } else {
-      next = applySentinelsInPlace(data) as Record<string, unknown>;
-    }
-    await writeDoc(this.collectionPath, this.id, next);
+    const op: WriteOp = { kind: "set", ref: this, data, merge: opts?.merge === true };
+    validateWrite(op);
+    const existing = op.merge ? await rawGet(this.path) : undefined;
+    await writeDoc(this.collectionPath, this.id, nextState(op, existing));
     return { writeTime: Timestamp.now() };
   }
 
   async update(data: Record<string, unknown>): Promise<{ writeTime: Timestamp }> {
-    for (const [key, value] of Object.entries(data)) {
-      // update() keys are dot-paths — every segment must be a valid name,
-      // like firebase-admin's FieldPath validation.
-      for (const seg of key.split(".")) assertValidFieldName(seg, key);
-      assertNoUndefined(value, key);
-    }
+    const op: WriteOp = { kind: "update", ref: this, data };
+    validateWrite(op);
     const existing = await rawGet(this.path);
-    if (existing === undefined) {
-      throw new Error(`selfhost firestore shim: update() on missing doc ${this.path}`);
-    }
-    const next = applyUpdate(existing, data);
-    await writeDoc(this.collectionPath, this.id, next);
+    await writeDoc(this.collectionPath, this.id, nextState(op, existing));
     return { writeTime: Timestamp.now() };
   }
 
@@ -1324,14 +1445,11 @@ export class DocRef {
     // Atomic, as Firestore's create() is: the INSERT decides, so of two
     // concurrent creates exactly one wins. It used to read, then write, so
     // both could. code 6 is ALREADY_EXISTS, what firebase-admin throws.
-    assertNoUndefined(data, "");
-    const next = applySentinelsInPlace(data) as Record<string, unknown>;
+    const op: WriteOp = { kind: "create", ref: this, data };
+    validateWrite(op);
+    const next = nextState(op, undefined)!;
     const created = await rawPut(this.collectionPath, this.id, next, undefined, "insert");
-    if (!created) {
-      throw Object.assign(new Error(`selfhost firestore shim: create() on existing doc ${this.path}`), {
-        code: 6,
-      });
-    }
+    if (!created) throw alreadyExists(this.path);
     if (!usesDurableTriggerQueue()) {
       emitChange({ collectionPath: this.collectionPath, id: this.id, path: this.path, before: undefined, after: next });
     }
@@ -1380,71 +1498,142 @@ export class CollectionRef extends Query {
 }
 
 // ---------------------------------------------------------------------------
-// Batch / transaction (spike: sequential application, single-writer model)
+// Batch / transaction: one Postgres transaction each, all or nothing
 // ---------------------------------------------------------------------------
 
 class WriteBatch {
-  private ops: Array<() => Promise<void>> = [];
+  private ops: WriteOp[] = [];
 
   set(ref: DocRef, data: Record<string, unknown>, opts?: { merge?: boolean }): WriteBatch {
-    this.ops.push(async () => {
-      await ref.set(data, opts);
-    });
-    return this;
+    return this.add({ kind: "set", ref, data, merge: opts?.merge === true });
   }
 
   update(ref: DocRef, data: Record<string, unknown>): WriteBatch {
-    this.ops.push(async () => {
-      await ref.update(data);
-    });
-    return this;
+    return this.add({ kind: "update", ref, data });
+  }
+
+  create(ref: DocRef, data: Record<string, unknown>): WriteBatch {
+    return this.add({ kind: "create", ref, data });
   }
 
   delete(ref: DocRef): WriteBatch {
-    this.ops.push(async () => {
-      await ref.delete();
-    });
+    return this.add({ kind: "delete", ref });
+  }
+
+  private add(op: WriteOp): WriteBatch {
+    validateWrite(op);
+    this.ops.push(op);
     return this;
   }
 
+  /**
+   * Every write lands, or none does. Applied one by one before, so an update
+   * on a missing document halfway through left the earlier writes in place.
+   */
   async commit(): Promise<void> {
-    for (const op of this.ops) await op();
+    const ops = this.ops;
     this.ops = [];
+    if (ops.length === 0) return;
+    const changes = await withTenant(async (q) => {
+      await lockPaths(q, ops.map((op) => op.ref.path));
+      return applyWritesInTx(q, ops);
+    });
+    emitCommitted(changes);
   }
 }
+
+/** A read the transaction made, to verify at commit that nothing moved. */
+function fingerprint(data: Record<string, unknown> | undefined): string {
+  return data === undefined ? "<missing>" : JSON.stringify(encodeValue(data));
+}
+
+function queryFingerprint(snap: QuerySnapshot): string {
+  return JSON.stringify(snap.docs.map((d) => [d.ref.path, fingerprint(d.data())]));
+}
+
+/** A read changed between the transaction reading it and committing: run it again. */
+class TransactionConflict extends Error {}
 
 class TransactionShim {
   // Writes queue up and apply at commit time (after the callback resolves),
-  // matching real Firestore transaction semantics — reads never see the
+  // matching real Firestore transaction semantics: reads never see the
   // transaction's own writes, and nothing lands if the callback throws.
-  private ops: Array<() => Promise<void>> = [];
+  readonly reads = new Map<string, string>();
+  readonly queries: Array<{ query: Query; seen: string; paths: string[] }> = [];
+  readonly ops: WriteOp[] = [];
 
   async get(refOrQuery: DocRef | Query): Promise<DocSnapshot | QuerySnapshot> {
-    return refOrQuery.get() as Promise<DocSnapshot | QuerySnapshot>;
+    if (this.ops.length > 0) {
+      // firebase-admin refuses this too: a read after a write would not see it.
+      throw new Error("Firestore transactions require all reads to be executed before all writes.");
+    }
+    if (refOrQuery instanceof DocRef) {
+      const data = await rawGet(refOrQuery.path);
+      this.reads.set(refOrQuery.path, fingerprint(data));
+      return new DocSnapshot(refOrQuery.id, data, refOrQuery);
+    }
+    const snap = await refOrQuery.get();
+    this.queries.push({ query: refOrQuery, seen: queryFingerprint(snap), paths: snap.docs.map((d) => d.ref.path) });
+    return snap;
   }
+
+  async getAll(...refs: DocRef[]): Promise<DocSnapshot[]> {
+    const out: DocSnapshot[] = [];
+    for (const ref of refs) out.push((await this.get(ref)) as DocSnapshot);
+    return out;
+  }
+
   set(ref: DocRef, data: Record<string, unknown>, opts?: { merge?: boolean }): TransactionShim {
-    this.ops.push(async () => {
-      await ref.set(data, opts);
-    });
-    return this;
+    return this.add({ kind: "set", ref, data, merge: opts?.merge === true });
   }
   update(ref: DocRef, data: Record<string, unknown>): TransactionShim {
-    this.ops.push(async () => {
-      await ref.update(data);
-    });
-    return this;
+    return this.add({ kind: "update", ref, data });
+  }
+  create(ref: DocRef, data: Record<string, unknown>): TransactionShim {
+    return this.add({ kind: "create", ref, data });
   }
   delete(ref: DocRef): TransactionShim {
-    this.ops.push(async () => {
-      await ref.delete();
-    });
+    return this.add({ kind: "delete", ref });
+  }
+
+  private add(op: WriteOp): TransactionShim {
+    validateWrite(op);
+    this.ops.push(op);
     return this;
   }
-  async __commit(): Promise<void> {
-    for (const op of this.ops) await op();
-    this.ops = [];
+
+  /**
+   * Commit, or throw TransactionConflict. Optimistic, like Firestore: the
+   * callback ran without holding anything; here every document it read or
+   * writes is locked (lockPaths, in a fixed order), every read and query is
+   * checked against what the callback saw, and only then are the writes
+   * applied, all in one Postgres transaction.
+   */
+  async commit(): Promise<DocChange[]> {
+    return withTenant(async (q) => {
+      await lockPaths(q, [
+        ...this.reads.keys(),
+        ...this.queries.flatMap((r) => r.paths),
+        ...this.ops.map((op) => op.ref.path),
+      ]);
+      for (const [path, seen] of this.reads) {
+        if (fingerprint(await rawGet(path, q)) !== seen) throw new TransactionConflict(path);
+      }
+      for (const read of this.queries) {
+        if (queryFingerprint(await read.query.get(q)) !== read.seen) throw new TransactionConflict("query");
+      }
+      return applyWritesInTx(q, this.ops);
+    });
   }
 }
+
+/** Postgres asked for the transaction to be retried (deadlock, serialization failure). */
+function isRetryablePgError(err: unknown): boolean {
+  const code = (err as { code?: unknown })?.code;
+  return code === "40P01" || code === "40001";
+}
+
+const TRANSACTION_MAX_ATTEMPTS = 10;
 
 // ---------------------------------------------------------------------------
 // Firestore facade
@@ -1475,12 +1664,36 @@ class FirestoreShim {
     return new WriteBatch();
   }
 
-  async runTransaction<T>(fn: (tx: TransactionShim) => Promise<T>): Promise<T> {
-    // Spike: no isolation — single-user, single-writer. Production wraps in PG tx.
-    const tx = new TransactionShim();
-    const result = await fn(tx);
-    await tx.__commit();
-    return result;
+  /**
+   * A real transaction: isolated and atomic. The callback may run more than
+   * once (Firestore's contract too), so it must not have side effects outside
+   * the transaction. It used to read and write with no isolation at all, so
+   * two concurrent callers could both read a counter and write the same next
+   * value, and a failure halfway through left half the writes in place.
+   */
+  async runTransaction<T>(
+    fn: (tx: TransactionShim) => Promise<T>,
+    opts?: { maxAttempts?: number },
+  ): Promise<T> {
+    const maxAttempts = opts?.maxAttempts ?? TRANSACTION_MAX_ATTEMPTS;
+    for (let attempt = 1; ; attempt++) {
+      const tx = new TransactionShim();
+      const result = await fn(tx); // a throwing callback writes nothing
+      try {
+        emitCommitted(await tx.commit());
+        return result;
+      } catch (err) {
+        const retry = err instanceof TransactionConflict || isRetryablePgError(err);
+        if (!retry) throw err;
+        if (attempt >= maxAttempts) {
+          throw Object.assign(new Error("selfhost firestore shim: transaction aborted after too much contention"), {
+            code: 10, // ABORTED, as firebase-admin reports it
+          });
+        }
+        // Jittered backoff, so contenders stop colliding in lockstep.
+        await new Promise((r) => setTimeout(r, Math.random() * Math.min(50, 5 * 2 ** attempt)));
+      }
+    }
   }
 
   async getAll(...refs: DocRef[]): Promise<DocSnapshot[]> {

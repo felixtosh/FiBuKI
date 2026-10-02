@@ -1068,6 +1068,20 @@ export function onSnapshot(
   };
 }
 
+/**
+ * Test seam: resolve once no shared listen has a request in flight or work
+ * queued, and none picked any up in the following macrotask. Lets a test
+ * assert "nothing was delivered" deterministically instead of sleeping.
+ */
+export async function __whenListensIdle(): Promise<void> {
+  const busy = () => [...listens.values()].some((l) => l.inFlight || l.wantFull || l.wantIds.size > 0);
+  for (;;) {
+    while (busy()) await new Promise<void>((r) => setTimeout(r, 1));
+    await new Promise<void>((r) => setTimeout(r, 0));
+    if (!busy()) return;
+  }
+}
+
 /** Test seam: drop every shared listen so cases cannot see each other's cache. */
 export function __resetListens(): void {
   for (const l of [...listens.values()]) dispose(l);

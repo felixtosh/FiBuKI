@@ -4,7 +4,6 @@ import { transactionTypeFromRawRow } from "@/functions/src/imports/transactionTy
 import { initializeApp, getApps } from "firebase/app";
 import {
   getFirestore,
-  connectFirestoreEmulator,
   doc,
   getDoc,
   updateDoc,
@@ -37,16 +36,6 @@ function sanitizeForLog(value: unknown): string {
 const appName = "truelayer-accounts";
 const app = getApps().find(a => a.name === appName) || initializeApp(firebaseConfig, appName);
 const db = getFirestore(app);
-
-// Connect to emulator in development
-if (process.env.NODE_ENV === "development" && process.env.NEXT_PUBLIC_USE_EMULATORS !== "false") {
-  try {
-    connectFirestoreEmulator(db, "localhost", 8080);
-    console.log("[TrueLayer Accounts] Connected to Firestore emulator");
-  } catch {
-    // Already connected
-  }
-}
 
 const CONNECTIONS_COLLECTION = "truelayerConnections";
 

@@ -10,14 +10,11 @@
 
 process.env.FIBUKI_STORAGE = "memory";
 
-import { describe, it, expect, beforeAll, beforeEach } from "vitest";
-import express from "express";
-import http from "node:http";
-import type { AddressInfo } from "node:net";
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { __resetFirestoreShim, getFirestore, Timestamp } from "../firestore-shim";
 import { drainTriggers, __resetTriggerShim } from "../trigger-shim";
-import { createDataPlane } from "../data-plane";
 import { ATTACKER, VICTIM, CANARY, seedAccounts, victimRows, assertVictimUntouched, assertNoLeak } from "./victim";
+import { startTestDataPlane, type TestServer } from "../test-helpers";
 
 type Callable = { run: (req: { data: unknown; auth?: { uid: string; token: Record<string, unknown> } }) => Promise<unknown> };
 
@@ -29,16 +26,16 @@ const ADMIN_AUTH = { uid: "admin-1", token: { admin: true, email: "admin@fibuki.
 
 let barrel: Record<string, Callable>;
 let base: string;
+let server: TestServer;
 
 beforeAll(async () => {
   delete process.env.SUPER_ADMIN_EMAIL;
   barrel = (await import("../../index")) as unknown as Record<string, Callable>;
-  const app = express();
-  app.use("/__data", createDataPlane(async (t) => (t === "tok-attacker" ? { uid: ATTACKER, token: {} } : null)));
-  const server = http.createServer(app);
-  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
-  base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  server = await startTestDataPlane(async (t) => (t === "tok-attacker" ? { uid: ATTACKER, token: {} } : null));
+  base = server.base;
 }, 120_000);
+
+afterAll(() => server.close());
 
 let before: Map<string, string>;
 

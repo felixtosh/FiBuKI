@@ -15,7 +15,7 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { getFirestore, Timestamp, __resetFirestoreShim } from "./firestore-shim";
+import { getFirestore, Timestamp, __resetFirestoreShim, __whenShimIdle } from "./firestore-shim";
 import { drainTriggers, __resetTriggerShim } from "./trigger-shim";
 import { HttpsError } from "./https-shim";
 import { waitFor } from "./test-helpers";
@@ -50,7 +50,7 @@ function call(data: unknown, auth?: { uid: string; token?: Record<string, unknow
 beforeEach(async () => {
   // Let fire-and-forget writes from the previous test (usage logs, billing
   // increments) land BEFORE the reset, so they can't bleed into this test.
-  await new Promise((r) => setTimeout(r, 20));
+  await __whenShimIdle(); // the previous test's fire-and-forget writes, finished
   await __resetFirestoreShim();
   __resetTriggerShim();
   await db.collection("sources").doc("src-n26").set({

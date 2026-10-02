@@ -775,7 +775,7 @@ Rules:
 - Different subsidiaries (Google LLC vs Alphabet Inc) = NO match
 - Similar names but different companies = NO match`;
 
-    const result = await model.generateContent({ contents: [{ role: "user", parts: [{ text: prompt }] }] });
+    const result = await model.generateContent({ generationConfig: { responseMimeType: "application/json" }, contents: [{ role: "user", parts: [{ text: prompt }] }] });
 
     // Log AI usage for partner deduplication
     const usageMetadata = result.response.usageMetadata;

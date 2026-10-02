@@ -217,19 +217,6 @@ export function ChatSidebar() {
 
   return (
     <>
-      {/* Toggle button when sidebar is closed */}
-      {!isSidebarOpen && (
-        <Button
-          variant="outline"
-          size="icon"
-          onClick={toggleSidebar}
-          className="fixed left-4 bottom-4 z-[60] h-12 w-12 rounded-full shadow-lg"
-          title="Open AI Chat"
-        >
-          <MessageSquare className="h-5 w-5" />
-        </Button>
-      )}
-
       {/* Sidebar */}
       <div
         ref={panelRef}

@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { getFirestore, Timestamp, __resetFirestoreShim } from "./firestore-shim";
+import { getFirestore, Timestamp, __resetFirestoreShim, __whenShimIdle } from "./firestore-shim";
 import { drainTriggers, __resetTriggerShim } from "./trigger-shim";
 
 // REAL application code, unmodified:
@@ -96,7 +96,7 @@ async function billingCycleOf(partnerId: string) {
 beforeEach(async () => {
   // Let fire-and-forget writes (usage logging) from the previous test land
   // before the reset so they can't bleed into this one.
-  await new Promise((r) => setTimeout(r, 20));
+  await __whenShimIdle(); // the previous test's fire-and-forget writes, finished
   await __resetFirestoreShim();
   __resetTriggerShim();
 });

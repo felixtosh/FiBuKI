@@ -1,10 +1,8 @@
 /**
- * #249: the Transactions list can be filtered by Documentation State.
- *
- * A multi-select chip, every state selected by default, so the useful
- * questions (which are often exclusions) can be asked of the list. The filter
- * round-trips through the URL, counts as an active filter and is reset with
- * the others.
+ * #249 gave the Transactions list a Documentation State chip; #526 removed it
+ * again, since the Files chip (Assigned / Unassigned) asks the same question
+ * by column. The pure matching helpers stay, and an old link's
+ * `documentation=` is ignored rather than applied invisibly.
  */
 
 import * as React from "react";
@@ -22,15 +20,7 @@ import {
   matchesDocumentationStates,
   normalizeDocumentationStates,
 } from "@/lib/filters/documentation-state-filter";
-import {
-  buildFilterUrl,
-  buildSearchParamsString,
-  countActiveFilters,
-  hasActiveFilters,
-  hasUrlParams,
-  parseFiltersFromUrl,
-} from "@/lib/filters/url-params";
-import { describeDocumentationState } from "@/lib/documents/document-type-presentation";
+import { buildSearchParamsString, parseFiltersFromUrl } from "@/lib/filters/url-params";
 import { TransactionToolbar } from "@/components/transactions/transaction-toolbar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import type { DocumentationState, TransactionFilters } from "@/types/transaction";
@@ -84,44 +74,14 @@ describe("normalizeDocumentationStates", () => {
 });
 
 describe("Documentation filter in the URL", () => {
-  const roundTrip = (query: string) => {
-    const filters = parseFiltersFromUrl(new URLSearchParams(query));
-    return { filters, query: buildSearchParamsString(filters, "") };
-  };
-
-  it("round-trips a selection", () => {
-    const { filters, query } = roundTrip("documentation=receipt-only,unknown");
-    expect(filters.documentationStates).toEqual(["receipt-only", "unknown"]);
-    expect(decodeURIComponent(query)).toBe("documentation=receipt-only,unknown");
-    expect(decodeURIComponent(buildFilterUrl("/transactions", filters))).toBe(
-      "/transactions?documentation=receipt-only,unknown"
-    );
-  });
-
-  it("round-trips the empty selection", () => {
-    const { filters, query } = roundTrip("documentation=");
-    expect(filters.documentationStates).toEqual([]);
-    expect(query).toBe("documentation=");
-  });
-
-  it("the default stays out of the URL", () => {
-    const { filters, query } = roundTrip("");
+  it("ignores an old documentation= link now that the chip is gone (#526)", () => {
+    const filters = parseFiltersFromUrl(new URLSearchParams("documentation=receipt-only,unknown"));
     expect(filters.documentationStates).toBeUndefined();
-    expect(query).toBe("");
-  });
-
-  it("counts as a URL param, an active filter, and is reset by clear-all", () => {
-    expect(hasUrlParams(new URLSearchParams("documentation=invoice"))).toBe(true);
-    const filters: TransactionFilters = { documentationStates: ["invoice"] };
-    expect(hasActiveFilters(filters)).toBe(true);
-    expect(countActiveFilters(filters)).toBe(1);
-    expect(countActiveFilters({ ...filters, isComplete: true })).toBe(2);
-    // clear-all resets to `{ search }`.
-    expect(countActiveFilters({ search: filters.search })).toBe(0);
+    expect(buildSearchParamsString(filters, "")).toBe("");
   });
 });
 
-describe("Documentation chip on the toolbar", () => {
+describe("Transactions toolbar", () => {
   function renderToolbar(filters: TransactionFilters, onFiltersChange = vi.fn()) {
     render(
       <NextIntlClientProvider locale="en" messages={messages} timeZone="Europe/Vienna">
@@ -138,42 +98,14 @@ describe("Documentation chip on the toolbar", () => {
     return onFiltersChange;
   }
 
-  const labels = ALL_DOCUMENTATION_STATES.map((s) => describeDocumentationState(s).label);
-
-  it("lists all five states, with the badge's labels, all checked by default", () => {
+  it("has no Documentation chip any more (#526)", () => {
     renderToolbar({});
-    fireEvent.click(screen.getByRole("button", { name: /Documentation/ }));
-    for (const label of labels) {
-      const option = screen.getByRole("menuitemcheckbox", { name: label });
-      expect(option.getAttribute("aria-checked")).toBe("true");
-    }
+    expect(screen.queryByRole("button", { name: /Documentation/ })).toBeNull();
   });
 
-  it("unchecking a value narrows the selection to the other four", () => {
-    const onFiltersChange = renderToolbar({});
-    fireEvent.click(screen.getByRole("button", { name: /Documentation/ }));
-    fireEvent.click(
-      screen.getByRole("menuitemcheckbox", { name: describeDocumentationState("invoice").label })
-    );
-    expect(onFiltersChange).toHaveBeenCalledWith({
-      documentationStates: ["receipt-only", "no-receipt-category", "undocumented", "unknown"],
-    });
-  });
-
-  it("rechecking the last value returns to the default", () => {
-    const onFiltersChange = renderToolbar({
-      documentationStates: ["invoice", "receipt-only", "no-receipt-category", "undocumented"],
-    });
-    fireEvent.click(screen.getByRole("button", { name: /Documentation/ }));
-    fireEvent.click(
-      screen.getByRole("menuitemcheckbox", { name: describeDocumentationState("unknown").label })
-    );
-    expect(onFiltersChange).toHaveBeenCalledWith({ documentationStates: undefined });
-  });
-
-  it("leaves the Status chip as it was", () => {
+  it("names the assigned/unassigned chip after the File column (#519)", () => {
     renderToolbar({});
-    fireEvent.click(screen.getByRole("button", { name: "Status" }));
+    fireEvent.click(screen.getByRole("button", { name: "Files" }));
     for (const name of ["All", "Assigned", "Unassigned"]) {
       expect(screen.getByRole("button", { name })).toBeTruthy();
     }
