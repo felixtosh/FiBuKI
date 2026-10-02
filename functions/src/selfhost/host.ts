@@ -28,6 +28,7 @@ import { EXCLUDED_EXPORTS } from "./manifest";
 import { createDataPlane } from "./data-plane";
 import { createStorageRoutes } from "./storage-routes";
 import { createChangeStream, changeStreamAuth, makePgListener, type StreamAuth } from "./change-stream";
+import { isAdminToken } from "./data-policy";
 import { getTenantId } from "./db/tenant";
 import { makeRateLimiter } from "./rate-limit";
 
@@ -306,7 +307,7 @@ export function createHost(
   const changeStream = createChangeStream({
     authOf: (req) => {
       const auth = (req as Request & { fibukiAuth?: StreamAuth }).fibukiAuth;
-      return auth ? { uid: auth.uid, tenant: getTenantId() } : null;
+      return auth ? { uid: auth.uid, tenant: getTenantId(), admin: isAdminToken(auth.token) } : null;
     },
     listen: makePgListener,
   });

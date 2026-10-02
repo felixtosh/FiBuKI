@@ -101,7 +101,21 @@ const HEARTBEAT_MS = 25_000;
  */
 interface Subscriber {
   tenant: string;
+  uid: string;
+  admin: boolean;
   res: Response;
+}
+
+/**
+ * One tenant's open streams, indexed the ways a notification is addressed
+ * (change-notify.ts `to`): by uid, admins, or everyone. Delivering a change
+ * then costs the streams it is meant for, not every stream on the host, which
+ * is what lets one host carry many tenants and many users per tenant.
+ */
+interface TenantStreams {
+  all: Set<Subscriber>;
+  admins: Set<Subscriber>;
+  byUid: Map<string, Set<Subscriber>>;
 }
 
 export interface ChangeStream {
@@ -116,7 +130,7 @@ export interface ChangeStream {
 
 export interface ChangeStreamOptions {
   /** Verified auth for a request, or null. Mirrors the host's verifier contract. */
-  authOf: (req: Request) => { uid: string; tenant: string } | null;
+  authOf: (req: Request) => { uid: string; tenant: string; admin?: boolean } | null;
   /**
    * Opens the dedicated LISTEN connection. Injected so tests can drive dispatch
    * directly, and so a database without LISTEN support simply yields null.
@@ -126,18 +140,59 @@ export interface ChangeStreamOptions {
 
 export function createChangeStream(options: ChangeStreamOptions): ChangeStream {
   const subscribers = new Set<Subscriber>();
+  const tenants = new Map<string, TenantStreams>();
   let listener: { close: () => Promise<void> } | null = null;
   let heartbeat: NodeJS.Timeout | null = null;
 
+  function addSubscriber(sub: Subscriber): void {
+    subscribers.add(sub);
+    let t = tenants.get(sub.tenant);
+    if (!t) {
+      t = { all: new Set(), admins: new Set(), byUid: new Map() };
+      tenants.set(sub.tenant, t);
+    }
+    t.all.add(sub);
+    if (sub.admin) t.admins.add(sub);
+    let mine = t.byUid.get(sub.uid);
+    if (!mine) {
+      mine = new Set();
+      t.byUid.set(sub.uid, mine);
+    }
+    mine.add(sub);
+  }
+
+  function removeSubscriber(sub: Subscriber): void {
+    subscribers.delete(sub);
+    const t = tenants.get(sub.tenant);
+    if (!t) return;
+    t.all.delete(sub);
+    t.admins.delete(sub);
+    const mine = t.byUid.get(sub.uid);
+    mine?.delete(sub);
+    if (mine && mine.size === 0) t.byUid.delete(sub.uid);
+    if (t.all.size === 0) tenants.delete(sub.tenant);
+  }
+
   function dispatch(change: ChangeNotification): void {
-    for (const sub of subscribers) {
-      // Tenant isolation. Everything else about this stream is best-effort; this
-      // comparison is not.
-      if (sub.tenant !== change.tenant) continue;
+    // Tenant isolation is the lookup itself: a change can only ever reach the
+    // streams filed under its own tenant. Everything else about this stream is
+    // best-effort; this is not.
+    const t = tenants.get(change.tenant);
+    if (!t) return;
+    let targets: Iterable<Subscriber>;
+    if (change.to?.u) {
+      const reached = new Set<Subscriber>();
+      for (const uid of change.to.u) for (const sub of t.byUid.get(uid) ?? []) reached.add(sub);
+      targets = reached;
+    } else if (change.to?.a) {
+      targets = t.admins;
+    } else {
+      targets = t.all;
+    }
+    const frame = `data: ${JSON.stringify({ collection: change.collection, id: change.id, op: change.op })}\n\n`;
+    for (const sub of targets) {
       try {
-        sub.res.write(
-          `data: ${JSON.stringify({ collection: change.collection, id: change.id, op: change.op })}\n\n`,
-        );
+        sub.res.write(frame);
       } catch {
         // Broken pipe — the 'close' handler will remove it.
       }
@@ -193,8 +248,8 @@ export function createChangeStream(options: ChangeStreamOptions): ChangeStream {
     // first change arrives, which may be minutes away.
     res.write(`: connected\n\n`);
 
-    const sub: Subscriber = { tenant: auth.tenant, res };
-    subscribers.add(sub);
+    const sub: Subscriber = { tenant: auth.tenant, uid: auth.uid, admin: auth.admin === true, res };
+    addSubscriber(sub);
     // Realtime is invisible when it works and invisible when it does not: a client
     // that never reconnects looks exactly like a client with nothing to say. Two
     // lines per stream make a drop a fact rather than an inference — the gap
@@ -209,7 +264,7 @@ export function createChangeStream(options: ChangeStreamOptions): ChangeStream {
     const cleanup = (): void => {
       if (closed) return; // "close" and "error" both fire on an aborted request
       closed = true;
-      subscribers.delete(sub);
+      removeSubscriber(sub);
       console.log(
         `selfhost change-stream: subscriber closed after ${Math.round(
           (Date.now() - openedAt) / 1000,
@@ -225,7 +280,7 @@ export function createChangeStream(options: ChangeStreamOptions): ChangeStream {
       try {
         sub.res.write(`: ping\n\n`);
       } catch {
-        subscribers.delete(sub);
+        removeSubscriber(sub);
       }
     }
   }, HEARTBEAT_MS);
@@ -246,6 +301,7 @@ export function createChangeStream(options: ChangeStreamOptions): ChangeStream {
         }
       }
       subscribers.clear();
+      tenants.clear();
       if (listener) {
         await listener.close().catch(() => undefined);
         listener = null;

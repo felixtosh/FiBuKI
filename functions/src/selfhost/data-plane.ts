@@ -3,7 +3,14 @@
  * frontend firestore shim talks to. Wire formats in
  * frontend-shim-design.md §2; policy in data-policy.ts.
  *
- *   POST /__data/query  { path, wheres?, orderBys?, limit? } -> { docs: [{id, data}] }
+ *   POST /__data/query  { path, wheres?, orderBys?, limit?, ids?, ifHash? }
+ *                         -> { docs: [{id, data}], hash } | { unchanged: true, hash }
+ *     ids     restrict the result to these document ids, after every other
+ *             filter and the access policy: "which of these still match?".
+ *             The realtime client asks this when a change frame names a doc,
+ *             instead of refetching the whole query. Ignores `limit`.
+ *     ifHash  the hash of the result the client already holds. When the
+ *             result is identical the docs are not sent back.
  *   POST /__data/get    { path }                             -> { exists, id, data|null }
  *   POST /__data/write  { ops: [...] }                       -> { ids: [...] }
  *
@@ -18,6 +25,7 @@
  * the client shim maps one format.
  */
 
+import { createHash } from "node:crypto";
 import express from "express";
 import type { NextFunction, Request, Response, Router } from "express";
 import { getFirestore, DocRef, Query, Timestamp } from "./firestore-shim";
@@ -32,6 +40,7 @@ import {
   TOP_LEVEL_POLICIES,
   TRANSACTION_HISTORY_POLICY,
   USER_DOC_POLICY,
+  isAdminToken,
 } from "./data-policy";
 
 const WHERE_OPS = new Set([
@@ -141,7 +150,7 @@ function accessGranted(access: Access, auth: AuthData): boolean {
     case "authed":
       return true;
     case "admin":
-      return auth.token?.admin === true;
+      return isAdminToken(auth.token);
     case "owner":
     case "uidKey":
       return true; // row/id check happens at the call site
@@ -250,6 +259,9 @@ interface WriteOp {
 
 const MAX_OPS = 500;
 
+/** Upper bound on `ids` in one /query: a delta, never a bulk read. */
+const MAX_QUERY_IDS = 200;
+
 export function createDataPlane(
   verifyToken: TokenVerifier,
   options?: { jsonLimit?: string },
@@ -289,12 +301,22 @@ export function createDataPlane(
   router.post("/query", async (req: Request, res: Response, next: NextFunction) => {
     try {
       const auth = authOf(req);
-      const { path, wheres, orderBys, limit } = (req.body ?? {}) as {
+      const { path, wheres, orderBys, limit, ids, ifHash } = (req.body ?? {}) as {
         path?: unknown;
         wheres?: WhereClause[];
         orderBys?: Array<{ field: string; dir: string }>;
         limit?: unknown;
+        ids?: unknown;
+        ifHash?: unknown;
       };
+      if (ids !== undefined && (!Array.isArray(ids) || !ids.every((id) => typeof id === "string"))) {
+        throw new DataPlaneError("invalid-argument", "ids must be an array of strings");
+      }
+      // The client switches to a full refetch past 50 (firestore-client.ts);
+      // anything far beyond that is not a delta, it is an unbounded IN list.
+      if (Array.isArray(ids) && ids.length > MAX_QUERY_IDS) {
+        throw new DataPlaneError("invalid-argument", `at most ${MAX_QUERY_IDS} ids per query`);
+      }
       const segments = splitPath(path);
       const resolved = resolveCollection(segments, auth.uid);
       requireAccess(resolved.policy.read, auth, `read on ${segments.join("/")}`);
@@ -302,7 +324,6 @@ export function createDataPlane(
       let q: Query = getFirestore().collection(segments.join("/"));
       if (resolved.policy.read === "owner") q = q.where("userId", "==", auth.uid);
 
-      const nameFilters: WhereClause[] = [];
       for (const w of wheres ?? []) {
         if (typeof w?.field !== "string" || !WHERE_OPS.has(w?.op)) {
           throw new DataPlaneError("invalid-argument", `bad where clause ${JSON.stringify(w)}`);
@@ -311,10 +332,16 @@ export function createDataPlane(
           if (w.op !== "==" && w.op !== "in") {
             throw new DataPlaneError("invalid-argument", `__name__ only supports == and in, got ${w.op}`);
           }
-          nameFilters.push({ ...w, value: decodeWire(w.value, false) });
-        } else {
-          q = q.where(w.field, w.op, decodeWire(w.value, false));
         }
+        // __name__ goes to the shim like any other filter: it compiles to
+        // `id IN (...)` in SQL (db/pushdown.ts, and the docs table in
+        // firestore-shim.ts), so an id filter reads only those rows.
+        q = q.where(w.field, w.op, decodeWire(w.value, false));
+      }
+      if (ids !== undefined) {
+        // "Which of these still match" is just one more id filter, after
+        // every other filter and the access policy above.
+        q = q.where("__name__", "in", ids as string[]);
       }
       for (const o of orderBys ?? []) {
         if (typeof o?.field !== "string" || (o.dir !== "asc" && o.dir !== "desc")) {
@@ -322,28 +349,32 @@ export function createDataPlane(
         }
         q = q.orderBy(o.field, o.dir);
       }
-      // A limit at the query level would slice BEFORE the __name__ and
-      // uidKey post-filters run, dropping own rows that sort behind foreign
-      // ones — defer to a post-slice whenever a post-filter is in play.
-      const postFilter = nameFilters.length > 0 || resolved.uidKeyed;
+      // A limit at the query level would slice BEFORE the uidKey post-filter
+      // runs, dropping own rows that sort behind foreign ones — defer to a
+      // post-slice when it is in play. "Which of these still match" has no
+      // window to slice at all, so `ids` drops the limit outright.
+      const postFilter = resolved.uidKeyed;
       if (limit !== undefined) {
         if (typeof limit !== "number" || limit < 0 || !Number.isInteger(limit)) {
           throw new DataPlaneError("invalid-argument", "limit must be a non-negative integer");
         }
-        if (!postFilter) q = q.limit(limit);
+        if (!postFilter && ids === undefined) q = q.limit(limit);
       }
 
       const snap = await q.get();
       let docs = snap.docs;
-      for (const f of nameFilters) {
-        docs = docs.filter((d) =>
-          f.op === "==" ? d.id === f.value : Array.isArray(f.value) && f.value.includes(d.id),
-        );
-      }
       if (resolved.uidKeyed) docs = docs.filter((d) => d.id === auth.uid);
-      if (typeof limit === "number" && postFilter) docs = docs.slice(0, limit);
+      if (ids === undefined && typeof limit === "number" && postFilter) {
+        docs = docs.slice(0, limit);
+      }
 
-      res.json({ docs: docs.map((d) => ({ id: d.id, data: encodeWire(d.data()) })) });
+      const encoded = docs.map((d) => ({ id: d.id, data: encodeWire(d.data()) }));
+      const hash = createHash("sha1").update(JSON.stringify(encoded)).digest("base64url");
+      if (typeof ifHash === "string" && ifHash === hash) {
+        res.json({ unchanged: true, hash });
+        return;
+      }
+      res.json({ docs: encoded, hash });
     } catch (err) {
       next(err);
     }

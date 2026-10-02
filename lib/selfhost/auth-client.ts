@@ -1230,7 +1230,10 @@ function stopChangeStream(): void {
 
 function ensureChangeStream(): void {
   if (typeof window === "undefined") return; // no streams during SSR
-  if (_changeStream || DEV_UID) return;
+  // Runs under the dev login too: the host authenticates the stream with the
+  // same verifier as every other route, and a dev box that only polls behaves
+  // nothing like production, which is the drift this layer exists to avoid.
+  if (_changeStream) return;
   const apiUrl =
     (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_FIBUKI_API_URL) || "";
   if (!apiUrl) return; // same-origin/unconfigured deployments simply keep polling

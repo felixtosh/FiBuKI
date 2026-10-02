@@ -36,6 +36,8 @@
  * way to read data you are not entitled to.
  */
 
+import type { ReadAudience } from "./data-policy";
+
 export const CHANGE_CHANNEL = "fibuki_changes";
 
 export interface ChangeNotification {
@@ -47,6 +49,27 @@ export interface ChangeNotification {
   id: string;
   /** "w" for write (create/update), "d" for delete. Kept terse for the 8KB cap. */
   op: "w" | "d";
+  /**
+   * Who may read the document (data-policy.ts readAudience): `u` the owning
+   * uids, `a` admins only. Absent means everyone in the tenant, which is also
+   * how a notification from a process that predates routing reads, so a
+   * rolling deploy over-delivers rather than drops.
+   */
+  to?: { u?: string[]; a?: 1 };
+}
+
+/** The wire form of a read audience; null when no client could read the doc. */
+export function audienceWire(audience: ReadAudience): ChangeNotification["to"] | null {
+  switch (audience.kind) {
+    case "users":
+      return { u: audience.uids };
+    case "admins":
+      return { a: 1 };
+    case "everyone":
+      return undefined;
+    case "nobody":
+      return null;
+  }
 }
 
 /** Query runner shape — the shim's `q`, so the notify joins the write's transaction. */
@@ -85,7 +108,12 @@ export function parseChangeNotification(raw: string): ChangeNotification | null 
       typeof v.id === "string" &&
       (v.op === "w" || v.op === "d")
     ) {
-      return v as ChangeNotification;
+      // A malformed audience is dropped to "everyone": over-delivery costs a
+      // request, under-delivery costs a stale screen.
+      const to = v.to;
+      const users = Array.isArray(to?.u) && to!.u.every((u) => typeof u === "string") ? to!.u : undefined;
+      const routed = users ? { u: users } : to?.a === 1 ? { a: 1 as const } : undefined;
+      return { tenant: v.tenant, collection: v.collection, id: v.id, op: v.op, ...(routed ? { to: routed } : {}) };
     }
   } catch {
     /* fall through */

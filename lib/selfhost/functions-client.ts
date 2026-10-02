@@ -24,7 +24,7 @@
  * out a poll interval.
  */
 
-import { pokePollers } from "./poll-bus";
+import { pokePollers, isStreamHealthy } from "./poll-bus";
 import { readHttpError } from "./http-error";
 
 /* ------------------------------------------------------------------ */
@@ -168,7 +168,15 @@ export function httpsCallable<Req = unknown, Res = unknown>(
     // Fired for reads too: a callable's name does not say whether it mutates, and
     // a redundant refetch is far cheaper than a missed one. Each poller drops a
     // poke that arrives while its own request is in flight.
-    pokePollers();
+    //
+    // Only while the realtime stream is down, though. With it up, every write
+    // the callable made has already been announced: Postgres sends the change
+    // notification on commit, which is before this response leaves the host,
+    // so the frames reach the tab no later than this line runs, and each one
+    // refetches exactly the document it names. Poking everything on top made
+    // every listen revalidate after every callable, including the partner
+    // match that runs on opening a transaction.
+    if (!isStreamHealthy()) pokePollers();
     return { data: r.result };
   };
 }

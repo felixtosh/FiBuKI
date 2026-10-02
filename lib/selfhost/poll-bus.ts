@@ -28,7 +28,25 @@
  * counterpart, so application code must never reach for it.
  */
 
-type Poller = () => void;
+/**
+ * What changed, when the poker knows: one document of one collection. A change
+ * frame from the realtime stream always knows; a write this tab made knows the
+ * paths it wrote. A callable does not (it can write anywhere), so it pokes
+ * without a hint.
+ */
+export interface ChangeHint {
+  /** Collection path, e.g. "files" or "users/u1/settings". */
+  collection: string;
+  id: string;
+}
+
+/**
+ * `hints` is every change collected in the coalescing window, or `null` when
+ * at least one poke in it did not know what changed. `null` therefore always
+ * means "assume anything changed": a listener must never treat a missing hint
+ * as "nothing of mine changed".
+ */
+export type Poller = (hints: readonly ChangeHint[] | null) => void;
 
 const pollers = new Set<Poller>();
 
@@ -59,12 +77,16 @@ const COALESCE_MS = 400;
 
 let lastFanOut = 0;
 let trailing: ReturnType<typeof setTimeout> | null = null;
+/** Hints gathered since the last fan-out; `null` once any poke lacked one. */
+let pendingHints: ChangeHint[] | null = [];
 
 function fanOut(): void {
   lastFanOut = Date.now();
+  const hints = pendingHints;
+  pendingHints = [];
   for (const poll of pollers) {
     try {
-      poll();
+      poll(hints);
     } catch {
       /* a broken subscriber must not break the write that triggered it */
     }
@@ -94,7 +116,10 @@ function fanOut(): void {
  * The trailing edge is what keeps this correct rather than merely cheaper: the
  * last change in a burst is the one that matters, and it is always refetched.
  */
-export function pokePollers(): void {
+export function pokePollers(hint?: ChangeHint | readonly ChangeHint[]): void {
+  if (hint === undefined) pendingHints = null;
+  else if (pendingHints) pendingHints.push(...(Array.isArray(hint) ? hint : [hint as ChangeHint]));
+
   if (trailing) return; // a fan-out is already scheduled for the end of this window
 
   const since = Date.now() - lastFanOut;
@@ -113,6 +138,7 @@ export function __resetPokeWindow(): void {
   if (trailing) clearTimeout(trailing);
   trailing = null;
   lastFanOut = 0;
+  pendingHints = [];
 }
 
 /** Test/diagnostic hook: how many listeners would a poke reach. */

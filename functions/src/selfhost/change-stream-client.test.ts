@@ -75,7 +75,11 @@ describe("change stream client", () => {
     });
     stops.push(client.stop);
 
-    await vi.waitFor(() => expect(poked).toHaveBeenCalledTimes(1), { timeout: 2000 });
+    // The split frame must arrive whole, as the hint naming its document.
+    await vi.waitFor(
+      () => expect(poked).toHaveBeenCalledWith([{ collection: "transactions", id: "t1" }]),
+      { timeout: 2000 },
+    );
     off();
   });
 
@@ -92,9 +96,12 @@ describe("change stream client", () => {
     });
     stops.push(client.stop);
 
-    // Give it room to misbehave, then assert it did not.
+    // Give it room to misbehave, then assert it did not. The one poke is the
+    // revalidation every connect makes (it heals whatever changed while there
+    // was no stream), and it carries no hint. The pings add nothing.
     await new Promise((r) => setTimeout(r, 150));
-    expect(poked).not.toHaveBeenCalled();
+    expect(poked).toHaveBeenCalledTimes(1);
+    expect(poked).toHaveBeenCalledWith(null);
     off();
   });
 

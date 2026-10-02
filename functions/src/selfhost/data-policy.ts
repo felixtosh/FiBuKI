@@ -108,3 +108,82 @@ export const USER_DOC_POLICY: CollectionPolicy = {
   update: "authed",
   delete: "none",
 };
+
+/** The admin bit, read the one way the data plane and the change stream both use. */
+export function isAdminToken(token: Record<string, unknown> | undefined): boolean {
+  return token?.admin === true;
+}
+
+/**
+ * Who may read one document, derived from the policies above. This is what the
+ * realtime change stream routes on, so a write is announced to the browsers
+ * that could read it and to nobody else.
+ *
+ * It must stay a projection of the read rules, never a second set of them:
+ * that is why it lives here and reads the same tables. Getting it too wide only
+ * costs requests (a tab asks about a document and is told it does not match).
+ * Getting it too narrow costs freshness, never correctness: every listen still
+ * revalidates in full on the safety-net timer, so a missed frame heals.
+ *
+ *   users/{uid} and users/{uid}/...   that uid
+ *   owner                             the userId before and after the write,
+ *                                     so a document changing hands reaches both
+ *   uidKey                            the doc id
+ *   admin                             admins
+ *   authed                            everyone in the tenant
+ *   none, unlisted, other subtrees    nobody (no client can read it)
+ */
+export type ReadAudience =
+  | { kind: "users"; uids: string[] }
+  | { kind: "admins" }
+  | { kind: "everyone" }
+  | { kind: "nobody" };
+
+export function readAudience(
+  collectionPath: string,
+  id: string,
+  versions: ReadonlyArray<Record<string, unknown> | undefined>,
+): ReadAudience {
+  const segs = collectionPath.split("/");
+
+  if (segs[0] === "users") {
+    // users/{uid} itself, or anything below it: the path names the reader.
+    const uid = segs.length === 1 ? id : segs[1];
+    return { kind: "users", uids: [uid] };
+  }
+  if (segs.length === 3 && segs[0] === "transactions" && segs[2] === "history") {
+    return audienceFor(TRANSACTION_HISTORY_POLICY.read, id, versions);
+  }
+  if (segs.length !== 1) return { kind: "nobody" };
+
+  const policy = TOP_LEVEL_POLICIES[segs[0]];
+  return policy ? audienceFor(policy.read, id, versions) : { kind: "nobody" };
+}
+
+function audienceFor(
+  access: Access,
+  id: string,
+  versions: ReadonlyArray<Record<string, unknown> | undefined>,
+): ReadAudience {
+  switch (access) {
+    case "owner": {
+      const uids = [
+        ...new Set(
+          versions
+            .map((v) => v?.userId)
+            .filter((u): u is string => typeof u === "string" && u.length > 0),
+        ),
+      ];
+      // No owner on either side: the owner filter hides it from every client.
+      return uids.length ? { kind: "users", uids } : { kind: "nobody" };
+    }
+    case "uidKey":
+      return { kind: "users", uids: [id] };
+    case "admin":
+      return { kind: "admins" };
+    case "authed":
+      return { kind: "everyone" };
+    case "none":
+      return { kind: "nobody" };
+  }
+}

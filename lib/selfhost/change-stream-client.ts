@@ -133,6 +133,11 @@ export function startChangeStream(
     // this flips back the next poll cycle returns to the configured interval.
     setStreamHealthy(true);
     setState("open");
+    // Whatever changed while there was no stream was never announced. One
+    // hint-less poke makes every listener revalidate against the server, which
+    // is what closes that gap; listeners whose data did not change get a tiny
+    // "unchanged" answer back (see the ifHash handshake in firestore-client).
+    pokePollers();
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -167,13 +172,18 @@ export function startChangeStream(
           if (!line || line.startsWith(":")) continue;
           if (!line.startsWith("data:")) continue;
           try {
-            const change = JSON.parse(line.slice(5).trim()) as { collection?: string };
-            // Poke everything rather than only listeners on `change.collection`.
-            // A write frequently cascades (a file connection updates the transaction,
-            // a trigger writes a partner), and each poller drops a poke that lands
-            // while its own request is in flight, so the cost of over-poking is a
-            // bounded refetch and the cost of under-poking is a stale screen.
-            if (change) pokePollers();
+            const change = JSON.parse(line.slice(5).trim()) as { collection?: unknown; id?: unknown };
+            // Every committed write announces itself, cascades included: a file
+            // connection that also updates the transaction emits a frame for
+            // each. So a frame can be routed to the listeners on its own
+            // collection, which refetch just that document. A frame without an
+            // identity still wakes everything, because a missing hint must
+            // never read as "nothing changed".
+            if (change && typeof change.collection === "string" && typeof change.id === "string") {
+              pokePollers({ collection: change.collection, id: change.id });
+            } else if (change) {
+              pokePollers();
+            }
           } catch {
             /* malformed frame — ignore, the next one will do */
           }

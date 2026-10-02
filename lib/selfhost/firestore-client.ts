@@ -21,7 +21,7 @@
  * GeoPoint. Any of those would throw rather than silently misbehave.
  */
 
-import { pokePollers, registerPoller, isStreamHealthy } from "./poll-bus";
+import { pokePollers, registerPoller, isStreamHealthy, type ChangeHint } from "./poll-bus";
 import { readHttpError } from "./http-error";
 
 /* ------------------------------------------------------------------ */
@@ -107,8 +107,35 @@ async function post(route: "query" | "get" | "write", body: unknown): Promise<an
   //
   // Without it, a user's own action takes up to a full poll interval to appear,
   // which reads as the app being broken rather than merely eventually-consistent.
-  if (route === "write") pokePollers();
+  //
+  // The poke names the documents this write touched, so listens refetch just
+  // those. What the server's triggers write in turn arrives as change frames.
+  // Without a stream nothing reports those follow-on writes, so then every
+  // listen revalidates, as before.
+  if (route === "write") pokePollers(isStreamHealthy() ? writeHints(body, json) : undefined);
   return json;
+}
+
+/** The documents a write touched, or undefined if any of them is unknown. */
+function writeHints(body: unknown, result: unknown): ChangeHint[] | undefined {
+  const ops = (body as { ops?: Array<{ type: string; path: string }> })?.ops;
+  if (!Array.isArray(ops)) return undefined;
+  const ids = (result as { ids?: unknown[] })?.ids;
+  const hints: ChangeHint[] = [];
+  for (let i = 0; i < ops.length; i++) {
+    const op = ops[i];
+    if (op.type === "add") {
+      // An add names its collection; the server picked the id.
+      const id = Array.isArray(ids) ? ids[i] : undefined;
+      if (typeof id !== "string") return undefined;
+      hints.push({ collection: op.path, id });
+    } else {
+      const cut = op.path.lastIndexOf("/");
+      if (cut <= 0) return undefined;
+      hints.push({ collection: op.path.slice(0, cut), id: op.path.slice(cut + 1) });
+    }
+  }
+  return hints;
 }
 
 /* ------------------------------------------------------------------ */
@@ -659,121 +686,396 @@ function effectivePollMs(): number {
 }
 
 /**
- * onSnapshot(target, onNext, onError?) — polling emulation. Fires on the
- * initial load and whenever the serialized response changes. Pauses while
- * the tab is hidden (document.hidden), resumes on visibilitychange. Errors
- * go to onError (the central hook already surfaces them). Unsubscribe stops
- * the timer.
+ * onSnapshot(target, onNext, onError?): one shared listen per query.
+ *
+ * ## Why shared
+ *
+ * Every listen is an HTTP query, so two hooks asking for the same files list
+ * used to cost two round trips, and a panel that mounts a hook the table
+ * already has waited on a fetch for data that was already in the tab.
+ * firebase/firestore dedupes identical listeners and answers from its cache;
+ * this does the same. All listeners on one query (same path, filters, order
+ * and limit) share one listen. A newcomer gets the result the listen already
+ * holds straight away, and one request serves all of them afterwards.
+ *
+ * ## How a listen stays current
+ *
+ * A change frame from the realtime stream names the document that changed
+ * (poll-bus.ts). A query listen on that collection then asks the server only
+ * "which of these ids still match my query?" (`ids` on /__data/query) and
+ * merges the answer: replace in place, or drop. The server applies the same
+ * filters and access policy as for the full query, so the client never
+ * re-decides membership. Whenever the merge would have to decide something
+ * only the server can (a new member's position, a changed sort key, any
+ * `limit` window), it refetches the whole query instead.
+ *
+ * ## How it heals
+ *
+ * The targeted refetch is an optimisation, never the source of truth. A full
+ * revalidation replaces the listen's result outright, and one runs:
+ *  - on the safety-net timer (60s while the stream is up, the configured poll
+ *    interval while it is down),
+ *  - when the stream (re)connects (change-stream-client.ts),
+ *  - when the tab becomes visible again (hidden tabs fetch nothing),
+ *  - after any callable or hint-less poke,
+ *  - when a newcomer joins a listen that was idle in its keep-alive window,
+ *  - when a targeted refetch fails.
+ * A full revalidation sends the hash of the result it holds (`ifHash`), so an
+ * unchanged result costs a tiny "unchanged" answer rather than the whole list.
+ *
+ * ## Lifetime
+ *
+ * When the last listener leaves, the listen is kept for KEEP_ALIVE_MS without
+ * its timer, still applying change frames, so closing and reopening a panel
+ * stays instant. Rejoining it also triggers a revalidation, because without
+ * the timer it may have missed something.
+ *
+ * Errors go to onError. An exception from a listener's own handler is
+ * rethrown to the host (#124) and that listener is offered the same result
+ * again on the next cycle.
  */
+
+/** How long a listen nobody holds keeps its result for the next one. */
+const KEEP_ALIVE_MS = 30_000;
+/** Past this many changed ids in one window, one full refetch is cheaper. */
+const MAX_DELTA_IDS = 50;
+/** Inequality filters order the result by their field even without an orderBy */
+const RANGE_OPS = new Set(["<", "<=", ">", ">=", "!=", "not-in"]);
+
+type WireDoc = { id: string; data: unknown };
+
+interface Subscriber {
+  next: NextFn;
+  error?: ErrFn;
+  /** contentKey of the result this listener last accepted without throwing. */
+  delivered: string | null;
+}
+
+interface Listen {
+  key: string;
+  target: Query | DocumentReference;
+  isDoc: boolean;
+  subs: Set<Subscriber>;
+  /** Query listens: the result as wire docs, in the server's order. */
+  docs: WireDoc[];
+  /** Doc listens: the raw /get response. */
+  docRaw: unknown;
+  loaded: boolean;
+  /** Serialized result; what "did it change" and "was it delivered" compare. */
+  contentKey: string | null;
+  /** Server hash of the last FULL result, dropped once a merge changes it. */
+  serverHash: string | null;
+  inFlight: boolean;
+  wantFull: boolean;
+  wantIds: Set<string>;
+  timer: ReturnType<typeof setTimeout> | null;
+  keepAlive: ReturnType<typeof setTimeout> | null;
+  unregister: () => void;
+  disposed: boolean;
+}
+
+const listens = new Map<string, Listen>();
+
+function listenKey(target: Query | DocumentReference): string {
+  return target instanceof DocumentReference
+    ? `d:${target.path}`
+    : `q:${JSON.stringify(queryBody(target))}`;
+}
+
+function buildSnapshot(l: Listen): unknown {
+  if (l.isDoc) {
+    const ref = l.target as DocumentReference;
+    const raw = l.docRaw as { id: string; exists: boolean; data: unknown };
+    return new DocumentSnapshot(
+      raw.id,
+      ref,
+      raw.exists ? (decodeValue(raw.data) as Record<string, unknown>) : undefined,
+      raw.exists,
+    );
+  }
+  // Decoded per listener, as before sharing: a handler that mutates what it
+  // was given must not reach into another listener's data.
+  return toQuerySnapshot((l.target as Query).path, l.docs);
+}
+
+function deliver(l: Listen): void {
+  if (!l.loaded || l.disposed) return;
+  for (const sub of [...l.subs]) {
+    if (sub.delivered === l.contentKey || !l.subs.has(sub)) continue;
+    // The listener's own handler runs OUTSIDE the onError funnel. An exception
+    // here is application code failing, not the listen, and firebase/firestore
+    // lets it reach the host rather than dressing it up as a FirebaseError
+    // (#124). `delivered` stays put, so the next cycle offers it again even if
+    // nothing changed, instead of leaving the listener dark.
+    try {
+      sub.next(buildSnapshot(l));
+    } catch (err) {
+      setTimeout(() => {
+        throw err;
+      });
+      continue;
+    }
+    sub.delivered = l.contentKey;
+  }
+}
+
+function fail(l: Listen, err: unknown): void {
+  const fe =
+    err instanceof FirestoreError ? err : new FirestoreError("unknown", String((err as Error)?.message ?? err));
+  for (const sub of [...l.subs]) sub.error?.(fe);
+}
+
+/** Fields whose change can move a document within the result. */
+function orderingFields(q: Query): string[] {
+  const fields = q._state.orderBys.map((o) => o.field);
+  for (const w of q._state.wheres) if (RANGE_OPS.has(w.op)) fields.push(w.field);
+  return fields.filter((f) => f !== "__name__");
+}
+
+async function fetchFull(l: Listen): Promise<void> {
+  if (l.isDoc) {
+    const raw = await post("get", { path: (l.target as DocumentReference).path });
+    l.docRaw = raw;
+    l.contentKey = JSON.stringify(raw);
+    l.loaded = true;
+    return;
+  }
+  const body = queryBody(l.target as Query);
+  const r = await post("query", l.loaded && l.serverHash ? { ...body, ifHash: l.serverHash } : body);
+  if (r.unchanged) {
+    if (l.loaded) return;
+    // Cannot happen (ifHash is only sent once loaded), but never trust it blind.
+    const again = await post("query", body);
+    return applyFull(l, again);
+  }
+  applyFull(l, r);
+}
+
+function applyFull(l: Listen, r: { docs: WireDoc[]; hash?: string }): void {
+  l.docs = r.docs;
+  l.serverHash = typeof r.hash === "string" ? r.hash : null;
+  l.contentKey = JSON.stringify(r.docs);
+  l.loaded = true;
+}
+
+/**
+ * Merge "which of these ids still match" into the held result. Returns false
+ * when the merge would need a decision only the server can make, in which case
+ * nothing was changed and the caller refetches the whole query.
+ */
+async function fetchDelta(l: Listen, ids: string[]): Promise<boolean> {
+  const q = l.target as Query;
+  const body = queryBody(q);
+  const r = await post("query", { path: body.path, wheres: body.wheres, orderBys: body.orderBys, ids });
+  const fresh = new Map<string, WireDoc>((r.docs as WireDoc[]).map((d) => [d.id, d]));
+  const ordering = orderingFields(q);
+  const docs = [...l.docs];
+
+  for (const id of ids) {
+    const next = fresh.get(id);
+    const at = docs.findIndex((d) => d.id === id);
+    if (!next) {
+      if (at !== -1) docs.splice(at, 1); // deleted, or no longer matches
+      continue;
+    }
+    if (at === -1) return false; // a new member: where it sorts is the server's call
+    const moved = ordering.some(
+      (f) => JSON.stringify(deepGet(docs[at].data, f)) !== JSON.stringify(deepGet(next.data, f)),
+    );
+    if (moved) return false;
+    docs[at] = next;
+  }
+
+  const key = JSON.stringify(docs);
+  if (key !== l.contentKey) {
+    l.docs = docs;
+    l.contentKey = key;
+    l.serverHash = null; // the server never saw this exact result; next full sends no hash
+  }
+  return true;
+}
+
+async function run(l: Listen): Promise<void> {
+  if (l.inFlight || l.disposed) return; // the running loop picks up what was asked
+  if (typeof document !== "undefined" && document.hidden) return; // wants stay set; visibility resumes
+  l.inFlight = true;
+  try {
+    while (!l.disposed && (l.wantFull || l.wantIds.size > 0)) {
+      const canDelta =
+        l.loaded && !l.isDoc && (l.target as Query)._state.limit === undefined && l.wantIds.size <= MAX_DELTA_IDS;
+      const full = l.wantFull || !canDelta;
+      const ids = [...l.wantIds];
+      l.wantFull = false;
+      l.wantIds.clear();
+      try {
+        if (full) {
+          await fetchFull(l);
+        } else if (!(await fetchDelta(l, ids))) {
+          l.wantFull = true;
+          continue;
+        }
+      } catch (err) {
+        if (l.disposed) return;
+        // Whatever was asked is still owed. A full revalidation is the safe
+        // way to pay it, on the next timer tick or poke rather than in a tight
+        // loop against a failing server.
+        l.wantFull = true;
+        fail(l, err);
+        return;
+      }
+      deliver(l);
+    }
+    // A listener that threw is offered the same result again (#124).
+    deliver(l);
+  } finally {
+    l.inFlight = false;
+  }
+}
+
+function poke(l: Listen, hints: readonly ChangeHint[] | null): void {
+  if (hints === null) {
+    l.wantFull = true;
+  } else {
+    for (const h of hints) {
+      if (l.isDoc) {
+        if (`${h.collection}/${h.id}` === (l.target as DocumentReference).path) l.wantFull = true;
+      } else if (h.collection === (l.target as Query).path) {
+        l.wantIds.add(h.id);
+      }
+    }
+  }
+  if (l.wantFull || l.wantIds.size > 0) void run(l);
+}
+
+function startTimer(l: Listen): void {
+  // Self-scheduling rather than setInterval, so the interval is re-read every
+  // cycle and a stream going up or down takes effect immediately, and a slow
+  // request can never stack up behind itself.
+  const schedule = (): void => {
+    if (l.disposed || l.subs.size === 0) return;
+    l.timer = setTimeout(() => {
+      l.wantFull = true;
+      void run(l).finally(schedule);
+    }, effectivePollMs());
+  };
+  schedule();
+}
+
+function stopTimer(l: Listen): void {
+  if (l.timer) clearTimeout(l.timer);
+  l.timer = null;
+}
+
+function dispose(l: Listen): void {
+  l.disposed = true;
+  stopTimer(l);
+  if (l.keepAlive) clearTimeout(l.keepAlive);
+  l.unregister();
+  if (listens.get(l.key) === l) listens.delete(l.key);
+}
+
+function createListen(key: string, target: Query | DocumentReference): Listen {
+  const l: Listen = {
+    key,
+    target,
+    isDoc: target instanceof DocumentReference,
+    subs: new Set(),
+    docs: [],
+    docRaw: null,
+    loaded: false,
+    contentKey: null,
+    serverHash: null,
+    inFlight: false,
+    wantFull: false,
+    wantIds: new Set(),
+    timer: null,
+    keepAlive: null,
+    unregister: () => {},
+    disposed: false,
+  };
+  l.unregister = registerPoller((hints) => poke(l, hints));
+  return l;
+}
+
+let visibilityHooked = false;
+function hookVisibility(): void {
+  if (visibilityHooked || typeof document === "undefined") return;
+  visibilityHooked = true;
+  // A hidden tab fetches nothing, so it may have missed anything: revalidate
+  // every held listen the moment it is looked at again.
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) return;
+    for (const l of listens.values()) {
+      if (l.subs.size === 0) continue;
+      l.wantFull = true;
+      void run(l);
+    }
+  });
+}
+
 export function onSnapshot(
   target: Query | DocumentReference,
   onNextOrObserver: NextFn | Observer,
   onError?: ErrFn,
 ): Unsubscribe {
   const { next, error } = normalizeObserver(onNextOrObserver, onError);
-  const isDoc = target instanceof DocumentReference;
+  hookVisibility();
 
-  let stopped = false;
-  let lastHash: string | null = null;
-  let inFlight = false;
-
-  /**
-   * Fetch and decode. Everything in here is the listen itself — a transport
-   * failure, a rejected query, an undecodable payload — so a throw belongs in
-   * the onError funnel. Returns null when the payload is unchanged and there
-   * is nothing to deliver.
-   */
-  async function fetchChanged(): Promise<{ snapshot: unknown; hash: string } | null> {
-    const raw = isDoc
-      ? await post("get", { path: (target as DocumentReference).path })
-      : await post("query", queryBody(target as Query));
-    if (stopped) return null;
-    const hash = JSON.stringify(raw);
-    if (hash === lastHash) return null;
-    if (isDoc) {
-      const ref = target as DocumentReference;
-      return {
-        hash,
-        snapshot: new DocumentSnapshot(
-          raw.id,
-          ref,
-          raw.exists ? (decodeValue(raw.data) as Record<string, unknown>) : undefined,
-          raw.exists,
-        ),
-      };
-    }
-    return { hash, snapshot: toQuerySnapshot((target as Query).path, raw.docs) };
+  const key = listenKey(target);
+  let l = listens.get(key);
+  if (!l || l.disposed) {
+    l = createListen(key, target);
+    listens.set(key, l);
   }
+  const listen = l;
+  const sub: Subscriber = { next, error, delivered: null };
+  const wasIdle = listen.subs.size === 0;
+  listen.subs.add(sub);
+  if (listen.keepAlive) {
+    clearTimeout(listen.keepAlive);
+    listen.keepAlive = null;
+  }
+  if (wasIdle) startTimer(listen);
 
-  async function tick(): Promise<void> {
-    if (stopped || inFlight) return;
-    if (typeof document !== "undefined" && document.hidden) return;
-    inFlight = true;
-    try {
-      let pending: { snapshot: unknown; hash: string } | null;
-      try {
-        pending = await fetchChanged();
-      } catch (err) {
-        if (stopped) return; // unsubscribed mid-flight — don't deliver a late error
-        const fe = err instanceof FirestoreError ? err : new FirestoreError("unknown", String((err as Error)?.message ?? err));
-        error?.(fe);
-        return;
-      }
-      if (!pending || stopped) return;
-
-      // The consumer's own handler runs OUTSIDE the onError funnel. An exception
-      // thrown in here is application code failing, not the listen failing, and
-      // firebase/firestore lets it reach the host environment rather than
-      // dressing it up as a FirebaseError and handing it back to onError — which
-      // sends whoever reads the log looking at the data plane. Rethrowing from a
-      // timer reproduces that: it lands on window.onerror, unhandled, with the
-      // original name and stack.
-      try {
-        next(pending.snapshot);
-      } catch (err) {
-        setTimeout(() => {
-          throw err;
-        });
-        // lastHash stays where it was: the payload was NOT consumed. Assigning it
-        // before next() meant a throwing handler still marked the payload
-        // delivered, so the following tick saw an unchanged hash, returned early,
-        // and the listener stayed dark until the data next changed.
-        return;
-      }
-      lastHash = pending.hash;
-    } finally {
-      inFlight = false;
+  if (!listen.loaded) {
+    // First load, or one already in flight that will deliver to everyone.
+    listen.wantFull = true;
+    void run(listen);
+  } else {
+    // Instant: hand the newcomer what the listen already holds. Asynchronous,
+    // as firebase/firestore is, so a caller may unsubscribe from inside its
+    // own first callback.
+    queueMicrotask(() => {
+      if (listen.subs.has(sub)) deliver(listen);
+    });
+    if (wasIdle) {
+      listen.wantFull = true;
+      void run(listen);
     }
   }
 
-  void tick();
-  // Self-scheduling rather than setInterval, so the interval is re-read every cycle
-  // and a stream going up or down takes effect immediately instead of at the next
-  // subscribe. Also guarantees a full gap BETWEEN ticks rather than between starts,
-  // so a slow request can never stack up behind itself.
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  const schedule = (): void => {
-    if (stopped) return;
-    timer = setTimeout(() => {
-      void tick().finally(schedule);
-    }, effectivePollMs());
-  };
-  schedule();
-
-  const onVisibility = (): void => {
-    if (typeof document !== "undefined" && !document.hidden) void tick();
-  };
-  if (typeof document !== "undefined") document.addEventListener("visibilitychange", onVisibility);
-  // Let a successful write, or a realtime change frame, pull this listener forward
-  // instead of making the user wait out the interval. See poll-bus.ts.
-  const unregister = registerPoller(() => void tick());
-
+  let unsubscribed = false;
   return () => {
-    stopped = true;
-    unregister();
-    if (timer) clearTimeout(timer);
-    if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVisibility);
+    if (unsubscribed) return;
+    unsubscribed = true;
+    listen.subs.delete(sub);
+    if (listen.subs.size === 0 && !listen.disposed) {
+      stopTimer(listen);
+      listen.keepAlive = setTimeout(() => dispose(listen), KEEP_ALIVE_MS);
+      // Never let a cache hold a Node process (tests, SSR) open.
+      (listen.keepAlive as { unref?: () => void }).unref?.();
+    }
   };
+}
+
+/** Test seam: drop every shared listen so cases cannot see each other's cache. */
+export function __resetListens(): void {
+  for (const l of [...listens.values()]) dispose(l);
+}
+
+/** Test/diagnostic hook: how many shared listens are held, and by how many. */
+export function __listenStats(): Array<{ key: string; subscribers: number; loaded: boolean }> {
+  return [...listens.values()].map((l) => ({ key: l.key, subscribers: l.subs.size, loaded: l.loaded }));
 }
 
 /* ------------------------------------------------------------------ */

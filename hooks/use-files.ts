@@ -292,26 +292,19 @@ export interface FileConnectionSourceInfo {
  * Hook to get files for a specific transaction with realtime updates
  */
 export function useTransactionFiles(transactionId: string | null) {
-  const { userId } = useAuth();
-
-  const q = useMemo(
-    () =>
-      transactionId && userId
-        ? query(
-            collection(db, FILES_COLLECTION),
-            where("userId", "==", userId),
-            where("transactionIds", "array-contains", transactionId),
-          )
-        : null,
-    [transactionId, userId],
-  );
-
-  const { data: rawFiles, loading, error } = useFirestoreCollection(q, mapFile);
-
-  // Filter out deleted files (soft-deleted files still have transactionIds)
+  // Derived from the account's file list rather than queried per transaction.
+  // Every screen that shows files already holds that list as one shared
+  // listen, so switching transactions costs no request and the panel never
+  // waits on data the table has. Same membership as the query this replaced
+  // (`transactionIds` array-contains), and useFiles already leaves deleted
+  // files out (soft-deleted files still carry their transactionIds).
+  const { files: allFiles, loading, error } = useFiles();
   const files = useMemo(
-    () => rawFiles.filter((file) => !file.deletedAt),
-    [rawFiles],
+    () =>
+      transactionId
+        ? allFiles.filter((file) => file.transactionIds?.includes(transactionId))
+        : [],
+    [allFiles, transactionId],
   );
 
   const connectFile = useCallback(

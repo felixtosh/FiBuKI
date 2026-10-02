@@ -11,7 +11,7 @@
  * here we assert the CLIENT half.
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import express from "express";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
@@ -24,6 +24,7 @@ import { drainTriggers, __resetTriggerShim, onDocumentCreated } from "./trigger-
 import { createDataPlane } from "./data-plane";
 import {
   __configureFirestoreClient,
+  __resetListens,
   collection,
   doc,
   query,
@@ -49,6 +50,7 @@ import {
   FirestoreError,
   getFirestore,
 } from "../../../lib/selfhost/firestore-client";
+import { pokePollers, __resetPokeWindow, setStreamHealthy } from "../../../lib/selfhost/poll-bus";
 
 const serverDb = getServerDb();
 const db = getFirestore(); // client-shim Firestore handle
@@ -57,9 +59,16 @@ const OTHER = "someone-else";
 const GOOD_TOKEN = "tok-stefan";
 
 let server: http.Server;
+let baseUrl = "";
+/** Every /__data/query body the client sent, in order. */
+const queryLog: Array<Record<string, unknown>> = [];
 
 beforeAll(async () => {
   const app = express();
+  app.use("/__data/query", express.json(), (req, _res, next) => {
+    queryLog.push(req.body);
+    next();
+  });
   app.use(
     "/__data",
     createDataPlane(async (token) => {
@@ -70,6 +79,7 @@ beforeAll(async () => {
   server = http.createServer(app);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  baseUrl = base;
   __configureFirestoreClient({ apiUrl: base, getToken: () => GOOD_TOKEN });
 });
 
@@ -81,6 +91,10 @@ beforeEach(async () => {
   await new Promise((r) => setTimeout(r, 20));
   await __resetFirestoreShim();
   __resetTriggerShim();
+  __resetListens();
+  __resetPokeWindow();
+  setStreamHealthy(false);
+  queryLog.length = 0;
 });
 
 /** Seed a doc straight through the server shim (bypasses policy/ownership). */
@@ -437,5 +451,248 @@ describe("onSnapshot (poll)", () => {
     await waitFor(() => err !== null);
     expect(err!.code).toBe("permission-denied");
     unsub();
+  });
+});
+
+/* ------------------------------------------------------------------ */
+
+describe("onSnapshot (shared listens)", () => {
+  // A huge interval: anything that changes during these cases was caused by a
+  // poke or a join, never by the safety-net timer.
+  beforeEach(() => {
+    process.env.NEXT_PUBLIC_FIBUKI_POLL_MS = "600000";
+  });
+  afterEach(() => {
+    delete process.env.NEXT_PUBLIC_FIBUKI_POLL_MS;
+  });
+
+  const ids = (snap: any): string[] => snap.docs.map((d: any) => d.id);
+  const filesQuery = () =>
+    query(collection(db, "files"), where("kind", "==", "invoice"), orderBy("uploadedAt", "desc"));
+  const deltaRequests = () => queryLog.filter((b) => Array.isArray(b.ids));
+  const fullRequests = () => queryLog.filter((b) => !Array.isArray(b.ids));
+  /** A change frame, as the realtime stream would deliver it. */
+  const frame = (id: string) => {
+    __resetPokeWindow();
+    pokePollers({ collection: "files", id });
+  };
+
+  async function seedFiles(): Promise<void> {
+    await seed("files/f1", { userId: USER, kind: "invoice", uploadedAt: 1, name: "one" });
+    await seed("files/f2", { userId: USER, kind: "invoice", uploadedAt: 2, name: "two" });
+    await seed("files/f3", { userId: USER, kind: "receipt", uploadedAt: 3, name: "three" });
+  }
+
+  it("two listeners on one query share one listen and one request", async () => {
+    await seedFiles();
+    const a: string[][] = [];
+    const b: string[][] = [];
+    const offA = onSnapshot(filesQuery(), (s) => a.push(ids(s)));
+    await waitFor(() => a.length === 1);
+    const offB = onSnapshot(filesQuery(), (s) => b.push(ids(s)));
+    await waitFor(() => b.length === 1);
+
+    expect(a[0]).toEqual(["f2", "f1"]);
+    expect(b[0]).toEqual(["f2", "f1"]);
+    // The second listener was answered from the shared listen: no new request.
+    expect(fullRequests()).toHaveLength(1);
+    offA();
+    offB();
+  });
+
+  it("a change frame refetches just that document and merges it in place", async () => {
+    await seedFiles();
+    const seen: any[] = [];
+    const off = onSnapshot(filesQuery(), (s) => seen.push(s.docs.map((d: any) => d.data().name)));
+    await waitFor(() => seen.length === 1);
+
+    await seed("files/f1", { userId: USER, kind: "invoice", uploadedAt: 1, name: "one, extracted" });
+    frame("f1");
+    await waitFor(() => seen.length === 2);
+
+    expect(seen[1]).toEqual(["two", "one, extracted"]);
+    expect(deltaRequests()).toHaveLength(1);
+    expect(deltaRequests()[0].ids).toEqual(["f1"]);
+    expect(fullRequests()).toHaveLength(1); // only the initial load
+    off();
+  });
+
+  it("a document that stops matching is dropped without a full refetch", async () => {
+    await seedFiles();
+    const seen: string[][] = [];
+    const off = onSnapshot(filesQuery(), (s) => seen.push(ids(s)));
+    await waitFor(() => seen.length === 1);
+
+    await seed("files/f2", { userId: USER, kind: "receipt", uploadedAt: 2, name: "two" });
+    frame("f2");
+    await waitFor(() => seen.length === 2);
+
+    expect(seen[1]).toEqual(["f1"]);
+    expect(fullRequests()).toHaveLength(1);
+    off();
+  });
+
+  it("a frame for a document the query never held changes nothing and delivers nothing", async () => {
+    await seedFiles();
+    const seen: string[][] = [];
+    const off = onSnapshot(filesQuery(), (s) => seen.push(ids(s)));
+    await waitFor(() => seen.length === 1);
+
+    frame("f3"); // a receipt: not in this query, before or after
+    await waitFor(() => deltaRequests().length === 1);
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(seen).toHaveLength(1);
+    off();
+  });
+
+  it("a new member, or a changed sort key, is placed by a full refetch, never by the client", async () => {
+    await seedFiles();
+    const seen: string[][] = [];
+    const off = onSnapshot(filesQuery(), (s) => seen.push(ids(s)));
+    await waitFor(() => seen.length === 1);
+
+    // f3 becomes an invoice: a new member, whose position is the server's call.
+    await seed("files/f3", { userId: USER, kind: "invoice", uploadedAt: 3, name: "three" });
+    frame("f3");
+    await waitFor(() => seen.length === 2);
+    expect(seen[1]).toEqual(["f3", "f2", "f1"]);
+
+    // f1's sort key moves it to the front.
+    await seed("files/f1", { userId: USER, kind: "invoice", uploadedAt: 9, name: "one" });
+    frame("f1");
+    await waitFor(() => seen.length === 3);
+    expect(seen[2]).toEqual(["f1", "f3", "f2"]);
+
+    expect(fullRequests()).toHaveLength(3); // initial + one per server decision
+    off();
+  });
+
+  it("a listener on another collection is not woken by the frame", async () => {
+    await seedFiles();
+    await seed("partners/p1", { userId: USER, name: "P" });
+    const partners: string[][] = [];
+    const off = onSnapshot(collection(db, "partners"), (s) => partners.push(ids(s)));
+    await waitFor(() => partners.length === 1);
+    const before = queryLog.length;
+
+    frame("f1");
+    await new Promise((r) => setTimeout(r, 80));
+
+    expect(queryLog.length).toBe(before);
+    off();
+  });
+
+  it("heals a missed frame on the next full revalidation, and an unchanged result is not resent", async () => {
+    await seedFiles();
+    const seen: string[][] = [];
+    const off = onSnapshot(filesQuery(), (s) => seen.push(ids(s)));
+    await waitFor(() => seen.length === 1);
+
+    // A revalidation with nothing changed: answered "unchanged", nothing delivered.
+    __resetPokeWindow();
+    pokePollers();
+    await waitFor(() => fullRequests().length === 2);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(seen).toHaveLength(1);
+    expect(typeof fullRequests()[1].ifHash).toBe("string");
+
+    // A change the client is never told about: the frame is lost.
+    await seed("files/f4", { userId: USER, kind: "invoice", uploadedAt: 4, name: "four" });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(seen).toHaveLength(1);
+
+    // Any full revalidation (timer, reconnect, tab shown, callable) repairs it.
+    __resetPokeWindow();
+    pokePollers();
+    await waitFor(() => seen.length === 2);
+    expect(seen[1]).toEqual(["f4", "f2", "f1"]);
+    off();
+  });
+
+  it("the generic docs table merges a frame the same way as a flattened table", async () => {
+    // noReceiptCategories is not flattened: it lives in the docs table, whose
+    // id filter is the `id = ANY(...)` path in firestore-shim.ts.
+    await seed("noReceiptCategories/c1", { userId: USER, isActive: true, name: "Bank fees" });
+    await seed("noReceiptCategories/c2", { userId: USER, isActive: true, name: "Tips" });
+    const q = () =>
+      query(collection(db, "noReceiptCategories"), where("isActive", "==", true), orderBy("name", "asc"));
+    const seen: string[][] = [];
+    const off = onSnapshot(q(), (s) => seen.push(s.docs.map((d: any) => d.data().name)));
+    await waitFor(() => seen.length === 1);
+
+    await seed("noReceiptCategories/c2", { userId: USER, isActive: false, name: "Tips" });
+    __resetPokeWindow();
+    pokePollers({ collection: "noReceiptCategories", id: "c2" });
+    await waitFor(() => seen.length === 2);
+
+    expect(seen[1]).toEqual(["Bank fees"]);
+    expect(deltaRequests()).toHaveLength(1);
+    off();
+  });
+
+  it("a frame naming someone else's document never brings it in", async () => {
+    await seedFiles();
+    await seed("files/foreign", { userId: OTHER, kind: "invoice", uploadedAt: 5, name: "not yours" });
+    const seen: string[][] = [];
+    const off = onSnapshot(filesQuery(), (s) => seen.push(ids(s)));
+    await waitFor(() => seen.length === 1);
+
+    frame("foreign");
+    await waitFor(() => deltaRequests().length === 1);
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).not.toContain("foreign");
+    off();
+  });
+
+  it("id filters on the docs table intersect, and still honour every other filter", async () => {
+    await seed("noReceiptCategories/a", { userId: USER, isActive: true, name: "A" });
+    await seed("noReceiptCategories/b", { userId: USER, isActive: false, name: "B" });
+    await seed("noReceiptCategories/c", { userId: USER, isActive: true, name: "C" });
+    await seed("noReceiptCategories/d", { userId: OTHER, isActive: true, name: "D" });
+    const col = collection(db, "noReceiptCategories");
+
+    const inOnly = await getDocs(query(col, where(documentId(), "in", ["a", "b", "d"])));
+    expect(inOnly.docs.map((d: any) => d.id).sort()).toEqual(["a", "b"]); // d is not ours
+
+    const both = await getDocs(
+      query(col, where(documentId(), "in", ["a", "b", "c"]), where(documentId(), "==", "c")),
+    );
+    expect(both.docs.map((d: any) => d.id)).toEqual(["c"]);
+
+    const withField = await getDocs(
+      query(col, where(documentId(), "in", ["a", "b"]), where("isActive", "==", true)),
+    );
+    expect(withField.docs.map((d: any) => d.id)).toEqual(["a"]);
+  });
+
+  it("the server refuses an unbounded id list", async () => {
+    const res = await fetch(`${baseUrl}/__data/query`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${GOOD_TOKEN}` },
+      body: JSON.stringify({ path: "files", ids: Array.from({ length: 201 }, (_, i) => `f${i}`) }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("a listener that comes back within the keep-alive window is answered at once, then revalidated", async () => {
+    await seedFiles();
+    const first: string[][] = [];
+    const off1 = onSnapshot(filesQuery(), (s) => first.push(ids(s)));
+    await waitFor(() => first.length === 1);
+    off1();
+
+    // Changed while nobody was listening and no frame said so.
+    await seed("files/f4", { userId: USER, kind: "invoice", uploadedAt: 4, name: "four" });
+
+    const second: string[][] = [];
+    const off2 = onSnapshot(filesQuery(), (s) => second.push(ids(s)));
+    await waitFor(() => second.length >= 1);
+    expect(second[0]).toEqual(["f2", "f1"]); // instant, from the kept result
+    await waitFor(() => second.length === 2);
+    expect(second[1]).toEqual(["f4", "f2", "f1"]); // and then corrected
+    off2();
   });
 });

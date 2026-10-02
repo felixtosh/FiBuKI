@@ -16,7 +16,8 @@
 import { FieldValue, Timestamp, VectorValue } from "@google-cloud/firestore";
 import { emitChange } from "./bus";
 import { enqueueTriggerEvent, usesDurableTriggerQueue } from "./trigger-queue";
-import { notifyChange } from "./change-notify";
+import { audienceWire, notifyChange } from "./change-notify";
+import { readAudience } from "./data-policy";
 import { FLATTENED, FlatSpec } from "./db/collections";
 import { runMigrations } from "./db/migrate";
 import { compileFlatQuery, CursorSpec } from "./db/pushdown";
@@ -734,13 +735,18 @@ async function rawPut(
       );
     }
     // Issued on the SAME connection as the write, so Postgres queues it and
-    // delivers only on commit — a rolled-back write notifies nobody.
-    await notifyChange(q, {
-      tenant: getTenantId(),
-      collection: collectionPath,
-      id,
-      op: "w",
-    });
+    // delivers only on commit — a rolled-back write notifies nobody. Addressed
+    // to whoever may read the document (data-policy.ts), before and after.
+    const to = audienceWire(readAudience(collectionPath, id, [data, before]));
+    if (to !== null) {
+      await notifyChange(q, {
+        tenant: getTenantId(),
+        collection: collectionPath,
+        id,
+        op: "w",
+        ...(to ? { to } : {}),
+      });
+    }
     // Same transaction, same reason: a process that does not dispatch triggers
     // itself must hand the change to one that does, and must not do so for a
     // write that then rolls back.
@@ -768,12 +774,16 @@ async function rawDelete(
     } else {
       await q(`DELETE FROM docs WHERE tenant_id = $1 AND path = $2`, [getTenantId(), path]);
     }
-    await notifyChange(q, {
-      tenant: getTenantId(),
-      collection: segs.slice(0, -1).join("/"),
-      id: segs[segs.length - 1],
-      op: "d",
-    });
+    const to = audienceWire(readAudience(segs.slice(0, -1).join("/"), segs[segs.length - 1], [before]));
+    if (to !== null) {
+      await notifyChange(q, {
+        tenant: getTenantId(),
+        collection: segs.slice(0, -1).join("/"),
+        id: segs[segs.length - 1],
+        op: "d",
+        ...(to ? { to } : {}),
+      });
+    }
     if (usesDurableTriggerQueue()) {
       await enqueueTriggerEvent(q, getTenantId(), {
         collectionPath: segs.slice(0, -1).join("/"),
@@ -974,6 +984,21 @@ function matchesFilter(data: Record<string, unknown>, f: Filter, id?: string): b
   }
 }
 
+/**
+ * The doc ids a query's `__name__` filters allow, intersected, or null when
+ * none restricts it. Only `==` and `in` exist on __name__ (matchesFilter).
+ */
+function idRestriction(filters: Filter[]): string[] | null {
+  const sets: Array<Set<string>> = [];
+  for (const f of filters) {
+    if (f.field !== "__name__") continue;
+    if (f.op === "==") sets.push(new Set([toDocId(f.value)]));
+    else if (f.op === "in" && Array.isArray(f.value)) sets.push(new Set((f.value as unknown[]).map(toDocId)));
+  }
+  if (sets.length === 0) return null;
+  return [...sets[0]].filter((id) => sets.every((set) => set.has(id)));
+}
+
 export class Query {
   constructor(
     protected readonly collectionPath: string,
@@ -1120,10 +1145,23 @@ export class Query {
         const res = await q<{ id: string; data: unknown }>(compiled.sql, compiled.params);
         return res.rows.map((r) => ({ id: r.id, collectionPath: this.collectionPath, data: r.data }));
       }
-      const res = await q<{ id: string; collection_path: string; data: unknown }>(
-        `SELECT id, collection_path, data FROM docs WHERE tenant_id = $1 AND collection_path = $2`,
-        [tenantId, this.collectionPath],
-      );
+      // A document-id filter narrows the fetch in SQL, as the flattened tables'
+      // pushdown already does, so "which of these ids still match" reads those
+      // rows rather than the whole collection. The JS pipeline below still
+      // applies every filter, so this is a superset narrowing and nothing more.
+      // By full path, which is the table's primary key (tenant_id, path): an
+      // exact index lookup per id, however large the collection grows.
+      const ids = idRestriction(this.filters);
+      const res = ids
+        ? await q<{ id: string; collection_path: string; data: unknown }>(
+            `SELECT id, collection_path, data FROM docs
+             WHERE tenant_id = $1 AND path = ANY($2::text[])`,
+            [tenantId, ids.map((id) => `${this.collectionPath}/${id}`)],
+          )
+        : await q<{ id: string; collection_path: string; data: unknown }>(
+            `SELECT id, collection_path, data FROM docs WHERE tenant_id = $1 AND collection_path = $2`,
+            [tenantId, this.collectionPath],
+          );
       return res.rows.map((r) => ({ id: r.id, collectionPath: r.collection_path, data: r.data }));
     });
     let rows = fetched.map((r) => ({

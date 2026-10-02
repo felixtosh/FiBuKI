@@ -26,6 +26,7 @@ import {
 } from "../../../lib/selfhost/poll-bus";
 import {
   __configureFirestoreClient,
+  __resetListens,
   doc,
   onSnapshot,
   setDoc,
@@ -138,6 +139,7 @@ describe("poll bus: end-to-end through the client shim", () => {
   beforeEach(async () => {
     await __resetFirestoreShim();
     __resetTriggerShim();
+    __resetListens();
   });
 
   it("a write refreshes an active listener without waiting for the interval", async () => {
@@ -164,15 +166,23 @@ describe("poll bus: end-to-end through the client shim", () => {
     delete process.env.NEXT_PUBLIC_FIBUKI_POLL_MS;
   });
 
-  it("unsubscribing deregisters from the bus", async () => {
+  it("unsubscribing deregisters from the bus once the keep-alive window ends", async () => {
     process.env.NEXT_PUBLIC_FIBUKI_POLL_MS = "600000";
-    const before = __pollerCount();
-    const unsub = onSnapshot(doc(db, "transactions", "t2"), () => {});
-    expect(__pollerCount()).toBe(before + 1);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const before = __pollerCount();
+      const unsub = onSnapshot(doc(db, "transactions", "t2"), () => {});
+      expect(__pollerCount()).toBe(before + 1);
 
-    unsub();
+      unsub();
+      // Kept warm, so a listener that comes straight back gets it instantly.
+      expect(__pollerCount()).toBe(before + 1);
 
-    expect(__pollerCount()).toBe(before);
-    delete process.env.NEXT_PUBLIC_FIBUKI_POLL_MS;
+      vi.advanceTimersByTime(30_001);
+      expect(__pollerCount()).toBe(before);
+    } finally {
+      vi.useRealTimers();
+      delete process.env.NEXT_PUBLIC_FIBUKI_POLL_MS;
+    }
   });
 });
