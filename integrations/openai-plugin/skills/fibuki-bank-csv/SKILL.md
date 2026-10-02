@@ -28,6 +28,7 @@ Choose the columns from the headers and samples:
 - date: the booking date (Buchungsdatum), not the value date (Valuta), when both exist
 - amount: one signed column, **or** separate debit (Soll) and credit (Haben) columns
 - name: the booking text (Buchungstext); partner: the counterparty name; iban: the counterparty IBAN; reference: the payment reference
+- balance: a running balance column (Saldo), if there is one. It is never the amount, but it is the best proof that the amounts are right (step 4)
 
 If two columns could be the date or the amount and the samples do not settle it, ask the user which one. Do not guess.
 
@@ -48,10 +49,13 @@ FiBuKI decides what is a duplicate, on the server: it skips lines an earlier imp
 ```
 node "${PLUGIN_ROOT}/scripts/fibuki-csv.mjs" convert <file.csv> \
   --date <col> --amount <col> --name <col> [--partner <col>] [--iban <col>] [--reference <col>] \
+  [--balance <col>] \
   [--after YYYY-MM-DD] [--out ./fibuki-import]
 ```
 
 For debit and credit columns use `--debit <col> --credit <col>` instead of `--amount`. A fixed currency other than EUR: `--currency CHF`, or `--currency-col <col>`.
+
+Pass `--balance <col>` whenever the file has a running balance. The script then checks **every row**: each balance must equal its neighbour's balance plus its own amount (oldest-first or newest-first, it works out which). It prints `balanceCheck` (rows checked and matched) and, when the amounts do not add up, a `warnings` entry. Treat a warning as a stop sign: wrong sign (a credit card that lists spending as positive), wrong amount column, or wrong format. Show it to the user and settle it before importing.
 
 It writes the converted rows into chunk files and prints a summary: rows read, valid, rows outside the range, rows skipped with the reason, first and last date, total income and total expense in cents, a five-row preview. Nothing is sent yet.
 
@@ -59,9 +63,10 @@ Show the user:
 
 - the preview (date, amount in Euro, name);
 - the row count and date range, and the totals, so they can compare with the bank's own statement;
+- whether the balance check confirmed the amounts (say "alle N Buchungen stimmen mit dem Saldo überein" or the equivalent), or that the file has no balance column so only the totals back it up;
 - every skipped row with its reason.
 
-If the script says it could not detect the date format, the dates are ambiguous (every day is 12 or less, so 01.09. could be 1 September or 9 January). Ask the user which comes first and pass `--date-format de` (day first) or `--date-format de-mdy` (month first); never pick one yourself. If the script refuses with "Day and month look swapped", it found dates like 13/09 that prove the format is wrong. Re-run with the `suggestedDateFormat` it names.
+If the script says "Amount format looks wrong", every row's decimal mark disagrees with the detected format (it would import amounts 100 times too large or small). Re-run with the `--amount-format` it names, or ask the user; never override it silently. If the script says it could not detect the date format, the dates are ambiguous (every day is 12 or less, so 01.09. could be 1 September or 9 January). Ask the user which comes first and pass `--date-format de` (day first) or `--date-format de-mdy` (month first); never pick one yourself. If the script refuses with "Day and month look swapped", it found dates like 13/09 that prove the format is wrong. Re-run with the `suggestedDateFormat` it names.
 
 Ask once: "N Buchungen von <date> bis <date> in <account> importieren? Was FiBuKI schon hat, wird übersprungen."
 

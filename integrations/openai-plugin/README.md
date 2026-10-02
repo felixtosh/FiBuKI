@@ -64,7 +64,8 @@ node scripts/fibuki-csv.mjs analyze export.csv [--skip N]
 
 # dry run: converts, writes chunk files, prints totals and a preview. Sends nothing.
 node scripts/fibuki-csv.mjs convert export.csv --date Buchungsdatum --amount Betrag \
-  --name Buchungstext --partner Partnername --iban "Partner IBAN" --after 2026-08-31
+  --name Buchungstext --partner Partnername --iban "Partner IBAN" --balance Saldo \
+  --after 2026-08-31
 
 # send it (FIBUKI_API_KEY, import_transactions in chunks under one import id, waits out
 # rate limits). FiBuKI skips lines it already has; the result says how many (alreadyImported).
@@ -74,7 +75,7 @@ node scripts/fibuki-csv.mjs convert export.csv ... --import --source <sourceId>
 node scripts/fibuki-upload.mjs a1-rechnung.pdf bon.jpg
 ```
 
-`fibuki-csv.mjs` is built from FiBuKI's own `lib/import` parsers, so it reads dates and amounts exactly as the web import does. After changing `lib/import` or `src/csv-cli.ts`:
+`fibuki-csv.mjs` is built from FiBuKI's own `lib/import` parsers, so it reads dates and amounts exactly as the web import does. On top of that it checks the result against every row: day/month order, the decimal mark, and (with `--balance`) that the running balance adds up. After changing `lib/import` or `src/csv-cli.ts`:
 
 ```bash
 node integrations/openai-plugin/build.mjs         # rebuild the committed bundle

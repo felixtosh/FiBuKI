@@ -91,6 +91,55 @@ test("convert: a swapped day/month format is refused instead of filing dates und
   assert.match(json.error, /swapped/);
 });
 
+test("convert: a running balance column confirms the amounts over every row", () => {
+  const { json } = convert("george-cp1252.csv", [
+    "--date", "Buchungsdatum", "--amount", "Betrag", "--name", "Buchungstext", "--balance", "Saldo",
+  ]);
+  assert.deepEqual(json.balanceCheck, { checked: 3, matched: 3, direction: "oldest-first" });
+  assert.deepEqual(json.warnings, []);
+});
+
+test("convert: a balance column in newest-first order reconciles too", () => {
+  const dir = mkdtempSync(join(tmpdir(), "fibuki-csv-"));
+  const file = join(dir, "newest-first.csv");
+  writeFileSync(file, "Datum;Betrag;Text;Saldo\n17.09.2026;-980,00;Miete;6.762,20\n15.09.2026;3.412,55;Honorar;7.742,20\n03.09.2026;-39,90;A1;4.329,65\n01.09.2026;-54,20;REWE;4.369,55\n");
+  const { json } = run(["convert", file, "--date", "Datum", "--amount", "Betrag", "--name", "Text", "--balance", "Saldo", "--out", dir]);
+  assert.equal(json.balanceCheck.direction, "newest-first");
+  assert.equal(json.balanceCheck.matched, json.balanceCheck.checked);
+  assert.deepEqual(json.warnings, []);
+});
+
+test("convert: amounts that do not add up to the balance are flagged (wrong sign, wrong column)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "fibuki-csv-"));
+  const file = join(dir, "card.csv");
+  // A credit card export that lists spending as positive while the balance falls.
+  writeFileSync(file, "Datum;Betrag;Text;Saldo\n01.09.2026;54,20;REWE;945,80\n03.09.2026;39,90;A1;905,90\n15.09.2026;120,00;Shell;785,90\n17.09.2026;980,00;Miete;-194,10\n");
+  const { json } = run(["convert", file, "--date", "Datum", "--amount", "Betrag", "--name", "Text", "--balance", "Saldo", "--date-format", "de", "--out", dir]);
+  assert.equal(json.ok, true);
+  assert.equal(json.balanceCheck.matched, 0);
+  assert.match(json.warnings[0], /does not add up/);
+});
+
+test("convert: a format that reads the decimal mark the wrong way round is refused over all rows", () => {
+  const { code, json } = convert(
+    "n26-utf8.csv",
+    ["--date", "Date", "--amount", "Amount (EUR)", "--name", "Payee"],
+    ["--amount-format", "de"]
+  );
+  assert.equal(code, 1);
+  assert.match(json.error, /factor of 100/);
+  assert.equal(json.decimalMarkInValues, ".");
+  assert.match(json.hint, /--amount-format us/);
+});
+
+test("convert: a German file is not mistaken for a dot-decimal one by the same check", () => {
+  const { code, json } = convert("george-cp1252.csv", [
+    "--date", "Buchungsdatum", "--amount", "Betrag", "--name", "Buchungstext", "--amount-format", "de",
+  ]);
+  assert.equal(code, 0);
+  assert.equal(json.ok, true);
+});
+
 test("convert: unreadable rows are listed, not silently dropped", () => {
   const dir = mkdtempSync(join(tmpdir(), "fibuki-csv-"));
   const file = join(dir, "bad.csv");

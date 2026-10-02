@@ -17,13 +17,14 @@ The layouts below are the ones FiBuKI's own tests and samples use (`spikes/jev-e
 - **Decimal separator**: `1.234,56` (German) against `1,234.56` and `-89.99` (English). A dot as decimal in a column that looks German would read 89,99 as 8.999; FiBuKI's detector now breaks that tie by looking at where the separators sit.
 - **Two-digit years** (`22.09.26`).
 - **Swapped day and month**: refused, not guessed.
+- **Decimal mark disagreeing with the values** on any amount column: refused, with the format to use instead.
 - **Debit/credit in two columns**: combined into one signed amount.
 
 ## Traps you must handle
 
 - **Which date.** If both a booking date and a value date (Valuta) exist, use the booking date, unless the user says otherwise.
-- **Running balance columns** (`Saldo`, `Balance`) are never the amount.
+- **Running balance columns** (`Saldo`, `Balance`) are never the amount, but pass them as `--balance`: the script then proves the amounts against the balance on every row.
 - **Several accounts in one file** (some banks export all accounts together, with an IBAN column per row): ask the user to split the file or tell you which IBAN to import; one Bank Account per import.
-- **Credit cards** often show the amount as positive for spending. Check the first rows against what the user remembers; if expenses come out positive, tell the user rather than flipping the sign silently.
+- **Credit cards** often show the amount as positive for spending. If the file has a balance column, `--balance` exposes the wrong sign (the balance falls while the amounts are positive). Otherwise check the first rows against what the user remembers. Either way, tell the user rather than flipping the sign silently.
 - **Header lines before the table** (account holder, period): the script reads the first line as the header. If `analyze` shows nonsense headers, count the lines above the real header and pass `--skip N` to `analyze` and `convert`.
 - **Currency**: `--currency` for a single-currency file, `--currency-col` when the file has one per row.

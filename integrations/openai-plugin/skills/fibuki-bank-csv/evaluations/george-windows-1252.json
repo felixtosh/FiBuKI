@@ -7,6 +7,7 @@
   "expected_behavior": [
     "Runs scripts/fibuki-csv.mjs analyze first and reads encoding windows-1252, delimiter semicolon, 4 rows",
     "Chooses Buchungsdatum as date, Betrag as amount, Buchungstext as name, Partnername as partner, Partner IBAN as iban, Zahlungsreferenz as reference and does not use Saldo as an amount",
+    "Passes --balance Saldo and reports that all rows reconcile with the running balance",
     "Calls list_sources and asks which Bank Account the file belongs to instead of assuming",
     "Checks the newest existing Transaction with list_transactions (sourceId, limit 1) before importing",
     "Runs convert without --import, shows the preview with Euro amounts (-54,20 €, -39,90 €, +3.412,55 €, -980,00 €), the totals and the date range",
@@ -16,6 +17,7 @@
   "success_criteria": [
     "No amount or date is converted by the model itself",
     "Müller Consulting GmbH is shown with its umlaut",
-    "Nothing is sent to FiBuKI before the confirmation"
+    "Nothing is sent to FiBuKI before the confirmation",
+    "The balance check result is shown to the user next to the totals"
   ]
 }

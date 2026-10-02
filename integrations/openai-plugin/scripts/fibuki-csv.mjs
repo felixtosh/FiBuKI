@@ -3102,6 +3102,28 @@ var NUMERIC = /^[\s+\-(]*\d[\d.,\s'\u2019]*[)\-]?\s*(?:EUR|\u20ac)?$/i;
 function looksNumeric(samples) {
   return samples.length > 0 && samples.every((s) => NUMERIC.test(s));
 }
+function decimalEvidence(values) {
+  let dot = 0;
+  let comma = 0;
+  for (const value of values) {
+    const match2 = /([.,])(\d{2})(?!\d)\D*$/.exec(value.trim());
+    if (match2) match2[1] === "." ? dot++ : comma++;
+  }
+  return { dot, comma };
+}
+function reconcileBalance(amounts, balances) {
+  let checked = 0;
+  let oldestFirst = 0;
+  let newestFirst = 0;
+  for (let i = 1; i < amounts.length; i++) {
+    const [a, prevA, b, prevB] = [amounts[i], amounts[i - 1], balances[i], balances[i - 1]];
+    if (a === null || prevA === null || b === null || prevB === null) continue;
+    checked++;
+    if (b - prevB === a) oldestFirst++;
+    if (prevB - b === prevA) newestFirst++;
+  }
+  return newestFirst > oldestFirst ? { checked, matched: newestFirst, direction: "newest-first" } : { checked, matched: oldestFirst, direction: "oldest-first" };
+}
 function load(file, flags) {
   let buffer;
   try {
@@ -3215,6 +3237,23 @@ async function convert(file, flags) {
   );
   const amountConfig = amountFormat ? getAmountParserConfig(amountFormat) : null;
   if (!amountFormat || !amountConfig) fail(`Could not detect an amount format for column "${amountSource}"`);
+  const amountValues = rows.flatMap((r) => [r[amountSource] ?? "", ...creditCol ? [r[creditCol] ?? ""] : []]);
+  const evidence = decimalEvidence(amountValues);
+  const evidenceTotal = evidence.dot + evidence.comma;
+  const winner = evidence.dot >= evidence.comma ? "." : ",";
+  if (evidenceTotal >= 3 && Math.max(evidence.dot, evidence.comma) / evidenceTotal >= 0.8 && winner !== amountConfig.decimalSeparator) {
+    fail("Amount format looks wrong: the values say one decimal mark, the format reads the other, so amounts would be off by a factor of 100", {
+      amountFormat,
+      decimalMarkInValues: winner,
+      decimalMarkOfFormat: amountConfig.decimalSeparator,
+      valuesEndingDotDD: evidence.dot,
+      valuesEndingCommaDD: evidence.comma,
+      hint: `Re-run with --amount-format ${winner === "." ? "us" : "de"}, or ask the user.`
+    });
+  }
+  const balanceCol = optional("balance");
+  const warnings = [];
+  let balanceCheck = null;
   const after = flag(flags, "after");
   const before = flag(flags, "before");
   const transactions = [];
@@ -3260,6 +3299,25 @@ async function convert(file, flags) {
     else expense += cents;
     transactions.push(tx);
   });
+  if (balanceCol) {
+    const amountOf = (row) => {
+      if (amountCol) return parseAmount(row[amountCol] ?? "", amountConfig);
+      const debit = parseAmount(row[debitCol] ?? "", amountConfig);
+      const credit = parseAmount(row[creditCol] ?? "", amountConfig);
+      return debit ? -Math.abs(debit) : credit ? Math.abs(credit) : null;
+    };
+    balanceCheck = reconcileBalance(
+      rows.map(amountOf),
+      rows.map((r) => parseAmount(r[balanceCol] ?? "", amountConfig))
+    );
+    if (balanceCheck.checked < 3) {
+      warnings.push("The balance column could not confirm the amounts (fewer than 3 comparable rows).");
+    } else if (balanceCheck.matched / balanceCheck.checked < 0.9) {
+      warnings.push(
+        `The running balance does not add up: only ${balanceCheck.matched} of ${balanceCheck.checked} rows reconcile with their amount. Amounts, signs or the column choice are probably wrong; compare with the bank before importing.`
+      );
+    }
+  }
   const chunkSize = Number(flag(flags, "chunk") ?? DEFAULT_CHUNK);
   const outDir = resolve(flag(flags, "out") ?? "fibuki-import");
   const chunks = [];
@@ -3282,6 +3340,8 @@ async function convert(file, flags) {
     incomeCents: income,
     expenseCents: expense,
     preview: transactions.slice(0, 5),
+    balanceCheck,
+    warnings,
     chunks
   };
   if (flags.import) {
@@ -3332,5 +3392,7 @@ async function main() {
 }
 main().catch((error) => fail(error instanceof Error ? error.message : String(error)));
 export {
-  decodeCsv
+  decimalEvidence,
+  decodeCsv,
+  reconcileBalance
 };

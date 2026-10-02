@@ -9,7 +9,7 @@
  *   fibuki-csv convert <file> --date COL (--amount COL | --debit COL --credit COL) --name COL
  *              [--description COL] [--partner COL] [--reference COL] [--iban COL]
  *              [--currency EUR | --currency-col COL] [--date-format ID] [--amount-format ID]
- *              [--skip N] [--after YYYY-MM-DD] [--before YYYY-MM-DD] [--out DIR] [--chunk 200]
+ *              [--balance COL] [--skip N] [--after YYYY-MM-DD] [--before YYYY-MM-DD] [--out DIR] [--chunk 200]
  *              [--import --source SOURCE_ID [--import-job-id ID]]   (needs FIBUKI_API_KEY)
  *
  * Output is always one JSON document on stdout.
@@ -84,6 +84,45 @@ const NUMERIC = /^[\s+\-(]*\d[\d.,\s'\u2019]*[)\-]?\s*(?:EUR|\u20ac)?$/i;
 
 function looksNumeric(samples: string[]): boolean {
   return samples.length > 0 && samples.every((s) => NUMERIC.test(s));
+}
+
+/**
+ * Which separator ends the amounts in a column: the last "." or "," followed by exactly
+ * two digits ("89.99", "1.234,56", "-54,20 EUR"). Values with three digits after the
+ * separator ("1.234") prove nothing and are not counted.
+ */
+export function decimalEvidence(values: string[]): { dot: number; comma: number } {
+  let dot = 0;
+  let comma = 0;
+  for (const value of values) {
+    const match = /([.,])(\d{2})(?!\d)\D*$/.exec(value.trim());
+    if (match) match[1] === "." ? dot++ : comma++;
+  }
+  return { dot, comma };
+}
+
+/**
+ * A running balance column proves the amounts: each row's balance must equal the
+ * neighbouring row's balance plus its own amount. Files come oldest first or newest
+ * first, so both directions are tried and the better one is reported.
+ */
+export function reconcileBalance(
+  amounts: Array<number | null>,
+  balances: Array<number | null>
+): { checked: number; matched: number; direction: "oldest-first" | "newest-first" } {
+  let checked = 0;
+  let oldestFirst = 0;
+  let newestFirst = 0;
+  for (let i = 1; i < amounts.length; i++) {
+    const [a, prevA, b, prevB] = [amounts[i], amounts[i - 1], balances[i], balances[i - 1]];
+    if (a === null || prevA === null || b === null || prevB === null) continue;
+    checked++;
+    if (b - prevB === a) oldestFirst++;
+    if (prevB - b === prevA) newestFirst++;
+  }
+  return newestFirst > oldestFirst
+    ? { checked, matched: newestFirst, direction: "newest-first" }
+    : { checked, matched: oldestFirst, direction: "oldest-first" };
 }
 
 function load(file: string, flags: Flags) {
@@ -219,6 +258,28 @@ async function convert(file: string, flags: Flags) {
   const amountConfig = amountFormat ? getAmountParserConfig(amountFormat) : null;
   if (!amountFormat || !amountConfig) fail(`Could not detect an amount format for column "${amountSource}"`);
 
+  // Every row, not just the detection sample: if nearly all amounts end in ".dd" but the
+  // chosen format reads "," as the decimal mark (or the reverse), the amounts would be off
+  // by a factor of 100. Refuse rather than import them.
+  const amountValues = rows.flatMap((r) => [r[amountSource] ?? "", ...(creditCol ? [r[creditCol] ?? ""] : [])]);
+  const evidence = decimalEvidence(amountValues);
+  const evidenceTotal = evidence.dot + evidence.comma;
+  const winner = evidence.dot >= evidence.comma ? "." : ",";
+  if (evidenceTotal >= 3 && Math.max(evidence.dot, evidence.comma) / evidenceTotal >= 0.8 && winner !== amountConfig.decimalSeparator) {
+    fail("Amount format looks wrong: the values say one decimal mark, the format reads the other, so amounts would be off by a factor of 100", {
+      amountFormat,
+      decimalMarkInValues: winner,
+      decimalMarkOfFormat: amountConfig.decimalSeparator,
+      valuesEndingDotDD: evidence.dot,
+      valuesEndingCommaDD: evidence.comma,
+      hint: `Re-run with --amount-format ${winner === "." ? "us" : "de"}, or ask the user.`,
+    });
+  }
+
+  const balanceCol = optional("balance");
+  const warnings: string[] = [];
+  let balanceCheck: ReturnType<typeof reconcileBalance> | null = null;
+
   const after = flag(flags, "after");
   const before = flag(flags, "before");
 
@@ -271,6 +332,27 @@ async function convert(file: string, flags: Flags) {
     transactions.push(tx);
   });
 
+  if (balanceCol) {
+    const amountOf = (row: Record<string, string>): number | null => {
+      if (amountCol) return parseAmount(row[amountCol] ?? "", amountConfig);
+      const debit = parseAmount(row[debitCol!] ?? "", amountConfig);
+      const credit = parseAmount(row[creditCol!] ?? "", amountConfig);
+      return debit ? -Math.abs(debit) : credit ? Math.abs(credit) : null;
+    };
+    balanceCheck = reconcileBalance(
+      rows.map(amountOf),
+      rows.map((r) => parseAmount(r[balanceCol] ?? "", amountConfig))
+    );
+    if (balanceCheck.checked < 3) {
+      warnings.push("The balance column could not confirm the amounts (fewer than 3 comparable rows).");
+    } else if (balanceCheck.matched / balanceCheck.checked < 0.9) {
+      warnings.push(
+        `The running balance does not add up: only ${balanceCheck.matched} of ${balanceCheck.checked} rows reconcile with their amount. ` +
+          "Amounts, signs or the column choice are probably wrong; compare with the bank before importing."
+      );
+    }
+  }
+
   const chunkSize = Number(flag(flags, "chunk") ?? DEFAULT_CHUNK);
   const outDir = resolve(flag(flags, "out") ?? "fibuki-import");
   const chunks: string[] = [];
@@ -294,6 +376,8 @@ async function convert(file: string, flags: Flags) {
     incomeCents: income,
     expenseCents: expense,
     preview: transactions.slice(0, 5),
+    balanceCheck,
+    warnings,
     chunks,
   };
 
