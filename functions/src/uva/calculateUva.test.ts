@@ -231,6 +231,56 @@ describe("step 1: line items with per-rate groups", () => {
     expect(r.unresolved[0].reason).toBe("amount-mismatch");
   });
 
+  it("derives a flagged single-rate file from its total at that rate, not its rows (#511)", () => {
+    // One rate, VAT once at the bottom, rows that do not add up: the rows are
+    // a rate-group fallback this document does not need.
+    const r = run([
+      {
+        id: "t-unrec-single",
+        date: "2026-02-10",
+        amount: -4750,
+        files: [
+          {
+            id: "f-unrec-single",
+            totalGross: 4750,
+            vatPercent: 20,
+            lineItemsUnreconciled: true,
+            lineItems: [
+              { vatPercent: 20, vatAmount: 1500, amount: 9000 },
+              { vatPercent: null, vatAmount: 0, amount: 1000 },
+            ],
+          },
+        ],
+      },
+    ]);
+    expect(r.unresolved).toEqual([]);
+    expect(r.totalInputVat).toBe(792);
+  });
+
+  it("still refuses a flagged file whose rows show a second rate (#511)", () => {
+    const r = run([
+      {
+        id: "t-unrec-mixed",
+        date: "2026-02-10",
+        amount: -4750,
+        files: [
+          {
+            id: "f-unrec-mixed",
+            totalGross: 4750,
+            vatPercent: 20,
+            lineItemsUnreconciled: true,
+            lineItems: [
+              { vatPercent: 10, vatAmount: 350, amount: 3850 },
+              { vatPercent: 20, vatAmount: 150, amount: 9000 },
+            ],
+          },
+        ],
+      },
+    ]);
+    expect(r.totalInputVat).toBe(0);
+    expect(r.unresolved[0].reason).toBe("amount-mismatch");
+  });
+
   it("derives from the receipt's printed rate groups in preference to line items (#67)", () => {
     const r = run([
       {

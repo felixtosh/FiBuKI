@@ -572,7 +572,9 @@ describe("characterization: runExtraction line-item reconciliation", () => {
     ]);
     expect(doc.lineItemsUnreconciled).toBe(true);
     expect(doc.extractedAmount).toBe(11900);
-    expect(doc.extractedVatAmount).toBeNull();
+    // #511: the document carries one rate, so its VAT is its total at that
+    // rate (11900 x 19/119) and does not go down with the broken rows.
+    expect(doc.extractedVatAmount).toBe(1900);
     expect(doc.extractedVatPercent).toBe(19);
   });
 

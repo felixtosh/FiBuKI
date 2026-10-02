@@ -24,6 +24,7 @@ import {
 import { assessTip } from "./tip";
 import { assessImpliedFx, isSameCurrency } from "../fx/fxPlausibility";
 import { ecbCrossRate, type EcbRateTable } from "../fx/ecbRates";
+import { singleDocumentRate } from "../extraction/lineItemReconciliation";
 import type {
   DerivationStep,
   ForeignVatEntry,
@@ -469,7 +470,17 @@ export function deriveRateGroups(
     // are not trustworthy enough to CLAIM from, and this file claims nothing.
     // Refusing the transaction over it would put its VAT back on the chasing
     // list as recoverable, which is the reading the marker exists to remove.
-    if (files.some((f) => !isExcluded(f) && f.lineItemsUnreconciled && !hasUsableRateGroups(f))) {
+    // #511: neither does a single-rate document. Its VAT is its total at its
+    // one rate, which the top-level rung derives without the broken rows.
+    if (
+      files.some(
+        (f) =>
+          !isExcluded(f) &&
+          f.lineItemsUnreconciled &&
+          !hasUsableRateGroups(f) &&
+          !isSingleRateDocument(f)
+      )
+    ) {
       return { ok: false, reason: "amount-mismatch", foregoneVat: guessVat20(bank), foreignVat, nonClaimableVat, fxConversions };
     }
 
@@ -808,8 +819,8 @@ function documentVatOf(f: UvaFile): number {
   if (hasUsableRateGroups(f)) {
     return (f.rateGroups as RateGroup[]).reduce((s, g) => s + g.vat, 0);
   }
-  if (f.lineItems?.length && f.lineItems.every((li) => li.vatPercent != null)) {
-    return f.lineItems.reduce((s, li) => s + li.vatAmount, 0);
+  if (lineItemsUsable(f)) {
+    return (f.lineItems ?? []).reduce((s, li) => s + li.vatAmount, 0);
   }
   return f.vatAmount ?? 0;
 }
@@ -832,6 +843,21 @@ function hasUsableRateGroups(f: UvaFile): boolean {
   return Array.isArray(f.rateGroups) && f.rateGroups.length > 0;
 }
 
+/**
+ * The line-item rung: every row states a rate, and the rows reconciled. A
+ * flagged file only reaches derivation at all when it is single-rate (#511),
+ * and then its rows are skipped for the top-level figure.
+ */
+function lineItemsUsable(f: UvaFile): boolean {
+  const items = f.lineItems ?? [];
+  return !f.lineItemsUnreconciled && items.length > 0 && items.every((li) => li.vatPercent != null);
+}
+
+/** One stated rate, and no row at any other (#511). */
+function isSingleRateDocument(f: UvaFile): boolean {
+  return singleDocumentRate(f.lineItems, null, f.vatPercent) !== null;
+}
+
 function fileRateGroups(
   f: UvaFile,
   bankFallbackGross: number
@@ -845,7 +871,7 @@ function fileRateGroups(
   }
 
   const items = f.lineItems ?? [];
-  if (items.length > 0 && items.every((li) => li.vatPercent != null)) {
+  if (lineItemsUsable(f)) {
     const byRate = new Map<number, RateGroup>();
     for (const li of items) {
       const rate = li.vatPercent as number;

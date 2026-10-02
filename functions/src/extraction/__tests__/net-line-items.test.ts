@@ -68,6 +68,17 @@ describe("net line items on a gross document total (fork #137)", () => {
     expect(r.lineItems[0]).toMatchObject({ amount: 318000, vatAmount: 53000, vatPercent: 20 });
   });
 
+  it("grosses up a net discount row with its own negative share of the VAT (#511)", () => {
+    // Netto 1000,00 - Rabatt 100,00 = 900,00, zzgl. 20% USt 180,00 = 1080,00.
+    const r = reconcileLineItemsWithDocumentTotal([item(100000), item(-10000)], 108000, null, 20);
+
+    expect(r.unreconciled).toBe(false);
+    expect(r.lineItems.map((i) => [i.amount, i.vatAmount])).toEqual([
+      [120000, 20000],
+      [-12000, -2000],
+    ]);
+  });
+
   it("leaves rows that already reconcile as gross untouched", () => {
     const rows = [item(318000, 20, 53000)];
 

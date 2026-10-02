@@ -16,6 +16,9 @@ export declare function describeLineItemsUnreconciled(
     | {
         lineItemsUnreconciled?: boolean | null;
         lineItemsUnreconciledRates?: number[] | null;
+        extractedRateGroups?: Array<{ rate: number }> | null;
+        extractedVatPercent?: number | null;
+        extractedLineItems?: Array<{ vatPercent?: number | null }> | null;
       }
     | null
     | undefined,

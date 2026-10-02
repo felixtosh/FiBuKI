@@ -33,6 +33,7 @@ import {
   consolidateLineItems,
   rateGroupTotals,
   reconcileLineItemsWithDocumentTotal,
+  singleRateDocumentVat,
   totalWithoutPrintedTip,
   validateRateGroups,
 } from "./lineItemReconciliation";
@@ -539,7 +540,11 @@ export async function runExtraction(
           updateData.extractedVatAmount = totals.totalVatAmount;
           updateData.extractedVatPercent = totals.consolidatedVatPercent ?? extracted.vatPercent;
         } else {
-          updateData.extractedVatAmount = null;
+          // #511: a single-rate document's VAT is its total at that rate,
+          // whatever its rows say. Only a mixed-rate or rate-less document
+          // loses its VAT with its rows.
+          const singleRate = singleRateDocumentVat(reconciled.lineItems, documentTotal, extracted.vatPercent);
+          updateData.extractedVatAmount = singleRate?.vatAmount ?? null;
           updateData.extractedVatPercent = extracted.vatPercent;
         }
       } else if (reconciled.rateGroups) {
