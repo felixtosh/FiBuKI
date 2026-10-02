@@ -427,7 +427,11 @@ describe("onSnapshot (poll)", () => {
       });
       // Nothing writes to `partners` in between: the only way a second delivery
       // arrives is the poller re-offering the payload it failed to hand over.
-      await waitFor(() => received.length >= 1);
+      // Wait for the rethrow too: it is queued on a timer, and on a loaded
+      // runner the re-delivery can land first. Restoring the runner's
+      // listeners before the timer fires hands the deliberate rethrow to the
+      // runner, which fails the file.
+      await waitFor(() => received.length >= 1 && escaped.length >= 1);
     } finally {
       unsub?.();
       process.removeAllListeners("uncaughtException");
