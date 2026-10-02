@@ -317,6 +317,35 @@ translating a screen, run `node scripts/check-ui-strings.mjs --update` to shrink
 allowance. English is the fallback for a missing German key and for any browser language
 other than German. Vocabulary follows ADR-0007.
 
+`lint:strings` is a regex, not a parser: anything between a `>` and the next `<` that
+holds letters and no braces counts as text. So an arrow (`=>`), a generic
+(`Set<string>`) or a chained JSX ternary (`) : other ? (`) between two JSX blocks reads
+as a hardcoded string. Don't raise the allowance for these; reshape the code instead:
+a type alias (`type IdSet = Set<string>`), `{cond ? (<A />) : null}` blocks instead of
+chained ternaries, counts or helpers moved below the component.
+
+## List pages (Files, Transactions, Partners)
+
+The lists share one pattern (noted where one differs); a new list reuses it rather
+than reinventing it.
+
+- **Filters: one per column, named like the column.** `ChoiceFilter` (single choice),
+  `PartnerFilter` (search, "No partner assigned", the partners) and `DateRangeFilter`,
+  laid out by `OverflowFilterRow`: what doesn't fit goes behind "More", and More lists
+  every filter. A chip can be on screen twice (row and panel), so every chip owns its
+  popover state; never keep a chip's open state in the toolbar.
+- **Selection (Files, Partners): `lib/selection/bulk-file-selection.js`.** A plain
+  click browses (opens the detail panel, box stays empty); checkboxes and
+  cmd/shift-click build a bulk selection. One ticked item still shows its detail panel; from two, the sidebar shows
+  the list's bulk panel with the actions in its footer. The checkbox column is
+  `SELECT_COLUMN_WIDTH`. Pass the selection to the table (`enableMultiSelect` +
+  `selectedRowIds`) and route row handlers through `useLatestCallback`, or the
+  memoised rows keep stale state (#232).
+- **Counter: `ProgressCounter`** (ring, done / total, explanation popover on hover).
+- **Remembered filters: `useRememberedListQuery`** (Files, Partners; Transactions keeps
+  its own in `lib/filters/url-params.ts`), per browser, never server-side, so two
+  screens don't overwrite each other's view (#530).
+
 ## Key Directories
 - `/app/(dashboard)/` - Main app pages (sources, transactions)
 - `/components/` - React components
