@@ -589,6 +589,11 @@
     "toolCompleted": "{tool} completed",
     "toolFailed": "{tool} failed"
   },
+  "integrationSections": {
+    "email": "Email",
+    "files": "Files",
+    "browser": "Browser"
+  },
   "folderIntegrations": {
     "title": "{provider}",
     "subtitle": "Import documents from one {provider} folder",

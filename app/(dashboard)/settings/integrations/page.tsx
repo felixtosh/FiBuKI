@@ -8,14 +8,10 @@ import {
   Loader2,
   Globe,
   Inbox,
-  Bot,
-  FileArchive,
   FileText,
-  MessageSquare,
   Code,
   BookOpen,
   Terminal,
-  Cloud,
 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useTranslations } from "next-intl";
@@ -28,6 +24,17 @@ import { SmartFeatureGuard } from "@/components/auth";
 import { useUserData } from "@/hooks/use-user-data";
 import { SettingsPageHeader } from "@/components/ui/settings-page-header";
 import { IntegrationCard } from "@/components/integrations/integration-card";
+import {
+  BmdLogo,
+  ClaudeLogo,
+  DropboxLogo,
+  FinanzOnlineLogo,
+  GmailLogo,
+  GoogleDriveLogo,
+  OpenAILogo,
+  OpenClawLogo,
+  OutlookLogo,
+} from "@/components/integrations/brand-logos";
 import { ApiKeysInline } from "@/components/settings/api-keys-inline";
 import { ResourceLink } from "@/components/settings/api-key-primitives";
 
@@ -38,6 +45,7 @@ interface AttentionItem {
 
 function IntegrationsContent() {
   const tFolder = useTranslations("folderIntegrations");
+  const tSections = useTranslations("integrationSections");
   const { integrations: dropboxIntegrations, loading: dropboxLoading } = useFolderIntegrations("dropbox");
   const { integrations: gdriveIntegrations, loading: gdriveLoading } = useFolderIntegrations("gdrive");
   const extension = useBrowserExtensionStatus();
@@ -235,22 +243,13 @@ function IntegrationsContent() {
           </Alert>
         )}
 
-        {/* Invoice Sources */}
         <section>
           <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-3">
-            Invoice Sources
+            {tSections("email")}
           </h3>
           <div className="space-y-2">
             <IntegrationCard
-              icon={<Globe className="h-4 w-4 text-emerald-700 dark:text-emerald-400" />}
-              iconBg="bg-emerald-100 dark:bg-emerald-900/40"
-              name="Browser Plugin"
-              status={extensionStatus}
-              badge={extensionBadge}
-              href="/integrations/browser"
-            />
-            <IntegrationCard
-              icon={<Mail className="h-4 w-4 text-red-600 dark:text-red-400" />}
+              icon={<GmailLogo className="h-4 w-4 text-[#EA4335] dark:text-red-400" />}
               iconBg="bg-red-100 dark:bg-red-900/40"
               name="Gmail"
               status={gmailStatus}
@@ -266,22 +265,6 @@ function IntegrationsContent() {
               href="/integrations/imap"
             />
             <IntegrationCard
-              icon={<Cloud className="h-4 w-4 text-sky-600 dark:text-sky-400" />}
-              iconBg="bg-sky-100 dark:bg-sky-900/40"
-              name={tFolder("providerNames.dropbox")}
-              status={dropboxStatus}
-              badge={dropboxBadge}
-              href="/integrations/dropbox"
-            />
-            <IntegrationCard
-              icon={<Cloud className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />}
-              iconBg="bg-emerald-100 dark:bg-emerald-900/40"
-              name={tFolder("providerNames.gdrive")}
-              status={gdriveStatus}
-              badge={gdriveBadge}
-              href="/integrations/gdrive"
-            />
-            <IntegrationCard
               icon={<Inbox className="h-4 w-4 text-purple-600 dark:text-purple-400" />}
               iconBg="bg-purple-100 dark:bg-purple-900/40"
               name="Email Forwarding"
@@ -290,13 +273,53 @@ function IntegrationsContent() {
               href="/integrations/email-inbound"
             />
             <IntegrationCard
-              icon={<Mail className="h-4 w-4 text-blue-600 dark:text-blue-400" />}
+              icon={<OutlookLogo className="h-4 w-4 text-[#0078D4] dark:text-blue-400" />}
               iconBg="bg-blue-100 dark:bg-blue-900/40"
               name="Microsoft Outlook"
               status="Connect your Outlook account"
               badge={{ label: "Coming Soon", variant: "muted" }}
               href="#"
               comingSoon
+            />
+          </div>
+        </section>
+
+        <section>
+          <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-3">
+            {tSections("files")}
+          </h3>
+          <div className="space-y-2">
+            <IntegrationCard
+              icon={<DropboxLogo className="h-4 w-4 text-[#0061FF] dark:text-blue-400" />}
+              iconBg="bg-blue-100 dark:bg-blue-900/40"
+              name={tFolder("providerNames.dropbox")}
+              status={dropboxStatus}
+              badge={dropboxBadge}
+              href="/integrations/dropbox"
+            />
+            <IntegrationCard
+              icon={<GoogleDriveLogo className="h-4 w-4 text-[#1FA463] dark:text-emerald-400" />}
+              iconBg="bg-emerald-100 dark:bg-emerald-900/40"
+              name={tFolder("providerNames.gdrive")}
+              status={gdriveStatus}
+              badge={gdriveBadge}
+              href="/integrations/gdrive"
+            />
+          </div>
+        </section>
+
+        <section>
+          <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-3">
+            {tSections("browser")}
+          </h3>
+          <div className="space-y-2">
+            <IntegrationCard
+              icon={<Globe className="h-4 w-4 text-emerald-700 dark:text-emerald-400" />}
+              iconBg="bg-emerald-100 dark:bg-emerald-900/40"
+              name="Browser Plugin"
+              status={extensionStatus}
+              badge={extensionBadge}
+              href="/integrations/browser"
             />
           </div>
         </section>
@@ -308,7 +331,7 @@ function IntegrationsContent() {
           </h3>
           <div className="space-y-2">
             <IntegrationCard
-              icon={<FileArchive className="h-4 w-4 text-orange-600 dark:text-orange-400" />}
+              icon={<BmdLogo className="h-4 w-4 text-[#FF701A] dark:text-orange-400" />}
               iconBg="bg-orange-100 dark:bg-orange-900/40"
               name="BMD NTCS Export"
               status="Export transactions for BMD"
@@ -316,8 +339,8 @@ function IntegrationsContent() {
             />
             {isAdmin && (
               <IntegrationCard
-                icon={<FileText className="h-4 w-4 text-blue-600 dark:text-blue-400" />}
-                iconBg="bg-blue-100 dark:bg-blue-900/40"
+                icon={<FinanzOnlineLogo className="h-4 w-4 text-[#E6320F] dark:text-red-400" />}
+                iconBg="bg-red-100 dark:bg-red-900/40"
                 name="FinanzOnline"
                 status={finanzonlineStatus}
                 badge={finanzonlineBadge}
@@ -336,22 +359,22 @@ function IntegrationsContent() {
             <ApiKeysInline />
 
             <IntegrationCard
-              icon={<Bot className="h-4 w-4 text-emerald-700 dark:text-emerald-400" />}
-              iconBg="bg-emerald-100 dark:bg-emerald-900/40"
+              icon={<OpenClawLogo className="h-4 w-4 text-[#E5372F] dark:text-red-400" />}
+              iconBg="bg-red-100 dark:bg-red-900/40"
               name="OpenClaw Skill"
               status="Install from ClawHub or npm"
               href="/integrations/openclaw"
             />
             <IntegrationCard
-              icon={<MessageSquare className="h-4 w-4 text-orange-600 dark:text-orange-400" />}
+              icon={<ClaudeLogo className="h-4 w-4 text-[#D97757] dark:text-orange-400" />}
               iconBg="bg-orange-100 dark:bg-orange-900/40"
               name="Claude Desktop (MCP)"
               status="Model Context Protocol server"
               href="/integrations/claude-mcp"
             />
             <IntegrationCard
-              icon={<Bot className="h-4 w-4 text-teal-600 dark:text-teal-400" />}
-              iconBg="bg-teal-100 dark:bg-teal-900/40"
+              icon={<OpenAILogo className="h-4 w-4 text-foreground" />}
+              iconBg="bg-gray-100 dark:bg-gray-800/60"
               name="ChatGPT Custom GPT"
               status="Import OpenAPI spec in GPT builder"
               href="/integrations/chatgpt"
