@@ -92,6 +92,14 @@ export async function seedAccounts(): Promise<void> {
     uploadedAt: now,
     extractionComplete: true,
   });
+  // Subcollections that carry no userId: only the parent says whose they are.
+  await db.doc(`transactions/${V.transaction}/history/v-hist-1`).set({
+    changedAt: now,
+    changedBy: VICTIM,
+    previousValues: { description: CANARY },
+    newValues: { description: CANARY },
+  });
+  await db.doc(`transactions/${V.transaction}/searches/v-search-1`).set({ triggeredBy: CANARY, status: "completed", createdAt: now });
   await db.doc(`partners/${V.partner}`).set({ ...owned, name: CANARY, aliases: [CANARY], isActive: true });
   await db.doc(`noReceiptCategories/${V.category}`).set({ ...owned, name: CANARY, templateId: "bank-fees", isActive: true });
   await db.doc(`imports/${V.import}`).set({ ...owned, fileName: CANARY, sourceId: V.source });
@@ -136,6 +144,20 @@ export async function victimRows(): Promise<Map<string, string>> {
     );
     for (const r of flat.rows) rows.set(`${spec.table}:${r.id}`, String(r.data));
   }
+  // Subcollections under the victim's documents (a Transaction's history and
+  // searches) carry no userId; they are the victim's because the parent is.
+  const flatCollection = new Map(Object.entries(FLATTENED).map(([coll, spec]) => [spec.table, coll]));
+  const parentPaths = [...rows.keys()].map((k) => {
+    const [table, ...rest] = k.split(":");
+    const key = rest.join(":");
+    return table === "docs" ? key : `${flatCollection.get(table)}/${key}`;
+  });
+  const patterns = parentPaths.map((p) => `${p.replace(/[\\%_]/g, "\\$&")}/%`);
+  const subs = await __rawSqlForTest(
+    `SELECT path, data::text AS data FROM docs WHERE path LIKE ANY($1::text[])`,
+    [patterns],
+  );
+  for (const r of subs.rows) rows.set(`docs:${r.path}`, String(r.data));
   return rows;
 }
 

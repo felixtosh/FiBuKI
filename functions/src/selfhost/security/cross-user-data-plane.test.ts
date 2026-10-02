@@ -136,6 +136,12 @@ describe("data plane: positive controls", () => {
     expect(h.body.docs.map((d: { id: string }) => d.id)).toEqual(["a-hist-1"]);
   });
 
+  it("the victim's history and searches are part of what must stay untouched", async () => {
+    const keys = [...before.keys()];
+    expect(keys).toContain(`docs:transactions/${V.transaction}/history/v-hist-1`);
+    expect(keys).toContain(`docs:transactions/${V.transaction}/searches/v-search-1`);
+  });
+
   it("the victim still reads their own history", async () => {
     const h = await call("query", { path: `transactions/${V.transaction}/history` }, VICTIM_TOKEN);
     expect(h.status).toBe(200);
