@@ -30,6 +30,18 @@ import {
 } from "../types/extraction";
 import { printedNameEquals } from "../utils/identity-matcher";
 import { decodeHtmlEntities } from "../utils/htmlEntities";
+import {
+  ADDITIONAL_FIELD_KEYS,
+  AdditionalFieldKey,
+  isAdditionalFieldKey,
+  normalizePaymentMethod,
+} from "./fieldVocabulary";
+import { countryFromVatId, normalizeCountry } from "./taxFacts";
+import {
+  amountFromPaymentCodes,
+  ibanFromPaymentCodes,
+  parseQrPayloads,
+} from "./qrCodes";
 
 /**
  * Bounding box extracted by Gemini for a field
@@ -651,7 +663,7 @@ export function applyInvoicingAgentGuard(
 }
 
 /**
- * The closed vocabulary `additionalFields` is allowed to carry (#252).
+ * The closed vocabulary `additionalFields` is allowed to carry (#252, #540).
  *
  * The bag used to be open — the prompt asked for "any other identifiers or
  * metadata", so the model offered a Tischnummer because it is printed in the
@@ -662,23 +674,12 @@ export function applyInvoicingAgentGuard(
  * synonym table over labels rots and fails OPEN: an unrecognised label is
  * kept, and Tischnummer comes back. A closed key vocabulary fails closed,
  * which is the point. Enforced here rather than requested in the prompt,
- * because a prompt is a request and this has to survive a model swap.
+ * because a prompt is a request and this has to survive a model swap. The
+ * list itself lives in ./fieldVocabulary, where the correction path enforces
+ * it too.
  */
-export const ADDITIONAL_FIELD_KEYS = [
-  "invoiceNumber",
-  "customerNumber",
-  "dueDate",
-  "debitDate",
-  "paymentTerms",
-  "orderNumber",
-  "deliveryNoteNumber",
-  "referenceNumber",
-  "poNumber",
-] as const;
-
-export type AdditionalFieldKey = (typeof ADDITIONAL_FIELD_KEYS)[number];
-
-const ADDITIONAL_FIELD_KEY_SET: ReadonlySet<string> = new Set(ADDITIONAL_FIELD_KEYS);
+export { ADDITIONAL_FIELD_KEYS };
+export type { AdditionalFieldKey };
 
 /**
  * Additional field extracted from document
@@ -913,6 +914,33 @@ VAT SUMMARY BLOCK ("rateGroups", IMPORTANT):
 - Never invent a summary block from a single total line
 - A Trinkgeld/Tip line is NEVER a row in this block
 
+VAT / TAX TOTAL ("vatPercent", "documentVatAmount", IMPORTANT):
+- VAT is printed under many names, in any language. Read ALL of these as VAT:
+  "VAT", "Tax", "Sales Tax", "GST", "HST", "MwSt.", "Mehrwertsteuer", "USt.",
+  "Umsatzsteuer", "IVA", "TVA", "BTW", "MVA", "Moms", "DPH", "ÁFA", "PVM",
+  "PTU", "DDV", "KDV", "inkl. MwSt.", "incl. tax", "davon ... USt"
+- NOT VAT: a tourist or city tax ("Ortstaxe", "Kurtaxe", "City Tax"),
+  insurance tax ("Versicherungssteuer"), excise or a deposit ("Pfand"). Never
+  report those as VAT
+- "vatPercent": the one rate the document applies, when it states exactly one
+- "documentVatAmount": the document's TOTAL VAT amount in cents, exactly as
+  printed ("davon 20% USt 11,25" -> 1125, "Tax 4.50" -> 450). Copy it, do NOT
+  compute it. null when the document prints no VAT total
+- A document that prints a VAT amount but no rate: return the amount in
+  "documentVatAmount" and leave "vatPercent" null - do NOT work out the rate
+
+QR CODES ("qrCodes", IMPORTANT):
+- If the document shows a QR code, decode it and return the decoded text of
+  EACH code in "qrCodes" (an array of strings), character for character
+- Several countries print fixed formats: Austrian till receipts (RKSV) start
+  with "_R1-AT", SEPA payment codes (GiroCode / EPC) start with "BCD" and hold
+  one value per line, Swiss QR-bills start with "SPC". Keep the line breaks
+  as "\\n"
+- A code that is a web link is returned as the link
+- A code you cannot decode is left out. NEVER reconstruct a code's content
+  from the text printed next to it
+- No QR code on the document: "qrCodes": []
+
 TRINKGELD / TIP ("tipAmount", IMPORTANT):
 - A restaurant or bar Beleg paid by card often prints THREE figures:
   "Summe 50,80" (the VAT-bearing total), "Trinkgeld 3,20" (the tip) and
@@ -954,7 +982,9 @@ SEQUENTIAL INVOICE NUMBER ("invoiceNumber", IMPORTANT):
   a customer number or a reference
 - If the document prints no invoice number, return "invoiceNumber": null
 
-Input format: German (dates DD.MM.YYYY, amounts with comma like 123,45)
+Input format: any language, most often German (dates DD.MM.YYYY, amounts
+with a decimal comma like 123,45); English documents use 12/15/2024 or
+15/12/2024 and a decimal point - read the order from the document itself
 Output: date as YYYY-MM-DD, amount in cents (123,45 → 12345)
 
 === ENTITY EXTRACTION (IMPORTANT) ===
@@ -981,6 +1011,9 @@ block that is biggest, first on the page, or carries the logo.
      Kleinunternehmer: "Steuerfrei gemäß § 6 Abs. 1 Z 27 UStG"). Return
      "vatId": null and leave it null - an absent UID is an answer, not a gap
      to fill from elsewhere on the page
+   - "country": the ISO 3166-1 alpha-2 code of the supplier's address
+     ("AT", "DE", "CH", "US"). null when the block prints no country and the
+     address does not make it unambiguous
 
 2. INVOICING AGENT ("invoicingAgent") - the business that WROTE the document
    in someone else's name (X above), with its own UID, usually the footer one:
@@ -1040,6 +1073,7 @@ JSON structure:
     "currency": "EUR",
     "vatPercent": 19,
     "vatPercent_raw": "19%",
+    "documentVatAmount": 1971,
     "selfDesignation": "Rechnung",
     "invoiceNumber": "2024-0042",
     "lineItems": [
@@ -1065,7 +1099,8 @@ JSON structure:
       "vatId": "DE123456789",
       "address": "Musterstraße 1, 12345 Berlin",
       "iban": "DE89370400440532013000",
-      "website": "vendor-company.de"
+      "website": "vendor-company.de",
+      "country": "DE"
     },
     "issuer_raw": {
       "name": "Vendor Company GmbH",
@@ -1078,7 +1113,8 @@ JSON structure:
     "recipient": {
       "name": "Customer Corp",
       "vatId": "ATU12345678",
-      "address": "Kundenweg 5, 1010 Wien"
+      "address": "Kundenweg 5, 1010 Wien",
+      "country": "AT"
     },
     "recipient_raw": {
       "name": "Customer Corp",
@@ -1092,6 +1128,7 @@ JSON structure:
       "address": "Agenturweg 9, 1030 Wien"
     }
   },
+  "qrCodes": [],
   "additionalFields": [
     {"key": "invoiceNumber", "label": "Rechnungsnummer", "value": "INV-2024-001", "rawValue": "INV-2024-001"},
     {"key": "dueDate", "label": "Fällig am", "value": "2025-01-15", "rawValue": "15.01.2025"},
@@ -1101,8 +1138,7 @@ JSON structure:
 
 ADDITIONAL FIELDS ("additionalFields", IMPORTANT):
 - A CLOSED list. Return a field ONLY when its "key" is one of exactly these:
-  "invoiceNumber", "customerNumber", "dueDate", "debitDate", "paymentTerms",
-  "orderNumber", "deliveryNoteNumber", "referenceNumber", "poNumber"
+  ${ADDITIONAL_FIELD_KEYS.map((key) => `"${key}"`).join(", ")}
 - "label" is the wording the DOCUMENT prints, in its own language
   ("Rechnungsnummer", "Kundennummer", "Zahlungsziel") - it is what a person
   reads, so do not translate or normalise it
@@ -1112,6 +1148,12 @@ ADDITIONAL FIELDS ("additionalFields", IMPORTANT):
 - A party is never an additional field: the issuer, the recipient and the
   Invoicing Agent each have their own field above, and belong in no other
 - Never invent a key to make a field fit
+- "serviceDate": the date or period of the supply as printed
+  ("Leistungsdatum", "Lieferdatum", "Leistungszeitraum", "Service period")
+- "paymentMethod": how the document says it WAS paid. "value" is exactly one
+  of "cash", "card", "bankTransfer", "directDebit", "paypal", "other"
+  ("Barzahlung" -> "cash", "Bankomat"/"Maestro"/"Visa" -> "card"); "label" is
+  the printed wording. Leave it out when the document does not say
 
 DUE DATE (key "dueDate", IMPORTANT):
 - The date by which the invoice must be PAID (the Fälligkeitsdatum).
@@ -1183,6 +1225,7 @@ JSON only, no markdown, no explanation.`;
     address?: string | null;
     iban?: string | null;
     website?: string | null;
+    country?: string | null;
   }
 
   // Define expected response structure (classification removed - handled by classifyDocument)
@@ -1191,6 +1234,7 @@ JSON only, no markdown, no explanation.`;
     lineItems?: GeminiLineItem[] | null;
     rateGroups?: GeminiRateGroup[] | null;
     tipAmount?: number | null;
+    qrCodes?: unknown;
     extracted?: {
       date?: string | null;
       date_raw?: string | null;
@@ -1201,6 +1245,8 @@ JSON only, no markdown, no explanation.`;
       currency?: string | null;
       vatPercent?: number | null;
       vatPercent_raw?: string | null;
+      documentVatAmount?: number | string | null;
+      qrCodes?: unknown;
       selfDesignation?: string | null;
       invoiceNumber?: string | null;
       lineItems?: GeminiLineItem[] | null;
@@ -1284,6 +1330,9 @@ JSON only, no markdown, no explanation.`;
     address: parsed.extracted.issuer.address || null,
     iban: parsed.extracted.issuer.iban || null,
     website: normalizeWebsite(parsed.extracted.issuer.website),
+    country:
+      normalizeCountry(parsed.extracted.issuer.country) ??
+      countryFromVatId(normalizeVatId(parsed.extracted.issuer.vatId)),
   } : null;
 
   // Extract recipient entity (normalize values)
@@ -1293,6 +1342,9 @@ JSON only, no markdown, no explanation.`;
     address: parsed.extracted.recipient.address || null,
     iban: parsed.extracted.recipient.iban || null,
     website: normalizeWebsite(parsed.extracted.recipient.website),
+    country:
+      normalizeCountry(parsed.extracted.recipient.country) ??
+      countryFromVatId(normalizeVatId(parsed.extracted.recipient.vatId)),
   } : null;
 
   // Extract the Invoicing Agent (§ 11 Abs 2) — the business that WROTE the
@@ -1336,9 +1388,17 @@ JSON only, no markdown, no explanation.`;
       (printedNameEquals(flatPartner, invoicingAgent.name) ||
         Boolean(flatVatId && invoicingAgent.vatId && flatVatId === invoicingAgent.vatId)));
 
+  const qrCodes = parseQrPayloads(parsed.qrCodes ?? parsed.extracted?.qrCodes);
+  if (qrCodes.length > 0) {
+    console.log(`  [Gemini] Decoded QR code(s): ${qrCodes.map((code) => code.format).join(", ")}`);
+  }
+  // A payment code's IBAN is the payee's, checksum-validated, and only fills
+  // a gap: a printed IBAN outranks a decoded one (#540).
+  const qrIban = ibanFromPaymentCodes(qrCodes);
   const legacyPartner = guardedIssuer?.name || (flatIsAgent ? null : flatPartner);
   const legacyVatId = guardedIssuer?.vatId || (flatIsAgent ? null : flatVatId);
-  const legacyIban = guardedIssuer?.iban || (flatIsAgent ? null : parsed.extracted?.iban || null);
+  const legacyIban =
+    guardedIssuer?.iban || (flatIsAgent ? null : parsed.extracted?.iban || null) || qrIban;
   const legacyAddress = guardedIssuer?.address || (flatIsAgent ? null : parsed.extracted?.address || null);
   const legacyWebsite = guardedIssuer?.website || (flatIsAgent ? null : normalizeWebsite(parsed.extracted?.website));
   const lineItems = normalizeLineItems(parsed.extracted?.lineItems || parsed.lineItems || null);
@@ -1351,9 +1411,13 @@ JSON only, no markdown, no explanation.`;
     tipAmount: normalizeTipAmount(parsed.extracted?.tipAmount ?? parsed.tipAmount),
     // Transcribed, not computed (#206): the figure the document designates as
     // due, null when it designates none. It never rewrites `amount`.
-    payableAmount: toCents(parsed.extracted?.payableAmount),
+    // A payment code's amount IS the figure the document designates as due,
+    // in machine form, so it fills the slot when no printed wording does.
+    payableAmount: toCents(parsed.extracted?.payableAmount) ?? amountFromPaymentCodes(qrCodes),
     currency: normalizeCurrency(parsed.extracted?.currency),
     vatPercent: typeof parsed.extracted?.vatPercent === "number" ? parsed.extracted.vatPercent : null,
+    documentVatAmount: toCents(parsed.extracted?.documentVatAmount),
+    qrCodes,
     lineItems,
     rateGroups,
     // Transcribed headings only: a non-string is the model having invented
@@ -1368,7 +1432,8 @@ JSON only, no markdown, no explanation.`;
     confidence: typeof parsed.extracted?.confidence === "number" ? parsed.extracted.confidence : 0.5,
     fieldSpans: {},
     // New entity fields
-    issuer: guardedIssuer,
+    issuer:
+      guardedIssuer && !guardedIssuer.iban && qrIban ? { ...guardedIssuer, iban: qrIban } : guardedIssuer,
     recipient: guardedRecipient,
     invoicingAgent,
   };
@@ -1424,11 +1489,11 @@ JSON only, no markdown, no explanation.`;
   // is dropped here rather than trusted to the prompt (#252).
   const offeredFields = (parsed.additionalFields || []).filter((f) => f && f.label && f.value);
   const additionalFields: ExtractedAdditionalField[] = offeredFields
-    .filter((f) => typeof f.key === "string" && ADDITIONAL_FIELD_KEY_SET.has(f.key))
+    .filter((f) => isAdditionalFieldKey(f.key))
     .map((f) => ({
       key: f.key as AdditionalFieldKey,
       label: f.label,
-      value: f.value,
+      value: f.key === "paymentMethod" ? normalizePaymentMethod(f.value) : f.value,
       rawValue: f.rawValue || f.value,
     }));
 

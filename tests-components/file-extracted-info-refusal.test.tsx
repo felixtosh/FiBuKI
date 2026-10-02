@@ -13,6 +13,8 @@
 import * as React from "react";
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { NextIntlClientProvider } from "next-intl";
+import messages from "@/messages/en.json";
 
 vi.mock("@/lib/currency", () => ({
   useEcbConverter: () => ({ convert: () => null }),
@@ -44,7 +46,11 @@ const REFUSALS = [
 ];
 
 function renderPanel(onUpdate: (fields: unknown) => Promise<void>) {
-  render(<FileExtractedInfo file={FILE} onUpdate={onUpdate} />);
+  render(
+    <NextIntlClientProvider locale="en" messages={messages} timeZone="Europe/Vienna">
+      <FileExtractedInfo file={FILE} onUpdate={onUpdate} />
+    </NextIntlClientProvider>
+  );
   fireEvent.click(screen.getByRole("button", { name: "Edit fields" }));
   const tip = screen.getByPlaceholderText("Trinkgeld in EUR") as HTMLInputElement;
   fireEvent.change(tip, { target: { value: "600" } });

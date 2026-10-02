@@ -143,7 +143,8 @@ describe("parseWithGemini: third-party issuance", () => {
     q(correctRun());
     const res = await parseWithGemini(Buffer.from("x"), "application/pdf");
 
-    expect(res.extracted.issuer).toEqual(SUPPLIER);
+    // #540: the country follows from the supplier's ATU prefix.
+    expect(res.extracted.issuer).toEqual({ ...SUPPLIER, country: "AT" });
     expect(res.extracted.issuer?.vatId).toBe(SUPPLIER.vatId);
     expect(res.extracted.invoicingAgent).toEqual(AGENT);
     // The legacy flat fields feed extractedPartner, and they follow the issuer.
@@ -266,7 +267,8 @@ describe("parseWithGemini: single-party documents are unchanged", () => {
     });
     const res = await parseWithGemini(Buffer.from("x"), "application/pdf");
 
-    expect(res.extracted.issuer).toEqual(SUPPLIER);
+    // #540: the country follows from the supplier's ATU prefix.
+    expect(res.extracted.issuer).toEqual({ ...SUPPLIER, country: "AT" });
     expect(res.extracted.partner).toBe(SUPPLIER.name);
     expect(res.extracted.vatId).toBe(SUPPLIER.vatId);
     expect(res.extracted.invoicingAgent).toBeNull();
@@ -283,7 +285,8 @@ describe("parseWithGemini: single-party documents are unchanged", () => {
     const res = await parseWithGemini(Buffer.from("x"), "application/pdf");
 
     expect(res.extracted.invoicingAgent).toBeNull();
-    expect(res.extracted.issuer).toEqual(SUPPLIER);
+    // #540: the country follows from the supplier's ATU prefix.
+    expect(res.extracted.issuer).toEqual({ ...SUPPLIER, country: "AT" });
   });
 });
 

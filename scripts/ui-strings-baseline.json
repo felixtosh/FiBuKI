@@ -88,7 +88,7 @@
   "components/files/file-columns.tsx": 18,
   "components/files/file-connections-list.tsx": 22,
   "components/files/file-detail-panel.tsx": 21,
-  "components/files/file-extracted-info.tsx": 49,
+  "components/files/file-extracted-info.tsx": 38,
   "components/files/file-preview.tsx": 5,
   "components/files/file-table.tsx": 4,
   "components/files/file-toolbar.tsx": 2,

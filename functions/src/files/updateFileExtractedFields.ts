@@ -39,6 +39,7 @@ import { retireRepairAmbiguity } from "../documents/repairReview";
 import { dueDateFromAdditionalFields } from "../matching/dueDate";
 import { debitDateFromAdditionalFields } from "../matching/debitDate";
 import { toDateSafe } from "../utils/toDateSafe";
+import { isAdditionalFieldKey, normalizePaymentMethod } from "../extraction/fieldVocabulary";
 
 /** An extra field the extractor kept but nothing else reads structurally. */
 interface EditedAdditionalField {
@@ -170,7 +171,7 @@ export const updateFileExtractedFieldsCallable = createCallable<
       if (value === undefined) continue;
       updates[storedField] =
         key === "additionalFields"
-          ? normalizeAdditionalFields(value)
+          ? normalizeAdditionalFields(value, record.extractedAdditionalFields)
           : normalizeText(value, key);
       if (key !== "additionalFields" && updates[storedField] !== (record[storedField] ?? null)) {
         movedDetails.push(storedField);
@@ -245,26 +246,51 @@ function normalizeText(value: unknown, field: string): string | null {
   return trimmed === "" ? null : trimmed;
 }
 
-/** Label/value pairs the extractor kept, taken as pairs of text. */
-function normalizeAdditionalFields(value: unknown): Array<Record<string, string>> | null {
+/**
+ * Label/value pairs, each under a key from the closed vocabulary (#252, #540).
+ *
+ * A row with a key outside the vocabulary is refused rather than dropped: the
+ * editor only offers vocabulary keys, so anything else is a stale or hostile
+ * client, and silently losing a row a person typed is worse than saying so.
+ * A row WITHOUT a key is legacy: stored before the vocabulary closed. It is
+ * carried through a save (its value may be edited) only when the stored record
+ * already holds a keyless row under the same label, so the open bag cannot be
+ * re-created by hand.
+ */
+function normalizeAdditionalFields(
+  value: unknown,
+  stored: unknown
+): Array<Record<string, string>> | null {
   if (value === null) return null;
   if (!Array.isArray(value)) {
     throw new HttpsError("invalid-argument", "additionalFields must be an array or null");
   }
+  const legacyLabels = new Set(
+    (Array.isArray(stored) ? stored : [])
+      .map((raw) => (raw ?? {}) as Partial<EditedAdditionalField>)
+      .filter((field) => !field.key && typeof field.label === "string")
+      .map((field) => (field.label as string).trim())
+  );
 
   const fields = value
     .map((raw) => (raw ?? {}) as Partial<EditedAdditionalField>)
     .filter((field) => typeof field.label === "string" && typeof field.value === "string")
-    .map((field) => ({
-      // The canonical key rides along unchanged: a save edits the value, it
-      // does not reclassify the field (#252). A row a person added has none.
-      ...(typeof field.key === "string" && field.key ? { key: field.key } : {}),
-      label: (field.label as string).trim(),
-      value: (field.value as string).trim(),
-      rawValue:
-        typeof field.rawValue === "string" ? field.rawValue.trim() : (field.value as string).trim(),
-    }))
-    .filter((field) => field.label && field.value);
+    .map((field) => {
+      const hasKey = typeof field.key === "string" && field.key !== "";
+      if (hasKey && !isAdditionalFieldKey(field.key)) {
+        throw new HttpsError("invalid-argument", `additionalFields: unknown key "${field.key}"`);
+      }
+      const label = (field.label as string).trim();
+      const text = (field.value as string).trim();
+      return {
+        ...(hasKey ? { key: field.key as string } : {}),
+        label,
+        value: field.key === "paymentMethod" ? normalizePaymentMethod(text) : text,
+        rawValue: typeof field.rawValue === "string" ? field.rawValue.trim() : text,
+      };
+    })
+    .filter((field) => field.label && field.value)
+    .filter((field) => field.key !== undefined || legacyLabels.has(field.label));
 
   return fields.length > 0 ? fields : null;
 }

@@ -237,6 +237,31 @@ _Deutsch_: Steuersatzzeile
 _Also printed as_: MwSt.-Aufstellung, USt-Zusammenfassung, Steuersätze
 _Avoid_: VAT breakdown, tax group, summary row
 _Avoid (de)_: USt-Aufschlüsselung, Steuergruppe
+When the page prints no block, an RKSV Code whose buckets add up to the document total to
+the cent stands in for it: the till's own block in machine form (#540).
+
+**Document VAT Total**:
+The VAT amount a document prints once, for the whole document ("davon 20% USt 11,25",
+"Tax 11,25"). Transcribed, never computed. When no rate is printed, the one known rate
+that reproduces it to the cent is the document's rate, and the Line Items get that rate.
+_Deutsch_: ausgewiesene Umsatzsteuer
+_Also printed as_: MwSt., USt., Tax, Sales Tax, GST, IVA, TVA, BTW, inkl. MwSt.
+_Avoid_: tax total, VAT sum
+_Avoid (de)_: Steuersumme
+
+**RKSV Code**:
+The signed QR code an Austrian registered till prints on every receipt (`_R1-AT…`): till
+id, receipt number, timestamp and the gross turnover at each of the five rate buckets.
+_Deutsch_: RKSV-Code (cite verbatim)
+_Avoid_: receipt QR, till code
+
+**Payment Code**:
+A QR code that carries a credit transfer: the EPC GiroCode (`BCD`) or the Swiss QR-bill
+(`SPC`). Its IBAN fills a missing issuer IBAN only when it passes its checksum; its amount
+is a designated payable amount.
+_Deutsch_: Zahlungscode
+_Also printed as_: GiroCode, EPC-QR, Bezahlcode, QR-Rechnung
+_Avoid_: payment QR
 
 **Due Date**:
 The date by which the User must pay an invoice. A deadline, not a payment date, and not

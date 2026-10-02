@@ -37,6 +37,8 @@ import {
   totalWithoutPrintedTip,
   validateRateGroups,
 } from "./lineItemReconciliation";
+import { rateFromDocumentVat } from "./taxFacts";
+import { rateGroupsFromRksv } from "./qrCodes";
 // Re-exported so existing importers (tests included) keep their path; the
 // implementations moved to lineItemReconciliation.ts, which stays free of the
 // extraction pipeline's imports so the correction path can share them (#203).
@@ -256,6 +258,9 @@ export async function runExtraction(
         extractedCurrency: null,
         extractedVatPercent: null,
         extractedVatAmount: null,
+        extractedDocumentVatAmount: null,
+        extractedQrCodes: null,
+        extractedCountry: null,
         extractedLineItems: null,
         extractedRateGroups: null,
         lineItemsUnreconciled: false,
@@ -442,6 +447,9 @@ export async function runExtraction(
     updateData.extractedCurrency = null;
     updateData.extractedVatPercent = null;
     updateData.extractedVatAmount = null;
+    updateData.extractedDocumentVatAmount = null;
+    updateData.extractedQrCodes = null;
+    updateData.extractedCountry = null;
     updateData.extractedLineItems = null;
     updateData.extractedRateGroups = null;
     updateData.lineItemsUnreconciled = false;
@@ -513,13 +521,45 @@ export async function runExtraction(
       extracted.rateGroups
     );
 
+    // #540: the printed VAT total and the decoded QR codes, stored as read.
+    // Written unconditionally like the other transcriptions, so a document
+    // that prints neither records an absence.
+    const documentVatAmount = extracted.documentVatAmount ?? null;
+    updateData.extractedDocumentVatAmount = documentVatAmount;
+    updateData.extractedQrCodes = extracted.qrCodes && extracted.qrCodes.length > 0 ? extracted.qrCodes : null;
+
+    // #540: one stored shape whatever the layout. A document that prints a
+    // VAT amount and no rate ("Tax 11,25") gets the one rate that reproduces
+    // that amount to the cent, and from there the same single-rate split as
+    // a document that printed the rate (#511). A mixed-rate total matches no
+    // single rate and stays rate-less: nothing is averaged.
+    const documentVatPercent =
+      extracted.vatPercent ?? rateFromDocumentVat(documentTotal, documentVatAmount);
+    if (extracted.vatPercent == null && documentVatPercent != null) {
+      console.log(
+        `[+${Date.now() - t0}ms] Document VAT ${documentVatAmount} on ${documentTotal} ` +
+        `is ${documentVatPercent}% (no rate printed)`
+      );
+    }
+    // An RKSV code is the till's own per-rate block in machine form. Used only
+    // when the page printed no block, and only when its buckets add up to the
+    // document total to the cent, which a misread code does not (#540, #166).
+    const rksvGroups =
+      extracted.rateGroups && extracted.rateGroups.length > 0
+        ? null
+        : rateGroupsFromRksv(extracted.qrCodes ?? [], documentTotal);
+    if (rksvGroups) {
+      console.log(`[+${Date.now() - t0}ms] Rate groups read from the RKSV code: ${rksvGroups.map((g) => g.rate).join(", ")}%`);
+    }
+    const printedRateGroups = rksvGroups ?? extracted.rateGroups;
+
     const normalizedLineItems = normalizeExtractedLineItems(extracted.lineItems);
     if (normalizedLineItems.length > 0) {
       const reconciled = reconcileLineItemsWithDocumentTotal(
         normalizedLineItems,
         documentTotal,
-        extracted.rateGroups,
-        extracted.vatPercent
+        printedRateGroups,
+        documentVatPercent
       );
       updateData.extractedLineItems = reconciled.lineItems;
       updateData.extractedRateGroups = reconciled.rateGroups;
@@ -538,14 +578,15 @@ export async function runExtraction(
           // a line-item failure and still carries the document's VAT.
           const totals = rateGroupTotals(reconciled.rateGroups);
           updateData.extractedVatAmount = totals.totalVatAmount;
-          updateData.extractedVatPercent = totals.consolidatedVatPercent ?? extracted.vatPercent;
+          updateData.extractedVatPercent = totals.consolidatedVatPercent ?? documentVatPercent;
         } else {
           // #511: a single-rate document's VAT is its total at that rate,
           // whatever its rows say. Only a mixed-rate or rate-less document
-          // loses its VAT with its rows.
-          const singleRate = singleRateDocumentVat(reconciled.lineItems, documentTotal, extracted.vatPercent);
-          updateData.extractedVatAmount = singleRate?.vatAmount ?? null;
-          updateData.extractedVatPercent = extracted.vatPercent;
+          // loses its VAT with its rows, and keeps the VAT total it printed
+          // when it printed one (#540).
+          const singleRate = singleRateDocumentVat(reconciled.lineItems, documentTotal, documentVatPercent);
+          updateData.extractedVatAmount = singleRate?.vatAmount ?? documentVatAmount;
+          updateData.extractedVatPercent = documentVatPercent;
         }
       } else if (reconciled.rateGroups) {
         // Both readings agree: prefer the printed block's VAT, which is one
@@ -564,7 +605,7 @@ export async function runExtraction(
     } else {
       // No itemisation — but a receipt can still print its VAT summary
       // block, and that alone is a §11-sufficient record (fork #67).
-      const validatedGroups = validateRateGroups(extracted.rateGroups, documentTotal);
+      const validatedGroups = validateRateGroups(printedRateGroups, documentTotal);
       updateData.extractedLineItems = null;
       updateData.extractedRateGroups = validatedGroups;
       updateData.lineItemsUnreconciled = false;
@@ -573,12 +614,17 @@ export async function runExtraction(
       if (validatedGroups) {
         const totals = rateGroupTotals(validatedGroups);
         updateData.extractedVatAmount = totals.totalVatAmount;
-        updateData.extractedVatPercent = totals.consolidatedVatPercent ?? extracted.vatPercent;
+        updateData.extractedVatPercent = totals.consolidatedVatPercent ?? documentVatPercent;
       } else {
-        updateData.extractedVatAmount = null;
-        updateData.extractedVatPercent = extracted.vatPercent;
+        // #540: the VAT total the document printed, when it printed one. Not
+        // derived from the rate: a derivation here would be stored as if read.
+        updateData.extractedVatAmount = documentVatAmount;
+        updateData.extractedVatPercent = documentVatPercent;
       }
     }
+
+    // #540: the counterparty's country decides which tax rules apply.
+    updateData.extractedCountry = counterparty?.country ?? null;
 
     // Use counterparty data if available, otherwise fall back to legacy extracted.partner
     // This ensures extractedPartner is always the counterparty (not the user's own company)

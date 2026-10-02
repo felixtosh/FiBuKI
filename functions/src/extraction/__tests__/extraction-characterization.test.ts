@@ -102,6 +102,9 @@ describe("characterization: geminiParser.parseWithGemini", () => {
       payableAmount: null,
       currency: "EUR",
       vatPercent: null,
+      // #540: no printed VAT total and no QR code are absences too.
+      documentVatAmount: null,
+      qrCodes: [],
       lineItems: null,
       rateGroups: null,
       // #104: transcribed heading and invoice number, null when the model
@@ -182,6 +185,8 @@ describe("characterization: geminiParser.parseWithGemini", () => {
       address: null,
       iban: null,
       website: "vendor.de",
+      // #540: from the VAT ID prefix, since the model gave no country.
+      country: "DE",
     });
     expect(res.extracted.recipient).toEqual({
       name: "R",
@@ -189,6 +194,7 @@ describe("characterization: geminiParser.parseWithGemini", () => {
       address: null,
       iban: null,
       website: "sub.client.com",
+      country: "AT",
     });
 
     // A "website" without a dot is rejected entirely

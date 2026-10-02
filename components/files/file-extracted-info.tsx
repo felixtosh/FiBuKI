@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 import { format } from "date-fns";
 import { RefreshCw, Search, Loader2, Pencil, X, Plus, Trash2 } from "lucide-react";
 import { ShowMoreButton } from "@/components/ui/show-more-button";
@@ -34,6 +35,13 @@ import {
   describeInvoiceDirection,
 } from "@/lib/documents/document-type-presentation";
 import { fileDocumentAmount, fileDocumentVatAmount } from "@/lib/files/document-amount";
+import { blocksSave, lineItemRowProblem, updateLineItemRow } from "@/lib/files/line-item-math";
+import {
+  ADDITIONAL_FIELD_KEYS,
+  PAYMENT_METHODS,
+  isAdditionalFieldKey,
+  isPaymentMethod,
+} from "@/types/extraction-fields";
 
 // Consistent field row component (matching transaction-details.tsx)
 // Uses container queries to stack vertically when panel is narrow (<340px)
@@ -119,6 +127,7 @@ function parseAmountToCents(value: string): number | null {
 
 export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsing, onFieldClick, onUpdate, isUpdating }: FileExtractedInfoProps) {
   const convert = useEcbConverter();
+  const tx = useTranslations("files.extracted");
   const documentLabel = useDocumentLabel();
   const directionPresentation = describeInvoiceDirection(file.invoiceDirection);
   const directionReview = describeDirectionReview(file);
@@ -210,19 +219,29 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
     setEditedFields((prev) => ({ ...prev, [field]: value }));
   };
 
-  const updateAdditionalField = (index: number, key: "label" | "value", newValue: string) => {
+  // Only the value is editable (#540): the key says what the field is, and a
+  // legacy row's printed label is evidence, not something to retype.
+  const updateAdditionalField = (index: number, newValue: string) => {
     setEditedFields((prev) => ({
       ...prev,
       additionalFields: prev.additionalFields.map((f, i) =>
-        i === index ? { ...f, [key]: newValue } : f
+        i === index ? { ...f, value: newValue } : f
       ),
     }));
   };
 
-  const addAdditionalField = () => {
+  // A new field is picked from the fixed vocabulary (#540), never named by
+  // hand: a free label is how "Tischnummer" got into the record. The label
+  // stored beside it is the field's name in the person's language, since
+  // there is no printed wording to keep.
+  const addAdditionalField = (key: string) => {
+    if (!isAdditionalFieldKey(key)) return;
     setEditedFields((prev) => ({
       ...prev,
-      additionalFields: [...prev.additionalFields, { label: "", value: "" }],
+      additionalFields: [
+        ...prev.additionalFields,
+        { key, label: tx(`fields.${key}`), value: key === "paymentMethod" ? "other" : "" },
+      ],
     }));
   };
 
@@ -238,10 +257,11 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
     key: "description" | "vatPercent" | "vatAmount" | "amount",
     value: string
   ) => {
+    // #540: the coupled box follows, so a row's three numbers always agree.
     setEditedFields((prev) => ({
       ...prev,
       lineItems: (prev.lineItems || []).map((item, i) =>
-        i === index ? { ...item, [key]: value } : item
+        i === index ? updateLineItemRow(item, key, value) : item
       ),
     }));
   };
@@ -384,8 +404,26 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
   const lineItemsDeltaCents =
     documentTotalCents != null ? lineItemsSumCents - documentTotalCents : null;
 
+  // #540: a row no rate can produce cannot be saved; the server would
+  // replace its VAT anyway, so saving it would store something nobody typed.
+  const lineItemProblems = editedLineItems.map((item) => lineItemRowProblem(item));
+  const lineItemsBlockSave = isEditing && lineItemProblems.some((problem) => blocksSave(problem));
+
+  // Keyed fields are named in the person's language; keyless ones are legacy
+  // rows from before the vocabulary closed, shown apart under their printed
+  // label so they read as what they are (#540).
+  const keyedAdditionalFields = additionalFields.filter((field) => isAdditionalFieldKey(field.key));
+  const legacyAdditionalFields = additionalFields.filter((field) => !isAdditionalFieldKey(field.key));
+  const unusedFieldKeys = ADDITIONAL_FIELD_KEYS.filter(
+    (key) => !editedFields.additionalFields.some((field) => field.key === key)
+  );
+  const fieldValueLabel = (key: string | undefined, value: string) =>
+    key === "paymentMethod" && isPaymentMethod(value) ? tx(`paymentMethods.${value}`) : value;
+
   // Secondary fields (VAT ID, IBAN, Address) - shown in "Show more"
-  const hasSecondaryFields = !!(file.extractedVatId || file.extractedIban || file.extractedAddress);
+  const hasSecondaryFields = !!(
+    file.extractedVatId || file.extractedIban || file.extractedAddress || file.extractedCountry
+  );
 
   const vatTotal = fileDocumentVatAmount(file);
 
@@ -775,54 +813,106 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
                 </FieldRow>
               )}
 
-              {/* Additional fields - editable with label+value pairs */}
+              {file.extractedCountry && !isEditing && (
+                <FieldRow label={tx("country")}>{file.extractedCountry}</FieldRow>
+              )}
+
+              {/*
+                Additional fields (#252, #540): named by key in the person's
+                language. Only the value is editable; a new field is picked
+                from the fixed list, never named by hand.
+              */}
               {isEditing ? (
                 <>
                   {editedFields.additionalFields.map((field, index) => (
                     <div key={index} className="flex items-center gap-2">
-                      <Input
-                        value={field.label}
-                        onChange={(e) => updateAdditionalField(index, "label", e.target.value)}
-                        className="h-8 text-sm w-28 shrink-0"
-                        placeholder="Label"
-                      />
-                      <Input
-                        value={field.value}
-                        onChange={(e) => updateAdditionalField(index, "value", e.target.value)}
-                        className="h-8 text-sm flex-1"
-                        placeholder="Value"
-                      />
+                      <span className="text-sm text-muted-foreground w-28 shrink-0 truncate">
+                        {isAdditionalFieldKey(field.key) ? tx(`fields.${field.key}`) : field.label}
+                      </span>
+                      {field.key === "paymentMethod" ? (
+                        <Select
+                          value={isPaymentMethod(field.value) ? field.value : "other"}
+                          onValueChange={(value) => updateAdditionalField(index, value)}
+                        >
+                          <SelectTrigger className="h-8 text-sm flex-1">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {PAYMENT_METHODS.map((method) => (
+                              <SelectItem key={method} value={method}>
+                                {tx(`paymentMethods.${method}`)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <Input
+                          value={field.value}
+                          onChange={(e) => updateAdditionalField(index, e.target.value)}
+                          className="h-8 text-sm flex-1"
+                          placeholder={tx("value")}
+                        />
+                      )}
                       <Button
                         variant="ghost"
                         size="icon"
                         className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
                         onClick={() => removeAdditionalField(index)}
+                        aria-label={tx("removeField")}
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>
                   ))}
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full"
-                    onClick={addAdditionalField}
-                  >
-                    <Plus className="h-4 w-4 mr-2" />
-                    Add field
-                  </Button>
+                  {unusedFieldKeys.length > 0 && (
+                    <Select value="" onValueChange={addAdditionalField}>
+                      <SelectTrigger className="h-8 text-sm w-full">
+                        <span className="flex items-center gap-2 text-muted-foreground">
+                          <Plus className="h-4 w-4" />
+                          {tx("addField")}
+                        </span>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {unusedFieldKeys.map((key) => (
+                          <SelectItem key={key} value={key}>
+                            {tx(`fields.${key}`)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
                 </>
               ) : (
-                additionalFields.map((field, index) => (
-                  <FieldRow
-                    key={index}
-                    label={field.label}
-                    onClick={onFieldClick}
-                    searchText={field.rawValue || field.value}
-                  >
-                    {field.value}
-                  </FieldRow>
-                ))
+                <>
+                  {keyedAdditionalFields.map((field, index) => (
+                    <FieldRow
+                      key={`k-${index}`}
+                      label={tx(`fields.${field.key}`)}
+                      onClick={onFieldClick}
+                      searchText={field.rawValue || field.value}
+                    >
+                      {fieldValueLabel(field.key, field.value)}
+                    </FieldRow>
+                  ))}
+                  {legacyAdditionalFields.length > 0 && (
+                    <div className="space-y-2 pt-1">
+                      <div className="text-xs text-muted-foreground flex items-center gap-1">
+                        {tx("legacyFields")}
+                        <InfoPopover label={tx("legacyFields")}>{tx("legacyFieldsInfo")}</InfoPopover>
+                      </div>
+                      {legacyAdditionalFields.map((field, index) => (
+                        <FieldRow
+                          key={`l-${index}`}
+                          label={field.label}
+                          onClick={onFieldClick}
+                          searchText={field.rawValue || field.value}
+                        >
+                          {field.value}
+                        </FieldRow>
+                      ))}
+                    </div>
+                  )}
+                </>
               )}
 
               {/*
@@ -854,7 +944,7 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
 
               {(hasLineItems || isEditing) && (
                 <div className="space-y-2 pt-2">
-                  <div className="text-sm text-muted-foreground">Line items</div>
+                  <div className="text-sm text-muted-foreground">{tx("lineItems.title")}</div>
                   {isEditing ? (
                     <div className="space-y-2">
                       {/*
@@ -889,34 +979,59 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
                           </span>
                         </div>
                       )}
+                      {hasEditableLineItems && (
+                        <p className="text-xs text-muted-foreground">{tx("lineItems.coupledHint")}</p>
+                      )}
                       {editedLineItems.map((item, index) => (
-                        <div key={index} className="rounded border p-2 space-y-2">
+                        <div
+                          key={index}
+                          className={cn(
+                            "rounded border p-2 space-y-2",
+                            blocksSave(lineItemProblems[index]) && "border-destructive"
+                          )}
+                        >
                           <Input
                             value={item.description}
                             onChange={(e) => updateLineItemField(index, "description", e.target.value)}
                             className="h-8 text-sm"
-                            placeholder="Description"
+                            placeholder={tx("lineItems.description")}
                           />
                           <div className="grid grid-cols-2 gap-2">
                             <Input
                               value={item.vatPercent}
                               onChange={(e) => updateLineItemField(index, "vatPercent", e.target.value)}
                               className="h-8 text-sm"
-                              placeholder="VAT %"
+                              placeholder={tx("lineItems.vatPercent")}
+                              aria-label={tx("lineItems.vatPercent")}
+                              inputMode="decimal"
                             />
                             <Input
                               value={item.vatAmount}
                               onChange={(e) => updateLineItemField(index, "vatAmount", e.target.value)}
                               className="h-8 text-sm"
-                              placeholder="VAT amount"
+                              placeholder={tx("lineItems.vatAmount")}
+                              aria-label={tx("lineItems.vatAmount")}
+                              inputMode="decimal"
                             />
                             <Input
                               value={item.amount}
                               onChange={(e) => updateLineItemField(index, "amount", e.target.value)}
                               className="h-8 text-sm col-span-2"
-                              placeholder="Gross amount"
+                              placeholder={tx("lineItems.grossAmount")}
+                              aria-label={tx("lineItems.grossAmount")}
+                              inputMode="decimal"
                             />
                           </div>
+                          {lineItemProblems[index] && (
+                            <p
+                              className={cn(
+                                "text-xs",
+                                blocksSave(lineItemProblems[index]) ? "text-destructive" : "text-amber-600"
+                              )}
+                            >
+                              {tx(`lineItems.problems.${lineItemProblems[index]}`)}
+                            </p>
+                          )}
                           <Button
                             variant="ghost"
                             size="sm"
@@ -924,7 +1039,7 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
                             onClick={() => removeLineItem(index)}
                           >
                             <Trash2 className="h-4 w-4 mr-1" />
-                            Remove item
+                            {tx("lineItems.removeItem")}
                           </Button>
                         </div>
                       ))}
@@ -936,7 +1051,7 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
                           onClick={addLineItem}
                         >
                           <Plus className="h-4 w-4 mr-2" />
-                          Add line item
+                          {tx("lineItems.addItem")}
                         </Button>
                         {/*
                           The exit for a delta that will not close (#253): some
@@ -953,7 +1068,7 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
                             onClick={removeAllLineItems}
                           >
                             <Trash2 className="h-4 w-4 mr-2" />
-                            Remove all line items
+                            {tx("lineItems.removeAll")}
                           </Button>
                         )}
                       </div>
@@ -964,8 +1079,8 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
                         <div key={index} className="rounded border p-2">
                           <div className="text-sm">{item.description || "—"}</div>
                           <div className="text-xs text-muted-foreground flex flex-wrap gap-3 mt-1 tabular-nums">
-                            <span>VAT: {item.vatPercent != null ? `${item.vatPercent}%` : "—"}</span>
-                            <span>Amount: {formatDocumentAmount(item.amount, file.extractedCurrency)}</span>
+                            <span>{tx("lineItems.vat", { rate: item.vatPercent != null ? `${item.vatPercent}%` : "—" })}</span>
+                            <span>{tx("lineItems.amount", { amount: formatDocumentAmount(item.amount, file.extractedCurrency) })}</span>
                           </div>
                         </div>
                       ))}
@@ -983,6 +1098,12 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
             </div>
           )}
 
+          {lineItemsBlockSave && (
+            <div role="alert" className="text-sm text-destructive">
+              {tx("lineItems.fixRows")}
+            </div>
+          )}
+
           {/* Update/Cancel buttons - shown when editing */}
           {isEditing && (
             <div className="flex gap-2 pt-3">
@@ -997,7 +1118,7 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
               <Button
                 size="sm"
                 onClick={handleUpdate}
-                disabled={isUpdating}
+                disabled={isUpdating || lineItemsBlockSave}
               >
                 {isUpdating ? (
                   <>
