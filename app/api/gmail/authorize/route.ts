@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
-import crypto from "crypto";
 import { getServerUserIdWithFallback } from "@/lib/auth/get-server-user";
+import { createOAuthState } from "@/lib/gmail/oauth-state";
 
 /**
  * Gmail OAuth 2.0 scopes
@@ -49,8 +49,11 @@ export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
   const returnTo = typeof body?.returnTo === "string" ? body.returnTo : null;
 
-  // Generate state parameter for CSRF protection
-  const state = crypto.randomBytes(32).toString("hex");
+  // The state is bound to the verified uid on the server (oauth-state.ts); the
+  // callback takes the uid from that record, never from anything the browser
+  // sends back. The cookie copy of the state remains as the CSRF check that
+  // the callback lands in the browser that started the flow.
+  const state = await createOAuthState(userId, "gmail");
   const stateExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
   // Build authorization URL
@@ -76,9 +79,9 @@ export async function POST(request: NextRequest) {
     path: "/",
   };
 
-  // CSRF state, verified user id, and optional return path for the callback.
+  // CSRF state and optional return path for the callback. The uid is NOT put
+  // in a cookie: a cookie is the user's to edit.
   response.cookies.set("gmail_oauth_state", state, cookieBase);
-  response.cookies.set("gmail_oauth_user_id", userId, cookieBase);
   if (returnTo && returnTo.startsWith("/") && !returnTo.startsWith("//")) {
     response.cookies.set("gmail_oauth_return_to", returnTo, cookieBase);
   }

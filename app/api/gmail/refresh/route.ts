@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { Timestamp } from "firebase-admin/firestore";
 import { decrypt, getEncryptionKey } from "@/lib/crypto/encryption";
+import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 
 const db = getAdminDb();
 const TOKENS_COLLECTION = "emailTokens";
@@ -32,10 +33,14 @@ interface GoogleTokenResponse {
  */
 export async function POST(request: NextRequest) {
   try {
+    // Hands back a live mailbox token, so the caller must be signed in AND own
+    // the integration. Both failures answer like a missing integration, so the
+    // route never confirms that someone else's id exists.
+    const userId = await getServerUserIdWithFallback(request);
     const body = await request.json();
     const { integrationId } = body;
 
-    if (!integrationId) {
+    if (!integrationId || typeof integrationId !== "string") {
       return NextResponse.json(
         { error: "Missing integrationId" },
         { status: 400 }
@@ -50,6 +55,11 @@ export async function POST(request: NextRequest) {
         { error: "Google OAuth is not configured" },
         { status: 500 }
       );
+    }
+
+    const integrationSnap = await db.collection(INTEGRATIONS_COLLECTION).doc(integrationId).get();
+    if (!integrationSnap.exists || integrationSnap.data()?.userId !== userId) {
+      return NextResponse.json({ error: "Integration not found" }, { status: 404 });
     }
 
     // Get stored tokens
@@ -160,6 +170,8 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (error) {
+    const unauthorized = unauthorizedResponse(error);
+    if (unauthorized) return unauthorized;
     console.error("Token refresh error:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Token refresh failed" },

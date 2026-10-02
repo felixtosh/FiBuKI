@@ -4,6 +4,7 @@ import { getAdminDb } from "@/lib/firebase/admin";
 import { Timestamp, FieldValue } from "firebase-admin/firestore";
 import { encrypt, getEncryptionKey } from "@/lib/crypto/encryption";
 import { activateMailIntegration } from "@/functions/src/mail/activateMailIntegration";
+import { consumeOAuthState } from "@/lib/gmail/oauth-state";
 
 const db = getAdminDb();
 
@@ -157,11 +158,11 @@ export async function GET(request: NextRequest) {
     // Calculate token expiry
     const expiresAt = new Date(Date.now() + tokens.expires_in * 1000);
 
-    // Get userId from cookie set during auth start
-    const cookieUserId = request.cookies.get("gmail_oauth_user_id")?.value;
-    const userId = cookieUserId || "";
+    // Who started this flow, from the server-side record the state points at.
+    // Single use: a replayed or forged state resolves to nobody.
+    const userId = await consumeOAuthState(state, "gmail");
     if (!userId) {
-      return redirectWithParams(request, "/integrations/gmail", { error: "no_user_id" });
+      return redirectWithParams(request, "/integrations/gmail", { error: "invalid_state" });
     }
 
     // Check if email is already connected (active) using Admin SDK
@@ -404,6 +405,6 @@ function redirectWithParams(
   const response = NextResponse.redirect(url);
   response.cookies.delete("gmail_oauth_state");
   response.cookies.delete("gmail_oauth_return_to");
-  response.cookies.delete("gmail_oauth_user_id");
+  response.cookies.delete("gmail_oauth_user_id"); // left over from before the server-side state
   return response;
 }
