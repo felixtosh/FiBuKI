@@ -24,10 +24,13 @@ import { useMfaChallenge } from "@/hooks/use-mfa-challenge";
 import { usePasskeys } from "@/hooks/use-passkeys";
 import { githubSignInEnabled } from "@/lib/auth/social-providers";
 import { consumeSocialAccessRequest } from "@/lib/auth/social-access-request";
+import { hintedEmail, safeRedirectPath } from "@/lib/auth/safe-redirect";
 import { logoFont } from "@/app/fonts";
 
 export default function LoginPage() {
-  const [email, setEmail] = useState("");
+  const searchParams = useSearchParams();
+  // A connecting app (ChatGPT, Claude) can suggest which account to use as ?email=
+  const [email, setEmail] = useState(() => hintedEmail(searchParams.get("email")));
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -67,7 +70,6 @@ export default function LoginPage() {
   const { handleMfaRequired, handleCustomMfaRequired } = useMfaChallenge();
   const { hasPasskeys } = usePasskeys();
   const router = useRouter();
-  const searchParams = useSearchParams();
   const redirect = searchParams.get("redirect");
 
   // Store referral code from URL in localStorage for persistence across OAuth redirects
@@ -125,8 +127,7 @@ export default function LoginPage() {
     // 3. No custom MFA challenge is pending
     // 4. Not currently loading
     if (user && !mfaRequired && !customMfaRequired && !accessRequested && !isLoading) {
-      const target = redirect && redirect.startsWith("/") ? redirect : "/transactions";
-      router.push(target);
+      router.push(safeRedirectPath(redirect));
     }
   }, [user, mfaRequired, customMfaRequired, accessRequested, isLoading, router, redirect]);
 

@@ -21,6 +21,7 @@ import { logoFont } from "@/app/fonts";
 import { callFunction } from "@/lib/firebase/callable";
 import { githubSignInEnabled } from "@/lib/auth/social-providers";
 import { consumeSocialAccessRequest } from "@/lib/auth/social-access-request";
+import { safeRedirectPath } from "@/lib/auth/safe-redirect";
 import { useOpenSeats } from "@/hooks/use-open-seats";
 
 export default function RegisterPage() {
@@ -64,12 +65,14 @@ export default function RegisterPage() {
 
   const { user, signInWithGoogle, signInWithGitHub, accessRequested } = useAuth();
 
-  // Redirect existing users to the dashboard
+  // Once signed up (or already signed in), go where the visitor was headed, e.g. back to a
+  // connecting app's authorize page; otherwise the dashboard.
+  const redirect = searchParams.get("redirect");
   useEffect(() => {
     if (user && !accessRequested) {
-      router.push("/transactions");
+      router.push(safeRedirectPath(redirect));
     }
-  }, [user, accessRequested, router]);
+  }, [user, accessRequested, router, redirect]);
 
   // Clear pending redirect state once auth resolves
   useEffect(() => {

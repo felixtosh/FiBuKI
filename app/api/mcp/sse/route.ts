@@ -5,8 +5,10 @@
  * Used by ChatGPT, Codex, Claude and any other remote MCP client.
  *
  * The proxy is transparent: it forwards the MCP headers and passes the
- * upstream status, headers and body through untouched. Notifications are
- * answered with 202 and an empty body, so the body is never parsed here.
+ * upstream status, headers and body through untouched. That includes the 401 and its
+ * WWW-Authenticate challenge, which points clients at the OAuth metadata, so a request
+ * without a token is forwarded too. Notifications are answered with 202 and an empty
+ * body, so the body is never parsed here.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -38,13 +40,6 @@ const FORWARD_RESPONSE_HEADERS = ["content-type", "mcp-session-id", "www-authent
 async function proxy(request: NextRequest): Promise<NextResponse> {
   if (!CF_URL) {
     return NextResponse.json({ error: FUNCTIONS_URL_UNSET_ERROR }, { status: 500 });
-  }
-
-  if (!request.headers.get("authorization")) {
-    return NextResponse.json(
-      { jsonrpc: "2.0", id: null, error: { code: -32001, message: "Missing Authorization header" } },
-      { status: 401, headers: { ...CORS_HEADERS, "WWW-Authenticate": 'Bearer realm="fibuki"' } }
-    );
   }
 
   const headers = new Headers();

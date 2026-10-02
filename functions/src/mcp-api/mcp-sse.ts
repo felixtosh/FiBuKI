@@ -16,6 +16,7 @@
 import { onRequest } from "firebase-functions/v2/https";
 import { validateApiKey } from "../api-keys";
 import { handleMcpRequest, MCP_SERVER_NAME, MCP_SERVER_VERSION } from "./mcp-server";
+import { bearerChallenge } from "../oauth/oauthCore";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -25,8 +26,6 @@ const CORS_HEADERS = {
   "Access-Control-Expose-Headers": "Mcp-Session-Id, WWW-Authenticate",
 };
 
-/** Sent on every 401 so MCP clients know to (re)authenticate. */
-const WWW_AUTHENTICATE = 'Bearer realm="fibuki"';
 
 const STREAMABLE_ACCEPT = "application/json, text/event-stream";
 
@@ -46,8 +45,12 @@ interface HttpResponse {
   end(): unknown;
 }
 
-function unauthorized(res: HttpResponse, message: string): void {
-  res.setHeader("WWW-Authenticate", WWW_AUTHENTICATE);
+/**
+ * Every 401 says where the OAuth metadata is (RFC 9728), so a client that has no token yet
+ * discovers how to get one, and one whose token expired knows to refresh it.
+ */
+function unauthorized(res: HttpResponse, message: string, invalidToken = false): void {
+  res.setHeader("WWW-Authenticate", bearerChallenge(invalidToken ? "invalid_token" : undefined));
   res.status(401).json({ jsonrpc: "2.0", id: null, error: { code: -32001, message } });
 }
 
@@ -123,7 +126,7 @@ export const mcpSse = onRequest(
 
     const validated = await validateApiKey(authValue.substring(7));
     if (!validated) {
-      unauthorized(response, "Invalid API key");
+      unauthorized(response, "Invalid or expired token", true);
       return;
     }
 

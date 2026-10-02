@@ -71,6 +71,10 @@ export const TOP_LEVEL_POLICIES: Readonly<Record<string, CollectionPolicy>> = {
   // Explicitly denied (rules: allow read, write: if false) — listed so a
   // future edit consciously flips them instead of "fixing" a 403.
   emailTokens: denied,
+  // OAuth for connected apps (functions/src/oauth): registered clients and one-time
+  // authorization codes. Server-only; the grants themselves live in apiKeys.
+  oauthClients: denied,
+  oauthCodes: denied,
   invoiceShares: denied,
   // ECB reference rates (#92): server-side only, and not user data at all.
   fxReferenceRates: denied,

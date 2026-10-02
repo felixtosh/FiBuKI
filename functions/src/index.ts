@@ -384,4 +384,6 @@ export { sendPasswordResetCallable as sendPasswordReset } from "./auth/sendPassw
 
 // MCP HTTP API (for OpenClaw, Claude Desktop, ChatGPT, etc.)
 export { mcpApi, mcpToolsList, mcpSse } from "./mcp-api";
+export { oauthMetadata, oauthRegister, oauthToken, oauthClientInfo } from "./oauth/oauthHttp";
+export { createOAuthAuthorizationCallable as createOAuthAuthorization } from "./oauth/oauthCallable";
 export { openApiSpec, aiPluginManifest } from "./mcp-api/openapi";

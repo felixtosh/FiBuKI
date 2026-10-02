@@ -146,6 +146,8 @@ export type CloudFunctionName =
   | "initOnboarding"
   | "syncOnboarding"
   | "updateOnboarding"
+  // OAuth for connected apps
+  | "createOAuthAuthorization"
   // Access requests
   | "submitAccessRequest"
   | "approveAccessRequest"

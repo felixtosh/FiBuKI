@@ -407,5 +407,58 @@
       "title": "Getting Started",
       "subtitle": "Complete these steps to set up your account"
     }
+  },
+  "oauth": {
+    "authorize": {
+      "loading": "One moment…",
+      "thisApp": "this app",
+      "returnsTo": "Returns to {host}",
+      "unverified": "FiBuKI could not verify this app. Only continue if you started this connection yourself. It will send you to {host}.",
+      "invalid": {
+        "title": "This connection request can't be used",
+        "body": "The link is incomplete or has expired. Start the connection again from the app.",
+        "back": "Back to {app}"
+      },
+      "signIn": {
+        "title": "Connect {app} to FiBuKI",
+        "body": "Sign in or create your FiBuKI account to continue.",
+        "hint": "{app} suggested {email}.",
+        "signIn": "Sign in",
+        "create": "Create account",
+        "finish": "Finish signing in"
+      },
+      "accountChoice": {
+        "title": "Which account?",
+        "body": "You're signed in as {current}, but {app} suggested {suggested}.",
+        "continueAs": "Continue as {current}",
+        "useOther": "Use {suggested}"
+      },
+      "identity": {
+        "title": "First, who are you?",
+        "body": "FiBuKI uses this to tell your own invoices from the ones you receive. You can add more later in Settings.",
+        "name": "Name as on your invoices",
+        "vatId": "UID (optional)",
+        "iban": "Your IBAN (optional)",
+        "save": "Continue",
+        "saving": "Saving…",
+        "error": "Could not save. Please try again."
+      },
+      "consent": {
+        "title": "Connect {app}?",
+        "canDo": "{app} will be able to:",
+        "seeData": "See your bank accounts, transactions, documents and partners",
+        "organise": "Match documents to transactions and categorise them",
+        "upload": "Upload documents and import transactions",
+        "cannot": "It cannot delete individual transactions.",
+        "disconnect": "You can disconnect it at any time in",
+        "settings": "Settings, Integrations",
+        "signedInAs": "Signed in as {email}.",
+        "switchAccount": "Use another account",
+        "allow": "Allow",
+        "cancel": "Cancel",
+        "working": "Connecting…",
+        "error": "Something went wrong. Please try again."
+      }
+    }
   }
 }
