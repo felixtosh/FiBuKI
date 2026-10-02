@@ -601,6 +601,7 @@
       "income": "Income",
       "expense": "Expense",
       "notInvoice": "Not an invoice",
+      "undetermined": "Not determined",
       "deleted": "Deleted files"
     },
     "transactions": {

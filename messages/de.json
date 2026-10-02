@@ -601,6 +601,7 @@
       "income": "Einnahme",
       "expense": "Ausgabe",
       "notInvoice": "Keine Rechnung",
+      "undetermined": "Nicht bestimmt",
       "deleted": "Gelöschte Belege"
     },
     "transactions": {
