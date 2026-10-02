@@ -441,20 +441,29 @@ function FilesContent() {
     noKeyboard: true,
   });
 
-  // Find selected file (primary selection from URL)
-  const selectedFile = useMemo(() => {
-    if (!primarySelectedId || !files.length) return null;
-    return files.find((f) => f.id === primarySelectedId) || null;
-  }, [primarySelectedId, files]);
+  // One ticked File is still one File (#526): the sidebar shows its details,
+  // and the bulk panel takes over from two. Prev/next and close leave the
+  // ticked state, since they browse rather than select.
+  const singleCheckedId =
+    showBulkActionBar && allSelectedIds.size === 1 ? [...allSelectedIds][0] : null;
+  const showBulkPanel = showBulkActionBar && allSelectedIds.size >= 2;
+  const panelFileId = singleCheckedId ?? primarySelectedId;
 
-  // A bulk selection takes over the sidebar: the bulk panel replaces the
-  // one-File detail panel (and the viewer and connect overlay that hang off
-  // it). The primary stays selected; clearing the bulk selection brings its
-  // panel back.
-  const detailFile = showBulkActionBar ? null : selectedFile;
+  // The File the detail panel is about: the browsed one (?id=) or the one
+  // ticked File.
+  const selectedFile = useMemo(() => {
+    if (!panelFileId || !files.length) return null;
+    return files.find((f) => f.id === panelFileId) || null;
+  }, [panelFileId, files]);
+
+  // A bulk selection of two or more takes over the sidebar: the bulk panel
+  // replaces the one-File detail panel (and the viewer and connect overlay
+  // that hang off it). The primary stays selected; clearing the bulk
+  // selection brings its panel back.
+  const detailFile = showBulkPanel ? null : selectedFile;
   const bulkSelectedFiles = useMemo(
-    () => (showBulkActionBar ? files.filter((f) => allSelectedIds.has(f.id)) : []),
-    [showBulkActionBar, files, allSelectedIds]
+    () => (showBulkPanel ? files.filter((f) => allSelectedIds.has(f.id)) : []),
+    [showBulkPanel, files, allSelectedIds]
   );
 
   // Locate the file that backs the current invoice (if any) so we can pass
@@ -491,9 +500,9 @@ function FilesContent() {
   );
 
   const hasPrevious =
-    getNeighbourRowId(orderedFileIds, primarySelectedId, -1) !== null;
+    getNeighbourRowId(orderedFileIds, panelFileId, -1) !== null;
   const hasNext =
-    getNeighbourRowId(orderedFileIds, primarySelectedId, 1) !== null;
+    getNeighbourRowId(orderedFileIds, panelFileId, 1) !== null;
 
   // Note: We intentionally do NOT close the viewer when navigating between files
   // The viewer should stay open so users can browse through files quickly
@@ -583,6 +592,8 @@ function FilesContent() {
 
   const handleSelectFile = useCallback(
     (file: TaxFile) => {
+      // Opening a File browses it; a single tick on another File goes (#526).
+      setAdditionalSelectedIds((prev) => (prev.size === 1 ? new Set() : prev));
       // Invoice files route via ?invoiceId= so the page-level InvoiceDetailPanel
       // branch mounts (with viewer-toggle and preview-source lifting wired up).
       // The FileDetailPanel fork to InvoiceDetailPanel does NOT lift those, so
@@ -602,6 +613,8 @@ function FilesContent() {
   );
 
   const handleCloseDetail = useCallback(() => {
+    // Closing the panel on the one ticked File unticks it too (#526).
+    setAdditionalSelectedIds((prev) => (prev.size === 1 ? new Set() : prev));
     const params = buildFileSearchParams(filters, searchValue, null);
     const newUrl = params.toString() ? `/files?${params.toString()}` : "/files";
     pushQuery(router, newUrl);
@@ -657,11 +670,11 @@ function FilesContent() {
   // Step through the displayed order (-1 previous, 1 next)
   const navigateFileBy = useCallback(
     (step: number) => {
-      const targetId = getNeighbourRowId(orderedFileIds, primarySelectedId, step);
+      const targetId = getNeighbourRowId(orderedFileIds, panelFileId, step);
       const target = targetId ? files.find((f) => f.id === targetId) : undefined;
       if (target) handleSelectFile(target);
     },
-    [orderedFileIds, primarySelectedId, files, handleSelectFile]
+    [orderedFileIds, panelFileId, files, handleSelectFile]
   );
 
   const handleNavigatePrevious = useCallback(() => navigateFileBy(-1), [navigateFileBy]);
@@ -1085,7 +1098,7 @@ function FilesContent() {
       <div
         className="relative h-full flex flex-col transition-[margin] duration-200 ease-in-out"
         style={{
-          marginRight: showBulkActionBar || detailFile || invoiceIdParam ? panelWidth : 0,
+          marginRight: showBulkPanel || detailFile || invoiceIdParam ? panelWidth : 0,
         }}
       >
         {/* FABs — anchored to the content column so they live within the
@@ -1206,7 +1219,7 @@ function FilesContent() {
 
       {/* Right sidebar - a bulk selection takes priority, then the invoice
           editor when the invoiceId param is set, then the File's details */}
-      {showBulkActionBar && (
+      {showBulkPanel && (
         <div
           ref={panelRef}
           className="fixed right-0 top-14 bottom-0 z-50 bg-background border-l flex"

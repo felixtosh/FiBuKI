@@ -426,7 +426,8 @@
       "recurring": "Recurring",
       "ofCount": "{part} of {count}",
       "merge": "Merge {count} partners",
-      "mergeNeedsTwo": "Select at least two partners to merge them."
+      "delete": "Delete {count} partners",
+      "deleteConfirm": "Delete {count} partners? Their Files and Transactions stay; only the partner assignment goes."
     }
   }
 }
