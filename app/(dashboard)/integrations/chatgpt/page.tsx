@@ -9,6 +9,7 @@ import {
   SetupStep,
 } from "@/components/integrations/developer-shared";
 import { CopyableCommand } from "@/components/settings/api-key-primitives";
+import { OAuthConnectCard } from "@/components/integrations/oauth-connect-card";
 
 export default function ChatGptPage() {
   return (
@@ -16,6 +17,8 @@ export default function ChatGptPage() {
       title="ChatGPT Custom GPT"
       description="Add FiBuKI as an action in your Custom GPT"
     >
+      <OAuthConnectCard app="chatgpt" />
+
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Setup</CardTitle>

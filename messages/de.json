@@ -460,5 +460,23 @@
         "error": "Etwas ist schiefgelaufen. Bitte versuche es erneut."
       }
     }
+  },
+  "integrations": {
+    "connect": {
+      "title": "Mit einem Klick verbinden (empfohlen)",
+      "description": "Kein API-Key zum Kopieren. Du meldest dich bei FiBuKI an und bestätigst die Verbindung.",
+      "signInStep": "Bei FiBuKI anmelden und Erlauben wählen",
+      "signInDetail": "Ein FiBuKI-Fenster öffnet sich. Melde dich an oder erstelle dein Konto und bestätige dann. Die Verbindung erscheint unten in der Liste der API-Keys als verbundene App, und wenn du sie dort trennst, endet der Zugriff.",
+      "chatgpt": {
+        "step1": "Entwicklermodus einschalten",
+        "step1Detail": "Öffne in ChatGPT Einstellungen, dann Sicherheit und Anmeldung, und schalte den Entwicklermodus ein. Gehe dann zu ChatGPT Plugins und wähle das Plus.",
+        "step2": "FiBuKI als Verbindung hinzufügen"
+      },
+      "claude": {
+        "step1": "Benutzerdefinierten Connector hinzufügen",
+        "step1Detail": "Öffne in Claude Einstellungen, dann Connectors, und füge einen benutzerdefinierten Connector hinzu.",
+        "step2": "Server-URL einfügen"
+      }
+    }
   }
 }

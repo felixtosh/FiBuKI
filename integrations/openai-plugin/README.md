@@ -19,18 +19,20 @@ scripts/
 src/csv-cli.ts  build.mjs      source and bundler for fibuki-csv.mjs
 ```
 
-## Use it with Codex today (API key)
+## Use it with Codex
 
-OAuth for the plugin comes with the ChatGPT work (phase 4). Until then Codex talks to FiBuKI with an API key.
-
-1. Create a key: `npx @fibukiapp/cli auth --format env`, then `export FIBUKI_API_KEY=fk_...`. (Or Settings, Integrations, AI Agents on fibuki.com.)
-2. Add FiBuKI's MCP server to `~/.codex/config.toml`:
+1. Add FiBuKI's MCP server to `~/.codex/config.toml`. No key needed: FiBuKI is an OAuth server, and Codex discovers it from the 401 challenge, registers itself and signs the user in.
 
    ```toml
    [mcp_servers.fibuki]
    url = "https://fibuki.com/api/mcp/sse"
-   bearer_token_env_var = "FIBUKI_API_KEY"
    ```
+
+2. Sign in: `codex mcp login fibuki`. A FiBuKI window opens; sign in or create an account (a new user is asked who they are first), then choose Allow. The connection shows up under Settings, Integrations as a connected app and can be revoked there.
+
+   **Alternative, with an API key** (tools without OAuth, or a self-host without a public web origin): create one with `npx @fibukiapp/cli auth --format env`, `export FIBUKI_API_KEY=fk_...`, and use `bearer_token_env_var = "FIBUKI_API_KEY"` in the same block instead of logging in.
+
+   **The scripts still need an API key.** `fibuki-csv.mjs --import` and `fibuki-upload.mjs` call FiBuKI directly rather than through the MCP connection, so they read `FIBUKI_API_KEY` whichever way the MCP server is connected.
 
 3. Install the plugin from a local marketplace: put this folder at `<repo>/plugins/fibuki` and add to `<repo>/.agents/plugins/marketplace.json`:
 

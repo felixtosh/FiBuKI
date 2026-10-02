@@ -460,5 +460,23 @@
         "error": "Something went wrong. Please try again."
       }
     }
+  },
+  "integrations": {
+    "connect": {
+      "title": "Connect with one click (recommended)",
+      "description": "No API key to copy. You sign in to FiBuKI and approve the connection.",
+      "signInStep": "Sign in to FiBuKI and choose Allow",
+      "signInDetail": "A FiBuKI window opens. Sign in or create your account, then approve. The connection appears in the API keys list below as a connected app, and disconnecting it there ends access.",
+      "chatgpt": {
+        "step1": "Turn on Developer mode",
+        "step1Detail": "In ChatGPT open Settings, then Security and login, and turn on Developer mode. Then go to ChatGPT Plugins and select the plus button.",
+        "step2": "Add FiBuKI as the connection"
+      },
+      "claude": {
+        "step1": "Add a custom connector",
+        "step1Detail": "In Claude open Settings, then Connectors, and add a custom connector.",
+        "step2": "Paste the server URL"
+      }
+    }
   }
 }
