@@ -3046,6 +3046,9 @@ export async function uploadFile(userId: string, args: Record<string, unknown>) 
   const { fileId, duplicate } = await createFileRecord(db, {
     userId,
     fileName: fileName as string,
+    // `fileType` is the field every reader classifies by; `mimeType` alone left
+    // the File with no preview (#248).
+    fileType: mimeType as string,
     mimeType: mimeType as string,
     storagePath,
     downloadUrl,

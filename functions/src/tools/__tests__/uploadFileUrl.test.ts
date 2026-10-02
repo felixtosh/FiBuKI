@@ -154,3 +154,13 @@ describe("upload_file with a file attached in the chat", () => {
     await expect(upload({ file: { file_id: "file_1" } })).rejects.toThrow(/Either file, url or base64/);
   });
 });
+
+describe("the stored File", () => {
+  // The file viewer and the sidebar read `fileType` with no extension fallback, so
+  // a File stored with only `mimeType` showed "Preview not available" (#248).
+  it("carries the caller's MIME type as fileType", async () => {
+    const result = await upload({ base64: Buffer.from("%PDF-1.4 typed").toString("base64") });
+    const stored = store.getDoc("files", result.fileId);
+    expect(stored).toMatchObject({ fileType: "application/pdf" });
+  });
+});
