@@ -3,7 +3,9 @@
  * lists folders for the picker. Talks to Dropbox through fetch alone.
  */
 import {
+  FolderAuthError,
   FolderCursorResetError,
+  FolderMissingError,
   type FolderListingEntry,
   type FolderListingPage,
   type FolderProvider,
@@ -13,21 +15,7 @@ const API = "https://api.dropboxapi.com/2";
 const CONTENT = "https://content.dropboxapi.com/2";
 export const DROPBOX_TOKEN_URL = "https://api.dropboxapi.com/oauth2/token";
 
-/** The grant is gone or expired for good: the owner must reconnect. */
-export class DropboxAuthError extends Error {
-  constructor(message = "Dropbox access was revoked or has expired") {
-    super(message);
-    this.name = "DropboxAuthError";
-  }
-}
-
-/** The chosen folder no longer exists. Never "the files are gone". */
-export class FolderMissingError extends Error {
-  constructor() {
-    super("The chosen Dropbox folder no longer exists");
-    this.name = "FolderMissingError";
-  }
-}
+export { FolderAuthError as DropboxAuthError, FolderMissingError } from "../types";
 
 export interface DropboxProviderOptions {
   /** Empty to mint one on first use. */
@@ -165,13 +153,13 @@ export class DropboxProvider implements FolderProvider {
     try {
       this.accessToken = await this.opts.refreshAccessToken();
     } catch {
-      throw new DropboxAuthError();
+      throw new FolderAuthError();
     }
   }
 
   private async errorFrom(res: Response, endpoint?: string): Promise<Error> {
     const text = await res.text().catch(() => "");
-    if (res.status === 401) return new DropboxAuthError();
+    if (res.status === 401) return new FolderAuthError();
     if (res.status === 409) {
       if (endpoint === "/files/list_folder/continue" && /reset/.test(text)) {
         return new FolderCursorResetError();
@@ -199,8 +187,8 @@ export async function refreshDropboxAccessToken(
       client_secret: appSecret,
     }),
   });
-  if (!res.ok) throw new DropboxAuthError();
+  if (!res.ok) throw new FolderAuthError();
   const json = (await res.json()) as { access_token?: string };
-  if (!json.access_token) throw new DropboxAuthError();
+  if (!json.access_token) throw new FolderAuthError();
   return json.access_token;
 }

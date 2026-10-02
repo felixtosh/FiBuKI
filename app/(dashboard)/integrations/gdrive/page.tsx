@@ -2,6 +2,6 @@
 
 import { FolderIntegrationPage } from "@/components/integrations/folder-integration-page";
 
-export default function DropboxPage() {
-  return <FolderIntegrationPage provider="dropbox" />;
+export default function GoogleDrivePage() {
+  return <FolderIntegrationPage provider="gdrive" />;
 }

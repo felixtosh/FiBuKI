@@ -5,7 +5,7 @@ import { Timestamp } from "firebase/firestore";
  * Files (ADR-0009). Collection: /folderIntegrations/{id}. Written only by the
  * connect routes and callables; the screen reads it.
  */
-export type FolderProvider = "dropbox";
+export type FolderProvider = "dropbox" | "gdrive";
 
 /** Why syncing stopped on its own. */
 export type FolderPausedReason =
@@ -21,7 +21,10 @@ export interface FolderIntegration {
   accountId: string;
   accountEmail: string;
   displayName?: string;
-  /** The chosen folder, "" for the whole store; null until one is chosen. */
+  /**
+   * The chosen folder; null until one is chosen. A Dropbox path ("" for the
+   * whole Dropbox) or a Drive folder id ("root" for My Drive).
+   */
   folderPath: string | null;
   folderLabel: string | null;
   /** Also delete Files connected to a Transaction when deleted at the provider. */

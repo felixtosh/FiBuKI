@@ -30,6 +30,8 @@ const SUPPORTED: Record<string, string> = {
   tiff: "image/tiff",
 };
 
+const SUPPORTED_MIMES = new Set(Object.values(SUPPORTED));
+
 export function mimeTypeFor(fileName: string): string | null {
   const dot = fileName.lastIndexOf(".");
   if (dot < 0) return null;
@@ -93,8 +95,9 @@ export async function runFolderSync(input: FolderSyncInput): Promise<FolderSyncR
 
   const liveIds = new Set<string>();
   const deletedPaths: string[] = [];
-  let fullListing = input.cursor === null;
-  let cursor = input.cursor;
+  const stateless = provider.listsFullyEachRun === true;
+  let fullListing = stateless || input.cursor === null;
+  let cursor = stateless ? null : input.cursor;
 
   // === 1. Read the listing, importing as we go ===
   let page;
@@ -117,7 +120,7 @@ export async function runFolderSync(input: FolderSyncInput): Promise<FolderSyncR
       liveIds.add(entry.id);
       await handleLiveEntry(entry, byId.get(entry.id), input, result, byId);
     }
-    cursor = page.cursor;
+    cursor = stateless ? null : page.cursor;
     if (!page.hasMore) break;
     if (pages >= MAX_PAGES) throw new Error("Folder listing exceeded the page limit");
     page = await provider.listContinue(page.cursor);
@@ -191,7 +194,8 @@ async function handleLiveEntry(
   const { provider, store, files } = input;
   const id = entry.id as string;
 
-  const mimeType = mimeTypeFor(entry.name);
+  const mimeType =
+    entry.mimeType && SUPPORTED_MIMES.has(entry.mimeType) ? entry.mimeType : mimeTypeFor(entry.name);
   if (!mimeType || (entry.size ?? 0) > MAX_FILE_BYTES) {
     result.unsupported++;
     return;

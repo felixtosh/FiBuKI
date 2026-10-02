@@ -72,10 +72,10 @@ export function useFolderIntegrations(provider: FolderProvider) {
   );
 
   const setFolder = useCallback(
-    (integrationId: string, path: string) =>
-      callFunction<{ integrationId: string; path: string }, { sync: FolderSyncSummary }>(
+    (integrationId: string, path: string, label?: string) =>
+      callFunction<{ integrationId: string; path: string; label?: string }, { sync: FolderSyncSummary }>(
         "setFolderIntegrationFolder",
-        { integrationId, path }
+        { integrationId, path, label }
       ),
     []
   );

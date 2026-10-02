@@ -19,6 +19,11 @@ export interface FolderListingEntry {
   /** Changes whenever the content does. */
   rev?: string;
   modifiedAt?: Date;
+  /**
+   * The type of the stored document, when the provider knows it better than
+   * the file name does (Drive: a Google Doc is delivered as a PDF).
+   */
+  mimeType?: string;
 }
 
 export interface FolderListingPage {
@@ -35,7 +40,29 @@ export class FolderCursorResetError extends Error {
   }
 }
 
+/** The grant is gone or expired for good: the owner must reconnect. */
+export class FolderAuthError extends Error {
+  constructor(message = "Access to the cloud store was revoked or has expired") {
+    super(message);
+    this.name = "FolderAuthError";
+  }
+}
+
+/** The chosen folder no longer exists. Never "the files are gone". */
+export class FolderMissingError extends Error {
+  constructor() {
+    super("The chosen folder no longer exists");
+    this.name = "FolderMissingError";
+  }
+}
+
 export interface FolderProvider {
+  /**
+   * True when the provider has no change feed: every run lists the whole
+   * folder, the cursor is unused, and a known file missing from the listing is
+   * gone. A listing that cannot complete must throw, never come back short.
+   */
+  readonly listsFullyEachRun?: boolean;
   /** First listing of `path`, recursive. */
   listFolder(path: string): Promise<FolderListingPage>;
   /** Changes since `cursor`. Throws FolderCursorResetError when it expired. */

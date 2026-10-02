@@ -12,19 +12,19 @@ import { createFileRecord } from "../files/createFileRecord";
 import { performDeleteFile } from "../files/deleteFile";
 import { performRestoreFile } from "../files/restoreFile";
 import { isGeneratedInvoiceFile } from "../files/generatedInvoiceGuard";
-import {
-  DropboxAuthError,
-  DropboxProvider,
-  FolderMissingError,
-  refreshDropboxAccessToken,
-} from "./dropbox/DropboxProvider";
+import { DropboxProvider, refreshDropboxAccessToken } from "./dropbox/DropboxProvider";
+import { GoogleDriveProvider, refreshGoogleAccessToken } from "./gdrive/GoogleDriveProvider";
 import { runFolderSync, type FolderSyncResult } from "./syncEngine";
-import type {
-  FolderEntryState,
+import {
+  FolderAuthError,
+  FolderMissingError,
+  type FolderEntryState,
   FolderEntryStore,
-  FolderFileGateway,
-  FolderProvider,
+  type FolderFileGateway,
+  type FolderProvider,
 } from "./types";
+
+export type FolderProviderId = "dropbox" | "gdrive";
 
 export const FOLDER_INTEGRATIONS = "folderIntegrations";
 export const FOLDER_TOKENS = "folderTokens";
@@ -36,6 +36,8 @@ const CLAIM_TTL_MS = 10 * 60 * 1000;
 export interface FolderRunnerSecrets {
   dropboxAppKey: string;
   dropboxAppSecret: string;
+  googleClientId: string;
+  googleClientSecret: string;
   encryptionKey: string;
 }
 
@@ -65,7 +67,7 @@ export function firestoreEntryStore(db: Db, integrationId: string): FolderEntryS
 
 export function firestoreFileGateway(
   db: Db,
-  integration: { id: string; userId: string; provider: "dropbox"; accountEmail: string }
+  integration: { id: string; userId: string; provider: FolderProviderId; accountEmail: string }
 ): FolderFileGateway {
   const { userId } = integration;
 
@@ -177,6 +179,26 @@ async function claim(db: Db, id: string): Promise<boolean> {
   });
 }
 
+/** The provider behind an integration, authenticated from its stored grant. */
+export function buildProvider(
+  provider: FolderProviderId,
+  refreshToken: string,
+  secrets: FolderRunnerSecrets
+): FolderProvider & { listSubfolders(path: string): Promise<Array<{ name: string; path: string }>> } {
+  if (provider === "gdrive") {
+    return new GoogleDriveProvider({
+      accessToken: "",
+      refreshAccessToken: () =>
+        refreshGoogleAccessToken(refreshToken, secrets.googleClientId, secrets.googleClientSecret),
+    });
+  }
+  return new DropboxProvider({
+    accessToken: "",
+    refreshAccessToken: () =>
+      refreshDropboxAccessToken(refreshToken, secrets.dropboxAppKey, secrets.dropboxAppSecret),
+  });
+}
+
 export type SyncOutcome =
   | { status: "skipped"; reason: string }
   | { status: "done"; result: FolderSyncResult };
@@ -208,17 +230,13 @@ export async function syncFolderIntegration(
     const tokenSnap = await db.collection(FOLDER_TOKENS).doc(integrationId).get();
     const tokens = tokenSnap.data();
     if (!tokens || tokens.userId !== integration.userId) {
-      throw new DropboxAuthError("No stored Dropbox grant");
+      throw new FolderAuthError("No stored grant");
     }
 
     let provider = opts.providerOverride;
     if (!provider) {
       const refreshToken = decrypt(tokens.refreshToken, tokens.refreshTokenIv, secrets.encryptionKey);
-      provider = new DropboxProvider({
-        accessToken: "",
-        refreshAccessToken: () =>
-          refreshDropboxAccessToken(refreshToken, secrets.dropboxAppKey, secrets.dropboxAppSecret),
-      });
+      provider = buildProvider(integration.provider, refreshToken, secrets);
     }
 
     const result = await runFolderSync({
@@ -257,7 +275,7 @@ export async function syncFolderIntegration(
       lastError: String(e instanceof Error ? e.message : e).slice(0, 300),
       updatedAt: FieldValue.serverTimestamp(),
     };
-    if (e instanceof DropboxAuthError) patch.needsReauth = true;
+    if (e instanceof FolderAuthError) patch.needsReauth = true;
     // A missing folder is an integration problem, never "the files are gone".
     if (e instanceof FolderMissingError) patch.pausedReason = "folderMissing";
     await ref.update(patch);

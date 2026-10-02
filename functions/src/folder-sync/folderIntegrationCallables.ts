@@ -8,11 +8,11 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import { getFirestore } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { decrypt } from "../utils/encryption";
-import { DropboxProvider, refreshDropboxAccessToken } from "./dropbox/DropboxProvider";
 import {
   FOLDER_ENTRIES,
   FOLDER_INTEGRATIONS,
   FOLDER_TOKENS,
+  buildProvider,
   syncFolderIntegration,
 } from "./folderSyncRunner";
 import { folderSecretParams, readFolderSecrets } from "./folderSecrets";
@@ -29,6 +29,16 @@ async function ownedIntegration(db: Db, userId: string, integrationId: unknown) 
     throw new HttpsError("not-found", "Integration not found");
   }
   return { ref, data: snap.data() as FirebaseFirestore.DocumentData };
+}
+
+/**
+ * Dropbox folders are paths, Drive folders are ids. Either way the value ends
+ * up in a request to the provider, so it is checked here.
+ */
+export function validFolderRef(provider: unknown, ref: unknown): boolean {
+  if (typeof ref !== "string") return false;
+  if (provider === "gdrive") return /^[A-Za-z0-9_-]{1,100}$/.test(ref);
+  return ref.length <= 1000 && !ref.includes("..") && (ref === "" || ref.startsWith("/"));
 }
 
 function summarize(outcome: Awaited<ReturnType<typeof syncFolderIntegration>>) {
@@ -54,39 +64,42 @@ export const listFolderChoicesCallable = createCallable<
   { name: "listFolderChoices", timeoutSeconds: 60, secrets: folderSecretParams },
   async (ctx, request) => {
     const { data } = await ownedIntegration(ctx.db, ctx.userId, request.integrationId);
-    const path = typeof request.path === "string" ? request.path : "";
-    if (path.includes("..")) throw new HttpsError("invalid-argument", "Invalid path");
+    const isDrive = data.provider === "gdrive";
+    const path = typeof request.path === "string" && request.path ? request.path : isDrive ? "root" : "";
+    if (!validFolderRef(data.provider, path)) throw new HttpsError("invalid-argument", "Invalid path");
     const secrets = readFolderSecrets();
     const tokenSnap = await ctx.db.collection(FOLDER_TOKENS).doc(request.integrationId).get();
     const tokens = tokenSnap.data();
-    if (!tokens || tokens.userId !== ctx.userId || data.provider !== "dropbox") {
+    if (!tokens || tokens.userId !== ctx.userId) {
       throw new HttpsError("failed-precondition", "Not connected");
     }
     const refreshToken = decrypt(tokens.refreshToken, tokens.refreshTokenIv, secrets.encryptionKey);
-    const provider = new DropboxProvider({
-      accessToken: "",
-      refreshAccessToken: () =>
-        refreshDropboxAccessToken(refreshToken, secrets.dropboxAppKey, secrets.dropboxAppSecret),
-    });
+    const provider = buildProvider(data.provider, refreshToken, secrets);
     return { folders: await provider.listSubfolders(path) };
   }
 );
 
 export const setFolderIntegrationFolderCallable = createCallable<
-  { integrationId: string; path: string },
+  { integrationId: string; path: string; label?: string },
   { success: boolean; sync: Record<string, unknown> }
 >(
   { name: "setFolderIntegrationFolder", timeoutSeconds: 300, memory: "1GiB", secrets: folderSecretParams },
   async (ctx, request) => {
-    const { ref } = await ownedIntegration(ctx.db, ctx.userId, request.integrationId);
-    if (typeof request.path !== "string" || request.path.includes("..")) {
+    const { ref, data } = await ownedIntegration(ctx.db, ctx.userId, request.integrationId);
+    if (!validFolderRef(data.provider, request.path)) {
       throw new HttpsError("invalid-argument", "path is required");
     }
+    const label =
+      typeof request.label === "string" && request.label.trim()
+        ? request.label.trim().slice(0, 200)
+        : request.path === ""
+          ? "/"
+          : request.path;
     // A new folder starts from a fresh listing. Files already imported stay.
     await ctx.db.collection(FOLDER_TOKENS).doc(request.integrationId).update({ cursor: null });
     await ref.update({
       folderPath: request.path,
-      folderLabel: request.path === "" ? "/" : request.path,
+      folderLabel: label,
       pausedReason: null,
       pendingRemovals: 0,
       updatedAt: Timestamp.now(),
