@@ -10,7 +10,25 @@
  * connectionType and the connections themselves are never touched.
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+
+// The recurrence check asks a model whether the partner bills on a schedule.
+// These partners do; the check itself is covered by recurrenceCheck.test.ts.
+vi.mock("../matching/recurrenceCheck", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../matching/recurrenceCheck")>();
+  const { Timestamp } = await import("firebase-admin/firestore");
+  return {
+    ...actual,
+    checkRecurrence: vi.fn(async (_userId: string, _partnerId: string, input: Parameters<typeof actual.recurrenceKey>[0]) => ({
+      recurring: true,
+      reason: "test",
+      key: actual.recurrenceKey(input),
+      model: "test",
+      checkedAt: Timestamp.now(),
+    })),
+  };
+});
+
 import { getFirestore, Timestamp, __resetFirestoreShim, __whenShimIdle } from "./firestore-shim";
 import { drainTriggers, __resetTriggerShim } from "./trigger-shim";
 
