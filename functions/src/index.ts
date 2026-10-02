@@ -96,6 +96,8 @@ export { onGmailSyncComplete } from "./precision-search/onGmailSyncComplete";
 export { generateSearchQueriesCallable } from "./precision-search/generateSearchQueriesCallable";
 export { scoreAttachmentMatchCallable } from "./precision-search/scoreAttachmentMatchCallable";
 export { scoreFileTransactionMatchCallable as scoreFileTransactionMatch } from "./matching/scoreFileTransactionMatchCallable";
+export { catchUpPartnerMatchingCallable as catchUpPartnerMatching } from "./matching/catchUpPartnerMatching";
+export { onGlobalPartnerWritten } from "./matching/partnerCatalogVersion";
 export { convertHtmlToPdfCallable } from "./precision-search/convertHtmlToPdfCallable";
 
 // Export inbound email functions

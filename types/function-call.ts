@@ -68,6 +68,7 @@ export type CloudFunctionName =
   // Existing functions (already in codebase)
   | "matchColumns"
   | "matchPartners"
+  | "catchUpPartnerMatching"
   | "learnPartnerPatterns"
   | "searchExternalPartners"
   | "matchCategories"

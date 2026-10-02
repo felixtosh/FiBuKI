@@ -112,7 +112,7 @@ function TransactionsContent() {
   // Restore filters from localStorage on initial mount if no URL params
   const hasRestoredRef = useRef(false);
   // Track latest patternsUpdatedAt to detect when new patterns are learned
-  const lastPatternsUpdatedAtRef = useRef(0);
+  const lastPatternsUpdatedAtRef = useRef(null as number | null);
   useEffect(() => {
     if (hasRestoredRef.current) return;
     hasRestoredRef.current = true;
@@ -357,39 +357,25 @@ function TransactionsContent() {
     onNext: handleNavigateNext,
   });
 
-  // Trigger backend matching when patterns change or on initial load
+
+  // Mid-session: learned patterns changed while the page is open (a Partner
+  // was just taught something), so re-match the unassigned Transactions now.
+  // The load itself is the catch-up's job, so the first signal is only noted.
   useEffect(() => {
     if (loading || !transactions.length || !partners.length) return;
 
-    const currentPatternsUpdatedAt = partners.reduce((max, p) => {
-      const millis = typeof p.patternsUpdatedAt?.toMillis === "function"
-        ? p.patternsUpdatedAt.toMillis()
-        : 0;
-      return Math.max(max, millis);
-    }, 0);
-    const hasPatternsUpdatedAt = partners.some((p) => !!p.patternsUpdatedAt);
-    const currentPatternCount = partners.reduce(
-      (sum, p) => sum + (p.learnedPatterns?.length || 0),
-      0
-    );
-    const patternSignal = hasPatternsUpdatedAt ? currentPatternsUpdatedAt : currentPatternCount;
-
-    // Skip if pattern signal hasn't changed (already processed this state)
-    if (patternSignal === lastPatternsUpdatedAtRef.current) return;
-
-    // Check if there are unassigned transactions
-    const unassignedCount = transactions.filter(t => !t.partnerId).length;
-    if (unassignedCount === 0) {
-      lastPatternsUpdatedAtRef.current = patternSignal;
+    const signal = patternSignal(partners);
+    if (lastPatternsUpdatedAtRef.current === null) {
+      lastPatternsUpdatedAtRef.current = signal;
       return;
     }
+    if (signal === lastPatternsUpdatedAtRef.current) return;
 
-    console.log(`[Partner Matching] Pattern signal changed: ${lastPatternsUpdatedAtRef.current} → ${patternSignal}, unassigned: ${unassignedCount}`);
+    const previous = lastPatternsUpdatedAtRef.current;
+    lastPatternsUpdatedAtRef.current = signal;
+    if (!transactions.some((t) => !t.partnerId)) return;
 
-    // Update ref to prevent duplicate calls for same pattern count
-    lastPatternsUpdatedAtRef.current = patternSignal;
-
-    // Call backend to match all unassigned transactions
+    console.log(`[Partner Matching] Pattern signal changed: ${previous} → ${signal}`);
     const matchPartnersFunc = httpsCallable(functions, "matchPartners");
     matchPartnersFunc({ matchAll: false }) // matchAll: false = only unassigned
       .then((result) => {
@@ -398,13 +384,26 @@ function TransactionsContent() {
       })
       .catch((error) => {
         console.error("Background partner matching failed:", error);
-        // Reset to allow retry
-        lastPatternsUpdatedAtRef.current = 0;
+        // Allow a retry on the next change
+        lastPatternsUpdatedAtRef.current = previous;
       });
   }, [loading, transactions, partners]);
 
   // --- Global drag & drop (table area) ---
   const { userId } = useAuth();
+
+  // Once per visit, in the background: the server re-matches unassigned
+  // Transactions only if the Global Partner directory or this user's learned
+  // patterns changed since its last run (catchUpPartnerMatching). Before, this
+  // page re-matched every unassigned Transaction on every visit.
+  const catchUpRequestedRef = useRef(false);
+  useEffect(() => {
+    if (catchUpRequestedRef.current || !userId) return;
+    catchUpRequestedRef.current = true;
+    callFunction("catchUpPartnerMatching", null).catch((error) => {
+      console.error("Partner matching catch-up failed:", error);
+    });
+  }, [userId]);
   const [uploadSuccessMsg, setUploadSuccessMsg] = useState<string | null>(null);
   const [globalUploading, setGlobalUploading] = useState(false);
 
@@ -615,6 +614,8 @@ function TransactionsContent() {
 import { PrecisionSearchProvider } from "@/hooks/use-precision-search-context";
 import { usePageTitle } from "@/hooks/use-page-title";
 import { pushQuery, replaceQuery } from "@/lib/navigation/query-url";
+import { patternSignal } from "@/functions/src/matching/patternSignal";
+import { callFunction } from "@/lib/firebase/callable";
 
 export default function TransactionsPage() {
   return (
