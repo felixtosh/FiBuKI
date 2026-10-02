@@ -73,27 +73,34 @@ Frontend reads use realtime Firestore listeners (`onSnapshot`) in React hooks. W
 
 ### Prerequisites
 
-- Node.js 22.x
-- Firebase CLI (`npm install -g firebase-tools`)
-- A Firebase project with Firestore, Storage, and Auth enabled
+- Node.js **22.x** (on Node 20, npm silently skips dependencies the server needs)
 
-### Setup
+### Run it locally
+
+FiBuKI runs on its self-host stack (Postgres + `fibuki-api` + `fibuki-web`), locally
+as in production. With no `DATABASE_URL` the API uses an in-memory database, so a
+first run needs no Postgres; set one for data that survives a restart.
 
 ```bash
-# Fork the repo on GitHub, then:
-git clone <your-fork-url>
-cd fibuki
+git clone <your-fork-url> && cd fibuki
+npm ci && (cd functions && npm ci)
 
-# Install dependencies + create .env.local
-npm run setup
+# API on :8788 (signs every request in as the dev user)
+cd functions
+FIBUKI_DEV_UID=dev-user FIBUKI_STORAGE=memory \
+FIBUKI_WEB_ORIGIN=http://localhost:3000 npm run selfhost:api
 
-# Fill in your Firebase config and API keys (see .env.example for details)
-
-# Start Firebase emulators + Next.js dev server
-npm run dev:all
+# Web on :3000, in a second terminal
+FIBUKI_BACKEND=selfhost NEXT_PUBLIC_FIBUKI_API_URL=http://localhost:8788 \
+NEXT_PUBLIC_FIBUKI_DEV_UID=dev-user NEXT_PUBLIC_FIBUKI_DEV_EMAIL=dev@example.com \
+npx next dev -p 3000
 ```
 
-The app will be available at `http://localhost:3000` with emulators providing Firestore, Auth, Storage, and Cloud Functions locally.
+AI features (CSV column matching, extraction, chat) need keys: put
+`FIBUKI_GEMINI_API_KEY` (and optionally `ANTHROPIC_API_KEY`) plus
+`GOOGLE_CLOUD_PROJECT` in `functions/.env.local`, which is gitignored. The full
+containerised stack (Postgres, SeaweedFS, Caddy) is in
+[`deploy/selfhost/README.md`](deploy/selfhost/README.md).
 
 ### Generate Test Data
 
