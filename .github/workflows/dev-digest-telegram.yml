@@ -1,0 +1,59 @@
+# Daily dev digest to the Development Telegram group.
+#
+# Every morning, lists the issues and still-open PRs created since the last
+# scheduled run (scripts/post-dev-digest.mjs), each issue with a one-line
+# German summary, and posts it as @bukibukibukibot. Quiet days post nothing.
+#
+# Secrets: GEMINI_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_DEV_CHAT_ID.
+# Manual run: Actions → Dev digest to Telegram → Run workflow; dry run is the
+# default there and only prints the message.
+
+name: Dev digest to Telegram
+
+on:
+  schedule:
+    # 05:00 UTC = 07:00 Vienna in summer, 06:00 in winter.
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Print the message instead of posting it"
+        type: boolean
+        default: true
+      since:
+        description: "Window start (ISO date), empty = since the last scheduled run"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+  actions: read
+
+concurrency:
+  group: dev-digest-telegram
+  cancel-in-progress: false
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            scripts
+            functions/src/utils/models.ts
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/post-dev-digest.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_DEV_CHAT_ID: ${{ secrets.TELEGRAM_DEV_CHAT_ID }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && '1' || '' }}
+          SINCE: ${{ inputs.since }}
