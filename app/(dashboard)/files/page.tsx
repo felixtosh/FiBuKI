@@ -1,5 +1,6 @@
 "use client";
 
+import { useRememberedListQuery } from "@/hooks/use-remembered-list-query";
 import { Suspense, useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useDropzone } from "react-dropzone";
@@ -111,6 +112,8 @@ const NO_FILE_IDS: string[] = [];
 function FilesContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  // Filters survive a trip to another page (#530).
+  useRememberedListQuery("files", "/files");
   const { userId } = useAuth();
 
   // Operations context for file creation
