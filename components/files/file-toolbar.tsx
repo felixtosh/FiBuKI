@@ -121,7 +121,7 @@ export function FileToolbar({
             node: (
               <>
       {/* Type: the Amount column's sign, not an invoice at all (#519), or
-          not determined yet (direction or Document Type still open).
+          no direction yet (Not determined, as the row's Type control says).
           The deleted-files view (#268) sits below a line, as the one bucket
           that is not a kind of document. */}
       <ChoiceFilter
