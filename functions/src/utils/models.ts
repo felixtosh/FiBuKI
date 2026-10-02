@@ -70,6 +70,7 @@ export const MODEL_PRICING: Record<string, { input: number; output: number }> = 
   "gemini-3.5-flash-lite": { input: 0.3, output: 2.5 },
   "gemini-3.5-flash": { input: 1.5, output: 9.0 },
   "gemini-3.6-flash": { input: 1.5, output: 7.5 },
+  "gemini-3.8-flash": { input: 1.5, output: 7.5 },
   // Retired — kept for historical aiUsage record cost lookups
   "gemini-2.5-flash-lite": { input: 0.1, output: 0.4 },
   "gemini-2.5-flash": { input: 0.3, output: 2.5 },

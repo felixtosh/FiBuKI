@@ -66,7 +66,9 @@ Things that cost real time to find. All of `fibuki.com` runs the self-host stack
   and tests fail far from the cause. `node -v` first.
 - **Local dev = the self-host stack, not Firebase emulators.** API:
   `cd functions && npm run selfhost:api` (port 8788); web: `npx next dev -p 3000`
-  with `FIBUKI_BACKEND=selfhost` and `NEXT_PUBLIC_FIBUKI_API_URL=http://localhost:8788`.
+  with `FIBUKI_BACKEND=selfhost`, `NEXT_PUBLIC_FIBUKI_API_URL=http://localhost:8788`
+  and `NEXT_PUBLIC_FUNCTIONS_URL=http://localhost:8788` (server-side callables, e.g.
+  the chat's tools; without it they fall back to a dead Firebase emulator).
   Dev login: `FIBUKI_DEV_UID` (API) plus `NEXT_PUBLIC_FIBUKI_DEV_UID` /
   `NEXT_PUBLIC_FIBUKI_DEV_EMAIL` (web). AI keys and `GOOGLE_CLOUD_PROJECT` go in
   `functions/.env.local` (gitignored); without them CSV import's AI column
@@ -426,7 +428,7 @@ silent failure mode is mis-billing, not a crash.
 | Document extraction | `geminiLite` | `gemini-3.1-flash-lite` | Native PDF/image support |
 | Partner matching / company lookup | `geminiFlash` | `gemini-3.5-flash-lite` | Priced identically to the 2.5-flash it replaces |
 | Chat/Agent (cloud) | `chatAgent` | Anthropic Claude | Complex reasoning, multi-step tasks |
-| Chat/Agent (self-host) | `FIBUKI_CHAT_MODEL` | `gemini-3.6-flash` | Runs in fibuki-web via API key, not Vertex |
+| Chat/Agent (self-host) | `FIBUKI_CHAT_MODEL` | `gemini-3.8-flash` | Runs in fibuki-web via API key, not Vertex |
 
 Google **retires model ids for new API-key consumers while Vertex keeps serving
 them** — `gemini-2.5-flash` returns 404 on a current key but works on Vertex. So a

@@ -285,6 +285,7 @@ Response format (JSON only, no markdown):
 
   try {
     const result = await model.generateContent({
+      generationConfig: { responseMimeType: "application/json" },
       contents: [{ role: "user", parts: [{ text: prompt }] }],
     });
     const responseText =

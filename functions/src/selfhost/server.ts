@@ -46,9 +46,11 @@ async function resolveVerifier(): Promise<ResolvedAuth> {
   if (devUid) {
     console.warn(`fibuki-api: DEV AUTH MODE — every bearer token authenticates as "${devUid}"`);
     return {
-      verifyToken: withAccountProvisioning(async () => ({ uid: devUid, token: {} }), {
-        syncAdminClaim: false,
-      }),
+      verifyToken: withAccountProvisioning(
+        // Admin follows the web's dev user, so both sides agree on what it may read.
+        async () => ({ uid: devUid, token: { admin: process.env.NEXT_PUBLIC_FIBUKI_DEV_ADMIN === "true" } }),
+        { syncAdminClaim: false },
+      ),
     };
   }
 

@@ -204,8 +204,7 @@
     "german": "Deutsch",
     "english": "English",
     "back": "Back",
-    "openChat": "Open chat",
-    "closeChat": "Close chat"
+    "openChat": "Open chat"
   },
   "billingCycle": {
     "title": "Billing Cycle",
@@ -446,6 +445,10 @@
       "delete": "Delete {count} partners",
       "deleteConfirm": "Delete {count} partners? Their Files and Transactions stay; only the partner assignment goes."
     }
+  },
+  "chat": {
+    "toolCompleted": "{tool} completed",
+    "toolFailed": "{tool} failed"
   },
   "folderIntegrations": {
     "title": "{provider}",

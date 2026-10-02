@@ -247,6 +247,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
                   // Update existing
                   if (p.input) existing.args = p.input;
                   if (p.output !== undefined) existing.result = typeof p.output === "string" ? JSON.parse(p.output) : p.output;
+                  else if (p.errorText) existing.result = { error: p.errorText };
                   if (p.state) existing.state = p.state;
                 } else {
                   toolInvocations.push({
@@ -254,7 +255,11 @@ export function ChatProvider({ children }: ChatProviderProps) {
                     toolName,
                     args: p.input || {},
                     state: p.state || "result",
-                    result: p.output !== undefined ? (typeof p.output === "string" ? JSON.parse(p.output) : p.output) : undefined,
+                    // A failed call keeps its error, so a reloaded chat can tell the
+                    // model why it failed.
+                    result: p.output !== undefined
+                      ? (typeof p.output === "string" ? JSON.parse(p.output) : p.output)
+                      : p.errorText ? { error: p.errorText } : undefined,
                   });
                 }
               }

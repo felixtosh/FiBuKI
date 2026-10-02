@@ -127,6 +127,7 @@ Return JSON only:
 }`;
 
   const result = await model.generateContent({
+    generationConfig: { responseMimeType: "application/json" },
     contents: [{ role: "user", parts: [{ text: prompt }] }],
   });
 
@@ -237,6 +238,7 @@ Return JSON only:
 }`;
 
   const result = await model.generateContent({
+    generationConfig: { responseMimeType: "application/json" },
     contents: [{ role: "user", parts: [{ text: prompt }] }],
   });
 
@@ -366,6 +368,7 @@ Return JSON only:
 }`;
 
   const result = await model.generateContent({
+    generationConfig: { responseMimeType: "application/json" },
     contents: [{ role: "user", parts: [{ text: prompt }] }],
   });
 

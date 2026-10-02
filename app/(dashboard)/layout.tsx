@@ -236,19 +236,21 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
       <header className="border-b bg-card flex-shrink-0 z-50 px-4 h-14 flex items-center">
           <div className="flex w-full min-w-0 items-center justify-between gap-3">
           <div ref={navContainerRef} className="flex min-w-0 flex-1 items-center gap-6">
-            {/* Chat toggle sits by the logo: the chat opens on this side. */}
+            {/* Chat opener sits by the logo, on the side the chat opens from; the
+                open chat closes itself. */}
             <div className="flex items-center gap-2 flex-shrink-0">
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={toggleSidebar}
-                className="h-8 w-8 -ml-1"
-                title={isSidebarOpen ? tCommon("closeChat") : tCommon("openChat")}
-                aria-label={isSidebarOpen ? tCommon("closeChat") : tCommon("openChat")}
-                aria-pressed={isSidebarOpen}
-              >
-                <MessageSquare className="h-4 w-4" />
-              </Button>
+              {!isSidebarOpen && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={toggleSidebar}
+                  className="h-8 w-8 -ml-1"
+                  title={tCommon("openChat")}
+                  aria-label={tCommon("openChat")}
+                >
+                  <MessageSquare className="h-4 w-4" />
+                </Button>
+              )}
               <button
                 onClick={handleLogoClick}
                 className={cn(

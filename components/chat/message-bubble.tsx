@@ -2,6 +2,7 @@
 
 import { Wrench, CheckCircle, XCircle, Loader2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 import { RuntimeChatMessage, MessagePart, ToolCall } from "@/types/chat";
 import { Badge } from "@/components/ui/badge";
@@ -71,6 +72,7 @@ interface ToolCallBadgeProps {
 }
 
 function ToolCallBadge({ toolCall }: ToolCallBadgeProps) {
+  const t = useTranslations("chat");
   const { uiActions } = useChat();
   const { renderToolResult, hasRenderer } = useToolResultRenderer({
     uiActions: {
@@ -105,10 +107,19 @@ function ToolCallBadge({ toolCall }: ToolCallBadgeProps) {
       return <div className="flex flex-col gap-2">{resultPreview}</div>;
     }
 
+    if (toolResultFailed(toolCall.result)) {
+      return (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <XCircle className="h-3.5 w-3.5 text-red-500" />
+          <span>{t("toolFailed", { tool: formatToolName(toolCall.name) })}</span>
+        </div>
+      );
+    }
+
     return (
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <CheckCircle className="h-3.5 w-3.5 text-green-500" />
-        <span>{formatToolName(toolCall.name)} completed</span>
+        <span>{t("toolCompleted", { tool: formatToolName(toolCall.name) })}</span>
       </div>
     );
   }
@@ -128,4 +139,22 @@ function ToolCallBadge({ toolCall }: ToolCallBadgeProps) {
       {resultPreview}
     </div>
   );
+}
+
+/**
+ * A tool that ran but did nothing: an error, or `success: false` (a bulk update
+ * whose every row failed). Results arrive as objects or as JSON strings.
+ */
+function toolResultFailed(result: unknown): boolean {
+  let value = result;
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return false;
+    }
+  }
+  if (!value || typeof value !== "object") return false;
+  const r = value as { success?: unknown; error?: unknown };
+  return r.success === false || (typeof r.error === "string" && r.error.length > 0);
 }

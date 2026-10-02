@@ -12,7 +12,7 @@
 
 import { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { StructuredToolInterface } from "@langchain/core/tools";
-import { MODELS } from "@/types/ai-usage";
+import { AI_MODEL_PRICING, MODELS } from "@/types/ai-usage";
 
 export type ModelProvider = "anthropic" | "gemini";
 
@@ -31,11 +31,26 @@ const MODEL_IDS = {
 // Project is determined from ADC/service account credentials
 const VERTEX_LOCATION = process.env.VERTEX_LOCATION || "europe-west1";
 
-// Cost per 1M tokens (input/output) for usage tracking
+// Fallback cost per 1M tokens (input/output), only for a model missing from
+// AI_MODEL_PRICING.
 export const MODEL_COSTS = {
-  anthropic: { input: 3, output: 15 }, // $3/$15 per 1M
-  gemini: { input: 0.30, output: 2.50 }, // $0.30/$2.50 per 1M (Gemini 2.5 Flash pricing)
+  anthropic: { input: 3, output: 15 },
+  gemini: { input: 1.5, output: 7.5 },
 } as const;
+
+/** The Gemini API key, when there is one: it selects the Generative Language API. */
+function geminiApiKey(): string | undefined {
+  return process.env.FIBUKI_GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+}
+
+/**
+ * The Gemini model the chat actually runs. With an API key, FIBUKI_CHAT_MODEL
+ * overrides the registry id (some registry ids are retired for API-key users);
+ * Vertex keeps the registry id.
+ */
+function geminiChatModelId(): string {
+  return geminiApiKey() ? process.env.FIBUKI_CHAT_MODEL || MODEL_IDS.gemini : MODEL_IDS.gemini;
+}
 
 /**
  * Create a chat model with tool support
@@ -55,7 +70,7 @@ export async function createChatModel(
     // "Could not load the default credentials" and took every chat turn with it.
     // Same reasoning as functions/src/selfhost/vertexai-adapter.ts: Gemini itself
     // does not require gcloud, only Vertex does.
-    const apiKey = process.env.FIBUKI_GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+    const apiKey = geminiApiKey();
     if (apiKey) {
       const { ChatGoogleGenerativeAI } = await import("@langchain/google-genai");
       const model = new ChatGoogleGenerativeAI({
@@ -63,7 +78,7 @@ export async function createChatModel(
         // consumers (the API answers 404 "no longer available to new users"), so
         // allow an override without touching the shared registry, which the
         // Firebase build still uses against Vertex.
-        model: process.env.FIBUKI_CHAT_MODEL || MODEL_IDS.gemini,
+        model: geminiChatModelId(),
         temperature,
         apiKey,
       });
@@ -105,7 +120,7 @@ export async function createChatModel(
  * Get the model ID string for logging
  */
 export function getModelId(provider: ModelProvider): string {
-  return MODEL_IDS[provider];
+  return provider === "gemini" ? geminiChatModelId() : MODEL_IDS[provider];
 }
 
 /**
@@ -116,6 +131,7 @@ export function calculateCost(
   inputTokens: number,
   outputTokens: number
 ): number {
-  const costs = MODEL_COSTS[provider];
+  // Priced at the model that ran, so a FIBUKI_CHAT_MODEL change is billed right.
+  const costs = AI_MODEL_PRICING[getModelId(provider)] ?? MODEL_COSTS[provider];
   return (inputTokens * costs.input + outputTokens * costs.output) / 1_000_000;
 }

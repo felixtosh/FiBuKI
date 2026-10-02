@@ -204,8 +204,7 @@
     "german": "Deutsch",
     "english": "English",
     "back": "Zurück",
-    "openChat": "Chat öffnen",
-    "closeChat": "Chat schließen"
+    "openChat": "Chat öffnen"
   },
   "billingCycle": {
     "title": "Abrechnungszyklus",
@@ -446,6 +445,10 @@
       "delete": "{count} Partner löschen",
       "deleteConfirm": "{count} Partner löschen? Ihre Belege und Transaktionen bleiben, nur die Partnerzuordnung fällt weg."
     }
+  },
+  "chat": {
+    "toolCompleted": "{tool} erledigt",
+    "toolFailed": "{tool} fehlgeschlagen"
   },
   "folderIntegrations": {
     "title": "{provider}",
