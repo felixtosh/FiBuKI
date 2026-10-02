@@ -338,8 +338,6 @@
       "withPartner": "Mit Partner",
       "notInvoice": "Keine Rechnung",
       "ofCount": "{part} von {count}",
-      "selectedFiles": "Ausgewählte Belege",
-      "deselect": "{name} aus der Auswahl entfernen",
       "assigningProgress": "Weise zu {completed} / {total}…",
       "updatingProgress": "Aktualisiere {completed} / {total}…",
       "assignPartner": "Partner zuweisen",

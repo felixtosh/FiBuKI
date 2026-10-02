@@ -3,13 +3,12 @@
 import { useMemo } from "react";
 import { format } from "date-fns";
 import { useTranslations } from "next-intl";
-import { Ban, Building2, FileCheck, Flame, Trash2, X } from "lucide-react";
+import { Ban, Building2, FileCheck, Flame, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { FieldRow, PanelHeader, SectionHeader } from "@/components/ui/detail-panel-primitives";
+import { FieldRow, PanelHeader } from "@/components/ui/detail-panel-primitives";
 import { TaxFile } from "@/types/file";
 import { fileDocumentAmount } from "@/lib/files/document-amount";
-import { fileDisplayName } from "@/lib/files/file-display-name";
 import { describeInvoiceDirection } from "@/lib/documents/document-type-presentation";
 import { normalizeCurrencyForDisplay } from "@/functions/src/fx/currencyNormalization";
 import { cn, toDateSafe } from "@/lib/utils";
@@ -21,7 +20,6 @@ interface FileBulkPanelProps {
    */
   mode?: "live" | "deleted";
   files: TaxFile[];
-  onDeselect: (fileId: string) => void;
   onClearSelection: () => void;
   onAssignPartner: () => void;
   onMarkAsNotInvoice: () => void;
@@ -47,14 +45,14 @@ function signedAmount(file: TaxFile): number | null {
 }
 
 /**
- * The detail sidebar while several Files are selected: what the selection
- * holds on top, the bulk actions in the footer where a single File's actions
- * sit, so a bulk selection reads like any other selection.
+ * The detail sidebar while several Files are selected: a summary of the
+ * selection on top (the Files themselves are highlighted in the list), the
+ * bulk actions in the footer where a single File's actions sit, so a bulk
+ * selection reads like any other selection.
  */
 export function FileBulkPanel({
   mode = "live",
   files,
-  onDeselect,
   onClearSelection,
   onAssignPartner,
   onMarkAsNotInvoice,
@@ -152,43 +150,6 @@ export function FileBulkPanel({
             )}
           </div>
 
-          <div className="space-y-2">
-            <SectionHeader>{t("selectedFiles")}</SectionHeader>
-            <ul className="space-y-0.5">
-              {files.map((file) => {
-                const amount = signedAmount(file);
-                const date = toDateSafe(file.extractedDate);
-                return (
-                  <li key={file.id} className="group flex items-center gap-3 py-1.5 px-2 -mx-2 rounded-md hover:bg-muted/50">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm truncate">{fileDisplayName(file)}</p>
-                      {date && <p className="text-xs text-muted-foreground">{format(date, "dd.MM.yyyy")}</p>}
-                    </div>
-                    {amount != null && (
-                      <span
-                        className={cn(
-                          "text-sm tabular-nums shrink-0",
-                          amount < 0 ? "text-amount-negative" : amount > 0 && "text-amount-positive"
-                        )}
-                      >
-                        {formatMoney(amount, normalizeCurrencyForDisplay(file.extractedCurrency))}
-                      </span>
-                    )}
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 shrink-0 text-muted-foreground"
-                      onClick={() => onDeselect(file.id)}
-                      disabled={busy}
-                      aria-label={t("deselect", { name: fileDisplayName(file) })}
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </Button>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
         </div>
       </ScrollArea>
 

@@ -338,8 +338,6 @@
       "withPartner": "With partner",
       "notInvoice": "Not an invoice",
       "ofCount": "{part} of {count}",
-      "selectedFiles": "Selected files",
-      "deselect": "Remove {name} from the selection",
       "assigningProgress": "Assigning {completed} / {total}…",
       "updatingProgress": "Updating {completed} / {total}…",
       "assignPartner": "Assign partner",

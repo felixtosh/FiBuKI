@@ -1202,7 +1202,6 @@ function FilesContent() {
             <FileBulkPanel
               mode={filters.deletedOnly === true ? "deleted" : "live"}
               files={bulkSelectedFiles}
-              onDeselect={(fileId) => handleFileCheckboxChange(fileId, false)}
               onClearSelection={handleClearSelection}
               onAssignPartner={() => setIsBulkPartnerPickerOpen(true)}
               onMarkAsNotInvoice={handleBulkMarkAsNotInvoice}
