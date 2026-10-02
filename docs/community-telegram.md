@@ -1,19 +1,19 @@
 # Community chat on Telegram
 
-A private group where paying users talk to Felix and Stefan, plus a public
-announcements channel. The Telegram Bot API is free (no plan, no per-message
+A private support group where FiBuKI users talk to Felix and Stefan, plus an
+announcements channel. Any FiBuKI account may join, on any plan. The Telegram Bot API is free (no plan, no per-message
 fee). Why Telegram and not WhatsApp: WhatsApp's Groups API caps a group at 8
 people and cannot add members; Communities need unofficial automation.
 
-**How it works.** A paying user opens Settings → Community and taps "Connect
+**How it works.** A signed-in user opens Settings → Community and taps "Connect
 Telegram". The API mints a one-time token for that signed-in user (15 minutes)
 and opens `t.me/<bot>?start=<token>`. The bot redeems the token, links the
 Telegram account to the FiBuKI account, and replies with a join-request invite
 link. When the user taps it, Telegram sends the bot a `chat_join_request`; the
-bot approves only if the Telegram id is linked to an account that pays (paid
-plan with an active Stripe subscription) or is staff. A forwarded link is
-useless to anyone else. A daily sweep (04:30) kicks members whose subscription
-lapsed; they can rejoin by resubscribing.
+bot approves only if the Telegram id is linked to an existing FiBuKI account
+or is staff. The link is the proof of having an account: nobody can get in
+without signing in to FiBuKI first. A forwarded link is
+useless to anyone else. A daily sweep (04:30) kicks members whose FiBuKI account was deleted.
 
 Code: `functions/src/community/`. Tests: `functions/src/selfhost/community-telegram.test.ts`.
 
@@ -22,13 +22,14 @@ Code: `functions/src/community/`. Tests: `functions/src/selfhost/community-teleg
 | Room | Who | How they get in |
 |---|---|---|
 | Announcements channel | Everyone | The open invite link. The bot DM and Settings → Community both show it. |
-| Support group (private, join requests on) | Paying users, Felix, Stefan | Connect in Settings → Community, the bot DMs a one-time join link, the bot approves the request. |
+| Support group (private, join requests on) | Anyone with a FiBuKI account, Felix, Stefan | Connect in Settings → Community, the bot DMs a join link, the bot approves the request. |
 
 The welcome is a **private DM from the bot**, not a post in the channel: a
 channel post reaches everyone and cannot greet one person. After "Connect
 Telegram" → Start, the bot sends the support-group join link plus the
-announcements link. Free users see the announcements link on the Settings page
-and in the bot's reply to a bare `/start`, but get no support link.
+announcements link. Someone who never connected an account sees the announcements link in the
+bot's reply to a bare `/start`, but gets no support link: the join link only
+comes after the account proof.
 
 ## One-time setup (Felix, about 15 minutes)
 
@@ -78,8 +79,9 @@ and in the bot's reply to a bare `/start`, but get no support link.
 
    `getWebhookInfo` at the end should show the URL and no `last_error_message`.
 9. **Test it.** In FiBuKI → Settings → Community, connect your own account
-   (needs a paid plan), press Start in the bot, tap the join link, you are in.
-   A free account must get no support link and a declined join request.
+   (any plan), press Start in the bot, tap the join link, you are in.
+   Then ask someone with no FiBuKI connection to tap the group's invite link
+   from the channel: their join request must be declined.
 
 ## Operating it
 

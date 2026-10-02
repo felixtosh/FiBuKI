@@ -13,8 +13,7 @@ import {
   createLinkToken,
   getLinkByUser,
   handleUpdate,
-  isPayingUser,
-  sweepLapsedMembers,
+    sweepOrphanedMembers,
   unlinkUser,
 } from "./membership";
 
@@ -49,14 +48,13 @@ export const communityMembershipSweep = onSchedule(
   async () => {
     const cfg = readTelegramConfig();
     if (!cfg) return;
-    const removed = await sweepLapsedMembers(cfg, createTelegramClient(cfg.botToken));
-    console.log(`[communityMembershipSweep] removed ${removed} lapsed member(s)`);
+    const removed = await sweepOrphanedMembers(cfg, createTelegramClient(cfg.botToken));
+    console.log(`[communityMembershipSweep] removed ${removed} orphaned member(s)`);
   },
 );
 
 interface StatusResponse {
   available: boolean;
-  paying: boolean;
   linked: boolean;
   username: string | null;
   announcementsUrl: string | null;
@@ -65,10 +63,9 @@ interface StatusResponse {
 export const getTelegramLinkStatusCallable = createCallable<Record<string, never>, StatusResponse>(
   { name: "getTelegramLinkStatus" },
   async (ctx) => {
-    const [paying, link] = await Promise.all([isPayingUser(ctx.userId), getLinkByUser(ctx.userId)]);
+    const link = await getLinkByUser(ctx.userId);
     return {
       available: readTelegramConfig() !== null,
-      paying,
       linked: link !== null,
       username: link?.username ?? null,
       announcementsUrl: readTelegramConfig()?.announcementsUrl ?? null,
@@ -81,9 +78,6 @@ export const createTelegramLinkCallable = createCallable<Record<string, never>, 
   async (ctx) => {
     const cfg = readTelegramConfig();
     if (!cfg) throw new HttpsError("failed-precondition", "The community chat is not set up yet.");
-    if (!(await isPayingUser(ctx.userId))) {
-      throw new HttpsError("failed-precondition", "The community chat is for paying subscribers.");
-    }
     const token = await createLinkToken(ctx.userId);
     return { url: `https://t.me/${cfg.botUsername}?start=${token}` };
   },

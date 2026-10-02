@@ -340,7 +340,6 @@
       "description": "Talk to the FiBuKI team and other users on Telegram.",
       "cardTitle": "Telegram community",
       "unavailable": "The community chat is not open yet.",
-      "paidOnly": "The community chat is for paying subscribers. Upgrade your plan to join.",
       "intro": "Connect your Telegram account so the FiBuKI bot can check that you are a subscriber and let you into the private chat.",
       "connect": "Connect Telegram",
       "connecting": "Preparing link...",

@@ -1,10 +1,12 @@
 /**
- * Community chat membership: only a linked, paying Telegram account (or staff)
- * gets in, and a token links exactly one Telegram account, once.
+ * Community chat membership: only a Telegram account linked to an existing
+ * FiBuKI account (or staff) gets in, and a token links exactly one Telegram account, once.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { getFirestore, __resetFirestoreShim } from "./firestore-shim";
-import { createLinkToken, handleUpdate, sweepLapsedMembers, getLinkByUser } from "../community/membership";
+import { __resetFirestoreShim, __rawSqlForTest } from "./firestore-shim";
+import { getTenantId } from "./db/tenant";
+import { getFirestore } from "./firestore-shim";
+import { createLinkToken, handleUpdate, sweepOrphanedMembers, getLinkByUser } from "../community/membership";
 import { readTelegramConfig, type TelegramClient } from "../community/telegram";
 
 const db = getFirestore();
@@ -30,7 +32,17 @@ function fakeTg(status: string | null = "member") {
   return tg satisfies TelegramClient;
 }
 
-const payingSub = { plan: "pro", stripeSubscriptionStatus: "active" };
+async function seedUser(uid: string) {
+  await __rawSqlForTest(
+    `INSERT INTO auth_users (tenant_id, id, name, email, "emailVerified", "customClaims", "createdAt", "updatedAt")
+     VALUES ($1, $2, $3, $4, true, NULL, now(), now()) ON CONFLICT DO NOTHING`,
+    [getTenantId(), uid, uid, `${uid}@test.invalid`],
+    getTenantId(),
+  );
+}
+async function dropUser(uid: string) {
+  await __rawSqlForTest(`DELETE FROM auth_users WHERE tenant_id = $1 AND id = $2`, [getTenantId(), uid], getTenantId());
+}
 const start = (token: string, fromId: number) => ({
   message: { text: `/start ${token}`, chat: { id: fromId, type: "private" }, from: { id: fromId, username: "u" } },
 });
@@ -38,12 +50,13 @@ const join = (fromId: number) => ({ chat_join_request: { chat: { id: CHAT }, fro
 
 beforeEach(async () => {
   await __resetFirestoreShim();
-  process.env.FIBUKI_TIER = "cloud";
+  await __rawSqlForTest(`DELETE FROM auth_users WHERE tenant_id = $1`, [getTenantId()], getTenantId());
 });
 
 describe("community telegram", () => {
-  it("links a token once and hands a paying user a join link", async () => {
-    await db.collection("subscriptions").doc("u1").set(payingSub);
+  it("links a token once and hands the account holder a join link, on any plan", async () => {
+    await seedUser("u1");
+    await db.collection("subscriptions").doc("u1").set({ plan: "free", stripeSubscriptionStatus: "none" });
     const token = await createLinkToken("u1");
     const tg = fakeTg();
     await handleUpdate(start(token, 5), cfg, tg);
@@ -61,18 +74,20 @@ describe("community telegram", () => {
     expect((await getLinkByUser("u1"))?.telegramUserId).toBe(5);
   });
 
-  it("links but gives no link to a non-paying user, and declines their join request", async () => {
-    await db.collection("subscriptions").doc("u2").set({ plan: "free", stripeSubscriptionStatus: "none" });
+  it("gives nothing to a token whose account is gone, and declines its join request", async () => {
+    await seedUser("u2");
+    const token = await createLinkToken("u2");
+    await dropUser("u2");
     const tg = fakeTg();
-    await handleUpdate(start(await createLinkToken("u2"), 7), cfg, tg);
+    await handleUpdate(start(token, 7), cfg, tg);
     expect(tg.createJoinRequestLink).not.toHaveBeenCalled();
     await handleUpdate(join(7), cfg, tg);
     expect(tg.declineJoinRequest).toHaveBeenCalledWith(CHAT, 7);
     expect(tg.approveJoinRequest).not.toHaveBeenCalled();
   });
 
-  it("approves paying users and staff, declines strangers", async () => {
-    await db.collection("subscriptions").doc("u1").set(payingSub);
+  it("approves linked account holders and staff, declines strangers", async () => {
+    await seedUser("u1");
     const tg = fakeTg();
     await handleUpdate(start(await createLinkToken("u1"), 5), cfg, tg);
     await handleUpdate(join(5), cfg, tg);
@@ -90,17 +105,19 @@ describe("community telegram", () => {
     expect(tg.declineJoinRequest).not.toHaveBeenCalled();
   });
 
-  it("sweeps lapsed members but never staff or group admins", async () => {
-    await db.collection("subscriptions").doc("u1").set({ plan: "free", stripeSubscriptionStatus: "canceled" });
-    await db.collection("telegramLinks").doc("5").set({ userId: "u1", telegramUserId: 5 });
-    await db.collection("telegramLinks").doc("999").set({ userId: "u1", telegramUserId: 999 });
+  it("sweeps members whose account was deleted, never staff or group admins or the still-registered", async () => {
+    await seedUser("alive");
+    await db.collection("telegramLinks").doc("5").set({ userId: "gone", telegramUserId: 5 });
+    await db.collection("telegramLinks").doc("999").set({ userId: "gone", telegramUserId: 999 });
+    await db.collection("telegramLinks").doc("6").set({ userId: "alive", telegramUserId: 6 });
     const tg = fakeTg("member");
-    expect(await sweepLapsedMembers(cfg, tg)).toBe(1);
+    expect(await sweepOrphanedMembers(cfg, tg)).toBe(1);
     expect(tg.removeMember).toHaveBeenCalledWith(CHAT, 5);
     expect(tg.removeMember).not.toHaveBeenCalledWith(CHAT, 999);
+    expect(tg.removeMember).not.toHaveBeenCalledWith(CHAT, 6);
 
     const admin = fakeTg("administrator");
-    expect(await sweepLapsedMembers(cfg, admin)).toBe(0);
+    expect(await sweepOrphanedMembers(cfg, admin)).toBe(0);
   });
 
   it("is off until configured, and parses staff ids", () => {

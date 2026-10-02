@@ -14,8 +14,6 @@ export function CommunityCard() {
   let body: React.ReactNode = <Loader2 className="h-4 w-4 animate-spin" />;
   if (status && !status.available) {
     body = <p className="text-sm text-muted-foreground">{t("unavailable")}</p>;
-  } else if (status && !status.paying) {
-    body = <p className="text-sm text-muted-foreground">{t("paidOnly")}</p>;
   } else if (status?.linked) {
     body = (
       <div className="flex items-center gap-3">

@@ -5,7 +5,6 @@ import { callFunction } from "@/lib/firebase/callable";
 
 export interface TelegramLinkStatus {
   available: boolean;
-  paying: boolean;
   linked: boolean;
   username: string | null;
   announcementsUrl: string | null;

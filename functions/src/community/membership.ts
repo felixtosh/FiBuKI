@@ -1,8 +1,8 @@
 /**
  * Community chat membership: who may be in the private Telegram group.
  *
- * Rule: a Telegram account gets in only if it is linked to a FiBuKI account that
- * pays, or it is staff. Linking is proven by a one-time token minted for the
+ * Rule: a Telegram account gets in only if it is linked to an existing FiBuKI
+ * account (any plan, paying or not), or it is staff. Linking is proven by a one-time token minted for the
  * signed-in user and redeemed by the bot in a private chat, so the uid never
  * comes from anything the Telegram side (or the client) supplies.
  *
@@ -13,8 +13,7 @@
 
 import { createHash, randomBytes } from "crypto";
 import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
-import { resolvePlanId } from "../billing/config";
-import { envPlanOverride } from "../billing/planSource";
+import { getAuth } from "firebase-admin/auth";
 import type { TelegramClient, TelegramConfig } from "./telegram";
 
 const TOKEN_TTL_MS = 15 * 60 * 1000;
@@ -30,16 +29,18 @@ export interface TelegramLink {
 const hashToken = (token: string) => createHash("sha256").update(token).digest("hex");
 
 /**
- * "Proved they pay": a paid plan with an active Stripe subscription. Where the
- * environment dictates the plan (self-host lever) nobody is billed, so the
- * plan alone decides.
+ * "Proved they have an account": the FiBuKI account exists. Any plan counts.
+ * Throws on anything but "no such user", so a transient auth failure never
+ * reads as "account gone" (the sweep would kick everyone).
  */
-export async function isPayingUser(userId: string): Promise<boolean> {
-  const snap = await getFirestore().collection("subscriptions").doc(userId).get();
-  const sub = snap.data() as { plan?: string; stripeSubscriptionStatus?: string } | undefined;
-  const plan = resolvePlanId(sub?.plan as never);
-  if (plan === "free") return false;
-  return envPlanOverride() !== null || sub?.stripeSubscriptionStatus === "active";
+export async function hasAccount(userId: string): Promise<boolean> {
+  try {
+    await getAuth().getUser(userId);
+    return true;
+  } catch (err) {
+    if ((err as { code?: string })?.code === "auth/user-not-found") return false;
+    throw err;
+  }
 }
 
 export async function createLinkToken(userId: string): Promise<string> {
@@ -78,7 +79,7 @@ async function getLinkByTelegramId(telegramUserId: number): Promise<TelegramLink
 async function mayBeInGroup(cfg: TelegramConfig, telegramUserId: number): Promise<boolean> {
   if (cfg.staffIds.has(telegramUserId)) return true;
   const link = await getLinkByTelegramId(telegramUserId);
-  return link ? isPayingUser(link.userId) : false;
+  return link ? hasAccount(link.userId) : false;
 }
 
 /** Unlink a user's Telegram account and remove it from the group. */
@@ -157,26 +158,31 @@ export async function handleUpdate(update: TgUpdate, cfg: TelegramConfig, tg: Te
   });
 
   if (!(await mayBeInGroup(cfg, msg.from.id))) {
-    await tg.sendMessage(msg.chat.id, "Your account is linked, but the community is for paying FiBuKI users. Upgrade and send /start again from Settings → Community.");
+    await tg.sendMessage(msg.chat.id, "Your account is linked, but that FiBuKI account no longer exists, so I cannot let you into the support group.");
     return;
   }
   const link = await tg.createJoinRequestLink(cfg.communityChatId, "FiBuKI member");
   await tg.sendMessage(msg.chat.id, `You're connected. Join the support group here (link valid for 1 hour):\n${link}${announcementsLine(cfg)}`);
 }
 
-/** Remove members whose subscription lapsed. Staff and group admins are never touched. */
-export async function sweepLapsedMembers(cfg: TelegramConfig, tg: TelegramClient): Promise<number> {
+/** Remove members whose FiBuKI account was deleted. Staff and group admins are never touched. */
+export async function sweepOrphanedMembers(cfg: TelegramConfig, tg: TelegramClient): Promise<number> {
   const links = await getFirestore().collection(LINKS).get();
   let removed = 0;
   for (const doc of links.docs) {
     const link = doc.data() as TelegramLink;
-    if (cfg.staffIds.has(link.telegramUserId) || (await isPayingUser(link.userId))) continue;
+    if (cfg.staffIds.has(link.telegramUserId)) continue;
+    try {
+      if (await hasAccount(link.userId)) continue;
+    } catch {
+      continue; // unknown is not "gone": try again tomorrow
+    }
     const status = await tg.memberStatus(cfg.communityChatId, link.telegramUserId);
     if (status === "creator" || status === "administrator") continue;
     if (status === "member" || status === "restricted") {
       await tg.removeMember(cfg.communityChatId, link.telegramUserId);
       await tg
-        .sendMessage(link.telegramUserId, "Your FiBuKI subscription ended, so I removed you from the community. Resubscribe any time and reconnect in Settings → Community.")
+        .sendMessage(link.telegramUserId, "Your FiBuKI account was deleted, so I removed you from the support group. Create a new account and reconnect in Settings → Community to come back.")
         .catch(() => undefined);
       removed++;
     }
