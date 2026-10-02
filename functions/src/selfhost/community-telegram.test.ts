@@ -15,6 +15,7 @@ const cfg = {
   communityChatId: CHAT,
   staffIds: new Set([999]),
   webhookSecret: "s",
+  announcementsUrl: "https://t.me/+news",
 };
 
 function fakeTg(status: string | null = "member") {
@@ -47,6 +48,10 @@ describe("community telegram", () => {
     const tg = fakeTg();
     await handleUpdate(start(token, 5), cfg, tg);
     expect(tg.createJoinRequestLink).toHaveBeenCalled();
+    // The welcome DM carries both rooms: the support join link and the open announcements channel.
+    const welcome = (tg.sendMessage.mock.calls as unknown as [number, string][]).at(-1)![1];
+    expect(welcome).toContain("https://t.me/+abc");
+    expect(welcome).toContain("https://t.me/+news");
     expect((await getLinkByUser("u1"))?.telegramUserId).toBe(5);
 
     // Replay by someone else gets nothing.

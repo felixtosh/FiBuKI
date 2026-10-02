@@ -59,6 +59,7 @@ interface StatusResponse {
   paying: boolean;
   linked: boolean;
   username: string | null;
+  announcementsUrl: string | null;
 }
 
 export const getTelegramLinkStatusCallable = createCallable<Record<string, never>, StatusResponse>(
@@ -70,6 +71,7 @@ export const getTelegramLinkStatusCallable = createCallable<Record<string, never
       paying,
       linked: link !== null,
       username: link?.username ?? null,
+      announcementsUrl: readTelegramConfig()?.announcementsUrl ?? null,
     };
   },
 );

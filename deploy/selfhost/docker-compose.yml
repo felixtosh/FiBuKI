@@ -163,6 +163,7 @@ services:
       TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
       TELEGRAM_COMMUNITY_CHAT_ID: ${TELEGRAM_COMMUNITY_CHAT_ID:-}
       TELEGRAM_STAFF_IDS: ${TELEGRAM_STAFF_IDS:-}
+      TELEGRAM_ANNOUNCEMENTS_URL: ${TELEGRAM_ANNOUNCEMENTS_URL:-}
       # Decrypts users' stored Gmail OAuth tokens. With this present and cron enabled,
       # the box can read the mailboxes of every migrated user.
       GMAIL_TOKEN_ENCRYPTION_KEY: ${GMAIL_TOKEN_ENCRYPTION_KEY:-}

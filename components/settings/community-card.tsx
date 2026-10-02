@@ -54,6 +54,13 @@ export function CommunityCard() {
       </CardHeader>
       <CardContent className="space-y-3">
         {body}
+        {status?.announcementsUrl ? (
+          <p className="text-sm">
+            <a className="underline" href={status.announcementsUrl} target="_blank" rel="noopener noreferrer">
+              {t("announcements")}
+            </a>
+          </p>
+        ) : null}
         {error ? <p className="text-sm text-destructive">{t("failed")}</p> : null}
       </CardContent>
     </Card>

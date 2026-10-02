@@ -348,6 +348,7 @@
       "connectedAnonymous": "Dein Telegram-Konto ist verbunden.",
       "disconnect": "Trennen",
       "openBot": "Falls Telegram sich nicht geöffnet hat, nutze diesen Link:",
+      "announcements": "Ankündigungskanal öffnen (für alle offen)",
       "failed": "Etwas ist schiefgelaufen. Bitte versuche es erneut."
     }
   },

@@ -104,9 +104,13 @@ interface TgUpdate {
   };
 }
 
-const HELP =
-  "Hi! I'm the FiBuKI community bot. To join, open FiBuKI → Settings → Community and tap " +
-  "\"Connect Telegram\" so I can check your account.";
+const announcementsLine = (cfg: TelegramConfig) =>
+  cfg.announcementsUrl ? `\n\nAnnouncements (open to everyone): ${cfg.announcementsUrl}` : "";
+
+const help = (cfg: TelegramConfig) =>
+  "Hi! I'm the FiBuKI community bot. To join the support group, open FiBuKI → Settings → Community and tap " +
+  "\"Connect Telegram\" so I can check your account." +
+  announcementsLine(cfg);
 
 export async function handleUpdate(update: TgUpdate, cfg: TelegramConfig, tg: TelegramClient) {
   const jr = update.chat_join_request;
@@ -117,7 +121,7 @@ export async function handleUpdate(update: TgUpdate, cfg: TelegramConfig, tg: Te
       await tg.approveJoinRequest(jr.chat.id, jr.from.id);
     } else {
       await tg.declineJoinRequest(jr.chat.id, jr.from.id);
-      await tg.sendMessage(dm, HELP).catch(() => undefined);
+      await tg.sendMessage(dm, help(cfg)).catch(() => undefined);
     }
     return;
   }
@@ -129,7 +133,7 @@ export async function handleUpdate(update: TgUpdate, cfg: TelegramConfig, tg: Te
 
   const token = match[1];
   if (!token) {
-    await tg.sendMessage(msg.chat.id, HELP);
+    await tg.sendMessage(msg.chat.id, help(cfg));
     return;
   }
 
@@ -157,7 +161,7 @@ export async function handleUpdate(update: TgUpdate, cfg: TelegramConfig, tg: Te
     return;
   }
   const link = await tg.createJoinRequestLink(cfg.communityChatId, "FiBuKI member");
-  await tg.sendMessage(msg.chat.id, `You're in. Join the community here (valid for 1 hour):\n${link}`);
+  await tg.sendMessage(msg.chat.id, `You're connected. Join the support group here (link valid for 1 hour):\n${link}${announcementsLine(cfg)}`);
 }
 
 /** Remove members whose subscription lapsed. Staff and group admins are never touched. */

@@ -8,6 +8,7 @@ export interface TelegramLinkStatus {
   paying: boolean;
   linked: boolean;
   username: string | null;
+  announcementsUrl: string | null;
 }
 
 type Empty = Record<string, never>;

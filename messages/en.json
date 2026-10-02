@@ -348,6 +348,7 @@
       "connectedAnonymous": "Your Telegram account is connected.",
       "disconnect": "Disconnect",
       "openBot": "If Telegram did not open, use this link:",
+      "announcements": "Open the announcements channel (open to everyone)",
       "failed": "Something went wrong. Please try again."
     }
   },

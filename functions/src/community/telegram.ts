@@ -26,6 +26,8 @@ export interface TelegramConfig {
   /** Telegram user ids that always get in and are never removed. */
   staffIds: Set<number>;
   webhookSecret: string;
+  /** Invite link of the open announcements channel, shown to everyone. */
+  announcementsUrl: string | null;
 }
 
 /** Null when the bot is not set up; callers must treat that as "feature off". */
@@ -43,7 +45,8 @@ export function readTelegramConfig(env: NodeJS.ProcessEnv = process.env): Telegr
       .map((s) => Number(s.trim()))
       .filter((n) => Number.isInteger(n) && n > 0),
   );
-  return { botToken, botUsername, communityChatId: chatId, staffIds, webhookSecret };
+  const announcementsUrl = env.TELEGRAM_ANNOUNCEMENTS_URL?.trim() || null;
+  return { botToken, botUsername, communityChatId: chatId, staffIds, webhookSecret, announcementsUrl };
 }
 
 export function createTelegramClient(botToken: string, fetchImpl: typeof fetch = fetch): TelegramClient {
