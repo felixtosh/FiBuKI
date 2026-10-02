@@ -68,7 +68,27 @@ on their box. Document it, do not build anything special.
 ### Onboarding: one checklist, two surfaces
 
 Same steps, same state, same completion rules in the web app and in the plugin.
-The plugin uses the `full_service` track. Order (Felix's flow, mapped to existing step ids):
+
+**Simplify first (Felix, 2026-10-02):** the track choice (`full_service` vs
+`data_only`, `components/onboarding/welcome-choice.tsx`) goes away in both
+surfaces. There is one onboarding, and identity is its first real step. Watch out:
+`setOnboardingTrackCallable.ts` also starts the trial and picks `trialTier` ("data"
+or "smart") from the track. Removing the choice means the trial start moves to
+onboarding init with a single tier (Felix to confirm which), and existing users with
+`track: "data_only"` keep working (read it as "onboarding done or skipped").
+
+**Honor where the user came from.** Record an `origin` on the onboarding doc at
+signup: `chatgpt`, `codex`, `claude`, or `web`. Take it from the OAuth client that
+started the signup (reliable), not from the HTTP Referer (often stripped); for plain
+web signups a `?ref=` parameter is enough. The welcome screen then adapts:
+- Came from ChatGPT / Codex: "You're set up. You can keep working in ChatGPT, it will
+  match your Belege for you, or do it here in FiBuKI. Both see the same data." Two
+  buttons: "Back to ChatGPT" and "Continue here". The remaining checklist is the same
+  either way.
+- Came from the web: today's flow, minus the track choice, plus one line that FiBuKI
+  also works from ChatGPT, Claude and Codex.
+
+Order (Felix's flow, mapped to existing step ids):
 
 | # | Step | In ChatGPT | Hands off to fibuki.com when |
 |---|---|---|---|
@@ -191,7 +211,9 @@ built from a small React or plain-TS bundle into one HTML file each.
    can there be two open years in January?). Also lands in the web welcome flow.
 3. **Mail source of truth.** Recommendation: FiBuKI's own Mail Integration primary
    (persistent, CASA-verified, background Sync); ChatGPT's apps only fill gaps inside a session.
-4. **Track.** Plugin users always get `full_service`? Recommendation: yes.
+4. **Trial tier without tracks.** The track choice is dropped (decided). Which single
+   trial tier does every new user get, "smart" or "data"? Recommendation: "smart",
+   since matching is the product.
 
 ## Phases (each one a separate small session)
 
@@ -216,6 +238,8 @@ built from a small React or plain-TS bundle into one HTML file each.
   fix prompts, not the server.
 
 ### Phase 3: onboarding parity (after Decisions 2 and 4)
+- Web first: remove the track choice, move trial start to onboarding init, add
+  `origin` and the origin-aware welcome copy (en + de messages).
 - `get_onboarding_status` (ported rules + shared test), step callables,
   `create_identity_entity`, `set_accounting_period`. Switch `hooks/use-onboarding.ts`
   and `onboarding-ops.ts` to them. Web welcome flow gains the accounting-year step.
