@@ -10,60 +10,109 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Loader2 } from "lucide-react";
 import { useDocumentLabel } from "@/hooks/use-document-label";
 import {
   describeDirectionReview,
+  describeDocumentType,
   describeInvoiceDirection,
-  INVOICE_DIRECTIONS,
 } from "@/lib/documents/document-type-presentation";
 import { cn } from "@/lib/utils";
 import type { TaxFile } from "@/types/file";
 import type { InvoiceDirection } from "@/types/user-data";
 
 /**
- * Direction (#233), in the File detail panel's top block beside Type (#513).
+ * Type, one field for what a File is and which way it goes (#519): Income
+ * (an outgoing invoice), Expense (an incoming one), or Not an invoice. The
+ * same three words as the Files list's Type filter.
  *
- * Until this row existed the field was rendered only as the SIGN of the
- * amount, where `unknown` fell through to a positive figure, so an undirected
- * purchase read as income and nothing in the product said so. Editable
- * because the only other way to move it was to edit identity data and hope
- * the backfill picked the file up.
+ * Before the File is placed it reads "Analyzing..." while classification
+ * runs, then "Not determined" until its direction is known. Direction used to
+ * be shown only as the sign of the amount, where `unknown` fell through to a
+ * positive figure (#233), so "Not determined" is a value here, never a guess.
+ *
+ * Picking Income or Expense on a File marked not an invoice undoes the mark,
+ * which re-extracts it; extraction then decides the direction.
  */
-export function FileDirectionControl({
+type FileKind = "outgoing" | "incoming" | "not-invoice" | "unknown";
+
+export function FileKindControl({
   file,
+  classifying = false,
+  disabled = false,
   onDirectionChange,
+  onMarkAsNotInvoice,
+  onUnmarkAsNotInvoice,
 }: {
   file: TaxFile;
+  classifying?: boolean;
+  disabled?: boolean;
   onDirectionChange?: (direction: InvoiceDirection) => void;
+  onMarkAsNotInvoice?: () => void;
+  onUnmarkAsNotInvoice?: () => void;
 }) {
-  const documentLabel = useDocumentLabel();
-  const presentation = describeInvoiceDirection(file.invoiceDirection);
+  const t = useTranslations("filters.type");
+  const tDetail = useTranslations("files.detail");
 
-  if (!onDirectionChange) {
+  if (classifying) {
     return (
-      <span className={cn(presentation.direction === "unknown" && "text-muted-foreground")}>
-        {documentLabel(presentation)}
+      <span className="flex items-center gap-1.5 text-muted-foreground">
+        <Loader2 className="h-3 w-3 animate-spin" />
+        {tDetail("analyzing")}
       </span>
     );
   }
 
+  const value: FileKind = file.isNotInvoice
+    ? "not-invoice"
+    : (describeInvoiceDirection(file.invoiceDirection).direction as InvoiceDirection);
+
+  const pick = (next: FileKind) => {
+    if (next === value || next === "unknown") return;
+    if (next === "not-invoice") {
+      onMarkAsNotInvoice?.();
+    } else if (file.isNotInvoice) {
+      onUnmarkAsNotInvoice?.();
+    } else {
+      onDirectionChange?.(next);
+    }
+  };
+
   return (
-    <Select
-      value={presentation.direction}
-      onValueChange={(value) => onDirectionChange(value as InvoiceDirection)}
-    >
-      <SelectTrigger className="h-7 w-auto min-w-[140px] text-sm">
+    <Select value={value} onValueChange={(next) => pick(next as FileKind)} disabled={disabled}>
+      <SelectTrigger
+        className={cn(
+          "h-7 w-auto min-w-[140px] text-sm",
+          value === "unknown" && "text-muted-foreground"
+        )}
+      >
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
-        {(Object.keys(INVOICE_DIRECTIONS) as InvoiceDirection[]).map((direction) => (
-          <SelectItem key={direction} value={direction}>
-            {documentLabel(INVOICE_DIRECTIONS[direction])}
+        {value === "unknown" && (
+          <SelectItem value="unknown" disabled>
+            {tDetail("notDetermined")}
           </SelectItem>
-        ))}
+        )}
+        <SelectItem value="outgoing">{t("income")}</SelectItem>
+        <SelectItem value="incoming">{t("expense")}</SelectItem>
+        <SelectItem value="not-invoice">{t("notInvoice")}</SelectItem>
       </SelectContent>
     </Select>
   );
+}
+
+/**
+ * Whether the VAT on an Expense File can be deducted (#519): the § 11 verdict
+ * stated as its consequence. A full invoice allows it; a payment confirmation
+ * alone does not; anything else is not determined yet.
+ */
+export function useVatDeductible(file: TaxFile): { text: string; tone: "yes" | "no" | "unknown" } {
+  const t = useTranslations("files.detail");
+  const type = describeDocumentType(file.documentType).type;
+  if (type === "invoice") return { text: t("vatDeductibleYes"), tone: "yes" };
+  if (type === "receipt") return { text: t("vatDeductibleNo"), tone: "no" };
+  return { text: t("notDetermined"), tone: "unknown" };
 }
 
 /** Why the direction needs a look, behind the label; null when it does not. */

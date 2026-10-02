@@ -356,7 +356,13 @@
       "fileName": "Dateiname",
       "uploaded": "Hochgeladen",
       "size": "Größe",
-      "source": "Quelle"
+      "source": "Quelle",
+      "analyzing": "Wird analysiert...",
+      "notDetermined": "Nicht bestimmt",
+      "vatDeductible": "Vorsteuer abziehbar",
+      "whyVatDeductible": "Warum die Vorsteuer abziehbar ist oder nicht",
+      "vatDeductibleYes": "Ja",
+      "vatDeductibleNo": "Nein, beim Lieferanten eine Rechnung anfordern"
     },
     "source": {
       "gmail": "Gmail",
@@ -381,5 +387,32 @@
     "transactions": "{done} von {total} Transaktionen sind dokumentiert: mit einem Beleg oder stattdessen mit einer Kategorie ohne Beleg.",
     "transactionsDeductible": "{percent} % sind mit einer Rechnung belegt, die zum Vorsteuerabzug berechtigt (§ 11 UStG). Eine reine Zahlungsbestätigung reicht dafür nicht.",
     "followsFilters": "Die Zahl folgt den Filtern und der Suche oben."
+  },
+  "filters": {
+    "all": "Alle",
+    "assigned": "Zugeordnet",
+    "unassigned": "Nicht zugeordnet",
+    "type": {
+      "label": "Typ",
+      "income": "Einnahme",
+      "expense": "Ausgabe",
+      "notInvoice": "Keine Rechnung",
+      "deleted": "Gelöschte Belege"
+    },
+    "transactions": {
+      "label": "Transaktionen"
+    },
+    "files": {
+      "label": "Belege"
+    },
+    "partner": {
+      "label": "Partner",
+      "labelCount": "Partner ({count})",
+      "noPartner": "Kein Partner zugeordnet",
+      "noPartnerShort": "Kein Partner",
+      "search": "Partner suchen...",
+      "none": "Keine Partner gefunden",
+      "clear": "Partnerfilter entfernen"
+    }
   }
 }

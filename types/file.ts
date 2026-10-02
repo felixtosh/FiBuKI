@@ -882,8 +882,12 @@ export interface FileFilters {
    */
   hasPartner?: boolean;
 
-  /** Filter by invoice direction (income = outgoing, expense = incoming) */
-  amountType?: "all" | "income" | "expense";
+  /**
+   * The Files page Type chip (#519): income = outgoing invoices, expense =
+   * incoming ones, not-invoice = Files marked not a financial document. Income
+   * and expense never include a not-invoice File.
+   */
+  amountType?: "all" | "income" | "expense" | "not-invoice";
 }
 
 /**

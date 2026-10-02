@@ -50,6 +50,9 @@ export function useFilteredTransactions(
     if (partnerIds.length > 0) {
       const allowedPartners = new Set(partnerIds);
       result = result.filter((t) => t.partnerId && allowedPartners.has(t.partnerId));
+    } else if (filters.hasPartner !== undefined) {
+      // "No partner assigned" (#519); a specific partner pick wins over it.
+      result = result.filter((t) => (filters.hasPartner ? !!t.partnerId : !t.partnerId));
     }
 
     // Date range filter
