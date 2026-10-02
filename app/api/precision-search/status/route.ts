@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
+import { getOwnedDoc } from "@/lib/auth/owned-doc";
 
 const db = getAdminDb();
 
@@ -77,6 +78,15 @@ export async function GET(request: NextRequest) {
 
     // Get transaction search history if requested
     if (transactionId) {
+      // The history sits under the transaction and carries no userId of its
+      // own, so the transaction's owner is the only check there is.
+      if (!(await getOwnedDoc(db, "transactions", transactionId, userId))) {
+        return NextResponse.json(
+          { error: "Transaction not found" },
+          { status: 404 }
+        );
+      }
+
       const searchesSnapshot = await db
         .collection("transactions")
         .doc(transactionId)

@@ -16,6 +16,7 @@ import {
   createFileRecord,
   findFileByContentHash,
 } from "@/functions/src/files/createFileRecord";
+import { getOwnedDoc } from "@/lib/auth/owned-doc";
 
 const db = getAdminDb();
 
@@ -212,6 +213,13 @@ export async function POST(request: NextRequest) {
         { error: "messageId and attachmentId are required" },
         { status: 400 }
       );
+    }
+
+    // The Transaction is written to below (fileIds, isComplete, a
+    // fileConnection), so it must be the caller's before anything happens:
+    // all users share one database. Not yours answers like not found.
+    if (transactionId && !(await getOwnedDoc(db, TRANSACTIONS_COLLECTION, transactionId, userId))) {
+      return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
     }
 
     // Every mailbox but Gmail is read through the provider factory (#245);
