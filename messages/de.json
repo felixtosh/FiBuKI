@@ -414,5 +414,16 @@
       "none": "Keine Partner gefunden",
       "clear": "Partnerfilter entfernen"
     }
+  },
+  "partners": {
+    "bulk": {
+      "title": "{count, plural, one {# Partner ausgewählt} other {# Partner ausgewählt}}",
+      "withVatId": "Mit UID",
+      "withIban": "Mit IBAN",
+      "recurring": "Wiederkehrend",
+      "ofCount": "{part} von {count}",
+      "merge": "{count} Partner zusammenführen",
+      "mergeNeedsTwo": "Wähle mindestens zwei Partner aus, um sie zusammenzuführen."
+    }
   }
 }
