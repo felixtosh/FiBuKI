@@ -77,7 +77,11 @@ jobs:
           cache-dependency-path: functions/package-lock.json
       - run: npm ci
       - run: npx tsc --noEmit
-      - run: npm test
+      # The real-Chromium tests run after the unit suite, not inside it. A cold
+      # Chrome start takes ~1-5s on an idle runner but 7-21s, once over 30s,
+      # while the suite's parallel workers load node_modules at the same time.
+      - run: npm test -- --exclude 'src/**/*.integration.test.ts'
+      - run: npm test -- integration.test.ts
 
       # lib/data/generated-tool-definitions.ts is committed but generated from
       # functions/src/tools/definitions.ts, and nothing used to fail when the
