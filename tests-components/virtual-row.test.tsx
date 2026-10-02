@@ -149,7 +149,10 @@ describe("VirtualRow rendering", () => {
     const tr = container.querySelector("tr");
     expect(tr).not.toBeNull();
     expect(tr!.getAttribute("data-row-id")).toBe("row-1");
-    expect(tr!.querySelectorAll("td")).toHaveLength(1);
+    // One cell per column, plus the aria-hidden filler that absorbs the width
+    // the fixed-width columns leave over.
+    expect(tr!.querySelectorAll("td:not([aria-hidden])")).toHaveLength(1);
+    expect(tr!.querySelectorAll("td[aria-hidden]")).toHaveLength(1);
     expect(getByTestId("name-cell").textContent).toBe("invoice.pdf");
     // Proves the counter is wired to a real render, so a later assertion of
     // "the count did not change" means something.
