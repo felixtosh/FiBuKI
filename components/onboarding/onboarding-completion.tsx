@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CheckCircle2, Sparkles, ArrowRight, Terminal, Key } from "lucide-react";
+import { useTranslations } from "next-intl";
+import { CheckCircle2, Sparkles, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -11,8 +12,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { useOnboarding } from "@/hooks/use-onboarding";
-import { useRouter } from "next/navigation";
 
 interface OnboardingCompletionProps {
   open: boolean;
@@ -23,9 +22,8 @@ export function OnboardingCompletion({
   open,
   onDismiss,
 }: OnboardingCompletionProps) {
+  const t = useTranslations("onboarding.completion");
   const [showConfetti, setShowConfetti] = useState(false);
-  const { track } = useOnboarding();
-  const router = useRouter();
 
   useEffect(() => {
     if (open) {
@@ -35,13 +33,8 @@ export function OnboardingCompletion({
     queueMicrotask(() => setShowConfetti(false));
   }, [open]);
 
-  const isDataOnly = track === "data_only";
-
   const handleDismiss = () => {
     onDismiss();
-    if (isDataOnly) {
-      router.push("/settings/integrations");
-    }
   };
 
   return (
@@ -57,23 +50,13 @@ export function OnboardingCompletion({
                 showConfetti && "scale-110"
               )}
             >
-              {isDataOnly ? (
-                <Terminal
-                  className={cn(
-                    "h-10 w-10 text-primary",
-                    "transition-all duration-500",
-                    showConfetti && "scale-110"
-                  )}
-                />
-              ) : (
-                <CheckCircle2
-                  className={cn(
-                    "h-10 w-10 text-primary",
-                    "transition-all duration-500",
-                    showConfetti && "scale-110"
-                  )}
-                />
-              )}
+              <CheckCircle2
+                className={cn(
+                  "h-10 w-10 text-primary",
+                  "transition-all duration-500",
+                  showConfetti && "scale-110"
+                )}
+              />
             </div>
 
             {/* Sparkle decorations */}
@@ -102,58 +85,35 @@ export function OnboardingCompletion({
           </div>
 
           <DialogTitle className="text-2xl font-bold">
-            {isDataOnly ? "Bank Data Ready!" : "You're all set!"}
+            {t("title")}
           </DialogTitle>
           <DialogDescription className="text-base mt-2">
-            {isDataOnly
-              ? "Your bank data is imported and ready to use via API and MCP."
-              : "Congratulations! You've completed the setup. Your account is now ready to help you manage your transactions and receipts."}
+            {t("description")}
           </DialogDescription>
         </DialogHeader>
 
         {/* Features unlocked */}
         <div className="bg-muted/50 rounded-lg p-4 space-y-3">
-          <p className="text-sm font-medium text-muted-foreground">
-            {isDataOnly ? "Next steps:" : "What's next:"}
-          </p>
+          <p className="text-sm font-medium text-muted-foreground">{t("next")}</p>
           <ul className="space-y-2 text-sm">
-            {isDataOnly ? (
-              <>
-                <li className="flex items-center gap-2">
-                  <Key className="h-4 w-4 text-primary flex-shrink-0" />
-                  <span>Create an API key for programmatic access</span>
-                </li>
-                <li className="flex items-center gap-2">
-                  <Terminal className="h-4 w-4 text-primary flex-shrink-0" />
-                  <span>Connect Claude, ChatGPT, or OpenClaw via MCP</span>
-                </li>
-                <li className="flex items-center gap-2">
-                  <CheckCircle2 className="h-4 w-4 text-primary flex-shrink-0" />
-                  <span>Use the API to query transactions programmatically</span>
-                </li>
-              </>
-            ) : (
-              <>
-                <li className="flex items-center gap-2">
-                  <CheckCircle2 className="h-4 w-4 text-primary flex-shrink-0" />
-                  <span>AI assistant ready to help categorize transactions</span>
-                </li>
-                <li className="flex items-center gap-2">
-                  <CheckCircle2 className="h-4 w-4 text-primary flex-shrink-0" />
-                  <span>Automatic receipt matching enabled</span>
-                </li>
-                <li className="flex items-center gap-2">
-                  <CheckCircle2 className="h-4 w-4 text-primary flex-shrink-0" />
-                  <span>Partner suggestions for faster bookkeeping</span>
-                </li>
-              </>
-            )}
+            <li className="flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 text-primary flex-shrink-0" />
+              <span>{t("assistant")}</span>
+            </li>
+            <li className="flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 text-primary flex-shrink-0" />
+              <span>{t("matching")}</span>
+            </li>
+            <li className="flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 text-primary flex-shrink-0" />
+              <span>{t("partners")}</span>
+            </li>
           </ul>
         </div>
 
         {/* Action button */}
         <Button onClick={handleDismiss} className="w-full mt-4">
-          {isDataOnly ? "Go to Integrations" : "Start using FiBuKI"}
+          {t("start")}
           <ArrowRight className="h-4 w-4 ml-2" />
         </Button>
       </DialogContent>

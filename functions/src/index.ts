@@ -344,7 +344,11 @@ export {
 } from "./billing/prioritySupportAddon";
 
 // Onboarding operations
-export { setOnboardingTrackCallable as setOnboardingTrack } from "./onboarding/setOnboardingTrackCallable";
+export {
+  initOnboardingCallable as initOnboarding,
+  syncOnboardingCallable as syncOnboarding,
+  updateOnboardingCallable as updateOnboarding,
+} from "./onboarding/onboardingCallables";
 
 // Country expansion operations
 export {

@@ -1,26 +1,15 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { doc, getDoc, onSnapshot } from "firebase/firestore";
+import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
+import { callFunction } from "@/lib/firebase/callable";
 import {
   OnboardingState,
   OnboardingStep,
   OnboardingStepConfig,
   ONBOARDING_STEPS,
-  getStepsForTrack,
-  getNextStepForTrack,
-  DATA_ONLY_STEPS,
 } from "@/types/onboarding";
-import {
-  OperationsContext,
-  initializeOnboarding,
-  completeOnboardingStep,
-  markOnboardingCompletionSeen,
-  calculateProgress,
-  skipOnboarding as skipOnboardingOp,
-  skipOnboardingStep,
-} from "@/lib/operations";
 import { useAuth } from "@/components/auth";
 import { useSources } from "./use-sources";
 import { useTransactions } from "./use-transactions";
@@ -28,7 +17,12 @@ import { useUserData } from "./use-user-data";
 import { useEmailIntegrations } from "./use-email-integrations";
 
 /**
- * Hook for managing onboarding state and auto-detecting step completion
+ * Onboarding state for the signed-in user.
+ *
+ * The browser only listens. Which steps are done is decided on the server from the
+ * user's data (functions/src/onboarding), the same answer the MCP tools give, and every
+ * change goes through a callable. This hook just tells the server when something the
+ * steps depend on may have changed.
  */
 export function useOnboarding() {
   const { userId } = useAuth();
@@ -37,22 +31,13 @@ export function useOnboarding() {
   const [error, setError] = useState<Error | null>(null);
   const [isServerStateReady, setIsServerStateReady] = useState(false);
 
-  // Dependencies for auto-detection
   const { sources, loading: sourcesLoading } = useSources();
   const { transactions, loading: transactionsLoading } = useTransactions();
-  const { userData, loading: userDataLoading, isConfigured: hasIdentity } = useUserData();
+  const { loading: userDataLoading, isConfigured: hasIdentity } = useUserData();
   const { hasGmailIntegration, loading: emailLoading } = useEmailIntegrations();
 
   // Guard against duplicate initialization attempts while awaiting listener updates
   const hasInitializedFromMissingDoc = useRef(false);
-
-  const ctx: OperationsContext = useMemo(
-    () => ({
-      db,
-      userId: userId ?? "",
-    }),
-    [userId]
-  );
 
   // Real-time listener for onboarding state. All initial state transitions
   // are deferred via queueMicrotask so they happen event-handler-style rather
@@ -89,13 +74,7 @@ export function useOnboarding() {
         }
 
         if (snapshot.exists()) {
-          const nextState = snapshot.data() as OnboardingState;
-          console.log("[Onboarding] Snapshot update:", {
-            isComplete: nextState.isComplete,
-            hasSeenCompletion: nextState.hasSeenCompletion,
-            currentStep: nextState.currentStep,
-          });
-          setState(nextState);
+          setState(snapshot.data() as OnboardingState);
           setLoading(false);
           return;
         }
@@ -109,11 +88,11 @@ export function useOnboarding() {
           return;
         }
 
+        // No document yet: the server creates it (and starts the trial). The listener
+        // above delivers the result.
         hasInitializedFromMissingDoc.current = true;
         try {
-          const newState = await initializeOnboarding(ctx);
-          setState(newState);
-          setLoading(false);
+          await callFunction("initOnboarding", {});
         } catch (err) {
           hasInitializedFromMissingDoc.current = false;
           console.error("Error initializing onboarding:", err);
@@ -132,11 +111,23 @@ export function useOnboarding() {
       cancelled = true;
       unsubscribe();
     };
-  }, [userId, ctx]);
+  }, [userId]);
 
-  // Auto-detect step completion based on existing data
+  // Ask the server to re-check the steps when the data they depend on changes. The
+  // signature only decides WHEN to ask; the rules are the server's. Completed
+  // onboarding never reopens, so nothing is asked once it is done.
+  const dataSignature = [
+    hasIdentity,
+    hasGmailIntegration,
+    sources.length,
+    transactions.length,
+    transactions.filter((t) => t.partnerId).length,
+    transactions.filter((t) => (t.fileIds && t.fileIds.length > 0) || t.noReceiptCategoryId).length,
+  ].join("|");
+  const lastSyncedSignature = useRef<string | null>(null);
+  const syncing = useRef(false);
+
   useEffect(() => {
-    // Wait until everything is loaded and onboarding state has synced from server
     if (
       !isServerStateReady ||
       !state ||
@@ -145,98 +136,32 @@ export function useOnboarding() {
       transactionsLoading ||
       userDataLoading ||
       emailLoading ||
-      !userId
+      !userId ||
+      state.isComplete
     ) {
       return;
     }
+    if (lastSyncedSignature.current === dataSignature || syncing.current) return;
 
-    // Once onboarding is completed (including explicit "Skip setup"),
-    // do not auto-reopen it based on subsequent data checks.
-    if (state.isComplete) {
-      return;
-    }
-
-    // Check each step and complete based on current conditions
-    const syncStepsWithData = async () => {
-      const isDataOnly = state.track === "data_only";
-
-      // For data_only track, skip directly to bank steps
-      if (!isDataOnly) {
-        // Step 0: Set identity (name/company)
-        if (!state.completedSteps.set_identity && hasIdentity) {
-          await completeOnboardingStep(ctx, "set_identity");
-          return;
-        }
-
-        // Step 1: Connect email (only check if step 0 is done, skip if user explicitly skipped)
-        const hasEmailConnected = hasGmailIntegration;
-        const isEmailSkipped = !!state.skippedSteps?.connect_email;
-        if (state.completedSteps.set_identity && !isEmailSkipped) {
-          if (!state.completedSteps.connect_email && hasEmailConnected) {
-            await completeOnboardingStep(ctx, "connect_email");
-            return;
-          }
-        }
-
-        // Only proceed to bank steps if email step is done or skipped
-        if (!state.completedSteps.connect_email) return;
-      }
-
-      // Bank steps (shared by both tracks)
-      const hasSources = sources.length > 0;
-      if (!state.completedSteps.add_bank_account && hasSources) {
-        await completeOnboardingStep(ctx, "add_bank_account", sources[0]?.id);
-        return;
-      }
-
-      const hasTransactions = transactions.length > 0;
-      if (state.completedSteps.add_bank_account) {
-        if (!state.completedSteps.import_transactions && hasTransactions) {
-          await completeOnboardingStep(ctx, "import_transactions");
-          return;
-        }
-      }
-
-      // test_integration step (data_only only): no auto-detection — user skips manually
-      if (isDataOnly) return;
-
-      // Full service: additional steps
-      const transactionWithPartner = transactions.find((t) => t.partnerId);
-      if (state.completedSteps.import_transactions) {
-        if (!state.completedSteps.assign_partner && transactionWithPartner) {
-          await completeOnboardingStep(ctx, "assign_partner", transactionWithPartner.id);
-          return;
-        }
-      }
-
-      const transactionWithFileOrCategory = transactions.find(
-        (t) =>
-          (t.fileIds && t.fileIds.length > 0) ||
-          t.noReceiptCategoryId
-      );
-      if (state.completedSteps.assign_partner) {
-        if (!state.completedSteps.attach_file && transactionWithFileOrCategory) {
-          await completeOnboardingStep(ctx, "attach_file", transactionWithFileOrCategory.id);
-          return;
-        }
-      }
-    };
-
-    syncStepsWithData();
+    syncing.current = true;
+    callFunction("syncOnboarding", {})
+      .then(() => {
+        lastSyncedSignature.current = dataSignature;
+      })
+      .catch((err) => console.error("Error syncing onboarding:", err))
+      .finally(() => {
+        syncing.current = false;
+      });
   }, [
     state,
-    sources,
-    transactions,
     loading,
     sourcesLoading,
     transactionsLoading,
     userDataLoading,
     emailLoading,
-    hasIdentity,
-    hasGmailIntegration,
     userId,
-    ctx,
     isServerStateReady,
+    dataSignature,
   ]);
 
   const resolvedState = isServerStateReady ? state : null;
@@ -251,84 +176,61 @@ export function useOnboarding() {
       emailLoading
     );
 
-  // Track-filtered steps
-  const track = resolvedState?.track;
-  const filteredSteps = useMemo(
-    () => getStepsForTrack(track),
-    [track]
-  );
-
-  // Get current step config
   const currentStepConfig = useMemo((): OnboardingStepConfig | null => {
     if (!resolvedState) return null;
-    return filteredSteps.find((s) => s.id === resolvedState.currentStep) || null;
-  }, [resolvedState, filteredSteps]);
+    return ONBOARDING_STEPS.find((s) => s.id === resolvedState.currentStep) || null;
+  }, [resolvedState]);
 
-  // Calculate progress based on filtered steps
   const progress = useMemo(() => {
-    if (!resolvedState) {
-      return { completed: 0, total: filteredSteps.length, percentage: 0 };
-    }
-    const completed = filteredSteps.filter(
-      (s) => !!resolvedState.completedSteps[s.id]
-    ).length;
-    return {
-      completed,
-      total: filteredSteps.length,
-      percentage: Math.round((completed / filteredSteps.length) * 100),
-    };
-  }, [resolvedState, filteredSteps]);
+    const total = ONBOARDING_STEPS.length;
+    if (!resolvedState) return { completed: 0, total, percentage: 0 };
+    const completed = ONBOARDING_STEPS.filter((s) => !!resolvedState.completedSteps[s.id]).length;
+    return { completed, total, percentage: Math.round((completed / total) * 100) };
+  }, [resolvedState]);
 
-  // Check if a step is completed
   const isStepCompleted = useCallback(
-    (step: OnboardingStep): boolean => {
-      return !!resolvedState?.completedSteps[step];
-    },
+    (step: OnboardingStep): boolean => !!resolvedState?.completedSteps[step],
     [resolvedState]
   );
 
-  // Check if a step was explicitly skipped
   const isStepSkipped = useCallback(
-    (step: OnboardingStep): boolean => {
-      return !!resolvedState?.skippedSteps?.[step];
-    },
+    (step: OnboardingStep): boolean => !!resolvedState?.skippedSteps?.[step],
     [resolvedState]
   );
 
-  // Skip entire onboarding
   const skipOnboarding = useCallback(async () => {
     try {
-      await skipOnboardingOp(ctx);
+      await callFunction("updateOnboarding", { action: "skip_all" });
     } catch (err) {
       console.error("Error skipping onboarding:", err);
     }
-  }, [ctx]);
+  }, []);
 
-  // Skip a single step
-  const skipStep = useCallback(
-    async (step: OnboardingStep) => {
-      try {
-        await skipOnboardingStep(ctx, step);
-      } catch (err) {
-        console.error("Error skipping step:", err);
-      }
-    },
-    [ctx]
-  );
+  const skipStep = useCallback(async (step: OnboardingStep) => {
+    try {
+      await callFunction("updateOnboarding", { action: "skip_step", step });
+    } catch (err) {
+      console.error("Error skipping step:", err);
+    }
+  }, []);
 
-  // Mark completion seen
   const dismissCompletion = useCallback(async () => {
     try {
-      console.log("[Onboarding] Dismissing completion dialog.");
-      await markOnboardingCompletionSeen(ctx);
-      console.log("[Onboarding] Marked completion as seen.");
-      const docRef = doc(db, "users", userId ?? "", "settings", "onboarding");
-      const snapshot = await getDoc(docRef);
-      console.log("[Onboarding] Readback after dismiss:", snapshot.data());
+      await callFunction("updateOnboarding", { action: "completion_seen" });
     } catch (err) {
       console.error("Error dismissing completion:", err);
     }
-  }, [ctx, userId]);
+  }, []);
+
+  const markWelcomeSeen = useCallback(async () => {
+    await callFunction("updateOnboarding", { action: "welcome_seen" });
+  }, []);
+
+  // A fresh account sees the welcome screen once. Accounts from the removed track
+  // choice have already been through a welcome.
+  const needsWelcome = resolvedState
+    ? !resolvedState.isComplete && !resolvedState.welcomeSeen && !resolvedState.track
+    : false;
 
   return {
     // State
@@ -336,9 +238,8 @@ export function useOnboarding() {
     loading: resolvedLoading,
     error,
 
-    // Track
-    track,
-    needsWelcome: resolvedState ? !resolvedState.track && !resolvedState.isComplete : false,
+    origin: resolvedState?.origin ?? "web",
+    needsWelcome,
 
     // Derived state
     isOnboarding: resolvedState ? !resolvedState.isComplete : false,
@@ -348,8 +249,8 @@ export function useOnboarding() {
     currentStep: resolvedState?.currentStep ?? null,
     currentStepConfig,
 
-    // Step info (filtered by track)
-    steps: filteredSteps,
+    // Step info
+    steps: ONBOARDING_STEPS,
     isStepCompleted,
     isStepSkipped,
     progress,
@@ -358,5 +259,6 @@ export function useOnboarding() {
     dismissCompletion,
     skipOnboarding,
     skipStep,
+    markWelcomeSeen,
   };
 }

@@ -602,6 +602,71 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   // Partners
   // =========================================================================
   {
+    name: "create_identity_entity",
+    description:
+      "Create the user's identity: their personal entity (a freelancer) or a company they run. " +
+      "Use it when list_identity_entities is empty, then update_identity_entity for later changes. " +
+      "FiBuKI needs it to tell the user's own issued invoices from the invoices they receive, so ask for the " +
+      "name, the UID (vatId, like ATU12345678), their own IBANs and any other names the business uses, and show " +
+      "what you will save before saving. Refuses a second personal entity or a company with the same name.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        type: { type: "string", enum: ["person", "company"], description: "person = the user as an individual, company = a business they run" },
+        name: { type: "string", description: "Name as it appears on invoices" },
+        vatId: { type: "string", description: "UID, e.g. ATU12345678 (optional)" },
+        ibans: { type: "array", items: { type: "string" }, description: "The user's own IBANs, so transfers between their accounts are recognised (optional)" },
+        aliases: { type: "array", items: { type: "string" }, description: "Other names or spellings the business uses (optional)" },
+        address: {
+          type: "object",
+          description: "Postal address for issued invoices (optional)",
+          properties: {
+            street: { type: "string" },
+            postalCode: { type: "string" },
+            city: { type: "string" },
+            country: { type: "string", description: "ISO 3166-1 alpha-2, e.g. AT" },
+          },
+        },
+      },
+      required: ["type", "name"],
+    },
+  },
+  {
+    name: "get_onboarding_status",
+    description:
+      "Where the user is in setting up FiBuKI: identity, mailbox, bank account, transactions, first partner, first document. " +
+      "Each step is done, skipped or open, with the page on fibuki.com where it is done. Records any step the user's data " +
+      "has completed since the last look, using the same rules as the web app, so call it at the start of a session and " +
+      "after the user finished something. Starts onboarding for a user who has none.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        origin: {
+          type: "string",
+          enum: ["web", "chatgpt", "codex", "claude", "api"],
+          description: "Which assistant is calling. Only used the first time, to remember where the user came from.",
+        },
+      },
+    },
+  },
+  {
+    name: "skip_onboarding_step",
+    description:
+      "Skip one onboarding step the user does not want (for example the mailbox step when they prefer to use their " +
+      "assistant's mail). Only on the user's say-so. Returns the new status.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        step: {
+          type: "string",
+          enum: ["set_identity", "connect_email", "add_bank_account", "import_transactions", "assign_partner", "attach_file"],
+          description: "The step to skip",
+        },
+      },
+      required: ["step"],
+    },
+  },
+  {
     name: "list_partners",
     description:
       "List user partners with optional search. Returns { partners, nextCursor, count } — `count` is " +

@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter, usePathname } from "next/navigation";
+import { useTranslations } from "next-intl";
 import {
   Building2,
   Upload,
@@ -165,9 +166,6 @@ function isUserInProgressOnStep(stepId: OnboardingStep, pathname: string): boole
     case "import_transactions":
       // User is on import page for any source
       return pathname.match(/^\/sources\/[^/]+\/import/) !== null;
-    case "test_integration":
-      // User is on integrations page or a specific integration sub-page
-      return pathname === "/settings/integrations" || pathname.startsWith("/integrations/");
     case "assign_partner":
       // User is on transactions page (assigning partner)
       return pathname === "/transactions";
@@ -182,6 +180,7 @@ function isUserInProgressOnStep(stepId: OnboardingStep, pathname: string): boole
 }
 
 export function OnboardingSidebar() {
+  const t = useTranslations("onboarding.sidebar");
   const router = useRouter();
   const pathname = usePathname();
   const {
@@ -193,7 +192,6 @@ export function OnboardingSidebar() {
     loading,
     skipOnboarding,
     skipStep,
-    track,
   } = useOnboarding();
 
   const handleNavigate = (route: string) => {
@@ -214,14 +212,8 @@ export function OnboardingSidebar() {
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="p-4 border-b">
-        <h2 className="font-semibold text-lg">
-          {track === "data_only" ? "Set Up Bank Data" : "Getting Started"}
-        </h2>
-        <p className="text-sm text-muted-foreground mt-1">
-          {track === "data_only"
-            ? "Connect your bank to start using the API"
-            : "Complete these steps to set up your account"}
-        </p>
+        <h2 className="font-semibold text-lg">{t("title")}</h2>
+        <p className="text-sm text-muted-foreground mt-1">{t("subtitle")}</p>
 
         {/* Progress bar */}
         <div className="mt-4">

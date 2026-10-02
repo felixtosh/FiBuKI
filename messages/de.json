@@ -381,5 +381,31 @@
     "transactions": "{done} von {total} Transaktionen sind dokumentiert: mit einem Beleg oder stattdessen mit einer Kategorie ohne Beleg.",
     "transactionsDeductible": "{percent} % sind mit einer Rechnung belegt, die zum Vorsteuerabzug berechtigt (§ 11 UStG). Eine reine Zahlungsbestätigung reicht dafür nicht.",
     "followsFilters": "Die Zahl folgt den Filtern und der Suche oben."
+  },
+  "onboarding": {
+    "welcome": {
+      "title": "Willkommen bei FiBuKI",
+      "intro": "FiBuKI macht aus deinen Bankbuchungen, Belegen und Rechnungen saubere Daten für deinen Steuerberater. Du sortierst einmal im Monat statt einmal im Quartal.",
+      "identityWhy": "Wir beginnen damit, wer du bist, damit deine eigenen Rechnungen nie mit Ausgaben verwechselt werden.",
+      "start": "Mit deinen Angaben beginnen",
+      "alsoElsewhere": "FiBuKI funktioniert auch in ChatGPT, Claude und Codex.",
+      "connectedTitle": "Du bist mit {app} verbunden",
+      "connectedBody": "Arbeite weiter in {app}, dort werden deine Belege für dich zugeordnet, oder mach hier in FiBuKI weiter. Beide sehen dieselben Daten, du kannst jederzeit wechseln.",
+      "continueHere": "In FiBuKI weitermachen",
+      "backToApp": "Zurück zu {app}"
+    },
+    "completion": {
+      "title": "Alles eingerichtet!",
+      "description": "Glückwunsch, die Einrichtung ist abgeschlossen. Dein Konto hilft dir jetzt bei Buchungen und Belegen.",
+      "next": "Wie es weitergeht:",
+      "assistant": "KI-Assistent hilft beim Kategorisieren von Buchungen",
+      "matching": "Automatische Beleg-Zuordnung ist aktiv",
+      "partners": "Partner-Vorschläge für schnelleres Buchen",
+      "start": "Los geht's mit FiBuKI"
+    },
+    "sidebar": {
+      "title": "Erste Schritte",
+      "subtitle": "Schließe diese Schritte ab, um dein Konto einzurichten"
+    }
   }
 }

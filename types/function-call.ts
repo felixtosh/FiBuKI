@@ -143,7 +143,9 @@ export type CloudFunctionName =
   // Automation mode
   | "updateAutomationMode"
   // Onboarding
-  | "setOnboardingTrack"
+  | "initOnboarding"
+  | "syncOnboarding"
+  | "updateOnboarding"
   // Access requests
   | "submitAccessRequest"
   | "approveAccessRequest"

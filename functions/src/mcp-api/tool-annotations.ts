@@ -77,6 +77,9 @@ export const WRITE_TOOLS = [
   "auto_connect_file_suggestions",
   "upload_file",
   "update_identity_entity",
+  "create_identity_entity",
+  "get_onboarding_status", // records steps the user's data completed; idempotent
+  "skip_onboarding_step",
   "set_partner_billing_cycle",
   "create_partner",
   "update_partner",

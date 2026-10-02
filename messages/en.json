@@ -381,5 +381,31 @@
     "transactions": "{done} of {total} Transactions are documented: they have a File, or a no-receipt category instead.",
     "transactionsDeductible": "{percent}% are documented by an invoice that allows the VAT deduction (§ 11 UStG). A payment confirmation alone does not.",
     "followsFilters": "The count follows the filters and search above."
+  },
+  "onboarding": {
+    "welcome": {
+      "title": "Welcome to FiBuKI",
+      "intro": "FiBuKI turns your bank lines, receipts and invoices into clean data for your Steuerberater. You do the sorting once a month instead of once a quarter.",
+      "identityWhy": "We start with who you are, so your own invoices are never mistaken for expenses.",
+      "start": "Start with who you are",
+      "alsoElsewhere": "FiBuKI also works from ChatGPT, Claude and Codex.",
+      "connectedTitle": "You're connected to {app}",
+      "connectedBody": "Keep working in {app} and it will match your documents for you, or continue here in FiBuKI. Both see the same data, so you can switch any time.",
+      "continueHere": "Continue in FiBuKI",
+      "backToApp": "Back to {app}"
+    },
+    "completion": {
+      "title": "You're all set!",
+      "description": "Congratulations! You've completed the setup. Your account is now ready to help you manage your transactions and receipts.",
+      "next": "What's next:",
+      "assistant": "AI assistant ready to help categorize transactions",
+      "matching": "Automatic receipt matching enabled",
+      "partners": "Partner suggestions for faster bookkeeping",
+      "start": "Start using FiBuKI"
+    },
+    "sidebar": {
+      "title": "Getting Started",
+      "subtitle": "Complete these steps to set up your account"
+    }
   }
 }
