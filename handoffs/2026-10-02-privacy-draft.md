@@ -20,9 +20,21 @@ something that needs a choice, not a lookup.
    Note for review: GDPR storage limitation still applies, so "kept until you ask us to delete them" with a stated
    deletion route is the honest minimum. A retention job can follow.
 
+5. Server facts (checked 2026-10-02, read-only, supplied by Felix): Gemini through an API key (not Vertex; models
+   gemini-3.1-flash-lite and gemini-3.8-flash); Anthropic key set but zero calls in 14 days, chat runs on Gemini; Vision
+   unused; LangFuse disabled; Stripe active; mail through Resend (smtp.resend.com); backups nightly 03:10, GPG-encrypted,
+   14 days, copied off-site to a Hetzner Storage Box, weekly restore test passing; server Hetzner Cloud nbg1-dc3, disk not
+   encrypted; Hetzner holds ISO/IEC 27001. Block F is rewritten on these facts. Remaining `[CONFIRM]` items are listed at
+   the end of F.
+6. `[DECISION]` Anthropic. Recommendation: do not list it as a processor of the in-app chat, because nothing is sent to
+   it, and a policy that names a processor that receives no data is as wrong as one that omits a real one. Block F removes
+   that entry and its transfer bullet. Anthropic stays named in block A as a provider the user may connect themselves. If
+   the chat is ever switched back to Anthropic, add the entry back BEFORE the switch (the key being set makes that a
+   one-line config change, so it is easy to do by accident).
+
 ## A. New third parties: assistants (add to `services` and `internationalTransfers`)
 
-`services.assistants` (new entry, after `anthropic`)
+`services.assistants` (new entry, after `gemini`, see block F)
 
 EN, name: `AI assistants you connect (OpenAI ChatGPT and Codex, Anthropic Claude)`
 EN, purpose: `Only if you connect one of them to FiBuKI. The assistant can read data from your FiBuKI account and make
@@ -132,46 +144,110 @@ DE, retention: `• Zugangsanfragen werden aufbewahrt, bis Sie uns um Löschung 
 Legal basis for D: legitimate interest (Art. 6(1)(f)), handling a request the person made themselves; add to
 `legalBasis` or cover it under the existing legitimate-interest bullet.
 
-## F. Correction: the page still describes Firebase / Google Cloud (production is Hetzner)
+## F. Correction: the page describes Firebase / Google Cloud; production is Hetzner, Gemini API, Stripe, Resend
 
-Replace, key by key (`privacy.sections.*`). Sourced from `deploy/selfhost/README-hetzner.md`, `backup.sh`, the compose files.
+Final replacement text, key by key (`privacy.sections.*`), on the confirmed server facts above. Entries not listed stay
+as they are (`gmailApi`, `googleUserData.*`, `truelayer`).
 
-`services.firebase` (rename the entry, keep the key or change the key and the page that renders it)
+### services
+
+| key | action |
+|---|---|
+| `firebase` | replace with the hosting entry below |
+| `cloudVision` | delete (not used) |
+| `vertexAi` | replace with the `gemini` entry below |
+| `anthropic` | delete `[DECISION]` item 6 |
+| `langfuse` | delete (disabled) |
+| `assistants` | add (block A) |
+| `stripe` | add |
+| `resend` | add |
+
+`services.firebase` becomes (rename the key to `hosting`, and the renderer in `app/(marketing)/privacy/page.tsx` with it)
 - EN name `Hetzner Online GmbH (hosting)`; purpose `Hosting of the application, the database and the file storage on servers in
-  Nuremberg, Germany.`
+  Nuremberg, Germany. Encrypted backups are also copied to a Hetzner Storage Box. Hetzner is certified under ISO/IEC 27001.`
 - DE name `Hetzner Online GmbH (Hosting)`; purpose `Hosting der Anwendung, der Datenbank und der Dateispeicherung auf Servern in
-  Nürnberg, Deutschland.`
+  Nürnberg, Deutschland. Verschlüsselte Backups werden zusätzlich auf eine Hetzner Storage Box kopiert. Hetzner ist nach
+  ISO/IEC 27001 zertifiziert.`
+- Link Hetzner's certificate page next to the ISO sentence. `[CONFIRM]` the exact URL before it goes in (the page text is plain
+  strings today, so a link needs the page component to render one).
 
-`internationalTransfers.content`, first sentence
-- EN `Your data is stored on servers in Germany (Hetzner, Nuremberg). Some processing involves transfers to the United States:`
+`services.vertexAi` becomes `services.gemini`
+- EN name `Google Gemini API`; purpose `AI-powered document analysis, categorization, matching of receipts and the in-app
+  assistant. The documents and text involved are sent to Google for processing.`
+- DE name `Google Gemini API`; purpose `KI-gestützte Dokumentenanalyse, Kategorisierung, Zuordnung von Belegen und der
+  In-App-Assistent. Die betreffenden Dokumente und Texte werden zur Verarbeitung an Google gesendet.`
+
+`services.stripe` (new)
+- EN name `Stripe`; purpose `Payment processing for subscriptions. Stripe receives your billing details; we do not store card
+  numbers.`
+- DE name `Stripe`; purpose `Zahlungsabwicklung für Abonnements. Stripe erhält Ihre Rechnungsdaten; wir speichern keine
+  Kartennummern.`
+- `[CONFIRM]` the contracting Stripe entity (Stripe Payments Europe, Ltd. for EEA accounts) and that checkout is Stripe-hosted,
+  which is what the "no card numbers" sentence assumes.
+
+`services.resend` (new)
+- EN name `Resend`; purpose `Sending of emails from FiBuKI, such as invitations, password resets and notifications.`
+- DE name `Resend`; purpose `Versand von E-Mails von FiBuKI, etwa Einladungen, Passwort-Zurücksetzungen und Benachrichtigungen.`
+
+### internationalTransfers.content
+
+First sentence
+- EN `Your data is stored on servers in Germany (Hetzner, Nuremberg). Some processing involves transfers outside the European
+  Union, in particular to the United States:`
 - DE `Ihre Daten werden auf Servern in Deutschland gespeichert (Hetzner, Nürnberg). Einige Verarbeitungen umfassen jedoch
-  Übermittlungen in die Vereinigten Staaten:`
+  Übermittlungen außerhalb der Europäischen Union, insbesondere in die Vereinigten Staaten:`
 
-`dataProtection.content`
-- Line "Encryption in transit ... TLS 1.3": change to `TLS` (Caddy terminates TLS with Let's Encrypt certificates; the repo does
-  not pin 1.3). `[CONFIRM]` if you want to keep "1.3".
-- Line "Encryption at rest ... Google Cloud Firestore ... Cloud Storage ... AES-256": NOT TRUE as written for Hetzner. The repo
-  configures no disk encryption (no LUKS); the database is Postgres on the server disk and files are in SeaweedFS. `[DECISION]`
-  either enable disk encryption on the server and keep an at-rest sentence, or replace it with only what is true:
-  EN `Backups are encrypted (GPG) before they leave the server.` / DE `Backups werden vor dem Verlassen des Servers
-  verschlüsselt (GPG).`
-- Line "Our services run on Google Cloud Platform ... SOC 2, ISO 27001": EN `Our services run on servers of Hetzner Online
-  GmbH in Germany.` / DE `Unsere Dienste laufen auf Servern der Hetzner Online GmbH in Deutschland.` Add Hetzner's
-  certifications only after you confirm them. `[CONFIRM]`
+Bullets
+- Delete the Anthropic (chat) bullet and the "Google Cloud AI (Vertex AI, Cloud Vision)" bullet.
+- Add, EN: `• Google (Gemini API): Documents and text sent for analysis are processed by Google, which may do so outside the EU.
+  This is covered by Google's data processing terms and standard contractual clauses.`
+  DE: `• Google (Gemini API): Zur Analyse gesendete Dokumente und Texte werden von Google verarbeitet, möglicherweise außerhalb der
+  EU. Dies ist durch Googles Datenverarbeitungsbedingungen und Standardvertragsklauseln abgedeckt.`
+- Add, EN: `• Resend (email delivery): Email addresses and message content are processed by Resend, a US provider. [safeguard]`
+  DE: `• Resend (E-Mail-Versand): E-Mail-Adressen und Nachrichteninhalte werden von Resend, einem US-Anbieter, verarbeitet.
+  [Garantie]`
+- Keep the connected-assistants bullet from block A.
+- `[CONFIRM]` for Gemini and Resend which safeguard actually applies (SCCs in the provider's DPA, or the EU-US Data Privacy
+  Framework certification of that provider) and name that one; "Google's data processing terms" holds only if you are on the
+  paid Gemini API tier, where Google does not use API data to improve its models. On the free tier it can, which would be a
+  different and much heavier disclosure. Check the billing tier of the key.
 
-`dataProtection.retention.content`, backups line
-- Local backups are GPG-encrypted and pruned after 14 days (`backup.sh`, `RETAIN_DAYS=14`), so "retained for up to 14 days"
-  holds for the local copy. `[CONFIRM]` the cron is installed (the Hetzner README said it was not at the time it was
-  written) and what an offsite copy (rclone to a storage box) retains, since that is also a backup.
+### dataProtection.content
 
-Services whose status only the server knows (set in its `.env`; the repo supports them but cannot say they are on) `[CONFIRM]`:
-- Gemini for extraction and matching: via Vertex AI (EU) or the Gemini API with an API key? The page says Vertex AI. They
-  differ in where data goes and in the contract that covers it.
-- Anthropic: the page says it powers the in-app chat. On self-host the documented chat model is Gemini
-  (`FIBUKI_CHAT_MODEL`); is Anthropic still used in production?
-- Google Cloud Vision (OCR), LangFuse: still in use after the move?
-- Missing from the page today: Stripe (payments), the outbound mail provider behind `FIBUKI_SMTP_*` (name it), FinAPI
-  (bank connection, if live; TrueLayer is listed), Google sign-in. Each needs an entry if it is active.
+- Transit line: `TLS` instead of `TLS 1.3` (Caddy; the repo does not pin the version). `[CONFIRM]` only if you want to keep "1.3".
+- At-rest line, replace with what is true (disk not encrypted, backups are):
+  EN `Backups are encrypted (GPG) before they leave the server.`
+  DE `Backups werden vor dem Verlassen des Servers verschlüsselt (GPG).`
+  Do not claim database or file encryption at rest. If you later enable disk encryption on the server, add that sentence then.
+- Infrastructure line, replace:
+  EN `Our services run on servers of Hetzner Online GmbH in Germany, which is certified under ISO/IEC 27001.`
+  DE `Unsere Dienste laufen auf Servern der Hetzner Online GmbH in Deutschland, die nach ISO/IEC 27001 zertifiziert ist.`
+
+### dataProtection.retention.content, backups line
+
+EN `Database backups are encrypted, kept for 14 days for disaster recovery and then automatically deleted. An encrypted copy is
+also kept off-site on a Hetzner Storage Box.` DE `Datenbank-Backups werden verschlüsselt, 14 Tage zur Notfallwiederherstellung
+aufbewahrt und danach automatisch gelöscht. Eine verschlüsselte Kopie wird zusätzlich extern auf einer Hetzner Storage Box
+aufbewahrt.` `[CONFIRM]` how long the Storage Box copy is kept; if longer than 14 days, say so, because "deleted after 14 days"
+would then be untrue for that copy.
+
+### Other places that still name the old stack or removed services
+
+- `legalBasis.content`: the legitimate-interest bullet mentions "AI quality monitoring". LangFuse, which did that, is
+  disabled; reword to usage analytics only unless something else does the monitoring. `[CONFIRM]`
+- `automatedProcessing.content` and `googleUserData.*`: check for "Vertex" or "Firebase" wording (not reviewed line by line here).
+- The Gmail "Limited Use" text is about Gmail data; Gemini now processes extracted text from those emails, so confirm the
+  sentence about sending data to AI providers still matches the Google API Services User Data Policy for your setup.
+  `[CONFIRM]` (Gemini API, not Vertex, is the part that changed).
+
+### Still `[CONFIRM]` after the server facts
+
+1. Gemini API billing tier of the key (paid vs free) and the safeguard for Gemini and Resend (above).
+2. Off-site backup retention on the Storage Box.
+3. Hetzner certificate page URL; whether the page component can render a link.
+4. TrueLayer and FinAPI: `FINAPI_*` and `TRUELAYER_*` are in the compose files; the server facts did not say whether either is
+   live. TrueLayer stays listed; add FinAPI if it is.
+5. Stripe contracting entity and hosted checkout.
 
 ## D2. Rate limiting of connection registration (one line for `dataCollection`, optional)
 
