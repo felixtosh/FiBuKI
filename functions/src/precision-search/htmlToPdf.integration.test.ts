@@ -29,6 +29,7 @@ let base = "";
 const hits: string[] = [];
 
 beforeAll(async () => {
+  console.log(`DIAG beforeAll start ${Date.now()}`);
   if (!CHROME) return;
   process.env.FIBUKI_CHROME_PATH = CHROME;
   internal = http.createServer((req, res) => {
@@ -51,11 +52,13 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
+  console.log(`DIAG afterAll start ${Date.now()}`);
   if (!CHROME) return;
   const { closeBrowser } = await import("./htmlToPdf");
   await closeBrowser();
   internal.closeAllConnections();
   await new Promise((resolve) => internal.close(resolve));
+  console.log(`DIAG afterAll end ${Date.now()}`);
 }, 30_000);
 
 beforeEach(() => {

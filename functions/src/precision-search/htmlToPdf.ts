@@ -12,6 +12,9 @@ import { guardPage } from "./renderGuard";
 import chromium from "@sparticuz/chromium";
 import puppeteer, { Browser } from "puppeteer-core";
 
+const T0 = Date.now();
+const diag = (m: string) => console.log(`DIAG +${Date.now() - T0}ms ${m}`);
+
 export interface PdfConversionResult {
   pdfBuffer: Buffer;
   pageCount: number;
@@ -111,8 +114,10 @@ async function getBrowser(): Promise<Browser> {
 
   // Cleared on failure too: a rejected launch kept here would be handed to every later caller,
   // and no PDF would render again until the process restarted.
+  diag("launch start");
   try {
     browserInstance = await browserLaunchPromise;
+    diag("launch done");
   } finally {
     browserLaunchPromise = null;
   }
@@ -136,6 +141,7 @@ export async function closeBrowser(): Promise<void> {
     new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 5000)),
   ]);
   if (!closed) browser.process()?.kill("SIGKILL");
+  diag(`closeBrowser closed=${closed}`);
 }
 
 /**
@@ -167,11 +173,14 @@ export async function convertHtmlToPdf(
   }
 ): Promise<PdfConversionResult> {
   const browser = await getBrowser();
+  diag("got browser");
   const page = await browser.newPage();
+  diag("newPage");
 
   try {
     // The HTML is untrusted: no script, and no request that reaches our own network (renderGuard.ts).
     await guardPage(page);
+    diag("guarded");
 
     // Detect if the input is already a complete HTML document (e.g. captured from browser extension)
     const isFullDocument = /^\s*<!DOCTYPE\s+html/i.test(html) || /^\s*<html[\s>]/i.test(html);
@@ -240,6 +249,7 @@ export async function convertHtmlToPdf(
       timeout: 15000,
     });
 
+    diag("setContent");
     // Brief wait for any inline styles to apply
     await new Promise((resolve) => setTimeout(resolve, 500));
 
@@ -254,6 +264,7 @@ export async function convertHtmlToPdf(
       },
     });
 
+    diag("pdf");
     // Estimate page count (rough calculation based on buffer size)
     // A typical A4 PDF page is ~3-5KB for text, more with images
     const pageCount = Math.max(1, Math.ceil(pdfBuffer.length / 50000));
@@ -264,6 +275,7 @@ export async function convertHtmlToPdf(
     };
   } finally {
     await page.close();
+    diag("page closed");
   }
 }
 
