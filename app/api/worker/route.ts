@@ -9,6 +9,7 @@ export const dynamic = "force-dynamic";
 import { NextResponse, after } from "next/server";
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { getOwnedDoc, isUsablePartner, ownsAll } from "@/lib/auth/owned-doc";
 import { Timestamp, FieldValue } from "firebase-admin/firestore";
 import { HumanMessage } from "@langchain/core/messages";
 import { streamWorkerGraph } from "@/lib/agent/worker-graph";
@@ -281,6 +282,28 @@ function cleanTriggerContext(triggerContext?: WorkerTriggerContext): WorkerTrigg
   }
 
   return Object.keys(cleaned).length > 0 ? cleaned : undefined;
+}
+
+/**
+ * Whether every id in a trigger context belongs to the caller.
+ *
+ * The context arrives in the request body, and the run reads these documents
+ * (names and amounts land in the caller's notifications, ids in the agent's
+ * prompt). All users share one database, so an id that is not the caller's
+ * must stop the run before anything is read, written or echoed.
+ */
+async function triggerContextIsOwned(
+  userId: string,
+  ctx: WorkerTriggerContext | undefined
+): Promise<boolean> {
+  if (!ctx) return true;
+  const fileIds = [...(ctx.fileId ? [ctx.fileId] : []), ...(ctx.fileIds || [])];
+  if (fileIds.length > 0 && !(await ownsAll(db, "files", fileIds, userId))) return false;
+  if (ctx.transactionId && !(await getOwnedDoc(db, "transactions", ctx.transactionId, userId))) {
+    return false;
+  }
+  if (ctx.partnerId && !(await isUsablePartner(db, ctx.partnerId, userId))) return false;
+  return true;
 }
 
 function buildWorkerDedupeKey(
@@ -1082,6 +1105,9 @@ export async function POST(req: Request) {
     const runId = runRef.id;
 
     let effectiveTriggerContext = cleanTriggerContext(triggerContext);
+    if (!(await triggerContextIsOwned(userId, effectiveTriggerContext))) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
     let effectiveInitialPrompt = initialPrompt;
     let dedupeKey = buildWorkerDedupeKey(workerType, effectiveTriggerContext);
 
@@ -1116,6 +1142,12 @@ export async function POST(req: Request) {
       );
 
       effectiveTriggerContext = cleanTriggerContext(claim.triggerContext);
+      // The claim folds in file ids queued on the batch state, so the merged
+      // context is checked again rather than trusted.
+      if (!(await triggerContextIsOwned(userId, effectiveTriggerContext))) {
+        await finalizePartnerBatchRun(userId, effectiveTriggerContext!.partnerId!, runId, undefined, "unowned ids in batch");
+        return NextResponse.json({ error: "Not found" }, { status: 404 });
+      }
       effectiveInitialPrompt = buildPartnerBatchPrompt(
         effectiveTriggerContext!.partnerId!,
         effectiveTriggerContext!.fileIds || []

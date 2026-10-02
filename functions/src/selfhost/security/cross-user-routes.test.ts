@@ -61,6 +61,15 @@ vi.mock("@/lib/api/firebase-callable", () => ({
   }),
 }));
 
+// The worker's agent loop needs a model; what is under test is everything the
+// route does around it, so the loop finishes at once with no messages.
+vi.mock("@/lib/agent/worker-graph", () => ({
+  // eslint-disable-next-line require-yield
+  streamWorkerGraph: async function* () {
+    return;
+  },
+}));
+
 beforeAll(() => {
   enableInternalAuth();
   // The Gmail message read in convert-to-pdf goes straight to fetch.
@@ -188,5 +197,60 @@ describe("precision search status", () => {
     const { GET } = await import("@/app/api/precision-search/status/route");
     const res = await GET(asUser(ATTACKER, `/api/precision-search/status?transactionId=${V.transaction}`));
     await expectRefused(res, "precision-search/status");
+  });
+});
+
+describe("worker trigger context", () => {
+  async function attackerNotifications(): Promise<string> {
+    const snap = await getFirestore().collection(`users/${ATTACKER}/notifications`).get();
+    return JSON.stringify(snap.docs.map((d) => d.data()));
+  }
+
+  const run = async (triggerContext: Record<string, unknown>, workerType = "receipt_search") => {
+    const { POST } = await import("@/app/api/worker/route");
+    return POST(
+      asUser(ATTACKER, "/api/worker", {
+        body: { workerType, initialPrompt: "go", triggeredBy: "auto", triggerContext },
+      }),
+    );
+  };
+
+  it("positive control: my own Transaction's name reaches my notification", async () => {
+    const res = await run({ transactionId: A.transaction });
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect(await attackerNotifications()).toContain("Mine");
+  });
+
+  const attacks: Array<[string, Record<string, unknown>, string?]> = [
+    ["transactionId", { transactionId: V.transaction }],
+    ["fileId", { fileId: V.file }],
+    ["fileIds", { fileIds: [A.file, V.file] }],
+    ["partnerId", { partnerId: V.partner, fileIds: [A.file] }, "partner_file_batch"],
+    ["partner batch file", { partnerId: A.partner, fileIds: [V.file] }, "partner_file_batch"],
+    ["path-shaped id", { transactionId: `../transactions/${V.transaction}` }],
+  ];
+  for (const [label, ctx, type] of attacks) {
+    it(`refuses another user's ${label}`, async () => {
+      const res = await run(ctx, type);
+      await expectRefused(res, `worker(${label})`);
+      assertNoLeak(await attackerNotifications(), `worker(${label}) notifications`);
+      const runs = await getFirestore().collection(`users/${ATTACKER}/workerRuns`).get();
+      expect(runs.size, "no run is created for a refused context").toBe(0);
+    });
+  }
+
+  it("refuses a partner batch whose queued state names another user's File", async () => {
+    // The batch state lives under the attacker's own user doc; a planted
+    // queued id must not become the run's context.
+    await getFirestore().doc(`users/${ATTACKER}/partnerBatchStates/${A.partner}`).set({
+      userId: ATTACKER,
+      partnerId: A.partner,
+      status: "pending",
+      queuedFileIds: [V.file],
+      inflightFileIds: [],
+    });
+    const res = await run({ partnerId: A.partner, fileIds: [A.file] }, "partner_file_batch");
+    await expectRefused(res, "worker(planted batch state)");
+    assertNoLeak(await attackerNotifications(), "worker(planted batch state) notifications");
   });
 });

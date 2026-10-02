@@ -52,3 +52,26 @@ export async function ownsAll(
   }
   return true;
 }
+
+/**
+ * Whether `partnerId` is a Partner the caller may point their own records
+ * at: one of their own user Partners, or a Global Partner (cross-user by
+ * design, owned by nobody). Another user's Partner is never usable.
+ *
+ * `partnerType` narrows the lookup when the caller says which kind it is;
+ * without it, either kind is accepted.
+ */
+export async function isUsablePartner(
+  db: Firestore,
+  partnerId: unknown,
+  uid: string,
+  partnerType?: "user" | "global" | null
+): Promise<boolean> {
+  if (!isPlainDocId(partnerId) || !uid) return false;
+  if (partnerType !== "global" && (await getOwnedDoc(db, "partners", partnerId, uid))) {
+    return true;
+  }
+  if (partnerType === "user") return false;
+  const global = await db.collection("globalPartners").doc(partnerId).get();
+  return global.exists;
+}
