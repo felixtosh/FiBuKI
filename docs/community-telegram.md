@@ -46,16 +46,18 @@ comes after the account proof.
      so only admins post there.
 4. **Make the bot an admin of the support group.** Group → Administrators → Add →
    the bot, with only **Invite users via link** and **Ban users**.
-5. **Make Stefan an admin of the group and the channel.** Admins are never
-   removed by the bot and need no linked FiBuKI account. Also put his id in
-   `TELEGRAM_STAFF_IDS` so his join requests are always approved.
+5. **Make Stefan an admin of the group and the channel.** Admins never go
+   through a join request and are never removed by the bot, so that is all he
+   needs. `TELEGRAM_STAFF_IDS` is optional: only list someone there if a
+   non-admin without a connected FiBuKI account must be able to join via the
+   invite link.
 6. **Find the ids with the bot itself** (do this BEFORE step 8, because
    `getUpdates` stops working once a webhook is set):
    1. Write any message in the support group.
-   2. Have Felix and Stefan each send `/start` to the bot in a private chat.
-   3. Run `curl -s "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/getUpdates"`
-      and read the numbers: the group's `chat.id` (negative, like `-100…`) is
-      `TELEGRAM_COMMUNITY_CHAT_ID`; each person's `from.id` is their staff id.
+   2. Run `curl -s "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/getUpdates"`
+      and read the group's `chat.id` (negative, like `-100…`): that is
+      `TELEGRAM_COMMUNITY_CHAT_ID`. (Staff ids, if you want them, are the
+      `from.id` of anyone who sends `/start` to the bot.)
 7. **Put the values on the box** in `/opt/fibuki/.env` (the deploy never
    overwrites it):
 
@@ -64,7 +66,7 @@ comes after the account proof.
    TELEGRAM_BOT_USERNAME=bukibukibukibot
    TELEGRAM_WEBHOOK_SECRET=<random, e.g. openssl rand -hex 32>
    TELEGRAM_COMMUNITY_CHAT_ID=-100xxxxxxxxxx
-   TELEGRAM_STAFF_IDS=<felix id>,<stefan id>
+   TELEGRAM_STAFF_IDS=            # optional, comma-separated Telegram user ids
    TELEGRAM_ANNOUNCEMENTS_URL=<the channel invite link>
    ```
 
