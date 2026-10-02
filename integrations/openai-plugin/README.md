@@ -90,3 +90,13 @@ node --test tests/openai-plugin-csv.test.mjs tests/openai-plugin-upload.test.mjs
 - **No shell, no CSV import.** Plain ChatGPT has no shell, so the CSV skill sends the user to the web import. A server tool that reuses the same parsers would close this (phase 4).
 - **No tool lists Postfächer**, so the skills ask the user.
 - **Bank layouts are modelled, not collected.** Add anonymised real exports to `tests/fixtures/openai-plugin` and extend `references/austrian-bank-csvs.md`.
+
+## Widgets
+
+Three small in-chat views ship with the MCP server itself (`functions/src/mcp-api/widgets.ts`), not with this
+package: an onboarding checklist (`get_onboarding_status`), a progress board (`get_period_status`) and a match
+review (`list_pending_matches`). Hosts that support MCP Apps / the ChatGPT Apps SDK draw them next to the tool
+result; every other client just sees the tool's JSON, so the skills never depend on a widget. They only call
+tools that already exist (`connect_file_to_transaction`, `dismiss_transaction_suggestion`,
+`auto_connect_file_suggestions`, `upload_file`). In ChatGPT the progress board also offers a file picker that
+hands the chosen files to `upload_file` through its `file` argument.

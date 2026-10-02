@@ -5,7 +5,7 @@
 `claude/sharp-meitner-w8f2qf`. Not yet run in a real Codex, ChatGPT or Claude session, and the web
 changes of phases 3 and 4 were not clicked through in a browser (they are covered by component tests and
 an end-to-end test with the official MCP SDK client). The `upload_file` SSRF guard is done (below). Next:
-widgets (phase 4). The Chromium renderer is fixed (below).
+submission and real-client testing. The Chromium renderer is fixed (below) and the three widgets exist (below).
 
 Felix's brief: fewer features, great embedded execution, use the mail and file
 services the user already connected, maybe the browser, onboarding parity between
@@ -380,7 +380,7 @@ Check how the portable format declares optional apps (the examples use `.app.jso
     `functions/src/tools/handlers.ts:2864`; on Hetzner it reaches fibuki-api, Postgres,
     SeaweedFS). https only, public IPs after DNS resolve, size cap, timeout. Do this
     before anything sends it third-party URLs; it is a real finding today.
-  - Widgets + `get_period_status` (built from existing queries) + file params.
+  - Widgets + `get_period_status` + `list_pending_matches` + file params: DONE (see "Widgets as built").
   - Submission.
 
 ## Non-goals
@@ -393,3 +393,29 @@ Check how the portable format declares optional apps (the examples use `.app.jso
 - Branch from `main`, small commits, self-review the PR.
 - Every write a skill makes is one the user confirmed in that turn's batch.
 - If a step seems to need domain logic, stop and write it down here instead.
+
+
+## Widgets as built (phase 4)
+
+- `functions/src/mcp-api/widgets.ts`: three self-contained HTML documents served as `ui://fibuki/{onboarding,progress,review}.html`
+  (mime `text/html;profile=mcp-app`), via MCP `resources/list` / `resources/read` (server now advertises `resources`).
+  Tools carry `_meta.ui.resourceUri` (+ `openai/outputTemplate`): `get_onboarding_status` -> onboarding card,
+  `get_period_status` -> progress board, `list_pending_matches` -> match review. `upload_file` carries
+  `openai/fileParams: ["file"]`.
+- New read-only tools (`functions/src/tools/periodStatus.ts`): `get_period_status` (per-month covered / missing /
+  parked, newest 25 missing lines, waiting-suggestion count; "missing" is exactly the `list_transactions_needing_files`
+  rule, tested against it) and `list_pending_matches` (files with no connection whose best suggestion clears the bar,
+  using the suggestion's stored preview, so no extra reads). Nothing is scored.
+- `upload_file` accepts `file: {download_url, file_id}` (a chat attachment); it takes the same guarded download as `url`.
+- Widgets only call existing tools: `connect_file_to_transaction`, `dismiss_transaction_suggestion`,
+  `auto_connect_file_suggestions`, `upload_file`. Server text is rendered with textContent only (tested).
+  The bridge speaks MCP Apps JSON-RPC over postMessage and falls back to `window.openai`; the drop zone shows only where
+  `window.openai.selectFiles/uploadFile/getFileDownloadUrl` exist.
+- Tests: `functions/src/tools/__tests__/periodStatus.test.ts`, `mcp-server.test.ts` (resources, tool meta),
+  `tests-components/plugin-widgets.test.tsx` (real widget pages in jsdom with a fake host).
+- NOT verified: the MCP Apps handshake details (`ui/initialize` params, `ui/message`, `ui/open-link`, `window.openai`
+  method names and shapes) were written from the spec as read on 2026-10-02 and tested only against a fake host. The
+  first real ChatGPT / Claude session decides; expect small fixes to `BRIDGE` in widgets.ts. File thumbnails in the
+  review were left out (file name only) to avoid a download-URL surface in the widget.
+- Not done: widget CSP declaration in the resource `_meta` (widgets load nothing external, so the host default
+  applies), the `openai/profile` tool, submission.

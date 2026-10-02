@@ -19,14 +19,17 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import {
   CallToolRequestSchema,
   ErrorCode,
+  ListResourcesRequestSchema,
   ListToolsRequestSchema,
   McpError,
+  ReadResourceRequestSchema,
   type CallToolResult,
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { TOOL_DEFINITIONS, TOOL_NAMES } from "../tools/definitions";
 import { handleToolInternal } from "./handlers";
 import { annotationsFor } from "./tool-annotations";
+import { listWidgetResources, renderWidget, toolMeta, widgetNameForUri, WIDGET_MIME_TYPE } from "./widgets";
 
 export const MCP_SERVER_NAME = "FiBuKI";
 export const MCP_SERVER_VERSION = "0.2.0";
@@ -55,9 +58,9 @@ export function listMcpTools(): Tool[] {
       inputSchema: def.inputSchema as Tool["inputSchema"],
       annotations,
     };
-    if (def.requiredFeature) {
-      tool._meta = { "fibuki/requiredFeature": def.requiredFeature };
-    }
+    const meta: Record<string, unknown> = { ...toolMeta(def.name) };
+    if (def.requiredFeature) meta["fibuki/requiredFeature"] = def.requiredFeature;
+    if (Object.keys(meta).length) tool._meta = meta;
     return tool;
   });
 }
@@ -95,10 +98,16 @@ export async function callMcpTool(
 export function buildMcpServer(userId: string): Server {
   const server = new Server(
     { name: MCP_SERVER_NAME, version: MCP_SERVER_VERSION },
-    { capabilities: { tools: {} }, instructions: MCP_INSTRUCTIONS }
+    { capabilities: { tools: {}, resources: {} }, instructions: MCP_INSTRUCTIONS }
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: listMcpTools() }));
+  server.setRequestHandler(ListResourcesRequestSchema, async () => ({ resources: listWidgetResources() }));
+  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    const name = widgetNameForUri(request.params.uri);
+    if (!name) throw new McpError(ErrorCode.InvalidParams, `Unknown resource: ${request.params.uri}`);
+    return { contents: [{ uri: request.params.uri, mimeType: WIDGET_MIME_TYPE, text: renderWidget(name) }] };
+  });
   server.setRequestHandler(CallToolRequestSchema, async (request) =>
     callMcpTool(userId, request.params.name, request.params.arguments)
   );

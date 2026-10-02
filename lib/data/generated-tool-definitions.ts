@@ -790,6 +790,23 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           "type": "string",
           "description": "Public https URL to download the file from (port 443, up to 25 MB). Private, local and non-https addresses are refused; use base64 for those."
         },
+        "file": {
+          "type": "object",
+          "description": "A file the user attached in the chat (ChatGPT fills this in). Alternative to url and base64.",
+          "properties": {
+            "download_url": {
+              "type": "string",
+              "description": "Short-lived https link to the file."
+            },
+            "file_id": {
+              "type": "string",
+              "description": "The chat platform's id for the file."
+            }
+          },
+          "required": [
+            "download_url"
+          ]
+        },
         "base64": {
           "type": "string",
           "description": "Base64-encoded file content (alternative to url)"
@@ -807,6 +824,40 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         "fileName",
         "mimeType"
       ]
+    }
+  },
+  {
+    "name": "get_period_status",
+    "description": "How far the bookkeeping for a period is: per month, how many Transactions are covered (a File connected or a No-document Category), still missing a receipt, or parked on the plan limit, plus the newest missing lines and how many Matches wait for a yes. Defaults to the last three months. Shows a progress board in clients that support widgets. Read-only; the coverage rules are the same ones list_transactions_needing_files uses.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "dateFrom": {
+          "type": "string",
+          "description": "First day, YYYY-MM-DD. Defaults to the first of the month two months ago."
+        },
+        "dateTo": {
+          "type": "string",
+          "description": "Last day, YYYY-MM-DD. Defaults to today."
+        }
+      }
+    }
+  },
+  {
+    "name": "list_pending_matches",
+    "description": "Files FiBuKI has matched to a Transaction but nobody has connected yet, best first, with FiBuKI's own confidence. Shows a review list in clients that support widgets. Connect one with connect_file_to_transaction, refuse one with dismiss_transaction_suggestion, or connect all at the bar with auto_connect_file_suggestions. Read-only; never re-score.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "minConfidence": {
+          "type": "number",
+          "description": "Lowest confidence to list (0-100). Default 85."
+        },
+        "limit": {
+          "type": "number",
+          "description": "Rows to return, 1-50. Default 20."
+        }
+      }
     }
   },
   {

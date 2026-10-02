@@ -33,6 +33,8 @@ export const READ_ONLY_TOOLS = [
   "list_invoices",
   "get_invoice",
   "get_automation_status",
+  "get_period_status",
+  "list_pending_matches",
 ] as const;
 
 /**

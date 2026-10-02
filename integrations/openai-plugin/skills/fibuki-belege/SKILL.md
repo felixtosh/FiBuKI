@@ -25,17 +25,17 @@ Default: the last full calendar month. If the user named one ("September", "Q3")
 
 ## 1. Status
 
-- `list_transactions` with `dateFrom`, `dateTo`, paging `nextCursor` until null, for the total.
-- `list_transactions_needing_files` (paged) for lines with no Beleg and no Kategorie; keep the rows inside the period.
-- `list_transactions_missing_invoice` (paged) for lines whose only document is a receipt without a § 11 invoice.
+`get_period_status` with `dateFrom`, `dateTo`: coverage per month (covered, still missing, on hold because of the plan), the newest missing lines, and how many Zuordnungen wait for a yes. Where the client supports widgets it draws a progress board; do not repeat the board in text, add one sentence with the point of it. If `truncated` is true the numbers describe the newest Transactions only; say so.
 
-Open with one short table: Transactions in the period, with a Beleg, still without, receipt only. Then go straight on; do not ask whether to continue.
+For the full list of missing lines page `list_transactions_needing_files`; for lines whose only document is a receipt without a § 11 invoice page `list_transactions_missing_invoice`. Keep the rows inside the period.
+
+Then go straight on; do not ask whether to continue.
 
 ## 2. Harvest what FiBuKI already found
 
-`list_files` with `hasConnections: false` and `hasSuggestions: true`. Each File carries `transactionSuggestions` with a match confidence. Show the pairs for the period as a table (Beleg, Partner, amount, date, payment, match confidence), highest first.
+`list_pending_matches` (default confidence 85 and up, best first). Each row is a File, the Transaction FiBuKI proposes and FiBuKI's own match confidence. Where the client supports widgets it shows a review list with Übernehmen / Ablehnen per row and "alle übernehmen"; then stay out of the way. Without widgets show the pairs for the period as a table (Beleg, Partner, amount, date, payment, match confidence), highest first.
 
-Ask once: "Diese N Zuordnungen übernehmen?" On yes, `connect_file_to_transaction` for each pair. For a large clean batch, `auto_connect_file_suggestions` applies FiBuKI's own threshold (default 89) in one call; use it only when every pair you showed is above that, otherwise connect the confirmed pairs one by one.
+Ask once: "Diese N Zuordnungen übernehmen?" On yes, `connect_file_to_transaction` for each pair; a pair the user refuses goes through `dismiss_transaction_suggestion`. For a large clean batch, `auto_connect_file_suggestions` with `minConfidence` set to the bar you showed connects everything above it in one call; use it only when every pair you showed is above that bar, otherwise connect the confirmed pairs one by one.
 
 Check `list_files` with `needsDirectionReview: true`. Files listed there are probably the user's own issued invoices or ones FiBuKI cannot place; tell the user, and fix with `update_file_extraction` (`invoiceDirection`) only on their say-so.
 

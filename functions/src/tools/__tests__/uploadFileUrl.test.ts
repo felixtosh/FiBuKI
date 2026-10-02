@@ -133,3 +133,24 @@ describe("the tool definition", () => {
     expect(url.description).toMatch(/refused/);
   });
 });
+
+describe("upload_file with a file attached in the chat", () => {
+  it("downloads the attachment's link under the same rules as url", async () => {
+    await expect(upload({ file: { download_url: "https://127.0.0.1/a.pdf", file_id: "file_1" } })).rejects.toThrow(
+      /URL not allowed/
+    );
+    expect(fetchSpy).toHaveBeenCalledWith("https://127.0.0.1/a.pdf");
+  });
+
+  it("fetches a public link and stores the bytes", async () => {
+    fetchSpy.mockResolvedValueOnce({ buffer: Buffer.from("%PDF-1.4 attached"), contentType: "application/pdf", finalUrl: "https://files.oaiusercontent.com/a" });
+    const result = await upload({ file: { download_url: "https://files.oaiusercontent.com/a", file_id: "file_1" } });
+    expect(result.success).toBe(true);
+    expect(fetchSpy).toHaveBeenCalledWith("https://files.oaiusercontent.com/a");
+    expect(storage.save).toHaveBeenCalledTimes(1);
+  });
+
+  it("still asks for a source when file has no link", async () => {
+    await expect(upload({ file: { file_id: "file_1" } })).rejects.toThrow(/Either file, url or base64/);
+  });
+});

@@ -91,7 +91,51 @@ describe("tools/list", () => {
     expect(byName.list_transactions.annotations.readOnlyHint).toBe(true);
     expect(byName.delete_source.annotations.destructiveHint).toBe(true);
     expect(byName.delete_file.annotations.destructiveHint).toBe(false); // reversible, ADR-0006
-    expect(byName.upload_file._meta).toEqual({ "fibuki/requiredFeature": "fileUpload" });
+    expect(byName.upload_file._meta).toEqual({
+      "openai/fileParams": ["file"],
+      "fibuki/requiredFeature": "fileUpload",
+    });
+  });
+
+  it("attaches each widget to the tool whose result it renders", async () => {
+    const { result } = await (await post(rpc("tools/list"))).json();
+    const byName = Object.fromEntries(result.tools.map((t: { name: string }) => [t.name, t]));
+    expect(byName.get_onboarding_status._meta.ui.resourceUri).toBe("ui://fibuki/onboarding.html");
+    expect(byName.get_period_status._meta.ui.resourceUri).toBe("ui://fibuki/progress.html");
+    expect(byName.list_pending_matches._meta.ui.resourceUri).toBe("ui://fibuki/review.html");
+    expect(byName.get_period_status._meta["openai/outputTemplate"]).toBe("ui://fibuki/progress.html");
+    expect(byName.list_sources._meta).toBeUndefined();
+  });
+});
+
+describe("widget resources", () => {
+  it("advertises the resources capability at initialize", async () => {
+    const { result } = await (await post(initialize("2025-11-25"))).json();
+    expect(result.capabilities.resources).toBeDefined();
+  });
+
+  it("lists exactly the three widgets as MCP App documents", async () => {
+    const { result } = await (await post(rpc("resources/list"))).json();
+    expect(result.resources.map((r: { uri: string }) => r.uri).sort()).toEqual([
+      "ui://fibuki/onboarding.html",
+      "ui://fibuki/progress.html",
+      "ui://fibuki/review.html",
+    ]);
+    for (const r of result.resources) expect(r.mimeType).toBe("text/html;profile=mcp-app");
+  });
+
+  it("reads a widget as a complete HTML document", async () => {
+    const { result } = await (
+      await post(rpc("resources/read", { uri: "ui://fibuki/review.html" }))
+    ).json();
+    expect(result.contents[0].mimeType).toBe("text/html;profile=mcp-app");
+    expect(result.contents[0].text).toMatch(/^<!doctype html>/);
+    expect(result.contents[0].text).toContain("connect_file_to_transaction");
+  });
+
+  it("refuses an unknown resource", async () => {
+    const body = await (await post(rpc("resources/read", { uri: "ui://fibuki/nope.html" }))).json();
+    expect(body.error).toBeDefined();
   });
 });
 

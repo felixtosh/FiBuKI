@@ -84,6 +84,7 @@ import {
   type ExpectedChargeWindow,
   type ResolvedEffectiveCycle,
 } from "../matching/billingCycle";
+import { getPeriodStatus, listPendingMatches } from "./periodStatus";
 import { PLANS, resolvePlanId } from "../billing/config";
 import { KNOWN_AUSTRIAN_RATES } from "../uva/rateSet";
 import { runUvaForPeriod } from "../reports/uvaPeriodRun";
@@ -209,6 +210,10 @@ export async function handleTool(
       return listTransactionsMissingInvoice(userId, args);
     case "import_transactions":
       return importTransactions(userId, args);
+    case "get_period_status":
+      return getPeriodStatus(userId, args);
+    case "list_pending_matches":
+      return listPendingMatches(userId, args);
 
     // Files
     case "list_files":
@@ -2969,10 +2974,14 @@ export async function importTransactions(userId: string, args: Record<string, un
 // ============================================================================
 
 export async function uploadFile(userId: string, args: Record<string, unknown>) {
-  const { url, base64, fileName, mimeType } = args;
+  const { base64, fileName, mimeType } = args;
+  // A file the user attached in ChatGPT arrives as { download_url, file_id }: a short-lived public
+  // https link, so it takes the same guarded download as `url`.
+  const attached = args.file as { download_url?: unknown } | undefined;
+  const url = args.url ?? (typeof attached?.download_url === "string" ? attached.download_url : undefined);
   if (!fileName) throw new Error("fileName is required");
   if (!mimeType) throw new Error("mimeType is required");
-  if (!url && !base64) throw new Error("Either url or base64 is required");
+  if (!url && !base64) throw new Error("Either file, url or base64 is required");
 
   let fileBuffer: Buffer;
 
