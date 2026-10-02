@@ -15,7 +15,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { FinapiClient, FinapiEnvironment } from "@/lib/finapi/client";
-import { callCloudFunction, setAuthToken } from "@/lib/firebase/callable-server";
+import { callCloudFunction } from "@/lib/firebase/callable-server";
 import {
   UpdateBankingConnectionRequest,
   UpdateBankingConnectionResponse,
@@ -27,8 +27,8 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  // Set auth token for Cloud Function calls
-  setAuthToken(request.headers.get("Authorization"));
+  // The caller's token, passed to each Cloud Function call explicitly
+  const authHeader = request.headers.get("Authorization");
 
   try {
     const userId = await getServerUserIdWithFallback(request);
@@ -135,7 +135,7 @@ export async function GET(
                       userRefreshToken: connection.providerData?.userRefreshToken as string,
                       tokenExpiresAt: new Date(Date.now() + 3600 * 1000).toISOString(),
                     },
-                  });
+                  }, authHeader);
                 }
                 console.log(`[Banking Connection] Updated ${sourcesToUpdate.size} sources with fresh tokens`);
               }
@@ -151,7 +151,7 @@ export async function GET(
                   status: "rejected",
                   statusMessage: errorMsg,
                 },
-              });
+              }, authHeader);
               connection.status = "rejected";
               connection.statusMessage = errorMsg;
             }
@@ -196,7 +196,7 @@ export async function GET(
                   accountIds: bankConnection.accountIds,
                 },
               },
-            });
+            }, authHeader);
 
             // Update local connection object for response
             connection = {
@@ -230,7 +230,7 @@ export async function GET(
               updates: {
                 status: "rejected",
               },
-            });
+            }, authHeader);
             connection.status = "rejected";
           }
           // Otherwise status is still IN_PROGRESS or NOT_YET_OPENED

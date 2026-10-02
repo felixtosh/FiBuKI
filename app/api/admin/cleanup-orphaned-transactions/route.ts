@@ -9,15 +9,15 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 import { getServerUserIdWithFallback, isServerUserAdmin, unauthorizedResponse } from "@/lib/auth/get-server-user";
-import { callCloudFunction, setAuthToken } from "@/lib/firebase/callable-server";
+import { callCloudFunction } from "@/lib/firebase/callable-server";
 import {
   CleanupOrphanedTransactionsRequest,
   CleanupOrphanedTransactionsResponse,
 } from "@/types/banking-sync";
 
 export async function POST(request: NextRequest) {
-  // Set auth token for Cloud Function calls
-  setAuthToken(request.headers.get("Authorization"));
+  // The caller's token, passed to each Cloud Function call explicitly
+  const authHeader = request.headers.get("Authorization");
 
   try {
     const userId = await getServerUserIdWithFallback(request);
@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
     const result = await callCloudFunction<
       CleanupOrphanedTransactionsRequest,
       CleanupOrphanedTransactionsResponse
-    >("cleanupOrphanedTransactions", requestData);
+    >("cleanupOrphanedTransactions", requestData, authHeader);
 
     return NextResponse.json(result);
   } catch (error) {
@@ -62,8 +62,8 @@ export async function POST(request: NextRequest) {
  * GET - Preview orphaned transactions (dry run)
  */
 export async function GET(request: NextRequest) {
-  // Set auth token for Cloud Function calls
-  setAuthToken(request.headers.get("Authorization"));
+  // The caller's token, passed to each Cloud Function call explicitly
+  const authHeader = request.headers.get("Authorization");
 
   try {
     const userId = await getServerUserIdWithFallback(request);
@@ -77,7 +77,7 @@ export async function GET(request: NextRequest) {
       CleanupOrphanedTransactionsResponse
     >("cleanupOrphanedTransactions", {
       dryRun: true,
-    });
+    }, authHeader);
 
     return NextResponse.json(result);
   } catch (error) {

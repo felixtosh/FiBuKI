@@ -13,7 +13,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { FinapiClient, FinapiEnvironment } from "@/lib/finapi/client";
-import { callCloudFunction, callCloudFunctionBackground, setAuthToken } from "@/lib/firebase/callable-server";
+import { callCloudFunction, callCloudFunctionBackground } from "@/lib/firebase/callable-server";
 import {
   CreateApiSourceRequest,
   CreateApiSourceResponse,
@@ -31,8 +31,8 @@ function sanitizeForLog(value: unknown): string {
  * Create a source from an existing finAPI bank connection
  */
 export async function POST(request: NextRequest) {
-  // Set auth token for Cloud Function calls
-  setAuthToken(request.headers.get("Authorization"));
+  // The caller's token, passed to each Cloud Function call explicitly
+  const authHeader = request.headers.get("Authorization");
 
   try {
     const userId = await getServerUserIdWithFallback(request);
@@ -187,7 +187,7 @@ export async function POST(request: NextRequest) {
         tokenExpiresAt: new Date(Date.now() + 3600 * 1000).toISOString(),
         lastSyncAt: null,
       },
-    });
+    }, authHeader);
 
     console.log(`[finAPI Accounts] Created source ${sanitizeForLog(sourceResult.sourceId)} for account ${sanitizeForLog(accountId)}`);
 
@@ -195,7 +195,7 @@ export async function POST(request: NextRequest) {
     if (syncFromYear) {
       callCloudFunctionBackground<SyncBankTransactionsRequest>(
         "syncBankTransactions",
-        { sourceId: sourceResult.sourceId, fromYear: syncFromYear }
+        { sourceId: sourceResult.sourceId, fromYear: syncFromYear }, authHeader
       );
     }
 

@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { callCloudFunction, setAuthToken } from "@/lib/firebase/callable-server";
+import { callCloudFunction } from "@/lib/firebase/callable-server";
 
 interface ListInstitutionsRequest {
   country: string;
@@ -32,7 +32,7 @@ interface ListInstitutionsResponse {
 export async function GET(request: NextRequest) {
   // No auth needed - listing banks is public
   // Clear any auth token to avoid sending wrong credentials
-  setAuthToken(null);
+  const authHeader = null;
 
   try {
     const { searchParams } = new URL(request.url);
@@ -51,7 +51,7 @@ export async function GET(request: NextRequest) {
       ListInstitutionsResponse
     >("listBankInstitutions", {
       country: countryCode,
-    });
+    }, authHeader);
 
     return NextResponse.json({
       institutions: result.institutions,
