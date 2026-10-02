@@ -176,7 +176,7 @@ describe("data plane: query", () => {
 });
 
 describe("data plane: get", () => {
-  it("owner doc reads work; foreign docs come back permission-denied", async () => {
+  it("owner doc reads work; a foreign doc reads exactly like a missing one", async () => {
     await db.collection("files").doc("f-1").set({ userId: USER, fileName: "a.pdf" });
     await db.collection("files").doc("f-2").set({ userId: OTHER, fileName: "b.pdf" });
     await drainTriggers();
@@ -185,10 +185,11 @@ describe("data plane: get", () => {
     expect(mine.body).toMatchObject({ exists: true, id: "f-1", data: { fileName: "a.pdf" } });
 
     const foreign = await call("get", { path: "files/f-2" });
-    expect(foreign.status).toBe(403);
-
     const missing = await call("get", { path: "files/f-none" });
     expect(missing.body).toMatchObject({ exists: false, data: null });
+    // No oracle: "someone else's" and "nobody's" are one answer.
+    expect(foreign.status).toBe(missing.status);
+    expect(foreign.body).toEqual({ ...missing.body, id: "f-2" });
   });
 
   it("uidKey: subscriptions readable only under your own uid", async () => {
@@ -277,9 +278,17 @@ describe("data plane: write", () => {
     const upd = await call("write", {
       ops: [{ type: "update", path: "files/f-x", data: { fileName: "mine-now.pdf" } }],
     });
-    expect(upd.status).toBe(403);
+    const updMissing = await call("write", {
+      ops: [{ type: "update", path: "files/f-none", data: { fileName: "mine-now.pdf" } }],
+    });
+    expect(upd.status).toBe(404);
+    expect(upd.status).toBe(updMissing.status);
+    // A foreign delete is the same idempotent no-op as a missing one.
     const del = await call("write", { ops: [{ type: "delete", path: "files/f-x" }] });
-    expect(del.status).toBe(403);
+    const delMissing = await call("write", { ops: [{ type: "delete", path: "files/f-none" }] });
+    expect(del.status).toBe(delMissing.status);
+    const still = await db.collection("files").doc("f-x").get();
+    expect(still.data()).toMatchObject({ userId: OTHER, fileName: "x.pdf" });
   });
 
   it("serverOnly writes are denied; delete of a missing doc is a no-op", async () => {

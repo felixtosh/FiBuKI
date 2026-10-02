@@ -275,7 +275,6 @@ describe("data plane: writes", () => {
     // change / delete
     ["update victim doc", { type: "update", path: `transactions/${V.transaction}`, data: { name: "changed" } }],
     ["update victim notification", { type: "update", path: `users/${VICTIM}/notifications/${V.notification}`, data: { read: true } }],
-    ["delete victim doc", { type: "delete", path: `files/${V.file}` }],
     ["delete victim subtree doc", { type: "delete", path: `users/${VICTIM}/chatSessions/${V.chat}` }],
     ["delete victim subscription", { type: "delete", path: `subscriptions/${VICTIM}` }],
     ["sentinel on victim doc", { type: "update", path: `transactions/${V.transaction}`, data: { fileIds: { __sv: "arrayUnion", v: [A.file] } } }],
@@ -294,9 +293,23 @@ describe("data plane: writes", () => {
     });
   }
 
+  it("deleting another user's document is the same no-op as deleting a missing one", async () => {
+    // Refusing it would confirm the id exists; doing it would be the breach.
+    // So it answers like a missing id and touches nothing (expectHarmless).
+    const foreign = await expectHarmless("write", { ops: [{ type: "delete", path: `files/${V.file}` }] });
+    const missing = await call("write", { ops: [{ type: "delete", path: "files/no-such-file" }] });
+    expect(foreign.status).toBe(missing.status);
+    // Inside a batch too: the own op commits, the foreign delete changes nothing.
+    await expectHarmless("write", {
+      ops: [
+        { type: "update", path: `transactions/${A.transaction}`, data: { description: "mine" } },
+        { type: "delete", path: `files/${V.file}` },
+      ],
+    });
+  });
+
   it("a batch with one own op and one victim op fails as a whole", async () => {
     const mixes = [
-      { type: "delete", path: `files/${V.file}` },
       { type: "update", path: `transactions/${V.transaction}`, data: { name: "x" } },
       { type: "add", path: "partners", data: { userId: VICTIM, name: "planted" } },
       { type: "set", path: `users/${VICTIM}/settings/userData`, data: { companyName: "x" } },
