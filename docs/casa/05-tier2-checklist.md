@@ -24,7 +24,7 @@ Each section below maps to an ASVS v4.0 chapter, with FiBuKI's current status an
 | --- | --- | --- | --- |
 | 1.1 | SDLC documented | MET | `CLAUDE.md`, `CONTRIBUTING.md` |
 | 1.2 | Authentication architecture defined | MET | [01-security-architecture.md §4](./01-security-architecture.md) |
-| 1.4 | Access control architecture defined | MET | [01 §5](./01-security-architecture.md) + `firestore.rules` |
+| 1.4 | Access control architecture defined | MET | [01 §5](./01-security-architecture.md) + `functions/src/selfhost/data-policy.ts` |
 | 1.5 | Input/output architecture documented | MET | Next.js Server Actions + Cloud Functions (typed contracts) |
 | 1.6 | Cryptographic architecture documented | MET | [01 §6](./01-security-architecture.md) |
 | 1.8 | Data protection architecture documented | MET | [02-pii-data-flow.md](./02-pii-data-flow.md) |
@@ -65,7 +65,7 @@ Each section below maps to an ASVS v4.0 chapter, with FiBuKI's current status an
 
 | ID | Control | Status | Evidence |
 | --- | --- | --- | --- |
-| 4.1 | General access control | MET | `createCallable()` + `firestore.rules` |
+| 4.1 | General access control | MET | `createCallable()` + `functions/src/selfhost/data-policy.ts` + `functions/src/selfhost/security/` |
 | 4.2 | Operation-level access control | MET | Per-handler `ctx.userId` checks |
 | 4.3 | Other access control | MET | Admin custom claim |
 

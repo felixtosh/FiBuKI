@@ -1,6 +1,8 @@
 /**
- * Client data-plane access policy — machine-readable mirror of
- * firestore.rules (repo root), enforced server-side by data-plane.ts.
+ * Client data-plane access policy, enforced server-side by data-plane.ts.
+ * This is the source of truth for what a browser may read or write. It began
+ * as a mirror of firestore.rules; those now only lock the retained Firebase
+ * project (the frozen rollback anchor) to deny-all.
  * Sibling of manifest.ts: additive, loud on anything unlisted.
  *
  * Access levels:

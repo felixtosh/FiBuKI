@@ -93,7 +93,7 @@ Yes. Sign-out clears refresh; admin can force-revoke through Firebase Auth.
 ## E. Authorization
 
 **E1. How is per-user data isolation enforced?**
-Two layers: (a) `firestore.rules` per-user predicates on every collection, (b) `createCallable()` injects `ctx.userId` and every handler filters by it.
+Two layers: (a) the API's client access policy (`functions/src/selfhost/data-policy.ts`) injects the owner filter into every user-scoped query and checks every write against the verified uid, (b) `createCallable()` injects `ctx.userId` and every handler filters by it. A cross-user attack suite (`functions/src/selfhost/security/`) runs every callable, AI tool and data-plane route as one user against another's ids.
 
 **E2. Are there server-side checks for every authenticated action?**
 Yes. `createCallable()` enforces `UNAUTHENTICATED`; handlers reject cross-user reads/writes.
