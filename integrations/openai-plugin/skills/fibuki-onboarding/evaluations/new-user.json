@@ -5,16 +5,18 @@
   ],
   "query": "Ich bin neu bei FiBuKI, richte mich bitte ein.",
   "expected_behavior": [
-    "Calls get_automation_status, list_identity_entities and list_sources and does not interview the user first",
-    "Shows one short checklist: Identität, Bankdaten, Postfach, erste Belege, with what is done and what is next",
-    "Starts with Identität and explains in one line that otherwise the user's own issued invoices would be matched to their expenses",
-    "When there is no identity entity, sends the user to https://fibuki.com/settings/identity because update_identity_entity cannot create one",
-    "Explains the Postfach choice once: FiBuKI's own (recommended, keeps syncing in the background) or the assistant's connected mailbox during a session, and leaves the choice to the user",
+    "Calls get_onboarding_status (with its own origin) and get_automation_status, and does not interview the user first",
+    "Shows one short checklist from the status: Identität, Postfach, Bankkonto, Import, erste Belege, with what is done and what is next",
+    "Starts with the identity step and explains in one line that otherwise the user's own issued invoices would be matched to their expenses",
+    "Asks for name, UID, own IBANs, other names and address, shows exactly what it will save, and only then calls create_identity_entity",
+    "Calls get_onboarding_status again afterwards and reports the identity step as done",
+    "Explains the Postfach choice once: FiBuKI's own (recommended, keeps syncing in the background) or the assistant's connected mailbox during a session, and leaves the choice to the user; if they pick the assistant's mail, skips connect_email with skip_onboarding_step",
     "Does not claim to know whether a Postfach is connected (no tool lists them) and asks instead"
   ],
   "success_criteria": [
     "Identity is the first step worked on",
-    "No identity value is saved without confirmation",
+    "create_identity_entity is not called before the user confirmed the values",
+    "No step is skipped without the user's say-so",
     "Ends with a three-line status and the sentence to continue"
   ]
 }

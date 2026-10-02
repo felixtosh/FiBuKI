@@ -1,6 +1,6 @@
 ---
 name: fibuki-onboarding
-description: Get a new FiBuKI user from nothing to a working pre-accounting setup (identity, bank data, mailbox). Use when the user is new to FiBuKI, says "set me up", "get started" or "einrichten", or when list_sources / list_identity_entities come back empty.
+description: Get a new FiBuKI user from nothing to a working pre-accounting setup (identity, bank data, mailbox). Use when the user is new to FiBuKI, says "set me up", "get started" or "einrichten", or when get_onboarding_status shows open steps.
 metadata:
   short-description: Set up FiBuKI step by step
 ---
@@ -13,26 +13,30 @@ Answer in the user's language (German or English). Use FiBuKI's own words: Beleg
 
 ## The checklist
 
-Work out where the user stands from three reads, show them as one short checklist, then do the first open step. Do not interview the user up front.
+One call tells you where the user stands, using the same rules as the FiBuKI web app:
 
-1. `get_automation_status`: plan and which tools the plan allows.
-2. `list_identity_entities`: is there an entity with name, UID (vatId) and IBANs?
-3. `list_sources`: is there at least one Bank Account, and does `list_transactions` (limit 1) return anything?
+`get_onboarding_status` (pass `origin`: `"chatgpt"`, `"codex"` or `"claude"`, whichever assistant you are, so FiBuKI remembers where the user came from). It returns the steps, each `done`, `skipped` or `open`, with the page on fibuki.com where it is done, and the current step. Call it at the start, and again after the user finished something; it records steps their data has completed. It starts onboarding for a new user.
 
-| Step | Done when | What to do |
+Show the result as one short checklist, then do the current step. Do not interview the user first. Also `get_automation_status` once, for the plan and which tools it allows.
+
+| Step id | Meaning | What to do |
 |---|---|---|
-| Identity | an entity has a name and, for a business, a UID and its own IBANs | below |
-| Bank data | a Bank Account has Transactions | the `fibuki-bank-csv` skill |
-| Postfach | the user says a mailbox is connected | below |
-| First Belege | some Transactions have Files | the `fibuki-belege` skill |
+| `set_identity` | name, UID, own IBANs | below |
+| `connect_email` | Postfach | below |
+| `add_bank_account`, `import_transactions` | bank data | the `fibuki-bank-csv` skill |
+| `assign_partner`, `attach_file` | first Belege | the `fibuki-belege` skill |
+
+If the user does not want a step, `skip_onboarding_step` (only on their say-so). Never skip the identity step for them.
 
 ## Identity comes first
 
 Why it matters, in one line to the user: without it FiBuKI cannot tell the user's own issued invoices from invoices they receive, and would match their own outgoing invoices to their expenses.
 
-- Entity exists but is incomplete: ask for what is missing (name, UID like ATU12345678, own IBANs, other names the business uses, address) and write it with `update_identity_entity`. Show the patch first and apply it after the user agrees.
-- No entity at all: `update_identity_entity` can only change an existing one. Send the user to https://fibuki.com/settings/identity and continue when they are back (re-read `list_identity_entities`).
-- The user may offer one of their own issued invoices. Read name, UID, IBAN and address off it and propose those values; never save without confirmation.
+`list_identity_entities` shows what exists.
+
+- **Nothing yet:** ask for what is needed (name as it appears on invoices; UID like ATU12345678 if they have one; their own IBANs; other names the business uses; address), show exactly what you will save, and on their yes call `create_identity_entity` (`type`: `person` for a freelancer, `company` for a business; a business owner often has both). The user may offer one of their own issued invoices: read name, UID, IBAN and address off it and propose those values.
+- **Exists but incomplete:** `update_identity_entity` with a patch of what is missing, after showing it.
+- Never save without confirmation. After saving, call `get_onboarding_status`; the identity step is done.
 
 ## Bank data
 
@@ -45,7 +49,7 @@ Explain the choice once, plainly:
 - **FiBuKI's own Postfach** (Integrations, Gmail or IMAP) is the recommended default. It keeps syncing in the background after this chat ends, so new invoices are waiting next time. Setup needs a login redirect, so send them to https://fibuki.com/integrations/gmail (or `/integrations/imap`).
 - **Your mailbox through this assistant**: if the user has connected Gmail, Outlook, Google Drive or Dropbox to their AI assistant, the `fibuki-belege` skill can search those during a session and upload what it finds. That also works, and assistants can run it in the background too. It is the user's choice; do not push.
 
-FiBuKI has no tool that lists Postfächer, so ask the user instead of guessing.
+FiBuKI has no tool that lists Postfächer, so ask the user instead of guessing. If they choose their assistant's mail over FiBuKI's, skip the step with `skip_onboarding_step` (`connect_email`).
 
 ## Finish
 

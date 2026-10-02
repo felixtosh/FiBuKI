@@ -1,9 +1,9 @@
 # Workstream: FiBuKI as an OpenAI plugin (ChatGPT + Codex)
 
-**Status (2026-10-02, v4):** Phase 1 (MCP server modernised) and Phase 2 (plugin package
-with three skills, scripts, evaluations) are DONE on branch `claude/sharp-meitner-w8f2qf`,
-plus the server-side dedupe below. Not yet run in a real Codex or ChatGPT session. Next:
-Phase 3 (onboarding simplification) and Phase 4 (OAuth, widgets), one session each.
+**Status (2026-10-02, v5):** Phases 1 (MCP server), 2 (plugin package + server-side dedupe)
+and 3 (one onboarding, decided on the server) are DONE on branch `claude/sharp-meitner-w8f2qf`.
+Not yet run in a real Codex or ChatGPT session, and the web changes of phase 3 were not
+clicked through in a browser. Next: Phase 4 (OAuth, widgets, `upload_file` SSRF guard).
 
 Felix's brief: fewer features, great embedded execution, use the mail and file
 services the user already connected, maybe the browser, onboarding parity between
@@ -99,6 +99,41 @@ Found and fixed on the way:
 `banking/syncBankTransactions.ts` which have their own hash copies. Move each onto
 `imports/dedupe.ts` (the hash formulas differ per provider today; check before unifying) and
 delete `generateDedupeHash` / `checkDuplicatesBatch` from `lib/import/deduplication.ts` when none is left.
+
+## Phase 3 (DONE): one onboarding, decided on the server
+
+- **Track choice removed** (web and server): `welcome-choice.tsx`, `setOnboardingTrack`, `DATA_ONLY_STEPS`
+  and the `test_integration` step are gone. Six steps for everyone. Accounts with the legacy
+  `track: "data_only"` are retired on their next sync (marked complete and skipped, no celebration)
+  instead of being reopened with six steps; `track: "full_service"` accounts carry on, and a present
+  `track` counts as "has seen a welcome".
+- **The rules moved to the server and are one copy.** `functions/src/onboarding/onboardingRules.ts`
+  (pure, ported from the browser hook) and `onboardingState.ts` (facts, persistence, `toStatus`). A test
+  pins the step list against the client's `types/onboarding.ts`. The browser hook now only listens to the
+  document and calls `syncOnboarding` when the data its steps depend on changes; all writes are callables
+  (`initOnboarding`, `syncOnboarding`, `updateOnboarding`). `lib/operations/onboarding-ops.ts` is deleted.
+- **Trial** starts with the onboarding document (tier `smart`, for everyone), not with a track choice.
+- **MCP tools** (62 now): `get_onboarding_status` (also records steps the data completed, accepts an
+  optional `origin`), `skip_onboarding_step`, `create_identity_entity` (shares its normalisation with
+  `update_identity_entity` instead of copying it). The plugin's onboarding skill uses them.
+- **Origin** is recorded once when onboarding is created (`web`, `chatgpt`, `codex`, `claude`, `api`) and
+  drives the welcome screen (`components/onboarding/welcome.tsx`, en + de): from an assistant "keep working
+  there or continue here" with a back link (ChatGPT, Claude; Codex has no web page); otherwise a short start.
+  The completion dialog and sidebar copy are translated too.
+- A bug found on the way: completing an earlier step after a later one was skipped moved `currentStep`
+  backwards. `currentStep` is now always the first open step.
+
+Deliberate differences from the old browser rules (decide whether to change): the email step still counts
+**Gmail only**, not IMAP (ported as is); the documents step reads `fileIds` / `noReceiptCategoryId` off the
+first **500** transactions (equality queries only, so it needs no new Firestore index and runs on the
+self-host shim); a user with more than 500 transactions and none of them matched in that window would not
+advance, which does not happen once partner matching has run.
+
+Follow-ups: (1) the web signup does not set `origin` yet. It must come from the OAuth client that started
+signup (phase 4), not from the Referer header; until then web signups are `web` and tool-created ones `api`.
+(2) `functions/src/selfhost/data-policy.ts` makes the whole `users/{uid}/settings` subtree client-writable,
+so a browser could still write the onboarding document; it holds UX state only (the trial is in
+`subscriptions`, server-only), but a per-document rule would be cleaner.
 
 ## What the docs confirmed (curl, 2026-10-02)
 
@@ -216,7 +251,7 @@ Check how the portable format declares optional apps (the examples use `.app.jso
   Codex (first check: the bundled `mcp.json` server against a `config.toml` entry), run the
   evaluations, test with MCP Inspector, add real anonymised bank exports to
   `tests/fixtures/openai-plugin`.
-- **Phase 3: onboarding simplification (web, useful without the plugin).**
+- **Phase 3: onboarding simplification (web, useful without the plugin).** DONE (above). Original scope:
   - Remove the track choice (`components/onboarding/welcome-choice.tsx`, `types/onboarding.ts`).
   - Trial start: `setOnboardingTrackCallable.ts` starts the trial and derives
     `trialTier` from the track. Move the trial start to onboarding init with tier

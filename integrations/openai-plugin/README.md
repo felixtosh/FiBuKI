@@ -86,6 +86,5 @@ node --test tests/openai-plugin-csv.test.mjs tests/openai-plugin-upload.test.mjs
 ## Known gaps
 
 - **No shell, no CSV import.** Plain ChatGPT has no shell, so the CSV skill sends the user to the web import. A server tool that reuses the same parsers would close this (phase 4).
-- **No tool creates an identity.** `update_identity_entity` only patches an existing one, so a brand new user sets their identity on fibuki.com until `create_identity_entity` exists (phase 3).
 - **No tool lists Postfächer**, so the skills ask the user.
 - **Bank layouts are modelled, not collected.** Add anonymised real exports to `tests/fixtures/openai-plugin` and extend `references/austrian-bank-csvs.md`.
