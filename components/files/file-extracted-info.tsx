@@ -22,6 +22,12 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -864,22 +870,27 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
                       </Button>
                     </div>
                   ))}
+                  {/*
+                    A button that opens a menu, like "Add line item" below, not
+                    a Select: a Select trigger reads as a value box and
+                    line-clamps its label, which stacked the icon over it.
+                  */}
                   {unusedFieldKeys.length > 0 && (
-                    <Select value="" onValueChange={addAdditionalField}>
-                      <SelectTrigger className="h-8 text-sm w-full">
-                        <span className="flex items-center gap-2 text-muted-foreground">
-                          <Plus className="h-4 w-4" />
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="outline" size="sm" className="w-full">
+                          <Plus className="h-4 w-4 mr-2" />
                           {tx("addField")}
-                        </span>
-                      </SelectTrigger>
-                      <SelectContent>
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="start" className="w-[var(--radix-dropdown-menu-trigger-width)]">
                         {unusedFieldKeys.map((key) => (
-                          <SelectItem key={key} value={key}>
+                          <DropdownMenuItem key={key} onSelect={() => addAdditionalField(key)}>
                             {tx(`fields.${key}`)}
-                          </SelectItem>
+                          </DropdownMenuItem>
                         ))}
-                      </SelectContent>
-                    </Select>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   )}
                 </>
               ) : (
