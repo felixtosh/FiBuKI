@@ -1,0 +1,61 @@
+# Daily changelog to the Telegram announcements channel.
+#
+# Once a day, summarizes the PRs merged into main since the last scheduled run
+# (scripts/post-daily-changelog.mjs) and posts the user-visible ones as
+# @bukibukibukibot. Days with nothing user-facing post nothing. Security work
+# is filtered out three times: title/label pre-filter, prompt, output filter.
+# Label a PR `no-changelog` to keep it out.
+#
+# Secrets: GEMINI_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_ANNOUNCEMENTS_CHAT_ID
+# (the bot must be an admin of the channel with "Post messages").
+# Manual run: Actions → Changelog to Telegram → Run workflow; dry run is the
+# default there and only prints the message.
+
+name: Changelog to Telegram
+
+on:
+  schedule:
+    # 16:00 UTC = 18:00 Vienna in summer, 17:00 in winter.
+    - cron: "0 16 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Print the message instead of posting it"
+        type: boolean
+        default: true
+      since:
+        description: "Window start (ISO date), empty = since the last scheduled run"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  pull-requests: read
+  actions: read
+
+concurrency:
+  group: changelog-telegram
+  cancel-in-progress: false
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            scripts
+            functions/src/utils/models.ts
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/post-daily-changelog.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_ANNOUNCEMENTS_CHAT_ID: ${{ secrets.TELEGRAM_ANNOUNCEMENTS_CHAT_ID }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && '1' || '' }}
+          SINCE: ${{ inputs.since }}
