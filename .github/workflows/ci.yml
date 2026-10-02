@@ -6,12 +6,13 @@ on:
 
 jobs:
   diag:
-    name: htmlToPdf phase diag (${{ matrix.n }})
+    name: htmlToPdf warm-up diag (${{ matrix.pre }} ${{ matrix.n }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        n: [1, 2, 3]
+        pre: [none, fclist, version, headless]
+        n: [1, 2]
     defaults:
       run:
         working-directory: functions
@@ -23,9 +24,14 @@ jobs:
           cache: npm
           cache-dependency-path: functions/package-lock.json
       - run: npm ci
+      - name: pre-step
+        run: |
+          s=$(date +%s%3N)
+          case "${{ matrix.pre }}" in
+            fclist) fc-list > /dev/null ;;
+            version) google-chrome --version ;;
+            headless) google-chrome --headless --no-sandbox --disable-gpu --dump-dom about:blank > /dev/null 2>&1 ;;
+          esac
+          echo "PRESTEP ${{ matrix.pre }} took $(( $(date +%s%3N) - s ))ms"
       - name: cold run
-        run: date +%s%3N; npm test -- integration.test.ts; date +%s%3N
-        env:
-          DEBUG: "puppeteer:browsers:launcher"
-      - name: warm run
-        run: date +%s%3N; npm test -- integration.test.ts; date +%s%3N
+        run: npm test -- integration.test.ts
