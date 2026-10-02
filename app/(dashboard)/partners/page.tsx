@@ -6,6 +6,8 @@ import { doc, getDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
 import { PartnerTable } from "@/components/partners/partner-table";
 import { PartnerDetailPanel } from "@/components/partners/partner-detail-panel";
+import { PartnerBulkPanel } from "@/components/partners/partner-bulk-panel";
+import { MergePartnersDialog } from "@/components/partners/merge-partners-dialog";
 import { MergedPartnerNotice } from "@/components/partners/merged-partner-notice";
 import { usePartners } from "@/hooks/use-partners";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -84,6 +86,18 @@ function PartnersContent() {
     },
     [router, searchValue, selectedId]
   );
+
+  // The bulk selection besides the browsed Partner (#524). While it is
+  // non-empty the sidebar shows the bulk panel instead of one Partner.
+  const [additionalSelectedIds, setAdditionalSelectedIds] = useState<Set<string>>(new Set());
+  const [isMergeDialogOpen, setIsMergeDialogOpen] = useState(false);
+  const bulkActive = additionalSelectedIds.size > 0;
+  const bulkPartners = useMemo(() => {
+    if (!bulkActive) return [];
+    const ids = new Set(additionalSelectedIds);
+    if (selectedId) ids.add(selectedId);
+    return partners.filter((p) => ids.has(p.id));
+  }, [bulkActive, additionalSelectedIds, selectedId, partners]);
 
   // Find selected partner
   const selectedPartner = useMemo(() => {
@@ -171,12 +185,14 @@ function PartnersContent() {
     };
   }, [isResizing, panelWidth]);
 
-  // Select partner (update URL)
-  const handleSelectPartner = useCallback(
-    (partner: UserPartner) => {
+  // Open a Partner in the panel, or close it with null (the table's selection model)
+  const handlePrimaryChange = useCallback(
+    (partnerId: string | null) => {
       const params = new URLSearchParams(searchParams.toString());
-      params.set("id", partner.id);
-      pushQuery(router, `/partners?${params.toString()}`);
+      if (partnerId) params.set("id", partnerId);
+      else params.delete("id");
+      const query = params.toString();
+      pushQuery(router, query ? `/partners?${query}` : "/partners");
     },
     [router, searchParams]
   );
@@ -205,18 +221,22 @@ function PartnersContent() {
     return <PartnerTableFallback />;
   }
 
-  const showMergedNotice = !selectedPartner && !!mergedAwaySurvivorId;
+  const showMergedNotice = !bulkActive && !selectedPartner && !!mergedAwaySurvivorId;
+  const showDetail = !bulkActive && !!selectedPartner;
+  const sidebarOpen = bulkActive || showDetail || showMergedNotice;
 
   return (
     <div className="h-full overflow-hidden">
       {/* Main content - adjusts margin when panel is open */}
       <div
         className="h-full transition-[margin] duration-200 ease-in-out"
-        style={{ marginRight: selectedPartner || showMergedNotice ? panelWidth : 0 }}
+        style={{ marginRight: sidebarOpen ? panelWidth : 0 }}
       >
         <PartnerTable
-          onSelectPartner={handleSelectPartner}
           selectedPartnerId={selectedId}
+          onPrimaryChange={handlePrimaryChange}
+          additionalSelectedIds={additionalSelectedIds}
+          onAdditionalSelectedIdsChange={setAdditionalSelectedIds}
           searchValue={searchValue}
           onSearchChange={handleSearchChange}
           filters={filters}
@@ -225,7 +245,7 @@ function PartnersContent() {
       </div>
 
       {/* Right sidebar - fixed position */}
-      {(selectedPartner || showMergedNotice) && (
+      {sidebarOpen && (
         <div
           className="fixed right-0 top-14 bottom-0 z-50 bg-background border-l flex"
           style={{ width: panelWidth }}
@@ -240,21 +260,36 @@ function PartnersContent() {
           />
           {/* Panel content */}
           <div className="flex-1 overflow-hidden detail-panel-container">
-            {selectedPartner ? (
+            {bulkActive ? (
+              <PartnerBulkPanel
+                partners={bulkPartners}
+                onMerge={() => setIsMergeDialogOpen(true)}
+                onClearSelection={() => setAdditionalSelectedIds(new Set())}
+              />
+            ) : null}
+            {showDetail && selectedPartner ? (
               <PartnerDetailPanel
                 partner={selectedPartner}
                 onClose={handleCloseDetail}
               />
-            ) : (
+            ) : null}
+            {showMergedNotice ? (
               <MergedPartnerNotice
                 survivorId={mergedAwaySurvivorId!}
                 onOpenSurvivor={handleOpenPartnerId}
                 onClose={handleCloseDetail}
               />
-            )}
+            ) : null}
           </div>
         </div>
       )}
+
+      <MergePartnersDialog
+        open={isMergeDialogOpen}
+        onClose={() => setIsMergeDialogOpen(false)}
+        partners={bulkPartners}
+        onMerged={() => setAdditionalSelectedIds(new Set())}
+      />
 
       {/* Prevent text selection while resizing */}
       {isResizing && (

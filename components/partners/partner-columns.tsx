@@ -1,20 +1,15 @@
 "use client";
 
 import { ColumnDef } from "@tanstack/react-table";
-import { Building2, MoreHorizontal, Pencil, Trash2, ExternalLink } from "lucide-react";
+import { Building2, ExternalLink } from "lucide-react";
 import { UserPartner } from "@/types/partner";
 import { formatIban } from "@/lib/import/deduplication";
-import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 
+/**
+ * No row menu (#524): Edit and Delete live in the Partner detail panel, which
+ * a plain click opens, as on the Files list.
+ */
 interface PartnerColumnOptions {
-  onEdit?: (partner: UserPartner) => void;
-  onDelete?: (partnerId: string) => void;
   /** Partner IDs marked as "my company" */
   markedAsMe?: string[];
 }
@@ -22,7 +17,7 @@ interface PartnerColumnOptions {
 export function getPartnerColumns(
   options: PartnerColumnOptions = {}
 ): ColumnDef<UserPartner>[] {
-  const { onEdit, onDelete, markedAsMe = [] } = options;
+  const { markedAsMe = [] } = options;
 
   return [
     {
@@ -96,42 +91,6 @@ export function getPartnerColumns(
             <span className="truncate">{website}</span>
             <ExternalLink className="h-3 w-3 flex-shrink-0" />
           </a>
-        );
-      },
-    },
-    {
-      id: "actions",
-      header: "",
-      enableResizing: false,
-      cell: ({ row }) => {
-        const partner = row.original;
-        if (!onEdit && !onDelete) return null;
-
-        return (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-              <Button variant="ghost" size="icon" className="h-8 w-8">
-                <MoreHorizontal className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              {onEdit && (
-                <DropdownMenuItem onClick={() => onEdit(partner)}>
-                  <Pencil className="h-4 w-4 mr-2" />
-                  Edit
-                </DropdownMenuItem>
-              )}
-              {onDelete && (
-                <DropdownMenuItem
-                  onClick={() => onDelete(partner.id)}
-                  className="text-red-600"
-                >
-                  <Trash2 className="h-4 w-4 mr-2" />
-                  Delete
-                </DropdownMenuItem>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
         );
       },
     },

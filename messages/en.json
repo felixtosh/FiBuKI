@@ -417,5 +417,16 @@
     "more": "More",
     "panelTitle": "More filters",
     "clearAll": "Clear all"
+  },
+  "partners": {
+    "bulk": {
+      "title": "{count, plural, one {# partner selected} other {# partners selected}}",
+      "withVatId": "With VAT ID",
+      "withIban": "With IBAN",
+      "recurring": "Recurring",
+      "ofCount": "{part} of {count}",
+      "merge": "Merge {count} partners",
+      "mergeNeedsTwo": "Select at least two partners to merge them."
+    }
   }
 }

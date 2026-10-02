@@ -139,7 +139,6 @@
   "components/partners/email-patterns-section.tsx": 13,
   "components/partners/merge-partners-dialog.tsx": 13,
   "components/partners/merged-partner-notice.tsx": 1,
-  "components/partners/partner-bulk-action-bar.tsx": 2,
   "components/partners/partner-columns.tsx": 3,
   "components/partners/partner-data-table.tsx": 2,
   "components/partners/partner-detail-panel.tsx": 46,
