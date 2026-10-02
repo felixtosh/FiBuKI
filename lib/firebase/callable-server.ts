@@ -3,10 +3,8 @@
  *
  * Use this in API routes (server-side) instead of the client-side callable.ts.
  *
- * In production: Uses Google Auth for service-to-service authentication.
- * In development/emulator: Forwards the user's auth token from the request.
- *
- * Every call takes the caller's Authorization header as an argument.
+ * Every call takes the caller's Authorization header as an argument and
+ * forwards it to the backend at NEXT_PUBLIC_FUNCTIONS_URL (fibuki-api).
  */
 
 import { CloudFunctionName } from "@/types/function-call";
@@ -22,49 +20,14 @@ interface CloudFunctionResponse<T> {
 }
 
 /**
- * Get the project ID from environment variables
- */
-function getProjectId(): string {
-  return (
-    process.env.GCLOUD_PROJECT ||
-    process.env.GCP_PROJECT ||
-    process.env.GOOGLE_CLOUD_PROJECT ||
-    process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ||
-    "demo-fibuki"
-  );
-}
-
-/**
- * Check if we're using Firebase emulator
- */
-function isEmulator(): boolean {
-  return !!(
-    process.env.FUNCTIONS_EMULATOR ||
-    process.env.FIREBASE_EMULATOR_HOST ||
-    process.env.FIRESTORE_EMULATOR_HOST ||
-    (process.env.NODE_ENV === "development" && !process.env.USE_PRODUCTION_FUNCTIONS)
-  );
-}
-
-/**
- * Get the function URL (emulator or the configured backend)
- *
- * The configured origin wins over everything. There is no Cloud Functions
- * default any more: a deployment that has not said where its backend lives
- * must fail here rather than post the caller's bearer token to a project it
- * does not own. See lib/api/functions-origin.ts.
+ * Get the function URL: the configured backend, or nothing. There is no Cloud
+ * Functions or emulator default any more: a deployment that has not said where
+ * its backend lives must fail here rather than post the caller's bearer token
+ * somewhere else. See lib/api/functions-origin.ts.
  */
 function getFunctionUrl(name: string): string {
   const configured = functionsUrl(name);
   if (configured) return configured;
-
-  if (isEmulator()) {
-    // Emulator URL format: http://127.0.0.1:5001/{projectId}/{region}/{functionName}
-    const projectId = getProjectId();
-    const emulatorHost = process.env.FUNCTIONS_EMULATOR_HOST || "127.0.0.1:5001";
-    return `http://${emulatorHost}/${projectId}/europe-west1/${name}`;
-  }
-
   throw new Error(FUNCTIONS_URL_UNSET_ERROR);
 }
 
@@ -100,25 +63,11 @@ export async function callCloudFunction<TRequest, TResponse>(
 ): Promise<TResponse> {
   const authToken = tokenOf(authHeader);
   const functionUrl = getFunctionUrl(name);
-  const useEmulator = isEmulator();
-
-  let headers: Record<string, string> = {
+  const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
-
-  if (useEmulator) {
-    console.log(`[callCloudFunction] Emulator mode - calling ${name}`);
-    // For emulator: forward the user's auth token
-    if (authToken) {
-      headers["Authorization"] = `Bearer ${authToken}`;
-    } else {
-      console.warn(`[callCloudFunction] No auth token passed for ${name}`);
-    }
-  } else if (authToken) {
-    // Production with user auth: Forward the Firebase ID token
-    headers["Authorization"] = `Bearer ${authToken}`;
-  }
-  // If no auth token is set, don't add any auth header (for public endpoints)
+  // No token, no header (public endpoints).
+  if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
 
   const response = await fetch(functionUrl, {
     method: "POST",

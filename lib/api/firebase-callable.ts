@@ -4,18 +4,11 @@
  * Allows calling Firebase callable functions from server-side code (API routes)
  * using the same HTTP protocol as the client SDK.
  *
- * Supports both production and Firebase emulator (detected via NODE_ENV=development).
+ * Posts to the backend at NEXT_PUBLIC_FUNCTIONS_URL (fibuki-api), never to a
+ * default: see ./functions-origin.ts.
  */
 
 import { functionsUrl, FUNCTIONS_URL_UNSET_ERROR } from "./functions-origin";
-
-const FIREBASE_PROJECT_ID = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "demo-fibuki";
-const FIREBASE_REGION = "europe-west1";
-
-// Use emulator in development mode (matching client-side config in lib/firebase/config.ts)
-const USE_EMULATOR = process.env.NODE_ENV === "development" &&
-  process.env.NEXT_PUBLIC_USE_EMULATORS !== "false";
-const EMULATOR_HOST = "127.0.0.1:5001";
 
 /**
  * Call a Firebase callable function from the server
@@ -32,14 +25,7 @@ export async function callFirebaseFunction<TRequest, TResponse>(
   // The configured backend origin wins. No Cloud Functions default: a deployment
   // that has not said where its backend lives must fail here rather than post the
   // caller's bearer token to a project it does not own.
-  const configured = functionsUrl(functionName);
-  // The emulator is only the fallback, as in lib/firebase/callable-server.ts: in
-  // dev it used to win, so local chat tools posted to a dead :5001.
-  const url =
-    configured ??
-    (USE_EMULATOR
-      ? `http://${EMULATOR_HOST}/${FIREBASE_PROJECT_ID}/${FIREBASE_REGION}/${functionName}`
-      : null);
+  const url = functionsUrl(functionName);
   if (!url) throw new Error(FUNCTIONS_URL_UNSET_ERROR);
 
   console.log(`[Firebase Callable] Calling ${functionName} at ${url}`);
