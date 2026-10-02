@@ -4,67 +4,15 @@ on:
   pull_request:
     branches: [main]
 
-concurrency:
-  group: ci-${{ github.head_ref }}
-  cancel-in-progress: true
-
 jobs:
-  app:
-    name: App (lint + typecheck + build)
+  diag:
+    name: chrome-launch diag (${{ matrix.mode }} ${{ matrix.n }})
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-      # Needs no dependencies, so it runs before the install and fails fast.
-      # A build arg compose passes but web.Dockerfile does not declare is dropped
-      # silently, and Next inlines undefined into the client bundle (fork #54).
-      - name: Web build args reach the Dockerfile
-        run: node scripts/check-web-build-args.js
-      # Test fixtures were written against a real bookkeeping corpus, and both
-      # repos are public. An anchor like a Paperless document id resolves to
-      # nothing for a reader and everything for the instance it came from.
-      - name: No anchors to one operator's private documents
-        run: node scripts/check-corpus-anchors.js
-      - run: npm ci
-      - run: npx tsc --noEmit
-      - run: npm run lint
-      - run: npm run lint:strings
-      # The 10 node:test files under tests/ had a script each and no job, so
-      # nothing ran them. They cover the pure presentation and URL-state logic
-      # the product's tables and panels are built on.
-      - run: npm run test:node
-      - run: npm run build
-        env:
-          NEXT_TELEMETRY_DISABLED: 1
-
-  app-components:
-    name: App (component tests)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          # 22, not 20. `test:node` was broken on node 21+ for a long time and
-          # nobody noticed, because the only job running it pinned node 20 — a
-          # new job on a stale major is the same trap. jsdom 29 also requires
-          # >= 22.13 within the 22 line.
-          node-version: 22
-          cache: npm
-      # ROOT tree only, deliberately. Unlike api-auth-smoke and the self-host
-      # jobs, this suite must NOT install functions/ as well: React has to be a
-      # single instance at runtime, and a second copy reachable from
-      # functions/node_modules is how you get "Invalid hook call". The runner
-      # (vitest), the renderer (@testing-library/react) and React all come from
-      # the root package.json. See vitest.components.config.ts.
-      - run: npm ci
-      - run: npm run test:components
-
-  functions:
-    name: Cloud Functions (build + test)
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [idle, loaded]
+        n: [1, 2, 3]
     defaults:
       run:
         working-directory: functions
@@ -76,156 +24,20 @@ jobs:
           cache: npm
           cache-dependency-path: functions/package-lock.json
       - run: npm ci
-      - run: npx tsc --noEmit
-      - run: npm test
-
-      # lib/data/generated-tool-definitions.ts is committed but generated from
-      # functions/src/tools/definitions.ts, and nothing used to fail when the
-      # two disagreed — it sat stale while llm.txt and openapi.json served the
-      # old tool docs to agents (fork #60). Regenerate and require no diff.
-      # The generator reads the compiled functions/lib, and the type check above
-      # is --noEmit, so this emits first.
-      - run: npx tsc
-      - name: Tool definitions are in sync
-        working-directory: .
+      - run: |
+          nproc; free -m | head -2; google-chrome --version
+          ls ~/.cache/fontconfig 2>/dev/null | wc -l; fc-list | wc -l; df -h /dev/shm | tail -1
+      - name: idle cold launch, then warm
+        if: matrix.mode == 'idle'
         run: |
-          node scripts/generate-tool-definitions.js
-          git diff --exit-code lib/data/generated-tool-definitions.ts \
-            || { echo "::error::lib/data/generated-tool-definitions.ts is stale — run 'npm run generate:tool-definitions' and commit the result"; exit 1; }
-
-  functions-selfhost:
-    name: Self-host suite (PGlite + in-memory storage)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: functions
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            functions/package-lock.json
-      # BOTH dependency trees. vitest.selfhost.config.ts aliases "@/" to the repo
-      # root and the suite exercises REAL app code (lib/selfhost/*, lib/agent/*),
-      # so it needs the root's deps — jose, next, @langchain/* — as well as
-      # functions'. Without this the tests fail at module resolution with errors
-      # that look like logic bugs ("engine is not a constructor") rather than a
-      # missing install.
-      - run: npm ci
-        working-directory: .
-      - run: npm ci
-      - run: npm run test:selfhost
-
-  functions-selfhost-compose:
-    name: Self-host suite (real Postgres + real S3)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            functions/package-lock.json
-      - name: Start Postgres + S3 (compose)
-        run: docker compose -f deploy/selfhost/docker-compose.ci.yml up -d --wait
-      # SeaweedFS carries no shell tools for a container-side healthcheck, so
-      # readiness is proven from here: any HTTP status means the gateway is
-      # listening, and 403 is the honest answer to an unsigned request.
-      - name: Wait for S3
+          node diag-chrome.cjs cold 2> cold.err; node diag-chrome.cjs warm 2> warm.err
+          for f in cold warm; do echo "== $f"; grep -v "^\[ *[0-9]*\] *$" $f.err | head -60; done
+      - name: launch while the unit suite runs
+        if: matrix.mode == 'loaded'
         run: |
-          for i in $(seq 1 60); do
-            code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8333/ || true)
-            if [ "$code" != "000" ]; then echo "S3 up after ${i}s (HTTP $code)"; exit 0; fi
-            sleep 1
-          done
-          echo "S3 never answered on :8333" >&2
-          docker compose -f deploy/selfhost/docker-compose.ci.yml logs seaweedfs | tail -40 >&2
-          exit 1
-      # Root deps too — see the note on the PGlite job above.
-      - run: npm ci
-      - run: npm ci
-        working-directory: functions
-      # Same suite as functions-selfhost, pointed at the compose services.
-      # Sequential (--no-file-parallelism): every worker would share the one
-      # Postgres `docs` table, unlike the per-process PGlite default.
-      - run: npm run test:selfhost -- --no-file-parallelism
-        working-directory: functions
-        env:
-          DATABASE_URL: postgres://fibuki:fibuki-ci@localhost:5433/fibuki_ci
-          # Real Postgres → better-auth.ts requires a real secret (JWKS
-          # private keys are encrypted with it; the library's dev default is
-          # refused whenever DATABASE_URL is set).
-          FIBUKI_AUTH_SECRET: fibuki-ci-auth-secret-not-for-production
-          FIBUKI_STORAGE: s3
-          FIBUKI_S3_ENDPOINT: localhost
-          # SeaweedFS's S3 gateway port; MinIO's was 9000.
-          FIBUKI_S3_PORT: "8333"
-          FIBUKI_S3_SSL: "false"
-          FIBUKI_S3_ACCESS_KEY: fibuki-ci
-          FIBUKI_S3_SECRET_KEY: fibuki-ci-secret
-          FIBUKI_STORAGE_BUCKET: fibuki-ci
-      - name: Compose logs on failure
-        if: failure()
-        run: docker compose -f deploy/selfhost/docker-compose.ci.yml logs
-
-  api-auth-smoke:
-    name: App API routes (auth smoke)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-      # The suite imports the real Next route handlers from the repo root,
-      # so it needs BOTH dependency trees (root: next/firebase-admin; the
-      # runner itself lives in functions/). See vitest.api-smoke.config.ts.
-      - run: npm ci
-      - run: npm ci
-        working-directory: functions
-      - run: npx vitest run --config vitest.api-smoke.config.ts
-        working-directory: functions
-
-  extension:
-    name: Extension (jest)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: extensions/taxstudio-browser
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: extensions/taxstudio-browser/package-lock.json
-      - run: npm ci
-      - run: npm test
-
-  firestore-parity:
-    name: Firestore parity (firebase-admin vs shim)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: functions/package-lock.json
-      - uses: actions/setup-java@v6
-        with:
-          distribution: temurin
-          java-version: "21"
-      - run: npm ci
-        working-directory: functions
-      # emulators:exec exports FIRESTORE_EMULATOR_HOST, which un-skips the
-      # firebase-admin half of the parity suite; the shim half always runs.
-      - name: Run parity suite against the Firestore emulator
-        run: >
-          npx -y firebase-tools@14 emulators:exec --only firestore --project demo-fibuki
-          "cd functions && npx vitest run src/test/firestore-parity.test.ts"
+          (npm test -- --exclude src/precision-search/htmlToPdf.integration.test.ts > suite.log 2>&1; echo "SUITE DONE $(date +%s)" >> suite.log) &
+          sleep 15; date +%s; uptime
+          node diag-chrome.cjs loaded-cold 2> cold.err; uptime
+          node diag-chrome.cjs loaded-second 2> warm.err; uptime
+          wait; tail -3 suite.log
+          for f in cold warm; do echo "== $f"; grep -v "^\[ *[0-9]*\] *$" $f.err | head -60; done
