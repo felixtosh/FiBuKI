@@ -1097,6 +1097,17 @@ export interface EffectiveBillingCycle extends BillingCycleBand {
  */
 export interface BillingCycle {
   learned?: LearnedBillingCycle[];
+  /**
+   * Whether a model judged this partner a recurring biller rather than a shop
+   * visited often. Learned bands reach `effective` only when `recurring`.
+   */
+  recurrence?: {
+    recurring: boolean;
+    reason: string;
+    key: string;
+    model: string;
+    checkedAt: Timestamp;
+  };
   declared?: DeclaredBillingCycle[];
   effective?: EffectiveBillingCycle[];
 }

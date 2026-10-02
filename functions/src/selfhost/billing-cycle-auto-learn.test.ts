@@ -13,6 +13,24 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
+
+// The recurrence check asks a model whether the partner bills on a schedule.
+// These partners do; the check itself is covered by recurrenceCheck.test.ts.
+vi.mock("../matching/recurrenceCheck", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../matching/recurrenceCheck")>();
+  const { Timestamp } = await import("firebase-admin/firestore");
+  return {
+    ...actual,
+    checkRecurrence: vi.fn(async (_userId: string, _partnerId: string, input: Parameters<typeof actual.recurrenceKey>[0]) => ({
+      recurring: true,
+      reason: "test",
+      key: actual.recurrenceKey(input),
+      model: "test",
+      checkedAt: Timestamp.now(),
+    })),
+  };
+});
+
 import { getFirestore, Timestamp, __resetFirestoreShim, __whenShimIdle } from "./firestore-shim";
 import { drainTriggers, __resetTriggerShim } from "./trigger-shim";
 
@@ -22,6 +40,7 @@ import {
   learnBillingCyclesForAllUsers,
   scheduledLearnBillingCycles,
 } from "../matching/scheduledBillingCycleLearn";
+import { checkRecurrence, recurrenceKey } from "../matching/recurrenceCheck";
 
 const db = getFirestore();
 const USER = "stefan-test";
@@ -227,22 +246,70 @@ describe("nightly billing-cycle learn", () => {
     expect((await billingCycleOf("p-shim"))!.learned).toHaveLength(1);
   });
 
-  it("makes no AI call — history only", async () => {
-    await seedMonthly("p-no-ai");
+  it("asks the model once per partner; the next nightly pass reuses the verdict", async () => {
+    await seedMonthly("p-cached");
     await drainTriggers();
+    const check = vi.mocked(checkRecurrence);
+    check.mockClear();
 
-    // Every AI provider behind the vertexai adapter goes out over global
-    // fetch, and every model call is billed through the aiUsage collection.
-    // Neither may move for a nightly pass over the whole book.
-    const fetchSpy = vi.spyOn(globalThis, "fetch");
-    try {
-      await learnBillingCyclesForAllUsers();
-    } finally {
-      fetchSpy.mockRestore();
+    await learnBillingCyclesForAllUsers();
+    expect(check).toHaveBeenCalledTimes(1);
+
+    // A nightly pass over the whole book must not pay for a model call per
+    // partner every night: same partner, same cadence, same answer.
+    await learnBillingCyclesForAllUsers();
+    expect(check).toHaveBeenCalledTimes(1);
+    expect((await billingCycleOf("p-cached"))!.effective).toHaveLength(1);
+  });
+});
+
+describe("recurrence check", () => {
+  it("keeps a shop's rhythm on record but off the effective cycle", async () => {
+    await seedMonthly("p-shop");
+    await drainTriggers();
+    vi.mocked(checkRecurrence).mockImplementationOnce(async (_u, _p, input) => ({
+      recurring: false,
+      reason: "Supermarket purchases",
+      key: recurrenceKey(input),
+      model: "test",
+      checkedAt: Timestamp.now(),
+    }));
+
+    await learnBillingCyclesForAllUsers();
+
+    const cycle = (await billingCycleOf("p-shop"))! as Record<string, unknown> & {
+      learned?: unknown[];
+      effective?: unknown[];
+    };
+    expect(cycle.learned).toHaveLength(1);
+    expect(cycle.effective).toEqual([]);
+    expect((cycle.recurrence as { recurring: boolean }).recurring).toBe(false);
+  });
+
+  it("leaves a learned cycle unconfirmed when the model cannot answer", async () => {
+    await seedMonthly("p-no-answer");
+    await drainTriggers();
+    vi.mocked(checkRecurrence).mockResolvedValueOnce(null);
+
+    await learnBillingCyclesForAllUsers();
+
+    expect((await billingCycleOf("p-no-answer"))!.effective).toEqual([]);
+  });
+
+  it("keeps a declared cycle effective whatever the model says", async () => {
+    await seedPartner("p-declared", USER, {
+      billingCycle: { declared: [{ frequencyDays: 30 }] },
+    });
+    for (let i = 0; i < MONTHLY_DATES.length; i++) {
+      await seedTx(`p-declared-t${i}`, "p-declared", MONTHLY_DATES[i]);
     }
+    await drainTriggers();
+    vi.mocked(checkRecurrence).mockResolvedValueOnce(null);
 
-    expect(fetchSpy).not.toHaveBeenCalled();
-    expect((await db.collection("aiUsage").get()).empty).toBe(true);
-    expect((await billingCycleOf("p-no-ai"))!.learned).toHaveLength(1);
+    await learnBillingCyclesForAllUsers();
+
+    const effective = (await billingCycleOf("p-declared"))!.effective!;
+    expect(effective).toHaveLength(1);
+    expect(effective[0].source).toBe("declared");
   });
 });
