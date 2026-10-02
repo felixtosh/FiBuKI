@@ -87,18 +87,16 @@ export function TransactionTable({
   );
 
   // Calculate assigned count and sum of amounts
-  const { assignedCount, totalCount, filteredSum, scorePercent, deductiblePercent } =
+  const { assignedCount, totalCount, filteredSum, deductiblePercent } =
     useMemo(() => {
     const total = filteredTransactions.length;
     const assigned = filteredTransactions.filter(
       (tx) => (tx.fileIds && tx.fileIds.length > 0) || tx.noReceiptCategoryId
     ).length;
     const sum = filteredTransactions.reduce((acc, tx) => acc + (tx.amount || 0), 0);
-    const score = total > 0 ? Math.round((assigned / total) * 100) : 0;
     // Documented is not the same as deductible. A line covered by a payment
-    // confirmation counts as assigned above and earns no Vorsteuer, so the ring
-    // draws the § 11 share as a second arc and the gap between them is the
-    // receipt-only rows, each flagged on its own File pill.
+    // confirmation counts as assigned above and earns no Vorsteuer, so the
+    // counter's explanation states the § 11 share separately (#517).
     const deductible = filteredTransactions.filter(
       (tx) => tx.documentationState === "invoice"
     ).length;
@@ -107,7 +105,6 @@ export function TransactionTable({
       assignedCount: assigned,
       totalCount: total,
       filteredSum: sum,
-      scorePercent: score,
       deductiblePercent: deductibleScore,
     };
   }, [filteredTransactions]);
@@ -340,7 +337,6 @@ export function TransactionTable({
         assignedCount={assignedCount}
         totalCount={totalCount}
         filteredSum={filteredSum}
-        scorePercent={scorePercent}
         deductiblePercent={deductiblePercent}
       />
 

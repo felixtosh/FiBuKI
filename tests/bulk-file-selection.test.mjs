@@ -7,7 +7,8 @@ import {
   resolveSelectionChange,
 } from "../lib/selection/bulk-file-selection.js";
 
-test("toggleFileCheckbox: checking a non-primary row adds it to the additional set", () => {
+test("toggleFileCheckbox: the first box ticked while browsing selects that row alone (#517)", () => {
+  // "a" is only open in the panel; its box is empty, so it must not join.
   const result = toggleFileCheckbox({
     fileId: "b",
     checked: true,
@@ -15,17 +16,28 @@ test("toggleFileCheckbox: checking a non-primary row adds it to the additional s
     additionalSelectedIds: new Set(),
   });
   assert.deepEqual([...result.additionalSelectedIds], ["b"]);
-  assert.equal(result.closePrimary, false);
+  assert.equal(result.closePrimary, true);
 });
 
-test("toggleFileCheckbox: checking the primary row is a no-op (already selected)", () => {
+test("toggleFileCheckbox: ticking the browsed row's own box makes it the bulk selection (#517)", () => {
   const result = toggleFileCheckbox({
     fileId: "a",
     checked: true,
     primarySelectedId: "a",
     additionalSelectedIds: new Set(),
   });
-  assert.deepEqual([...result.additionalSelectedIds], []);
+  assert.deepEqual([...result.additionalSelectedIds], ["a"]);
+  assert.equal(result.closePrimary, true);
+});
+
+test("toggleFileCheckbox: inside a bulk selection, checking a row adds it", () => {
+  const result = toggleFileCheckbox({
+    fileId: "c",
+    checked: true,
+    primarySelectedId: "a",
+    additionalSelectedIds: new Set(["b"]),
+  });
+  assert.deepEqual([...result.additionalSelectedIds], ["b", "c"]);
   assert.equal(result.closePrimary, false);
 });
 

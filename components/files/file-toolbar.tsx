@@ -1,5 +1,7 @@
 "use client";
 
+import { useTranslations } from "next-intl";
+import { ProgressCounter } from "@/components/ui/progress-counter";
 import { useState } from "react";
 import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
@@ -234,6 +236,7 @@ export function FileToolbar({
   };
 
   // Show counter only when there are files
+  const tProgress = useTranslations("progress");
   const showCounter = totalCount !== undefined && totalCount > 0;
 
   return (
@@ -795,11 +798,17 @@ export function FileToolbar({
 
       {/* Right side: counter */}
       {showCounter && (
-        <div className="flex items-center gap-1.5 text-sm text-muted-foreground shrink-0">
-          <span className="tabular-nums font-medium text-foreground">{connectedCount ?? 0}</span>
-          <span>/</span>
-          <span className="tabular-nums">{totalCount}</span>
-        </div>
+        <ProgressCounter
+          className="text-sm shrink-0"
+          done={connectedCount ?? 0}
+          total={totalCount ?? 0}
+          explanation={
+            <div className="space-y-1.5">
+              <p>{tProgress("files", { done: connectedCount ?? 0, total: totalCount ?? 0 })}</p>
+              <p className="text-muted-foreground">{tProgress("followsFilters")}</p>
+            </div>
+          }
+        />
       )}
     </div>
   );

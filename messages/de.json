@@ -375,5 +375,11 @@
       "detailsInfoSearch": "Die Suche, mit der FiBuKI dein Postfach nach einem Beleg für eine offene Transaktion durchsucht hat, z. B. der Name des Partners.",
       "detailsInfoResult": "Welcher Teil der Mail dieser Beleg ist: ein Anhang, die Mail selbst als PDF gespeichert, oder eine Datei, die über einen Link in der Mail geladen wurde."
     }
+  },
+  "progress": {
+    "files": "{done} von {total} Belegen sind mit einer Transaktion verknüpft. Als „kein Finanzbeleg“ markierte Belege zählen nicht mit.",
+    "transactions": "{done} von {total} Transaktionen sind dokumentiert: mit einem Beleg oder stattdessen mit einer Kategorie ohne Beleg.",
+    "transactionsDeductible": "{percent} % sind mit einer Rechnung belegt, die zum Vorsteuerabzug berechtigt (§ 11 UStG). Eine reine Zahlungsbestätigung reicht dafür nicht.",
+    "followsFilters": "Die Zahl folgt den Filtern und der Suche oben."
   }
 }

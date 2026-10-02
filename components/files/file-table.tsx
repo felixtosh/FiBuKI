@@ -41,6 +41,12 @@ interface FileTableProps {
   // Multi-select props
   enableMultiSelect?: boolean;
   selectedRowIds?: Set<string>;
+  /**
+   * What the checkbox column shows ticked. Browsing a File (a plain click)
+   * highlights its row but leaves its box empty (#517); defaults to
+   * `selectedRowIds`.
+   */
+  checkedRowIds?: FileTableProps["selectedRowIds"];
   onSelectionChange?: (selectedIds: Set<string>, meta: SelectionChangeMeta) => void;
   /** Callback with the row ids in displayed order (filtered rows, active sort) */
   onDisplayedOrderChange?: (orderedIds: string[]) => void;
@@ -72,6 +78,7 @@ export const FileTable = forwardRef<FilesDataTableHandle, FileTableProps>(
       transactionAmountsMap,
       enableMultiSelect,
       selectedRowIds,
+      checkedRowIds,
       onSelectionChange,
       onDisplayedOrderChange,
       onToggleFileSelection,
@@ -108,14 +115,14 @@ export const FileTable = forwardRef<FilesDataTableHandle, FileTableProps>(
         cell: ({ row }) => (
           <div className="flex items-center" onClick={(e) => e.stopPropagation()}>
             <Checkbox
-              checked={selectedRowIds?.has(row.original.id) ?? false}
+              checked={(checkedRowIds ?? selectedRowIds)?.has(row.original.id) ?? false}
               onCheckedChange={(checked) => onToggleFileSelection?.(row.original.id, checked === true)}
               aria-label={`Select ${row.original.fileName}`}
             />
           </div>
         ),
       }),
-      [selectAllState, selectedRowIds, onToggleFileSelection, onToggleSelectAll]
+      [selectAllState, checkedRowIds, selectedRowIds, onToggleFileSelection, onToggleSelectAll]
     );
 
     const dataColumns = useMemo(
