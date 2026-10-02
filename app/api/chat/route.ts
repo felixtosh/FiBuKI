@@ -11,6 +11,7 @@ export const dynamic = "force-dynamic";
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { Timestamp } from "firebase-admin/firestore";
+import type { UsageMetadata } from "@langchain/core/messages";
 
 // Dynamic imports to avoid build-time analysis issues
 const getAI = async () => import("ai");
@@ -76,9 +77,27 @@ export async function POST(req: Request) {
   // Build the graph
   const graph = buildAgentGraph();
 
-  // Track token usage
+  // Track token usage. Counted when each model call ends, not from the stream:
+  // LangGraph rebuilds streamed chunks from text alone for Gemini, so they never
+  // carry usage, and chat cost was logged as nothing at all.
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
+  const usageHandler = {
+    handleLLMEnd(output: {
+      generations?: Array<Array<{ message?: { usage_metadata?: UsageMetadata } }>>;
+    }) {
+      for (const gen of output.generations?.flat() ?? []) {
+        const usage = gen.message?.usage_metadata;
+        if (!usage) continue;
+        const input = usage.input_tokens || 0;
+        totalInputTokens += input;
+        // total minus input, so a thinking model's reasoning (billed as output,
+        // missing from output_tokens on Gemini) is counted too.
+        totalOutputTokens += Math.max(usage.output_tokens || 0, (usage.total_tokens || 0) - input);
+        console.log("[Token Usage]", usage);
+      }
+    },
+  };
 
   // Use graph.stream with messages streamMode for best compatibility with toUIMessageStream
   const graphStream = await graph.stream(
@@ -92,7 +111,7 @@ export async function POST(req: Request) {
     },
     {
       streamMode: ["messages"] as const,
-      callbacks: langfuseHandler ? [langfuseHandler] : undefined,
+      callbacks: langfuseHandler ? [usageHandler, langfuseHandler] : [usageHandler],
     }
   );
 
@@ -143,18 +162,8 @@ export async function POST(req: Request) {
 
       const msgChunk = msgData[0];
       if (msgChunk) {
-        // Extract usage metadata from kwargs (serialized LC format)
-
         const chunkObj = msgChunk as any;
         const kwargs = chunkObj.kwargs || chunkObj;
-        const usageMeta = kwargs.usage_metadata;
-
-        if (usageMeta) {
-          totalInputTokens += usageMeta.input_tokens || 0;
-          totalOutputTokens += usageMeta.output_tokens || 0;
-          console.log("[Token Usage]", usageMeta);
-        }
-
         // Log content for debugging (from kwargs for serialized format)
         const content = kwargs.content;
         if (Array.isArray(content) && content.length > 0) {

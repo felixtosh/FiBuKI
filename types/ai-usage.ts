@@ -112,6 +112,7 @@ export const AI_MODEL_PRICING: Record<string, { input: number; output: number }>
   "gemini-3.5-flash-lite": { input: 0.30, output: 2.50 },
   "gemini-3.5-flash": { input: 1.50, output: 9.00 },
   "gemini-3.6-flash": { input: 1.50, output: 7.50 },
+  "gemini-3.8-flash": { input: 1.50, output: 7.50 },
   // Retired — kept for historical aiUsage record cost lookups
   "gemini-2.5-flash-lite": { input: 0.10, output: 0.40 },
   "gemini-2.5-flash": { input: 0.30, output: 2.50 },

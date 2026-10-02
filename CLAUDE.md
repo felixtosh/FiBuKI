@@ -428,7 +428,7 @@ silent failure mode is mis-billing, not a crash.
 | Document extraction | `geminiLite` | `gemini-3.1-flash-lite` | Native PDF/image support |
 | Partner matching / company lookup | `geminiFlash` | `gemini-3.5-flash-lite` | Priced identically to the 2.5-flash it replaces |
 | Chat/Agent (cloud) | `chatAgent` | Anthropic Claude | Complex reasoning, multi-step tasks |
-| Chat/Agent (self-host) | `FIBUKI_CHAT_MODEL` | `gemini-3.6-flash` | Runs in fibuki-web via API key, not Vertex |
+| Chat/Agent (self-host) | `FIBUKI_CHAT_MODEL` | `gemini-3.8-flash` | Runs in fibuki-web via API key, not Vertex |
 
 Google **retires model ids for new API-key consumers while Vertex keeps serving
 them** — `gemini-2.5-flash` returns 404 on a current key but works on Vertex. So a
