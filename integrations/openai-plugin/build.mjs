@@ -7,7 +7,8 @@
  * tests/openai-plugin-csv.test.mjs fails if the
  * committed bundle is stale.
  *
- * esbuild comes from functions/node_modules (installed there already).
+ * esbuild is a root devDependency (pinned to the version functions/ resolves, because --check compares bytes);
+ * functions/node_modules is the fallback for a checkout that only installed there.
  */
 
 import { readFileSync } from "node:fs";
@@ -17,8 +18,17 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../..");
-const require = createRequire(resolve(repoRoot, "functions/package.json"));
-const esbuild = require("esbuild");
+function loadEsbuild() {
+  for (const base of ["package.json", "functions/package.json"]) {
+    try {
+      return createRequire(resolve(repoRoot, base))("esbuild");
+    } catch {
+      // try the next install
+    }
+  }
+  throw new Error("esbuild not found: run npm ci at the repo root");
+}
+const esbuild = loadEsbuild();
 
 const check = process.argv.includes("--check");
 const outfile = resolve(here, "scripts/fibuki-csv.mjs");
