@@ -10,6 +10,17 @@ export default function CommunityPage() {
     <div className="space-y-6">
       <SettingsPageHeader title={t("title")} description={t("description")} />
       <CommunityCard />
+      <p className="text-sm text-muted-foreground">
+        {t("githubText")}{" "}
+        <a
+          className="underline"
+          href="https://github.com/felixtosh/TaxToolAT"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          {t("githubLink")}
+        </a>
+      </p>
     </div>
   );
 }

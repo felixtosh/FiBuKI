@@ -8,16 +8,16 @@ import {
   Link2,
   Download,
   Gift,
-  LifeBuoy,
-  MessagesSquare,
-  type LucideIcon,
 } from "lucide-react";
+import type { ComponentType } from "react";
+import { TelegramLogo } from "@/components/ui/telegram-logo";
+import { COMMUNITY_SETTINGS_PATH } from "@/lib/config/community";
 import type { PlanFeatureKey } from "@/types/billing";
 
 export interface SettingsNavItem {
   href: string;
   label: string;
-  icon: LucideIcon;
+  icon: ComponentType<{ className?: string }>;
   feature?: PlanFeatureKey;
   external?: boolean;
 }
@@ -32,6 +32,5 @@ export const settingsNavItems: SettingsNavItem[] = [
   { href: "/settings/integrations", label: "Integrations", icon: Link2, feature: "aiMatching" },
   { href: "/settings/import-export", label: "Import / Export", icon: Download },
   { href: "/settings/referral", label: "Refer a Friend", icon: Gift },
-  { href: "/settings/community", label: "Community", icon: MessagesSquare },
-  { href: "https://github.com/felixtosh/TaxToolAT", label: "Support", icon: LifeBuoy, external: true },
+  { href: COMMUNITY_SETTINGS_PATH, label: "Support & Community", icon: TelegramLogo },
 ];
