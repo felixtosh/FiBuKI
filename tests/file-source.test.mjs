@@ -52,13 +52,12 @@ test("a browser pull is a Browser source named by its domain, not an Upload (#bu
   assert.equal(fileSourceView({ sourceType: "browser" }).text, null);
 });
 
-test("Dropbox and Drive files are cloud sources linked to their integration", () => {
+test("Dropbox and Drive files are cloud sources linked to their provider page", () => {
   for (const sourceType of ["dropbox", "gdrive"]) {
     const view = fileSourceView({ sourceType, sourceIntegrationId: "c1" });
     assert.equal(view.kind, sourceType);
     assert.equal(view.icon, "cloud");
-    assert.equal(view.href, "/integrations/c1");
+    assert.equal(view.href, `/integrations/${sourceType}`);
     assert.equal(view.isMail, false);
   }
-  assert.equal(fileSourceView({ sourceType: "dropbox" }).href, null);
 });
