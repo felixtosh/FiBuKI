@@ -19,6 +19,7 @@ import { getFirestore, Timestamp, __resetFirestoreShim } from "./firestore-shim"
 import { drainTriggers, __resetTriggerShim } from "./trigger-shim";
 import { HttpsError } from "./https-shim";
 import { waitFor } from "./test-helpers";
+import { computeDedupeHash } from "../imports/dedupe";
 
 // REAL application code, unmodified:
 import { bulkCreateTransactionsCallable } from "../imports/bulkCreateTransactions";
@@ -97,7 +98,11 @@ describe("selfhost hardening: bulkCreateTransactions callable via https-shim", (
 
     const tx = (await db.collection("transactions").doc(res.transactionIds[0]).get()).data()!;
     expect(tx.userId).toBe(USER);
-    expect(tx.dedupeHash).toBe("hash-1");
+    // The server derives the hash; the client-sent "hash-1" is ignored. src-n26 has no IBAN,
+    // so the account id stands in as the identifier.
+    expect(tx.dedupeHash).toBe(
+      computeDedupeHash({ date: "2026-07-05T22:00:00.000Z", amount: -1001, sourceIdentifier: "src-n26" }),
+    );
     expect(tx.isComplete).toBe(false);
     expect(tx.partnerId).toBeNull();
     // 2026-07-05T22:00 UTC stays July 5 at UTC midnight (no timezone drift)

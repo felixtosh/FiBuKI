@@ -7,6 +7,7 @@ import { createCallable, HttpsError } from "../utils/createCallable";
 import { checkTransactionQuota, incrementTransactionCount } from "../billing/checkTransactionQuota";
 import { toDateSafe } from "../utils/toDateSafe";
 import { normalizeTransactionType } from "./transactionType";
+import { computeDedupeHash, splitDuplicates } from "./dedupe";
 
 interface TransactionData {
   sourceId: string;
@@ -20,7 +21,8 @@ interface TransactionData {
   partnerIban?: string | null;
   /** The bank's own type wording from the mapped column, raw (#136). */
   bankTransactionType?: string | null;
-  dedupeHash: string;
+  /** Ignored. The server derives the hash itself (imports/dedupe.ts), so no client can drift from it. */
+  dedupeHash?: string;
   importJobId: string;
   csvRowIndex?: number;
   _original: {
@@ -47,6 +49,8 @@ interface BulkCreateTransactionsResponse {
   success: boolean;
   transactionIds: string[];
   count: number;
+  /** Rows an earlier import already stored for this Bank Account; not written. */
+  duplicateCount: number;
   quotaExceeded: boolean;
   overLimitCount: number;
   overLimitTransactionIds: string[];
@@ -75,7 +79,7 @@ export const bulkCreateTransactionsCallable = createCallable<
     }
 
     if (transactions.length === 0) {
-      return { success: true, transactionIds: [], count: 0, quotaExceeded: false, overLimitCount: 0, overLimitTransactionIds: [] };
+      return { success: true, transactionIds: [], count: 0, duplicateCount: 0, quotaExceeded: false, overLimitCount: 0, overLimitTransactionIds: [] };
     }
 
     if (transactions.length > 5000) {
@@ -97,10 +101,35 @@ export const bulkCreateTransactionsCallable = createCallable<
       throw new HttpsError("permission-denied", "Source access denied");
     }
 
+    // Skip what an earlier import already holds, decided here and nowhere else. The hash
+    // is the Bank Account's IBAN (or its id when it has none) with date, amount and reference.
+    const sourceIdentifier = (sourceSnap.data()!.iban as string | undefined) || sourceId;
+    const importJobId = transactions[0].importJobId;
+    const hashed = transactions.map((tx) => {
+      if (isNaN(new Date(tx.date).getTime())) {
+        throw new HttpsError("invalid-argument", `Invalid date for transaction: ${tx.date}`);
+      }
+      return {
+        ...tx,
+        dedupeHash: computeDedupeHash({
+          date: tx.date,
+          amount: tx.amount,
+          sourceIdentifier,
+          reference: tx.reference,
+        }),
+      };
+    });
+    const { fresh, duplicates } = await splitDuplicates(ctx.db, ctx.userId, sourceId, hashed, importJobId);
+    const duplicateCount = duplicates.length;
+
+    if (fresh.length === 0) {
+      return { success: true, transactionIds: [], count: 0, duplicateCount, quotaExceeded: false, overLimitCount: 0, overLimitTransactionIds: [] };
+    }
+
     // Check transaction quota (soft limit — import all, mark over-limit ones)
     const isAdmin = ctx.request.auth?.token?.admin === true;
-    const quota = await checkTransactionQuota(ctx.userId, transactions.length, isAdmin);
-    const overLimitStartIndex = quota.allowed ? transactions.length : quota.remainingSlots;
+    const quota = await checkTransactionQuota(ctx.userId, fresh.length, isAdmin);
+    const overLimitStartIndex = quota.allowed ? fresh.length : quota.remainingSlots;
 
     const now = Timestamp.now();
     const transactionIds: string[] = [];
@@ -108,9 +137,9 @@ export const bulkCreateTransactionsCallable = createCallable<
 
     // Process in batches
     let globalIndex = 0;
-    for (let i = 0; i < transactions.length; i += BATCH_SIZE) {
+    for (let i = 0; i < fresh.length; i += BATCH_SIZE) {
       const batch = ctx.db.batch();
-      const chunk = transactions.slice(i, i + BATCH_SIZE);
+      const chunk = fresh.slice(i, i + BATCH_SIZE);
 
       for (const txData of chunk) {
         const docRef = ctx.db.collection("transactions").doc();
@@ -222,6 +251,7 @@ export const bulkCreateTransactionsCallable = createCallable<
       success: true,
       transactionIds,
       count: transactionIds.length,
+      duplicateCount,
       quotaExceeded,
       overLimitCount: overLimitTransactionIds.length,
       overLimitTransactionIds,

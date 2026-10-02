@@ -58,6 +58,7 @@ import {
 import { getStorage } from "firebase-admin/storage";
 import { createHash, randomUUID } from "crypto";
 import { createFileRecord, findFileByContentHash } from "../files/createFileRecord";
+import { computeDedupeHash, splitDuplicates } from "../imports/dedupe";
 import { generatedInvoiceRefusal } from "../files/generatedInvoiceGuard";
 import { syncDocumentationStateForTransactions } from "../documents/syncDocumentationState";
 import { assignNoReceiptCategoryToTransaction } from "../matching/assignNoReceiptCategory";
@@ -2720,19 +2721,22 @@ export async function importTransactions(userId: string, args: Record<string, un
     throw new Error("Source not found");
   }
 
-  // Build transaction data with dedupeHashes
-  const crypto = await import("crypto");
-  const importJobId = `api_${Date.now()}`;
+  // Calls that belong to one file share an importJobId, so identical rows inside
+  // that file are never taken for duplicates of each other (see imports/dedupe.ts).
+  const importJobId =
+    typeof args.importJobId === "string" && args.importJobId
+      ? args.importJobId
+      : `api_${Date.now()}_${randomUUID().slice(0, 8)}`;
 
-  const transactions = (rawTxs as Array<Record<string, unknown>>).map((tx, index) => {
+  // The same hash the web import stores: Bank Account IBAN, or its id when it has none.
+  const sourceIdentifier = (sourceDoc.data()?.iban as string | undefined) || (sourceId as string);
+
+  const candidates = (rawTxs as Array<Record<string, unknown>>).map((tx, index) => {
     const date = tx.date as string;
     const amount = tx.amount as number;
     const name = tx.name as string;
     const currency = (tx.currency as string) || "EUR";
-
-    // Generate dedupeHash from key fields
-    const hashInput = `${sourceId}|${date}|${amount}|${name}|${currency}`;
-    const dedupeHash = crypto.createHash("sha256").update(hashInput).digest("hex");
+    const reference = (tx.reference as string) || null;
 
     return {
       sourceId: sourceId as string,
@@ -2742,9 +2746,9 @@ export async function importTransactions(userId: string, args: Record<string, un
       name,
       description: (tx.description as string) || null,
       partner: (tx.partner as string) || null,
-      reference: (tx.reference as string) || null,
+      reference,
       partnerIban: (tx.partnerIban as string) || null,
-      dedupeHash,
+      dedupeHash: computeDedupeHash({ date, amount, sourceIdentifier, reference }),
       importJobId,
       csvRowIndex: index,
       _original: {
@@ -2754,6 +2758,27 @@ export async function importTransactions(userId: string, args: Record<string, un
       },
     };
   });
+
+  // Rows an earlier import already stored are skipped here, on the server, for every caller.
+  const { fresh: transactions, duplicates } = await splitDuplicates(
+    db,
+    userId,
+    sourceId as string,
+    candidates,
+    importJobId
+  );
+  const duplicateCount = duplicates.length;
+
+  if (transactions.length === 0) {
+    return {
+      success: true,
+      transactionIds: [] as string[],
+      count: 0,
+      duplicateCount,
+      quotaExceeded: false,
+      overLimitCount: 0,
+    };
+  }
 
   // Use bulk create directly (not via callable to avoid double auth check)
   const { Timestamp: AdminTimestamp } = await import("firebase-admin/firestore");
@@ -2840,6 +2865,7 @@ export async function importTransactions(userId: string, args: Record<string, un
     success: true,
     transactionIds,
     count: transactionIds.length,
+    duplicateCount,
     quotaExceeded: overLimitTransactionIds.length > 0,
     overLimitCount: overLimitTransactionIds.length,
   };

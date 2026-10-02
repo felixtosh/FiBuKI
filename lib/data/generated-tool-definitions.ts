@@ -258,13 +258,17 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "import_transactions",
-    "description": "Import pre-mapped transactions into a source. Transactions must include date, amount, name, and currency.",
+    "description": "Import pre-mapped transactions into a source. Transactions must include date, amount, name, and currency. Lines an earlier import already stored for the same bank account are skipped (same date, amount and reference), so re-sending an overlapping export is safe; the response says how many in duplicateCount. When a file is sent in several calls, pass the same importJobId on each so identical lines of that file are all kept.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "sourceId": {
           "type": "string",
           "description": "The source/bank account ID to import into"
+        },
+        "importJobId": {
+          "type": "string",
+          "description": "Optional. One id per file, repeated on every call that carries a chunk of it. Without it each call is its own import."
         },
         "transactions": {
           "type": "array",
