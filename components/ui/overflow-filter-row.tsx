@@ -22,16 +22,21 @@ const GAP = 8; // gap-2
  * move behind a "More" button. The button says how many hidden filters are
  * set, so a filter never goes unseen just because the window is narrow.
  *
- * "More" opens the hidden filters as a list of full-width rows: a popover
- * anchored to the button on a wide screen, a bottom sheet on a phone, where a
- * popover would land off-screen or under a thumb. Each row is the same chip
- * the toolbar shows, so it opens its own picker exactly as it would inline.
+ * "More" opens every filter, not only the hidden ones (#528), as a list of
+ * full-width rows: the whole filter set in one place, which is what a phone
+ * needs anyway. A popover anchored to the button on a wide screen, a bottom
+ * sheet on a phone, where a popover would land off-screen or under a thumb.
+ * Each row is the same chip the toolbar shows, so it opens its own picker
+ * exactly as it would inline.
  *
- * Fitting is measured, not guessed. Every chip renders exactly once, in the
- * row or in the panel, because several keep their popover's open state in the
- * toolbar and a second copy would open with it. Each chip's width is cached
- * whenever it sits in the row (the first paint shows them all), and the row
- * re-fits from that cache on every resize and every label change.
+ * A chip can therefore be on screen twice, in the row and in the panel, so
+ * every chip passed in must own its popover state (ChoiceFilter,
+ * PartnerFilter, DateRangeFilter do); one whose open state lived in the
+ * toolbar would open in both places at once.
+ *
+ * Fitting is measured, not guessed. Each chip's width is cached whenever it
+ * sits in the row (the first paint shows them all), and the row re-fits from
+ * that cache on every resize and every label change.
  */
 export function OverflowFilterRow({
   leading,
@@ -46,7 +51,7 @@ export function OverflowFilterRow({
   items: OverflowFilterItem[];
   /** "More", the button's label. */
   moreLabel: string;
-  /** Heading of the panel the hidden filters open in. */
+  /** Heading of the panel that lists every filter. */
   panelTitle: string;
   clearLabel?: string;
   /** Clears every filter; offered in the panel when one is set. */
@@ -152,7 +157,7 @@ export function OverflowFilterRow({
         )}
       </div>
       <div className="flex flex-col gap-2 [&>div>button]:w-full [&>div>button]:justify-start">
-        {hidden.map((item) => (
+        {items.map((item) => (
           <div key={item.key}>{item.node}</div>
         ))}
       </div>

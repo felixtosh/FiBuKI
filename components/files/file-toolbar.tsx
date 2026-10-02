@@ -2,22 +2,13 @@
 
 import { useTranslations } from "next-intl";
 import { ProgressCounter } from "@/components/ui/progress-counter";
-import { useState } from "react";
-import { format } from "date-fns";
-import { Button } from "@/components/ui/button";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { Calendar } from "@/components/ui/calendar";
-import { CalendarDays, Link2, ArrowUpDown, X, CalendarIcon, Trash2 } from "lucide-react";
+import { Link2, ArrowUpDown, Trash2 } from "lucide-react";
 import { SearchButton } from "@/components/ui/search-button";
 import { ChoiceFilter } from "@/components/ui/choice-filter";
+import { DateRangeFilter } from "@/components/ui/date-range-filter";
 import { OverflowFilterRow } from "@/components/ui/overflow-filter-row";
 import { PartnerFilter } from "@/components/partners/partner-filter";
 import { FileFilters } from "@/types/file";
-import { cn } from "@/lib/utils";
 import { UserPartner } from "@/types/partner";
 
 interface FileToolbarProps {
@@ -41,57 +32,14 @@ export function FileToolbar({
   connectedCount,
   totalCount,
 }: FileToolbarProps) {
-  const [datePopoverOpen, setDatePopoverOpen] = useState(false);
-  const [showFromCalendar, setShowFromCalendar] = useState(false);
-  const [showToCalendar, setShowToCalendar] = useState(false);
 
   const hasDateFilter = filters.extractedDateFrom || filters.extractedDateTo;
 
-  const handleDatePresetClick = (preset: string) => {
-    const now = new Date();
-    let extractedDateFrom: Date | undefined;
-    let extractedDateTo: Date | undefined;
 
-    switch (preset) {
-      case "30d":
-        extractedDateFrom = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-        extractedDateTo = now;
-        break;
-      case "3m":
-        extractedDateFrom = new Date(now.getFullYear(), now.getMonth() - 3, now.getDate());
-        extractedDateTo = now;
-        break;
-      case "thisYear":
-        extractedDateFrom = new Date(now.getFullYear(), 0, 1);
-        extractedDateTo = now;
-        break;
-      case "lastYear":
-        extractedDateFrom = new Date(now.getFullYear() - 1, 0, 1);
-        extractedDateTo = new Date(now.getFullYear() - 1, 11, 31);
-        break;
-      default:
-        extractedDateFrom = undefined;
-        extractedDateTo = undefined;
-    }
 
-    onFiltersChange({ ...filters, extractedDateFrom, extractedDateTo });
-    setDatePopoverOpen(false);
-  };
 
-  const clearDateFilter = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    onFiltersChange({ ...filters, extractedDateFrom: undefined, extractedDateTo: undefined });
-  };
 
-  const getDateLabel = () => {
-    if (!hasDateFilter) return "Date";
-    if (filters.extractedDateFrom && filters.extractedDateTo) {
-      return `${format(filters.extractedDateFrom, "MMM d")} - ${format(filters.extractedDateTo, "MMM d")}`;
-    }
-    if (filters.extractedDateFrom) return `From ${format(filters.extractedDateFrom, "MMM d")}`;
-    if (filters.extractedDateTo) return `Until ${format(filters.extractedDateTo, "MMM d")}`;
-    return "Date";
-  };
+
 
   const t = useTranslations("filters");
   // The Type chip is one choice across two stored fields: the deleted-files
@@ -140,144 +88,13 @@ export function FileToolbar({
             active: Boolean(hasDateFilter),
             node: (
               <>
-      {/* Date filter (Invoice Date) */}
-      <Popover open={datePopoverOpen} onOpenChange={setDatePopoverOpen}>
-        <PopoverTrigger asChild>
-          <Button
-            variant={hasDateFilter ? "secondary" : "outline"}
-            size="sm"
-            className="h-9 gap-2"
-          >
-            <CalendarDays className="h-4 w-4" />
-            <span>{getDateLabel()}</span>
-            {hasDateFilter && (
-              <span
-                role="button"
-                tabIndex={0}
-                onClick={clearDateFilter}
-                onKeyDown={(e) => e.key === "Enter" && clearDateFilter(e as unknown as React.MouseEvent)}
-                className="ml-1 hover:bg-muted rounded p-0.5 -mr-1 cursor-pointer"
-              >
-                <X className="h-3 w-3" />
-              </span>
-            )}
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="w-auto p-4" align="start">
-          <div className="space-y-4">
-            {/* From/To date pickers on top */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-muted-foreground">From</label>
-                <Popover open={showFromCalendar} onOpenChange={setShowFromCalendar}>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      className={cn(
-                        "w-full justify-start text-left font-normal h-9",
-                        !filters.extractedDateFrom && "text-muted-foreground"
-                      )}
-                    >
-                      <CalendarIcon className="mr-2 h-4 w-4" />
-                      {filters.extractedDateFrom ? format(filters.extractedDateFrom, "PP") : "Pick date"}
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0" align="start">
-                    <Calendar
-                      mode="single"
-                      selected={filters.extractedDateFrom}
-                      onSelect={(date) => {
-                        onFiltersChange({ ...filters, extractedDateFrom: date });
-                        setShowFromCalendar(false);
-                      }}
-                      autoFocus
-                    />
-                  </PopoverContent>
-                </Popover>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-muted-foreground">To</label>
-                <Popover open={showToCalendar} onOpenChange={setShowToCalendar}>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      className={cn(
-                        "w-full justify-start text-left font-normal h-9",
-                        !filters.extractedDateTo && "text-muted-foreground"
-                      )}
-                    >
-                      <CalendarIcon className="mr-2 h-4 w-4" />
-                      {filters.extractedDateTo ? format(filters.extractedDateTo, "PP") : "Pick date"}
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0" align="start">
-                    <Calendar
-                      mode="single"
-                      selected={filters.extractedDateTo}
-                      onSelect={(date) => {
-                        onFiltersChange({ ...filters, extractedDateTo: date });
-                        setShowToCalendar(false);
-                      }}
-                      autoFocus
-                    />
-                  </PopoverContent>
-                </Popover>
-              </div>
-            </div>
-
-            {/* Separator */}
-            <div className="border-t" />
-
-            {/* Quick presets as buttons */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Quick select</label>
-              <div className="flex flex-wrap gap-1.5">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-8"
-                  onClick={() => handleDatePresetClick("all")}
-                >
-                  All time
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-8"
-                  onClick={() => handleDatePresetClick("30d")}
-                >
-                  30 days
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-8"
-                  onClick={() => handleDatePresetClick("3m")}
-                >
-                  3 months
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-8"
-                  onClick={() => handleDatePresetClick("thisYear")}
-                >
-                  This year
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-8"
-                  onClick={() => handleDatePresetClick("lastYear")}
-                >
-                  Last year
-                </Button>
-              </div>
-            </div>
-          </div>
-        </PopoverContent>
-      </Popover>
+      <DateRangeFilter
+        from={filters.extractedDateFrom}
+        to={filters.extractedDateTo}
+        onChange={(extractedDateFrom, extractedDateTo) =>
+          onFiltersChange({ ...filters, extractedDateFrom, extractedDateTo })
+        }
+      />
               </>
             ),
           },
