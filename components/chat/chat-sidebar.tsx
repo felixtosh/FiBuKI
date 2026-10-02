@@ -289,7 +289,7 @@ export function ChatSidebar() {
                   <div className="relative flex-1 overflow-hidden">
                     <ScrollArea className="h-full px-4" ref={scrollRef} viewportRef={viewportRef} onScroll={handleScroll}>
                       <div className="space-y-4 py-4">
-                        {!chatGate.allowed && messages.length === 0 ? (
+                        {chatGate.denied && messages.length === 0 ? (
                           <div className="flex flex-col items-center justify-center py-8 text-center text-muted-foreground">
                             <MessageSquare className="mb-4 h-12 w-12 opacity-20" />
                             <p className="text-sm font-medium">Chat Assistant</p>
