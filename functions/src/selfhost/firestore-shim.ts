@@ -716,24 +716,30 @@ async function rawPut(
   id: string,
   data: Record<string, unknown>,
   before: Record<string, unknown> | undefined,
-): Promise<void> {
+  /**
+   * "insert" writes only if the document does not exist, decided by Postgres
+   * in the INSERT itself, and returns false when it already did: the atomic
+   * create() Firestore guarantees. "upsert" is every other write.
+   */
+  mode: "upsert" | "insert" = "upsert",
+): Promise<boolean> {
   const spec = flatSpecFor(collectionPath);
   const path = `${collectionPath}/${id}`;
   const json = JSON.stringify(encodeValue(data));
-  await withTenant(async (q) => {
-    if (spec) {
-      await q(
-        `INSERT INTO ${spec.table} (tenant_id, id, data) VALUES ($1, $2, $3::jsonb)
-           ON CONFLICT (tenant_id, id) DO UPDATE SET data = EXCLUDED.data`,
-        [getTenantId(), id, json],
-      );
-    } else {
-      await q(
-        `INSERT INTO docs (tenant_id, path, collection_path, id, data) VALUES ($1, $2, $3, $4, $5::jsonb)
-           ON CONFLICT (tenant_id, path) DO UPDATE SET data = EXCLUDED.data`,
-        [getTenantId(), path, collectionPath, id, json],
-      );
-    }
+  return withTenant(async (q) => {
+    const onConflict = mode === "insert" ? "DO NOTHING" : "DO UPDATE SET data = EXCLUDED.data";
+    const res = spec
+      ? await q(
+          `INSERT INTO ${spec.table} (tenant_id, id, data) VALUES ($1, $2, $3::jsonb)
+             ON CONFLICT (tenant_id, id) ${onConflict} RETURNING id`,
+          [getTenantId(), id, json],
+        )
+      : await q(
+          `INSERT INTO docs (tenant_id, path, collection_path, id, data) VALUES ($1, $2, $3, $4, $5::jsonb)
+             ON CONFLICT (tenant_id, path) ${onConflict} RETURNING id`,
+          [getTenantId(), path, collectionPath, id, json],
+        );
+    if (mode === "insert" && (res as { rows: unknown[] }).rows.length === 0) return false;
     // Issued on the SAME connection as the write, so Postgres queues it and
     // delivers only on commit — a rolled-back write notifies nobody. Addressed
     // to whoever may read the document (data-policy.ts), before and after.
@@ -759,6 +765,7 @@ async function rawPut(
         after: encodeValue(data),
       });
     }
+    return true;
   });
 }
 
@@ -1278,11 +1285,20 @@ export class DocRef {
     opts?: { merge?: boolean },
   ): Promise<{ writeTime: Timestamp }> {
     assertNoUndefined(data, "");
-    const processed = applySentinelsInPlace(data) as Record<string, unknown>;
-    let next = processed;
+    let next: Record<string, unknown>;
     if (opts?.merge) {
+      // Top-level transforms resolve against the stored document, as in
+      // Firestore: set({ n: increment(1) }, { merge: true }) adds one. They
+      // used to be resolved here first, against nothing, so every such counter
+      // was written back as 1. Nested values keep the existing (shallow) merge.
       const existing = (await rawGet(this.path)) || {};
-      next = applyUpdate(existing, flattenForMerge(processed));
+      const top: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(data)) {
+        top[key] = sentinelKind(value) ? value : applySentinelsInPlace(value);
+      }
+      next = applyUpdate(existing, flattenForMerge(top));
+    } else {
+      next = applySentinelsInPlace(data) as Record<string, unknown>;
     }
     await writeDoc(this.collectionPath, this.id, next);
     return { writeTime: Timestamp.now() };
@@ -1305,11 +1321,21 @@ export class DocRef {
   }
 
   async create(data: Record<string, unknown>): Promise<{ writeTime: Timestamp }> {
-    const existing = await rawGet(this.path);
-    if (existing !== undefined) {
-      throw new Error(`selfhost firestore shim: create() on existing doc ${this.path}`);
+    // Atomic, as Firestore's create() is: the INSERT decides, so of two
+    // concurrent creates exactly one wins. It used to read, then write, so
+    // both could. code 6 is ALREADY_EXISTS, what firebase-admin throws.
+    assertNoUndefined(data, "");
+    const next = applySentinelsInPlace(data) as Record<string, unknown>;
+    const created = await rawPut(this.collectionPath, this.id, next, undefined, "insert");
+    if (!created) {
+      throw Object.assign(new Error(`selfhost firestore shim: create() on existing doc ${this.path}`), {
+        code: 6,
+      });
     }
-    return this.set(data);
+    if (!usesDurableTriggerQueue()) {
+      emitChange({ collectionPath: this.collectionPath, id: this.id, path: this.path, before: undefined, after: next });
+    }
+    return { writeTime: Timestamp.now() };
   }
 
   async delete(): Promise<{ writeTime: Timestamp }> {
