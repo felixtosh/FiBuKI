@@ -388,7 +388,10 @@
       "detailsInfoIntro": "How FiBuKI found this File in your mail:",
       "detailsInfoSender": "Who sent the mail.",
       "detailsInfoSearch": "The search FiBuKI ran in your mailbox when it looked for a document for an open Transaction, e.g. the Partner's name.",
-      "detailsInfoResult": "Which part of the mail became this File: an attachment, the mail itself saved as a PDF, or a file downloaded from a link in the mail."
+      "detailsInfoResult": "Which part of the mail became this File: an attachment, the mail itself saved as a PDF, or a file downloaded from a link in the mail.",
+      "browser": "Browser",
+      "dropbox": "Dropbox",
+      "gdrive": "Google Drive"
     },
     "new": {
       "button": "New",

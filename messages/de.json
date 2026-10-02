@@ -388,7 +388,10 @@
       "detailsInfoIntro": "So hat FiBuKI diesen Beleg in deinen Mails gefunden:",
       "detailsInfoSender": "Wer die Mail geschickt hat.",
       "detailsInfoSearch": "Die Suche, mit der FiBuKI dein Postfach nach einem Beleg für eine offene Transaktion durchsucht hat, z. B. der Name des Partners.",
-      "detailsInfoResult": "Welcher Teil der Mail dieser Beleg ist: ein Anhang, die Mail selbst als PDF gespeichert, oder eine Datei, die über einen Link in der Mail geladen wurde."
+      "detailsInfoResult": "Welcher Teil der Mail dieser Beleg ist: ein Anhang, die Mail selbst als PDF gespeichert, oder eine Datei, die über einen Link in der Mail geladen wurde.",
+      "browser": "Browser",
+      "dropbox": "Dropbox",
+      "gdrive": "Google Drive"
     },
     "new": {
       "button": "Neu",

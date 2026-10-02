@@ -202,7 +202,7 @@ export interface TaxFile {
   // === Source Tracking ===
 
   /** How the file was added to FiBuKI (defaults to "upload" for legacy files) */
-  sourceType?: "upload" | "gmail" | "gmail_html_invoice" | "gmail_invoice_link" | "browser" | "email_inbound" | "email_inbound_body" | "fibuki_invoice";
+  sourceType?: "upload" | "gmail" | "gmail_html_invoice" | "gmail_invoice_link" | "browser" | "email_inbound" | "email_inbound_body" | "fibuki_invoice" | "dropbox" | "gdrive";
 
   /** Search pattern/query that produced this file (when known) */
   sourceSearchPattern?: string;
@@ -221,6 +221,15 @@ export interface TaxFile {
 
   /** For browser imports: collector ID */
   sourceCollectorId?: string;
+
+  /** For cloud-storage imports (Dropbox, Drive): which integration the file came from */
+  sourceIntegrationId?: string;
+
+  /** For cloud-storage imports: the provider's id for the file, the dedup and sync key */
+  sourceExternalId?: string;
+
+  /** For cloud-storage imports: link back to the file at the provider */
+  sourceExternalUrl?: string;
 
   /** For mail imports: provider message id (Gmail message id, IMAP UID) — dedup key (#102) */
   mailMessageId?: string;
@@ -907,7 +916,7 @@ export interface FileCreateData {
   contentHash: string;
 
   // Source tracking
-  sourceType?: "upload" | "gmail" | "gmail_html_invoice" | "gmail_invoice_link" | "browser" | "email_inbound" | "email_inbound_body" | "fibuki_invoice";
+  sourceType?: "upload" | "gmail" | "gmail_html_invoice" | "gmail_invoice_link" | "browser" | "email_inbound" | "email_inbound_body" | "fibuki_invoice" | "dropbox" | "gdrive";
   sourceSearchPattern?: string;
   sourceResultType?: FileSourceResultType;
   sourceUrl?: string;
