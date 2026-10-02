@@ -26,6 +26,7 @@ import { createFile, checkFileDuplicate, OperationsContext } from "@/lib/operati
 import { useAuth } from "@/components/auth";
 import {
   parseFiltersFromUrl,
+  filterQueryKey,
   saveFiltersToStorage,
   loadFiltersFromStorage,
   buildSearchParamsString,
@@ -127,7 +128,7 @@ function TransactionsContent() {
         loadFiltersFromStorage();
       const paramsString = buildSearchParamsString(savedFilters, savedSearch);
       if (paramsString) {
-        router.replace(`/transactions?${paramsString}`, { scroll: false });
+        replaceQuery(router, `/transactions?${paramsString}`);
       }
     }
   }, [router, searchParams]);
@@ -136,7 +137,10 @@ function TransactionsContent() {
   const searchValue = searchParams.get("search") || "";
 
   // Parse filters from URL
-  const filters = useMemo(() => parseFiltersFromUrl(searchParams), [searchParams]);
+  // Keyed on the filter params only, so selecting a row (the `id` param) does
+  // not hand the list a new filters object (lib/filters/url-params.ts).
+  const filterKey = filterQueryKey(searchParams);
+  const filters = useMemo(() => parseFiltersFromUrl(new URLSearchParams(filterKey)), [filterKey]);
 
   // Save filters to localStorage whenever they change
   useEffect(() => {
@@ -155,7 +159,7 @@ function TransactionsContent() {
       const newUrl = params.toString()
         ? `/transactions?${params.toString()}`
         : "/transactions";
-      router.replace(newUrl, { scroll: false });
+      replaceQuery(router, newUrl);
     },
     [router]
   );
@@ -209,13 +213,13 @@ function TransactionsContent() {
   const openConnectFileOverlay = useCallback(() => {
     const params = new URLSearchParams(searchParamsRef.current.toString());
     params.set("connect", "true");
-    router.push(`/transactions?${params.toString()}`, { scroll: false });
+    pushQuery(router, `/transactions?${params.toString()}`);
   }, [router]);
 
   const closeConnectFileOverlay = useCallback(() => {
     const params = new URLSearchParams(searchParamsRef.current.toString());
     params.delete("connect");
-    router.push(`/transactions?${params.toString()}`, { scroll: false });
+    pushQuery(router, `/transactions?${params.toString()}`);
   }, [router]);
 
   const toggleConnectFileOverlay = useCallback(() => {
@@ -296,7 +300,7 @@ function TransactionsContent() {
       if (!options?.keepConnect) {
         params.delete("connect");
       }
-      router.push(`/transactions?${params.toString()}`, { scroll: false });
+      pushQuery(router, `/transactions?${params.toString()}`);
     },
     [router]
   );
@@ -309,7 +313,7 @@ function TransactionsContent() {
     const newUrl = params.toString()
       ? `/transactions?${params.toString()}`
       : "/transactions";
-    router.push(newUrl, { scroll: false });
+    pushQuery(router, newUrl);
   }, [router]);
 
   // Update transaction
@@ -520,8 +524,10 @@ function TransactionsContent() {
             onDisplayedOrderChange={setTableOrderedIds}
           />
 
-          {/* Connect file overlay - positioned over table area */}
-          {selectedTransaction && (
+          {/* Connect file overlay - positioned over table area. Mounted only
+              while open: it renders nothing when closed, but its hooks ran on
+              every row selection. */}
+          {selectedTransaction && isConnectFileOpen && (
             <ConnectFileOverlay
               open={isConnectFileOpen}
               onClose={closeConnectFileOverlay}
@@ -608,6 +614,7 @@ function TransactionsContent() {
 
 import { PrecisionSearchProvider } from "@/hooks/use-precision-search-context";
 import { usePageTitle } from "@/hooks/use-page-title";
+import { pushQuery, replaceQuery } from "@/lib/navigation/query-url";
 
 export default function TransactionsPage() {
   return (

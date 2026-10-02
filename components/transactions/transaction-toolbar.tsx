@@ -14,7 +14,7 @@
  * or leaving for another surface, goes right, next to the ring.
  */
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, memo } from "react";
 import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -146,7 +146,7 @@ function ScoreRing({
   );
 }
 
-export function TransactionToolbar({
+function TransactionToolbarInner({
   searchValue,
   onSearchChange,
   filters,
@@ -787,3 +787,9 @@ export function TransactionToolbar({
     </div>
   );
 }
+
+/**
+ * Memoised: it sits in the table, which re-renders on every row selection,
+ * and nothing it shows depends on which row is selected.
+ */
+export const TransactionToolbar = memo(TransactionToolbarInner);

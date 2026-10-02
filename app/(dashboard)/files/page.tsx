@@ -61,6 +61,7 @@ import { usePageTitle } from "@/hooks/use-page-title";
 import { callFunction } from "@/lib/firebase/callable";
 import { InvoiceDetailPanel } from "@/components/invoicing/InvoiceDetailPanel";
 import { AddPartnerDialog } from "@/components/partners/add-partner-dialog";
+import { pushQuery, replaceQuery } from "@/lib/navigation/query-url";
 const MAX_FILE_SIZE = UPLOAD_MAX_FILE_SIZE;
 const ACCEPTED_TYPES = UPLOAD_ACCEPTED_TYPES;
 
@@ -260,7 +261,7 @@ function FilesContent() {
     const params = new URLSearchParams(searchParams.toString());
     params.delete("preview");
     const newUrl = params.toString() ? `/files?${params.toString()}` : "/files";
-    router.replace(newUrl, { scroll: false });
+    replaceQuery(router, newUrl);
   }, [searchParams, router]);
 
   const toggleInvoiceViewer = useCallback(() => {
@@ -273,7 +274,7 @@ function FilesContent() {
   const closeConnectTransactionOverlay = useCallback(() => {
     const params = new URLSearchParams(searchParams.toString());
     params.delete("connect");
-    router.push(`/files?${params.toString()}`, { scroll: false });
+    pushQuery(router, `/files?${params.toString()}`);
   }, [router, searchParams]);
 
   // Toggle connect overlay (also closes viewer when opening)
@@ -286,7 +287,7 @@ function FilesContent() {
       setHighlightText(null);
       const params = new URLSearchParams(searchParams.toString());
       params.set("connect", "true");
-      router.push(`/files?${params.toString()}`, { scroll: false });
+      pushQuery(router, `/files?${params.toString()}`);
     }
   }, [isConnectTransactionOpen, closeConnectTransactionOverlay, router, searchParams]);
 
@@ -404,7 +405,7 @@ function FilesContent() {
         const firstSuccessfulId = results.find((id) => id !== null);
         if (firstSuccessfulId) {
           const params = buildFileSearchParams(filters, searchValue, firstSuccessfulId);
-          router.push(`/files?${params.toString()}`, { scroll: false });
+          pushQuery(router, `/files?${params.toString()}`);
         }
       } finally {
         dropGuard.release(claim);
@@ -555,7 +556,7 @@ function FilesContent() {
     (value: string) => {
       const params = buildFileSearchParams(filters, value, primarySelectedId);
       const newUrl = params.toString() ? `/files?${params.toString()}` : "/files";
-      router.replace(newUrl, { scroll: false });
+      replaceQuery(router, newUrl);
     },
     [router, filters, primarySelectedId]
   );
@@ -564,7 +565,7 @@ function FilesContent() {
     (newFilters: FileFilters) => {
       const params = buildFileSearchParams(newFilters, searchValue, primarySelectedId);
       const newUrl = params.toString() ? `/files?${params.toString()}` : "/files";
-      router.replace(newUrl, { scroll: false });
+      replaceQuery(router, newUrl);
     },
     [router, searchValue, primarySelectedId]
   );
@@ -580,11 +581,11 @@ function FilesContent() {
         // walks, so landing on an invoice row must not widen it.
         const params = buildFileSearchParams(filters, searchValue, null);
         params.set("invoiceId", file.invoiceId);
-        router.push(`/files?${params.toString()}`, { scroll: false });
+        pushQuery(router, `/files?${params.toString()}`);
         return;
       }
       const params = buildFileSearchParams(filters, searchValue, file.id);
-      router.push(`/files?${params.toString()}`, { scroll: false });
+      pushQuery(router, `/files?${params.toString()}`);
     },
     [router, filters, searchValue]
   );
@@ -592,7 +593,7 @@ function FilesContent() {
   const handleCloseDetail = useCallback(() => {
     const params = buildFileSearchParams(filters, searchValue, null);
     const newUrl = params.toString() ? `/files?${params.toString()}` : "/files";
-    router.push(newUrl, { scroll: false });
+    pushQuery(router, newUrl);
   }, [router, filters, searchValue]);
 
   // Checkbox column: independent of row-click selection, so it never opens or
@@ -663,7 +664,7 @@ function FilesContent() {
       if (target.invoiceId) {
         params.set("invoiceId", target.invoiceId);
       }
-      router.push(`/files?${params.toString()}`, { scroll: false });
+      pushQuery(router, `/files?${params.toString()}`);
     },
     [router, filters, searchValue]
   );
@@ -787,7 +788,7 @@ function FilesContent() {
       // as the InvoiceDetailPanel has produced a preview source. The flag is
       // stripped from the URL by the consuming effect.
       params.set("preview", "1");
-      router.push(`/files?${params.toString()}`, { scroll: false });
+      pushQuery(router, `/files?${params.toString()}`);
     } catch (err) {
       console.error("Failed to create invoice:", err);
     } finally {
@@ -799,7 +800,7 @@ function FilesContent() {
     const params = new URLSearchParams(searchParams.toString());
     params.delete("invoiceId");
     const newUrl = params.toString() ? `/files?${params.toString()}` : "/files";
-    router.push(newUrl, { scroll: false });
+    pushQuery(router, newUrl);
   }, [router, searchParams]);
 
   // Multi-select: handle selection changes from table. The table sends the
@@ -820,7 +821,7 @@ function FilesContent() {
       if (result.primaryId !== primarySelectedId) {
         const params = buildFileSearchParams(filters, searchValue, result.primaryId);
         const newUrl = params.toString() ? `/files?${params.toString()}` : "/files";
-        router.push(newUrl, { scroll: false });
+        pushQuery(router, newUrl);
       }
     },
     [router, filters, searchValue, primarySelectedId]
@@ -856,7 +857,7 @@ function FilesContent() {
       setAdditionalSelectedIds(new Set());
       const params = buildFileSearchParams(filters, searchValue, null);
       const newUrl = params.toString() ? `/files?${params.toString()}` : "/files";
-      router.push(newUrl, { scroll: false });
+      pushQuery(router, newUrl);
       setBulkToast({
         message:
           failureCount > 0
@@ -890,7 +891,7 @@ function FilesContent() {
       setAdditionalSelectedIds(new Set());
       const params = buildFileSearchParams(filters, searchValue, null);
       const newUrl = params.toString() ? `/files?${params.toString()}` : "/files";
-      router.push(newUrl, { scroll: false });
+      pushQuery(router, newUrl);
 
       const refusedNames = result.refused
         .map((r) => r.fileName ?? r.fileId)

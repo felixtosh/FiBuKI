@@ -54,6 +54,7 @@ import { cn, toDateSafe } from "@/lib/utils";
 import { fileDisplayName } from "@/lib/files/file-display-name";
 import Link from "next/link";
 import { useState } from "react";
+import { useMountOnceOpened } from "@/hooks/use-mount-once-opened";
 
 // Consistent field row component (matches transaction-details.tsx)
 // Uses container queries to stack vertically when panel is narrow (<300px)
@@ -406,6 +407,7 @@ export function TransactionFilesSection({
   extensionInstalled = false,
 }: TransactionFilesSectionProps) {
   const [isReceiptLostDialogOpen, setIsReceiptLostDialogOpen] = useState(false);
+  const receiptLostMounted = useMountOnceOpened(isReceiptLostDialogOpen);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
   const [dismissedSuggestions, setDismissedSuggestions] = useState<Set<string>>(new Set());
   const [showRejectedFiles, setShowRejectedFiles] = useState(false);
@@ -1079,12 +1081,14 @@ export function TransactionFilesSection({
         )}
 
         {/* Receipt lost dialog */}
-        <ReceiptLostDialog
-          open={isReceiptLostDialogOpen}
-          onClose={() => setIsReceiptLostDialogOpen(false)}
-          onConfirm={handleReceiptLostSubmit}
-          transaction={transaction}
-        />
+        {receiptLostMounted && (
+          <ReceiptLostDialog
+            open={isReceiptLostDialogOpen}
+            onClose={() => setIsReceiptLostDialogOpen(false)}
+            onConfirm={handleReceiptLostSubmit}
+            transaction={transaction}
+          />
+        )}
 
       </div>
     </TooltipProvider>

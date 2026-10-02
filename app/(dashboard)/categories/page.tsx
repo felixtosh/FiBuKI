@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { UserNoReceiptCategory } from "@/types/no-receipt-category";
 import { cn } from "@/lib/utils";
 import { usePageTitle } from "@/hooks/use-page-title";
+import { pushQuery, replaceQuery } from "@/lib/navigation/query-url";
 
 const PANEL_WIDTH_KEY = "categoryDetailPanelWidth";
 const DEFAULT_PANEL_WIDTH = 480;
@@ -62,7 +63,7 @@ function CategoriesContent() {
         params.delete("search");
       }
       const newUrl = params.toString() ? `/categories?${params.toString()}` : "/categories";
-      router.replace(newUrl, { scroll: false });
+      replaceQuery(router, newUrl);
     },
     [router, searchParams]
   );
@@ -120,7 +121,7 @@ function CategoriesContent() {
     (category: UserNoReceiptCategory) => {
       const params = new URLSearchParams(searchParams.toString());
       params.set("id", category.id);
-      router.push(`/categories?${params.toString()}`, { scroll: false });
+      pushQuery(router, `/categories?${params.toString()}`);
     },
     [router, searchParams]
   );
@@ -132,7 +133,7 @@ function CategoriesContent() {
     const newUrl = params.toString()
       ? `/categories?${params.toString()}`
       : "/categories";
-    router.push(newUrl, { scroll: false });
+    pushQuery(router, newUrl);
   }, [router, searchParams]);
 
   if (loading) {

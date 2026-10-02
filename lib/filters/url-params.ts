@@ -126,6 +126,21 @@ export function hasUrlParams(searchParams: URLSearchParams): boolean {
 /**
  * Parse URL search params into TransactionFilters object
  */
+/**
+ * The query string with only what the filters read: everything except the
+ * selected row (`id`) and an open overlay (`connect`). Memoise filter parsing
+ * on this, not on the whole searchParams object: selecting a row changes the
+ * query, and a fresh filters object on every selection re-filtered and
+ * re-sorted the whole list and re-rendered every visible row.
+ */
+export function filterQueryKey(searchParams: URLSearchParams): string {
+  const params = new URLSearchParams(searchParams.toString());
+  params.delete("id");
+  params.delete("connect");
+  params.sort();
+  return params.toString();
+}
+
 export function parseFiltersFromUrl(
   searchParams: URLSearchParams
 ): TransactionFilters {

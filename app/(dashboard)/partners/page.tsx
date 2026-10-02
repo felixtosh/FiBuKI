@@ -14,6 +14,7 @@ import { parsePartnerFiltersFromUrl, buildPartnerFilterUrl } from "@/lib/filters
 import { cn } from "@/lib/utils";
 import { usePageTitle } from "@/hooks/use-page-title";
 import { SmartFeatureGuard, useAuth } from "@/components/auth";
+import { pushQuery, replaceQuery } from "@/lib/navigation/query-url";
 
 const PANEL_WIDTH_KEY = "partnerDetailPanelWidth";
 const DEFAULT_PANEL_WIDTH = 480;
@@ -70,7 +71,7 @@ function PartnersContent() {
   const handleSearchChange = useCallback(
     (value: string) => {
       const url = buildPartnerFilterUrl(filters, value, selectedId);
-      router.replace(url, { scroll: false });
+      replaceQuery(router, url);
     },
     [router, filters, selectedId]
   );
@@ -79,7 +80,7 @@ function PartnersContent() {
   const handleFiltersChange = useCallback(
     (newFilters: PartnerFilters) => {
       const url = buildPartnerFilterUrl(newFilters, searchValue, selectedId);
-      router.push(url, { scroll: false });
+      pushQuery(router, url);
     },
     [router, searchValue, selectedId]
   );
@@ -175,7 +176,7 @@ function PartnersContent() {
     (partner: UserPartner) => {
       const params = new URLSearchParams(searchParams.toString());
       params.set("id", partner.id);
-      router.push(`/partners?${params.toString()}`, { scroll: false });
+      pushQuery(router, `/partners?${params.toString()}`);
     },
     [router, searchParams]
   );
@@ -187,7 +188,7 @@ function PartnersContent() {
     const newUrl = params.toString()
       ? `/partners?${params.toString()}`
       : "/partners";
-    router.push(newUrl, { scroll: false });
+    pushQuery(router, newUrl);
   }, [router, searchParams]);
 
   // Open a partner by id (used to jump from a Merged Partner to its survivor)
@@ -195,7 +196,7 @@ function PartnersContent() {
     (partnerId: string) => {
       const params = new URLSearchParams(searchParams.toString());
       params.set("id", partnerId);
-      router.push(`/partners?${params.toString()}`, { scroll: false });
+      pushQuery(router, `/partners?${params.toString()}`);
     },
     [router, searchParams]
   );

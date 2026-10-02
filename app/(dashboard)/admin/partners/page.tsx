@@ -10,6 +10,7 @@ import { CandidateDetailPanel } from "@/components/admin/candidate-detail-panel"
 import { GlobalPartner, GlobalPartnerFormData, PromotionCandidate } from "@/types/partner";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { pushQuery, replaceQuery } from "@/lib/navigation/query-url";
 
 const PANEL_WIDTH_KEY = "globalPartnerDetailPanelWidth";
 const DEFAULT_PANEL_WIDTH = 480;
@@ -114,7 +115,7 @@ function AdminPartnersContent() {
       const newUrl = params.toString()
         ? `/admin/partners?${params.toString()}`
         : "/admin/partners";
-      router.replace(newUrl, { scroll: false });
+      replaceQuery(router, newUrl);
     },
     [router, searchParams]
   );
@@ -127,7 +128,7 @@ function AdminPartnersContent() {
       const params = new URLSearchParams(searchParams.toString());
       params.set("id", partner.id);
       params.delete("candidateId");
-      router.push(`/admin/partners?${params.toString()}`, { scroll: false });
+      pushQuery(router, `/admin/partners?${params.toString()}`);
     },
     [router, searchParams]
   );
@@ -140,7 +141,7 @@ function AdminPartnersContent() {
       const params = new URLSearchParams(searchParams.toString());
       params.delete("id");
       params.set("candidateId", candidate.id);
-      router.push(`/admin/partners?${params.toString()}`, { scroll: false });
+      pushQuery(router, `/admin/partners?${params.toString()}`);
     },
     [router, searchParams]
   );
@@ -154,7 +155,7 @@ function AdminPartnersContent() {
     const newUrl = params.toString()
       ? `/admin/partners?${params.toString()}`
       : "/admin/partners";
-    router.push(newUrl, { scroll: false });
+    pushQuery(router, newUrl);
   }, [router, searchParams]);
 
   const handleAdd = () => {

@@ -10,7 +10,7 @@ import { useSources } from "@/hooks/use-sources";
 import { useNoReceiptCategories } from "@/hooks/use-no-receipt-categories";
 import { useFiles } from "@/hooks/use-files";
 import { useFilteredTransactions } from "@/hooks/use-filtered-transactions";
-import { parseFiltersFromUrl, buildFilterUrl } from "@/lib/filters/url-params";
+import { parseFiltersFromUrl, buildFilterUrl, filterQueryKey } from "@/lib/filters/url-params";
 // Category suggestions come from transaction.categorySuggestions (computed on backend)
 import { DataTable, DataTableHandle } from "./data-table";
 import { getTransactionColumns } from "./transaction-columns";
@@ -21,6 +21,7 @@ import { UserPartner, GlobalPartner } from "@/types/partner";
 import { CategorySuggestion } from "@/types/no-receipt-category";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { usePrecisionSearchContext } from "@/hooks/use-precision-search-context";
+import { pushQuery } from "@/lib/navigation/query-url";
 
 interface TransactionTableProps {
   onSelectTransaction: (transaction: Transaction) => void;
@@ -70,9 +71,12 @@ export function TransactionTable({
   );
 
   // Parse filters from URL
+  // Keyed on the filter params only: a selection must not re-filter the list
+  // and re-render every row (lib/filters/url-params.ts).
+  const filterKey = filterQueryKey(searchParams);
   const filters = useMemo(
-    () => parseFiltersFromUrl(searchParams),
-    [searchParams]
+    () => parseFiltersFromUrl(new URLSearchParams(filterKey)),
+    [filterKey]
   );
 
   // Apply filters using the hook
@@ -182,10 +186,13 @@ export function TransactionTable({
   }, [openTransactionById, scrollToTransactionById]);
 
   // Update URL when filters change
-  const handleFiltersChange = (newFilters: TransactionFilters) => {
-    const url = buildFilterUrl("/transactions", newFilters);
-    router.push(url);
-  };
+  // Stable, so the memoised toolbar does not re-render on every row selection.
+  const handleFiltersChange = useCallback(
+    (newFilters: TransactionFilters) => {
+      pushQuery(router, buildFilterUrl("/transactions", newFilters));
+    },
+    [router]
+  );
 
   // Use stored category suggestions from backend (no client-side computation)
   const categorySuggestions = useMemo(() => {

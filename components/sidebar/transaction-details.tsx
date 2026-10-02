@@ -30,6 +30,7 @@ import { ShowMoreButton } from "@/components/ui/show-more-button";
 import { cn } from "@/lib/utils";
 import { functions } from "@/lib/firebase/config";
 import { useChat } from "@/components/chat/chat-provider";
+import { useMountOnceOpened } from "@/hooks/use-mount-once-opened";
 
 interface TransactionDetailsProps {
   transaction: Transaction;
@@ -77,6 +78,7 @@ export function TransactionDetails({
   const assignedPartner = useAssignedPartner(transaction, userPartners, globalPartners);
 
   // Memoize initialData to prevent unnecessary re-renders of AddPartnerDialog
+  const addPartnerMounted = useMountOnceOpened(isAddPartnerOpen);
   const dialogInitialData = useMemo(() => ({
     name: transaction.partner || transaction.name || undefined,
     ibans: transaction.partnerIban ? [transaction.partnerIban] : undefined,
@@ -312,17 +314,19 @@ export function TransactionDetails({
       </div>
 
       {/* Add Partner Dialog */}
-      <AddPartnerDialog
-        open={isAddPartnerOpen}
-        onClose={() => setIsAddPartnerOpen(false)}
-        onAdd={handleAddPartner}
-        onSelectPartner={handleSelectExistingPartner}
-        onSelectSuggestion={handleSelectSuggestion}
-        suggestions={suggestions}
-        userPartners={userPartners}
-        globalPartners={globalPartners}
-        initialData={dialogInitialData}
-      />
+      {addPartnerMounted && (
+        <AddPartnerDialog
+          open={isAddPartnerOpen}
+          onClose={() => setIsAddPartnerOpen(false)}
+          onAdd={handleAddPartner}
+          onSelectPartner={handleSelectExistingPartner}
+          onSelectSuggestion={handleSelectSuggestion}
+          suggestions={suggestions}
+          userPartners={userPartners}
+          globalPartners={globalPartners}
+          initialData={dialogInitialData}
+        />
+      )}
     </div>
   );
 }
