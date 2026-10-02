@@ -1075,7 +1075,10 @@ export async function POST(req: Request) {
       );
     }
 
-    if (workerUsesGmail(config)) {
+    // A background run waits for the reconnect and resumes on its own. A user's
+    // wand click runs anyway: the Gmail tool card in the chat then shows which
+    // mailbox to reconnect, instead of a click that visibly does nothing.
+    if (workerUsesGmail(config) && triggeredBy !== "user") {
       const gmailBlock = await getGmailReauthBlock(userId);
       if (gmailBlock.blocked) {
         const pauseMessage =
