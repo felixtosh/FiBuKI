@@ -203,7 +203,9 @@
     "language": "Language",
     "german": "Deutsch",
     "english": "English",
-    "back": "Back"
+    "back": "Back",
+    "openChat": "Open chat",
+    "closeChat": "Close chat"
   },
   "billingCycle": {
     "title": "Billing Cycle",
@@ -387,6 +389,11 @@
       "detailsInfoSender": "Who sent the mail.",
       "detailsInfoSearch": "The search FiBuKI ran in your mailbox when it looked for a document for an open Transaction, e.g. the Partner's name.",
       "detailsInfoResult": "Which part of the mail became this File: an attachment, the mail itself saved as a PDF, or a file downloaded from a link in the mail."
+    },
+    "new": {
+      "button": "New",
+      "upload": "Upload",
+      "invoice": "Invoice"
     }
   },
   "progress": {

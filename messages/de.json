@@ -203,7 +203,9 @@
     "language": "Sprache",
     "german": "Deutsch",
     "english": "English",
-    "back": "Zurück"
+    "back": "Zurück",
+    "openChat": "Chat öffnen",
+    "closeChat": "Chat schließen"
   },
   "billingCycle": {
     "title": "Abrechnungszyklus",
@@ -387,6 +389,11 @@
       "detailsInfoSender": "Wer die Mail geschickt hat.",
       "detailsInfoSearch": "Die Suche, mit der FiBuKI dein Postfach nach einem Beleg für eine offene Transaktion durchsucht hat, z. B. der Name des Partners.",
       "detailsInfoResult": "Welcher Teil der Mail dieser Beleg ist: ein Anhang, die Mail selbst als PDF gespeichert, oder eine Datei, die über einen Link in der Mail geladen wurde."
+    },
+    "new": {
+      "button": "Neu",
+      "upload": "Hochladen",
+      "invoice": "Rechnung"
     }
   },
   "progress": {

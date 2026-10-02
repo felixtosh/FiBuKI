@@ -58,6 +58,9 @@ interface FileTableProps {
   selectAllState?: SelectAllCheckedState;
   /** Callback to trigger file upload dialog */
   onUploadClick?: () => void;
+  /** Callback to create an invoice (toolbar "New" menu) */
+  onCreateInvoice?: () => void;
+  creatingInvoice?: boolean;
 }
 
 export const FileTable = forwardRef<FilesDataTableHandle, FileTableProps>(
@@ -85,6 +88,8 @@ export const FileTable = forwardRef<FilesDataTableHandle, FileTableProps>(
       onToggleSelectAll,
       selectAllState = "unchecked",
       onUploadClick,
+      onCreateInvoice,
+      creatingInvoice,
     },
     ref
   ) {
@@ -202,6 +207,9 @@ export const FileTable = forwardRef<FilesDataTableHandle, FileTableProps>(
           userPartners={userPartners}
           connectedCount={connectedCount}
           totalCount={totalCount}
+          onUploadClick={onUploadClick}
+          onCreateInvoice={onCreateInvoice}
+          creatingInvoice={creatingInvoice}
         />
         <div className="flex-1 relative overflow-hidden flex flex-col">
           <FilesDataTable

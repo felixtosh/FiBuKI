@@ -4,7 +4,7 @@ import { useRememberedListQuery } from "@/hooks/use-remembered-list-query";
 import { Suspense, useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useDropzone } from "react-dropzone";
-import { FileText, Upload, Loader2 } from "lucide-react";
+import { Upload } from "lucide-react";
 import { db } from "@/lib/firebase/config";
 import { uploadFile, UPLOAD_ACCEPTED_TYPES, UPLOAD_MAX_FILE_SIZE } from "@/lib/files/upload-file";
 import { retryFileExtraction, connectFileToTransaction, assignPartnerToFile, OperationsContext } from "@/lib/operations";
@@ -48,7 +48,6 @@ import {
 } from "@/lib/selection/bulk-file-selection";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SummaryToast, SummaryToastState } from "@/components/ui/summary-toast";
-import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -1082,9 +1081,7 @@ function FilesContent() {
       <div {...getRootProps()} className="h-full overflow-hidden relative">
         <input {...getInputProps()} />
 
-      {/* Upload dialog — controlled via the FAB rendered inside the content
-          column below so the FAB tracks the file-list area when the sidebar
-          opens, instead of overlapping it. */}
+      {/* Upload dialog, opened from the toolbar's "New" menu. */}
       <Dialog open={isUploadDialogOpen} onOpenChange={setIsUploadDialogOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -1094,43 +1091,13 @@ function FilesContent() {
         </DialogContent>
       </Dialog>
 
-      {/* Main content. `relative` so the FABs below can anchor here via
-          absolute positioning — they then slide with the content when the
-          right-side detail panel opens (instead of sitting fixed against
-          the viewport and overlapping the sidebar). */}
+      {/* Main content: makes room for the right-side detail panel. */}
       <div
         className="relative h-full flex flex-col transition-[margin] duration-200 ease-in-out"
         style={{
           marginRight: showBulkPanel || detailFile || invoiceIdParam ? panelWidth : 0,
         }}
       >
-        {/* FABs — anchored to the content column so they live within the
-            visible file list area. z-30 keeps them above the table but
-            below the FileViewerOverlay (z-40) so the overlay can cover
-            them while previewing a file. */}
-        <Button
-          className="absolute bottom-6 right-6 z-30 h-14 w-14 rounded-full shadow-lg"
-          size="icon"
-          onClick={() => setIsUploadDialogOpen(true)}
-          title="Datei hochladen"
-        >
-          <Upload className="h-6 w-6" />
-        </Button>
-        <Button
-          variant="secondary"
-          className="absolute bottom-24 right-6 z-30 h-14 w-14 rounded-full shadow-lg"
-          size="icon"
-          title="Rechnung erstellen"
-          onClick={handleCreateInvoice}
-          disabled={creatingInvoice}
-        >
-          {creatingInvoice ? (
-            <Loader2 className="h-6 w-6 animate-spin" />
-          ) : (
-            <FileText className="h-6 w-6" />
-          )}
-        </Button>
-
         <div className="flex-1 overflow-hidden relative">
           {/* Drag overlay — inside the margin-constrained area so it doesn't extend behind the detail panel */}
           {isDragActive && (
@@ -1170,6 +1137,8 @@ function FilesContent() {
             onToggleSelectAll={handleToggleSelectAll}
             selectAllState={selectAllState}
             onUploadClick={() => setIsUploadDialogOpen(true)}
+            onCreateInvoice={handleCreateInvoice}
+            creatingInvoice={creatingInvoice}
           />
 
           {/* File viewer overlay - positioned over table area only.
