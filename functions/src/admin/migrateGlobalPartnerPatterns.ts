@@ -44,8 +44,6 @@ const GLOBAL_PARTNER_PATTERNS: Record<string, Array<{ pattern: string; field: "p
     { pattern: "*microsoft*", field: "name", confidence: 92 },
     { pattern: "*msft*", field: "name", confidence: 90 },
     { pattern: "*azure*", field: "name", confidence: 90 },
-    { pattern: "*github*", field: "name", confidence: 92 },
-    { pattern: "*linkedin*", field: "name", confidence: 92 },
   ],
   "Tesla, Inc.": [
     { pattern: "*tesla*", field: "name", confidence: 92 },
@@ -182,6 +180,12 @@ const GLOBAL_PARTNER_PATTERNS: Record<string, Array<{ pattern: string; field: "p
   ],
   "Airtable Inc.": [
     { pattern: "*airtable*", field: "name", confidence: 92 },
+  ],
+  "GitHub, Inc.": [
+    { pattern: "*github*", field: "name", confidence: 92 },
+  ],
+  "LinkedIn Corporation": [
+    { pattern: "*linkedin*", field: "name", confidence: 92 },
   ],
 
   // Retail

@@ -47,12 +47,10 @@ export const PRESET_PARTNERS: PresetPartner[] = [
   { name: "Netflix, Inc.", aliases: ["Netflix", "Netflix International B.V."], country: "US", website: "netflix.com", patterns: [
     { pattern: "*netflix*", field: "name", confidence: 95 },
   ]},
-  { name: "Microsoft Corporation", aliases: ["Microsoft", "Microsoft 365", "Azure", "LinkedIn", "GitHub", "Microsoft Ireland Operations Limited"], country: "US", website: "microsoft.com", vatId: "IE8256796U", patterns: [
+  { name: "Microsoft Corporation", aliases: ["Microsoft", "Microsoft 365", "Azure", "Microsoft Ireland Operations Limited"], country: "US", website: "microsoft.com", vatId: "IE8256796U", patterns: [
     { pattern: "*microsoft*", field: "name", confidence: 92 },
     { pattern: "*msft*", field: "name", confidence: 90 },
     { pattern: "*azure*", field: "name", confidence: 90 },
-    { pattern: "*github*", field: "name", confidence: 92 },
-    { pattern: "*linkedin*", field: "name", confidence: 92 },
   ]},
   { name: "NVIDIA Corporation", aliases: ["NVIDIA", "Nvidia"], country: "US", website: "nvidia.com" },
   { name: "Tesla, Inc.", aliases: ["Tesla", "Tesla Motors", "Tesla Germany GmbH"], country: "US", website: "tesla.com", patterns: [
@@ -481,6 +479,9 @@ export const PRESET_PARTNERS: PresetPartner[] = [
   { name: "Netlify, Inc.", aliases: ["Netlify"], country: "US", website: "netlify.com" },
   { name: "Supabase, Inc.", aliases: ["Supabase"], country: "US", website: "supabase.com" },
   { name: "Airtable Inc.", aliases: ["Airtable"], country: "US", website: "airtable.com" },
+  { name: "GitHub, Inc.", aliases: ["GitHub"], country: "US", website: "github.com", patterns: [
+    { pattern: "*github*", field: "name", confidence: 92 },
+  ]},
 
   // AI & Dev Tools
   { name: "OpenAI, LLC", aliases: ["OpenAI", "ChatGPT", "GPT-4", "OpenAI Ireland Ltd"], country: "US", website: "openai.com" },
@@ -514,7 +515,9 @@ export const PRESET_PARTNERS: PresetPartner[] = [
   // ============ Utilities & Services (10) ============
   { name: "Apple Services", aliases: ["iCloud", "Apple Music", "App Store"], country: "US", website: "apple.com" },
   { name: "Google Services", aliases: ["Google One", "Google Workspace"], country: "US", website: "google.com" },
-  { name: "LinkedIn Corporation", aliases: ["LinkedIn", "LinkedIn Premium"], country: "US", website: "linkedin.com" },
+  { name: "LinkedIn Corporation", aliases: ["LinkedIn", "LinkedIn Premium"], country: "US", website: "linkedin.com", patterns: [
+    { pattern: "*linkedin*", field: "name", confidence: 92 },
+  ]},
   { name: "Xero Limited", aliases: ["Xero"], country: "NZ", website: "xero.com" },
   { name: "FreshBooks", aliases: ["FreshBooks"], country: "CA", website: "freshbooks.com" },
   { name: "Mailchimp", aliases: ["Mailchimp", "Intuit Mailchimp"], country: "US", website: "mailchimp.com" },
