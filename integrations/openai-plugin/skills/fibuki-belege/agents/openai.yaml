@@ -1,0 +1,4 @@
+interface:
+  display_name: "Belege zuordnen"
+  short_description: "Match payments to invoices and close the month"
+  default_prompt: "Mach meinen letzten Monat fertig."

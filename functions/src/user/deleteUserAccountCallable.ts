@@ -269,6 +269,8 @@ export async function deleteUserData(
     "userImports",
     "userExports",
     "chatSessions",
+    // API keys and the OAuth connections of ChatGPT / Claude / Codex (their tokens are API keys).
+    "apiKeys",
   ];
 
   for (const collection of collectionsToDelete) {

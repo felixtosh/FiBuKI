@@ -1,0 +1,18 @@
+{
+  "name": "Receipt without invoice",
+  "skills": [
+    "fibuki-belege"
+  ],
+  "query": "Und was ist mit den Zahlungen, bei denen ich nur einen Kassenbon habe?",
+  "expected_behavior": [
+    "Calls list_transactions_missing_invoice and pages to the end",
+    "Explains that a receipt proves payment but without a § 11 UStG invoice there is no Vorsteuer",
+    "Offers to draft a request to the supplier naming the missing § 11 elements listed per row",
+    "Does not call accept_receipt_only without a reason the user stated",
+    "When the user says a marketplace seller charges no VAT, calls accept_receipt_only with exactly that reason"
+  ],
+  "success_criteria": [
+    "The reason passed to accept_receipt_only is the user's, not invented",
+    "No claim that Vorsteuer becomes deductible after the ruling"
+  ]
+}

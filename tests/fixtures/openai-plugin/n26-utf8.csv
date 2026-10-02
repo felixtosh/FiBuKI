@@ -1,0 +1,4 @@
+Date,Payee,Account number,Transaction type,Payment reference,Amount (EUR),Amount (Foreign Currency)
+2026-09-01,Amazon EU,DE89370400440532013000,MasterCard Payment,,-89.99,
+2026-09-05,Shell Tankstelle,,Direct Debit,Order 028-441,-64.10,
+2026-09-14,Anna Gruber,AT483200000012345864,Outgoing Transfer,Rueckzahlung Mittagessen,25.00,

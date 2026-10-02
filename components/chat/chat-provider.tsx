@@ -599,6 +599,21 @@ export function ChatProvider({ children }: ChatProviderProps) {
 
       try {
         const result = await triggerFn();
+
+        // Every Gmail mailbox needs reconnecting: the worker never starts, so no
+        // notification would ever clear the spinner. It left a "Reconnect Gmail"
+        // notification instead, so show that.
+        if (result?.status === "blocked_for_reauth") {
+          wandTriggeredAtRef.current.delete(entityId);
+          setActiveWandTargets((prev) => {
+            const next = new Set(prev);
+            next.delete(entityId);
+            return next;
+          });
+          setActiveTab("notifications");
+          return;
+        }
+
         const sessionId = result?.sessionId;
 
         // If API already knows the target session, load it immediately.

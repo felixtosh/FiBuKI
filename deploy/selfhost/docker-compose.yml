@@ -336,6 +336,13 @@ services:
       DROPBOX_APP_SECRET: ${DROPBOX_APP_SECRET:-}
       DROPBOX_OAUTH_REDIRECT_URI: ${DROPBOX_OAUTH_REDIRECT_URI:-}
       GDRIVE_OAUTH_REDIRECT_URI: ${GDRIVE_OAUTH_REDIRECT_URI:-}
+      # Google OAuth runs here too: app/api/gmail/{authorize,callback,refresh} and
+      # app/api/gdrive/{authorize,callback}. Without these, Gmail Reconnect answered
+      # 500 "Google OAuth is not configured" while the api side had the values.
+      # Same values as the api service above.
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_OAUTH_REDIRECT_URI: ${GOOGLE_OAUTH_REDIRECT_URI:-}
       # The /api/mcp and /api/mcp/sse route handlers proxy to the functions host
       # SERVER-SIDE, so this resolves at runtime, not build time. Unset, those
       # routes fell back to the SaaS production Cloud Functions and forwarded

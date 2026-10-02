@@ -439,6 +439,43 @@ describe("onSnapshot (poll)", () => {
     expect(received[0]).toContain("retry1");
   });
 
+  /**
+   * A failed poll sends the listener its error, and app hooks answer that by
+   * dropping their data (useFirestoreDoc sets data: null). The next good poll
+   * returned the same payload, which deliver() skipped as already sent, so the
+   * hook stayed empty until the document changed: the chat showed "Upgrade"
+   * to a Pro user whose subscription doc had read as missing.
+   */
+  it("re-delivers an unchanged payload after a failed poll", async () => {
+    process.env.NEXT_PUBLIC_FIBUKI_POLL_MS = "40";
+    await seed("partners/recover1", { userId: USER, name: "A" });
+
+    let token = GOOD_TOKEN;
+    __configureFirestoreClient({ apiUrl: baseUrl, getToken: () => token });
+    let deliveries = 0;
+    let errors = 0;
+    const unsub = onSnapshot(
+      collection(db, "partners"),
+      () => {
+        deliveries++;
+      },
+      () => {
+        errors++;
+      },
+    );
+    try {
+      await waitFor(() => deliveries === 1);
+      token = "expired";
+      await waitFor(() => errors >= 1);
+      token = GOOD_TOKEN;
+      await waitFor(() => deliveries === 2);
+    } finally {
+      unsub();
+      __configureFirestoreClient({ apiUrl: baseUrl, getToken: () => GOOD_TOKEN });
+      delete process.env.NEXT_PUBLIC_FIBUKI_POLL_MS;
+    }
+  });
+
   it("surfaces server errors through the error callback", async () => {
     let err: FirestoreError | null = null;
     const unsub = onSnapshot(

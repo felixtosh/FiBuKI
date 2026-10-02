@@ -17,11 +17,9 @@ import {
   addDoc,
   deleteDoc,
   Timestamp,
-  writeBatch,
 } from "firebase/firestore";
 import { OperationsContext } from "./types";
 import { getSourceById, updateSource } from "./source-ops";
-import { checkDuplicatesBatch } from "@/lib/import/deduplication";
 import { normalizeIban } from "@/lib/import/deduplication";
 
 import {
@@ -33,7 +31,6 @@ import {
   BankingAccount,
   BankingConfig,
   ConnectionStatus,
-  SyncResult,
   ReauthRequiredError,
 } from "@/lib/banking";
 import { toDateSafe } from "@/lib/utils";
@@ -435,151 +432,6 @@ export async function linkBankAccountToSource(
 // =========================================
 
 /**
- * Sync transactions for an API-connected source
- */
-export async function syncBankTransactions(
-  ctx: OperationsContext,
-  sourceId: string
-): Promise<SyncResult> {
-  const source = await getSourceById(ctx, sourceId);
-  if (!source) {
-    throw new Error(`Source ${sourceId} not found`);
-  }
-
-  if (source.type !== "api" || !source.apiConfig) {
-    throw new Error("Source is not an API-connected account");
-  }
-
-  const config = source.apiConfig as BankingConfig;
-  const provider = getBankingProvider(config.provider);
-
-  // Check if re-auth is required
-  const reauthInfo = provider.checkReauthRequired(config);
-  if (reauthInfo.required) {
-    throw new ReauthRequiredError(
-      config.provider,
-      sourceId,
-      reauthInfo.expiresAt || new Date()
-    );
-  }
-
-  // Refresh token if needed (for OAuth providers like TrueLayer)
-  if (provider.refreshTokenIfNeeded) {
-    const refreshedConfig = await provider.refreshTokenIfNeeded(config);
-    if (refreshedConfig) {
-      await updateSource(ctx, sourceId, {
-        apiConfig: refreshedConfig as any, // Type assertion - TODO: fix BankingConfig types
-      });
-      (config as any).accessToken = (refreshedConfig as any).accessToken;
-    }
-  }
-
-  // Calculate date range
-  const lastSyncAt = toDateSafe(config.lastSyncAt);
-  const dateFrom = lastSyncAt
-    ? new Date(lastSyncAt.getTime() - 24 * 60 * 60 * 1000).toISOString().split("T")[0]
-    : new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
-  const dateTo = new Date().toISOString().split("T")[0];
-
-  // Fetch transactions
-  const bankingTransactions = await provider.fetchTransactions({
-    accountId: config.accountId,
-    dateFrom,
-    dateTo,
-    config,
-  });
-
-  if (bankingTransactions.length === 0) {
-    await updateSource(ctx, sourceId, {
-      apiConfig: {
-        ...config,
-        lastSyncAt: Timestamp.now(),
-        lastSyncError: undefined,
-      } as any, // Type assertion - TODO: fix BankingConfig types
-    });
-    return { imported: 0, skipped: 0, total: 0 };
-  }
-
-  // Transform to our format
-  const syncJobId = `sync_${sourceId}_${Date.now()}`;
-  const transactions = bankingTransactions.map((tx) => ({
-    name: tx.counterpartyName || tx.description || "Unknown",
-    description: tx.description || "",
-    amount: Math.round(tx.amount * 100), // Convert to cents
-    currency: tx.currency,
-    date: Timestamp.fromDate(new Date(tx.bookingDate)),
-    sourceId,
-    userId: ctx.userId,
-    importJobId: syncJobId,
-    dedupeHash: generateDedupeHash(tx, source.iban || sourceId),
-    createdAt: Timestamp.now(),
-    updatedAt: Timestamp.now(),
-  }));
-
-  // Check for duplicates
-  const hashes = transactions.map((t) => t.dedupeHash);
-  const existingHashes = await checkDuplicatesBatch(hashes, sourceId);
-
-  // Filter out duplicates
-  const newTransactions = transactions.filter((t) => !existingHashes.has(t.dedupeHash));
-
-  // Batch write
-  const BATCH_SIZE = 500;
-  let imported = 0;
-
-  for (let i = 0; i < newTransactions.length; i += BATCH_SIZE) {
-    const batch = writeBatch(ctx.db);
-    const slice = newTransactions.slice(i, i + BATCH_SIZE);
-
-    for (const tx of slice) {
-      const docRef = doc(collection(ctx.db, TRANSACTIONS_COLLECTION));
-      batch.set(docRef, tx);
-      imported++;
-    }
-
-    await batch.commit();
-  }
-
-  // Update source - handle provider-specific data
-  const providerConfig = config as any;
-  const updatedConfig: any = {
-    ...config,
-    lastSyncAt: Timestamp.now(),
-    lastSyncError: undefined,
-  };
-
-  // For Plaid, save the new cursor for incremental syncs
-  if (config.provider === "plaid" && providerConfig._newCursor) {
-    updatedConfig.syncCursor = providerConfig._newCursor;
-  }
-
-  // For finAPI, save refreshed tokens if they were updated
-  if (config.provider === "finapi") {
-    if (providerConfig._refreshedToken) {
-      updatedConfig.userAccessToken = providerConfig._refreshedToken;
-    }
-    if (providerConfig._refreshedRefreshToken) {
-      updatedConfig.userRefreshToken = providerConfig._refreshedRefreshToken;
-    }
-    if (providerConfig._tokenExpiresAt) {
-      updatedConfig.tokenExpiresAt = Timestamp.fromDate(
-        new Date(providerConfig._tokenExpiresAt)
-      );
-    }
-  }
-
-  await updateSource(ctx, sourceId, {
-    apiConfig: updatedConfig,
-  });
-
-  return {
-    imported,
-    skipped: existingHashes.size,
-    total: bankingTransactions.length,
-  };
-}
-
-/**
  * Get sync status for a source
  */
 export async function getBankSyncStatus(
@@ -683,26 +535,4 @@ function buildApiConfig(
     default:
       throw new Error(`Unsupported provider: ${connection.providerId}`);
   }
-}
-
-function generateDedupeHash(
-  tx: { id: string; bookingDate: string; amount: number; currency: string },
-  identifier: string
-): string {
-  // Use crypto if available, otherwise simple hash
-  const data = `${identifier}|${tx.bookingDate}|${tx.amount}|${tx.currency}|${tx.id}`;
-
-  if (typeof crypto !== "undefined" && crypto.subtle) {
-    // Browser/Node 18+
-    return data; // In production, use actual hash
-  }
-
-  // Simple hash fallback
-  let hash = 0;
-  for (let i = 0; i < data.length; i++) {
-    const char = data.charCodeAt(i);
-    hash = (hash << 5) - hash + char;
-    hash = hash & hash;
-  }
-  return `hash_${Math.abs(hash).toString(36)}`;
 }

@@ -1,0 +1,16 @@
+{
+  "name": "Dates that could be day-first or month-first",
+  "skills": [
+    "fibuki-bank-csv"
+  ],
+  "query": "Import this file. Dates look like 01.09.2026, 02.09.2026, 03.09.2026.",
+  "expected_behavior": [
+    "Receives the script's answer that it could not detect the date format",
+    "Asks the user whether the day or the month comes first instead of choosing",
+    "After the answer passes --date-format de or --date-format de-mdy accordingly"
+  ],
+  "success_criteria": [
+    "The model never picks the date order on its own",
+    "The preview is shown only after the format is settled"
+  ]
+}

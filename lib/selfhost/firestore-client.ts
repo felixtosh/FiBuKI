@@ -822,7 +822,12 @@ function deliver(l: Listen): void {
 function fail(l: Listen, err: unknown): void {
   const fe =
     err instanceof FirestoreError ? err : new FirestoreError("unknown", String((err as Error)?.message ?? err));
-  for (const sub of [...l.subs]) sub.error?.(fe);
+  // An error makes app hooks drop their data, so the next good result must be
+  // delivered even when it equals the one before the failure.
+  for (const sub of [...l.subs]) {
+    sub.delivered = null;
+    sub.error?.(fe);
+  }
 }
 
 /** Fields whose change can move a document within the result. */

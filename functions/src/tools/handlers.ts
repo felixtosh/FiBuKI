@@ -58,6 +58,10 @@ import {
 import { getStorage } from "firebase-admin/storage";
 import { createHash, randomUUID } from "crypto";
 import { createFileRecord, findFileByContentHash } from "../files/createFileRecord";
+import { computeDedupeHash, splitDuplicates } from "../imports/dedupe";
+import { fetchPublicUrl, UnsafeUrlError } from "../utils/safeFetch";
+import { syncOnboarding, toStatus, updateOnboarding } from "../onboarding/onboardingState";
+import { isOnboardingOrigin, isOnboardingStep } from "../onboarding/onboardingRules";
 import { generatedInvoiceRefusal } from "../files/generatedInvoiceGuard";
 import { syncDocumentationStateForTransactions } from "../documents/syncDocumentationState";
 import { assignNoReceiptCategoryToTransaction } from "../matching/assignNoReceiptCategory";
@@ -80,6 +84,7 @@ import {
   type ExpectedChargeWindow,
   type ResolvedEffectiveCycle,
 } from "../matching/billingCycle";
+import { getPeriodStatus, listPendingMatches } from "./periodStatus";
 import { PLANS, resolvePlanId } from "../billing/config";
 import { KNOWN_AUSTRIAN_RATES } from "../uva/rateSet";
 import { runUvaForPeriod } from "../reports/uvaPeriodRun";
@@ -205,6 +210,10 @@ export async function handleTool(
       return listTransactionsMissingInvoice(userId, args);
     case "import_transactions":
       return importTransactions(userId, args);
+    case "get_period_status":
+      return getPeriodStatus(userId, args);
+    case "list_pending_matches":
+      return listPendingMatches(userId, args);
 
     // Files
     case "list_files":
@@ -254,6 +263,14 @@ export async function handleTool(
       return listIdentityEntities(userId);
     case "update_identity_entity":
       return updateIdentityEntity(userId, args);
+    case "create_identity_entity":
+      return createIdentityEntity(userId, args);
+
+    // Onboarding
+    case "get_onboarding_status":
+      return getOnboardingStatus(userId, args);
+    case "skip_onboarding_step":
+      return skipOnboardingStep(userId, args);
 
     // Partners
     case "list_partners":
@@ -314,6 +331,8 @@ export async function handleTool(
       return undoIssueInvoice(userId, args);
 
     // Status
+    case "get_profile":
+      return { profileId: `fbp_${createHash("sha256").update(`fibuki-profile:${userId}`).digest("hex").slice(0, 32)}` };
     case "get_automation_status":
       return getAutomationStatus(userId);
 
@@ -1706,47 +1725,14 @@ export async function updateIdentityEntity(
     if (!snap.exists) throw new Error("User data not found");
     const data = snap.data() as Record<string, unknown>;
 
-    const applyPatch = (entity: Record<string, unknown>) => {
-      const next: Record<string, unknown> = { ...entity };
-      if (typeof patch.name === "string") next.name = patch.name.trim();
-      if (typeof patch.vatId === "string") {
-        const v = patch.vatId.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-        if (v) next.vatId = v; else delete next.vatId;
-      }
-      if (Array.isArray(patch.ibans)) {
-        next.ibans = (patch.ibans as unknown[])
-          .map((i) => String(i).trim().toUpperCase().replace(/\s+/g, ""))
-          .filter(Boolean);
-      }
-      if (Array.isArray(patch.aliases)) {
-        next.aliases = (patch.aliases as unknown[])
-          .map((a) => String(a).trim())
-          .filter(Boolean);
-      }
-      if (patch.address !== undefined) {
-        const addr = (patch.address as Record<string, string> | null) || null;
-        if (addr) {
-          const clean: Record<string, string> = {};
-          if (addr.street?.trim()) clean.street = addr.street.trim();
-          if (addr.postalCode?.trim()) clean.postalCode = addr.postalCode.trim();
-          if (addr.city?.trim()) clean.city = addr.city.trim();
-          if (addr.country?.trim()) clean.country = addr.country.trim().toUpperCase();
-          if (Object.keys(clean).length > 0) next.address = clean;
-        } else {
-          delete next.address;
-        }
-      }
-      return next;
-    };
-
     const personal = data.personalEntity as Record<string, unknown> | undefined;
     if (personal && personal.id === entityId) {
-      data.personalEntity = applyPatch(personal);
+      data.personalEntity = applyIdentityPatch(personal, patch);
     } else {
       const companies = (data.companies as Array<Record<string, unknown>>) || [];
       const idx = companies.findIndex((c) => c.id === entityId);
       if (idx < 0) throw new Error(`Identity entity ${entityId} not found`);
-      companies[idx] = applyPatch(companies[idx]);
+      companies[idx] = applyIdentityPatch(companies[idx], patch);
       data.companies = companies;
     }
     data.updatedAt = FieldValue.serverTimestamp();
@@ -1754,6 +1740,121 @@ export async function updateIdentityEntity(
   });
 
   return { success: true, entityId };
+}
+
+/**
+ * Apply a sparse patch of name / vatId / ibans / aliases / address to an identity
+ * entity, with the same normalisation the settings page applies. Shared by
+ * update_identity_entity and create_identity_entity so the two cannot drift.
+ */
+function applyIdentityPatch(
+  entity: Record<string, unknown>,
+  patch: Record<string, unknown>
+): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...entity };
+  if (typeof patch.name === "string") next.name = patch.name.trim();
+  if (typeof patch.vatId === "string") {
+    const v = patch.vatId.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (v) next.vatId = v; else delete next.vatId;
+  }
+  if (Array.isArray(patch.ibans)) {
+    next.ibans = (patch.ibans as unknown[])
+      .map((i) => String(i).trim().toUpperCase().replace(/\s+/g, ""))
+      .filter(Boolean);
+  }
+  if (Array.isArray(patch.aliases)) {
+    next.aliases = (patch.aliases as unknown[])
+      .map((a) => String(a).trim())
+      .filter(Boolean);
+  }
+  if (patch.address !== undefined) {
+    const addr = (patch.address as Record<string, string> | null) || null;
+    if (addr) {
+      const clean: Record<string, string> = {};
+      if (addr.street?.trim()) clean.street = addr.street.trim();
+      if (addr.postalCode?.trim()) clean.postalCode = addr.postalCode.trim();
+      if (addr.city?.trim()) clean.city = addr.city.trim();
+      if (addr.country?.trim()) clean.country = addr.country.trim().toUpperCase();
+      if (Object.keys(clean).length > 0) next.address = clean;
+    } else {
+      delete next.address;
+    }
+  }
+  return next;
+}
+
+/**
+ * Create the user's personal entity or a company, for someone who has none yet.
+ * The settings page does the same; update_identity_entity only patches what exists,
+ * so without this a new user would have to open fibuki.com before anything else.
+ * Writing the document is what makes FiBuKI create the identity Partner and tell
+ * the user's own issued invoices from the ones they receive.
+ */
+export async function createIdentityEntity(userId: string, args: Record<string, unknown>) {
+  const type = args.type;
+  if (type !== "person" && type !== "company") throw new Error("type must be 'person' or 'company'");
+  const name = typeof args.name === "string" ? args.name.trim() : "";
+  if (!name) throw new Error("name is required");
+
+  const docRef = db.doc(`users/${userId}/settings/userData`);
+  const entityId = `entity_${Date.now()}_${randomUUID().slice(0, 9)}`;
+
+  const entity = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(docRef);
+    const data = (snap.exists ? snap.data() : {}) as Record<string, unknown>;
+    const companies = Array.isArray(data.companies) ? [...(data.companies as Array<Record<string, unknown>>)] : [];
+
+    if (type === "person" && (data.personalEntity as { id?: string } | undefined)?.id) {
+      throw new Error("A personal entity already exists. Use update_identity_entity to change it.");
+    }
+    if (type === "company" && companies.some((c) => String(c.name ?? "").trim().toLowerCase() === name.toLowerCase())) {
+      throw new Error(`A company named "${name}" already exists. Use update_identity_entity to change it.`);
+    }
+
+    const created = applyIdentityPatch(
+      {
+        id: entityId,
+        type,
+        name,
+        aliases: [],
+        ibans: [],
+        order: type === "person" ? 0 : companies.length,
+        createdAt: Timestamp.now(),
+      },
+      args
+    );
+
+    const next: Record<string, unknown> = {
+      country: data.country || "AT",
+      taxNumber: data.taxNumber || "",
+      ownEmails: data.ownEmails || [],
+      createdAt: data.createdAt || Timestamp.now(),
+      ...data,
+      updatedAt: FieldValue.serverTimestamp(),
+    };
+    if (type === "person") next.personalEntity = created;
+    else next.companies = [...companies, created];
+
+    tx.set(docRef, next);
+    return created;
+  });
+
+  return { success: true, entityId, entity };
+}
+
+/**
+ * Where the user is in onboarding. Records any step the user's data has completed
+ * since the last look (the same rules the web app uses), so a tool call and a page
+ * load always agree. `origin` is only used the first time, when it creates the record.
+ */
+export async function getOnboardingStatus(userId: string, args: Record<string, unknown>) {
+  const origin = isOnboardingOrigin(args.origin) ? args.origin : "api";
+  return toStatus(await syncOnboarding(db, userId, origin));
+}
+
+export async function skipOnboardingStep(userId: string, args: Record<string, unknown>) {
+  if (!isOnboardingStep(args.step)) throw new Error("step is not an onboarding step");
+  return toStatus(await updateOnboarding(db, userId, { action: "skip_step", step: args.step }));
 }
 
 /**
@@ -2720,19 +2821,22 @@ export async function importTransactions(userId: string, args: Record<string, un
     throw new Error("Source not found");
   }
 
-  // Build transaction data with dedupeHashes
-  const crypto = await import("crypto");
-  const importJobId = `api_${Date.now()}`;
+  // Calls that belong to one file share an importJobId, so identical rows inside
+  // that file are never taken for duplicates of each other (see imports/dedupe.ts).
+  const importJobId =
+    typeof args.importJobId === "string" && args.importJobId
+      ? args.importJobId
+      : `api_${Date.now()}_${randomUUID().slice(0, 8)}`;
 
-  const transactions = (rawTxs as Array<Record<string, unknown>>).map((tx, index) => {
+  // The same hash the web import stores: Bank Account IBAN, or its id when it has none.
+  const sourceIdentifier = (sourceDoc.data()?.iban as string | undefined) || (sourceId as string);
+
+  const candidates = (rawTxs as Array<Record<string, unknown>>).map((tx, index) => {
     const date = tx.date as string;
     const amount = tx.amount as number;
     const name = tx.name as string;
     const currency = (tx.currency as string) || "EUR";
-
-    // Generate dedupeHash from key fields
-    const hashInput = `${sourceId}|${date}|${amount}|${name}|${currency}`;
-    const dedupeHash = crypto.createHash("sha256").update(hashInput).digest("hex");
+    const reference = (tx.reference as string) || null;
 
     return {
       sourceId: sourceId as string,
@@ -2742,9 +2846,9 @@ export async function importTransactions(userId: string, args: Record<string, un
       name,
       description: (tx.description as string) || null,
       partner: (tx.partner as string) || null,
-      reference: (tx.reference as string) || null,
+      reference,
       partnerIban: (tx.partnerIban as string) || null,
-      dedupeHash,
+      dedupeHash: computeDedupeHash({ date, amount, sourceIdentifier, reference }),
       importJobId,
       csvRowIndex: index,
       _original: {
@@ -2754,6 +2858,27 @@ export async function importTransactions(userId: string, args: Record<string, un
       },
     };
   });
+
+  // Rows an earlier import already stored are skipped here, on the server, for every caller.
+  const { fresh: transactions, duplicates } = await splitDuplicates(
+    db,
+    userId,
+    sourceId as string,
+    candidates,
+    importJobId
+  );
+  const duplicateCount = duplicates.length;
+
+  if (transactions.length === 0) {
+    return {
+      success: true,
+      transactionIds: [] as string[],
+      count: 0,
+      duplicateCount,
+      quotaExceeded: false,
+      overLimitCount: 0,
+    };
+  }
 
   // Use bulk create directly (not via callable to avoid double auth check)
   const { Timestamp: AdminTimestamp } = await import("firebase-admin/firestore");
@@ -2840,6 +2965,7 @@ export async function importTransactions(userId: string, args: Record<string, un
     success: true,
     transactionIds,
     count: transactionIds.length,
+    duplicateCount,
     quotaExceeded: overLimitTransactionIds.length > 0,
     overLimitCount: overLimitTransactionIds.length,
   };
@@ -2850,23 +2976,31 @@ export async function importTransactions(userId: string, args: Record<string, un
 // ============================================================================
 
 export async function uploadFile(userId: string, args: Record<string, unknown>) {
-  const { url, base64, fileName, mimeType } = args;
+  const { base64, fileName, mimeType } = args;
+  // A file the user attached in ChatGPT arrives as { download_url, file_id }: a short-lived public
+  // https link, so it takes the same guarded download as `url`.
+  const attached = args.file as { download_url?: unknown } | undefined;
+  const url = args.url ?? (typeof attached?.download_url === "string" ? attached.download_url : undefined);
   if (!fileName) throw new Error("fileName is required");
   if (!mimeType) throw new Error("mimeType is required");
-  if (!url && !base64) throw new Error("Either url or base64 is required");
+  if (!url && !base64) throw new Error("Either file, url or base64 is required");
 
   let fileBuffer: Buffer;
 
   if (base64) {
     fileBuffer = Buffer.from(base64 as string, "base64");
   } else {
-    // Download from URL
-    const response = await fetch(url as string);
-    if (!response.ok) {
-      throw new Error(`Failed to download file: ${response.status} ${response.statusText}`);
+    // The URL comes from whoever called the tool, so it is fetched under the SSRF rules in
+    // utils/safeFetch.ts: public https only, checked at connect time, size and time capped.
+    if (typeof url !== "string") throw new Error("url must be a string");
+    try {
+      ({ buffer: fileBuffer } = await fetchPublicUrl(url));
+    } catch (error) {
+      if (error instanceof UnsafeUrlError) {
+        throw new Error(`${error.message}. upload_file downloads public https URLs only; send the file as base64 instead.`);
+      }
+      throw error;
     }
-    const arrayBuffer = await response.arrayBuffer();
-    fileBuffer = Buffer.from(arrayBuffer);
   }
 
   // Hash the bytes before touching storage (#182). This tool used to write a

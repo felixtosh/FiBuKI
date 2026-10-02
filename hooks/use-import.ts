@@ -14,10 +14,6 @@ import {
   getDateParserName,
 } from "@/lib/import/date-parsers";
 import { parseAmount, getAmountParserConfig } from "@/lib/import/amount-parsers";
-import {
-  generateDedupeHash,
-  checkDuplicatesBatch,
-} from "@/lib/import/deduplication";
 import { autoMatchColumns, validateMappings } from "@/lib/import/field-matcher";
 import { parseCSV } from "@/lib/import/csv-parser";
 import { uploadImportCSV } from "@/lib/operations";
@@ -482,8 +478,9 @@ export function useImport(
     // Prepare transactions
     // bankTransactionType is the raw bank wording, sent for the callable to
     // normalise into transactionType (#136); it is not stored as such.
-    const transactions: Array<Omit<Transaction, "id"> & { bankTransactionType: string | null }> = [];
-    const hashes: string[] = [];
+    // No dedupeHash here: the server derives it and decides what is a duplicate
+    // (functions/src/imports/dedupe.ts), so this hook carries no copy of the rule.
+    const transactions: Array<Omit<Transaction, "id" | "dedupeHash"> & { bankTransactionType: string | null }> = [];
     const errors: { row: number; message: string; rowData: Record<string, string> }[] = [];
 
     for (let i = 0; i < rows.length; i++) {
@@ -573,16 +570,6 @@ export function useImport(
           }
         }
 
-        // Generate dedupe hash (use sourceId as fallback for sources without IBAN like credit cards)
-        const hash = await generateDedupeHash(
-          parsedDate,
-          parsedAmount,
-          source.iban ?? source.id,
-          referenceValue
-        );
-
-        hashes.push(hash);
-
         // Create transaction object
         const now = Timestamp.now();
         transactions.push({
@@ -601,7 +588,6 @@ export function useImport(
           reference: referenceValue,
           partnerIban: partnerIbanValue,
           bankTransactionType: bankTypeValue,
-          dedupeHash: hash,
           fileIds: [],
           isComplete: false,
           // Partner fields - explicitly null for Firestore query compatibility
@@ -631,15 +617,6 @@ export function useImport(
       }));
     }
 
-    // Check for duplicates
-    const existingHashes = await checkDuplicatesBatch(hashes, source.id);
-
-    // Filter out duplicates
-    const newTransactions = transactions.filter(
-      (t) => !existingHashes.has(t.dedupeHash)
-    );
-    const skippedCount = transactions.length - newTransactions.length;
-
     // Derive opening balance from CSV balance column if available
     let balanceInfo: {
       openingBalance: number;
@@ -668,11 +645,12 @@ export function useImport(
 
     // Batch write transactions using Cloud Function
     let importedCount = 0;
+    let skippedCount = 0; // rows the server found already imported
     const transactionIds: string[] = [];
     const overLimitTransactionIds: string[] = [];
 
-    for (let i = 0; i < newTransactions.length; i += BATCH_SIZE) {
-      const chunk = newTransactions.slice(i, i + BATCH_SIZE);
+    for (let i = 0; i < transactions.length; i += BATCH_SIZE) {
+      const chunk = transactions.slice(i, i + BATCH_SIZE);
 
       // Convert Timestamps to ISO strings for Cloud Function
       const transactionsForCF = chunk.map((t) => ({
@@ -685,7 +663,7 @@ export function useImport(
       // Include balanceInfo only on the first batch
       const result = await callFunction<
         { transactions: typeof transactionsForCF; sourceId: string; balanceInfo?: typeof balanceInfo },
-        { transactionIds: string[]; quotaExceeded?: boolean; overLimitCount?: number; overLimitTransactionIds?: string[] }
+        { transactionIds: string[]; duplicateCount?: number; quotaExceeded?: boolean; overLimitCount?: number; overLimitTransactionIds?: string[] }
       >("bulkCreateTransactions", {
         transactions: transactionsForCF,
         sourceId: source.id,
@@ -696,11 +674,12 @@ export function useImport(
       if (result.overLimitTransactionIds) {
         overLimitTransactionIds.push(...result.overLimitTransactionIds);
       }
-      importedCount += chunk.length;
+      importedCount += result.transactionIds.length;
+      skippedCount += result.duplicateCount ?? 0;
 
       setState((s) => ({
         ...s,
-        progress: 50 + Math.round(((i + chunk.length) / newTransactions.length) * 50),
+        progress: 50 + Math.round(((i + chunk.length) / transactions.length) * 50),
       }));
     }
 

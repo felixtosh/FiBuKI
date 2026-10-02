@@ -1,0 +1,5 @@
+Buchungsdatum;Partnername;Partner IBAN;BIC/SWIFT;Betrag;Währung;Buchungstext;Zahlungsreferenz;Saldo
+01.09.2026;REWE Dankt Filiale 4402;;;-54,20;EUR;POS 4402 K1 27.09. REWE DANKT;;4.369,55
+03.09.2026;A1 Telekom Austria AG;AT611904300234573201;GIBAATWWXXX;-39,90;EUR;A1 Rechnung 09/26;RF48 0000 1122 33;4.329,65
+15.09.2026;Müller Consulting GmbH;DE89370400440532013000;COBADEFFXXX;+3.412,55;EUR;Honorar September;MREF-99812;7.742,20
+17.09.2026;Hausverwaltung Nowak;;;-980,00;EUR;Miete Oktober;;6.762,20

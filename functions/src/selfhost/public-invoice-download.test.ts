@@ -272,4 +272,16 @@ describe("deploy/selfhost/docker-compose.yml", () => {
       expect(web[key], `fibuki-web ${key}`).toBe(api[key]);
     }
   });
+
+  // app/api/gmail/* and app/api/gdrive/* run in fibuki-web. Without the client
+  // credentials there, Gmail Reconnect answered 500 "Google OAuth is not
+  // configured" on fibuki.com while fibuki-api had them all along.
+  it("gives fibuki-web the same Google OAuth client as fibuki-api", () => {
+    const api = serviceEnv("fibuki-api");
+    const web = serviceEnv("fibuki-web");
+    for (const key of ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_OAUTH_REDIRECT_URI"]) {
+      expect(api[key], `fibuki-api ${key}`).toBeTruthy();
+      expect(web[key], `fibuki-web ${key}`).toBe(api[key]);
+    }
+  });
 });

@@ -204,4 +204,63 @@ describe("Google social sign-in — provider wiring + invite gate on the auto-cr
     expect(authData?.uid).toBeTruthy();
     expect(authData?.token?.email).toBe(email.toLowerCase());
   });
+
+  describe("open seats (the register page promises them)", () => {
+    const seats = async (config: Record<string, unknown>) => {
+      await getFirestore().collection("config").doc("openSeats").set(config);
+    };
+    // The seats config is shared with the other tests in this file; leave none behind.
+    afterAll(async () => {
+      await getFirestore().collection("config").doc("openSeats").delete();
+    });
+    const remaining = async () =>
+      ((await getFirestore().collection("config").doc("openSeats").get()).data() ?? {}).remainingSeats;
+
+    it("a stranger claims a seat on first Google sign-in: account created, seat spent, invite marked used", async () => {
+      stubGoogleJwks();
+      const auth = await createSelfhostAuth();
+      await seats({ totalSeats: 2, remainingSeats: 2, claimedSeats: 0 });
+      const email = uniqueEmail("seat");
+
+      const res = await auth.handler(socialSignIn({ idToken: { token: await mintGoogleIdToken(email) } }));
+      expect(res.status).toBe(200);
+      expect(await countUsers(email)).toBe(1);
+      expect(await remaining()).toBe(1);
+
+      const invite = await getFirestore().collection("allowedEmails").where("email", "==", email.toLowerCase()).get();
+      expect(invite.docs).toHaveLength(1);
+      expect(invite.docs[0].data()).toMatchObject({ addedBy: "open-seat" });
+      expect(invite.docs[0].data().usedAt).toBeTruthy();
+      expect(await pendingAccessRequests(email)).toHaveLength(0);
+    });
+
+    it("with no seat left a stranger is refused and an access request is recorded", async () => {
+      stubGoogleJwks();
+      const auth = await createSelfhostAuth();
+      await seats({ totalSeats: 2, remainingSeats: 0, claimedSeats: 2 });
+      const email = uniqueEmail("noseat");
+
+      const res = await auth.handler(socialSignIn({ idToken: { token: await mintGoogleIdToken(email) } }));
+      expect(res.status).toBe(401);
+      expect(await countUsers(email)).toBe(0);
+      expect(await pendingAccessRequests(email)).toHaveLength(1);
+    });
+
+    it("two strangers racing for the last seat: one account, one seat spent", async () => {
+      stubGoogleJwks();
+      const auth = await createSelfhostAuth();
+      await seats({ totalSeats: 1, remainingSeats: 1, claimedSeats: 0 });
+      const a = uniqueEmail("race-a");
+      const b = uniqueEmail("race-b");
+
+      const [ra, rb] = await Promise.all([
+        auth.handler(socialSignIn({ idToken: { token: await mintGoogleIdToken(a) } })),
+        auth.handler(socialSignIn({ idToken: { token: await mintGoogleIdToken(b) } })),
+      ]);
+
+      expect([ra.status, rb.status].sort()).toEqual([200, 401]);
+      expect((await countUsers(a)) + (await countUsers(b))).toBe(1);
+      expect(await remaining()).toBe(0);
+    });
+  });
 });

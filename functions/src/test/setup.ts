@@ -93,6 +93,8 @@ export interface MockQuery {
 
 export interface MockFirestore {
   collection: (name: string) => MockCollectionRef;
+  /** A document by full path, e.g. "users/u1/settings/userData". Stored under its parent path as the collection. */
+  doc: (path: string) => MockDocRef;
   batch: () => MockWriteBatch;
   runTransaction: <T>(fn: (tx: MockTransaction) => Promise<T>) => Promise<T>;
 }
@@ -395,6 +397,10 @@ export function createMockFirestore(): MockFirestore {
 
   return {
     collection: (name: string) => createCollectionRef(name),
+    doc: (path: string) => {
+      const parts = path.split("/");
+      return createDocRef(parts.slice(0, -1).join("/"), parts[parts.length - 1]);
+    },
     batch: () => {
       const operations: Array<() => void> = [];
       const batch: MockWriteBatch = {

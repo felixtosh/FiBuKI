@@ -187,7 +187,6 @@ export function useRemapping(importId: string, source: TransactionSource | null)
         state.parsedRows,
         source.iban || null,
         source.id,
-        source.currency,
         (progress) => setState((s) => ({ ...s, progress }))
       );
 

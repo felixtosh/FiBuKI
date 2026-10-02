@@ -9,6 +9,7 @@ import {
   SetupStep,
 } from "@/components/integrations/developer-shared";
 import { CopyableCommand } from "@/components/settings/api-key-primitives";
+import { OAuthConnectCard } from "@/components/integrations/oauth-connect-card";
 
 export default function ClaudeMcpPage() {
   return (
@@ -16,6 +17,8 @@ export default function ClaudeMcpPage() {
       title="Claude Desktop (MCP)"
       description="Connect FiBuKI to Claude Desktop via the Model Context Protocol"
     >
+      <OAuthConnectCard app="claude" />
+
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Setup</CardTitle>

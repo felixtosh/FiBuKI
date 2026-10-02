@@ -61,6 +61,7 @@ export type CloudFunctionName =
   // Import operations
   | "bulkCreateTransactions"
   | "createImportRecord"
+  | "applyImportRemap"
   | "createDraftImport"
   | "updateDraftMappings"
   | "deleteDraftImport"
@@ -149,7 +150,11 @@ export type CloudFunctionName =
   // Automation mode
   | "updateAutomationMode"
   // Onboarding
-  | "setOnboardingTrack"
+  | "initOnboarding"
+  | "syncOnboarding"
+  | "updateOnboarding"
+  // OAuth for connected apps
+  | "createOAuthAuthorization"
   // Access requests
   | "submitAccessRequest"
   | "approveAccessRequest"

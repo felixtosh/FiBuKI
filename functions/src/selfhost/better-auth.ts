@@ -37,6 +37,7 @@ import { createLocalJWKSet, jwtVerify } from "jose";
 import { getFirestore, getSqlClient, FieldValue } from "./firestore-shim";
 import { getTenantId } from "./db/tenant";
 import type { TokenVerifier } from "./host";
+import { admitEmail, recordRegistration } from "../auth/registrationGate";
 
 export interface SelfhostAuth {
   handler: (req: Request) => Promise<Response>;
@@ -387,22 +388,19 @@ function parseClaims(user: Record<string, unknown>): Record<string, unknown> {
 
 /**
  * The invite gate — same data, same semantics as the Firebase build
- * (CLAUDE.md auth section): allowedEmails collection, SUPER_ADMIN_EMAIL
- * exempt. Enforced in the user.create database hook so EVERY account path
+ * (CLAUDE.md auth section): allowedEmails collection, an open seat when one is left
+ * (auth/registrationGate.ts, shared with the Firebase callables), SUPER_ADMIN_EMAIL exempt. Enforced in the user.create database hook so EVERY account path
  * is gated — provisionUser AND social sign-ins (Google auto-creates a user
  * on first login; without the hook that would bypass invite-only).
  */
+/** The shim implements the slice of Firestore the registration gate uses (queries, runTransaction, increment). */
+const gateDb = () => getFirestore() as unknown as import("firebase-admin/firestore").Firestore;
+
 async function assertInvited(email: string): Promise<void> {
-  const normalized = email.trim().toLowerCase();
-  if (normalized === superAdminEmail()) return;
-  const snap = await getFirestore()
-    .collection("allowedEmails")
-    .where("email", "==", normalized)
-    .limit(1)
-    .get();
-  if (snap.empty) {
+  const decision = await admitEmail(gateDb(), email, superAdminEmail());
+  if (!decision.allowed) {
     throw new Error(
-      `selfhost auth: ${normalized} is not in allowedEmails — this product is invite-only`,
+      `selfhost auth: ${email.trim().toLowerCase()} is not in allowedEmails and no open seat is left — this product is invite-only`,
     );
   }
 }
@@ -557,6 +555,12 @@ function buildAuth() {
               throw err;
             }
             return { data: user };
+          },
+          // The account exists now: mark the invite used and count it (Firebase's markInviteUsed).
+          after: async (user) => {
+            await recordRegistration(gateDb(), user.email, user.id, superAdminEmail()).catch((e) =>
+              console.error("selfhost auth: failed to record registration", e),
+            );
           },
         },
       },

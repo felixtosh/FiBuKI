@@ -8,6 +8,7 @@
  * Uses @sparticuz/chromium for serverless environments (Cloud Functions).
  */
 
+import { guardPage } from "./renderGuard";
 import chromium from "@sparticuz/chromium";
 import puppeteer, { Browser } from "puppeteer-core";
 
@@ -111,6 +112,19 @@ async function getBrowser(): Promise<Browser> {
   return browserInstance;
 }
 
+/** Shut the shared browser down (tests, and anything that must not leave Chromium running). */
+export async function closeBrowser(): Promise<void> {
+  const browser = browserInstance ?? (browserLaunchPromise ? await browserLaunchPromise : null);
+  browserInstance = null;
+  if (!browser) return;
+  // close() can wait on a wedged renderer; kill the process if it does not return.
+  const closed = await Promise.race([
+    browser.close().then(() => true, () => true),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 5000)),
+  ]);
+  if (!closed) browser.process()?.kill("SIGKILL");
+}
+
 /**
  * Escape HTML special characters
  */
@@ -143,6 +157,9 @@ export async function convertHtmlToPdf(
   const page = await browser.newPage();
 
   try {
+    // The HTML is untrusted: no script, and no request that reaches our own network (renderGuard.ts).
+    await guardPage(page);
+
     // Detect if the input is already a complete HTML document (e.g. captured from browser extension)
     const isFullDocument = /^\s*<!DOCTYPE\s+html/i.test(html) || /^\s*<html[\s>]/i.test(html);
 
@@ -198,6 +215,10 @@ export async function convertHtmlToPdf(
         </html>
       `;
     }
+
+    // A meta refresh is a navigation, which the guard refuses; the refused navigation would replace
+    // the whole document with an error page, so the tag goes before rendering.
+    fullHtml = fullHtml.replace(/<meta\b[^>]*http-equiv\s*=\s*["']?refresh["']?[^>]*>/gi, "");
 
     // Use 'domcontentloaded' instead of 'networkidle0' - don't wait for external images
     // Email HTML often has broken cid: references and tracking pixels that never load

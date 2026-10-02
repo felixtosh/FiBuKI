@@ -15,6 +15,7 @@ import {
   type DerivedBillingCycle,
 } from "./billingCycle";
 import { rescoreFileConnectionsForPartner } from "./rescoreFileConnections";
+import { checkRecurrence, isVerdictFresh, recurrenceKey, type RecurrenceCheckInput } from "./recurrenceCheck";
 import { derivePartnerAliases, deriveScoringWeights } from "./transactionScoring";
 
 /** Charges a partner needs before any cycle can be derived. */
@@ -38,8 +39,10 @@ interface LearnBillingCycleResponse {
  * Shared by the callable below and by both auto-learn triggers — the
  * post-file-connect learn and the nightly schedule
  * (yazzbert/FiBuKI-selfhost#166) — so every path writes the same shape
- * through the same dotted-path update. History only: no AI call anywhere
- * below, the derivation is arithmetic over dates and amounts.
+ * through the same dotted-path update. The derivation is arithmetic over
+ * dates and amounts; a learned cycle only becomes effective once a model has
+ * confirmed the partner bills on a schedule (./recurrenceCheck.ts), since a
+ * supermarket has a rhythm too. That verdict is cached on the partner.
  *
  * Verifies ownership itself and returns null for an unknown or foreign
  * partner, the same way learnPatternsForPartnersBatch skips one, so an
@@ -65,21 +68,24 @@ export async function learnBillingCycleForPartner(
   // Query transactions for this partner, ordered by date. partnerId only —
   // never bankPartnerId, which reflects the bank's descriptor rather than
   // the resolved supplier and would pollute the learned cycle.
+  // Newest first, so a long history is judged on its recent charges, then
+  // put back in date order for the derivation.
   const txSnapshot = await db
     .collection("transactions")
     .where("userId", "==", userId)
     .where("partnerId", "==", partnerId)
-    .orderBy("date", "asc")
+    .orderBy("date", "desc")
     .limit(MAX_TRANSACTIONS)
     .get();
+  const txDocs = [...txSnapshot.docs].reverse();
 
   if (txSnapshot.size < MIN_BILLING_CYCLE_TRANSACTIONS) {
     console.log(`[BillingCycle] Not enough transactions for partner ${partnerId}: ${txSnapshot.size}`);
     return null;
   }
 
-  const invoiceDates = await getInvoiceDates(db, userId, partnerId, txSnapshot.docs);
-  const transactions: BillingCycleTransaction[] = txSnapshot.docs.map((doc) => {
+  const invoiceDates = await getInvoiceDates(db, userId, partnerId, txDocs);
+  const transactions: BillingCycleTransaction[] = txDocs.map((doc) => {
     const data = doc.data();
     return {
       date: data.date.toDate(),
@@ -94,10 +100,37 @@ export async function learnBillingCycleForPartner(
     return null;
   }
 
+  const checkInput: RecurrenceCheckInput = {
+    partnerName: String(partnerData.name ?? ""),
+    aliases: Array.isArray(partnerData.aliases) ? partnerData.aliases.map(String) : [],
+    website: typeof partnerData.website === "string" ? partnerData.website : null,
+    cycles: learned,
+    charges: txSnapshot.docs.map((doc) => {
+      const data = doc.data();
+      return {
+        date: data.date.toDate(),
+        amount: data.amount,
+        description: [data.name, data.partner, data.reference].filter(Boolean).join(" / ").slice(0, 120),
+      };
+    }),
+  };
+  const cachedVerdict = partnerData.billingCycle?.recurrence;
+  const freshVerdict = isVerdictFresh(cachedVerdict, recurrenceKey(checkInput))
+    ? null
+    : await checkRecurrence(userId, partnerId, checkInput);
+  // A failed check keeps the last answer for this same question rather than
+  // flipping a confirmed subscription off for a night.
+  const verdict = freshVerdict
+    ?? (cachedVerdict?.key === recurrenceKey(checkInput) ? cachedVerdict : null);
+  const confirmed = verdict?.recurring === true;
+
   const existingDeclared = partnerData.billingCycle?.declared;
   const learnedAt = Timestamp.now();
   const learnedWithTimestamp = learned.map((cycle) => ({ ...cycle, learnedAt }));
-  const effective = resolveEffectiveCycles(learned, existingDeclared);
+  // Unconfirmed learned bands stay on record but act on nothing: matching,
+  // the "document missing" marker and the MCP all read `effective`.
+  const effective = resolveEffectiveCycles(learned, existingDeclared)
+    .filter((cycle) => confirmed || cycle.source === "declared");
 
   // Declared halves are never touched here — they're set/cleared through
   // set_partner_billing_cycle (yazzbert/FiBuKI-selfhost#167), and must
@@ -105,12 +138,13 @@ export async function learnBillingCycleForPartner(
   await partnerRef.update({
     "billingCycle.learned": learnedWithTimestamp,
     "billingCycle.effective": effective,
+    ...(freshVerdict ? { "billingCycle.recurrence": freshVerdict } : {}),
     updatedAt: learnedAt,
   });
 
   console.log(
     `[BillingCycle] Partner ${partnerId}: ${learned.length} band(s) learned, ` +
-    `sample=${txSnapshot.size}`
+    `recurring=${verdict ? verdict.recurring : "unchecked"}, sample=${txSnapshot.size}`
   );
 
   // Re-score already-connected files now that the cycle changed, so a
@@ -127,7 +161,7 @@ export async function learnBillingCycleForPartner(
       db,
       userId,
       partnerId,
-      txSnapshot.docs,
+      txDocs,
       effective,
       deriveScoringWeights(partnerData),
       await derivePartnerAliases(db, partnerData)
@@ -138,6 +172,7 @@ export async function learnBillingCycleForPartner(
 
   // Today's callers (worker chat, agent tools) expect one flat cycle back.
   // With more than one band, surface the most confident one.
+  if (!confirmed) return null;
   return [...learned].sort((a, b) => b.frequencyConfidence - a.frequencyConfidence)[0];
 }
 
