@@ -653,6 +653,20 @@ describe("scoreTransaction — composite behaviors", () => {
       );
       expect(result.breakdown.hint).toBe(0);
     });
+
+    // #589: the local-file strategies nominate instead of hinting, and a hint
+    // one of them left behind restated the scorer's own signals.
+    it("scores an email strategy's hint, and nothing for a local-file strategy's", () => {
+      const byStrategy = (searchStrategy: string) =>
+        scoreTransaction(
+          { precisionSearchHint: { transactionId: "tx-1", matchConfidence: 80, searchStrategy } },
+          baseTx()
+        ).breakdown.hint;
+      expect(byStrategy("email_attachment")).toBe(40);
+      expect(byStrategy("email_invoice")).toBe(40);
+      expect(byStrategy("partner_files")).toBe(0);
+      expect(byStrategy("amount_files")).toBe(0);
+    });
   });
 
   describe("partner-date boost/penalty exact values", () => {

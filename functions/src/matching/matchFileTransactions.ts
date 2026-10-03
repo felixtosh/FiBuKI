@@ -367,9 +367,19 @@ function resolvePartnerConflict(
 
 // === Main Function ===
 
+export interface TransactionMatchingOptions {
+  /**
+   * Transactions a precision-search strategy nominated for this run (#589).
+   * Each is a candidate even outside the date window, and is scored like any
+   * other: a nomination is worth nothing by itself.
+   */
+  nominatedTransactionIds?: string[];
+}
+
 export async function runTransactionMatching(
   fileId: string,
-  fileData: FirebaseFirestore.DocumentData
+  fileData: FirebaseFirestore.DocumentData,
+  options: TransactionMatchingOptions = {}
 ): Promise<void> {
   // Skip soft-deleted files
   if (fileData.deletedAt) {
@@ -473,19 +483,20 @@ export async function runTransactionMatching(
 
   console.log(`[TxMatch] Found ${transactions.length} candidate transactions (${dateRangeStr})`);
 
-  // If there's a precision search hint with a transaction ID, ensure it's in the candidate set
-  // The hint means automation already validated this transaction is relevant (by amount/partner search)
-  // but it might be outside the date range
+  // A hinted or nominated transaction is a candidate even outside the date
+  // range: a search already found it relevant, and an invoice paid on a
+  // 45-day term is still this file's (#589). Only joins the candidates; what
+  // it scores is the scorer's business.
+  const extraCandidateIds = new Set<string>(options.nominatedTransactionIds ?? []);
   if (fileData.precisionSearchHint?.transactionId) {
-    const hintedTxId = fileData.precisionSearchHint.transactionId;
-    const alreadyIncluded = transactions.some(doc => doc.id === hintedTxId);
-
-    if (!alreadyIncluded) {
-      const hintedTxDoc = await db.collection("transactions").doc(hintedTxId).get();
-      if (hintedTxDoc.exists && hintedTxDoc.data()?.userId === userId) {
-        transactions.push(hintedTxDoc as FirebaseFirestore.QueryDocumentSnapshot);
-        console.log(`[TxMatch] Added hinted transaction ${hintedTxId} to candidates (was outside date range)`);
-      }
+    extraCandidateIds.add(fileData.precisionSearchHint.transactionId);
+  }
+  for (const extraTxId of extraCandidateIds) {
+    if (transactions.some((doc) => doc.id === extraTxId)) continue;
+    const extraTxDoc = await db.collection("transactions").doc(extraTxId).get();
+    if (extraTxDoc.exists && extraTxDoc.data()?.userId === userId) {
+      transactions.push(extraTxDoc as FirebaseFirestore.QueryDocumentSnapshot);
+      console.log(`[TxMatch] Added transaction ${extraTxId} to candidates (searched for, outside date range)`);
     }
   }
 
@@ -876,9 +887,12 @@ export async function runTransactionMatching(
 
   // Queue agentic follow-up:
   // - Partner batch: only on explicit "new successful match for this partner" signal
-  // - No partner: keep legacy per-file fallback only when no auto-match
+  // - No partner: keep legacy per-file fallback only when no auto-match, and
+  //   not on a search's nomination run (#589): that run checks one pair, and
+  //   a search nominates to several files per transaction.
   const shouldQueuePartnerBatch = Boolean(fileData.partnerId) && newTransactionIds.length > 0;
-  const shouldQueueSingleFileWorker = !fileData.partnerId && autoMatches.length === 0;
+  const shouldQueueSingleFileWorker =
+    !fileData.partnerId && autoMatches.length === 0 && !options.nominatedTransactionIds?.length;
 
   if (shouldQueuePartnerBatch || shouldQueueSingleFileWorker) {
     // Check AI budget before queuing agentic workers (rule-based scoring above stays free)
