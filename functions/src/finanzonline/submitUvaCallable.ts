@@ -17,6 +17,9 @@ import { decrypt } from "../utils/encryption";
 import { sha256 } from "../utils/encryption";
 import { sessionLogin, sessionLogout, uploadFile, isSuccess, getErrorMessage } from "./soapClient";
 import { generateUvaXml } from "../reports/generateUvaXml";
+import { runUvaForPeriod } from "../reports/uvaPeriodRun";
+import { recordFiled, refuseOnBlockers } from "../reports/uvaFiledRecords";
+import { validateFiledKennzahlen } from "../uva/filedRecord";
 import type {
   SubmitUvaRequest,
   SubmitUvaResponse,
@@ -50,7 +53,7 @@ export const submitUvaToFinanzOnlineCallable = createCallable<
   {
     name: "submitUvaToFinanzOnline",
     secrets: [FINANZONLINE_ENCRYPTION_KEY],
-    timeoutSeconds: 60, // SOAP calls can be slow
+    timeoutSeconds: 120, // SOAP calls can be slow, and the period is re-run for its blockers
     memory: "512MiB",
   },
   async (ctx, request) => {
@@ -83,6 +86,12 @@ export const submitUvaToFinanzOnlineCallable = createCallable<
     if (!period) {
       throw new HttpsError("invalid-argument", "Period is required");
     }
+
+    // A period with blockers is never submitted (#564, ADR-0010 rule 4): an
+    // unlinked correction or an over-refund has to be resolved first, exactly
+    // as Mark as filed requires. The run is the same one the preview shows.
+    const { result: run } = await runUvaForPeriod(ctx.db, ctx.userId, period);
+    refuseOnBlockers(run);
 
     // ========================================================================
     // Load credentials
@@ -223,6 +232,22 @@ export const submitUvaToFinanzOnlineCallable = createCallable<
         status: "success",
         referenceNumber: referenceNumber || null,
       });
+
+      // The figures submitted are the figures filed (#564, D11): recorded the
+      // same way Mark as filed records them, so a later run is compared
+      // against what reached FinanzOnline. A record that fails to write never
+      // fails a submission that already succeeded.
+      try {
+        const submitted = validateFiledKennzahlen(kennzahlen);
+        await recordFiled(ctx.db, ctx.userId, {
+          result: run,
+          source: "finanzonline",
+          kennzahlen: typeof submitted === "string" ? null : submitted,
+          referenceNumber: referenceNumber || null,
+        });
+      } catch (err) {
+        console.error("[FinanzOnline] Submitted, but the filed record failed to write:", err);
+      }
 
       // Update last submission timestamp in userData
       await ctx.db

@@ -47,6 +47,8 @@ export type CloudFunctionName =
   | "unlinkCorrection"
   | "getCorrection"
   | "backfillCorrectionLinks"
+  | "markUvaPeriodFiled"
+  | "getUvaFiledStatus"
   | "connectFileToTransaction"
   | "disconnectFileFromTransaction"
   | "dismissTransactionSuggestion"

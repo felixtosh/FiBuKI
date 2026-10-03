@@ -196,6 +196,12 @@ export {
   backfillFileEntityNamesCallable as backfillFileEntityNames,
 } from "./files";
 
+// What was filed for a UVA period, and how a later run compares (#564)
+export {
+  markUvaPeriodFiledCallable as markUvaPeriodFiled,
+  getUvaFiledStatusCallable as getUvaFiledStatus,
+} from "./reports/uvaFiledRecords";
+
 // Invoice Corrections: the link to the File each one corrects (#564)
 export {
   linkCorrectionCallable as linkCorrection,

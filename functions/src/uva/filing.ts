@@ -36,6 +36,7 @@ import type {
   UvaReportResult,
 } from "./types";
 import type { UvaReconciliation } from "./reconcile";
+import type { FiledComparison } from "./filedRecord";
 
 /** One claimed input-VAT figure and the documents it rests on. */
 export interface VorsteuerTraceEntry {
@@ -258,6 +259,12 @@ export interface UvaFiling {
   handover: UvaFilingHandover;
   /** Empty means the filing can go out. */
   blockers: FilingBlocker[];
+  /**
+   * Earlier periods already filed whose figures a later run moved (#564).
+   * Raised here so a difference is not forgotten; it never blocks this
+   * filing, and whether to file a corrected UVA is the User's decision.
+   */
+  filedPeriodsMoved: FiledComparison[];
 }
 
 /**
@@ -476,6 +483,8 @@ export interface BuildFilingInput {
    * Steuerberater received THIS filing when he received a different one.
    */
   handoverCovers?: HandoverCoverage | null;
+  /** Earlier filed periods compared against a fresh run; only the moved ones are kept. */
+  filedPeriods?: FiledComparison[];
 }
 
 /** The figures a recorded handover went out with. */
@@ -579,6 +588,7 @@ export function buildUvaFiling(input: BuildFilingInput): UvaFiling {
     reconciliation,
     handover,
     blockers,
+    filedPeriodsMoved: (input.filedPeriods ?? []).filter((c) => c.moved),
   };
 }
 
