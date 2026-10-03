@@ -155,6 +155,36 @@ describe("Transaction Cloud Functions", () => {
         })
       ).rejects.toThrow(/goods.*service/);
     });
+
+    // #565: what a 0% sale is, the income-side mirror.
+    it("writes saleSupplyKind, clears it with null, and rejects values outside the set", async () => {
+      const userId = "user-123";
+      const txId = "tx-456";
+      store.setDoc("transactions", txId, createTestTransaction({ userId }));
+
+      const ctx = {
+        userId,
+        db: createMockFirestore(),
+        request: { auth: { uid: userId }, data: {} },
+        logAIUsage: vi.fn(),
+      };
+
+      await updateTransactionCallable(ctx as any, {
+        id: txId,
+        data: { saleSupplyKind: "service-non-eu" },
+      });
+      expect(store.getDoc("transactions", txId)?.saleSupplyKind).toBe("service-non-eu");
+
+      await updateTransactionCallable(ctx as any, { id: txId, data: { saleSupplyKind: null } });
+      expect(store.getDoc("transactions", txId)?.saleSupplyKind).toBeNull();
+
+      await expect(
+        updateTransactionCallable(ctx as any, {
+          id: txId,
+          data: { saleSupplyKind: "service" as never },
+        })
+      ).rejects.toThrow(/service-eu/);
+    });
   });
 
   describe("acceptReceiptOnly (#165)", () => {

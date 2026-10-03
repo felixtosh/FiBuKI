@@ -3,6 +3,7 @@
  */
 
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
+import { SALE_SUPPLY_KINDS, type SaleSupplyKind } from "../uva/types";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { deriveActivityLevel } from "../utils/activityLevel";
 
@@ -38,6 +39,8 @@ interface UpdateTransactionRequest {
     isReverseCharge?: boolean | null;
     /** Goods/service answer to the foreign-regime review (#214); null clears. */
     foreignSupplyKind?: "goods" | "service" | null;
+    /** What a 0% sale is (#565); null clears back to the Invoice or detection. */
+    saleSupplyKind?: SaleSupplyKind | null;
   };
 }
 
@@ -66,6 +69,17 @@ export const updateTransactionCallable = createCallable<
       throw new HttpsError(
         "invalid-argument",
         'foreignSupplyKind must be "goods", "service", or null to clear'
+      );
+    }
+
+    if (
+      data.saleSupplyKind !== undefined &&
+      data.saleSupplyKind !== null &&
+      !SALE_SUPPLY_KINDS.includes(data.saleSupplyKind)
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        `saleSupplyKind must be one of ${SALE_SUPPLY_KINDS.join(", ")}, or null to clear`
       );
     }
 

@@ -180,6 +180,13 @@ export interface UvaForeignRegime {
  */
 export type SaleSupplyKind = "service-eu" | "service-non-eu" | "export-goods";
 
+/** The kinds a person can set on a Transaction (#565); the write paths validate against it. */
+export const SALE_SUPPLY_KINDS: readonly SaleSupplyKind[] = [
+  "service-eu",
+  "service-non-eu",
+  "export-goods",
+];
+
 /**
  * Where a sale's supply kind came from (#565), in precedence order: a
  * person's override on the Transaction, the setting on a FiBuKI Invoice, the
