@@ -21,15 +21,18 @@
  * bottom of this file. Each is the inert minimum: matchMedia never matches, the
  * observers never fire, scrolling does nothing. None of them feeds geometry.
  *
- * There is still no getBoundingClientRect override, so a virtualizer
- * (@tanstack/react-virtual) renders no rows here. VirtualRow's tests do not
- * need one because VirtualRow takes its geometry (virtualStart, virtualSize,
+ * There is no geometry stub here, so a virtualizer (@tanstack/react-virtual)
+ * renders no rows: it sizes its scroll container from offsetWidth and
+ * offsetHeight, which jsdom reports as 0. VirtualRow's tests do not need one
+ * because VirtualRow takes its geometry (virtualStart, virtualSize,
  * columnSizes) as plain props, which is exactly what makes it testable in
  * isolation.
  *
- * If you add such a stub, put it here, and be honest in the test about what the
- * stub means: a hand-fed getBoundingClientRect makes a virtualizer render, but
- * the test then asserts against numbers you supplied rather than real layout.
+ * A test that needs real table rows stubs offsetWidth/offsetHeight for its own
+ * file and restores them afterwards (files-checkbox-accumulate.test.tsx), so
+ * the suites that never asked for rows keep rendering none. Be honest in such a
+ * test about what the stub means: it makes a virtualizer render, but the
+ * numbers are supplied, not real layout, so assert on behaviour, never on them.
  * Prefer components that accept their geometry as props.
  *
  * Not mocked here: next/navigation, next/image, next-intl and next-themes.
