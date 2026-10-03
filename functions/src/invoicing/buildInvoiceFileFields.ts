@@ -9,7 +9,7 @@
  */
 
 import { Timestamp } from "firebase-admin/firestore";
-import { Invoice, InvoicePartnerAddress } from "./types";
+import { Invoice, InvoicePartnerAddress, computeLineItemTotals } from "./types";
 
 function formatAddressOneLine(
   addr?: InvoicePartnerAddress,
@@ -64,13 +64,18 @@ export function buildInvoiceFileFields(
   opts: BuildOptions,
 ): Record<string, unknown> {
   // The invoice's own line items keep quantity and unit price; the extracted
-  // shape they are projected into is four fields (#252).
-  const extractedLineItems = invoice.lineItems.map((li) => ({
-    description: li.description,
-    vatPercent: li.vatRate,
-    vatAmount: Math.round((li.quantity * li.unitPrice * li.vatRate) / 100),
-    amount: Math.round(li.quantity * li.unitPrice * (1 + li.vatRate / 100)),
-  }));
+  // shape they are projected into is four fields (#252). The cents come from
+  // the same arithmetic as the printed totals, so the lines sum to them and an
+  // Invoice Correction's lines are exactly its original's, negated.
+  const extractedLineItems = invoice.lineItems.map((li) => {
+    const { vatCents, grossCents } = computeLineItemTotals(li);
+    return {
+      description: li.description,
+      vatPercent: li.vatRate,
+      vatAmount: vatCents,
+      amount: grossCents,
+    };
+  });
 
   const uniqueVatRates = Array.from(
     new Set(invoice.lineItems.map((li) => li.vatRate)),

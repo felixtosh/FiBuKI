@@ -114,6 +114,8 @@ export interface SerializedInvoice {
   vatAmount: number;
   total: number;
   paidAt?: string;
+  /** Set on an Invoice Correction: the invoice it cancels (#133). */
+  correctsInvoice?: { number: string; issueDate: string };
 }
 
 function tsToIso(ts: unknown): string {
@@ -146,5 +148,11 @@ function serializeInvoice(invoice: Invoice): SerializedInvoice {
     vatAmount: invoice.vatAmount,
     total: invoice.total,
     paidAt: invoice.paidAt ? tsToIso(invoice.paidAt) : undefined,
+    correctsInvoice: invoice.correctsInvoice
+      ? {
+          number: invoice.correctsInvoice.number,
+          issueDate: tsToIso(invoice.correctsInvoice.issueDate),
+        }
+      : undefined,
   };
 }

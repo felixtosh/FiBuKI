@@ -1,8 +1,67 @@
 /**
- * Atomic per-user invoice number allocator.
+ * Invoice numbering.
+ *
+ * `nextInvoiceNumberSeq` is the one sequence every numbered invoice draws from:
+ * a draft's pre-filled number and an Invoice Correction's own number (#133).
+ *
+ * `allocateInvoiceNumber` is the legacy atomic per-user counter, kept for
+ * drafts created before numberSeq existed.
  * Stores counter at users/{userId}/settings/invoiceCounter.
  * Format: YYYY-#### (e.g., "2026-0001"). Resets on year change.
  */
+
+import { toDateSafe } from "../utils/toDateSafe";
+
+/**
+ * (highest sequence this user holds in `year`) + 1.
+ *
+ * Deliberately not filtered by namePrefix (that would need an extra composite
+ * index): the seq is shared across all of the user's invoices in the year,
+ * drafts included. Scans ALL of the user's invoices (no date filter) and reads
+ * both the structured numberSeq AND the trailing chunk of the legacy `number`
+ * field. A year filter was dropping older sequences when timezone math pushed
+ * issueDate across the boundary; doing it here keeps things consistent.
+ */
+export async function nextInvoiceNumberSeq(
+  db: FirebaseFirestore.Firestore,
+  userId: string,
+  year: number,
+): Promise<number> {
+  const seqQuery = await db.collection("invoices").where("userId", "==", userId).get();
+  let maxSeq = 0;
+  const yearRegex = new RegExp(`-${year}-(\\d{1,6})$`);
+  seqQuery.forEach((doc) => {
+    const data = doc.data() as {
+      numberSeq?: number;
+      number?: string;
+      issueDate?: { toDate: () => Date };
+    };
+    // Same-year guard: prefer the doc's stored issueDate year, fall back
+    // to parsing the year from the number string.
+    let docYear: number | null = null;
+    try {
+      docYear = toDateSafe(data.issueDate)?.getFullYear() ?? null;
+    } catch {
+      docYear = null;
+    }
+    if (docYear !== null && docYear !== year) return;
+
+    if (typeof data.numberSeq === "number" && data.numberSeq > maxSeq) {
+      maxSeq = data.numberSeq;
+    }
+    // Legacy fallback: parse "{prefix}-{year}-{NNNN}" from data.number.
+    if (typeof data.number === "string") {
+      const m = data.number.match(yearRegex);
+      if (m) {
+        const legacySeq = parseInt(m[1], 10);
+        if (!Number.isNaN(legacySeq) && legacySeq > maxSeq) {
+          maxSeq = legacySeq;
+        }
+      }
+    }
+  });
+  return maxSeq + 1;
+}
 
 export async function allocateInvoiceNumber(
   db: FirebaseFirestore.Firestore,

@@ -59,6 +59,10 @@ export function PublicInvoiceView({
   const showStatusBadge =
     invoice.status === "paid" || invoice.status === "cancelled";
 
+  // An Invoice Correction (#133) names the invoice it cancels and asks for
+  // no payment, like its PDF.
+  const corrects = invoice.correctsInvoice;
+
   // EPC / Girocode QR — only when we have an IBAN and a non-zero total.
   // The PDF footer renders the same payload; the HTML view stays close to
   // the PDF layout for printability.
@@ -80,8 +84,14 @@ export function PublicInvoiceView({
         <div className="rounded-t-xl bg-background border border-b-0 px-6 py-6 sm:px-10 sm:py-8 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
           <div className="space-y-1">
             <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">
-              Rechnung {invoice.number}
+              {corrects ? "Rechnungskorrektur" : "Rechnung"} {invoice.number}
             </h1>
+            {corrects && (
+              <p className="text-sm text-muted-foreground">
+                Storno zu Rechnung {corrects.number} vom{" "}
+                {formatGermanDate(corrects.issueDate)}
+              </p>
+            )}
             <p className="text-sm text-muted-foreground">
               {invoice.issuer.name}
             </p>
@@ -175,18 +185,22 @@ export function PublicInvoiceView({
               </div>
               <div className="mt-1">{formatGermanDate(invoice.issueDate)}</div>
             </div>
-            <div>
-              <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                Fällig am
+            {!corrects && (
+              <div>
+                <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                  Fällig am
+                </div>
+                <div className="mt-1">{formatGermanDate(invoice.dueDate)}</div>
               </div>
-              <div className="mt-1">{formatGermanDate(invoice.dueDate)}</div>
-            </div>
-            <div className="col-span-2 sm:col-span-1">
-              <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                Zahlungsfrist
+            )}
+            {!corrects && (
+              <div className="col-span-2 sm:col-span-1">
+                <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                  Zahlungsfrist
+                </div>
+                <div className="mt-1">{invoice.paymentTerms}</div>
               </div>
-              <div className="mt-1">{invoice.paymentTerms}</div>
-            </div>
+            )}
           </div>
 
           {/* Line items */}
@@ -265,7 +279,7 @@ export function PublicInvoiceView({
               on the right. Mirrors the PDF footer so the HTML view prints
               close to the PDF. Only rendered when we have enough data to
               produce a valid EPC payload (issuer.iban + non-zero total). */}
-          {(invoice.issuer.iban || epcPayload) && (
+          {!corrects && (invoice.issuer.iban || epcPayload) && (
             <section className="pt-4 border-t">
               <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-3">
                 Zahlung

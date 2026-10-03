@@ -3358,7 +3358,13 @@ export async function cancelInvoice(userId: string, args: Record<string, unknown
   const result = await performCancelInvoice(db, userId, {
     invoiceId: args.invoiceId as string,
   });
-  return { invoiceId: result.invoiceId, status: result.status };
+  return {
+    invoiceId: result.invoiceId,
+    status: result.status,
+    correctionInvoiceId: result.correctionInvoiceId,
+    correctionNumber: result.correctionNumber,
+    correctionFileId: result.correctionFileId,
+  };
 }
 
 // ============================================================================

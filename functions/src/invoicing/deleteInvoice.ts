@@ -3,6 +3,7 @@
  * Also removes any linked file (which should be unusual for drafts).
  */
 
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { Invoice } from "./types";
 
@@ -13,6 +14,32 @@ export interface DeleteInvoiceRequest {
 export interface DeleteInvoiceResponse {
   success: boolean;
   invoiceId: string;
+}
+
+async function restoreCancelledOriginal(
+  db: FirebaseFirestore.Firestore,
+  userId: string,
+  originalId: string,
+  correctionId: string,
+): Promise<void> {
+  const ref = db.collection("invoices").doc(originalId);
+  const snap = await ref.get();
+  const original = snap.exists ? (snap.data() as Invoice) : null;
+  if (
+    !original ||
+    original.userId !== userId ||
+    original.status !== "cancelled" ||
+    original.correctedByInvoiceId !== correctionId
+  ) {
+    return;
+  }
+  const status = original.paidAt ? "paid" : original.sentAt || original.sentVia ? "sent" : "issued";
+  await ref.update({
+    status,
+    cancelledAt: FieldValue.delete(),
+    correctedByInvoiceId: FieldValue.delete(),
+    updatedAt: Timestamp.now(),
+  });
 }
 
 /**
@@ -44,6 +71,13 @@ export async function performDeleteInvoice(
     await db.collection("files").doc(inv.fileId).delete().catch(() => undefined);
   }
   await invoiceRef.delete();
+
+  // Discarding the draft of an Invoice Correction (one that was undone, or
+  // whose cancel never finished) takes the Cancel back: the original returns
+  // to the state it had before it was cancelled (#133).
+  if (inv.correctsInvoice) {
+    await restoreCancelledOriginal(db, userId, inv.correctsInvoice.invoiceId, invoiceRef.id);
+  }
 
   return { success: true, invoiceId: request.invoiceId };
 }

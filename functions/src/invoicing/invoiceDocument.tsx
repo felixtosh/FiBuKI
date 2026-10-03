@@ -247,6 +247,9 @@ export const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({
 }) => {
   const issuerAddress = formatAddress(invoice.issuer.address);
   const recipientAddress = formatAddress(invoice.recipient.address);
+  // An Invoice Correction (#133) names the invoice it cancels where an invoice
+  // names its due date, and asks for no payment.
+  const corrects = invoice.correctsInvoice;
 
   return (
     <Document>
@@ -261,7 +264,9 @@ export const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({
             ) : null}
           </View>
           <View style={styles.invoiceMetaBlock}>
-            <Text style={styles.invoiceTitle}>RECHNUNG</Text>
+            <Text style={styles.invoiceTitle}>
+              {corrects ? "RECHNUNGSKORREKTUR" : "RECHNUNG"}
+            </Text>
             <View style={styles.metaRow}>
               <Text style={styles.metaLabel}>Nr.:</Text>
               <Text>{invoice.number}</Text>
@@ -270,10 +275,19 @@ export const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({
               <Text style={styles.metaLabel}>Datum:</Text>
               <Text>{formatDate(invoice.issueDate)}</Text>
             </View>
-            <View style={styles.metaRow}>
-              <Text style={styles.metaLabel}>Fällig:</Text>
-              <Text>{formatDate(invoice.dueDate)}</Text>
-            </View>
+            {corrects ? (
+              <View style={styles.metaRow}>
+                <Text style={styles.metaLabel}>Storno zu:</Text>
+                <Text>
+                  Rechnung {corrects.number} vom {formatDate(corrects.issueDate)}
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.metaRow}>
+                <Text style={styles.metaLabel}>Fällig:</Text>
+                <Text>{formatDate(invoice.dueDate)}</Text>
+              </View>
+            )}
           </View>
         </View>
 
@@ -306,24 +320,26 @@ export const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({
           </View>
         </View>
 
-        {/* Footer (payment info + QR) */}
-        <View style={styles.footer}>
-          <View style={styles.paymentBlock}>
-            <Text style={styles.sectionLabel}>Bitte überweisen Sie auf:</Text>
-            <Text>{invoice.issuer.name}</Text>
-            <Text>IBAN: {invoice.issuer.iban}</Text>
-            {invoice.issuer.bic ? <Text>BIC: {invoice.issuer.bic}</Text> : null}
-            <Text>Verwendungszweck: Rechnung {invoice.number}</Text>
+        {/* Footer (payment info + QR); a correction asks for no payment */}
+        {corrects ? null : (
+          <View style={styles.footer}>
+            <View style={styles.paymentBlock}>
+              <Text style={styles.sectionLabel}>Bitte überweisen Sie auf:</Text>
+              <Text>{invoice.issuer.name}</Text>
+              <Text>IBAN: {invoice.issuer.iban}</Text>
+              {invoice.issuer.bic ? <Text>BIC: {invoice.issuer.bic}</Text> : null}
+              <Text>Verwendungszweck: Rechnung {invoice.number}</Text>
+            </View>
+            <View style={styles.qrBlock}>
+              {qrDataUrl ? (
+                <>
+                  <Image src={qrDataUrl} style={styles.qrImage} />
+                  <Text style={styles.qrCaption}>EPC QR (Girocode)</Text>
+                </>
+              ) : null}
+            </View>
           </View>
-          <View style={styles.qrBlock}>
-            {qrDataUrl ? (
-              <>
-                <Image src={qrDataUrl} style={styles.qrImage} />
-                <Text style={styles.qrCaption}>EPC QR (Girocode)</Text>
-              </>
-            ) : null}
-          </View>
-        </View>
+        )}
 
         {/* Notes */}
         {invoice.notes ? (

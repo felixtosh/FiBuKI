@@ -1848,7 +1848,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "cancel_invoice",
-    "description": "Cancel an issued/sent/paid invoice. Sets status to 'cancelled' and soft-deletes the linked file.",
+    "description": "Cancel an issued/sent/paid invoice (Storno). Issues an Invoice Correction (Rechnungskorrektur): a new invoice with its own next number, the original's line items negated, referencing the original. The original and its file stay on record with status 'cancelled'. Returns the correction's invoiceId, number and fileId. A correction itself cannot be cancelled; undo its issue (undo_issue_invoice), then discarding that draft in the app takes the Cancel back.",
     "inputSchema": {
       "type": "object",
       "properties": {

@@ -33,6 +33,7 @@ export async function generatedInvoiceRefusal(
   const invoiceId = typeof fileData.invoiceId === "string" ? fileData.invoiceId : null;
   let label = invoiceId ? `invoice ${invoiceId}` : "an invoice";
   let status: string | null = null;
+  let correction = false;
 
   if (invoiceId) {
     const snap = await db.collection("invoices").doc(invoiceId).get();
@@ -40,13 +41,18 @@ export async function generatedInvoiceRefusal(
     if (invoice && invoice.userId === userId) {
       status = typeof invoice.status === "string" ? invoice.status : null;
       if (invoice.number) label = `invoice ${invoice.number} (${invoiceId})`;
+      correction = !!invoice.correctsInvoice;
     }
   }
 
   const way =
     status === "draft"
       ? "It belongs to a draft; the draft is discarded with the invoice, not by deleting its document."
-      : "To withdraw the invoice, cancel it with cancel_invoice.";
+      : correction
+        ? "It is an Invoice Correction; it and the invoice it cancels both stay on record."
+        : status === "cancelled"
+          ? "The invoice is cancelled; it and its Invoice Correction both stay on record."
+          : "To withdraw the invoice, cancel it with cancel_invoice.";
 
   return (
     `${GENERATED_INVOICE_ERROR}: this file is the document FiBuKI generated for ${label}. ` +

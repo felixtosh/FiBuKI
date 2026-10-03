@@ -748,5 +748,18 @@
       "claimed": "{amount} VSt claimed",
       "claimedOutput": "{amount} USt owed"
     }
+  },
+  "invoices": {
+    "correction": {
+      "cancel": "Cancel invoice",
+      "cancelTitle": "Cancel this invoice?",
+      "cancelDescription": "FiBuKI issues an Invoice Correction with its own next number that reverses every line of this invoice. Both documents stay on record; send the correction to your customer. This cannot be undone.",
+      "cancelConfirm": "Cancel invoice",
+      "keep": "Keep",
+      "correctsLabel": "Corrects",
+      "correctsValue": "Invoice {number}",
+      "correctedByLabel": "Cancelled by",
+      "correctedByValue": "Invoice Correction {number}"
+    }
   }
 }
