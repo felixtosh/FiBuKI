@@ -181,6 +181,74 @@ describe("runExtraction: a document written im Namen von the supplier", () => {
   });
 });
 
+describe("re-extraction replaces the counterparty fields of the run it replaces (#376)", () => {
+  // What a File extracted before #156 landed holds: the agent, read as the issuer.
+  const STALE_AGENT_READ = {
+    extractionComplete: true,
+    extractedPartner: AGENT.name,
+    extractedVatId: AGENT.vatId,
+    extractedAddress: AGENT.address,
+    extractedIban: "AT611904300234573201",
+    extractedWebsite: "agent-platform.example",
+  };
+  // A Kleinunternehmer prints no UID; the only one on the page is the agent's.
+  const KLEINUNTERNEHMER = { ...SUPPLIER, vatId: null };
+
+  it("clears the agent's footer UID when the supplier prints none", async () => {
+    const fileData = await seedFile("f-stale-ku", STALE_AGENT_READ);
+    q({ isInvoice: true, confidence: 0.95 });
+    q({
+      rawText: "Rechnung ausgestellt von Agent Platform GmbH im Namen von: AL&FA Taxi KG",
+      extracted: {
+        date: "2026-07-01",
+        amount: 2400,
+        currency: "EUR",
+        confidence: 0.9,
+        issuer: { ...KLEINUNTERNEHMER },
+        invoicingAgent: { ...AGENT },
+        recipient: { name: "House of Bandits GmbH", vatId: "ATU99999999" },
+      },
+    });
+
+    await runExtraction("f-stale-ku", fileData, {});
+    const doc = await fileDoc("f-stale-ku");
+
+    expect(doc.extractedPartner).toBe(SUPPLIER.name);
+    expect(doc.extractedAddress).toBe(SUPPLIER.address);
+    expect(doc.extractedVatId).toBeNull();
+    expect(doc.extractedIban).toBeNull();
+    expect(doc.extractedWebsite).toBeNull();
+  });
+
+  it("clears the agent read as the issuer when the agent is the only party read", async () => {
+    const fileData = await seedFile("f-stale-agent-only", STALE_AGENT_READ);
+    q({ isInvoice: true, confidence: 0.95 });
+    q({
+      rawText: "Rechnung ausgestellt von Agent Platform GmbH im Namen von: AL&FA Taxi KG",
+      extracted: {
+        date: "2026-07-01",
+        amount: 2400,
+        currency: "EUR",
+        confidence: 1,
+        issuer: { ...AGENT },
+        invoicingAgent: { ...AGENT },
+        partner: AGENT.name,
+        vatId: AGENT.vatId,
+        recipient: { name: "House of Bandits GmbH", vatId: "ATU99999999" },
+      },
+    });
+
+    await runExtraction("f-stale-agent-only", fileData, {});
+    const doc = await fileDoc("f-stale-agent-only");
+
+    expect(doc.extractedPartner).toBeNull();
+    expect(doc.extractedVatId).toBeNull();
+    expect(doc.extractedAddress).toBeNull();
+    expect(doc.extractedIban).toBeNull();
+    expect(doc.extractedWebsite).toBeNull();
+  });
+});
+
 describe("manual correction does not teach the agent's name as a supplier alias", () => {
   async function seedPartner(): Promise<void> {
     await db.collection("partners").doc("p-supplier").set({
