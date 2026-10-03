@@ -100,6 +100,7 @@
 import { Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { newMergeWriteId, stampMergeWrite } from "./mergeWriteMarker";
+import { repointProvenance } from "../matching/partnerProvenance";
 import {
   matchTransaction,
   normalizeIban,
@@ -676,7 +677,11 @@ async function repointByPartnerId(
     db,
     snapshot.docs.map((doc) => ({
       ref: doc.ref,
-      updates: { partnerId: survivorId, ...alongside },
+      updates: {
+        partnerId: survivorId,
+        ...alongside,
+        ...repointProvenance(doc.data(), loserId, survivorId),
+      },
     }))
   );
 

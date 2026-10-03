@@ -21,6 +21,11 @@ import { HttpsError } from "../utils/createCallable";
 import { normalizeCompanyName } from "../utils/partner-matcher";
 import { isGeneratedInvoiceFile } from "./generatedInvoiceGuard";
 import { buildUnmarkNotInvoiceUpdates, queueExtractionAfterUnmark } from "./notInvoiceOps";
+import {
+  partnerRevertForRemovedConnection,
+  rematchRevertedTransactions,
+  type PartnerRevert,
+} from "../matching/partnerProvenance";
 
 type Data = FirebaseFirestore.DocumentData;
 type Db = FirebaseFirestore.Firestore;
@@ -306,7 +311,7 @@ async function applyCopy(
   original: Snap,
   recordedBy: CopyRecordedBy,
   extraCopyUpdates: Record<string, unknown> = {}
-): Promise<{ moved: string[]; dropped: string[] }> {
+): Promise<{ moved: string[]; dropped: string[]; rematch: Array<string | null> }> {
   const [followersSnap, copyConnSnap, origConnSnap] = await Promise.all([
     tx.get(db.collection("files").where("userId", "==", userId).where("copyOfFileId", "==", copy.id)),
     tx.get(db.collection("fileConnections").where("userId", "==", userId).where("fileId", "==", copy.id)),
@@ -328,6 +333,46 @@ async function applyCopy(
     [...touchedTxIds].map((id) => tx.get(db.collection("transactions").doc(id)))
   );
   const ownedTx = txSnaps.filter((s) => s.exists && s.data()?.userId === userId);
+
+  // Which Transactions the original takes over, decided exactly as the
+  // writes below decide it, so the Partner revert can count the original as
+  // still connected there.
+  const gainsOriginal = new Set<string>();
+  {
+    const covered = new Set(originalTxIds);
+    const take = (id: string | undefined) => {
+      if (id && !covered.has(id)) {
+        covered.add(id);
+        gainsOriginal.add(id);
+      }
+    };
+    for (const conn of copyConnSnap.docs) take(conn.data().transactionId as string | undefined);
+    for (const txSnap of ownedTx) take(txSnap.id);
+  }
+
+  // A Partner the payee rule filled from the copy is derived again from the
+  // Files that remain, the original included where it takes over (#584).
+  const txReverts = new Map<string, PartnerRevert>();
+  const rematch: Array<string | null> = [];
+  for (const txSnap of ownedTx) {
+    const txData = txSnap.data()!;
+    const remainingFileIds = ((txData.fileIds || []) as string[]).filter((id) => id !== copy.id);
+    if (gainsOriginal.has(txSnap.id)) remainingFileIds.push(original.id);
+    const revert = await partnerRevertForRemovedConnection(
+      db,
+      userId,
+      {
+        fileId: copy.id,
+        fileData: copy.data,
+        transactionId: txSnap.id,
+        txData,
+        remainingFileIds,
+      },
+      (ref) => tx.get(ref)
+    );
+    txReverts.set(txSnap.id, revert);
+    rematch.push(revert.rematchTransactionId);
+  }
 
   // ---- writes ----
   const now = Timestamp.now();
@@ -366,7 +411,9 @@ async function applyCopy(
 
   for (const txSnap of ownedTx) {
     const gainsOriginal = moved.includes(txSnap.id);
+    const revert = txReverts.get(txSnap.id);
     tx.update(txSnap.ref, {
+      ...(revert?.transaction ?? {}),
       fileIds: FieldValue.arrayRemove(copy.id),
       updatedAt: now,
       automationHistory: FieldValue.arrayUnion({
@@ -380,7 +427,7 @@ async function applyCopy(
         summary: gainsOriginal
           ? `File "${displayName(copy)}" marked as a Copy of "${displayName(original)}"; the original now documents this line`
           : `File "${displayName(copy)}" marked as a Copy of "${displayName(original)}"`,
-      }),
+      }, ...(revert?.transactionActivity ?? [])),
     });
     if (gainsOriginal) {
       tx.update(txSnap.ref, { fileIds: FieldValue.arrayUnion(original.id) });
@@ -414,7 +461,7 @@ async function applyCopy(
   if (recordedBy === "user") copyUpdate.notCopyOfFileIds = FieldValue.arrayRemove(original.id);
   tx.update(copy.ref, copyUpdate);
 
-  return { moved, dropped };
+  return { moved, dropped, rematch };
 }
 
 /**
@@ -471,6 +518,8 @@ export async function markFileAsCopy(
     throw new HttpsError("invalid-argument", "A File cannot be a Copy of itself");
   }
 
+  // Set by the attempt that commits; a retried attempt overwrites it.
+  let rematch: Array<string | null> = [];
   const { result, reopenedExtraction } = await db.runTransaction(async (tx) => {
     const copy = await readOwnedFile(tx, db, userId, fileId);
     const named = await readOwnedFile(tx, db, userId, originalFileId);
@@ -501,20 +550,22 @@ export async function markFileAsCopy(
     const unmark = recordedBy === "user" && copy.data.isNotInvoice === true;
     const extra = unmark ? buildUnmarkNotInvoiceUpdates(copy.data, false) : {};
 
-    const { moved, dropped } = await applyCopy(tx, db, userId, copy, root, recordedBy, extra);
+    const applied = await applyCopy(tx, db, userId, copy, root, recordedBy, extra);
+    rematch = applied.rematch;
     return {
       result: {
         success: true as const,
         fileId,
         originalFileId: root.id,
-        movedConnections: moved,
-        removedConnections: dropped,
+        movedConnections: applied.moved,
+        removedConnections: applied.dropped,
       },
       reopenedExtraction: unmark,
     };
   });
 
   if (reopenedExtraction) await queueExtractionAfterUnmark(fileId, userId);
+  await rematchRevertedTransactions(userId, rematch);
   return result;
 }
 
@@ -601,7 +652,8 @@ export async function makeFileTheOriginal(
 ): Promise<MakeOriginalResult> {
   const fileId = requireId(args.fileId, "fileId");
 
-  return db.runTransaction(async (tx) => {
+  let rematch: Array<string | null> = [];
+  const result = await db.runTransaction(async (tx) => {
     const file = await readOwnedFile(tx, db, userId, fileId);
     const originalId = typeof file.data.copyOfFileId === "string" ? file.data.copyOfFileId : null;
     if (!originalId) {
@@ -617,9 +669,12 @@ export async function makeFileTheOriginal(
         "COPY_OF_GENERATED_INVOICE: the original is the document FiBuKI generated for an invoice, which is always the original."
       );
     }
-    const { moved } = await applyCopy(tx, db, userId, original, file, "user");
-    return { success: true as const, fileId, copyFileId: originalId, movedConnections: moved };
+    const applied = await applyCopy(tx, db, userId, original, file, "user");
+    rematch = applied.rematch;
+    return { success: true as const, fileId, copyFileId: originalId, movedConnections: applied.moved };
   });
+  await rematchRevertedTransactions(userId, rematch);
+  return result;
 }
 
 // ============================================================================
