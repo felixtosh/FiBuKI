@@ -144,6 +144,30 @@ export async function POST(request: NextRequest) {
     }
 
     const tokens: GoogleTokenResponse = await tokenResponse.json();
+
+    // Reject downgraded scope grants, like the sync queue and the search
+    // callable do on their refresh: once OAuth verification for
+    // `gmail.readonly` lapses, Google refreshes tokens without it. Storing
+    // such a token and clearing needsReauth would undo the flag the queue set
+    // on its 403, and the UI would show Connected over a mailbox it cannot read.
+    const grantedScopes = new Set((tokens.scope || "").split(/\s+/).filter(Boolean));
+    if (!grantedScopes.has("https://www.googleapis.com/auth/gmail.readonly")) {
+      console.error(
+        "[Gmail OAuth] Refreshed token missing gmail.readonly. Granted:",
+        sanitizeForLog(tokens.scope)
+      );
+      await db.collection(INTEGRATIONS_COLLECTION).doc(integrationId).update({
+        needsReauth: true,
+        lastError:
+          "Gmail access not granted — please reconnect and grant 'View your email' permission.",
+        updatedAt: Timestamp.now(),
+      });
+      return NextResponse.json(
+        { error: "Gmail access not granted. User needs to re-authenticate." },
+        { status: 401 }
+      );
+    }
+
     const expiresAt = new Date(Date.now() + tokens.expires_in * 1000);
 
     // Update stored tokens
