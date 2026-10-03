@@ -1,5 +1,5 @@
 import { Timestamp } from "firebase/firestore";
-import { Transaction, TransactionType } from "@/types/transaction";
+import { SaleSupplyKind, Transaction, TransactionType } from "@/types/transaction";
 import { TransactionSource } from "@/types/source";
 
 /** How an Austrian bank export words each type, for the raw "Buchungsart" column (#136). */
@@ -69,7 +69,8 @@ const INCOME_SOURCES = [
 ];
 
 // Edge case data. `foreignSupplyKind` / `isReverseCharge` exercise the #214
-// foreign-regime fields; `receiptOnlyAcceptance` (#165) and
+// foreign-regime fields, `saleSupplyKind` with a 0% `vatRate` the #565 sale
+// side; `receiptOnlyAcceptance` (#165) and
 // `partialPaymentAcceptance` (#554) are left unset because each presupposes a
 // connected File (a receipt, a tipped Beleg), which test data does not create.
 const EDGE_CASES: Array<{
@@ -78,6 +79,8 @@ const EDGE_CASES: Array<{
   amount: number;
   isReverseCharge?: boolean;
   foreignSupplyKind?: "goods" | "service";
+  saleSupplyKind?: SaleSupplyKind;
+  vatRate?: number;
   isEuTransaction?: boolean;
 }> = [
   { name: "Überweisung Müller & Söhne GmbH", partner: "Müller & Söhne GmbH", amount: 1523400 }, // Large + umlauts
@@ -96,6 +99,8 @@ const EDGE_CASES: Array<{
   { name: "AWS Cloud Services", partner: "Amazon Web Services EMEA SARL", amount: -21600, isReverseCharge: true, foreignSupplyKind: "service", isEuTransaction: false },
   // ... and an EU goods purchase (ig. Erwerb) a person classified as goods.
   { name: "Marketplace Warenkauf", partner: "Gadget Versand DE", amount: -7962, foreignSupplyKind: "goods", isEuTransaction: true },
+  // #565: a B2B service sold to a UK customer at 0%, not taxable in Austria.
+  { name: "Beratung UK Kunde", partner: "Thames Consulting Ltd", amount: 189000, vatRate: 0, saleSupplyKind: "service-non-eu" },
 ];
 
 function randomInt(min: number, max: number): number {
@@ -276,6 +281,9 @@ export async function generateTestTransactions(): Promise<
       ...(edge.isReverseCharge !== undefined ? { isReverseCharge: edge.isReverseCharge } : {}),
       ...(edge.foreignSupplyKind !== undefined ? { foreignSupplyKind: edge.foreignSupplyKind } : {}),
       ...(edge.isEuTransaction !== undefined ? { isEuTransaction: edge.isEuTransaction } : {}),
+      // #565 sale-side fields
+      ...(edge.saleSupplyKind !== undefined ? { saleSupplyKind: edge.saleSupplyKind } : {}),
+      ...(edge.vatRate !== undefined ? { vatRate: edge.vatRate } : {}),
       createdAt: now,
       updatedAt: now,
     });
