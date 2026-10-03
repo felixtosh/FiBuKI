@@ -395,6 +395,7 @@
       "uploaded": "Uploaded",
       "size": "Size",
       "source": "Source",
+      "queued": "Queued",
       "analyzing": "Analyzing...",
       "notDetermined": "Not determined",
       "vatDeductible": "VAT deductible",
@@ -546,6 +547,13 @@
       "confirm": "Split into {count} Files",
       "cancel": "Cancel",
       "failed": "Could not split: {message}"
+    },
+    "processing": {
+      "queued": "Queued",
+      "analyzing": "Analyzing...",
+      "parsing": "Parsing...",
+      "notInvoice": "Not an invoice",
+      "failed": "Extraction failed"
     }
   },
   "progress": {

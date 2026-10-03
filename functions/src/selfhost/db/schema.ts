@@ -320,3 +320,66 @@ export const triggerEvents = pgTable(
     index("trigger_events_pending_idx").on(t.tenant_id, t.claimed_at, t.seq),
   ],
 );
+
+/**
+ * The extraction queue (selfhost/extraction-worker.ts, #603).
+ *
+ * Extraction is too slow to share the trigger queue: a File waits here, one
+ * row per File, until an extraction worker claims it. The worker's
+ * bookkeeping lives on this row and never on the File, so a claim fires no
+ * File trigger and never reaches the client. The one exception is
+ * `extractionStartedAt`, written on the File when a claim starts, which is
+ * how the UI tells "Queued" from "Analyzing".
+ *
+ * `claimed_at` is the in-flight marker, refreshed by the running worker. A
+ * claim not refreshed for the extraction timeout plus a minute belongs to a
+ * worker that died, and is put back. `attempts` counts only those reclaims;
+ * after three the File is marked failed instead. `claim_token` names the
+ * claim that owns the row, so a worker that was reclaimed cannot finish a
+ * row someone else now holds. `rerun` is set when a Retry arrives while the
+ * File is being extracted: the row is put back when that run ends instead of
+ * being deleted, so the File is never extracted by two runs at once, and
+ * `reset_on_claim` tells the next claim to apply the Retry's reset first
+ * (the run that just ended has written its results over it).
+ */
+export const extractionJobs = pgTable(
+  "extraction_jobs",
+  {
+    tenant_id: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id),
+    file_id: text("file_id").notNull(),
+    user_id: text("user_id").notNull(),
+    skip_classification: boolean("skip_classification").notNull().default(false),
+    created_at: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    claimed_at: timestamp("claimed_at", { withTimezone: true }),
+    claim_token: text("claim_token"),
+    attempts: integer("attempts").notNull().default(0),
+    rerun: boolean("rerun").notNull().default(false),
+    reset_on_claim: boolean("reset_on_claim").notNull().default(false),
+  },
+  (t) => [
+    primaryKey({ columns: [t.tenant_id, t.file_id] }),
+    // The claim's hot path: waiting rows for this tenant, oldest first.
+    index("extraction_jobs_waiting_idx").on(t.tenant_id, t.claimed_at, t.created_at),
+  ],
+);
+
+/**
+ * When each user's extraction was last claimed. The claim takes the oldest
+ * waiting job of the user served least recently, so one user's large upload
+ * does not hold another user's single File (fibuki.com is one tenant with
+ * many users). Kept apart from the jobs because a job is deleted when it
+ * ends, and the turn order has to outlive it.
+ */
+export const extractionTurns = pgTable(
+  "extraction_turns",
+  {
+    tenant_id: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id),
+    user_id: text("user_id").notNull(),
+    last_claimed_at: timestamp("last_claimed_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.tenant_id, t.user_id] })],
+);

@@ -86,6 +86,12 @@ services:
       # API replicas: exactly one instance may own the schedules, and there is no
       # advisory lock enforcing that.
       FIBUKI_NO_CRON: ${FIBUKI_NO_CRON:-}
+      # Extraction runs in a worker inside every API replica, outside the
+      # trigger queue (#603). Empty means the defaults: 4 at a time per replica
+      # with the built-in Gemini (1 with an external Extraction Service), and a
+      # 300-second limit per File.
+      FIBUKI_EXTRACTION_CONCURRENCY: ${FIBUKI_EXTRACTION_CONCURRENCY:-}
+      FIBUKI_EXTRACTION_TIMEOUT_SECONDS: ${FIBUKI_EXTRACTION_TIMEOUT_SECONDS:-}
       # storage-shim -> MinIO (blobstore-s3.ts)
       FIBUKI_STORAGE: s3
       FIBUKI_S3_ENDPOINT: seaweedfs

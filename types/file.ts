@@ -709,6 +709,13 @@ export interface TaxFile {
   /** Error message if extraction failed */
   extractionError?: string | null;
 
+  /**
+   * When an extraction worker picked this File up (#603). Until then an
+   * incomplete Extraction is only queued; after it, it is being analyzed.
+   * Cleared when a Retry queues the File again.
+   */
+  extractionStartedAt?: Timestamp | null;
+
   /** Extracted field locations for overlay rendering */
   extractedFields?: ExtractedFieldLocation[];
 

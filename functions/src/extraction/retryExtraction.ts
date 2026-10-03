@@ -16,12 +16,11 @@ const CORS_ORIGINS = [
 
 const db = getFirestore();
 
-const ERROR_CODES: Record<RetryRefusalCode, "not-found" | "permission-denied" | "failed-precondition" | "internal"> = {
+const ERROR_CODES: Record<RetryRefusalCode, "not-found" | "permission-denied" | "failed-precondition"> = {
   NOT_FOUND: "not-found",
   ACCESS_DENIED: "permission-denied",
   ALREADY_EXTRACTED: "failed-precondition",
   HAND_CORRECTED: "failed-precondition",
-  EXTRACTION_FAILED: "internal",
 };
 
 /**
@@ -36,7 +35,8 @@ const ERROR_CODES: Record<RetryRefusalCode, "not-found" | "permission-denied" | 
  * force cannot be what protects a correction.
  *
  * The eligibility rule and the writes live in retryExtractionOps, shared with
- * the retry_file_extraction tool on the MCP surface.
+ * the retry_file_extraction tool on the MCP surface. The Extraction itself is
+ * queued and this returns at once (#603); its outcome lands on the File.
  */
 export const retryFileExtraction = onCall(
   {

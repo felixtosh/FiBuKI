@@ -26,8 +26,9 @@ import type { InvoiceDirection } from "@/types/user-data";
  * (an outgoing invoice), Expense (an incoming one), or Not an invoice. The
  * same three words as the Files list's Type filter.
  *
- * Before the File is placed it reads "Analyzing..." while classification
- * runs, then "Not determined" until its direction is known. Direction used to
+ * Before the File is placed it reads "Queued" until an extraction worker
+ * picks it up (#603), "Analyzing..." while classification runs, then "Not
+ * determined" until its direction is known. Direction used to
  * be shown only as the sign of the amount, where `unknown` fell through to a
  * positive figure (#233), so "Not determined" is a value here, never a guess.
  *
@@ -55,10 +56,11 @@ export function FileKindControl({
   const tDetail = useTranslations("files.detail");
 
   if (classifying) {
+    const queued = !file.extractionComplete && !file.extractionStartedAt;
     return (
       <span className="flex items-center gap-1.5 text-muted-foreground">
         <Loader2 className="h-3 w-3 animate-spin" />
-        {tDetail("analyzing")}
+        {tDetail(queued ? "queued" : "analyzing")}
       </span>
     );
   }

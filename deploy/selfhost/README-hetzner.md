@@ -459,6 +459,11 @@ crash-recovery net.
 The API is a single Node process with no clustering, so a bigger instance buys
 little. `FIBUKI_NO_CRON=1` lets you run additional replicas safely, but exactly
 one instance may run the schedules: there is no advisory lock or leader election,
-so two unguarded instances fire all 12 jobs twice. The trigger bus is in-process,
-so heavy trigger and PDF work cannot be isolated onto a dedicated worker until
-pg-boss lands in Phase 3.
+so two unguarded instances fire all 12 jobs twice. Extraction is the exception
+to everything above: it runs in a worker inside every replica, claims its jobs
+from Postgres without a lock, and needs no switch. Each replica runs
+`FIBUKI_EXTRACTION_CONCURRENCY` Extractions at once (default 4 with Gemini, 1 with
+an external Extraction Service), each limited to `FIBUKI_EXTRACTION_TIMEOUT_SECONDS`
+(default 300). The rest of the trigger bus is in-process, so other heavy trigger
+and PDF work cannot be isolated onto a dedicated worker until pg-boss lands in
+Phase 3.

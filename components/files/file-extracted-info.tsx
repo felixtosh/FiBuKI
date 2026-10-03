@@ -135,6 +135,7 @@ function parseAmountToCents(value: string): number | null {
 export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsing, onFieldClick, onUpdate, isUpdating }: FileExtractedInfoProps) {
   const convert = useEcbConverter();
   const tx = useTranslations("files.extracted");
+  const tDetail = useTranslations("files.detail");
   const documentLabel = useDocumentLabel();
   const directionPresentation = describeInvoiceDirection(file.invoiceDirection);
   const directionReview = describeDirectionReview(file);
@@ -522,11 +523,12 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
                 )}
               </>
             )
-          ) : file.classificationComplete && !file.isNotInvoice ? (
-            // Classification done (is invoice), extraction in progress - show "Parsing..."
+          ) : !file.extractionStartedAt || (file.classificationComplete && !file.isNotInvoice) ? (
+            // Waiting for an extraction worker (#603), or classified as an
+            // invoice with extraction in progress
             <span className="flex items-center gap-1.5 text-muted-foreground text-sm">
               <Loader2 className="h-3 w-3 animate-spin" />
-              Parsing...
+              {!file.extractionStartedAt ? tDetail("queued") : "Parsing..."}
             </span>
           ) : isParsing ? (
             // User override: treating as invoice, parsing in progress

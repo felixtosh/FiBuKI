@@ -9,6 +9,7 @@
  */
 
 import { FieldValue } from "firebase-admin/firestore";
+import { enqueueExtraction } from "../extraction/extractionQueue";
 
 /**
  * Fields the transition reads. Deliberately narrow: everything else on the
@@ -91,7 +92,9 @@ export function buildMarkNotInvoiceUpdates(
 
 /**
  * Unmarking restores the file as an invoice and re-opens extraction, which is
- * what recovers the data `buildMarkNotInvoiceUpdates` cleared.
+ * what recovers the data `buildMarkNotInvoiceUpdates` cleared. Nothing fires
+ * on the write itself: whoever writes these updates calls
+ * `queueExtractionAfterUnmark` once the write has committed.
  *
  * `hasManualConnections` says whether the file is manually connected to at
  * least one transaction. When it is, transaction matching is left alone —
@@ -106,9 +109,11 @@ export function buildUnmarkNotInvoiceUpdates(
     notInvoiceReason: null,
     // Skip classification - user has confirmed it's an invoice
     classificationComplete: true,
-    // Reset extraction to trigger re-extraction
+    // Waiting for Extraction again; the caller queues it.
     extractionComplete: false,
     extractionError: null,
+    // Queued again until a worker picks it up (#603).
+    extractionStartedAt: null,
     updatedAt: FieldValue.serverTimestamp(),
   };
 
@@ -129,4 +134,17 @@ export function buildUnmarkNotInvoiceUpdates(
   }
 
   return updates;
+}
+
+/**
+ * Ask for the Extraction an unmark re-opened. Call it after the unmark has
+ * committed, never inside a transaction: the callback can run more than once,
+ * and on self-host the job is a write outside it.
+ *
+ * Classification is skipped because the person just ruled the document an
+ * invoice, as a Retry does for a classification the user overrode. A `retry`
+ * ask on a File already waiting joins its job, so a second ask is harmless.
+ */
+export async function queueExtractionAfterUnmark(fileId: string, userId: string): Promise<void> {
+  await enqueueExtraction({ fileId, userId, skipClassification: true, kind: "retry" });
 }

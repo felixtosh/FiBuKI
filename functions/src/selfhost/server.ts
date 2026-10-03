@@ -23,6 +23,7 @@ import { enableAutoDrain } from "./bus";
 import { startTriggerQueueDrain } from "./trigger-queue-drain";
 import { createCronHost } from "./cron-host";
 import { resweepPendingExtractions } from "./extraction-resweep";
+import { startExtractionWorker } from "./extraction-worker";
 import { createHost, type TokenVerifier } from "./host";
 import { createOidcVerifier } from "./oidc-verifier";
 import { createSelfhostAuth } from "./better-auth";
@@ -132,17 +133,23 @@ async function main() {
   // how it went unnoticed until the mailbox-connect sync never queued.
   const triggerQueue = startTriggerQueueDrain({ log: (m) => console.log(m) });
 
+  // Extraction runs outside the trigger queue (#603): the upload trigger
+  // writes a job, and this worker runs it. Every replica runs one, whatever
+  // FIBUKI_NO_CRON says; claims are safe without a lock.
+  const extractionWorker = startExtractionWorker();
+
   for (const signal of ["SIGTERM", "SIGINT"] as const) {
     process.on(signal, () => {
       triggerQueue.stop();
-      void cron.stop().finally(() => process.exit(0));
+      void Promise.allSettled([extractionWorker.stop(), cron.stop()]).finally(() =>
+        process.exit(0),
+      );
     });
   }
 
-  // The bus is in-memory, so a restart loses queued-but-undelivered
-  // triggers; files whose created-event died with the process would stay
-  // unextracted forever. Fire-and-forget: a failed sweep logs and the next
-  // boot retries.
+  // A File waiting for its Extraction with no job (written before the queue
+  // existed, or its job lost between the two writes) would stay unextracted
+  // forever. Fire-and-forget: a failed sweep logs and the next boot retries.
   void resweepPendingExtractions((m) => console.log(m)).catch((err) => {
     console.error("extraction resweep failed:", err);
   });

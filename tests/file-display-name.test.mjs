@@ -52,34 +52,61 @@ test("describeFileNameCell: file name shown, no second line when nothing is proc
   assert.deepEqual(cell, { name: "scan_0042.pdf", secondLine: null });
 });
 
-test("describeFileNameCell: 'Analyzing...' takes the second line over the file name", () => {
+test("describeFileNameCell: 'analyzing' takes the second line over the file name", () => {
   const cell = describeFileNameCell(
-    makeFile({ extractedInvoiceNumber: "RE-1", classificationComplete: false }),
+    makeFile({
+      extractedInvoiceNumber: "RE-1",
+      classificationComplete: false,
+      extractionComplete: false,
+      extractionStartedAt: new Date(),
+    }),
   );
   assert.deepEqual(cell, {
     name: "RE-1",
-    secondLine: { kind: "status", text: "Analyzing...", busy: true },
+    secondLine: { kind: "status", status: "analyzing", busy: true },
   });
 });
 
-test("describeFileNameCell: 'Parsing...' takes the second line over the file name", () => {
+test("describeFileNameCell: 'parsing' takes the second line over the file name", () => {
   const cell = describeFileNameCell(
-    makeFile({ extractedInvoiceNumber: "RE-1", extractionComplete: false }),
+    makeFile({ extractedInvoiceNumber: "RE-1", extractionComplete: false, extractionStartedAt: new Date() }),
   );
-  assert.deepEqual(cell.secondLine, { kind: "status", text: "Parsing...", busy: true });
+  assert.deepEqual(cell.secondLine, { kind: "status", status: "parsing", busy: true });
 });
 
-test("describeFileNameCell: 'Not an invoice' takes the second line over the file name", () => {
+test("describeFileNameCell: 'notInvoice' takes the second line over the file name", () => {
   const cell = describeFileNameCell(
     makeFile({ extractedInvoiceNumber: "RE-1", isNotInvoice: true }),
   );
-  assert.deepEqual(cell.secondLine, { kind: "status", text: "Not an invoice", busy: false });
+  assert.deepEqual(cell.secondLine, { kind: "status", status: "notInvoice", busy: false });
+});
+
+// #603: an Extraction waits in a queue until a worker picks it up.
+test("describeFileNameCell: 'queued' until a worker picks the File up", () => {
+  for (const overrides of [
+    { classificationComplete: false, extractionComplete: false },
+    // A Retry of a File classified before: still queued, not parsing.
+    { classificationComplete: true, extractionComplete: false, extractionStartedAt: null },
+  ]) {
+    assert.deepEqual(describeFileNameCell(makeFile(overrides)).secondLine, {
+      kind: "status",
+      status: "queued",
+      busy: true,
+    });
+  }
+});
+
+test("describeFileNameCell: a failed Extraction says so instead of looking busy", () => {
+  const cell = describeFileNameCell(
+    makeFile({ classificationComplete: false, extractionError: "did not finish after 3 attempts" }),
+  );
+  assert.deepEqual(cell.secondLine, { kind: "status", status: "failed", busy: false });
 });
 
 test("describeFileNameCell: a status still shows when the file name is already the name", () => {
   const cell = describeFileNameCell(makeFile({ classificationComplete: false }));
   assert.deepEqual(cell, {
     name: "scan_0042.pdf",
-    secondLine: { kind: "status", text: "Analyzing...", busy: true },
+    secondLine: { kind: "status", status: "analyzing", busy: true },
   });
 });

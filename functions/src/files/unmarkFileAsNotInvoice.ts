@@ -4,7 +4,7 @@
  */
 
 import { createCallable, HttpsError } from "../utils/createCallable";
-import { buildUnmarkNotInvoiceUpdates } from "./notInvoiceOps";
+import { buildUnmarkNotInvoiceUpdates, queueExtractionAfterUnmark } from "./notInvoiceOps";
 
 interface UnmarkFileAsNotInvoiceRequest {
   fileId: string;
@@ -46,6 +46,7 @@ export const unmarkFileAsNotInvoiceCallable = createCallable<
       .get();
 
     await fileRef.update(buildUnmarkNotInvoiceUpdates(fileData, !connectionsQuery.empty));
+    await queueExtractionAfterUnmark(fileId, ctx.userId);
 
     console.log(`[unmarkFileAsNotInvoice] Unmarked file ${fileId} as invoice`, {
       userId: ctx.userId,

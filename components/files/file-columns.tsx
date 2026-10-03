@@ -3,6 +3,7 @@
 import { ColumnDef } from "@tanstack/react-table";
 import { format } from "date-fns";
 import { Loader2 } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { TaxFile } from "@/types/file";
 // The one normalizer, shared with the extraction path that wrote this value.
 // functions/tsconfig.json sets rootDir "src", so the shared module has to live
@@ -14,6 +15,7 @@ import { SortableHeader, AutomationHeader } from "@/components/ui/data-table";
 import { PartnerPill } from "@/components/partners/partner-pill";
 import { describeInvoiceDirection } from "@/lib/documents/document-type-presentation";
 import { describeFileNameCell } from "@/lib/files/file-display-name";
+import type { FileProcessingStatus } from "@/lib/files/file-display-name";
 import { fileDocumentAmount } from "@/lib/files/document-amount";
 import { AmountMatchDisplay } from "@/components/ui/amount-match-display";
 import { cn, formatFileSize, toDateSafe } from "@/lib/utils";
@@ -135,7 +137,11 @@ export function getFileColumns(
                 {secondLine.kind === "status" && secondLine.busy && (
                   <Loader2 className="h-3 w-3 animate-spin" />
                 )}
-                <span className="truncate">{secondLine.text}</span>
+                {secondLine.kind === "status" ? (
+                  <FileProcessingLabel status={secondLine.status} />
+                ) : (
+                  <span className="truncate">{secondLine.text}</span>
+                )}
               </p>
             )}
           </div>
@@ -422,4 +428,10 @@ export function getFileColumns(
       ),
     },
   ];
+}
+
+/** A File's processing status in the user's language (#603). */
+function FileProcessingLabel({ status }: { status: FileProcessingStatus }) {
+  const t = useTranslations("files.processing");
+  return <span className="truncate">{t(status)}</span>;
 }
