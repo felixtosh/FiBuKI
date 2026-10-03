@@ -34,7 +34,9 @@ export function bookingSide(tx: {
   if (c?.status === "linked") {
     return c.kind === "purchase" ? "purchase-correction" : "sale-correction";
   }
-  return tx.amount > 0 ? "sale" : "purchase";
+  // A zero line books as a sale, as the BMD Export always booked it; the UVA
+  // has nothing to claim on it either way.
+  return tx.amount < 0 ? "purchase" : "sale";
 }
 
 /** True for the two correction sides. */

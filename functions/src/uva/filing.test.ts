@@ -320,3 +320,60 @@ describe("buildUvaFiling", () => {
     expect(filing.blockers.map((b) => b.code)).toEqual(["reconciliation-not-comparable"]);
   });
 });
+
+describe("buildUvaFiling — corrections (#564)", () => {
+  const original = {
+    fileId: "f-original",
+    paidByTransactionIds: ["t-purchase"],
+    gross: 12000,
+    claimed: [{ rate: 20, net: 10000, vat: 2000 }],
+  };
+  const refund = (correction: UvaTransaction["correction"]): UvaTransaction => ({
+    id: "t-refund",
+    date: "2026-02-10",
+    amount: 3000,
+    files: [{ id: "f-credit-note", totalGross: -3000, vatPercent: 20, vatAmount: -500 }],
+    correction,
+  });
+
+  it("files a linked correction, its negative Vorsteuer traced to documents", () => {
+    const filing = buildUvaFiling({
+      report: run([refund({ status: "linked", kind: "purchase", basis: "link", original, priorCorrected: [] })]),
+    });
+    expect(filing.blockers).toEqual([]);
+    expect(filing.vorsteuer.traced).toHaveLength(1);
+    expect(filing.vorsteuer.reconciles).toBe(true);
+  });
+
+  it("blocks a correction with no original on file, and says how to clear it", () => {
+    const filing = buildUvaFiling({
+      report: run([refund({ status: "unlinked", reason: "no-link", fileIds: ["f-credit-note"] })]),
+    });
+    expect(filing.blockers.map((b) => b.code)).toEqual(["correction-unlinked"]);
+    expect(filing.blockers[0].detail).toMatch(/Link the File it corrects/);
+  });
+
+  it("blocks an original no Transaction on file paid", () => {
+    const filing = buildUvaFiling({
+      report: run([
+        refund({ status: "unlinked", reason: "original-unpaid", fileIds: ["f-credit-note"], originalFileId: "f-original" }),
+      ]),
+    });
+    expect(filing.blockers[0].detail).toMatch(/Import the bank period/);
+  });
+
+  it("blocks refunds that reverse more than the original claimed", () => {
+    const filing = buildUvaFiling({
+      report: run([
+        refund({
+          status: "linked",
+          kind: "purchase",
+          basis: "link",
+          original,
+          priorCorrected: [{ rate: 20, net: 9000, vat: 1800 }],
+        }),
+      ]),
+    });
+    expect(filing.blockers.map((b) => b.code)).toEqual(["correction-over-cap"]);
+  });
+});

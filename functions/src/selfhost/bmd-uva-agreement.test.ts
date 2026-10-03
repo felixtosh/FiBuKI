@@ -28,6 +28,8 @@ import {
 import { calculateUva } from "../uva/calculateUva";
 import { buildUvaTransaction, type CategoryRecord, type FileRecord } from "../uva/adapter";
 import { buildEcbRateTable, type EcbRateTable } from "../fx/ecbRates";
+import { bookingSide } from "../uva/correction";
+import type { UvaCorrection } from "../uva/types";
 
 const T = (iso: string) => Timestamp.fromDate(new Date(iso));
 /** Mid-March, so every fixture lands inside 2026-Q1 and 2026-03. */
@@ -37,6 +39,23 @@ interface Fixture {
   name: string;
   tx: TransactionForExport;
   files?: FileForExport[];
+}
+
+/** A correction linked to a 120,00 original at 20%, which claimed (or owed) 20,00. */
+function linkedCorrection(
+  kind: "purchase" | "sale",
+  original: { gross: number; claimed: Array<{ rate: number; net: number; vat: number }> } = {
+    gross: 12000,
+    claimed: [{ rate: 20, net: 10000, vat: 2000 }],
+  },
+): UvaCorrection {
+  return {
+    status: "linked",
+    kind,
+    basis: "link",
+    original: { fileId: "f-original", paidByTransactionIds: ["t-original"], ...original },
+    priorCorrected: [],
+  };
 }
 
 const withFile = (
@@ -151,6 +170,35 @@ const FIXTURES: Fixture[] = [
       noReceiptCategoryTemplateId: "receipt-lost",
     },
   },
+  // #564: a correction books on its original's side, in both outputs.
+  withFile("purchase refund, linked to a 20% original", 3000, {
+    extractedAmount: -3000,
+    extractedVatAmount: -500,
+    extractedVatPercent: 20,
+  }, { correction: linkedCorrection("purchase") }),
+  withFile("purchase refund of a mixed 20/0 original", 4000, {
+    extractedAmount: -4000,
+  }, {
+    correction: linkedCorrection("purchase", {
+      gross: 8000,
+      claimed: [{ rate: 20, net: 5000, vat: 1000 }, { rate: 0, net: 2000, vat: 0 }],
+    }),
+  }),
+  withFile("the User's refund to a customer, linked", -6000, {
+    extractedAmount: -6000,
+    extractedVatAmount: -1000,
+    extractedVatPercent: 20,
+  }, { correction: linkedCorrection("sale") }),
+  withFile("purchase refund, unlinked (defaults to 20% revenue)", 3000, {
+    extractedAmount: -3000,
+    extractedVatAmount: -500,
+    extractedVatPercent: 20,
+  }, { correction: { status: "unlinked", reason: "no-link", fileIds: ["f1"] } }),
+  withFile("own refund, unlinked (claims nothing)", -3000, {
+    extractedAmount: -3000,
+    extractedVatAmount: -500,
+    extractedVatPercent: 20,
+  }, { correction: { status: "unlinked", reason: "no-link", fileIds: ["f1"] } }),
 ];
 
 /** Sum the `steuer` column of the export, in cents. */
@@ -188,7 +236,11 @@ function uvaReportFor(f: Fixture, ecbRates: EcbRateTable | null = null) {
       fileIds: f.tx.fileIds,
       partialPaymentAcceptance: f.tx.partialPaymentAcceptance ?? null,
     },
-    { filesById, categoriesById },
+    {
+      filesById,
+      categoriesById,
+      correctionByTransactionId: f.tx.correction ? new Map([[f.tx.id, f.tx.correction]]) : undefined,
+    },
   );
   return calculateUva({
     period: { year: 2026, period: 3, type: "monthly" },
@@ -203,6 +255,11 @@ function reportVatCents(f: Fixture, ecbRates: EcbRateTable | null = null): numbe
   // Reverse charge nets to zero on this line (owed and deducted in the same
   // breath), and the booking row likewise carries no tax — so comparing the
   // net figure is the right comparison for it too.
+  // A correction's VAT is a reduction on its original's side (#564); the
+  // export carries it unsigned under the flipped bucod, so compare magnitudes.
+  const side = bookingSide(f.tx);
+  if (side === "purchase-correction") return -report.totalInputVat;
+  if (side === "sale-correction") return -report.totalOutputVat;
   return f.tx.amount > 0
     ? report.totalOutputVat
     : report.totalInputVat - (report.reverseCharge.length ? report.totalOutputVat : 0);
@@ -465,5 +522,50 @@ describe("bmd/uva agreement (#554): a tip the bank line does not cover", () => {
     // 8,333), the UVA scales the document's printed 16,67. That is the
     // rounding of every partial payment, not a disagreement about the base.
     expect(Math.abs(exportVatCents(f) - reportVatCents(f))).toBeLessThanOrEqual(1);
+  });
+});
+
+/**
+ * The side, not just the tax (#564). Equal VAT totals would still pass with a
+ * refund booked to a Debitor as a sale, which is the bug: the account and the
+ * direction have to agree with the UVA's side too.
+ */
+describe("bmd/uva agreement on the booking side (#564)", () => {
+  const rowFields = (f: Fixture) => {
+    const files = new Map((f.files ?? []).map((file) => [file.id, file]));
+    return generateBuchungenCsv([f.tx], files, new Map(), 1)
+      .split("\n")
+      .slice(1)
+      .filter(Boolean)
+      .map((line) => {
+        const c = line.split(";");
+        return { konto: c[1], gkto: c[2], betrag: c[6], bucod: c[7], steuer: c[8], mwst: c[9], symbol: c[12] };
+      });
+  };
+  const byName = (name: string) => FIXTURES.find((f) => f.name === name)!;
+
+  it("books a purchase refund on the Kreditor, opposite to the purchase, as ER", () => {
+    expect(rowFields(byName("purchase refund, linked to a 20% original"))).toEqual([
+      { konto: "200001", gkto: "7000", betrag: "30,00", bucod: "2", steuer: "5,00", mwst: "20", symbol: "ER" },
+    ]);
+  });
+
+  it("books the part of a refund the original claimed nothing on as a 0% row", () => {
+    expect(rowFields(byName("purchase refund of a mixed 20/0 original"))).toEqual([
+      { konto: "200001", gkto: "7000", betrag: "30,00", bucod: "2", steuer: "5,00", mwst: "20", symbol: "ER" },
+      { konto: "200001", gkto: "7000", betrag: "10,00", bucod: "2", steuer: "0,00", mwst: "0", symbol: "ER" },
+    ]);
+  });
+
+  it("books the User's refund on the Debitor, opposite to the sale, as AR", () => {
+    expect(rowFields(byName("the User's refund to a customer, linked"))).toEqual([
+      { konto: "300001", gkto: "4000", betrag: "60,00", bucod: "1", steuer: "10,00", mwst: "20", symbol: "AR" },
+    ]);
+  });
+
+  it("books an unlinked refund as the preview does: a sale at 20% on the Debitor", () => {
+    expect(rowFields(byName("purchase refund, unlinked (defaults to 20% revenue)"))).toEqual([
+      { konto: "300001", gkto: "4000", betrag: "30,00", bucod: "2", steuer: "5,00", mwst: "20", symbol: "AR" },
+    ]);
   });
 });

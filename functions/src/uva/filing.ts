@@ -222,7 +222,15 @@ export type FilingBlockerCode =
   /** A supplied reconciliation is against a different period. */
   | "reconciliation-not-comparable"
   /** The recorded handover covered a run whose totals this one no longer has. */
-  | "handover-stale";
+  | "handover-stale"
+  /**
+   * A correction with no original on file (#564, ADR-0010). Clear it by
+   * linking the original, importing the bank period that paid it, or
+   * reclassifying the line with a Category.
+   */
+  | "correction-unlinked"
+  /** Refunds of one original reverse more than it claimed: an over-refund or a wrong link. */
+  | "correction-over-cap";
 
 export interface FilingBlocker {
   code: FilingBlockerCode;
@@ -509,6 +517,27 @@ export function buildUvaFiling(input: BuildFilingInput): UvaFiling {
       });
     }
   }
+  for (const c of report.corrections) {
+    if (c.status === "unlinked") {
+      blockers.push({
+        code: "correction-unlinked",
+        detail:
+          c.unlinkedReason === "original-unpaid"
+            ? `Transaction ${c.transactionId} corrects File ${c.originalFileId}, which no ` +
+              `Transaction on file paid. Import the bank period that paid it.`
+            : `Transaction ${c.transactionId} is a correction with no original on file. ` +
+              `Link the File it corrects, import the bank period that paid it, or ` +
+              `reclassify the line with a Category.`,
+      });
+    } else if (c.excessVat > 0) {
+      blockers.push({
+        code: "correction-over-cap",
+        detail:
+          `Transaction ${c.transactionId} would reverse ${c.excessVat} cents more VAT than ` +
+          `File ${c.originalFileId} has left to give back. Check its link and the earlier refunds.`,
+      });
+    }
+  }
   const handover = input.handover ?? { state: "prepared" };
   if (handover.state === "handed-over" && input.handoverCovers) {
     const covered = input.handoverCovers;
@@ -575,7 +604,9 @@ function isDocumentStep(step: DerivationStep): boolean {
     step === "line-items" ||
     step === "top-level" ||
     step === "invoice" ||
-    step === "non-claimable"
+    step === "non-claimable" ||
+    step === "purchase-correction" ||
+    step === "sale-correction"
   );
 }
 

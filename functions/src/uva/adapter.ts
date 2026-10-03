@@ -14,6 +14,7 @@ import {
 } from "./partialPaymentAcceptance";
 import type {
   NonClaimableVatReason,
+  UvaCorrection,
   UvaFile,
   UvaForeignRegime,
   UvaTransaction,
@@ -239,6 +240,11 @@ export interface BuildOptions {
   categoriesById: Map<string, CategoryRecord>;
   /** File id → fraction of the file's total already paid in earlier periods. */
   priorClaimedFractionByFileId?: Map<string, number>;
+  /**
+   * Transaction id → its correction, resolved by the period run (#564). A
+   * Transaction absent here is an ordinary sale or purchase.
+   */
+  correctionByTransactionId?: Map<string, UvaCorrection>;
 }
 
 export function buildUvaTransaction(
@@ -285,6 +291,7 @@ export function buildUvaTransaction(
     foreignRegime: deriveForeignRegime(tx, files),
     priorClaimedFraction,
     partialPaymentAccepted: isPartialPaymentAcceptanceLive(tx, opts.filesById),
+    correction: opts.correctionByTransactionId?.get(tx.id) ?? null,
     // invoiceRateGroups stays unset: the data model has no
     // invoice↔transaction link yet. Income resolves via connected files
     // (uploaded AR invoices) or falls back per spec §3 step 4; the pure
