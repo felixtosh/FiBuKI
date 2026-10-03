@@ -426,6 +426,22 @@ describe("data plane: write", () => {
     expect((await call("get", { path: `users/${OTHER}/settings/onboarding` })).status).toBe(403);
   });
 
+  it("keeps the invoice-numbering lock server-only: no read, no write", async () => {
+    const path = `users/${USER}/settings/invoiceNumbering`;
+    await db.doc(path).set({ updatedAt: new Date() });
+    await drainTriggers();
+
+    expect((await call("get", { path })).status).toBe(403);
+    for (const op of [
+      { type: "set", path, data: { updatedAt: 1 } },
+      { type: "update", path, data: { updatedAt: 1 } },
+      { type: "delete", path },
+    ]) {
+      const r = await call("write", { ops: [op] });
+      expect(r.status, `${op.type}`).toBe(403);
+    }
+  });
+
   it("rejects a malformed __ts value as 400, not 500", async () => {
     const r = await call("write", {
       ops: [{ type: "add", path: "partners", data: { userId: USER, at: { __ts: [1, 9_999_999_999] } } }],
