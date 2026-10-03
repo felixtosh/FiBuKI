@@ -2,7 +2,7 @@
 
 Pre-accounting for Austrian one-person businesses (EPUs): turn the pile of Files (Belege)
 and bank lines into something a Tax Advisor can book without cleaning it up first.
-This glossary is the project's ubiquitous language — issues, tests, UI copy and code
+This glossary is the project's ubiquitous language — issues, tests, UI text and code
 should use these words and avoid the listed synonyms.
 
 Some entries describe code that is still landing. The § 11 classifier
@@ -19,9 +19,9 @@ Scope note: this file is a glossary, not a spec. Positioning lives in
 
 Every concept has a name in both languages, chosen by
 [ADR-0007](docs/adr/0007-english-names-german-meaning.md). The headword is the name used
-in code, issues, tests and English copy. The lines under it say what German does:
+in code, issues, tests and English UI text. The lines under it say what German does:
 
-- `_Deutsch_: Vorschlag` — the word German copy and the message catalogue use. Nothing more.
+- `_Deutsch_: Vorschlag` — the word German UI text and the message catalogue use. Nothing more.
 - `_Deutsch (defining)_: Zahlungsbeleg` — the German word draws the concept's boundary,
   because Austrian law or practice already has one. The English headword names that
   Austrian concept and nothing wider.
@@ -115,7 +115,7 @@ Something the user received or uploaded. The unit that gets extracted, classifie
 matched. One word for one thing: a File whose Document Type is `other`, or whose
 Extraction failed, is still a File.
 _Deutsch_: Beleg
-_Avoid_: document, receipt, attachment, Beleg (in code and English copy). The single
+_Avoid_: document, receipt, attachment, Beleg (in code and English UI text). The single
 exception is **Document Type**, where "document" names the File itself; the word appears
 nowhere else in that sense. **Documentation State** is unrelated — see its entry.
 _Avoid (de)_: Datei, Dokument, Anhang, Rechnung (a File need not be one)
@@ -180,7 +180,7 @@ _Deutsch (defining)_: Rechnungskorrektur
 _Also printed as_: Stornorechnung, Storno, Korrekturrechnung, Gutschrift, Credit Note
 (a Gutschrift that references an invoice and carries the opposite sign)
 _Avoid_: credit note, refund, reversal, void
-_Avoid (de)_: Gutschrift in our own copy (that is a **Self-billed Invoice**), Stornobeleg
+_Avoid (de)_: Gutschrift in our own UI text (that is a **Self-billed Invoice**), Stornobeleg
 (the cash-register term), Rechnungsänderung (implies editing)
 
 **Self-billed Invoice**:
@@ -198,7 +198,7 @@ _Avoid (de)_: Rechnungskorrektur (that is the other Gutschrift), Gutschein
 A document demanding payment of an Invoice already due. It states no new supply, so it
 is never an invoice and carries no VAT (Mahnspesen and Verzugszinsen are outside VAT).
 Incoming, it is a File with Document Type `other` that the Extraction must not read as a
-second copy of the invoice it names; outgoing, what the User would send for their own
+**Copy** of the invoice it names; outgoing, what the User would send for their own
 overdue Invoice.
 _Deutsch (defining)_: Mahnung
 _Also printed as_: Zahlungserinnerung, 1. Mahnung, 2. Mahnung, letzte Mahnung,
@@ -352,6 +352,25 @@ may record one, but a link can also be undone without saying the pair was wrong.
 _Deutsch_: Zuordnung lösen
 _Avoid_: disconnect, remove, detach, reject
 _Avoid (de)_: Entfernen, Löschen, Ablehnen
+
+**Copy**:
+A second File of a document FiBuKI already holds: the same invoice from the same issuer,
+arriving again by another route, such as a mailbox Sync and a document system, or a
+mailed copy of an invoice the User issued in FiBuKI. Different bytes, one document. A
+Copy points at exactly one other File, its original, and documents nothing on its own:
+it holds no File Connection and is never proposed as a Match, so the original alone
+carries the Coverage, the input VAT and the BMD Export. It stays out of the queue while
+its original is live; when the original is deleted, the Copy is an ordinary File again.
+The system records a Copy only when no File Connection is lost by it, and suggests one
+otherwise; every Copy can be undone, and undoing one is not a Rejection. A Receipt for
+the same charge as an invoice is not a Copy, and neither is a **Dunning Letter**: both
+are different documents.
+_Deutsch_: Kopie
+_Also printed as_: Duplikat, Kopie, Zweitschrift, Rechnungskopie
+_Avoid_: duplicate (identical bytes, which are never stored a second time), second copy,
+sibling
+_Avoid (de)_: Duplikat, Zweitschrift as our own word (a second invoice the supplier
+issues and marks as such; a Copy is often an unmarked second original)
 
 **Learned Pattern**:
 A rule the system inferred from the user's own corrections, stored on a Partner and used
