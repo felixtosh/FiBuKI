@@ -77,6 +77,9 @@ export const WRITE_TOOLS = [
   "undismiss_transaction_suggestion",
   "mark_file_as_not_invoice",
   "unmark_file_as_not_invoice",
+  "mark_file_as_copy", // a moved or removed File Connection stays with the original; undone by unmark_file_as_copy
+  "unmark_file_as_copy",
+  "make_file_the_original",
   "update_file_extraction",
   "auto_connect_file_suggestions",
   "upload_file",
