@@ -691,6 +691,64 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     }
   },
   {
+    "name": "link_correction",
+    "description": "Link an Invoice Correction (a supplier's credit note, a Gutschrift that reduces an earlier invoice, a Rechnungskorrektur) to the File it corrects: the original invoice. The UVA and the BMD export then book the refund as a correction of that original, at the original's rates (a purchase refund reduces Vorsteuer in KZ 067), and an unlinked correction blocks the period's filing. Also accepts a suggestion (correctionSuggestions, see get_correction). The original must not itself be a correction. Reversible with unlink_correction.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "fileId": {
+          "type": "string",
+          "description": "The correction File (the credit note)"
+        },
+        "originalFileId": {
+          "type": "string",
+          "description": "The File it corrects (the original invoice)"
+        }
+      },
+      "required": [
+        "fileId",
+        "originalFileId"
+      ]
+    }
+  },
+  {
+    "name": "unlink_correction",
+    "description": "Remove an Invoice Correction's link to its original, or decline one of its suggestions (pass originalFileId). The named File is never linked to this correction automatically again; link_correction on the pair revokes that. An unlinked correction blocks the period's filing until it is linked again or the line is reclassified.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "fileId": {
+          "type": "string",
+          "description": "The correction File"
+        },
+        "originalFileId": {
+          "type": "string",
+          "description": "Optional: the suggested File to decline. Omit to remove the current link."
+        }
+      },
+      "required": [
+        "fileId"
+      ]
+    }
+  },
+  {
+    "name": "get_correction",
+    "description": "Inspect Invoice Corrections. With fileId: what the File reads as (invoice-correction or self-billed-invoice, and whether the signals disagree), its referenced invoice number, the File it corrects and the transactions that paid that File, its link suggestions, and the corrections linked to it when it is an original. With transactionId: the transactions related to it through a correction (the purchase a refund refunds, or the refunds of a purchase).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "fileId": {
+          "type": "string",
+          "description": "A File: a correction or an original"
+        },
+        "transactionId": {
+          "type": "string",
+          "description": "A transaction: a refund or what it refunds"
+        }
+      }
+    }
+  },
+  {
     "name": "unmark_file_as_not_invoice",
     "description": "Restore a file previously flagged as not an invoice. Re-opens extraction, which recovers the fields marking cleared.",
     "inputSchema": {

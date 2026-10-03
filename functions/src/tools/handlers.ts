@@ -35,6 +35,7 @@ import {
   CLEARED_COPY_MARK,
 } from "../files/copyOps";
 import { unmarkFileAsCopyAndRematch } from "../files/copyCallables";
+import { getCorrection, linkCorrection, unlinkCorrection } from "../corrections/correctionOps";
 import {
   buildClearVatNotClaimableUpdates,
   buildMarkVatNotClaimableUpdates,
@@ -258,6 +259,12 @@ export async function handleTool(
       return unmarkFileAsCopyAndRematch(db, userId, args);
     case "make_file_the_original":
       return makeFileTheOriginal(db, userId, args);
+    case "link_correction":
+      return linkCorrection(db, userId, args);
+    case "unlink_correction":
+      return unlinkCorrection(db, userId, args);
+    case "get_correction":
+      return getCorrection(db, userId, args);
     case "confirm_file_recipient_is_user":
       return confirmFileRecipientIsUser(userId, args);
     case "unconfirm_file_recipient_is_user":

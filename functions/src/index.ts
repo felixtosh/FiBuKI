@@ -196,6 +196,14 @@ export {
   backfillFileEntityNamesCallable as backfillFileEntityNames,
 } from "./files";
 
+// Invoice Corrections: the link to the File each one corrects (#564)
+export {
+  linkCorrectionCallable as linkCorrection,
+  unlinkCorrectionCallable as unlinkCorrection,
+  getCorrectionCallable as getCorrection,
+  backfillCorrectionLinksCallable as backfillCorrectionLinks,
+} from "./corrections/correctionCallables";
+
 // Import operations
 export {
   bulkCreateTransactionsCallable as bulkCreateTransactions,

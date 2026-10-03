@@ -418,6 +418,74 @@ export const makeFileTheOriginalTool = tool(
 );
 
 // ============================================================================
+// Invoice Corrections (#564, ADR-0010)
+// ============================================================================
+
+/** The correction acts are callables, as for MCP; the tools only relay them. */
+async function relayCorrectionAct(
+  name: "linkCorrection" | "unlinkCorrection" | "getCorrection",
+  data: Record<string, string>,
+  authHeader: string | undefined
+): Promise<Record<string, unknown>> {
+  if (!authHeader) return { error: "Auth header not provided" };
+  try {
+    return await callFirebaseFunction<Record<string, string>, Record<string, unknown>>(name, data, authHeader);
+  } catch (err) {
+    return { error: (err as Error).message || `Failed: ${name}` };
+  }
+}
+
+export const linkCorrectionTool = tool(
+  async ({ fileId, originalFileId }, config) =>
+    relayCorrectionAct("linkCorrection", { fileId, originalFileId }, config?.configurable?.authHeader),
+  {
+    name: "linkCorrection",
+    description:
+      "Link an Invoice Correction (a supplier's credit note, a Gutschrift reducing an earlier invoice, a Rechnungskorrektur) to the File it corrects. The UVA then books the refund against the original's Vorsteuer (KZ 067) or revenue, at the original's rates; an unlinked correction blocks the period's filing. Also accepts a link suggestion. Reversible with unlinkCorrection.",
+    schema: z.object({
+      fileId: z.string().describe("The correction File (the credit note)"),
+      originalFileId: z.string().describe("The File it corrects (the original invoice)"),
+    }),
+  }
+);
+
+export const unlinkCorrectionTool = tool(
+  async ({ fileId, originalFileId }, config) =>
+    relayCorrectionAct(
+      "unlinkCorrection",
+      originalFileId ? { fileId, originalFileId } : { fileId },
+      config?.configurable?.authHeader
+    ),
+  {
+    name: "unlinkCorrection",
+    description:
+      "Remove an Invoice Correction's link, or decline one of its link suggestions (pass originalFileId). That File is never linked to it automatically again.",
+    schema: z.object({
+      fileId: z.string().describe("The correction File"),
+      originalFileId: z.string().optional().describe("The suggested File to decline; omit to remove the link"),
+    }),
+  }
+);
+
+export const getCorrectionTool = tool(
+  async ({ fileId, transactionId }, config) =>
+    relayCorrectionAct(
+      "getCorrection",
+      transactionId ? { transactionId } : { fileId: fileId ?? "" },
+      config?.configurable?.authHeader
+    ),
+  {
+    name: "getCorrection",
+    description:
+      "Inspect Invoice Corrections: for a File, what it corrects, who paid the original, its link suggestions and the corrections linked to it; for a transaction, the transactions related to it through a correction (a refund and the purchase it refunds).",
+    schema: z.object({
+      fileId: z.string().optional().describe("A correction or an original File"),
+      transactionId: z.string().optional().describe("A refund or what it refunds"),
+    }),
+  }
+);
+
+// ============================================================================
 // Create Partner
 // ============================================================================
 
@@ -1150,6 +1218,9 @@ export const WRITE_TOOLS = [
   markFileAsCopyTool,
   unmarkFileAsCopyTool,
   makeFileTheOriginalTool,
+  linkCorrectionTool,
+  unlinkCorrectionTool,
+  getCorrectionTool,
   bulkAssignPartnerToTransactionsTool,
   bulkUpdateTransactionsTool,
   matchTransactionPartnersTool,

@@ -41,6 +41,7 @@ import { isSameDayEvidence, hasUndocumentedRival } from "./remainderAutoConnect"
 import { readDismissedTransactionIds } from "./dismissedTransactions";
 import { isFileRejected } from "./rejectedFiles";
 import { runCopyCheck, CLEARED_COPY_MARK } from "../files/copyOps";
+import { runCorrectionCheck } from "../corrections/correctionOps";
 import { AutomationMeta } from "../automation/types";
 import { checkAIBudget } from "../billing/checkAIBudget";
 import { isPassiveMode } from "../utils/checkAutomationMode";
@@ -1273,6 +1274,22 @@ export const matchFileTransactions = onDocumentUpdated(
       !before.partnerMatchComplete &&
       after.partnerMatchComplete &&
       !after.extractionError;
+
+    // #564: the correction check reads the Partner, the referenced invoice
+    // number, the amount and the heading. It runs whenever one of them moves,
+    // manual File Connections or not: a credit note is usually connected by
+    // hand, and its link must still follow its Partner.
+    const correctionInputsChanged =
+      partnerMatchJustCompleted ||
+      before.partnerId !== after.partnerId ||
+      before.extractedReferencedInvoiceNumber !== after.extractedReferencedInvoiceNumber ||
+      before.extractedAmount !== after.extractedAmount ||
+      before.extractedSelfDesignation !== after.extractedSelfDesignation;
+    if (correctionInputsChanged) {
+      await runCorrectionCheck(db, fileId, after).catch((err) => {
+        console.error(`[CorrectionCheck] Failed for ${fileId}`, err);
+      });
+    }
 
     // Case 2: Partner ID changed (re-run)
     const partnerIdChanged =
