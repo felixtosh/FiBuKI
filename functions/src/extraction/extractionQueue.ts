@@ -17,8 +17,6 @@
  * before this, so a refusal still reaches the caller synchronously.
  */
 
-import { extractQueuedFile } from "./extractQueuedFile";
-
 export interface ExtractionRequest {
   fileId: string;
   /** The File's owner. On self-host it decides whose turn the job waits in. */
@@ -36,5 +34,8 @@ export interface ExtractionRequest {
 }
 
 export async function enqueueExtraction(request: ExtractionRequest): Promise<void> {
+  // Loaded on first use: the Extraction code opens Firestore when it loads,
+  // and small modules (the not-an-invoice builders) import this one.
+  const { extractQueuedFile } = await import("./extractQueuedFile");
   await extractQueuedFile(request.fileId, { skipClassification: request.skipClassification });
 }
