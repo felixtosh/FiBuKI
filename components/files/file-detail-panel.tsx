@@ -52,6 +52,7 @@ import { FilePreview } from "./file-preview";
 import { FileExtractedInfo } from "./file-extracted-info";
 import { FileConnectionsList } from "./file-connections-list";
 import { FileCopySection, type CopyAct, type MarkCopyAct } from "./file-copy-section";
+import { FileCorrectionSection } from "./file-correction-section";
 import { Section11Reasoning } from "@/components/documents/section-11-details";
 import { describeInvoiceDirection } from "@/lib/documents/document-type-presentation";
 import { InfoPopover } from "@/components/ui/info-popover";
@@ -656,6 +657,9 @@ function FileDetailPanelInner({
                 onMakeOriginal={onMakeOriginal}
               />
             ) : null}
+
+            {/* What this File corrects, or what corrects it (#564) */}
+            <FileCorrectionSection file={file} />
 
             {/* Connected Transactions + Suggestions */}
             <FileConnectionsList

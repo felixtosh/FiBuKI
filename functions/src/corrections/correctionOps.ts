@@ -145,7 +145,8 @@ export async function runCorrectionCheck(db: Db, fileId: string, fileData: Data)
   return result.kind === "suggestions" ? { kind: "suggested", fileIds: result.fileIds } : { kind: "none" };
 }
 
-async function candidateFiles(db: Db, userId: string, partnerId: unknown): Promise<LinkMatchCandidate[]> {
+/** The user's live Files of one Partner that could be an original: no Copies, no non-invoices. */
+async function candidateDocs(db: Db, userId: string, partnerId: unknown): Promise<Array<{ id: string; data: Data }>> {
   if (typeof partnerId !== "string" || !partnerId) return [];
   const snap = await db
     .collection("files")
@@ -155,7 +156,32 @@ async function candidateFiles(db: Db, userId: string, partnerId: unknown): Promi
     .get();
   return snap.docs
     .map((d) => ({ id: d.id, data: d.data() }))
-    .filter((f) => isLive(f.data) && f.data.isNotInvoice !== true && !f.data.copyOfFileId)
+    .filter((f) => isLive(f.data) && f.data.isNotInvoice !== true && !f.data.copyOfFileId);
+}
+
+function fileRef(id: string, data: Data): CorrectionFileRef {
+  return {
+    fileId: id,
+    fileName: data.fileName ?? null,
+    invoiceNumber: data.extractedInvoiceNumber ?? null,
+    amount: data.extractedAmount ?? null,
+    date: dayOf(data.extractedDate),
+  };
+}
+
+/** The original File behind an Invoice Correction FiBuKI issued, through its Invoice. */
+async function issuedOriginalFileId(db: Db, userId: string, invoiceId: unknown): Promise<string | null> {
+  if (typeof invoiceId !== "string" || !invoiceId) return null;
+  const inv = await db.collection("invoices").doc(invoiceId).get();
+  const correctsId = inv.exists && inv.data()?.userId === userId ? inv.data()?.correctsInvoice?.invoiceId : null;
+  if (!correctsId) return null;
+  const original = await db.collection("invoices").doc(correctsId).get();
+  const data = original.exists ? original.data() : null;
+  return data && data.userId === userId && typeof data.fileId === "string" ? data.fileId : null;
+}
+
+async function candidateFiles(db: Db, userId: string, partnerId: unknown): Promise<LinkMatchCandidate[]> {
+  return (await candidateDocs(db, userId, partnerId))
     .map((f) => ({
       id: f.id,
       userId: f.data.userId,
@@ -274,13 +300,28 @@ export interface CorrectionTransactionRef {
   partner: string | null;
 }
 
+export interface CorrectionFileRef {
+  fileId: string;
+  fileName: string | null;
+  invoiceNumber: string | null;
+  amount: number | null;
+  date: string | null;
+}
+
+/** Files of the same Partner offered for a manual link, at most. */
+const MANUAL_CANDIDATES = 20;
+
 export interface CorrectionFileView {
   fileId: string;
   /** D8: what the document reads as, and whether its signals disagree. */
   kind: "invoice-correction" | "self-billed-invoice" | null;
   signalsDisagree: boolean;
   referencedInvoiceNumber: string | null;
-  link: { originalFileId: string; setBy: CorrectionLinkSetBy } | null;
+  /**
+   * The link to the original. `issued-correction`: an Invoice Correction
+   * FiBuKI issued, which names its original Invoice; it cannot be unlinked.
+   */
+  link: { originalFileId: string; setBy: CorrectionLinkSetBy | "issued-correction" } | null;
   original: {
     fileId: string;
     fileName: string | null;
@@ -289,7 +330,9 @@ export interface CorrectionFileView {
     /** The Transactions that paid the original. */
     paidBy: CorrectionTransactionRef[];
   } | null;
-  suggestions: Array<{ fileId: string; fileName: string | null; invoiceNumber: string | null; amount: number | null }>;
+  suggestions: CorrectionFileRef[];
+  /** Files of the same Partner a person may link by hand, newest first. */
+  candidates: CorrectionFileRef[];
   /** Corrections linked to this File, when it is an original. */
   correctedBy: Array<{ fileId: string; fileName: string | null; transactions: CorrectionTransactionRef[] }>;
 }
@@ -315,11 +358,17 @@ export async function getCorrection(
 async function correctionViewOfFile(db: Db, userId: string, fileId: string): Promise<CorrectionFileView> {
   const file = await readOwned(db, "files", userId, fileId);
   const verdict = classifyCorrectionDocument(file.data);
-  const link = file.data.correctionLink as { fileId: string; setBy: CorrectionLinkSetBy } | null | undefined;
+  const stored = file.data.correctionLink as { fileId: string; setBy: CorrectionLinkSetBy } | null | undefined;
+  const issued = stored?.fileId ? null : await issuedOriginalFileId(db, userId, file.data.invoiceId);
+  const link: CorrectionFileView["link"] = stored?.fileId
+    ? { originalFileId: stored.fileId, setBy: stored.setBy }
+    : issued
+      ? { originalFileId: issued, setBy: "issued-correction" }
+      : null;
 
   let original: CorrectionFileView["original"] = null;
-  if (link?.fileId) {
-    const o = await readOwnedOrNull(db, "files", userId, link.fileId);
+  if (link) {
+    const o = await readOwnedOrNull(db, "files", userId, link.originalFileId);
     if (o) {
       original = {
         fileId: o.id,
@@ -333,18 +382,21 @@ async function correctionViewOfFile(db: Db, userId: string, fileId: string): Pro
     }
   }
 
-  const suggestions: CorrectionFileView["suggestions"] = [];
+  const suggestions: CorrectionFileRef[] = [];
   for (const s of (file.data.correctionSuggestions ?? []) as Array<{ fileId: string }>) {
     const f = await readOwnedOrNull(db, "files", userId, s.fileId);
-    if (f && isLive(f.data)) {
-      suggestions.push({
-        fileId: f.id,
-        fileName: f.data.fileName ?? null,
-        invoiceNumber: f.data.extractedInvoiceNumber ?? null,
-        amount: f.data.extractedAmount ?? null,
-      });
-    }
+    if (f && isLive(f.data)) suggestions.push(fileRef(f.id, f.data));
   }
+
+  // Only a correction is offered originals to link by hand.
+  const candidates: CorrectionFileRef[] =
+    verdict.kind === "invoice-correction" || link
+      ? (await candidateDocs(db, userId, file.data.partnerId))
+          .filter((c) => c.id !== fileId && !isCorrectionDocument(c.data))
+          .sort((a, b) => (dayOf(b.data.extractedDate) ?? "").localeCompare(dayOf(a.data.extractedDate) ?? ""))
+          .slice(0, MANUAL_CANDIDATES)
+          .map((c) => fileRef(c.id, c.data))
+      : [];
 
   const linkedSnap = await db
     .collection("files")
@@ -367,9 +419,10 @@ async function correctionViewOfFile(db: Db, userId: string, fileId: string): Pro
     kind: verdict.kind,
     signalsDisagree: verdict.signalsDisagree,
     referencedInvoiceNumber: file.data.extractedReferencedInvoiceNumber ?? null,
-    link: link?.fileId ? { originalFileId: link.fileId, setBy: link.setBy } : null,
+    link,
     original,
     suggestions,
+    candidates,
     correctedBy,
   };
 }

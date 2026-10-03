@@ -48,6 +48,7 @@ import {
 } from "@/types/report";
 import { TaxCountryCode } from "@/types/user-data";
 import { ReportReadinessCheck } from "@/components/reports/readiness-check";
+import { UvaFilingPanel } from "@/components/reports/uva-filing-panel";
 import { UVAPreview } from "@/components/reports/uva-preview";
 import { PeriodTimeline } from "@/components/reports/period-timeline";
 import { usePageTitle } from "@/hooks/use-page-title";
@@ -622,13 +623,16 @@ function ReportsContent() {
 
               <TabsContent value="preview" className="mt-4">
                 {uvaResult && (
-                  <UVAPreview
-                    result={uvaResult}
-                    period={selectedPeriod}
-                    country={country}
-                    onSetForeignSupplyKind={handleSetForeignSupplyKind}
-                    onRulePartialPayment={handleRulePartialPayment}
-                  />
+                  <div className="space-y-4">
+                    <UVAPreview
+                      result={uvaResult}
+                      period={selectedPeriod}
+                      country={country}
+                      onSetForeignSupplyKind={handleSetForeignSupplyKind}
+                      onRulePartialPayment={handleRulePartialPayment}
+                    />
+                    <UvaFilingPanel period={selectedPeriod} result={uvaResult} />
+                  </div>
                 )}
               </TabsContent>
 

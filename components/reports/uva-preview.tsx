@@ -30,6 +30,7 @@ import { cn } from "@/lib/utils";
 import { ReportPeriod, formatPeriod } from "@/types/report";
 import { TaxCountryCode } from "@/types/user-data";
 import type { TransactionDerivationEntry, UvaReportResult } from "@/functions/src/uva/types";
+import { UvaCorrections } from "./uva-corrections";
 import {
   buildVorsteuerTrace,
   deriveFilingExceptions,
@@ -92,6 +93,8 @@ const KZ_LABELS: Record<string, string> = {
   "060": "Input VAT from invoices (Vorsteuer)",
   "061": "Import VAT paid (Einfuhrumsatzsteuer)",
   "083": "Import VAT via §26 (EUSt deferral)",
+  "067": "Vorsteuer correction (§ 16) — refunds of purchases",
+  "090": "Other corrections — tax of a negative base (§ 16)",
   "095": "Zahllast / Gutschrift (netted)",
 };
 
@@ -104,7 +107,8 @@ const FX_METHOD_LABELS: Record<string, string> = {
 const KZ_ORDER = [
   "000", "022", "029", "006", "124", "011", "017",
   "057", "070", "072", "073", "008", "125",
-  "060", "066", "065", "061", "083",
+  "060", "066", "065", "061", "083", "067",
+  "090",
   "095",
 ];
 
@@ -120,6 +124,8 @@ const STEP_LABELS: Record<string, string> = {
   "reverse-charge": "reverse charge",
   "eu-acquisition": "EU acquisition",
   import: "import",
+  "purchase-correction": "refund of a purchase",
+  "sale-correction": "refund to a customer",
 };
 
 /** Why a document's VAT was kept out of Vorsteuer (#203). */
@@ -151,6 +157,7 @@ const REASON_KEYS = new Set([
   "impossible-tip",
   "tip-partial-payment",
   "needs-receipt",
+  "correction-unlinked",
 ]);
 
 function KennzahlRow({
@@ -296,6 +303,8 @@ export function UVAPreview({
               );
             })}
           </div>
+
+          <UvaCorrections corrections={result.corrections ?? []} />
 
           {result.euKennzahlen.basis === "not-implemented" && (
             <p className="text-xs text-muted-foreground px-3">
