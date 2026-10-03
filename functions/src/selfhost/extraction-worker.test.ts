@@ -65,6 +65,9 @@ import {
 } from "./extraction-worker";
 import { resweepPendingExtractions } from "./extraction-resweep";
 import { retryExtractionForFile } from "../extraction/retryExtractionOps";
+import { unmarkFileAsNotInvoice } from "../tools/handlers";
+import { unmarkFileAsNotInvoiceCallable } from "../files/unmarkFileAsNotInvoice";
+import { markFileAsCopy } from "../files/copyOps";
 
 const db = getFirestore();
 const ALICE = "alice";
@@ -222,6 +225,82 @@ describe("leaving the trigger queue", () => {
     await run;
     expect(await jobs()).toEqual([]);
     expect(fake.started).toEqual(["slow"]);
+  });
+});
+
+describe("lifting a not-an-invoice mark", () => {
+  /** A File as marking it "not an invoice" leaves it: extraction complete, fields cleared. */
+  async function markedNotInvoice(fileId: string) {
+    await db.collection("files").doc(fileId).set({
+      userId: ALICE,
+      fileName: `${fileId}.pdf`,
+      storagePath: `uploads/${fileId}.pdf`,
+      isNotInvoice: true,
+      notInvoiceReason: "duplicate re-send",
+      classificationComplete: true,
+      extractionComplete: true,
+      extractedAmount: null,
+      transactionIds: [],
+    });
+    await drainTriggers();
+  }
+
+  // No trigger fires on the unmark's write, so each writer queues the
+  // Extraction itself; before, these Files sat Queued until the next boot.
+  it("the MCP tool queues an Extraction that skips classification, and the worker runs it", async () => {
+    await markedNotInvoice("m");
+    expect(await jobs()).toHaveLength(0);
+
+    await unmarkFileAsNotInvoice(ALICE, { fileId: "m" });
+    await drainTriggers();
+    expect(await jobs()).toMatchObject([{ file_id: "m", user_id: ALICE, skip_classification: true }]);
+
+    expect(await drainExtractionQueue()).toBe(1);
+    expect(fake.started).toEqual(["m"]);
+    expect(await file("m")).toMatchObject({ isNotInvoice: false, extractionComplete: true, extractedAmount: 4200 });
+  });
+
+  it("the callable queues it too, so the UI needs no follow-up Retry", async () => {
+    await markedNotInvoice("c");
+
+    await (unmarkFileAsNotInvoiceCallable as unknown as { run: (r: unknown) => Promise<unknown> }).run({
+      data: { fileId: "c" },
+      auth: { uid: ALICE, token: {} },
+    });
+    await drainTriggers();
+    expect(await jobs()).toMatchObject([{ file_id: "c", skip_classification: true }]);
+
+    expect(await drainExtractionQueue()).toBe(1);
+    expect(await file("c")).toMatchObject({ extractionComplete: true, extractedAmount: 4200 });
+  });
+
+  it("marking a hidden re-send as a Copy queues its Extraction once the transaction commits", async () => {
+    await db.collection("files").doc("orig").set({
+      userId: ALICE,
+      fileName: "orig.pdf",
+      extractionComplete: true,
+      extractedAmount: 4990,
+      transactionIds: [],
+    });
+    await markedNotInvoice("resend");
+
+    await markFileAsCopy(db as never, ALICE, { fileId: "resend", originalFileId: "orig" }, "user");
+    await drainTriggers();
+    expect(await jobs()).toMatchObject([{ file_id: "resend", skip_classification: true }]);
+    expect(await file("resend")).toMatchObject({ copyOfFileId: "orig", isNotInvoice: false });
+
+    expect(await drainExtractionQueue()).toBe(1);
+    expect(fake.started).toEqual(["resend"]);
+  });
+
+  it("marking an ordinary File as a Copy queues nothing", async () => {
+    await db.collection("files").doc("orig").set({ userId: ALICE, fileName: "orig.pdf", extractionComplete: true, transactionIds: [] });
+    await db.collection("files").doc("dup").set({ userId: ALICE, fileName: "dup.pdf", extractionComplete: true, transactionIds: [] });
+    await drainTriggers();
+
+    await markFileAsCopy(db as never, ALICE, { fileId: "dup", originalFileId: "orig" }, "user");
+    await drainTriggers();
+    expect(await jobs()).toHaveLength(0);
   });
 });
 

@@ -1029,7 +1029,8 @@ describe("Tool Registry Handlers: Files", () => {
       await expect(handlers.unmarkFileAsNotInvoice(userId, { fileId: "f-1" })).rejects.toThrow("File not found");
     });
 
-    it("should re-open extraction on unmark", async () => {
+    it("should re-open extraction on unmark, and queue it without re-classifying", async () => {
+      extraction.runExtraction.mockReset();
       store.setDoc(
         "files",
         "f-1",
@@ -1044,6 +1045,12 @@ describe("Tool Registry Handlers: Files", () => {
       const result = await handlers.unmarkFileAsNotInvoice(userId, { fileId: "f-1" });
 
       expect(result).toMatchObject({ success: true, isNotInvoice: false });
+      // Nothing fires on the write, so the tool queues the Extraction itself
+      // (this build runs the queue inline). The user ruled it an invoice.
+      expect(extraction.runExtraction).toHaveBeenCalledTimes(1);
+      expect(extraction.runExtraction).toHaveBeenCalledWith("f-1", expect.anything(), {
+        skipClassification: true,
+      });
 
       const file = store.getDoc("files", "f-1");
       expect(file?.isNotInvoice).toBe(false);
