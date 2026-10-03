@@ -12,7 +12,6 @@
  * of the `searchGmail` and `connectFileToTransaction` dependencies.
  */
 
-import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import {
   searchGmailDirect,
@@ -21,6 +20,7 @@ import {
   type GmailMessageResult,
 } from "../gmail/searchGmailCallable";
 import { defineSecret } from "firebase-functions/params";
+import { performConnectFileToTransaction } from "../files/connectFileToTransaction";
 import {
   findReceiptForTransaction,
   type FindReceiptResult,
@@ -35,10 +35,6 @@ const tokenEncryptionKey = defineSecret("GMAIL_TOKEN_ENCRYPTION_KEY");
 
 interface FindReceiptCallableRequest {
   transactionId: string;
-  /** Override score threshold for auto-connect (default 70). */
-  autoConnectThreshold?: number;
-  /** Override score floor below which candidates are dropped (default 35). */
-  candidateFloor?: number;
   /** Override lead margin required for auto-connect (default 10). */
   clearLeadMargin?: number;
   /** Max candidates returned in needs_review (default 3). */
@@ -56,39 +52,27 @@ export const findReceiptForTransactionCallable = createCallable<
     secrets: [googleClientId, googleClientSecret, tokenEncryptionKey],
   },
   async (ctx, request) => {
-    const { transactionId, ...thresholds } = request;
+    // The auto-connect line and the candidate floor are the matcher's (#588),
+    // so they are not read from the request: one line for stored Files,
+    // whoever calls.
+    const { transactionId, clearLeadMargin, maxCandidates } = request;
     if (!transactionId) {
       throw new HttpsError("invalid-argument", "transactionId is required");
     }
 
     const result = await findReceiptForTransaction(
-      { transactionId, userId: ctx.userId, ...thresholds },
+      { transactionId, userId: ctx.userId, clearLeadMargin, maxCandidates },
       {
         db: ctx.db,
         searchGmail: (args) => searchGmailForWorkflow(ctx.db, args),
         connectFileToTransaction: async ({ fileId, transactionId, matchConfidence, connectionType }) => {
-          // Minimal inline connect for agent-initiated auto-connects.
-          // Pattern learning + worker cancellation side effects are intentionally
-          // skipped here (the user can re-run partner matching / receipt-search
-          // automation manually). We do enough to mark the transaction complete
-          // and create the connection record that the UI relies on.
-          const now = Timestamp.now();
-          await ctx.db.collection("transactions").doc(transactionId).update({
-            fileIds: FieldValue.arrayUnion(fileId),
-            isComplete: true,
-            updatedAt: now,
-          });
-          await ctx.db.collection("files").doc(fileId).update({
-            transactionIds: FieldValue.arrayUnion(transactionId),
-            updatedAt: now,
-          });
-          await ctx.db.collection("fileConnections").add({
+          // The connect the UI makes, Copy refusal, Partner sync and learning
+          // included.
+          await performConnectFileToTransaction(ctx, {
             fileId,
             transactionId,
-            userId: ctx.userId,
             connectionType,
             matchConfidence,
-            createdAt: now,
           });
           return { fileId };
         },

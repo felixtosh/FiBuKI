@@ -237,7 +237,7 @@ You are given a transaction ID. Find the best matching receipt/invoice.
 **Always call \`findReceiptForTransaction({ transactionId })\` first.**
 
 It searches local files + Gmail across all integrations, scores every
-candidate, and auto-connects a clear local-file winner (≥70% with ≥10pt lead)
+candidate, and auto-connects a clear stored-file winner (≥85% with ≥10pt lead)
 in a single backend call. Possible outcomes:
 
 - \`status: "connected"\` → done. Report which file was attached at what
@@ -274,10 +274,14 @@ Composing them yourself burns LLM round-trips for no benefit and is
 typically 5–10× slower than letting the workflow do its job.
 
 ### Score Interpretation
-- 70%+ Strong match — connect it (workflow auto-connects)
-- 50–70% Likely — connect it after partner verification
-- 35–50% Possible — connect only if partner matches and no better option
-- <35% Weak — probably not a match
+Stored files (\`local_file\`) carry the matcher's confidence, the one their
+suggestion list shows; they are surfaced from 50%:
+- 85%+ Strong — the workflow auto-connects it when it leads by 10 points
+- 50–85% Likely — connect it after partner verification
+
+Gmail candidates are scored on the attachment scale and never auto-connected:
+- 75%+ Strong — download, verify, connect
+- 35–75% Possible — connect only if partner matches and no better option
 
 ### Already Downloaded Handling
 Gmail search results show \`alreadyDownloaded: true\` and \`existingFileId\` for attachments that were previously downloaded.

@@ -2223,7 +2223,7 @@ export const findReceiptForTransactionTool = tool(
   {
     name: "findReceiptForTransaction",
     description:
-      "End-to-end receipt finder for a transaction. Searches local files + Gmail across all the user's integrations, scores every candidate, and auto-connects a clear local-file winner (≥70% score with ≥10pt lead). Otherwise returns top candidates for review. Single call replaces the older recipe of generateSearchSuggestions→searchLocalFiles→searchGmail*→analyzeEmail→score chain. transactionId MUST be a real database ID from listTransactions/getTransaction (not a placeholder).",
+      "End-to-end receipt finder for a transaction. Searches local files + Gmail across all the user's integrations, scores every candidate, and auto-connects a clear stored-file winner (≥85%, the matcher's auto-connect line, with ≥10pt lead). Stored files carry the same confidence their suggestion list shows; Gmail candidates are never auto-connected. Otherwise returns top candidates for review. Single call replaces the older recipe of generateSearchSuggestions→searchLocalFiles→searchGmail*→analyzeEmail→score chain. transactionId MUST be a real database ID from listTransactions/getTransaction (not a placeholder).",
     schema: z.object({
       transactionId: z
         .string()
