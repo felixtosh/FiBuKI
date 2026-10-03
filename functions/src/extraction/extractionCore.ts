@@ -628,48 +628,23 @@ export async function runExtraction(
 
     // Use counterparty data if available, otherwise fall back to legacy extracted.partner
     // This ensures extractedPartner is always the counterparty (not the user's own company)
-    if (counterparty) {
-      // Use counterparty entity data
-      if (counterparty.name) {
-        // Already decoded: #299 moved the character-reference decode to entity
-        // normalisation, so the counterparty this came from is one of the
-        // stored entities and its name carries no "&amp;". Decoding again here
-        // would be a second layer whose harmlessness depends on the decoder
-        // staying single-pass.
-        updateData.extractedPartner = counterparty.name;
-      }
-      if (counterparty.vatId) {
-        updateData.extractedVatId = counterparty.vatId;
-      }
-      if (counterparty.iban) {
-        updateData.extractedIban = counterparty.iban;
-      }
-      if (counterparty.address) {
-        updateData.extractedAddress = counterparty.address;
-      }
-      if (counterparty.website) {
-        updateData.extractedWebsite = counterparty.website;
-      }
-    } else {
-      // Fall back to legacy extracted fields (from Claude parser or when counterparty detection fails)
-      if (extracted.partner) {
-        // Decoded at entity normalisation too (#299) — the flat legacy field
-        // is shaped in the same place the issuer/recipient entities are.
-        updateData.extractedPartner = extracted.partner;
-      }
-      if (extracted.vatId) {
-        updateData.extractedVatId = extracted.vatId;
-      }
-      if (extracted.iban) {
-        updateData.extractedIban = extracted.iban;
-      }
-      if (extracted.address) {
-        updateData.extractedAddress = extracted.address;
-      }
-      if (extracted.website) {
-        updateData.extractedWebsite = extracted.website;
-      }
-    }
+    //
+    // Every field is written, null included (#376). This is an update, so a
+    // field this run did not read would otherwise keep the previous run's value:
+    // a re-extraction that rightly refuses an Invoicing Agent's footer UID left
+    // the agent's UID from the pre-#156 run on the File. Both sources are the
+    // same party, so a field one of them lacks is not borrowed from the other.
+    //
+    // Names: already decoded. #299 moved the character-reference decode to
+    // entity normalisation, so neither source carries "&amp;". Decoding again
+    // here would be a second layer whose harmlessness depends on the decoder
+    // staying single-pass.
+    const party = counterparty ?? extracted;
+    updateData.extractedPartner = (counterparty ? counterparty.name : extracted.partner) || null;
+    updateData.extractedVatId = party.vatId || null;
+    updateData.extractedIban = party.iban || null;
+    updateData.extractedAddress = party.address || null;
+    updateData.extractedWebsite = party.website || null;
 
     // Store raw text values for PDF search/highlight
     if (result.extractedRaw) {

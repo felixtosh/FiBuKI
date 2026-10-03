@@ -356,10 +356,11 @@ describe("characterization: runExtraction extraction + counterparty", () => {
     expect(doc.matchedUserAccount).toBe("issuer");
     expect(doc.extractedPartner).toBe("Client Co");
     expect(doc.extractedVatId).toBe("DE999888777");
-    // counterparty has no IBAN/website/address → fields are simply not written
-    expect(doc.extractedIban).toBeUndefined();
-    expect(doc.extractedAddress).toBeUndefined();
-    expect(doc.extractedWebsite).toBeUndefined();
+    // counterparty has no IBAN/website/address → fields are written as null,
+    // so a re-extraction never keeps the previous run's value (#376)
+    expect(doc.extractedIban).toBeNull();
+    expect(doc.extractedAddress).toBeNull();
+    expect(doc.extractedWebsite).toBeNull();
     // raw partner overridden with the counterparty's raw name…
     expect((doc.extractedRaw as Record<string, unknown>).partner).toBe("Client Co Ltd.");
     // characterization: …but raw IBAN falls back to the ISSUER's raw IBAN
