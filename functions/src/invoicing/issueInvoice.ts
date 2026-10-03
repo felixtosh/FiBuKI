@@ -1,7 +1,8 @@
 /**
  * Issue an invoice.
  *
- * 1. Allocate real invoice number atomically.
+ * 1. Compose the invoice number and claim it: refused when another invoice
+ *    already holds it (§ 11 Abs 1 Z 5 UStG). A later failure gives it back.
  * 2. Render PDF.
  * 3. Upload to Storage.
  * 4. Create linked TaxFile (with isFibukiGenerated + extractionComplete=false at first).
@@ -9,13 +10,13 @@
  * 6. Optionally create a share link.
  */
 
-import { Timestamp } from "firebase-admin/firestore";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { buildStorageObjectUrl } from "../utils/buildDownloadUrl";
 import { getStorage } from "firebase-admin/storage";
 import * as crypto from "crypto";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { Invoice, composeInvoiceName } from "./types";
-import { allocateInvoiceNumber } from "./numberAllocator";
+import { allocateInvoiceNumber, assertInvoiceNumberFree } from "./numberAllocator";
 import { renderInvoicePdf } from "./renderInvoicePdf";
 import { buildInvoiceFileFields } from "./buildInvoiceFileFields";
 
@@ -125,60 +126,87 @@ export async function performIssueInvoice(
     updatedAt: now,
   };
 
-  // 2. Render PDF
-  const pdfBuffer = await deps.renderPdf(issuedInvoice);
+  async function renderAndFile() {
+    // 2. Render PDF
+    const pdfBuffer = await deps.renderPdf(issuedInvoice);
 
-  // 3. Upload to Storage
-  const storagePath = `files/${userId}/invoices/${invoiceRef.id}_v1.pdf`;
-  const downloadUrl = await deps.storeDocument(storagePath, pdfBuffer, `${number}.pdf`);
+    // 3. Upload to Storage
+    const storagePath = `files/${userId}/invoices/${invoiceRef.id}_v1.pdf`;
+    const downloadUrl = await deps.storeDocument(storagePath, pdfBuffer, `${number}.pdf`);
 
-  // 4. Update the TaxFile record. createInvoice already created a stub
-  // TaxFile (so the draft appears in the files list); we update it in place
-  // here with the real PDF + extracted data. Fall back to creating a new
-  // file if the stub is missing (legacy drafts created before this change).
-  const fileFields = buildInvoiceFileFields(issuedInvoice, {
-    storagePath,
-    downloadUrl,
-    fileSize: pdfBuffer.length,
+    // 4. Update the TaxFile record. createInvoice already created a stub
+    // TaxFile (so the draft appears in the files list); we update it in place
+    // here with the real PDF + extracted data. Fall back to creating a new
+    // file if the stub is missing (legacy drafts created before this change).
+    const fileFields = buildInvoiceFileFields(issuedInvoice, {
+      storagePath,
+      downloadUrl,
+      fileSize: pdfBuffer.length,
+    });
+
+    const fileRef = current.fileId
+      ? db.collection("files").doc(current.fileId)
+      : db.collection("files").doc();
+    const existing = await fileRef.get();
+
+    if (existing.exists) {
+      // Stub TaxFile created at draft time — fill it in. extractionComplete is
+      // already true (set at stub creation), so we flip it false then true to
+      // trigger matchFilePartner.
+      await fileRef.update({
+        ...fileFields,
+        extractionComplete: false,
+      });
+      await fileRef.update({
+        extractionComplete: true,
+        updatedAt: Timestamp.now(),
+      });
+    } else {
+      // Legacy path: no stub exists. Create the file fresh.
+      await fileRef.set({
+        ...fileFields,
+        userId,
+        extractionComplete: false, // flipped to true below so matchFilePartner fires
+        transactionIds: [],
+        uploadedAt: now,
+        createdAt: now,
+      });
+      await fileRef.update({
+        extractionComplete: true,
+        updatedAt: Timestamp.now(),
+      });
+    }
+    return { fileRef, downloadUrl };
+  }
+
+  // Claim the number before anything is rendered: no second invoice may
+  // carry it, and no PDF is printed with a number that turns out taken.
+  await db.runTransaction(async (tx) => {
+    const fresh = (await tx.get(invoiceRef)).data() as Invoice | undefined;
+    if (fresh?.status !== "draft") {
+      throw new HttpsError("failed-precondition", "Only drafts can be issued");
+    }
+    await assertInvoiceNumberFree(tx, db, userId, number, invoiceRef.id);
+    tx.update(invoiceRef, { number, status: "issued", issuedAt: now, updatedAt: now });
   });
 
+  // A failed render or upload hands the number back: the invoice is a draft
+  // again, exactly as before the attempt.
   let fileRef: FirebaseFirestore.DocumentReference;
-  if (current.fileId) {
-    fileRef = db.collection("files").doc(current.fileId);
-  } else {
-    fileRef = db.collection("files").doc();
-  }
-  const existing = await fileRef.get();
-
-  if (existing.exists) {
-    // Stub TaxFile created at draft time — fill it in. extractionComplete is
-    // already true (set at stub creation), so we flip it false then true to
-    // trigger matchFilePartner.
-    await fileRef.update({
-      ...fileFields,
-      extractionComplete: false,
-    });
-    await fileRef.update({
-      extractionComplete: true,
+  let downloadUrl: string;
+  try {
+    ({ fileRef, downloadUrl } = await renderAndFile());
+  } catch (err) {
+    await invoiceRef.update({
+      status: "draft",
+      number: current.number,
+      issuedAt: FieldValue.delete(),
       updatedAt: Timestamp.now(),
     });
-  } else {
-    // Legacy path: no stub exists. Create the file fresh.
-    await fileRef.set({
-      ...fileFields,
-      userId,
-      extractionComplete: false, // flipped to true below so matchFilePartner fires
-      transactionIds: [],
-      uploadedAt: now,
-      createdAt: now,
-    });
-    await fileRef.update({
-      extractionComplete: true,
-      updatedAt: Timestamp.now(),
-    });
+    throw err;
   }
 
-  // 6. Update invoice with file backref + new status
+  // 6. Update invoice with file backref (number and status were claimed above)
   const invoiceUpdates: Record<string, unknown> = {
     number,
     status: "issued",

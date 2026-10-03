@@ -4,13 +4,55 @@
  * `nextInvoiceNumberSeq` is the one sequence every numbered invoice draws from:
  * a draft's pre-filled number and an Invoice Correction's own number (#133).
  *
+ * `assertInvoiceNumberFree` keeps an issued number unique.
+ *
  * `allocateInvoiceNumber` is the legacy atomic per-user counter, kept for
  * drafts created before numberSeq existed.
  * Stores counter at users/{userId}/settings/invoiceCounter.
  * Format: YYYY-#### (e.g., "2026-0001"). Resets on year change.
  */
 
+import { Timestamp } from "firebase-admin/firestore";
+import { HttpsError } from "../utils/createCallable";
 import { toDateSafe } from "../utils/toDateSafe";
+
+/**
+ * Every write that gives an invoice its final number reads and writes this
+ * document, so two of them can never commit side by side: the later one
+ * conflicts, retries, and then sees the earlier one's number.
+ */
+function numberingLockRef(db: FirebaseFirestore.Firestore, userId: string) {
+  return db.collection("users").doc(userId).collection("settings").doc("invoiceNumbering");
+}
+
+/**
+ * Refuse `number` when another of the user's invoices already holds it.
+ *
+ * § 11 Abs 1 Z 5 UStG: an invoice number identifies one invoice. Drafts hold
+ * no number yet; a cancelled invoice keeps its own on record. Call inside the
+ * transaction that writes the number, before any write of that transaction.
+ */
+export async function assertInvoiceNumberFree(
+  tx: FirebaseFirestore.Transaction,
+  db: FirebaseFirestore.Firestore,
+  userId: string,
+  number: string,
+  invoiceId: string,
+): Promise<void> {
+  const lockRef = numberingLockRef(db, userId);
+  await tx.get(lockRef);
+  const holders = await tx.get(
+    db.collection("invoices").where("userId", "==", userId).where("number", "==", number),
+  );
+  const taken = holders.docs.some((d) => d.id !== invoiceId && d.data().status !== "draft");
+  if (taken) {
+    throw new HttpsError(
+      "already-exists",
+      `Invoice number ${number} is already used by another invoice. Choose another number.`,
+    );
+  }
+  tx.set(lockRef, { updatedAt: Timestamp.now() }, { merge: true });
+}
 
 /**
  * (highest sequence this user holds in `year`) + 1.
