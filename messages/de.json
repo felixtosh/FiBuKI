@@ -899,7 +899,10 @@
       "noneForSearch": "Keine Belege passen zur Suche",
       "noneForFilters": "Keine Belege passen zu diesen Filtern",
       "none": "Keine Belege gefunden",
-      "matched": "Gefunden in: {fields}"
+      "matched": "Gefunden in: {fields}",
+      "searchNotApplied": "Alle Belege, gereiht. Die Suche oben hat deine Postfächer durchsucht.",
+      "narrowedBy": "Belege gefiltert nach „{query}“",
+      "applySearch": "Belege nach „{query}“ filtern"
     }
   }
 }

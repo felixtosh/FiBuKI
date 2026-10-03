@@ -162,3 +162,24 @@ export function rememberConnectControls(
 ): void {
   remembered[list] = { ...controls };
 }
+
+/**
+ * What the Files tab says about the search box (#598). One box serves every
+ * tab, but only typed text narrows the Files tab (#555): the auto-search and
+ * the suggestion chips are mailbox searches. When the box shows other text
+ * than the one narrowing the Files tab, the tab says so. Null: nothing to say.
+ */
+export type FilesSearchNotice =
+  | { kind: "notApplied"; boxQuery: string }
+  | { kind: "narrowedBy"; boxQuery: string; filesQuery: string };
+
+export function filesSearchNotice(
+  boxQuery: string,
+  filesQuery: string
+): FilesSearchNotice | null {
+  const box = boxQuery.trim();
+  const files = filesQuery.trim();
+  if (!box || box === files) return null;
+  if (!files) return { kind: "notApplied", boxQuery: box };
+  return { kind: "narrowedBy", boxQuery: box, filesQuery: files };
+}
