@@ -170,7 +170,7 @@ describe("the Invoice Correction a Cancel issues", () => {
 });
 
 describe("service, place of supply abroad (#565)", () => {
-  const UK = { partnerId: "p1", partnerType: "user", name: "Michael Chaffe", address: { country: "GB" } };
+  const UK = { partnerId: "p1", partnerType: "user", name: "Thames Consulting Ltd", address: { country: "GB" } };
   const ZERO = [{ ...LINES[0], vatRate: 0 }];
   const zeroRated = { lineItems: ZERO, ...computeInvoiceTotals(ZERO) };
 

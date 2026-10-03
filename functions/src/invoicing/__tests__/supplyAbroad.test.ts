@@ -16,7 +16,7 @@ import type { InvoiceLineItem } from "../types";
 const LINES: InvoiceLineItem[] = [
   { id: "l1", description: "Consulting", quantity: 1, unitPrice: 189000, vatRate: 0 },
 ];
-const UK = { partnerId: "p1", partnerType: "user" as const, name: "Michael Chaffe", address: { country: "GB" } };
+const UK = { partnerId: "p1", partnerType: "user" as const, name: "Thames Consulting Ltd", address: { country: "GB" } };
 const DE = { partnerId: "p2", partnerType: "user" as const, name: "Kunde GmbH", vatId: "DE123456789", address: { country: "DE" } };
 const ISSUER = { entityId: "e1", name: "Stefan EPU", iban: "AT61", vatId: "ATU12345678" };
 

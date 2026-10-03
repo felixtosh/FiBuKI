@@ -484,7 +484,7 @@ describe("bmd/uva agreement (#565): a service supplied abroad", () => {
       extractedAmount: 189000,
       extractedVatAmount: 0,
       extractedVatPercent: 0,
-    }, { partnerName: "Michael Chaffe", saleSupplyKind: "service-non-eu", vatId: "GB123456789" }),
+    }, { partnerName: "Thames Consulting Ltd", saleSupplyKind: "service-non-eu", vatId: "GB123456789" }),
   ];
 
   const rowsOf = (f: Fixture) => {
@@ -512,7 +512,7 @@ describe("bmd/uva agreement (#565): a service supplied abroad", () => {
     expect(eu[13]).toBe("DE123456789");
 
     const [uk] = rowsOf(SERVICES[1]);
-    expect(uk[10]).toBe("§3a Abs6 Drittland: Michael Chaffe");
+    expect(uk[10]).toBe("§3a Abs6 Drittland: Thames Consulting Ltd");
     expect(uk[13]).toBe("GB123456789");
   });
 

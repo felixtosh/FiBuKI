@@ -504,14 +504,14 @@ describe("prepareUvaFiling: services supplied abroad (#565)", () => {
   });
 
   it("reads the customer's country off the Partner when the document names none", async () => {
-    await db.collection("partners").doc("p-uk").set({ userId: USER, name: "Michael Chaffe", country: "GB" });
-    await seedFile("f-chaffe", {
+    await db.collection("partners").doc("p-uk").set({ userId: USER, name: "Thames Consulting Ltd", country: "GB" });
+    await seedFile("f-uk-service", {
       extractedAmount: 189000,
       extractedVatAmount: 0,
       extractedRateGroups: [{ rate: 0, net: 189000, vat: 0, gross: 189000 }],
       extractedDate: day("2026-02-20"),
     });
-    await seedTransaction("t-chaffe", "2026-02-27", 189000, ["f-chaffe"], {
+    await seedTransaction("t-uk-service", "2026-02-27", 189000, ["f-uk-service"], {
       partnerId: "p-uk",
       partnerType: "user",
     });
