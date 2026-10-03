@@ -14,6 +14,8 @@
  * (ThemeProvider, NextIntlClientProvider with the real messages), then the REAL
  * dashboard layout and template, then the page. Anything that throws while
  * rendering fails the test. They do not assert behaviour; that is the point.
+ * Each case does assert one piece of the page body, though: a page that renders
+ * null (a feature guard, a stuck Suspense) throws nothing and would pass empty.
  * Keep them cheap to run, and add a page here when it gets its own route.
  *
  * What is mocked, and why that is the smallest cut
@@ -122,7 +124,8 @@ vi.mock("@/components/auth/auth-provider", () => {
 
 // --- Firebase I/O -----------------------------------------------------------
 // Only the network edge. Reads answer from the fixtures below (one transaction,
-// every other collection empty, every single doc missing); writes resolve.
+// every other collection empty, a Smart subscription, every other single doc
+// missing); writes resolve.
 
 vi.mock("firebase/firestore", async (importOriginal) => {
   const actual = await importOriginal<typeof import("firebase/firestore")>();
@@ -188,8 +191,14 @@ vi.mock("firebase/firestore", async (importOriginal) => {
       }),
     ],
   };
+  // Single docs by path; every other doc is missing. Files and Partners sit
+  // behind SmartFeatureGuard, which renders null on the default "free" plan,
+  // so without a Smart subscription their cases pass with an empty page.
+  const docFixtures: Record<string, Record<string, unknown>> = {
+    "subscriptions/smoke-user": { plan: "smart", status: "active" },
+  };
   const read = (ref: unknown) => {
-    if (ref instanceof actual.DocumentReference) return docSnapshot(ref.id, undefined);
+    if (ref instanceof actual.DocumentReference) return docSnapshot(ref.id, docFixtures[ref.path]);
     const path = pathOf.get(ref as object) ?? "";
     return querySnapshot(fixtures[path.split("/").pop() ?? ""] ?? []);
   };
@@ -289,13 +298,17 @@ describe("dashboard pages render inside the real dashboard layout", () => {
 
   it("Files", async () => {
     await renderDashboardPage("/files", FilesPage);
+    // The page body, not the guard's null or the Suspense skeleton.
+    expect(screen.getByText("No files uploaded")).toBeTruthy();
   });
 
   it("Partners", async () => {
     await renderDashboardPage("/partners", PartnersPage);
+    expect(screen.getByText("No partners yet")).toBeTruthy();
   });
 
   it("Sources", async () => {
     await renderDashboardPage("/sources", SourcesPage);
+    expect(screen.getByText("No bank accounts yet")).toBeTruthy();
   });
 });
