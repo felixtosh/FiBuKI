@@ -301,6 +301,8 @@ function TransactionsContent() {
     (transaction: Transaction, options?: { keepConnect?: boolean }) => {
       const params = new URLSearchParams(searchParamsRef.current.toString());
       params.set("id", transaction.id);
+      // A suggested File belongs to the Transaction it was suggested for (#555).
+      params.delete("connectFile");
       if (!options?.keepConnect) {
         params.delete("connect");
       }
@@ -314,6 +316,7 @@ function TransactionsContent() {
     const params = new URLSearchParams(searchParamsRef.current.toString());
     params.delete("id");
     params.delete("connect");
+    params.delete("connectFile");
     const newUrl = params.toString()
       ? `/transactions?${params.toString()}`
       : "/transactions";
