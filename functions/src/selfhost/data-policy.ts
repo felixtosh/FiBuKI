@@ -107,6 +107,9 @@ export const SUBTREE_DOC_POLICIES: Readonly<Record<string, CollectionPolicy>> = 
   // callables. The client only reads it: a client write could mark steps done or change where the
   // user came from.
   "settings/onboarding": { read: "authed", create: "none", update: "none", delete: "none" },
+  // The lock every invoice-number claim goes through (invoicing/numberAllocator.ts). Server-only:
+  // nothing on it is the client's to read or change.
+  "settings/invoiceNumbering": { read: "none", create: "none", update: "none", delete: "none" },
 };
 
 /** users/{uid}/<name>/... — uid must equal auth.uid, then this table. */
