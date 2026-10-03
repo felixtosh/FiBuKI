@@ -36,7 +36,7 @@ async function seedTx(id: string, date: string, amount: number, fileIds: string[
 }
 
 async function seedFile(id: string, data: Record<string, unknown>, userId = USER) {
-  await db.collection("files").doc(id).set({ userId, ...data });
+  await db.collection("files").doc(id).set({ userId, extractionComplete: true, ...data });
 }
 
 /** A 120,00 purchase at 20%, paid on 5 January. */
@@ -63,14 +63,14 @@ async function seedRefund(id: string, date: string, amount: number, link: string
     extractedVatPercent: 20,
     extractedSelfDesignation: "Gutschrift",
     transactionIds: [id],
-    ...(link ? { correctionLink: { fileId: link, setBy: "manual" } } : {}),
+    ...(link ? { correctionLink: { fileId: link, setBy: "auto" } } : {}),
   });
   await seedTx(id, date, amount, [`${id}-credit`]);
 }
 
 beforeEach(async () => {
   await __whenShimIdle();
-  __resetFirestoreShim();
+  await __resetFirestoreShim();
   __resetTriggerShim();
 });
 

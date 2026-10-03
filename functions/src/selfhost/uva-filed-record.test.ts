@@ -29,7 +29,7 @@ async function seedTx(id: string, date: string, amount: number, fileIds: string[
   });
 }
 async function seedFile(id: string, data: Record<string, unknown>) {
-  await db.collection("files").doc(id).set({ userId: USER, ...data });
+  await db.collection("files").doc(id).set({ userId: USER, extractionComplete: true, ...data });
 }
 
 /** A 120,00 purchase at 20% in January, and a 30,00 refund in February with its credit note. */
@@ -46,7 +46,7 @@ async function seedQuarter(linked: boolean) {
 
 beforeEach(async () => {
   await __whenShimIdle();
-  __resetFirestoreShim();
+  await __resetFirestoreShim();
   __resetTriggerShim();
 });
 

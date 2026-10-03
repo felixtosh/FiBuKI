@@ -24,7 +24,7 @@ const OTHER = "someone-else";
 const day = (iso: string) => Timestamp.fromDate(new Date(`${iso}T00:00:00.000Z`));
 
 async function seedFile(id: string, data: Record<string, unknown>, userId = USER) {
-  await db.collection("files").doc(id).set({ userId, fileName: `${id}.pdf`, partnerId: "p-amazon", ...data });
+  await db.collection("files").doc(id).set({ userId, fileName: `${id}.pdf`, partnerId: "p-amazon", extractionComplete: true, ...data });
 }
 
 async function file(id: string) {
@@ -57,7 +57,7 @@ async function seedCredit(over: Record<string, unknown> = {}) {
 
 beforeEach(async () => {
   await __whenShimIdle();
-  __resetFirestoreShim();
+  await __resetFirestoreShim();
   __resetTriggerShim();
 });
 
