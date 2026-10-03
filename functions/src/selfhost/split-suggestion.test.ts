@@ -125,6 +125,34 @@ describe("the split suggestion from Extraction", () => {
     expect(file.splitSuggestion).toBeNull();
   });
 
+  it("reads a reply that came back as one reading per document instead of losing it", async () => {
+    // What the model returned for the live Amazon bundle (#550): an array of
+    // three complete readings, no top-level object.
+    const reading = (amount: number, invoiceNumber: string) => ({
+      rawText: invoiceNumber,
+      extracted: { date: "2026-03-10", amount, currency: "EUR", confidence: 0.9, invoiceNumber },
+      segments: null,
+    });
+    const reply = JSON.stringify([
+      { ...reading(713, "PL600029H28QLI"), segments: SEGMENTS },
+      reading(788, "XX6000181KNHPT"),
+      reading(519, "XX60003JTXCKLT"),
+    ]);
+    await db.collection("files").doc("f-array").set({
+      userId: USER,
+      fileName: "bundle.pdf",
+      fileType: "application/pdf",
+      storagePath: PDF_PATH,
+      extractionComplete: false,
+    });
+    gemini.queue.push(JSON.stringify({ isInvoice: true, confidence: 0.95 }), reply);
+    await runExtraction("f-array", (await db.collection("files").doc("f-array").get()).data()!, {});
+    const file = (await db.collection("files").doc("f-array").get()).data()!;
+    expect(file.extractedAmount).toBe(713);
+    expect(file.extractedInvoiceNumber).toBe("PL600029H28QLI");
+    expect(file.splitSuggestion).toEqual({ pageCount: 4, segments: SEGMENTS });
+  });
+
   it("drops segments that do not fit the pages", async () => {
     const outside = [SEGMENTS[0], { ...SEGMENTS[1], pages: [3, 5] }];
     expect((await extract("f-outside", outside)).splitSuggestion).toBeNull();

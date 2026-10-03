@@ -1055,6 +1055,9 @@ SEVERAL DOCUMENTS IN ONE FILE ("segments"):
   delivery note, a page that only repeats the invoice number, or a reminder
   that quotes an invoice is ONE document: return "segments": null
 - A single document: "segments": null
+- The answer is still ONE JSON object, never an array, however many
+  documents the file holds: the top-level fields describe the FIRST
+  document, and "segments" lists every document with its pages
 
 Input format: any language, most often German (dates DD.MM.YYYY, amounts
 with a decimal comma like 123,45); English documents use 12/15/2024 or
@@ -1259,7 +1262,7 @@ DEBIT DATE (key "debitDate"):
 - If the document prints no debit date, return NO "debitDate" field
 - Never return a "debitDate" earlier than the invoice date
 
-JSON only, no markdown, no explanation.`;
+JSON only: exactly one object, no markdown, no explanation.`;
 
   const apiStart = Date.now();
   // JSON mode (#377): the model escapes string content itself, so a document
@@ -1389,6 +1392,21 @@ JSON only, no markdown, no explanation.`;
       console.error("[Gemini] JSON repair failed. Raw response:", jsonStr.substring(0, 500));
       throw new Error(`JSON parse failed even after repair: ${repairError}`);
     }
+  }
+
+  // #550: on a file holding several documents the model has answered with one
+  // complete reading per document instead of one object. The first reading is
+  // the one the prompt asks the top level to describe; segments are kept from
+  // whichever reading carries them. Reading nothing here lost the whole File.
+  if (Array.isArray(parsed)) {
+    const readings = (parsed as unknown[]).filter(
+      (r): r is GeminiResponse => !!r && typeof r === "object" && !Array.isArray(r)
+    );
+    console.warn(`[Gemini] Reply was an array of ${readings.length} readings; using the first (#550)`);
+    parsed = {
+      ...(readings[0] ?? {}),
+      segments: readings.map((r) => r.segments ?? r.extracted?.segments).find(Array.isArray) ?? null,
+    };
   }
 
   // Extract issuer entity (normalize values)
