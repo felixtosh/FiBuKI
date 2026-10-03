@@ -143,4 +143,26 @@ describe("the split suggestion from Extraction", () => {
     expect(file.splitSuggestion).toBeNull();
     expect(file.splitSuggestionDismissed).toBe(true);
   });
+
+  it("dismiss_split_suggestion clears it, and the next extraction stores none", async () => {
+    await extract("f-bundle", SEGMENTS);
+    expect(await handleTool(USER, "dismiss_split_suggestion", { fileId: "f-bundle" })).toEqual({ success: true });
+    expect((await handleTool(USER, "get_file", { fileId: "f-bundle" })) as Record<string, unknown>).toMatchObject({
+      splitSuggestion: null,
+      splitSuggestionDismissed: true,
+    });
+
+    const dismissed = (await db.collection("files").doc("f-bundle").get()).data()!;
+    gemini.queue.push(JSON.stringify({ isInvoice: true, confidence: 0.95 }), extractionReply(SEGMENTS));
+    await runExtraction("f-bundle", dismissed, {});
+    expect((await db.collection("files").doc("f-bundle").get()).data()!.splitSuggestion).toBeNull();
+  });
+
+  it("dismiss_split_suggestion refuses another user's File as not found and leaves it alone", async () => {
+    await extract("f-theirs", SEGMENTS, { userId: "someone-else" });
+    await expect(handleTool(USER, "dismiss_split_suggestion", { fileId: "f-theirs" })).rejects.toThrow(/File not found/);
+    const theirs = (await db.collection("files").doc("f-theirs").get()).data()!;
+    expect(theirs.splitSuggestion).toEqual({ pageCount: 4, segments: SEGMENTS });
+    expect(theirs.splitSuggestionDismissed).toBeUndefined();
+  });
 });

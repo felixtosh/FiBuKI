@@ -52,6 +52,7 @@ const OPENAPI_SPEC = {
                       "delete_file",
                       "restore_file",
                       "split_file",
+                      "dismiss_split_suggestion",
                       "connect_file_to_transaction",
                       "disconnect_file_from_transaction",
                       "list_transactions_needing_files",
@@ -221,6 +222,8 @@ const OPENAPI_SPEC = {
       "Delete a file, reversibly: it is hidden and its stored document kept; restore_file puts it back. Detaches it from its transactions and reports reopenedTransactions separately from stillCompleteTransactions (date, amount, counterparty each). A FiBuKI-generated invoice document is refused with GENERATED_INVOICE; use cancel_invoice. Args: fileId (string), confirm (boolean, must be true)",
     restore_file:
       "Restore a deleted file. Previous transaction connections are not recreated. A split original is refused while any of its parts exists. Args: fileId (string)",
+    dismiss_split_suggestion:
+      "Say a file is one document: removes its splitSuggestion for good, and re-extraction stores no new one. split_file still works by explicit ranges. Args: fileId (string)",
     split_file:
       "Split a PDF holding several separately issued invoices or Receipts into one file per invoice or Receipt. The ranges cover every page once, in order. Each part is extracted from scratch and connected to the original's transactions; the original is deleted (reversible once the parts are deleted). Args: fileId (string), ranges (array of { from, to }, 1-based inclusive pages)",
     connect_file_to_transaction:

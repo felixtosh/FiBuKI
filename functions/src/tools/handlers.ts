@@ -243,6 +243,8 @@ export async function handleTool(
       return restoreFile(userId, args);
     case "split_file":
       return splitFileTool(userId, args);
+    case "dismiss_split_suggestion":
+      return dismissSplitSuggestionTool(userId, args);
     case "connect_file_to_transaction":
       return connectFileToTransaction(userId, args);
     case "disconnect_file_from_transaction":
@@ -1015,6 +1017,12 @@ export async function restoreFile(userId: string, args: Record<string, unknown>)
 export async function splitFileTool(userId: string, args: Record<string, unknown>) {
   const { performSplitFile } = await import("../files/splitFile");
   return performSplitFile(db, userId, args.fileId as string, args.ranges);
+}
+
+/** "Not a bundle" (#550): the same dismissal as the dismissSplitSuggestion callable. */
+export async function dismissSplitSuggestionTool(userId: string, args: Record<string, unknown>) {
+  const { performDismissSplitSuggestion } = await import("../files/splitFile");
+  return performDismissSplitSuggestion(db, userId, args.fileId as string);
 }
 
 export async function connectFileToTransaction(userId: string, args: Record<string, unknown>) {

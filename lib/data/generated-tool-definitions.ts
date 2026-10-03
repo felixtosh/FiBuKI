@@ -502,6 +502,22 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     }
   },
   {
+    "name": "dismiss_split_suggestion",
+    "description": "Say a file is one document, not several: removes get_file's splitSuggestion, and re-extraction never stores a new one for this file. Use it when the suggestion is wrong, for example one invoice that runs over several pages. It cannot be undone, but nothing is lost: split_file still splits the file by explicit page ranges.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "fileId": {
+          "type": "string",
+          "description": "The file whose split suggestion is wrong"
+        }
+      },
+      "required": [
+        "fileId"
+      ]
+    }
+  },
+  {
     "name": "connect_file_to_transaction",
     "description": "Connect a file (receipt) to a transaction, marking it complete. A pair that was previously rejected is refused with PAIR_REJECTED; lift the rejection with undismiss_transaction_suggestion first if the connection is genuinely intended.",
     "inputSchema": {

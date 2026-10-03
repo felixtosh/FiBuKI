@@ -1236,6 +1236,30 @@ export const splitFileTool = tool(
   }
 );
 
+export const dismissSplitSuggestionTool = tool(
+  async ({ fileId }, config) => {
+    const authHeader = config?.configurable?.authHeader;
+    if (!authHeader) return { error: "Auth header not provided" };
+    try {
+      return await callFirebaseFunction<{ fileId: string }, Record<string, unknown>>(
+        "dismissSplitSuggestion",
+        { fileId },
+        authHeader
+      );
+    } catch (err) {
+      return { error: (err as Error).message || "Failed: dismissSplitSuggestion" };
+    }
+  },
+  {
+    name: "dismissSplitSuggestion",
+    description:
+      "Say a file is one document, not several: removes its splitSuggestion, and re-extraction never stores a new one. Use it when the suggestion is wrong, such as one invoice running over several pages. splitFile still splits the file by explicit ranges.",
+    schema: z.object({
+      fileId: z.string().describe("The file whose split suggestion is wrong"),
+    }),
+  }
+);
+
 // ============================================================================
 // Export all write tools
 // ============================================================================
@@ -1253,6 +1277,7 @@ export const WRITE_TOOLS = [
   unlinkCorrectionTool,
   getCorrectionTool,
   splitFileTool,
+  dismissSplitSuggestionTool,
   bulkAssignPartnerToTransactionsTool,
   bulkUpdateTransactionsTool,
   matchTransactionPartnersTool,
