@@ -5,8 +5,9 @@
  * be parsed by code instead of read by a model:
  *
  *  - RKSV (Austria, Registrierkassensicherheitsverordnung): every receipt from
- *    a registered till carries `_R1-AT<n>_<kasse>_<beleg>_<timestamp>_` and
- *    the gross turnover at each of the five rate buckets, signed by the till.
+ *    a registered till carries `_R1-AT<n>_<kasse>_<beleg>_<timestamp>_`, the
+ *    gross turnover at each of the five rate buckets and the turnover
+ *    counter, signed by the till.
  *  - EPC069-12 "GiroCode" (SEPA credit transfer, common in AT/DE/NL/BE/FI):
  *    `BCD` + payee name, IBAN, amount and reference, one per line.
  *  - Swiss QR-bill (`SPC`): creditor IBAN, name, country, amount, currency.
@@ -24,6 +25,15 @@ import { vatInsideGross } from "./taxFacts";
 
 export type QrCodeFormat = "rksv" | "epc" | "swissQr" | "url" | "unknown";
 
+/**
+ * The five turnover buckets of an RKSV code, in the order it prints them
+ * (RKSV Anlage Z 4).
+ */
+export type RksvBucket = "normal" | "reduced1" | "reduced2" | "zero" | "special";
+
+/** A receipt the till marks as not a sale: a cancellation or a training receipt. */
+export type RksvReceiptKind = "cancellation" | "training";
+
 export interface ParsedQrCode {
   format: QrCodeFormat;
   /** The decoded text as the model returned it (trimmed, capped). */
@@ -33,8 +43,13 @@ export interface ParsedQrCode {
   receiptNumber?: string;
   /** RKSV: the receipt timestamp, ISO date part (YYYY-MM-DD). */
   date?: string;
-  /** RKSV: gross turnover per rate, cents, non-zero buckets only. */
-  grossByRate?: Array<{ rate: number; gross: number }>;
+  /**
+   * RKSV: gross turnover per bucket, cents, non-zero buckets only. `rate` is
+   * null where the bucket does not name one rate (see RKSV_BUCKET_RATES).
+   */
+  grossByRate?: Array<{ bucket: RksvBucket; rate: number | null; gross: number }>;
+  /** RKSV: set when the turnover counter marks a cancellation or training receipt. */
+  receiptKind?: RksvReceiptKind;
   /** EPC / Swiss: the payee. */
   payeeName?: string;
   iban?: string;
@@ -49,24 +64,65 @@ export interface ParsedQrCode {
 const MAX_PAYLOAD_LENGTH = 2000;
 
 /**
- * RKSV buckets in the order the code prints them (RKSV § 9, Anlage Z 4):
- * Normal 20 %, Ermäßigt-1 10 %, Ermäßigt-2 13 %, Null 0 %, Besonders 19 %.
+ * The rate each RKSV bucket stands for, per the BMF Erlass zur
+ * Registrierkassenpflicht (GZ 2025-1.047.659), 3.3.4 and 4.6.6:
+ *
+ *  - Normal 20 %, Ermäßigt-1 10 %, Ermäßigt-2 13 %.
+ *  - Null is not "0 % VAT". It collects exempt and non-taxable sales, cash
+ *    payments against an invoice, margin-scheme sales (the whole price, though
+ *    VAT is owed on the margin), vouchers and anything taxed at a rate the
+ *    other buckets do not list. Its gross says nothing about the VAT inside.
+ *  - Besonders held 19 % (Jungholz/Mittelberg) until 30 June 2026. Since
+ *    1 July 2026 it also holds the 4.9 % on basic foods (RKSV Anlage Z 4 as of
+ *    BGBl. II Nr. 134/2026: "Betrag-Satz-Besonders (19 %, 4,9 %)"), so the
+ *    code alone cannot tell which rate a grocery receipt's amount is at.
+ *
+ * A bucket without a rate is never turned into a Rate Group (#166).
  */
-const RKSV_BUCKET_RATES = [20, 10, 13, 0, 19] as const;
+const RKSV_BUCKETS: ReadonlyArray<{ bucket: RksvBucket; rate: number | null }> = [
+  { bucket: "normal", rate: 20 },
+  { bucket: "reduced1", rate: 10 },
+  { bucket: "reduced2", rate: 13 },
+  { bucket: "zero", rate: null },
+  { bucket: "special", rate: null },
+];
 
-const RKSV_PATTERN =
-  /^_R1-AT\d+_([^_]+)_([^_]+)_(\d{4}-\d{2}-\d{2})T\d{2}:\d{2}:\d{2}_(-?\d+,\d{2})_(-?\d+,\d{2})_(-?\d+,\d{2})_(-?\d+,\d{2})_(-?\d+,\d{2})_/;
+/**
+ * An RKSV amount. The till prints "0,00" (German number format, BMF mustercode);
+ * some print a point, and a German-locale till can group thousands ("1.234,56").
+ */
+const RKSV_AMOUNT = String.raw`(-?(?:\d{1,3}(?:\.\d{3})+,\d{2}|\d+[.,]\d{2}))`;
 
-function commaCents(value: string): number {
-  const [whole, fraction] = value.split(",");
-  const sign = whole.startsWith("-") ? -1 : 1;
-  return sign * (Math.abs(parseInt(whole, 10)) * 100 + parseInt(fraction, 10));
+const RKSV_PATTERN = new RegExp(
+  String.raw`^_R1-AT\d+_([^_]+)_([^_]+)_(\d{4}-\d{2}-\d{2})T\d{2}:\d{2}:\d{2}` +
+  `_${RKSV_AMOUNT}`.repeat(5) +
+  String.raw`_([^_]*)_`
+);
+
+/**
+ * The turnover counter of a cancellation or training receipt holds "STO" or
+ * "TRA" instead of the encrypted counter: Base64 in the QR code, Base32 in the
+ * OCR line (BMF mustercode, TurnoverCounterType). The plain word is accepted
+ * too, in case a decoder hands it over decoded.
+ */
+function rksvReceiptKind(counter: string): RksvReceiptKind | undefined {
+  const value = counter.replace(/=+$/, "");
+  if (value === "U1RP" || value === "KNKE6" || value === "STO") return "cancellation";
+  if (value === "VFJB" || value === "KRJEC" || value === "TRA") return "training";
+  return undefined;
+}
+
+function rksvCents(value: string): number {
+  const sign = value.startsWith("-") ? -1 : 1;
+  const digits = value.replace(/^-/, "").replace(/\.(?=\d{3})/g, "").replace(",", ".");
+  const [whole, fraction] = digits.split(".");
+  return sign * (parseInt(whole, 10) * 100 + parseInt(fraction, 10));
 }
 
 function parseRksv(payload: string): ParsedQrCode | null {
   const match = RKSV_PATTERN.exec(payload);
   if (!match) return null;
-  const buckets = match.slice(4, 9).map(commaCents);
+  const buckets = match.slice(4, 9).map(rksvCents);
   return {
     format: "rksv",
     payload,
@@ -74,8 +130,9 @@ function parseRksv(payload: string): ParsedQrCode | null {
     receiptNumber: match[2],
     date: match[3],
     grossByRate: buckets
-      .map((gross, i) => ({ rate: RKSV_BUCKET_RATES[i], gross }))
+      .map((gross, i) => ({ ...RKSV_BUCKETS[i], gross }))
       .filter((bucket) => bucket.gross !== 0),
+    receiptKind: rksvReceiptKind(match[9]),
   };
 }
 
@@ -175,7 +232,13 @@ export function ibanChecksumValid(iban: string | undefined): boolean {
  *
  * The buckets are gross; net and VAT follow from the rate. The sum check is
  * what lets a model-decoded payload be used at all: a misread digit or an
- * invented code does not add up to the total the page prints.
+ * invented code does not add up to the total the page prints. A sum below the
+ * total is a partial cash payment, whose buckets cover only the cash part
+ * (Erlass 4.6.6), and is refused like any other mismatch.
+ *
+ * Refused as well (#166): a cancellation or training receipt, which is not a
+ * sale, and any amount in a bucket that names no single rate (Null,
+ * Besonders), whose VAT the code does not determine.
  */
 export function rateGroupsFromRksv(
   codes: ParsedQrCode[],
@@ -187,12 +250,16 @@ export function rateGroupsFromRksv(
   const rksv = codes.find((code) => code.format === "rksv" && code.grossByRate?.length);
   if (!rksv?.grossByRate) return null;
   const sum = rksv.grossByRate.reduce((acc, bucket) => acc + bucket.gross, 0);
-  if (sum !== documentTotal || rksv.grossByRate.some((bucket) => bucket.gross < 0)) {
+  if (
+    rksv.receiptKind ||
+    sum !== documentTotal ||
+    rksv.grossByRate.some((bucket) => bucket.gross < 0 || bucket.rate === null)
+  ) {
     return null;
   }
   return rksv.grossByRate.map(({ rate, gross }) => {
-    const vat = vatInsideGross(gross, rate);
-    return { rate, net: gross - vat, vat, gross };
+    const vat = vatInsideGross(gross, rate as number);
+    return { rate: rate as number, net: gross - vat, vat, gross };
   });
 }
 

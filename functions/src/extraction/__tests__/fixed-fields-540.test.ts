@@ -177,8 +177,9 @@ describe("QR codes", () => {
       cashRegisterId: "221430a",
       receiptNumber: "RG2026/5840",
       date: "2026-04-25",
-      grossByRate: [{ rate: 20, gross: 6750 }],
+      grossByRate: [{ bucket: "normal", rate: 20, gross: 6750 }],
     });
+    expect(code).not.toHaveProperty("receiptKind");
   });
 
   it("uses RKSV groups only when they add up to the document total", () => {
@@ -194,6 +195,56 @@ describe("QR codes", () => {
     expect(rateGroupsFromRksv(codes, 1750)?.map((g) => [g.rate, g.vat])).toEqual([
       [20, 200],
       [10, 50],
+    ]);
+  });
+
+  // #166: the bucket-to-rate mapping is the BMF Erlass's (3.3.4, 4.6.6) and
+  // RKSV Anlage Z 4 as of BGBl. II Nr. 134/2026, never a guess.
+  const rksvCode = (buckets: string, counter = "AbCdEf==") =>
+    `_R1-AT1_K1_42_2026-07-15T10:00:00_${buckets}_${counter}_1a2b3c_XyZ==_sig`;
+
+  it("maps Ermäßigt-2 to 13 %", () => {
+    const codes = parseQrPayloads([rksvCode("0,00_0,00_11,30_0,00_0,00")]);
+    expect(rateGroupsFromRksv(codes, 1130)).toEqual([{ rate: 13, net: 1000, vat: 130, gross: 1130 }]);
+  });
+
+  it("never turns the Besonders bucket into a rate: since July 2026 it holds 19 % and 4.9 %", () => {
+    const codes = parseQrPayloads([rksvCode("12,00_0,00_0,00_0,00_10,49")]);
+    expect(codes[0].grossByRate).toContainEqual({ bucket: "special", rate: null, gross: 1049 });
+    expect(rateGroupsFromRksv(codes, 2249)).toBeNull();
+  });
+
+  it("never reads the Null bucket as 0 % VAT: it collects exempt, margin and invoice payments", () => {
+    const codes = parseQrPayloads([rksvCode("0,00_0,00_0,00_120,00_0,00")]);
+    expect(codes[0].grossByRate).toEqual([{ bucket: "zero", rate: null, gross: 12000 }]);
+    expect(rateGroupsFromRksv(codes, 12000)).toBeNull();
+  });
+
+  it("flags cancellation and training receipts and never uses their buckets", () => {
+    // Base64 in the QR code, Base32 in the OCR line (BMF mustercode, TurnoverCounterType).
+    for (const [counter, kind] of [
+      ["U1RP", "cancellation"],
+      ["KNKE6===", "cancellation"],
+      ["VFJB", "training"],
+      ["KRJEC===", "training"],
+    ] as const) {
+      const codes = parseQrPayloads([rksvCode("12,00_0,00_0,00_0,00_0,00", counter)]);
+      expect(codes[0].receiptKind).toBe(kind);
+      expect(rateGroupsFromRksv(codes, 1200)).toBeNull();
+    }
+  });
+
+  it("refuses a partial cash payment, whose buckets cover only the cash part", () => {
+    const codes = parseQrPayloads([rksvCode("12,00_0,00_0,00_0,00_0,00")]);
+    expect(rateGroupsFromRksv(codes, 2000)).toBeNull();
+  });
+
+  it("reads a point decimal and a grouped thousands amount", () => {
+    expect(parseQrPayload(rksvCode("12.00_0,00_0,00_0,00_0,00"))?.grossByRate).toEqual([
+      { bucket: "normal", rate: 20, gross: 1200 },
+    ]);
+    expect(parseQrPayload(rksvCode("1.234,56_0,00_0,00_0,00_0,00"))?.grossByRate).toEqual([
+      { bucket: "normal", rate: 20, gross: 123456 },
     ]);
   });
 
