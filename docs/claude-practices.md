@@ -33,7 +33,10 @@ worker cap does not.
 npx vitest run src/mail/imap/ImapProvider.test.ts --pool=forks --maxWorkers=1
 
 # explicit files, capped heap
-npx tsc --noEmit --max-old-space-size=900 src/foo.ts src/bar.ts
+# tsc: a throwaway config inherits the project's options; the heap cap is a
+# Node flag (tsc rejects --max-old-space-size as an argument)
+echo '{"extends":"./tsconfig.json","include":[],"files":["src/foo.ts", "src/bar.ts"]}' > functions/tsconfig.scoped.json
+NODE_OPTIONS=--max-old-space-size=900 npx tsc --noEmit -p functions/tsconfig.scoped.json
 ```
 
 Full suites and full builds go on **CT 999**, not the audit box.

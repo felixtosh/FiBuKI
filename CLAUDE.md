@@ -51,7 +51,10 @@ workstation it never fires. Use the scoped forms instead:
 
 ```bash
 npx vitest run <one-file> --pool=forks --maxWorkers=1
-npx tsc --noEmit --max-old-space-size=900 <explicit files>
+# tsc: a throwaway config inherits the project's options; the heap cap is a
+# Node flag (tsc rejects --max-old-space-size as an argument)
+echo '{"extends":"./tsconfig.json","include":[],"files":["src/foo.ts"]}' > functions/tsconfig.scoped.json
+NODE_OPTIONS=--max-old-space-size=900 npx tsc --noEmit -p functions/tsconfig.scoped.json
 ```
 
 Full suites belong on CT 999. Also: **no parallel sub-agents on the audit box** —

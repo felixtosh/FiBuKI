@@ -106,7 +106,9 @@ fi
 if [ "$ran_tsc" -eq 1 ]; then
   if ! printf '%s' "$cmd" | grep -q -- '--max-old-space-size'; then
     danger="tsc without --max-old-space-size"
-    fix='npx tsc --noEmit --max-old-space-size=900 <explicit files>'
+    fix='NODE_OPTIONS=--max-old-space-size=900 npx tsc --noEmit -p <dir>/tsconfig.scoped.json
+  (tsconfig.scoped.json: {"extends":"./tsconfig.json","include":[],"files":[<explicit files>]};
+  --max-old-space-size is a Node flag, tsc rejects it as an argument)'
   fi
 fi
 

@@ -74,6 +74,8 @@ allow=(
   'cd functions && npx vitest run src/a.test.ts --maxWorkers=1 2>&1 | tail -5'
   'npx tsc --noEmit --max-old-space-size=900 lib/a.ts'
   'node --max-old-space-size=900 node_modules/.bin/tsc --noEmit lib/a.ts'
+  # The form CLAUDE.md documents: the cap is a Node flag, the files come from a config
+  'NODE_OPTIONS=--max-old-space-size=900 npx tsc --noEmit -p functions/tsconfig.scoped.json'
   'npm run test:node'
   'npm ci'
   'test -f vitest.config.ts && echo yes'
