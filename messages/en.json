@@ -747,6 +747,39 @@
       "revokeHint": "Remove the ruling. The line returns to the review list and claims nothing until it is resolved.",
       "claimed": "{amount} VSt claimed",
       "claimedOutput": "{amount} USt owed"
+    },
+    "saleSupply": {
+      "kind": {
+        "service-eu": "Service, EU",
+        "service-non-eu": "Service, non-EU",
+        "export-goods": "Export of goods"
+      },
+      "kindHint": {
+        "service-eu": "A B2B service to a business in another EU country (§ 3a Abs 6): not taxable in Austria, off the UVA, due on the Zusammenfassende Meldung",
+        "service-non-eu": "A B2B service to a business outside the EU, the UK included (§ 3a Abs 6): not taxable in Austria, off the UVA",
+        "export-goods": "An export of goods (Ausfuhrlieferung): stays in KZ 011"
+      },
+      "basis": {
+        "manual": "set by you",
+        "invoice": "from invoice",
+        "detected": "detected",
+        "none": "undetermined"
+      },
+      "needsReview": "check",
+      "notTaxable": {
+        "title": "Not taxable in Austria (§ 3a Abs 6)",
+        "description": "B2B services supplied abroad. They are not taxable in Austria and appear on no Kennzahl, not even KZ 000. They are still revenue, so they are listed here for the Tax Advisor. Cash basis, like the rest of this report.",
+        "eu": "EU customers",
+        "nonEu": "Customers outside the EU"
+      },
+      "kz011": {
+        "title": "Sales at 0% in KZ 011 ({count})",
+        "description": "Booked as exports of goods. A sale nothing has classified stays here and is marked for a check: if it was a service to a business abroad, mark it as one and it leaves the UVA."
+      },
+      "zm": {
+        "title": "Zusammenfassende Meldung due by {date}",
+        "description": "{count, plural, one {# service} other {# services}} to EU businesses were performed in this period, counted by service date, not payment. FiBuKI does not file the ZM; file it in FinanzOnline or ask your Tax Advisor."
+      }
     }
   },
   "invoices": {
@@ -760,6 +793,10 @@
       "correctsValue": "Invoice {number}",
       "correctedByLabel": "Cancelled by",
       "correctedByValue": "Invoice Correction {number}"
+    },
+    "supplyAbroad": {
+      "label": "Service, place of supply abroad (§ 3a Abs 6)",
+      "hint": "A service to a business outside Austria. Every line is at 0% VAT, and the invoice prints the reverse-charge note for an EU customer or the not-taxable note otherwise. Issuing needs a customer country outside Austria, and for an EU customer both UIDs."
     }
   }
 }
