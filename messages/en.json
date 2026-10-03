@@ -899,7 +899,10 @@
       "noneForSearch": "No files match your search",
       "noneForFilters": "No files match these filters",
       "none": "No files found",
-      "matched": "Matched: {fields}"
+      "matched": "Matched: {fields}",
+      "searchNotApplied": "Showing all Files, ranked. The search above searched your mailboxes.",
+      "narrowedBy": "Files narrowed by “{query}”",
+      "applySearch": "Filter Files by “{query}”"
     }
   }
 }

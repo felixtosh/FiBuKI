@@ -57,6 +57,7 @@ import {
   CONNECT_SORT_OPTIONS,
   ConnectControls,
   ConnectSortMode,
+  filesSearchNotice,
   filterConnectCandidates,
   rememberConnectControls,
   rememberedConnectControls,
@@ -484,6 +485,10 @@ export function ConnectFileOverlay({
     );
     return () => clearTimeout(timer);
   }, [open, transaction?.id, trimmedFilesQuery, fetchFileMatches]);
+
+  // The box can show a mailbox query that is not narrowing the Files tab;
+  // the tab says so, with one click to narrow it by the box's text (#598).
+  const filesNotice = filesSearchNotice(searchQuery, filesQuery);
 
   // Sort and chips, remembered apart from the Files-side window's (#244, #555).
   const [controls, setControlsState] = useState(rememberedFileControls);
@@ -1983,6 +1988,24 @@ export function ConnectFileOverlay({
                   })}
                 </div>
               </div>
+              {filesNotice && (
+                <div className="px-3 py-1.5 border-b shrink-0 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+                  <span className="min-w-0 break-words">
+                    {filesNotice.kind === "notApplied"
+                      ? t("files.searchNotApplied")
+                      : t("files.narrowedBy", { query: filesNotice.filesQuery })}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="link"
+                    size="sm"
+                    className="h-auto p-0 text-xs min-w-0 whitespace-normal text-left"
+                    onClick={() => setFilesQuery(searchQuery)}
+                  >
+                    {t("files.applySearch", { query: filesNotice.boxQuery })}
+                  </Button>
+                </div>
+              )}
               <ScrollArea className="flex-1 min-h-0 w-full">
                 {filesTabLoading ? (
                   <div className="p-8 text-center text-muted-foreground">

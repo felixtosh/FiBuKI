@@ -13,6 +13,7 @@ import {
   CONNECT_DATE_WINDOW_OPTIONS,
   CONNECT_SORT_OPTIONS,
   DEFAULT_CONNECT_CONTROLS,
+  filesSearchNotice,
   filterConnectCandidates,
   rememberConnectControls,
   rememberedConnectControls,
@@ -176,5 +177,41 @@ describe("Files as candidates, the Transaction's date as reference (#555)", () =
     expect(rememberedConnectControls("files").sort).toBe("closest-date");
     expect(rememberedConnectControls("transactions")).toEqual(DEFAULT_CONNECT_CONTROLS);
     rememberConnectControls(DEFAULT_CONNECT_CONTROLS, "files");
+  });
+});
+
+/**
+ * #598: one search box serves every tab, but only typed text narrows the Files
+ * tab. When the box shows something else, the Files tab says so.
+ */
+describe("filesSearchNotice", () => {
+  it("shows nothing for an empty box", () => {
+    expect(filesSearchNotice("", "")).toBeNull();
+    expect(filesSearchNotice("   ", "")).toBeNull();
+  });
+
+  it("shows nothing when the box holds what narrows the Files tab", () => {
+    expect(filesSearchNotice("oebb", "oebb")).toBeNull();
+    expect(filesSearchNotice("oebb ", "oebb ")).toBeNull();
+  });
+
+  it("an auto-filled or chip query with no Files filter: all Files are shown", () => {
+    expect(filesSearchNotice("from:oebb.at", "")).toEqual({
+      kind: "notApplied",
+      boxQuery: "from:oebb.at",
+    });
+  });
+
+  it("a chip clicked after typing: the Files tab is narrowed by the typed text", () => {
+    expect(filesSearchNotice("from:oebb.at", "foo")).toEqual({
+      kind: "narrowedBy",
+      boxQuery: "from:oebb.at",
+      filesQuery: "foo",
+    });
+  });
+
+  it("compares trimmed text, as the Files filter does", () => {
+    expect(filesSearchNotice("oebb", " oebb ")).toBeNull();
+    expect(filesSearchNotice(" oebb ", "")).toEqual({ kind: "notApplied", boxQuery: "oebb" });
   });
 });
