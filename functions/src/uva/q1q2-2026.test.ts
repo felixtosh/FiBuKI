@@ -523,3 +523,53 @@ describe("the ECB rate against the filed figures, per document", () => {
     expect(q1.blockers).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// IV-26-1163 to Michael Chaffe (UK): a service, not an export of goods (#565)
+// ---------------------------------------------------------------------------
+
+describe("the Chaffe sales leave KZ 011 and KZ 000 once classified (#565)", () => {
+  /**
+   * The two payments against IV-26-1163, at 0% on the document. Before #565
+   * every 0% sale was an Ausfuhrlieferung; the invoice prints "Non-domestic
+   * taxable supply", and a B2B service to a UK customer is supplied in the UK
+   * (§ 3a Abs 6), so it belongs on no U30 field at all.
+   */
+  const chaffe = (id: string, date: string, net: number, classified: boolean): UvaTransaction => ({
+    id,
+    date,
+    amount: net,
+    partnerName: "Michael Chaffe",
+    files: [{ id: "f-iv-26-1163", totalGross: net, vatAmount: 0, rateGroups: [{ rate: 0, net, vat: 0, gross: net }] }],
+    saleSupply: classified
+      ? { kind: "service-non-eu", basis: "manual" }
+      : { kind: "undetermined", basis: null },
+  });
+
+  const kz = (r: ReturnType<typeof run>, code: string) => r.kennzahlen[code]?.value ?? 0;
+  const cases = [
+    { period: Q1, corpus: FX_Q1, date: "2026-02-27", net: 189000 },
+    { period: Q2, corpus: FX_Q2, date: "2026-05-29", net: 75000 },
+  ];
+
+  it("moves KZ 011 and KZ 000 by exactly the Chaffe net, and KZ 095 not at all", () => {
+    for (const { period, corpus, date, net } of cases) {
+      const before = runAtEcbRates(period, [...corpus, chaffe("t-chaffe", date, net, false)]);
+      const after = runAtEcbRates(period, [...corpus, chaffe("t-chaffe", date, net, true)]);
+
+      expect(kz(before, "011")).toBe(net);
+      expect(kz(after, "011") - kz(before, "011")).toBe(-net);
+      expect(kz(after, "000") - kz(before, "000")).toBe(-net);
+      expect(kz(after, "095")).toBe(kz(before, "095"));
+    }
+  });
+
+  it("puts the sale on the filing's not-taxable line instead", () => {
+    const q1 = buildUvaFiling({ report: runAtEcbRates(Q1, [...FX_Q1, chaffe("t-chaffe", "2026-02-27", 189000, true)]) });
+
+    expect(q1.notTaxableAbroad.nonEu.total).toBe(189000);
+    expect(q1.notTaxableAbroad.eu.total).toBe(0);
+    // A UK customer owes no ZM; and a classified sale wants no review.
+    expect(q1.warnings).toEqual([]);
+  });
+});

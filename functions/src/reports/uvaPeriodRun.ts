@@ -19,6 +19,7 @@ import {
   payableTotalOf,
   type CategoryRecord,
   type FileRecord,
+  type PartnerRecord,
   type TransactionRecord,
 } from "../uva/adapter";
 import { loadEcbRateTable } from "../fx/ecbRateStore";
@@ -27,6 +28,20 @@ import type { UvaPeriod, UvaReportResult } from "../uva/types";
 
 /** Firestore getAll takes at most this many refs per call comfortably. */
 const FETCH_CHUNK = 100;
+
+/**
+ * How far either side of the period a sale's payment is looked for, in months
+ * (#565). The ZM counts an EU service by when it was performed, so a service
+ * performed in the period and paid outside it still owes a ZM line. A payment
+ * further away than this from its service is not looked for.
+ */
+const ZM_PAYMENT_WINDOW_MONTHS = 12;
+
+function shiftMonths(d: Date, months: number): Date {
+  const out = new Date(d.getTime());
+  out.setUTCMonth(out.getUTCMonth() + months);
+  return out;
+}
 
 export interface UvaPeriodRun {
   result: UvaReportResult;
@@ -93,6 +108,29 @@ export async function runUvaForPeriod(
     if (data.noReceiptCategoryId) categoryIds.add(data.noReceiptCategoryId);
   }
 
+  // Sales paid outside the period, for the ZM's service-date rule (#565). They
+  // reach the calculation as candidates only: it filters the UVA itself to the
+  // period by bank date, and reads these for the ZM warning alone.
+  const offPeriodSales: TransactionRecord[] = [];
+  const windows: Array<[Date, Date]> = [
+    [shiftMonths(startDate, -ZM_PAYMENT_WINDOW_MONTHS), startDate],
+    [endExclusiveDate, shiftMonths(endExclusiveDate, ZM_PAYMENT_WINDOW_MONTHS)],
+  ];
+  for (const [from, to] of windows) {
+    const snap = await db
+      .collection("transactions")
+      .where("userId", "==", userId)
+      .where("date", ">=", Timestamp.fromDate(from))
+      .where("date", "<", Timestamp.fromDate(to))
+      .get();
+    for (const doc of snap.docs) {
+      const data = doc.data();
+      if (!((data.amount ?? 0) > 0) || !(data.fileIds ?? []).length) continue;
+      offPeriodSales.push({ ...data, id: doc.id } as TransactionRecord);
+      for (const id of data.fileIds ?? []) fileIds.add(id);
+    }
+  }
+
   const filesById = new Map<string, FileRecord>();
   for (const chunk of chunked([...fileIds], FETCH_CHUNK)) {
     const refs = chunk.map((id) => db.collection("files").doc(id));
@@ -113,6 +151,28 @@ export async function runUvaForPeriod(
       const data = doc.data();
       if (doc.exists && data?.userId === userId) {
         categoriesById.set(doc.id, { ...data, id: doc.id } as CategoryRecord);
+      }
+    }
+  }
+
+  // The customer-country fallback for a sale (#565): the assigned Partner's.
+  const partnersById = new Map<string, PartnerRecord>();
+  const partnerRefs = new Map<string, "user" | "global">();
+  for (const tx of [...txRecords, ...offPeriodSales]) {
+    const raw = tx as TransactionRecord & { partnerType?: "user" | "global" | null };
+    if (tx.amount > 0 && tx.partnerId) partnerRefs.set(tx.partnerId, raw.partnerType ?? "user");
+  }
+  for (const type of ["user", "global"] as const) {
+    const ids = [...partnerRefs].filter(([, t]) => t === type).map(([id]) => id);
+    for (const chunk of chunked(ids, FETCH_CHUNK)) {
+      const collection = type === "user" ? "partners" : "globalPartners";
+      const docs = await db.getAll(...chunk.map((id) => db.collection(collection).doc(id)));
+      for (const doc of docs) {
+        const data = doc.data();
+        // A user Partner is read only when it is this user's; a global one is
+        // shared by design.
+        if (!doc.exists || (type === "user" && data?.userId !== userId)) continue;
+        partnersById.set(doc.id, { id: doc.id, country: data?.country ?? data?.address?.country ?? null });
       }
     }
   }
@@ -156,10 +216,11 @@ export async function runUvaForPeriod(
 
   const result = calculateUva({
     period,
-    transactions: buildUvaTransactions(txRecords, {
+    transactions: buildUvaTransactions([...txRecords, ...offPeriodSales], {
       filesById,
       categoriesById,
       priorClaimedFractionByFileId,
+      partnersById,
     }),
     ecbRates,
   });

@@ -469,3 +469,56 @@ describe("prepareUvaFiling: open items and the handover", () => {
     expect(filing.blockers.map((b) => b.code)).toContain("handover-stale");
   });
 });
+
+describe("prepareUvaFiling: services supplied abroad (#565)", () => {
+  /** A service invoiced to an EU business at 0%, dated 20 March, paid 10 April. */
+  async function seedEuServicePaidLate() {
+    await seedFile("f-eu-service", {
+      extractedAmount: 50000,
+      extractedVatAmount: 0,
+      extractedVatPercent: 0,
+      extractedRateGroups: [{ rate: 0, net: 50000, vat: 0, gross: 50000 }],
+      matchedUserAccount: "issuer",
+      extractedRecipient: { name: "Kunde GmbH", vatId: "DE123456789", address: null, country: "DE" },
+      extractedDate: day("2026-03-20"),
+    });
+    await seedTransaction("t-eu-service", "2026-04-10", 50000, ["f-eu-service"]);
+  }
+
+  it("warns in the quarter the service was performed, and lists the revenue in the quarter it was paid", async () => {
+    await seedEuServicePaidLate();
+
+    const q1 = await call({ period: Q1 });
+    const q2 = await call({ period: Q2 });
+
+    expect(q1.filing.warnings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "zm-due", dueDate: "2026-04-30", transactionIds: ["t-eu-service"] }),
+      ])
+    );
+    expect(q2.filing.warnings.find((w: { code: string }) => w.code === "zm-due")).toBeUndefined();
+    expect(q2.filing.notTaxableAbroad.eu.total).toBe(50000);
+    expect(q2.filing.report.kennzahlen["011"]).toBeUndefined();
+    // Detected, so the filing asks a person to confirm it.
+    expect(q2.filing.warnings.map((w: { code: string }) => w.code)).toContain("zero-rated-sale-detected");
+  });
+
+  it("reads the customer's country off the Partner when the document names none", async () => {
+    await db.collection("partners").doc("p-uk").set({ userId: USER, name: "Michael Chaffe", country: "GB" });
+    await seedFile("f-chaffe", {
+      extractedAmount: 189000,
+      extractedVatAmount: 0,
+      extractedRateGroups: [{ rate: 0, net: 189000, vat: 0, gross: 189000 }],
+      extractedDate: day("2026-02-20"),
+    });
+    await seedTransaction("t-chaffe", "2026-02-27", 189000, ["f-chaffe"], {
+      partnerId: "p-uk",
+      partnerType: "user",
+    });
+
+    const { filing } = await call({ period: Q1 });
+
+    expect(filing.notTaxableAbroad.nonEu.total).toBe(189000);
+    expect(filing.report.kennzahlen["011"]).toBeUndefined();
+  });
+});
