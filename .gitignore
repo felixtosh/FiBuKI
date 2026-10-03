@@ -6,6 +6,8 @@
 # not a directory, and "node_modules/" does not match one. Those symlinks then
 # show up as untracked and get swept into a commit by `git add -A`.
 node_modules
+# Throwaway config for a scoped typecheck on a small host (CLAUDE.md, Host safety)
+tsconfig.scoped.json
 /.pnp
 .pnp.js
 .yarn/install-state.gz
