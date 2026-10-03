@@ -24,7 +24,8 @@
     "selfhost:strip-line-item-fields": "vite-node --config vitest.selfhost.config.ts scripts/strip-line-item-fields.ts",
     "selfhost:decode-partner-name-entities": "vite-node --config vitest.selfhost.config.ts scripts/decode-partner-name-entities.ts",
     "selfhost:migrate-file-hash": "vite-node --config vitest.selfhost.config.ts scripts/migrate-file-hash.ts",
-    "selfhost:migrate-transaction-type": "vite-node --config vitest.selfhost.config.ts scripts/migrate-transaction-type.ts"
+    "selfhost:migrate-transaction-type": "vite-node --config vitest.selfhost.config.ts scripts/migrate-transaction-type.ts",
+    "selfhost:remove-local-file-hints": "vite-node --config vitest.selfhost.config.ts scripts/remove-local-file-hints.ts"
   },
   "engines": {
     "node": "22"
