@@ -337,3 +337,36 @@ test("applyFileFilters: invoiceCount is zero when only Document Type other is sh
   assert.equal(rows.length, 1);
   assert.equal(invoiceCount, 0);
 });
+
+// #162: a Copy is a second File of a document already held. It is never work,
+// so "Unassigned" leaves it out, and only while its original is live.
+test("applyFileFilters: Unassigned leaves out a Copy whose original is live", () => {
+  const files = [
+    makeFile({ id: "orig", transactionIds: ["t1"] }),
+    makeFile({ id: "copy", copyOfFileId: "orig" }),
+    makeFile({ id: "work" }),
+  ];
+  const { rows, copies } = applyFileFilters(files, { hasConnections: false });
+  assert.deepEqual(rows.map((f) => f.id), ["work"]);
+  assert.equal(copies.get("copy"), "orig");
+});
+
+test("applyFileFilters: a Copy whose original is deleted is back in Unassigned", () => {
+  const files = [
+    makeFile({ id: "orig", deletedAt: ts(new Date()) }),
+    makeFile({ id: "copy", copyOfFileId: "orig" }),
+  ];
+  const { rows, copies } = applyFileFilters(files, { hasConnections: false });
+  assert.deepEqual(rows.map((f) => f.id), ["copy"]);
+  assert.equal(copies.size, 0);
+});
+
+test("applyFileFilters: the Copy value shows only live Copies", () => {
+  const files = [
+    makeFile({ id: "orig" }),
+    makeFile({ id: "copy", copyOfFileId: "orig" }),
+    makeFile({ id: "orphan", copyOfFileId: "gone" }),
+  ];
+  const { rows } = applyFileFilters(files, { copiesOnly: true });
+  assert.deepEqual(rows.map((f) => f.id), ["copy"]);
+});

@@ -35,6 +35,7 @@ import { Section11MissingElements } from "@/components/documents/section-11-deta
 import { NoReceiptCategoryPopover } from "./no-receipt-category-popover";
 import { ReceiptLostDialog } from "./receipt-lost-dialog";
 import { useTransactionFiles, useFiles } from "@/hooks/use-files";
+import { TransactionFileCopies } from "@/components/files/file-copy-section";
 import { useEcbConverter } from "@/lib/currency";
 // Coverage, the Remainder and the tolerance that decides whether it is closed
 // are derived in one place, shared with the scorers (#239).
@@ -415,7 +416,7 @@ export function TransactionFilesSection({
 
   const { files, loading: filesLoading, connectFile, disconnectFile, unrejectFile } =
     useTransactionFiles(transaction.id);
-  const { files: allFiles, loading: allFilesLoading, getFileById } = useFiles();
+  const { files: allFiles, loading: allFilesLoading, getFileById, copiesOf } = useFiles();
   const {
     categories,
     loading: categoriesLoading,
@@ -788,14 +789,17 @@ export function TransactionFilesSection({
               </div>
               <div className="space-y-0.5">
                 {files.map((file) => (
-                  <FileRow
-                    key={file.id}
-                    file={file}
-                    transactionCurrency={transaction.currency}
-                    transactionDate={toDateSafe(transaction.date) || new Date()}
-                    onDisconnect={() => handleDisconnectFile(file.id)}
-                    disconnecting={disconnecting === file.id}
-                  />
+                  <div key={file.id}>
+                    <FileRow
+                      file={file}
+                      transactionCurrency={transaction.currency}
+                      transactionDate={toDateSafe(transaction.date) || new Date()}
+                      onDisconnect={() => handleDisconnectFile(file.id)}
+                      disconnecting={disconnecting === file.id}
+                    />
+                    {/* #162: the original's Copies, shown and never counted */}
+                    <TransactionFileCopies copies={copiesOf(file.id)} />
+                  </div>
                 ))}
                 {/* Add button after files */}
                 <div className="pt-1 flex items-center gap-2">

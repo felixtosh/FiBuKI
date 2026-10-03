@@ -186,3 +186,11 @@ test("Type not-invoice round-trips through the URL (#519)", () => {
   assert.equal(params.get("type"), "not-invoice");
   assert.equal(parseFileFiltersFromUrl(params).amountType, "not-invoice");
 });
+
+// #162: the Connections chip's third value, Copy, round-trips through the URL.
+test("connected=copy parses to copiesOnly and builds back", () => {
+  const filters = parseFileFiltersFromUrl(new URLSearchParams("connected=copy"));
+  assert.deepEqual(filters, { copiesOnly: true });
+  assert.equal(buildFileSearchParams(filters, "").get("connected"), "copy");
+  assert.equal(hasActiveFileFilters(filters), true);
+});

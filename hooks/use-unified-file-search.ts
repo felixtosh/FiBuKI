@@ -170,7 +170,7 @@ export function useUnifiedFileSearch(
   options?: UnifiedFileSearchOptions
 ): UseUnifiedFileSearchResult {
   const { localOnly, dateFrom, dateTo } = options || {};
-  const { files, loading: filesLoading } = useFiles();
+  const { files, loading: filesLoading, copies } = useFiles();
   const { integrations, loading: integrationsLoading, hasGmailIntegration } = useEmailIntegrations();
   const { user } = useAuth();
 
@@ -415,7 +415,10 @@ export function useUnifiedFileSearch(
         // Get filtered local files
         // Files already connected elsewhere stay in, badged by the overlay with
         // their Connection count (#241).
-        let filteredFiles = files.filter(isConnectCandidateFile);
+        // A Copy is never offered (#162): its original is the File to connect.
+        let filteredFiles = files.filter(
+          (f) => isConnectCandidateFile(f) && !copies.has(f.id)
+        );
 
         // Filter by date range ONLY if explicitly set by user
         if (dateFrom || dateTo) {
@@ -523,7 +526,7 @@ export function useUnifiedFileSearch(
         }
       }
     },
-    [files, gmailIntegrations, hasGmailIntegration, transactionInfo.date, localOnly, dateFrom, dateTo, searchFile, scoreResultsWithApi]
+    [files, copies, gmailIntegrations, hasGmailIntegration, transactionInfo.date, localOnly, dateFrom, dateTo, searchFile, scoreResultsWithApi]
   );
 
   // Clear results

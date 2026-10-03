@@ -166,7 +166,7 @@ export function FileToolbar({
           },
           {
             key: "transactions",
-            active: filters.hasConnections !== undefined,
+            active: filters.hasConnections !== undefined || filters.copiesOnly === true,
             node: (
               <>
       {/* Transactions: the Transactions column (#519) */}
@@ -174,22 +174,19 @@ export function FileToolbar({
         label={t("transactions.label")}
         icon={<Link2 className="h-4 w-4" />}
         allLabel={t("all")}
-        value={
-          filters.hasConnections === true
-            ? "assigned"
-            : filters.hasConnections === false
-              ? "unassigned"
-              : undefined
-        }
+        value={connectionsValue(filters)}
         onChange={(value) =>
           onFiltersChange({
             ...filters,
-            hasConnections: value === undefined ? undefined : value === "assigned",
+            hasConnections:
+              value === "assigned" ? true : value === "unassigned" ? false : undefined,
+            copiesOnly: value === "copy" ? true : undefined,
           })
         }
         options={[
           { value: "assigned", label: t("assigned") },
           { value: "unassigned", label: t("unassigned") },
+          { value: "copy", label: t("copy") },
         ]}
       />
               </>
@@ -244,4 +241,12 @@ export function FileToolbar({
       )}
     </div>
   );
+}
+
+/** The Connections chip's value: assigned, unassigned (Copies left out), or Copy (#162). */
+function connectionsValue(filters: FileFilters): string | undefined {
+  if (filters.copiesOnly) return "copy";
+  if (filters.hasConnections === true) return "assigned";
+  if (filters.hasConnections === false) return "unassigned";
+  return undefined;
 }

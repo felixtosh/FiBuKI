@@ -47,6 +47,7 @@ export function useFiles(filters?: FileFilters) {
   const deletedOnly = filters?.deletedOnly;
   const search = filters?.search;
   const hasConnections = filters?.hasConnections;
+  const copiesOnly = filters?.copiesOnly;
   const extractionComplete = filters?.extractionComplete;
   const documentTypes = filters?.documentTypes;
   const extractedDateFrom = filters?.extractedDateFrom;
@@ -56,13 +57,14 @@ export function useFiles(filters?: FileFilters) {
   const amountType = filters?.amountType;
 
   // Apply filters client-side via useMemo - no loading state change
-  const { rows: files, invoiceCount } = useMemo(
+  const { rows: files, invoiceCount, copies } = useMemo(
     () =>
       applyFileFilters(rawFiles, {
         includeDeleted,
         deletedOnly,
         search,
         hasConnections,
+        copiesOnly,
         extractionComplete,
         documentTypes,
         extractedDateFrom,
@@ -77,6 +79,7 @@ export function useFiles(filters?: FileFilters) {
       deletedOnly,
       search,
       hasConnections,
+      copiesOnly,
       extractionComplete,
       documentTypes,
       extractedDateFrom,
@@ -154,6 +157,36 @@ export function useFiles(filters?: FileFilters) {
       await callFunction("unmarkFileAsNotInvoice", { fileId });
     },
     []
+  );
+
+  // The Copy acts (#162, ADR-0010). Marking also accepts a Copy suggestion;
+  // "Not a Copy" undoes a Copy or declines a suggestion.
+  const markAsCopy = useCallback(
+    async (fileId: string, originalFileId: string): Promise<void> => {
+      await callFunction("markFileAsCopy", { fileId, originalFileId });
+    },
+    []
+  );
+
+  const markNotACopy = useCallback(
+    async (fileId: string): Promise<void> => {
+      await callFunction("unmarkFileAsCopy", { fileId });
+    },
+    []
+  );
+
+  const makeOriginal = useCallback(
+    async (fileId: string): Promise<void> => {
+      await callFunction("makeFileTheOriginal", { fileId });
+    },
+    []
+  );
+
+  /** The live Copies of a File: the ones whose original it is. */
+  const copiesOf = useCallback(
+    (fileId: string): TaxFile[] =>
+      rawFiles.filter((f) => copies.get(f.id) === fileId),
+    [rawFiles, copies]
   );
 
   const getFileById = useCallback(
@@ -257,6 +290,11 @@ export function useFiles(filters?: FileFilters) {
     purge,
     markAsNotInvoice,
     unmarkAsNotInvoice,
+    markAsCopy,
+    markNotACopy,
+    makeOriginal,
+    copies,
+    copiesOf,
     getFileById,
     connectToTransaction,
     disconnectFromTransaction,
