@@ -550,41 +550,22 @@ export default function AdminUsersPage() {
     setError("");
     try {
       const bulkRetryFn = httpsCallable<
-        { targetUid: string; maxFiles?: number },
-        {
-          processed: number;
-          succeeded: number;
-          failed: number;
-          hasMore: boolean;
-          sampleErrors: string[];
-        }
+        { targetUid: string },
+        { queued: number; skippedHandCorrected: number }
       >(functions, "bulkRetryExtraction");
 
-      let totalProcessed = 0;
-      let totalSucceeded = 0;
-      let totalFailed = 0;
-      const allErrors: string[] = [];
+      // Returns once every errored file is queued; the extractions run in the
+      // background and land on each file (#603).
+      const { queued, skippedHandCorrected } = (await bulkRetryFn({ targetUid })).data;
 
-      // Poll until no more errored files remain (or 10 batches max).
-      for (let batch = 0; batch < 10; batch++) {
-        const result = await bulkRetryFn({ targetUid });
-        totalProcessed += result.data.processed;
-        totalSucceeded += result.data.succeeded;
-        totalFailed += result.data.failed;
-        allErrors.push(...result.data.sampleErrors);
-        if (!result.data.hasMore || result.data.processed === 0) break;
-      }
-
-      if (totalProcessed === 0) {
+      if (queued === 0 && skippedHandCorrected === 0) {
         setSuccess("No errored files found for this user");
       } else {
-        const errorSnippet =
-          totalFailed > 0 && allErrors.length > 0
-            ? ` (sample failure: ${allErrors[0].slice(0, 80)})`
+        const skipped =
+          skippedHandCorrected > 0
+            ? `, ${skippedHandCorrected} skipped because a person corrected them by hand`
             : "";
-        setSuccess(
-          `Rescanned ${totalProcessed} file(s): ${totalSucceeded} succeeded, ${totalFailed} still failed${errorSnippet}`,
-        );
+        setSuccess(`Queued ${queued} file(s) for re-extraction${skipped}`);
       }
       setTimeout(() => setSuccess(""), 8000);
     } catch (err) {

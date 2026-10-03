@@ -105,6 +105,8 @@ export function buildUnmarkNotInvoiceUpdates(
     // Reset extraction to trigger re-extraction
     extractionComplete: false,
     extractionError: null,
+    // Queued again until a worker picks it up (#603).
+    extractionStartedAt: null,
     updatedAt: FieldValue.serverTimestamp(),
   };
 

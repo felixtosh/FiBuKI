@@ -17,12 +17,16 @@
  * net-vs-gross total inference, ISO-date → local-time Timestamp conversion,
  * confidence rounding, raw-text counterparty overrides, retry gating/reset
  * semantics, and trigger guards.
+ *
+ * Retry and the triggers queue the Extraction and return (#603); the tests
+ * run the queue with drainExtractionQueue, as the worker would.
  */
 
 import { describe, it, expect, beforeEach, beforeAll, vi } from "vitest";
 import { MODELS } from "../utils/models";
 import { getFirestore, Timestamp, __resetFirestoreShim, __whenShimIdle } from "./firestore-shim";
 import { drainTriggers, __resetTriggerShim } from "./trigger-shim";
+import { drainExtractionQueue } from "./extraction-worker";
 import { getStorage } from "./storage-shim";
 
 // ---------------------------------------------------------------------------
@@ -940,6 +944,13 @@ describe("characterization: retryFileExtraction callable", () => {
     return retryFileExtraction.run({ data, auth: { uid } } as never);
   }
 
+  /** Retry, then let the worker run what it queued. */
+  async function retryAndRun(data: { fileId: string } & Record<string, unknown>) {
+    const res = await call(data);
+    expect(res).toEqual({ queued: true, fileId: data.fileId });
+    await drainExtractionQueue();
+  }
+
   it("rejects a missing fileId as invalid-argument", async () => {
     await expect(call({})).rejects.toMatchObject({ code: "invalid-argument" });
   });
@@ -1004,13 +1015,8 @@ describe("characterization: retryFileExtraction callable", () => {
     q({ isInvoice: true, confidence: 0.95 });
     q({ extracted: { amount: 42, confidence: 1 } });
 
-    const res = (await call({
-      fileId: "f-overwrite",
-      force: true,
-      overwriteCorrections: true,
-    })) as { success: boolean };
+    await retryAndRun({ fileId: "f-overwrite", force: true, overwriteCorrections: true });
 
-    expect(res.success).toBe(true);
     const doc = await fileDoc("f-overwrite");
     expect(doc.extractedAmount).toBe(42);
     // The marker survives the overwrite — the file stays on the exclusion list.
@@ -1023,8 +1029,7 @@ describe("characterization: retryFileExtraction callable", () => {
     q({ isInvoice: true, confidence: 0.95 });
     q({ extracted: { amount: 42, confidence: 1 } });
 
-    const res = (await call({ fileId: "f-forced", force: true })) as { success: boolean };
-    expect(res.success).toBe(true);
+    await retryAndRun({ fileId: "f-forced", force: true });
     expect((await fileDoc("f-forced")).extractedAmount).toBe(42);
   });
 
@@ -1043,8 +1048,7 @@ describe("characterization: retryFileExtraction callable", () => {
     });
     q({ extracted: { amount: 100, confidence: 1 } });
 
-    const res = (await call({ fileId: "f-redo" })) as { success: boolean };
-    expect(res.success).toBe(true);
+    await retryAndRun({ fileId: "f-redo" });
     expect(gemini.requests).toHaveLength(1); // user override → classification skipped
 
     const doc = await fileDoc("f-redo");
@@ -1071,7 +1075,7 @@ describe("characterization: retryFileExtraction callable", () => {
     });
     q({ extracted: { amount: 250, confidence: 0.9 } });
 
-    await call({ fileId: "f-manual" });
+    await retryAndRun({ fileId: "f-manual" });
     expect(gemini.requests).toHaveLength(1); // wasNotInvoice → user override, no classify
 
     const doc = await fileDoc("f-manual");
@@ -1082,17 +1086,14 @@ describe("characterization: retryFileExtraction callable", () => {
     expect(doc.extractedAmount).toBe(250);
   });
 
-  it("persists a new extraction error on the doc and rethrows as internal", async () => {
+  it("persists a new extraction error on the doc; the caller reads it there (#603)", async () => {
     await seedFile("f-err", {
       extractionError: "previous boom",
       extractionComplete: true,
       storagePath: "missing/nope.pdf",
     });
 
-    await expect(call({ fileId: "f-err" })).rejects.toMatchObject({
-      code: "internal",
-      message: "No such object: missing/nope.pdf",
-    });
+    await retryAndRun({ fileId: "f-err" });
     expect(gemini.requests).toHaveLength(0); // failed at download, before any AI call
 
     const doc = await fileDoc("f-err");
@@ -1116,6 +1117,7 @@ describe("characterization: extractFileData triggers", () => {
     await seedFile("t-fibuki", { isFibukiGenerated: true });
     await seedFile("t-deleted", { deletedAt: Timestamp.now() });
     await drainTriggers();
+    expect(await drainExtractionQueue()).toBe(0); // nothing was queued
 
     expect(gemini.requests).toHaveLength(0);
     expect((await fileDoc("t-fibuki")).extractionError).toBeUndefined();
@@ -1126,8 +1128,13 @@ describe("characterization: extractFileData triggers", () => {
     q({ isInvoice: false, reason: "Spam", confidence: 0.8 });
     await seedFile("t-new");
     await drainTriggers();
+    // The trigger only queued it: nothing is extracted yet.
+    expect(gemini.requests).toHaveLength(0);
+    expect((await fileDoc("t-new")).extractionStartedAt).toBeUndefined();
+    await drainExtractionQueue();
 
     const doc = await fileDoc("t-new");
+    expect(doc.extractionStartedAt).toBeInstanceOf(Timestamp); // "Analyzing" from the claim on
     expect(doc.classificationComplete).toBe(true);
     expect(doc.isNotInvoice).toBe(true);
     expect(doc.notInvoiceReason).toBe("Spam");
@@ -1137,6 +1144,7 @@ describe("characterization: extractFileData triggers", () => {
   it("persists extraction failures on the doc instead of crashing the trigger", async () => {
     await seedFile("t-broken", { storagePath: undefined });
     await drainTriggers();
+    await drainExtractionQueue();
 
     const doc = await fileDoc("t-broken");
     expect(doc.extractionComplete).toBe(true);
@@ -1150,6 +1158,7 @@ describe("characterization: extractFileData triggers", () => {
     q({ isInvoice: false, reason: "Duplicate upload", confidence: 0.7 });
     await db.collection("files").doc("t-undelete").update({ deletedAt: null });
     await drainTriggers();
+    await drainExtractionQueue();
 
     const doc = await fileDoc("t-undelete");
     expect(doc.isNotInvoice).toBe(true);

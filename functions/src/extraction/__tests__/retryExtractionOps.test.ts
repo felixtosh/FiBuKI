@@ -41,6 +41,8 @@ describe("buildRetryResetUpdates", () => {
     expect(updates).toMatchObject({
       extractionComplete: false,
       extractionError: null,
+      // Back to "Queued" until a worker picks it up (#603).
+      extractionStartedAt: null,
       isNotInvoice: null,
       partnerMatchComplete: false,
       partnerSuggestions: [],

@@ -28,6 +28,7 @@ import {
   __resetTriggerQueueMode,
 } from "./trigger-queue";
 import { drainTriggerQueue, drainTriggerQueueOnce } from "./trigger-queue-drain";
+import { drainChanges } from "./bus";
 import {
   onDocumentCreated,
   onDocumentUpdated,
@@ -210,6 +211,49 @@ describe("durable trigger queue", () => {
     // Reclaimed rather than dropped — the write it describes is committed, so
     // discarding the event would lose the trigger for good.
     expect(seen).toEqual(["f1"]);
+    expect(await pending()).toHaveLength(0);
+  });
+
+  // #603: a batch claimed up front sat claimed while its head dispatched, and
+  // past the claim window another pass dispatched the tail a second time.
+  it("dispatches no event twice when one handler outlasts the claim window", async () => {
+    const calls: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    onDocumentCreated("files/{id}", async (e) => {
+      calls.push(e.params.id);
+      if (e.params.id === "slow") await gate;
+    });
+
+    await asWebContainer(async () => {
+      await db.collection("files").doc("slow").set({ name: "slow.pdf" });
+      await db.collection("files").doc("next").set({ name: "next.pdf" });
+    });
+
+    const opts = { claimTimeoutMs: 200 };
+    const first = drainTriggerQueueOnce(opts);
+    try {
+      await new Promise((r) => setTimeout(r, 600)); // three claim windows
+
+      // Claimed one at a time and kept fresh: the running event is still
+      // claimed once, and the one behind it was never claimed at all.
+      const rows = await pending();
+      expect(rows.map((r) => [r.doc_id, r.attempts, r.claimed_at !== null])).toEqual([
+        ["slow", 1, true],
+        ["next", 0, false],
+      ]);
+
+      // Another drainer (a second replica) takes the next event, not the
+      // running one. (In this one process both share the bus, so the next
+      // handler runs once the slow one ends.)
+      expect(await drainTriggerQueueOnce(opts)).toBe(1);
+    } finally {
+      release();
+    }
+    expect(await first).toBe(1);
+    await drainChanges();
+
+    expect(calls).toEqual(["slow", "next"]);
     expect(await pending()).toHaveLength(0);
   });
 

@@ -1707,7 +1707,8 @@ describe("Tool Registry Handlers: Files", () => {
 
       const result = await handlers.retryFileExtractionTool(userId, { fileId: "f-1" });
 
-      expect(result).toMatchObject({ success: true, fileId: "f-1", duration: 12 });
+      // The tool queues and returns (#603); this build runs the queue inline.
+      expect(result).toEqual({ queued: true, fileId: "f-1" });
       expect(extraction.runExtraction).toHaveBeenCalledTimes(1);
       // The reset is written before extraction runs, and matching is re-armed.
       const file = store.getDoc("files", "f-1") as Record<string, unknown>;
@@ -1830,7 +1831,7 @@ describe("Tool Registry Handlers: Files", () => {
       );
     });
 
-    it("stamps a failed extraction on the document and reports it", async () => {
+    it("stamps a failed extraction on the document, where the agent reads it", async () => {
       store.setDoc(
         "files",
         "f-5",
@@ -1838,9 +1839,11 @@ describe("Tool Registry Handlers: Files", () => {
       );
       extraction.runExtraction.mockRejectedValue(new Error("No such object: missing/nope.pdf"));
 
-      await expect(handlers.retryFileExtractionTool(userId, { fileId: "f-5" })).rejects.toThrow(
-        /^EXTRACTION_FAILED: No such object/
-      );
+      // Queued, not refused: how the Extraction went is on the File (#603).
+      await expect(handlers.retryFileExtractionTool(userId, { fileId: "f-5" })).resolves.toEqual({
+        queued: true,
+        fileId: "f-5",
+      });
 
       const file = store.getDoc("files", "f-5") as Record<string, unknown>;
       expect(file.extractionComplete).toBe(true);

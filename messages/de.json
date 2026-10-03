@@ -395,6 +395,7 @@
       "uploaded": "Hochgeladen",
       "size": "Größe",
       "source": "Quelle",
+      "queued": "In der Warteschlange",
       "analyzing": "Wird analysiert...",
       "notDetermined": "Nicht bestimmt",
       "vatDeductible": "Vorsteuer abziehbar",
@@ -541,6 +542,13 @@
       "confirm": "In {count} Belege aufteilen",
       "cancel": "Abbrechen",
       "failed": "Aufteilen fehlgeschlagen: {message}"
+    },
+    "processing": {
+      "queued": "In der Warteschlange",
+      "analyzing": "Wird analysiert...",
+      "parsing": "Wird ausgelesen...",
+      "notInvoice": "Keine Rechnung",
+      "failed": "Extraktion fehlgeschlagen"
     }
   },
   "progress": {

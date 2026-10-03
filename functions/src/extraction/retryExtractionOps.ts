@@ -16,8 +16,12 @@
  */
 
 import type { Firestore } from "firebase-admin/firestore";
-import { Timestamp } from "firebase-admin/firestore";
-import { runExtraction } from "./extractionCore";
+import { enqueueExtraction } from "./extractionQueue";
+import { buildRetryResetUpdates } from "./retryReset";
+
+// The reset is its own module so the extraction worker can apply it too
+// without importing this one (which imports the queue).
+export { buildRetryResetUpdates };
 import { correctedFieldsOf } from "../files/extractionProvenanceOps";
 
 /** Why a retry was refused. Each surface maps these onto its own error type. */
@@ -25,8 +29,7 @@ export type RetryRefusalCode =
   | "NOT_FOUND"
   | "ACCESS_DENIED"
   | "ALREADY_EXTRACTED"
-  | "HAND_CORRECTED"
-  | "EXTRACTION_FAILED";
+  | "HAND_CORRECTED";
 
 export class RetryExtractionError extends Error {
   constructor(readonly code: RetryRefusalCode, message: string) {
@@ -77,48 +80,19 @@ export function canRetryExtraction(
   return !fileData.extractionComplete;
 }
 
-/**
- * The fields a retry clears before extraction re-runs.
- *
- * Partner and transaction matching are reset because both derive from the
- * extracted data — leaving them would pin the file to conclusions drawn from
- * the output being replaced. A manual partner assignment survives: the user
- * decided that, not the matcher.
- */
-export function buildRetryResetUpdates(fileData: {
-  partnerMatchedBy?: unknown;
-}): Record<string, unknown> {
-  const resetData: Record<string, unknown> = {
-    extractionComplete: false,
-    extractionError: null,
-    isNotInvoice: null,
-    notInvoiceReason: null,
-    partnerMatchComplete: false,
-    partnerMatchedAt: null,
-    partnerSuggestions: [],
-    transactionMatchComplete: false,
-    transactionMatchedAt: null,
-    transactionSuggestions: [],
-    updatedAt: Timestamp.now(),
-  };
-
-  if (fileData.partnerMatchedBy !== "manual") {
-    resetData.partnerId = null;
-    resetData.partnerType = null;
-    resetData.partnerMatchedBy = null;
-    resetData.partnerMatchConfidence = null;
-  }
-
-  return resetData;
+/** A Retry the caller was not refused: the File waits for its Extraction. */
+export interface RetryExtractionResult {
+  queued: true;
+  fileId: string;
 }
 
 /**
- * Re-run extraction on one file the caller owns.
+ * Queue a fresh Extraction of one file the caller owns, and return at once.
  *
- * Throws RetryExtractionError for every refusal, including a failed extraction
- * — the failure is stamped on the document first, exactly as the trigger path
- * does, so a file never sits with `extractionComplete: false` forever after a
- * crash mid-run.
+ * Throws RetryExtractionError for every refusal. The checks run here, before
+ * anything is queued, so the caller hears a refusal synchronously; how the
+ * Extraction then goes is written on the File, which the caller reads later
+ * (#603). A failed Extraction is stamped on the File as `extractionError`.
  *
  * A file carrying hand corrections is refused outright unless the caller asks
  * for those corrections to be overwritten (#184), and the refusal names the
@@ -130,7 +104,7 @@ export function buildRetryResetUpdates(fileData: {
 export async function retryExtractionForFile(
   db: Firestore,
   { fileId, userId, force, overwriteCorrections }: RetryExtractionOptions
-): Promise<Awaited<ReturnType<typeof runExtraction>>> {
+): Promise<RetryExtractionResult> {
   const fileRef = db.collection("files").doc(fileId);
   const fileDoc = await fileRef.get();
 
@@ -175,21 +149,12 @@ export async function retryExtractionForFile(
   );
 
   await fileRef.update(buildRetryResetUpdates(fileData));
+  await enqueueExtraction({
+    fileId,
+    userId,
+    skipClassification: isUserOverride,
+    kind: "retry",
+  });
 
-  try {
-    return await runExtraction(fileId, fileData, { skipClassification: isUserOverride });
-  } catch (error) {
-    console.error(`Retry extraction failed for file ${fileId}:`, error);
-
-    await fileRef.update({
-      extractionComplete: true,
-      extractionError: error instanceof Error ? error.message : "Unknown extraction error",
-      updatedAt: Timestamp.now(),
-    });
-
-    throw new RetryExtractionError(
-      "EXTRACTION_FAILED",
-      error instanceof Error ? error.message : "Extraction failed"
-    );
-  }
+  return { queued: true, fileId };
 }

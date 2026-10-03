@@ -12,7 +12,6 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { getFirestore, __resetFirestoreShim } from "./firestore-shim";
 import { enableAutoDrain } from "./bus";
 import { onDocumentCreated, __resetTriggerShim } from "./trigger-shim";
-import { resweepPendingExtractions } from "./extraction-resweep";
 
 const db = getFirestore();
 
@@ -112,27 +111,4 @@ describe("auto-drain", () => {
     expect(spins).toBe(previous);
     expect(spins).toBeLessThanOrEqual(110);
   }, 20_000);
-});
-
-describe("resweepPendingExtractions", () => {
-  it("re-queues only live files awaiting extraction", async () => {
-    enableAutoDrain();
-    const seen: string[] = [];
-    onDocumentCreated("files/{id}", (e) => {
-      seen.push(e.params.id);
-    });
-
-    await db.collection("files").doc("pending").set({ extractionComplete: false });
-    await db.collection("files").doc("done").set({ extractionComplete: true });
-    await db.collection("files").doc("deleted").set({ extractionComplete: false, deletedAt: new Date() });
-    await db.collection("files").doc("generated").set({ extractionComplete: false, isFibukiGenerated: true });
-    // Let the four create-triggers themselves flush first.
-    await until(() => seen.length === 4);
-    seen.length = 0;
-
-    const n = await resweepPendingExtractions(() => {});
-    expect(n).toBe(1);
-    await until(() => seen.length === 1);
-    expect(seen).toEqual(["pending"]);
-  });
 });

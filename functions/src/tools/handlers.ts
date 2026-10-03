@@ -1345,8 +1345,8 @@ export async function unmarkFileAsNotInvoice(userId: string, args: Record<string
  * the UI drives — a file re-extracted by an agent and one re-extracted by a
  * click have to land in the same state.
  *
- * Extraction runs inline here rather than being queued: the only trigger that
- * re-runs it fires on undelete, so there is nothing to hand the work to.
+ * The Extraction is queued and this returns at once (#603): the agent reads
+ * the File again later to see what it got.
  *
  * The refusal codes are surfaced as message prefixes, matching the
  * PAIR_REJECTED convention the connect handler uses: an agent working a list
@@ -1368,11 +1368,9 @@ export async function retryFileExtractionTool(userId: string, args: Record<strin
       overwriteCorrections: args.overwriteCorrections === true,
     });
 
-    console.log(`[retryFileExtraction] Re-extracted file ${fileId}`, { userId, via: "tools" });
+    console.log(`[retryFileExtraction] Queued re-extraction of file ${fileId}`, { userId, via: "tools" });
 
-    // runExtraction already reports success and duration; fileId is what the
-    // agent needs to tie the result back to the file it asked about.
-    return { ...result, fileId };
+    return result;
   } catch (error) {
     if (error instanceof RetryExtractionError) {
       throw new Error(`${error.code}: ${error.message}`);

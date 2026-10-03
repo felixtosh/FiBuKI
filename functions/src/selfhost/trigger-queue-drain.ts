@@ -17,8 +17,11 @@
  *
  * ## Ordering
  *
- * Events are claimed in `seq` order and dispatched one at a time, so a single
- * drainer preserves write order. Two API replicas can interleave, because
+ * Events are claimed one at a time, at dispatch, in `seq` order, so a single
+ * drainer preserves write order. Claiming a batch up front (it used to be 20)
+ * let the tail of the batch sit claimed while the head dispatched; past the
+ * claim window another pass took it for abandoned and dispatched it again
+ * (#603). While a handler runs, its claim is kept fresh for the same reason. Two API replicas can interleave, because
  * `SKIP LOCKED` lets each claim a different row — the same weak ordering real
  * Firestore gives, where concurrent trigger invocations have no relative order.
  */
@@ -27,13 +30,10 @@ import { drainChanges, emitChange } from "./bus";
 import { getSqlClient, __decodeDocValue } from "./firestore-shim";
 import { getTenantId } from "./db/tenant";
 
-/** Rows claimed per drain pass. Bounds one transaction's work, not the queue. */
-const CLAIM_BATCH = 20;
-
 /**
- * How long a claimed row may stay in flight before another pass may reclaim it.
- * Must exceed the slowest realistic handler — extraction and matching run for
- * minutes — or a slow trigger gets dispatched twice concurrently.
+ * How long a claim may go unrefreshed before another pass may reclaim it. A
+ * dispatching drainer refreshes its claim well inside this, so only a dead
+ * process's claim runs out.
  */
 const CLAIM_TIMEOUT_MS = 15 * 60 * 1000;
 
@@ -65,49 +65,71 @@ interface ClaimedRow {
  * committed, so dropping the event would silently lose the trigger — the exact
  * failure this module exists to remove.
  */
-async function reclaimStale(q: (sql: string, params?: unknown[]) => Promise<unknown>): Promise<void> {
+async function reclaimStale(
+  q: (sql: string, params?: unknown[]) => Promise<unknown>,
+  claimTimeoutMs: number,
+): Promise<void> {
   await q(
     `UPDATE trigger_events SET claimed_at = NULL
       WHERE tenant_id = $1 AND claimed_at IS NOT NULL AND claimed_at < $2 AND attempts < $3`,
-    [getTenantId(), new Date(Date.now() - CLAIM_TIMEOUT_MS), MAX_ATTEMPTS],
+    [getTenantId(), new Date(Date.now() - claimTimeoutMs), MAX_ATTEMPTS],
   );
 }
 
+export interface TriggerQueueDrainOptions {
+  /** Override the claim window. Tests shrink it; nothing else should. */
+  claimTimeoutMs?: number;
+}
+
 /**
- * Claim, dispatch and delete one batch. Returns how many events were handled,
- * so the caller can keep draining while the queue is non-empty.
+ * Claim, dispatch and delete one event. Returns 1 when an event was handled
+ * and 0 when none was waiting, so the caller can keep draining.
  */
-export async function drainTriggerQueueOnce(): Promise<number> {
+export async function drainTriggerQueueOnce(opts: TriggerQueueDrainOptions = {}): Promise<number> {
   const pg = await getSqlClient();
   const tenantId = getTenantId();
+  const claimTimeoutMs = opts.claimTimeoutMs ?? CLAIM_TIMEOUT_MS;
 
   // Claim in its own short transaction. Holding it across dispatch would pin a
-  // pooled connection for the whole of a multi-minute extraction handler, and
-  // at POSTGRES_MAX_CONNECTIONS=25 a handful of those is the entire pool.
-  const claimed = await pg.tx(tenantId, async (q) => {
-    await reclaimStale(q);
+  // pooled connection for the whole of a slow handler, and at
+  // POSTGRES_MAX_CONNECTIONS=25 a handful of those is the entire pool.
+  const row = await pg.tx(tenantId, async (q) => {
+    await reclaimStale(q, claimTimeoutMs);
     const res = await q<ClaimedRow>(
       `UPDATE trigger_events
           SET claimed_at = now(), attempts = attempts + 1
-        WHERE seq IN (
+        WHERE seq = (
           SELECT seq FROM trigger_events
            WHERE tenant_id = $1 AND claimed_at IS NULL AND attempts < $2
            ORDER BY seq
-           LIMIT $3
+           LIMIT 1
            FOR UPDATE SKIP LOCKED
         )
       RETURNING seq, collection_path, doc_id, path, before, after`,
-      [tenantId, MAX_ATTEMPTS, CLAIM_BATCH],
+      [tenantId, MAX_ATTEMPTS],
     );
-    return res.rows;
+    return res.rows[0];
   });
 
-  if (claimed.length === 0) return 0;
+  if (!row) return 0;
 
-  // RETURNING does not promise the UPDATE's row order.
-  claimed.sort((a, b) => Number(a.seq) - Number(b.seq));
+  const heartbeat = setInterval(
+    () =>
+      void pg
+        .tx(tenantId, (q) =>
+          q(`UPDATE trigger_events SET claimed_at = now() WHERE tenant_id = $1 AND seq = $2`, [
+            tenantId,
+            row.seq,
+          ]),
+        )
+        .catch((err) =>
+          console.error(`selfhost trigger-queue: could not refresh the claim on ${row.path}:`, err),
+        ),
+    Math.max(10, Math.min(60 * 1000, claimTimeoutMs / 4)),
+  );
+  heartbeat.unref?.();
 
-  for (const row of claimed) {
+  try {
     // SQL NULL on a side means "no document there": null before = create,
     // null after = delete. undefined is what the bus and trigger shim read.
     emitChange({
@@ -122,26 +144,28 @@ export async function drainTriggerQueueOnce(): Promise<number> {
         row.after === null ? undefined : (__decodeDocValue(row.after) as Record<string, unknown>),
     });
 
-    // Dispatch this event and any cascade it starts before moving on, so the
-    // queue drains in order rather than interleaving with the next event.
+    // Dispatch this event and any cascade it starts before claiming the next,
+    // so the queue drains in order rather than interleaving.
     await drainChanges();
-
-    await pg.tx(tenantId, (q) =>
-      q(`DELETE FROM trigger_events WHERE tenant_id = $1 AND seq = $2`, [tenantId, row.seq]),
-    );
+  } finally {
+    clearInterval(heartbeat);
   }
 
-  return claimed.length;
+  await pg.tx(tenantId, (q) =>
+    q(`DELETE FROM trigger_events WHERE tenant_id = $1 AND seq = $2`, [tenantId, row.seq]),
+  );
+
+  return 1;
 }
 
 /**
  * Drain until the queue is empty, then report how many events were delivered.
  * Separate from the loop below so boot and tests can drain deterministically.
  */
-export async function drainTriggerQueue(): Promise<number> {
+export async function drainTriggerQueue(opts: TriggerQueueDrainOptions = {}): Promise<number> {
   let total = 0;
   for (;;) {
-    const n = await drainTriggerQueueOnce();
+    const n = await drainTriggerQueueOnce(opts);
     if (n === 0) return total;
     total += n;
   }

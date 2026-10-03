@@ -47,9 +47,17 @@ describe("FileKindControl", () => {
   });
 
   it("says Analyzing... with no control while classification runs", () => {
-    renderControl({ classifying: true });
+    const started = file({ extractionComplete: false, extractionStartedAt: {} as TaxFile["extractionStartedAt"] });
+    renderControl({ file: started, classifying: true });
     expect(screen.queryByRole("combobox")).toBeNull();
     expect(screen.getByText("Analyzing...")).toBeTruthy();
+  });
+
+  // #603: an Extraction waits in a queue until a worker picks the File up.
+  it("says Queued before a worker picks the File up", () => {
+    renderControl({ file: file({ extractionComplete: false }), classifying: true });
+    expect(screen.queryByRole("combobox")).toBeNull();
+    expect(screen.getByText("Queued")).toBeTruthy();
   });
 });
 

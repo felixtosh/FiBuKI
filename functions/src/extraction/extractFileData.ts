@@ -1,14 +1,10 @@
 import { onDocumentCreated, onDocumentUpdated } from "firebase-functions/v2/firestore";
-import { getFirestore, Timestamp } from "firebase-admin/firestore";
-import { runExtraction } from "./extractionCore";
-
-const db = getFirestore();
+import { enqueueExtraction } from "./extractionQueue";
 
 /**
  * Triggered when a file document is updated.
- * Re-runs extraction when:
- * - File was undeleted (deletedAt went from non-null to null)
- * - extractionComplete is false
+ * Asks for an Extraction when the File was undeleted (deletedAt went from
+ * non-null to null) and its Extraction is not complete.
  */
 export const extractFileDataOnUndelete = onDocumentUpdated(
   {
@@ -31,33 +27,26 @@ export const extractFileDataOnUndelete = onDocumentUpdated(
       return;
     }
 
-    // Check if this is an undelete operation
     const wasDeleted = !!before.deletedAt;
     const isNowNotDeleted = !after.deletedAt;
     const needsExtraction = !after.extractionComplete;
 
     if (wasDeleted && isNowNotDeleted && needsExtraction) {
-      console.log(`[${new Date().toISOString()}] File ${fileId} was undeleted, starting extraction`);
-
-      try {
-        await runExtraction(fileId, after, {
-          skipClassification: false,
-        });
-      } catch (error) {
-        console.error(`Extraction failed for undeleted file ${fileId}:`, error);
-        await db.collection("files").doc(fileId).update({
-          extractionComplete: true,
-          extractionError: error instanceof Error ? error.message : "Unknown extraction error",
-          updatedAt: Timestamp.now(),
-        });
-      }
+      console.log(`[${new Date().toISOString()}] File ${fileId} was undeleted, queueing extraction`);
+      await enqueueExtraction({
+        fileId,
+        userId: after.userId as string,
+        skipClassification: false,
+        kind: "new",
+      });
     }
   }
 );
 
 /**
- * Triggered when a new file document is created in Firestore.
- * Extracts text and structured data from the file using the configured provider.
+ * Triggered when a new file document is created.
+ * Asks for an Extraction; the extraction worker runs it (#603), so a slow
+ * Extraction never holds the trigger queue.
  */
 export const extractFileData = onDocumentCreated(
   {
@@ -91,27 +80,11 @@ export const extractFileData = onDocumentCreated(
       return;
     }
 
-    console.log(`[${new Date().toISOString()}] Starting extraction for file: ${fileData.fileName} (${fileId})`);
-
-    try {
-      const latestDoc = await db.collection("files").doc(fileId).get();
-      if (latestDoc.exists && latestDoc.data()?.deletedAt) {
-        console.log(`File ${fileId} was soft-deleted before extraction, skipping`);
-        return;
-      }
-
-      await runExtraction(fileId, fileData, {
-        skipClassification: false,
-      });
-    } catch (error) {
-      console.error(`Extraction failed for file ${fileId}:`, error);
-
-      // Update document with error
-      await db.collection("files").doc(fileId).update({
-        extractionComplete: true,
-        extractionError: error instanceof Error ? error.message : "Unknown extraction error",
-        updatedAt: Timestamp.now(),
-      });
-    }
+    await enqueueExtraction({
+      fileId,
+      userId: fileData.userId as string,
+      skipClassification: false,
+      kind: "new",
+    });
   }
 );

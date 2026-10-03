@@ -39,6 +39,10 @@ export default defineConfig({
       // build emits host /__storage/download URLs instead of googleapis.com,
       // so backend-written download links resolve. See buildDownloadUrl-shim.ts.
       { find: /^.*\/utils\/buildDownloadUrl$/, replacement: shim("buildDownloadUrl-shim.ts") },
+      // Asking for an Extraction writes a job for the extraction worker instead
+      // of running it inline (#603). Its importers are siblings in
+      // extraction/, so the pattern catches the relative "./extractionQueue".
+      { find: /^.*\/extractionQueue$/, replacement: shim("extraction-queue-shim.ts") },
       // Mirrors next.config.ts: server-side document IO for the web container.
       // Must be listed BEFORE the generic "@/" rule below, which would otherwise
       // resolve this to the real firebase-admin module and defeat the swap.

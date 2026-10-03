@@ -290,6 +290,9 @@ export async function __resetFirestoreShim(): Promise<void> {
     // Undelivered trigger events are per-test state too: leaving them behind
     // lets one case's queued write fire inside the next case's drain.
     await q(`DELETE FROM trigger_events`);
+    // Same for waiting Extractions and whose turn it is (#603).
+    await q(`DELETE FROM extraction_jobs`);
+    await q(`DELETE FROM extraction_turns`);
   });
 }
 
