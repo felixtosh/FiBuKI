@@ -182,7 +182,10 @@ export async function partnerRevertForRemovedConnection(
 
 /**
  * Match the Transactions a revert left without a Partner again from their
- * bank data. Runs after the caller's commit; a failure is logged, never
+ * bank data: the rule-based step only. Not the full partner-matching run,
+ * which also posts a notification and chains file matching for every Partner
+ * it assigns; that chain could connect the File the user just disconnected
+ * straight back. Runs after the caller's commit; a failure is logged, never
  * thrown, because the disconnect it follows has already happened.
  */
 export async function rematchRevertedTransactions(
@@ -192,10 +195,23 @@ export async function rematchRevertedTransactions(
   const ids = [...new Set(transactionIds.filter((id): id is string => Boolean(id)))];
   if (ids.length === 0) return;
   try {
-    // Imported here: the matcher pulls in the whole Partner pipeline, which
-    // the File callables that call this have no other use for.
-    const { runPartnerMatching } = await import("./matchPartners");
-    await runPartnerMatching(userId, { transactionIds: ids, agenticFallback: false });
+    // Imported here: the matcher reads Firestore at load and pulls in the
+    // Partner pipeline, which the File callables have no other use for.
+    const { getFirestore } = await import("firebase-admin/firestore");
+    const { loadPartnerMatchingContext, processPartnerMatchesForTransactions, applyPartnerMatchUpdates } =
+      await import("./partnerMatchingShared");
+    const db = getFirestore();
+    const snaps = await Promise.all(ids.map((id) => db.collection("transactions").doc(id).get()));
+    const transactions = snaps.filter((s) => s.exists && s.data()?.userId === userId);
+    if (transactions.length === 0) return;
+    const partnerContext = await loadPartnerMatchingContext(userId);
+    const result = await processPartnerMatchesForTransactions({
+      userId,
+      transactions,
+      partnerContext,
+      skipUnchangedSuggestions: true,
+    });
+    await applyPartnerMatchUpdates(result.writeOperations, { userId });
   } catch (err) {
     console.error(`[partnerProvenance] Re-match after revert failed for ${ids.join(",")}:`, err);
   }

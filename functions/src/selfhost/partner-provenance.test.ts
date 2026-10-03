@@ -173,6 +173,30 @@ describe("disconnecting the File that supplied the Partner", () => {
     expect(after.partnerMatchedBy).toBe("auto");
   });
 
+  it("does not connect the disconnected File straight back when the bank data names its Partner", async () => {
+    await db.collection("subscriptions").doc(ME).update({ automationMode: "active" });
+    await invoiceFile("f-loan", {
+      partnerId: "p-bank",
+      partnerType: "user",
+      partnerMatchedBy: "auto",
+      partnerMatchConfidence: 98,
+      extractedPartner: "Sparkasse Oberoesterreich",
+      extractedIban: IBAN_BANK,
+      extractedAmount: 49.9,
+      extractedCurrency: "EUR",
+      extractedDate: DAY,
+      extractedText: "Sparkasse Oberoesterreich Kreditrate 49,90 EUR",
+    });
+    await connect("f-loan", "t-loan");
+    expect((await tx("t-loan")).partnerId).toBe("p-bank");
+
+    await disconnect("f-loan", "t-loan");
+
+    const after = await tx("t-loan");
+    expect(after.partnerId).toBe("p-bank");
+    expect(after.fileIds).toEqual([]);
+  });
+
   it("reverts on a Rejection too, and records no manual removal", async () => {
     await connect("f-magenta", "t-plain");
     await disconnect("f-magenta", "t-plain", true);
