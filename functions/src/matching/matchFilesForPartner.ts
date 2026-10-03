@@ -14,6 +14,7 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { MODELS } from "../utils/models";
 import { readDismissedTransactionIds } from "./dismissedTransactions";
+import { liveCopyIds } from "../files/copyOps";
 import { filePaymentTotal } from "./transactionScoring";
 
 const db = getFirestore();
@@ -446,12 +447,17 @@ export async function matchFilesForPartnerInternal(
     }
   }
 
-  // Filter to unconnected files that are invoices (not "Not Invoice")
+  // Filter to unconnected files that are invoices (not "Not Invoice"), and
+  // not Copies (#162): a Copy is never proposed as a Match.
+  const copies = await liveCopyIds(
+    db,
+    Array.from(fileMap.values()).map((doc) => ({ id: doc.id, data: doc.data() }))
+  );
   const unconnectedFiles = Array.from(fileMap.values()).filter((doc) => {
     const data = doc.data();
     const isConnected = data.transactionIds && data.transactionIds.length > 0;
     const isNotInvoice = data.isNotInvoice === true;
-    return !isConnected && !isNotInvoice;
+    return !isConnected && !isNotInvoice && !copies.has(doc.id);
   });
 
   if (unconnectedFiles.length === 0) {

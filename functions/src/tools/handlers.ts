@@ -28,6 +28,14 @@ import { buildDownloadUrl } from "../utils/buildDownloadUrl";
 import { dayStartUtc, dayEndExclusiveUtc } from "../uva/dateWindow";
 import { buildMarkNotInvoiceUpdates, buildUnmarkNotInvoiceUpdates } from "../files/notInvoiceOps";
 import {
+  liveCopyIds,
+  markFileAsCopy,
+  makeFileTheOriginal,
+  copyConnectCheck,
+  CLEARED_COPY_MARK,
+} from "../files/copyOps";
+import { unmarkFileAsCopyAndRematch } from "../files/copyCallables";
+import {
   buildClearVatNotClaimableUpdates,
   buildMarkVatNotClaimableUpdates,
   NonClaimableVatError,
@@ -244,6 +252,12 @@ export async function handleTool(
       return markFileAsNotInvoice(userId, args);
     case "unmark_file_as_not_invoice":
       return unmarkFileAsNotInvoice(userId, args);
+    case "mark_file_as_copy":
+      return markFileAsCopy(db, userId, args, "user");
+    case "unmark_file_as_copy":
+      return unmarkFileAsCopyAndRematch(db, userId, args);
+    case "make_file_the_original":
+      return makeFileTheOriginal(db, userId, args);
     case "confirm_file_recipient_is_user":
       return confirmFileRecipientIsUser(userId, args);
     case "unconfirm_file_recipient_is_user":
@@ -799,11 +813,23 @@ export async function listFiles(userId: string, args: Record<string, unknown>) {
       (args.includeDeleted === true || !f.deletedAt) && !f.isNotInvoice && !f.purgedAt
   );
 
+  // #162: whether each File is a Copy right now (its original live). The
+  // unmatched queue (hasConnections: false) leaves Copies out unless they are
+  // asked for: a Copy is never work.
+  const copies = await liveCopyIds(
+    db,
+    files.map((f) => ({ id: f.id as string, data: f as FirebaseFirestore.DocumentData }))
+  );
+  if (args.isCopy !== undefined) {
+    files = files.filter((f) => (args.isCopy ? copies.has(f.id as string) : !copies.has(f.id as string)));
+  }
+
   if (args.hasConnections !== undefined) {
     files = files.filter((f: Record<string, unknown>) =>
       args.hasConnections
         ? ((f.transactionIds as string[])?.length || 0) > 0
-        : ((f.transactionIds as string[])?.length || 0) === 0
+        : ((f.transactionIds as string[])?.length || 0) === 0 &&
+          (args.isCopy === true || !copies.has(f.id as string))
     );
   }
 
@@ -856,7 +882,9 @@ export async function listFiles(userId: string, args: Record<string, unknown>) {
   }
 
   // The page ends either at the requested limit or at the end of the scan.
-  const page = files.slice(0, requestedLimit);
+  const page = files
+    .slice(0, requestedLimit)
+    .map((f): Record<string, unknown> => ({ ...f, isCopy: copies.has(f.id as string) }));
   const truncated = files.length > requestedLimit;
   const hasMore = truncated || scanned.length === scanLimit;
 
@@ -995,8 +1023,13 @@ export async function connectFileToTransaction(userId: string, args: Record<stri
     );
   }
 
+  // #162, ADR-0010: a Copy holds no File Connection.
+  const copyCheck = await copyConnectCheck(db, fileDoc.data()!);
+  if (copyCheck.refusal) throw new Error(copyCheck.refusal);
+
   const batch = db.batch();
   const now = FieldValue.serverTimestamp();
+  if (copyCheck.clearMark) batch.update(fileDoc.ref, { ...CLEARED_COPY_MARK });
 
   const connRef = db.collection("fileConnections").doc();
   batch.set(connRef, {
@@ -1585,12 +1618,17 @@ export async function autoConnectFileSuggestions(userId: string, args: Record<st
       .where("transactionMatchComplete", "==", true)
       .get();
 
+    const copies = await liveCopyIds(
+      db,
+      snapshot.docs.map((doc) => ({ id: doc.id, data: doc.data() }))
+    );
     files = snapshot.docs
       .map((doc) => ({ id: doc.id, ...doc.data() }))
       .filter(
         (f: Record<string, unknown>) =>
           !f.deletedAt &&
           !f.isNotInvoice &&
+          !copies.has(f.id as string) &&
           (!(f.transactionIds as string[]) || (f.transactionIds as string[]).length === 0) &&
           (f.transactionSuggestions as Array<{ confidence: number }>)?.some(
             (s) => s.confidence >= minConfidence

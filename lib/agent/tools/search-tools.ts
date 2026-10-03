@@ -14,6 +14,7 @@ import { callFirebaseFunction } from "@/lib/api/firebase-callable";
 // the enforcement drifts apart again. Dependency-free pure logic; the relative
 // path across the package boundary mirrors lib/selfhost/firestore-admin-shim.
 import { readDismissedTransactionIds } from "../../../functions/src/matching/dismissedTransactions";
+import { liveCopies } from "@/lib/files/copy-state";
 
 // Lazy-load admin DB to avoid initialization at build time
 let _db: ReturnType<typeof import("@/lib/firebase/admin").getAdminDb> | null = null;
@@ -533,11 +534,30 @@ export const searchLocalFilesTool = tool(
       extractedPartner?: string;
     }
 
-    // Filter to eligible files (PDFs and images, not soft-deleted)
+    // A Copy is never offered (#162): its original is the File to connect.
+    // The original may be connected, so it can sit outside the query above.
+    const listedIds = new Set(filesSnapshot.docs.map((d) => d.id));
+    const missingOriginalIds = [
+      ...new Set(
+        filesSnapshot.docs
+          .map((d) => d.data().copyOfFileId as string | undefined)
+          .filter((id): id is string => !!id && !listedIds.has(id))
+      ),
+    ];
+    const missingOriginals = missingOriginalIds.length
+      ? await db.getAll(...missingOriginalIds.map((id) => db.collection("files").doc(id)))
+      : [];
+    const copies = liveCopies([
+      ...filesSnapshot.docs.map((d) => ({ id: d.id, ...d.data() })),
+      ...missingOriginals.filter((d) => d.exists).map((d) => ({ id: d.id, ...d.data() })),
+    ]);
+
+    // Filter to eligible files (PDFs and images, not soft-deleted, not Copies)
     const typeEligibleFiles: EligibleFile[] = filesSnapshot.docs
       .map((doc) => ({ id: doc.id, ...doc.data() } as EligibleFile))
       .filter((file) => {
         if (file.deletedAt) return false;
+        if (copies.has(file.id)) return false;
         return file.fileType === "application/pdf" || file.fileType?.startsWith("image/");
       });
 

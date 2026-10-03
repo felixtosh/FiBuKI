@@ -51,6 +51,7 @@ import {
 import { FilePreview } from "./file-preview";
 import { FileExtractedInfo } from "./file-extracted-info";
 import { FileConnectionsList } from "./file-connections-list";
+import { FileCopySection, type CopyAct, type MarkCopyAct } from "./file-copy-section";
 import { Section11Reasoning } from "@/components/documents/section-11-details";
 import { describeInvoiceDirection } from "@/lib/documents/document-type-presentation";
 import { InfoPopover } from "@/components/ui/info-popover";
@@ -106,6 +107,15 @@ interface FileDetailPanelProps {
   onOpenConnectTransaction?: () => void;
   /** Whether connect transaction overlay is open (for button state) */
   isConnectTransactionOpen?: boolean;
+  /** #162: the live original when this File is a Copy right now. */
+  copyOriginal?: TaxFile | null;
+  /** #162: the live File a Copy suggestion on this File names. */
+  copySuggestionOriginal?: TaxFile | null;
+  /** #162: this File's own live Copies. */
+  copiesOfFile?: TaxFile[];
+  onMarkAsCopy?: MarkCopyAct;
+  onNotACopy?: CopyAct;
+  onMakeOriginal?: CopyAct;
 }
 
 export function FileDetailPanel(props: FileDetailPanelProps) {
@@ -153,6 +163,12 @@ function FileDetailPanelInner({
   onHighlightField,
   onOpenConnectTransaction,
   isConnectTransactionOpen = false,
+  copyOriginal,
+  copySuggestionOriginal,
+  copiesOfFile,
+  onMarkAsCopy,
+  onNotACopy,
+  onMakeOriginal,
 }: FileDetailPanelProps) {
   const router = useRouter();
   const t = useTranslations("files.detail");
@@ -627,6 +643,19 @@ function FileDetailPanelInner({
             </div>
 
             <Separator />
+
+            {/* A Copy, a Copy suggestion, or this File's Copies (#162) */}
+            {onMarkAsCopy && onNotACopy && onMakeOriginal ? (
+              <FileCopySection
+                file={file}
+                original={copyOriginal}
+                suggestedOriginal={copySuggestionOriginal}
+                copies={copiesOfFile}
+                onMarkAsCopy={onMarkAsCopy}
+                onNotACopy={onNotACopy}
+                onMakeOriginal={onMakeOriginal}
+              />
+            ) : null}
 
             {/* Connected Transactions + Suggestions */}
             <FileConnectionsList

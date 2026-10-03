@@ -27,6 +27,8 @@ interface FileTableProps {
   allFilesCount?: number;
   /** Count of displayed files that are not marked as not-invoice (for the toolbar counter) */
   invoiceCount?: number;
+  /** Files that are a Copy right now (#162): done, like a connected File. */
+  copies?: ReadonlyMap<string, string>;
   /** Loading state - when true, empty states are not shown to prevent flicker */
   loading?: boolean;
   onSelectFile: (file: TaxFile) => void;
@@ -69,6 +71,7 @@ export const FileTable = forwardRef<FilesDataTableHandle, FileTableProps>(
       files,
       allFilesCount,
       invoiceCount,
+      copies,
       loading,
       onSelectFile,
       selectedFileId,
@@ -140,12 +143,15 @@ export const FileTable = forwardRef<FilesDataTableHandle, FileTableProps>(
       [enableMultiSelect, selectionColumn, dataColumns]
     );
 
-    // Calculate connected count (files connected to at least one transaction)
+    // Done: connected to at least one transaction, or a Copy of a File FiBuKI
+    // already holds (#162), which is never work.
     const connectedCount = useMemo(
       () =>
-        files.filter((file) => file.transactionIds && file.transactionIds.length > 0)
-          .length,
-      [files]
+        files.filter(
+          (file) =>
+            (file.transactionIds && file.transactionIds.length > 0) || copies?.has(file.id)
+        ).length,
+      [files, copies]
     );
     // Toolbar total counts invoices only; not-invoice files never inflate it.
     const totalCount = invoiceCount ?? files.filter((f) => !f.isNotInvoice).length;
@@ -153,7 +159,7 @@ export const FileTable = forwardRef<FilesDataTableHandle, FileTableProps>(
     // Determine which empty state to show
     const totalUnfilteredCount = allFilesCount ?? files.length;
     const hasAnyFilters = searchValue || filters.extractedDateFrom || filters.extractedDateTo ||
-      filters.hasConnections !== undefined || filters.amountType || filters.partnerIds?.length ||
+      filters.hasConnections !== undefined || filters.copiesOnly || filters.amountType || filters.partnerIds?.length ||
       filters.hasPartner !== undefined ||
       filters.extractionComplete !== undefined || filters.documentTypes !== undefined || filters.deletedOnly;
 

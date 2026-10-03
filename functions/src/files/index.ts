@@ -13,6 +13,12 @@ export { restoreFileCallable } from "./restoreFile";
 export { purgeFilesCallable } from "./purgeFiles";
 export { markFileAsNotInvoiceCallable } from "./markFileAsNotInvoice";
 export { unmarkFileAsNotInvoiceCallable } from "./unmarkFileAsNotInvoice";
+export {
+  markFileAsCopyCallable,
+  unmarkFileAsCopyCallable,
+  makeFileTheOriginalCallable,
+  backfillCopySuggestionsCallable,
+} from "./copyCallables";
 export { connectFileToTransactionCallable } from "./connectFileToTransaction";
 export { disconnectFileFromTransactionCallable } from "./disconnectFileFromTransaction";
 export { dismissTransactionSuggestionCallable } from "./dismissTransactionSuggestion";

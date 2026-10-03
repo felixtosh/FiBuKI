@@ -28,6 +28,7 @@ import {
   learnFileSourcePattern,
 } from "./partner-ops";
 import { OperationsContext } from "./types";
+import { liveCopies } from "@/lib/files/copy-state";
 import { callFunction } from "@/lib/firebase/callable";
 import { fileDocumentAmount, fileDocumentVatAmount } from "@/lib/files/document-amount";
 
@@ -1755,8 +1756,22 @@ export async function listFilesWithSuggestions(
     transactionMatchComplete: doc.data().transactionMatchComplete || false,
   })) as FileWithSuggestions[];
 
-  // Filter out soft-deleted and non-invoice files
-  files = files.filter((f) => !f.deletedAt && !f.isNotInvoice);
+  // Filter out soft-deleted and non-invoice files, and Copies (#162): a Copy
+  // is never work. Its original may sit outside this query, so it is read.
+  const listed = new Set(files.map((f) => f.id));
+  const missingOriginalIds = [
+    ...new Set(files.map((f) => f.copyOfFileId).filter((id): id is string => !!id && !listed.has(id))),
+  ];
+  const missingOriginals = await Promise.all(
+    missingOriginalIds.map((id) => getDoc(doc(ctx.db, FILES_COLLECTION, id)))
+  );
+  const copies = liveCopies([
+    ...files,
+    ...missingOriginals
+      .filter((snap) => snap.exists())
+      .map((snap) => ({ id: snap.id, ...(snap.data() as Pick<TaxFile, "deletedAt" | "purgedAt">) })),
+  ]);
+  files = files.filter((f) => !f.deletedAt && !f.isNotInvoice && !copies.has(f.id));
 
   // Client-side filters
   if (filters?.search) {

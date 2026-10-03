@@ -8,6 +8,7 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { readDismissedTransactionIds } from "./dismissedTransactions";
+import { liveCopyIds } from "../files/copyOps";
 import { loadDocumentedAmounts } from "./documentedAmounts";
 import { deriveCoverage } from "./coverage";
 import { matchesTransactionSearch } from "./transactionSearch";
@@ -165,6 +166,12 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
       // Skip "Not Invoice" files - return empty matches
       if (docData.isNotInvoice === true) {
         console.log(`[FindMatches] File ${fileId} is not an invoice, returning empty`);
+        return { matches: [], totalCandidates: 0 };
+      }
+
+      // #162: a Copy is never proposed as a Match.
+      if ((await liveCopyIds(db, [{ id: fileId, data: docData }])).has(fileId)) {
+        console.log(`[FindMatches] File ${fileId} is a Copy, returning empty`);
         return { matches: [], totalCandidates: 0 };
       }
 

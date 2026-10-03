@@ -475,10 +475,27 @@
         },
         "fixRows": "Bitte die markierten Positionen vor dem Speichern korrigieren."
       }
+    },
+    "copy": {
+      "label": "Kopie",
+      "copyOf": "Kopie von",
+      "explanation": "Ein zweiter Beleg eines Dokuments, das FiBuKI schon hat. Er belegt selbst nichts: Das Original trägt die Transaktion, die Vorsteuer und den Export.",
+      "undo": "Keine Kopie",
+      "makeOriginal": "Zum Original machen",
+      "suggested": "Möglicherweise eine Kopie von",
+      "reasonConnected": "Gleicher Aussteller, gleiche Rechnungsnummer, gleicher Betrag, gleiches Datum. Dieser Beleg ist mit einer Transaktion verknüpft und wird deshalb nicht automatisch markiert. Beim Markieren geht die Verknüpfung auf das Original über.",
+      "reasonNoInvoiceNumber": "Gleicher Aussteller, Betrag und Datum, aber eine Rechnungsnummer fehlt.",
+      "reasonSameContent": "Die Datei ist byte-gleich mit dem Original.",
+      "reasonMarkedNotInvoice": "Als „keine Rechnung“ markiert und gleich benannt wie das Original. Als Kopie markiert, wird diese Markierung aufgehoben.",
+      "accept": "Als Kopie markieren",
+      "decline": "Keine Kopie",
+      "copies": "Kopien",
+      "copiesExplanation": "Weitere Belege dieses Dokuments. Sie zählen nicht mit.",
+      "failed": "Das hat nicht geklappt: {message}"
     }
   },
   "progress": {
-    "files": "{done} von {total} Belegen sind mit einer Transaktion verknüpft. Als „kein Finanzbeleg“ markierte Belege zählen nicht mit.",
+    "files": "{done} von {total} Belegen sind mit einer Transaktion verknüpft oder Kopie eines Belegs, den FiBuKI schon hat. Als „kein Finanzbeleg“ markierte Belege zählen nicht mit.",
     "transactions": "{done} von {total} Transaktionen sind dokumentiert: mit einem Beleg oder stattdessen mit einer Kategorie ohne Beleg.",
     "transactionsDeductible": "{percent} % sind mit einer Rechnung belegt, die zum Vorsteuerabzug berechtigt (§ 11 UStG). Eine reine Zahlungsbestätigung reicht dafür nicht.",
     "followsFilters": "Die Zahl folgt den Filtern und der Suche oben."
@@ -621,7 +638,8 @@
     },
     "more": "Mehr",
     "panelTitle": "Filter",
-    "clearAll": "Alle entfernen"
+    "clearAll": "Alle entfernen",
+    "copy": "Kopie"
   },
   "partners": {
     "bulk": {

@@ -129,7 +129,23 @@ function FilesContent() {
   // Get search value from URL
   const searchValue = searchParams.get("search") || "";
 
-  const { files, allFilesCount, invoiceCount, loading, remove, restore, purge, markAsNotInvoice, unmarkAsNotInvoice } = useFiles({
+  const {
+    files,
+    allFilesCount,
+    invoiceCount,
+    loading,
+    remove,
+    restore,
+    purge,
+    markAsNotInvoice,
+    unmarkAsNotInvoice,
+    markAsCopy,
+    markNotACopy,
+    makeOriginal,
+    copies,
+    copiesOf,
+    getFileById,
+  } = useFiles({
     search: searchValue,
     ...filters,
   });
@@ -463,6 +479,20 @@ function FilesContent() {
   // that hang off it). The primary stays selected; clearing the bulk
   // selection brings its panel back.
   const detailFile = showBulkPanel ? null : selectedFile;
+
+  // The detail File's Copy state (#162), read off the user's whole File list:
+  // its live original, the live File a suggestion names, its own Copies.
+  const detailCopy = useMemo(() => {
+    if (!detailFile) return { original: null, suggestedOriginal: null, copies: [] as TaxFile[] };
+    const originalId = copies.get(detailFile.id);
+    const suggestedId = detailFile.copySuggestion?.originalFileId;
+    const suggested = suggestedId ? getFileById(suggestedId) : undefined;
+    return {
+      original: originalId ? getFileById(originalId) ?? null : null,
+      suggestedOriginal: suggested && !suggested.deletedAt && !suggested.purgedAt ? suggested : null,
+      copies: copiesOf(detailFile.id),
+    };
+  }, [detailFile, copies, getFileById, copiesOf]);
   const bulkSelectedFiles = useMemo(
     () => (showBulkPanel ? files.filter((f) => allSelectedIds.has(f.id)) : []),
     [showBulkPanel, files, allSelectedIds]
@@ -1115,6 +1145,7 @@ function FilesContent() {
             files={files}
             allFilesCount={allFilesCount}
             invoiceCount={invoiceCount}
+            copies={copies}
             loading={loading}
             onSelectFile={handleSelectFile}
             // While the invoice panel is open there is no ?id=, so hand the
@@ -1293,6 +1324,12 @@ function FilesContent() {
               }}
               onOpenConnectTransaction={toggleConnectTransactionOverlay}
               isConnectTransactionOpen={isConnectTransactionOpen}
+              copyOriginal={detailCopy.original}
+              copySuggestionOriginal={detailCopy.suggestedOriginal}
+              copiesOfFile={detailCopy.copies}
+              onMarkAsCopy={(originalFileId) => markAsCopy(detailFile.id, originalFileId)}
+              onNotACopy={() => markNotACopy(detailFile.id)}
+              onMakeOriginal={() => makeOriginal(detailFile.id)}
             />
           </div>
         </div>

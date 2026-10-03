@@ -11,6 +11,7 @@ import {
 } from "../utils/cancelWorkers";
 import { deriveActivityLevel } from "../utils/activityLevel";
 import { learnBillingCycleForPartner } from "../matching/learnBillingCycle";
+import { copyConnectCheck, CLEARED_COPY_MARK } from "./copyOps";
 
 interface FileConnectionSourceInfo {
   sourceType?: string;
@@ -100,6 +101,12 @@ export const connectFileToTransactionCallable = createCallable<
     const transactionData = transactionSnap.data()!;
     if (transactionData.userId !== ctx.userId) {
       throw new HttpsError("permission-denied", "Transaction access denied");
+    }
+
+    // #162, ADR-0010: a Copy holds no File Connection.
+    const copyCheck = await copyConnectCheck(ctx.db, fileData);
+    if (copyCheck.refusal) {
+      throw new HttpsError("failed-precondition", copyCheck.refusal);
     }
 
     // Block automated connections to over-quota transactions (manual still allowed)
@@ -318,6 +325,7 @@ export const connectFileToTransactionCallable = createCallable<
     const fileUpdate: Record<string, unknown> = {
       transactionIds: FieldValue.arrayUnion(transactionId),
       updatedAt: now,
+      ...(copyCheck.clearMark ? CLEARED_COPY_MARK : {}),
     };
 
     // 3. Update transaction's fileIds array and mark as complete
