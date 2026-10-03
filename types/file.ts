@@ -1091,7 +1091,14 @@ export interface ExtractedQrCode {
   cashRegisterId?: string;
   receiptNumber?: string;
   date?: string;
-  grossByRate?: Array<{ rate: number; gross: number }>;
+  /** Per RKSV bucket; `rate` is null for Null and Besonders, which name no single rate (#166). */
+  grossByRate?: Array<{
+    bucket: "normal" | "reduced1" | "reduced2" | "zero" | "special";
+    rate: number | null;
+    gross: number;
+  }>;
+  /** RKSV: the till marks this receipt as a cancellation or a training receipt (#166). */
+  receiptKind?: "cancellation" | "training";
   payeeName?: string;
   iban?: string;
   amount?: number;
