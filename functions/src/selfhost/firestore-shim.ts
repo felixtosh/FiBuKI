@@ -854,29 +854,6 @@ async function rawDelete(
   await (inTx ? remove(inTx) : withTenant(remove));
 }
 
-async function writeDoc(
-  collectionPath: string,
-  id: string,
-  next: Record<string, unknown> | undefined,
-): Promise<void> {
-  const path = `${collectionPath}/${id}`;
-  const before = await rawGet(path);
-  if (next === undefined) {
-    await rawDelete(path, before);
-  } else {
-    await rawPut(collectionPath, id, next, before);
-  }
-  // Two delivery paths, never both, chosen by whether THIS process dispatches
-  // triggers. fibuki-api emits in-process (cheap, and handler cascades stay in
-  // memory where the drain's loop guard can see them). Everyone else has
-  // already appended to trigger_events inside the write's transaction above;
-  // emitting here as well would queue a change onto a bus with no listeners,
-  // which is exactly the silent drop this replaces.
-  if (!usesDurableTriggerQueue()) {
-    emitChange({ collectionPath, id, path, before, after: next });
-  }
-}
-
 
 // ---------------------------------------------------------------------------
 // One write, as data: what DocRef, WriteBatch and a transaction all apply
@@ -961,9 +938,36 @@ async function applyWritesInTx(q: QueryFn, ops: WriteOp[]): Promise<DocChange[]>
   return changes;
 }
 
+/**
+ * Two delivery paths, never both, chosen by whether THIS process dispatches
+ * triggers. fibuki-api emits in-process (cheap, and handler cascades stay in
+ * memory where the drain's loop guard can see them). Everyone else has already
+ * appended to trigger_events inside the write's transaction; emitting here as
+ * well would queue a change onto a bus with no listeners.
+ */
 function emitCommitted(changes: DocChange[]): void {
   if (usesDurableTriggerQueue()) return; // already enqueued inside the transaction
   for (const change of changes) emitChange(change);
+}
+
+/**
+ * Commit writes as one Postgres transaction with every document they touch
+ * locked, so each one merges against the stored document and not a copy read
+ * earlier. A DocRef write is this with one op, a batch with many.
+ *
+ * update() and set(merge) used to read in one transaction and write in a
+ * second, so a writer that read in between put its stale copy back: on
+ * fibuki.com a File Connection lost its Transaction side 17 seconds after it
+ * was made, and a manual category was reverted (#503). The lock is the same
+ * advisory lock a Firestore transaction takes at commit, so it holds across
+ * every process writing to the database.
+ */
+async function commitWrites(ops: WriteOp[]): Promise<void> {
+  const changes = await withTenant(async (q) => {
+    await lockPaths(q, ops.map((op) => op.ref.path));
+    return applyWritesInTx(q, ops);
+  });
+  emitCommitted(changes);
 }
 
 // ---------------------------------------------------------------------------
@@ -1428,16 +1432,14 @@ export class DocRef {
   ): Promise<{ writeTime: Timestamp }> {
     const op: WriteOp = { kind: "set", ref: this, data, merge: opts?.merge === true };
     validateWrite(op);
-    const existing = op.merge ? await rawGet(this.path) : undefined;
-    await writeDoc(this.collectionPath, this.id, nextState(op, existing));
+    await commitWrites([op]);
     return { writeTime: Timestamp.now() };
   }
 
   async update(data: Record<string, unknown>): Promise<{ writeTime: Timestamp }> {
     const op: WriteOp = { kind: "update", ref: this, data };
     validateWrite(op);
-    const existing = await rawGet(this.path);
-    await writeDoc(this.collectionPath, this.id, nextState(op, existing));
+    await commitWrites([op]);
     return { writeTime: Timestamp.now() };
   }
 
@@ -1457,7 +1459,7 @@ export class DocRef {
   }
 
   async delete(): Promise<{ writeTime: Timestamp }> {
-    await writeDoc(this.collectionPath, this.id, undefined);
+    await commitWrites([{ kind: "delete", ref: this }]);
     return { writeTime: Timestamp.now() };
   }
 }
@@ -1534,11 +1536,7 @@ class WriteBatch {
     const ops = this.ops;
     this.ops = [];
     if (ops.length === 0) return;
-    const changes = await withTenant(async (q) => {
-      await lockPaths(q, ops.map((op) => op.ref.path));
-      return applyWritesInTx(q, ops);
-    });
-    emitCommitted(changes);
+    await commitWrites(ops);
   }
 }
 

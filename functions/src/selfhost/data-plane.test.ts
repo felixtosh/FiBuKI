@@ -332,6 +332,30 @@ describe("data plane: write", () => {
     expect(second.body.error.status).toBe("ABORTED");
   });
 
+  // Only real Postgres can fail this (CI's compose job): PGlite answers without
+  // yielding to the event loop, so on it one request's read and commit never
+  // have another request between them. The isolation suite pins the mechanism
+  // on both databases.
+  it("ifUnchanged holds when the claims arrive at the same moment: exactly one wins (#503)", async () => {
+    await db.collection(`users/${USER}/workerRequests`).doc("wr-race").set({ status: "pending", task: "sync" });
+    await drainTriggers();
+
+    const claims = await Promise.all(
+      Array.from({ length: 20 }, (_, i) =>
+        call("write", {
+          ops: [{
+            type: "update",
+            path: `users/${USER}/workerRequests/wr-race`,
+            data: { status: "claimed", claimedBy: `worker-${i}` },
+            ifUnchanged: { status: "pending" },
+          }],
+        }),
+      ),
+    );
+    expect(claims.filter((c) => c.status === 200)).toHaveLength(1);
+    expect(claims.filter((c) => c.status === 409)).toHaveLength(19);
+  });
+
   it("set with merge patches instead of replacing", async () => {
     await db.collection("sources").doc("s-m").set({ userId: USER, name: "N26", isActive: true });
     await drainTriggers();
