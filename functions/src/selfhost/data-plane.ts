@@ -16,10 +16,10 @@
  *
  * All routes require a valid Bearer token (the data plane has no
  * anonymous surface). Owner-scoped queries get where("userId","==",uid)
- * injected server-side. One write request = one shim batch; `ifUnchanged`
- * preconditions are checked against the validation-phase reads, then the
- * batch commits — no interleaving hazard in the single-process,
- * single-user selfhost deployment this is built for.
+ * injected server-side. One write request = one shim transaction: the
+ * validation-phase reads (ownership, `ifUnchanged` preconditions) are
+ * re-checked under lock at commit, so a precondition holds against every
+ * other writer, in this process or another (#503).
  *
  * Errors use the callable wire shape ({ error: { message, status } }) so
  * the client shim maps one format.
@@ -28,7 +28,7 @@
 import { createHash } from "node:crypto";
 import express from "express";
 import type { NextFunction, Request, Response, Router } from "express";
-import { getFirestore, DocRef, Query, Timestamp } from "./firestore-shim";
+import { getFirestore, DocRef, DocSnapshot, Query, Timestamp } from "./firestore-shim";
 import { decodeWire, encodeWire, WireError } from "./wire-values";
 import { makeRateLimiter } from "./rate-limit";
 import type { AuthData } from "./https-shim";
@@ -447,113 +447,119 @@ export function createDataPlane(
         | { kind: "update"; ref: DocRef; data: Record<string, unknown>; id: string }
         | { kind: "delete"; ref: DocRef; id: string }
         | { kind: "skip"; id: string };
-      const prepared: Prepared[] = [];
+      // One transaction for the whole request: the reads that decide policy,
+      // ownership and every ifUnchanged precondition are re-checked under lock
+      // at commit, and the callback runs again on fresh reads when one moved,
+      // so a precondition cannot pass against a value another writer has
+      // already changed (#503).
+      const ids = await db.runTransaction(async (tx) => {
+        const prepared: Prepared[] = [];
 
-      // Phase 1: validate every op (policy + ownership + preconditions).
-      for (const op of ops) {
-        const segments = splitPath(op?.path);
+        // Phase 1: validate every op (policy + ownership + preconditions).
+        for (const op of ops) {
+          const segments = splitPath(op?.path);
 
-        if (op.type === "add") {
-          const resolved = resolveCollection(segments, auth.uid);
-          requireAccess(resolved.policy.create, auth, `create in ${segments.join("/")}`);
-          await requireOwnedParent(resolved, auth);
-          const data = decodeWire(op.data, true);
-          if (typeof data !== "object" || data === null || Array.isArray(data)) {
-            throw new DataPlaneError("invalid-argument", "add op needs an object data payload");
-          }
-          const record = data as Record<string, unknown>;
-          assertSafeFieldPaths(record);
-          if (resolved.policy.create === "owner" && record.userId !== auth.uid) {
-            throw new DataPlaneError("permission-denied", `create in ${segments[0]} requires userId === your uid`);
-          }
-          const ref = db.collection(segments.join("/")).doc();
-          prepared.push({ kind: "set", ref, data: record, merge: false, id: ref.id });
-          continue;
-        }
-
-        const resolved = resolveDoc(segments, auth.uid);
-        const docPath = segments.join("/");
-        const id = segments[segments.length - 1];
-        if (resolved.uidKeyed && id !== auth.uid) {
-          throw new DataPlaneError("permission-denied", "document is keyed to another user");
-        }
-        await requireOwnedParent(resolved, auth);
-        const ref = db.doc(docPath);
-        const snap = await ref.get();
-        const existing = snap.exists ? (snap.data() as Record<string, unknown>) : undefined;
-        const ownerRules = resolved.policy.update === "owner" || resolved.policy.create === "owner";
-
-        const data = op.data !== undefined ? decodeWire(op.data, true) : undefined;
-        if (data !== undefined && (typeof data !== "object" || data === null || Array.isArray(data))) {
-          throw new DataPlaneError("invalid-argument", `${op.type} op needs an object data payload`);
-        }
-        const record = data as Record<string, unknown> | undefined;
-        if (record) assertSafeFieldPaths(record);
-        // An owner-scoped write may never point userId at someone else.
-        if (ownerRules && record && "userId" in record && record.userId !== auth.uid) {
-          throw new DataPlaneError("permission-denied", "cannot write a foreign userId");
-        }
-
-        if (op.type === "set") {
-          // The one shape that still tells "taken" from "free": a set on a
-          // free id creates it, on another user's it cannot. Ids are random
-          // (about 119 bits), so this confirms only an id the caller already
-          // holds; it cannot be used to discover one.
-          if (existing) {
-            requireAccess(resolved.policy.update, auth, `update on ${docPath}`);
-            if (resolved.policy.update === "owner" && !ownsRow(existing, auth.uid)) {
-              throw new DataPlaneError("permission-denied", "document belongs to another user");
+          if (op.type === "add") {
+            const resolved = resolveCollection(segments, auth.uid);
+            requireAccess(resolved.policy.create, auth, `create in ${segments.join("/")}`);
+            await requireOwnedParent(resolved, auth);
+            const data = decodeWire(op.data, true);
+            if (typeof data !== "object" || data === null || Array.isArray(data)) {
+              throw new DataPlaneError("invalid-argument", "add op needs an object data payload");
             }
-          } else {
-            requireAccess(resolved.policy.create, auth, `create on ${docPath}`);
-            if (resolved.policy.create === "owner" && record?.userId !== auth.uid) {
+            const record = data as Record<string, unknown>;
+            assertSafeFieldPaths(record);
+            if (resolved.policy.create === "owner" && record.userId !== auth.uid) {
               throw new DataPlaneError("permission-denied", `create in ${segments[0]} requires userId === your uid`);
             }
-          }
-          if (!record) throw new DataPlaneError("invalid-argument", "set op needs data");
-          checkPrecondition(existing, op.ifUnchanged, docPath);
-          prepared.push({ kind: "set", ref, data: record, merge: op.merge === true, id });
-        } else if (op.type === "update") {
-          requireAccess(resolved.policy.update, auth, `update on ${docPath}`);
-          // Missing and foreign give one answer, so an update cannot be used
-          // to learn whether someone else's id exists.
-          if (!existing || (resolved.policy.update === "owner" && !ownsRow(existing, auth.uid))) {
-            throw new DataPlaneError("not-found", `update on missing doc ${docPath}`);
-          }
-          if (!record) throw new DataPlaneError("invalid-argument", "update op needs data");
-          checkPrecondition(existing, op.ifUnchanged, docPath);
-          prepared.push({ kind: "update", ref, data: record, id });
-        } else if (op.type === "delete") {
-          requireAccess(resolved.policy.delete, auth, `delete on ${docPath}`);
-          // Ownership before the precondition: a precondition compares a
-          // stored value, so checked first it would answer "aborted" or
-          // "denied" depending on another user's data.
-          //
-          // Another user's document is treated as absent: the delete is the
-          // same idempotent no-op it is for a missing id, and touches nothing.
-          const deletable =
-            existing && !(resolved.policy.delete === "owner" && !ownsRow(existing, auth.uid)) ? existing : undefined;
-          checkPrecondition(deletable, op.ifUnchanged, docPath);
-          if (!deletable) {
-            prepared.push({ kind: "skip", id }); // Firestore deletes are idempotent
+            const ref = db.collection(segments.join("/")).doc();
+            prepared.push({ kind: "set", ref, data: record, merge: false, id: ref.id });
             continue;
           }
-          prepared.push({ kind: "delete", ref, id });
-        } else {
-          throw new DataPlaneError("invalid-argument", `unknown op type ${JSON.stringify(op.type)}`);
+
+          const resolved = resolveDoc(segments, auth.uid);
+          const docPath = segments.join("/");
+          const id = segments[segments.length - 1];
+          if (resolved.uidKeyed && id !== auth.uid) {
+            throw new DataPlaneError("permission-denied", "document is keyed to another user");
+          }
+          await requireOwnedParent(resolved, auth);
+          const ref = db.doc(docPath);
+          const snap = (await tx.get(ref)) as DocSnapshot;
+          const existing = snap.exists ? (snap.data() as Record<string, unknown>) : undefined;
+          const ownerRules = resolved.policy.update === "owner" || resolved.policy.create === "owner";
+
+          const data = op.data !== undefined ? decodeWire(op.data, true) : undefined;
+          if (data !== undefined && (typeof data !== "object" || data === null || Array.isArray(data))) {
+            throw new DataPlaneError("invalid-argument", `${op.type} op needs an object data payload`);
+          }
+          const record = data as Record<string, unknown> | undefined;
+          if (record) assertSafeFieldPaths(record);
+          // An owner-scoped write may never point userId at someone else.
+          if (ownerRules && record && "userId" in record && record.userId !== auth.uid) {
+            throw new DataPlaneError("permission-denied", "cannot write a foreign userId");
+          }
+
+          if (op.type === "set") {
+            // The one shape that still tells "taken" from "free": a set on a
+            // free id creates it, on another user's it cannot. Ids are random
+            // (about 119 bits), so this confirms only an id the caller already
+            // holds; it cannot be used to discover one.
+            if (existing) {
+              requireAccess(resolved.policy.update, auth, `update on ${docPath}`);
+              if (resolved.policy.update === "owner" && !ownsRow(existing, auth.uid)) {
+                throw new DataPlaneError("permission-denied", "document belongs to another user");
+              }
+            } else {
+              requireAccess(resolved.policy.create, auth, `create on ${docPath}`);
+              if (resolved.policy.create === "owner" && record?.userId !== auth.uid) {
+                throw new DataPlaneError("permission-denied", `create in ${segments[0]} requires userId === your uid`);
+              }
+            }
+            if (!record) throw new DataPlaneError("invalid-argument", "set op needs data");
+            checkPrecondition(existing, op.ifUnchanged, docPath);
+            prepared.push({ kind: "set", ref, data: record, merge: op.merge === true, id });
+          } else if (op.type === "update") {
+            requireAccess(resolved.policy.update, auth, `update on ${docPath}`);
+            // Missing and foreign give one answer, so an update cannot be used
+            // to learn whether someone else's id exists.
+            if (!existing || (resolved.policy.update === "owner" && !ownsRow(existing, auth.uid))) {
+              throw new DataPlaneError("not-found", `update on missing doc ${docPath}`);
+            }
+            if (!record) throw new DataPlaneError("invalid-argument", "update op needs data");
+            checkPrecondition(existing, op.ifUnchanged, docPath);
+            prepared.push({ kind: "update", ref, data: record, id });
+          } else if (op.type === "delete") {
+            requireAccess(resolved.policy.delete, auth, `delete on ${docPath}`);
+            // Ownership before the precondition: a precondition compares a
+            // stored value, so checked first it would answer "aborted" or
+            // "denied" depending on another user's data.
+            //
+            // Another user's document is treated as absent: the delete is the
+            // same idempotent no-op it is for a missing id, and touches nothing.
+            const deletable =
+              existing && !(resolved.policy.delete === "owner" && !ownsRow(existing, auth.uid)) ? existing : undefined;
+            checkPrecondition(deletable, op.ifUnchanged, docPath);
+            if (!deletable) {
+              prepared.push({ kind: "skip", id }); // Firestore deletes are idempotent
+              continue;
+            }
+            prepared.push({ kind: "delete", ref, id });
+          } else {
+            throw new DataPlaneError("invalid-argument", `unknown op type ${JSON.stringify(op.type)}`);
+          }
         }
-      }
 
-      // Phase 2: commit as one shim batch (triggers fire post-commit).
-      const batch = db.batch();
-      for (const p of prepared) {
-        if (p.kind === "set") batch.set(p.ref, p.data, p.merge ? { merge: true } : undefined);
-        else if (p.kind === "update") batch.update(p.ref, p.data);
-        else if (p.kind === "delete") batch.delete(p.ref);
-      }
-      await batch.commit();
+        // Phase 2: the writes, applied at commit (triggers fire post-commit).
+        for (const p of prepared) {
+          if (p.kind === "set") tx.set(p.ref, p.data, p.merge ? { merge: true } : undefined);
+          else if (p.kind === "update") tx.update(p.ref, p.data);
+          else if (p.kind === "delete") tx.delete(p.ref);
+        }
+        return prepared.map((p) => p.id);
+      });
 
-      res.json({ ids: prepared.map((p) => p.id) });
+      res.json({ ids });
     } catch (err) {
       next(err);
     }

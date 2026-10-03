@@ -81,6 +81,21 @@ describe("isolation", () => {
     expect((await db.doc("config/c").get()).data()).toEqual({ n: 101 });
   });
 
+  it("a transaction that loses every race gives up after a bounded number of runs and writes nothing", async () => {
+    await db.doc("config/c").set({ n: 0 });
+    let runs = 0;
+    const attempt = db.runTransaction(async (tx) => {
+      runs++;
+      await tx.get(db.doc("config/c"));
+      await db.doc("config/c").update({ n: FieldValue.increment(1) }); // someone else, every time
+      tx.set(db.doc("config/never"), { written: true });
+    });
+    await expect(attempt).rejects.toMatchObject({ code: 10 }); // ABORTED, as firebase-admin reports it
+    expect(runs).toBe(10);
+    expect((await db.doc("config/never").get()).exists).toBe(false);
+    expect((await db.doc("config/c").get()).data()).toEqual({ n: 10 }); // the other writer lost nothing
+  });
+
   it("a document newly matching a query read in the transaction makes it run again", async () => {
     await db.doc("jobs/a").set({ status: "pending" });
     let runs = 0;
