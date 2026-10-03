@@ -38,6 +38,7 @@ import {
   describeDirectionReview,
   describeForeignRecipient,
   describeRepairAmbiguity,
+  describeRksvCodeReview,
   describeInvoiceDirection,
 } from "@/lib/documents/document-type-presentation";
 import { fileDocumentAmount, fileDocumentVatAmount } from "@/lib/files/document-amount";
@@ -139,6 +140,7 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
   const directionReview = describeDirectionReview(file);
   const foreignRecipient = describeForeignRecipient(file.foreignRecipient);
   const repairAmbiguity = describeRepairAmbiguity(file);
+  const rksvCodeReview = describeRksvCodeReview(file);
   const [showMore, setShowMore] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   // Why the last save did not land, shown until the next attempt (#342).
@@ -563,6 +565,18 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
         </div>
       )}
 
+      {/* Two readings of the same split that disagree (#166). */}
+      {rksvCodeReview && (
+        <div className="rounded border border-amber-500/40 bg-amber-500/10 p-2 space-y-1">
+          <Badge variant="outline" className="text-xs">
+            {tx("rksvCodeReview.label")}
+          </Badge>
+          <p className="text-xs text-muted-foreground">
+            {tx("rksvCodeReview.text", { rates: formatRates(rksvCodeReview.rates) })}
+          </p>
+        </div>
+      )}
+
       {/*
         Only a CONFLICT still gets a callout of its own. A conflict is a
         finding: the document contradicts a transaction it is attached to, one
@@ -952,6 +966,9 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
                       </div>
                     ))}
                   </div>
+                  {file.extractedRateGroupsSource === "rksvCode" && (
+                    <p className="text-xs text-muted-foreground">{tx("rateGroupsFromRksvCode")}</p>
+                  )}
                 </div>
               )}
 
@@ -1148,4 +1165,9 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
       )}
     </div>
   );
+}
+
+/** "10%, 13%": the rates a review names, in the order it stored them. */
+function formatRates(rates: number[]): string {
+  return rates.map((rate) => `${rate}%`).join(", ");
 }

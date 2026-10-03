@@ -176,6 +176,15 @@ export interface RepairAmbiguityPresentation {
   fields: string[];
 }
 
+export interface RksvCodeReviewPresentation {
+  tone: DocumentTone;
+  /** Message keys; the words live in the catalogues. */
+  labelKey: string;
+  textKey: string;
+  /** The rates at which the printed block and the code disagree. */
+  rates: number[];
+}
+
 export interface ForeignRecipientPresentation {
   label: string;
   tone: DocumentTone;
@@ -215,3 +224,13 @@ export declare function describeRepairAmbiguity(
     | null
     | undefined,
 ): RepairAmbiguityPresentation | null;
+
+export declare function describeRksvCodeReview(
+  review:
+    | {
+        needsRksvCodeReview?: boolean;
+        rksvCodeDisagreeingRates?: number[] | null;
+      }
+    | null
+    | undefined,
+): RksvCodeReviewPresentation | null;

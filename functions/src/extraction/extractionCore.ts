@@ -17,6 +17,10 @@ import { MODELS } from "../utils/models";
 
 const db = getFirestore();
 
+/** The stored reason for a File its RKSV Code marks as a training receipt (#166). */
+export const RKSV_TRAINING_RECEIPT_REASON =
+  "RKSV training receipt (Trainingsbeleg): the till marks it as not a sale";
+
 import { ExtractedEntity, ExtractedLineItem } from "../types/extraction";
 import { applyVatDowngradeGuard } from "./vatSourceGuard";
 import type { RecipientIdentity } from "../matching/recipientIdentity";
@@ -38,7 +42,8 @@ import {
   validateRateGroups,
 } from "./lineItemReconciliation";
 import { rateFromDocumentVat } from "./taxFacts";
-import { rateGroupsFromRksv } from "./qrCodes";
+import { rateGroupsFromRksv, rksvReceiptKindOf } from "./qrCodes";
+import { reviewFileRecordRksvCode, rksvCodeReviewFields } from "../documents/rksvCodeReview";
 // Re-exported so existing importers (tests included) keep their path; the
 // implementations moved to lineItemReconciliation.ts, which stays free of the
 // extraction pipeline's imports so the correction path can share them (#203).
@@ -268,6 +273,7 @@ export async function runExtraction(
         extractedCountry: null,
         extractedLineItems: null,
         extractedRateGroups: null,
+        extractedRateGroupsSource: null,
         lineItemsUnreconciled: false,
         lineItemsUnreconciledRates: null,
         vatSourceDowngraded: false,
@@ -300,6 +306,8 @@ export async function runExtraction(
         // Nothing was transcribed on this pass, so no transcription was
         // guessed at either — any flag an earlier pass left goes (#275).
         ...repairReviewFields({ ambiguousFields: [], needsReview: false }),
+        // Nor a printed block for an RKSV Code to contradict (#166).
+        ...rksvCodeReviewFields({ disagreeingRates: [], needsReview: false }),
         extractedText: "(classification only - not an invoice)",
         extractedFields: [],
         pageCount,
@@ -452,10 +460,21 @@ export async function runExtraction(
     updatedAt: Timestamp.now(),
   };
 
+  // #166: a till marks a training receipt in its RKSV Code. It is never a
+  // sale, whatever the page looks like, so it gets the classifier's own "not
+  // an invoice" verdict. Not when the user overrode the classification: they
+  // already said this document is an invoice, and unmarking must stay possible.
+  const trainingReceipt =
+    !options.skipClassification &&
+    !result.isNotInvoice &&
+    rksvReceiptKindOf(result.extracted.qrCodes ?? []) === "training";
+
   // Handle "not an invoice" classification
-  if (result.isNotInvoice) {
+  if (result.isNotInvoice || trainingReceipt) {
     updateData.isNotInvoice = true;
-    updateData.notInvoiceReason = result.notInvoiceReason || "Not an invoice";
+    updateData.notInvoiceReason = trainingReceipt
+      ? RKSV_TRAINING_RECEIPT_REASON
+      : result.notInvoiceReason || "Not an invoice";
     // Clear any hallucinated extracted data for non-invoices
     updateData.extractedDate = null;
     updateData.extractedAmount = null;
@@ -469,6 +488,7 @@ export async function runExtraction(
     updateData.extractedCountry = null;
     updateData.extractedLineItems = null;
     updateData.extractedRateGroups = null;
+    updateData.extractedRateGroupsSource = null;
     updateData.lineItemsUnreconciled = false;
     updateData.lineItemsUnreconciledRates = null;
     updateData.vatSourceDowngraded = false;
@@ -488,7 +508,7 @@ export async function runExtraction(
     updateData.extractedPayableAmount = null;
     updateData.extractedInvoicingAgent = null;
     updateData.splitSuggestion = null;
-    console.log(`[+${Date.now() - t0}ms] Classified as NOT an invoice: ${result.notInvoiceReason}`);
+    console.log(`[+${Date.now() - t0}ms] Classified as NOT an invoice: ${updateData.notInvoiceReason}`);
   } else {
     // Add extracted fields if found
     const extracted = result.extracted;
@@ -565,11 +585,13 @@ export async function runExtraction(
     }
     // An RKSV code is the till's own per-rate block in machine form. Used only
     // when the page printed no block, and only when its buckets add up to the
-    // document total to the cent, which a misread code does not (#540, #166).
+    // document total to the cent, which a misread code does not (#540). A
+    // bucket that names no single rate is decided by the printed VAT total or
+    // not at all (#166).
     const rksvGroups =
       extracted.rateGroups && extracted.rateGroups.length > 0
         ? null
-        : rateGroupsFromRksv(extracted.qrCodes ?? [], documentTotal);
+        : rateGroupsFromRksv(extracted.qrCodes ?? [], documentTotal, documentVatAmount);
     if (rksvGroups) {
       console.log(`[+${Date.now() - t0}ms] Rate groups read from the RKSV code: ${rksvGroups.map((g) => g.rate).join(", ")}%`);
     }
@@ -644,6 +666,17 @@ export async function runExtraction(
         updateData.extractedVatPercent = documentVatPercent;
       }
     }
+
+    // #166: where the stored Rate Groups came from, written with them. A
+    // later reader cannot otherwise tell a till-attested split from a
+    // transcribed one.
+    const storedGroups = updateData.extractedRateGroups;
+    updateData.extractedRateGroupsSource =
+      Array.isArray(storedGroups) && storedGroups.length > 0
+        ? rksvGroups
+          ? "rksvCode"
+          : "document"
+        : null;
 
     // #540: the counterparty's country decides which tax rules apply.
     updateData.extractedCountry = counterparty?.country ?? null;
@@ -760,6 +793,16 @@ export async function runExtraction(
       `[ExtractionCore] ${fileId} carries a repaired escape sequence in ` +
       `${repairReview.ambiguousFields.join(", ")}; the stored text may not be ` +
       "what the document prints. Flagged for review."
+    );
+  }
+  // #166: a printed Rate Group block the RKSV Code contradicts. Read off the
+  // stored record, after the VAT guard, like the rate review above.
+  const rksvReview = reviewFileRecordRksvCode(storedRecord);
+  Object.assign(updateData, rksvCodeReviewFields(rksvReview));
+  if (rksvReview.needsReview) {
+    console.warn(
+      `[ExtractionCore] ${fileId}: the printed Rate Group block and the RKSV Code ` +
+      `disagree at ${rksvReview.disagreeingRates.join(", ")}%. Kept the printed block; flagged for review.`
     );
   }
   if (rateReview.needsReview) {

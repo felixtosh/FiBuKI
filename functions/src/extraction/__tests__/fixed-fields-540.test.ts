@@ -23,6 +23,7 @@ import {
   parseQrPayload,
   parseQrPayloads,
   rateGroupsFromRksv,
+  rksvReceiptKindOf,
 } from "../qrCodes";
 import { buildExtractionCorrection } from "../../files/extractionCorrectionOps";
 import { ExtractedLineItem } from "../../types/extraction";
@@ -218,6 +219,63 @@ describe("QR codes", () => {
     const codes = parseQrPayloads([rksvCode("0,00_0,00_0,00_120,00_0,00")]);
     expect(codes[0].grossByRate).toEqual([{ bucket: "zero", rate: null, gross: 12000 }]);
     expect(rateGroupsFromRksv(codes, 12000)).toBeNull();
+  });
+
+  describe("a bucket that names no single rate, decided by the printed VAT total", () => {
+    it("reads Besonders as 4.9 % from July 2026 when only 4.9 % reproduces the VAT", () => {
+      const codes = parseQrPayloads([rksvCode("12,00_0,00_0,00_0,00_10,49")]);
+      expect(rateGroupsFromRksv(codes, 2249, 249)).toEqual([
+        { rate: 20, net: 1000, vat: 200, gross: 1200 },
+        { rate: 4.9, net: 1000, vat: 49, gross: 1049 },
+      ]);
+    });
+
+    it("reads Besonders as 19 % when only 19 % reproduces the VAT", () => {
+      const codes = parseQrPayloads([rksvCode("0,00_0,00_0,00_0,00_11,90")]);
+      expect(rateGroupsFromRksv(codes, 1190, 190)).toEqual([{ rate: 19, net: 1000, vat: 190, gross: 1190 }]);
+    });
+
+    it("never reads Besonders as 4.9 % before 1 July 2026", () => {
+      const codes = parseQrPayloads([
+        "_R1-AT1_K1_42_2026-06-30T23:59:00_12,00_0,00_0,00_0,00_10,49_x_y_z_sig",
+      ]);
+      expect(rateGroupsFromRksv(codes, 2249, 249)).toBeNull();
+    });
+
+    it("refuses when both rates reproduce the VAT", () => {
+      // 0,05 holds 0 cents at 4.9 % and 1 cent at 19 %: both within the cent.
+      const codes = parseQrPayloads([rksvCode("12,00_0,00_0,00_0,00_0,05")]);
+      expect(rateGroupsFromRksv(codes, 1205, 200)).toBeNull();
+    });
+
+    it("refuses when no rate reproduces the VAT", () => {
+      const codes = parseQrPayloads([rksvCode("12,00_0,00_0,00_0,00_10,49")]);
+      expect(rateGroupsFromRksv(codes, 2249, 300)).toBeNull();
+    });
+
+    it("reads Null as 0 % only when the VAT leaves nothing for it", () => {
+      const codes = parseQrPayloads([rksvCode("12,00_0,00_0,00_0,75_0,00")]);
+      expect(rateGroupsFromRksv(codes, 1275, 200)).toEqual([
+        { rate: 20, net: 1000, vat: 200, gross: 1200 },
+        { rate: 0, net: 75, vat: 0, gross: 75 },
+      ]);
+      // An invoice paid in cash: the page prints VAT the Null bucket does not state.
+      const invoicePayment = parseQrPayloads([rksvCode("0,00_0,00_0,00_120,00_0,00")]);
+      expect(rateGroupsFromRksv(invoicePayment, 12000, 2000)).toBeNull();
+    });
+
+    it("needs a printed VAT total, and none for a code without such a bucket", () => {
+      expect(rateGroupsFromRksv(parseQrPayloads([rksvCode("12,00_0,00_0,00_0,75_0,00")]), 1275)).toBeNull();
+      expect(rateGroupsFromRksv(parseQrPayloads([rksvCode("12,00_0,00_0,00_0,00_0,00")]), 1200)).toEqual([
+        { rate: 20, net: 1000, vat: 200, gross: 1200 },
+      ]);
+    });
+
+    it("never decides a bucket on a cancellation or training receipt", () => {
+      const codes = parseQrPayloads([rksvCode("12,00_0,00_0,00_0,00_10,49", "VFJB")]);
+      expect(rateGroupsFromRksv(codes, 2249, 249)).toBeNull();
+      expect(rksvReceiptKindOf(codes)).toBe("training");
+    });
   });
 
   it("flags cancellation and training receipts and never uses their buckets", () => {

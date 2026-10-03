@@ -474,6 +474,11 @@
           "rateUnusual": "Kein EU-Land verlangt mehr als 27 % USt. Bitte den Satz prüfen."
         },
         "fixRows": "Bitte die markierten Positionen vor dem Speichern korrigieren."
+      },
+      "rateGroupsFromRksvCode": "Aus dem RKSV-Code des Belegs gelesen, der maschinenlesbaren Aufstellung der Registrierkasse.",
+      "rksvCodeReview": {
+        "label": "Steuersatzzeilen widersprechen dem RKSV-Code",
+        "text": "Die gedruckten Steuersatzzeilen und der RKSV-Code des Belegs (der QR-Code der Registrierkasse) nennen bei {rates} unterschiedliche Beträge. Gespeichert sind die gedruckten Steuersatzzeilen. Bitte mit dem Beleg vergleichen und die USt korrigieren, falls sie falsch gelesen wurden."
       }
     },
     "copy": {

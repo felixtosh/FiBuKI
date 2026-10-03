@@ -42,6 +42,7 @@ export function buildMarkNotInvoiceUpdates(
     extractedVatAmount: null,
     extractedLineItems: null,
     extractedRateGroups: null,
+    extractedRateGroupsSource: null,
     lineItemsUnreconciled: false,
     lineItemsUnreconciledRates: null,
     vatSourceDowngraded: false,
@@ -54,6 +55,9 @@ export function buildMarkNotInvoiceUpdates(
     // pointed at are among the fields cleared here, so nothing is left to doubt.
     needsRepairReview: false,
     repairAmbiguousFields: [],
+    // And the RKSV Code's flag (#166): the printed block it compared is gone.
+    needsRksvCodeReview: false,
+    rksvCodeDisagreeingRates: [],
     extractedPartner: null,
     extractedVatId: null,
     extractedIban: null,

@@ -404,6 +404,14 @@ export interface TaxFile {
   extractedRateGroups?: ExtractedRateGroup[] | null;
 
   /**
+   * Where `extractedRateGroups` came from (#166): the block the page prints,
+   * or the receipt's RKSV Code when the page printed none. Written and cleared
+   * with the Rate Groups. Absent on records written before it existed, which
+   * says nothing either way.
+   */
+  extractedRateGroupsSource?: "document" | "rksvCode" | null;
+
+  /**
    * Set when the extracted line items failed reconciliation against the
    * document total (fork #64): the items are kept for human repair but
    * must not be trusted for VAT derivation.
@@ -490,6 +498,17 @@ export interface TaxFile {
 
   /** Which fields those are, so the record reads without opening the PDF. */
   repairAmbiguousFields?: string[];
+
+  /**
+   * The printed Rate Group block and the receipt's RKSV Code disagree at 20,
+   * 10 or 13 % (#166). The printed block is what is stored; this says a human
+   * should look. Written at extraction and on every correction, queryable as
+   * a review list.
+   */
+  needsRksvCodeReview?: boolean;
+
+  /** The rates at which they disagree, so the record reads without opening the PDF. */
+  rksvCodeDisagreeingRates?: number[];
 
   /**
    * The document names a Leistungsempfänger who is not the user (#229), on a

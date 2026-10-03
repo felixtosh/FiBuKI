@@ -474,6 +474,11 @@
           "rateUnusual": "No EU country charges more than 27 % VAT. Check the rate."
         },
         "fixRows": "Fix the marked line items before saving."
+      },
+      "rateGroupsFromRksvCode": "Read from the receipt's RKSV code, the till's own machine-readable record of this split.",
+      "rksvCodeReview": {
+        "label": "Rate groups disagree with the RKSV code",
+        "text": "The printed rate groups and the receipt's RKSV code (the QR code from the till) give different amounts at {rates}. The printed rate groups are what is stored. Check them against the receipt and correct the VAT if they were misread."
       }
     },
     "copy": {
