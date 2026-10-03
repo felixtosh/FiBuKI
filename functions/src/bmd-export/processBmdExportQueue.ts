@@ -4,6 +4,7 @@
  * Collects transactions with files, generates BMD CSVs, creates ZIP, and uploads to Storage.
  */
 
+import type { SaleSupplyKind } from "../uva/types";
 import {
   onDocumentCreated,
   FirestoreEvent,
@@ -116,6 +117,8 @@ async function processBmdExport(
       isReverseCharge?: boolean;
       /** Goods/service answer to the foreign-regime review (#214). */
       foreignSupplyKind?: "goods" | "service" | null;
+      /** What a 0% sale is (#565). */
+      saleSupplyKind?: SaleSupplyKind | null;
       noReceiptCategoryId?: string | null;
       noReceiptCategoryTemplateId?: string | null;
       /** Accepted Partial Payment (#554), read by the VAT ladder. */
@@ -264,6 +267,10 @@ async function processBmdExport(
         currency: tx.currency as string | undefined,
         isReverseCharge: tx.isReverseCharge as boolean | undefined,
         foreignSupplyKind: tx.foreignSupplyKind ?? null,
+        saleSupplyKind: tx.saleSupplyKind ?? null,
+        partnerCountry: tx.partnerId
+          ? ((partnersMap.get(tx.partnerId)?.country as string | undefined) ?? null)
+          : null,
         noReceiptCategoryId: tx.noReceiptCategoryId,
         noReceiptCategoryTemplateId: tx.noReceiptCategoryTemplateId,
         partialPaymentAcceptance: tx.partialPaymentAcceptance ?? null,

@@ -74,6 +74,12 @@ export interface Invoice {
   paidByTransactionId?: string;
   paidAt?: Timestamp;
   cancelledAt?: Timestamp;
+  /**
+   * "Service, place of supply abroad (§ 3a Abs 6)" (#565): every line at 0%,
+   * the reverse-charge or not-taxable note printed, and the kind recorded on
+   * the Invoice's File for the UVA.
+   */
+  supplyAbroad?: boolean;
   /** Set on an Invoice Correction: the Invoice it cancels (#133). */
   correctsInvoice?: InvoiceCorrectionRef;
   /** Set on a cancelled Invoice: the Invoice Correction that cancels it (#133). */

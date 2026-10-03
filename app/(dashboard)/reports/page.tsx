@@ -35,7 +35,7 @@ import { formatCurrency } from "@/lib/utils";
 import {
   getReportReadiness,
 } from "@/lib/operations";
-import type { UvaReportResult } from "@/functions/src/uva/types";
+import type { SaleSupplyKind, UvaReportResult } from "@/functions/src/uva/types";
 import { OperationsContext } from "@/lib/operations/types";
 import {
   ReportPeriod,
@@ -202,6 +202,17 @@ function ReportsContent() {
     await callFunction("updateTransaction", {
       id: transactionId,
       data: { foreignSupplyKind: kind },
+    });
+    setReloadKey((k) => k + 1);
+  };
+
+  // #565: what a 0% sale is (service EU / non-EU, export of goods), written
+  // through the same callable, then recalculated so the sale moves off (or
+  // back onto) KZ 011 and KZ 000.
+  const handleSetSaleSupplyKind = async (transactionId: string, kind: SaleSupplyKind) => {
+    await callFunction("updateTransaction", {
+      id: transactionId,
+      data: { saleSupplyKind: kind },
     });
     setReloadKey((k) => k + 1);
   };
@@ -628,6 +639,7 @@ function ReportsContent() {
                     country={country}
                     onSetForeignSupplyKind={handleSetForeignSupplyKind}
                     onRulePartialPayment={handleRulePartialPayment}
+                    onSetSaleSupplyKind={handleSetSaleSupplyKind}
                   />
                 )}
               </TabsContent>

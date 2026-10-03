@@ -10,6 +10,7 @@ import {
   deriveFilingExceptions,
   FX_MARKUP_HIGH,
   FX_MARKUP_LOW,
+  zmDueDate,
 } from "./filing";
 import { reconcileDerivations, snapshotDerivations } from "./reconcile";
 import type { UvaPeriod, UvaTransaction } from "./types";
@@ -318,5 +319,74 @@ describe("buildUvaFiling", () => {
     });
 
     expect(filing.blockers.map((b) => b.code)).toEqual(["reconciliation-not-comparable"]);
+  });
+});
+
+describe("services supplied abroad on the filing (#565)", () => {
+  const sale = (
+    id: string,
+    kind: "service-eu" | "service-non-eu" | "export-goods" | null,
+    paid: string,
+    served: string,
+    basis: "manual" | "invoice" | "detected" = "manual"
+  ): UvaTransaction => ({
+    id,
+    date: paid,
+    amount: 50000,
+    files: [{ id: `f-${id}`, totalGross: 50000, rateGroups: [{ rate: 0, net: 50000, vat: 0, gross: 50000 }] }],
+    saleSupply: kind ? { kind, basis, serviceDate: served } : null,
+  });
+
+  it("lists the not-taxable section, split EU and non-EU", () => {
+    const filing = buildUvaFiling({
+      report: run([
+        sale("t-eu", "service-eu", "2026-02-01", "2026-01-20"),
+        sale("t-uk", "service-non-eu", "2026-02-02", "2026-01-21"),
+        sale("t-uk2", "service-non-eu", "2026-03-02", "2026-02-21"),
+      ]),
+    });
+    expect(filing.notTaxableAbroad.eu.total).toBe(50000);
+    expect(filing.notTaxableAbroad.nonEu.total).toBe(100000);
+    expect(filing.notTaxableAbroad.nonEu.sales.map((s) => s.transactionId)).toEqual(["t-uk", "t-uk2"]);
+  });
+
+  it("warns that a ZM is due, dated from the service, not the payment", () => {
+    // Performed in Q1, paid in Q2: Q1 warns, Q2 does not.
+    const transactions = [sale("t-eu", "service-eu", "2026-04-10", "2026-03-25")];
+    const q1 = buildUvaFiling({ report: run(transactions) });
+    const q2 = buildUvaFiling({ report: run(transactions, { ...Q1_2026, period: 2 }) });
+
+    expect(q1.warnings).toEqual([
+      expect.objectContaining({ code: "zm-due", dueDate: "2026-04-30", transactionIds: ["t-eu"] }),
+    ]);
+    expect(q2.warnings.find((w) => w.code === "zm-due")).toBeUndefined();
+    // The UVA is on the cash basis: the revenue is Q2's.
+    expect(q2.notTaxableAbroad.eu.total).toBe(50000);
+    expect(q1.notTaxableAbroad.eu.total).toBe(0);
+  });
+
+  it("does not warn about a ZM for a non-EU service", () => {
+    const filing = buildUvaFiling({ report: run([sale("t-uk", "service-non-eu", "2026-02-01", "2026-01-20")]) });
+    expect(filing.warnings).toEqual([]);
+  });
+
+  it("flags an undetermined or detected 0% sale without blocking the filing", () => {
+    const filing = buildUvaFiling({
+      report: run([
+        sale("t-unknown", null, "2026-02-01", "2026-01-20"),
+        sale("t-detected", "service-non-eu", "2026-02-02", "2026-01-21", "detected"),
+      ]),
+    });
+    expect(filing.warnings.map((w) => w.code)).toEqual([
+      "zero-rated-sale-undetermined",
+      "zero-rated-sale-detected",
+    ]);
+    expect(filing.blockers).toEqual([]);
+  });
+
+  it("dates a December period's ZM in January of the next year", () => {
+    expect(zmDueDate("2026-12-31")).toBe("2027-01-31");
+    expect(zmDueDate("2026-01-31")).toBe("2026-02-28");
+    expect(zmDueDate("2028-01-31")).toBe("2028-02-29");
   });
 });

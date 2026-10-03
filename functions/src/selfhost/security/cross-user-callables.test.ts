@@ -159,6 +159,19 @@ describe("cross-user isolation: every callable", () => {
     expect(mine.data()?.description).toBe("mine, edited");
   });
 
+  it("refuses to set what another user's 0% sale is (#565)", async () => {
+    const before = await freshAccounts();
+    const update = callables.find(([n]) => n === "updateTransaction")?.[1];
+    await expect(
+      update!.run({
+        data: { id: V.transaction, data: { saleSupplyKind: "service-non-eu" } },
+        auth: ATTACKER_AUTH,
+      })
+    ).rejects.toThrow();
+    await drainTriggers();
+    await assertVictimUntouched(before, "updateTransaction saleSupplyKind");
+  });
+
   it("no callable reads, changes or creates anything in another user's account", async () => {
     const failures: string[] = [];
     const timeouts: string[] = [];

@@ -29,6 +29,7 @@ import { Button } from "@/components/ui/button";
 import { useAuthenticatedDownload } from "@/hooks/use-authenticated-download";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { ShowMoreButton } from "@/components/ui/show-more-button";
@@ -171,6 +172,8 @@ interface LocalForm {
   dueDate: string; // yyyy-MM-dd
   lineItems: InvoiceLineItem[];
   notes: string;
+  /** "Service, place of supply abroad (§ 3a Abs 6)" (#565). */
+  supplyAbroad: boolean;
   namePrefix: string;
   /** Stored as string so the user can clear/edit freely; parsed at save time. */
   numberSeq: string;
@@ -192,6 +195,7 @@ function invoiceToForm(invoice: Invoice): LocalForm {
     dueDate: toDateInput(invoice.dueDate),
     lineItems: invoice.lineItems ?? [],
     notes: invoice.notes ?? "",
+    supplyAbroad: invoice.supplyAbroad ?? false,
     namePrefix: invoice.namePrefix ?? "",
     numberSeq:
       typeof invoice.numberSeq === "number"
@@ -393,6 +397,7 @@ export function InvoiceDetailPanel({
         paymentTerms: next.paymentTerms,
         lineItems: next.lineItems,
         notes: next.notes,
+        supplyAbroad: next.supplyAbroad,
         namePrefix: next.namePrefix.trim() === "" ? null : next.namePrefix.trim(),
       };
       const parsedSeq = parseInt(next.numberSeq, 10);
@@ -590,6 +595,7 @@ export function InvoiceDetailPanel({
       ...invoice,
       lineItems: form.lineItems,
       notes: form.notes,
+      supplyAbroad: form.supplyAbroad,
       ...computeInvoiceTotals(form.lineItems),
     };
   }, [invoice, form]);
@@ -608,6 +614,7 @@ export function InvoiceDetailPanel({
       pt: livePreviewInvoice.paymentTerms,
       li: livePreviewInvoice.lineItems,
       no: livePreviewInvoice.notes,
+      sa: livePreviewInvoice.supplyAbroad,
       cu: livePreviewInvoice.currency,
       t: livePreviewInvoice.total,
     });
@@ -1543,6 +1550,48 @@ function ViewSections({
 }
 
 // ===========================================================================
+// "Service, place of supply abroad (§ 3a Abs 6)" (#565). Turning it on sets
+// every line to 0% at once, so the totals and the preview follow immediately;
+// the server enforces the same and checks the recipient at issue.
+// ===========================================================================
+
+function SupplyAbroadSetting({
+  form,
+  updateForm,
+  disabled,
+}: {
+  form: LocalForm;
+  updateForm: (patch: Partial<LocalForm>) => void;
+  disabled: boolean;
+}) {
+  const t = useTranslations("invoices.supplyAbroad");
+  return (
+    <div className="flex items-start gap-2">
+      <Checkbox
+        id="invoice-supply-abroad"
+        checked={form.supplyAbroad}
+        disabled={disabled}
+        onCheckedChange={(checked) => {
+          const on = checked === true;
+          updateForm(
+            on
+              ? { supplyAbroad: true, lineItems: form.lineItems.map((li) => ({ ...li, vatRate: 0 })) }
+              : { supplyAbroad: false },
+          );
+        }}
+        className="mt-0.5"
+      />
+      <div className="space-y-0.5">
+        <Label htmlFor="invoice-supply-abroad" className="text-sm font-normal">
+          {t("label")}
+        </Label>
+        <p className="text-[11px] text-muted-foreground">{t("hint")}</p>
+      </div>
+    </div>
+  );
+}
+
+// ===========================================================================
 // Edit mode — the editable form (issuer, recipient, dates, line items, notes).
 // Functionally the same as the previous panel body.
 // ===========================================================================
@@ -1664,8 +1713,11 @@ function EditSections({
           lineItems={form.lineItems}
           onChange={(lineItems) => updateForm({ lineItems })}
           disabled={disabled}
+          vatLocked={form.supplyAbroad}
         />
       </div>
+
+      <SupplyAbroadSetting form={form} updateForm={updateForm} disabled={disabled} />
 
       <div className="space-y-1 text-sm tabular-nums">
         <div className="flex justify-between">

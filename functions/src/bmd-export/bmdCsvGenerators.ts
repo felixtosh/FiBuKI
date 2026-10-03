@@ -17,7 +17,7 @@ import { assessTip, documentsTotalWithTip, isTipPartialPayment } from "../uva/ti
 import { documentsInBankCurrency, RECONCILE_TOLERANCE_CENTS } from "../uva/calculateUva";
 import type { PartialPaymentAcceptance } from "../uva/partialPaymentAcceptance";
 import type { EcbRateTable } from "../fx/ecbRates";
-import type { RateGroup } from "../uva/types";
+import type { RateGroup, SaleSupplyKind, UvaSaleSupply } from "../uva/types";
 
 /**
  * Maps no-receipt category templateIds to BMD Sachkonten.
@@ -195,6 +195,10 @@ export interface TransactionForExport {
   isReverseCharge?: boolean | null;
   /** Goods/service answer to the foreign-regime review (#214), read by the D3 classifier. */
   foreignSupplyKind?: "goods" | "service" | null;
+  /** What a 0% sale is (#565), the person's override; read by the adapter. */
+  saleSupplyKind?: SaleSupplyKind | null;
+  /** The Partner's country, the adapter's last customer-country signal (#565). */
+  partnerCountry?: string | null;
   noReceiptCategoryId?: string | null;
   noReceiptCategoryTemplateId?: string | null;
   /** Accepted Partial Payment (#554), as stored; the ladder decides whether it is live. */
@@ -266,7 +270,12 @@ function splitByRate(
  * reported by name so the operator sees them before filing.
  */
 type VatRowsResult =
-  | { kind: "rows"; rows: Array<{ rate: number; gross: number; vat: number }> }
+  | {
+      kind: "rows";
+      rows: Array<{ rate: number; gross: number; vat: number }>;
+      /** What the sale's 0% part is (#565); absent on a purchase. */
+      saleSupply?: UvaSaleSupply | null;
+    }
   | {
       kind: "refused";
       /** The documents that carry the offending figure, for the report. */
@@ -321,12 +330,20 @@ function vatRowsFor(
       vatRate: tx.vatRate ?? null,
       isReverseCharge: tx.isReverseCharge ?? null,
       foreignSupplyKind: tx.foreignSupplyKind ?? null,
+      saleSupplyKind: tx.saleSupplyKind ?? null,
+      partnerId: tx.partnerId ?? null,
       noReceiptCategoryId: tx.noReceiptCategoryId ?? null,
       noReceiptCategoryTemplateId: tx.noReceiptCategoryTemplateId ?? null,
       fileIds: tx.fileIds,
       partialPaymentAcceptance: tx.partialPaymentAcceptance ?? null,
     },
-    { filesById, categoriesById }
+    {
+      filesById,
+      categoriesById,
+      partnersById: tx.partnerId
+        ? new Map([[tx.partnerId, { id: tx.partnerId, country: tx.partnerCountry ?? null }]])
+        : undefined,
+    }
   );
 
   // The tip is judged in the bank's currency, on the same converted documents
@@ -426,7 +443,7 @@ function vatRowsFor(
         ],
       };
     }
-    return { kind: "rows", rows: splitByRate(bankGross, derived.groups) };
+    return { kind: "rows", rows: splitByRate(bankGross, derived.groups), saleSupply: uvaTx.saleSupply };
   }
   // TODO(#214, pending Tax Advisor confirmation): the BMD Steuercode for
   // ig. Erwerb is NOT settled. Until it is confirmed, a goods/eu foreign
@@ -434,6 +451,34 @@ function vatRowsFor(
   // 0% catch-all row a reverse-charge service does. Do not invent a code
   // here - the mapping lands once the Tax Advisor picks it.
   return { kind: "rows", rows: [{ rate: 0, gross: bankGross, vat: 0 }] };
+}
+
+/** The text prefix that names a service supplied abroad on its BMD row (#565). */
+const SERVICE_ABROAD_TEXT: Record<"service-eu" | "service-non-eu", string> = {
+  "service-eu": "§3a Abs6 EU",
+  "service-non-eu": "§3a Abs6 Drittland",
+};
+
+/**
+ * The note and UID a BMD row carries (#565). A 0% row of a service supplied
+ * abroad names the kind and carries the customer's UID, so the Tax Advisor
+ * can map it to the right account; every other row is unchanged. No tax code
+ * is emitted: the row has none, and the account mapping stays his.
+ */
+function rowLabel(
+  v: { rate: number },
+  saleSupply: UvaSaleSupply | null | undefined,
+  text: string,
+  fallbackUid: string
+): { text: string; uidnr: string } {
+  const kind = saleSupply?.kind;
+  if (v.rate === 0 && (kind === "service-eu" || kind === "service-non-eu")) {
+    return {
+      text: `${SERVICE_ABROAD_TEXT[kind]}: ${text}`.substring(0, 75),
+      uidnr: (saleSupply?.customerVatId || fallbackUid).substring(0, 20),
+    };
+  }
+  return { text: text.substring(0, 75), uidnr: fallbackUid.substring(0, 20) };
 }
 
 /**
@@ -571,6 +616,7 @@ export function generateBuchungenCsvWithReport(
       const text = `${categoryMapping.name}: ${displayName}`.substring(0, 75);
 
       for (const v of vatRows) {
+        const label = rowLabel(v, vat.saleSupply, text, tx.vatId || "");
         rows.push({
           satzart: 0,
           konto: sachkonto,
@@ -582,10 +628,10 @@ export function generateBuchungenCsvWithReport(
           bucod: isExpense ? 1 : 2,
           steuer: formatBmdAmount(v.vat),
           mwst: v.rate,
-          text,
+          text: label.text,
           extbelegnr,
           symbol: categoryMapping.symbol || (isExpense ? "ER" : "AR"),
-          uidnr: (tx.vatId || "").substring(0, 20),
+          uidnr: label.uidnr,
         });
       }
     } else {
@@ -599,6 +645,7 @@ export function generateBuchungenCsvWithReport(
       const contraAccount = isExpense ? "7000" : "4000";
 
       for (const v of vatRows) {
+        const label = rowLabel(v, vat.saleSupply, displayName, tx.vatId || "");
         rows.push({
           satzart: 0,
           konto: personenkonto,
@@ -610,10 +657,10 @@ export function generateBuchungenCsvWithReport(
           bucod: isExpense ? 1 : 2,
           steuer: formatBmdAmount(v.vat),
           mwst: v.rate,
-          text: displayName.substring(0, 75),
+          text: label.text,
           extbelegnr,
           symbol: isExpense ? "ER" : "AR",
-          uidnr: (tx.vatId || "").substring(0, 20),
+          uidnr: label.uidnr,
         });
       }
     }

@@ -183,6 +183,7 @@ function uvaReportFor(f: Fixture, ecbRates: EcbRateTable | null = null) {
       partner: f.tx.partnerName ?? f.tx.partner ?? null,
       vatRate: f.tx.vatRate ?? null,
       isReverseCharge: f.tx.isReverseCharge ?? null,
+      saleSupplyKind: f.tx.saleSupplyKind ?? null,
       noReceiptCategoryId: f.tx.noReceiptCategoryId ?? null,
       noReceiptCategoryTemplateId: f.tx.noReceiptCategoryTemplateId ?? null,
       fileIds: f.tx.fileIds,
@@ -465,5 +466,64 @@ describe("bmd/uva agreement (#554): a tip the bank line does not cover", () => {
     // 8,333), the UVA scales the document's printed 16,67. That is the
     // rounding of every partial payment, not a disagreement about the base.
     expect(Math.abs(exportVatCents(f) - reportVatCents(f))).toBeLessThanOrEqual(1);
+  });
+});
+
+describe("bmd/uva agreement (#565): a service supplied abroad", () => {
+  // An outgoing invoice at 0% to an EU business, and one to a UK customer the
+  // person classified by hand. Neither carries Austrian VAT on either side.
+  const SERVICES: Fixture[] = [
+    withFile("EU service, detected from the document", 50000, {
+      extractedAmount: 50000,
+      extractedVatAmount: 0,
+      extractedVatPercent: 0,
+      matchedUserAccount: "issuer",
+      extractedRecipient: { vatId: "DE123456789", country: "DE" },
+    }, { partnerName: "Kunde GmbH" }),
+    withFile("non-EU service, classified by hand", 189000, {
+      extractedAmount: 189000,
+      extractedVatAmount: 0,
+      extractedVatPercent: 0,
+    }, { partnerName: "Thames Consulting Ltd", saleSupplyKind: "service-non-eu", vatId: "GB123456789" }),
+  ];
+
+  const rowsOf = (f: Fixture) => {
+    const files = new Map((f.files ?? []).map((file) => [file.id, file]));
+    return generateBuchungenCsv([f.tx], files, new Map()).split("\n").slice(1).filter(Boolean)
+      .map((line) => line.split(";"));
+  };
+
+  for (const f of SERVICES) {
+    it(`states 0 VAT on both sides, and keeps it off every Kennzahl: ${f.name}`, () => {
+      expect(exportVatCents(f)).toBe(0);
+      expect(reportVatCents(f)).toBe(0);
+      const report = uvaReportFor(f);
+      expect(report.kennzahlen["000"]).toBeUndefined();
+      expect(report.kennzahlen["011"]).toBeUndefined();
+    });
+  }
+
+  it("books the row at mwst 0 with the customer's UID and a note naming the kind", () => {
+    const [eu] = rowsOf(SERVICES[0]);
+    // headers: ... betrag(6) bucod(7) steuer(8) mwst(9) text(10) ... uidnr(13)
+    expect(eu[8]).toBe("0,00");
+    expect(eu[9]).toBe("0");
+    expect(eu[10]).toBe("§3a Abs6 EU: Kunde GmbH");
+    expect(eu[13]).toBe("DE123456789");
+
+    const [uk] = rowsOf(SERVICES[1]);
+    expect(uk[10]).toBe("§3a Abs6 Drittland: Thames Consulting Ltd");
+    expect(uk[13]).toBe("GB123456789");
+  });
+
+  it("leaves an export of goods' row as it was", () => {
+    const goods = withFile("export of goods", 50000, {
+      extractedAmount: 50000,
+      extractedVatAmount: 0,
+      extractedVatPercent: 0,
+    }, { partnerName: "Buyer Ltd", saleSupplyKind: "export-goods" });
+    const [row] = rowsOf(goods);
+    expect(row[10]).toBe("Buyer Ltd");
+    expect(uvaReportFor(goods).kennzahlen["011"]?.value).toBe(50000);
   });
 });

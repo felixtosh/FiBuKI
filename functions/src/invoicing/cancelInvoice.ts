@@ -81,6 +81,8 @@ function correctionDraft(
     updatedAt: now,
   };
   if (original.namePrefix) draft.namePrefix = original.namePrefix;
+  // A correction of a service supplied abroad prints the same note (#565).
+  if (original.supplyAbroad) draft.supplyAbroad = true;
   return draft;
 }
 

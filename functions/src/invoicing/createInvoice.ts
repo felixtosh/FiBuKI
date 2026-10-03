@@ -24,6 +24,7 @@ import {
   pickIssuerEntity,
   pickIssuerIban,
 } from "./snapshots";
+import { withoutVat } from "./supplyAbroad";
 import {
   InvoiceIssuerSnapshot,
   InvoiceRecipientSnapshot,
@@ -63,6 +64,8 @@ export interface CreateInvoiceRequest {
   currency?: string;
   lineItems?: CreateInvoiceLineItemInput[];
   notes?: string;
+  /** "Service, place of supply abroad (§ 3a Abs 6)" (#565): forces every line to 0%. */
+  supplyAbroad?: boolean;
 }
 
 export interface CreateInvoiceResponse {
@@ -168,6 +171,8 @@ export async function performCreateInvoice(
       },
     ];
   }
+  // "Service, place of supply abroad" (#565): no line carries Austrian VAT.
+  if (request.supplyAbroad === true) lineItems = withoutVat(lineItems);
   const { subtotal, vatAmount, total } = computeInvoiceTotals(lineItems);
 
   // Pre-fill numberSeq with the next number of this user's year. Issued
@@ -208,6 +213,7 @@ export async function performCreateInvoice(
   if (request.notes) {
     (invoiceData as Invoice).notes = request.notes;
   }
+  if (request.supplyAbroad === true) (invoiceData as Invoice).supplyAbroad = true;
 
   // Stub TaxFile so the draft invoice appears as a row in the files list.
   const fileData: Record<string, unknown> = {

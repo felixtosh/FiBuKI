@@ -12,6 +12,11 @@ interface InvoiceLineItemsTableProps {
   lineItems: InvoiceLineItem[];
   onChange: (lineItems: InvoiceLineItem[]) => void;
   disabled?: boolean;
+  /**
+   * "Service, place of supply abroad" (#565): every line is at 0% and the
+   * VAT field cannot change it.
+   */
+  vatLocked?: boolean;
 }
 
 function formatEur(cents: number): string {
@@ -48,7 +53,9 @@ export function InvoiceLineItemsTable({
   lineItems,
   onChange,
   disabled = false,
+  vatLocked = false,
 }: InvoiceLineItemsTableProps) {
+  const newLineVatRate = vatLocked ? 0 : DEFAULT_VAT_RATE;
   const updateItem = useCallback(
     (index: number, patch: Partial<InvoiceLineItem>) => {
       const next = lineItems.map((item, i) =>
@@ -70,7 +77,7 @@ export function InvoiceLineItemsTable({
             description: "",
             quantity: 1,
             unitPrice: 0,
-            vatRate: DEFAULT_VAT_RATE,
+            vatRate: newLineVatRate,
           },
         ]);
         return;
@@ -78,7 +85,7 @@ export function InvoiceLineItemsTable({
       const next = lineItems.filter((_, i) => i !== index);
       onChange(next);
     },
-    [lineItems, onChange]
+    [lineItems, onChange, newLineVatRate]
   );
 
   const addItem = useCallback(() => {
@@ -89,11 +96,11 @@ export function InvoiceLineItemsTable({
         description: "",
         quantity: 1,
         unitPrice: 0,
-        vatRate: DEFAULT_VAT_RATE,
+        vatRate: newLineVatRate,
       },
     ];
     onChange(next);
-  }, [lineItems, onChange]);
+  }, [lineItems, onChange, newLineVatRate]);
 
   return (
     <div className="space-y-2 invoice-line-items">
@@ -131,6 +138,7 @@ export function InvoiceLineItemsTable({
                 unitEur={unitEur}
                 netCents={netCents}
                 disabled={disabled}
+                vatLocked={vatLocked}
                 canRemove={lineItems.length > 1}
                 onUpdate={(patch) => updateItem(index, patch)}
                 onRemove={() => removeItem(index)}
@@ -161,6 +169,7 @@ interface LineItemRowProps {
   unitEur: string;
   netCents: number;
   disabled: boolean;
+  vatLocked: boolean;
   /** When false the remove button is hidden (e.g. the only line item). */
   canRemove: boolean;
   onUpdate: (patch: Partial<InvoiceLineItem>) => void;
@@ -172,6 +181,7 @@ function LineItemRow({
   unitEur,
   netCents,
   disabled,
+  vatLocked,
   canRemove,
   onUpdate,
   onRemove,
@@ -260,7 +270,7 @@ function LineItemRow({
               const v = parseFloat(e.target.value);
               onUpdate({ vatRate: Number.isFinite(v) ? v : 0 });
             }}
-            disabled={disabled}
+            disabled={disabled || vatLocked}
             className="h-8 text-right"
           />
         </div>

@@ -26,6 +26,7 @@ import {
 } from "../transactions/partialPaymentRulingOps";
 import { buildDownloadUrl } from "../utils/buildDownloadUrl";
 import { dayStartUtc, dayEndExclusiveUtc } from "../uva/dateWindow";
+import { SALE_SUPPLY_KINDS, type SaleSupplyKind } from "../uva/types";
 import { buildMarkNotInvoiceUpdates, buildUnmarkNotInvoiceUpdates } from "../files/notInvoiceOps";
 import {
   liveCopyIds,
@@ -486,8 +487,15 @@ export async function getTransaction(userId: string, transactionId: string) {
 }
 
 export async function updateTransaction(userId: string, args: Record<string, unknown>) {
-  const { transactionId, description, isComplete, vatRate, isReverseCharge, foreignSupplyKind } =
-    args;
+  const {
+    transactionId,
+    description,
+    isComplete,
+    vatRate,
+    isReverseCharge,
+    foreignSupplyKind,
+    saleSupplyKind,
+  } = args;
   if (!transactionId) throw new Error("transactionId is required");
 
   // Manual override lane (fork #64, spec §3 step 3): the UVA calculation
@@ -516,6 +524,14 @@ export async function updateTransaction(userId: string, args: Record<string, unk
   ) {
     throw new Error('foreignSupplyKind must be "goods", "service", or null to clear');
   }
+  // #565: what a 0% sale is - the income-side mirror of foreignSupplyKind.
+  if (
+    saleSupplyKind !== undefined &&
+    saleSupplyKind !== null &&
+    !SALE_SUPPLY_KINDS.includes(saleSupplyKind as SaleSupplyKind)
+  ) {
+    throw new Error(`saleSupplyKind must be one of ${SALE_SUPPLY_KINDS.join(", ")}, or null to clear`);
+  }
 
   const docRef = db.collection("transactions").doc(transactionId as string);
   const doc = await docRef.get();
@@ -540,6 +556,7 @@ export async function updateTransaction(userId: string, args: Record<string, unk
   if (vatRate !== undefined) updates.vatRate = vatRate;
   if (isReverseCharge !== undefined) updates.isReverseCharge = isReverseCharge;
   if (foreignSupplyKind !== undefined) updates.foreignSupplyKind = foreignSupplyKind;
+  if (saleSupplyKind !== undefined) updates.saleSupplyKind = saleSupplyKind;
 
   await docRef.update(updates);
   return { success: true, transactionId };
@@ -3271,6 +3288,7 @@ export async function createInvoice(userId: string, args: Record<string, unknown
       vatRate?: number;
     }> | undefined,
     notes: args.notes as string | undefined,
+    supplyAbroad: args.supplyAbroad === true,
   });
 
   // Look up the freshly-created invoice number for the response.

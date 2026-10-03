@@ -69,6 +69,12 @@ export interface Invoice {
   lineItems: InvoiceLineItem[];
   notes?: string;
   currency: string;
+  /**
+   * "Service, place of supply abroad (§ 3a Abs 6)" (#565): every line at 0%,
+   * the reverse-charge or not-taxable note printed, and the kind recorded on
+   * the Invoice's File for the UVA.
+   */
+  supplyAbroad?: boolean;
 
   subtotal: number;
   vatAmount: number;
