@@ -93,6 +93,11 @@ interface TransactionFilesSectionProps {
   onTriggerSearch?: () => void;
   /** Open the connect file overlay (lifted to page level) */
   onOpenConnectFile?: () => void;
+  /**
+   * Open the connect file overlay with a suggested File selected and
+   * previewed, so it can be looked at before it is accepted (#555).
+   */
+  onPreviewSuggestedFile?: (fileId: string) => void;
   /** Whether the connect overlay is currently open */
   isConnectFileOpen?: boolean;
   /** Browser learn mode handlers (optional — shown when extension installed + partner assigned) */
@@ -316,6 +321,10 @@ interface SuggestedFileRowProps {
   matchSources: string[];
   onConfirm: () => void;
   onDecline: () => void;
+  /** Opens the connect overlay on this File (#555). */
+  onPreview?: () => void;
+  /** A decline is being written. */
+  isDeclining?: boolean;
 }
 
 function SuggestedFileRow({
@@ -324,11 +333,23 @@ function SuggestedFileRow({
   matchSources,
   onConfirm,
   onDecline,
+  onPreview,
+  isDeclining = false,
 }: SuggestedFileRowProps) {
   return (
     <div className="flex items-center justify-between gap-2 p-2 -mx-2 rounded bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200/50 dark:border-amber-800/30 group overflow-hidden">
       <div className="min-w-0 flex-1 overflow-hidden w-0">
-        <p className="text-sm truncate">{fileDisplayName(file)}</p>
+        {onPreview ? (
+          <button
+            type="button"
+            onClick={onPreview}
+            className="block w-full text-left text-sm truncate hover:underline"
+          >
+            {fileDisplayName(file)}
+          </button>
+        ) : (
+          <p className="text-sm truncate">{fileDisplayName(file)}</p>
+        )}
         <p className="text-xs text-muted-foreground">
           {toDateSafe(file.extractedDate)
             ? format(toDateSafe(file.extractedDate)!, "MMM d, yyyy")
@@ -375,7 +396,8 @@ function SuggestedFileRow({
         <button
           type="button"
           onClick={onDecline}
-          className="p-1 rounded hover:bg-destructive/10 transition-colors"
+          disabled={isDeclining}
+          className="p-1 rounded hover:bg-destructive/10 transition-colors disabled:opacity-50"
           title="Decline suggestion"
         >
           <X className="h-4 w-4 text-muted-foreground hover:text-destructive" />
@@ -399,6 +421,7 @@ export function TransactionFilesSection({
   searchLabel,
   onTriggerSearch,
   onOpenConnectFile,
+  onPreviewSuggestedFile,
   isConnectFileOpen = false,
   learnMode,
   replayMode,
@@ -410,13 +433,19 @@ export function TransactionFilesSection({
   const [isReceiptLostDialogOpen, setIsReceiptLostDialogOpen] = useState(false);
   const receiptLostMounted = useMountOnceOpened(isReceiptLostDialogOpen);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
-  const [dismissedSuggestions, setDismissedSuggestions] = useState<Set<string>>(new Set());
+  const [decliningSuggestion, setDecliningSuggestion] = useState<string | null>(null);
   const [showRejectedFiles, setShowRejectedFiles] = useState(false);
   const [unrejecting, setUnrejecting] = useState<string | null>(null);
 
   const { files, loading: filesLoading, connectFile, disconnectFile, unrejectFile } =
     useTransactionFiles(transaction.id);
-  const { files: allFiles, loading: allFilesLoading, getFileById, copiesOf } = useFiles();
+  const {
+    files: allFiles,
+    loading: allFilesLoading,
+    getFileById,
+    copiesOf,
+    dismissSuggestion,
+  } = useFiles();
   const {
     categories,
     loading: categoriesLoading,
@@ -428,7 +457,6 @@ export function TransactionFilesSection({
 
   // Clear state when transaction changes
   useEffect(() => {
-    setDismissedSuggestions(new Set());
     setShowRejectedFiles(false);
   }, [transaction.id]);
 
@@ -478,8 +506,6 @@ export function TransactionFilesSection({
         if (connectedFileIds.has(file.id)) return false;
         // Skip files already connected to ANY transaction (avoid suggesting files that are assigned elsewhere)
         if (file.transactionIds && file.transactionIds.length > 0) return false;
-        // Skip dismissed suggestions
-        if (dismissedSuggestions.has(file.id)) return false;
         // Skip rejected files (user manually removed them from this transaction)
         if (rejectedIds.has(file.id)) return false;
         // Check if file has this transaction in suggestions
@@ -499,7 +525,7 @@ export function TransactionFilesSection({
       })
       .sort((a, b) => b.confidence - a.confidence)
       .slice(0, 3);
-  }, [allFiles, allFilesLoading, files, hasFiles, hasCategory, transaction.id, dismissedSuggestions]);
+  }, [allFiles, allFilesLoading, files, hasFiles, hasCategory, transaction.id]);
 
   // Get rejected files info
   const rejectedFiles = useMemo(() => {
@@ -521,8 +547,18 @@ export function TransactionFilesSection({
     }
   };
 
-  const handleDismissSuggestion = (fileId: string) => {
-    setDismissedSuggestions(prev => new Set([...prev, fileId]));
+  // A decline is a Rejection (#555), written by the same writer the File's
+  // detail panel uses. It also drops the suggestion from the File's stored
+  // list, so the realtime list loses the row on its own and it stays gone.
+  const handleDismissSuggestion = async (fileId: string) => {
+    setDecliningSuggestion(fileId);
+    try {
+      await dismissSuggestion(fileId, transaction.id);
+    } catch (error) {
+      console.error("Failed to decline suggestion:", error);
+    } finally {
+      setDecliningSuggestion(null);
+    }
   };
 
   const handleDisconnectFile = async (fileId: string) => {
@@ -1005,6 +1041,10 @@ export function TransactionFilesSection({
                   matchSources={matchSources}
                   onConfirm={() => handleConnectFile(file.id)}
                   onDecline={() => handleDismissSuggestion(file.id)}
+                  onPreview={
+                    onPreviewSuggestedFile ? () => onPreviewSuggestedFile(file.id) : undefined
+                  }
+                  isDeclining={decliningSuggestion === file.id}
                 />
               ))}
             </div>

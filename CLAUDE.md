@@ -306,7 +306,7 @@ the whole project.
 ```
 
 **Rules**:
-1. **Frontend scoring**: Call `/api/matching/score-files` which proxies to `scoreAttachmentMatchCallable`
+1. **Frontend scoring**: a stored File against a Transaction goes through the matcher's own callables, `findTransactionMatchesForFile` (File side) and `findFileMatchesForTransaction` (Transaction side, #555); both are surfaces in `scorer-parity.test.ts`. Mail results that are not Files yet go through `/api/matching/score-files`, which proxies to `scoreAttachmentMatchCallable`
 2. **Agent tools**: Score a File/Transaction pair by id with the `scoreFileTransactionMatch` callable (same scorer and input assembly as the matching trigger and MCP's `score_file_transaction_match`) via `callFirebaseFunction`
 3. **Pre-computed scores**: Stored in `file.transactionSuggestions` (computed by `matchFileTransactions` trigger)
 4. **NEVER** implement local `scoreResult()` or similar functions in hooks/components

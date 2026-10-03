@@ -761,5 +761,27 @@
       "correctedByLabel": "Storniert durch",
       "correctedByValue": "Rechnungskorrektur {number}"
     }
+  },
+  "connect": {
+    "sort": {
+      "label": "Sortierung",
+      "aria": "Belege sortieren",
+      "best": "Bester Vorschlag",
+      "closestDate": "Nächstes Datum",
+      "newest": "Neueste"
+    },
+    "dateWindow": {
+      "days7": "±7 Tage",
+      "days30": "±30 Tage",
+      "all": "Alle Daten"
+    },
+    "partnerOnly": "Nur dieser Partner",
+    "files": {
+      "loading": "Beste Vorschläge werden gesucht...",
+      "noneForSearch": "Keine Belege passen zur Suche",
+      "noneForFilters": "Keine Belege passen zu diesen Filtern",
+      "none": "Keine Belege gefunden",
+      "matched": "Gefunden in: {fields}"
+    }
   }
 }

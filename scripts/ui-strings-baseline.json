@@ -82,7 +82,7 @@
   "components/expand/country-grid.tsx": 2,
   "components/expand/country-page-content.tsx": 18,
   "components/expand/expand-page-content.tsx": 6,
-  "components/files/connect-file-overlay.tsx": 88,
+  "components/files/connect-file-overlay.tsx": 86,
   "components/files/connect-transaction-overlay.tsx": 22,
   "components/files/email-search-panel.tsx": 14,
   "components/files/file-columns.tsx": 18,

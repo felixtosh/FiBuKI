@@ -268,12 +268,12 @@ export function ConnectTransactionOverlay({
     const narrowed = filterConnectCandidates(candidates, {
       partnerId: controls.partnerOnly ? filePartnerId : null,
       dateWindowDays: controls.dateWindowDays,
-      fileDateMs,
+      referenceDateMs: fileDateMs,
     });
     return sortConnectCandidates(narrowed, controls.sort, {
       // Best match is the server's match confidence, never a local score.
       confidenceOf: (c) => matchMap.get(c.id)?.confidence,
-      fileDateMs,
+      referenceDateMs: fileDateMs,
     }).map((c) => c.tx);
   }, [filteredTransactions, controls, filePartnerId, fileDateMs, matchMap]);
 
