@@ -20,7 +20,7 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { HttpsError } from "../utils/createCallable";
 import { normalizeCompanyName } from "../utils/partner-matcher";
 import { isGeneratedInvoiceFile } from "./generatedInvoiceGuard";
-import { buildUnmarkNotInvoiceUpdates } from "./notInvoiceOps";
+import { buildUnmarkNotInvoiceUpdates, queueExtractionAfterUnmark } from "./notInvoiceOps";
 
 type Data = FirebaseFirestore.DocumentData;
 type Db = FirebaseFirestore.Firestore;
@@ -471,7 +471,7 @@ export async function markFileAsCopy(
     throw new HttpsError("invalid-argument", "A File cannot be a Copy of itself");
   }
 
-  return db.runTransaction(async (tx) => {
+  const { result, reopenedExtraction } = await db.runTransaction(async (tx) => {
     const copy = await readOwnedFile(tx, db, userId, fileId);
     const named = await readOwnedFile(tx, db, userId, originalFileId);
 
@@ -496,21 +496,26 @@ export async function markFileAsCopy(
 
     // A File hidden as "not an invoice" because it was a re-send becomes what
     // it is: an invoice document, recorded as a Copy. Clearing the mark
-    // re-opens Extraction, which brings back the fields it cleared.
-    const extra =
-      recordedBy === "user" && copy.data.isNotInvoice === true
-        ? buildUnmarkNotInvoiceUpdates(copy.data, false)
-        : {};
+    // re-opens Extraction, which brings back the fields it cleared; it is
+    // queued once the transaction has committed.
+    const unmark = recordedBy === "user" && copy.data.isNotInvoice === true;
+    const extra = unmark ? buildUnmarkNotInvoiceUpdates(copy.data, false) : {};
 
     const { moved, dropped } = await applyCopy(tx, db, userId, copy, root, recordedBy, extra);
     return {
-      success: true as const,
-      fileId,
-      originalFileId: root.id,
-      movedConnections: moved,
-      removedConnections: dropped,
+      result: {
+        success: true as const,
+        fileId,
+        originalFileId: root.id,
+        movedConnections: moved,
+        removedConnections: dropped,
+      },
+      reopenedExtraction: unmark,
     };
   });
+
+  if (reopenedExtraction) await queueExtractionAfterUnmark(fileId, userId);
+  return result;
 }
 
 export interface NotACopyResult {

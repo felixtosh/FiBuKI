@@ -7,7 +7,7 @@ import { useDropzone } from "react-dropzone";
 import { Upload } from "lucide-react";
 import { db } from "@/lib/firebase/config";
 import { uploadFile, UPLOAD_ACCEPTED_TYPES, UPLOAD_MAX_FILE_SIZE } from "@/lib/files/upload-file";
-import { retryFileExtraction, connectFileToTransaction, assignPartnerToFile, OperationsContext } from "@/lib/operations";
+import { connectFileToTransaction, assignPartnerToFile, OperationsContext } from "@/lib/operations";
 import { FileTable } from "@/components/files/file-table";
 import { FileDetailPanel } from "@/components/files/file-detail-panel";
 import { FileBulkPanel } from "@/components/files/file-bulk-panel";
@@ -817,16 +817,15 @@ function FilesContent() {
     if (!selectedFile) return;
     // Set parsing state FIRST before any Firestore updates (prevents race condition)
     setParsingFileId(selectedFile.id);
-    // Unmark as not-invoice and trigger re-extraction (user says it IS an invoice)
-    await unmarkAsNotInvoice(selectedFile.id);
-    // Force re-extraction since user overrode the AI classification
+    // Unmarking queues the re-extraction itself, without re-classifying:
+    // the user says it IS an invoice.
     try {
-      await retryFileExtraction(ctx, selectedFile.id);
+      await unmarkAsNotInvoice(selectedFile.id);
     } catch (error) {
-      console.error("Failed to re-extract after marking as invoice:", error);
+      console.error("Failed to mark as invoice:", error);
       setParsingFileId(null);
     }
-  }, [selectedFile, unmarkAsNotInvoice, ctx]);
+  }, [selectedFile, unmarkAsNotInvoice]);
 
 
   // FAB: create an empty draft invoice and open the sidebar. Partner and
@@ -1027,14 +1026,9 @@ function FilesContent() {
     try {
       for (const fileId of fileIds) {
         try {
+          // Queues the re-extraction too.
           await unmarkAsNotInvoice(fileId);
           successCount++;
-          // Trigger re-extraction since user says it IS an invoice
-          try {
-            await retryFileExtraction(ctx, fileId);
-          } catch (error) {
-            console.error(`Failed to re-extract file ${fileId}:`, error);
-          }
         } catch (error) {
           console.error(`Failed to mark file ${fileId} as invoice:`, error);
           failureCount++;
@@ -1053,7 +1047,7 @@ function FilesContent() {
       setIsBulkUpdating(false);
       setBulkProgress(null);
     }
-  }, [allSelectedIds, unmarkAsNotInvoice, ctx]);
+  }, [allSelectedIds, unmarkAsNotInvoice]);
 
   // Multi-select: bulk assign partner. Iterates the same single-file operation
   // the detail panel calls, so twenty files end up recorded exactly as twenty

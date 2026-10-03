@@ -27,7 +27,11 @@ import {
 import { buildDownloadUrl } from "../utils/buildDownloadUrl";
 import { dayStartUtc, dayEndExclusiveUtc } from "../uva/dateWindow";
 import { SALE_SUPPLY_KINDS, type SaleSupplyKind } from "../uva/types";
-import { buildMarkNotInvoiceUpdates, buildUnmarkNotInvoiceUpdates } from "../files/notInvoiceOps";
+import {
+  buildMarkNotInvoiceUpdates,
+  buildUnmarkNotInvoiceUpdates,
+  queueExtractionAfterUnmark,
+} from "../files/notInvoiceOps";
 import {
   liveCopyIds,
   markFileAsCopy,
@@ -1328,6 +1332,7 @@ export async function unmarkFileAsNotInvoice(userId: string, args: Record<string
     .get();
 
   await fileRef.update(buildUnmarkNotInvoiceUpdates(fileData, !manualConnections.empty));
+  await queueExtractionAfterUnmark(fileId, userId);
 
   console.log(`[unmarkFileAsNotInvoice] Unmarked file ${fileId} as invoice`, {
     userId,
