@@ -63,7 +63,7 @@ async function seedRefund(id: string, date: string, amount: number, link: string
     extractedVatPercent: 20,
     extractedSelfDesignation: "Gutschrift",
     transactionIds: [id],
-    ...(link ? { correctionLink: { fileId: link, setBy: "auto" } } : {}),
+    ...(link ? { correctionLink: { fileId: link, setBy: "manual" } } : {}),
   });
   await seedTx(id, date, amount, [`${id}-credit`]);
 }

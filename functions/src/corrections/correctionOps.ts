@@ -18,6 +18,7 @@
 
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { HttpsError } from "../utils/createCallable";
+import { toDateSafe } from "../utils/toDateSafe";
 import { classifyCorrectionDocument } from "./classifyCorrectionDocument";
 import { matchCorrectionLink, type LinkMatchCandidate } from "./linkMatcher";
 import type { CorrectionLinkSetBy } from "./resolveCorrections";
@@ -54,7 +55,7 @@ async function readOwned(
 }
 
 function dayOf(value: unknown): string | null {
-  const d = (value as { toDate?: () => Date } | null)?.toDate?.();
+  const d = toDateSafe(value);
   return d ? d.toISOString().slice(0, 10) : null;
 }
 

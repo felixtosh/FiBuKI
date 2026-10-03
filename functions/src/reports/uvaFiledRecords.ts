@@ -10,6 +10,7 @@
 
 import { Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
+import { toDateSafe } from "../utils/toDateSafe";
 import { runUvaForPeriod, assertValidPeriod } from "./uvaPeriodRun";
 import { buildUvaFiling, type FilingBlocker } from "../uva/filing";
 import { periodKeyOf, snapshotDerivations, type UvaDerivationSnapshot } from "../uva/reconcile";
@@ -38,7 +39,7 @@ export interface StoredFiledRecord extends Omit<UvaFiledRecord, "filedAt"> {
 }
 
 function toRecord(id: string, data: FirebaseFirestore.DocumentData): StoredFiledRecord {
-  const at = data.filedAt?.toDate?.() as Date | undefined;
+  const at = toDateSafe(data.filedAt);
   return {
     id,
     periodKey: data.periodKey,

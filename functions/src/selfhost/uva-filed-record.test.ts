@@ -39,7 +39,7 @@ async function seedQuarter(linked: boolean) {
   await seedFile("f-credit", {
     extractedAmount: -3000, extractedVatAmount: -500, extractedVatPercent: 20, extractedSelfDesignation: "Gutschrift",
     transactionIds: ["t-refund"],
-    ...(linked ? { correctionLink: { fileId: "f-invoice", setBy: "auto" } } : {}),
+    ...(linked ? { correctionLink: { fileId: "f-invoice", setBy: "manual" } } : {}),
   });
   await seedTx("t-refund", "2026-02-10", 3000, ["f-credit"]);
 }
