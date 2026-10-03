@@ -20,14 +20,16 @@
  */
 
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { ReportPeriod, formatPeriod } from "@/types/report";
 import { TaxCountryCode } from "@/types/user-data";
-import type { UvaReportResult } from "@/functions/src/uva/types";
+import type { TransactionDerivationEntry, UvaReportResult } from "@/functions/src/uva/types";
 import {
   buildVorsteuerTrace,
   deriveFilingExceptions,
@@ -48,6 +50,19 @@ interface UVAPreviewProps {
     transactionId: string,
     kind: "goods" | "service"
   ) => Promise<void> | void;
+  /**
+   * Writer for the Accepted Partial Payment ruling (#554). Called with the
+   * transaction, the action, and the person's reason on accept; the caller
+   * persists it (acceptPartialPayment callable) and recalculates the period.
+   * Absent, the review list renders read-only.
+   */
+  onRulePartialPayment?: (
+    transactionId: string,
+    action: "accept" | "revoke",
+    reason?: string
+    // Awaited either way. Typed `unknown` rather than as a promise so the
+    // string lint (#168) does not read the generic as copy.
+  ) => unknown;
 }
 
 function formatAmount(cents: number): string {
@@ -123,15 +138,20 @@ const UNTRACED_LABELS: Record<string, string> = {
   "import-declaration": "Evidenced by the customs declaration",
 };
 
-const REASON_LABELS: Record<string, string> = {
-  "no-file": "No receipt connected",
-  "no-vat-data": "Receipt has no VAT data",
-  "foreign-or-invalid-rate": "Foreign or invalid VAT rate",
-  "amount-mismatch": "Bank amount ≠ invoice total",
-  "foreign-currency": "Foreign-currency receipt — no usable exchange rate",
-  "impossible-tip": "Trinkgeld ≥ bank amount — correct the tip on the receipt",
-  "needs-receipt": "Receipt lost — needs documentation",
-};
+/** The initial value of a nullable string state (typed here, not as a generic). */
+const NO_TEXT: string | null = null;
+
+/** Review reasons with a label in `uvaReview.reasons`; anything else shows its code. */
+const REASON_KEYS = new Set([
+  "no-file",
+  "no-vat-data",
+  "foreign-or-invalid-rate",
+  "amount-mismatch",
+  "foreign-currency",
+  "impossible-tip",
+  "tip-partial-payment",
+  "needs-receipt",
+]);
 
 function KennzahlRow({
   kz,
@@ -172,7 +192,14 @@ function KennzahlRow({
   );
 }
 
-export function UVAPreview({ result, period, country, onSetForeignSupplyKind }: UVAPreviewProps) {
+export function UVAPreview({
+  result,
+  period,
+  country,
+  onSetForeignSupplyKind,
+  onRulePartialPayment,
+}: UVAPreviewProps) {
+  const t = useTranslations("uvaReview");
   const codes = KZ_ORDER.filter(
     (code) => result.kennzahlen[code] && (result.kennzahlen[code].value !== 0 || code === "095")
   );
@@ -198,6 +225,40 @@ export function UVAPreview({ result, period, country, onSetForeignSupplyKind }: 
       await onSetForeignSupplyKind(transactionId, kind);
     } finally {
       setSavingKindFor(null);
+    }
+  };
+
+  // #554: the lines claimed in part on a live Accepted Partial Payment, so the
+  // ruling can be seen and revoked where it took effect.
+  const acceptedPartialPayments = result.derivations.filter(isAcceptedPartialPayment);
+  // The row whose ruling is being written, and the reason typed so far. One at
+  // a time: the period recalculates after every ruling.
+  const [rulingFor, setRulingFor] = useState(NO_TEXT);
+  const [rulingReason, setRulingReason] = useState("");
+  const [rulingSaving, setRulingSaving] = useState(false);
+  // Each error shows where its action was taken: an accept's in that row's
+  // form, a revoke's under the accepted list.
+  const [rulingError, setRulingError] = useState(NO_TEXT);
+  const [revokeError, setRevokeError] = useState(NO_TEXT);
+  const rule = async (transactionId: string, action: "accept" | "revoke") => {
+    if (!onRulePartialPayment) return;
+    const setError = action === "accept" ? setRulingError : setRevokeError;
+    setRulingSaving(true);
+    setError(null);
+    try {
+      await onRulePartialPayment(
+        transactionId,
+        action,
+        action === "accept" ? rulingReason.trim() : undefined
+      );
+      if (action === "accept") {
+        setRulingFor(null);
+        setRulingReason("");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("partialPayment.saveFailed"));
+    } finally {
+      setRulingSaving(false);
     }
   };
 
@@ -418,25 +479,125 @@ export function UVAPreview({ result, period, country, onSetForeignSupplyKind }: 
           <CardContent>
             <div className="space-y-1">
               {result.unresolved.map((u) => (
-                <div key={u.transactionId} className="flex items-center gap-3 py-1.5 px-2 text-sm border-b last:border-b-0">
-                  <span className="w-24 font-mono text-xs text-muted-foreground">{u.date}</span>
-                  <span className="flex-1 truncate">{u.partner ?? "—"}</span>
-                  <Badge variant="outline" className="text-xs">
-                    {REASON_LABELS[u.reason] ?? u.reason}
-                  </Badge>
+                <div key={u.transactionId} className="border-b last:border-b-0">
+                  <div className="flex items-center gap-3 py-1.5 px-2 text-sm">
+                    <span className="w-24 font-mono text-xs text-muted-foreground">{u.date}</span>
+                    <span className="flex-1 truncate">{u.partner ?? "—"}</span>
+                    <Badge variant="outline" className="text-xs">
+                      {REASON_KEYS.has(u.reason) ? t(`reasons.${u.reason}`) : u.reason}
+                    </Badge>
+                    {onRulePartialPayment && u.reason === "tip-partial-payment" && rulingFor !== u.transactionId && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-6 px-2 text-xs"
+                        disabled={rulingSaving}
+                        onClick={() => {
+                          setRulingFor(u.transactionId);
+                          setRulingReason("");
+                          setRulingError(null);
+                        }}
+                        title={t("partialPayment.acceptHint")}
+                      >
+                        {t("partialPayment.accept")}
+                      </Button>
+                    )}
+                    <span className="w-28 text-right font-mono tabular-nums">
+                      {formatAmount(u.amount)} EUR
+                    </span>
+                    <span className="w-32 text-right font-mono text-xs text-muted-foreground tabular-nums">
+                      {u.side === "income"
+                        ? `+${formatAmount(u.defaultedOutputVat ?? 0)} USt`
+                        : u.foregoneVat != null
+                          ? `${formatAmount(u.foregoneVat)} VSt lost`
+                          : ""}
+                    </span>
+                  </div>
+                  {rulingFor === u.transactionId && (
+                    <div className="flex flex-wrap items-center gap-2 px-2 pb-2 text-sm">
+                      <Input
+                        className="h-7 flex-1 min-w-48 text-xs"
+                        value={rulingReason}
+                        onChange={(e) => setRulingReason(e.target.value)}
+                        placeholder={t("partialPayment.reasonPlaceholder")}
+                        aria-label={t("partialPayment.reasonLabel")}
+                        autoFocus
+                      />
+                      <Button
+                        size="sm"
+                        className="h-7 px-2 text-xs"
+                        disabled={rulingSaving || rulingReason.trim() === ""}
+                        onClick={() => rule(u.transactionId, "accept")}
+                      >
+                        {t("partialPayment.confirm")}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-xs"
+                        disabled={rulingSaving}
+                        onClick={() => {
+                          setRulingFor(null);
+                          setRulingError(null);
+                        }}
+                      >
+                        {t("partialPayment.cancel")}
+                      </Button>
+                      {rulingError ? (
+                        <span className="w-full text-xs text-destructive">{rulingError}</span>
+                      ) : null}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {acceptedPartialPayments.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">
+              {t("partialPayment.acceptedTitle", { count: acceptedPartialPayments.length })}
+            </CardTitle>
+            <CardDescription>{t("partialPayment.acceptedDescription")}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-1">
+              {acceptedPartialPayments.map((d) => (
+                <div
+                  key={d.transactionId}
+                  className="flex items-center gap-3 py-1.5 px-2 text-sm border-b last:border-b-0"
+                >
+                  <span className="w-24 font-mono text-xs text-muted-foreground">{d.date}</span>
+                  <span className="flex-1 truncate">{d.partner ?? "—"}</span>
+                  {onRulePartialPayment && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-6 px-2 text-xs"
+                      disabled={rulingSaving}
+                      onClick={() => rule(d.transactionId, "revoke")}
+                      title={t("partialPayment.revokeHint")}
+                    >
+                      {t("partialPayment.revoke")}
+                    </Button>
+                  )}
                   <span className="w-28 text-right font-mono tabular-nums">
-                    {formatAmount(u.amount)} EUR
+                    {formatAmount(d.amount)} EUR
                   </span>
                   <span className="w-32 text-right font-mono text-xs text-muted-foreground tabular-nums">
-                    {u.side === "income"
-                      ? `+${formatAmount(u.defaultedOutputVat ?? 0)} USt`
-                      : u.foregoneVat != null
-                        ? `${formatAmount(u.foregoneVat)} VSt lost`
-                        : ""}
+                    {d.side === "income"
+                      ? t("partialPayment.claimedOutput", { amount: formatAmount(d.outputVat) })
+                      : t("partialPayment.claimed", { amount: formatAmount(d.inputVat) })}
                   </span>
                 </div>
               ))}
             </div>
+            {revokeError ? (
+              <p className="mt-2 text-xs text-destructive">{revokeError}</p>
+            ) : null}
           </CardContent>
         </Card>
       )}
@@ -615,4 +776,9 @@ export function UVAPreview({ result, period, country, onSetForeignSupplyKind }: 
       )}
     </div>
   );
+}
+
+/** A derivation claimed in part on a live Accepted Partial Payment (#554). */
+function isAcceptedPartialPayment(d: TransactionDerivationEntry): boolean {
+  return d.partialPaymentAccepted === true;
 }

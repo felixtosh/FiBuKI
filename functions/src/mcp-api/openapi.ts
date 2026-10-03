@@ -56,6 +56,7 @@ const OPENAPI_SPEC = {
                       "list_transactions_needing_files",
                       "list_transactions_missing_invoice",
                       "accept_receipt_only",
+                      "accept_partial_payment",
                       "mark_file_as_not_invoice",
                       "unmark_file_as_not_invoice",
                       "dismiss_transaction_suggestion",
@@ -224,6 +225,8 @@ const OPENAPI_SPEC = {
       "Find transactions documented by a receipt only - a document is attached but no § 11 UStG invoice was ever received, so no Vorsteuer may be claimed. Each row carries the vendor, the amount, the date and the § 11 elements the attached document is missing. Lines with a live Accepted Receipt ruling are excluded and reported in acceptedCount. Returns { transactions, nextCursor, count, acceptedCount } - count and acceptedCount are this page, not totals. Args: minAmount? (number, in cents), limit? (number, max 500), cursor? (string, nextCursor from the previous page)",
     accept_receipt_only:
       "Record - or revoke - an Accepted Receipt ruling on a receipt-only transaction: no § 11 invoice is obtainable and the receipt is as good as the evidence will ever get, so the chase queue stops holding the line. Touches nothing else (documentationState, isComplete, UVA, BMD all unchanged); goes stale on its own when files or documentation state change. A claimed input VAT earns a warning, never a refusal. Args: transactionId (string), reason? (string, required unless revoking), revoke? (boolean)",
+    accept_partial_payment:
+      "Record - or revoke - an Accepted Partial Payment ruling on a tipped transaction whose bank amount is short of document total + tip: the shortfall is real (split bill, instalment), not a mistyped tip. Without it the UVA lists the line as tip-partial-payment and claims nothing, and the BMD export refuses it; with it both claim and book the paid fraction. Goes stale on its own when the files, a file's total or tip, or the bank amount change. Args: transactionId (string), reason? (string, required unless revoking), revoke? (boolean)",
     mark_file_as_not_invoice:
       "Flag a file as not an invoice (duplicate re-send, payment reminder, statement). Clears extracted data and removes it from the unmatched-file queue; refuses while the file is still connected to a transaction. Args: fileId (string), reason? (string)",
     unmark_file_as_not_invoice:

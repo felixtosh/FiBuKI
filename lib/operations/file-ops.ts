@@ -382,9 +382,9 @@ export interface EditableExtractedFields {
    */
   tipAmount: string;
   /**
-   * The tip above is not printed on the invoice (#310), so the server measures
-   * it against the transaction total rather than the document total. Absent is
-   * false: the default bound is the document's own total.
+   * The tip above is not printed on the invoice (#310), so the server does not
+   * measure it against the document total (#554). Absent is false: the default
+   * bound is the document's own total.
    */
   tipNotPrinted?: boolean;
   vatPercent: string; // number as string

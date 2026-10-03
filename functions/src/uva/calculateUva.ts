@@ -21,7 +21,7 @@ import {
   ratesValidInPeriod,
   ratesValidOn,
 } from "./rateSet";
-import { assessTip } from "./tip";
+import { assessTip, documentsTotalWithTip, isTipPartialPayment } from "./tip";
 import { assessImpliedFx, isSameCurrency } from "../fx/fxPlausibility";
 import { ecbCrossRate, type EcbRateTable } from "../fx/ecbRates";
 import { singleDocumentRate } from "../extraction/lineItemReconciliation";
@@ -73,6 +73,17 @@ export interface Derivation {
   nonClaimableVat: NonClaimableVatEntry[];
   /** Foreign-currency documents read at the effective rate paid. Usually empty. */
   fxConversions: FxConversionEntry[];
+  /**
+   * The Trinkgeld this payment carries, in the bank's currency, scaled on the
+   * same anchor as `groups` (#554). Set by the file ladder only; outside the
+   * VAT base, so it reaches no Kennzahl. The BMD export books it as the 0% row.
+   */
+  tip?: number;
+  /**
+   * The groups were scaled as a partial payment of a tipped bill because a
+   * live Accepted Partial Payment ruling said the shortfall is real (#554).
+   */
+  partialPaymentAccepted?: true;
 }
 
 export interface DerivationFailure {
@@ -158,6 +169,7 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
       reason?: UnresolvedReason | null;
       outputVat?: number;
       inputVat?: number;
+      partialPaymentAccepted?: true;
     }
   ) => {
     result.derivations.push({
@@ -171,6 +183,7 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
       fileIds: (tx.files ?? []).map((f) => f.id),
       outputVat: e.outputVat ?? 0,
       inputVat: e.inputVat ?? 0,
+      ...(e.partialPaymentAccepted ? { partialPaymentAccepted: true as const } : {}),
     });
   };
 
@@ -366,13 +379,19 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
         step: d.step,
         reason,
         outputVat: d.groups.reduce((s, g) => s + g.vat, 0),
+        partialPaymentAccepted: d.partialPaymentAccepted,
       });
     } else {
       let vat = 0;
       for (const g of d.groups) vat += g.vat;
       totalInputVat += vat;
       addKz("060", vat, d.step);
-      recordDerivation(tx, { step: d.step, reason, inputVat: vat });
+      recordDerivation(tx, {
+        step: d.step,
+        reason,
+        inputVat: vat,
+        partialPaymentAccepted: d.partialPaymentAccepted,
+      });
     }
   }
 }
@@ -603,9 +622,31 @@ export function deriveRateGroups(
     // base — transcribed where the Beleg prints it (#172), hand-set where it
     // does not (#217) — so it joins the total here and nowhere else: the
     // reconcile comes out exact and no tolerance rung is involved.
-    const invoiceTotal =
-      reconcileTotal ??
-      files.reduce((s, f) => s + (f.totalGross ?? 0) + (f.tipAmount ?? 0), 0);
+    const invoiceTotal = reconcileTotal ?? documentsTotalWithTip(files);
+
+    // A possible tip the bank line still falls short of (#554). Below, the
+    // shortfall would take R2 and claim `bank / (document + tip)` of the
+    // document's VAT — and a 100,00 Beleg whose 10,00 tip was typed as 100,00
+    // claims 9,17 of its 16,67 with nothing on the review list. A split bill
+    // looks exactly the same and SHOULD be claimed in part, so arithmetic does
+    // not decide: the line claims nothing and waits on review until the tip is
+    // corrected or a person records an Accepted Partial Payment. The BMD
+    // export refuses the same transaction, on this same predicate.
+    const tipShort = isTipPartialPayment(tipHere, bank, invoiceTotal, RECONCILE_TOLERANCE_CENTS);
+    if (tipShort && !tx.partialPaymentAccepted) {
+      return {
+        ok: false,
+        reason: "tip-partial-payment",
+        // The same 20% proxy `impossible-tip` uses: which part of the document
+        // is claimable is the question the ruling has not answered yet.
+        foregoneVat: guessVat20(bank),
+        foreignVat,
+        nonClaimableVat,
+        fxConversions,
+      };
+    }
+    const accepted = tipShort ? { partialPaymentAccepted: true as const } : {};
+
     const prior = tx.priorClaimedFraction ?? 0;
     let fraction = 1;
     if (invoiceTotal > 0) {
@@ -637,7 +678,7 @@ export function deriveRateGroups(
     }
 
     if (fraction >= 1 && prior === 0) {
-      return { ok: true, step, groups, foreignVat, nonClaimableVat, fxConversions };
+      return { ok: true, step, groups, foreignVat, nonClaimableVat, fxConversions, tip: tipHere.tip };
     }
     // Scale each group; rounding is anchored to the cumulative fraction so
     // instalments sum exactly to the document's VAT once fully paid.
@@ -655,7 +696,19 @@ export function deriveRateGroups(
       ...n,
       excludedVat: scaleAnchored(n.excludedVat, prior, fraction),
     }));
-    return { ok: true, step, groups: scaled, foreignVat, nonClaimableVat: scaledNonClaimable, fxConversions };
+    return {
+      ok: true,
+      step,
+      groups: scaled,
+      foreignVat,
+      nonClaimableVat: scaledNonClaimable,
+      fxConversions,
+      // The tip is part of what was paid, so a payment of half the bill paid
+      // half the tip too: a split bill of 100,00 + 10,00 paid with 55,00
+      // carries 5,00 of it, not 10,00 (#554).
+      tip: scaleAnchored(tipHere.tip, prior, fraction),
+      ...accepted,
+    };
   }
 
   // Step 3: manual override lane.

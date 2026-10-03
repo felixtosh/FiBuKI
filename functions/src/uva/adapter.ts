@@ -8,6 +8,10 @@
  * anything with toDate().
  */
 
+import {
+  isPartialPaymentAcceptanceLive,
+  type PartialPaymentAcceptance,
+} from "./partialPaymentAcceptance";
 import type {
   NonClaimableVatReason,
   UvaFile,
@@ -33,6 +37,12 @@ export interface TransactionRecord {
   noReceiptCategoryId?: string | null;
   noReceiptCategoryTemplateId?: string | null;
   fileIds?: string[];
+  /**
+   * Accepted Partial Payment (#554), as stored. Read only through
+   * `isPartialPaymentAcceptanceLive`: a ruling over figures that have since
+   * changed lets nothing through.
+   */
+  partialPaymentAcceptance?: PartialPaymentAcceptance | null;
 }
 
 /** Minimal shape of a stored file record this adapter reads. */
@@ -208,6 +218,22 @@ export function deriveForeignRegime(
   return null;
 }
 
+/**
+ * What paying a document in full comes to, cents: its total plus its tip
+ * (#172). The instalment cap divides what earlier periods paid by this, the
+ * same figure the reconcile measures a payment against; dividing by the total
+ * alone made a ruled split bill's second half look over-paid (#554). Null for
+ * a document with no positive total, which is never read as an instalment.
+ */
+export function payableTotalOf(
+  f: Pick<FileRecord, "extractedAmount" | "extractedTipAmount"> | undefined
+): number | null {
+  const total = f?.extractedAmount ?? 0;
+  if (total <= 0) return null;
+  const tip = f?.extractedTipAmount ?? 0;
+  return total + (tip > 0 ? tip : 0);
+}
+
 export interface BuildOptions {
   filesById: Map<string, FileRecord>;
   categoriesById: Map<string, CategoryRecord>;
@@ -258,6 +284,7 @@ export function buildUvaTransaction(
     files,
     foreignRegime: deriveForeignRegime(tx, files),
     priorClaimedFraction,
+    partialPaymentAccepted: isPartialPaymentAcceptanceLive(tx, opts.filesById),
     // invoiceRateGroups stays unset: the data model has no
     // invoice↔transaction link yet. Income resolves via connected files
     // (uploaded AR invoices) or falls back per spec §3 step 4; the pure

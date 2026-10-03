@@ -13,8 +13,9 @@ import {
 } from "../types/bmd-export";
 import { buildUvaTransaction, type CategoryRecord, type FileRecord } from "../uva/adapter";
 import { deriveTransactionVat } from "../uva/transactionVat";
-import { assessTip } from "../uva/tip";
-import { documentsInBankCurrency } from "../uva/calculateUva";
+import { assessTip, documentsTotalWithTip, isTipPartialPayment } from "../uva/tip";
+import { documentsInBankCurrency, RECONCILE_TOLERANCE_CENTS } from "../uva/calculateUva";
+import type { PartialPaymentAcceptance } from "../uva/partialPaymentAcceptance";
 import type { EcbRateTable } from "../fx/ecbRates";
 import type { RateGroup } from "../uva/types";
 
@@ -196,6 +197,8 @@ export interface TransactionForExport {
   foreignSupplyKind?: "goods" | "service" | null;
   noReceiptCategoryId?: string | null;
   noReceiptCategoryTemplateId?: string | null;
+  /** Accepted Partial Payment (#554), as stored; the ladder decides whether it is live. */
+  partialPaymentAcceptance?: PartialPaymentAcceptance | null;
 }
 
 /**
@@ -321,6 +324,7 @@ function vatRowsFor(
       noReceiptCategoryId: tx.noReceiptCategoryId ?? null,
       noReceiptCategoryTemplateId: tx.noReceiptCategoryTemplateId ?? null,
       fileIds: tx.fileIds,
+      partialPaymentAcceptance: tx.partialPaymentAcceptance ?? null,
     },
     { filesById, categoriesById }
   );
@@ -368,23 +372,57 @@ function vatRowsFor(
       `(${formatBmdAmount(bankGross)}); correct the tip on this document and re-run`,
   });
 
+  // A possible tip the bank line falls short of (#554): a mistyped tip or a
+  // split bill, and only an Accepted Partial Payment says which. The UVA
+  // claims nothing on it and lists it as `tip-partial-payment`; the export
+  // refuses it on the same predicate, judged on the same figures the ladder
+  // reconciles (the payment itself for a document converted at a published
+  // rate). It used to book `bank - tip` at the document's rates and the whole
+  // tip at 0%, which agreed with neither the document nor the UVA's scaled
+  // claim. The ladder stops the expense path itself; this also covers the
+  // lanes that resolve without the reconcile, as `impossible-tip` does above.
+  const reconcileTotal = inBank?.conversion
+    ? inBank.conversion.bankAmount
+    : documentsTotalWithTip(inBank?.files);
+  const tipShort =
+    isTipPartialPayment(tip, bankGross, reconcileTotal, RECONCILE_TOLERANCE_CENTS) &&
+    !uvaTx.partialPaymentAccepted;
+  const refuseTipPartialPayment = (): VatRowsResult => ({
+    kind: "refused",
+    fileIds: tip.tipFiles.map((f) => f.id),
+    reason:
+      `bank amount (${formatBmdAmount(bankGross)}) is short of document total plus tip ` +
+      `(${formatBmdAmount(reconcileTotal)}, tip ${tipAsCompared()}); correct the tip, or ` +
+      `record an Accepted Partial Payment if only part of the bill was paid, and re-run`,
+  });
+
   const derived = deriveTransactionVat(uvaTx, ecbRates);
   if (derived.kind === "unresolved" && derived.reason === "impossible-tip") {
     return refuseImpossibleTip();
   }
+  if (derived.kind === "unresolved" && derived.reason === "tip-partial-payment") {
+    return refuseTipPartialPayment();
+  }
   if (derived.kind === "groups") {
     if (tip.impossible) return refuseImpossibleTip();
+    if (tipShort) return refuseTipPartialPayment();
     // A printed Trinkgeld is a Betriebsausgabe and no part of the VAT base
     // (#172), so it books as its own 0% row instead of being scaled into the
     // rate groups. Without this, splitByRate would stretch the document's
     // rates over the tip too and the export would state VAT the UVA does not
     // — the fork #66 divergence, reintroduced.
-    if (tip.tip > 0) {
+    //
+    // The row is the tip THIS payment carries. The ladder scales it with the
+    // groups, so a split bill of 100,00 + 10,00 paid with 55,00 books 50,00 at
+    // the document's rates and 5,00 at 0%, matching the UVA's half claim
+    // (#554). Lanes that never read a document's tip fall back to the whole.
+    const tipRow = derived.tip ?? tip.tip;
+    if (tipRow > 0) {
       return {
         kind: "rows",
         rows: [
-          ...splitByRate(bankGross - tip.tip, derived.groups),
-          { rate: 0, gross: tip.tip, vat: 0 },
+          ...splitByRate(bankGross - tipRow, derived.groups),
+          { rate: 0, gross: tipRow, vat: 0 },
         ],
       };
     }

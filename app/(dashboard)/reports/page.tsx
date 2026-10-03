@@ -206,6 +206,17 @@ function ReportsContent() {
     setReloadKey((k) => k + 1);
   };
 
+  // Accepted Partial Payment (#554): a tipped line the bank does not cover is
+  // claimed in part only on a recorded ruling. Persist it, then recalculate.
+  const handleRulePartialPayment = async (
+    transactionId: string,
+    action: "accept" | "revoke",
+    reason?: string
+  ) => {
+    await callFunction("acceptPartialPayment", { id: transactionId, action, reason });
+    setReloadKey((k) => k + 1);
+  };
+
   // Handle period type change
   const handlePeriodTypeChange = (type: "monthly" | "quarterly") => {
     setPeriodType(type);
@@ -616,6 +627,7 @@ function ReportsContent() {
                     period={selectedPeriod}
                     country={country}
                     onSetForeignSupplyKind={handleSetForeignSupplyKind}
+                    onRulePartialPayment={handleRulePartialPayment}
                   />
                 )}
               </TabsContent>

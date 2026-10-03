@@ -33,6 +33,7 @@ import {
 } from "./bmdCsvGenerators";
 import { loadEcbRateTable } from "../fx/ecbRateStore";
 import { toViennaCalendarDay } from "../uva/adapter";
+import type { PartialPaymentAcceptance } from "../uva/partialPaymentAcceptance";
 
 const PROCESSING_TIMEOUT_MS = 4 * 60 * 1000; // 4 minutes
 
@@ -117,6 +118,8 @@ async function processBmdExport(
       foreignSupplyKind?: "goods" | "service" | null;
       noReceiptCategoryId?: string | null;
       noReceiptCategoryTemplateId?: string | null;
+      /** Accepted Partial Payment (#554), read by the VAT ladder. */
+      partialPaymentAcceptance?: PartialPaymentAcceptance | null;
     }
 
     const txSnapshot = await txQuery.get();
@@ -263,6 +266,7 @@ async function processBmdExport(
         foreignSupplyKind: tx.foreignSupplyKind ?? null,
         noReceiptCategoryId: tx.noReceiptCategoryId,
         noReceiptCategoryTemplateId: tx.noReceiptCategoryTemplateId,
+        partialPaymentAcceptance: tx.partialPaymentAcceptance ?? null,
       })
     );
 

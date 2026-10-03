@@ -9,6 +9,7 @@
 
 import { describe, it, expect } from "vitest";
 import { calculateUva } from "./calculateUva";
+import { payableTotalOf } from "./adapter";
 import { periodBoundaries, ratesValidOn } from "./rateSet";
 import type {
   UvaTransaction,
@@ -748,16 +749,17 @@ describe("impossible Trinkgeld (#317): what must not change", () => {
     expect(r.unresolved).toHaveLength(0);
   });
 
-  it("claims a tip one cent under the bank amount — the guard stops at `>=`", () => {
+  it("does not call a tip one cent under the bank amount impossible — the guard stops at `>=`", () => {
     // The boundary from the safe side. 53,99 of a 54,00 charge read as
-    // Trinkgeld is nonsense too, but it is the conservative nonsense #194
-    // left alone: 50,80 + 53,99 is still short of the bank line, so this is
-    // the partial-payment branch and it under-claims rather than over-claims.
+    // Trinkgeld is nonsense too, but not this predicate's: 50,80 + 53,99 is
+    // short of the bank line, which used to take the partial-payment branch
+    // and under-claim. Since #554 a tipped shortfall is its own review reason
+    // (`tip-partial-payment`), so it claims nothing until someone rules on it.
     const r = run([meal(-5400, 5399)]);
 
-    expect(r.unresolved).toHaveLength(0);
-    expect(r.totalInputVat).toBeGreaterThan(0);
-    expect(r.totalInputVat).toBeLessThan(555);
+    expect(r.unresolved).toHaveLength(1);
+    expect(r.unresolved[0].reason).toBe("tip-partial-payment");
+    expect(r.totalInputVat).toBe(0);
   });
 
   it("keeps the D1 asymmetry on income: the full 20% is still owed, and flagged", () => {
@@ -805,6 +807,145 @@ describe("impossible Trinkgeld (#317): what must not change", () => {
 // ---------------------------------------------------------------------------
 // Step 3 — manual override
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// A tip the bank line does not cover is not silently a partial payment (#554)
+// ---------------------------------------------------------------------------
+
+describe("tip the bank line does not cover (#554)", () => {
+  /** A Beleg at one rate, with a tip beside its total. */
+  const beleg = (totalGross: number, rate: number, vatAmount: number, tipAmount: number) => ({
+    id: "f-beleg",
+    totalGross,
+    tipAmount,
+    vatPercent: rate,
+    vatAmount,
+  });
+
+  const tx = (
+    amount: number,
+    file: ReturnType<typeof beleg>,
+    extra: Partial<UvaTransaction> = {}
+  ): UvaTransaction => ({
+    id: "t-tip",
+    date: "2026-02-20",
+    amount,
+    files: [file],
+    ...extra,
+  });
+
+  /** 100,00 at 20%: 16,67 of Vorsteuer. */
+  const hundred = (tip: number) => beleg(10000, 20, 1667, tip);
+  /** A 3,00 coffee at 10%. */
+  const coffee = (tip: number) => beleg(300, 10, 27, tip);
+
+  it("lists a mistyped tip for review and claims nothing", () => {
+    // 110,00 paid, the 10,00 tip typed as 100,00. R2 used to read 200,00 as
+    // the invoice total and claim 55%: 9,17 of the 16,67, with nothing listed.
+    const r = run([tx(-11000, hundred(10000))]);
+
+    expect(r.totalInputVat).toBe(0);
+    expect(kz(r, "060")).toBe(0);
+    expect(r.unresolved).toHaveLength(1);
+    expect(r.unresolved[0].reason).toBe("tip-partial-payment");
+    expect(r.unresolved[0].transactionId).toBe("t-tip");
+    expect(r.unresolved[0].foregoneVat).toBe(1833);
+    expect(r.derivations[0].reason).toBe("tip-partial-payment");
+    expect(r.derivations[0].inputVat).toBe(0);
+  });
+
+  it("lists 3,00 + 7,99 against an 8,00 bank line the same way (#346)", () => {
+    const r = run([tx(-800, coffee(799))]);
+
+    expect(r.totalInputVat).toBe(0);
+    expect(r.unresolved.map((u) => u.reason)).toEqual(["tip-partial-payment"]);
+  });
+
+  it("claims 3,00 + 5,00 against an 8,00 bank line in full, as before", () => {
+    const r = run([tx(-800, coffee(500))]);
+
+    expect(r.unresolved).toHaveLength(0);
+    expect(r.totalInputVat).toBe(27);
+  });
+
+  it("lets a shortfall inside the reconcile tolerance through", () => {
+    // 3,00 + 5,02 against 8,00: the tolerance R6 already grants.
+    const r = run([tx(-800, coffee(502))]);
+
+    expect(r.unresolved).toHaveLength(0);
+    expect(r.totalInputVat).toBe(27);
+  });
+
+  describe("a split bill: 100,00 + 10,00 tip, half of it paid", () => {
+    it("is on review until someone rules on it", () => {
+      const r = run([tx(-5500, hundred(1000))]);
+
+      expect(r.totalInputVat).toBe(0);
+      expect(r.unresolved.map((u) => u.reason)).toEqual(["tip-partial-payment"]);
+    });
+
+    it("claims half the Vorsteuer with a live Accepted Partial Payment", () => {
+      const r = run([tx(-5500, hundred(1000), { partialPaymentAccepted: true })]);
+
+      expect(r.unresolved).toHaveLength(0);
+      // Half of 16,67, rounded on the instalment anchor.
+      expect(r.totalInputVat).toBe(834);
+      expect(kz(r, "060")).toBe(834);
+      expect(r.derivations[0].partialPaymentAccepted).toBe(true);
+    });
+  });
+
+  it("marks no derivation as resting on a ruling when the ruling did nothing", () => {
+    // The tip is covered, so the ruling is not what let it through.
+    const r = run([tx(-800, coffee(500), { partialPaymentAccepted: true })]);
+
+    expect(r.totalInputVat).toBe(27);
+    expect(r.derivations[0].partialPaymentAccepted).toBeUndefined();
+  });
+
+  it("does not let a ruling rescue an impossible tip", () => {
+    const r = run([tx(-800, coffee(800), { partialPaymentAccepted: true })]);
+
+    expect(r.totalInputVat).toBe(0);
+    expect(r.unresolved.map((u) => u.reason)).toEqual(["impossible-tip"]);
+  });
+
+  it("still scales a short bank line with no tip, with no ruling needed", () => {
+    const r = run([tx(-5000, hundred(0))]);
+
+    expect(r.unresolved).toHaveLength(0);
+    expect(r.totalInputVat).toBe(834);
+  });
+
+  it("claims a ruled tipped bill paid in two halves in full, across both periods", () => {
+    // 55,00 in Q1 and 55,00 in Q2, each ruled. The prior fraction is what the
+    // period run computes: earlier payments over total PLUS tip. Over the total
+    // alone it read 0,55 and the second half claimed 7,50 instead of 8,33.
+    const q1 = run([tx(-5500, hundred(1000), { partialPaymentAccepted: true })]);
+    const prior = 5500 / payableTotalOf({ extractedAmount: 10000, extractedTipAmount: 1000 })!;
+    const q2 = run(
+      [
+        {
+          ...tx(-5500, hundred(1000), { partialPaymentAccepted: true, priorClaimedFraction: prior }),
+          date: "2026-05-20",
+        },
+      ],
+      Q2_2026
+    );
+
+    expect(prior).toBe(0.5);
+    expect(q1.totalInputVat).toBe(834);
+    expect(q2.totalInputVat).toBe(833);
+    expect(q1.totalInputVat + q2.totalInputVat).toBe(1667);
+  });
+
+  it("keeps the D1 asymmetry on income: defaulted to 20% and flagged", () => {
+    const r = run([tx(11000, hundred(10000))]);
+
+    expect(r.unresolved[0].reason).toBe("tip-partial-payment");
+    expect(r.unresolved[0].defaultedOutputVat).toBe(1833);
+  });
+});
 
 describe("foreign-currency documents (fork #87)", () => {
   // Live shape: Invoice-SJJFNBF4-0004.pdf USD 36.00 incl. USD 6.00 VAT (20%),

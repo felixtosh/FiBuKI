@@ -19,6 +19,16 @@
  * So the predicate lives here and nowhere else, and both sides import it. What
  * they do with a `true` stays theirs: the export withholds the transaction and
  * names the documents, the UVA puts it on the review list as "impossible-tip".
+ *
+ * A tip that IS smaller than the bank line can still be one the bank line
+ * does not cover (#554): a 3,00 Beleg with a 7,99 tip, paid with 8,00. The
+ * reconcile used to read that as a partial payment and scale the claim by
+ * `bank / (document + tip)`, returning `ok`. It is either a mistyped tip or a
+ * real partial payment of a tipped bill (a split bill), and only a person can
+ * say which. `isTipPartialPayment` is that second predicate, shared the same
+ * way: the UVA lists the line as "tip-partial-payment" and claims nothing, the
+ * export refuses it, and both let it through once an Accepted Partial Payment
+ * is live (`./partialPaymentAcceptance`).
  */
 
 import type { UvaFile } from "./types";
@@ -50,4 +60,34 @@ export function assessTip(
   const tipFiles = (files ?? []).filter((f) => (f.tipAmount ?? 0) > 0);
   const tip = tipFiles.reduce((s, f) => s + (f.tipAmount ?? 0), 0);
   return { tip, tipFiles, impossible: tip > 0 && tip >= bankGross };
+}
+
+/**
+ * What the bank line is reconciled against when it is the sum of the
+ * documents: each document's total plus its tip (#172). Cents, on documents
+ * already in the bank's currency.
+ */
+export function documentsTotalWithTip(files: readonly UvaFile[] | null | undefined): number {
+  return (files ?? []).reduce((s, f) => s + (f.totalGross ?? 0) + (f.tipAmount ?? 0), 0);
+}
+
+/**
+ * Is the bank line short of what the tipped documents add up to (#554)?
+ *
+ * `reconcileTotal` is the figure the reconcile compares the bank line with:
+ * `documentsTotalWithTip` on the converted documents, or the payment itself
+ * for a document converted at a published rate (#92), which therefore never
+ * reads as short. An impossible tip is not also a partial payment: it is
+ * refused on its own predicate first, and stays so with a ruling.
+ *
+ * `toleranceCents` is the reconcile's own (`RECONCILE_TOLERANCE_CENTS`), so
+ * this fires exactly where the reconcile would otherwise take R2.
+ */
+export function isTipPartialPayment(
+  tip: TipAssessment,
+  bankGross: number,
+  reconcileTotal: number,
+  toleranceCents: number
+): boolean {
+  return tip.tip > 0 && !tip.impossible && reconcileTotal - bankGross > toleranceCents;
 }

@@ -184,8 +184,11 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
       tipAmount: file.extractedTipAmount != null ? (file.extractedTipAmount / 100).toString() : "",
       // #310: seeded from the bound the last correction recorded, so re-saving
       // a tip that was accepted as unprinted does not re-measure it against a
-      // document total it was never meant to fit inside.
-      tipNotPrinted: file.extractedTipBound?.bound === "transaction",
+      // document total it was never meant to fit inside. "transaction" is how
+      // #310 recorded the same declaration before #554 renamed it.
+      tipNotPrinted:
+        file.extractedTipBound?.bound === "not-printed" ||
+        file.extractedTipBound?.bound === "transaction",
       vatPercent: file.extractedVatPercent != null ? file.extractedVatPercent.toString() : "",
       partner: file.extractedPartner || "",
       vatId: file.extractedVatId || "",
@@ -697,12 +700,11 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
           )}
 
           {/*
-            #310. A hand-set tip is bounded, and which total bounds it depends
-            on something only the person knows: whether the document printed the
-            tip at all. Ticking this measures it against the bank line instead
-            of the invoice — which is the only way a 5,00 tip on a 3,00 coffee
-            can be recorded, and still no way to record one larger than the
-            payment itself.
+            #310. A printed tip is bounded by the document total, and whether
+            the document printed the tip at all is something only the person
+            knows. Ticking this says it did not, so the document total does not
+            bound it (#554) — the only way a 5,00 tip on a 3,00 coffee can be
+            recorded. Whether the bank line covers it is the UVA's question.
           */}
           {isEditing && editedFields.tipAmount.trim() !== "" && (
             <div className="flex items-center gap-4 field-row-responsive">

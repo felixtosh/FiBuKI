@@ -7,5 +7,6 @@
 
 export { updateTransactionCallable } from "./updateTransaction";
 export { acceptReceiptOnlyCallable } from "./acceptReceiptOnly";
+export { acceptPartialPaymentCallable } from "./acceptPartialPayment";
 export { bulkUpdateTransactionsCallable } from "./bulkUpdateTransactions";
 export { deleteTransactionsBySourceCallable } from "./deleteTransactionsBySource";

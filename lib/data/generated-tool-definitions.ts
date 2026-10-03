@@ -215,6 +215,30 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     }
   },
   {
+    "name": "accept_partial_payment",
+    "description": "Record - or revoke - an Accepted Partial Payment ruling on a transaction whose connected files carry a tip and whose bank amount is short of document total + tip: a recorded ruling (who, when, why, over which figures) that the shortfall is real - a split bill where only a share was paid, or an instalment - and not a mistyped tip. Without it the UVA lists such a line as tip-partial-payment and claims nothing, and the BMD export refuses it. With a live ruling the UVA claims the paid fraction of the document's Vorsteuer and the BMD export books the tip row scaled to the same fraction. Do not use it to make a mistyped tip go away - correct the tip with update_file_extraction instead. The ruling goes stale on its own when the connected files, a file's total or tip, or the bank amount change; revoke: true removes it. Requires at least one connected file with a tip.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "transactionId": {
+          "type": "string",
+          "description": "The transaction ID"
+        },
+        "reason": {
+          "type": "string",
+          "description": "Why the shortfall is real (e.g. split the bill, paid my half). Required unless revoking - the reason IS the record."
+        },
+        "revoke": {
+          "type": "boolean",
+          "description": "true removes the recorded ruling instead of making one"
+        }
+      },
+      "required": [
+        "transactionId"
+      ]
+    }
+  },
+  {
     "name": "list_transactions_needing_files",
     "description": "Find transactions without receipts (no files, no category). Returns { transactions, nextCursor, count }. `count` is the size of this page, not a total — page with nextCursor until it comes back null to see everything that still needs a receipt.",
     "inputSchema": {
@@ -698,11 +722,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
             "number",
             "null"
           ],
-          "description": "Freiwilliges Trinkgeld in cents that the document does NOT print — the terminal took it and the Beleg never says so, which is why the bank line is larger than the invoice. It is stored BESIDE the total and never taken out of it: on such a document the printed total already is the VAT-bearing figure, so subtracting the tip would shrink the VAT base and under-claim. Only a human sets it; it is never inferred from the bank/document gap. A tip the document DOES print is already extracted into this field and needs no correction. Zero and null both clear it; a negative is refused. It is also bounded: it must be less than the document total, or — with tipNotPrinted — less than the transaction total. An over-large tip is refused rather than clamped, because it makes the file unmatchable and nothing afterwards says why."
+          "description": "Freiwilliges Trinkgeld in cents that the document does NOT print — the terminal took it and the Beleg never says so, which is why the bank line is larger than the invoice. It is stored BESIDE the total and never taken out of it: on such a document the printed total already is the VAT-bearing figure, so subtracting the tip would shrink the VAT base and under-claim. Only a human sets it; it is never inferred from the bank/document gap. A tip the document DOES print is already extracted into this field and needs no correction. Zero and null both clear it; a negative is refused. It is also bounded by what the document shows: it must be less than the document total, unless tipNotPrinted says the document does not print it. An over-large tip is refused rather than clamped."
         },
         "tipNotPrinted": {
           "type": "boolean",
-          "description": "The tip being set is not printed on the invoice, so it is measured against the TRANSACTION total instead of the document total: the terminal took it on top of an invoice that is complete without it, and the bank line is the only figure that knows how large it can be. It moves the bound, it does not lift one — a tip that is not less than the transaction total is still refused, and a file connected to no transaction has nothing to measure against. Which bound applied is stored on the file as extractedTipBound."
+          "description": "The tip being set is not printed on the invoice: the terminal took it on top of an invoice that is complete without it, so the document total does not bound it. No connected transaction is needed. Whether the bank line covers document + tip is checked at UVA time, not here: a tip not less than the bank line is impossible-tip, and a bank line short of document + tip is tip-partial-payment. The declaration is stored on the file as extractedTipBound."
         },
         "invoiceDirection": {
           "type": [

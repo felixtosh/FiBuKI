@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   buildUvaTransaction,
   deriveForeignRegime,
+  payableTotalOf,
   toUvaFile,
   toViennaCalendarDay,
   TEMPLATE_VAT_TREATMENT,
@@ -224,6 +225,23 @@ describe("deriveForeignRegime", () => {
       };
       expect(deriveForeignRegime(tx, [])).toBeNull();
     });
+  });
+});
+
+describe("payableTotalOf (#554)", () => {
+  it("is the total plus the tip, the figure a full payment comes to", () => {
+    expect(payableTotalOf({ extractedAmount: 10000, extractedTipAmount: 1000 })).toBe(11000);
+  });
+
+  it("is the total alone without a tip", () => {
+    expect(payableTotalOf({ extractedAmount: 10000 })).toBe(10000);
+    expect(payableTotalOf({ extractedAmount: 10000, extractedTipAmount: 0 })).toBe(10000);
+  });
+
+  it("is null for a document that cannot be an instalment", () => {
+    expect(payableTotalOf(undefined)).toBeNull();
+    expect(payableTotalOf({ extractedAmount: null, extractedTipAmount: 500 })).toBeNull();
+    expect(payableTotalOf({ extractedAmount: -5000 })).toBeNull();
   });
 });
 
