@@ -521,6 +521,31 @@
       "transactionCorrects": "Corrects",
       "transactionCorrectedBy": "Corrected by",
       "failed": "That did not work: {message}"
+    },
+    "split": {
+      "suggestionTitle": "Looks like {count} separate invoices or Receipts",
+      "suggestionExplanation": "One PDF holds several separately issued documents. Split it so each gets its own Partner, invoice number and amount.",
+      "pageRange": "Pages {from}–{to}",
+      "pageSingle": "Page {page}",
+      "split": "Split",
+      "adjust": "Adjust",
+      "notABundle": "Not a bundle",
+      "splitFrom": "Split from",
+      "splitInto": "Split into {count} Files",
+      "theOriginal": "the original File",
+      "action": "Split into parts",
+      "dialogTitle": "Split this File",
+      "dialogDescription": "Each part becomes its own File holding those pages unchanged. It is read from scratch and connected to the same transactions. This File is then deleted; you can restore it once its parts are deleted.",
+      "pageCount": "{count} pages",
+      "pageCountUnknown": "Page count not known yet",
+      "part": "Part {n}",
+      "fromPage": "From page",
+      "toPage": "To page",
+      "addPart": "Add part",
+      "removePart": "Remove part",
+      "confirm": "Split into {count} Files",
+      "cancel": "Cancel",
+      "failed": "Could not split: {message}"
     }
   },
   "progress": {

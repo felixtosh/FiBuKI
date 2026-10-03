@@ -68,6 +68,8 @@ export const WRITE_TOOLS = [
   "accept_partial_payment",
   "delete_file", // reversible: restore_file (ADR-0006)
   "restore_file",
+  "split_file", // reversible: delete the parts, then restore_file the original
+  "dismiss_split_suggestion", // no undo, but loses nothing: split_file still takes explicit ranges
   "connect_file_to_transaction",
   "disconnect_file_from_transaction",
   "confirm_file_recipient_is_user",

@@ -11,6 +11,7 @@ export { updateFileExtractedFieldsCallable } from "./updateFileExtractedFields";
 export { deleteFileCallable } from "./deleteFile";
 export { restoreFileCallable } from "./restoreFile";
 export { purgeFilesCallable } from "./purgeFiles";
+export { splitFileCallable, dismissSplitSuggestionCallable } from "./splitFile";
 export { markFileAsNotInvoiceCallable } from "./markFileAsNotInvoice";
 export { unmarkFileAsNotInvoiceCallable } from "./unmarkFileAsNotInvoice";
 export {

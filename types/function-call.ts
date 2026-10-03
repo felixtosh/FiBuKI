@@ -37,6 +37,9 @@ export type CloudFunctionName =
   | "deleteFile"
   | "restoreFile"
   | "purgeFiles"
+  // Split (#550): one File per invoice or Receipt, and "not a bundle".
+  | "splitFile"
+  | "dismissSplitSuggestion"
   | "markFileAsNotInvoice"
   | "unmarkFileAsNotInvoice"
   | "markFileAsCopy"

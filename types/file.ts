@@ -172,6 +172,15 @@ export interface TransactionSuggestion {
  * Files are standalone entities that can be connected to multiple transactions.
  * Collection: /files/{id}
  */
+/** One separately issued invoice or Receipt inside a File (#550). */
+export interface SplitSegment {
+  pages: [number, number];
+  invoiceNumber: string | null;
+  issuer: string | null;
+  /** Cents, as printed. */
+  total: number | null;
+}
+
 export interface TaxFile {
   id: string;
 
@@ -827,6 +836,30 @@ export interface TaxFile {
 
   /** When true, file was created by Fibuki (not uploaded). Bypasses extraction trigger. */
   isFibukiGenerated?: boolean;
+
+  // === Split (#550) ===
+
+  /** Pages in the stored PDF, read at Extraction; absent for an image. */
+  pageCount?: number | null;
+
+  /**
+   * The separately issued invoices or Receipts the Extraction read in this
+   * PDF, by page range. A suggestion only: the User confirms, adjusts or
+   * dismisses it, and nothing splits on its own.
+   */
+  splitSuggestion?: {
+    segments: SplitSegment[];
+    pageCount: number;
+  } | null;
+
+  /** "Not a bundle": while set, re-extraction stores no split suggestion. */
+  splitSuggestionDismissed?: boolean;
+
+  /** On a part: the File it was split from, and its pages there. */
+  splitFrom?: { fileId: string; pages: [number, number] } | null;
+
+  /** On a split original: its parts, in page order. */
+  splitInto?: string[] | null;
 
   // === Delete and Purge (ADR-0006, #268) ===
 

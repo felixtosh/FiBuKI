@@ -785,7 +785,13 @@ function FilesContent() {
 
   const handleRestore = useCallback(async () => {
     if (!selectedFile) return;
-    await restore(selectedFile.id);
+    try {
+      await restore(selectedFile.id);
+    } catch (err) {
+      // A Split original is refused while its parts exist (#550); the
+      // refusal names them.
+      setBulkToast({ message: (err as Error)?.message ?? String(err), tone: "error" });
+    }
   }, [selectedFile, restore]);
 
   // Marking not-invoice from the panel is queue triage: advance to the next

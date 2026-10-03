@@ -55,7 +55,12 @@ A business the user transacts with, as that user knows it — one record per use
 the IBANs, VAT ID, domains and learned patterns that identify it. On a File, the Partner
 is always the business that **did the work** (the Leistungserbringer), never the business
 that happened to write the document. See
-[ADR-0003](docs/adr/0003-partner-is-the-supplier.md).
+[ADR-0003](docs/adr/0003-partner-is-the-supplier.md). On a Transaction, the Partner is the
+**payee**: the business the money went to, as the bank line identifies it. It may differ
+from the Partners of its Files (a marketplace charge for several sellers, an Uber ride).
+A File's Partner never overwrites a Transaction's; it fills an empty one only when every
+File on the Transaction names it. See
+[ADR-0011](docs/adr/0011-a-transactions-partner-is-the-payee.md).
 _Deutsch_: Partner
 _Avoid_: vendor, supplier, merchant, counterparty, contact
 _Avoid (de)_: Lieferant (a Partner may be a customer), Kunde, Kontakt
@@ -126,6 +131,17 @@ the keys that stop it being imported again survive. Deleting a File hides it and
 undone; purging is the only act in the system that cannot.
 _Deutsch_: Endgültig löschen
 _Avoid_: hard delete, permanent delete, wipe
+
+**Split**:
+Turning one File that holds several separately issued invoices or Receipts into one File
+per invoice or Receipt, by page range. Each part holds its pages unedited and is
+extracted, classified and Partner-matched from scratch. It is connected to every
+Transaction the original was connected to, and the original is deleted, never Purged, so
+the retained document survives. The original cannot be restored while any of its parts
+exists. The Extraction may suggest a Split; FiBuKI never splits on its own, and a File the
+User ruled not to be several documents is not suggested again.
+_Deutsch_: Aufteilen
+_Avoid_: bundle (prose only, never a domain term), separate, divide, unmerge
 
 **Document Type**:
 What a File is under § 11 UStG: `invoice`, `receipt`, `other`, or `unknown`. Decides

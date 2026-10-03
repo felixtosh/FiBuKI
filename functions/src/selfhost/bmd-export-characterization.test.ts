@@ -1134,3 +1134,77 @@ describe("bmd characterization: processBmdExportOnCreate end-to-end", () => {
     }
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* 8. #550 — the Personenkonto under the payee rule                    */
+/* ------------------------------------------------------------------ */
+
+describe("bmd #550: the Personenkonto a bank line books to", () => {
+  async function seedPartner(id: string, name: string) {
+    await db.collection("partners").doc(id).set({ userId: USER, name, country: "AT" });
+  }
+
+  async function exportOne(fileIds: Array<[string, string | null]>) {
+    for (const [id, partnerId] of fileIds) {
+      await db.collection("files").doc(id).set({
+        userId: USER,
+        fileName: `${id}.pdf`,
+        partnerId,
+        extractedDate: T("2026-03-10T12:00:00Z"),
+        extractedAmount: 1000,
+        extractedVatAmount: 0,
+        extractedVatPercent: 0,
+      });
+    }
+    // The payee stays on the bank line: Amazon was paid.
+    await db.collection("transactions").doc("t-amazon").set({
+      userId: USER,
+      date: T("2026-03-15T12:00:00Z"),
+      amount: -2020,
+      name: "AMAZON MARKETPLACE",
+      partnerId: "p-amazon",
+      fileIds: fileIds.map(([id]) => id),
+    });
+    await drainTriggers();
+    const res = await call(
+      { dateFrom: "2026-01-01", dateTo: "2026-12-31", onlyWithFiles: true, includeFiles: false },
+      { uid: USER },
+    );
+    const exportRef = db.collection("bmdExports").doc(res.exportId);
+    await waitFor(async () => (await exportRef.get()).data()!.status === "completed");
+    const zip = await openZip((await exportRef.get()).data()!.storagePath);
+    const personen = (await zip.entry("personenkonten.csv")).slice(1).split("\n").slice(1);
+    const booking = (await zip.entry("buchungen.csv")).slice(1).split("\n")[1].split(";");
+    return { personen, booking };
+  }
+
+  beforeEach(async () => {
+    await seedPartner("p-amazon", "Amazon EU S.a.r.l.");
+    await seedPartner("p-seller-pl", "Seller PL");
+    await seedPartner("p-seller-hk", "Seller HK");
+  });
+
+  it("books a one-supplier line to the supplier its File names, as before the payee rule", async () => {
+    const { personen, booking } = await exportOne([["f-pl", "p-seller-pl"]]);
+    expect(personen).toHaveLength(1);
+    expect(personen[0]).toMatch(/^200001;Seller PL;/);
+    expect(booking[1]).toBe("200001");
+    expect(booking[10]).toBe("Seller PL");
+  });
+
+  it("books a line whose Files name different suppliers to the payee", async () => {
+    const { personen, booking } = await exportOne([
+      ["f-pl", "p-seller-pl"],
+      ["f-hk", "p-seller-hk"],
+    ]);
+    expect(personen).toHaveLength(1);
+    expect(personen[0]).toMatch(/^200001;Amazon EU S\.a\.r\.l\.;/);
+    expect(booking[1]).toBe("200001");
+    expect(booking[10]).toBe("Amazon EU S.a.r.l.");
+  });
+
+  it("books to the payee when no File names a Partner", async () => {
+    const { booking } = await exportOne([["f-none", null]]);
+    expect(booking[10]).toBe("Amazon EU S.a.r.l.");
+  });
+});
