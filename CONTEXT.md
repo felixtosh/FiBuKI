@@ -176,6 +176,10 @@ carrying the negative amounts; the original is never edited. Under § 11 it is i
 invoice, so an incoming one is a File with Document Type `invoice`. A full cancellation is
 a correction over the whole amount, not a second concept; **Cancel** is the act that
 issues one. The re-issued document with the corrected figures is simply a new Invoice.
+It is linked to the File it corrects, and through that File's File Connection to the
+Transaction that paid it. It reverses only what that original claimed or owed, and a
+correction without its original cannot be filed — see
+[ADR-0010](docs/adr/0010-an-invoice-correction-is-filed-only-with-its-original.md).
 _Deutsch (defining)_: Rechnungskorrektur
 _Also printed as_: Stornorechnung, Storno, Korrekturrechnung, Gutschrift, Credit Note
 (a Gutschrift that references an invoice and carries the opposite sign)
@@ -187,8 +191,8 @@ _Avoid (de)_: Gutschrift in our own copy (that is a **Self-billed Invoice**), St
 An Invoice written by the *recipient* of the supply in the supplier's name, which § 11
 Abs 7 UStG treats as the supplier's invoice. For the User it is an incoming File that is
 their own outgoing invoice — a platform payout statement is the common case — so it is
-revenue, not a reduced expense. Told from an Invoice Correction by the sign and the
-absence of a referenced invoice number.
+revenue, not a reduced expense. Told from an Invoice Correction first by the absence of a
+referenced invoice number, then by the sign (ADR-0010).
 _Deutsch (defining)_: Gutschrift (§ 11 Abs 7)
 _Also printed as_: Gutschrift, Abrechnung, Auszahlung, Self-billing invoice
 _Avoid_: credit note, payout
@@ -445,6 +449,15 @@ derives and reconciles it; it does not file it.
 _English_: none, cite verbatim
 _Avoid_: VAT report, tax return, advance VAT return
 _Avoid (de)_: USt-Meldung, Steuererklärung (the annual one)
+
+**Filed Record**:
+What the User actually filed for one UVA period: every Kennzahl as submitted, recorded by
+Mark as filed (editable, for a filing corrected by hand) or by a FinanzOnline submission.
+Append-only; a corrected UVA adds a new one. FiBuKI compares it with a fresh calculation
+and shows the difference, and never changes it (#564).
+_Deutsch_: Eingereichte Werte
+_Avoid_: snapshot, submission (that is the FinanzOnline call), filed UVA
+_Avoid (de)_: Abgabe, Meldung
 
 **BMD Export**:
 The handover file the Tax Advisor imports. The one artefact an advisor judges us on,
