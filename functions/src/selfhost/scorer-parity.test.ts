@@ -1,7 +1,7 @@
 /**
  * #308 / #327 — one File/Transaction pair, one score, whichever surface asks.
  *
- * CLAUDE.md requires the agent's scorer and the UI's to agree. Four surfaces
+ * CLAUDE.md requires the agent's scorer and the UI's to agree. Five surfaces
  * score a pair:
  *
  *   - the matching trigger (`runTransactionMatching`), whose output the UI
@@ -9,16 +9,18 @@
  *   - the connect dialog opened from a File (`findTransactionMatchesForFile`),
  *   - the connect window opened from a Transaction
  *     (`findFileMatchesForTransaction`, #555),
- *   - the agent's `score_file_transaction_match` (`scoreFileTransactionMatch`).
+ *   - the agent's `score_file_transaction_match` (`scoreFileTransactionMatch`),
+ *   - the find-receipt workflow the chat agent runs (`findReceiptForTransaction`,
+ *     #588), for the File the fixture is about.
  *
  * Each fixture below exercises one input that a hand-built copy of the
  * scoring inputs has dropped before: the tip (#217), the Remainder (#239), the
  * bank-stated original amount (#112), the invoice number in the preserved raw
  * row (#137), the precision-search hint, and the assigned Partner's aliases
  * and learned weights, the published ECB rate for an old foreign-currency
- * pair (#555), and an undated File. All four surfaces run for real on the
+ * pair (#555), and an undated File. All five surfaces run for real on the
  * self-host shim, and every pair the trigger suggests must score identically
- * on the other three.
+ * on the others.
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
@@ -30,6 +32,8 @@ import { findTransactionMatchesForFile } from "../matching/findTransactionMatche
 import { findFileMatchesForTransactionCallable } from "../matching/findFileMatches";
 import { storeEcbDays } from "../fx/ecbRateStore";
 import { scoreFileTransactionMatch } from "../tools/handlers";
+import { findReceiptForTransactionCallable } from "../workflows/findReceiptForTransactionCallable";
+import type { FindReceiptResult } from "../workflows/findReceiptForTransaction";
 import { formatScoreBreakdown, type ScoreBreakdown } from "../matching/transactionScoring";
 
 const db = getFirestore();
@@ -258,6 +262,32 @@ const connectWindow = (data: Record<string, unknown>) =>
     }
   ).run({ data, auth: { uid: USER, token: {} } });
 
+/** The find-receipt workflow (#588). Large maxCandidates: every File it scored. */
+const findReceipt = (transactionId: string) =>
+  (
+    findReceiptForTransactionCallable as unknown as {
+      run: (req: unknown) => Promise<FindReceiptResult>;
+    }
+  ).run({ data: { transactionId, maxCandidates: 100 }, auth: { uid: USER, token: {} } });
+
+/**
+ * What find-receipt said about one File: its candidate entry, or the
+ * Confidence it connected the File at. Reasons are the matcher's sources;
+ * a connect does not echo them, so they are null there.
+ */
+async function findReceiptScore(transactionId: string, fileId: string) {
+  const result = await findReceipt(transactionId);
+  if (result.status === "connected" && result.fileId === fileId) {
+    return { status: result.status, confidence: result.confidence, matchSources: null };
+  }
+  const candidate = result.candidates?.find((c) => c.fileId === fileId);
+  return {
+    status: result.status,
+    confidence: candidate?.score,
+    matchSources: candidate ? sorted(candidate.reasons) : undefined,
+  };
+}
+
 const sorted = (sources: string[]) => [...sources].sort();
 
 beforeEach(async () => {
@@ -325,8 +355,38 @@ describe("the trigger, both connect windows and the agent tool score a pair iden
           breakdown: formatScoreBreakdown(inDialog!.breakdown),
         });
       }
+
+      // Last: find-receipt may connect the File, which would change what the
+      // other surfaces see.
+      const own = suggestions.find((s) => s.transactionId === fixture.transactionId)!;
+      const fromWorkflow = await findReceiptScore(fixture.transactionId, fixture.fileId);
+      if (fixture.fileId === "f-remainder") {
+        // Its line already holds a File, and find-receipt only looks for the
+        // first one: the early exit stands (#588).
+        expect(fromWorkflow.status).toBe("skipped");
+        return;
+      }
+      expect(fromWorkflow.confidence).toBe(own.confidence);
+      if (fromWorkflow.matchSources) {
+        expect(fromWorkflow.matchSources).toEqual(sorted(own.matchSources));
+      }
     });
   }
+});
+
+describe("find-receipt sees what the trigger sees (#588)", () => {
+  it("scores a foreign-currency pair off the bank-stated original amount", async () => {
+    const { matches } = await connectWindow({ transactionId: "t-fx" });
+    const fromWindow = matches.find((m) => m.fileId === "f-fx")!;
+    // The attachment scorer gave this pair nothing for amount; the matcher
+    // reads the 24.00 USD the bank states and calls it exact.
+    expect(fromWindow.matchSources).toContain("amount_exact");
+    expect(await findReceipt("t-fx")).toMatchObject({
+      status: "connected",
+      fileId: "f-fx",
+      confidence: fromWindow.confidence,
+    });
+  });
 });
 
 describe("score_file_transaction_match sees what the trigger sees (#327)", () => {

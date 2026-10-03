@@ -3,19 +3,60 @@
  *
  * This is the secret-sauce workflow expressed as TypeScript rather than as
  * a chat-prompt recipe. Same outcome callable by chat agent, MCP, A2A.
+ *
+ * Stored Files are scored by the matcher (#588), stubbed here so these tests
+ * hold the workflow's own decisions: the early exits, where the auto-connect
+ * line and the candidate floor sit, the lead, and that Gmail never connects.
+ * The matcher's real scores, and the real connect, run on the self-host shim
+ * in selfhost/find-receipt.test.ts and selfhost/scorer-parity.test.ts.
  */
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   setupTestHooks,
   store,
   createMockFirestore,
   createTestTransaction,
-  createTestFile,
 } from "../../test/setup";
 import {
   findReceiptForTransaction,
   FindReceiptDeps,
 } from "../findReceiptForTransaction";
+import { scoreFilesForTransaction } from "../../matching/findFileMatches";
+
+vi.mock("../../matching/findFileMatches", () => ({
+  scoreFilesForTransaction: vi.fn(),
+}));
+
+const scoreStoredFiles = vi.mocked(scoreFilesForTransaction);
+
+/** The matcher's answer for the Transaction: these Files at these Confidences. */
+function storedFilesScore(...scores: Array<[fileId: string, confidence: number]>) {
+  scoreStoredFiles.mockResolvedValue({
+    totalCandidates: scores.length,
+    matches: scores.map(([fileId, confidence]) => ({
+      fileId,
+      confidence,
+      matchSources: ["amount_exact", "date_exact"],
+      breakdown: {} as never,
+      scoredAgainstRemainder: false,
+    })),
+  });
+}
+
+function netflixTransaction(overrides: Record<string, unknown> = {}) {
+  store.setDoc(
+    "transactions",
+    "tx-1",
+    createTestTransaction({
+      userId: "u1",
+      amount: -1999,
+      partner: "Netflix",
+      name: "NETFLIX.COM",
+      date: new Date("2026-02-15"),
+      ...overrides,
+    })
+  );
+}
 
 function buildDeps(overrides: Partial<FindReceiptDeps> = {}): FindReceiptDeps {
   return {
@@ -28,6 +69,10 @@ function buildDeps(overrides: Partial<FindReceiptDeps> = {}): FindReceiptDeps {
 
 describe("findReceiptForTransaction", () => {
   setupTestHooks();
+
+  beforeEach(() => {
+    storedFilesScore();
+  });
 
   it("skips when the transaction does not exist", async () => {
     const deps = buildDeps();
@@ -75,29 +120,9 @@ describe("findReceiptForTransaction", () => {
     expect(result.skipReason).toBe("has_no_receipt_category");
   });
 
-  it("returns no_match when nothing scores above the floor", async () => {
-    store.setDoc(
-      "transactions",
-      "tx-1",
-      createTestTransaction({
-        userId: "u1",
-        amount: -1999,
-        partner: "Netflix",
-        name: "NETFLIX.COM",
-        date: new Date("2026-02-15"),
-      })
-    );
-    // An unrelated file the user has uploaded
-    store.setDoc(
-      "files",
-      "file-1",
-      createTestFile({
-        userId: "u1",
-        fileName: "completely_unrelated_grocery.jpg",
-        extractedPartner: "Billa",
-        extractedAmount: -550,
-      })
-    );
+  it("returns no_match when no stored File reaches the matcher's suggestion threshold", async () => {
+    netflixTransaction();
+    storedFilesScore(["file-1", 49]);
     const deps = buildDeps();
     const result = await findReceiptForTransaction(
       { transactionId: "tx-1", userId: "u1" },
@@ -108,186 +133,90 @@ describe("findReceiptForTransaction", () => {
     expect(deps.connectFileToTransaction).not.toHaveBeenCalled();
   });
 
-  it("auto-connects when a single local file scores strongly", async () => {
-    store.setDoc(
-      "transactions",
-      "tx-1",
-      createTestTransaction({
-        userId: "u1",
-        amount: -1999,
-        partner: "Netflix",
-        name: "NETFLIX.COM",
-        date: new Date("2026-02-15"),
-      })
-    );
-    store.setDoc(
-      "files",
-      "file-netflix",
-      createTestFile({
-        userId: "u1",
-        fileName: "netflix_invoice_2026_02.pdf",
-        fileType: "application/pdf",
-        extractedPartner: "Netflix Inc.",
-        extractedAmount: -1999,
-        extractedDate: new Date("2026-02-15"),
-      })
-    );
-    const deps = buildDeps();
-    const result = await findReceiptForTransaction(
-      { transactionId: "tx-1", userId: "u1" },
-      deps
-    );
-    expect(result.status).toBe("connected");
-    expect(result.fileId).toBe("file-netflix");
-    expect(result.confidence).toBeGreaterThanOrEqual(70);
-    expect(deps.connectFileToTransaction).toHaveBeenCalledWith(
-      expect.objectContaining({
-        userId: "u1",
-        transactionId: "tx-1",
-        fileId: "file-netflix",
-      })
-    );
-  });
-
-  it("ignores a local file that dismissed this transaction (fork #94)", async () => {
-    store.setDoc(
-      "transactions",
-      "tx-1",
-      createTestTransaction({
-        userId: "u1",
-        amount: -1999,
-        partner: "Netflix",
-        name: "NETFLIX.COM",
-        date: new Date("2026-02-15"),
-      })
-    );
-    store.setDoc(
-      "files",
-      "file-netflix",
-      createTestFile({
-        userId: "u1",
-        fileName: "netflix_invoice_2026_02.pdf",
-        fileType: "application/pdf",
-        extractedPartner: "Netflix Inc.",
-        extractedAmount: -1999,
-        extractedDate: new Date("2026-02-15"),
-        dismissedTransactionIds: ["tx-1"],
-      })
-    );
-    const deps = buildDeps();
-    const result = await findReceiptForTransaction(
-      { transactionId: "tx-1", userId: "u1" },
-      deps
-    );
-    expect(result.status).toBe("no_match");
-    expect(result.sourcesChecked?.localFiles).toBe(0);
-    expect(deps.connectFileToTransaction).not.toHaveBeenCalled();
-  });
-
-  it("ignores soft-deleted local files", async () => {
-    store.setDoc(
-      "transactions",
-      "tx-1",
-      createTestTransaction({
-        userId: "u1",
-        amount: -1999,
-        partner: "Netflix",
-        date: new Date("2026-02-15"),
-      })
-    );
-    store.setDoc(
-      "files",
-      "deleted-file",
-      createTestFile({
-        userId: "u1",
-        fileName: "netflix_invoice.pdf",
-        extractedPartner: "Netflix",
-        extractedAmount: -1999,
-        deletedAt: new Date(),
-      })
-    );
-    const deps = buildDeps();
-    const result = await findReceiptForTransaction(
-      { transactionId: "tx-1", userId: "u1" },
-      deps
-    );
-    expect(result.status).toBe("no_match");
-    expect(result.sourcesChecked.localFiles).toBe(0);
-  });
-
-  it("returns needs_review when two strong candidates score close together", async () => {
-    store.setDoc(
-      "transactions",
-      "tx-1",
-      createTestTransaction({
-        userId: "u1",
-        amount: -4999,
-        partner: "Spusu",
-        name: "SPUSU AT",
-        date: new Date("2026-02-02"),
-      })
-    );
-    store.setDoc(
-      "files",
-      "file-a",
-      createTestFile({
-        userId: "u1",
-        fileName: "spusu_rechnung_feb.pdf",
-        extractedPartner: "Spusu",
-        extractedAmount: -4999,
-        extractedDate: new Date("2026-02-02"),
-      })
-    );
-    store.setDoc(
-      "files",
-      "file-b",
-      createTestFile({
-        userId: "u1",
-        fileName: "spusu_invoice_february.pdf",
-        extractedPartner: "Spusu",
-        extractedAmount: -4999,
-        extractedDate: new Date("2026-02-03"),
-      })
-    );
+  it("surfaces a stored File from 50", async () => {
+    netflixTransaction();
+    storedFilesScore(["file-1", 50]);
     const deps = buildDeps();
     const result = await findReceiptForTransaction(
       { transactionId: "tx-1", userId: "u1" },
       deps
     );
     expect(result.status).toBe("needs_review");
-    expect(result.candidates).toBeDefined();
-    expect(result.candidates!.length).toBeGreaterThanOrEqual(2);
-    expect(deps.connectFileToTransaction).not.toHaveBeenCalled();
+    expect(result.candidates).toEqual([
+      expect.objectContaining({
+        source: "local_file",
+        fileId: "file-1",
+        score: 50,
+        label: "Likely",
+        reasons: ["amount_exact", "date_exact"],
+      }),
+    ]);
   });
 
-  it("only inspects files owned by the requesting user", async () => {
-    store.setDoc(
-      "transactions",
-      "tx-1",
-      createTestTransaction({
-        userId: "u1",
-        amount: -1999,
-        partner: "Netflix",
-        date: new Date("2026-02-15"),
-      })
-    );
-    store.setDoc(
-      "files",
-      "other-user-file",
-      createTestFile({
-        userId: "other-user",
-        fileName: "netflix_invoice.pdf",
-        extractedPartner: "Netflix",
-        extractedAmount: -1999,
-      })
-    );
+  it("auto-connects a stored File at 85 with a 10-point lead", async () => {
+    netflixTransaction();
+    storedFilesScore(["file-netflix", 85], ["file-other", 75]);
     const deps = buildDeps();
     const result = await findReceiptForTransaction(
       { transactionId: "tx-1", userId: "u1" },
       deps
     );
-    expect(result.sourcesChecked.localFiles).toBe(0);
-    expect(result.status).toBe("no_match");
+    expect(result).toMatchObject({ status: "connected", fileId: "file-netflix", confidence: 85 });
+    expect(deps.connectFileToTransaction).toHaveBeenCalledWith({
+      userId: "u1",
+      transactionId: "tx-1",
+      fileId: "file-netflix",
+      matchConfidence: 85,
+      connectionType: "auto_matched",
+    });
+  });
+
+  it("does not auto-connect a stored File at 84", async () => {
+    netflixTransaction();
+    storedFilesScore(["file-netflix", 84]);
+    const deps = buildDeps();
+    const result = await findReceiptForTransaction(
+      { transactionId: "tx-1", userId: "u1" },
+      deps
+    );
+    expect(result.status).toBe("needs_review");
+    expect(result.candidates?.map((c) => c.fileId)).toEqual(["file-netflix"]);
+    expect(deps.connectFileToTransaction).not.toHaveBeenCalled();
+  });
+
+  it("does not auto-connect a stored File at 85 without a 10-point lead", async () => {
+    netflixTransaction();
+    storedFilesScore(["file-a", 85], ["file-b", 76]);
+    const deps = buildDeps();
+    const result = await findReceiptForTransaction(
+      { transactionId: "tx-1", userId: "u1" },
+      deps
+    );
+    expect(result.status).toBe("needs_review");
+    expect(result.candidates?.map((c) => c.fileId)).toEqual(["file-a", "file-b"]);
+    expect(deps.connectFileToTransaction).not.toHaveBeenCalled();
+  });
+
+  it("does not auto-connect onto an over-quota Transaction", async () => {
+    netflixTransaction({ quotaExceeded: true });
+    storedFilesScore(["file-netflix", 95]);
+    const deps = buildDeps();
+    const result = await findReceiptForTransaction(
+      { transactionId: "tx-1", userId: "u1" },
+      deps
+    );
+    expect(result.status).toBe("needs_review");
+    expect(deps.connectFileToTransaction).not.toHaveBeenCalled();
+  });
+
+  it("asks the matcher about this Transaction only", async () => {
+    netflixTransaction();
+    const deps = buildDeps();
+    await findReceiptForTransaction({ transactionId: "tx-1", userId: "u1" }, deps);
+    expect(scoreStoredFiles).toHaveBeenCalledTimes(1);
+    const [, userId, txSnap] = scoreStoredFiles.mock.calls[0];
+    expect(userId).toBe("u1");
+    expect(txSnap.id).toBe("tx-1");
   });
 
   it("does not call searchGmail when there are no active integrations", async () => {
@@ -398,5 +327,47 @@ describe("findReceiptForTransaction", () => {
     const deps = buildDeps();
     await findReceiptForTransaction({ transactionId: "tx-1", userId: "u1" }, deps);
     expect(deps.searchGmail).not.toHaveBeenCalled();
+  });
+
+  it("never auto-connects a Gmail candidate, whatever its rank", async () => {
+    netflixTransaction();
+    store.setDoc("emailIntegrations", "int-1", {
+      userId: "u1",
+      provider: "gmail",
+      isActive: true,
+      needsReauth: false,
+    });
+    // Nothing stored competes: the mail is the top candidate and alone.
+    const searchGmail = vi.fn().mockResolvedValue({
+      messages: [
+        {
+          messageId: "msg-1",
+          threadId: "thr-1",
+          subject: "Your Netflix invoice 19.99 EUR",
+          from: "billing@netflix.com",
+          date: "2026-02-15T08:00:00Z",
+          snippet: "Netflix invoice, total 19.99 EUR",
+          bodyText: "Netflix. Total: 19.99 EUR",
+          integrationId: "int-1",
+          attachments: [
+            {
+              attachmentId: "att-1",
+              filename: "netflix_invoice_2026_02.pdf",
+              mimeType: "application/pdf",
+            },
+          ],
+          classification: { hasPdfAttachment: true, confidence: 90 },
+        },
+      ],
+    });
+    const deps = buildDeps({ searchGmail });
+    const result = await findReceiptForTransaction(
+      { transactionId: "tx-1", userId: "u1" },
+      deps
+    );
+    expect(result.status).toBe("needs_review");
+    expect(result.candidates?.[0]).toMatchObject({ source: "gmail_attachment" });
+    expect(result.candidates![0].score).toBeGreaterThanOrEqual(85);
+    expect(deps.connectFileToTransaction).not.toHaveBeenCalled();
   });
 });

@@ -8,12 +8,16 @@
  *
  * Scope of this version:
  *   - Pulls the transaction + checks short-circuits (already connected, no-receipt category)
- *   - Searches local files owned by the user, scores each candidate
+ *   - Scores the user's stored Files with the matcher (#588): the same scorer and
+ *     input assembly as the matching trigger, so a File's Confidence here is the
+ *     one its suggestion list shows
  *   - Searches Gmail across the user's active integrations (if any), scores attachments
- *     and detects email-as-invoice candidates
- *   - Picks the best candidate; if it's a local file with a clear lead, auto-connects;
- *     otherwise surfaces top candidates for review (so the chat agent / UI / MCP caller
- *     can chain `downloadGmailAttachment` + `connectFileToTransaction` after user confirm)
+ *     and detects email-as-invoice candidates. Those are not Files yet, so the
+ *     attachment scorer ranks them, and they are never auto-connected
+ *   - Picks the best candidate; if it's a stored File at the matcher's auto threshold
+ *     with a clear lead, auto-connects through the real connect path; otherwise
+ *     surfaces top candidates for review (so the chat agent / UI / MCP caller can
+ *     chain `downloadGmailAttachment` + `connectFileToTransaction` after user confirm)
  *
  * Dependency injection (searchGmail, connectFileToTransaction) keeps the workflow
  * unit-testable and lets the same code run from a callable Cloud Function or from
@@ -29,8 +33,16 @@ import {
   generateTypedSearchQueries,
   QueryGenerationPartner,
 } from "../precision-search/generateSearchQueries";
-import { isTransactionDismissed } from "../matching/dismissedTransactions";
 import { readBankOriginalAmount } from "../fx/bankOriginalAmount";
+import { scoreFilesForTransaction } from "../matching/findFileMatches";
+import { SCORING_CONFIG } from "../matching/transactionScoring";
+
+/**
+ * Below this a Gmail candidate is not surfaced. On the attachment scorer's
+ * scale, which is not the matcher's: it only ranks mail against mail and
+ * against stored Files for review, and never connects anything.
+ */
+const GMAIL_CANDIDATE_FLOOR = 35;
 
 export type FindReceiptStatus =
   | "connected"
@@ -66,10 +78,6 @@ export interface FindReceiptCandidate {
 export interface FindReceiptOptions {
   transactionId: string;
   userId: string;
-  /** Score at/above which a clear top local-file winner is auto-connected (default 70). */
-  autoConnectThreshold?: number;
-  /** Minimum score for a candidate to be surfaced at all (default 35). */
-  candidateFloor?: number;
   /** Minimum lead the top candidate must have over the runner-up to auto-connect (default 10). */
   clearLeadMargin?: number;
   /** Max candidates returned in needs_review (default 3). */
@@ -130,7 +138,7 @@ export interface ConnectFileArgs {
   transactionId: string;
   fileId: string;
   matchConfidence: number;
-  connectionType: string;
+  connectionType: "auto_matched";
 }
 
 export interface FindReceiptDeps {
@@ -160,8 +168,9 @@ export async function findReceiptForTransaction(
   deps: FindReceiptDeps
 ): Promise<FindReceiptResult> {
   const { transactionId, userId } = options;
-  const autoConnectThreshold = options.autoConnectThreshold ?? 70;
-  const candidateFloor = options.candidateFloor ?? 35;
+  // One line for stored Files, whoever calls (#588): the matcher's own.
+  const autoConnectThreshold = SCORING_CONFIG.AUTO_MATCH_THRESHOLD;
+  const suggestionThreshold = SCORING_CONFIG.SUGGESTION_THRESHOLD;
   const clearLeadMargin = options.clearLeadMargin ?? 10;
   const maxCandidates = options.maxCandidates ?? 3;
   const { db, searchGmail, connectFileToTransaction } = deps;
@@ -231,51 +240,23 @@ export async function findReceiptForTransaction(
     transactionPartnerId,
   };
 
-  // --- Score local files ---
+  // --- Score stored Files ---
+  // The matcher, not the attachment scorer: currency, the bank-stated original
+  // amount, the tip, Partner aliases and learned weights all count, and a
+  // Rejection on either side or a Copy keeps a File out, as in the trigger.
   const candidates: FindReceiptCandidate[] = [];
-  let localFileCount = 0;
+  const stored = await scoreFilesForTransaction(db, userId, txSnap);
+  const localFileCount = stored.totalCandidates;
 
-  const filesSnap = await db
-    .collection("files")
-    .where("userId", "==", userId)
-    .get();
-
-  for (const fileDoc of filesSnap.docs) {
-    const file = fileDoc.data();
-    if (file.deletedAt) continue;
-    const fileTxIds = Array.isArray(file.transactionIds)
-      ? (file.transactionIds as string[])
-      : [];
-    if (fileTxIds.includes(transactionId)) continue;
-    // A pair this file dismissed is off the table: the clear winner here is
-    // auto-connected outright, so scoring it would undo the rejection.
-    if (isTransactionDismissed(file, transactionId)) continue;
-    localFileCount++;
-
-    const result = scoreAttachmentMatch({
-      ...baseScoringContext,
-      filename: (file.fileName as string) ?? "",
-      mimeType: (file.fileType as string) ?? "application/pdf",
-      fileExtractedAmount:
-        typeof file.extractedAmount === "number"
-          ? (file.extractedAmount as number)
-          : null,
-      fileExtractedDate: toDate(file.extractedDate),
-      fileExtractedPartner:
-        (file.extractedPartner as string | null | undefined) ?? null,
-      filePartnerId: (file.partnerId as string | null | undefined) ?? null,
+  for (const match of stored.matches) {
+    if (match.confidence < suggestionThreshold) break;
+    candidates.push({
+      source: "local_file",
+      score: match.confidence,
+      label: match.confidence >= autoConnectThreshold ? "Strong" : "Likely",
+      reasons: match.matchSources,
+      fileId: match.fileId,
     });
-
-    if (result.score >= candidateFloor) {
-      candidates.push({
-        source: "local_file",
-        score: result.score,
-        label: result.label,
-        reasons: result.reasons,
-        fileId: fileDoc.id,
-        filename: (file.fileName as string) ?? undefined,
-      });
-    }
   }
 
   // --- Score Gmail attachments + emails ---
@@ -412,7 +393,7 @@ export async function findReceiptForTransaction(
             filename: att.filename,
             mimeType: att.mimeType,
           });
-          if (result.score >= candidateFloor) {
+          if (result.score >= GMAIL_CANDIDATE_FLOOR) {
             candidates.push({
               source: "gmail_attachment",
               score: result.score,
@@ -439,7 +420,7 @@ export async function findReceiptForTransaction(
             filename: `${message.subject || "email"}.pdf`,
             mimeType: "application/pdf",
           });
-          if (result.score >= candidateFloor) {
+          if (result.score >= GMAIL_CANDIDATE_FLOOR) {
             candidates.push({
               source: "gmail_email",
               score: result.score,
@@ -474,15 +455,17 @@ export async function findReceiptForTransaction(
     top.score >= autoConnectThreshold &&
     (!second || top.score - second.score >= clearLeadMargin);
 
-  // Only local files are auto-connected. Gmail candidates require a download
+  // Only stored Files are auto-connected. Gmail candidates require a download
   // step (and async extraction verification) which the caller orchestrates.
-  if (isClearWinner && top.source === "local_file" && top.fileId) {
+  // An over-quota Transaction takes no automated connect; the connect path
+  // would refuse it.
+  if (isClearWinner && top.source === "local_file" && top.fileId && !tx.quotaExceeded) {
     await connectFileToTransaction({
       userId,
       transactionId,
       fileId: top.fileId,
       matchConfidence: top.score,
-      connectionType: "agent_auto",
+      connectionType: "auto_matched",
     });
     return {
       status: "connected",
@@ -492,9 +475,19 @@ export async function findReceiptForTransaction(
     };
   }
 
+  const surfaced = candidates.slice(0, maxCandidates);
+  await Promise.all(
+    surfaced
+      .filter((c) => c.source === "local_file" && c.fileId)
+      .map(async (c) => {
+        const fileSnap = await db.collection("files").doc(c.fileId!).get();
+        c.filename = (fileSnap.data()?.fileName as string | undefined) ?? undefined;
+      })
+  );
+
   return {
     status: "needs_review",
-    candidates: candidates.slice(0, maxCandidates),
+    candidates: surfaced,
     sourcesChecked,
   };
 }

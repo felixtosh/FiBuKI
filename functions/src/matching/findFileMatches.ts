@@ -39,7 +39,7 @@ interface FindFileMatchesRequest {
   limit?: number;
 }
 
-interface FileMatchResult {
+export interface FileMatchResult {
   fileId: string;
   confidence: number;
   matchSources: TransactionMatchSource[];
@@ -81,98 +81,123 @@ export const findFileMatchesForTransactionCallable = createCallable<
     if (!txDoc.exists || txDoc.data()?.userId !== ctx.userId) {
       throw new HttpsError("not-found", "Transaction not found");
     }
-    const txData = txDoc.data()!;
-    const txDateMs = toDateSafe(txData.date)?.getTime() ?? null;
 
-    // Every File of the caller's, narrowed here rather than in the query: an
-    // undated File has no extractedDate at all on some records and a null one
-    // on others, and no single query reaches both. The browser already holds
-    // this same list.
-    const snapshot = await ctx.db.collection("files").where("userId", "==", ctx.userId).get();
-
-    const rejectedHere = readRejectedFileIds(txData);
-    const windowMs = SCORING_CONFIG.DATE_RANGE_DAYS * MS_PER_DAY;
-
-    const eligible = snapshot.docs.filter((doc) => {
-      const data = doc.data();
-      if (!isLiveFile(data) || data.isNotInvoice === true) return false;
-      // Already on this Transaction: the window shows it as connected.
-      if (Array.isArray(data.transactionIds) && data.transactionIds.includes(transactionId)) {
-        return false;
-      }
-      // An explicit search reaches every File, including dated outside the
-      // window and pairs rejected earlier: it is the way back to one by hand.
-      if (search) return fileSearchMatches(data, search).length > 0;
-
-      // A Rejection on either side holds without a search.
-      if (rejectedHere.has(doc.id)) return false;
-      if (readDismissedTransactionIds(data).has(transactionId)) return false;
-
-      // The trigger's own date range, from the other end: the pairs it can
-      // store are a File within DATE_RANGE_DAYS of the Transaction, an
-      // undated File (scored against recent Transactions), and a File whose
-      // precision-search hint names this Transaction.
-      const fileDate = toDateSafe(data.extractedDate);
-      if (!fileDate || txDateMs === null) return true;
-      if (data.precisionSearchHint?.transactionId === transactionId) return true;
-      return Math.abs(fileDate.getTime() - txDateMs) <= windowMs;
-    });
-
-    // #162: a Copy is never proposed as a Match; its original is.
-    const copies = await liveCopyIds(
+    const { matches, totalCandidates } = await scoreFilesForTransaction(
       ctx.db,
-      eligible.map((doc) => ({ id: doc.id, data: doc.data() }))
+      ctx.userId,
+      txDoc,
+      search
     );
-    const candidates = eligible.filter((doc) => !copies.has(doc.id));
-
-    if (candidates.length === 0) return { matches: [], totalCandidates: 0 };
-
-    // No candidate is connected to this Transaction, so what its connected
-    // Files explain is the same figure the trigger reads with the candidate
-    // excluded.
-    const [documentedAmounts, ecbRates] = await Promise.all([
-      loadDocumentedAmounts([transactionId]),
-      loadScoringEcbRates(
-        ctx.db,
-        candidates.map((doc) => doc.data().extractedCurrency),
-        [txDoc]
-      ),
-    ]);
-
-    // One scoring context per Partner, as the trigger reads it per File.
-    const partners = new Map<string, Promise<PartnerScoringContext>>();
-    const partnerFor = (partnerId: string | null | undefined) => {
-      const key = partnerId ?? "";
-      if (!partners.has(key)) {
-        partners.set(key, loadPartnerScoringContext(ctx.db, partnerId, ctx.userId));
-      }
-      return partners.get(key)!;
-    };
-
-    const scored = await Promise.all(
-      candidates.map(async (doc) => {
-        const fileData = doc.data();
-        const partner = await partnerFor(fileData.partnerId);
-        const [match] = scoreFileAgainstTransactions(
-          fileData,
-          [txDoc],
-          partner,
-          documentedAmounts,
-          ecbRates
-        );
-        return {
-          fileId: doc.id,
-          confidence: match.confidence,
-          matchSources: match.matchSources,
-          breakdown: match.breakdown,
-          scoredAgainstRemainder: isRemainderMatch(match),
-        };
-      })
-    );
-
-    return {
-      matches: scored.sort((a, b) => b.confidence - a.confidence).slice(0, limit),
-      totalCandidates: candidates.length,
-    };
+    return { matches: matches.slice(0, limit), totalCandidates };
   }
 );
+
+/**
+ * Every File of the user's the matcher could pair with this Transaction,
+ * scored with the trigger's own input assembly, best first. Shared by the
+ * Connect File window and the find-receipt workflow (#588), so both report
+ * the Confidence the trigger stores for the same pair.
+ *
+ * The caller has checked that `txDoc` is the user's.
+ */
+export async function scoreFilesForTransaction(
+  db: FirebaseFirestore.Firestore,
+  userId: string,
+  txDoc: FirebaseFirestore.DocumentSnapshot,
+  search = ""
+): Promise<FindFileMatchesResponse> {
+  const transactionId = txDoc.id;
+  const txData = txDoc.data()!;
+  const txDateMs = toDateSafe(txData.date)?.getTime() ?? null;
+
+  // Every File of the caller's, narrowed here rather than in the query: an
+  // undated File has no extractedDate at all on some records and a null one
+  // on others, and no single query reaches both. The browser already holds
+  // this same list.
+  const snapshot = await db.collection("files").where("userId", "==", userId).get();
+
+  const rejectedHere = readRejectedFileIds(txData);
+  const windowMs = SCORING_CONFIG.DATE_RANGE_DAYS * MS_PER_DAY;
+
+  const eligible = snapshot.docs.filter((doc) => {
+    const data = doc.data();
+    if (!isLiveFile(data) || data.isNotInvoice === true) return false;
+    // Already on this Transaction: the window shows it as connected.
+    if (Array.isArray(data.transactionIds) && data.transactionIds.includes(transactionId)) {
+      return false;
+    }
+    // An explicit search reaches every File, including dated outside the
+    // window and pairs rejected earlier: it is the way back to one by hand.
+    if (search) return fileSearchMatches(data, search).length > 0;
+
+    // A Rejection on either side holds without a search.
+    if (rejectedHere.has(doc.id)) return false;
+    if (readDismissedTransactionIds(data).has(transactionId)) return false;
+
+    // The trigger's own date range, from the other end: the pairs it can
+    // store are a File within DATE_RANGE_DAYS of the Transaction, an
+    // undated File (scored against recent Transactions), and a File whose
+    // precision-search hint names this Transaction.
+    const fileDate = toDateSafe(data.extractedDate);
+    if (!fileDate || txDateMs === null) return true;
+    if (data.precisionSearchHint?.transactionId === transactionId) return true;
+    return Math.abs(fileDate.getTime() - txDateMs) <= windowMs;
+  });
+
+  // #162: a Copy is never proposed as a Match; its original is.
+  const copies = await liveCopyIds(
+    db,
+    eligible.map((doc) => ({ id: doc.id, data: doc.data() }))
+  );
+  const candidates = eligible.filter((doc) => !copies.has(doc.id));
+
+  if (candidates.length === 0) return { matches: [], totalCandidates: 0 };
+
+  // No candidate is connected to this Transaction, so what its connected
+  // Files explain is the same figure the trigger reads with the candidate
+  // excluded.
+  const [documentedAmounts, ecbRates] = await Promise.all([
+    loadDocumentedAmounts([transactionId]),
+    loadScoringEcbRates(
+      db,
+      candidates.map((doc) => doc.data().extractedCurrency),
+      [txDoc]
+    ),
+  ]);
+
+  // One scoring context per Partner, as the trigger reads it per File.
+  const partners = new Map<string, Promise<PartnerScoringContext>>();
+  const partnerFor = (partnerId: string | null | undefined) => {
+    const key = partnerId ?? "";
+    if (!partners.has(key)) {
+      partners.set(key, loadPartnerScoringContext(db, partnerId, userId));
+    }
+    return partners.get(key)!;
+  };
+
+  const scored = await Promise.all(
+    candidates.map(async (doc) => {
+      const fileData = doc.data();
+      const partner = await partnerFor(fileData.partnerId);
+      const [match] = scoreFileAgainstTransactions(
+        fileData,
+        [txDoc],
+        partner,
+        documentedAmounts,
+        ecbRates
+      );
+      return {
+        fileId: doc.id,
+        confidence: match.confidence,
+        matchSources: match.matchSources,
+        breakdown: match.breakdown,
+        scoredAgainstRemainder: isRemainderMatch(match),
+      };
+    })
+  );
+
+  return {
+    matches: scored.sort((a, b) => b.confidence - a.confidence),
+    totalCandidates: candidates.length,
+  };
+}

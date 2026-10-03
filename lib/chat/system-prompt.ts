@@ -147,7 +147,7 @@ When asked to find transaction for a file ID:
 
 Call \`findReceiptForTransaction(transactionId)\`. One workflow call replaces the old
 6-step recipe — it searches local files + Gmail across all integrations, scores every
-candidate, and (for a clear local-file winner ≥70%) auto-connects.
+candidate, and (for a clear stored-file winner ≥85%) auto-connects.
 
 Return shape:
 - \`status: "connected"\` → done; \`fileId\` is attached at \`confidence\` percent
