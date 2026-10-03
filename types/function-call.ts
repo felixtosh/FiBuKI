@@ -89,6 +89,7 @@ export type CloudFunctionName =
   | "generateSearchQueriesCallable"
   | "scoreAttachmentMatchCallable"
   | "findTransactionMatchesForFile"
+  | "findFileMatchesForTransaction"
   | "matchFilesForPartner"
   | "lookupCompany"
   | "lookupByVatId"

@@ -798,5 +798,27 @@
       "label": "Leistung, Leistungsort im Ausland (§ 3a Abs 6)",
       "hint": "Eine Leistung an ein Unternehmen außerhalb Österreichs. Alle Positionen haben 0 % USt., und die Rechnung druckt den Reverse-Charge-Hinweis für Kunden in der EU, sonst den Hinweis auf die nicht steuerbare Leistung. Ausstellen braucht ein Kundenland außerhalb Österreichs, bei Kunden in der EU beide UIDs."
     }
+  },
+  "connect": {
+    "sort": {
+      "label": "Sortierung",
+      "aria": "Belege sortieren",
+      "best": "Bester Vorschlag",
+      "closestDate": "Nächstes Datum",
+      "newest": "Neueste"
+    },
+    "dateWindow": {
+      "days7": "±7 Tage",
+      "days30": "±30 Tage",
+      "all": "Alle Daten"
+    },
+    "partnerOnly": "Nur dieser Partner",
+    "files": {
+      "loading": "Beste Vorschläge werden gesucht...",
+      "noneForSearch": "Keine Belege passen zur Suche",
+      "noneForFilters": "Keine Belege passen zu diesen Filtern",
+      "none": "Keine Belege gefunden",
+      "matched": "Gefunden in: {fields}"
+    }
   }
 }

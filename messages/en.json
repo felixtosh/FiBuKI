@@ -798,5 +798,27 @@
       "label": "Service, place of supply abroad (§ 3a Abs 6)",
       "hint": "A service to a business outside Austria. Every line is at 0% VAT, and the invoice prints the reverse-charge note for an EU customer or the not-taxable note otherwise. Issuing needs a customer country outside Austria, and for an EU customer both UIDs."
     }
+  },
+  "connect": {
+    "sort": {
+      "label": "Sort",
+      "aria": "Sort files",
+      "best": "Best match",
+      "closestDate": "Closest date",
+      "newest": "Newest"
+    },
+    "dateWindow": {
+      "days7": "±7 days",
+      "days30": "±30 days",
+      "all": "All dates"
+    },
+    "partnerOnly": "This Partner only",
+    "files": {
+      "loading": "Finding best matches...",
+      "noneForSearch": "No files match your search",
+      "noneForFilters": "No files match these filters",
+      "none": "No files found",
+      "matched": "Matched: {fields}"
+    }
   }
 }

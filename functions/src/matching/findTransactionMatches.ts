@@ -10,6 +10,7 @@ import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { readDismissedTransactionIds } from "./dismissedTransactions";
 import { liveCopyIds } from "../files/copyOps";
 import { loadDocumentedAmounts } from "./documentedAmounts";
+import { loadScoringEcbRates } from "./scoringEcbRates";
 import { deriveCoverage } from "./coverage";
 import { matchesTransactionSearch } from "./transactionSearch";
 import {
@@ -283,14 +284,18 @@ export const findTransactionMatchesForFile = onCall<FindTransactionMatchesReques
     // What the Files already on each candidate explain (#239). The trigger
     // resolves its Remainders through the same helper, so this dialog and the
     // stored suggestions cannot disagree about which figure is open.
-    const documentedAmounts = await loadDocumentedAmounts(candidates.map((c) => c.id), fileId);
+    const [documentedAmounts, ecbRates] = await Promise.all([
+      loadDocumentedAmounts(candidates.map((c) => c.id), fileId),
+      loadScoringEcbRates(db, [fileData.extractedCurrency], candidates),
+    ]);
 
     // Score each transaction — the trigger's own input assembly (#308, #327).
     const allScores: TransactionMatchScore[] = scoreFileAgainstTransactions(
       fileData,
       candidates,
       partner,
-      documentedAmounts
+      documentedAmounts,
+      ecbRates
     );
 
     // Sort by confidence and take top results

@@ -3,6 +3,9 @@
  * (Best match / Closest date / Newest) and two chips (This Partner only, a date
  * window around the File's date). Best match must reproduce the order the
  * overlay had before; Closest date must differ from Newest.
+ *
+ * #555: the mirror window, Files for a Transaction, uses the same helper with
+ * the Transaction's date as reference and Files (some undated) as candidates.
  */
 
 import { describe, expect, it } from "vitest";
@@ -33,21 +36,21 @@ describe("sortConnectCandidates", () => {
 
   it("Best match: scored first by confidence, the rest newest first (today's order)", () => {
     expect(
-      ids(sortConnectCandidates(TXS, "best", { confidenceOf, fileDateMs: FILE_DATE }))
+      ids(sortConnectCandidates(TXS, "best", { confidenceOf, referenceDateMs: FILE_DATE }))
     ).toEqual(["mar-early", "jan", "sep", "mar-late"]);
   });
 
   it("Closest date: distance from the File's date in both directions", () => {
     expect(
-      ids(sortConnectCandidates(TXS, "closest-date", { confidenceOf, fileDateMs: FILE_DATE }))
+      ids(sortConnectCandidates(TXS, "closest-date", { confidenceOf, referenceDateMs: FILE_DATE }))
     ).toEqual(["mar-late", "mar-early", "jan", "sep"]);
   });
 
   it("Newest: date descending, distinct from Closest date", () => {
-    const newest = ids(sortConnectCandidates(TXS, "newest", { confidenceOf, fileDateMs: FILE_DATE }));
+    const newest = ids(sortConnectCandidates(TXS, "newest", { confidenceOf, referenceDateMs: FILE_DATE }));
     expect(newest).toEqual(["sep", "mar-late", "mar-early", "jan"]);
     expect(newest).not.toEqual(
-      ids(sortConnectCandidates(TXS, "closest-date", { confidenceOf, fileDateMs: FILE_DATE }))
+      ids(sortConnectCandidates(TXS, "closest-date", { confidenceOf, referenceDateMs: FILE_DATE }))
     );
   });
 
@@ -68,13 +71,13 @@ describe("filterConnectCandidates", () => {
 
   it("the date window is relative to the File's date", () => {
     expect(
-      ids(filterConnectCandidates(TXS, { dateWindowDays: 7, fileDateMs: FILE_DATE }))
+      ids(filterConnectCandidates(TXS, { dateWindowDays: 7, referenceDateMs: FILE_DATE }))
     ).toEqual(["mar-late"]);
     expect(
-      ids(filterConnectCandidates(TXS, { dateWindowDays: 30, fileDateMs: FILE_DATE }))
+      ids(filterConnectCandidates(TXS, { dateWindowDays: 30, referenceDateMs: FILE_DATE }))
     ).toEqual(["mar-early", "mar-late"]);
     expect(
-      ids(filterConnectCandidates(TXS, { dateWindowDays: null, fileDateMs: FILE_DATE }))
+      ids(filterConnectCandidates(TXS, { dateWindowDays: null, referenceDateMs: FILE_DATE }))
     ).toEqual(ids(TXS));
   });
 
@@ -110,5 +113,68 @@ describe("controls", () => {
       dateWindowDays: 7,
     });
     rememberConnectControls(DEFAULT_CONNECT_CONTROLS);
+  });
+});
+
+describe("Files as candidates, the Transaction's date as reference (#555)", () => {
+  const TX_DATE = day("2026-03-12");
+  const FILES = [
+    { id: "undated", dateMs: null, partnerId: "p-openai" },
+    { id: "jan", dateMs: day("2026-01-05"), partnerId: "p-openai" },
+    { id: "mar", dateMs: day("2026-03-10"), partnerId: "p-other" },
+    { id: "apr", dateMs: day("2026-04-02"), partnerId: "p-openai" },
+  ];
+  const confidence: Record<string, number> = { apr: 78, mar: 44 };
+  const opts = {
+    confidenceOf: (c: { id: string }) => confidence[c.id],
+    referenceDateMs: TX_DATE,
+  };
+
+  it("Best match: the server's Confidence, then the rest newest first, undated last", () => {
+    expect(ids(sortConnectCandidates(FILES, "best", opts))).toEqual([
+      "apr",
+      "mar",
+      "jan",
+      "undated",
+    ]);
+  });
+
+  it("Closest date: either direction from the Transaction's date, undated last", () => {
+    expect(ids(sortConnectCandidates(FILES, "closest-date", opts))).toEqual([
+      "mar",
+      "apr",
+      "jan",
+      "undated",
+    ]);
+  });
+
+  it("Newest: date descending, undated last", () => {
+    expect(ids(sortConnectCandidates(FILES, "newest", opts))).toEqual([
+      "apr",
+      "mar",
+      "jan",
+      "undated",
+    ]);
+  });
+
+  it("a date window keeps an undated File", () => {
+    expect(
+      ids(filterConnectCandidates(FILES, { dateWindowDays: 7, referenceDateMs: TX_DATE }))
+    ).toEqual(["undated", "mar"]);
+  });
+
+  it("This Partner only keeps the Transaction's Partner", () => {
+    expect(ids(filterConnectCandidates(FILES, { partnerId: "p-openai" }))).toEqual([
+      "undated",
+      "jan",
+      "apr",
+    ]);
+  });
+
+  it("remembers its controls apart from the Files-side window's", () => {
+    rememberConnectControls({ sort: "closest-date", partnerOnly: false, dateWindowDays: 30 }, "files");
+    expect(rememberedConnectControls("files").sort).toBe("closest-date");
+    expect(rememberedConnectControls("transactions")).toEqual(DEFAULT_CONNECT_CONTROLS);
+    rememberConnectControls(DEFAULT_CONNECT_CONTROLS, "files");
   });
 });

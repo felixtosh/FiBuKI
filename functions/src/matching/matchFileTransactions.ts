@@ -39,6 +39,7 @@ import { deriveCoverage, isRemainderClosed, filePaymentTotal } from "./coverage"
 import { loadConnectedFiles, documentedAmountsOf } from "./documentedAmounts";
 import { isSameDayEvidence, hasUndocumentedRival } from "./remainderAutoConnect";
 import { readDismissedTransactionIds } from "./dismissedTransactions";
+import { loadScoringEcbRates } from "./scoringEcbRates";
 import { isFileRejected } from "./rejectedFiles";
 import { runCopyCheck, CLEARED_COPY_MARK } from "../files/copyOps";
 import { AutomationMeta } from "../automation/types";
@@ -564,11 +565,13 @@ export async function runTransactionMatching(
   // Score each transaction. The same assembly the connect dialog and the
   // agent's score_file_transaction_match use (#308, #327).
   const fileMatchingData = toFileMatchingData(fileData);
+  const ecbRates = await loadScoringEcbRates(db, [fileData.extractedCurrency], eligibleTransactions);
   const allScores = scoreFileAgainstTransactions(
     fileData,
     eligibleTransactions,
     partner,
-    documentedAmounts
+    documentedAmounts,
+    ecbRates
   );
 
   const matches = allScores

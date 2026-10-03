@@ -210,15 +210,19 @@ function TransactionsContent() {
   const connectedFileIds = useMemo(() => connectedFiles.map(f => f.id), [connectedFiles]);
 
   // Open/close connect file overlay via URL param
-  const openConnectFileOverlay = useCallback(() => {
+  // `fileId` opens it on a suggested File, selected and previewed (#555).
+  const openConnectFileOverlay = useCallback((fileId?: string) => {
     const params = new URLSearchParams(searchParamsRef.current.toString());
     params.set("connect", "true");
+    if (fileId) params.set("connectFile", fileId);
+    else params.delete("connectFile");
     pushQuery(router, `/transactions?${params.toString()}`);
   }, [router]);
 
   const closeConnectFileOverlay = useCallback(() => {
     const params = new URLSearchParams(searchParamsRef.current.toString());
     params.delete("connect");
+    params.delete("connectFile");
     pushQuery(router, `/transactions?${params.toString()}`);
   }, [router]);
 
@@ -297,6 +301,8 @@ function TransactionsContent() {
     (transaction: Transaction, options?: { keepConnect?: boolean }) => {
       const params = new URLSearchParams(searchParamsRef.current.toString());
       params.set("id", transaction.id);
+      // A suggested File belongs to the Transaction it was suggested for (#555).
+      params.delete("connectFile");
       if (!options?.keepConnect) {
         params.delete("connect");
       }
@@ -310,6 +316,7 @@ function TransactionsContent() {
     const params = new URLSearchParams(searchParamsRef.current.toString());
     params.delete("id");
     params.delete("connect");
+    params.delete("connectFile");
     const newUrl = params.toString()
       ? `/transactions?${params.toString()}`
       : "/transactions";
@@ -533,6 +540,7 @@ function TransactionsContent() {
               onSelect={handleConnectFile}
               connectedFileIds={connectedFileIds}
               transaction={selectedTransaction}
+              initialFileId={searchParams.get("connectFile")}
             />
           )}
 
@@ -597,6 +605,7 @@ function TransactionsContent() {
               onRemovePartner={removeFromTransaction}
               onCreatePartner={createPartner}
               onOpenConnectFile={toggleConnectFileOverlay}
+              onPreviewSuggestedFile={openConnectFileOverlay}
               isConnectFileOpen={isConnectFileOpen}
             />
           </div>

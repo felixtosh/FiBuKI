@@ -60,6 +60,13 @@ export interface ScoreAttachmentInput {
    * "nothing connected", which is the pre-#239 comparison.
    */
   transactionDocumentedAmount?: number | null;
+  /**
+   * The bank-stated original amount in cents, in the currency the charge was
+   * made in (#555), read from the Transaction's preserved raw row. An invoice
+   * email for a USD charge says "$24.00", never the bank's EUR 21,76, so the
+   * amount is looked for in both figures.
+   */
+  transactionOriginalAmount?: number | null;
   transactionDate?: Date | null;
   transactionName?: string | null;
   transactionReference?: string | null;
@@ -176,6 +183,7 @@ export function scoreAttachmentMatch(input: ScoreAttachmentInput): ScoreAttachme
     fileExtractedDate,
     fileExtractedPartner,
     transactionAmount,
+    transactionOriginalAmount,
     transactionDate,
     transactionName,
     transactionReference,
@@ -186,7 +194,12 @@ export function scoreAttachmentMatch(input: ScoreAttachmentInput): ScoreAttachme
   } = input;
 
   // Build search targets
-  const amountVariants = buildAmountVariants(transactionAmount);
+  const amountVariants = [
+    ...new Set([
+      ...buildAmountVariants(transactionAmount),
+      ...buildAmountVariants(transactionOriginalAmount),
+    ]),
+  ];
   const partnerTokens = [
     ...extractTokens(partnerName),
     ...extractTokens(transactionPartner),

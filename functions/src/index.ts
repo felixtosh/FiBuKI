@@ -66,6 +66,7 @@ export { matchFilePartner } from "./matching/matchFilePartner";
 // Export file-transaction matching functions
 export { matchFileTransactions } from "./matching/matchFileTransactions";
 export { findTransactionMatchesForFile } from "./matching/findTransactionMatches";
+export { findFileMatchesForTransactionCallable as findFileMatchesForTransaction } from "./matching/findFileMatches";
 export { matchFilesForPartner } from "./matching/matchFilesForPartner";
 
 // Export orphaned file processing (fallback for stuck files)
