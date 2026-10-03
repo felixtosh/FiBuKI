@@ -10,7 +10,7 @@ import { buildDownloadUrl } from "../utils/buildDownloadUrl";
 import { decrypt } from "../utils/encryption";
 import { createFileRecord } from "../files/createFileRecord";
 import { performDeleteFile } from "../files/deleteFile";
-import { performRestoreFile } from "../files/restoreFile";
+import { performRestoreFile, SplitPartsLiveError } from "../files/restoreFile";
 import { isGeneratedInvoiceFile } from "../files/generatedInvoiceGuard";
 import { DropboxProvider, refreshDropboxAccessToken } from "./dropbox/DropboxProvider";
 import { GoogleDriveProvider, refreshGoogleAccessToken } from "./gdrive/GoogleDriveProvider";
@@ -160,7 +160,13 @@ export function firestoreFileGateway(
     async restore(fileId) {
       const f = await ownFile(fileId);
       if (!f) return;
-      await performRestoreFile(db, userId, fileId, f.data);
+      try {
+        await performRestoreFile(db, userId, fileId, f.data);
+      } catch (error) {
+        // A Split original stays deleted while its parts live (#550); the
+        // bundle coming back at the source does not bring it back either.
+        if (!(error instanceof SplitPartsLiveError)) throw error;
+      }
       await f.ref.update({ sourceGoneAt: null });
     },
   };

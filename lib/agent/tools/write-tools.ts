@@ -1206,6 +1206,37 @@ export const bulkUpdateTransactionsTool = tool(
 );
 
 // ============================================================================
+// Split (#550)
+// ============================================================================
+
+export const splitFileTool = tool(
+  async ({ fileId, ranges }, config) => {
+    const authHeader = config?.configurable?.authHeader;
+    if (!authHeader) return { error: "Auth header not provided" };
+    try {
+      return await callFirebaseFunction<
+        { fileId: string; ranges: Array<{ from: number; to: number }> },
+        Record<string, unknown>
+      >("splitFile", { fileId, ranges }, authHeader);
+    } catch (err) {
+      return { error: (err as Error).message || "Failed: splitFile" };
+    }
+  },
+  {
+    name: "splitFile",
+    description:
+      "Split a PDF that holds several separately issued invoices or Receipts (an Amazon Marketplace order with one Rechnung or Quittung per seller) into one file per invoice or Receipt. The ranges cover every page exactly once, in order. Each part is extracted from scratch and connected to the original's transactions; the original is deleted, and can be restored only after its parts are deleted. Use the file's splitSuggestion for the ranges when it has one.",
+    schema: z.object({
+      fileId: z.string().describe("The file to split"),
+      ranges: z
+        .array(z.object({ from: z.number().int(), to: z.number().int() }))
+        .min(2)
+        .describe("The parts in page order: first and last page of each, 1-based and inclusive"),
+    }),
+  }
+);
+
+// ============================================================================
 // Export all write tools
 // ============================================================================
 
@@ -1221,6 +1252,7 @@ export const WRITE_TOOLS = [
   linkCorrectionTool,
   unlinkCorrectionTool,
   getCorrectionTool,
+  splitFileTool,
   bulkAssignPartnerToTransactionsTool,
   bulkUpdateTransactionsTool,
   matchTransactionPartnersTool,

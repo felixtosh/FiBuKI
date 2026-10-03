@@ -837,6 +837,53 @@ function normalizeTipAmount(value: unknown): number | null {
   return cents > 0 ? cents : null;
 }
 
+/**
+ * One separately issued invoice or Receipt inside a File (#550): its pages,
+ * 1-based and inclusive, and what the Extraction read off them.
+ */
+export interface SplitSegment {
+  pages: [number, number];
+  invoiceNumber: string | null;
+  issuer: string | null;
+  /** Cents, as printed. */
+  total: number | null;
+}
+
+interface GeminiSegment {
+  pages?: unknown;
+  invoiceNumber?: unknown;
+  issuer?: unknown;
+  total?: unknown;
+}
+
+/**
+ * The model's "segments", or null when it read fewer than two documents.
+ *
+ * Only the shape is checked here; whether the ranges fit the page count is
+ * decided where the page count is known. A malformed entry drops the whole
+ * list, as for the VAT summary block: a half-kept list would suggest a Split
+ * the document does not support.
+ */
+export function normalizeSplitSegments(raw: unknown): SplitSegment[] | null {
+  if (!Array.isArray(raw) || raw.length < 2) return null;
+  const segments: SplitSegment[] = [];
+  for (const entry of raw as GeminiSegment[]) {
+    const pages = entry?.pages;
+    if (!Array.isArray(pages) || pages.length !== 2) return null;
+    const [from, to] = pages.map((p) => toFiniteNumber(p));
+    if (from === null || to === null || !Number.isInteger(from) || !Number.isInteger(to)) return null;
+    if (from < 1 || to < from) return null;
+    segments.push({
+      pages: [from, to],
+      invoiceNumber: asTranscribedString(entry.invoiceNumber),
+      issuer: typeof entry.issuer === "string" ? decodeHtmlEntities(entry.issuer) || null : null,
+      total: typeof entry.total === "number" && Number.isFinite(entry.total) ? Math.round(entry.total) : null,
+    });
+  }
+  segments.sort((a, b) => a.pages[0] - b.pages[0]);
+  return segments;
+}
+
 export async function parseWithGemini(
   fileBuffer: Buffer,
   fileType: string,
@@ -853,6 +900,8 @@ export async function parseWithGemini(
    * Empty on every response that parsed first time.
    */
   repairAmbiguousFields: string[];
+  /** Separately issued documents the model read in this File, or null (#550). */
+  splitSegments: SplitSegment[] | null;
   usage: { inputTokens: number; outputTokens: number; model: string };
 }> {
   const projectId = getProjectId();
@@ -993,6 +1042,19 @@ REFERENCED INVOICE NUMBER ("referencedInvoiceNumber", IMPORTANT):
   payment reference for it
 - If the document references no earlier invoice, return
   "referencedInvoiceNumber": null
+
+SEVERAL DOCUMENTS IN ONE FILE ("segments"):
+- One PDF can hold several SEPARATELY ISSUED invoices or receipts, each with
+  its own seller, its own number and its own total. A marketplace order
+  download does this: every seller's "Rechnung" or "Quittung" on its own pages
+- Only when the file holds TWO OR MORE such documents, list each one in
+  "segments", in page order: "pages" as [first, last] (1-based, inclusive),
+  "invoiceNumber" and "issuer" as printed on that document, "total" in cents
+- Every page belongs to exactly one segment
+- ONE invoice that runs over several pages, an invoice with its terms or a
+  delivery note, a page that only repeats the invoice number, or a reminder
+  that quotes an invoice is ONE document: return "segments": null
+- A single document: "segments": null
 
 Input format: any language, most often German (dates DD.MM.YYYY, amounts
 with a decimal comma like 123,45); English documents use 12/15/2024 or
@@ -1142,6 +1204,7 @@ JSON structure:
     }
   },
   "qrCodes": [],
+  "segments": null,
   "additionalFields": [
     {"key": "invoiceNumber", "label": "Rechnungsnummer", "value": "INV-2024-001", "rawValue": "INV-2024-001"},
     {"key": "dueDate", "label": "Fällig am", "value": "2025-01-15", "rawValue": "15.01.2025"},
@@ -1248,6 +1311,7 @@ JSON only, no markdown, no explanation.`;
     rateGroups?: GeminiRateGroup[] | null;
     tipAmount?: number | null;
     qrCodes?: unknown;
+    segments?: unknown;
     extracted?: {
       date?: string | null;
       date_raw?: string | null;
@@ -1260,6 +1324,7 @@ JSON only, no markdown, no explanation.`;
       vatPercent_raw?: string | null;
       documentVatAmount?: number | string | null;
       qrCodes?: unknown;
+      segments?: unknown;
       selfDesignation?: string | null;
       invoiceNumber?: string | null;
       referencedInvoiceNumber?: string | null;
@@ -1529,6 +1594,7 @@ JSON only, no markdown, no explanation.`;
     extractedRaw,
     additionalFields,
     repairAmbiguousFields,
+    splitSegments: normalizeSplitSegments(parsed.segments ?? parsed.extracted?.segments),
     usage,
   };
 }

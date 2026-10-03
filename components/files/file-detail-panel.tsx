@@ -35,6 +35,7 @@ import {
   Loader2,
   Info,
   Search,
+  Scissors,
 } from "lucide-react";
 import { TaxFile, TransactionSuggestion } from "@/types/file";
 import { UserPartner, GlobalPartner, PartnerSuggestion } from "@/types/partner";
@@ -53,6 +54,7 @@ import { FileExtractedInfo } from "./file-extracted-info";
 import { FileConnectionsList } from "./file-connections-list";
 import { FileCopySection, type CopyAct, type MarkCopyAct } from "./file-copy-section";
 import { FileCorrectionSection } from "./file-correction-section";
+import { FileSplitSection, SplitFileDialog, canSplitFile } from "./file-split-section";
 import { Section11Reasoning } from "@/components/documents/section-11-details";
 import { describeInvoiceDirection } from "@/lib/documents/document-type-presentation";
 import { InfoPopover } from "@/components/ui/info-popover";
@@ -174,9 +176,11 @@ function FileDetailPanelInner({
   const router = useRouter();
   const t = useTranslations("files.detail");
   const tSource = useTranslations("files.source");
+  const tSplit = useTranslations("files.split");
   const storedDownload = useAuthenticatedDownload();
   const { userId } = useAuth();
   const [isAddPartnerOpen, setIsAddPartnerOpen] = useState(false);
+  const [isSplitOpen, setIsSplitOpen] = useState(false);
   const [isAssigningPartner, setIsAssigningPartner] = useState(false);
   const [isRetryingExtraction, setIsRetryingExtraction] = useState(false);
   const [isUpdatingExtractedFields, setIsUpdatingExtractedFields] = useState(false);
@@ -658,6 +662,9 @@ function FileDetailPanelInner({
               />
             ) : null}
 
+            {/* A split suggestion, or the other side of a Split (#550) */}
+            <FileSplitSection file={file} ctx={ctx} onSplit={() => setIsSplitOpen(true)} />
+
             {/* What this File corrects, or what corrects it (#564) */}
             <FileCorrectionSection file={file} />
 
@@ -728,11 +735,19 @@ function FileDetailPanelInner({
               )
             )}
           </div>
+          {canSplitFile(file) ? (
+            <Button variant="ghost" size="sm" onClick={() => setIsSplitOpen(true)}>
+              <Scissors className="h-4 w-4 mr-2" />
+              {tSplit("action")}
+            </Button>
+          ) : null}
           {storedDownload.error && (
             <p className="text-xs text-destructive">{storedDownload.error}</p>
           )}
         </div>
       </div>
+
+      <SplitFileDialog file={file} open={isSplitOpen} onClose={() => setIsSplitOpen(false)} />
 
       {/* Add Partner Dialog */}
       <AddPartnerDialog

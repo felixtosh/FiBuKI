@@ -230,6 +230,7 @@ export function useCategories() {
 - `updateFileCallable` - Update file metadata
 - `deleteFileCallable` - Delete a file: hides it, undone by `restoreFile`, never touches the stored bytes. Refuses a FiBuKI-generated invoice document (ADR-0006)
 - `purgeFilesCallable` - Purge deleted files: destroys the stored bytes (verified) and reduces the record to dedup keys. Deleted-files view only; never on the MCP/tool surface
+- `splitFileCallable` / `dismissSplitSuggestionCallable` - Split a PDF holding several invoices or Receipts into one File per range (parts take over the File Connections, the original is deleted and cannot be restored while a part lives), and "not a bundle" for the Extraction's split suggestion (#550)
 - `markFileAsCopyCallable` / `unmarkFileAsCopyCallable` / `makeFileTheOriginalCallable` - Mark a File as a Copy of another, "Not a Copy" (undo or decline, stores a standing ruling), and swap a Copy with its original (#162, ADR-0010). A Copy holds no File Connection
 
 **Invoice Corrections (#564, ADR-0010):**

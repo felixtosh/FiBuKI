@@ -51,6 +51,7 @@ const OPENAPI_SPEC = {
                       "get_file",
                       "delete_file",
                       "restore_file",
+                      "split_file",
                       "connect_file_to_transaction",
                       "disconnect_file_from_transaction",
                       "list_transactions_needing_files",
@@ -214,11 +215,14 @@ const OPENAPI_SPEC = {
       'Update transaction description, status, or the UVA overrides. Args: transactionId (string), description? (string), isComplete? (boolean), vatRate? (number|null), isReverseCharge? (boolean|null), foreignSupplyKind? ("goods"|"service"|null - goods routes an EU acquisition to ig. Erwerb / a third-country one to the import lane; null keeps the service heuristic flagged for review), saleSupplyKind? ("service-eu"|"service-non-eu"|"export-goods"|null - what a 0% sale is: a service supplied abroad (§ 3a Abs 6) reaches no Kennzahl, an export of goods stays in KZ 011; null falls back to the Invoice setting or detection)',
     list_files:
       "List uploaded files/receipts. Returns { files, nextCursor, count } — count is this page, not a total. Args: hasConnections? (boolean), hasSuggestions? (boolean), needsVatRateReview? (boolean), handCorrected? (boolean, true = only files a human corrected by hand, which is the exclusion list for a re-extraction sweep), includeDeleted? (boolean, also return deleted files; excluded by default), limit? (number, max 500), cursor? (string, nextCursor from the previous page)",
-    get_file: "Get file details including suggestions. Args: fileId (string)",
+    get_file:
+      "Get file details including suggestions; splitSuggestion lists the separately issued invoices or Receipts read in one PDF, by page range. Args: fileId (string)",
     delete_file:
       "Delete a file, reversibly: it is hidden and its stored document kept; restore_file puts it back. Detaches it from its transactions and reports reopenedTransactions separately from stillCompleteTransactions (date, amount, counterparty each). A FiBuKI-generated invoice document is refused with GENERATED_INVOICE; use cancel_invoice. Args: fileId (string), confirm (boolean, must be true)",
     restore_file:
-      "Restore a deleted file. Previous transaction connections are not recreated. Args: fileId (string)",
+      "Restore a deleted file. Previous transaction connections are not recreated. A split original is refused while any of its parts exists. Args: fileId (string)",
+    split_file:
+      "Split a PDF holding several separately issued invoices or Receipts into one file per invoice or Receipt. The ranges cover every page once, in order. Each part is extracted from scratch and connected to the original's transactions; the original is deleted (reversible once the parts are deleted). Args: fileId (string), ranges (array of { from, to }, 1-based inclusive pages)",
     connect_file_to_transaction:
       "Connect a file to a transaction (marks transaction complete). A pair previously rejected with dismiss_transaction_suggestion is refused with PAIR_REJECTED; lift it with undismiss_transaction_suggestion first if the connection is genuinely intended. Args: fileId (string), transactionId (string)",
     disconnect_file_from_transaction:

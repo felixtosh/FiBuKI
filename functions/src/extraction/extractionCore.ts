@@ -57,6 +57,7 @@ import { repairReviewFields, reviewRepair } from "../documents/repairReview";
 import { dueDateFromAdditionalFields } from "../matching/dueDate";
 import { debitDateFromAdditionalFields } from "../matching/debitDate";
 import { toDateSafe } from "../utils/toDateSafe";
+import { pdfPageCount, splitSuggestionFor } from "../files/splitSuggestion";
 
 /**
  * Options for running extraction
@@ -207,6 +208,10 @@ export async function runExtraction(
   const t2 = Date.now();
   console.log(`[+${t2 - t0}ms] Downloaded file: ${fileBuffer.length} bytes (download took ${t2 - t1}ms)`);
 
+  // #550: the page count is what a split suggestion is checked against, and
+  // what the Split dialog shows. Null for an image or an unreadable PDF.
+  const pageCount = await pdfPageCount(fileBuffer);
+
   // Get provider and model config
   const provider = getDefaultProvider();
   const geminiModel = options.geminiModel || process.env.GEMINI_MODEL || MODELS.geminiLite;
@@ -297,6 +302,8 @@ export async function runExtraction(
         ...repairReviewFields({ ambiguousFields: [], needsReview: false }),
         extractedText: "(classification only - not an invoice)",
         extractedFields: [],
+        pageCount,
+        splitSuggestion: null,
         updatedAt: Timestamp.now(),
       });
       console.log(`[+${Date.now() - t0}ms] DONE - Not an invoice, skipping extraction`);
@@ -433,6 +440,15 @@ export async function runExtraction(
     classificationComplete: true,
     isNotInvoice: false, // If we got here, it's confirmed to be an invoice
     notInvoiceReason: null,
+    pageCount,
+    // #550: read in the same call, stored as a suggestion only. Written on
+    // every pass, so a re-extraction that reads one document clears an old
+    // suggestion, and a dismissed File never gets a new one.
+    splitSuggestion: splitSuggestionFor(
+      result.splitSegments,
+      pageCount,
+      fileData.splitSuggestionDismissed === true
+    ),
     updatedAt: Timestamp.now(),
   };
 
@@ -471,6 +487,7 @@ export async function runExtraction(
     updateData.extractedReferencedInvoiceNumber = null;
     updateData.extractedPayableAmount = null;
     updateData.extractedInvoicingAgent = null;
+    updateData.splitSuggestion = null;
     console.log(`[+${Date.now() - t0}ms] Classified as NOT an invoice: ${result.notInvoiceReason}`);
   } else {
     // Add extracted fields if found

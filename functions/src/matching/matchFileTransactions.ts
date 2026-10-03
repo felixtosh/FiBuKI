@@ -46,6 +46,7 @@ import { runCorrectionCheck } from "../corrections/correctionOps";
 import { AutomationMeta } from "../automation/types";
 import { checkAIBudget } from "../billing/checkAIBudget";
 import { isPassiveMode } from "../utils/checkAutomationMode";
+import { payeeFillForTransaction } from "../partners/payeeSync";
 
 // =============================================================================
 // AUTOMATION METADATA
@@ -325,45 +326,6 @@ async function learnEmailDomainFromMatch(
     `[EmailDomain] Learned domain "${domain}" for partner ${txData.partnerId} ` +
     `from file ${fileData.fileName} matched to transaction ${transactionId}`
   );
-}
-
-// === Partner Priority Resolution ===
-
-type PartnerMatchedBy = "manual" | "suggestion" | "auto" | null;
-
-function resolvePartnerConflict(
-  filePartnerId: string | null,
-  fileMatchedBy: PartnerMatchedBy,
-  txPartnerId: string | null,
-  txMatchedBy: PartnerMatchedBy
-): { winnerId: string | null; source: "file" | "transaction" | null } {
-  if (!filePartnerId && !txPartnerId) {
-    return { winnerId: null, source: null };
-  }
-
-  if (filePartnerId && !txPartnerId) {
-    return { winnerId: filePartnerId, source: "file" };
-  }
-  if (txPartnerId && !filePartnerId) {
-    return { winnerId: txPartnerId, source: "transaction" };
-  }
-
-  const fileIsManual = fileMatchedBy === "manual";
-  const txIsManual = txMatchedBy === "manual";
-
-  if (fileIsManual && !txIsManual) {
-    return { winnerId: filePartnerId!, source: "file" };
-  }
-  if (txIsManual && !fileIsManual) {
-    return { winnerId: txPartnerId!, source: "transaction" };
-  }
-
-  if (fileIsManual && txIsManual) {
-    return { winnerId: txPartnerId!, source: "transaction" };
-  }
-
-  // Both auto/suggestion - file wins
-  return { winnerId: filePartnerId!, source: "file" };
 }
 
 // === Main Function ===
@@ -794,30 +756,15 @@ export async function runTransactionMatching(
       console.error(`Failed to learn email domain for tx ${match.transactionId}:`, err);
     });
 
-    // Handle partner resolution for auto-matched transactions
+    // The payee rule (#550, ADR-0011): fill an empty Partner only when every
+    // File on the Transaction, this one included, names the same Partner.
     const txDoc = await db.collection("transactions").doc(match.transactionId).get();
     if (txDoc.exists) {
-      const txData = txDoc.data()!;
-      const resolution = resolvePartnerConflict(
-        fileData.partnerId || null,
-        fileData.partnerMatchedBy || null,
-        txData.partnerId || null,
-        txData.partnerMatchedBy || null
-      );
-
-      // If file's partner should win and transaction doesn't have it, update transaction
-      if (
-        resolution.source === "file" &&
-        fileData.partnerId &&
-        txData.partnerId !== fileData.partnerId
-      ) {
-        batch.update(txRef, {
-          partnerId: fileData.partnerId,
-          partnerType: fileData.partnerType,
-          partnerMatchedBy: "auto",
-          partnerMatchConfidence: fileData.partnerMatchConfidence || null,
-        });
-      }
+      const payeeFill = await payeeFillForTransaction(db, userId, txDoc.data()!, {
+        connectingFileId: fileId,
+        known: new Map([[fileId, fileData]]),
+      });
+      if (payeeFill) batch.update(txRef, { ...payeeFill });
     }
   }
 

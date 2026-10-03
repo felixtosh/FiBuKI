@@ -28,6 +28,7 @@ import {
   learnFileSourcePattern,
 } from "./partner-ops";
 import { OperationsContext } from "./types";
+import { payeeFillFromFiles } from "@/functions/src/partners/payeeRule";
 import { liveCopies } from "@/lib/files/copy-state";
 import { callFunction } from "@/lib/firebase/callable";
 import { fileDocumentAmount, fileDocumentVatAmount } from "@/lib/files/document-amount";
@@ -59,80 +60,6 @@ export interface FileConnectionSourceInfo {
 const FILES_COLLECTION = "files";
 const FILE_CONNECTIONS_COLLECTION = "fileConnections";
 const TRANSACTIONS_COLLECTION = "transactions";
-
-// === Partner Resolution ===
-
-export type PartnerMatchedBy = "manual" | "suggestion" | "auto" | null;
-
-/**
- * Resolve partner conflict between file and transaction.
- * Implements bidirectional sync with manual-wins priority.
- *
- * Rules:
- * - Neither has partner → no sync
- * - Only one has partner → sync to the other
- * - Manual wins over auto/suggestion
- * - Both manual → no sync (keep both as-is, they both chose intentionally)
- * - Both auto → higher confidence wins, tie goes to transaction (bank statement)
- */
-export function resolvePartnerConflict(
-  filePartnerId: string | null | undefined,
-  fileMatchedBy: PartnerMatchedBy,
-  fileConfidence: number | null | undefined,
-  txPartnerId: string | null | undefined,
-  txMatchedBy: PartnerMatchedBy,
-  txConfidence: number | null | undefined
-): { winnerId: string | null; source: "file" | "transaction" | null; shouldSync: boolean } {
-  const filePid = filePartnerId ?? null;
-  const txPid = txPartnerId ?? null;
-
-  // Neither has partner
-  if (!filePid && !txPid) {
-    return { winnerId: null, source: null, shouldSync: false };
-  }
-
-  // Only file has partner → sync to transaction
-  if (filePid && !txPid) {
-    return { winnerId: filePid, source: "file", shouldSync: true };
-  }
-
-  // Only transaction has partner → sync to file
-  if (txPid && !filePid) {
-    return { winnerId: txPid, source: "transaction", shouldSync: true };
-  }
-
-  // Both have partners - determine winner
-  const fileIsManual = fileMatchedBy === "manual";
-  const txIsManual = txMatchedBy === "manual";
-
-  // Both manual → no sync (both were intentional choices)
-  if (fileIsManual && txIsManual) {
-    return { winnerId: null, source: null, shouldSync: false };
-  }
-
-  // File is manual, transaction is not → file wins, sync to transaction
-  if (fileIsManual && !txIsManual) {
-    return { winnerId: filePid!, source: "file", shouldSync: true };
-  }
-
-  // Transaction is manual, file is not → transaction wins, sync to file
-  if (txIsManual && !fileIsManual) {
-    return { winnerId: txPid!, source: "transaction", shouldSync: true };
-  }
-
-  // Both auto/suggestion → higher confidence wins
-  const fileConf = fileConfidence ?? 0;
-  const txConf = txConfidence ?? 0;
-
-  if (fileConf > txConf) {
-    return { winnerId: filePid!, source: "file", shouldSync: true };
-  } else if (txConf > fileConf) {
-    return { winnerId: txPid!, source: "transaction", shouldSync: true };
-  }
-
-  // Equal confidence → transaction wins (bank statement is primary source)
-  return { winnerId: txPid!, source: "transaction", shouldSync: true };
-}
 
 function normalizeFileMonetaryFields(file: TaxFile): TaxFile {
   const lineItems = file.extractedLineItems;
@@ -948,48 +875,24 @@ export async function connectFileToTransaction(
     }
   }
 
-  // 4. Partner sync: Resolve conflict and sync partner bidirectionally
-  // Defer partner sync until extraction completes so file partner is authoritative.
-  if (file.extractionComplete === true) {
-    const resolution = resolvePartnerConflict(
-      resolvedFilePartner.partnerId,
-      file.partnerMatchedBy as PartnerMatchedBy,
-      file.partnerMatchConfidence,
-      resolvedTxPartner.partnerId,
-      txData.partnerMatchedBy as PartnerMatchedBy,
-      txData.partnerMatchConfidence
-    );
-
-    if (resolution.shouldSync && resolution.winnerId) {
-      if (resolution.source === "file") {
-        // File wins → sync file's partner to transaction
-        transactionUpdates.partnerId = resolvedFilePartner.partnerId;
-        transactionUpdates.partnerType = resolvedFilePartner.partnerType;
-        // Keep "auto" if syncing, unless file was manual
-        transactionUpdates.partnerMatchedBy = file.partnerMatchedBy === "manual" ? "manual" : "auto";
-        transactionUpdates.partnerMatchConfidence = file.partnerMatchConfidence ?? null;
-        console.log(
-          `[FileConnect] Synced partner ${resolvedFilePartner.partnerId} from file to transaction ${transactionId} ` +
-          `(file: ${file.partnerMatchConfidence ?? 0}% vs tx: ${txData.partnerMatchConfidence ?? 0}%)`
-        );
-      } else if (resolution.source === "transaction") {
-        // Transaction wins → sync transaction's partner to file
-        fileUpdates.partnerId = resolvedTxPartner.partnerId;
-        fileUpdates.partnerType = resolvedTxPartner.partnerType;
-        // Keep "auto" if syncing, unless transaction was manual
-        fileUpdates.partnerMatchedBy = txData.partnerMatchedBy === "manual" ? "manual" : "auto";
-        fileUpdates.partnerMatchConfidence = txData.partnerMatchConfidence ?? null;
-        console.log(
-          `[FileConnect] Synced partner ${resolvedTxPartner.partnerId} from transaction to file ${fileId} ` +
-          `(tx: ${txData.partnerMatchConfidence ?? 0}% vs file: ${file.partnerMatchConfidence ?? 0}%)`
-        );
-      }
-    }
-  } else {
-    console.log(
-      `[FileConnect] Deferred partner sync for file ${fileId} until extraction completes`
-    );
-  }
+  // 4. The payee rule (#550, ADR-0011), the same one every server connect
+  // applies: the File never overwrites the Transaction's Partner and never
+  // takes it; an empty one is filled only when every File on the Transaction,
+  // this one included, names the same Partner.
+  const otherFiles = await Promise.all(
+    ((txData.fileIds ?? []) as string[])
+      .filter((id) => id !== fileId)
+      .map((id) => getFile(ctx, id))
+  );
+  const payeeFill = payeeFillFromFiles({ partnerId: resolvedTxPartner.partnerId }, [
+    {
+      partnerId: resolvedFilePartner.partnerId,
+      partnerType: resolvedFilePartner.partnerType,
+      partnerMatchConfidence: file.partnerMatchConfidence ?? null,
+    },
+    ...otherFiles.filter((f): f is TaxFile => !!f && !f.deletedAt),
+  ]);
+  if (payeeFill) Object.assign(transactionUpdates, payeeFill);
 
   batch.update(fileRef, fileUpdates);
   batch.update(transactionRef, transactionUpdates);

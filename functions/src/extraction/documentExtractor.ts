@@ -14,7 +14,7 @@
  */
 
 import { ExtractedData, OCRBlock } from "../types/extraction";
-import { GeminiBoundingBox, ExtractedRawText, ExtractedAdditionalField } from "./geminiParser";
+import { GeminiBoundingBox, ExtractedRawText, ExtractedAdditionalField, SplitSegment } from "./geminiParser";
 
 export type ExtractionProvider = "gemini";
 
@@ -39,6 +39,8 @@ export interface ExtractionResult {
    * vision-claude path never repairs, so it never sets this.
    */
   repairAmbiguousFields?: string[];
+  /** Separately issued documents read in this File, or null (#550). */
+  splitSegments?: SplitSegment[] | null;
   /** Token usage for AI calls */
   usage?: { inputTokens: number; outputTokens: number; model: string };
 }
@@ -179,6 +181,7 @@ async function extractWithGemini(
     extractedRaw: result.extractedRaw,
     additionalFields: result.additionalFields,
     repairAmbiguousFields: result.repairAmbiguousFields,
+    splitSegments: result.splitSegments,
     usage: result.usage,
   };
 }

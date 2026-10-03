@@ -412,7 +412,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "get_file",
-    "description": "Get file details including extracted data and suggestions",
+    "description": "Get file details including extracted data and suggestions. splitSuggestion, when present, means the Extraction read several separately issued invoices or Receipts in this one PDF: segments lists each one's pages with the invoice number, issuer and total it read; confirm or adjust it with split_file. splitFrom (on a part) and splitInto (on a split original) link the two sides of a Split.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -460,6 +460,44 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       "required": [
         "fileId"
+      ]
+    }
+  },
+  {
+    "name": "split_file",
+    "description": "Split a PDF that holds several separately issued invoices or Receipts (an Amazon Marketplace order download with one Rechnung or Quittung per seller) into one file per invoice or Receipt. Give the page ranges in order; together they must cover every page exactly once. Each part is a new file holding those pages unedited; it is extracted, classified and partner-matched from scratch, and connected to every transaction the original was connected to. The original is then deleted (reversible), and restore_file refuses it while any part exists, so undo by deleting the parts first. Refused for a single-page PDF, an image, a deleted or encrypted file, a document FiBuKI generated for an invoice, and when a part's pages are already on file. Use get_file's splitSuggestion for the ranges when it has one.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "fileId": {
+          "type": "string",
+          "description": "The file to split"
+        },
+        "ranges": {
+          "type": "array",
+          "description": "The parts, in page order: each range's first and last page, 1-based and inclusive",
+          "items": {
+            "type": "object",
+            "properties": {
+              "from": {
+                "type": "integer",
+                "description": "First page of the part"
+              },
+              "to": {
+                "type": "integer",
+                "description": "Last page of the part"
+              }
+            },
+            "required": [
+              "from",
+              "to"
+            ]
+          }
+        }
+      },
+      "required": [
+        "fileId",
+        "ranges"
       ]
     }
   },
