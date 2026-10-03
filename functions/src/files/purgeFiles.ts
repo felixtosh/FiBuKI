@@ -20,6 +20,7 @@ import { Timestamp } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { generatedInvoiceRefusal } from "./generatedInvoiceGuard";
+import { CLEARED_COPY_MARK } from "./copyOps";
 
 interface PurgeFilesRequest {
   fileIds: string[];
@@ -209,6 +210,16 @@ export const purgeFilesCallable = createCallable<PurgeFilesRequest, PurgeFilesRe
         }
       }
       await fileRef.set(skeleton);
+      // A Copy of a purged original is an ordinary File for good (#162): the
+      // mark pointed at a document that no longer exists.
+      const copies = await ctx.db
+        .collection("files")
+        .where("userId", "==", ctx.userId)
+        .where("copyOfFileId", "==", fileId)
+        .get();
+      for (const copy of copies.docs) {
+        await copy.ref.update({ ...CLEARED_COPY_MARK, updatedAt: now });
+      }
       purged++;
       console.log(`[purgeFiles] Purged file ${fileId}`, { userId: ctx.userId });
     }

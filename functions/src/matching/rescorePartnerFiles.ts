@@ -33,6 +33,7 @@ import {
   scoreFileAgainstTransactions,
 } from "./transactionScoring";
 import { readDismissedTransactionIds } from "./dismissedTransactions";
+import { liveCopyIds } from "../files/copyOps";
 import { isFileRejected } from "./rejectedFiles";
 import { toDateSafe } from "../utils/toDateSafe";
 
@@ -99,9 +100,15 @@ export async function rescoreUnconnectedFilesForPartners(
     // Unconnected, already through the pipeline, and actually matchable. A
     // File mid-pipeline (`transactionMatchComplete` not yet true) is left to
     // its own trigger rather than raced.
+    // #162: a Copy is never proposed as a Match.
+    const copies = await liveCopyIds(
+      db,
+      filesSnapshot.docs.map((doc) => ({ id: doc.id, data: doc.data() }))
+    );
     const files = filesSnapshot.docs.filter((doc) => {
       const data = doc.data();
       if (data.deletedAt) return false;
+      if (copies.has(doc.id)) return false;
       if (data.isNotInvoice === true) return false;
       if (data.foreignRecipient === true) return false;
       if (data.transactionMatchComplete !== true) return false;

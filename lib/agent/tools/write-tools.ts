@@ -360,6 +360,64 @@ export const assignPartnerToFileTool = tool(
 );
 
 // ============================================================================
+// Copy (#162, ADR-0010)
+// ============================================================================
+
+/** The three Copy acts are callables; the tools only relay them. */
+async function relayCopyAct(
+  name: "markFileAsCopy" | "unmarkFileAsCopy" | "makeFileTheOriginal",
+  data: Record<string, string>,
+  authHeader: string | undefined
+): Promise<Record<string, unknown>> {
+  if (!authHeader) return { error: "Auth header not provided" };
+  try {
+    return await callFirebaseFunction<Record<string, string>, Record<string, unknown>>(name, data, authHeader);
+  } catch (err) {
+    return { error: (err as Error).message || `Failed: ${name}` };
+  }
+}
+
+export const markFileAsCopyTool = tool(
+  async ({ fileId, originalFileId }, config) =>
+    relayCopyAct("markFileAsCopy", { fileId, originalFileId }, config?.configurable?.authHeader),
+  {
+    name: "markFileAsCopy",
+    description:
+      "Record a file as a Copy of another file: a second File of the same invoice that arrived by another route (mailbox and a document system, or a mailed copy of an invoice the user issued). A Copy holds no transaction connection and is never proposed as a match; if it was connected, the connection moves to the original where the original lacks it. Also accepts a Copy suggestion. A receipt for the same charge as an invoice is NOT a Copy, nor is a payment reminder. Reversible with unmarkFileAsCopy.",
+    schema: z.object({
+      fileId: z.string().describe("The File that is the Copy"),
+      originalFileId: z.string().describe("The File it is a Copy of"),
+    }),
+  }
+);
+
+export const unmarkFileAsCopyTool = tool(
+  async ({ fileId }, config) =>
+    relayCopyAct("unmarkFileAsCopy", { fileId }, config?.configurable?.authHeader),
+  {
+    name: "unmarkFileAsCopy",
+    description:
+      "Not a Copy: undo a Copy, or decline a Copy suggestion on a file. The pair is never suggested again. Undoing reconnects nothing; the file goes back to matching.",
+    schema: z.object({
+      fileId: z.string().describe("The File that is (or was suggested as) the Copy"),
+    }),
+  }
+);
+
+export const makeFileTheOriginalTool = tool(
+  async ({ fileId }, config) =>
+    relayCopyAct("makeFileTheOriginal", { fileId }, config?.configurable?.authHeader),
+  {
+    name: "makeFileTheOriginal",
+    description:
+      "Swap a Copy and its original: the given Copy becomes the original and takes over the transaction connections; the former original becomes its Copy.",
+    schema: z.object({
+      fileId: z.string().describe("The Copy to make the original"),
+    }),
+  }
+);
+
+// ============================================================================
 // Create Partner
 // ============================================================================
 
@@ -1089,6 +1147,9 @@ export const WRITE_TOOLS = [
   rollbackTransactionTool,
   assignPartnerToTransactionTool,
   assignPartnerToFileTool,
+  markFileAsCopyTool,
+  unmarkFileAsCopyTool,
+  makeFileTheOriginalTool,
   bulkAssignPartnerToTransactionsTool,
   bulkUpdateTransactionsTool,
   matchTransactionPartnersTool,

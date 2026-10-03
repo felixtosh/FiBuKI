@@ -729,6 +729,42 @@ export interface TaxFile {
    */
   invoiceDirection?: InvoiceDirection;
 
+  // === Copy (#162, ADR-0010) ===
+
+  /**
+   * This File is a Copy of that File, its original: a second File of the same
+   * document. A Copy holds no File Connection and is never proposed as a
+   * Match. It is a Copy only while the original is live; with the original
+   * deleted it is an ordinary File again (derived on read, nothing written).
+   * Always the root of the chain, never a File that is itself a Copy.
+   */
+  copyOfFileId?: string | null;
+
+  /** Who recorded the Copy: the Copy check, or a person (click, chat, MCP). */
+  copyRecordedBy?: "system" | "user" | null;
+
+  copyRecordedAt?: Timestamp | null;
+
+  /**
+   * The Copy check found that this File may be a Copy of another, but did not
+   * record it: marking it would take a File Connection apart, or an invoice
+   * number is missing. A person accepts (mark as Copy) or declines (Not a
+   * Copy). Shown only while the named File is live.
+   */
+  copySuggestion?: {
+    originalFileId: string;
+    reason: CopySuggestionReason;
+    suggestedAt: Timestamp;
+  } | null;
+
+  /**
+   * Standing "not a Copy" rulings: Files a person said this one is not a Copy
+   * of (or the original of). Written on both Files of the pair, survives
+   * re-extraction, so the pair is never suggested or recorded again. Marking
+   * the pair as a Copy revokes it.
+   */
+  notCopyOfFileIds?: string[];
+
   // === Fibuki-generated invoices ===
 
   /** If set, this file is a Fibuki-generated invoice. Points to /invoices/{id}. */
@@ -765,6 +801,17 @@ export interface TaxFile {
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
+
+/**
+ * Why the Copy check only suggested a Copy (#162): marking would take a File
+ * Connection apart, an invoice number is missing, or the one-time pass found
+ * the pair (same bytes, or a re-send hidden as "not an invoice").
+ */
+export type CopySuggestionReason =
+  | "connected"
+  | "no-invoice-number"
+  | "same-content"
+  | "marked-not-invoice";
 
 /**
  * Junction collection for File <-> Transaction relationship
@@ -862,8 +909,14 @@ export interface FileFilters {
   /** Text search in file name, extracted partner, invoice number and amount */
   search?: string;
 
-  /** Filter by connection status */
+  /**
+   * Filter by connection status. false ("Unassigned") leaves Copies out: a
+   * Copy is never work (#162).
+   */
   hasConnections?: boolean;
+
+  /** The Connections chip's third value (#162): only Files that are a Copy right now. */
+  copiesOnly?: boolean;
 
   /** Filter by extraction status */
   extractionComplete?: boolean;

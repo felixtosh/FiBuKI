@@ -59,6 +59,9 @@ const OPENAPI_SPEC = {
                       "accept_partial_payment",
                       "mark_file_as_not_invoice",
                       "unmark_file_as_not_invoice",
+                      "mark_file_as_copy",
+                      "unmark_file_as_copy",
+                      "make_file_the_original",
                       "dismiss_transaction_suggestion",
                       "undismiss_transaction_suggestion",
                       "retry_file_extraction",
@@ -228,9 +231,15 @@ const OPENAPI_SPEC = {
     accept_partial_payment:
       "Record - or revoke - an Accepted Partial Payment ruling on a tipped transaction whose bank amount is short of document total + tip: the shortfall is real (split bill, instalment), not a mistyped tip. Without it the UVA lists the line as tip-partial-payment and claims nothing, and the BMD export refuses it; with it both claim and book the paid fraction. Goes stale on its own when the files, a file's total or tip, or the bank amount change. Args: transactionId (string), reason? (string, required unless revoking), revoke? (boolean)",
     mark_file_as_not_invoice:
-      "Flag a file as not an invoice (duplicate re-send, payment reminder, statement). Clears extracted data and removes it from the unmatched-file queue; refuses while the file is still connected to a transaction. Args: fileId (string), reason? (string)",
+      "Flag a file as not an invoice (payment reminder, statement). Clears extracted data and removes it from the unmatched-file queue; refuses while the file is still connected to a transaction. A second copy of an invoice already held is a Copy instead: use mark_file_as_copy. Args: fileId (string), reason? (string)",
     unmark_file_as_not_invoice:
       "Restore a file previously flagged as not an invoice, re-opening extraction. Args: fileId (string)",
+    mark_file_as_copy:
+      "Record a file as a Copy of another: a second File of the same invoice that arrived by another route. A Copy holds no transaction connection and is never proposed as a match; a connection it held moves to the original where the original lacks it. Also accepts a Copy suggestion. A FiBuKI-generated invoice is always the original. A receipt for the same charge is not a Copy. Args: fileId (string), originalFileId (string)",
+    unmark_file_as_copy:
+      "Not a Copy: undo a Copy or decline a Copy suggestion. The pair is never suggested again; the file goes back to matching. Args: fileId (string)",
+    make_file_the_original:
+      "Swap a Copy and its original; the transaction connections move to the given file. Args: fileId (string)",
     dismiss_transaction_suggestion:
       "Reject a proposed file-to-transaction pair (coincidental amount or date, an own-side document scored against an expense line). Removes the suggestion and records the rejection so re-scoring does not propose it again; do not use when the pair is correct but the transaction already holds a document. Args: fileId (string), transactionId (string), reason? (string, max 500 characters)",
     undismiss_transaction_suggestion:

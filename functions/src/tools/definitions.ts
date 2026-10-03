@@ -243,7 +243,15 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     inputSchema: {
       type: "object",
       properties: {
-        hasConnections: { type: "boolean", description: "true = matched, false = unmatched" },
+        hasConnections: {
+          type: "boolean",
+          description: "true = matched, false = unmatched (leaves out Copies, which are never work)",
+        },
+        isCopy: {
+          type: "boolean",
+          description:
+            "true = only Copies (second Files of a document already held, see mark_file_as_copy), false = no Copies. Every listed file carries isCopy.",
+        },
         hasSuggestions: { type: "boolean", description: "Filter by suggestion availability" },
         needsDirectionReview: {
           type: "boolean",
@@ -418,12 +426,52 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "mark_file_as_not_invoice",
     description:
-      "Flag a file as not an invoice (duplicate re-send, payment reminder, statement, anything that documents nothing). Clears its extracted data and takes it out of the unmatched-file queue. Refuses while the file is still connected to a transaction. Reversible with unmark_file_as_not_invoice.",
+      "Flag a file as not an invoice (payment reminder, statement, anything that documents nothing). Clears its extracted data and takes it out of the unmatched-file queue. Refuses while the file is still connected to a transaction. Reversible with unmark_file_as_not_invoice. For a second copy of an invoice already held, use mark_file_as_copy instead: it records which File it is a copy of.",
     inputSchema: {
       type: "object",
       properties: {
         fileId: { type: "string", description: "The file ID" },
         reason: { type: "string", description: "Why it is not an invoice — stored on the file" },
+      },
+      required: ["fileId"],
+    },
+  },
+  {
+    name: "mark_file_as_copy",
+    description:
+      "Record a file as a Copy of another file: a second File of the same invoice that arrived by another route (a mailbox Sync and a document system, a mailed copy of an invoice the user issued). A Copy holds no transaction connection and is never proposed as a match, so the original alone carries the coverage, the input VAT and the BMD export. If the Copy is connected, its connections are taken off it; where the original is not on that transaction, the connection moves to the original, so no transaction loses its document. Not a rejection. Also accepts a Copy suggestion (copySuggestion on the file). A FiBuKI-generated invoice is always the original and is refused as the Copy. A Receipt for the same charge as an invoice is NOT a Copy, nor is a payment reminder. Reversible with unmark_file_as_copy.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fileId: { type: "string", description: "The File that is the Copy" },
+        originalFileId: {
+          type: "string",
+          description: "The File it is a Copy of. If that File is itself a Copy, its original is used.",
+        },
+      },
+      required: ["fileId", "originalFileId"],
+    },
+  },
+  {
+    name: "unmark_file_as_copy",
+    description:
+      "Not a Copy: undo a Copy, or decline a Copy suggestion on a file. Stores a standing ruling for the pair, so it is never suggested or recorded again (marking the pair with mark_file_as_copy revokes the ruling). Undoing reconnects nothing: the file goes back to matching like any unconnected file.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fileId: { type: "string", description: "The File that is (or was suggested as) the Copy" },
+      },
+      required: ["fileId"],
+    },
+  },
+  {
+    name: "make_file_the_original",
+    description:
+      "Swap a Copy and its original: the given Copy becomes the original, the former original becomes its Copy, and the transaction connections move to the given file in the same act. Refused when the original is a FiBuKI-generated invoice, which is always the original.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fileId: { type: "string", description: "The Copy to make the original" },
       },
       required: ["fileId"],
     },

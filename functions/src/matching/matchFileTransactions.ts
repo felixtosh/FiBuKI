@@ -40,6 +40,7 @@ import { loadConnectedFiles, documentedAmountsOf } from "./documentedAmounts";
 import { isSameDayEvidence, hasUndocumentedRival } from "./remainderAutoConnect";
 import { readDismissedTransactionIds } from "./dismissedTransactions";
 import { isFileRejected } from "./rejectedFiles";
+import { runCopyCheck, CLEARED_COPY_MARK } from "../files/copyOps";
 import { AutomationMeta } from "../automation/types";
 import { checkAIBudget } from "../billing/checkAIBudget";
 import { isPassiveMode } from "../utils/checkAutomationMode";
@@ -378,6 +379,24 @@ export async function runTransactionMatching(
   // Skip "Not Invoice" files - no transaction matching needed
   if (fileData.isNotInvoice === true) {
     console.log(`[TxMatch] File ${fileId} is not an invoice, skipping transaction matching`);
+    await db.collection("files").doc(fileId).update({
+      transactionMatchComplete: true,
+      transactionMatchedAt: Timestamp.now(),
+      transactionSuggestions: [],
+      updatedAt: Timestamp.now(),
+    });
+    return;
+  }
+
+  // #162: a Copy is never proposed as a Match. The Copy check runs here,
+  // after Extraction and before scoring, so a File it records as a Copy is
+  // never scored at all; one it only suggests is matched as usual.
+  const copyCheck = await runCopyCheck(db, fileId, fileData).catch((err) => {
+    console.error(`[TxMatch] Copy check failed for ${fileId}, matching as usual`, err);
+    return { kind: "none" as const };
+  });
+  if (copyCheck.kind === "recorded-this") {
+    console.log(`[TxMatch] File ${fileId} is a Copy of ${copyCheck.originalFileId}, skipping transaction matching`);
     await db.collection("files").doc(fileId).update({
       transactionMatchComplete: true,
       transactionMatchedAt: Timestamp.now(),
@@ -797,6 +816,10 @@ export async function runTransactionMatching(
 
   if (newTransactionIds.length > 0) {
     fileUpdate.transactionIds = FieldValue.arrayUnion(...newTransactionIds);
+    // A mark whose original is gone (the File was matched as an ordinary
+    // File) ends here: a File holding a File Connection is never a Copy, so
+    // restoring the original must not turn this one back into one.
+    if (fileData.copyOfFileId) Object.assign(fileUpdate, CLEARED_COPY_MARK);
   }
 
   batch.update(fileRef, fileUpdate);
