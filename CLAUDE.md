@@ -232,6 +232,15 @@ export function useCategories() {
 - `purgeFilesCallable` - Purge deleted files: destroys the stored bytes (verified) and reduces the record to dedup keys. Deleted-files view only; never on the MCP/tool surface
 - `markFileAsCopyCallable` / `unmarkFileAsCopyCallable` / `makeFileTheOriginalCallable` - Mark a File as a Copy of another, "Not a Copy" (undo or decline, stores a standing ruling), and swap a Copy with its original (#162, ADR-0010). A Copy holds no File Connection
 
+**Invoice Corrections (#564, ADR-0010):**
+- `linkCorrectionCallable` / `unlinkCorrectionCallable` - Link a correction File to the File it corrects (also accepts a suggestion), or unlink / decline one; a declined pair is never linked automatically again
+- `getCorrectionCallable` - What a File corrects and who paid the original, or a Transaction's related refund or purchase
+- `backfillCorrectionLinksCallable` - Run the correction check over the user's existing Files once
+
+**UVA filing:**
+- `markUvaPeriodFiledCallable` - Record what was filed for a period (append-only, editable figures); refused while the period has blockers
+- `getUvaFiledStatusCallable` - Blockers, filed vs now per Kennzahl, and earlier filed periods whose figures moved
+
 **Imports:**
 - `bulkCreateTransactionsCallable` - Bulk create transactions from CSV
 - `createImportRecordCallable` - Create import record
