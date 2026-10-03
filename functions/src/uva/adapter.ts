@@ -272,6 +272,14 @@ function uidCountry(uid: string | null | undefined): string | null {
   return prefix === "EL" ? "GR" : prefix;
 }
 
+/** A customer's country: the UID prefix first, the stated country second (#565). */
+export function customerCountry(
+  customerVatId: string | null | undefined,
+  country: string | null | undefined
+): string | null {
+  return uidCountry(customerVatId) ?? isoCountry(country);
+}
+
 /**
  * EU or not, for a service sold to a business there (#565). The UID prefix
  * decides first, the country second; null when neither is known.
@@ -280,7 +288,7 @@ export function serviceRegionOf(
   customerVatId: string | null | undefined,
   country: string | null | undefined
 ): "eu" | "non-eu" | null {
-  const c = uidCountry(customerVatId) ?? isoCountry(country);
+  const c = customerCountry(customerVatId, country);
   if (!c) return null;
   return EU27_COUNTRIES.has(c) ? "eu" : "non-eu";
 }

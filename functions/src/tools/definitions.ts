@@ -1242,6 +1242,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         currency: { type: "string", description: "ISO 4217 (default EUR)" },
         notes: { type: "string", description: "Free-text footer note" },
+        supplyAbroad: {
+          type: "boolean",
+          description:
+            "Service, place of supply abroad (§ 3a Abs 6): a B2B service to a customer outside Austria. Forces every line to 0%, prints the reverse-charge note (EU customer) or the not-taxable note (outside the EU), and records the sale as not taxable in Austria for the UVA. Issuing then requires a customer country outside Austria, and for an EU customer both UIDs.",
+        },
         issuerEntityId: {
           type: "string",
           description: "Identity entity to issue from (default: first/default)",
@@ -1287,6 +1292,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
               },
             },
             notes: { type: "string" },
+            supplyAbroad: {
+              type: "boolean",
+              description:
+                "Service, place of supply abroad (§ 3a Abs 6): a B2B service to a customer outside Austria. Forces every line to 0%, prints the reverse-charge note (EU customer) or the not-taxable note (outside the EU), and records the sale as not taxable in Austria for the UVA. Issuing then requires a customer country outside Austria, and for an EU customer both UIDs.",
+            },
           },
         },
       },

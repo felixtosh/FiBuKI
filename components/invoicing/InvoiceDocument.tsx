@@ -17,6 +17,7 @@ import {
   StyleSheet,
 } from "@react-pdf/renderer";
 import { Invoice } from "@/types/invoice";
+import { invoiceSupplyKind, supplyAbroadNote } from "@/functions/src/invoicing/supplyAbroad";
 import { lineItemColumnCents } from "@/lib/invoicing/invoice-totals";
 import { PartnerAddress } from "@/types/partner";
 
@@ -192,6 +193,10 @@ const styles = StyleSheet.create({
     marginTop: 4,
     textAlign: "right",
   },
+  supplyAbroadBlock: {
+    marginTop: 14,
+    fontSize: 9,
+  },
   notesBlock: {
     marginTop: 20,
     paddingTop: 10,
@@ -254,6 +259,9 @@ export const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({
   // An Invoice Correction (#133) names the invoice it cancels where an invoice
   // names its due date, and asks for no payment. Mirrors the server PDF.
   const corrects = invoice.correctsInvoice;
+  // The kind the recipient makes of the setting (#565); null without it, and
+  // null while the recipient's country is unknown, which issuing refuses.
+  const supplyKind = invoiceSupplyKind(invoice);
 
   return (
     <Document>
@@ -323,6 +331,14 @@ export const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({
             <Text>{formatEur(invoice.total)}</Text>
           </View>
         </View>
+
+        {/* Service, place of supply abroad (#565): why there is no VAT */}
+        {supplyKind ? (
+          <View style={styles.supplyAbroadBlock}>
+            <Text>{supplyAbroadNote(supplyKind).de}</Text>
+            <Text>{supplyAbroadNote(supplyKind).en}</Text>
+          </View>
+        ) : null}
 
         {/* Footer (payment info + QR); a correction asks for no payment */}
         {corrects ? null : (

@@ -168,3 +168,67 @@ describe("the Invoice Correction a Cancel issues", () => {
     expect([ra.correctionNumber, rb.correctionNumber].sort()).toEqual([numberOf(3), numberOf(4)]);
   });
 });
+
+describe("service, place of supply abroad (#565)", () => {
+  const UK = { partnerId: "p1", partnerType: "user", name: "Michael Chaffe", address: { country: "GB" } };
+  const ZERO = [{ ...LINES[0], vatRate: 0 }];
+  const zeroRated = { lineItems: ZERO, ...computeInvoiceTotals(ZERO) };
+
+  it("records the kind on the Invoice's File when issued", async () => {
+    await invoice("a", 7, "draft", { supplyAbroad: true, recipient: UK, ...zeroRated });
+
+    await issue("a");
+
+    const file = (await db.collection("files").doc("file-a").get()).data()!;
+    expect(file.invoiceSupplyKind).toBe("service-non-eu");
+    expect(file.extractedVatAmount).toBe(0);
+  });
+
+  it("refuses to issue to an Austrian customer, before anything is rendered", async () => {
+    await invoice("a", 7, "draft", {
+      supplyAbroad: true,
+      recipient: { ...UK, address: { country: "AT" } },
+      ...zeroRated,
+    });
+
+    await expect(issue("a")).rejects.toThrow(/Austria/);
+    expect((await read("a")).status).toBe("draft");
+    expect(renders).toBe(0);
+  });
+
+  it("forces every line to 0% when the setting is turned on, and keeps it there", async () => {
+    await invoice("a", 7, "draft", { recipient: UK });
+
+    await performUpdateInvoice(db, USER, { invoiceId: "a", patch: { supplyAbroad: true } });
+    let a = await read("a");
+    expect(a.supplyAbroad).toBe(true);
+    expect(a.lineItems.map((l: InvoiceLineItem) => l.vatRate)).toEqual([0]);
+    expect(a.vatAmount).toBe(0);
+
+    await performUpdateInvoice(db, USER, {
+      invoiceId: "a",
+      patch: { lineItems: [{ description: "More", quantity: 1, unitPrice: 5000, vatRate: 20 }] },
+    });
+    a = await read("a");
+    expect(a.lineItems.map((l: InvoiceLineItem) => l.vatRate)).toEqual([0]);
+    expect(a.total).toBe(5000);
+  });
+
+  it("refuses to turn it on for an issued invoice to an Austrian customer", async () => {
+    await invoice("a", 7, "issued", { recipient: { ...UK, address: { country: "AT" } } });
+
+    await expect(
+      performUpdateInvoice(db, USER, { invoiceId: "a", patch: { supplyAbroad: true } })
+    ).rejects.toThrow(/Austria/);
+    expect((await read("a")).supplyAbroad).toBeUndefined();
+  });
+
+  it("carries the setting to the Invoice Correction", async () => {
+    await invoice("a", 7, "draft", { supplyAbroad: true, recipient: UK, ...zeroRated });
+    await issue("a");
+
+    const { correctionInvoiceId } = await performCancelInvoice(db, USER, { invoiceId: "a" }, deps());
+
+    expect((await read(correctionInvoiceId)).supplyAbroad).toBe(true);
+  });
+});

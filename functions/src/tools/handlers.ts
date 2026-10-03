@@ -3288,6 +3288,7 @@ export async function createInvoice(userId: string, args: Record<string, unknown
       vatRate?: number;
     }> | undefined,
     notes: args.notes as string | undefined,
+    supplyAbroad: args.supplyAbroad === true,
   });
 
   // Look up the freshly-created invoice number for the response.

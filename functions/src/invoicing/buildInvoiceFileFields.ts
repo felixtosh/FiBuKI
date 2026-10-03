@@ -10,6 +10,7 @@
 
 import { Timestamp } from "firebase-admin/firestore";
 import { Invoice, InvoicePartnerAddress, computeLineItemTotals } from "./types";
+import { invoiceSupplyKind } from "./supplyAbroad";
 
 function formatAddressOneLine(
   addr?: InvoicePartnerAddress,
@@ -120,6 +121,9 @@ export function buildInvoiceFileFields(
     },
     extractedVatId: invoice.recipient.vatId || null,
     extractedAddress: recipientAddressLine || null,
+    // What the UVA reads before any detection (#565). Null clears it when the
+    // setting is turned off and the PDF regenerated.
+    invoiceSupplyKind: invoiceSupplyKind(invoice),
     updatedAt: Timestamp.now(),
   };
 
