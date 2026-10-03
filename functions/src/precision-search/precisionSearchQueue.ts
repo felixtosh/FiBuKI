@@ -289,6 +289,11 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** A deleted File that was Split into parts (#550). */
+function hasSplitParts(fileData: FirebaseFirestore.DocumentData): boolean {
+  return Array.isArray(fileData.splitInto) && fileData.splitInto.length > 0;
+}
+
 async function sha256(data: Buffer): Promise<string> {
   return crypto.createHash("sha256").update(data).digest("hex");
 }
@@ -595,8 +600,9 @@ async function createFileFromAttachment(
     const existingDoc = existingFile.docs[0];
     const existingData = existingDoc.data();
 
-    // Check if file was soft-deleted
-    if (existingData.deletedAt) {
+    // Check if file was soft-deleted. A Split original stays deleted (#550):
+    // its parts document the payment, and undeleting it would do so twice.
+    if (existingData.deletedAt && !hasSplitParts(existingData)) {
       // Undelete the file and update its metadata + add precision search hint
       console.log(`[PrecisionSearch] Undeleting soft-deleted file: ${attachment.filename} (${existingDoc.id})`);
 
@@ -779,8 +785,9 @@ async function createFileFromHtmlPdf(
     const existingDoc = existingFile.docs[0];
     const existingData = existingDoc.data();
 
-    // Check if file was soft-deleted
-    if (existingData.deletedAt) {
+    // Check if file was soft-deleted. A Split original stays deleted (#550):
+    // its parts document the payment, and undeleting it would do so twice.
+    if (existingData.deletedAt && !hasSplitParts(existingData)) {
       // Undelete the file and update its metadata + add precision search hint
       console.log(`[PrecisionSearch] Undeleting soft-deleted PDF: ${filename} (${existingDoc.id})`);
       const updateData: Record<string, unknown> = {

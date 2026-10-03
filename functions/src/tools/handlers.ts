@@ -77,6 +77,7 @@ import { fetchPublicUrl, UnsafeUrlError } from "../utils/safeFetch";
 import { syncOnboarding, toStatus, updateOnboarding } from "../onboarding/onboardingState";
 import { isOnboardingOrigin, isOnboardingStep } from "../onboarding/onboardingRules";
 import { generatedInvoiceRefusal } from "../files/generatedInvoiceGuard";
+import { payeeFillForTransaction } from "../partners/payeeSync";
 import { syncDocumentationStateForTransactions } from "../documents/syncDocumentationState";
 import { assignNoReceiptCategoryToTransaction } from "../matching/assignNoReceiptCategory";
 import { TOOL_DEFINITIONS, TOOL_NAMES } from "./definitions";
@@ -240,6 +241,10 @@ export async function handleTool(
       return deleteFile(userId, args);
     case "restore_file":
       return restoreFile(userId, args);
+    case "split_file":
+      return splitFileTool(userId, args);
+    case "dismiss_split_suggestion":
+      return dismissSplitSuggestionTool(userId, args);
     case "connect_file_to_transaction":
       return connectFileToTransaction(userId, args);
     case "disconnect_file_from_transaction":
@@ -1005,6 +1010,21 @@ export async function restoreFile(userId: string, args: Record<string, unknown>)
   return { success: true, fileId, restored };
 }
 
+/**
+ * Split a File into one File per invoice or Receipt (#550). The same operation
+ * as the splitFile callable; a refusal comes back as its message.
+ */
+export async function splitFileTool(userId: string, args: Record<string, unknown>) {
+  const { performSplitFile } = await import("../files/splitFile");
+  return performSplitFile(db, userId, args.fileId as string, args.ranges);
+}
+
+/** "Not a bundle" (#550): the same dismissal as the dismissSplitSuggestion callable. */
+export async function dismissSplitSuggestionTool(userId: string, args: Record<string, unknown>) {
+  const { performDismissSplitSuggestion } = await import("../files/splitFile");
+  return performDismissSplitSuggestion(db, userId, args.fileId as string);
+}
+
 export async function connectFileToTransaction(userId: string, args: Record<string, unknown>) {
   const { fileId, transactionId } = args;
   if (!fileId || !transactionId) {
@@ -1069,10 +1089,17 @@ export async function connectFileToTransaction(userId: string, args: Record<stri
     updatedAt: now,
   });
 
+  // The payee rule (#550, ADR-0011), as every connect applies it.
+  const payeeFill = await payeeFillForTransaction(db, userId, txDoc.data()!, {
+    connectingFileId: fileId as string,
+    known: new Map([[fileId as string, fileDoc.data()!]]),
+  });
+
   batch.update(txDoc.ref, {
     fileIds: FieldValue.arrayUnion(fileId),
     isComplete: true,
     updatedAt: now,
+    ...(payeeFill ?? {}),
   });
 
   await batch.commit();

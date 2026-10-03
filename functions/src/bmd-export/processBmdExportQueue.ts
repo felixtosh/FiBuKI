@@ -37,6 +37,7 @@ import { toViennaCalendarDay, type FileRecord, type TransactionRecord } from "..
 import { loadCorrections } from "../corrections/loadCorrections";
 import { bookingSide } from "../uva/correction";
 import type { PartialPaymentAcceptance } from "../uva/partialPaymentAcceptance";
+import { personenkontoPartnerId, type FilePartnerRef } from "../partners/payeeRule";
 
 const PROCESSING_TIMEOUT_MS = 4 * 60 * 1000; // 4 minutes
 
@@ -157,6 +158,8 @@ async function processBmdExport(
     });
 
     const filesMap = new Map<string, FileForExport & { storagePath?: string }>();
+    /** Each File's Partner, for the Personenkonto rule (#550). */
+    const filePartners = new Map<string, FilePartnerRef>();
     /** The user's own Files as stored, for correction resolution (#564). */
     const correctionFiles = new Map<string, FileRecord>();
     for (const fileId of allFileIds) {
@@ -164,6 +167,7 @@ async function processBmdExport(
       if (fileDoc.exists) {
         const data = fileDoc.data();
         if (data?.userId === userId) correctionFiles.set(fileId, { ...data, id: fileId } as FileRecord);
+        filePartners.set(fileId, { partnerId: data?.partnerId ?? null });
         filesMap.set(fileId, {
           id: fileId,
           fileName: data?.fileName || "document",
@@ -209,7 +213,19 @@ async function processBmdExport(
       ecbRates
     );
 
-    // 3. Collect all associated partners
+    // 3. The Partner each line books to (#550, ADR-0011): the Partner its
+    // Files agree on, so a one-supplier line keeps its supplier as before the
+    // payee rule; the Transaction's Partner, the payee, otherwise.
+    const bookingPartnerId = new Map<string, string | undefined>();
+    transactions.forEach((tx) => {
+      const files = (tx.fileIds ?? [])
+        .map((id) => filePartners.get(id))
+        .filter((f): f is FilePartnerRef => !!f);
+      bookingPartnerId.set(tx.id, personenkontoPartnerId(tx.partnerId, files) ?? undefined);
+    });
+    transactions = transactions.map((tx) => ({ ...tx, partnerId: bookingPartnerId.get(tx.id) }));
+
+    // Collect all associated partners
     const partnerIds = new Set<string>();
     transactions.forEach((tx) => {
       if (tx.partnerId) partnerIds.add(tx.partnerId as string);

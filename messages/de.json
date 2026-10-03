@@ -516,6 +516,31 @@
       "transactionCorrects": "Korrigiert",
       "transactionCorrectedBy": "Korrigiert durch",
       "failed": "Das hat nicht geklappt: {message}"
+    },
+    "split": {
+      "suggestionTitle": "Sieht aus wie {count} getrennte Rechnungen oder Zahlungsbelege",
+      "suggestionExplanation": "Ein PDF enthält mehrere getrennt ausgestellte Belege. Teile es auf, damit jeder seinen eigenen Partner, seine Rechnungsnummer und seinen Betrag bekommt.",
+      "pageRange": "Seiten {from}–{to}",
+      "pageSingle": "Seite {page}",
+      "split": "Aufteilen",
+      "adjust": "Anpassen",
+      "notABundle": "Ist ein einziger Beleg",
+      "splitFrom": "Aufgeteilt aus",
+      "splitInto": "In {count} Belege aufgeteilt",
+      "theOriginal": "dem ursprünglichen Beleg",
+      "action": "In Teile aufteilen",
+      "dialogTitle": "Diesen Beleg aufteilen",
+      "dialogDescription": "Jeder Teil wird ein eigener Beleg mit genau diesen Seiten, unverändert. Er wird neu gelesen und mit denselben Transaktionen verbunden. Dieser Beleg wird danach gelöscht; du kannst ihn wiederherstellen, sobald seine Teile gelöscht sind.",
+      "pageCount": "{count} Seiten",
+      "pageCountUnknown": "Seitenzahl noch nicht bekannt",
+      "part": "Teil {n}",
+      "fromPage": "Ab Seite",
+      "toPage": "Bis Seite",
+      "addPart": "Teil hinzufügen",
+      "removePart": "Teil entfernen",
+      "confirm": "In {count} Belege aufteilen",
+      "cancel": "Abbrechen",
+      "failed": "Aufteilen fehlgeschlagen: {message}"
     }
   },
   "progress": {

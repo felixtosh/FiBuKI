@@ -12,6 +12,7 @@ import {
 import { deriveActivityLevel } from "../utils/activityLevel";
 import { learnBillingCycleForPartner } from "../matching/learnBillingCycle";
 import { copyConnectCheck, CLEARED_COPY_MARK } from "./copyOps";
+import { payeeFillForTransaction } from "../partners/payeeSync";
 
 interface FileConnectionSourceInfo {
   sourceType?: string;
@@ -164,6 +165,8 @@ export async function performConnectFileToTransaction(
   const now = Timestamp.now();
   const batch = ctx.db.batch();
   let reassignedConnections = 0;
+  /** Files this call takes off the Transaction, so the payee rule ignores them. */
+  const reassignedAwayFileIds = new Set<string>();
 
   const isAutoConnectionType = (value: unknown): boolean =>
     value === "auto_matched" || value === "ai_matched";
@@ -244,6 +247,7 @@ export async function performConnectFileToTransaction(
           removeFileIdsByTx.set(staleTransactionId, new Set());
         }
         removeFileIdsByTx.get(staleTransactionId)!.add(staleFileId);
+        if (staleTransactionId === transactionId) reassignedAwayFileIds.add(staleFileId);
 
         batch.delete(staleDoc.ref);
       }
@@ -363,55 +367,21 @@ export async function performConnectFileToTransaction(
     }),
   };
 
-  // 4. Partner sync logic - FILE TAKES PRECEDENCE (it's the actual document)
-  // Exception: Manual assignments on transaction are respected
-  //
-  // Priority (highest to lowest):
-  // 1. Manual assignment on transaction (user explicitly chose) - always respected
-  // 2. File's partner (actual document with extracted company name)
-  // 3. Transaction's auto-matched partner (bank data guessing)
-  //
-  // We store the original transaction partner as bankPartnerId for audit trail
+  // 4. The payee rule (#550, ADR-0011): the File never overwrites the
+  // Transaction's Partner and never takes it. An empty one is filled only when
+  // every File on the Transaction, this one included, names the same Partner.
   const filePartnerId = fileData.partnerId;
-  const filePartnerConfidence = fileData.partnerMatchConfidence ?? 0;
   const transactionPartnerId = transactionData.partnerId;
-  const transactionPartnerMatchedBy = transactionData.partnerMatchedBy;
-  const transactionWasManual = transactionPartnerMatchedBy === "manual";
-
-  if (filePartnerId && !transactionPartnerId) {
-    // File has partner, transaction doesn't -> sync to transaction
-    transactionUpdate.partnerId = filePartnerId;
-    transactionUpdate.partnerType = fileData.partnerType ?? "user";
-    transactionUpdate.partnerMatchConfidence = filePartnerConfidence;
-    transactionUpdate.partnerMatchedBy = "auto"; // Synced from file
-    console.log(`[connectFileToTransaction] Synced partner ${filePartnerId} from file to transaction`);
-  } else if (transactionPartnerId && !filePartnerId) {
-    // Transaction has partner, file doesn't -> sync to file
-    fileUpdate.partnerId = transactionPartnerId;
-    fileUpdate.partnerType = transactionData.partnerType ?? "user";
-    fileUpdate.partnerMatchConfidence = transactionData.partnerMatchConfidence ?? 0;
-    console.log(`[connectFileToTransaction] Synced partner ${transactionPartnerId} from transaction to file`);
-  } else if (filePartnerId && transactionPartnerId && filePartnerId !== transactionPartnerId) {
-    // Both have different partners - FILE WINS unless transaction was manual
-    if (transactionWasManual) {
-      // Respect manual assignment - sync transaction's partner to file instead
-      fileUpdate.partnerId = transactionPartnerId;
-      fileUpdate.partnerType = transactionData.partnerType ?? "user";
-      fileUpdate.partnerMatchConfidence = transactionData.partnerMatchConfidence ?? 0;
-      console.log(`[connectFileToTransaction] Transaction partner ${transactionPartnerId} (manual) respected, synced to file`);
-    } else {
-      // File wins - store original as bankPartnerId for audit trail
-      transactionUpdate.bankPartnerId = transactionPartnerId;
-      transactionUpdate.bankPartnerType = transactionData.partnerType ?? null;
-      transactionUpdate.bankPartnerMatchedBy = transactionPartnerMatchedBy ?? null;
-      transactionUpdate.bankPartnerMatchConfidence = transactionData.partnerMatchConfidence ?? null;
-      // Override with file's partner
-      transactionUpdate.partnerId = filePartnerId;
-      transactionUpdate.partnerType = fileData.partnerType ?? "user";
-      transactionUpdate.partnerMatchConfidence = filePartnerConfidence;
-      transactionUpdate.partnerMatchedBy = "auto"; // Synced from file
-      console.log(`[connectFileToTransaction] File partner ${filePartnerId} wins over transaction partner ${transactionPartnerId} (stored as bankPartnerId)`);
-    }
+  const payeeFileIds = Array.isArray(transactionData.fileIds)
+    ? transactionData.fileIds.filter((id: string) => !reassignedAwayFileIds.has(id))
+    : [];
+  const payeeFill = await payeeFillForTransaction(ctx.db, ctx.userId, { ...transactionData, fileIds: payeeFileIds }, {
+    connectingFileId: fileId,
+    known: new Map([[fileId, fileData]]),
+  });
+  if (payeeFill) {
+    Object.assign(transactionUpdate, payeeFill);
+    console.log(`[connectFileToTransaction] Filled empty transaction partner with ${payeeFill.partnerId}`);
   }
 
   batch.update(fileRef, fileUpdate);

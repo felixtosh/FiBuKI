@@ -182,6 +182,8 @@ export {
   deleteFileCallable as deleteFile,
   restoreFileCallable as restoreFile,
   purgeFilesCallable as purgeFiles,
+  splitFileCallable as splitFile,
+  dismissSplitSuggestionCallable as dismissSplitSuggestion,
   markFileAsNotInvoiceCallable as markFileAsNotInvoice,
   unmarkFileAsNotInvoiceCallable as unmarkFileAsNotInvoice,
   markFileAsCopyCallable as markFileAsCopy,

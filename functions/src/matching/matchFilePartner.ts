@@ -37,6 +37,7 @@ import { ensureGlobalPartnerFromVies } from "../utils/globalPartnerUpsert";
 import { checkAIBudget } from "../billing/checkAIBudget";
 import { isPassiveMode } from "../utils/checkAutomationMode";
 import { printedNameEquals } from "../utils/identity-matcher";
+import { payeeFillForTransaction } from "../partners/payeeSync";
 
 // =============================================================================
 // AUTOMATION METADATA
@@ -539,58 +540,6 @@ async function markPartnerMatchComplete(
   }
 }
 
-type PartnerMatchedBy = "manual" | "suggestion" | "auto" | "ai" | null;
-
-/**
- * Resolve partner conflict between file and transaction.
- *
- * Priority (highest to lowest):
- * 1. Manual assignment on transaction (user explicitly chose) - always respected
- * 2. File's partner (actual document with extracted company name)
- * 3. Transaction's auto-matched partner (bank data guessing)
- *
- * The file is the source of truth because it's the actual invoice/receipt
- * with the real company name extracted from the document.
- */
-function resolvePartnerConflictForFileSync(
-  filePartnerId: string | null | undefined,
-  txPartnerId: string | null | undefined,
-  txMatchedBy: PartnerMatchedBy
-): {
-  winnerId: string | null;
-  source: "file" | "transaction" | null;
-  shouldSync: boolean;
-  shouldStoreBankPartner: boolean;
-} {
-  const filePid = filePartnerId ?? null;
-  const txPid = txPartnerId ?? null;
-  const txIsManual = txMatchedBy === "manual";
-
-  // Neither has partner
-  if (!filePid && !txPid) {
-    return { winnerId: null, source: null, shouldSync: false, shouldStoreBankPartner: false };
-  }
-
-  // Only file has partner -> sync to transaction
-  if (filePid && !txPid) {
-    return { winnerId: filePid, source: "file", shouldSync: true, shouldStoreBankPartner: false };
-  }
-
-  // Only transaction has partner -> no sync needed (file doesn't override nothing)
-  if (txPid && !filePid) {
-    return { winnerId: null, source: null, shouldSync: false, shouldStoreBankPartner: false };
-  }
-
-  // Both have partners
-  // If transaction was manual -> respect it, don't sync
-  if (txIsManual) {
-    return { winnerId: null, source: null, shouldSync: false, shouldStoreBankPartner: false };
-  }
-
-  // File wins - sync file's partner to transaction (store original as bankPartnerId)
-  return { winnerId: filePid!, source: "file", shouldSync: true, shouldStoreBankPartner: txPid !== filePid };
-}
-
 async function syncPartnerToConnectedTransactions(
   fileId: string,
   fileData: FirebaseFirestore.DocumentData
@@ -633,39 +582,19 @@ async function syncPartnerToConnectedTransactions(
     const txData = txDoc.data()!;
     if (txData.userId !== fileData.userId) continue;
 
-    const resolution = resolvePartnerConflictForFileSync(
-      fileData.partnerId,
-      txData.partnerId ?? null,
-      (txData.partnerMatchedBy as PartnerMatchedBy) ?? null
-    );
+    // The payee rule (#550, ADR-0011): the File's Partner never overwrites
+    // the Transaction's; it fills an empty one only when every File on the
+    // Transaction names it.
+    const payeeFill = await payeeFillForTransaction(db, fileData.userId, txData, {
+      connectingFileId: fileId,
+      known: new Map([[fileId, fileData]]),
+    });
+    if (!payeeFill) continue;
 
-    if (!resolution.shouldSync) {
-      continue;
-    }
-
-    const updateData: Record<string, unknown> = {
-      partnerId: fileData.partnerId,
-      partnerType: fileData.partnerType ?? null,
-      partnerMatchedBy: fileData.partnerMatchedBy === "manual" ? "manual" : "auto",
-      partnerMatchConfidence: fileData.partnerMatchConfidence ?? null,
-      updatedAt: now,
-    };
-
-    // Store original transaction partner as bankPartnerId for audit trail
-    if (resolution.shouldStoreBankPartner && txData.partnerId) {
-      updateData.bankPartnerId = txData.partnerId;
-      updateData.bankPartnerType = txData.partnerType ?? null;
-      updateData.bankPartnerMatchedBy = txData.partnerMatchedBy ?? null;
-      updateData.bankPartnerMatchConfidence = txData.partnerMatchConfidence ?? null;
-      console.log(
-        `[PartnerMatch] Storing original partner ${txData.partnerId} as bankPartnerId before overwriting`
-      );
-    }
-
-    await txRef.update(updateData);
+    await txRef.update({ ...payeeFill, updatedAt: now });
 
     console.log(
-      `[PartnerMatch] Synced partner ${fileData.partnerId} from file ${fileId} to transaction ${transactionId}`
+      `[PartnerMatch] Filled partner ${payeeFill.partnerId} from file ${fileId} on transaction ${transactionId}`
     );
   }
 }
