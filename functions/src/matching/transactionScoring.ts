@@ -229,6 +229,8 @@ export interface FileMatchingData {
   precisionSearchHint?: {
     transactionId: string;
     matchConfidence?: number;
+    /** The search strategy that wrote the hint; absent on old hints. */
+    searchStrategy?: string;
   } | null;
   /**
    * This document's §11 classification (#104). Absent on a file extracted
@@ -275,6 +277,17 @@ export interface TransactionData {
 }
 
 // === Utility Functions ===
+
+/**
+ * The precision-search strategies that look at the user's stored Files rather
+ * than at mail (#589). They nominate a Transaction to the matcher and never
+ * score, so a hint carrying one of these names is worth nothing.
+ */
+export const LOCAL_FILE_STRATEGIES: readonly string[] = ["partner_files", "amount_files"];
+
+export function isLocalFileStrategy(strategy: string | null | undefined): boolean {
+  return strategy != null && LOCAL_FILE_STRATEGIES.includes(strategy);
+}
 
 export function normalizeIban(iban: string): string {
   return iban.replace(/\s+/g, "").toUpperCase();
@@ -1273,10 +1286,14 @@ export function scoreTransaction(
     if (result.source) matchSources.push(result.source);
   }
 
-  // 6. Precision search hint scoring (0-40)
+  // 6. Precision search hint scoring (0-40). Only an email strategy's hint
+  // scores: the email is evidence this scorer does not have. The local-file
+  // strategies nominate instead of hinting since #589, and a hint one of them
+  // wrote before that only restated this scorer's own signals.
   if (
     fileData.precisionSearchHint &&
-    fileData.precisionSearchHint.transactionId === txData.id
+    fileData.precisionSearchHint.transactionId === txData.id &&
+    !isLocalFileStrategy(fileData.precisionSearchHint.searchStrategy)
   ) {
     const searchConfidence = fileData.precisionSearchHint.matchConfidence;
     if (searchConfidence && searchConfidence >= 50) {

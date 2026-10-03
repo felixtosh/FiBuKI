@@ -112,6 +112,7 @@ export async function GET(request: NextRequest) {
             candidatesFound: attempt.candidatesFound,
             matchesFound: attempt.matchesFound,
             fileIdsConnected: attempt.fileIdsConnected,
+            fileIdsNominated: attempt.fileIdsNominated ?? [],
             error: attempt.error,
             searchParams: attempt.searchParams,
           })),

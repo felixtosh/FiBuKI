@@ -12,7 +12,6 @@
 
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { buildDownloadUrl } from "../utils/buildDownloadUrl";
-import { toDateSafe } from "../utils/toDateSafe";
 import { isTransactionDismissed } from "../matching/dismissedTransactions";
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import { getFirestore, Timestamp, FieldValue } from "firebase-admin/firestore";
@@ -20,6 +19,9 @@ import { getStorage } from "firebase-admin/storage";
 import * as crypto from "crypto";
 import { analyzeEmailForInvoice } from "./geminiSearchHelper";
 import { isFileRejected } from "../matching/rejectedFiles";
+import { runTransactionMatching } from "../matching/matchFileTransactions";
+import { calculateAmountScore, isLocalFileStrategy } from "../matching/transactionScoring";
+import { filePaymentTotal } from "../matching/coverage";
 import { readBankOriginalAmount } from "../fx/bankOriginalAmount";
 import { generateQueriesWithGemini } from "./generateQueriesWithGemini";
 import {
@@ -142,8 +144,12 @@ interface TaxFile {
   extractedPartner?: string;
   extractedIban?: string;
   extractedText?: string;
+  extractedCurrency?: string;
+  extractedTipAmount?: number | null;
   partnerId?: string;
   transactionIds?: string[];
+  transactionMatchComplete?: boolean;
+  precisionSearchHint?: { searchStrategy?: string } | null;
   deletedAt?: Timestamp | null;
 }
 
@@ -262,6 +268,12 @@ interface SearchAttempt {
   candidatesEvaluated: number;
   matchesFound: number;
   fileIdsConnected: string[];
+  /**
+   * Stored Files a local-file strategy nominated this Transaction to (#589).
+   * A nomination is not a connection: the ones the matcher connected are in
+   * `fileIdsConnected` as well.
+   */
+  fileIdsNominated?: string[];
   bestMatchScore?: number; // Track the best score to decide if we should stop searching
   invoiceLinksFound?: string[];
   geminiCalls?: number;
@@ -941,13 +953,126 @@ function toWindowParams(dateWindow: SearchDateWindow) {
 // ============================================================================
 
 /**
+ * Most stored Files one local-file strategy nominates a Transaction to (#589).
+ * Each nomination is a full matcher run on that File, so the nearest-dated
+ * candidates go first and the rest wait for the next search.
+ */
+const MAX_NOMINATIONS = 5;
+
+/** Days between a File's extracted date and the Transaction; undated Files sort last. */
+function daysFromTransaction(file: TaxFile, transaction: Transaction): number {
+  if (!file.extractedDate) return Number.POSITIVE_INFINITY;
+  return Math.abs(file.extractedDate.toMillis() - transaction.date.toMillis()) / 86_400_000;
+}
+
+/**
+ * Whether the File's amount agrees with the Transaction's, by the matcher's
+ * own amount comparison: within its tolerance, or through the bank-stated
+ * original amount of a foreign-currency charge. Picks candidates; scores
+ * nothing.
+ */
+function amountAgrees(file: TaxFile, transaction: Transaction): boolean {
+  const payment = filePaymentTotal(file.extractedAmount, file.extractedTipAmount);
+  if (payment == null) return false;
+  return (
+    calculateAmountScore(
+      payment,
+      transaction.amount,
+      file.extractedCurrency,
+      transaction.currency,
+      readBankOriginalAmount(transaction._original?.rawRow)
+    ).score > 0
+  );
+}
+
+/**
+ * Nominate the Transaction to each candidate File (#589): run the matcher on
+ * the File with the Transaction as one more candidate, worth nothing by
+ * itself. The matcher alone scores the pair and decides on a File
+ * Connection, at its usual thresholds; the attempt records what it decided.
+ *
+ * A File still in its own matching pipeline is left to it — running the
+ * matcher early would mark it matched before its Partner is known — and a
+ * rejected File or a pair the File dismissed is skipped, as before.
+ * `alreadyNominated` is shared by the strategies searching for one
+ * Transaction.
+ */
+async function nominateTransaction(
+  candidates: TaxFile[],
+  transaction: Transaction,
+  attempt: SearchAttempt,
+  alreadyNominated: Set<string>
+): Promise<void> {
+  const nominated = (attempt.fileIdsNominated ??= []);
+
+  for (const file of candidates) {
+    if (nominated.length >= MAX_NOMINATIONS) break;
+
+    // An earlier strategy already ran the matcher on this pair; a second run
+    // would only repeat its verdict.
+    if (alreadyNominated.has(file.id)) continue;
+
+    if (isFileRejectedByTransaction(file.id, transaction)) {
+      console.log(`[PrecisionSearch] Skipping rejected file ${file.fileName} (${file.id})`);
+      continue;
+    }
+    if (isTransactionDismissed(file, transaction.id)) {
+      console.log(
+        `[PrecisionSearch] Skipping dismissed pair: file ${file.fileName} (${file.id}) ` +
+        `x transaction ${transaction.id}`
+      );
+      continue;
+    }
+    if (file.transactionMatchComplete !== true) {
+      console.log(`[PrecisionSearch] Skipping file ${file.fileName} (${file.id}): its own matching has not finished`);
+      continue;
+    }
+
+    // A hint this strategy wrote before #589 scores nothing any more; drop it
+    // so the File no longer claims a search vouched for the pair.
+    const { id: fileId, ...fileData } = file;
+    if (fileData.precisionSearchHint && isLocalFileStrategy(fileData.precisionSearchHint.searchStrategy)) {
+      await db.collection("files").doc(fileId).update({ precisionSearchHint: FieldValue.delete() });
+      delete fileData.precisionSearchHint;
+    }
+
+    await runTransactionMatching(fileId, fileData, { nominatedTransactionIds: [transaction.id] });
+    nominated.push(fileId);
+    alreadyNominated.add(fileId);
+
+    const after = (await db.collection("files").doc(fileId).get()).data();
+    const match = ((after?.transactionSuggestions ?? []) as Array<{ transactionId: string; confidence: number }>)
+      .find((m) => m.transactionId === transaction.id);
+    if (match) {
+      attempt.matchesFound++;
+      if (attempt.bestMatchScore === undefined || match.confidence > attempt.bestMatchScore) {
+        attempt.bestMatchScore = match.confidence;
+      }
+    }
+    console.log(
+      `[PrecisionSearch] ${attempt.strategy}: nominated tx ${transaction.id} to file ${file.fileName} (${fileId}): ` +
+      (match ? `Match at ${match.confidence}%` : "no Match")
+    );
+
+    if (((after?.transactionIds ?? []) as string[]).includes(transaction.id)) {
+      // The matcher connected it, so the Transaction is documented.
+      attempt.fileIdsConnected.push(fileId);
+      break;
+    }
+  }
+
+  attempt.candidatesEvaluated = nominated.length;
+}
+
+/**
  * Execute Strategy 1: Partner Files Matching
- * Find unassociated files from the same partner and match by amount/date
+ * Nominate the Transaction to the Partner's unconnected Files (#589)
  */
 async function executePartnerFilesStrategy(
   transaction: Transaction,
   userId: string,
-  dateWindow?: SearchDateWindow
+  dateWindow: SearchDateWindow | undefined,
+  alreadyNominated: Set<string>
 ): Promise<SearchAttempt> {
   const startedAt = Timestamp.now();
   const attempt: SearchAttempt = {
@@ -961,6 +1086,7 @@ async function executePartnerFilesStrategy(
     candidatesEvaluated: 0,
     matchesFound: 0,
     fileIdsConnected: [],
+    fileIdsNominated: [],
   };
 
   try {
@@ -969,22 +1095,6 @@ async function executePartnerFilesStrategy(
       console.log(`[PrecisionSearch] partner_files: Skipped - no partnerId on transaction ${transaction.id}`);
       attempt.completedAt = Timestamp.now();
       return attempt;
-    }
-
-    // Get partner info if available
-    let partnerInfo: { name?: string; emailDomains?: string[] } | undefined;
-    if (transaction.partnerId) {
-      const partnerDoc = await db
-        .collection(transaction.partnerType === "global" ? "globalPartners" : "partners")
-        .doc(transaction.partnerId)
-        .get();
-      if (partnerDoc.exists) {
-        const data = partnerDoc.data()!;
-        partnerInfo = {
-          name: data.name,
-          emailDomains: data.emailDomains,
-        };
-      }
     }
 
     // Find unassociated files for this partner
@@ -1002,93 +1112,15 @@ async function executePartnerFilesStrategy(
       .filter((f) => !f.transactionIds || f.transactionIds.length === 0)
       // #169: a recurring partner's charge only wants the document of its own
       // period — every other month's invoice from the same vendor carries the
-      // same amount and the same name, and is exactly what the scorer cannot
-      // tell apart. A file with no extracted date is not judged, only scored.
-      .filter((f) => isExtractedDateInWindow(f.extractedDate, dateWindow));
+      // same amount and the same name. A file with no extracted date is not
+      // judged here; the matcher judges it.
+      .filter((f) => isExtractedDateInWindow(f.extractedDate, dateWindow))
+      .sort((a, b) => daysFromTransaction(a, transaction) - daysFromTransaction(b, transaction));
 
     attempt.candidatesFound = unassociatedFiles.length;
     console.log(`[PrecisionSearch] partner_files: Found ${filesSnapshot.size} files for partner, ${unassociatedFiles.length} unassociated${dateWindow ? " and inside the billing-cycle window" : ""}`);
 
-    if (unassociatedFiles.length === 0) {
-      attempt.completedAt = Timestamp.now();
-      return attempt;
-    }
-
-    // Score files against transaction using unified scoring (same as UI)
-    for (const file of unassociatedFiles) {
-      attempt.candidatesEvaluated++;
-
-      const scoreInput: ScoreAttachmentInput = {
-        filename: file.fileName || "unknown",
-        mimeType: file.fileType || "application/pdf",
-        emailBodyText: file.extractedText, // Treat OCR text as body
-        emailDate: toDateSafe(file.extractedDate),
-        // File extracted data for numeric comparison
-        fileExtractedAmount: file.extractedAmount,
-        fileExtractedDate: toDateSafe(file.extractedDate),
-        fileExtractedPartner: file.extractedPartner,
-        // Transaction data
-        transactionAmount: transaction.amount,
-        transactionOriginalAmount: originalAmountOf(transaction),
-        transactionDate: transaction.date.toDate(),
-        transactionName: transaction.name,
-        transactionReference: transaction.reference,
-        transactionPartner: transaction.partner,
-        partnerName: partnerInfo?.name,
-        partnerEmailDomains: partnerInfo?.emailDomains,
-      };
-
-      const score = scoreAttachmentMatch(scoreInput);
-      console.log(
-        `[PrecisionSearch] Match score for file ${file.fileName} (${file.id}): ${score.score}% ` +
-        `[${score.reasons.slice(0, 3).join(", ")}]`
-      );
-
-      // Only connect if score meets threshold (same as UI)
-      // Track best score
-      if (!attempt.bestMatchScore || score.score > attempt.bestMatchScore) {
-        attempt.bestMatchScore = score.score;
-      }
-
-      if (score.score < ATTACHMENT_MATCH_THRESHOLD) {
-        continue;
-      }
-
-      // Check if this file was rejected by the transaction (user manually removed it)
-      if (isFileRejectedByTransaction(file.id, transaction)) {
-        console.log(`[PrecisionSearch] Skipping rejected file ${file.fileName} (${file.id})`);
-        continue;
-      }
-
-      // ...and the mirror image: a pair the file itself dismissed. The hint
-      // below only re-triggers matching, which now drops dismissed candidates —
-      // so hinting one burns a read and then counts a connection that never
-      // happened.
-      if (isTransactionDismissed(file, transaction.id)) {
-        console.log(
-          `[PrecisionSearch] Skipping dismissed pair: file ${file.fileName} (${file.id}) ` +
-          `x transaction ${transaction.id}`
-        );
-        continue;
-      }
-
-      // Match found! Add hint and re-trigger matching logic
-      await db.collection("files").doc(file.id).update({
-        precisionSearchHint: {
-          transactionId: transaction.id,
-          transactionAmount: transaction.amount,
-          transactionDate: transaction.date,
-          searchStrategy: "partner_files",
-          matchConfidence: score.score,
-          searchedAt: Timestamp.now(),
-        },
-        transactionMatchComplete: false, // Re-trigger matching
-        updatedAt: Timestamp.now(),
-      });
-      attempt.fileIdsConnected.push(file.id);
-      attempt.matchesFound++;
-      // Continue to find more candidates
-    }
+    await nominateTransaction(unassociatedFiles, transaction, attempt, alreadyNominated);
 
     attempt.completedAt = Timestamp.now();
     return attempt;
@@ -1101,12 +1133,13 @@ async function executePartnerFilesStrategy(
 
 /**
  * Execute Strategy 2: Amount Files Matching
- * Search all unassociated files by amount/date range
+ * Nominate the Transaction to unconnected Files of the same amount (#589)
  */
 async function executeAmountFilesStrategy(
   transaction: Transaction,
   userId: string,
-  dateWindow?: SearchDateWindow
+  dateWindow: SearchDateWindow | undefined,
+  alreadyNominated: Set<string>
 ): Promise<SearchAttempt> {
   const startedAt = Timestamp.now();
   const attempt: SearchAttempt = {
@@ -1120,15 +1153,15 @@ async function executeAmountFilesStrategy(
     candidatesEvaluated: 0,
     matchesFound: 0,
     fileIdsConnected: [],
+    fileIdsNominated: [],
   };
 
   try {
-    // Calculate date range (±90 days - wider since UI scoring has date multiplier)
+    // ±90 days around the stored day. Shifted in UTC: the stored date is UTC
+    // midnight of the Vienna calendar day.
     const txDate = transaction.date.toDate();
-    const dateFrom = new Date(txDate);
-    dateFrom.setDate(dateFrom.getDate() - 90);
-    const dateTo = new Date(txDate);
-    dateTo.setDate(dateTo.getDate() + 90);
+    const dateFrom = new Date(txDate.getTime() - 90 * 86_400_000);
+    const dateTo = new Date(txDate.getTime() + 90 * 86_400_000);
 
     // #169: for a recurring partner the expected invoice date is known, so the
     // sweep narrows to that charge's own window and same-amount documents from
@@ -1163,90 +1196,18 @@ async function executeAmountFilesStrategy(
       .limit(100)
       .get();
 
-    // Filter to unassociated non-deleted files
+    // Unassociated, non-deleted files whose amount agrees, nearest-dated first
     const candidates = filesSnapshot.docs
       .map((doc) => ({ id: doc.id, ...doc.data() }) as TaxFile)
       .filter((f) => !f.deletedAt) // Exclude soft-deleted files
-      .filter((f) => !f.transactionIds || f.transactionIds.length === 0);
+      .filter((f) => !f.transactionIds || f.transactionIds.length === 0)
+      .filter((f) => amountAgrees(f, transaction))
+      .sort((a, b) => daysFromTransaction(a, transaction) - daysFromTransaction(b, transaction));
 
-    console.log(`[PrecisionSearch] amount_files: Query returned ${filesSnapshot.size} files in date range, ${candidates.length} unassociated`);
+    attempt.candidatesFound = candidates.length;
+    console.log(`[PrecisionSearch] amount_files: Query returned ${filesSnapshot.size} files in date range, ${candidates.length} unassociated with an agreeing amount`);
 
-    if (candidates.length === 0) {
-      attempt.completedAt = Timestamp.now();
-      return attempt;
-    }
-
-    // Score all candidates using unified scoring (same as UI)
-    const scoredCandidates = candidates
-      .map((file) => {
-        const scoreInput: ScoreAttachmentInput = {
-          filename: file.fileName || "unknown",
-          mimeType: file.fileType || "application/pdf",
-          emailBodyText: file.extractedText,
-          emailDate: toDateSafe(file.extractedDate),
-          // File extracted data for numeric comparison
-          fileExtractedAmount: file.extractedAmount,
-          fileExtractedDate: toDateSafe(file.extractedDate),
-          fileExtractedPartner: file.extractedPartner,
-          // Transaction data
-          transactionAmount: transaction.amount,
-          transactionOriginalAmount: originalAmountOf(transaction),
-          transactionDate: txDate,
-          transactionName: transaction.name,
-          transactionReference: transaction.reference,
-          transactionPartner: transaction.partner,
-        };
-        const score = scoreAttachmentMatch(scoreInput);
-        return { file, score };
-      })
-      .filter((c) => c.score.score >= ATTACHMENT_MATCH_THRESHOLD)
-      .sort((a, b) => b.score.score - a.score.score);
-
-    attempt.candidatesFound = scoredCandidates.length;
-    attempt.candidatesEvaluated = candidates.length;
-
-    // Track best score (array is sorted by score descending)
-    if (scoredCandidates.length > 0) {
-      attempt.bestMatchScore = scoredCandidates[0].score.score;
-    }
-
-    // Log all scores for debugging
-    for (const { file, score } of scoredCandidates.slice(0, 5)) {
-      console.log(
-        `[PrecisionSearch] Match score for file ${file.fileName} (${file.id}): ${score.score}% ` +
-        `[${score.reasons.slice(0, 3).join(", ")}]`
-      );
-    }
-
-    if (scoredCandidates.length === 0) {
-      console.log(`[PrecisionSearch] amount_files: No files meet ${ATTACHMENT_MATCH_THRESHOLD}% threshold`);
-      attempt.completedAt = Timestamp.now();
-      return attempt;
-    }
-
-    // Add hints to top candidates and re-trigger matching (skip rejected files,
-    // and pairs the file itself dismissed — matching drops those anyway)
-    const topCandidates = scoredCandidates
-      .filter(({ file }) => !isFileRejectedByTransaction(file.id, transaction))
-      .filter(({ file }) => !isTransactionDismissed(file, transaction.id))
-      .slice(0, 3); // Top 3 non-rejected matches
-
-    for (const { file: candidate, score } of topCandidates) {
-      await db.collection("files").doc(candidate.id).update({
-        precisionSearchHint: {
-          transactionId: transaction.id,
-          transactionAmount: transaction.amount,
-          transactionDate: transaction.date,
-          searchStrategy: "amount_files",
-          matchConfidence: score.score,
-          searchedAt: Timestamp.now(),
-        },
-        transactionMatchComplete: false, // Re-trigger matching
-        updatedAt: Timestamp.now(),
-      });
-      attempt.fileIdsConnected.push(candidate.id);
-      attempt.matchesFound++;
-    }
+    await nominateTransaction(candidates, transaction, attempt, alreadyNominated);
 
     attempt.completedAt = Timestamp.now();
     return attempt;
@@ -1967,13 +1928,14 @@ async function executeStrategy(
   strategy: SearchStrategy,
   transaction: Transaction,
   userId: string,
-  dateWindow?: SearchDateWindow
+  dateWindow: SearchDateWindow | undefined,
+  nominatedFileIds: Set<string>
 ): Promise<SearchAttempt> {
   switch (strategy) {
     case "partner_files":
-      return executePartnerFilesStrategy(transaction, userId, dateWindow);
+      return executePartnerFilesStrategy(transaction, userId, dateWindow, nominatedFileIds);
     case "amount_files":
-      return executeAmountFilesStrategy(transaction, userId, dateWindow);
+      return executeAmountFilesStrategy(transaction, userId, dateWindow, nominatedFileIds);
     case "email_attachment":
       return executeEmailAttachmentStrategy(transaction, userId, dateWindow);
     case "email_invoice":
@@ -2207,11 +2169,15 @@ async function processQueueItem(queueItem: PrecisionSearchQueueItem): Promise<{
         // Set high because attachment scoring and transaction scoring can diverge
         const STRONG_MATCH_THRESHOLD = 85;
 
+        // Stored Files this transaction was nominated to (#589), shared by
+        // the local-file strategies so no File is matched twice for it.
+        const nominatedFileIds = new Set<string>();
+
         for (const strategy of queueItem.strategies) {
           // Skip if transaction already completed (from initial data)
           if (tx.isComplete) break;
 
-          const attempt = await executeStrategy(strategy, tx, queueItem.userId, dateWindow);
+          const attempt = await executeStrategy(strategy, tx, queueItem.userId, dateWindow, nominatedFileIds);
 
           // Log the attempt
           await logSearchAttempt(tx.id, queueItem.id, queueItem.triggeredBy, attempt);

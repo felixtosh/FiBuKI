@@ -80,6 +80,13 @@ export interface SearchAttempt {
   /** File IDs that were connected to the transaction */
   fileIdsConnected: string[];
 
+  /**
+   * Stored Files a local-file strategy nominated the transaction to (#589):
+   * the matcher scored the pair and decided. Connected ones are also in
+   * `fileIdsConnected`.
+   */
+  fileIdsNominated?: string[];
+
   /** Invoice links discovered (for email_invoice strategy) */
   invoiceLinksFound?: string[];
 
