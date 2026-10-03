@@ -761,8 +761,9 @@ function normalizedFileName(name: unknown): string | null {
  *
  * - Files that share a `contentHash`: stored twice before #182 made identical
  *   bytes impossible to store again. The original is picked by the usual
- *   order, the rest are suggested as its Copies. Files marked "not an
- *   invoice" take no part: identical bytes do not make a non-document a Copy.
+ *   order among the invoices, the rest are suggested as its Copies. A group
+ *   of Files all marked "not an invoice" is skipped: identical bytes do not
+ *   make a non-document a Copy.
  * - Files marked "not an invoice", the workaround people used for a re-send.
  *   Marking cleared their extracted fields, so what is left to compare is the
  *   file name: suggested only when exactly one live invoice File carries the
@@ -783,10 +784,6 @@ export async function backfillCopySuggestions(
   let sameContent = 0;
   const byHash = new Map<string, Array<{ id: string; data: Data }>>();
   for (const f of all) {
-    // A File marked "not an invoice" is no document's Copy by its bytes: two
-    // copies of a photo are still a photo. That set is matched by name below,
-    // against invoices only, and accepting there lifts the mark on purpose.
-    if (f.data.isNotInvoice === true) continue;
     if (copies.has(f.id) || typeof f.data.contentHash !== "string" || !f.data.contentHash) continue;
     const group = byHash.get(f.data.contentHash) ?? [];
     group.push(f);
@@ -794,8 +791,14 @@ export async function backfillCopySuggestions(
   }
   for (const group of byHash.values()) {
     if (group.length < 2) continue;
-    let original = group[0];
-    for (const f of group.slice(1)) {
+    // The original must be an invoice: two copies of a photo marked "not an
+    // invoice" are still a photo, and accepting a suggestion lifts that mark.
+    // A not-an-invoice member of a group that holds an invoice is the hidden
+    // re-send this pass exists for.
+    const invoices = group.filter((f) => f.data.isNotInvoice !== true);
+    if (invoices.length === 0) continue;
+    let original = invoices[0];
+    for (const f of invoices.slice(1)) {
       const pick = pickOriginal(original, f);
       if (pick) original = pick.original;
     }
