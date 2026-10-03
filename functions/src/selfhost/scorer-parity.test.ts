@@ -1,20 +1,24 @@
 /**
  * #308 / #327 — one File/Transaction pair, one score, whichever surface asks.
  *
- * CLAUDE.md requires the agent's scorer and the UI's to agree. Three surfaces
+ * CLAUDE.md requires the agent's scorer and the UI's to agree. Four surfaces
  * score a pair:
  *
  *   - the matching trigger (`runTransactionMatching`), whose output the UI
  *     shows as the File's stored suggestions,
- *   - the connect dialog (`findTransactionMatchesForFile`),
+ *   - the connect dialog opened from a File (`findTransactionMatchesForFile`),
+ *   - the connect window opened from a Transaction
+ *     (`findFileMatchesForTransaction`, #555),
  *   - the agent's `score_file_transaction_match` (`scoreFileTransactionMatch`).
  *
  * Each fixture below exercises one input that a hand-built copy of the
  * scoring inputs has dropped before: the tip (#217), the Remainder (#239), the
  * bank-stated original amount (#112), the invoice number in the preserved raw
  * row (#137), the precision-search hint, and the assigned Partner's aliases
- * and learned weights. All three surfaces run for real on the self-host shim,
- * and every pair the trigger suggests must score identically on the other two.
+ * and learned weights, the published ECB rate for an old foreign-currency
+ * pair (#555), and an undated File. All four surfaces run for real on the
+ * self-host shim, and every pair the trigger suggests must score identically
+ * on the other three.
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
@@ -23,6 +27,8 @@ import { __resetTriggerShim } from "./trigger-shim";
 
 import { runTransactionMatching } from "../matching/matchFileTransactions";
 import { findTransactionMatchesForFile } from "../matching/findTransactionMatches";
+import { findFileMatchesForTransactionCallable } from "../matching/findFileMatches";
+import { storeEcbDays } from "../fx/ecbRateStore";
 import { scoreFileTransactionMatch } from "../tools/handlers";
 import { formatScoreBreakdown, type ScoreBreakdown } from "../matching/transactionScoring";
 
@@ -136,9 +142,48 @@ const FIXTURES: Fixture[] = [
       name: "ACME BRAND STORE",
     },
   },
+  {
+    // USD sat at parity in 2022, 13% off the static anchor (#555).
+    name: "2022 USD invoice, no bank-stated original, judged at that day's ECB rate",
+    fileId: "f-ecb",
+    file: {
+      extractedAmount: 2400,
+      extractedCurrency: "USD",
+      extractedDate: day("2022-09-01"),
+      extractedPartner: "Figma Inc",
+    },
+    transactionId: "t-ecb",
+    transaction: {
+      amount: -2390,
+      currency: "EUR",
+      date: day("2022-09-02"),
+      name: "FIGMA",
+    },
+  },
+  {
+    name: "File with no extracted date",
+    fileId: "f-undated",
+    file: {
+      extractedAmount: 4200,
+      extractedCurrency: "EUR",
+      extractedPartner: "Undated Supplier GmbH",
+    },
+    transactionId: "t-undated",
+    transaction: {
+      amount: -4200,
+      currency: "EUR",
+      date: day("2026-07-01"),
+      name: "UNDATED SUPPLIER GMBH",
+    },
+  },
 ];
 
+/** The ECB published 1 EUR = 1.0000 USD on the 2022 fixture's payment day. */
+const ECB_DAY = { date: "2022-09-02", rates: { USD: 1.0 } };
+
 async function seed() {
+  await storeEcbDays(db, [ECB_DAY]);
+
   // Passive: the trigger stores suggestions and connects nothing, so every
   // fixture is still unconnected when the other two surfaces score it.
   await db.collection("subscriptions").doc(USER).set({
@@ -203,6 +248,16 @@ const dialog = findTransactionMatchesForFile as unknown as (req: {
   data: Record<string, unknown>;
 }) => Promise<{ matches: DialogMatch[] }>;
 
+type WindowMatch = DialogMatch & { fileId: string; scoredAgainstRemainder: boolean };
+
+/** The Connect File window opened from a Transaction (#555). */
+const connectWindow = (data: Record<string, unknown>) =>
+  (
+    findFileMatchesForTransactionCallable as unknown as {
+      run: (req: unknown) => Promise<{ matches: WindowMatch[] }>;
+    }
+  ).run({ data, auth: { uid: USER, token: {} } });
+
 const sorted = (sources: string[]) => [...sources].sort();
 
 beforeEach(async () => {
@@ -211,7 +266,7 @@ beforeEach(async () => {
   await seed();
 });
 
-describe("the trigger, the connect dialog and the agent tool score a pair identically", () => {
+describe("the trigger, both connect windows and the agent tool score a pair identically", () => {
   for (const fixture of FIXTURES) {
     it(fixture.name, async () => {
       const fileData = (await db.collection("files").doc(fixture.fileId).get()).data()!;
@@ -235,7 +290,24 @@ describe("the trigger, the connect dialog and the agent tool score a pair identi
           transactionId: suggestion.transactionId,
         });
 
+        // No search term: the window ranks before anything is typed.
+        const { matches: fromTransaction } = await connectWindow({
+          transactionId: suggestion.transactionId,
+          limit: 100,
+        });
+        const inWindow = fromTransaction.find((m) => m.fileId === fixture.fileId);
+
         expect(inDialog, `dialog is missing ${suggestion.transactionId}`).toBeDefined();
+        expect(inWindow, `window is missing ${fixture.fileId}`).toBeDefined();
+        expect({
+          confidence: inWindow!.confidence,
+          matchSources: sorted(inWindow!.matchSources),
+          breakdown: inWindow!.breakdown,
+        }).toEqual({
+          confidence: suggestion.confidence,
+          matchSources: sorted(suggestion.matchSources),
+          breakdown: inDialog!.breakdown,
+        });
         expect({
           confidence: inDialog!.confidence,
           matchSources: sorted(inDialog!.matchSources),
@@ -290,5 +362,51 @@ describe("score_file_transaction_match sees what the trigger sees (#327)", () =>
       transactionId: "t-partner",
     });
     expect(result.matchSources).toContain("precision_hint");
+  });
+});
+
+describe("the Connect File window opened from a Transaction (#555)", () => {
+  it("ranks a File no typed text would have found", async () => {
+    // The old window searched for the Transaction's name first, and nothing
+    // on this File says SAMMELUEBERWEISUNG.
+    const { matches } = await connectWindow({ transactionId: "t-remainder" });
+    const hit = matches.find((m) => m.fileId === "f-remainder");
+    expect(hit?.matchSources).toContain("amount_remainder");
+    expect(hit?.scoredAgainstRemainder).toBe(true);
+  });
+
+  it("keeps a rejected pair out of the ranked list and lets a search reach it", async () => {
+    await db.collection("files").doc("f-tip").update({
+      dismissedTransactionIds: ["t-tip"],
+    });
+    const ranked = await connectWindow({ transactionId: "t-tip" });
+    expect(ranked.matches.map((m) => m.fileId)).not.toContain("f-tip");
+
+    const searched = await connectWindow({ transactionId: "t-tip", searchQuery: "gasthaus" });
+    expect(searched.matches.map((m) => m.fileId)).toContain("f-tip");
+  });
+
+  it("honours a Rejection written on the Transaction's side too", async () => {
+    await db.collection("transactions").doc("t-tip").update({ rejectedFileIds: ["f-tip"] });
+    const ranked = await connectWindow({ transactionId: "t-tip" });
+    expect(ranked.matches.map((m) => m.fileId)).not.toContain("f-tip");
+  });
+});
+
+describe("a foreign-currency pair is judged at the published rate (#555)", () => {
+  const amountOf = async () => {
+    const { matches } = await connectWindow({ transactionId: "t-ecb" });
+    return matches.find((m) => m.fileId === "f-ecb")!.breakdown.amount;
+  };
+
+  it("anchors on the ECB rate for the Transaction's date", async () => {
+    // 23.90 / 24.00 is 0.4% off the published 1.0000: the tight band.
+    expect(await amountOf()).toBe(30);
+  });
+
+  it("falls back to the static anchor where the store does not reach", async () => {
+    await db.collection("fxReferenceRates").doc("2022-09").delete();
+    // 13% off the static USD anchor: the loose band.
+    expect(await amountOf()).toBe(20);
   });
 });

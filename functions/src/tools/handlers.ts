@@ -3171,13 +3171,21 @@ export async function scoreFileTransactionMatch(userId: string, args: Record<str
     scoreFileAgainstTransactions,
   } = await import("../matching/transactionScoring");
   const { loadDocumentedAmounts } = await import("../matching/documentedAmounts");
+  const { loadScoringEcbRates } = await import("../matching/scoringEcbRates");
 
   const fileData = fileDoc.data()!;
-  const [partner, documentedAmounts] = await Promise.all([
+  const [partner, documentedAmounts, ecbRates] = await Promise.all([
     loadPartnerScoringContext(db, fileData.partnerId, userId),
     loadDocumentedAmounts([txDoc.id], fileDoc.id),
+    loadScoringEcbRates(db, [fileData.extractedCurrency], [txDoc]),
   ]);
-  const [result] = scoreFileAgainstTransactions(fileData, [txDoc], partner, documentedAmounts);
+  const [result] = scoreFileAgainstTransactions(
+    fileData,
+    [txDoc],
+    partner,
+    documentedAmounts,
+    ecbRates
+  );
 
   return {
     fileId,

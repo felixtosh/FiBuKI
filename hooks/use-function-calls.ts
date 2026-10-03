@@ -290,6 +290,7 @@ export function formatFunctionDisplayName(functionName: string): string {
     generateSearchQueriesCallable: "Generate Queries",
     scoreAttachmentMatchCallable: "Score Attachment",
     findTransactionMatchesForFile: "Find Transaction Matches",
+    findFileMatchesForTransaction: "Find File Matches",
     lookupCompany: "Lookup Company",
     retryFileExtraction: "Retry Extraction",
   };
