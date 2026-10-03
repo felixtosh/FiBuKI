@@ -18,6 +18,7 @@
 import type { Firestore } from "firebase-admin/firestore";
 import { classifyFileRecord, documentTypeFields, FileRecord } from "../documents/adapter";
 import { reviewFileRecordVatRates, vatRateReviewFields } from "../documents/vatRateReview";
+import { reviewFileRecordRksvCode, rksvCodeReviewFields } from "../documents/rksvCodeReview";
 import { retireRepairAmbiguity } from "../documents/repairReview";
 import { computeDirectionReviewFields } from "../documents/syncDirectionReview";
 import { checkTipBound } from "./tipBound";
@@ -79,6 +80,9 @@ export async function buildCorrectedFileUpdate(
 
   Object.assign(built.updates, documentTypeFields(classifyFileRecord(corrected)));
   Object.assign(built.updates, vatRateReviewFields(reviewFileRecordVatRates(corrected)));
+  // #166: a VAT-bearing correction clears the printed block the RKSV Code
+  // disagreed with, so the flag goes; any other correction leaves it as it was.
+  Object.assign(built.updates, rksvCodeReviewFields(reviewFileRecordRksvCode(corrected)));
 
   // The repair flag is not recomputed, it is retired per field (#301): a value
   // a person typed replaces the guess the flag was warning about.

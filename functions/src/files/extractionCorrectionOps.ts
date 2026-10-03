@@ -284,6 +284,7 @@ export function buildExtractionCorrection(
 
   if (VAT_BEARING.some((field) => fields[field] !== undefined)) {
     updates.extractedRateGroups = null;
+    updates.extractedRateGroupsSource = null;
     updates.vatSourceDowngraded = false;
     updates.vatFieldsPreserved = false;
 

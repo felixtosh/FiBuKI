@@ -387,6 +387,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           "type": "boolean",
           "description": "true = only files printing a VAT rate Austria does not have (anything outside 0/10/13/20 on the document's date). Each such file reports the offending rates in vatRatesOutsideSet. 11% is Versicherungssteuer, not VAT, and is not deductible — mark those with mark_file_vat_not_claimable."
         },
+        "needsRksvCodeReview": {
+          "type": "boolean",
+          "description": "true = only till receipts whose printed VAT block disagrees with the receipt's RKSV Code (the signed QR code on Austrian till receipts) at 20, 10 or 13%. The printed block is what is stored; each such file reports the rates in rksvCodeDisagreeingRates. Check the paper, then correct the VAT with update_file_extraction if the printed block was misread."
+        },
         "foreignRecipient": {
           "type": "boolean",
           "description": "true = only files whose document names a Leistungsempfänger who is not the user. Such a document can satisfy § 11 completely and still carry no Vorsteuer for this user (§ 12 Abs 1 Z 1): the supply was rendered to somebody else. Their VAT is excluded from the UVA and they are not offered as transaction matches. If the recipient IS the user under a different name, confirm_file_recipient_is_user lifts it."

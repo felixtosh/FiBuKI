@@ -880,6 +880,142 @@ describe("runExtraction: fixed fields for every VAT layout (#540)", () => {
     expect(doc.extractedRateGroups).toBeNull();
     expect(doc.extractedVatAmount).toBeNull();
   });
+
+  // #166: Null and Besonders name no single rate; the printed VAT total decides.
+  const rksv = (date: string, buckets: string, counter = "x") =>
+    `_R1-AT0_K1_42_${date}T10:00:00_${buckets}_${counter}_y_z_sig`;
+
+  it("reads a Besonders amount as 4.9 % when the printed VAT total says so, and records the source", async () => {
+    const fileData = await seedFile("f-166-besonders");
+    q({
+      extracted: { amount: 2249, documentVatAmount: 249, confidence: 0.9 },
+      qrCodes: [rksv("2026-07-15", "12,00_0,00_0,00_0,00_10,49")],
+    });
+    await runExtraction("f-166-besonders", fileData, { skipClassification: true });
+
+    const doc = await fileDoc("f-166-besonders");
+    expect(doc.extractedRateGroups).toEqual([
+      { rate: 20, net: 1000, vat: 200, gross: 1200 },
+      { rate: 4.9, net: 1000, vat: 49, gross: 1049 },
+    ]);
+    expect(doc.extractedVatAmount).toBe(249);
+    expect(doc.extractedRateGroupsSource).toBe("rksvCode");
+    expect(doc.needsRksvCodeReview).toBe(false);
+  });
+
+  it("reads a deposit in Null as 0 % only when the printed VAT total leaves no VAT for it", async () => {
+    const fileData = await seedFile("f-166-pfand");
+    q({
+      extracted: { amount: 1275, documentVatAmount: 200, confidence: 0.9 },
+      qrCodes: [rksv("2026-08-01", "12,00_0,00_0,00_0,75_0,00")],
+    });
+    await runExtraction("f-166-pfand", fileData, { skipClassification: true });
+
+    const doc = await fileDoc("f-166-pfand");
+    expect(doc.extractedRateGroups).toEqual([
+      { rate: 20, net: 1000, vat: 200, gross: 1200 },
+      { rate: 0, net: 75, vat: 0, gross: 75 },
+    ]);
+    expect(doc.extractedRateGroupsSource).toBe("rksvCode");
+  });
+
+  it("does not use a Besonders amount when no VAT total is printed", async () => {
+    const fileData = await seedFile("f-166-no-vat");
+    q({
+      extracted: { amount: 2249, confidence: 0.9 },
+      qrCodes: [rksv("2026-07-15", "12,00_0,00_0,00_0,00_10,49")],
+    });
+    await runExtraction("f-166-no-vat", fileData, { skipClassification: true });
+
+    const doc = await fileDoc("f-166-no-vat");
+    expect(doc.extractedRateGroups).toBeNull();
+    expect(doc.extractedRateGroupsSource).toBeNull();
+  });
+
+  it("keeps a printed block the code contradicts and flags the File with the rates", async () => {
+    const fileData = await seedFile("f-166-disagree");
+    q({
+      extracted: {
+        amount: 2260,
+        confidence: 0.9,
+        // The model transposed the 10 % and 13 % rows.
+        rateGroups: [
+          { rate: 10, net: 1000, vat: 100, gross: 1100 },
+          { rate: 13, net: 1027, vat: 133, gross: 1160 },
+        ],
+      },
+      qrCodes: [rksv("2026-05-02", "0,00_11,60_11,00_0,00_0,00")],
+    });
+    await runExtraction("f-166-disagree", fileData, { skipClassification: true });
+
+    const doc = await fileDoc("f-166-disagree");
+    expect((doc.extractedRateGroups as Array<{ rate: number }>).map((g) => g.rate)).toEqual([10, 13]);
+    expect(doc.extractedRateGroupsSource).toBe("document");
+    expect(doc.needsRksvCodeReview).toBe(true);
+    expect(doc.rksvCodeDisagreeingRates).toEqual([10, 13]);
+  });
+
+  it("does not flag a printed block the code agrees with, nor a partial cash payment", async () => {
+    const agree = await seedFile("f-166-agree");
+    q({
+      extracted: { amount: 1200, confidence: 0.9, rateGroups: [{ rate: 20, net: 1000, vat: 200, gross: 1200 }] },
+      qrCodes: [rksv("2026-05-02", "12,00_0,00_0,00_0,00_0,00")],
+    });
+    await runExtraction("f-166-agree", agree, { skipClassification: true });
+    expect((await fileDoc("f-166-agree")).needsRksvCodeReview).toBe(false);
+
+    const partial = await seedFile("f-166-partial");
+    q({
+      extracted: { amount: 2400, confidence: 0.9, rateGroups: [{ rate: 20, net: 2000, vat: 400, gross: 2400 }] },
+      qrCodes: [rksv("2026-05-02", "12,00_0,00_0,00_0,00_0,00")],
+    });
+    await runExtraction("f-166-partial", partial, { skipClassification: true });
+    expect((await fileDoc("f-166-partial")).needsRksvCodeReview).toBe(false);
+  });
+
+  it("marks a training receipt not an invoice, over the classifier's verdict", async () => {
+    const fileData = await seedFile("f-166-training");
+    q({ isInvoice: true, confidence: 0.95 });
+    q({
+      extracted: { amount: 1200, confidence: 0.9 },
+      qrCodes: [rksv("2026-05-02", "12,00_0,00_0,00_0,00_0,00", "VFJB")],
+    });
+    await runExtraction("f-166-training", fileData, { skipClassification: false });
+
+    const doc = await fileDoc("f-166-training");
+    expect(doc.isNotInvoice).toBe(true);
+    expect(doc.notInvoiceReason).toMatch(/training receipt/i);
+    expect(doc.extractedRateGroups).toBeNull();
+    expect(doc.extractedRateGroupsSource).toBeNull();
+  });
+
+  it("leaves a training receipt the user declared an invoice as an invoice", async () => {
+    const fileData = await seedFile("f-166-training-override");
+    q({
+      extracted: { amount: 1200, confidence: 0.9 },
+      qrCodes: [rksv("2026-05-02", "12,00_0,00_0,00_0,00_0,00", "VFJB")],
+    });
+    await runExtraction("f-166-training-override", fileData, { skipClassification: true });
+
+    const doc = await fileDoc("f-166-training-override");
+    expect(doc.isNotInvoice).toBe(false);
+    expect(doc.extractedRateGroups).toBeNull();
+  });
+
+  it("keeps a cancellation receipt and takes nothing from its code", async () => {
+    const fileData = await seedFile("f-166-storno");
+    q({ isInvoice: true, confidence: 0.95 });
+    q({
+      extracted: { amount: 1200, confidence: 0.9 },
+      qrCodes: [rksv("2026-05-02", "12,00_0,00_0,00_0,00_0,00", "U1RP")],
+    });
+    await runExtraction("f-166-storno", fileData, { skipClassification: false });
+
+    const doc = await fileDoc("f-166-storno");
+    expect(doc.isNotInvoice).toBe(false);
+    expect(doc.extractedRateGroups).toBeNull();
+    expect((doc.extractedQrCodes as Array<{ receiptKind?: string }>)[0].receiptKind).toBe("cancellation");
+  });
 });
 
 describe("runExtraction: designated payable amount", () => {

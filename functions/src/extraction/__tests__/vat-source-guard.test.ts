@@ -19,6 +19,7 @@ const strongRecord = {
   extractedVatAmount: 53000,
   extractedLineItems: ratedItems,
   extractedRateGroups: null,
+  extractedRateGroupsSource: null,
   lineItemsUnreconciled: false,
   lineItemsUnreconciledRates: null,
 };
@@ -91,6 +92,24 @@ describe("applyVatDowngradeGuard", () => {
     applyVatDowngradeGuard(strongRecord, updateData);
 
     expect(updateData.extractedPartner).toBe("Neuer Name");
+  });
+
+  it("keeps the Rate Groups' source with the Rate Groups it preserves (#166)", () => {
+    const fromCode = {
+      extractedAmount: 1200,
+      extractedRateGroups: [{ rate: 20, net: 1000, vat: 200, gross: 1200 }],
+      extractedRateGroupsSource: "rksvCode",
+    };
+    const updateData: Record<string, unknown> = {
+      extractedAmount: 1200,
+      extractedRateGroups: null,
+      extractedRateGroupsSource: null,
+    };
+
+    applyVatDowngradeGuard(fromCode, updateData);
+
+    expect(updateData.extractedRateGroups).toEqual(fromCode.extractedRateGroups);
+    expect(updateData.extractedRateGroupsSource).toBe("rksvCode");
   });
 
   it("lets a stronger or equal pass through untouched", () => {

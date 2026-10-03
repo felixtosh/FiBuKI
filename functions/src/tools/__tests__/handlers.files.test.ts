@@ -1302,6 +1302,26 @@ describe("Tool Registry Handlers: Files", () => {
     });
   });
 
+  describe("listFiles - needsRksvCodeReview (#166)", () => {
+    it("lists the receipts whose printed block the RKSV Code contradicts", async () => {
+      store.setDoc(
+        "files",
+        "f-flagged",
+        createTestFile({ userId, needsRksvCodeReview: true, rksvCodeDisagreeingRates: [10, 13] })
+      );
+      store.setDoc("files", "f-ok", createTestFile({ userId, needsRksvCodeReview: false }));
+      // Written before the detector existed: no flag at all, not a flagged one.
+      store.setDoc("files", "f-legacy", createTestFile({ userId }));
+
+      const flagged = await handlers.listFiles(userId, { needsRksvCodeReview: true });
+      const rest = await handlers.listFiles(userId, { needsRksvCodeReview: false });
+
+      expect(flagged.files.map((f) => f.id)).toEqual(["f-flagged"]);
+      expect(flagged.files[0].rksvCodeDisagreeingRates).toEqual([10, 13]);
+      expect(rest.files.map((f) => f.id).sort()).toEqual(["f-legacy", "f-ok"]);
+    });
+  });
+
   describe("listFiles - additional filters", () => {
     it("should filter by hasSuggestions true", async () => {
       store.setDoc("files", "f-1", createTestFile({

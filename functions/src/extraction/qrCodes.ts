@@ -22,6 +22,7 @@
 
 import { ExtractedRateGroup } from "../types/extraction";
 import { vatInsideGross } from "./taxFacts";
+import { ratesValidOn } from "../uva/rateSet";
 
 export type QrCodeFormat = "rksv" | "epc" | "swissQr" | "url" | "unknown";
 
@@ -77,7 +78,8 @@ const MAX_PAYLOAD_LENGTH = 2000;
  *    BGBl. II Nr. 134/2026: "Betrag-Satz-Besonders (19 %, 4,9 %)"), so the
  *    code alone cannot tell which rate a grocery receipt's amount is at.
  *
- * A bucket without a rate is never turned into a Rate Group (#166).
+ * A bucket without a rate becomes a Rate Group only when the document's printed
+ * VAT total decides its rate (see `rateGroupsFromRksv`, #166).
  */
 const RKSV_BUCKETS: ReadonlyArray<{ bucket: RksvBucket; rate: number | null }> = [
   { bucket: "normal", rate: 20 },
@@ -227,39 +229,102 @@ export function ibanChecksumValid(iban: string | undefined): boolean {
 }
 
 /**
- * The per-rate block an RKSV code carries, when it accounts for the document
- * total to the cent, else null.
+ * The RKSV code that can stand for the receipt's sale, or null.
  *
- * The buckets are gross; net and VAT follow from the rate. The sum check is
- * what lets a model-decoded payload be used at all: a misread digit or an
- * invented code does not add up to the total the page prints. A sum below the
- * total is a partial cash payment, whose buckets cover only the cash part
- * (Erlass 4.6.6), and is refused like any other mismatch.
- *
- * Refused as well (#166): a cancellation or training receipt, which is not a
- * sale, and any amount in a bucket that names no single rate (Null,
- * Besonders), whose VAT the code does not determine.
+ * The sum check is what lets a model-decoded payload be used at all: a
+ * misread digit or an invented code does not add up to the total the page
+ * prints. A sum below the total is a partial cash payment, whose buckets cover
+ * only the cash part (Erlass 4.6.6), and is refused like any other mismatch.
+ * A cancellation or training receipt is not a sale and is refused too (#166).
  */
-export function rateGroupsFromRksv(
+export function usableRksvCode(
   codes: ParsedQrCode[],
   documentTotal: number | null | undefined
-): ExtractedRateGroup[] | null {
+): ParsedQrCode | null {
   if (typeof documentTotal !== "number" || !Number.isFinite(documentTotal) || documentTotal <= 0) {
     return null;
   }
   const rksv = codes.find((code) => code.format === "rksv" && code.grossByRate?.length);
-  if (!rksv?.grossByRate) return null;
+  if (!rksv?.grossByRate || rksv.receiptKind) return null;
   const sum = rksv.grossByRate.reduce((acc, bucket) => acc + bucket.gross, 0);
-  if (
-    rksv.receiptKind ||
-    sum !== documentTotal ||
-    rksv.grossByRate.some((bucket) => bucket.gross < 0 || bucket.rate === null)
-  ) {
+  if (sum !== documentTotal || rksv.grossByRate.some((bucket) => bucket.gross < 0)) {
     return null;
   }
-  return rksv.grossByRate.map(({ rate, gross }) => {
-    const vat = vatInsideGross(gross, rate as number);
-    return { rate: rate as number, net: gross - vat, vat, gross };
+  return rksv;
+}
+
+/** The cancellation or training marker of the first RKSV code that carries one. */
+export function rksvReceiptKindOf(codes: ParsedQrCode[]): RksvReceiptKind | null {
+  return codes.find((code) => code.format === "rksv" && code.receiptKind)?.receiptKind ?? null;
+}
+
+/**
+ * The rates a bucket that names no single rate may stand for (#166).
+ *
+ * Null is read as 0 % only: its other contents (an invoice paid in cash, a
+ * rate the code does not list) carry VAT the code does not state, and the
+ * printed VAT total check below is what tells them apart. Besonders is 19 %,
+ * and from the day the 4.9 % rate starts also 4.9 %, by the receipt's own
+ * date as the code prints it.
+ */
+function candidateRates(bucket: RksvBucket, date: string | undefined): number[] {
+  if (bucket === "zero") return [0];
+  if (bucket === "special") {
+    return date && ratesValidOn(date).includes(4.9) ? [4.9, 19] : [19];
+  }
+  return [];
+}
+
+/** Every way of giving each bucket one rate. */
+function rateAssignments(
+  buckets: Array<{ bucket: RksvBucket; rate: number | null; gross: number }>,
+  date: string | undefined
+): number[][] {
+  let assignments: number[][] = [[]];
+  for (const bucket of buckets) {
+    const rates = bucket.rate !== null ? [bucket.rate] : candidateRates(bucket.bucket, date);
+    assignments = assignments.flatMap((head) => rates.map((rate) => [...head, rate]));
+  }
+  return assignments;
+}
+
+/**
+ * The per-rate block an RKSV code carries, when it accounts for the document
+ * total to the cent (see `usableRksvCode`), else null.
+ *
+ * The buckets are gross; net and VAT follow from the rate. Normal, Ermäßigt-1
+ * and Ermäßigt-2 name one rate each. Null and Besonders do not (see
+ * RKSV_BUCKETS), so a code with an amount in either is used only when the
+ * document's printed VAT total decides it: exactly one way of giving those
+ * buckets a rate must reproduce that total, within the cent the printed
+ * figure was rounded to. No printed VAT total, or no way or several ways that
+ * reproduce it, and the code is not used (#166).
+ */
+export function rateGroupsFromRksv(
+  codes: ParsedQrCode[],
+  documentTotal: number | null | undefined,
+  documentVatAmount?: number | null
+): ExtractedRateGroup[] | null {
+  const rksv = usableRksvCode(codes, documentTotal);
+  if (!rksv?.grossByRate) return null;
+  const buckets = rksv.grossByRate;
+
+  let rates: number[];
+  if (buckets.every((bucket) => bucket.rate !== null)) {
+    rates = buckets.map((bucket) => bucket.rate as number);
+  } else {
+    if (typeof documentVatAmount !== "number" || !Number.isFinite(documentVatAmount)) return null;
+    const reproducing = rateAssignments(buckets, rksv.date).filter((assignment) => {
+      const vat = assignment.reduce((acc, rate, i) => acc + vatInsideGross(buckets[i].gross, rate), 0);
+      return Math.abs(vat - documentVatAmount) <= 1;
+    });
+    if (reproducing.length !== 1) return null;
+    rates = reproducing[0];
+  }
+
+  return buckets.map(({ gross }, i) => {
+    const vat = vatInsideGross(gross, rates[i]);
+    return { rate: rates[i], net: gross - vat, vat, gross };
   });
 }
 

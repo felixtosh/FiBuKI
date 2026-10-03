@@ -242,8 +242,12 @@ _Also printed as_: MwSt.-Aufstellung, USt-Zusammenfassung, Steuersätze
 _Avoid_: VAT breakdown, tax group, summary row
 _Avoid (de)_: USt-Aufschlüsselung, Steuergruppe
 When the page prints no block, an RKSV Code whose buckets add up to the document total to
-the cent stands in for it: the till's own block in machine form (#540). Only the three
-buckets that name one rate count (#166); see RKSV Code.
+the cent stands in for it: the till's own block in machine form (#540). An amount in Null or
+Besonders counts only when the Document VAT Total decides its rate: exactly one way of giving
+those buckets a rate must reproduce the printed VAT to the cent (#166). Every stored set of
+Rate Groups records its source, the printed block or the RKSV Code. When the page prints a
+block and the code disagrees with it at 20, 10 or 13 %, the printed block is kept and the File
+is flagged for review.
 
 **Document VAT Total**:
 The VAT amount a document prints once, for the whole document ("davon 20% USt 11,25",
@@ -260,8 +264,9 @@ id, receipt number, timestamp and the gross turnover at each of the five rate bu
 Normal is 20 %, Ermäßigt-1 10 %, Ermäßigt-2 13 %. Null is not 0 % VAT: it collects exempt
 sales, margin-scheme sales, payments against an invoice and any rate the others do not list.
 Besonders holds both 19 % and, since 1 July 2026, the 4.9 % on basic foods. Neither Null nor
-Besonders determines VAT, and a cancellation or training receipt (its turnover counter says
-so) is not a sale.
+Besonders determines VAT on its own, and a cancellation or training receipt (its turnover
+counter says so) is not a sale. A training receipt is marked not an invoice; a cancellation
+receipt stays, since it can be the paper for a refund.
 _Deutsch_: RKSV-Code (cite verbatim)
 _Avoid_: receipt QR, till code
 

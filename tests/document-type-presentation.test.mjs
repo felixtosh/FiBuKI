@@ -5,6 +5,7 @@ import {
   describeDirectionReview,
   describeForeignRecipient,
   describeRepairAmbiguity,
+  describeRksvCodeReview,
   describeDocumentType,
   describeDocumentationState,
   describeDocumentTypeBasis,
@@ -545,4 +546,21 @@ test("term glosses: each statutory term is written once and carries vocabulary o
     assert.ok(gloss.text.split(/\.(\s|$)/).filter((s) => s && s.trim()).length <= 2, key);
   }
   assert.equal(describeTerm("nonsense"), null);
+});
+
+test("describeRksvCodeReview: nothing to show without the flag (#166)", () => {
+  assert.equal(describeRksvCodeReview(null), null);
+  assert.equal(describeRksvCodeReview({ needsRksvCodeReview: false, rksvCodeDisagreeingRates: [10] }), null);
+});
+
+test("describeRksvCodeReview: message keys and the disagreeing rates, never text (#166)", () => {
+  assert.deepEqual(
+    describeRksvCodeReview({ needsRksvCodeReview: true, rksvCodeDisagreeingRates: [10, 13, "x"] }),
+    {
+      tone: "warning",
+      labelKey: "files.extracted.rksvCodeReview.label",
+      textKey: "files.extracted.rksvCodeReview.text",
+      rates: [10, 13],
+    },
+  );
 });

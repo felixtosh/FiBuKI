@@ -269,6 +269,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           description:
             "true = only files printing a VAT rate Austria does not have (anything outside 0/10/13/20 on the document's date). Each such file reports the offending rates in vatRatesOutsideSet. 11% is Versicherungssteuer, not VAT, and is not deductible — mark those with mark_file_vat_not_claimable.",
         },
+        needsRksvCodeReview: {
+          type: "boolean",
+          description:
+            "true = only till receipts whose printed VAT block disagrees with the receipt's RKSV Code (the signed QR code on Austrian till receipts) at 20, 10 or 13%. The printed block is what is stored; each such file reports the rates in rksvCodeDisagreeingRates. Check the paper, then correct the VAT with update_file_extraction if the printed block was misread.",
+        },
         foreignRecipient: {
           type: "boolean",
           description:

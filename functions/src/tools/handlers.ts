@@ -875,6 +875,14 @@ export async function listFiles(userId: string, args: Record<string, unknown>) {
     );
   }
 
+  // #166: receipts whose printed Rate Group block the RKSV Code contradicts.
+  // In memory for the same reason as the flags around it.
+  if (args.needsRksvCodeReview !== undefined) {
+    files = files.filter((f: Record<string, unknown>) =>
+      args.needsRksvCodeReview ? f.needsRksvCodeReview === true : f.needsRksvCodeReview !== true
+    );
+  }
+
   // #233: the direction review list — a conflict against a linked transaction,
   // or a direction that was never established. In memory for the same reason
   // as the flags around it.

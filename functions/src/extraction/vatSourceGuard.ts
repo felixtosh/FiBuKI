@@ -35,6 +35,8 @@ export const VAT_FIELDS = [
   "extractedVatAmount",
   "extractedLineItems",
   "extractedRateGroups",
+  // Where the Rate Groups came from travels with them (#166).
+  "extractedRateGroupsSource",
   "lineItemsUnreconciled",
   "lineItemsUnreconciledRates",
 ] as const;
