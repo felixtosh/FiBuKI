@@ -21,7 +21,7 @@ import { createCallable, HttpsError } from "../utils/createCallable";
 import { Invoice } from "./types";
 import { nextInvoiceNumberSeq } from "./numberAllocator";
 import { draftFileStubFields, draftPlaceholderNumber } from "./buildInvoiceFileFields";
-import { IssueInvoiceDeps, performIssueInvoice } from "./issueInvoice";
+import { IssueInvoiceDeps, IssueInvoiceResponse, performIssueInvoice } from "./issueInvoice";
 
 export interface CancelInvoiceRequest {
   invoiceId: string;
@@ -84,6 +84,20 @@ function correctionDraft(
   return draft;
 }
 
+/** Move a correction's draft to the next free number of its year. */
+async function renumberCorrection(
+  db: FirebaseFirestore.Firestore,
+  userId: string,
+  correctionId: string,
+): Promise<void> {
+  const ref = db.collection("invoices").doc(correctionId);
+  const draft = (await ref.get()).data() as Invoice;
+  const numberSeq = await nextInvoiceNumberSeq(db, userId, draft.issueDate.toDate().getFullYear());
+  await ref.update({ numberSeq, updatedAt: Timestamp.now() });
+}
+
+const ISSUE_ATTEMPTS = 3;
+
 async function issueCorrection(
   db: FirebaseFirestore.Firestore,
   userId: string,
@@ -91,7 +105,19 @@ async function issueCorrection(
   correctionId: string,
   deps: IssueInvoiceDeps | undefined,
 ): Promise<CancelInvoiceResponse> {
-  const issued = await performIssueInvoice(db, userId, { invoiceId: correctionId }, deps);
+  // The number is picked before it is claimed, so a cancel or issue running
+  // alongside can take it first. Issuing then refuses it, and the correction
+  // moves on to the next free number.
+  let issued: IssueInvoiceResponse;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      issued = await performIssueInvoice(db, userId, { invoiceId: correctionId }, deps);
+      break;
+    } catch (err) {
+      if (attempt >= ISSUE_ATTEMPTS || (err as { code?: unknown })?.code !== "already-exists") throw err;
+      await renumberCorrection(db, userId, correctionId);
+    }
+  }
   const correction = (await db.collection("invoices").doc(correctionId).get()).data() as Invoice;
   return {
     success: true,

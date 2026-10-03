@@ -9,6 +9,7 @@
 
 import { Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
+import { assertInvoiceNumberFree } from "./numberAllocator";
 import {
   DEFAULT_VAT_RATE,
   Invoice,
@@ -281,7 +282,16 @@ export async function performUpdateInvoice(
 
   updates.updatedAt = Timestamp.now();
 
-  await docRef.update(updates);
+  // A renumbered issued invoice may not take a number another invoice holds.
+  if (typeof updates.number === "string" && updates.number !== current.number) {
+    const number = updates.number;
+    await db.runTransaction(async (tx) => {
+      await assertInvoiceNumberFree(tx, db, userId, number, docRef.id);
+      tx.update(docRef, updates);
+    });
+  } else {
+    await docRef.update(updates);
+  }
 
   return { success: true, invoiceId: request.invoiceId, status: current.status };
 }
