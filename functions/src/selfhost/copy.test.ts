@@ -320,11 +320,21 @@ describe("the one-time pass", () => {
       createdAt: LATER,
     });
 
+    // The same photo received twice, both marked not an invoice: not a Copy.
+    await db.doc("files/photo").set({ userId: ME, fileName: "screen.jpeg", contentHash: "h2", isNotInvoice: true, transactionIds: [], createdAt: EARLIER });
+    await db.doc("files/photo2").set({ userId: ME, fileName: "screen.jpeg", contentHash: "h2", isNotInvoice: true, transactionIds: [], createdAt: LATER });
+    // An invoice and its byte-identical re-send hidden as not an invoice, under another name.
+    await db.doc("files/c").set(invoice({ fileName: "R-0099.pdf", extractedInvoiceNumber: "R-0099", extractedAmount: 3300, contentHash: "h3" }));
+    await db.doc("files/c-hidden").set({ userId: ME, fileName: "attachment.pdf", contentHash: "h3", isNotInvoice: true, transactionIds: [], createdAt: EARLIER });
+
     const r = await call<{ sameContent: number; markedNotInvoice: number }>(backfillCopySuggestionsCallable, {});
-    expect(r).toMatchObject({ sameContent: 1, markedNotInvoice: 1 });
+    expect(r).toMatchObject({ sameContent: 2, markedNotInvoice: 1 });
     expect((await file("a2")).copySuggestion).toMatchObject({ originalFileId: "a", reason: "same-content" });
     expect((await file("b-resend")).copySuggestion).toMatchObject({ originalFileId: "b", reason: "marked-not-invoice" });
     expect((await file("a2")).copyOfFileId).toBeUndefined();
+    expect((await file("photo")).copySuggestion).toBeUndefined();
+    expect((await file("photo2")).copySuggestion).toBeUndefined();
+    expect((await file("c-hidden")).copySuggestion).toMatchObject({ originalFileId: "c", reason: "same-content" });
 
     // Accepting the re-send's suggestion sets the Copy and lifts the mark.
     await call(markFileAsCopyCallable, { fileId: "b-resend", originalFileId: "b" });
