@@ -25,6 +25,7 @@ import {
   pickIssuerEntity,
   pickIssuerIban,
 } from "./snapshots";
+import { supplyAbroadIssueProblem, withoutVat } from "./supplyAbroad";
 
 export interface UpdateInvoiceLineItemInput {
   id?: string;
@@ -55,6 +56,8 @@ export interface UpdateInvoicePatch {
   namePrefix?: string | null;
   /** Positive integer (<= 9999) representing the invoice sequence. */
   numberSeq?: number;
+  /** "Service, place of supply abroad (§ 3a Abs 6)" (#565): forces every line to 0%. */
+  supplyAbroad?: boolean;
 }
 
 export interface UpdateInvoiceRequest {
@@ -244,6 +247,35 @@ export async function performUpdateInvoice(
     updates.subtotal = subtotal;
     updates.vatAmount = vatAmount;
     updates.total = total;
+  }
+
+  // "Service, place of supply abroad" (#565): with it set, no line carries
+  // Austrian VAT, whichever of the two changed.
+  if (patch.supplyAbroad !== undefined && typeof patch.supplyAbroad !== "boolean") {
+    throw new HttpsError("invalid-argument", "supplyAbroad must be true or false");
+  }
+  if (patch.supplyAbroad !== undefined) updates.supplyAbroad = patch.supplyAbroad;
+  const supplyAbroad = patch.supplyAbroad ?? current.supplyAbroad ?? false;
+  if (supplyAbroad && (patch.supplyAbroad === true || patch.lineItems !== undefined)) {
+    const items = withoutVat(
+      (updates.lineItems as InvoiceLineItem[] | undefined) ?? current.lineItems ?? [],
+    );
+    const { subtotal, vatAmount, total } = computeInvoiceTotals(items);
+    updates.lineItems = items;
+    updates.subtotal = subtotal;
+    updates.vatAmount = vatAmount;
+    updates.total = total;
+  }
+  // A draft is checked at issue, when its recipient is final. An edit to an
+  // issued invoice is checked here, or it would bypass that check.
+  if (current.status !== "draft" && supplyAbroad) {
+    const problem = supplyAbroadIssueProblem({
+      supplyAbroad,
+      recipient: (updates.recipient as Invoice["recipient"] | undefined) ?? current.recipient,
+      issuer: (updates.issuer as Invoice["issuer"] | undefined) ?? current.issuer,
+      lineItems: (updates.lineItems as InvoiceLineItem[] | undefined) ?? current.lineItems,
+    });
+    if (problem) throw new HttpsError("failed-precondition", problem);
   }
 
   // For non-draft invoices, recompose `number` whenever namePrefix / numberSeq /

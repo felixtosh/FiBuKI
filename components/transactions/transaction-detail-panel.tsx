@@ -57,6 +57,8 @@ interface TransactionDetailPanelProps {
   onCreatePartner: (data: PartnerFormData) => Promise<string>;
   /** Open the connect file overlay (managed at page level) */
   onOpenConnectFile?: () => void;
+  /** Open the connect file overlay on a suggested File (#555). */
+  onPreviewSuggestedFile?: (fileId: string) => void;
   /** Whether the connect file overlay is open */
   isConnectFileOpen?: boolean;
 }
@@ -76,6 +78,7 @@ export function TransactionDetailPanel({
   onRemovePartner,
   onCreatePartner,
   onOpenConnectFile,
+  onPreviewSuggestedFile,
   isConnectFileOpen = false,
 }: TransactionDetailPanelProps) {
   const { userId } = useAuth();
@@ -327,6 +330,7 @@ export function TransactionDetailPanel({
               searchLabel={strategyLabel}
               onTriggerSearch={triggerSearch}
               onOpenConnectFile={onOpenConnectFile}
+              onPreviewSuggestedFile={onPreviewSuggestedFile}
               isConnectFileOpen={isConnectFileOpen}
               learnMode={learnMode}
               replayMode={replayMode}

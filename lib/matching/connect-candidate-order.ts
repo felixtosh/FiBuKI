@@ -1,6 +1,9 @@
 /**
- * Ordering and narrowing the Transaction list in the overlay that finds a
- * Transaction for a File (#244).
+ * Ordering and narrowing the candidate list in the two connect windows: the
+ * one that finds a Transaction for a File (#244) and its mirror that finds a
+ * File for a Transaction (#555). The reference date is the File's date in the
+ * first and the Transaction's in the second; a candidate's date is a
+ * Transaction's booking date or a File's extracted date.
  *
  * Two registers, deliberately: the mechanism is **proximity** (the word the
  * scorers already use), the label the user reads is "Closest".
@@ -24,7 +27,7 @@ export const CONNECT_SORT_OPTIONS: Array<{ value: ConnectSortMode; label: string
   { value: "newest", label: "Newest" },
 ];
 
-/** ± days around the File's date; null is "all". */
+/** ± days around the reference date; null is "all". */
 export type ConnectDateWindow = 7 | 30 | null;
 
 export const CONNECT_DATE_WINDOW_OPTIONS: Array<{ value: ConnectDateWindow; label: string }> = [
@@ -35,30 +38,35 @@ export const CONNECT_DATE_WINDOW_OPTIONS: Array<{ value: ConnectDateWindow; labe
 
 export interface ConnectCandidate {
   id: string;
-  /** Milliseconds since epoch. */
-  dateMs: number;
+  /**
+   * Milliseconds since epoch. Null for a File with no extracted date, which
+   * no date filter hides and every date order puts last (#555).
+   */
+  dateMs: number | null;
   partnerId?: string | null;
 }
 
 export interface ConnectFilters {
-  /** Keep only Transactions assigned to this Partner. Null or absent: off. */
+  /** Keep only candidates assigned to this Partner. Null or absent: off. */
   partnerId?: string | null;
-  /** ± days around `fileDateMs`. Null or absent: all. */
+  /** ± days around `referenceDateMs`. Null or absent: all. */
   dateWindowDays?: ConnectDateWindow;
-  /** The File's extracted date; without one the date window cannot apply. */
-  fileDateMs?: number | null;
+  /** The date the window is around; without one it cannot apply. */
+  referenceDateMs?: number | null;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export function filterConnectCandidates<T extends ConnectCandidate>(
   candidates: readonly T[],
-  { partnerId, dateWindowDays, fileDateMs }: ConnectFilters
+  { partnerId, dateWindowDays, referenceDateMs }: ConnectFilters
 ): T[] {
   return candidates.filter((c) => {
     if (partnerId && c.partnerId !== partnerId) return false;
-    if (dateWindowDays != null && fileDateMs != null) {
-      if (Math.abs(c.dateMs - fileDateMs) > dateWindowDays * DAY_MS) return false;
+    // An undated candidate is never hidden by a date window: an unextracted
+    // document must not silently vanish.
+    if (dateWindowDays != null && referenceDateMs != null && c.dateMs != null) {
+      if (Math.abs(c.dateMs - referenceDateMs) > dateWindowDays * DAY_MS) return false;
     }
     return true;
   });
@@ -70,20 +78,24 @@ export function filterConnectCandidates<T extends ConnectCandidate>(
  *
  * - best: scored candidates first by confidence, the rest newest first. This
  *   is exactly the order the overlay had before there was a choice.
- * - closest-date: smallest distance from the File's date, in either direction.
- *   Not the same as newest: a File from March puts March first, not today.
- *   Without a File date there is nothing to be close to, so it reads as newest.
+ * - closest-date: smallest distance from the reference date, in either
+ *   direction. Not the same as newest: a March reference puts March first, not
+ *   today. Without a reference date there is nothing to be close to, so it
+ *   reads as newest.
  * - newest: date descending.
+ *
+ * An undated candidate sorts after every dated one in each date order.
  */
 export function sortConnectCandidates<T extends ConnectCandidate>(
   candidates: readonly T[],
   mode: ConnectSortMode,
   opts: {
     confidenceOf: (candidate: T) => number | undefined;
-    fileDateMs?: number | null;
+    referenceDateMs?: number | null;
   }
 ): T[] {
-  const newest = (a: T, b: T) => b.dateMs - a.dateMs;
+  const undatedLast = (a: T, b: T) => (a.dateMs == null ? 1 : 0) - (b.dateMs == null ? 1 : 0);
+  const newest = (a: T, b: T) => undatedLast(a, b) || (b.dateMs ?? 0) - (a.dateMs ?? 0);
   const sorted = [...candidates];
 
   if (mode === "best") {
@@ -97,11 +109,11 @@ export function sortConnectCandidates<T extends ConnectCandidate>(
     });
   }
 
-  if (mode === "closest-date" && opts.fileDateMs != null) {
-    const fileDateMs = opts.fileDateMs;
+  if (mode === "closest-date" && opts.referenceDateMs != null) {
+    const reference = opts.referenceDateMs;
     return sorted.sort((a, b) => {
-      const proximity =
-        Math.abs(a.dateMs - fileDateMs) - Math.abs(b.dateMs - fileDateMs);
+      if (a.dateMs == null || b.dateMs == null) return newest(a, b);
+      const proximity = Math.abs(a.dateMs - reference) - Math.abs(b.dateMs - reference);
       return proximity !== 0 ? proximity : newest(a, b);
     });
   }
@@ -114,7 +126,13 @@ export function sortConnectCandidates<T extends ConnectCandidate>(
  * reload (#244). Deliberately not persisted per user: a sort set three weeks
  * ago and forgotten is a silent wrong-order bug, and the scorer's order is
  * where the user should land by default.
+ *
+ * Remembered per window, by what it lists (#555): the Files-side window lists
+ * Transactions, the Transaction-side one Files, and neither overwrites the
+ * other's choice.
  */
+export type ConnectWindowList = "transactions" | "files";
+
 export interface ConnectControls {
   sort: ConnectSortMode;
   partnerOnly: boolean;
@@ -127,12 +145,20 @@ export const DEFAULT_CONNECT_CONTROLS: ConnectControls = {
   dateWindowDays: null,
 };
 
-let remembered: ConnectControls = { ...DEFAULT_CONNECT_CONTROLS };
+const remembered: Record<ConnectWindowList, ConnectControls> = {
+  transactions: { ...DEFAULT_CONNECT_CONTROLS },
+  files: { ...DEFAULT_CONNECT_CONTROLS },
+};
 
-export function rememberedConnectControls(): ConnectControls {
-  return { ...remembered };
+export function rememberedConnectControls(
+  list: ConnectWindowList = "transactions"
+): ConnectControls {
+  return { ...remembered[list] };
 }
 
-export function rememberConnectControls(controls: ConnectControls): void {
-  remembered = { ...controls };
+export function rememberConnectControls(
+  controls: ConnectControls,
+  list: ConnectWindowList = "transactions"
+): void {
+  remembered[list] = { ...controls };
 }

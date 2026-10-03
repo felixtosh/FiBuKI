@@ -34,6 +34,8 @@ import type {
   NonClaimableVatReason,
   DerivationStep,
   UvaReportResult,
+  ZeroRatedSaleEntry,
+  ZmServiceEntry,
 } from "./types";
 import type { UvaReconciliation } from "./reconcile";
 import type { FiledComparison } from "./filedRecord";
@@ -238,6 +240,38 @@ export interface FilingBlocker {
   detail: string;
 }
 
+/**
+ * Sales whose place of supply is abroad (§ 3a Abs 6), which reach no Kennzahl
+ * (#565). Listed so the Tax Advisor still sees the revenue: it is not taxable
+ * in Austria, and it is income all the same.
+ */
+export interface NotTaxableAbroad {
+  /** Net, cents; on the cash basis like the rest of the report. */
+  eu: { total: number; sales: ZeroRatedSaleEntry[] };
+  nonEu: { total: number; sales: ZeroRatedSaleEntry[] };
+}
+
+export type FilingWarningCode =
+  /** EU services were performed in the period: a Zusammenfassende Meldung is due. */
+  | "zm-due"
+  /** A 0% sale nothing classified, booked in KZ 011 as before #565. */
+  | "zero-rated-sale-undetermined"
+  /** A 0% sale classified by the detection rule, not yet confirmed. */
+  | "zero-rated-sale-detected";
+
+/**
+ * Something the filing wants a person to see that does not stop it going out
+ * (#565). A blocker says the figures cannot be signed; a warning says they can,
+ * and names what else is owed or worth a look.
+ */
+export interface FilingWarning {
+  code: FilingWarningCode;
+  detail: string;
+  transactionIds: string[];
+  /** zm-due only: the last day the ZM can be filed, YYYY-MM-DD. */
+  dueDate?: string;
+}
+
 export interface UvaFiling {
   report: UvaReportResult;
   /**
@@ -254,6 +288,10 @@ export interface UvaFiling {
    */
   fxRateDeltas: FxRateDelta[];
   openItems: UvaOpenItem[];
+  /** Services supplied abroad, off the U30, split EU / non-EU (#565). */
+  notTaxableAbroad: NotTaxableAbroad;
+  /** Not blockers: the ZM due date, and 0% sales a person has not classified (#565). */
+  warnings: FilingWarning[];
   /** Comparison against an earlier run of the same period, when one was kept. */
   reconciliation: UvaReconciliation | null;
   handover: UvaFilingHandover;
@@ -468,6 +506,73 @@ export function deriveFxRateDeltas(result: UvaReportResult): FxRateDelta[] {
   });
 }
 
+/** The not-taxable-in-Austria section of a run (#565). */
+export function deriveNotTaxableAbroad(result: UvaReportResult): NotTaxableAbroad {
+  // A run stored before #565 has no list.
+  const sales = result.zeroRatedSales ?? [];
+  const eu = sales.filter((s) => s.kind === "service-eu");
+  const nonEu = sales.filter((s) => s.kind === "service-non-eu");
+  const total = (xs: ZeroRatedSaleEntry[]) => xs.reduce((s, x) => s + x.net, 0);
+  return {
+    eu: { total: total(eu), sales: eu },
+    nonEu: { total: total(nonEu), sales: nonEu },
+  };
+}
+
+/**
+ * The last day a Zusammenfassende Meldung for the period can be filed: the end
+ * of the month after it (Art 21 Abs 3 UStG). Calendar arithmetic on the ISO
+ * string, so no host timezone is read.
+ */
+export function zmDueDate(periodEnd: string): string {
+  const [y, m] = periodEnd.split("-").map(Number);
+  const dueYear = m === 12 ? y + 1 : y;
+  const dueMonth = m === 12 ? 1 : m + 1;
+  const lastDay = new Date(Date.UTC(dueYear, dueMonth, 0)).getUTCDate();
+  return `${dueYear}-${String(dueMonth).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+}
+
+/** The ZM warning and the 0% sales that want a person's look (#565). */
+export function deriveFilingWarnings(result: UvaReportResult): FilingWarning[] {
+  const warnings: FilingWarning[] = [];
+  const zm: ZmServiceEntry[] = result.zmServices ?? [];
+  if (zm.length > 0) {
+    const dueDate = zmDueDate(result.period.end);
+    warnings.push({
+      code: "zm-due",
+      detail:
+        `Zusammenfassende Meldung due by ${dueDate}: ${zm.length} service(s) to EU ` +
+        `businesses were performed in this period, counted by service date. FiBuKI ` +
+        `does not file the ZM.`,
+      transactionIds: zm.map((z) => z.transactionId),
+      dueDate,
+    });
+  }
+  const sales = result.zeroRatedSales ?? [];
+  const undetermined = sales.filter((s) => s.kind === "undetermined");
+  if (undetermined.length > 0) {
+    warnings.push({
+      code: "zero-rated-sale-undetermined",
+      detail:
+        `${undetermined.length} sale(s) at 0% are booked in KZ 011 as exports of goods ` +
+        `because nothing says what they are. A service supplied abroad belongs on no ` +
+        `Kennzahl.`,
+      transactionIds: undetermined.map((s) => s.transactionId),
+    });
+  }
+  const detected = sales.filter((s) => s.basis === "detected");
+  if (detected.length > 0) {
+    warnings.push({
+      code: "zero-rated-sale-detected",
+      detail:
+        `${detected.length} sale(s) at 0% were read as services supplied abroad from ` +
+        `the document (no VAT printed, a customer outside Austria). Confirm or correct them.`,
+      transactionIds: detected.map((s) => s.transactionId),
+    });
+  }
+  return warnings;
+}
+
 export interface BuildFilingInput {
   report: UvaReportResult;
   /** Declared open items; every one needs a rationale and a stated effect. */
@@ -585,6 +690,8 @@ export function buildUvaFiling(input: BuildFilingInput): UvaFiling {
     exceptions,
     fxRateDeltas: deriveFxRateDeltas(report),
     openItems,
+    notTaxableAbroad: deriveNotTaxableAbroad(report),
+    warnings: deriveFilingWarnings(report),
     reconciliation,
     handover,
     blockers,

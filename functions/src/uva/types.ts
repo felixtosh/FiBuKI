@@ -165,6 +165,51 @@ export interface UvaForeignRegime {
   importVatScheme?: "paid" | "deferred" | null;
 }
 
+/**
+ * What a 0% sale is (#565). Decides where its net lands, because a 0% rate
+ * alone cannot: a B2B service supplied abroad (§ 3a Abs 6) is not taxable in
+ * Austria and leaves the U30 entirely, while an export of goods (§ 7) is a
+ * tax-free supply reported in KZ 011.
+ *
+ *  - service-eu      place of supply in another EU state; also due on the
+ *                    Zusammenfassende Meldung
+ *  - service-non-eu  place of supply outside the EU (GB and XI count here)
+ *  - export-goods    Ausfuhrlieferung, KZ 011
+ *  - undetermined    nothing says which; booked as KZ 011, as before #565,
+ *                    and flagged so nothing silently leaves the form
+ */
+export type SaleSupplyKind = "service-eu" | "service-non-eu" | "export-goods";
+
+/** The kinds a person can set on a Transaction (#565); the write paths validate against it. */
+export const SALE_SUPPLY_KINDS: readonly SaleSupplyKind[] = [
+  "service-eu",
+  "service-non-eu",
+  "export-goods",
+];
+
+/**
+ * Where a sale's supply kind came from (#565), in precedence order: a
+ * person's override on the Transaction, the setting on a FiBuKI Invoice, the
+ * detection rule over a File that is not one.
+ */
+export type SaleSupplyBasis = "manual" | "invoice" | "detected";
+
+/** A money-in Transaction's supply kind, as the adapter resolved it (#565). */
+export interface UvaSaleSupply {
+  kind: SaleSupplyKind | "undetermined";
+  /** Null exactly when the kind is undetermined. */
+  basis: SaleSupplyBasis | null;
+  /** The customer's UID, when a document names one. */
+  customerVatId?: string | null;
+  /**
+   * The day the service was performed, as the document dates it: the
+   * invoice date. The Zusammenfassende Meldung is dated by the performance
+   * of the service (Art 21 Abs 3 UStG), not by the payment, so this is the
+   * one figure on this surface that is not the bank date.
+   */
+  serviceDate?: string | null;
+}
+
 /** Per-rate group: the atom of derivation (R4/R6). */
 export interface RateGroup {
   /** VAT rate 0-100 */
@@ -203,6 +248,11 @@ export interface UvaTransaction {
   invoiceRateGroups?: RateGroup[] | null;
   /** D3 classification; null/undefined = domestic. */
   foreignRegime?: UvaForeignRegime | null;
+  /**
+   * Income only: what the 0% part of this sale is (#565). Read only for a
+   * 0% rate group; absent reads as undetermined.
+   */
+  saleSupply?: UvaSaleSupply | null;
   /**
    * Instalments: fraction of the connected file's total already claimed by
    * transactions in EARLIER periods (0-1). This period's claim is capped so
@@ -540,6 +590,41 @@ export interface CorrectionEntry {
   printedVatMismatch: boolean;
 }
 
+/**
+ * One sale's 0% net and what it was booked as (#565). Every money-in
+ * Transaction with a 0% rate group in the period gets one, so the report can
+ * show what left the form, what stayed in KZ 011, and what wants a review.
+ */
+export interface ZeroRatedSaleEntry {
+  transactionId: string;
+  /** Bank date (Ist). */
+  date: string;
+  partner: string | null;
+  /** The 0% net this Transaction contributed, cents. */
+  net: number;
+  kind: SaleSupplyKind | "undetermined";
+  basis: SaleSupplyBasis | null;
+  customerVatId: string | null;
+  /** True for a detected or undetermined kind: a person has not confirmed it. */
+  needsReview: boolean;
+}
+
+/**
+ * A service supplied to an EU business whose performance falls in the period
+ * (#565), whenever it was paid. What the Zusammenfassende Meldung warning
+ * counts: the ZM is dated by the service, not by the money.
+ */
+export interface ZmServiceEntry {
+  transactionId: string;
+  serviceDate: string;
+  /** Bank date — may fall outside the period. */
+  paidOn: string;
+  partner: string | null;
+  customerVatId: string | null;
+  /** The 0% net, cents. */
+  net: number;
+}
+
 export interface KennzahlFigure {
   /** Cents */
   value: number;
@@ -591,6 +676,17 @@ export interface UvaReportResult {
   reverseCharge: ReverseChargeEntry[];
   /** Refunds booked as corrections of their originals, and the unlinked ones (#564). */
   corrections: CorrectionEntry[];
+  /**
+   * Every 0% sale in the period and what it was booked as (#565). A service
+   * supplied abroad here contributed to no Kennzahl. Optional: a run stored
+   * before #565 has none.
+   */
+  zeroRatedSales?: ZeroRatedSaleEntry[];
+  /**
+   * EU services performed in the period, by service date (#565), for the ZM
+   * warning. Optional for the same reason.
+   */
+  zmServices?: ZmServiceEntry[];
   /** Spec §3: EU Kennzahlen are structurally-empty-with-reason until real detection lands. */
   euKennzahlen: { basis: "not-implemented" | "measured" };
 }

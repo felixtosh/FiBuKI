@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from "react";
 import { format } from "date-fns";
+import { useTranslations } from "next-intl";
 import { fetchWithAuth } from "@/lib/api/fetch-with-auth";
 import {
   Search,
@@ -43,17 +44,40 @@ import { isPdfAttachment } from "@/lib/email-providers/interface";
 import { termsFromQuery } from "@/functions/src/mail/search-terms";
 import type { MailSearchTerms } from "@/functions/src/mail/provider";
 import { ConnectResultRow } from "@/components/ui/connect-result-row";
-import { otherConnectionCount } from "@/lib/matching/connection-count";
+import { isConnectCandidateFile, otherConnectionCount } from "@/lib/matching/connection-count";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  CONNECT_DATE_WINDOW_OPTIONS,
+  CONNECT_SORT_OPTIONS,
+  ConnectControls,
+  ConnectSortMode,
+  filterConnectCandidates,
+  rememberConnectControls,
+  rememberedConnectControls,
+  sortConnectCandidates,
+} from "@/lib/matching/connect-candidate-order";
+import { classifyFileStrict } from "@/lib/files/file-kind";
+import { fileSearchMatches } from "@/functions/src/matching/fileSearch";
+import { readRejectedFileIds } from "@/functions/src/matching/rejectedFiles";
+import { readDismissedTransactionIds } from "@/functions/src/matching/dismissedTransactions";
+import {
+  TRANSACTION_MATCH_CONFIG,
+  getMatchSourceLabel,
+} from "@/types/transaction-matching";
+import { TaxFile } from "@/types/file";
+import { toDateSafe } from "@/lib/utils";
 import { FilePreview } from "./file-preview";
 import { GmailAttachmentPreview } from "./gmail-attachment-preview";
-import {
-  useUnifiedFileSearch,
-  UnifiedSearchResult,
-  TransactionInfo,
-} from "@/hooks/use-unified-file-search";
 import { usePartners } from "@/hooks/use-partners";
 import { useEmailIntegrations } from "@/hooks/use-email-integrations";
-import { useTransactionFiles } from "@/hooks/use-files";
+import { useFiles, useTransactionFiles } from "@/hooks/use-files";
+import { useFileMatching } from "@/hooks/use-file-matching";
 import {
   uploadFile,
   UPLOAD_ACCEPTED_TYPES,
@@ -210,6 +234,12 @@ interface ConnectFileOverlayProps {
   ) => Promise<void>;
   connectedFileIds?: string[];
   transaction?: Transaction | null;
+  /**
+   * A File to open with, selected and previewed on the Files tab: a
+   * suggestion from the Transaction's detail panel, looked at before it is
+   * accepted (#555).
+   */
+  initialFileId?: string | null;
 }
 
 interface EmailWithContent extends EmailMessage {
@@ -232,8 +262,10 @@ export function ConnectFileOverlay({
   onSelect,
   connectedFileIds = [],
   transaction,
+  initialFileId = null,
 }: ConnectFileOverlayProps) {
   const { userId } = useAuth();
+  const t = useTranslations("connect");
 
   // Common state
   const [activeTab, setActiveTab] = useState<"files" | "gmail-attachments" | "email-to-pdf" | "browser">("files");
@@ -247,7 +279,12 @@ export function ConnectFileOverlay({
   const [showAllSuggestions, setShowAllSuggestions] = useState(false);
 
   // Files tab state
-  const [selectedResult, setSelectedResult] = useState<UnifiedSearchResult | null>(null);
+  const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
+  // What the user typed into the search box, as opposed to the mail query the
+  // window fills in on its own. Only this narrows the Files tab (#555): the
+  // auto-filled query is a mailbox search, and gating the user's own Files on
+  // it is how the File the matcher suggests went missing from this list.
+  const [filesQuery, setFilesQuery] = useState("");
 
   // Gmail attachments tab state
   const [gmailMessages, setGmailMessages] = useState<EmailMessage[]>([]);
@@ -412,31 +449,109 @@ export function ConnectFileOverlay({
     setShowAllSuggestions(false);
   }, [open, suggestionsLoading, typedSuggestions.length, suggestedQueries.length]);
 
-  // Build transaction info for the search hook
-  const searchTransactionInfo: TransactionInfo | null = useMemo(() => {
-    if (!transaction) return null;
-    return {
-      id: transaction.id,
-      date: transaction.date.toDate(),
-      amount: transaction.amount,
-      currency: transaction.currency,
-      partner: transaction.partner || undefined,
-      partnerId: transaction.partnerId || undefined,
-    };
-  }, [transaction]);
+  // === Files tab: the user's Files, ranked by the matcher (#555) ===
+  //
+  // Every connect-candidate File the client already holds, with the server's
+  // Confidence attached where findFileMatchesForTransaction returned one.
+  // Nothing about a File is sent to the server and nothing is scored here.
+  const { files: allFiles, loading: filesLoading, copies } = useFiles();
+  const filesById = useMemo(() => {
+    const map = new Map<string, TaxFile>();
+    for (const f of allFiles) map.set(f.id, f);
+    return map;
+  }, [allFiles]);
 
-  // Local files search hook
   const {
-    results: localFileResults,
-    loading: localFilesLoading,
-    search: searchLocalFiles,
-    clear: clearLocalFiles,
-    hasSearched: hasSearchedLocalFiles,
-  } = useUnifiedFileSearch(
-    searchTransactionInfo || { id: "", date: new Date(), amount: 0, currency: "EUR" },
-    partner,
-    { localOnly: true }
+    matches: fileMatches,
+    hasLoaded: fileMatchesLoaded,
+    isLoading: fileMatchesLoading,
+    fetchMatches: fetchFileMatches,
+    clearMatches: clearFileMatches,
+  } = useFileMatching({ transactionId: open ? transaction?.id : null, limit: 100 });
+  const fileMatchMap = useMemo(
+    () => new Map(fileMatches.map((m) => [m.fileId, m])),
+    [fileMatches]
   );
+
+  // Ranked on open; a typed search goes to the server too, debounced, so a
+  // File dated outside the window can still be scored and shown.
+  const trimmedFilesQuery = filesQuery.trim();
+  useEffect(() => {
+    if (!open || !transaction?.id) return;
+    const timer = setTimeout(
+      () => fetchFileMatches(trimmedFilesQuery || undefined),
+      trimmedFilesQuery ? 300 : 0
+    );
+    return () => clearTimeout(timer);
+  }, [open, transaction?.id, trimmedFilesQuery, fetchFileMatches]);
+
+  // Sort and chips, remembered apart from the Files-side window's (#244, #555).
+  const [controls, setControlsState] = useState(rememberedFileControls);
+  const updateControls = useCallback((patch: Partial<ConnectControls>) => {
+    setControlsState((prev) => {
+      const next = { ...prev, ...patch };
+      rememberConnectControls(next, "files");
+      return next;
+    });
+  }, []);
+  const transactionDateMs = transaction?.date.toMillis() ?? null;
+  const transactionPartnerId = transaction?.partnerId ?? null;
+
+  // A Rejection of this pair, on either side, holds unless the user searches:
+  // the search is the way back to a rejected File by hand.
+  const rejectedFileIds = useMemo(() => {
+    const ids = readRejectedFileIds(transaction);
+    if (transaction?.id) {
+      for (const f of allFiles) {
+        if (readDismissedTransactionIds(f).has(transaction.id)) ids.add(f.id);
+      }
+    }
+    return ids;
+  }, [transaction, allFiles]);
+
+  const visibleFiles = useMemo(() => {
+    const candidates = allFiles
+      .filter((f) => {
+        // Files connected elsewhere stay in, badged with their count (#241).
+        // A Copy is never offered (#162): its original is the File to connect.
+        if (!isConnectCandidateFile(f) || copies.has(f.id)) return false;
+        // PDFs and images only. Some records carry no fileType (#248).
+        const { isPdf, isImage } = classifyFileStrict(f.fileType);
+        if (!isPdf && !isImage) return false;
+        if (trimmedFilesQuery) return fileSearchMatches(f, trimmedFilesQuery).length > 0;
+        return !rejectedFileIds.has(f.id);
+      })
+      .map((f) => ({
+        id: f.id,
+        dateMs: toDateSafe(f.extractedDate)?.getTime() ?? null,
+        partnerId: f.partnerId ?? null,
+        file: f,
+      }));
+    const narrowed = filterConnectCandidates(candidates, {
+      partnerId: controls.partnerOnly ? transactionPartnerId : null,
+      dateWindowDays: controls.dateWindowDays,
+      referenceDateMs: transactionDateMs,
+    });
+    return sortConnectCandidates(narrowed, controls.sort, {
+      // Best match is the server's Confidence, never a local score.
+      confidenceOf: (c) => fileMatchMap.get(c.id)?.confidence,
+      referenceDateMs: transactionDateMs,
+    }).map((c) => c.file);
+  }, [
+    allFiles,
+    copies,
+    trimmedFilesQuery,
+    rejectedFileIds,
+    controls,
+    transactionPartnerId,
+    transactionDateMs,
+    fileMatchMap,
+  ]);
+
+  // The list renders once both the Files and the server's scores are in, so
+  // a slow load never reads as "No files found".
+  const filesTabLoading = filesLoading || !fileMatchesLoaded;
+  const selectedFile = selectedFileId ? filesById.get(selectedFileId) ?? null : null;
 
   // Transaction date for sorting results by proximity
   const transactionDate = transaction?.date.toDate();
@@ -781,22 +896,21 @@ export function ConnectFileOverlay({
       return new Set<string>();
     }
     const matches = new Set<string>();
-    for (const result of localFileResults) {
-      if (result.type !== "local" || !result.fileId) continue;
-      const fileName = result.filename.toLowerCase();
+    for (const file of visibleFiles) {
+      const fileName = file.fileName.toLowerCase();
       for (const pattern of partnerStrategies.localPatterns) {
         if (
           globMatch(pattern.pattern, fileName) ||
           (pattern.normalized &&
             fileName.includes(pattern.normalized.toLowerCase()))
         ) {
-          matches.add(result.fileId);
+          matches.add(file.id);
           break;
         }
       }
     }
     return matches;
-  }, [strategyMode, localFileResults, partnerStrategies.localPatterns]);
+  }, [strategyMode, visibleFiles, partnerStrategies.localPatterns]);
 
   const getLocalStrategyPattern = useCallback(
     (filename: string): string | null => {
@@ -997,16 +1111,10 @@ export function ConnectFileOverlay({
     setSearchLoading(true);
     setError(null);
     setHasSearched(true);
-    setSelectedResult(null);
+    setSelectedFileId(null);
     setSelectedAttachmentKey(null);
     setSelectedEmail(null);
     setGmailAuthIssues({});
-
-    if (partnerStrategies.localPatterns.length > 0) {
-      searchLocalFiles("");
-    } else if (primaryQuery) {
-      searchLocalFiles(primaryQuery);
-    }
 
     if (!hasMailIntegration || mailIntegrations.length === 0 || allQueries.length === 0) {
       setStrategyGmailMessageIds(new Set());
@@ -1093,7 +1201,6 @@ export function ConnectFileOverlay({
     partnerStrategies,
     partner?.emailDomains,
     simpleSearch,
-    searchLocalFiles,
     hasMailIntegration,
     mailIntegrations,
     searchMail,
@@ -1112,7 +1219,7 @@ export function ConnectFileOverlay({
     if (transactionChanged) {
       setActiveTab("files");
       setSearchQuery("");
-      setSelectedResult(null);
+      setSelectedFileId(null);
       setGmailMessages([]);
       setSelectedAttachmentKey(null);
       setEmails([]);
@@ -1125,9 +1232,16 @@ export function ConnectFileOverlay({
       setStrategyGmailMessageIds(new Set());
       setStrategyEmailMessageIds(new Set());
       setStrategyQueryByMessageId(new Map());
-      clearLocalFiles();
+      setFilesQuery("");
+      clearFileMatches();
     }
-  }, [open, transaction?.id, clearLocalFiles]);
+
+    // A suggestion opened from the detail panel arrives selected (#555).
+    if (initialFileId) {
+      setActiveTab("files");
+      setSelectedFileId(initialFileId);
+    }
+  }, [open, transaction?.id, initialFileId, clearFileMatches]);
 
   // Search handler - searches based on active tab
   const handleSearch = useCallback(async (
@@ -1149,14 +1263,14 @@ export function ConnectFileOverlay({
     setSearchLoading(true);
     setError(null);
     setHasSearched(true);
-    setSelectedResult(null);
+    setSelectedFileId(null);
     setSelectedAttachmentKey(null);
     setSelectedEmail(null);
     setGmailAuthIssues({});
 
     try {
-      // Always search local files
-      searchLocalFiles(searchWith);
+      // The Files tab is ranked by the matcher and narrowed only by what the
+      // user types (#555); this searches the mailboxes.
 
       // Search Gmail if integrations available
       if (hasMailIntegration && mailIntegrations.length > 0) {
@@ -1207,7 +1321,6 @@ export function ConnectFileOverlay({
     }
   }, [
     searchQuery,
-    searchLocalFiles,
     hasMailIntegration,
     mailIntegrations,
     searchMail,
@@ -1258,19 +1371,17 @@ export function ConnectFileOverlay({
 
   // Handle selecting a local file
   const handleSelectLocalFile = async () => {
-    if (!selectedResult) return;
+    if (!selectedFile) return;
 
     setIsConnecting(true);
     try {
-      if (selectedResult.type === "local" && selectedResult.fileId) {
-        const strategyPattern = getLocalStrategyPattern(selectedResult.filename);
-        const searchPattern = strategyPattern || searchQuery || undefined;
-        await onSelect(selectedResult.fileId, {
-          sourceType: "local",
-          searchPattern,
-          resultType: "local_file",
-        });
-      }
+      const strategyPattern = getLocalStrategyPattern(selectedFile.fileName);
+      const searchPattern = strategyPattern || trimmedFilesQuery || undefined;
+      await onSelect(selectedFile.id, {
+        sourceType: "local",
+        searchPattern,
+        resultType: "local_file",
+      });
       onClose();
     } catch (error) {
       console.error("Failed to connect file:", error);
@@ -1532,8 +1643,8 @@ export function ConnectFileOverlay({
     return new Intl.NumberFormat("de-DE", { style: "currency", currency: currency || "EUR" }).format(amount / 100);
   };
 
-  const isFileConnected = (result: UnifiedSearchResult) => {
-    return result.type === "local" && result.fileId ? connectedFileIds.includes(result.fileId) : false;
+  const isFileConnected = (fileId: string) => {
+    return connectedFileIds.includes(fileId);
   };
 
   // Subtitle
@@ -1547,7 +1658,7 @@ export function ConnectFileOverlay({
     </>
   ) : undefined;
 
-  const loading = searchLoading || localFilesLoading;
+  const loading = searchLoading || (activeTab === "files" && fileMatchesLoading);
 
   return (
     <TooltipProvider>
@@ -1574,7 +1685,10 @@ export function ConnectFileOverlay({
                 <Input
                   placeholder="Search..."
                   value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    setFilesQuery(e.target.value);
+                  }}
                   onKeyDown={handleKeyDown}
                   className="pl-9"
                 />
@@ -1703,8 +1817,8 @@ export function ConnectFileOverlay({
                   >
                     <HardDrive className="h-3.5 w-3.5 shrink-0" />
                     <span className="hidden @min-[340px]:inline">Files</span>
-                    {hasSearchedLocalFiles && localFileResults.length > 0 && (
-                      <span className="text-[10px] text-muted-foreground">({localFileResults.length})</span>
+                    {!filesTabLoading && visibleFiles.length > 0 && (
+                      <span className="text-[10px] text-muted-foreground">({visibleFiles.length})</span>
                     )}
                   </TabsTrigger>
                 </TooltipTrigger>
@@ -1817,63 +1931,113 @@ export function ConnectFileOverlay({
             )}
 
             {/* Files Tab Results */}
-            <TabsContent value="files" className="flex-1 min-h-0 mt-0 data-[state=inactive]:hidden overflow-hidden" forceMount>
-              <ScrollArea className="h-full w-full">
-                {!hasSearchedLocalFiles ? (
+            <TabsContent value="files" className="flex-1 min-h-0 mt-0 data-[state=inactive]:hidden overflow-hidden flex flex-col" forceMount>
+              {/* Sort and chips (#555), the Files-side window's (#244) */}
+              <div className="px-3 py-2 border-b space-y-2 shrink-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground shrink-0">{t("sort.label")}</span>
+                  <Select
+                    value={controls.sort}
+                    onValueChange={(value) => updateControls({ sort: value as ConnectSortMode })}
+                  >
+                    <SelectTrigger className="h-8 text-xs" aria-label={t("sort.aria")}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {CONNECT_SORT_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value} className="text-xs">
+                          {t(SORT_LABEL_KEYS[option.value])}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {transactionPartnerId && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={controls.partnerOnly ? "default" : "outline"}
+                      className="h-6 px-2 text-xs rounded-full"
+                      aria-pressed={controls.partnerOnly}
+                      onClick={() => updateControls({ partnerOnly: !controls.partnerOnly })}
+                    >
+                      {t("partnerOnly")}
+                    </Button>
+                  )}
+                  {CONNECT_DATE_WINDOW_OPTIONS.map((option) => {
+                    const active = controls.dateWindowDays === option.value;
+                    return (
+                      <Button
+                        key={option.label}
+                        type="button"
+                        size="sm"
+                        variant={active ? "default" : "outline"}
+                        className="h-6 px-2 text-xs rounded-full"
+                        aria-pressed={active}
+                        onClick={() => updateControls({ dateWindowDays: option.value })}
+                      >
+                        {t(dateWindowLabelKey(option.value))}
+                      </Button>
+                    );
+                  })}
+                </div>
+              </div>
+              <ScrollArea className="flex-1 min-h-0 w-full">
+                {filesTabLoading ? (
                   <div className="p-8 text-center text-muted-foreground">
-                    <Search className="h-8 w-8 mx-auto mb-2 opacity-30" />
-                    <p className="text-sm">Search for files</p>
+                    <Loader2 className="h-6 w-6 mx-auto mb-2 animate-spin" />
+                    <p className="text-sm">{t("files.loading")}</p>
                   </div>
-                ) : localFileResults.length === 0 && !localFilesLoading ? (
+                ) : visibleFiles.length === 0 ? (
                   <div className="p-8 text-center text-muted-foreground">
                     <FileText className="h-8 w-8 mx-auto mb-2 opacity-30" />
-                    <p className="text-sm">No files found</p>
+                    <p className="text-sm">{t(emptyFilesKey(trimmedFilesQuery, controls))}</p>
                   </div>
                 ) : (
                   <div className="p-2 space-y-1 overflow-hidden">
-                    {localFileResults.map((result) => {
-                      const isConnected = isFileConnected(result);
-                      const isSelected = selectedResult?.id === result.id;
-                      const isPdf = result.mimeType === "application/pdf";
-                      const isStrategyMatch = !!(
-                        result.type === "local" &&
-                        result.fileId &&
-                        localStrategyMatchFileIds.has(result.fileId)
-                      );
+                    {visibleFiles.map((file) => {
+                      const match = fileMatchMap.get(file.id);
+                      const isPdf = classifyFileStrict(file.fileType).isPdf;
+                      const isStrategyMatch = localStrategyMatchFileIds.has(file.id);
+                      const isSuggested =
+                        match !== undefined &&
+                        TRANSACTION_MATCH_CONFIG.SUGGESTION_THRESHOLD <= match.confidence;
+                      const fileDate = toDateSafe(file.extractedDate);
+                      const matchedFields = trimmedFilesQuery
+                        ? fileSearchMatches(file, trimmedFilesQuery)
+                        : [];
 
                       return (
                         <ConnectResultRow
-                          key={result.id}
-                          id={result.id}
-                          title={result.filename}
-                          date={result.date ? format(result.date, "MMM d, yyyy") : undefined}
-                          amount={result.amount ? formatAmount(result.amount, result.currency) ?? undefined : undefined}
-                          subtitle={result.partner}
+                          key={file.id}
+                          id={file.id}
+                          title={file.fileName}
+                          date={fileDate ? format(fileDate, "MMM d, yyyy") : undefined}
+                          amount={formatAmount(file.extractedAmount, file.extractedCurrency) ?? undefined}
+                          subtitle={file.extractedPartner ?? undefined}
                           icon={
                             <div className="flex-shrink-0 w-10 h-10 rounded bg-muted flex items-center justify-center">
                               {isPdf ? <FileText className="h-5 w-5 text-red-500" /> : <Image className="h-5 w-5 text-blue-500" />}
                             </div>
                           }
-                          isSelected={isSelected}
-                          isConnected={isConnected}
+                          isSelected={selectedFileId === file.id}
+                          isConnected={isFileConnected(file.id)}
                           // Connections to Transactions other than this one (#241).
                           // A count only: a split payment puts one File on two.
-                          connectionCount={otherConnectionCount(
-                            result.file?.transactionIds,
-                            transaction?.id
-                          )}
+                          connectionCount={otherConnectionCount(file.transactionIds, transaction?.id)}
                           connectionNoun="Transaction"
-                          isHighlighted={isStrategyMatch}
-                          highlightVariant="strategy"
-                          confidence={result.score > 0 ? result.score : undefined}
+                          isHighlighted={isStrategyMatch || isSuggested}
+                          highlightVariant={isStrategyMatch ? "strategy" : "suggestion"}
+                          confidence={match?.confidence}
                           matchSignals={
-                            result.matchReasons?.length
-                              ? result.matchReasons
-                              : result.matchedFields?.length
-                              ? [`Matched: ${result.matchedFields.join(", ")}`]
+                            match?.matchSources.length
+                              ? match.matchSources.map((source) => getMatchSourceLabel(source))
+                              : matchedFields.length
+                              ? [t("files.matched", { fields: matchedFields.join(", ") })]
                               : undefined
                           }
-                          onClick={() => setSelectedResult(result)}
+                          onClick={() => setSelectedFileId(file.id)}
                         />
                       );
                     })}
@@ -2146,21 +2310,10 @@ export function ConnectFileOverlay({
         <div className="flex-1 flex flex-col min-h-0 min-w-0">
           {/* Files preview */}
           {activeTab === "files" && (
-            selectedResult ? (
+            selectedFile ? (
               <>
                 <div className="flex-1 overflow-hidden">
-                  {selectedResult.type === "gmail" && selectedResult.integrationId && selectedResult.messageId && selectedResult.attachmentId ? (
-                    <GmailAttachmentPreview
-                      integrationId={selectedResult.integrationId}
-                      messageId={selectedResult.messageId}
-                      attachmentId={selectedResult.attachmentId}
-                      mimeType={selectedResult.mimeType}
-                      filename={selectedResult.filename}
-                      fullSize
-                    />
-                  ) : (
-                    <FilePreview downloadUrl={selectedResult.previewUrl} fileType={selectedResult.mimeType} fileName={selectedResult.filename} fullSize />
-                  )}
+                  <FilePreview downloadUrl={selectedFile.downloadUrl} fileType={selectedFile.fileType} fileName={selectedFile.fileName} fullSize />
                 </div>
                 <div className="border-t p-4 flex justify-end gap-2 shrink-0">
                   <Button variant="outline" onClick={onClose}>Cancel</Button>
@@ -2394,6 +2547,31 @@ export function ConnectFileOverlay({
  * The mail tabs' empty state (#245). Says what is actually missing: no
  * mailbox connected at all, versus mailboxes that need re-authentication.
  */
+/** The Files tab's sort and chips as last left, apart from the Files-side window's. */
+function rememberedFileControls(): ConnectControls {
+  return rememberedConnectControls("files");
+}
+
+/** Message keys for the sort options; the option values are the helper's. */
+const SORT_LABEL_KEYS: Record<ConnectSortMode, string> = {
+  best: "sort.best",
+  "closest-date": "sort.closestDate",
+  newest: "sort.newest",
+};
+
+function dateWindowLabelKey(days: ConnectControls["dateWindowDays"]): string {
+  if (days === 7) return "dateWindow.days7";
+  if (days === 30) return "dateWindow.days30";
+  return "dateWindow.all";
+}
+
+/** Why the Files tab is empty: the search, the chips, or no Files at all. */
+function emptyFilesKey(query: string, controls: ConnectControls): string {
+  if (query) return "files.noneForSearch";
+  if (controls.partnerOnly || controls.dateWindowDays != null) return "files.noneForFilters";
+  return "files.none";
+}
+
 function MailTabEmptyState({
   state,
   mailboxes,

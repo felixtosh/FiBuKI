@@ -20,6 +20,7 @@ import { getStorage } from "firebase-admin/storage";
 import * as crypto from "crypto";
 import { analyzeEmailForInvoice } from "./geminiSearchHelper";
 import { isFileRejected } from "../matching/rejectedFiles";
+import { readBankOriginalAmount } from "../fx/bankOriginalAmount";
 import { generateQueriesWithGemini } from "./generateQueriesWithGemini";
 import {
   expectedInvoiceWindow,
@@ -122,6 +123,13 @@ interface Transaction {
   rejectedFileIds?: string[];
   description?: string;
   reference?: string;
+  /** The importer's preserved CSV row; carries the bank-stated original (#112). */
+  _original?: { rawRow?: Record<string, string> | null } | null;
+}
+
+/** The bank-stated original amount in cents, for the email scorer (#555). */
+function originalAmountOf(transaction: Transaction): number | null {
+  return readBankOriginalAmount(transaction._original?.rawRow)?.amount ?? null;
 }
 
 interface TaxFile {
@@ -1021,6 +1029,7 @@ async function executePartnerFilesStrategy(
         fileExtractedPartner: file.extractedPartner,
         // Transaction data
         transactionAmount: transaction.amount,
+        transactionOriginalAmount: originalAmountOf(transaction),
         transactionDate: transaction.date.toDate(),
         transactionName: transaction.name,
         transactionReference: transaction.reference,
@@ -1181,6 +1190,7 @@ async function executeAmountFilesStrategy(
           fileExtractedPartner: file.extractedPartner,
           // Transaction data
           transactionAmount: transaction.amount,
+          transactionOriginalAmount: originalAmountOf(transaction),
           transactionDate: txDate,
           transactionName: transaction.name,
           transactionReference: transaction.reference,
@@ -1458,6 +1468,7 @@ async function executeEmailAttachmentStrategy(
                     emailDate,
                     integrationId: integration.id,
                     transactionAmount: transaction.amount,
+                    transactionOriginalAmount: originalAmountOf(transaction),
                     transactionDate: transaction.date.toDate(),
                     transactionName: transaction.name,
                     transactionReference: transaction.reference,
@@ -1561,6 +1572,7 @@ async function executeEmailAttachmentStrategy(
                         emailDate,
                         integrationId: integration.id,
                         transactionAmount: transaction.amount,
+                        transactionOriginalAmount: originalAmountOf(transaction),
                         transactionDate: transaction.date.toDate(),
                         transactionName: transaction.name,
                         transactionReference: transaction.reference,
@@ -1849,6 +1861,7 @@ async function executeEmailInvoiceStrategy(
                   emailDate,
                   integrationId: integration.id,
                   transactionAmount: transaction.amount,
+                  transactionOriginalAmount: originalAmountOf(transaction),
                   transactionDate: txDate,
                   transactionName: transaction.name,
                   transactionReference: transaction.reference,

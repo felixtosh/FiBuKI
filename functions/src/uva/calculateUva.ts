@@ -35,12 +35,14 @@ import type {
   KennzahlFigure,
   NonClaimableVatEntry,
   RateGroup,
+  SaleSupplyKind,
   UnresolvedReason,
   UvaCalculationInput,
   UvaCorrection,
   UvaFile,
   UvaReportResult,
   UvaTransaction,
+  ZmServiceEntry,
 } from "./types";
 
 /** Bank-vs-invoice equality tolerance in cents — a product decision, not a legal bright line (spec §10.5). */
@@ -137,8 +139,11 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
     foreignVat: [],
     reverseCharge: [],
     corrections: [],
+    zeroRatedSales: [],
+    zmServices: [],
     euKennzahlen: { basis: "not-implemented" },
   };
+  const zeroRatedSales = result.zeroRatedSales!;
 
   const markUnresolved = (
     tx: UvaTransaction,
@@ -333,6 +338,7 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
     }
   }
 
+  result.zmServices = zmServicesOf(input, bounds);
   floorNegativeOutputBases();
 
   result.totalOutputVat = totalOutputVat;
@@ -496,11 +502,35 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
     reason: UnresolvedReason | null
   ) {
     if (income) {
+      // What the 0% part of this sale is (#565). A service supplied abroad
+      // (§ 3a Abs 6) is not taxable in Austria, so its net reaches no
+      // Kennzahl at all: not KZ 000, not KZ 011, not KZ 021. Everything else
+      // at 0% keeps the KZ 011 booking it always had.
+      const supply = tx.saleSupply ?? null;
+      const kind = supply?.kind ?? "undetermined";
+      const leavesForm = isServiceAbroad(kind);
+      const zeroGroups = d.groups.filter((g) => g.rate === 0);
+      if (zeroGroups.length > 0) {
+        zeroRatedSales.push({
+          transactionId: tx.id,
+          date: tx.date,
+          partner: tx.partnerName ?? null,
+          net: zeroGroups.reduce((s, g) => s + g.net, 0),
+          kind,
+          basis: supply?.basis ?? null,
+          customerVatId: supply?.customerVatId ?? null,
+          needsReview: kind === "undetermined" || supply?.basis === "detected",
+        });
+      }
+
       // Aggregate per KZ before counting so one transaction contributes
       // one count per Kennzahl regardless of its group structure.
       const perKz = new Map<string, number>();
       let totalNet = 0;
+      let onForm = false;
       for (const g of d.groups) {
+        if (g.rate === 0 && leavesForm) continue;
+        onForm = true;
         totalNet += g.net;
         totalOutputVat += g.vat;
         const acc = outputByRate.get(g.rate) ?? { base: 0, vat: 0 };
@@ -509,11 +539,11 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
         outputByRate.set(g.rate, acc);
         const code =
           g.rate === 0
-            ? "011" // 0% without EU detection = export (EU KZs stay not-implemented)
+            ? "011" // export of goods, or a 0% sale nothing has classified (#565)
             : OUTPUT_BASE_KZ[g.rate];
         if (code) perKz.set(code, (perKz.get(code) ?? 0) + g.net);
       }
-      addKz("000", totalNet, d.step);
+      if (onForm) addKz("000", totalNet, d.step);
       for (const [code, cents] of perKz) addKz(code, cents, d.step);
       recordDerivation(tx, {
         step: d.step,
@@ -534,6 +564,49 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
       });
     }
   }
+}
+
+/** A service whose place of supply is abroad (§ 3a Abs 6): off the U30 (#565). */
+export function isServiceAbroad(
+  kind: SaleSupplyKind | "undetermined" | null | undefined
+): kind is "service-eu" | "service-non-eu" {
+  return kind === "service-eu" || kind === "service-non-eu";
+}
+
+/**
+ * The EU services performed in the period, whenever they were paid (#565).
+ *
+ * The Zusammenfassende Meldung is dated by the performance of the service
+ * (Art 21 Abs 3 UStG), so this reads every candidate the caller passed, not
+ * only the ones whose bank date falls in the period. A sale without a service
+ * date falls back to its bank date. The net is the sale's 0% part, derived on
+ * the same lanes the period loop takes for income: a foreign-currency line or
+ * a no-receipt category derives nothing.
+ */
+function zmServicesOf(
+  input: UvaCalculationInput,
+  bounds: { start: string; end: string }
+): ZmServiceEntry[] {
+  const out: ZmServiceEntry[] = [];
+  for (const tx of input.transactions) {
+    if (tx.amount <= 0 || tx.saleSupply?.kind !== "service-eu") continue;
+    const serviceDate = tx.saleSupply.serviceDate ?? tx.date;
+    if (serviceDate < bounds.start || serviceDate > bounds.end) continue;
+    if (!isSameCurrency(tx.currency, "EUR") || tx.noReceiptCategory?.vatTreatment) continue;
+    const d = deriveRateGroups(tx, input.ecbRates ?? null);
+    if (!d.ok) continue;
+    const net = d.groups.filter((g) => g.rate === 0).reduce((s, g) => s + g.net, 0);
+    if (net === 0) continue;
+    out.push({
+      transactionId: tx.id,
+      serviceDate,
+      paidOn: tx.date,
+      partner: tx.partnerName ?? null,
+      customerVatId: tx.saleSupply.customerVatId ?? null,
+      net,
+    });
+  }
+  return out.sort((a, b) => a.serviceDate.localeCompare(b.serviceDate));
 }
 
 /** 20/120 of the bank gross — the foregone-VAT guess for the chasing worklist. */

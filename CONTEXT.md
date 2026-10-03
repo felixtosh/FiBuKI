@@ -484,6 +484,32 @@ _English_: none, cite verbatim
 _Avoid_: VAT report, tax return, advance VAT return
 _Avoid (de)_: USt-Meldung, Steuererklärung (the annual one)
 
+**Supply Kind**:
+What a 0% sale is: a Service Abroad (EU or non-EU), an export of goods, or undetermined. A
+0% rate alone does not say where the net belongs, so the UVA reads the kind: an export of
+goods is KZ 011, a Service Abroad is on no Kennzahl. It comes from the User's override on
+the Transaction, then the Invoice's setting, then detection on an uploaded invoice (no VAT
+printed, a customer outside Austria); a detected or undetermined kind is flagged (#565).
+_Deutsch_: Art der Leistung
+_Avoid_: sale type, export flag, zero-rate reason
+_Avoid (de)_: Umsatzart
+
+**Service Abroad**:
+A B2B service whose place of supply is where the customer is established, outside Austria
+(§ 3a Abs 6 UStG). Not taxable in Austria, so it leaves the U30 entirely and shows on the
+UVA report's "Not taxable in Austria" line instead. An EU one also belongs on the ZM.
+GB and XI customers are non-EU.
+_Deutsch_: Leistung mit Leistungsort im Ausland
+_Avoid_: export, foreign sale, reverse-charge sale
+_Avoid (de)_: Ausfuhr, Exportumsatz
+
+**ZM**:
+The Zusammenfassende Meldung: the quarterly or monthly list of EU Services Abroad, due at
+the end of the month after the period and dated by when the service was performed, not
+when it was paid. FiBuKI warns that one is due; it does not produce or file it.
+_English_: none, cite verbatim
+_Avoid_: EC Sales List, recapitulative statement
+
 **Filed Record**:
 What the User actually filed for one UVA period: every Kennzahl as submitted, recorded by
 Mark as filed (editable, for a filing corrected by hand) or by a FinanzOnline submission.

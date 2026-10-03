@@ -33,6 +33,7 @@ import {
   scoreFileAgainstTransactions,
 } from "./transactionScoring";
 import { readDismissedTransactionIds } from "./dismissedTransactions";
+import { loadScoringEcbRates } from "./scoringEcbRates";
 import { liveCopyIds } from "../files/copyOps";
 import { isFileRejected } from "./rejectedFiles";
 import { toDateSafe } from "../utils/toDateSafe";
@@ -164,6 +165,13 @@ export async function rescoreUnconnectedFilesForPartners(
       candidates = snapshot.docs;
     }
 
+    // One rate read per Partner too, over the same pool (#555).
+    const ecbRates = await loadScoringEcbRates(
+      db,
+      files.map((doc) => doc.data().extractedCurrency),
+      candidates
+    );
+
     let batch = db.batch();
     let pending = 0;
 
@@ -189,7 +197,7 @@ export async function rescoreUnconnectedFilesForPartners(
       // Scored against full amounts (no documentedAmounts), the same way
       // rescoreFileConnections.ts reuses the scorer: these are suggestions on
       // unconnected Files, and a Remainder judgement is the connect paths' job.
-      const scores = scoreFileAgainstTransactions(fileData, eligible, partner, new Map());
+      const scores = scoreFileAgainstTransactions(fileData, eligible, partner, new Map(), ecbRates);
 
       const suggestions: TransactionSuggestion[] = scores
         .filter((m) => m.confidence >= SCORING_CONFIG.SUGGESTION_THRESHOLD)

@@ -30,6 +30,7 @@ import {
   QueryGenerationPartner,
 } from "../precision-search/generateSearchQueries";
 import { isTransactionDismissed } from "../matching/dismissedTransactions";
+import { readBankOriginalAmount } from "../fx/bankOriginalAmount";
 
 export type FindReceiptStatus =
   | "connected"
@@ -212,6 +213,7 @@ export async function findReceiptForTransaction(
   const baseScoringContext: Pick<
     ScoreAttachmentInput,
     | "transactionAmount"
+    | "transactionOriginalAmount"
     | "transactionDate"
     | "transactionName"
     | "transactionReference"
@@ -219,6 +221,9 @@ export async function findReceiptForTransaction(
     | "transactionPartnerId"
   > = {
     transactionAmount,
+    // #555: the email states the charge in its own currency.
+    transactionOriginalAmount:
+      readBankOriginalAmount(tx._original?.rawRow)?.amount ?? null,
     transactionDate,
     transactionName,
     transactionReference,

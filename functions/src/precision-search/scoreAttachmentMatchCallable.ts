@@ -4,7 +4,9 @@
  */
 
 import { onCall, HttpsError } from "firebase-functions/v2/https";
+import { getFirestore } from "firebase-admin/firestore";
 import { loadDocumentedAmounts } from "../matching/documentedAmounts";
+import { readBankOriginalAmount } from "../fx/bankOriginalAmount";
 import {
   scoreAttachmentMatch,
   ScoreAttachmentInput,
@@ -108,9 +110,18 @@ export const scoreAttachmentMatchCallable = onCall<
     // here is the one way that guarantee breaks: the trigger derives its own
     // from `fileConnections` and the two answers can differ. Same read, same
     // source of truth, same answer.
-    const documentedAmount = transaction?.id
-      ? (await loadDocumentedAmounts([transaction.id])).get(transaction.id) ?? 0
+    //
+    // The bank-stated original amount (#555) is read off the same stored
+    // Transaction. Both only for the caller's own Transaction: an id that is
+    // someone else's scores as no Transaction record at all.
+    const txDoc = transaction?.id
+      ? await getFirestore().collection("transactions").doc(transaction.id).get()
+      : null;
+    const ownTx = txDoc?.exists && txDoc.data()?.userId === request.auth.uid ? txDoc : null;
+    const documentedAmount = ownTx
+      ? (await loadDocumentedAmounts([ownTx.id])).get(ownTx.id) ?? 0
       : 0;
+    const originalAmount = readBankOriginalAmount(ownTx?.data()?._original?.rawRow)?.amount ?? null;
 
     const scores = attachments.map((att) => {
       const input: ScoreAttachmentInput = {
@@ -130,6 +141,7 @@ export const scoreAttachmentMatchCallable = onCall<
         // Transaction data
         transactionAmount: transaction?.amount,
         transactionDocumentedAmount: documentedAmount,
+        transactionOriginalAmount: originalAmount,
         transactionDate,
         transactionName: transaction?.name,
         transactionReference: transaction?.reference,

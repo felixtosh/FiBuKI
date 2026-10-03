@@ -91,6 +91,29 @@ export interface FindTransactionMatchesResponse {
   totalCandidates: number;
 }
 
+// === The mirror: File matches for a Transaction (#555) ===
+
+export interface FindFileMatchesRequest {
+  transactionId: string;
+  /** Typed search text. Lifts the date gate and the Rejection filter. */
+  searchQuery?: string;
+  limit?: number;
+}
+
+export interface FileMatchResult {
+  fileId: string;
+  confidence: number;
+  matchSources: TransactionMatchSource[];
+  breakdown: ScoreBreakdown;
+  /** The amount was judged against the Transaction's Remainder (#239). */
+  scoredAgainstRemainder: boolean;
+}
+
+export interface FindFileMatchesResponse {
+  matches: FileMatchResult[];
+  totalCandidates: number;
+}
+
 // === Config (mirrors server config) ===
 
 export const TRANSACTION_MATCH_CONFIG = {

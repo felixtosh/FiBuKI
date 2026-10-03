@@ -15,8 +15,10 @@ import {
 import type {
   NonClaimableVatReason,
   UvaCorrection,
+  SaleSupplyKind,
   UvaFile,
   UvaForeignRegime,
+  UvaSaleSupply,
   UvaTransaction,
   VatTreatment,
 } from "./types";
@@ -35,6 +37,13 @@ export interface TransactionRecord {
    * Unset/null keeps the service heuristic below exactly as it was.
    */
   foreignSupplyKind?: "goods" | "service" | null;
+  /**
+   * A person's answer to what a 0% sale is (#565), the income-side mirror of
+   * `foreignSupplyKind`. Wins over the Invoice setting and over detection.
+   */
+  saleSupplyKind?: SaleSupplyKind | null;
+  /** The assigned Partner, whose country is the last customer-country signal (#565). */
+  partnerId?: string | null;
   noReceiptCategoryId?: string | null;
   noReceiptCategoryTemplateId?: string | null;
   fileIds?: string[];
@@ -69,7 +78,24 @@ export interface FileRecord {
   lineItemsUnreconciled?: boolean;
   lineItemsUnreconciledRates?: number[] | null;
   extractedVatId?: string | null;
-  extractedIssuer?: { vatId?: string | null } | null;
+  extractedIssuer?: { vatId?: string | null; country?: string | null } | null;
+  /** The bill-to party; the customer on a sale (#565). */
+  extractedRecipient?: { vatId?: string | null; country?: string | null } | null;
+  /** Which party is the user: "issuer" on a sale, "recipient" on a purchase. */
+  matchedUserAccount?: "issuer" | "recipient" | null;
+  /** ISO country of the counterparty (#540). */
+  extractedCountry?: string | null;
+  /** The document's printed total VAT, cents (#540); null when none is printed. */
+  extractedDocumentVatAmount?: number | null;
+  /** The invoice date: the service date of a sale, for the ZM (#565). */
+  extractedDate?: TimestampLike | null;
+  /** A FiBuKI Invoice's document (ADR-0006), as opposed to an uploaded one. */
+  isFibukiGenerated?: boolean;
+  /**
+   * A FiBuKI Invoice issued with "Service, place of supply abroad (§ 3a
+   * Abs 6)" set (#565), resolved to the customer's region at issue.
+   */
+  invoiceSupplyKind?: "service-eu" | "service-non-eu" | null;
   /**
    * A human's standing decision that this document's VAT is not deductible
    * (#203). The reason IS the marker — there is no separate boolean, so the
@@ -88,6 +114,12 @@ export interface CategoryRecord {
   id: string;
   templateId?: string | null;
   vatTreatment?: VatTreatment | null;
+}
+
+/** The Partner fields the customer-country fallback reads (#565). */
+export interface PartnerRecord {
+  id: string;
+  country?: string | null;
 }
 
 export interface TimestampLike {
@@ -220,6 +252,101 @@ export function deriveForeignRegime(
 }
 
 /**
+ * EU member states for the place-of-supply question (#565), as ISO codes. This
+ * is not `EU_UID_PREFIXES`: Northern Ireland (XI) is inside the EU for goods
+ * only, so a service to an XI business is a non-EU service, like one to GB.
+ */
+const EU27_COUNTRIES = new Set([
+  "AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "ES", "FI", "FR", "GR",
+  "HR", "HU", "IE", "IT", "LT", "LU", "LV", "MT", "NL", "PL", "PT", "RO",
+  "SE", "SI", "SK",
+]);
+
+function isoCountry(raw: string | null | undefined): string | null {
+  const c = raw?.trim().toUpperCase();
+  return c && /^[A-Z]{2}$/.test(c) ? c : null;
+}
+
+/** A UID's country: its prefix, except Greece, whose UIDs start EL. */
+function uidCountry(uid: string | null | undefined): string | null {
+  const prefix = isoCountry(uid?.trim().slice(0, 2));
+  return prefix === "EL" ? "GR" : prefix;
+}
+
+/** A customer's country: the UID prefix first, the stated country second (#565). */
+export function customerCountry(
+  customerVatId: string | null | undefined,
+  country: string | null | undefined
+): string | null {
+  return uidCountry(customerVatId) ?? isoCountry(country);
+}
+
+/**
+ * EU or not, for a service sold to a business there (#565). The UID prefix
+ * decides first, the country second; null when neither is known.
+ */
+export function serviceRegionOf(
+  customerVatId: string | null | undefined,
+  country: string | null | undefined
+): "eu" | "non-eu" | null {
+  const c = customerCountry(customerVatId, country);
+  if (!c) return null;
+  return EU27_COUNTRIES.has(c) ? "eu" : "non-eu";
+}
+
+/** The party on a document that is not the user: the customer, on a sale. */
+function customerOf(f: FileRecord) {
+  return f.matchedUserAccount === "recipient" ? f.extractedIssuer : f.extractedRecipient;
+}
+
+/**
+ * What a sale's 0% part is (#565). Precedence: the person's override on the
+ * Transaction, then the setting on a FiBuKI Invoice, then detection, then
+ * undetermined. Resolved for every money-in Transaction; the calculation
+ * reads it only for a 0% rate group, so a kind on a 20% sale changes nothing.
+ *
+ * Detection reads only Files that are not FiBuKI Invoices: no VAT printed and
+ * a customer outside Austria. The customer's country is the UID prefix, then
+ * the File's extracted country, then the Partner's. A FiBuKI Invoice issued
+ * without the setting stays undetermined: what it says is the setting.
+ */
+export function deriveSaleSupply(
+  tx: TransactionRecord,
+  files: FileRecord[],
+  partner: PartnerRecord | undefined
+): UvaSaleSupply | null {
+  if (tx.amount <= 0) return null;
+
+  const invoiceFile = files.find((f) => f.isFibukiGenerated && f.invoiceSupplyKind);
+  const uploaded = files.filter((f) => !f.isFibukiGenerated);
+  const named = [invoiceFile, ...files].find((f) => f && (customerOf(f)?.vatId || f.extractedVatId));
+  const customerVatId = named ? customerOf(named)?.vatId || named.extractedVatId || null : null;
+  const dated = [invoiceFile, ...files].find((f) => f?.extractedDate);
+  const serviceDate = dated?.extractedDate ? toViennaCalendarDay(dated.extractedDate) : null;
+  const facts = { customerVatId, serviceDate };
+
+  if (tx.saleSupplyKind) return { kind: tx.saleSupplyKind, basis: "manual", ...facts };
+  if (invoiceFile?.invoiceSupplyKind) {
+    return { kind: invoiceFile.invoiceSupplyKind, basis: "invoice", ...facts };
+  }
+
+  const printsNoVat = (f: FileRecord) =>
+    !((f.extractedDocumentVatAmount ?? 0) > 0) && !((f.extractedVatAmount ?? 0) > 0);
+  if (uploaded.length > 0 && uploaded.every(printsNoVat)) {
+    const withCountry = uploaded.find((f) => customerOf(f)?.country || f.extractedCountry);
+    const country =
+      uidCountry(customerVatId) ??
+      isoCountry(withCountry ? customerOf(withCountry)?.country || withCountry.extractedCountry : null) ??
+      isoCountry(partner?.country);
+    if (country && country !== "AT") {
+      const region = serviceRegionOf(null, country);
+      return { kind: region === "eu" ? "service-eu" : "service-non-eu", basis: "detected", ...facts };
+    }
+  }
+  return { kind: "undetermined", basis: null, ...facts };
+}
+
+/**
  * What paying a document in full comes to, cents: its total plus its tip
  * (#172). The instalment cap divides what earlier periods paid by this, the
  * same figure the reconcile measures a payment against; dividing by the total
@@ -245,16 +372,18 @@ export interface BuildOptions {
    * Transaction absent here is an ordinary sale or purchase.
    */
   correctionByTransactionId?: Map<string, UvaCorrection>;
+  /** Partners by id, for the customer-country fallback (#565). */
+  partnersById?: Map<string, PartnerRecord>;
 }
 
 export function buildUvaTransaction(
   tx: TransactionRecord,
   opts: BuildOptions
 ): UvaTransaction {
-  const files = (tx.fileIds ?? [])
+  const fileRecords = (tx.fileIds ?? [])
     .map((id) => opts.filesById.get(id))
-    .filter((f): f is FileRecord => !!f)
-    .map(toUvaFile);
+    .filter((f): f is FileRecord => !!f);
+  const files = fileRecords.map(toUvaFile);
 
   let noReceiptCategory: UvaTransaction["noReceiptCategory"] = null;
   if (tx.noReceiptCategoryId) {
@@ -289,6 +418,11 @@ export function buildUvaTransaction(
     noReceiptCategory,
     files,
     foreignRegime: deriveForeignRegime(tx, files),
+    saleSupply: deriveSaleSupply(
+      tx,
+      fileRecords,
+      tx.partnerId ? opts.partnersById?.get(tx.partnerId) : undefined
+    ),
     priorClaimedFraction,
     partialPaymentAccepted: isPartialPaymentAcceptanceLive(tx, opts.filesById),
     correction: opts.correctionByTransactionId?.get(tx.id) ?? null,

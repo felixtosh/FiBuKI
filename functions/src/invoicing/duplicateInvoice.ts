@@ -76,6 +76,7 @@ export async function performDuplicateInvoice(
     updatedAt: now,
   };
   if (src.notes) (newData as Invoice).notes = src.notes;
+  if (src.supplyAbroad) (newData as Invoice).supplyAbroad = true;
 
   // Stub TaxFile so the new draft appears in the files list.
   const newFileData: Record<string, unknown> = {

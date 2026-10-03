@@ -124,6 +124,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           description:
             'Goods or service, for the foreign-regime classification: "goods" routes an EU acquisition to ig. Erwerb (KZ 070 + per-rate base + KZ 065) and a third-country one to the import lane (unresolved until EUSt is documented); "service" confirms reverse charge §19 (KZ 057/066). null clears, keeping the service heuristic flagged basis: "heuristic" for review. Applies only where a foreign supply is detected (isReverseCharge: true, or a foreign supplier UID on a zero-VAT document) - it never conjures a foreign regime on its own.',
         },
+        saleSupplyKind: {
+          type: ["string", "null"],
+          enum: ["service-eu", "service-non-eu", "export-goods", null],
+          description:
+            'What a 0% sale is, for the UVA: "service-eu" or "service-non-eu" is a B2B service supplied abroad (§ 3a Abs 6), not taxable in Austria, so its net reaches no Kennzahl (an EU one also owes a Zusammenfassende Meldung); "export-goods" keeps it in KZ 011. Wins over a FiBuKI Invoice\'s setting and over detection. null clears, back to the Invoice setting or detection. Read only for the 0% part of a money-in transaction; the UVA report lists every 0% sale with its kind and where it came from.',
+        },
       },
       required: ["transactionId"],
     },
@@ -1277,6 +1283,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         currency: { type: "string", description: "ISO 4217 (default EUR)" },
         notes: { type: "string", description: "Free-text footer note" },
+        supplyAbroad: {
+          type: "boolean",
+          description:
+            "Service, place of supply abroad (§ 3a Abs 6): a B2B service to a customer outside Austria. Forces every line to 0%, prints the reverse-charge note (EU customer) or the not-taxable note (outside the EU), and records the sale as not taxable in Austria for the UVA. Issuing then requires a customer country outside Austria, and for an EU customer both UIDs.",
+        },
         issuerEntityId: {
           type: "string",
           description: "Identity entity to issue from (default: first/default)",
@@ -1322,6 +1333,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
               },
             },
             notes: { type: "string" },
+            supplyAbroad: {
+              type: "boolean",
+              description:
+                "Service, place of supply abroad (§ 3a Abs 6): a B2B service to a customer outside Austria. Forces every line to 0%, prints the reverse-charge note (EU customer) or the not-taxable note (outside the EU), and records the sale as not taxable in Austria for the UVA. Issuing then requires a customer country outside Austria, and for an EU customer both UIDs.",
+            },
           },
         },
       },

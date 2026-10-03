@@ -307,6 +307,21 @@ describe("Tool Registry Handlers: Transactions", () => {
         })
       ).rejects.toThrow(/goods.*service/);
     });
+
+    // #565: what a 0% sale is, set through the same tool the UI's callable mirrors.
+    it("writes saleSupplyKind, clears it with null, and rejects values outside the set", async () => {
+      store.setDoc("transactions", "tx-1", createTestTransaction({ userId }));
+
+      await handlers.updateTransaction(userId, { transactionId: "tx-1", saleSupplyKind: "service-eu" });
+      expect(store.getDoc("transactions", "tx-1")?.saleSupplyKind).toBe("service-eu");
+
+      await handlers.updateTransaction(userId, { transactionId: "tx-1", saleSupplyKind: null });
+      expect(store.getDoc("transactions", "tx-1")?.saleSupplyKind).toBeNull();
+
+      await expect(
+        handlers.updateTransaction(userId, { transactionId: "tx-1", saleSupplyKind: "goods" })
+      ).rejects.toThrow(/service-eu/);
+    });
   });
 
   describe("listTransactionsNeedingFiles", () => {

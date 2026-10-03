@@ -7,7 +7,8 @@
  */
 
 import { Timestamp } from "firebase-admin/firestore";
-import { assessImpliedFx, isSameCurrency } from "../fx/fxPlausibility";
+import { assessImpliedFx, isSameCurrency, type FxAssessmentOptions } from "../fx/fxPlausibility";
+import { ecbCrossRate, type EcbRateTable } from "../fx/ecbRates";
 import {
   readBankOriginalAmount,
   type BankOriginalAmount,
@@ -393,7 +394,8 @@ export function calculateAmountScore(
   txAmount: number,
   fileCurrency?: string | null,
   txCurrency?: string | null,
-  txOriginal?: BankOriginalAmount | null
+  txOriginal?: BankOriginalAmount | null,
+  fxOptions?: FxAssessmentOptions
 ): { score: number; source: TransactionMatchSource | null; currencyMismatch: boolean } {
   const absFile = Math.abs(fileAmount);
   const absTx = Math.abs(txAmount);
@@ -435,7 +437,7 @@ export function calculateAmountScore(
   // deliberately capped below a same-currency exact match (40) and never
   // sets source amount_exact, so it cannot earn the hard-facts bonus:
   // a foreign-currency file still needs partner or date corroboration.
-  const fx = assessImpliedFx(fileAmount, fileCurrency, txAmount, txCurrency);
+  const fx = assessImpliedFx(fileAmount, fileCurrency, txAmount, txCurrency, fxOptions);
   if (fx.mismatch && fx.referenceRate !== null) {
     if (fx.band === "tight") return { score: 30, source: "amount_close", currencyMismatch: true };
     if (fx.band === "loose") return { score: 20, source: "amount_close", currencyMismatch: true };
@@ -814,6 +816,13 @@ export interface ScoringOptions {
   };
   /** Billing cycle data for improved date scoring */
   billingCycle?: BillingCycleHint;
+  /**
+   * The published ECB rate for this pair's currencies on the Transaction's
+   * date (#555), as units of the Transaction's currency per unit of the
+   * File's. Anchors the exchange-rate check in place of the static table;
+   * absent or null keeps the static anchor.
+   */
+  fxReferenceRate?: number | null;
 }
 
 /**
@@ -1053,23 +1062,56 @@ export async function loadPartnerScoringContext(
  *
  * `documentedAmounts` is what the Files already on each candidate explain
  * (#239), from `loadConnectedFiles` with the scored File excluded.
+ *
+ * `ecbRates` anchors a foreign-currency pair's exchange-rate check on the
+ * rate the ECB published for the Transaction's date (#555), from
+ * `loadScoringEcbRates`. Required rather than optional, so a new caller has
+ * to decide; one that passes EMPTY_ECB_RATE_TABLE keeps the static anchor and
+ * scores differently from the trigger on old foreign-currency pairs.
  */
 export function scoreFileAgainstTransactions(
   fileData: FirebaseFirestore.DocumentData,
   transactions: Array<{ id: string; data(): FirebaseFirestore.DocumentData | undefined }>,
   partner: PartnerScoringContext,
-  documentedAmounts: Map<string, number>
+  documentedAmounts: Map<string, number>,
+  ecbRates: EcbRateTable
 ): TransactionMatchScore[] {
   const fileMatchingData = toFileMatchingData(fileData);
   return transactions.map((doc) => {
     const txData = doc.data() ?? {};
+    const options = buildScoringOptions(partner.effectiveCycles, partner.weights, txData.amount);
+    const fxReferenceRate = publishedRateFor(
+      ecbRates,
+      fileMatchingData.extractedCurrency,
+      txData.currency,
+      txData.date
+    );
     return scoreTransaction(
       fileMatchingData,
       toTransactionData(doc.id, txData, documentedAmounts.get(doc.id)),
       partner.aliases,
-      buildScoringOptions(partner.effectiveCycles, partner.weights, txData.amount)
+      fxReferenceRate == null ? options : { ...options, fxReferenceRate }
     );
   });
+}
+
+/**
+ * The ECB cross rate for a File's currency into a Transaction's, on the
+ * Transaction's date (#555). Null for a same-currency pair, an undated
+ * Transaction, or a date the table does not reach within its lookback: the
+ * static anchor stands in, exactly as the VAT return falls back.
+ */
+function publishedRateFor(
+  ecbRates: EcbRateTable,
+  fileCurrency: string | null | undefined,
+  txCurrency: string | null | undefined,
+  txDate: unknown
+): number | null {
+  if (ecbRates.days.length === 0 || isSameCurrency(fileCurrency, txCurrency)) return null;
+  const date = toDateSafe(txDate);
+  if (!date) return null;
+  // The stored day is UTC midnight of the Vienna calendar day.
+  return ecbCrossRate(ecbRates, fileCurrency, txCurrency, date.toISOString().slice(0, 10))?.rate ?? null;
 }
 
 /**
@@ -1132,7 +1174,8 @@ export function scoreTransaction(
       txData.amount,
       fileData.extractedCurrency,
       txData.currency,
-      readBankOriginalAmount(txData._original?.rawRow)
+      readBankOriginalAmount(txData._original?.rawRow),
+      { referenceRate: options?.fxReferenceRate }
     );
     amountScore = result.score;
     amountExact = result.source === "amount_exact" && !result.currencyMismatch;

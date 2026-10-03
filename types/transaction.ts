@@ -64,6 +64,14 @@ export interface PartialPaymentAcceptance {
 export type ForeignSupplyKind = "goods" | "service";
 
 /**
+ * What a 0% sale is (#565), the income-side mirror of `ForeignSupplyKind`. A
+ * B2B service supplied abroad (§ 3a Abs 6) is not taxable in Austria and
+ * reaches no UVA Kennzahl; an export of goods stays in KZ 011. Mirrors
+ * `SaleSupplyKind` in functions/src/uva/types.ts.
+ */
+export type SaleSupplyKind = "service-eu" | "service-non-eu" | "export-goods";
+
+/**
  * Entry in the automation history for a transaction.
  * Tracks what automated actions were performed and when.
  */
@@ -365,6 +373,13 @@ export interface Transaction {
    * flagged for review.
    */
   foreignSupplyKind?: ForeignSupplyKind | null;
+
+  /**
+   * A person's answer to what a 0% sale is (#565). Wins over a FiBuKI
+   * Invoice's "Service, place of supply abroad" setting and over detection;
+   * unset/null leaves those to decide.
+   */
+  saleSupplyKind?: SaleSupplyKind | null;
 
   /** Whether this transaction exceeds the plan's monthly quota (imported but limited) */
   quotaExceeded?: boolean;

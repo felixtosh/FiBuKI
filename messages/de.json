@@ -828,6 +828,39 @@
       "cancel": "Abbrechen",
       "confirm": "Als abgegeben markieren",
       "failed": "Das hat nicht geklappt: {message}"
+    },
+    "saleSupply": {
+      "kind": {
+        "service-eu": "Leistung, EU",
+        "service-non-eu": "Leistung, Drittland",
+        "export-goods": "Ausfuhrlieferung"
+      },
+      "kindHint": {
+        "service-eu": "Eine B2B-Leistung an ein Unternehmen in einem anderen EU-Land (§ 3a Abs 6): in Österreich nicht steuerbar, nicht in der UVA, meldepflichtig in der Zusammenfassenden Meldung",
+        "service-non-eu": "Eine B2B-Leistung an ein Unternehmen außerhalb der EU, auch im Vereinigten Königreich (§ 3a Abs 6): in Österreich nicht steuerbar, nicht in der UVA",
+        "export-goods": "Eine Ausfuhrlieferung von Waren: bleibt in KZ 011"
+      },
+      "basis": {
+        "manual": "von dir gesetzt",
+        "invoice": "laut Rechnung",
+        "detected": "erkannt",
+        "none": "unbestimmt"
+      },
+      "needsReview": "prüfen",
+      "notTaxable": {
+        "title": "In Österreich nicht steuerbar (§ 3a Abs 6)",
+        "description": "B2B-Leistungen mit Leistungsort im Ausland. Sie sind in Österreich nicht steuerbar und stehen in keiner Kennzahl, auch nicht in KZ 000. Umsatz sind sie trotzdem, deshalb stehen sie hier für deinen Steuerberater. Ist-Besteuerung wie der Rest dieser Auswertung.",
+        "eu": "Kunden in der EU",
+        "nonEu": "Kunden außerhalb der EU"
+      },
+      "kz011": {
+        "title": "Umsätze zu 0 % in KZ 011 ({count})",
+        "description": "Als Ausfuhrlieferungen gebucht. Ein Umsatz, den nichts zugeordnet hat, bleibt hier und ist zum Prüfen markiert: War es eine Leistung an ein Unternehmen im Ausland, markiere ihn so, und er verlässt die UVA."
+      },
+      "zm": {
+        "title": "Zusammenfassende Meldung fällig bis {date}",
+        "description": "{count, plural, one {# Leistung} other {# Leistungen}} an Unternehmen in der EU wurden in diesem Zeitraum erbracht, gezählt nach Leistungsdatum, nicht nach Zahlung. FiBuKI reicht die ZM nicht ein; reiche sie in FinanzOnline ein oder frag deinen Steuerberater."
+      }
     }
   },
   "invoices": {
@@ -841,6 +874,32 @@
       "correctsValue": "Rechnung {number}",
       "correctedByLabel": "Storniert durch",
       "correctedByValue": "Rechnungskorrektur {number}"
+    },
+    "supplyAbroad": {
+      "label": "Leistung, Leistungsort im Ausland (§ 3a Abs 6)",
+      "hint": "Eine Leistung an ein Unternehmen außerhalb Österreichs. Alle Positionen haben 0 % USt., und die Rechnung druckt den Reverse-Charge-Hinweis für Kunden in der EU, sonst den Hinweis auf die nicht steuerbare Leistung. Ausstellen braucht ein Kundenland außerhalb Österreichs, bei Kunden in der EU beide UIDs."
+    }
+  },
+  "connect": {
+    "sort": {
+      "label": "Sortierung",
+      "aria": "Belege sortieren",
+      "best": "Bester Vorschlag",
+      "closestDate": "Nächstes Datum",
+      "newest": "Neueste"
+    },
+    "dateWindow": {
+      "days7": "±7 Tage",
+      "days30": "±30 Tage",
+      "all": "Alle Daten"
+    },
+    "partnerOnly": "Nur dieser Partner",
+    "files": {
+      "loading": "Beste Vorschläge werden gesucht...",
+      "noneForSearch": "Keine Belege passen zur Suche",
+      "noneForFilters": "Keine Belege passen zu diesen Filtern",
+      "none": "Keine Belege gefunden",
+      "matched": "Gefunden in: {fields}"
     }
   }
 }

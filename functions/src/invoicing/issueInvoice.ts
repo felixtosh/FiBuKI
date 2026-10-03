@@ -19,6 +19,7 @@ import { Invoice, composeInvoiceName } from "./types";
 import { allocateInvoiceNumber, assertInvoiceNumberFree } from "./numberAllocator";
 import { renderInvoicePdf } from "./renderInvoicePdf";
 import { buildInvoiceFileFields } from "./buildInvoiceFileFields";
+import { supplyAbroadIssueProblem } from "./supplyAbroad";
 
 export interface IssueInvoiceRequest {
   invoiceId: string;
@@ -97,6 +98,10 @@ export async function performIssueInvoice(
   }
   if (!current.issuer?.entityId || !current.issuer?.iban || !current.issuer?.name) {
     throw new HttpsError("failed-precondition", "Pick a sender bank account first");
+  }
+  const supplyAbroadProblem = supplyAbroadIssueProblem(current);
+  if (supplyAbroadProblem) {
+    throw new HttpsError("failed-precondition", supplyAbroadProblem);
   }
 
   // 1. Compose the invoice number from namePrefix + year + numberSeq. Legacy

@@ -29,7 +29,12 @@ import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { ReportPeriod, formatPeriod } from "@/types/report";
 import { TaxCountryCode } from "@/types/user-data";
-import type { TransactionDerivationEntry, UvaReportResult } from "@/functions/src/uva/types";
+import type {
+  SaleSupplyKind,
+  TransactionDerivationEntry,
+  UvaReportResult,
+} from "@/functions/src/uva/types";
+import { SaleSupplyReview } from "./sale-supply-review";
 import { UvaCorrections } from "./uva-corrections";
 import {
   buildVorsteuerTrace,
@@ -64,6 +69,11 @@ interface UVAPreviewProps {
     // Awaited either way. Typed `unknown` rather than as a promise so the
     // string lint (#168) does not read the generic as copy.
   ) => unknown;
+  /**
+   * Writer for what a 0% sale is (#565): service EU / non-EU or export of
+   * goods. The caller persists it and recalculates. Absent, read-only.
+   */
+  onSetSaleSupplyKind?: (transactionId: string, kind: SaleSupplyKind) => unknown;
 }
 
 function formatAmount(cents: number): string {
@@ -205,6 +215,7 @@ export function UVAPreview({
   country,
   onSetForeignSupplyKind,
   onRulePartialPayment,
+  onSetSaleSupplyKind,
 }: UVAPreviewProps) {
   const t = useTranslations("uvaReview");
   const codes = KZ_ORDER.filter(
@@ -645,6 +656,8 @@ export function UVAPreview({
           </CardContent>
         </Card>
       )}
+
+      <SaleSupplyReview result={result} onSetSaleSupplyKind={onSetSaleSupplyKind} />
 
       {result.reverseCharge.length > 0 && (
         <Card>
