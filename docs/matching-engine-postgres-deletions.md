@@ -128,15 +128,16 @@ representation and the JS filters are *correct*, not just workarounds.
 **Verdict: Phase 2, after reconciliation.** The scoring
 (`scoreFileForTransaction`, greedy assignment, AI fallback) stays untouched.
 
-### 5. `precisionSearchQueue.ts` strategies — `:897-900`, `:1026-1029`
+### 5. `precisionSearchQueue.ts` strategies — `:1112`, `:1203`
 
 `partner_files` and `amount_files` strategies both do indexed prefilters
 (partner equality / `extractedDate` ±90d window — generated columns, pinned)
 then `.filter((f) => !f.transactionIds || f.transactionIds.length === 0)`.
 Same anti-join shape and same reconciliation caveat as case 4.
 
-**Verdict: Phase 2.** Scoring via `scoreAttachmentMatch` (the single source
-of truth) is untouched.
+**Verdict: Phase 2.** The strategies score nothing since #589: each
+candidate File is nominated to the matcher (`runTransactionMatching`), which
+alone scores the pair. Only the candidate queries are in scope here.
 
 ### 6. `__name__ in` chunk loops
 
