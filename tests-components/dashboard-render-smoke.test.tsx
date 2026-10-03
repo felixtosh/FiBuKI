@@ -47,6 +47,13 @@ import { act, render, screen } from "@testing-library/react";
 
 const nav = vi.hoisted(() => ({ pathname: "/transactions" }));
 
+// Single docs by path; every other doc is missing. Files and Partners sit
+// behind SmartFeatureGuard, which renders null on the default "free" plan, so
+// the cases run on Smart unless they say otherwise (see beforeEach); without
+// it those two pages would pass with nothing rendered.
+const SMART_SUBSCRIPTION = { plan: "smart", status: "active" };
+const docFixtures = vi.hoisted(() => ({}) as Record<string, Record<string, unknown>>);
+
 vi.mock("next/navigation", () => {
   const router = {
     push: vi.fn(),
@@ -124,7 +131,7 @@ vi.mock("@/components/auth/auth-provider", () => {
 
 // --- Firebase I/O -----------------------------------------------------------
 // Only the network edge. Reads answer from the fixtures below (one transaction,
-// every other collection empty, a Smart subscription, every other single doc
+// every other collection empty, single docs from docFixtures above, the rest
 // missing); writes resolve.
 
 vi.mock("firebase/firestore", async (importOriginal) => {
@@ -190,12 +197,6 @@ vi.mock("firebase/firestore", async (importOriginal) => {
         updatedAt: now,
       }),
     ],
-  };
-  // Single docs by path; every other doc is missing. Files and Partners sit
-  // behind SmartFeatureGuard, which renders null on the default "free" plan,
-  // so without a Smart subscription their cases pass with an empty page.
-  const docFixtures: Record<string, Record<string, unknown>> = {
-    "subscriptions/smoke-user": { plan: "smart", status: "active" },
   };
   const read = (ref: unknown) => {
     if (ref instanceof actual.DocumentReference) return docSnapshot(ref.id, docFixtures[ref.path]);
@@ -285,6 +286,8 @@ async function renderDashboardPage(pathname: string, Page: React.ComponentType) 
 describe("dashboard pages render inside the real dashboard layout", () => {
   beforeEach(() => {
     window.localStorage.clear();
+    for (const path of Object.keys(docFixtures)) delete docFixtures[path];
+    docFixtures["subscriptions/smoke-user"] = SMART_SUBSCRIPTION;
   });
 
   it("Transactions (table + toolbar)", async () => {
@@ -294,6 +297,18 @@ describe("dashboard pages render inside the real dashboard layout", () => {
     // fixture row arrived, and the column headers are the table's.
     expect(screen.getByText(/-12,99/)).toBeTruthy();
     expect(screen.getByText("Description")).toBeTruthy();
+  });
+
+  it("Transactions on the free plan (no subscription doc)", async () => {
+    // The layout's plan-filtered nav and the billing banner take their free
+    // branch here; every other case renders them on Smart.
+    delete docFixtures["subscriptions/smoke-user"];
+    await renderDashboardPage("/transactions", TransactionsPage);
+    expect(screen.getByText(/-12,99/)).toBeTruthy();
+    // The free path really ran: the nav dropped the Smart-only pages.
+    expect(document.querySelector('a[href="/transactions"]')).not.toBeNull();
+    expect(document.querySelector('a[href="/files"]')).toBeNull();
+    expect(document.querySelector('a[href="/partners"]')).toBeNull();
   });
 
   it("Files", async () => {
