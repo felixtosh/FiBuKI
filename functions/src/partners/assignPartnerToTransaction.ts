@@ -6,6 +6,7 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { cancelPartnerWorkersForTransaction } from "../utils/cancelWorkers";
 import { deriveActivityLevel } from "../utils/activityLevel";
+import { CLEAR_TX_PROVENANCE } from "../matching/partnerProvenance";
 
 interface AssignPartnerToTransactionRequest {
   transactionId: string;
@@ -152,6 +153,7 @@ export const assignPartnerToTransactionCallable = createCallable<
     // Update transaction with partner assignment + activity log
     const actor = (matchedBy === "manual" ? "manual" : matchedBy === "suggestion" ? "suggestion" : matchedBy === "ai" ? "ai" : "auto") as "manual" | "suggestion" | "ai" | "auto";
     await transactionRef.update({
+      ...CLEAR_TX_PROVENANCE,
       partnerId: effectivePartnerId,
       partnerType: effectivePartnerType,
       partnerMatchedBy: matchedBy,

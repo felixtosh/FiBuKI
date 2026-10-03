@@ -10,6 +10,10 @@
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { generatedInvoiceRefusal } from "./generatedInvoiceGuard";
+import {
+  partnerRevertForRemovedConnection,
+  rematchRevertedTransactions,
+} from "../matching/partnerProvenance";
 
 interface DeleteFileRequest {
   fileId: string;
@@ -72,6 +76,30 @@ export async function performDeleteFile(
   const now = Timestamp.now();
   let deletedConnections = 0;
 
+  // A Partner the payee rule filled from this File is derived again from
+  // the Files that remain (#584).
+  const rematch: Array<string | null> = [];
+  const revertPartners = async (
+    transactionId: string,
+    txData: FirebaseFirestore.DocumentData,
+    remainingFileIds: string[]
+  ): Promise<Record<string, unknown>> => {
+    const revert = await partnerRevertForRemovedConnection(db, userId, {
+      fileId,
+      fileData,
+      transactionId,
+      txData,
+      remainingFileIds,
+    });
+    rematch.push(revert.rematchTransactionId);
+    return {
+      ...revert.transaction,
+      ...(revert.transactionActivity.length > 0
+        ? { automationHistory: FieldValue.arrayUnion(...revert.transactionActivity) }
+        : {}),
+    };
+  };
+
   // 1. Delete all fileConnections and update linked transactions
   const connectionsQuery = await db
     .collection("fileConnections")
@@ -107,7 +135,9 @@ export async function performDeleteFile(
           const hasNoReceiptCategory = !!txData.noReceiptCategoryId;
           const isComplete = hasFiles || hasNoReceiptCategory;
 
+          const revert = await revertPartners(conn.transactionId, txData, remainingFileIds);
           batch.update(transactionRef, {
+            ...revert,
             fileIds: FieldValue.arrayRemove(fileId),
             isComplete,
             updatedAt: now,
@@ -141,7 +171,9 @@ export async function performDeleteFile(
       const hasNoReceiptCategory = !!txData.noReceiptCategoryId;
       const isComplete = hasFiles || hasNoReceiptCategory;
 
+      const revert = await revertPartners(transactionId, txData, remainingFileIds);
       await transactionRef.update({
+        ...revert,
         fileIds: FieldValue.arrayRemove(fileId),
         isComplete,
         updatedAt: now,
@@ -166,6 +198,8 @@ export async function performDeleteFile(
     ...(wasAttached ? { hadTransactionConnections: true } : {}),
   });
   console.log(`[deleteFile] Deleted file ${fileId} (reversible)`);
+
+  await rematchRevertedTransactions(userId, rematch);
 
   return { success: true, deletedConnections, detachedTransactions };
 }

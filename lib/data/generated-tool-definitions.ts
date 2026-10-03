@@ -1584,7 +1584,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "partner_rematch_report",
-    "description": "READ-ONLY. Re-runs the current partner matcher over transactions that ALREADY have a partner assigned and returns only the cases where its answer differs from what is stored: a different partner would be applied, or nothing would be applied because no candidate reaches the auto-apply threshold. Writes nothing — no assignment is changed and no false positive is recorded. Use it to review assignments made before a matcher fix; partner matching itself skips any transaction that already has a partner, so those are never re-scored on their own. Counts cover every evaluated transaction; `rows` is capped by `limit` and sets `truncated`.",
+    "description": "READ-ONLY. Re-runs the current partner matcher over transactions that ALREADY have a partner assigned and returns only the cases where its answer differs from what is stored: a different partner would be applied, or nothing would be applied because no candidate reaches the auto-apply threshold. Writes nothing — no assignment is changed and no false positive is recorded. Use it to review assignments made before a matcher fix; partner matching itself skips any transaction that already has a partner, so those are never re-scored on their own. An assignment that a connected file backs with the same partner is supported evidence the bank-data matcher cannot see: it is left out and counted in `fileBacked`. Counts cover every evaluated transaction; `rows` is capped by `limit` and sets `truncated`.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1620,7 +1620,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "rematch_assigned_partners",
-    "description": "Re-run the current partner matcher over transactions that already have an AUTO-assigned partner, whole account, and write the corrected answer WITHOUT recording a false positive — unlike remove_partner_from_transaction, which blacklists the pair forever. Defaults to a dry run: pass dryRun=false to write. Reassigns where the matcher now picks a different partner and keeps where it agrees; an assignment it no longer reproduces is reported but left alone unless clearUnconfirmed=true. Never touches manual, suggestion or ai assignments. Review with partner_rematch_report first.",
+    "description": "Re-run the current partner matcher over transactions that already have an AUTO-assigned partner, whole account, and write the corrected answer WITHOUT recording a false positive — unlike remove_partner_from_transaction, which blacklists the pair forever. Defaults to a dry run: pass dryRun=false to write. Reassigns where the matcher now picks a different partner and keeps where it agrees; an assignment it no longer reproduces is reported but left alone unless clearUnconfirmed=true. Never touches manual, suggestion or ai assignments, nor one that a connected file backs with the same partner. Review with partner_rematch_report first.",
     "inputSchema": {
       "type": "object",
       "properties": {

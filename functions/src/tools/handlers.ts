@@ -40,6 +40,7 @@ import {
   CLEARED_COPY_MARK,
 } from "../files/copyOps";
 import { unmarkFileAsCopyAndRematch } from "../files/copyCallables";
+import { performDisconnectFile } from "../files/disconnectFileFromTransaction";
 import { getCorrection, linkCorrection, unlinkCorrection } from "../corrections/correctionOps";
 import {
   buildClearVatNotClaimableUpdates,
@@ -108,6 +109,7 @@ import { PLANS, resolvePlanId } from "../billing/config";
 import { KNOWN_AUSTRIAN_RATES } from "../uva/rateSet";
 import { runUvaForPeriod } from "../reports/uvaPeriodRun";
 import type { PlanId, PlanFeatures } from "../billing/config";
+import { CLEAR_TX_PROVENANCE } from "../matching/partnerProvenance";
 
 /**
  * Convert a Firestore Timestamp to the YYYY-MM-DD calendar day it stands for.
@@ -1136,22 +1138,12 @@ export async function disconnectFileFromTransaction(userId: string, args: Record
     throw new Error("Connection not found");
   }
 
-  const batch = db.batch();
-  const now = FieldValue.serverTimestamp();
-
-  batch.delete(connSnapshot.docs[0].ref);
-
-  batch.update(db.collection("files").doc(fileId as string), {
-    transactionIds: FieldValue.arrayRemove(transactionId),
-    updatedAt: now,
+  // The app's disconnect (#584): it reverts a Partner the connect copied
+  // across. Records no Rejection: only the app's disconnect can.
+  await performDisconnectFile(db, userId, {
+    fileId: fileId as string,
+    transactionId: transactionId as string,
   });
-
-  batch.update(db.collection("transactions").doc(transactionId as string), {
-    fileIds: FieldValue.arrayRemove(fileId),
-    updatedAt: now,
-  });
-
-  await batch.commit();
   return { success: true, fileId, transactionId };
 }
 
@@ -2554,6 +2546,7 @@ export async function assignPartnerToTx(userId: string, args: Record<string, unk
 
   const now = FieldValue.serverTimestamp();
   await db.collection("transactions").doc(transactionId as string).update({
+    ...CLEAR_TX_PROVENANCE,
     partnerId,
     partnerType: "user",
     partnerMatchedBy: "api",
@@ -2597,6 +2590,7 @@ export async function removePartnerFromTx(userId: string, args: Record<string, u
 
   const now = FieldValue.serverTimestamp();
   await db.collection("transactions").doc(transactionId as string).update({
+    ...CLEAR_TX_PROVENANCE,
     partnerId: null,
     partnerType: null,
     partnerMatchedBy: null,

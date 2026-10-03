@@ -44,6 +44,7 @@ import {
   toRematchRow,
 } from "./partnerRematchReport";
 import { AUTO_APPLY_THRESHOLD } from "../utils/partner-matcher";
+import { CLEAR_TX_PROVENANCE } from "./partnerProvenance";
 
 /**
  * The only assignment kind this op may rewrite. Anything else is a judgement it
@@ -205,6 +206,7 @@ function buildClearUpdates(
   candidates: CandidateView[]
 ): Record<string, unknown> {
   return {
+    ...CLEAR_TX_PROVENANCE,
     partnerId: null,
     partnerType: null,
     partnerMatchedBy: null,
@@ -236,6 +238,7 @@ function buildReassignUpdates(
   candidates: CandidateView[]
 ): Record<string, unknown> {
   return {
+    ...CLEAR_TX_PROVENANCE,
     partnerId: nextPartnerId,
     partnerType: "user",
     partnerMatchedBy: "auto",

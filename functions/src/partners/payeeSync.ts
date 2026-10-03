@@ -8,6 +8,7 @@
  */
 
 import { payeeFillFromFiles, type FilePartnerRef, type PayeeFill } from "./payeeRule";
+import { recordedFill } from "../matching/partnerProvenance";
 
 export interface PayeeFillOptions {
   /** A File joining the Transaction in the caller's pending write. */
@@ -46,5 +47,8 @@ export async function payeeFillForTransaction(
     files.push(data as FilePartnerRef);
   }
 
-  return payeeFillFromFiles(transaction, files);
+  // The fill carries its record, so removing one of these Files can derive
+  // the Partner again (#584).
+  const fill = payeeFillFromFiles(transaction, files);
+  return fill ? recordedFill(fill) : null;
 }

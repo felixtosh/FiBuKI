@@ -5,6 +5,7 @@
 
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
+import { CLEAR_TX_PROVENANCE } from "../matching/partnerProvenance";
 
 interface RemovePartnerFromTransactionRequest {
   transactionId: string;
@@ -57,6 +58,7 @@ export const removePartnerFromTransactionCallable = createCallable<
 
     // Clear partner assignment + activity log
     await transactionRef.update({
+      ...CLEAR_TX_PROVENANCE,
       partnerId: null,
       partnerType: null,
       partnerMatchedBy: null,

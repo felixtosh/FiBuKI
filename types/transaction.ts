@@ -23,6 +23,16 @@ export type DocumentationState =
  * `rootDir: "src"` reason as `DocumentationState` above; the backend module
  * owns the liveness derivation.
  */
+/**
+ * A Partner the payee rule filled from the connected Files (#584, ADR-0011).
+ * While the Transaction still holds exactly `partnerId` with `matchedBy`,
+ * removing a File derives it again from the Files that remain.
+ */
+export interface PartnerFromFiles {
+  partnerId: string;
+  matchedBy: string;
+}
+
 export interface ReceiptOnlyAcceptance {
   /** Who ruled - the user id the acting party authenticated as. */
   by: string;
@@ -288,6 +298,9 @@ export interface Transaction {
 
   /** How the partner was matched: auto (≥95%), manual, ai (chat agent), or suggestion click */
   partnerMatchedBy?: "auto" | "manual" | "ai" | "suggestion" | null;
+
+  /** Set while the partner is the one the connected Files agreed on (#584) */
+  partnerFromFiles?: PartnerFromFiles | null;
 
   /** Top 3 partner suggestions (stored for UI display) */
   partnerSuggestions?: Array<{
