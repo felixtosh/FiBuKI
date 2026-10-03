@@ -14,6 +14,8 @@
  * (ThemeProvider, NextIntlClientProvider with the real messages), then the REAL
  * dashboard layout and template, then the page. Anything that throws while
  * rendering fails the test. They do not assert behaviour; that is the point.
+ * Each case does assert one piece of the page body, though: a page that renders
+ * null (a feature guard, a stuck Suspense) throws nothing and would pass empty.
  * Keep them cheap to run, and add a page here when it gets its own route.
  *
  * What is mocked, and why that is the smallest cut
@@ -44,6 +46,13 @@ import { act, render, screen } from "@testing-library/react";
 // --- Next runtime -----------------------------------------------------------
 
 const nav = vi.hoisted(() => ({ pathname: "/transactions" }));
+
+// Single docs by path; every other doc is missing. Files and Partners sit
+// behind SmartFeatureGuard, which renders null on the default "free" plan, so
+// the cases run on Smart unless they say otherwise (see beforeEach); without
+// it those two pages would pass with nothing rendered.
+const SMART_SUBSCRIPTION = { plan: "smart", status: "active" };
+const docFixtures = vi.hoisted(() => ({}) as Record<string, Record<string, unknown>>);
 
 vi.mock("next/navigation", () => {
   const router = {
@@ -122,7 +131,8 @@ vi.mock("@/components/auth/auth-provider", () => {
 
 // --- Firebase I/O -----------------------------------------------------------
 // Only the network edge. Reads answer from the fixtures below (one transaction,
-// every other collection empty, every single doc missing); writes resolve.
+// every other collection empty, single docs from docFixtures above, the rest
+// missing); writes resolve.
 
 vi.mock("firebase/firestore", async (importOriginal) => {
   const actual = await importOriginal<typeof import("firebase/firestore")>();
@@ -189,7 +199,7 @@ vi.mock("firebase/firestore", async (importOriginal) => {
     ],
   };
   const read = (ref: unknown) => {
-    if (ref instanceof actual.DocumentReference) return docSnapshot(ref.id, undefined);
+    if (ref instanceof actual.DocumentReference) return docSnapshot(ref.id, docFixtures[ref.path]);
     const path = pathOf.get(ref as object) ?? "";
     return querySnapshot(fixtures[path.split("/").pop() ?? ""] ?? []);
   };
@@ -276,6 +286,8 @@ async function renderDashboardPage(pathname: string, Page: React.ComponentType) 
 describe("dashboard pages render inside the real dashboard layout", () => {
   beforeEach(() => {
     window.localStorage.clear();
+    for (const path of Object.keys(docFixtures)) delete docFixtures[path];
+    docFixtures["subscriptions/smoke-user"] = SMART_SUBSCRIPTION;
   });
 
   it("Transactions (table + toolbar)", async () => {
@@ -287,15 +299,31 @@ describe("dashboard pages render inside the real dashboard layout", () => {
     expect(screen.getByText("Description")).toBeTruthy();
   });
 
+  it("Transactions on the free plan (no subscription doc)", async () => {
+    // The layout's plan-filtered nav and the billing banner take their free
+    // branch here; every other case renders them on Smart.
+    delete docFixtures["subscriptions/smoke-user"];
+    await renderDashboardPage("/transactions", TransactionsPage);
+    expect(screen.getByText(/-12,99/)).toBeTruthy();
+    // The free path really ran: the nav dropped the Smart-only pages.
+    expect(document.querySelector('a[href="/transactions"]')).not.toBeNull();
+    expect(document.querySelector('a[href="/files"]')).toBeNull();
+    expect(document.querySelector('a[href="/partners"]')).toBeNull();
+  });
+
   it("Files", async () => {
     await renderDashboardPage("/files", FilesPage);
+    // The page body, not the guard's null or the Suspense skeleton.
+    expect(screen.getByText("No files uploaded")).toBeTruthy();
   });
 
   it("Partners", async () => {
     await renderDashboardPage("/partners", PartnersPage);
+    expect(screen.getByText("No partners yet")).toBeTruthy();
   });
 
   it("Sources", async () => {
     await renderDashboardPage("/sources", SourcesPage);
+    expect(screen.getByText("No bank accounts yet")).toBeTruthy();
   });
 });
