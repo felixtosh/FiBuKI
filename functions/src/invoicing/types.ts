@@ -34,6 +34,17 @@ export interface InvoiceRecipientSnapshot {
   address?: InvoicePartnerAddress;
 }
 
+/**
+ * What an Invoice Correction (Rechnungskorrektur) corrects: the original
+ * Invoice, frozen at Cancel so the correction's document can print the
+ * reference without reading the original again.
+ */
+export interface InvoiceCorrectionRef {
+  invoiceId: string;
+  number: string;
+  issueDate: Timestamp;
+}
+
 export interface Invoice {
   id: string;
   userId: string;
@@ -63,6 +74,10 @@ export interface Invoice {
   paidByTransactionId?: string;
   paidAt?: Timestamp;
   cancelledAt?: Timestamp;
+  /** Set on an Invoice Correction: the Invoice it cancels (#133). */
+  correctsInvoice?: InvoiceCorrectionRef;
+  /** Set on a cancelled Invoice: the Invoice Correction that cancels it (#133). */
+  correctedByInvoiceId?: string;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -86,8 +101,11 @@ export function computeLineItemTotals(item: InvoiceLineItem): {
   vatCents: number;
   grossCents: number;
 } {
-  const netCents = Math.round(item.quantity * item.unitPrice);
-  const vatCents = Math.round((netCents * item.vatRate) / 100);
+  // Half away from zero, so a negated line (an Invoice Correction) rounds to
+  // exactly the negative of the line it reverses.
+  const round = (x: number) => Math.sign(x) * Math.round(Math.abs(x));
+  const netCents = round(item.quantity * item.unitPrice);
+  const vatCents = round((netCents * item.vatRate) / 100);
   return { netCents, vatCents, grossCents: netCents + vatCents };
 }
 

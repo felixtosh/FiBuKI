@@ -10,6 +10,12 @@ import { buildEpcPayload } from "./epcPayload";
 import { Invoice } from "./types";
 
 export async function renderInvoicePdf(invoice: Invoice): Promise<Buffer> {
+  // An Invoice Correction asks for no payment, so it carries no QR (#133).
+  if (invoice.correctsInvoice) {
+    const element = React.createElement(InvoiceDocument, { invoice });
+    return (await renderToBuffer(element as any)) as unknown as Buffer;
+  }
+
   // Build EPC / Girocode payload from issuer + total.
   const epc = buildEpcPayload({
     bic: invoice.issuer.bic,

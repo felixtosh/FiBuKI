@@ -730,5 +730,18 @@
       "claimed": "{amount} VSt geltend gemacht",
       "claimedOutput": "{amount} USt geschuldet"
     }
+  },
+  "invoices": {
+    "correction": {
+      "cancel": "Stornieren",
+      "cancelTitle": "Rechnung stornieren?",
+      "cancelDescription": "FiBuKI stellt eine Rechnungskorrektur mit eigener, nächster Nummer aus, die jede Position dieser Rechnung aufhebt. Beide Belege bleiben erhalten; die Korrektur schickst du an deinen Kunden. Das lässt sich nicht rückgängig machen.",
+      "cancelConfirm": "Stornieren",
+      "keep": "Behalten",
+      "correctsLabel": "Korrigiert",
+      "correctsValue": "Rechnung {number}",
+      "correctedByLabel": "Storniert durch",
+      "correctedByValue": "Rechnungskorrektur {number}"
+    }
   }
 }

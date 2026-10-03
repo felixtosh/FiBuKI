@@ -33,6 +33,31 @@ export interface IssueInvoiceResponse {
   shareToken?: string;
 }
 
+export interface IssueInvoiceDeps {
+  renderPdf: (invoice: Invoice) => Promise<Buffer>;
+  /** Store the rendered PDF at `storagePath`; returns its download URL. */
+  storeDocument: (storagePath: string, pdf: Buffer, fileName: string) => Promise<string>;
+}
+
+const defaultDeps: IssueInvoiceDeps = {
+  renderPdf: renderInvoicePdf,
+  storeDocument: async (storagePath, pdf, fileName) => {
+    const bucket = getStorage().bucket();
+    const storageFile = bucket.file(storagePath);
+    await storageFile.save(pdf, {
+      contentType: "application/pdf",
+      metadata: {
+        cacheControl: "private, max-age=0, no-store",
+        contentDisposition: `inline; filename="${fileName}"`,
+      },
+    });
+    await storageFile.makePublic();
+    // Append a version query param so iframe / browser caches don't keep
+    // serving prior PDF bytes after regen.
+    return buildStorageObjectUrl(bucket.name, storagePath, { cacheBust: true });
+  },
+};
+
 function genShareToken(): string {
   return crypto.randomBytes(32).toString("base64url");
 }
@@ -45,6 +70,7 @@ export async function performIssueInvoice(
   db: FirebaseFirestore.Firestore,
   userId: string,
   request: IssueInvoiceRequest,
+  deps: IssueInvoiceDeps = defaultDeps,
 ): Promise<IssueInvoiceResponse> {
   if (!request?.invoiceId) {
     throw new HttpsError("invalid-argument", "invoiceId is required");
@@ -100,23 +126,11 @@ export async function performIssueInvoice(
   };
 
   // 2. Render PDF
-  const pdfBuffer = await renderInvoicePdf(issuedInvoice);
+  const pdfBuffer = await deps.renderPdf(issuedInvoice);
 
   // 3. Upload to Storage
   const storagePath = `files/${userId}/invoices/${invoiceRef.id}_v1.pdf`;
-  const bucket = getStorage().bucket();
-  const storageFile = bucket.file(storagePath);
-  await storageFile.save(pdfBuffer, {
-    contentType: "application/pdf",
-    metadata: {
-      cacheControl: "private, max-age=0, no-store",
-      contentDisposition: `inline; filename="${number}.pdf"`,
-    },
-  });
-  await storageFile.makePublic();
-  // Append a version query param so iframe / browser caches don't keep
-  // serving prior PDF bytes after regen.
-  const downloadUrl = buildStorageObjectUrl(bucket.name, storagePath, { cacheBust: true });
+  const downloadUrl = await deps.storeDocument(storagePath, pdfBuffer, `${number}.pdf`);
 
   // 4. Update the TaxFile record. createInvoice already created a stub
   // TaxFile (so the draft appears in the files list); we update it in place

@@ -8,6 +8,8 @@ import {
   useState,
 } from "react";
 import { format } from "date-fns";
+import { useRouter } from "next/navigation";
+import { useTranslations } from "next-intl";
 import {
   AlertCircle,
   Copy,
@@ -17,7 +19,6 @@ import {
   Pencil,
   Send,
   Share2,
-  Trash2,
   Undo2,
   X,
   XCircle,
@@ -47,6 +48,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { callFunction } from "@/lib/firebase/callable";
+import { pushQuery } from "@/lib/navigation/query-url";
 import { db } from "@/lib/firebase/config";
 import { useInvoice } from "@/hooks/use-invoice";
 import { useUserData } from "@/hooks/use-user-data";
@@ -220,6 +222,9 @@ export function InvoiceDetailPanel({
 }: InvoiceDetailPanelProps) {
   const storedDownload = useAuthenticatedDownload();
   const { invoice, loading } = useInvoice(invoiceId);
+  // A cancelled invoice names its Invoice Correction by number (#133).
+  const { invoice: correction } = useInvoice(invoice?.correctedByInvoiceId ?? null);
+  const router = useRouter();
   const { userData } = useUserData();
   const { userId } = useAuth();
   const { partners: userPartners } = usePartners();
@@ -310,6 +315,9 @@ export function InvoiceDetailPanel({
   }, [invoiceId]);
 
   const isDraft = invoice?.status === "draft";
+  // An Invoice Correction (#133) is edited like any invoice, but only its
+  // original can be cancelled.
+  const isCorrection = !!invoice?.correctsInvoice;
   // Editing is allowed in any non-cancelled state. Cancelled invoices are
   // locked because their accounting record must remain immutable.
   const disabled = invoice?.status === "cancelled";
@@ -779,10 +787,20 @@ export function InvoiceDetailPanel({
     doAction("cancel", async () => {
       await callFunction<
         { invoiceId: string },
-        { invoiceId: string; status: string }
+        { invoiceId: string; status: string; correctionInvoiceId: string }
       >("cancelInvoice", { invoiceId });
-      onClose();
     });
+
+  // The original and its correction link to each other.
+  const openInvoice = useCallback(
+    (id: string) => {
+      const params = new URLSearchParams(window.location.search);
+      params.set("invoiceId", id);
+      params.delete("id");
+      pushQuery(router, `/files?${params.toString()}`);
+    },
+    [router]
+  );
 
   const handleUndoIssue = () =>
     doAction("undoIssue", async () => {
@@ -1050,6 +1068,8 @@ export function InvoiceDetailPanel({
                 onTriggerRematch={handleTriggerRematch}
                 isRematching={isRematching}
                 onEnterEditMode={() => setMode("edit")}
+                correctionNumber={correction?.number}
+                onOpenInvoice={openInvoice}
               />
             ) : (
               <EditSections
@@ -1204,48 +1224,14 @@ export function InvoiceDetailPanel({
                         {storedDownload.error}
                       </p>
                     )}
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <Button
-                          variant="outline"
-                          className={
-                            hasIssuedPdf
-                              ? "text-destructive hover:text-destructive hover:bg-destructive/10"
-                              : "col-span-2 text-destructive hover:text-destructive hover:bg-destructive/10"
-                          }
-                          disabled={actionBusy !== null}
-                        >
-                          <Trash2 className="h-4 w-4 mr-2" />
-                          Löschen
-                        </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>Rechnung löschen?</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            Die Rechnung wird gelöscht und das verknüpfte PDF
-                            wird ausgeblendet. Dieser Schritt lässt sich nicht
-                            rückgängig machen — du kannst die Rechnung aber
-                            duplizieren, um einen neuen Entwurf zu erstellen.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel disabled={actionBusy === "cancel"}>
-                            Abbrechen
-                          </AlertDialogCancel>
-                          <AlertDialogAction
-                            onClick={handleCancel}
-                            disabled={actionBusy !== null}
-                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                          >
-                            {actionBusy === "cancel" && (
-                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                            )}
-                            Löschen
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
+                    {!isCorrection && (
+                      <CancelInvoiceDialog
+                        className={hasIssuedPdf ? undefined : "col-span-2"}
+                        busy={actionBusy === "cancel"}
+                        disabled={actionBusy !== null}
+                        onConfirm={handleCancel}
+                      />
+                    )}
                   </div>
                 </>
               )}
@@ -1281,6 +1267,14 @@ export function InvoiceDetailPanel({
                       </a>
                     </Button>
                   )}
+                  {!isCorrection && (
+                    <CancelInvoiceDialog
+                      className="w-full"
+                      busy={actionBusy === "cancel"}
+                      disabled={actionBusy !== null}
+                      onConfirm={handleCancel}
+                    />
+                  )}
                 </>
               )}
 
@@ -1311,6 +1305,63 @@ export function InvoiceDetailPanel({
 }
 
 // ===========================================================================
+// Cancel (#133): issues an Invoice Correction; both documents stay on record.
+// ===========================================================================
+
+function CancelInvoiceDialog({
+  className,
+  busy,
+  disabled,
+  onConfirm,
+}: {
+  className?: string;
+  busy: boolean;
+  disabled: boolean;
+  onConfirm: () => void;
+}) {
+  const t = useTranslations("invoices.correction");
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button
+          variant="outline"
+          className={`text-destructive hover:text-destructive hover:bg-destructive/10 ${className ?? ""}`}
+          disabled={disabled}
+        >
+          <XCircle className="h-4 w-4 mr-2" />
+          {t("cancel")}
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{t("cancelTitle")}</AlertDialogTitle>
+          <AlertDialogDescription>{t("cancelDescription")}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={busy}>{t("keep")}</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={onConfirm}
+            disabled={disabled}
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+          >
+            {busy && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+            {t("cancelConfirm")}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+function InvoiceLink({ onClick, text }: { onClick: () => void; text: string }) {
+  return (
+    <button type="button" onClick={onClick} className="text-sm text-primary hover:underline">
+      {text}
+    </button>
+  );
+}
+
+// ===========================================================================
 // View mode — read-only label/value rows, mirroring file-detail-panel.
 // ===========================================================================
 
@@ -1333,6 +1384,9 @@ interface ViewSectionsProps {
   onTriggerRematch: () => Promise<void>;
   isRematching: boolean;
   onEnterEditMode: () => void;
+  /** Number of the Invoice Correction that cancels this invoice, once loaded. */
+  correctionNumber?: string;
+  onOpenInvoice: (invoiceId: string) => void;
 }
 
 function ViewSections({
@@ -1353,7 +1407,10 @@ function ViewSections({
   onTriggerRematch,
   isRematching,
   onEnterEditMode,
+  correctionNumber,
+  onOpenInvoice,
 }: ViewSectionsProps) {
+  const t = useTranslations("invoices.correction");
   const lineItemCount = form.lineItems.filter(
     (li) => li.description.trim() !== "" || (li.unitPrice ?? 0) > 0,
   ).length;
@@ -1382,6 +1439,23 @@ function ViewSections({
               {formatEur(liveTotals.total)}
             </span>
           </FieldRow>
+
+          {invoice.correctsInvoice ? (
+            <FieldRow label={t("correctsLabel")} labelWidth="w-28" className="py-0">
+              <InvoiceLink
+                onClick={() => onOpenInvoice(invoice.correctsInvoice!.invoiceId)}
+                text={t("correctsValue", { number: invoice.correctsInvoice.number })}
+              />
+            </FieldRow>
+          ) : null}
+          {invoice.correctedByInvoiceId ? (
+            <FieldRow label={t("correctedByLabel")} labelWidth="w-28" className="py-0">
+              <InvoiceLink
+                onClick={() => onOpenInvoice(invoice.correctedByInvoiceId!)}
+                text={t("correctedByValue", { number: correctionNumber ?? "…" })}
+              />
+            </FieldRow>
+          ) : null}
 
           <ShowMoreButton
             expanded={showMore}

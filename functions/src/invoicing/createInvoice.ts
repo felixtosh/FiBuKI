@@ -6,7 +6,6 @@
  * atomically at issue time.
  */
 
-import { toDateSafe } from "../utils/toDateSafe";
 import { Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import {
@@ -30,6 +29,7 @@ import {
   InvoiceRecipientSnapshot,
 } from "./types";
 import { draftFileStubFields, draftPlaceholderNumber } from "./buildInvoiceFileFields";
+import { nextInvoiceNumberSeq } from "./numberAllocator";
 
 function buildBlankIssuerSnapshot(): InvoiceIssuerSnapshot {
   return { entityId: "", name: "", iban: "" };
@@ -170,56 +170,12 @@ export async function performCreateInvoice(
   }
   const { subtotal, vatAmount, total } = computeInvoiceTotals(lineItems);
 
-  // Pre-fill numberSeq with (highest existing seq for this user+year) + 1.
-  // We deliberately don't filter by namePrefix to avoid an extra composite
-  // index; the seq is shared across all of the user's invoices in this year.
-  // Issued invoices remain stable (number is frozen at issue time), so this
-  // only affects what the upcoming draft's seq looks like.
-  const issueYear = issueDate.toDate().getFullYear();
+  // Pre-fill numberSeq with the next number of this user's year. Issued
+  // invoices remain stable (number is frozen at issue time), so this only
+  // affects what the upcoming draft's seq looks like.
   let numberSeq = 1;
   try {
-    // Scan ALL of the user's invoices (no date filter) and look at both
-    // structured numberSeq AND the trailing 4-digit chunk of the legacy
-    // `number` field for the current year. Year filter was dropping older
-    // sequences when timezone math pushed issueDate across the boundary;
-    // doing it manually below keeps things consistent.
-    const seqQuery = await db
-      .collection("invoices")
-      .where("userId", "==", userId)
-      .get();
-    let maxSeq = 0;
-    const yearRegex = new RegExp(`-${issueYear}-(\\d{1,6})$`);
-    seqQuery.forEach((doc) => {
-      const data = doc.data() as {
-        numberSeq?: number;
-        number?: string;
-        issueDate?: { toDate: () => Date };
-      };
-      // Same-year guard: prefer the doc's stored issueDate year, fall back
-      // to parsing the year from the number string.
-      let docYear: number | null = null;
-      try {
-        docYear = toDateSafe(data.issueDate)?.getFullYear() ?? null;
-      } catch {
-        docYear = null;
-      }
-      if (docYear !== null && docYear !== issueYear) return;
-
-      if (typeof data.numberSeq === "number" && data.numberSeq > maxSeq) {
-        maxSeq = data.numberSeq;
-      }
-      // Legacy fallback: parse "{prefix}-{year}-{NNNN}" from data.number.
-      if (typeof data.number === "string") {
-        const m = data.number.match(yearRegex);
-        if (m) {
-          const legacySeq = parseInt(m[1], 10);
-          if (!Number.isNaN(legacySeq) && legacySeq > maxSeq) {
-            maxSeq = legacySeq;
-          }
-        }
-      }
-    });
-    numberSeq = maxSeq + 1;
+    numberSeq = await nextInvoiceNumberSeq(db, userId, issueDate.toDate().getFullYear());
   } catch (err) {
     // Non-fatal — fall back to 1 and let the user adjust manually.
     console.warn("createInvoice: failed to compute next numberSeq", err);
