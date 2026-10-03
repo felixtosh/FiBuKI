@@ -362,7 +362,9 @@ it holds no File Connection and is never proposed as a Match, so the original al
 carries the Coverage, the input VAT and the BMD Export. It stays out of the queue while
 its original is live; when the original is deleted, the Copy is an ordinary File again.
 The system records a Copy only when no File Connection is lost by it, and suggests one
-otherwise; every Copy can be undone, and undoing one is not a Rejection. A Receipt for
+otherwise; every Copy can be undone, and undoing one is not a Rejection. A pair the User
+ruled not a Copy is never suggested again. See
+[ADR-0010](docs/adr/0010-a-copy-holds-no-file-connection.md). A Receipt for
 the same charge as an invoice is not a Copy, and neither is a **Dunning Letter**: both
 are different documents.
 _Deutsch_: Kopie
