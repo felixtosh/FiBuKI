@@ -269,6 +269,16 @@ External AI integrations (OpenClaw, Claude Desktop, ChatGPT) use a shared tool r
 - `functions/src/mcp-api/index.ts` - REST API endpoint (mcpApi)
 - `functions/src/mcp-api/mcp-sse.ts` - MCP protocol endpoint (mcpSse)
 
+**A new tool touches five places**, and CI catches only some of them, one at a time:
+the definition in `functions/src/tools/definitions.ts`, its case in `handlers.ts`, its
+class in `functions/src/mcp-api/tool-annotations.ts` (read-only / write / destructive;
+`mcp-server.test.ts` fails without it), its entry and description in
+`functions/src/mcp-api/openapi.ts`, and the regenerated
+`lib/data/generated-tool-definitions.ts` (`npm run generate:tool-definitions`; CI's
+drift check runs only after the unit tests pass). The generator reads the compiled
+`functions/lib`; on a small host compile `src/tools/definitions.ts` alone instead of
+the whole project.
+
 **Note**: Chat assistant (`lib/agent/tools/`) has separate implementations for performance (direct Admin SDK reads). Writes are already unified via Cloud Function callables.
 
 ## Business Rules
