@@ -727,7 +727,8 @@
       "acceptedDescription": "Rechnungen mit Trinkgeld, die der Bankbetrag nicht deckt, anteilig geltend gemacht aufgrund einer festgehaltenen Entscheidung, dass nur ein Teil bezahlt wurde. Die Entscheidung verfällt, sobald sich die Belege, ihre Summen oder Trinkgelder oder der Bankbetrag ändern.",
       "revoke": "Widerrufen",
       "revokeHint": "Entscheidung entfernen. Die Transaktion kommt zurück auf die Prüfliste und macht nichts geltend, bis sie geklärt ist.",
-      "claimed": "{amount} VSt geltend gemacht"
+      "claimed": "{amount} VSt geltend gemacht",
+      "claimedOutput": "{amount} USt geschuldet"
     }
   }
 }

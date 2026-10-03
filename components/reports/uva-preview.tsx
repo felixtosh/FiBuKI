@@ -236,21 +236,27 @@ export function UVAPreview({
   const [rulingFor, setRulingFor] = useState(NO_TEXT);
   const [rulingReason, setRulingReason] = useState("");
   const [rulingSaving, setRulingSaving] = useState(false);
+  // Each error shows where its action was taken: an accept's in that row's
+  // form, a revoke's under the accepted list.
   const [rulingError, setRulingError] = useState(NO_TEXT);
+  const [revokeError, setRevokeError] = useState(NO_TEXT);
   const rule = async (transactionId: string, action: "accept" | "revoke") => {
     if (!onRulePartialPayment) return;
+    const setError = action === "accept" ? setRulingError : setRevokeError;
     setRulingSaving(true);
-    setRulingError(null);
+    setError(null);
     try {
       await onRulePartialPayment(
         transactionId,
         action,
         action === "accept" ? rulingReason.trim() : undefined
       );
-      setRulingFor(null);
-      setRulingReason("");
+      if (action === "accept") {
+        setRulingFor(null);
+        setRulingReason("");
+      }
     } catch (err) {
-      setRulingError(err instanceof Error ? err.message : t("partialPayment.saveFailed"));
+      setError(err instanceof Error ? err.message : t("partialPayment.saveFailed"));
     } finally {
       setRulingSaving(false);
     }
@@ -530,7 +536,10 @@ export function UVAPreview({
                         size="sm"
                         className="h-7 px-2 text-xs"
                         disabled={rulingSaving}
-                        onClick={() => setRulingFor(null)}
+                        onClick={() => {
+                          setRulingFor(null);
+                          setRulingError(null);
+                        }}
                       >
                         {t("partialPayment.cancel")}
                       </Button>
@@ -579,13 +588,15 @@ export function UVAPreview({
                     {formatAmount(d.amount)} EUR
                   </span>
                   <span className="w-32 text-right font-mono text-xs text-muted-foreground tabular-nums">
-                    {t("partialPayment.claimed", { amount: formatAmount(d.inputVat) })}
+                    {d.side === "income"
+                      ? t("partialPayment.claimedOutput", { amount: formatAmount(d.outputVat) })
+                      : t("partialPayment.claimed", { amount: formatAmount(d.inputVat) })}
                   </span>
                 </div>
               ))}
             </div>
-            {rulingError && rulingFor === null ? (
-              <p className="mt-2 text-xs text-destructive">{rulingError}</p>
+            {revokeError ? (
+              <p className="mt-2 text-xs text-destructive">{revokeError}</p>
             ) : null}
           </CardContent>
         </Card>

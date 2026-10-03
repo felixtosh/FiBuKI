@@ -16,6 +16,7 @@ import { periodBoundaries } from "../uva/rateSet";
 import { dayStartUtc, dayEndExclusiveUtc } from "../uva/dateWindow";
 import {
   buildUvaTransactions,
+  payableTotalOf,
   type CategoryRecord,
   type FileRecord,
   type TransactionRecord,
@@ -123,14 +124,14 @@ export async function runUvaForPeriod(
   const partialFileIds = new Set<string>();
   for (const tx of txRecords) {
     for (const fid of tx.fileIds ?? []) {
-      const total = filesById.get(fid)?.extractedAmount;
+      const total = payableTotalOf(filesById.get(fid));
       if (total && Math.abs(tx.amount) + RECONCILE_TOLERANCE_CENTS < total) {
         partialFileIds.add(fid);
       }
     }
   }
   for (const fid of partialFileIds) {
-    const total = filesById.get(fid)?.extractedAmount;
+    const total = payableTotalOf(filesById.get(fid));
     if (!total) continue;
     const priorSnapshot = await db
       .collection("transactions")

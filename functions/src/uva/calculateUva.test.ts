@@ -9,6 +9,7 @@
 
 import { describe, it, expect } from "vitest";
 import { calculateUva } from "./calculateUva";
+import { payableTotalOf } from "./adapter";
 import { periodBoundaries, ratesValidOn } from "./rateSet";
 import type {
   UvaTransaction,
@@ -916,13 +917,26 @@ describe("tip the bank line does not cover (#554)", () => {
     expect(r.totalInputVat).toBe(834);
   });
 
-  it("caps an instalment of a ruled split bill at the remaining fraction", () => {
-    // Half was claimed in an earlier period; this payment pays the rest.
-    const r = run([
-      tx(-5500, hundred(1000), { partialPaymentAccepted: true, priorClaimedFraction: 0.5 }),
-    ]);
+  it("claims a ruled tipped bill paid in two halves in full, across both periods", () => {
+    // 55,00 in Q1 and 55,00 in Q2, each ruled. The prior fraction is what the
+    // period run computes: earlier payments over total PLUS tip. Over the total
+    // alone it read 0,55 and the second half claimed 7,50 instead of 8,33.
+    const q1 = run([tx(-5500, hundred(1000), { partialPaymentAccepted: true })]);
+    const prior = 5500 / payableTotalOf({ extractedAmount: 10000, extractedTipAmount: 1000 })!;
+    const q2 = run(
+      [
+        {
+          ...tx(-5500, hundred(1000), { partialPaymentAccepted: true, priorClaimedFraction: prior }),
+          date: "2026-05-20",
+        },
+      ],
+      Q2_2026
+    );
 
-    expect(r.totalInputVat).toBe(833);
+    expect(prior).toBe(0.5);
+    expect(q1.totalInputVat).toBe(834);
+    expect(q2.totalInputVat).toBe(833);
+    expect(q1.totalInputVat + q2.totalInputVat).toBe(1667);
   });
 
   it("keeps the D1 asymmetry on income: defaulted to 20% and flagged", () => {

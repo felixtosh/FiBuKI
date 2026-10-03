@@ -512,7 +512,7 @@ export async function runExtraction(
     // #310: the bound belongs to the tip it measured. This figure is the
     // extractor's, so the record of what bounded a hand-set one goes with the
     // figure it described — left standing it would say a tip transcribed from
-    // the page had been measured against a bank line, and the panel would
+    // the page had been declared as not printed (#554), and the panel would
     // re-offer "not printed" for a tip the page prints.
     updateData.extractedTipBound = null;
     const documentTotal = totalWithoutPrintedTip(

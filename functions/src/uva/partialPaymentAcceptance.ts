@@ -73,6 +73,8 @@ function tipOf(f: RuledFileRecord | undefined): number | null {
  * The figures a ruling made now would record. A File id that does not
  * resolve is kept, with no total and no tip, so it still counts towards the
  * set: a ruling over a File nobody could read is not a ruling over no File.
+ * A File listed twice counts once, as liveness compares SETS: a ruling that
+ * recorded it twice could never be live again.
  */
 export function partialPaymentFigures(
   tx: Pick<PartialPaymentSubject, "amount" | "fileIds">,
@@ -80,7 +82,7 @@ export function partialPaymentFigures(
 ): PartialPaymentFigures {
   return {
     bankAmount: tx.amount,
-    files: (tx.fileIds ?? []).map((id) => {
+    files: [...new Set(tx.fileIds ?? [])].map((id) => {
       const f = filesById.get(id);
       return { id, total: f?.extractedAmount ?? null, tip: tipOf(f) };
     }),

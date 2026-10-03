@@ -218,6 +218,22 @@ export function deriveForeignRegime(
   return null;
 }
 
+/**
+ * What paying a document in full comes to, cents: its total plus its tip
+ * (#172). The instalment cap divides what earlier periods paid by this, the
+ * same figure the reconcile measures a payment against; dividing by the total
+ * alone made a ruled split bill's second half look over-paid (#554). Null for
+ * a document with no positive total, which is never read as an instalment.
+ */
+export function payableTotalOf(
+  f: Pick<FileRecord, "extractedAmount" | "extractedTipAmount"> | undefined
+): number | null {
+  const total = f?.extractedAmount ?? 0;
+  if (total <= 0) return null;
+  const tip = f?.extractedTipAmount ?? 0;
+  return total + (tip > 0 ? tip : 0);
+}
+
 export interface BuildOptions {
   filesById: Map<string, FileRecord>;
   categoriesById: Map<string, CategoryRecord>;

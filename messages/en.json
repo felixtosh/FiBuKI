@@ -727,7 +727,8 @@
       "acceptedDescription": "Tipped bills the bank amount does not cover, claimed in part on a recorded ruling that only part was paid. A ruling goes stale when the receipts, their totals or tips, or the bank amount change.",
       "revoke": "Revoke",
       "revokeHint": "Remove the ruling. The line returns to the review list and claims nothing until it is resolved.",
-      "claimed": "{amount} VSt claimed"
+      "claimed": "{amount} VSt claimed",
+      "claimedOutput": "{amount} USt owed"
     }
   }
 }

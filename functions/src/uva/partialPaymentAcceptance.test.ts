@@ -128,3 +128,18 @@ describe("the adapter reads the ruling only through liveness", () => {
     expect(build({ partialPaymentAcceptance: null }).partialPaymentAccepted).toBe(false);
   });
 });
+
+describe("a file listed twice (#554 review)", () => {
+  it("is recorded once, so the ruling made over it can be live", () => {
+    const subject = { amount: -5500, fileIds: ["f-1", "f-1"] };
+    const figures = partialPaymentFigures(subject, files());
+
+    expect(figures.files).toHaveLength(1);
+    expect(
+      isPartialPaymentAcceptanceLive(
+        { ...subject, partialPaymentAcceptance: { by: "u", at: null, reason: "r", ...figures } },
+        files()
+      )
+    ).toBe(true);
+  });
+});
