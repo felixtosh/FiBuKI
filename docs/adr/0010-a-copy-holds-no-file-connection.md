@@ -1,7 +1,7 @@
 # A Copy holds no File Connection
 
 _Status: accepted (2026-10-03), settled in the #162 grilling on top of Felix's decision of
-2026-09-27 that a **Copy** is a first-class File state. Not yet implemented._
+2026-09-27 that a **Copy** is a first-class File state. Implemented with #162._
 
 Marking a File as a **Copy** of another File takes its File Connection apart. The Copy
 then documents nothing on its own: the original is the one File the Transaction holds,
@@ -52,3 +52,11 @@ it alone.
 - Swapping which File is the original moves the File Connection to the other File in a
   single act.
 - A pair ruled "not a Copy" is never suggested again.
+- Marking a connected File as a Copy moves each File Connection it held to the original
+  wherever the original does not already hold one, so no Transaction loses its document
+  by the mark. Where the original already holds it, the Copy's is simply removed.
+- A File whose original is deleted, and which then gets a File Connection of its own,
+  loses its mark: a File holding a File Connection is never a Copy, so restoring the
+  original leaves two ordinary Files.
+- Every "Not a Copy" stores the ruling, whoever recorded the Copy. Without it the Copy
+  check would record an exact pair again the moment the File returns to matching.
