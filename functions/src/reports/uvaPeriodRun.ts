@@ -23,6 +23,7 @@ import {
   type TransactionRecord,
 } from "../uva/adapter";
 import { loadEcbRateTable } from "../fx/ecbRateStore";
+import { loadCorrections } from "../corrections/loadCorrections";
 import type { TransactionStats } from "../uva/legacyProjection";
 import type { UvaPeriod, UvaReportResult } from "../uva/types";
 
@@ -214,12 +215,24 @@ export async function runUvaForPeriod(
   // run rather than per document — a quarter is four month documents.
   const ecbRates = await loadEcbRateTable(db, bounds.start, bounds.end);
 
+  // Refunds (#564): each one's original, what it claimed, and what earlier
+  // refunds already took back, resolved here so the calculation never queries.
+  const correctionByTransactionId = await loadCorrections(
+    db,
+    userId,
+    txRecords,
+    filesById,
+    categoriesById,
+    ecbRates
+  );
+
   const result = calculateUva({
     period,
     transactions: buildUvaTransactions([...txRecords, ...offPeriodSales], {
       filesById,
       categoriesById,
       priorClaimedFractionByFileId,
+      correctionByTransactionId,
       partnersById,
     }),
     ecbRates,

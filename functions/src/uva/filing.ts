@@ -38,6 +38,7 @@ import type {
   ZmServiceEntry,
 } from "./types";
 import type { UvaReconciliation } from "./reconcile";
+import type { FiledComparison } from "./filedRecord";
 
 /** One claimed input-VAT figure and the documents it rests on. */
 export interface VorsteuerTraceEntry {
@@ -224,7 +225,15 @@ export type FilingBlockerCode =
   /** A supplied reconciliation is against a different period. */
   | "reconciliation-not-comparable"
   /** The recorded handover covered a run whose totals this one no longer has. */
-  | "handover-stale";
+  | "handover-stale"
+  /**
+   * A correction with no original on file (#564, ADR-0010). Clear it by
+   * linking the original, importing the bank period that paid it, or
+   * reclassifying the line with a Category.
+   */
+  | "correction-unlinked"
+  /** Refunds of one original reverse more than it claimed: an over-refund or a wrong link. */
+  | "correction-over-cap";
 
 export interface FilingBlocker {
   code: FilingBlockerCode;
@@ -288,6 +297,12 @@ export interface UvaFiling {
   handover: UvaFilingHandover;
   /** Empty means the filing can go out. */
   blockers: FilingBlocker[];
+  /**
+   * Earlier periods already filed whose figures a later run moved (#564).
+   * Raised here so a difference is not forgotten; it never blocks this
+   * filing, and whether to file a corrected UVA is the User's decision.
+   */
+  filedPeriodsMoved: FiledComparison[];
 }
 
 /**
@@ -573,6 +588,8 @@ export interface BuildFilingInput {
    * Steuerberater received THIS filing when he received a different one.
    */
   handoverCovers?: HandoverCoverage | null;
+  /** Earlier filed periods compared against a fresh run; only the moved ones are kept. */
+  filedPeriods?: FiledComparison[];
 }
 
 /** The figures a recorded handover went out with. */
@@ -611,6 +628,27 @@ export function buildUvaFiling(input: BuildFilingInput): UvaFiling {
       blockers.push({
         code: "open-item-unexplained",
         detail: `Open item ${item.ref} is ${item.disposition} with no rationale.`,
+      });
+    }
+  }
+  for (const c of report.corrections) {
+    if (c.status === "unlinked") {
+      blockers.push({
+        code: "correction-unlinked",
+        detail:
+          c.unlinkedReason === "original-unpaid"
+            ? `Transaction ${c.transactionId} corrects File ${c.originalFileId}, which no ` +
+              `Transaction on file paid. Import the bank period that paid it.`
+            : `Transaction ${c.transactionId} is a correction with no original on file. ` +
+              `Link the File it corrects, import the bank period that paid it, or ` +
+              `reclassify the line with a Category.`,
+      });
+    } else if (c.excessVat > 0) {
+      blockers.push({
+        code: "correction-over-cap",
+        detail:
+          `Transaction ${c.transactionId} would reverse ${c.excessVat} cents more VAT than ` +
+          `File ${c.originalFileId} has left to give back. Check its link and the earlier refunds.`,
       });
     }
   }
@@ -657,6 +695,7 @@ export function buildUvaFiling(input: BuildFilingInput): UvaFiling {
     reconciliation,
     handover,
     blockers,
+    filedPeriodsMoved: (input.filedPeriods ?? []).filter((c) => c.moved),
   };
 }
 
@@ -682,7 +721,9 @@ function isDocumentStep(step: DerivationStep): boolean {
     step === "line-items" ||
     step === "top-level" ||
     step === "invoice" ||
-    step === "non-claimable"
+    step === "non-claimable" ||
+    step === "purchase-correction" ||
+    step === "sale-correction"
   );
 }
 

@@ -33,7 +33,9 @@ import {
   PartnerAccountIndex,
 } from "./bmdCsvGenerators";
 import { loadEcbRateTable } from "../fx/ecbRateStore";
-import { toViennaCalendarDay } from "../uva/adapter";
+import { toViennaCalendarDay, type FileRecord, type TransactionRecord } from "../uva/adapter";
+import { loadCorrections } from "../corrections/loadCorrections";
+import { bookingSide } from "../uva/correction";
 import type { PartialPaymentAcceptance } from "../uva/partialPaymentAcceptance";
 
 const PROCESSING_TIMEOUT_MS = 4 * 60 * 1000; // 4 minutes
@@ -155,10 +157,13 @@ async function processBmdExport(
     });
 
     const filesMap = new Map<string, FileForExport & { storagePath?: string }>();
+    /** The user's own Files as stored, for correction resolution (#564). */
+    const correctionFiles = new Map<string, FileRecord>();
     for (const fileId of allFileIds) {
       const fileDoc = await db.collection("files").doc(fileId).get();
       if (fileDoc.exists) {
         const data = fileDoc.data();
+        if (data?.userId === userId) correctionFiles.set(fileId, { ...data, id: fileId } as FileRecord);
         filesMap.set(fileId, {
           id: fileId,
           fileName: data?.fileName || "document",
@@ -187,6 +192,23 @@ async function processBmdExport(
       "progress.currentEntity": "partners",
     });
 
+    // Refunds (#564): resolved exactly as the UVA period run resolves them,
+    // so the export books each one on the side the UVA does. The ECB table is
+    // the one the VAT ladder converts at, loaded here once for both.
+    const ecbRates = await loadEcbRateTable(
+      db,
+      toViennaCalendarDay(dateFrom),
+      toViennaCalendarDay(dateTo)
+    );
+    const correctionByTransactionId = await loadCorrections(
+      db,
+      userId,
+      transactions.map((tx) => ({ ...tx, date: tx.date as Timestamp }) as unknown as TransactionRecord),
+      correctionFiles,
+      new Map(),
+      ecbRates
+    );
+
     // 3. Collect all associated partners
     const partnerIds = new Set<string>();
     transactions.forEach((tx) => {
@@ -205,8 +227,12 @@ async function processBmdExport(
     const partnerTypes = new Map<string, "kreditor" | "debitor">();
     transactions.forEach((tx) => {
       if (tx.partnerId) {
-        const isExpense = (tx.amount as number) < 0;
-        partnerTypes.set(tx.partnerId as string, isExpense ? "kreditor" : "debitor");
+        const side = bookingSide({
+          amount: tx.amount as number,
+          correction: correctionByTransactionId.get(tx.id) ?? null,
+        });
+        const isKreditor = side === "purchase" || side === "purchase-correction";
+        partnerTypes.set(tx.partnerId as string, isKreditor ? "kreditor" : "debitor");
       }
     });
 
@@ -274,6 +300,7 @@ async function processBmdExport(
         noReceiptCategoryId: tx.noReceiptCategoryId,
         noReceiptCategoryTemplateId: tx.noReceiptCategoryTemplateId,
         partialPaymentAcceptance: tx.partialPaymentAcceptance ?? null,
+        correction: correctionByTransactionId.get(tx.id) ?? null,
       })
     );
 
@@ -285,15 +312,9 @@ async function processBmdExport(
       simpleFilesMap.set(id, forExport);
     });
 
-    // The same rate table the UVA run loads (#92), so a foreign-currency
-    // document is converted at the same rate on both sides and its tip reaches
-    // the same verdict (#326). Without it the export fell back to the
-    // effective bank rate where the UVA used the ECB's.
-    const ecbRates = await loadEcbRateTable(
-      db,
-      toViennaCalendarDay(dateFrom),
-      toViennaCalendarDay(dateTo)
-    );
+    // `ecbRates` above is the same rate table the UVA run loads (#92), so a
+    // foreign-currency document is converted at the same rate on both sides
+    // and its tip reaches the same verdict (#326).
 
     // A document whose figures cannot be booked honestly keeps its transaction
     // out of the CSV rather than degrading into a wrong booking (#194). The run

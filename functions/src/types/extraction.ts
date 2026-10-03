@@ -137,6 +137,13 @@ export interface ExtractedData {
    * Transcribed, never invented; null when the document prints none (#104).
    */
   invoiceNumber: string | null;
+  /**
+   * The number of the invoice this document corrects, as a credit note or
+   * Rechnungskorrektur prints it ("zu Rechnung Nr.", "Original invoice").
+   * Transcribed, never inferred; null when the document references none
+   * (#564). Optional for extractors that predate it.
+   */
+  referencedInvoiceNumber?: string | null;
   partner: string | null;
   vatId: string | null; // VAT ID (e.g., ATU12345678, DE123456789)
   iban: string | null; // IBAN if visible

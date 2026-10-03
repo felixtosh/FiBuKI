@@ -492,6 +492,30 @@
       "copies": "Copies",
       "copiesExplanation": "Other Files of this document. They are not counted.",
       "failed": "That did not work: {message}"
+    },
+    "correction": {
+      "label": "Invoice Correction",
+      "referencedNumber": "refers to invoice {number}",
+      "signalsDisagree": "The document's signals disagree: it refers to an invoice but prints positive figures, or prints negative figures without naming an invoice. Check that it really corrects an earlier invoice.",
+      "corrects": "Corrects",
+      "paidBy": "paid by",
+      "notPaid": "No Transaction on file paid the original. Import the bank period that paid it, or the period cannot be filed.",
+      "linkedAuto": "Linked by the invoice number it refers to.",
+      "linkedSuggested": "Linked from a suggestion.",
+      "linkedManual": "Linked by hand.",
+      "linkedIssued": "Issued by FiBuKI as the correction of this invoice.",
+      "unlink": "Unlink",
+      "unlinkedExplanation": "Not linked to the invoice it corrects. FiBuKI reverses only what that original claimed, so until it is linked the period cannot be filed.",
+      "suggestionsTitle": "Possibly corrects",
+      "accept": "Link",
+      "decline": "Not this one",
+      "linkByHand": "Link",
+      "chooseFile": "Choose the invoice it corrects",
+      "noCandidates": "No other File of this Partner",
+      "correctedBy": "Corrected by",
+      "transactionCorrects": "Corrects",
+      "transactionCorrectedBy": "Corrected by",
+      "failed": "That did not work: {message}"
     }
   },
   "progress": {
@@ -731,7 +755,8 @@
       "foreign-currency": "Foreign-currency receipt — no usable exchange rate",
       "impossible-tip": "Trinkgeld ≥ bank amount — correct the tip on the receipt",
       "tip-partial-payment": "Bank amount short of total + Trinkgeld — correct the tip, or accept a partial payment",
-      "needs-receipt": "Receipt lost — needs documentation"
+      "needs-receipt": "Receipt lost — needs documentation",
+      "correction-unlinked": "Invoice Correction not linked to its original — link it, or the period cannot be filed"
     },
     "partialPayment": {
       "accept": "Accept partial payment",
@@ -747,6 +772,62 @@
       "revokeHint": "Remove the ruling. The line returns to the review list and claims nothing until it is resolved.",
       "claimed": "{amount} VSt claimed",
       "claimedOutput": "{amount} USt owed"
+    },
+    "corrections": {
+      "title": "Invoice Corrections",
+      "explanation": "A refund reverses what its original did, in the period the money moved: a refund of a purchase reduces the Vorsteuer it claimed (KZ 067), your refund to a customer the tax its sale owed.",
+      "purchase": "Refund of a purchase",
+      "sale": "Refund to a customer",
+      "original": "Original invoice",
+      "paidBy": "paid by {count, plural, one {# Transaction} other {# Transactions}}",
+      "claimed": "claimed {vat} VAT on {gross}",
+      "owed": "owed {vat} VAT on {gross}",
+      "fraction": "this refund is {percent} of it",
+      "prior": "earlier refunds took back {vat}",
+      "reverses": "reverses {vat}",
+      "nothing": "The original claimed no VAT, so nothing is reversed.",
+      "excess": "{vat} more than the original had left: an over-refund or a wrong link. The period cannot be filed until it is resolved.",
+      "printedMismatch": "The correction document prints {printed} VAT; FiBuKI computes {computed}. Check the link.",
+      "unlinked": "Not linked to its original. Booked at the safe default until it is linked; the period cannot be filed.",
+      "unpaid": "Its original was paid by no Transaction on file. Import the bank period that paid it."
+    },
+    "filing": {
+      "title": "Filing",
+      "description": "What was filed for this period, and whether FiBuKI's figures have moved since.",
+      "blockersTitle": "{count, plural, one {# blocker} other {# blockers}}: this period cannot be filed yet",
+      "blocker": {
+        "correction-unlinked": "An Invoice Correction has no original on file. Link the invoice it corrects, import the bank period that paid it, or reclassify the line with a Category.",
+        "correction-over-cap": "Refunds of one invoice reverse more VAT than it claimed. Check the correction's link and the earlier refunds."
+      },
+      "notFiled": "Not marked as filed yet.",
+      "filedOn": "Marked as filed on {date}.",
+      "filedViaFinanzOnline": "Submitted to FinanzOnline on {date}.",
+      "editedByHand": "Figures edited by hand.",
+      "history": "{count} filings recorded.",
+      "unchanged": "FiBuKI's figures still match what was filed.",
+      "balanceMoved": "FiBuKI's figures moved since filing, and the amount payable (KZ 095) moved by {delta}. A corrected UVA would change the tax.",
+      "onlyMoved": "FiBuKI's figures moved since filing, but only between Kennzahlen: the amount payable (KZ 095) is unchanged.",
+      "kz": "KZ",
+      "filed": "Filed",
+      "now": "Now",
+      "delta": "Difference",
+      "movedBy": "Moved by these Transactions",
+      "movedVat": "input VAT {input}, output VAT {output}",
+      "earlierTitle": "Earlier filed periods whose figures moved",
+      "earlierBalance": "{period}: the amount payable moved by {delta}",
+      "earlierOnlyMoved": "{period}: {count, plural, one {# Kennzahl} other {# Kennzahlen}} moved, the amount payable did not",
+      "markFiled": "Mark as filed",
+      "markFiledAgain": "Mark a corrected filing",
+      "blockedHint": "Resolve the blockers first.",
+      "decisionIsYours": "FiBuKI only shows the difference. Whether to file a corrected UVA is your and your Tax Advisor's decision.",
+      "dialogTitle": "Mark as filed",
+      "dialogDescription": "Record the figures you actually filed. They start as FiBuKI's; change any you filed differently. Earlier records are kept.",
+      "kzCode": "KZ {code}",
+      "note": "Note (optional)",
+      "notANumber": "KZ {code} is not a number.",
+      "cancel": "Cancel",
+      "confirm": "Mark as filed",
+      "failed": "That did not work: {message}"
     },
     "saleSupply": {
       "kind": {

@@ -982,6 +982,18 @@ SEQUENTIAL INVOICE NUMBER ("invoiceNumber", IMPORTANT):
   a customer number or a reference
 - If the document prints no invoice number, return "invoiceNumber": null
 
+REFERENCED INVOICE NUMBER ("referencedInvoiceNumber", IMPORTANT):
+- A credit note, a Gutschrift, a Rechnungskorrektur or a Storno names the
+  invoice it corrects. Transcribe THAT invoice's number, exactly as printed,
+  from wordings such as "zu Rechnung Nr.", "Bezug auf Rechnung", "Rechnungs-
+  korrektur zu", "Storno zu", "Original invoice", "Corrects invoice",
+  "Credit note for invoice", "Reference invoice"
+- It is never the document's own number: that is "invoiceNumber"
+- Copy what is printed - do NOT take an order number, a customer number or a
+  payment reference for it
+- If the document references no earlier invoice, return
+  "referencedInvoiceNumber": null
+
 Input format: any language, most often German (dates DD.MM.YYYY, amounts
 with a decimal comma like 123,45); English documents use 12/15/2024 or
 15/12/2024 and a decimal point - read the order from the document itself
@@ -1076,6 +1088,7 @@ JSON structure:
     "documentVatAmount": 1971,
     "selfDesignation": "Rechnung",
     "invoiceNumber": "2024-0042",
+    "referencedInvoiceNumber": null,
     "lineItems": [
       {
         "description": "USB-C Cable",
@@ -1249,6 +1262,7 @@ JSON only, no markdown, no explanation.`;
       qrCodes?: unknown;
       selfDesignation?: string | null;
       invoiceNumber?: string | null;
+      referencedInvoiceNumber?: string | null;
       lineItems?: GeminiLineItem[] | null;
       rateGroups?: GeminiRateGroup[] | null;
       confidence?: number;
@@ -1424,6 +1438,7 @@ JSON only, no markdown, no explanation.`;
     // something, and an invented §11 element is worse than a missing one.
     selfDesignation: asTranscribedString(parsed.extracted?.selfDesignation),
     invoiceNumber: asTranscribedString(parsed.extracted?.invoiceNumber),
+    referencedInvoiceNumber: asTranscribedString(parsed.extracted?.referencedInvoiceNumber),
     partner: legacyPartner,
     vatId: legacyVatId,
     iban: legacyIban,

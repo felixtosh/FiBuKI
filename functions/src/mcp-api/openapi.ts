@@ -62,6 +62,9 @@ const OPENAPI_SPEC = {
                       "mark_file_as_copy",
                       "unmark_file_as_copy",
                       "make_file_the_original",
+                      "link_correction",
+                      "unlink_correction",
+                      "get_correction",
                       "dismiss_transaction_suggestion",
                       "undismiss_transaction_suggestion",
                       "retry_file_extraction",
@@ -240,6 +243,12 @@ const OPENAPI_SPEC = {
       "Not a Copy: undo a Copy or decline a Copy suggestion. The pair is never suggested again; the file goes back to matching. Args: fileId (string)",
     make_file_the_original:
       "Swap a Copy and its original; the transaction connections move to the given file. Args: fileId (string)",
+    link_correction:
+      "Link an Invoice Correction (credit note, Gutschrift reducing an earlier invoice, Rechnungskorrektur) to the File it corrects. The UVA then books the refund against the original's Vorsteuer (KZ 067) or revenue, and the BMD export on the original's side; an unlinked correction blocks the filing. Also accepts a suggestion. Args: fileId (string), originalFileId (string)",
+    unlink_correction:
+      "Remove a correction's link, or decline a suggestion (originalFileId); the File is never linked automatically again. Args: fileId (string), originalFileId? (string)",
+    get_correction:
+      "What a File corrects and who paid the original, its suggestions and linked corrections; or, for a transaction, the transactions related through a correction. Args: fileId? (string), transactionId? (string)",
     dismiss_transaction_suggestion:
       "Reject a proposed file-to-transaction pair (coincidental amount or date, an own-side document scored against an expense line). Removes the suggestion and records the rejection so re-scoring does not propose it again; do not use when the pair is correct but the transaction already holds a document. Args: fileId (string), transactionId (string), reason? (string, max 500 characters)",
     undismiss_transaction_suggestion:

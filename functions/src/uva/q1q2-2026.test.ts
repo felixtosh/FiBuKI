@@ -525,6 +525,102 @@ describe("the ECB rate against the filed figures, per document", () => {
 });
 
 // ---------------------------------------------------------------------------
+// The Amazon refunds (#564) — four in Q1, one in Q2
+// ---------------------------------------------------------------------------
+
+/**
+ * Each refund's credit note prints negative figures, which is how they used to
+ * become negative revenue: KZ 022 and KZ 011 too low. Each original is the
+ * purchase the refund names, and the refunds are whole: the €14,28 one refunds
+ * a 0% marketplace purchase that claimed no Vorsteuer.
+ */
+const AMAZON_REFUNDS: Array<{ id: string; date: string; gross: number; rate: 20 | 0 }> = [
+  { id: "amazon-r1", date: "2026-01-21", gross: 3119, rate: 20 },
+  { id: "amazon-r2", date: "2026-02-09", gross: 9263, rate: 20 },
+  { id: "amazon-r3", date: "2026-02-26", gross: 906, rate: 20 },
+  { id: "amazon-r4", date: "2026-03-17", gross: 1428, rate: 0 },
+  { id: "amazon-r5", date: "2026-05-12", gross: 3256, rate: 20 },
+];
+
+const vatAt = (gross: number, rate: number) => Math.round((gross * rate) / (100 + rate));
+
+function amazonRefund(
+  r: (typeof AMAZON_REFUNDS)[number],
+  linkedToOriginal: boolean
+): UvaTransaction {
+  const vat = vatAt(r.gross, r.rate);
+  return {
+    id: r.id,
+    date: r.date,
+    amount: r.gross,
+    partnerName: "Amazon",
+    files: [{ id: `${r.id}-credit-note`, totalGross: -r.gross, vatPercent: r.rate, vatAmount: -vat }],
+    correction: linkedToOriginal
+      ? {
+          status: "linked",
+          kind: "purchase",
+          basis: "link",
+          original: {
+            fileId: `${r.id}-original`,
+            paidByTransactionIds: [`${r.id}-purchase`],
+            gross: r.gross,
+            claimed: [{ rate: r.rate, net: r.gross - vat, vat }],
+          },
+          priorCorrected: [],
+          printedVat: vat,
+          correctionFileId: `${r.id}-credit-note`,
+        }
+      : null,
+  };
+}
+
+describe("Q1 / Q2 2026 — the Amazon refunds correct Vorsteuer (#564)", () => {
+  const after = (period: UvaPeriod) => run(period, AMAZON_REFUNDS.map((r) => amazonRefund(r, true)));
+  const kz = (period: UvaPeriod, code: string) => after(period).kennzahlen[code]?.value;
+
+  /**
+   * What the refunds booked before #564, read off the credit notes as negative
+   * revenue: Q1 KZ 022 -110,73, KZ 011 -14,28, output VAT -22,15; Q2 KZ 022
+   * -27,13, output VAT -5,43.
+   */
+  const BEFORE = {
+    Q1: { kz022: -11073, kz011: -1428, kz000: -12501, balance: -2215 },
+    Q2: { kz022: -2713, balance: -543 },
+  };
+
+  it("gives Q1 back the revenue the refunds took off it, and reduces Vorsteuer instead", () => {
+    expect((kz(Q1, "022") ?? 0) - BEFORE.Q1.kz022).toBe(11073);
+    expect((kz(Q1, "011") ?? 0) - BEFORE.Q1.kz011).toBe(1428);
+    expect((kz(Q1, "000") ?? 0) - BEFORE.Q1.kz000).toBe(12501);
+    expect(kz(Q1, "067")).toBe(-2215);
+    expect(kz(Q1, "060")).toBeUndefined();
+  });
+
+  it("does the same for Q2", () => {
+    expect((kz(Q2, "022") ?? 0) - BEFORE.Q2.kz022).toBe(2713);
+    expect(kz(Q2, "067")).toBe(-543);
+  });
+
+  it("raises the amount payable by twice the Vorsteuer returned", () => {
+    // Negative revenue lowered output VAT by the refunds' VAT; the correction
+    // lowers input VAT by it instead. KZ 095 is output minus input, so it
+    // moves by both: the spec's "KZ 095 unchanged" does not hold.
+    expect((kz(Q1, "095") ?? 0) - BEFORE.Q1.balance).toBe(2 * 2215);
+    expect((kz(Q2, "095") ?? 0) - BEFORE.Q2.balance).toBe(2 * 543);
+  });
+
+  it("never lets the 0% refund reach KZ 011 or the revenue", () => {
+    const r = after(Q1);
+    expect(r.kennzahlen["011"]).toBeUndefined();
+    expect(r.corrections.find((c) => c.transactionId === "amazon-r4")).toMatchObject({ corrected: [] });
+  });
+
+  it("agrees with every printed credit note", () => {
+    expect(after(Q1).corrections.every((c) => !c.printedVatMismatch)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // An outgoing invoice to a UK customer: a service, not an export of goods (#565)
 // ---------------------------------------------------------------------------
 

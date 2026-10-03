@@ -492,6 +492,30 @@
       "copies": "Kopien",
       "copiesExplanation": "Weitere Belege dieses Dokuments. Sie zählen nicht mit.",
       "failed": "Das hat nicht geklappt: {message}"
+    },
+    "correction": {
+      "label": "Rechnungskorrektur",
+      "referencedNumber": "bezieht sich auf Rechnung {number}",
+      "signalsDisagree": "Die Angaben des Belegs widersprechen sich: Er nennt eine Rechnung, weist aber positive Beträge aus, oder er weist negative Beträge aus, ohne eine Rechnung zu nennen. Prüfe, ob er wirklich eine frühere Rechnung korrigiert.",
+      "corrects": "Korrigiert",
+      "paidBy": "bezahlt mit",
+      "notPaid": "Keine erfasste Transaktion hat das Original bezahlt. Importiere den Bankzeitraum, in dem es bezahlt wurde, sonst kann der Zeitraum nicht abgegeben werden.",
+      "linkedAuto": "Über die genannte Rechnungsnummer verknüpft.",
+      "linkedSuggested": "Aus einem Vorschlag verknüpft.",
+      "linkedManual": "Von Hand verknüpft.",
+      "linkedIssued": "Von FiBuKI als Korrektur dieser Rechnung ausgestellt.",
+      "unlink": "Verknüpfung lösen",
+      "unlinkedExplanation": "Nicht mit der Rechnung verknüpft, die sie korrigiert. FiBuKI berichtigt nur, was dieses Original geltend gemacht hat. Solange die Verknüpfung fehlt, kann der Zeitraum nicht abgegeben werden.",
+      "suggestionsTitle": "Korrigiert möglicherweise",
+      "accept": "Verknüpfen",
+      "decline": "Nicht diese",
+      "linkByHand": "Verknüpfen",
+      "chooseFile": "Korrigierte Rechnung wählen",
+      "noCandidates": "Kein anderer Beleg dieses Partners",
+      "correctedBy": "Korrigiert durch",
+      "transactionCorrects": "Korrigiert",
+      "transactionCorrectedBy": "Korrigiert durch",
+      "failed": "Das hat nicht geklappt: {message}"
     }
   },
   "progress": {
@@ -731,7 +755,8 @@
       "foreign-currency": "Beleg in Fremdwährung — kein verwendbarer Wechselkurs",
       "impossible-tip": "Trinkgeld ≥ Bankbetrag — Trinkgeld am Beleg korrigieren",
       "tip-partial-payment": "Bankbetrag kleiner als Summe + Trinkgeld — Trinkgeld korrigieren oder Teilzahlung akzeptieren",
-      "needs-receipt": "Beleg verloren — Nachweis fehlt"
+      "needs-receipt": "Beleg verloren — Nachweis fehlt",
+      "correction-unlinked": "Rechnungskorrektur nicht mit dem Original verknüpft — verknüpfen, sonst kann der Zeitraum nicht abgegeben werden"
     },
     "partialPayment": {
       "accept": "Teilzahlung akzeptieren",
@@ -747,6 +772,62 @@
       "revokeHint": "Entscheidung entfernen. Die Transaktion kommt zurück auf die Prüfliste und macht nichts geltend, bis sie geklärt ist.",
       "claimed": "{amount} VSt geltend gemacht",
       "claimedOutput": "{amount} USt geschuldet"
+    },
+    "corrections": {
+      "title": "Rechnungskorrekturen",
+      "explanation": "Eine Rückzahlung berichtigt, was ihr Original bewirkt hat, im Zeitraum, in dem das Geld fließt: Die Rückzahlung eines Einkaufs mindert die geltend gemachte Vorsteuer (KZ 067), deine Rückzahlung an einen Kunden die Steuer, die der Verkauf geschuldet hat.",
+      "purchase": "Rückzahlung eines Einkaufs",
+      "sale": "Rückzahlung an einen Kunden",
+      "original": "Originalrechnung",
+      "paidBy": "bezahlt mit {count, plural, one {# Transaktion} other {# Transaktionen}}",
+      "claimed": "{vat} USt geltend gemacht auf {gross}",
+      "owed": "{vat} USt geschuldet auf {gross}",
+      "fraction": "diese Rückzahlung ist {percent} davon",
+      "prior": "frühere Rückzahlungen haben {vat} berichtigt",
+      "reverses": "berichtigt {vat}",
+      "nothing": "Das Original hat keine Steuer geltend gemacht, daher wird nichts berichtigt.",
+      "excess": "{vat} mehr, als das Original noch offen hatte: zu viel zurückgezahlt oder falsch verknüpft. Der Zeitraum kann erst abgegeben werden, wenn das geklärt ist.",
+      "printedMismatch": "Die Rechnungskorrektur weist {printed} USt aus, FiBuKI berechnet {computed}. Prüfe die Verknüpfung.",
+      "unlinked": "Nicht mit dem Original verknüpft. Bis zur Verknüpfung sicher vorbelegt, der Zeitraum kann nicht abgegeben werden.",
+      "unpaid": "Keine erfasste Transaktion hat das Original bezahlt. Importiere den Bankzeitraum, in dem es bezahlt wurde."
+    },
+    "filing": {
+      "title": "Abgabe",
+      "description": "Was für diesen Zeitraum abgegeben wurde und ob sich FiBuKIs Zahlen seither verändert haben.",
+      "blockersTitle": "{count, plural, one {# Hindernis} other {# Hindernisse}}: Dieser Zeitraum kann noch nicht abgegeben werden",
+      "blocker": {
+        "correction-unlinked": "Zu einer Rechnungskorrektur ist kein Original erfasst. Verknüpfe die korrigierte Rechnung, importiere den Bankzeitraum, in dem sie bezahlt wurde, oder ordne die Zeile einer Kategorie zu.",
+        "correction-over-cap": "Rückzahlungen zu einer Rechnung berichtigen mehr Steuer, als sie geltend gemacht hat. Prüfe die Verknüpfung der Korrektur und die früheren Rückzahlungen."
+      },
+      "notFiled": "Noch nicht als abgegeben markiert.",
+      "filedOn": "Am {date} als abgegeben markiert.",
+      "filedViaFinanzOnline": "Am {date} an FinanzOnline übermittelt.",
+      "editedByHand": "Zahlen von Hand geändert.",
+      "history": "{count} Abgaben erfasst.",
+      "unchanged": "FiBuKIs Zahlen stimmen noch mit der Abgabe überein.",
+      "balanceMoved": "FiBuKIs Zahlen haben sich seit der Abgabe verändert, die Zahllast (KZ 095) um {delta}. Eine berichtigte UVA würde die Steuer ändern.",
+      "onlyMoved": "FiBuKIs Zahlen haben sich seit der Abgabe verändert, aber nur zwischen Kennzahlen: Die Zahllast (KZ 095) ist gleich.",
+      "kz": "KZ",
+      "filed": "Abgegeben",
+      "now": "Jetzt",
+      "delta": "Differenz",
+      "movedBy": "Verändert durch diese Transaktionen",
+      "movedVat": "Vorsteuer {input}, Umsatzsteuer {output}",
+      "earlierTitle": "Frühere abgegebene Zeiträume mit veränderten Zahlen",
+      "earlierBalance": "{period}: Die Zahllast hat sich um {delta} verändert",
+      "earlierOnlyMoved": "{period}: {count, plural, one {# Kennzahl} other {# Kennzahlen}} verändert, die Zahllast nicht",
+      "markFiled": "Als abgegeben markieren",
+      "markFiledAgain": "Berichtigte Abgabe erfassen",
+      "blockedHint": "Zuerst die Hindernisse beheben.",
+      "decisionIsYours": "FiBuKI zeigt nur die Differenz. Ob eine berichtigte UVA abgegeben wird, entscheidest du mit deiner Steuerberatung.",
+      "dialogTitle": "Als abgegeben markieren",
+      "dialogDescription": "Erfasse die Zahlen, die du tatsächlich abgegeben hast. Vorbelegt sind FiBuKIs Zahlen; ändere, was du anders abgegeben hast. Frühere Einträge bleiben erhalten.",
+      "kzCode": "KZ {code}",
+      "note": "Notiz (optional)",
+      "notANumber": "KZ {code} ist keine Zahl.",
+      "cancel": "Abbrechen",
+      "confirm": "Als abgegeben markieren",
+      "failed": "Das hat nicht geklappt: {message}"
     },
     "saleSupply": {
       "kind": {

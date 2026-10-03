@@ -42,6 +42,7 @@ import {
   type UvaDerivationSnapshot,
 } from "../uva/reconcile";
 import type { UvaPeriod } from "../uva/types";
+import { earlierFiledComparisons } from "./uvaFiledRecords";
 
 /** Where the run this filing was measured against came from. */
 export type BaselineOrigin =
@@ -146,6 +147,9 @@ export const prepareUvaFilingCallable = createCallable<
     // record itself, so only that part is inside.
     const { result } = await runUvaForPeriod(ctx.db, ctx.userId, period);
     const latest = snapshotDerivations(result);
+    // Earlier filed periods a later run moved (#564): raised on this
+    // handover so the difference is not forgotten.
+    const filedPeriods = await earlierFiledComparisons(ctx.db, ctx.userId, period);
 
     const outcome = await ctx.db.runTransaction(async (tx) => {
       // Every read first: Firestore refuses a read after a write in the same
@@ -189,6 +193,7 @@ export const prepareUvaFilingCallable = createCallable<
         reconciliation,
         handover,
         handoverCovers,
+        filedPeriods,
       });
 
       // Recording a HANDOVER is what a blocker refuses: undocumented

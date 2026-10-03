@@ -15,6 +15,7 @@ import { Transaction } from "@/types/transaction";
 import { TransactionSource } from "@/types/source";
 import { TransactionDetails } from "@/components/sidebar/transaction-details";
 import { TransactionFilesSection } from "@/components/transactions/transaction-files-section";
+import { TransactionCorrectionRelated } from "./transaction-correction-related";
 import { TransactionHistory } from "@/components/sidebar/transaction-history";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
@@ -312,6 +313,12 @@ export function TransactionDetailPanel({
             onAssignPartner={handleAssignPartner}
             onRemovePartner={handleRemovePartner}
             onCreatePartner={handleCreatePartner}
+          />
+
+          {/* A refund and what it corrects (#564) */}
+          <TransactionCorrectionRelated
+            transactionId={transaction.id}
+            fileKey={(transaction.fileIds ?? []).join(",")}
           />
 
           {/* Files Section */}

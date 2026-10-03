@@ -545,6 +545,42 @@ export interface TaxFile {
   extractedInvoiceNumber?: string | null;
 
   /**
+   * The number of the invoice this document corrects, as a credit note or
+   * Rechnungskorrektur prints it ("zu Rechnung Nr.", "Original invoice").
+   * Transcribed (#564); null when the document references none.
+   */
+  extractedReferencedInvoiceNumber?: string | null;
+
+  // === Invoice Correction (#564, ADR-0010) ===
+
+  /**
+   * What the document reads as (D8): an Invoice Correction (a credit note
+   * reducing an earlier invoice) or a Self-billed Invoice (revenue). Written
+   * by the correction check after Extraction.
+   */
+  correctionKind?: "invoice-correction" | "self-billed-invoice" | null;
+
+  /** The signals disagree (a reference on positive figures, or the reverse); a person decides. */
+  correctionSignalsDisagree?: boolean;
+
+  /**
+   * The File this correction corrects. Points at a File, never a
+   * Transaction: the Transaction that paid the original is found through
+   * that File's File Connections.
+   */
+  correctionLink?: {
+    fileId: string;
+    setBy: "auto" | "suggested-accepted" | "manual";
+    setAt: Timestamp;
+  } | null;
+
+  /** Files that could be the original, by Partner and amount; a person confirms one. */
+  correctionSuggestions?: Array<{ fileId: string; suggestedAt: Timestamp }>;
+
+  /** Files a person declined or unlinked as this correction's original; never linked automatically again. */
+  correctionDeclinedFileIds?: string[];
+
+  /**
    * What kind of document this is, decided by the § 11 rules at extraction
    * time and stored here rather than recomputed at read time — two readers
    * must not be able to disagree about the same document (#104).

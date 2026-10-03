@@ -25,6 +25,7 @@ import { assessTip, documentsTotalWithTip, isTipPartialPayment } from "./tip";
 import { assessImpliedFx, isSameCurrency } from "../fx/fxPlausibility";
 import { ecbCrossRate, type EcbRateTable } from "../fx/ecbRates";
 import { singleDocumentRate } from "../extraction/lineItemReconciliation";
+import { bookingSide, correctionAmounts } from "./correction";
 import type {
   DerivationStep,
   ForeignVatEntry,
@@ -37,6 +38,7 @@ import type {
   SaleSupplyKind,
   UnresolvedReason,
   UvaCalculationInput,
+  UvaCorrection,
   UvaFile,
   UvaReportResult,
   UvaTransaction,
@@ -136,6 +138,7 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
     nonClaimableVat: [],
     foreignVat: [],
     reverseCharge: [],
+    corrections: [],
     zeroRatedSales: [],
     zmServices: [],
     euKennzahlen: { basis: "not-implemented" },
@@ -175,8 +178,12 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
       outputVat?: number;
       inputVat?: number;
       partialPaymentAccepted?: true;
+      /** Documents the figure rests on beyond the line's own (a correction's original). */
+      extraFileIds?: string[];
     }
   ) => {
+    const fileIds = (tx.files ?? []).map((f) => f.id);
+    for (const id of e.extraFileIds ?? []) if (!fileIds.includes(id)) fileIds.push(id);
     result.derivations.push({
       transactionId: tx.id,
       date: tx.date,
@@ -185,7 +192,7 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
       side: tx.amount > 0 ? "income" : "expense",
       step: e.step,
       reason: e.reason ?? null,
-      fileIds: (tx.files ?? []).map((f) => f.id),
+      fileIds,
       outputVat: e.outputVat ?? 0,
       inputVat: e.inputVat ?? 0,
       ...(e.partialPaymentAccepted ? { partialPaymentAccepted: true as const } : {}),
@@ -201,6 +208,25 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
     if (!isSameCurrency(tx.currency, "EUR")) {
       markUnresolved(tx, "foreign-currency", null);
       recordDerivation(tx, { step: null, reason: "foreign-currency" });
+      continue;
+    }
+
+    // --- Corrections (#564, ADR-0010) ------------------------------------
+    // A refund reverses what its original did, on the original's side, and
+    // nothing the line's own documents print decides the figure. An unlinked
+    // one keeps the safe default — money in is 20% revenue, money out claims
+    // nothing — and blocks the filing until it is linked or reclassified.
+    if (tx.correction?.status === "linked") {
+      applyCorrection(tx, tx.correction, bank);
+      continue;
+    }
+    if (tx.correction?.status === "unlinked") {
+      recordCorrection(tx, tx.correction, null);
+      if (isIncome) defaultIncomeAt20(tx, bank, "correction-unlinked");
+      else {
+        markUnresolved(tx, "correction-unlinked", null);
+        recordDerivation(tx, { step: null, reason: "correction-unlinked" });
+      }
       continue;
     }
 
@@ -313,6 +339,8 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
   }
 
   result.zmServices = zmServicesOf(input, bounds);
+  floorNegativeOutputBases();
+
   result.totalOutputVat = totalOutputVat;
   result.totalInputVat = totalInputVat;
   result.balance = totalOutputVat - totalInputVat;
@@ -324,6 +352,118 @@ export function calculateUva(input: UvaCalculationInput): UvaReportResult {
   return result;
 
   // --- helpers bound to the accumulator state ----------------------------
+
+  /**
+   * A linked correction (#564). A purchase refund reverses the Vorsteuer its
+   * original claimed, signed, in KZ 067 — KZ 060 keeps only this period's
+   * claims and revenue is untouched. The User's own refund reverses the tax
+   * its sale owed: negative into KZ 000 and the rate field, floored at the end
+   * of the period with the overflow in KZ 090.
+   */
+  function applyCorrection(
+    tx: UvaTransaction,
+    c: Extract<UvaCorrection, { status: "linked" }>,
+    bank: number
+  ) {
+    const amounts = correctionAmounts(bank, c.original.claimed, c.original.gross, c.priorCorrected);
+    recordCorrection(tx, c, amounts);
+    const vat = amounts.groups.reduce((s, g) => s + g.vat, 0);
+    if (bookingSide(tx) === "purchase-correction") {
+      if (vat !== 0) addKz("067", -vat, "purchase-correction");
+      totalInputVat -= vat;
+      recordDerivation(tx, {
+        step: "purchase-correction",
+        inputVat: -vat,
+        extraFileIds: [c.original.fileId],
+      });
+      return;
+    }
+    const perKz = new Map<string, number>();
+    let totalNet = 0;
+    for (const g of amounts.groups) {
+      totalNet += g.net;
+      totalOutputVat -= g.vat;
+      const acc = outputByRate.get(g.rate) ?? { base: 0, vat: 0 };
+      acc.base -= g.net;
+      acc.vat -= g.vat;
+      outputByRate.set(g.rate, acc);
+      const code = OUTPUT_BASE_KZ[g.rate];
+      if (code) perKz.set(code, (perKz.get(code) ?? 0) + g.net);
+    }
+    if (totalNet !== 0) addKz("000", -totalNet, "sale-correction");
+    for (const [code, cents] of perKz) addKz(code, -cents, "sale-correction");
+    recordDerivation(tx, {
+      step: "sale-correction",
+      outputVat: -vat,
+      extraFileIds: [c.original.fileId],
+    });
+  }
+
+  function recordCorrection(
+    tx: UvaTransaction,
+    c: UvaCorrection,
+    amounts: ReturnType<typeof correctionAmounts> | null
+  ) {
+    const linked = c.status === "linked" ? c : null;
+    const printedVat = linked?.printedVat ?? null;
+    result.corrections.push({
+      transactionId: tx.id,
+      date: tx.date,
+      partner: tx.partnerName ?? null,
+      amount: tx.amount,
+      side: linked
+        ? linked.kind === "purchase"
+          ? "purchase-correction"
+          : "sale-correction"
+        : tx.amount > 0
+          ? "purchase-correction"
+          : "sale-correction",
+      status: c.status,
+      basis: linked?.basis ?? null,
+      unlinkedReason: c.status === "unlinked" ? c.reason : null,
+      fileIds:
+        c.status === "unlinked"
+          ? c.fileIds
+          : c.correctionFileId
+            ? [c.correctionFileId]
+            : [],
+      originalFileId: linked?.original.fileId ?? (c.status === "unlinked" ? c.originalFileId ?? null : null),
+      paidByTransactionIds: linked?.original.paidByTransactionIds ?? [],
+      originalGross: linked?.original.gross ?? 0,
+      claimed: linked?.original.claimed ?? [],
+      priorCorrected: linked?.priorCorrected ?? [],
+      corrected: amounts?.groups ?? [],
+      excessVat: amounts?.excessVat ?? 0,
+      printedVat,
+      printedVatMismatch:
+        printedVat !== null &&
+        amounts !== null &&
+        Math.abs(printedVat - amounts.uncappedVat) > RECONCILE_TOLERANCE_CENTS,
+    });
+  }
+
+  /**
+   * Only KZ 063, 067 and 090 carry a sign on the U30. A rate field the
+   * period's sale corrections took below zero shows 0, and its (negative) tax
+   * goes to KZ 090 — the BMF's worked example for Entgeltsänderungen. KZ 000
+   * gives back the same base, and is floored the same way. The balance is
+   * untouched: the tax only moves between Kennzahlen.
+   */
+  function floorNegativeOutputBases() {
+    let floored = 0;
+    for (const [rate, acc] of outputByRate) {
+      const code = rate === 0 ? "011" : OUTPUT_BASE_KZ[rate];
+      const kz = code ? kennzahlen[code] : undefined;
+      if (!kz || kz.value >= 0) continue;
+      floored -= kz.value;
+      kz.value = 0;
+      addKz("090", acc.vat, "sale-correction");
+    }
+    const total = kennzahlen["000"];
+    if (total && (floored > 0 || total.value < 0)) {
+      total.value = Math.max(total.value + floored, 0);
+    }
+  }
 
   /**
    * The D1 asymmetry: income whose VAT cannot be derived still books 20%,

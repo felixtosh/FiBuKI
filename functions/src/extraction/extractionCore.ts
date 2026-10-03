@@ -278,6 +278,7 @@ export async function runExtraction(
         extractedDebitDate: null,
         extractedSelfDesignation: null,
         extractedInvoiceNumber: null,
+        extractedReferencedInvoiceNumber: null,
         extractedPayableAmount: null,
         ...documentTypeFields(classifyDocumentType({ grossTotal: null, isNotInvoice: true })),
         // Every printed rate was just cleared, so there is nothing left to
@@ -467,6 +468,7 @@ export async function runExtraction(
     updateData.extractedDebitDate = null;
     updateData.extractedSelfDesignation = null;
     updateData.extractedInvoiceNumber = null;
+    updateData.extractedReferencedInvoiceNumber = null;
     updateData.extractedPayableAmount = null;
     updateData.extractedInvoicingAgent = null;
     console.log(`[+${Date.now() - t0}ms] Classified as NOT an invoice: ${result.notInvoiceReason}`);
@@ -496,6 +498,9 @@ export async function runExtraction(
     // absence, or the §11 classifier reads the record as merely legacy.
     updateData.extractedSelfDesignation = extracted.selfDesignation ?? null;
     updateData.extractedInvoiceNumber = extracted.invoiceNumber ?? null;
+    // #564: the invoice a credit note corrects, the key the correction link
+    // matches on. Written unconditionally like the other transcriptions.
+    updateData.extractedReferencedInvoiceNumber = extracted.referencedInvoiceNumber ?? null;
 
     // #206: the figure the document itself designates as due, transcribed
     // beside the total rather than replacing it. Written unconditionally, so

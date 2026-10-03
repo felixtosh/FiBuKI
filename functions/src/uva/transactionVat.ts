@@ -17,6 +17,7 @@
  */
 
 import { deriveRateGroups } from "./calculateUva";
+import { bookingSide, correctionAmounts } from "./correction";
 import { isSameCurrency } from "../fx/fxPlausibility";
 import type { EcbRateTable } from "../fx/ecbRates";
 import type {
@@ -93,6 +94,30 @@ export function deriveTransactionVat(
   // (fork #87). Surfaced, never guessed.
   if (!isSameCurrency(tx.currency, "EUR")) {
     return { kind: "unresolved", reason: "foreign-currency", foregoneVat: null, foreignVat: [] };
+  }
+
+  // A correction reverses its original's figures, never its own document's
+  // (#564). Unlinked, it keeps the safe default the UVA preview books: money
+  // in at 20% revenue, money out claiming nothing.
+  const correction = tx.correction;
+  if (correction?.status === "linked") {
+    const amounts = correctionAmounts(
+      Math.abs(tx.amount),
+      correction.original.claimed,
+      correction.original.gross,
+      correction.priorCorrected
+    );
+    return {
+      kind: "groups",
+      step: bookingSide(tx) === "purchase-correction" ? "purchase-correction" : "sale-correction",
+      groups: amounts.groups.map((g) => ({ ...g, gross: g.net + g.vat })),
+      foreignVat: [],
+      nonClaimableVat: [],
+    };
+  }
+  if (correction?.status === "unlinked") {
+    if (tx.amount > 0) return defaultedIncomeAt20(tx.amount, []);
+    return { kind: "unresolved", reason: "correction-unlinked", foregoneVat: null, foreignVat: [] };
   }
 
   if (tx.foreignRegime) {

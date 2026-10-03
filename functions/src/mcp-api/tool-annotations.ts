@@ -22,6 +22,7 @@ export const READ_ONLY_TOOLS = [
   "list_transactions_missing_invoice",
   "list_files",
   "get_file",
+  "get_correction",
   "score_file_transaction_match",
   "list_identity_entities",
   "list_partners",
@@ -80,6 +81,8 @@ export const WRITE_TOOLS = [
   "mark_file_as_copy", // a moved or removed File Connection stays with the original; undone by unmark_file_as_copy
   "unmark_file_as_copy",
   "make_file_the_original",
+  "link_correction",
+  "unlink_correction", // the link is the only state; link_correction restores it
   "update_file_extraction",
   "auto_connect_file_suggestions",
   "upload_file",

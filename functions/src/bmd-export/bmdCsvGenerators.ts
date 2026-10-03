@@ -17,7 +17,8 @@ import { assessTip, documentsTotalWithTip, isTipPartialPayment } from "../uva/ti
 import { documentsInBankCurrency, RECONCILE_TOLERANCE_CENTS } from "../uva/calculateUva";
 import type { PartialPaymentAcceptance } from "../uva/partialPaymentAcceptance";
 import type { EcbRateTable } from "../fx/ecbRates";
-import type { RateGroup, SaleSupplyKind, UvaSaleSupply } from "../uva/types";
+import { bookingSide } from "../uva/correction";
+import type { BookingSide, RateGroup, SaleSupplyKind, UvaCorrection, UvaSaleSupply } from "../uva/types";
 
 /**
  * Maps no-receipt category templateIds to BMD Sachkonten.
@@ -203,6 +204,12 @@ export interface TransactionForExport {
   noReceiptCategoryTemplateId?: string | null;
   /** Accepted Partial Payment (#554), as stored; the ladder decides whether it is live. */
   partialPaymentAcceptance?: PartialPaymentAcceptance | null;
+  /**
+   * The line's correction, resolved by the export run exactly as the UVA's
+   * period run resolves it (#564). It decides the booking side, so a supplier's
+   * refund goes to the Kreditor as a reduction, never to a Debitor as a sale.
+   */
+  correction?: UvaCorrection | null;
 }
 
 /**
@@ -340,11 +347,25 @@ function vatRowsFor(
     {
       filesById,
       categoriesById,
+      correctionByTransactionId: tx.correction ? new Map([[tx.id, tx.correction]]) : undefined,
       partnersById: tx.partnerId
         ? new Map([[tx.partnerId, { id: tx.partnerId, country: tx.partnerCountry ?? null }]])
         : undefined,
     }
   );
+
+  // A linked correction books what it reverses, at the original's rates and
+  // to the cent the UVA states (#564); the rest of the refund, the part the
+  // original claimed nothing on, is a 0% row. The correction's own document
+  // never decides the figure, so its tip is not read either.
+  if (uvaTx.correction?.status === "linked") {
+    const derived = deriveTransactionVat(uvaTx, ecbRates);
+    const groups = derived.kind === "groups" ? derived.groups : [];
+    const rows = groups.map((g) => ({ rate: g.rate, gross: g.gross, vat: g.vat }));
+    const rest = bankGross - rows.reduce((s, r) => s + r.gross, 0);
+    if (rest > 0 || rows.length === 0) rows.push({ rate: 0, gross: Math.max(rest, 0), vat: 0 });
+    return { kind: "rows", rows };
+  }
 
   // The tip is judged in the bank's currency, on the same converted documents
   // the ladder reads, at the same rate (#326). A foreign receipt's tip read
@@ -552,7 +573,11 @@ export function generateBuchungenCsvWithReport(
 
   for (const tx of transactions) {
     const isExpense = tx.amount < 0;
-    const isKreditor = isExpense;
+    // The booking side, not the bank sign, picks the account and the
+    // direction (#564): a supplier's refund is money in on the Kreditor,
+    // booked opposite to the purchase it reduces.
+    const side = bookingSide(tx);
+    const isKreditor = isPurchaseSide(side);
     const hasFiles = tx.fileIds && tx.fileIds.length > 0;
     const templateId = tx.noReceiptCategoryTemplateId;
     const categoryMapping = templateId ? NO_RECEIPT_SACHKONTO_MAP[templateId] : undefined;
@@ -642,7 +667,7 @@ export function generateBuchungenCsvWithReport(
           ? String(KREDITOR_ACCOUNT_BASE + 1)
           : String(DEBITOR_ACCOUNT_BASE + 1);
 
-      const contraAccount = isExpense ? "7000" : "4000";
+      const contraAccount = isKreditor ? "7000" : "4000";
 
       for (const v of vatRows) {
         const label = rowLabel(v, vat.saleSupply, displayName, tx.vatId || "");
@@ -654,12 +679,12 @@ export function generateBuchungenCsvWithReport(
           buchdat: formatBmdDate(tx.date),
           belegdat: formatBmdDate(belegdat),
           betrag: formatBmdAmount(v.gross),
-          bucod: isExpense ? 1 : 2,
+          bucod: bucodFor(side),
           steuer: formatBmdAmount(v.vat),
           mwst: v.rate,
           text: label.text,
           extbelegnr,
-          symbol: isExpense ? "ER" : "AR",
+          symbol: isKreditor ? "ER" : "AR",
           uidnr: label.uidnr,
         });
       }
@@ -673,6 +698,20 @@ export function generateBuchungenCsvWithReport(
   );
 
   return { csv: [headers.join(";"), ...csvRows].join("\n"), skipped };
+}
+
+function isPurchaseSide(side: BookingSide): boolean {
+  return side === "purchase" || side === "purchase-correction";
+}
+
+/**
+ * Soll/Haben on the Personenkonto. A correction books opposite to what it
+ * corrects: a purchase is 1, its refund 2; a sale is 2, the User's refund 1.
+ * `betrag` and `steuer` stay unsigned, so the flipped code is what makes the
+ * refund's VAT a reduction.
+ */
+function bucodFor(side: BookingSide): 1 | 2 {
+  return side === "purchase" || side === "sale-correction" ? 1 : 2;
 }
 
 /**

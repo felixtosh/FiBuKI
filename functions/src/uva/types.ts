@@ -267,7 +267,83 @@ export interface UvaTransaction {
    * tipped shortfall is `tip-partial-payment`, never a partial payment.
    */
   partialPaymentAccepted?: boolean;
+  /**
+   * This line moves money back for something already booked (#564,
+   * ADR-0010): a supplier's refund of a purchase, or the User's refund to a
+   * customer. Resolved by the period run from the correction link, never by
+   * the calculation. Absent = an ordinary sale or purchase, decided by sign.
+   */
+  correction?: UvaCorrection | null;
 }
+
+/**
+ * Which way a Transaction books (#564, ADR-0010). One function decides it
+ * (`bookingSide`), and the UVA and the BMD Export both read that function: the
+ * bank sign decides only when no File says otherwise.
+ */
+export type BookingSide = "sale" | "sale-correction" | "purchase" | "purchase-correction";
+
+/** One rate of what an original claimed (purchase) or owed (sale), cents. */
+export interface CorrectionRateGroup {
+  rate: number;
+  net: number;
+  vat: number;
+}
+
+/** What the original File did, as the correction reverses it. */
+export interface CorrectionOriginal {
+  /** The File corrected. */
+  fileId: string;
+  /** The Transactions that paid it, through its File Connections. */
+  paidByTransactionIds: string[];
+  /** What paying it came to, cents (positive): the denominator of the fraction. */
+  gross: number;
+  /**
+   * Per rate, what the original claimed as Vorsteuer (purchase) or owed as
+   * output VAT (sale), cents (positive). Empty, or rate-0 only, when it
+   * claimed nothing — and then the correction corrects nothing.
+   */
+  claimed: CorrectionRateGroup[];
+}
+
+/**
+ * How the link to the original was found.
+ *  - link                the File's stored correction link (auto, accepted, manual)
+ *  - issued-correction   an Invoice Correction FiBuKI issued, which names its Invoice
+ *  - connected-original  the original File itself sits on the refund line, already
+ *                        connected to the Transaction that paid it (D9)
+ */
+export type CorrectionBasis = "link" | "issued-correction" | "connected-original";
+
+export type UvaCorrection =
+  | {
+      status: "linked";
+      /** The original's side: a purchase refunded by a supplier, or the User's sale. */
+      kind: "purchase" | "sale";
+      basis: CorrectionBasis;
+      original: CorrectionOriginal;
+      /**
+       * Per rate, what earlier corrections of the same original already took
+       * back, cents (positive). Earlier = an earlier bank day, any period.
+       */
+      priorCorrected: CorrectionRateGroup[];
+      /** The correction document's own printed VAT total, cents (absolute); a cross-check only. */
+      printedVat?: number | null;
+      /** The correction document, when there is one (absent on `connected-original`). */
+      correctionFileId?: string | null;
+    }
+  | {
+      status: "unlinked";
+      /**
+       * no-link          a correction document with no original linked
+       * original-unpaid  the original is linked but no Transaction on file paid it
+       */
+      reason: "no-link" | "original-unpaid";
+      /** The documents that make this line a correction. */
+      fileIds: string[];
+      /** The linked original, on `original-unpaid`. */
+      originalFileId?: string | null;
+    };
 
 export type DerivationStep =
   /** The document's own printed per-rate VAT summary block (spec §6 item 3) */
@@ -284,7 +360,11 @@ export type DerivationStep =
   | "non-claimable"
   | "reverse-charge"
   | "eu-acquisition"
-  | "import";
+  | "import"
+  /** A refund reversing the Vorsteuer its original purchase claimed (#564) */
+  | "purchase-correction"
+  /** The User's refund reversing the output VAT its original sale owed (#564) */
+  | "sale-correction";
 
 export type UnresolvedReason =
   | "no-file"
@@ -318,7 +398,13 @@ export type UnresolvedReason =
    * Payment. The BMD export refuses the same transaction. See `./tip`.
    */
   | "tip-partial-payment"
-  | "needs-receipt";
+  | "needs-receipt"
+  /**
+   * A correction with no original on file (#564, ADR-0010): money in keeps
+   * the defaulted-20 revenue and money out claims nothing, and the filing is
+   * blocked until the original is linked or the line is reclassified.
+   */
+  | "correction-unlinked";
 
 /** The pre-filing human checklist (spec §5). */
 export interface UnresolvedEntry {
@@ -464,6 +550,47 @@ export interface ReverseChargeEntry {
 }
 
 /**
+ * One correction, and how its figure was derived (#564): the original, what
+ * it claimed, the fraction this refund is of it, and what earlier refunds
+ * already took back. The report states it so the figure can be audited.
+ */
+export interface CorrectionEntry {
+  transactionId: string;
+  date: string;
+  partner: string | null;
+  /** Signed cents as on the bank line. */
+  amount: number;
+  /** An unlinked line is placed by its sign: money in reads as a purchase refund. */
+  side: "purchase-correction" | "sale-correction";
+  status: "linked" | "unlinked";
+  basis: CorrectionBasis | null;
+  /** Why an unlinked correction is unlinked. */
+  unlinkedReason: "no-link" | "original-unpaid" | null;
+  /** The correction documents on this line (empty on `connected-original`). */
+  fileIds: string[];
+  originalFileId: string | null;
+  paidByTransactionIds: string[];
+  /** What paying the original came to, cents; 0 when unlinked. */
+  originalGross: number;
+  /** Per rate, what the original claimed (purchase) or owed (sale). */
+  claimed: CorrectionRateGroup[];
+  /** Per rate, what earlier corrections of the same original already took back. */
+  priorCorrected: CorrectionRateGroup[];
+  /** Per rate, what this line reverses, cents (positive). */
+  corrected: CorrectionRateGroup[];
+  /**
+   * VAT this refund would reverse beyond what the original still had to give
+   * back, cents. Above zero, the original is over-refunded or wrongly linked,
+   * and the filing is blocked until it is resolved.
+   */
+  excessVat: number;
+  /** The correction document's printed VAT total (absolute), when it has one. */
+  printedVat: number | null;
+  /** The printed VAT disagrees with the computed one beyond the reconcile tolerance. */
+  printedVatMismatch: boolean;
+}
+
+/**
  * One sale's 0% net and what it was booked as (#565). Every money-in
  * Transaction with a 0% rate group in the period gets one, so the report can
  * show what left the form, what stayed in KZ 011, and what wants a review.
@@ -547,6 +674,8 @@ export interface UvaReportResult {
   nonClaimableVat: NonClaimableVatEntry[];
   foreignVat: ForeignVatEntry[];
   reverseCharge: ReverseChargeEntry[];
+  /** Refunds booked as corrections of their originals, and the unlinked ones (#564). */
+  corrections: CorrectionEntry[];
   /**
    * Every 0% sale in the period and what it was booked as (#565). A service
    * supplied abroad here contributed to no Kennzahl. Optional: a run stored
