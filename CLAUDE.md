@@ -219,6 +219,7 @@ export function useCategories() {
 - `bulkUpdateTransactionsCallable` - Update multiple transactions
 - `deleteTransactionsBySourceCallable` - Delete all transactions for a source
 - `acceptReceiptOnlyCallable` - Record or revoke an Accepted Receipt ruling on a receipt-only transaction (#165)
+- `acceptPartialPaymentCallable` - Record or revoke an Accepted Partial Payment ruling on a tipped transaction the bank line does not cover (#554)
 
 **Files:**
 - `connectFileToTransactionCallable` - Connect file to transaction

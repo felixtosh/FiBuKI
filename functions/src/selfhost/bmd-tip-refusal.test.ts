@@ -206,17 +206,18 @@ describe("bmd tip refusal (#194): what must not change", () => {
     ]);
   });
 
-  it("books a tip one cent under the bank amount — the guard stops at `>=`", () => {
-    // The boundary from the safe side. 53,99 of a 54,00 charge read as
-    // Trinkgeld is nonsense too, but it is the conservative nonsense this
-    // ticket leaves alone: it understates the VAT base instead of stretching
-    // the document's rates over money the document taxes at nothing.
+  it("does not call a tip one cent under the bank amount impossible — the guard stops at `>=`", () => {
+    // The boundary from the safe side. 53,99 of a 54,00 charge is not this
+    // predicate's: it used to book, understating the VAT base. But 50,80 +
+    // 53,99 is short of the bank line, and since #554 a tipped shortfall is
+    // refused on its own predicate, the one the UVA lists as
+    // `tip-partial-payment`.
     const { csv, skipped } = run(mealTx(-5400), mealBeleg(5399));
 
-    expect(skipped).toEqual([]);
-    const rows = bookedRows(csv);
-    expect(rows.reduce((s, r) => s + r.gross, 0)).toBe(5400);
-    expect(rows[rows.length - 1]).toEqual({ gross: 5399, vat: 0, rate: 0 });
+    expect(skipped).toHaveLength(1);
+    expect(skipped[0].reason).not.toMatch(/not less than the bank amount/);
+    expect(skipped[0].reason).toMatch(/short of document total plus tip/);
+    expect(bookedRows(csv)).toEqual([]);
   });
 
   it("books a document without a tip across the full bank amount", () => {

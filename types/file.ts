@@ -325,25 +325,30 @@ export interface TaxFile {
   extractedTipAmount?: number | null;
 
   /**
-   * Which total a hand-set tip was measured against, and what that total was
-   * (#310), in cents.
+   * What bounded a hand-set tip at correction time (#310, #554).
    *
-   * A tip is bounded at correction time, because an oversized one is never
-   * caught afterwards: it moves the reconciled total away from the bank line
-   * and the file simply stops matching, with nothing saying why. The default
-   * bound is the document total; a tip declared as not printed on the invoice
-   * is bounded by the transaction total instead, since on that document the
-   * total is the Entgelt and the tip sits on top of it.
+   * A correction checks only what the document can show. A printed tip is
+   * inside the document total, so it is bounded by it: `{ bound: "document",
+   * total }`, the total in cents as it stood then. A tip declared as not
+   * printed on the invoice sits on top of the document total, so the document
+   * has nothing to bound it by: `{ bound: "not-printed" }`. Whether
+   * `document + tip` lands on the bank line is for matching (the Remainder)
+   * and the UVA (`tip-partial-payment`) to say, not for the correction.
+   *
+   * `{ bound: "transaction", total }` is how #310 recorded the not-printed
+   * declaration, when it still measured the tip against the bank line. Such a
+   * record reads as not printed too.
    *
    * Stored so the check is reproducible later and a reader can tell an
-   * overridden tip from an ordinary one. Absent on every file whose tip
+   * unprinted tip from an ordinary one. Absent on every file whose tip
    * predates the guard, and on one the extractor transcribed from the page —
    * a printed tip is evidence, not a hand-set figure.
    */
-  extractedTipBound?: {
-    bound: "document" | "transaction";
-    total: number;
-  } | null;
+  extractedTipBound?:
+    | { bound: "document"; total: number }
+    | { bound: "not-printed" }
+    | { bound: "transaction"; total: number }
+    | null;
 
   /**
    * The figure the document itself designates as due, in cents, transcribed

@@ -28,6 +28,7 @@ vi.mock("../utils/createCallable", () => ({
 const { updateTransactionCallable } = await import("../transactions/updateTransaction");
 const { bulkUpdateTransactionsCallable } = await import("../transactions/bulkUpdateTransactions");
 const { acceptReceiptOnlyCallable } = await import("../transactions/acceptReceiptOnly");
+const { acceptPartialPaymentCallable } = await import("../transactions/acceptPartialPayment");
 
 describe("Transaction Cloud Functions", () => {
   setupTestHooks();
@@ -252,6 +253,124 @@ describe("Transaction Cloud Functions", () => {
 
       expect(result.success).toBe(true);
       expect(store.getDoc("transactions", "tx-1")?.receiptOnlyAcceptance).toBeNull();
+    });
+  });
+
+  describe("acceptPartialPayment (#554)", () => {
+    const userId = "user-123";
+    const makeCtx = () => ({
+      userId,
+      db: createMockFirestore(),
+      request: { auth: { uid: userId }, data: {} },
+      logAIUsage: vi.fn(),
+    });
+
+    /** A split bill: 100,00 + 10,00 tip, 55,00 paid. */
+    const seedSplitBill = (txOver: Record<string, unknown> = {}, tip: number | null = 1000) => {
+      store.setDoc("files", "f-bill", {
+        userId,
+        extractedAmount: 10000,
+        extractedTipAmount: tip,
+      });
+      store.setDoc(
+        "transactions",
+        "tx-1",
+        createTestTransaction({ userId, amount: -5500, fileIds: ["f-bill"], ...txOver })
+      );
+    };
+
+    it("records who ruled, why, and over which figures", async () => {
+      seedSplitBill();
+
+      const result = await acceptPartialPaymentCallable(makeCtx() as any, {
+        id: "tx-1",
+        action: "accept",
+        reason: "  Split the bill, paid my half  ",
+      });
+
+      expect(result.success).toBe(true);
+      const ruling = store.getDoc("transactions", "tx-1")
+        ?.partialPaymentAcceptance as Record<string, unknown>;
+      expect(ruling.by).toBe(userId);
+      expect(ruling.reason).toBe("Split the bill, paid my half");
+      expect(ruling.bankAmount).toBe(-5500);
+      expect(ruling.files).toEqual([{ id: "f-bill", total: 10000, tip: 1000 }]);
+      expect(ruling.at).toBeDefined();
+    });
+
+    it("requires a reason - the ruling IS the record", async () => {
+      seedSplitBill();
+
+      await expect(
+        acceptPartialPaymentCallable(makeCtx() as any, { id: "tx-1", action: "accept" })
+      ).rejects.toThrow(/reason/);
+      await expect(
+        acceptPartialPaymentCallable(makeCtx() as any, { id: "tx-1", action: "accept", reason: " " })
+      ).rejects.toThrow(/reason/);
+    });
+
+    it("refuses a transaction whose files carry no tip", async () => {
+      seedSplitBill({}, null);
+
+      await expect(
+        acceptPartialPaymentCallable(makeCtx() as any, {
+          id: "tx-1",
+          action: "accept",
+          reason: "x",
+        })
+      ).rejects.toThrow(/carry a tip/);
+    });
+
+    it("does not read another user's file as carrying a tip", async () => {
+      seedSplitBill();
+      store.setDoc("files", "f-bill", {
+        userId: "someone-else",
+        extractedAmount: 10000,
+        extractedTipAmount: 1000,
+      });
+
+      await expect(
+        acceptPartialPaymentCallable(makeCtx() as any, {
+          id: "tx-1",
+          action: "accept",
+          reason: "x",
+        })
+      ).rejects.toThrow(/carry a tip/);
+    });
+
+    it("refuses another user's transaction", async () => {
+      seedSplitBill({ userId: "someone-else" });
+
+      await expect(
+        acceptPartialPaymentCallable(makeCtx() as any, {
+          id: "tx-1",
+          action: "accept",
+          reason: "x",
+        })
+      ).rejects.toThrow(/Access denied/);
+    });
+
+    it("revokes a recorded ruling, and refuses to revoke nothing", async () => {
+      seedSplitBill({
+        partialPaymentAcceptance: {
+          by: userId,
+          at: new Date(),
+          reason: "ruled",
+          bankAmount: -5500,
+          files: [{ id: "f-bill", total: 10000, tip: 1000 }],
+        },
+      });
+
+      const result = await acceptPartialPaymentCallable(makeCtx() as any, {
+        id: "tx-1",
+        action: "revoke",
+      });
+
+      expect(result.success).toBe(true);
+      expect(store.getDoc("transactions", "tx-1")?.partialPaymentAcceptance).toBeNull();
+      await expect(
+        acceptPartialPaymentCallable(makeCtx() as any, { id: "tx-1", action: "revoke" })
+      ).rejects.toThrow(/No Accepted Partial Payment/);
     });
   });
 

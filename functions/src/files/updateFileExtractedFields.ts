@@ -68,8 +68,8 @@ interface UpdateFileExtractedFieldsRequest {
   /** Correctable values, already typed. Omitted is not null — see the builder. */
   correction?: FileExtractionCorrection;
   /**
-   * The tip in this correction is not printed on the invoice (#310), so it is
-   * bounded by the transaction total rather than the document total. Sent
+   * The tip in this correction is not printed on the invoice (#310), so the
+   * document total does not bound it (#554). Sent
    * beside `correction` rather than inside it because it is not a value the
    * record keeps per field: it says how to read the tip, and what it decided
    * is stored as `extractedTipBound`.

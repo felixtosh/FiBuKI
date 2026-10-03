@@ -439,6 +439,19 @@ _Deutsch_: Akzeptierter Zahlungsbeleg
 _Avoid_: dismissed, hidden, resolved, snoozed, whitelisted
 _Avoid (de)_: Ausgeblendet, Erledigt, Ausnahme
 
+**Accepted Partial Payment**:
+A recorded ruling that a tipped Transaction's bank line really is short of its
+documents' total plus tip: a split bill where only a share was paid, or an
+instalment, and not a mistyped tip. Who ruled, when, why, over which figures (the
+bank amount, each connected File's total and tip). Without it such a line claims
+nothing and sits on the UVA review list as `tip-partial-payment`, and the BMD Export
+refuses it; with a live ruling both take the paid fraction. Goes stale on its own
+(derived on read, never deleted) when the connected Files, their totals or tips, or
+the bank amount change, and it is explicitly revocable. A ruling, never a hide.
+_Deutsch_: Akzeptierte Teilzahlung
+_Avoid_: partial match, underpayment override, accepted shortfall
+_Avoid (de)_: Teilabgleich, Fehlbetrag akzeptiert
+
 **UVA**:
 The Umsatzsteuervoranmeldung — the periodic VAT return the user's figures feed. FiBuKI
 derives and reconciles it; it does not file it.

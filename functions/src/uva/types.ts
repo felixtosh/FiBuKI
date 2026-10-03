@@ -209,6 +209,14 @@ export interface UvaTransaction {
    * the file's cumulative claimed fraction never exceeds 1.
    */
   priorClaimedFraction?: number | null;
+  /**
+   * A live Accepted Partial Payment ruling (#554): a person ruled that this
+   * tipped line's bank amount really is short of `document + tip` (a split
+   * bill, an instalment). Derived by the adapter from the stored ruling and
+   * the figures it was made over; a stale ruling reads as false. Without it a
+   * tipped shortfall is `tip-partial-payment`, never a partial payment.
+   */
+  partialPaymentAccepted?: boolean;
 }
 
 export type DerivationStep =
@@ -250,6 +258,16 @@ export type UnresolvedReason =
    * Nothing is claimed until the figure is corrected. See `./tip`.
    */
   | "impossible-tip"
+  /**
+   * The documents carry a tip, the tip is possible, and the bank line is short
+   * of `document total + tip` beyond the reconcile tolerance (#554). That is a
+   * mistyped tip or a genuine partial payment of a tipped bill (a split bill),
+   * and arithmetic cannot tell which. Scaling it as R2 would claim a slice of
+   * the document's VAT on a figure nobody confirmed, so nothing is claimed
+   * until the tip is corrected or a person records an Accepted Partial
+   * Payment. The BMD export refuses the same transaction. See `./tip`.
+   */
+  | "tip-partial-payment"
   | "needs-receipt";
 
 /** The pre-filing human checklist (spec §5). */
@@ -299,6 +317,11 @@ export interface TransactionDerivationEntry {
   outputVat: number;
   /** Cents this transaction added to input VAT (Vorsteuer + self-assessed). */
   inputVat: number;
+  /**
+   * The claim was scaled as a partial payment of a tipped bill on the strength
+   * of a live Accepted Partial Payment ruling (#554). Absent otherwise.
+   */
+  partialPaymentAccepted?: true;
 }
 
 /**

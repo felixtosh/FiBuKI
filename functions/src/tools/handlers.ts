@@ -20,6 +20,10 @@ import {
   type ReceiptOnlyAcceptance,
 } from "../documents/receiptOnlyAcceptance";
 import { claimedVatWarning } from "../transactions/acceptReceiptOnly";
+import {
+  PartialPaymentRulingError,
+  rulePartialPayment,
+} from "../transactions/partialPaymentRulingOps";
 import { buildDownloadUrl } from "../utils/buildDownloadUrl";
 import { dayStartUtc, dayEndExclusiveUtc } from "../uva/dateWindow";
 import { buildMarkNotInvoiceUpdates, buildUnmarkNotInvoiceUpdates } from "../files/notInvoiceOps";
@@ -204,6 +208,8 @@ export async function handleTool(
       return updateTransaction(userId, args);
     case "accept_receipt_only":
       return acceptReceiptOnly(userId, args);
+    case "accept_partial_payment":
+      return acceptPartialPayment(userId, args);
     case "list_transactions_needing_files":
       return listTransactionsNeedingFiles(userId, args);
     case "list_transactions_missing_invoice":
@@ -586,6 +592,31 @@ export async function acceptReceiptOnly(userId: string, args: Record<string, unk
   return warning
     ? { success: true, transactionId, warning }
     : { success: true, transactionId };
+}
+
+/**
+ * Accepted Partial Payment (#554): record - or revoke - the ruling that a
+ * tipped transaction's bank line really is short of document + tip.
+ *
+ * Same writer as the acceptPartialPayment callable. Another user's
+ * transaction reads as not found, as everywhere else on this surface.
+ */
+export async function acceptPartialPayment(userId: string, args: Record<string, unknown>) {
+  const { transactionId, reason, revoke } = args;
+  if (!transactionId) throw new Error("transactionId is required");
+  try {
+    await rulePartialPayment(db, userId, {
+      transactionId: transactionId as string,
+      action: revoke === true ? "revoke" : "accept",
+      reason,
+    });
+  } catch (error) {
+    if (error instanceof PartialPaymentRulingError) {
+      throw new Error(error.code === "permission-denied" ? "Transaction not found" : error.message);
+    }
+    throw error;
+  }
+  return { success: true, transactionId };
 }
 
 /**
@@ -1069,7 +1100,7 @@ export async function updateFileExtraction(userId: string, args: Record<string, 
 
   // Not a correctable field and deliberately not one (#310): it states how to
   // read the tip in this call, not a value the record keeps, so it is never
-  // stamped as hand-corrected. What it decided IS kept, as extractedTipBound.
+  // stamped as hand-corrected. The declaration IS kept, as extractedTipBound.
   if (args.tipNotPrinted !== undefined && typeof args.tipNotPrinted !== "boolean") {
     throw new Error("tipNotPrinted must be a boolean");
   }

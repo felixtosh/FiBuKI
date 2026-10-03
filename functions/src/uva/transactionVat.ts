@@ -60,6 +60,12 @@ export type TransactionVat =
        * is in `groups` at rate 0, so the booking still covers the payment.
        */
       nonClaimableVat: NonClaimableVatEntry[];
+      /**
+       * The Trinkgeld this payment carries, scaled with the groups when the
+       * payment is partial (#554). Set by the file ladder only; absent on the
+       * lanes that never read a document's tip.
+       */
+      tip?: number;
     }
   | { kind: "no-vat"; why: NoVatReason }
   | {
@@ -123,6 +129,7 @@ export function deriveTransactionVat(
       groups: derivation.groups,
       foreignVat: derivation.foreignVat,
       nonClaimableVat: derivation.nonClaimableVat,
+      ...(derivation.tip !== undefined ? { tip: derivation.tip } : {}),
     };
   }
 

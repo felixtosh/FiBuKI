@@ -64,6 +64,7 @@ export const WRITE_TOOLS = [
   "create_source",
   "update_transaction",
   "accept_receipt_only",
+  "accept_partial_payment",
   "delete_file", // reversible: restore_file (ADR-0006)
   "restore_file",
   "connect_file_to_transaction",

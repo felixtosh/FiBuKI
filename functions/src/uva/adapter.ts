@@ -8,6 +8,10 @@
  * anything with toDate().
  */
 
+import {
+  isPartialPaymentAcceptanceLive,
+  type PartialPaymentAcceptance,
+} from "./partialPaymentAcceptance";
 import type {
   NonClaimableVatReason,
   UvaFile,
@@ -33,6 +37,12 @@ export interface TransactionRecord {
   noReceiptCategoryId?: string | null;
   noReceiptCategoryTemplateId?: string | null;
   fileIds?: string[];
+  /**
+   * Accepted Partial Payment (#554), as stored. Read only through
+   * `isPartialPaymentAcceptanceLive`: a ruling over figures that have since
+   * changed lets nothing through.
+   */
+  partialPaymentAcceptance?: PartialPaymentAcceptance | null;
 }
 
 /** Minimal shape of a stored file record this adapter reads. */
@@ -258,6 +268,7 @@ export function buildUvaTransaction(
     files,
     foreignRegime: deriveForeignRegime(tx, files),
     priorClaimedFraction,
+    partialPaymentAccepted: isPartialPaymentAcceptanceLive(tx, opts.filesById),
     // invoiceRateGroups stays unset: the data model has no
     // invoice↔transaction link yet. Income resolves via connected files
     // (uploaded AR invoices) or falls back per spec §3 step 4; the pure

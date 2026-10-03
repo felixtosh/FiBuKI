@@ -713,6 +713,88 @@ describe("Tool Registry Handlers: Transactions", () => {
     });
   });
 
+  describe("acceptPartialPayment (#554)", () => {
+    /** A split bill: 100,00 + 10,00 tip, 55,00 paid. */
+    const seedSplitBill = (txOver: Record<string, unknown> = {}) => {
+      store.setDoc(
+        "files",
+        "f-bill",
+        createTestFile({ userId, extractedAmount: 10000, extractedTipAmount: 1000 })
+      );
+      store.setDoc(
+        "transactions",
+        "tx-1",
+        createTestTransaction({ userId, amount: -5500, fileIds: ["f-bill"], ...txOver })
+      );
+    };
+
+    it("records the ruling over the figures as they stand", async () => {
+      seedSplitBill();
+
+      const result = await handlers.acceptPartialPayment(userId, {
+        transactionId: "tx-1",
+        reason: "Split the bill, paid my half",
+      });
+
+      expect(result).toEqual({ success: true, transactionId: "tx-1" });
+      const ruling = store.getDoc("transactions", "tx-1")
+        ?.partialPaymentAcceptance as Record<string, unknown>;
+      expect(ruling.by).toBe(userId);
+      expect(ruling.bankAmount).toBe(-5500);
+      expect(ruling.files).toEqual([{ id: "f-bill", total: 10000, tip: 1000 }]);
+    });
+
+    it("never touches the files, the tip or isComplete", async () => {
+      seedSplitBill({ isComplete: true });
+
+      await handlers.acceptPartialPayment(userId, { transactionId: "tx-1", reason: "split" });
+
+      expect(store.getDoc("files", "f-bill")?.extractedTipAmount).toBe(1000);
+      expect(store.getDoc("transactions", "tx-1")?.isComplete).toBe(true);
+    });
+
+    it("requires a reason", async () => {
+      seedSplitBill();
+
+      await expect(
+        handlers.acceptPartialPayment(userId, { transactionId: "tx-1" })
+      ).rejects.toThrow(/reason/);
+    });
+
+    it("revokes with revoke: true", async () => {
+      seedSplitBill();
+      await handlers.acceptPartialPayment(userId, { transactionId: "tx-1", reason: "split" });
+
+      await handlers.acceptPartialPayment(userId, { transactionId: "tx-1", revoke: true });
+
+      expect(store.getDoc("transactions", "tx-1")?.partialPaymentAcceptance).toBeNull();
+    });
+
+    it("reads another user's transaction as not found", async () => {
+      store.setDoc(
+        "transactions",
+        "tx-theirs",
+        createTestTransaction({ userId: otherUserId, amount: -5500 })
+      );
+
+      await expect(
+        handlers.acceptPartialPayment(userId, { transactionId: "tx-theirs", reason: "x" })
+      ).rejects.toThrow("Transaction not found");
+      expect(store.getDoc("transactions", "tx-theirs")?.partialPaymentAcceptance).toBeUndefined();
+    });
+
+    it("is reachable through the dispatcher under its tool name", async () => {
+      seedSplitBill();
+
+      const result = (await handlers.handleTool(userId, "accept_partial_payment", {
+        transactionId: "tx-1",
+        reason: "split",
+      })) as { success: boolean };
+
+      expect(result.success).toBe(true);
+    });
+  });
+
   describe("listTransactionsNeedingFiles - paging and the limit", () => {
     // Seed n transactions, newest first by date so page order is deterministic.
     const seedTransactions = (n: number, overridesFor: (i: number) => Record<string, unknown> = () => ({})) => {

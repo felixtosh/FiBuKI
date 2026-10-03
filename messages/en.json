@@ -703,5 +703,31 @@
     },
     "disconnectRevoked": "{provider} disconnected. FiBuKI's access to your account was revoked.",
     "disconnectNotRevoked": "{provider} was disconnected in FiBuKI, but we could not revoke the access at {provider}. You can remove FiBuKI under the connected apps in your {provider} account settings."
+  },
+  "uvaReview": {
+    "reasons": {
+      "no-file": "No receipt connected",
+      "no-vat-data": "Receipt has no VAT data",
+      "foreign-or-invalid-rate": "Foreign or invalid VAT rate",
+      "amount-mismatch": "Bank amount ≠ invoice total",
+      "foreign-currency": "Foreign-currency receipt — no usable exchange rate",
+      "impossible-tip": "Trinkgeld ≥ bank amount — correct the tip on the receipt",
+      "tip-partial-payment": "Bank amount short of total + Trinkgeld — correct the tip, or accept a partial payment",
+      "needs-receipt": "Receipt lost — needs documentation"
+    },
+    "partialPayment": {
+      "accept": "Accept partial payment",
+      "acceptHint": "Only part of this bill was paid (a split bill, an instalment). Claims the paid share of the input VAT. If the tip is wrong, correct it on the receipt instead.",
+      "reasonLabel": "Why only part of the bill was paid",
+      "reasonPlaceholder": "Why was only part paid? e.g. split the bill, paid my half",
+      "confirm": "Record ruling",
+      "cancel": "Cancel",
+      "saveFailed": "The ruling could not be saved.",
+      "acceptedTitle": "Accepted partial payments ({count})",
+      "acceptedDescription": "Tipped bills the bank amount does not cover, claimed in part on a recorded ruling that only part was paid. A ruling goes stale when the receipts, their totals or tips, or the bank amount change.",
+      "revoke": "Revoke",
+      "revokeHint": "Remove the ruling. The line returns to the review list and claims nothing until it is resolved.",
+      "claimed": "{amount} VSt claimed"
+    }
   }
 }

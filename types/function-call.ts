@@ -26,6 +26,8 @@ export type CloudFunctionName =
   | "deleteTransactionsBySource"
   // Accepted Receipt (#165): rule a receipt-only line closed, or revoke.
   | "acceptReceiptOnly"
+  // Accepted Partial Payment (#554): rule a tipped line's shortfall real, or revoke.
+  | "acceptPartialPayment"
   // File operations
   | "createFile"
   | "updateFile"

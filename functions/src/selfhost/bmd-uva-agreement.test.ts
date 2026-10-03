@@ -186,6 +186,7 @@ function uvaReportFor(f: Fixture, ecbRates: EcbRateTable | null = null) {
       noReceiptCategoryId: f.tx.noReceiptCategoryId ?? null,
       noReceiptCategoryTemplateId: f.tx.noReceiptCategoryTemplateId ?? null,
       fileIds: f.tx.fileIds,
+      partialPaymentAcceptance: f.tx.partialPaymentAcceptance ?? null,
     },
     { filesById, categoriesById },
   );
@@ -328,5 +329,141 @@ describe("bmd/uva agreement (#326): a foreign-currency Trinkgeld", () => {
       "tip (40,00, converted from 32,00 GBP) is not less than the bank amount (36,00); " +
         "correct the tip on this document and re-run",
     );
+  });
+});
+
+/**
+ * A tip the bank line does not cover (#554). Both sides used to let it
+ * through: the UVA as a partial payment it scaled and returned `ok`, the
+ * export by booking `bank - tip` at the document's rates and the whole tip at
+ * 0%, and the two disagreed about the VAT. Now both stop on the same
+ * predicate, and both let it through once an Accepted Partial Payment is live.
+ */
+describe("bmd/uva agreement (#554): a tip the bank line does not cover", () => {
+  /** 100,00 at 20%, 16,67 of VAT, with a tip beside it. */
+  const hundred = (name: string, bank: number, tip: number, txOver: Partial<TransactionForExport> = {}) =>
+    withFile(
+      name,
+      bank,
+      {
+        extractedAmount: 10000,
+        extractedTipAmount: tip,
+        extractedVatAmount: 1667,
+        extractedVatPercent: 20,
+      },
+      txOver,
+    );
+  /** A 3,00 coffee at 10%. */
+  const coffee = (name: string, bank: number, tip: number) =>
+    withFile(name, bank, {
+      extractedAmount: 300,
+      extractedTipAmount: tip,
+      extractedVatAmount: 27,
+      extractedVatPercent: 10,
+    });
+
+  /** The ruling a person makes over the split bill as it stands. */
+  const splitRuling = (tip = 1000) => ({
+    by: "user-1",
+    at: null,
+    reason: "Split the bill, paid my half",
+    bankAmount: -5500,
+    files: [{ id: "f1", total: 10000, tip }],
+  });
+
+  const exportOf = (f: Fixture) =>
+    generateBuchungenCsvWithReport(
+      [f.tx],
+      new Map((f.files ?? []).map((file) => [file.id, file])),
+      new Map(),
+    );
+
+  /** The booking rows, as `{ gross, vat, rate }` in cents/percent. */
+  const rowsOf = (csv: string) =>
+    csv
+      .split("\n")
+      .slice(1)
+      .filter(Boolean)
+      .map((line) => {
+        const cols = line.split(";");
+        return {
+          gross: Math.round(Number(cols[6].replace(",", ".")) * 100),
+          vat: Math.round(Number(cols[8].replace(",", ".")) * 100),
+          rate: Number(cols[9]),
+        };
+      });
+
+  const refused = [
+    hundred("mistyped tip: 100,00 typed for 10,00, paid 110,00", -11000, 10000),
+    coffee("3,00 + 7,99 paid with 8,00", -800, 799),
+    hundred("split bill without a ruling", -5500, 1000),
+    hundred("split bill whose ruling went stale: the tip changed", -5500, 1200, {
+      partialPaymentAcceptance: splitRuling(1000),
+    }),
+    hundred("split bill whose ruling went stale: the bank amount changed", -5600, 1000, {
+      partialPaymentAcceptance: splitRuling(1000),
+    }),
+  ];
+
+  for (const f of refused) {
+    it(`is refused by both: ${f.name}`, () => {
+      const { csv, skipped } = exportOf(f);
+      const report = uvaReportFor(f);
+
+      expect(rowsOf(csv)).toEqual([]);
+      expect(skipped.map((s) => s.fileId)).toEqual(["f1"]);
+      expect(skipped[0].reason).toMatch(/short of document total plus tip/);
+
+      expect(report.totalInputVat).toBe(0);
+      expect(report.unresolved.map((u) => u.reason)).toEqual(["tip-partial-payment"]);
+    });
+  }
+
+  it("names the figures it compared in the refusal", () => {
+    const { skipped } = exportOf(refused[0]);
+
+    expect(skipped[0].reason).toBe(
+      "bank amount (110,00) is short of document total plus tip (200,00, tip 100,00); " +
+        "correct the tip, or record an Accepted Partial Payment if only part of the bill " +
+        "was paid, and re-run",
+    );
+  });
+
+  it("books 3,00 + 5,00 against 8,00 in full on both sides, unchanged", () => {
+    const f = coffee("3,00 + 5,00 paid with 8,00", -800, 500);
+    const { csv, skipped } = exportOf(f);
+    const report = uvaReportFor(f);
+
+    expect(skipped).toEqual([]);
+    expect(report.unresolved).toEqual([]);
+    expect(report.totalInputVat).toBe(27);
+    expect(rowsOf(csv)).toEqual([
+      { gross: 300, vat: 27, rate: 10 },
+      { gross: 500, vat: 0, rate: 0 },
+    ]);
+    expect(exportVatCents(f)).toBe(reportVatCents(f));
+  });
+
+  it("books a ruled split bill at half on both sides, tip row included", () => {
+    const f = hundred("split bill with a live ruling", -5500, 1000, {
+      partialPaymentAcceptance: splitRuling(),
+    });
+    const { csv, skipped } = exportOf(f);
+    const report = uvaReportFor(f);
+
+    expect(skipped).toEqual([]);
+    expect(report.unresolved).toEqual([]);
+    // Half of 16,67, on the instalment anchor: 8,335 rounds to 8,34.
+    expect(report.totalInputVat).toBe(834);
+    // 50,00 at 20% and 5,00 at 0%: the tip row is scaled with the payment.
+    // Before #554 the export booked 45,00 at 20% and the whole 10,00 at 0%.
+    expect(rowsOf(csv)).toEqual([
+      { gross: 5000, vat: 833, rate: 20 },
+      { gross: 500, vat: 0, rate: 0 },
+    ]);
+    // The export recomputes VAT from the gross it books (50,00 at 20% is
+    // 8,333), the UVA scales the document's printed 16,67. That is the
+    // rounding of every partial payment, not a disagreement about the base.
+    expect(Math.abs(exportVatCents(f) - reportVatCents(f))).toBeLessThanOrEqual(1);
   });
 });

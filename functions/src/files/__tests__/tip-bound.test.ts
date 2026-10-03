@@ -8,12 +8,12 @@
  * line there is, and the file becomes unmatchable with nothing on the record
  * saying why.
  *
- * The bound is not one number, which is the whole reason this ticket exists.
- * A tip the document PRINTS is inside the document total; a tip it never
- * printed sits on top of it and only the bank line knows how large it can be.
- * So the default is the document total, and a correction can declare itself
- * the second shape — which MOVES the bound to the transaction total rather
- * than removing it.
+ * A tip the document PRINTS is inside the document total, so that total
+ * bounds it. A tip it never printed sits on top of it, and the document has
+ * nothing to say about how large it can be. #310 measured that one against the
+ * bank line; #554 took that out, because it judged a document fact by a
+ * matching fact. A correction now checks only what the document shows, and
+ * the UVA decides what an uncovered tip means (`tip-partial-payment`).
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -71,8 +71,8 @@ const userId = "user-1";
 /**
  * Kaffeehaus Sperl. A 3,00 Melange, and a card charge of 8,00 because the
  * terminal took 5,00 on top of it — a tip larger than the document total and
- * perfectly ordinary. It is the case the document bound cannot accept and the
- * transaction bound can.
+ * perfectly ordinary. It is the case the document bound cannot accept, and
+ * the reason a tip can be declared as not printed.
  */
 const DOCUMENT_TOTAL = 300;
 const CARD_CHARGE = 800;
@@ -139,25 +139,30 @@ beforeEach(() => seed());
 describe("the bound itself", () => {
   it("measures a tip against the document total by default", () => {
     expect(
-      checkTipBound({ tip: 320, documentTotal: 5080, transactionTotal: null, notPrinted: false })
+      checkTipBound({ tip: 320, documentTotal: 5080, notPrinted: false })
     ).toEqual({ bound: "document", total: 5080 });
   });
 
-  it("measures a tip declared as not printed against the transaction total", () => {
+  it("does not measure a tip declared as not printed against anything", () => {
     expect(
-      checkTipBound({ tip: TIP, documentTotal: DOCUMENT_TOTAL, transactionTotal: -CARD_CHARGE, notPrinted: true })
-    ).toEqual({ bound: "transaction", total: CARD_CHARGE });
+      checkTipBound({ tip: TIP, documentTotal: DOCUMENT_TOTAL, notPrinted: true })
+    ).toEqual({ bound: "not-printed" });
+    // Not even against a missing document total: the declaration says the
+    // document does not hold the tip.
+    expect(checkTipBound({ tip: TIP, documentTotal: null, notPrinted: true })).toEqual({
+      bound: "not-printed",
+    });
   });
 
-  it("takes both totals in absolute value: a credit note bounds a tip as its own total", () => {
+  it("takes the total in absolute value: a credit note bounds a tip as its own total", () => {
     expect(
-      checkTipBound({ tip: 320, documentTotal: -5080, transactionTotal: null, notPrinted: false })
+      checkTipBound({ tip: 320, documentTotal: -5080, notPrinted: false })
     ).toEqual({ bound: "document", total: 5080 });
   });
 
   it("returns no bound for no tip, so clearing one clears what bounded it", () => {
-    expect(checkTipBound({ tip: null, documentTotal: 5080, transactionTotal: null, notPrinted: false })).toBeNull();
-    expect(checkTipBound({ tip: 0, documentTotal: 5080, transactionTotal: null, notPrinted: false })).toBeNull();
+    expect(checkTipBound({ tip: null, documentTotal: 5080, notPrinted: false })).toBeNull();
+    expect(checkTipBound({ tip: 0, documentTotal: 5080, notPrinted: false })).toBeNull();
   });
 
   it("refuses a tip that is not less than the total it is measured against", () => {
@@ -165,11 +170,8 @@ describe("the bound itself", () => {
     // payment is a Gesamt in the Trinkgeld field, and it leaves nothing for the
     // document's own rates to apply to.
     expect(() =>
-      checkTipBound({ tip: 5080, documentTotal: 5080, transactionTotal: null, notPrinted: false })
+      checkTipBound({ tip: 5080, documentTotal: 5080, notPrinted: false })
     ).toThrow(/must be less than the document total/);
-    expect(() =>
-      checkTipBound({ tip: 5400, documentTotal: 5080, transactionTotal: 5400, notPrinted: true })
-    ).toThrow(/must be less than the transaction total/);
   });
 });
 
@@ -233,7 +235,7 @@ describe("the document bound, by default", () => {
   });
 });
 
-describe("the transaction bound, when the tip was never printed", () => {
+describe("a tip declared as not printed (#554)", () => {
   it("accepts a tip larger than the document total but smaller than the bank line", async () => {
     // 5,00 on a 3,00 Melange: impossible against the document, ordinary
     // against the 8,00 the card was actually charged.
@@ -244,50 +246,55 @@ describe("the transaction bound, when the tip was never printed", () => {
     expect(file().extractedAmount).toBe(DOCUMENT_TOTAL);
   });
 
-  it("records which bound applied, so an overridden tip is legible as one", async () => {
+  it("records the declaration, so an unprinted tip is legible as one", async () => {
     await mcp({ tipAmount: TIP, tipNotPrinted: true });
 
-    expect(file().extractedTipBound).toEqual({ bound: "transaction", total: CARD_CHARGE });
+    expect(file().extractedTipBound).toEqual({ bound: "not-printed" });
   });
 
-  it("cannot be used to exceed the transaction total", async () => {
-    // The override moves the bound; it does not remove it.
-    await expect(panel({ tipAmount: 60000 }, true)).rejects.toThrow(
-      "tipAmount 600.00 must be less than the transaction total it is measured against, 8.00."
-    );
-    await expect(mcp({ tipAmount: 60000, tipNotPrinted: true })).rejects.toThrow(
-      "tipAmount 600.00 must be less than the transaction total it is measured against, 8.00."
-    );
+  it("is not measured against the bank line, on either door", async () => {
+    // #310 refused this: 600,00 is not less than the 8,00 card charge. A
+    // correction no longer reads the bank line. The UVA puts the transaction
+    // on review instead (`impossible-tip`, since 600,00 is not less than
+    // 8,00), which is where a figure that does not reconcile is judged.
+    await panel({ tipAmount: 60000 }, true);
+    expect(file().extractedTipAmount).toBe(60000);
 
-    expect(file().extractedTipAmount).toBeNull();
+    seed();
+    await mcp({ tipAmount: 60000, tipNotPrinted: true });
+    expect(file().extractedTipAmount).toBe(60000);
+    expect(file().extractedTipBound).toEqual({ bound: "not-printed" });
   });
 
-  it("sums the bank lines when the document settled over several", async () => {
-    store.setDoc(
-      "files",
-      "f-1",
-      createTestFile({ userId, extractedAmount: DOCUMENT_TOTAL, transactionIds: ["tx-1", "tx-2"] })
-    );
-    store.setDoc("transactions", "tx-2", createTestTransaction({ userId, amount: -200 }));
+  it("accepts the arithmetically short tip #346 was filed about", async () => {
+    // 3,00 + 7,99 is not the 8,00 that was paid. The document cannot show
+    // that, so the correction takes it; the UVA lists the transaction as
+    // `tip-partial-payment` and claims nothing until someone rules on it.
+    await mcp({ tipAmount: 799, tipNotPrinted: true });
 
-    await mcp({ tipAmount: TIP, tipNotPrinted: true });
-
-    expect(file().extractedTipBound).toEqual({ bound: "transaction", total: CARD_CHARGE + 200 });
+    expect(file().extractedTipAmount).toBe(799);
   });
 
-  it("refuses when the file is connected to no transaction at all", async () => {
-    // There is then no bank line to explain, which is the only thing an
-    // unprinted tip is for.
+  it("does not need the file to be connected to a transaction", async () => {
     seed({}, null);
 
-    await expect(mcp({ tipAmount: TIP, tipNotPrinted: true })).rejects.toThrow(
-      /not connected to a transaction/
-    );
+    await mcp({ tipAmount: TIP, tipNotPrinted: true });
+
+    expect(file().extractedTipAmount).toBe(TIP);
+    expect(file().extractedTipBound).toEqual({ bound: "not-printed" });
   });
 
-  it("clears the recorded bound when the tip is cleared", async () => {
+  it("does not need a document total", async () => {
+    seed({ extractedAmount: null });
+
+    await panel({ amount: null, tipAmount: TIP }, true);
+
+    expect(file().extractedTipAmount).toBe(TIP);
+  });
+
+  it("clears the recorded declaration when the tip is cleared", async () => {
     await mcp({ tipAmount: TIP, tipNotPrinted: true });
-    expect(file().extractedTipBound).toEqual({ bound: "transaction", total: CARD_CHARGE });
+    expect(file().extractedTipBound).toEqual({ bound: "not-printed" });
 
     await mcp({ tipAmount: null });
 

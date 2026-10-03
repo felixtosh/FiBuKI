@@ -35,6 +35,27 @@ export interface ReceiptOnlyAcceptance {
 }
 
 /**
+ * Accepted Partial Payment (#554): the recorded ruling that a tipped
+ * transaction's bank line really is short of document total + tip (a split
+ * bill, an instalment) - who ruled, when, why, over which figures. Shape
+ * duplicated from `functions/src/uva/partialPaymentAcceptance.ts` for the same
+ * `rootDir: "src"` reason as `DocumentationState` above; the backend module
+ * owns the liveness derivation.
+ */
+export interface PartialPaymentAcceptance {
+  /** Who ruled - the user id the acting party authenticated as. */
+  by: string;
+  /** When the ruling was made. */
+  at: Timestamp;
+  /** Why the shortfall is real. The reason IS the record. */
+  reason: string;
+  /** The bank line the ruling was made over, signed cents. */
+  bankAmount: number;
+  /** Each connected file's total and tip (cents) the ruling was made over. */
+  files: Array<{ id: string; total: number | null; tip: number | null }>;
+}
+
+/**
  * Whether a foreign no-VAT purchase was goods or a service (#214). Decides
  * the UVA lane: `service` is reverse charge § 19 (KZ 057/066), `goods` is
  * ig. Erwerb (KZ 070 + base KZ + 065) or the import lane for third-country
@@ -217,6 +238,17 @@ export interface Transaction {
    * `documentationState`, `isComplete`, the UVA or the BMD export.
    */
   receiptOnlyAcceptance?: ReceiptOnlyAcceptance | null;
+
+  /**
+   * Accepted Partial Payment (#554): a standing ruling that this tipped line's
+   * bank amount really is short of document total + tip, so the UVA claims
+   * the paid fraction instead of listing it as `tip-partial-payment`, and the
+   * BMD export books it instead of refusing it. Written only by the
+   * acceptPartialPayment callable / accept_partial_payment tool; `null` =
+   * revoked. Goes STALE (derived on read, never deleted) when `fileIds`, a
+   * connected file's total or tip, or `amount` change.
+   */
+  partialPaymentAcceptance?: PartialPaymentAcceptance | null;
 
   // === Metadata ===
 

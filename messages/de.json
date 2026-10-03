@@ -703,5 +703,31 @@
     },
     "disconnectRevoked": "{provider} getrennt. Der Zugriff von FiBuKI auf Ihr Konto wurde widerrufen.",
     "disconnectNotRevoked": "{provider} wurde in FiBuKI getrennt, aber der Zugriff bei {provider} konnte nicht widerrufen werden. Sie können FiBuKI in den Einstellungen Ihres {provider}-Kontos unter den verbundenen Apps entfernen."
+  },
+  "uvaReview": {
+    "reasons": {
+      "no-file": "Kein Beleg zugeordnet",
+      "no-vat-data": "Beleg ohne USt-Angaben",
+      "foreign-or-invalid-rate": "Ausländischer oder ungültiger Steuersatz",
+      "amount-mismatch": "Bankbetrag ≠ Rechnungssumme",
+      "foreign-currency": "Beleg in Fremdwährung — kein verwendbarer Wechselkurs",
+      "impossible-tip": "Trinkgeld ≥ Bankbetrag — Trinkgeld am Beleg korrigieren",
+      "tip-partial-payment": "Bankbetrag kleiner als Summe + Trinkgeld — Trinkgeld korrigieren oder Teilzahlung akzeptieren",
+      "needs-receipt": "Beleg verloren — Nachweis fehlt"
+    },
+    "partialPayment": {
+      "accept": "Teilzahlung akzeptieren",
+      "acceptHint": "Nur ein Teil der Rechnung wurde bezahlt (Rechnung geteilt, Ratenzahlung). Der bezahlte Anteil der Vorsteuer wird geltend gemacht. Ist das Trinkgeld falsch, korrigiere es stattdessen am Beleg.",
+      "reasonLabel": "Warum nur ein Teil der Rechnung bezahlt wurde",
+      "reasonPlaceholder": "Warum nur ein Teil? z. B. Rechnung geteilt, meine Hälfte bezahlt",
+      "confirm": "Entscheidung festhalten",
+      "cancel": "Abbrechen",
+      "saveFailed": "Die Entscheidung konnte nicht gespeichert werden.",
+      "acceptedTitle": "Akzeptierte Teilzahlungen ({count})",
+      "acceptedDescription": "Rechnungen mit Trinkgeld, die der Bankbetrag nicht deckt, anteilig geltend gemacht aufgrund einer festgehaltenen Entscheidung, dass nur ein Teil bezahlt wurde. Die Entscheidung verfällt, sobald sich die Belege, ihre Summen oder Trinkgelder oder der Bankbetrag ändern.",
+      "revoke": "Widerrufen",
+      "revokeHint": "Entscheidung entfernen. Die Transaktion kommt zurück auf die Prüfliste und macht nichts geltend, bis sie geklärt ist.",
+      "claimed": "{amount} VSt geltend gemacht"
+    }
   }
 }

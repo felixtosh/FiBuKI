@@ -69,8 +69,9 @@ const INCOME_SOURCES = [
 ];
 
 // Edge case data. `foreignSupplyKind` / `isReverseCharge` exercise the #214
-// foreign-regime fields; `receiptOnlyAcceptance` (#165) is left unset because
-// it presupposes a connected receipt File, which test data does not create.
+// foreign-regime fields; `receiptOnlyAcceptance` (#165) and
+// `partialPaymentAcceptance` (#554) are left unset because each presupposes a
+// connected File (a receipt, a tipped Beleg), which test data does not create.
 const EDGE_CASES: Array<{
   name: string;
   partner: string | null;
