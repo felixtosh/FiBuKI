@@ -18,7 +18,7 @@ import {
   backfillCopySuggestionsCallable,
 } from "../files/copyCallables";
 import { connectFileToTransactionCallable } from "../files/connectFileToTransaction";
-import { runCopyCheck, compareCopyEvidence, copyEvidenceOf, pickOriginal } from "../files/copyOps";
+import { runCopyCheck, compareCopyEvidence, copyEvidenceOf, pickOriginal, markFileAsCopy } from "../files/copyOps";
 import { runTransactionMatching } from "../matching/matchFileTransactions";
 import { listFiles } from "../tools/handlers";
 
@@ -245,6 +245,16 @@ describe("the Copy check", () => {
     expect(outcome.kind).toBe("suggested");
     expect(await connectionsOf("tx1")).toEqual(["new", "old"]);
     expect((await file("new")).copySuggestion?.originalFileId).toBe("old");
+    expect((await file("new")).copyOfFileId).toBeUndefined();
+  });
+
+  it("refuses to record a File connected since the check looked, leaving its File Connection", async () => {
+    await db.doc("files/orig").set(invoice());
+    await db.doc("files/new").set(invoice({ createdAt: LATER }));
+    await connect("new", "tx1");
+    const err = await markFileAsCopy(db, ME, { fileId: "new", originalFileId: "orig" }, "system").catch((e) => e);
+    expect(err.code).toBe("failed-precondition");
+    expect(await connectionsOf("tx1")).toEqual(["new"]);
     expect((await file("new")).copyOfFileId).toBeUndefined();
   });
 

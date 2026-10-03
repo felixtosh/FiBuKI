@@ -485,6 +485,13 @@ export async function markFileAsCopy(
       );
     }
 
+    // The system never unlinks (ADR-0010). The Copy check saw the File
+    // unconnected before this transaction; a connect that landed since is
+    // seen here, and the record is refused rather than taking it apart.
+    if (recordedBy === "system" && isConnectedFile(copy.data)) {
+      throw new HttpsError("failed-precondition", "The File holds a File Connection; only a person may mark it");
+    }
+
     const root = await resolveRoot(tx, db, userId, named, fileId);
 
     // A File hidden as "not an invoice" because it was a re-send becomes what
