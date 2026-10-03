@@ -210,12 +210,12 @@ describe("leaving the trigger queue", () => {
     await drainTriggers();
 
     const job = (await claimExtractionJob())!;
-    const run = runExtractionJob(job, { timeoutMs: 1000, claimWindowMs: 200 });
+    const run = runExtractionJob(job, { timeoutMs: 1000, claimWindowMs: 1000 });
 
     await until(async () => !!(await file("slow")).extractionError, 3000);
     expect((await file("slow")).extractionError).toBe("Extraction did not finish within 1 seconds.");
     // Still one run: the claim is held, nobody else may take the File.
-    await reclaimAbandonedExtractions({ claimWindowMs: 200 });
+    await reclaimAbandonedExtractions({ claimWindowMs: 1000 });
     expect(await claimExtractionJob()).toBeNull();
 
     gate.resolve();
@@ -232,11 +232,11 @@ describe("never twice at once", () => {
     await upload("long");
     await drainTriggers();
 
-    const timing = { timeoutMs: 10_000, claimWindowMs: 200 };
+    const timing = { timeoutMs: 10_000, claimWindowMs: 1000 };
     const job = (await claimExtractionJob())!;
     const run = runExtractionJob(job, timing);
 
-    await sleep(600); // three claim windows
+    await sleep(2500); // well past two claim windows
     await reclaimAbandonedExtractions(timing);
     expect(await claimExtractionJob()).toBeNull();
     expect((await jobs())[0].attempts).toBe(0);

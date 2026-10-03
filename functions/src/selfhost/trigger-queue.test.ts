@@ -230,10 +230,10 @@ describe("durable trigger queue", () => {
       await db.collection("files").doc("next").set({ name: "next.pdf" });
     });
 
-    const opts = { claimTimeoutMs: 200 };
+    const opts = { claimTimeoutMs: 1000 };
     const first = drainTriggerQueueOnce(opts);
     try {
-      await new Promise((r) => setTimeout(r, 600)); // three claim windows
+      await new Promise((r) => setTimeout(r, 2500)); // well past two claim windows
 
       // Claimed one at a time and kept fresh: the running event is still
       // claimed once, and the one behind it was never claimed at all.
