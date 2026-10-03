@@ -111,6 +111,7 @@ describe("characterization: geminiParser.parseWithGemini", () => {
       // returns neither — an invented §11 element is worse than a missing one.
       selfDesignation: null,
       invoiceNumber: null,
+      referencedInvoiceNumber: null,
       partner: null,
       vatId: null,
       iban: null,
@@ -1053,6 +1054,7 @@ describe("characterization: documentExtractor", () => {
       lineItems: null,
       selfDesignation: null,
       invoiceNumber: null,
+      referencedInvoiceNumber: null,
       partner: null,
       vatId: null,
       iban: null,
