@@ -42,6 +42,7 @@ const FACTS = [
   "invoiceDirection",
   "extractionCorrectedFields",
   "extractionCorrectedAt",
+  "lastFactChange",
 ].join("|");
 
 /** One call argument: a name, a member chain or a call, as far as a static walk can tell. */

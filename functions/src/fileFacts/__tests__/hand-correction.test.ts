@@ -16,6 +16,7 @@ import { describe, it, expect } from "vitest";
 import { Timestamp } from "firebase-admin/firestore";
 import {
   decideFactChange,
+  isHandCorrectionWrite,
   reExtractionRefusal,
   type FactChange,
   type FactOutcome,
@@ -746,10 +747,37 @@ describe("the UI and MCP doors (#637 user story 20)", () => {
     const ui = accepted(decide(record, { origin: "ui-correction", ...change }, money));
     const viaMcp = accepted(decide(record, { origin: "mcp-correction", ...change }, money));
 
-    expect(viaMcp.update).toEqual(ui.update);
+    // The same File, apart from the stamp that names the door.
+    const { lastFactChange: uiStamp, ...uiUpdate } = ui.update;
+    const { lastFactChange: mcpStamp, ...mcpUpdate } = viaMcp.update;
+    expect(mcpUpdate).toEqual(uiUpdate);
+    expect(uiStamp).toEqual({ origin: "ui-correction", at: AT });
+    expect(mcpStamp).toEqual({ origin: "mcp-correction", at: AT });
     expect(viaMcp.followUps).toEqual(ui.followUps);
     expect(viaMcp.changed).toEqual(ui.changed);
     expect(ui.changed).toEqual(["amount", "tipAmount", "date", "dueDate"]);
+  });
+});
+
+describe("which write was a Hand Correction (#638)", () => {
+  const corrected = (record: Record<string, unknown>, origin: "ui-correction" | "mcp-correction") =>
+    ({ ...record, ...accepted(decide(record, { origin, correction: { amount: 5100 } })).update });
+
+  it("names it, so a trigger reading before and after can tell", () => {
+    const before = { extractedAmount: 5000 };
+    expect(isHandCorrectionWrite(before, corrected(before, "ui-correction"))).toBe(true);
+    expect(isHandCorrectionWrite(before, corrected(before, "mcp-correction"))).toBe(true);
+  });
+
+  it("does not read a later write that left the stamp standing as one", () => {
+    const after = corrected({ extractedAmount: 5000 }, "ui-correction");
+    expect(isHandCorrectionWrite(after, { ...after, extractedInvoiceNumber: "R-2" })).toBe(false);
+    expect(isHandCorrectionWrite({}, { extractedAmount: 5000 })).toBe(false);
+  });
+
+  it("stamps nothing on a save that moved nothing", () => {
+    const outcome = accepted(decide({ extractedAmount: 5000 }, { origin: "ui-correction", correction: { amount: 5000 } }));
+    expect(outcome.update).toEqual({});
   });
 });
 

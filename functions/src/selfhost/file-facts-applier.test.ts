@@ -154,6 +154,8 @@ describe("the two Hand Correction doors", () => {
       updatedAt: _updated,
       transactionMatchedAt: _matched,
       extractionCorrectedAt: _at,
+      // Names the door it came in by, so it is the one field that differs.
+      lastFactChange: _door,
       extractionCorrectedFields,
       ...rest
     } = file;

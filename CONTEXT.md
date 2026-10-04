@@ -258,7 +258,8 @@ carrying one is refused as a whole unless it is forced. Made in the File detail 
 through the MCP correction tool, which take the same fields. Changing the counterparty's
 name, VAT id, IBAN or address is not recorded. One that moves the amount, the date, the
 Due Date, the Debit Date, or the counterparty's name, VAT id or IBAN re-scores the File's
-suggestions; none connects or disconnects a Transaction.
+suggestions; none connects or disconnects a Transaction, a Receipt Link's paired File
+included: after one, the pair check only suggests.
 _Deutsch_: von Hand geändert
 _Avoid_: correction (that is the **Invoice Correction**), override, edit
 _Avoid (de)_: Korrektur, Rechnungskorrektur (both name the **Invoice Correction**)

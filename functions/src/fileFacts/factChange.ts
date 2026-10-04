@@ -122,6 +122,37 @@ export interface FactUpdate {
 export type FactOutcome = FactUpdate | FactRefusal;
 
 // ---------------------------------------------------------------------------
+// Which write was a Hand Correction
+// ---------------------------------------------------------------------------
+
+/**
+ * Stamped on every update the module returns: which origin wrote the File's
+ * facts last, and when. A trigger sees only the File before and after a
+ * write, so this is how it tells a Hand Correction from any other write.
+ */
+export const LAST_FACT_CHANGE_FIELD = "lastFactChange";
+
+const HAND_CORRECTION_ORIGINS: readonly string[] = ["ui-correction", "mcp-correction"];
+
+/**
+ * Was the write that turned `before` into `after` a Hand Correction? A
+ * correction connects nothing, so a trigger that would connect a File after
+ * this write (the Receipt Link follow, #571) only suggests instead (Stefan,
+ * 2026-10-04).
+ */
+export function isHandCorrectionWrite(
+  before: Record<string, unknown> | undefined,
+  after: Record<string, unknown> | undefined
+): boolean {
+  const stampOf = (record: Record<string, unknown> | undefined) =>
+    (record?.[LAST_FACT_CHANGE_FIELD] ?? null) as { origin?: unknown; at?: unknown } | null;
+  const now = stampOf(after);
+  if (!now || !HAND_CORRECTION_ORIGINS.includes(now.origin as string)) return false;
+  const was = stampOf(before);
+  return !was || was.origin !== now.origin || !sameStored(was.at, now.at);
+}
+
+// ---------------------------------------------------------------------------
 // The re-extraction check
 // ---------------------------------------------------------------------------
 
@@ -315,6 +346,7 @@ function decideHandCorrection(current: CurrentFile, change: HandCorrectionChange
   }
 
   if (Object.keys(update).length > 0) {
+    update[LAST_FACT_CHANGE_FIELD] = { origin: change.origin, at };
     update.updatedAt = at;
   }
 
