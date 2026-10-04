@@ -1106,7 +1106,7 @@ export function TransactionFilesSection({
         >
           {hasCategory && assignedCategory ? (
             <Link
-              href={`/categories?id=${assignedCategory.id}`}
+              href={`/settings/categories?id=${assignedCategory.id}`}
               className="inline-flex items-center h-7 px-3 gap-2 rounded-md border text-sm max-w-full min-w-0 bg-background border-input cursor-pointer hover:bg-accent"
             >
               <Tag className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
