@@ -160,8 +160,16 @@ function RemainderLine({ transactionAmount, transactionCurrency, transactionDate
   const lineFiles: RemainderLineFile[] = files.map((file) => {
     const extractionPending = isExtractionPending(file);
     const payment = filePaymentTotal(file.extractedAmount, file.extractedTipAmount);
+    // Which File it is and what it pays, so a Receipt beside its invoice
+    // counts once (#571); the currency is the document's own, which decides
+    // whether a Receipt's surplus counts at all.
+    const pair = {
+      fileId: file.id,
+      currency: file.extractedCurrency ?? null,
+      receiptOfFileId: file.receiptLink?.fileId ?? null,
+    };
     if (payment == null || file.extractedCurrency === transactionCurrency) {
-      return { payment, extractionPending };
+      return { payment, extractionPending, ...pair };
     }
     const conversion = convert(
       payment,
@@ -170,8 +178,8 @@ function RemainderLine({ transactionAmount, transactionCurrency, transactionDate
       transactionDate
     );
     return conversion
-      ? { payment: conversion.amount, extractionPending }
-      : { payment, extractionPending, conversionFailed: true };
+      ? { payment: conversion.amount, extractionPending, ...pair }
+      : { payment, extractionPending, conversionFailed: true, ...pair };
   });
 
   const state = remainderLineState(transactionAmount, lineFiles);

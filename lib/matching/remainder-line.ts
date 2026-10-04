@@ -9,6 +9,7 @@
  */
 
 import {
+  countConnectedFiles,
   deriveCoverage,
   summarizeConnectedFiles,
   type ConnectedFileAmount,
@@ -33,8 +34,11 @@ export function remainderLineState(
   transactionAmount: number,
   files: RemainderLineFile[]
 ): RemainderLineState {
-  const { documentedAmount, pendingCount } = summarizeConnectedFiles(files);
-  const counted = files.filter((f) => !(f.extractionPending && f.payment == null));
+  // A Receipt beside the invoice it pays is no File of its own here (#571):
+  // its currency or a missing amount cannot hide the pair's figure.
+  const documents = countConnectedFiles(files);
+  const { documentedAmount, pendingCount } = summarizeConnectedFiles(documents);
+  const counted = documents.filter((f) => !(f.extractionPending && f.payment == null));
 
   if (counted.length === 0) {
     return pendingCount > 0 ? { kind: "pending", pendingCount } : { kind: "hidden" };

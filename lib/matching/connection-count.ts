@@ -1,7 +1,7 @@
 import {
   deriveCoverage,
-  documentedAmountOf,
   filePaymentTotal,
+  summarizeConnectedFiles,
   type Coverage,
 } from "@/functions/src/matching/coverage";
 
@@ -80,13 +80,24 @@ export function rowRemainder(
 export function coverageFromConnectedFiles(
   transactionAmount: number,
   connectedFiles: Array<{
+    id?: string;
     extractedAmount?: number | null;
     extractedTipAmount?: number | null;
+    extractedCurrency?: string | null;
+    receiptLink?: { fileId?: string | null } | null;
   }>
 ): Coverage | null {
-  const documented = documentedAmountOf(
-    connectedFiles.map((f) => filePaymentTotal(f.extractedAmount, f.extractedTipAmount))
-  );
+  // Through the summary the scorer reads, so a Receipt beside the invoice it
+  // pays counts once here as well (#571).
+  const documented = summarizeConnectedFiles(
+    connectedFiles.map((f) => ({
+      payment: filePaymentTotal(f.extractedAmount, f.extractedTipAmount),
+      extractionPending: false,
+      fileId: f.id,
+      currency: f.extractedCurrency ?? null,
+      receiptOfFileId: f.receiptLink?.fileId ?? null,
+    }))
+  ).documentedAmount;
   if (documented <= 0) return null;
   return deriveCoverage(transactionAmount, documented);
 }

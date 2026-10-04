@@ -1029,6 +1029,9 @@ SEQUENTIAL INVOICE NUMBER ("invoiceNumber", IMPORTANT):
   "Rechnungsnummer", "Rechnungs-Nr.", "Invoice No.", "Belegnummer"
 - Copy what is printed - do NOT construct one from a date, an order number,
   a customer number or a reference
+- A receipt's own number ("Receipt number", "Beleg-Nr.") counts as its own
+  number. The number of the invoice a receipt pays is never this field: that
+  is "paidInvoiceNumber"
 - If the document prints no invoice number, return "invoiceNumber": null
 
 REFERENCED INVOICE NUMBER ("referencedInvoiceNumber", IMPORTANT):
@@ -1042,6 +1045,21 @@ REFERENCED INVOICE NUMBER ("referencedInvoiceNumber", IMPORTANT):
   payment reference for it
 - If the document references no earlier invoice, return
   "referencedInvoiceNumber": null
+
+PAID INVOICE NUMBER ("paidInvoiceNumber", IMPORTANT):
+- A payment confirmation, a Receipt or a Zahlungsbestätigung names the invoice
+  whose payment it confirms. Transcribe THAT invoice's number, exactly as
+  printed, from wordings such as "Invoice number" on a receipt,
+  "Zahlung zu Rechnung", "Bezahlte Rechnung", "Payment for invoice",
+  "Paid invoice"
+- A receipt does not correct anything: never put this number in
+  "referencedInvoiceNumber", which is only for credit notes and corrections
+- The document's own number (a receipt number counts) stays in
+  "invoiceNumber"; this field never holds it
+- Copy what is printed - do NOT take an order number, a customer number or a
+  payment reference for it
+- If the document confirms no particular invoice's payment, return
+  "paidInvoiceNumber": null
 
 SEVERAL DOCUMENTS IN ONE FILE ("segments"):
 - One PDF can hold several SEPARATELY ISSUED invoices or receipts, each with
@@ -1154,6 +1172,7 @@ JSON structure:
     "selfDesignation": "Rechnung",
     "invoiceNumber": "2024-0042",
     "referencedInvoiceNumber": null,
+    "paidInvoiceNumber": null,
     "lineItems": [
       {
         "description": "USB-C Cable",
@@ -1331,6 +1350,7 @@ JSON only: exactly one object, no markdown, no explanation.`;
       selfDesignation?: string | null;
       invoiceNumber?: string | null;
       referencedInvoiceNumber?: string | null;
+      paidInvoiceNumber?: string | null;
       lineItems?: GeminiLineItem[] | null;
       rateGroups?: GeminiRateGroup[] | null;
       confidence?: number;
@@ -1522,6 +1542,7 @@ JSON only: exactly one object, no markdown, no explanation.`;
     selfDesignation: asTranscribedString(parsed.extracted?.selfDesignation),
     invoiceNumber: asTranscribedString(parsed.extracted?.invoiceNumber),
     referencedInvoiceNumber: asTranscribedString(parsed.extracted?.referencedInvoiceNumber),
+    paidInvoiceNumber: asTranscribedString(parsed.extracted?.paidInvoiceNumber),
     partner: legacyPartner,
     vatId: legacyVatId,
     iban: legacyIban,
