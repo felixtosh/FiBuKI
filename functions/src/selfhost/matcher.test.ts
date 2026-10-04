@@ -285,3 +285,113 @@ describe("a File that is not stored yet", () => {
     expect(a.matches[0].matchSources).toContain("precision_hint");
   });
 });
+
+describe("the date window reaches to the Due Date or Debit Date (#614)", () => {
+  /** The calendar day `n` days after the File's date, as an ISO day. */
+  const isoPlus = (n: number) =>
+    new Date(Date.parse(`${DAY}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+  const plus = (n: number) => day(isoPlus(n));
+
+  /**
+   * Is t-1, dated `n` days after the File, a candidate? Asked from the File,
+   * from the Transaction, in a batch and in Partner matching: they agree.
+   */
+  async function reaches(n: number): Promise<boolean> {
+    await seedTx("t-1", { date: plus(n) });
+    const { fromFile, fromTx } = await bothDirections();
+    const among = await pairsAmong(db, ME, [await file("f-1")], [await tx("t-1")]);
+    const [batch] = await transactionsForFiles(db, ME, [await file("f-1")]);
+    const answers = [
+      fromFile !== undefined,
+      fromTx !== undefined,
+      among.length > 0,
+      batch.matches.some((m) => m.transactionId === "t-1"),
+    ];
+    expect({ n, answers }).toEqual({ n, answers: answers.map(() => answers[0]) });
+    return answers[0];
+  }
+
+  it("stretches forward to a week past a Due Date at +45", async () => {
+    await seedFile("f-1", { extractedDueDate: plus(45) });
+    expect(await reaches(45)).toBe(true);
+    expect(await reaches(52)).toBe(true);
+    expect(await reaches(53)).toBe(false);
+  });
+
+  it("does not move the back edge", async () => {
+    await seedFile("f-1", { extractedDueDate: plus(45) });
+    expect(await reaches(-30)).toBe(true);
+    expect(await reaches(-31)).toBe(false);
+  });
+
+  it("takes the later of the Debit Date and the Due Date", async () => {
+    await seedFile("f-1", { extractedDueDate: plus(20), extractedDebitDate: plus(40) });
+    expect(await reaches(47)).toBe(true);
+    expect(await reaches(48)).toBe(false);
+  });
+
+  it("is not stretched by an anchor whose week ends inside ±30 days", async () => {
+    await seedFile("f-1", { extractedDebitDate: plus(10) });
+    expect(await reaches(30)).toBe(true);
+    expect(await reaches(31)).toBe(false);
+  });
+
+  it("stretches up to an anchor at +90", async () => {
+    await seedFile("f-1", { extractedDueDate: plus(90) });
+    expect(await reaches(97)).toBe(true);
+    expect(await reaches(98)).toBe(false);
+  });
+
+  it("stays ±30 days for an anchor past +90, a misread", async () => {
+    await seedFile("f-1", { extractedDueDate: plus(120) });
+    expect(await reaches(30)).toBe(true);
+    expect(await reaches(31)).toBe(false);
+    expect(await reaches(120)).toBe(false);
+    expect(await reaches(127)).toBe(false);
+  });
+
+  it("stretches the same for a legacy keyless Zahlungstermin row", async () => {
+    await seedFile("f-1", {
+      extractedAdditionalFields: [{ label: "Zahlungstermin", value: isoPlus(45) }],
+    });
+    expect(await reaches(52)).toBe(true);
+    expect(await reaches(53)).toBe(false);
+  });
+
+  it("prefers the typed field over a legacy row, as the scorer does", async () => {
+    await seedFile("f-1", {
+      extractedDueDate: null,
+      extractedAdditionalFields: [{ label: "Zahlungstermin", value: isoPlus(45) }],
+    });
+    expect(await reaches(31)).toBe(false);
+  });
+
+  it("is never stretched by a printed payment term", async () => {
+    await seedFile("f-1", {
+      extractedAdditionalFields: [{ key: "paymentTerms", label: "Zahlungsziel", value: "45 Tage" }],
+    });
+    expect(await reaches(31)).toBe(false);
+  });
+
+  it("is the anchor ± 30 days for an undated File, not the most recent Transactions", async () => {
+    await seedFile("f-1", { extractedDate: null, extractedDueDate: plus(0) });
+    expect(await reaches(-30)).toBe(true);
+    expect(await reaches(30)).toBe(true);
+    expect(await reaches(31)).toBe(false);
+    expect(await reaches(-31)).toBe(false);
+  });
+
+  it("does not change what a pair inside ±30 days scores", async () => {
+    await seedFile("f-1", { extractedDueDate: plus(45) });
+    await seedTx("t-1", { date: plus(10) });
+    const alone = (await transactionsForFile(db, ME, await file("f-1"))).matches.find(
+      (m) => m.transactionId === "t-1"
+    );
+    await seedTx("t-2", { date: plus(50) });
+    const stretched = await transactionsForFile(db, ME, await file("f-1"));
+    expect(stretched.matches.map((m) => m.transactionId).sort()).toEqual(["t-1", "t-2"]);
+    const t1 = stretched.matches.find((m) => m.transactionId === "t-1");
+    expect(t1!.confidence).toBe(alone!.confidence);
+    expect(t1!.breakdown).toEqual(alone!.breakdown);
+  });
+});
