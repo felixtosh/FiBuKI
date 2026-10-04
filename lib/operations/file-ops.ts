@@ -22,13 +22,7 @@ import {
 } from "@/types/file";
 import { Transaction } from "@/types/transaction";
 import { FileSourceResultType, FileSourceType, ManualFileRemoval } from "@/types/partner";
-import {
-  createLocalPartnerFromGlobal,
-  decrementFileSourcePatternUsage,
-  learnFileSourcePattern,
-} from "./partner-ops";
 import { OperationsContext } from "./types";
-import { payeeFillFromFiles } from "@/functions/src/partners/payeeRule";
 import { liveCopies } from "@/lib/files/copy-state";
 import { callFunction } from "@/lib/firebase/callable";
 import { fileDocumentAmount, fileDocumentVatAmount } from "@/lib/files/document-amount";
@@ -622,278 +616,49 @@ export async function restoreFile(
 // === File-Transaction Connection Operations ===
 
 /**
- * Connect a file to a transaction (many-to-many)
+ * Connect a file to a transaction (many-to-many). The connect callable does
+ * the work, so every screen gets its Copy refusal, the payee rule and the
+ * record a disconnect reverts (#584).
  */
 export async function connectFileToTransaction(
-  ctx: OperationsContext,
+  _ctx: OperationsContext,
   fileId: string,
   transactionId: string,
   connectionType: "manual" | "auto_matched" = "manual",
   matchConfidence?: number,
   sourceInfo?: FileConnectionSourceInfo
 ): Promise<string> {
-  // Verify file ownership
-  const file = await getFile(ctx, fileId);
-  if (!file) {
-    throw new Error(`File ${fileId} not found or access denied`);
-  }
-
-  // Verify transaction ownership
-  const transactionDoc = await getDoc(doc(ctx.db, TRANSACTIONS_COLLECTION, transactionId));
-  if (!transactionDoc.exists() || transactionDoc.data().userId !== ctx.userId) {
-    throw new Error(`Transaction ${transactionId} not found or access denied`);
-  }
-
-  // Check if connection already exists
-  const existingQ = query(
-    collection(ctx.db, FILE_CONNECTIONS_COLLECTION),
-    where("fileId", "==", fileId),
-    where("transactionId", "==", transactionId),
-    where("userId", "==", ctx.userId)
-  );
-  const existingSnap = await getDocs(existingQ);
-  if (!existingSnap.empty) {
-    return existingSnap.docs[0].id; // Already connected
-  }
-
-  const now = Timestamp.now();
-  const batch = writeBatch(ctx.db);
-
-  // 1. Create junction document
-  const connectionRef = doc(collection(ctx.db, FILE_CONNECTIONS_COLLECTION));
-  // Build connection data, only including defined fields (Firestore doesn't allow undefined)
-  const connectionData: Record<string, unknown> = {
+  const result = await callFunction<
+    {
+      fileId: string;
+      transactionId: string;
+      connectionType: "manual" | "auto_matched";
+      matchConfidence?: number;
+      sourceInfo?: FileConnectionSourceInfo;
+    },
+    { connectionId: string }
+  >("connectFileToTransaction", {
     fileId,
     transactionId,
-    userId: ctx.userId,
     connectionType,
-    matchConfidence: matchConfidence ?? null,
-    createdAt: now,
-  };
-
-  // Add source tracking fields only if provided
-  if (sourceInfo?.sourceType) {
-    connectionData.sourceType = sourceInfo.sourceType;
-  }
-  if (sourceInfo?.searchPattern) {
-    connectionData.searchPattern = sourceInfo.searchPattern;
-  }
-  if (sourceInfo?.gmailIntegrationId) {
-    connectionData.gmailIntegrationId = sourceInfo.gmailIntegrationId;
-  }
-  if (sourceInfo?.gmailIntegrationEmail) {
-    connectionData.gmailIntegrationEmail = sourceInfo.gmailIntegrationEmail;
-  }
-  if (sourceInfo?.mailMessageId) {
-    connectionData.mailMessageId = sourceInfo.mailMessageId;
-  }
-  if (sourceInfo?.gmailMessageFrom) {
-    connectionData.gmailMessageFrom = sourceInfo.gmailMessageFrom;
-  }
-  if (sourceInfo?.gmailMessageFromName) {
-    connectionData.gmailMessageFromName = sourceInfo.gmailMessageFromName;
-  }
-  if (sourceInfo?.resultType) {
-    connectionData.resultType = sourceInfo.resultType;
-  }
-
-  batch.set(connectionRef, connectionData);
-
-  // 2. Update file's transactionIds array
-  const fileRef = doc(ctx.db, FILES_COLLECTION, fileId);
-  const fileUpdates: Record<string, unknown> = {
-    transactionIds: arrayUnion(transactionId),
-    updatedAt: now,
-  };
-
-  // 3. Update transaction's fileIds array and mark as complete
-  const transactionRef = doc(ctx.db, TRANSACTIONS_COLLECTION, transactionId);
-  const txData = transactionDoc.data();
-  const transactionUpdates: Record<string, unknown> = {
-    fileIds: arrayUnion(fileId),
-    isComplete: true,
-    updatedAt: now,
-  };
-
-  const localizePartner = async (
-    partnerId: string | null | undefined,
-    partnerType: "user" | "global" | null | undefined
-  ): Promise<{ partnerId: string | null; partnerType: "user" | "global" | null; localized: boolean }> => {
-    if (!partnerId || partnerType !== "global") {
-      return { partnerId: partnerId ?? null, partnerType: partnerType ?? null, localized: false };
-    }
-
-    try {
-      const { localPartnerId } = await createLocalPartnerFromGlobal(ctx, partnerId);
-      return { partnerId: localPartnerId, partnerType: "user", localized: true };
-    } catch (error) {
-      console.error(`[PartnerMatch] Failed to localize global partner ${partnerId}:`, error);
-      return { partnerId, partnerType, localized: false };
-    }
-  };
-
-  const resolvedTxPartner = await localizePartner(txData.partnerId, txData.partnerType);
-  if (resolvedTxPartner.localized) {
-    transactionUpdates.partnerId = resolvedTxPartner.partnerId;
-    transactionUpdates.partnerType = "user";
-  }
-
-  const resolvedFilePartner = await localizePartner(file.partnerId, file.partnerType ?? null);
-  if (resolvedFilePartner.localized) {
-    fileUpdates.partnerId = resolvedFilePartner.partnerId;
-    fileUpdates.partnerType = "user";
-  }
-
-  if (sourceInfo?.searchPattern) {
-    const patternPartnerId = resolvedTxPartner.partnerId ?? resolvedFilePartner.partnerId ?? null;
-    if (patternPartnerId) {
-      try {
-        await learnFileSourcePattern(ctx, patternPartnerId, transactionId, {
-          sourceType: sourceInfo.sourceType,
-          searchPattern: sourceInfo.searchPattern,
-          integrationId: sourceInfo.gmailIntegrationId,
-          resultType: sourceInfo.resultType,
-        });
-      } catch (error) {
-        console.error("Failed to learn file source pattern:", error);
-      }
-    }
-  }
-
-  // 4. The payee rule (#550, ADR-0011), the same one every server connect
-  // applies: the File never overwrites the Transaction's Partner and never
-  // takes it; an empty one is filled only when every File on the Transaction,
-  // this one included, names the same Partner.
-  const otherFiles = await Promise.all(
-    ((txData.fileIds ?? []) as string[])
-      .filter((id) => id !== fileId)
-      .map((id) => getFile(ctx, id))
-  );
-  const payeeFill = payeeFillFromFiles({ partnerId: resolvedTxPartner.partnerId }, [
-    {
-      partnerId: resolvedFilePartner.partnerId,
-      partnerType: resolvedFilePartner.partnerType,
-      partnerMatchConfidence: file.partnerMatchConfidence ?? null,
-    },
-    ...otherFiles.filter((f): f is TaxFile => !!f && !f.deletedAt),
-  ]);
-  if (payeeFill) Object.assign(transactionUpdates, payeeFill);
-
-  batch.update(fileRef, fileUpdates);
-  batch.update(transactionRef, transactionUpdates);
-
-  await batch.commit();
-  return connectionRef.id;
+    ...(matchConfidence !== undefined ? { matchConfidence } : {}),
+    ...(sourceInfo ? { sourceInfo } : {}),
+  });
+  return result.connectionId;
 }
 
 /**
- * Disconnect a file from a transaction
+ * Disconnect a file from a transaction, through the disconnect callable
+ * (#584): it derives a Partner the payee rule filled from the remaining Files.
  * @param rejectFile If true, adds the file to transaction's rejectedFileIds to prevent auto-reconnection
  */
 export async function disconnectFileFromTransaction(
-  ctx: OperationsContext,
+  _ctx: OperationsContext,
   fileId: string,
   transactionId: string,
   rejectFile: boolean = false
 ): Promise<void> {
-  // Verify file exists and belongs to user
-  const fileDoc = await getDoc(doc(ctx.db, FILES_COLLECTION, fileId));
-  if (!fileDoc.exists()) {
-    throw new Error(`File ${fileId} not found`);
-  }
-  const fileData = fileDoc.data();
-  if (fileData.userId !== ctx.userId) {
-    throw new Error(`File ${fileId} access denied`);
-  }
-
-  // Find the connection document (may not exist for legacy connections)
-  const q = query(
-    collection(ctx.db, FILE_CONNECTIONS_COLLECTION),
-    where("fileId", "==", fileId),
-    where("transactionId", "==", transactionId),
-    where("userId", "==", ctx.userId)
-  );
-  const snapshot = await getDocs(q);
-
-  // Get transaction to check if this is the last file
-  const transactionDoc = await getDoc(doc(ctx.db, TRANSACTIONS_COLLECTION, transactionId));
-  if (!transactionDoc.exists()) {
-    throw new Error(`Transaction ${transactionId} not found`);
-  }
-  const txData = transactionDoc.data();
-  if (txData.userId !== ctx.userId) {
-    throw new Error(`Transaction ${transactionId} access denied`);
-  }
-  const currentFileIds = txData.fileIds || [];
-  const willHaveNoFiles = currentFileIds.length <= 1;
-  const hasNoReceiptCategory = !!txData.noReceiptCategoryId;
-
-  const now = Timestamp.now();
-  const batch = writeBatch(ctx.db);
-
-  if (!snapshot.empty) {
-    const connectionData = snapshot.docs[0].data() as {
-      sourceType?: FileSourceType;
-      searchPattern?: string;
-      gmailIntegrationId?: string;
-      resultType?: FileSourceResultType;
-    };
-    const partnerIdForPattern = txData.partnerId ?? fileData.partnerId ?? null;
-    if (
-      connectionData.sourceType &&
-      connectionData.searchPattern &&
-      partnerIdForPattern
-    ) {
-      try {
-        await decrementFileSourcePatternUsage(
-          ctx,
-          partnerIdForPattern,
-          transactionId,
-          {
-            sourceType: connectionData.sourceType,
-            searchPattern: connectionData.searchPattern,
-            integrationId: connectionData.gmailIntegrationId,
-            resultType: connectionData.resultType,
-          }
-        );
-      } catch (error) {
-        console.error("Failed to decrement file source pattern:", error);
-      }
-    }
-  }
-
-  // 1. Delete junction document if it exists
-  if (!snapshot.empty) {
-    batch.delete(snapshot.docs[0].ref);
-  }
-
-  // 2. Update file's transactionIds array
-  const fileRef = doc(ctx.db, FILES_COLLECTION, fileId);
-  batch.update(fileRef, {
-    transactionIds: arrayRemove(transactionId),
-    updatedAt: now,
-  });
-
-  // 3. Update transaction's fileIds array and potentially mark incomplete
-  const transactionRef = doc(ctx.db, TRANSACTIONS_COLLECTION, transactionId);
-  const transactionUpdate: Record<string, unknown> = {
-    fileIds: arrayRemove(fileId),
-    updatedAt: now,
-  };
-
-  // Mark incomplete only if no files remain AND no no-receipt category
-  if (willHaveNoFiles && !hasNoReceiptCategory) {
-    transactionUpdate.isComplete = false;
-  }
-
-  // If rejecting, add to rejectedFileIds to prevent auto-reconnection
-  if (rejectFile) {
-    transactionUpdate.rejectedFileIds = arrayUnion(fileId);
-  }
-
-  batch.update(transactionRef, transactionUpdate);
-
-  await batch.commit();
+  await callFunction("disconnectFileFromTransaction", { fileId, transactionId, rejectFile });
 }
 
 /**

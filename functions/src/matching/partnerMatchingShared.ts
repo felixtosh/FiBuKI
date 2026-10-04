@@ -6,6 +6,7 @@ import {
   TransactionData,
 } from "../utils/partner-matcher";
 import { createLocalPartnerFromGlobal } from "./createLocalPartnerFromGlobal";
+import { CLEAR_TX_PROVENANCE } from "./partnerProvenance";
 
 const db = getFirestore();
 const MAX_BATCH_SIZE = 500;
@@ -281,6 +282,7 @@ export async function processPartnerMatchesForTransactions(
       updates.partnerType = assignedPartnerType;
       updates.partnerMatchConfidence = topMatch.confidence;
       updates.partnerMatchedBy = "auto";
+      Object.assign(updates, CLEAR_TX_PROVENANCE);
       autoMatched++;
 
       const partnerName = partnerContext.partnerNameMap.get(assignedPartnerId) ||

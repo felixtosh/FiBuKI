@@ -288,6 +288,8 @@ export interface PartnerRematchReport {
   scanned: number;
   /** Transactions carrying a partner assignment. */
   assigned: number;
+  /** Assignments a connected File backs with the same Partner: supported, not re-run (#584). */
+  fileBacked: number;
   /** Assignments that passed the filters and were re-run. */
   evaluated: number;
   /** Verdict counts over every evaluated transaction, not over `rows`. */
@@ -356,11 +358,36 @@ export function readAssignedAt(automationHistory: unknown): string | null {
 export interface RematchContext {
   partnerContext: PartnerMatchingContext;
   index: PartnerIndex;
+  /** Each of the user's Files that carries a Partner, by File id. */
+  filePartnerById: Map<string, string>;
 }
 
 export async function loadRematchContext(userId: string): Promise<RematchContext> {
-  const partnerContext = await loadPartnerMatchingContext(userId);
-  return { partnerContext, index: buildPartnerIndex(partnerContext) };
+  const [partnerContext, filesSnap] = await Promise.all([
+    loadPartnerMatchingContext(userId),
+    db.collection("files").where("userId", "==", userId).select("partnerId").get(),
+  ]);
+  const filePartnerById = new Map<string, string>();
+  for (const doc of filesSnap.docs) {
+    const partnerId = doc.data().partnerId;
+    if (typeof partnerId === "string" && partnerId) filePartnerById.set(doc.id, partnerId);
+  }
+  return { partnerContext, index: buildPartnerIndex(partnerContext), filePartnerById };
+}
+
+/**
+ * Whether a File connected to the Transaction carries its Partner (#584).
+ * The bank-data matcher cannot see that evidence, so an assignment backed
+ * by it is supported whatever the matcher says: never reported as a
+ * disagreement, never rewritten.
+ */
+export function isFileBacked(
+  txData: FirebaseFirestore.DocumentData,
+  partnerId: string,
+  filePartnerById: Map<string, string>
+): boolean {
+  const fileIds = Array.isArray(txData.fileIds) ? (txData.fileIds as unknown[]) : [];
+  return fileIds.some((id) => typeof id === "string" && filePartnerById.get(id) === partnerId);
 }
 
 export interface AssignmentFilters {
@@ -390,6 +417,8 @@ export interface AssignedScanSummary {
   assignedWithoutMatchedBy: number;
   /** Passed `matchedBy` but dropped by a confidence or date filter. */
   skippedByFilters: number;
+  /** A connected File carries the stored Partner: supported, not re-run (#584). */
+  fileBacked: number;
   /** Assignments actually re-run through the matcher. */
   evaluated: number;
   /** True when the scan hit its ceiling — the population is only partly covered. */
@@ -420,6 +449,7 @@ export async function evaluateAssignedTransactions(
     skippedByMatchedBy: 0,
     assignedWithoutMatchedBy: 0,
     skippedByFilters: 0,
+    fileBacked: 0,
     evaluated: 0,
     scanLimitReached: false,
   };
@@ -472,6 +502,11 @@ export async function evaluateAssignedTransactions(
           assignedAt !== null &&
           assignedAt >= filters.assignedBefore) {
         summary.skippedByFilters++;
+        continue;
+      }
+
+      if (isFileBacked(txData, storedPartnerId, context.filePartnerById)) {
+        summary.fileBacked++;
         continue;
       }
 
@@ -603,6 +638,7 @@ export async function buildPartnerRematchReport(
     autoApplyThreshold: AUTO_APPLY_THRESHOLD,
     scanned: summary.scanned,
     assigned: summary.assigned,
+    fileBacked: summary.fileBacked,
     evaluated: summary.evaluated,
     counts,
     disagreements,

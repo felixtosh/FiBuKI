@@ -13,6 +13,10 @@ import { deriveActivityLevel } from "../utils/activityLevel";
 import { learnBillingCycleForPartner } from "../matching/learnBillingCycle";
 import { copyConnectCheck, CLEARED_COPY_MARK } from "./copyOps";
 import { payeeFillForTransaction } from "../partners/payeeSync";
+import {
+  partnerRevertForRemovedConnection,
+  rematchRevertedTransactions,
+} from "../matching/partnerProvenance";
 
 interface FileConnectionSourceInfo {
   sourceType?: string;
@@ -167,6 +171,11 @@ export async function performConnectFileToTransaction(
   let reassignedConnections = 0;
   /** Files this call takes off the Transaction, so the payee rule ignores them. */
   const reassignedAwayFileIds = new Set<string>();
+  // Partner reverts from reassigned auto connections, by Transaction (#584).
+  const staleTxViews = new Map<string, FirebaseFirestore.DocumentData>();
+  const staleTxFields = new Map<string, Record<string, unknown>>();
+  const staleTxActivity = new Map<string, Record<string, unknown>[]>();
+  const staleRematch = new Set<string>();
 
   const isAutoConnectionType = (value: unknown): boolean =>
     value === "auto_matched" || value === "ai_matched";
@@ -263,16 +272,48 @@ export async function performConnectFileToTransaction(
         const staleTxRef = ctx.db.collection("transactions").doc(staleTransactionId);
         const staleTxSnap = await staleTxRef.get();
         const staleTxData = staleTxSnap.exists ? staleTxSnap.data() || {} : {};
+        const isTarget = staleTransactionId === transactionId;
         const existingFileIds = Array.isArray(staleTxData.fileIds) ? staleTxData.fileIds : [];
         const remainingFileIds = existingFileIds.filter(
           (id: string) => !staleFileIds.has(id)
         );
+
+        // A Partner the payee rule filled from a File taken off here is
+        // derived again from the Files that stay (#584). The target carries
+        // its result into the payee rule below, with the connecting File.
+        const txView: FirebaseFirestore.DocumentData = { ...staleTxData };
+        const activity: Record<string, unknown>[] = [];
+        if (staleTxSnap.exists && staleTxData.userId === ctx.userId) {
+          for (const staleFileId of staleFileIds) {
+            const staleFileSnap = await ctx.db.collection("files").doc(staleFileId).get();
+            const revert = await partnerRevertForRemovedConnection(ctx.db, ctx.userId, {
+              fileId: staleFileId,
+              fileData: staleFileSnap.data() ?? {},
+              transactionId: staleTransactionId,
+              txData: txView,
+              remainingFileIds,
+            });
+            Object.assign(txView, revert.transaction);
+            activity.push(...revert.transactionActivity);
+            if (revert.rematchTransactionId) staleRematch.add(staleTransactionId);
+            else if (revert.transaction.partnerId) staleRematch.delete(staleTransactionId);
+          }
+        }
+        const partnerFields = Object.fromEntries(
+          Object.entries(txView).filter(([key, value]) => staleTxData[key] !== value)
+        );
+        staleTxViews.set(staleTransactionId, txView);
+        staleTxFields.set(staleTransactionId, partnerFields);
+        staleTxActivity.set(staleTransactionId, activity);
+
         const hasNoReceiptCategory = !!staleTxData.noReceiptCategoryId;
         const staleUpdates: Record<string, unknown> = {
+          ...(isTarget ? {} : partnerFields),
           fileIds: FieldValue.arrayRemove(...Array.from(staleFileIds)),
           updatedAt: now,
+          ...(!isTarget && activity.length > 0 ? { automationHistory: FieldValue.arrayUnion(...activity) } : {}),
         };
-        if (staleTransactionId !== transactionId && remainingFileIds.length === 0 && !hasNoReceiptCategory) {
+        if (!isTarget && remainingFileIds.length === 0 && !hasNoReceiptCategory) {
           staleUpdates.isComplete = false;
         }
         batch.update(staleTxRef, staleUpdates);
@@ -351,10 +392,11 @@ export async function performConnectFileToTransaction(
     ? `File "${fileData.fileName || fileId}" connected (found via ${sourceTypeLabel}: "${searchPattern}")`
     : `File "${fileData.fileName || fileId}" connected`;
   const transactionUpdate: Record<string, unknown> = {
+    ...(staleTxFields.get(transactionId) ?? {}),
     fileIds: FieldValue.arrayUnion(fileId),
     isComplete: true,
     updatedAt: now,
-    automationHistory: FieldValue.arrayUnion({
+    automationHistory: FieldValue.arrayUnion(...(staleTxActivity.get(transactionId) ?? []), {
       type: "file_connected",
       ranAt: now,
       status: "completed",
@@ -370,14 +412,34 @@ export async function performConnectFileToTransaction(
   // 4. The payee rule (#550, ADR-0011): the File never overwrites the
   // Transaction's Partner and never takes it. An empty one is filled only when
   // every File on the Transaction, this one included, names the same Partner.
-  const filePartnerId = fileData.partnerId;
-  const transactionPartnerId = transactionData.partnerId;
-  const payeeFileIds = Array.isArray(transactionData.fileIds)
-    ? transactionData.fileIds.filter((id: string) => !reassignedAwayFileIds.has(id))
+  // The Transaction as it stands after any revert above. A global Partner
+  // is localized first, as the browser-side connect did before it moved here
+  // (#584): a connect writes only the user's own Partners.
+  const txView: FirebaseFirestore.DocumentData = { ...(staleTxViews.get(transactionId) ?? transactionData) };
+  const fileView: FirebaseFirestore.DocumentData = { ...fileData };
+  const filePartner = await localizedPartner(ctx.userId, fileData.partnerId, fileData.partnerType);
+  if (filePartner.localized) {
+    fileUpdate.partnerId = filePartner.partnerId;
+    fileUpdate.partnerType = "user";
+    fileView.partnerId = filePartner.partnerId;
+    fileView.partnerType = "user";
+  }
+  const txPartner = await localizedPartner(ctx.userId, txView.partnerId, txView.partnerType);
+  if (txPartner.localized) {
+    transactionUpdate.partnerId = txPartner.partnerId;
+    transactionUpdate.partnerType = "user";
+    txView.partnerId = txPartner.partnerId;
+    txView.partnerType = "user";
+  }
+
+  const filePartnerId = fileView.partnerId;
+  const transactionPartnerId = txView.partnerId;
+  const payeeFileIds = Array.isArray(txView.fileIds)
+    ? txView.fileIds.filter((id: string) => !reassignedAwayFileIds.has(id))
     : [];
-  const payeeFill = await payeeFillForTransaction(ctx.db, ctx.userId, { ...transactionData, fileIds: payeeFileIds }, {
+  const payeeFill = await payeeFillForTransaction(ctx.db, ctx.userId, { ...txView, fileIds: payeeFileIds }, {
     connectingFileId: fileId,
-    known: new Map([[fileId, fileData]]),
+    known: new Map([[fileId, fileView]]),
   });
   if (payeeFill) {
     Object.assign(transactionUpdate, payeeFill);
@@ -390,6 +452,13 @@ export async function performConnectFileToTransaction(
   await batch.commit();
 
   console.log(`[connectFileToTransaction] Connected file ${fileId} to transaction ${transactionId}`);
+
+  // A reassigned connection that left a Transaction with no Partner: match it
+  // again from its bank data. The target only if the connect gave it none.
+  const targetPartnerAfter =
+    "partnerId" in transactionUpdate ? transactionUpdate.partnerId : txView.partnerId;
+  if (targetPartnerAfter) staleRematch.delete(transactionId);
+  await rematchRevertedTransactions(ctx.userId, [...staleRematch]);
 
   // === LEARN SOURCE PATTERNS ON PARTNER ===
   // After successful connection, store source patterns for future matching/search hints.
@@ -519,6 +588,29 @@ export async function performConnectFileToTransaction(
     alreadyConnected: false,
     reassignedConnections,
   };
+}
+
+/**
+ * A global Partner becomes the user's own copy before a connect writes it,
+ * as the browser-side connect did before it moved here (#584). A failed
+ * copy keeps the global id rather than failing the connect.
+ */
+async function localizedPartner(
+  userId: string,
+  partnerId: unknown,
+  partnerType: unknown
+): Promise<{ partnerId: string | null; partnerType: string | null; localized: boolean }> {
+  const id = typeof partnerId === "string" && partnerId ? partnerId : null;
+  const type = typeof partnerType === "string" ? partnerType : null;
+  if (!id || type !== "global") return { partnerId: id, partnerType: type, localized: false };
+  try {
+    // Imported here: the module reads Firestore at load.
+    const { createLocalPartnerFromGlobal } = await import("../matching/createLocalPartnerFromGlobal");
+    return { partnerId: await createLocalPartnerFromGlobal(userId, id), partnerType: "user", localized: true };
+  } catch (err) {
+    console.error(`[connectFileToTransaction] Failed to localize global partner ${id}:`, err);
+    return { partnerId: id, partnerType: type, localized: false };
+  }
 }
 
 /**

@@ -5,6 +5,7 @@ import { logAIUsage } from "../utils/ai-usage-logger";
 import { MODELS } from "../utils/models";
 import { matchPatternFlexible } from "../utils/pattern-utils";
 import { learnPatterns, TxSample, CollisionTxSample } from "./patternEngine";
+import { CLEAR_TX_PROVENANCE } from "./partnerProvenance";
 
 const GEMINI_MODEL = MODELS.geminiLite;
 const VERTEX_LOCATION = process.env.VERTEX_LOCATION || "europe-west1";
@@ -136,6 +137,7 @@ async function rematchUnassignedTransactions(
     if (bestMatch && bestMatch.confidence >= 89) {
       console.log(`  -> AUTO-ASSIGNING with confidence ${bestMatch.confidence}%`);
       batch.update(txDoc.ref, {
+        ...CLEAR_TX_PROVENANCE,
         partnerId: partnerId,
         partnerType: "user",
         partnerMatchConfidence: bestMatch.confidence,
@@ -236,6 +238,7 @@ async function cascadeUnassignTransactions(
     }
 
     batch.update(txDoc.ref, {
+      ...CLEAR_TX_PROVENANCE,
       partnerId: null,
       partnerType: null,
       partnerMatchedBy: null,
