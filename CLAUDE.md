@@ -324,8 +324,9 @@ cd .. && npm run generate:tool-definitions
 with an MCP twin is a thin wrapper in `lib/agent/tools/mcp-tools.ts` over the `runTool`
 callable, which runs the named tool through `handleTool` as the session's User, with the
 plan feature gate and without the API-key rate limit. The MCP output shape is the contract
-external integrations depend on: a wrapper passes it through, and filtering or computing
-lives only in the shared tool. Chat-only tools (queue status, Transaction history,
+external integrations depend on: a wrapper passes it through, reformatted for reading
+only (`forTheModel`: Timestamps as ISO strings, a File's OCR text left out of list rows),
+and filtering or computing lives only in the shared tool. Chat-only tools (queue status, Transaction history,
 navigation, Gmail search, the Partner batch context) keep their own reads.
 `functions/src/selfhost/chat-mcp-tools.test.ts` holds each wrapper to its twin's output
 and fails if one reads or writes the database itself.
