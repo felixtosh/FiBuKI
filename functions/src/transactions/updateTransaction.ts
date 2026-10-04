@@ -1,42 +1,21 @@
 /**
- * Update a single transaction
+ * Update a single transaction: what a foreign or 0% line is, for the UVA
  */
 
-import { FieldValue, Timestamp } from "firebase-admin/firestore";
+import { FieldValue } from "firebase-admin/firestore";
 import { SALE_SUPPLY_KINDS, type SaleSupplyKind } from "../uva/types";
 import { createCallable, HttpsError } from "../utils/createCallable";
-import { deriveActivityLevel } from "../utils/activityLevel";
+import { assertWritableFields, WRITABLE_FIELDS } from "./writableFields";
 
 interface UpdateTransactionRequest {
   /** Transaction ID to update */
   id: string;
-  /** Fields to update */
+  /**
+   * Fields to update: the Reports page's answers to the UVA review (#621).
+   * Partners, no-receipt categories and File Connections have their own
+   * callables.
+   */
   data: {
-    description?: string | null;
-    fileIds?: string[];
-    isComplete?: boolean;
-    partnerId?: string | null;
-    partnerType?: "global" | "user" | null;
-    partnerMatchConfidence?: number | null;
-    partnerMatchedBy?: "auto" | "manual" | "ai" | "suggestion" | null;
-    noReceiptCategoryId?: string | null;
-    noReceiptCategoryTemplateId?: string | null;
-    noReceiptCategoryMatchedBy?: "manual" | "suggestion" | "auto" | null;
-    noReceiptCategoryConfidence?: number | null;
-    receiptLostEntry?: {
-      reason: string;
-      description?: string;
-      estimatedAmount?: number;
-      dateRecorded: string;
-    } | null;
-    rejectedFileIds?: string[];
-    aiSearchQueries?: string[] | null;
-    aiSearchQueriesForPartnerId?: string | null;
-    // Tax fields
-    vatRate?: number | null;
-    vatAmount?: number | null;
-    isEuTransaction?: boolean | null;
-    isReverseCharge?: boolean | null;
     /** Goods/service answer to the foreign-regime review (#214); null clears. */
     foreignSupplyKind?: "goods" | "service" | null;
     /** What a 0% sale is (#565); null clears back to the Invoice or detection. */
@@ -59,6 +38,8 @@ export const updateTransactionCallable = createCallable<
     if (!id) {
       throw new HttpsError("invalid-argument", "Transaction ID is required");
     }
+
+    assertWritableFields("updateTransaction", data, WRITABLE_FIELDS);
 
     if (
       data.foreignSupplyKind !== undefined &&
@@ -101,65 +82,6 @@ export const updateTransactionCallable = createCallable<
     for (const [key, value] of Object.entries(data)) {
       if (value !== undefined) {
         updateData[key] = value;
-      }
-    }
-
-    // Automatically manage isComplete based on noReceiptCategoryId changes
-    // Green row = file attached OR no-receipt category assigned
-    if (data.noReceiptCategoryId !== undefined) {
-      const currentFileIds = transactionData?.fileIds || [];
-      const hasFiles = currentFileIds.length > 0;
-
-      if (data.noReceiptCategoryId) {
-        // Category being assigned -> mark complete
-        updateData.isComplete = true;
-      } else if (!hasFiles) {
-        // Category being removed AND no files -> mark incomplete
-        updateData.isComplete = false;
-      }
-      // If category removed but has files, keep isComplete=true (don't change)
-    }
-
-    // Log category changes to activity log
-    if (data.noReceiptCategoryId !== undefined) {
-      const previousCategoryId = transactionData?.noReceiptCategoryId;
-      const actor = (data.noReceiptCategoryMatchedBy === "suggestion" ? "suggestion" : data.noReceiptCategoryMatchedBy === "auto" ? "auto" : "manual") as "manual" | "suggestion" | "auto";
-
-      if (data.noReceiptCategoryId && data.noReceiptCategoryId !== previousCategoryId) {
-        // Look up category name
-        let categoryName: string | null = null;
-        try {
-          const catSnap = await ctx.db.collection("noReceiptCategories").doc(data.noReceiptCategoryId).get();
-          categoryName = catSnap.data()?.name || null;
-        } catch { /* best effort */ }
-
-        updateData.automationHistory = FieldValue.arrayUnion({
-          type: "category_assigned",
-          ranAt: Timestamp.now(),
-          status: "completed",
-          actor,
-          level: deriveActivityLevel({ type: "category_assigned", actor }),
-          categoryName: categoryName || data.noReceiptCategoryTemplateId || null,
-          confidence: data.noReceiptCategoryConfidence ?? null,
-          summary: `Category "${categoryName || data.noReceiptCategoryTemplateId || "unknown"}" assigned`,
-        });
-      } else if (!data.noReceiptCategoryId && previousCategoryId) {
-        // Look up previous category name
-        let categoryName: string | null = null;
-        try {
-          const catSnap = await ctx.db.collection("noReceiptCategories").doc(previousCategoryId).get();
-          categoryName = catSnap.data()?.name || null;
-        } catch { /* best effort */ }
-
-        updateData.automationHistory = FieldValue.arrayUnion({
-          type: "category_removed",
-          ranAt: Timestamp.now(),
-          status: "completed",
-          actor: "manual" as const,
-          level: "decision" as const,
-          categoryName: categoryName || null,
-          summary: `Category "${categoryName || "unknown"}" removed`,
-        });
       }
     }
 

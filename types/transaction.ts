@@ -416,6 +416,12 @@ export interface Transaction {
 }
 
 /**
+ * The fields the `updateTransaction` callable writes (#621): the Reports
+ * page's answers to the UVA review. It refuses any other key.
+ */
+export type TransactionUpdate = Partial<Pick<Transaction, "foreignSupplyKind" | "saleSupplyKind">>;
+
+/**
  * Derive the activity level from an automation history entry's type and actor.
  * Used for backward compatibility with entries that don't have `level` set,
  * and as the single source of truth for level classification.

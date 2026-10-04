@@ -10,7 +10,7 @@ import {
 } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
 import { useFirestoreCollection } from "@/lib/firebase/use-firestore-collection";
-import { Transaction } from "@/types/transaction";
+import { Transaction, type TransactionUpdate } from "@/types/transaction";
 import { callFunction } from "@/lib/firebase/callable";
 import { useAuth } from "@/components/auth";
 
@@ -42,7 +42,7 @@ export function useTransactions() {
 
   // Mutations call Cloud Functions
   const updateTransaction = useCallback(
-    async (transactionId: string, data: Partial<Transaction>) => {
+    async (transactionId: string, data: TransactionUpdate) => {
       await callFunction("updateTransaction", { id: transactionId, data });
     },
     [],

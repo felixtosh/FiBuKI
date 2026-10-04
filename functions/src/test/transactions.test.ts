@@ -50,13 +50,13 @@ describe("Transaction Cloud Functions", () => {
       // Act
       const result = await updateTransactionCallable(ctx as any, {
         id: txId,
-        data: { description: "Updated description" },
+        data: { foreignSupplyKind: "service" },
       });
 
       // Assert
       expect(result.success).toBe(true);
       const updated = store.getDoc("transactions", txId);
-      expect(updated?.description).toBe("Updated description");
+      expect(updated?.foreignSupplyKind).toBe("service");
     });
 
     it("should reject update for non-existent transaction", async () => {
@@ -71,7 +71,7 @@ describe("Transaction Cloud Functions", () => {
       await expect(
         updateTransactionCallable(ctx as any, {
           id: "non-existent",
-          data: { description: "test" },
+          data: { foreignSupplyKind: "goods" },
         })
       ).rejects.toThrow("Transaction not found");
     });
@@ -90,37 +90,9 @@ describe("Transaction Cloud Functions", () => {
       await expect(
         updateTransactionCallable(ctx as any, {
           id: txId,
-          data: { description: "test" },
+          data: { foreignSupplyKind: "goods" },
         })
       ).rejects.toThrow("Access denied");
-    });
-
-    it("should update partner assignment fields", async () => {
-      const userId = "user-123";
-      const txId = "tx-456";
-      store.setDoc("transactions", txId, createTestTransaction({ userId }));
-
-      const ctx = {
-        userId,
-        db: createMockFirestore(),
-        request: { auth: { uid: userId }, data: {} },
-        logAIUsage: vi.fn(),
-      };
-
-      await updateTransactionCallable(ctx as any, {
-        id: txId,
-        data: {
-          partnerId: "partner-789",
-          partnerType: "user",
-          partnerMatchedBy: "manual",
-          partnerMatchConfidence: 1.0,
-        },
-      });
-
-      const updated = store.getDoc("transactions", txId);
-      expect(updated?.partnerId).toBe("partner-789");
-      expect(updated?.partnerType).toBe("user");
-      expect(updated?.partnerMatchedBy).toBe("manual");
     });
 
     // #214: the goods/service answer to the foreign-regime review flag.
@@ -462,6 +434,171 @@ describe("Transaction Cloud Functions", () => {
       // Verify only owned transaction was updated
       expect(store.getDoc("transactions", "tx-owned")?.isComplete).toBe(true);
       expect(store.getDoc("transactions", "tx-other")?.isComplete).toBeFalsy();
+    });
+  });
+
+  // #621: both callables write a named set of fields and refuse any other key,
+  // so a User cannot hand their own Transaction to someone else or rewrite
+  // what the bank import wrote.
+  describe("field whitelist", () => {
+    const userId = "user-123";
+    const makeCtx = () => ({
+      userId,
+      db: createMockFirestore(),
+      request: { auth: { uid: userId }, data: {} },
+      logAIUsage: vi.fn(),
+    });
+    const NEVER_WRITABLE: Record<string, unknown> = {
+      userId: "other-user",
+      sourceId: "other-source",
+      amount: 1_000_000,
+      date: new Date("2020-01-01"),
+      currency: "USD",
+      name: "Rewritten",
+      dedupeHash: "rewritten",
+      _original: { rewritten: true },
+      importJobId: "other-import",
+      createdAt: new Date("2020-01-01"),
+      updatedAt: new Date("2020-01-01"),
+    };
+
+    it.each(Object.entries(NEVER_WRITABLE))("updateTransaction refuses %s", async (field, value) => {
+      store.setDoc("transactions", "tx-1", createTestTransaction({ userId }));
+      const before = { ...store.getDoc("transactions", "tx-1") };
+
+      await expect(
+        updateTransactionCallable(makeCtx() as any, {
+          id: "tx-1",
+          data: { foreignSupplyKind: "goods", [field]: value } as never,
+        })
+      ).rejects.toThrow(`updateTransaction does not write ${field}`);
+      expect(store.getDoc("transactions", "tx-1")).toEqual(before);
+    });
+
+    it.each(Object.entries(NEVER_WRITABLE))("bulkUpdateTransactions refuses %s", async (field, value) => {
+      store.setDoc("transactions", "tx-1", createTestTransaction({ userId }));
+      store.setDoc("transactions", "tx-2", createTestTransaction({ userId }));
+      const before = [{ ...store.getDoc("transactions", "tx-1") }, { ...store.getDoc("transactions", "tx-2") }];
+
+      await expect(
+        bulkUpdateTransactionsCallable(makeCtx() as any, {
+          ids: ["tx-1", "tx-2"],
+          data: { isComplete: true, [field]: value } as never,
+        })
+      ).rejects.toThrow(`bulkUpdateTransactions does not write ${field}`);
+      expect([store.getDoc("transactions", "tx-1"), store.getDoc("transactions", "tx-2")]).toEqual(before);
+    });
+
+    it("refuses what no live caller sends, the File Connection id list included", async () => {
+      store.setDoc("transactions", "tx-1", createTestTransaction({ userId }));
+      const before = { ...store.getDoc("transactions", "tx-1") };
+
+      for (const field of ["fileIds", "description", "isComplete", "partnerId", "noReceiptCategoryId", "vatRate"]) {
+        await expect(
+          updateTransactionCallable(makeCtx() as any, { id: "tx-1", data: { [field]: "x" } as never })
+        ).rejects.toThrow(`updateTransaction does not write ${field}`);
+      }
+      for (const field of ["partnerMatchConfidence", "noReceiptCategoryConfidence", "vatRate", "fileIds"]) {
+        await expect(
+          bulkUpdateTransactionsCallable(makeCtx() as any, { ids: ["tx-1"], data: { [field]: 1 } as never })
+        ).rejects.toThrow(`bulkUpdateTransactions does not write ${field}`);
+      }
+      await expect(
+        updateTransactionCallable(makeCtx() as any, { id: "tx-1", data: undefined as never })
+      ).rejects.toThrow("data must be an object");
+      expect(store.getDoc("transactions", "tx-1")).toEqual(before);
+    });
+
+    it("bulkUpdateTransactions still takes what the chat agent's tool sends", async () => {
+      store.setDoc("transactions", "tx-1", createTestTransaction({ userId }));
+      store.setDoc("partners", "partner-1", { userId, name: "Mine" });
+      store.setDoc("noReceiptCategories", "cat-1", { userId, name: "Bank fees", templateId: "bank-fees" });
+
+      const result = await bulkUpdateTransactionsCallable(makeCtx() as any, {
+        ids: ["tx-1"],
+        data: {
+          description: "Bank fees",
+          isComplete: true,
+          partnerId: "partner-1",
+          partnerType: "user",
+          partnerMatchedBy: "ai",
+          noReceiptCategoryId: "cat-1",
+          noReceiptCategoryTemplateId: "bank-fees",
+          noReceiptCategoryMatchedBy: "manual",
+        },
+      });
+
+      expect(result).toMatchObject({ success: 1, failed: 0 });
+      expect(store.getDoc("transactions", "tx-1")).toMatchObject({
+        userId,
+        description: "Bank fees",
+        partnerId: "partner-1",
+        partnerType: "user",
+        noReceiptCategoryId: "cat-1",
+      });
+    });
+  });
+
+  // #621: every user shares one database, so a Partner or category id must be
+  // the caller's own (or a Global Partner) before a row may point at it.
+  describe("bulkUpdateTransactions references", () => {
+    const userId = "user-123";
+    const makeCtx = () => ({
+      userId,
+      db: createMockFirestore(),
+      request: { auth: { uid: userId }, data: {} },
+      logAIUsage: vi.fn(),
+    });
+    const bulk = (data: Record<string, unknown>) =>
+      bulkUpdateTransactionsCallable(makeCtx() as any, { ids: ["tx-1"], data: data as never });
+
+    beforeEach(() => {
+      store.setDoc("transactions", "tx-1", createTestTransaction({ userId }));
+      store.setDoc("partners", "mine", { userId, name: "Mine" });
+      store.setDoc("partners", "theirs", { userId: "other-user", name: "Theirs" });
+      store.setDoc("globalPartners", "global-1", { name: "Global" });
+      store.setDoc("noReceiptCategories", "my-cat", { userId, name: "Mine" });
+      store.setDoc("noReceiptCategories", "their-cat", { userId: "other-user", name: "Theirs" });
+    });
+
+    it("refuses another user's Partner, as not found, and writes nothing", async () => {
+      const before = { ...store.getDoc("transactions", "tx-1") };
+      await expect(bulk({ partnerId: "theirs", partnerType: "user" })).rejects.toThrow("Partner not found");
+      await expect(bulk({ partnerId: "nope", partnerType: "user" })).rejects.toThrow("Partner not found");
+      // A user Partner's id named as Global is looked up among Global Partners.
+      await expect(bulk({ partnerId: "theirs", partnerType: "global" })).rejects.toThrow("Partner not found");
+      expect(store.getDoc("transactions", "tx-1")).toEqual(before);
+    });
+
+    it("refuses another user's no-receipt category, as not found, and writes nothing", async () => {
+      const before = { ...store.getDoc("transactions", "tx-1") };
+      await expect(bulk({ noReceiptCategoryId: "their-cat" })).rejects.toThrow("No-receipt category not found");
+      await expect(bulk({ noReceiptCategoryId: "nope" })).rejects.toThrow("No-receipt category not found");
+      expect(store.getDoc("transactions", "tx-1")).toEqual(before);
+    });
+
+    it("takes the caller's own Partner, a Global Partner, the caller's category, and clears", async () => {
+      await bulk({ partnerId: "mine", partnerType: "user" });
+      expect(store.getDoc("transactions", "tx-1")).toMatchObject({ partnerId: "mine", partnerType: "user" });
+      await bulk({ partnerId: "global-1", partnerType: "global" });
+      expect(store.getDoc("transactions", "tx-1")).toMatchObject({ partnerId: "global-1", partnerType: "global" });
+      await bulk({ partnerId: null, partnerType: null });
+      expect(store.getDoc("transactions", "tx-1")).toMatchObject({ partnerId: null, partnerType: null });
+      await bulk({ noReceiptCategoryId: "my-cat" });
+      expect(store.getDoc("transactions", "tx-1")?.noReceiptCategoryId).toBe("my-cat");
+      await bulk({ noReceiptCategoryId: null });
+      expect(store.getDoc("transactions", "tx-1")?.noReceiptCategoryId).toBeNull();
+    });
+
+    it("needs a partnerType with a partnerId, and no partnerType without one", async () => {
+      await expect(bulk({ partnerId: "mine" })).rejects.toThrow('partnerType must be "user" or "global"');
+      await expect(bulk({ partnerType: "user" })).rejects.toThrow("partnerType is only written with a partnerId");
+      await expect(bulk({ partnerId: null, partnerType: "user" })).rejects.toThrow(
+        "partnerType is only written with a partnerId"
+      );
+      await expect(bulk({ partnerId: "../partners/mine", partnerType: "user" })).rejects.toThrow(
+        "partnerId must be a document id"
+      );
     });
   });
 });
