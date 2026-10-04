@@ -1162,7 +1162,6 @@ function FilesContent() {
         maxWidth={MAX_PANEL_WIDTH}
         open={!!(showBulkPanel || detailFile || invoiceIdParam)}
         mainClassName="relative h-full flex flex-col"
-        handleVariant="bar"
         panel={detailPanel}
       >
         <div className="flex-1 overflow-hidden relative">

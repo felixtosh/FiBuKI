@@ -43,8 +43,6 @@ interface DetailPanelLayoutProps {
   mainClassName?: string;
   /** Extra props for the list side's element (e.g. a dropzone's root props). */
   mainProps?: MainProps;
-  /** `bar` draws the handle as a visible line; `subtle` shows it on hover only. */
-  handleVariant?: "subtle" | "bar";
 }
 
 /**
@@ -62,7 +60,6 @@ export function DetailPanelLayout({
   children,
   mainClassName = "h-full",
   mainProps,
-  handleVariant = "subtle",
 }: DetailPanelLayoutProps) {
   // The stored width is read during render, so a layout that mounts with its
   // panel open (the pages mount it once their data has loaded) opens at that
@@ -140,10 +137,7 @@ export function DetailPanelLayout({
             role="separator"
             aria-orientation="vertical"
             className={cn(
-              "w-1 cursor-col-resize flex-shrink-0",
-              handleVariant === "bar"
-                ? "bg-border hover:bg-primary/20 active:bg-primary/30"
-                : "hover:bg-primary/20 transition-colors",
+              "w-1 cursor-col-resize hover:bg-primary/20 transition-colors flex-shrink-0",
               isResizing && "bg-primary/30"
             )}
             onMouseDown={handleResizeStart}

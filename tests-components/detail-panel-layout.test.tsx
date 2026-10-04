@@ -135,4 +135,10 @@ describe("DetailPanelLayout", () => {
     fireEvent.mouseMove(document, { clientX: 500 });
     expect(panel()!.style.width).toBe("580px");
   });
+
+  it("shows the handle on hover only, on every page", async () => {
+    const { handle } = await renderLayout();
+    expect(handle().className).toContain("hover:bg-primary/20");
+    expect(handle().className).not.toContain("bg-border");
+  });
 });

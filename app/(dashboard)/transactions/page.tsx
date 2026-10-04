@@ -465,7 +465,6 @@ function TransactionsContent() {
         maxWidth={MAX_PANEL_WIDTH}
         open={!!selectedTransaction}
         mainProps={getGlobalRootProps()}
-        handleVariant="bar"
         panel={
           selectedTransaction ? (
             <TransactionDetailPanel
