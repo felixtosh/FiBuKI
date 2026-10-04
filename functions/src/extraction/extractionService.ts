@@ -346,10 +346,15 @@ export async function callExtractionService(
   const parsed = extractionServiceResponseSchema.safeParse(json);
   if (!parsed.success) {
     // Paths and messages only: zod's messages name the expected type, never
-    // the value, so no document content reaches the File's error.
+    // the value, so no document content reaches the File's error. The one
+    // exception is an unrecognized key, whose message quotes the key the
+    // service sent: that one is named by its code alone.
     const issues = parsed.error.issues
       .slice(0, 3)
-      .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
+      .map(
+        (issue) =>
+          `${issue.path.join(".") || "(root)"}: ${issue.code === "unrecognized_keys" ? "unrecognized key" : issue.message}`
+      )
       .join("; ");
     throw new ExtractionServiceError(`response fails the contract schema (${issues})`);
   }

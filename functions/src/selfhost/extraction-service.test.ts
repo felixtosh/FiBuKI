@@ -369,6 +369,18 @@ describe("#161: no fallback when the service fails", () => {
     expect(gemini.requests).toHaveLength(0);
   });
 
+  it("a schema failure names no key or value the service sent", async () => {
+    const fileData = await seedFile("f-keys");
+    fake.replies.push(
+      transcription({ qrCodes: [{ payload: "x", "Erika Musterfrau ATU12345678": true }] })
+    );
+
+    const error = await runExtraction("f-keys", fileData, {}).catch((e: Error) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toMatch(/schema/);
+    expect((error as Error).message).not.toContain("Musterfrau");
+  });
+
   it("a reply that is not JSON fails the Extraction", async () => {
     const fileData = await seedFile("f-html");
     fake.replies.push({ body: "<html>proxy error</html>" });
