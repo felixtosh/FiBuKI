@@ -90,6 +90,31 @@ function ownPayloads(): Array<Record<string, unknown>> {
   ];
 }
 
+/**
+ * The attacker's OWN rows, with the owner rewritten to the victim (#621).
+ * Ownership checks pass, since the row is the attacker's; what has to refuse
+ * is the field list. A row handed over this way lands in the victim's list,
+ * UVA period and BMD export, which is a change to the victim's account.
+ */
+function handOverPayloads(): Array<Record<string, unknown>> {
+  const handOver = { userId: VICTIM };
+  const all: Record<string, unknown> = {};
+  for (const k of ID_KEYS) all[k] = attackerValueFor(k);
+  return [
+    { ...all, data: handOver, updates: handOver },
+    ...ID_KEYS.map((k) => ({ [k]: attackerValueFor(k), data: handOver, updates: handOver })),
+    // Smuggled beside a field the callable does write.
+    { id: A.transaction, data: { description: "mine", userId: VICTIM } },
+    { ids: [A.transaction], data: { isComplete: true, userId: VICTIM } },
+    { transactionId: A.transaction, updates: { description: "mine", userId: VICTIM } },
+    { fileId: A.file, data: { fileName: "mine.pdf", userId: VICTIM } },
+    { partnerId: A.partner, data: { name: "Mine", userId: VICTIM } },
+    { categoryId: A.category, data: { name: "Mine", userId: VICTIM } },
+    { sourceId: A.source, data: { name: "Mine", userId: VICTIM } },
+    { invoiceId: A.invoice, data: { recipientName: "Mine", userId: VICTIM } },
+  ];
+}
+
 function payloads(): Array<Record<string, unknown>> {
   const all: Record<string, unknown> = {};
   for (const k of ID_KEYS) all[k] = victimValueFor(k);
@@ -171,6 +196,32 @@ describe("cross-user isolation: every callable", () => {
     await drainTriggers();
     await assertVictimUntouched(before, "updateTransaction saleSupplyKind");
   });
+
+  it("no callable hands the attacker's own row to another user (#621)", async () => {
+    const failures: string[] = [];
+    for (const [name, fn] of callables) {
+      const before = await freshAccounts();
+      for (const data of handOverPayloads()) {
+        try {
+          await withTimeout(fn.run({ data, auth: ATTACKER_AUTH }), CALL_TIMEOUT_MS);
+        } catch {
+          // Refused: what this case wants. The account check below decides.
+        }
+      }
+      try {
+        await withTimeout(drainTriggers(), 10_000);
+      } catch {
+        /* the account check still runs */
+      }
+      try {
+        await assertVictimUntouched(before, name);
+      } catch (e) {
+        failures.push((e as Error).message);
+      }
+    }
+    if (failures.length) process.stderr.write(`\nHAND-OVER FINDINGS (${failures.length})\n${failures.join("\n---\n")}\nEND FINDINGS\n`);
+    expect(failures).toEqual([]);
+  }, 1_800_000);
 
   it("no callable reads, changes or creates anything in another user's account", async () => {
     const failures: string[] = [];
