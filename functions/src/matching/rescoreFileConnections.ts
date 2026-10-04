@@ -13,7 +13,7 @@
  * the connection's existence are never touched).
  */
 
-import { Timestamp } from "firebase-admin/firestore";
+import { writeConnectionScores, type ConnectionScore } from "../fileConnections/writer";
 import {
   scoreTransaction,
   ScoringOptions,
@@ -23,8 +23,6 @@ import {
 } from "./transactionScoring";
 import { ResolvedEffectiveCycle } from "./billingCycle";
 
-/** Firestore batch write cap is 500; chunk with headroom. */
-const BATCH_CHUNK_SIZE = 400;
 /** Firestore 'in' query cap. */
 const QUERY_CHUNK_SIZE = 30;
 
@@ -66,10 +64,7 @@ export async function rescoreFileConnectionsForPartner(
     for (const doc of snapshot.docs) filesById.set(doc.id, doc.data());
   }
 
-  let batch = db.batch();
-  let pending = 0;
-  let rescored = 0;
-
+  const scores: ConnectionScore[] = [];
   for (const connectionDoc of connections) {
     const connData = connectionDoc.data();
     const txDoc = txById.get(connData.transactionId);
@@ -88,23 +83,16 @@ export async function rescoreFileConnectionsForPartner(
       scoringOptions
     );
 
-    batch.update(connectionDoc.ref, {
+    scores.push({
+      connectionId: connectionDoc.id,
       matchConfidence: result.confidence,
       scoreBreakdown: result.breakdown,
       matchSources: result.matchSources,
-      rescoredAt: Timestamp.now(),
     });
-    pending++;
-    rescored++;
-
-    if (pending >= BATCH_CHUNK_SIZE) {
-      await batch.commit();
-      batch = db.batch();
-      pending = 0;
-    }
   }
 
-  if (pending > 0) await batch.commit();
+  // Written by the File Connection writer (#612), the records' one writer.
+  const rescored = await writeConnectionScores(db, scores);
 
   console.log(`[BillingCycle] Re-scored ${rescored} connection(s) for partner ${partnerId}`);
   return { rescored };

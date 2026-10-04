@@ -7,13 +7,10 @@
  * See docs/adr/0006-deleting-a-file-is-reversible.md.
  */
 
-import { FieldValue, Timestamp } from "firebase-admin/firestore";
+import { Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { generatedInvoiceRefusal } from "./generatedInvoiceGuard";
-import {
-  partnerRevertForRemovedConnection,
-  rematchRevertedTransactions,
-} from "../matching/partnerProvenance";
+import { detachFile, type DetachedTransaction } from "../fileConnections/writer";
 
 interface DeleteFileRequest {
   fileId: string;
@@ -24,20 +21,7 @@ interface DeleteFileResponse {
   deletedConnections: number;
 }
 
-/**
- * A Transaction the deleted File was attached to, as it stands afterwards.
- * `isComplete` false means it re-opened; true means it still has another
- * document or carries a No-document Category.
- */
-export interface DetachedTransaction {
-  transactionId: string;
-  isComplete: boolean;
-  date: unknown;
-  amount: number | null;
-  currency: string | null;
-  name: string | null;
-  partner: string | null;
-}
+export type { DetachedTransaction };
 
 export interface PerformDeleteFileResult extends DeleteFileResponse {
   detachedTransactions: DetachedTransaction[];
@@ -55,153 +39,28 @@ export async function performDeleteFile(
   fileId: string,
   fileData: FirebaseFirestore.DocumentData
 ): Promise<PerformDeleteFileResult> {
-  const fileRef = db.collection("files").doc(fileId);
-  const detachedTransactions: DetachedTransaction[] = [];
-  const recordDetached = (
-    transactionId: string,
-    txData: FirebaseFirestore.DocumentData,
-    isComplete: boolean
-  ) => {
-    detachedTransactions.push({
-      transactionId,
-      isComplete,
-      date: txData.date ?? null,
-      amount: typeof txData.amount === "number" ? txData.amount : null,
-      currency: txData.currency ?? null,
-      name: txData.name ?? null,
-      partner: txData.partner ?? null,
-    });
-  };
+  // 1. Take the File off every Transaction, through the File Connection
+  // writer (#612). A Partner the payee rule filled from it is derived again
+  // from the Files that remain (#584).
+  const { removedConnections, detachedTransactions } = await detachFile(db, userId, fileId, fileData);
 
-  const now = Timestamp.now();
-  let deletedConnections = 0;
-
-  // A Partner the payee rule filled from this File is derived again from
-  // the Files that remain (#584).
-  const rematch: Array<string | null> = [];
-  const revertPartners = async (
-    transactionId: string,
-    txData: FirebaseFirestore.DocumentData,
-    remainingFileIds: string[]
-  ): Promise<Record<string, unknown>> => {
-    const revert = await partnerRevertForRemovedConnection(db, userId, {
-      fileId,
-      fileData,
-      transactionId,
-      txData,
-      remainingFileIds,
-    });
-    rematch.push(revert.rematchTransactionId);
-    return {
-      ...revert.transaction,
-      ...(revert.transactionActivity.length > 0
-        ? { automationHistory: FieldValue.arrayUnion(...revert.transactionActivity) }
-        : {}),
-    };
-  };
-
-  // 1. Delete all fileConnections and update linked transactions
-  const connectionsQuery = await db
-    .collection("fileConnections")
-    .where("fileId", "==", fileId)
-    .where("userId", "==", userId)
-    .get();
-
-  if (!connectionsQuery.empty) {
-    const BATCH_SIZE = 500;
-
-    for (let i = 0; i < connectionsQuery.docs.length; i += BATCH_SIZE) {
-      const batch = db.batch();
-      const chunk = connectionsQuery.docs.slice(i, i + BATCH_SIZE);
-
-      for (const connDoc of chunk) {
-        const conn = connDoc.data();
-
-        // Delete connection document
-        batch.delete(connDoc.ref);
-        deletedConnections++;
-
-        // Update transaction to remove this file
-        const transactionRef = db.collection("transactions").doc(conn.transactionId);
-        const transactionSnap = await transactionRef.get();
-
-        if (transactionSnap.exists && transactionSnap.data()!.userId === userId) {
-          const txData = transactionSnap.data()!;
-          const currentFileIds = (txData.fileIds || []) as string[];
-          const remainingFileIds = currentFileIds.filter((id: string) => id !== fileId);
-
-          // Recalculate isComplete
-          const hasFiles = remainingFileIds.length > 0;
-          const hasNoReceiptCategory = !!txData.noReceiptCategoryId;
-          const isComplete = hasFiles || hasNoReceiptCategory;
-
-          const revert = await revertPartners(conn.transactionId, txData, remainingFileIds);
-          batch.update(transactionRef, {
-            ...revert,
-            fileIds: FieldValue.arrayRemove(fileId),
-            isComplete,
-            updatedAt: now,
-          });
-          recordDetached(conn.transactionId, txData, isComplete);
-        }
-      }
-
-      await batch.commit();
-    }
-  }
-
-  // 2. Also handle legacy connections via file's transactionIds array
-  const fileTransactionIds = (fileData.transactionIds || []) as string[];
-  for (const transactionId of fileTransactionIds) {
-    // Skip if already handled via fileConnections
-    const wasHandled = connectionsQuery.docs.some(
-      (d) => d.data().transactionId === transactionId
-    );
-    if (wasHandled) continue;
-
-    const transactionRef = db.collection("transactions").doc(transactionId);
-    const transactionSnap = await transactionRef.get();
-
-    if (transactionSnap.exists && transactionSnap.data()!.userId === userId) {
-      const txData = transactionSnap.data()!;
-      const currentFileIds = (txData.fileIds || []) as string[];
-      const remainingFileIds = currentFileIds.filter((id: string) => id !== fileId);
-
-      const hasFiles = remainingFileIds.length > 0;
-      const hasNoReceiptCategory = !!txData.noReceiptCategoryId;
-      const isComplete = hasFiles || hasNoReceiptCategory;
-
-      const revert = await revertPartners(transactionId, txData, remainingFileIds);
-      await transactionRef.update({
-        ...revert,
-        fileIds: FieldValue.arrayRemove(fileId),
-        isComplete,
-        updatedAt: now,
-      });
-      recordDetached(transactionId, txData, isComplete);
-      deletedConnections++;
-    }
-  }
-
-  // 3. Hide the file. The row stays — a Sync-sourced File needs it to
+  // 2. Hide the file. The row stays — a Sync-sourced File needs it to
   // deduplicate against, and every File needs it to be restorable — and the
   // stored document is not touched at all.
-  // Clear transactionIds so it stops showing in transaction file lists.
   // A File that was attached when it was deleted is stamped as such, because
   // the delete clears the attachment fields the Purge confirmation would
   // otherwise read its retention warning from (#268).
+  const now = Timestamp.now();
+  const fileTransactionIds = (fileData.transactionIds || []) as string[];
   const wasAttached = detachedTransactions.length > 0 || fileTransactionIds.length > 0;
-  await fileRef.update({
+  await db.collection("files").doc(fileId).update({
     deletedAt: now,
-    transactionIds: [],
     updatedAt: now,
     ...(wasAttached ? { hadTransactionConnections: true } : {}),
   });
   console.log(`[deleteFile] Deleted file ${fileId} (reversible)`);
 
-  await rematchRevertedTransactions(userId, rematch);
-
-  return { success: true, deletedConnections, detachedTransactions };
+  return { success: true, deletedConnections: removedConnections, detachedTransactions };
 }
 
 export const deleteFileCallable = createCallable<

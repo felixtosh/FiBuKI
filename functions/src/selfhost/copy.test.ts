@@ -17,7 +17,6 @@ import {
   makeFileTheOriginalCallable,
   backfillCopySuggestionsCallable,
 } from "../files/copyCallables";
-import { connectFileToTransactionCallable } from "../files/connectFileToTransaction";
 import { runCopyCheck, compareCopyEvidence, copyEvidenceOf, pickOriginal, markFileAsCopy } from "../files/copyOps";
 import { runTransactionMatching } from "../matching/matchFileTransactions";
 import { listFiles } from "../tools/handlers";
@@ -206,7 +205,7 @@ describe("a Copy and the queue", () => {
     expect(await unmatchedQueue()).toEqual(["orig"]);
   });
 
-  it("is never proposed as a Match or connected, even against a perfect Transaction", async () => {
+  it("is never proposed as a Match, even against a perfect Transaction", async () => {
     await db.doc("files/orig").set(invoice());
     await db.doc("files/dup").set(invoice({ createdAt: LATER }));
     await call(markFileAsCopyCallable, { fileId: "dup", originalFileId: "orig" });
@@ -215,10 +214,8 @@ describe("a Copy and the queue", () => {
     const dup = await file("dup");
     expect(dup.transactionSuggestions).toEqual([]);
     expect(dup.transactionIds).toEqual([]);
-
-    const err = await call(connectFileToTransactionCallable, { fileId: "dup", transactionId: "tx1" }).catch((e) => e);
-    expect(err.code).toBe("failed-precondition");
-    expect(err.message).toMatch(/COPY_HOLDS_NO_CONNECTION/);
+    // Connecting it is refused by the File Connection writer, for every
+    // origin: file-connection-writer.test.ts.
   });
 });
 

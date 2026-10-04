@@ -4,6 +4,7 @@
 
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
+import { detachTransactions } from "../fileConnections/writer";
 
 interface DeleteSourceRequest {
   sourceId: string;
@@ -128,28 +129,13 @@ export async function deleteSourceInternal(
     for (let i = 0; i < transactionsQuery.docs.length; i += BATCH_SIZE) {
       const chunk = transactionsQuery.docs.slice(i, i + BATCH_SIZE);
 
-      // First, delete file connections for each transaction
-      for (const txDoc of chunk) {
-        const connectionsQuery = await dbRef
-          .collection("fileConnections")
-          .where("transactionId", "==", txDoc.id)
-          .get();
-
-        if (!connectionsQuery.empty) {
-          const connBatch = dbRef.batch();
-          for (const connDoc of connectionsQuery.docs) {
-            connBatch.delete(connDoc.ref);
-
-            // Update file to remove transaction from transactionIds
-            const fileRef = dbRef.collection("files").doc(connDoc.data().fileId);
-            connBatch.update(fileRef, {
-              transactionIds: FieldValue.arrayRemove(txDoc.id),
-              updatedAt: now,
-            });
-          }
-          await connBatch.commit();
-        }
-      }
+      // First, take every File off them, through the File Connection writer
+      // (#612), so no File keeps listing a deleted Transaction.
+      await detachTransactions(
+        dbRef,
+        userId,
+        chunk.map((d) => ({ id: d.id, data: d.data() }))
+      );
 
       // Then delete the transactions
       const txBatch = dbRef.batch();

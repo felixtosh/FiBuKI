@@ -21,11 +21,8 @@ import { HttpsError } from "../utils/createCallable";
 import { normalizeCompanyName } from "../utils/partner-matcher";
 import { isGeneratedInvoiceFile } from "./generatedInvoiceGuard";
 import { buildUnmarkNotInvoiceUpdates, queueExtractionAfterUnmark } from "./notInvoiceOps";
-import {
-  partnerRevertForRemovedConnection,
-  rematchRevertedTransactions,
-  type PartnerRevert,
-} from "../matching/partnerProvenance";
+import { rematchRevertedTransactions } from "../matching/partnerProvenance";
+import { planCopyMove } from "../fileConnections/writer";
 
 type Data = FirebaseFirestore.DocumentData;
 type Db = FirebaseFirestore.Firestore;
@@ -99,29 +96,13 @@ export async function liveCopyIds(
 
 export const COPY_CONNECT_ERROR = "COPY_HOLDS_NO_CONNECTION";
 
-/**
- * What a connect must do about a File's Copy mark. A Copy holds no File
- * Connection, so connecting one is refused while its original is live. A mark
- * whose original is gone is cleared by the connect: the File has become the
- * document of record, and restoring the original must not turn a connected
- * File back into a Copy.
- */
-export async function copyConnectCheck(
-  db: Db,
-  fileData: Data
-): Promise<{ refusal: string | null; clearMark: boolean }> {
-  const originalId = fileData.copyOfFileId;
-  if (typeof originalId !== "string" || !originalId) return { refusal: null, clearMark: false };
-  const snap = await db.collection("files").doc(originalId).get();
-  const original = snap.exists ? snap.data() : undefined;
-  if (!isLiveCopy(fileData, original)) return { refusal: null, clearMark: true };
+/** Why a connect of a live Copy is refused. */
+export function copyRefusalMessage(originalId: string, original: Data | undefined): string {
   const name = (typeof original?.fileName === "string" && original.fileName) || originalId;
-  return {
-    refusal:
-      `${COPY_CONNECT_ERROR}: this File is a Copy of "${name}" (${originalId}), and a Copy holds no ` +
-      "File Connection. Connect the original, or make this File the original first.",
-    clearMark: false,
-  };
+  return (
+    `${COPY_CONNECT_ERROR}: this File is a Copy of "${name}" (${originalId}), and a Copy holds no ` +
+    "File Connection. Connect the original, or make this File the original first."
+  );
 }
 
 /** Whether a person ruled this pair "not a Copy", from either side. */
@@ -312,127 +293,19 @@ async function applyCopy(
   recordedBy: CopyRecordedBy,
   extraCopyUpdates: Record<string, unknown> = {}
 ): Promise<{ moved: string[]; dropped: string[]; rematch: Array<string | null> }> {
-  const [followersSnap, copyConnSnap, origConnSnap] = await Promise.all([
-    tx.get(db.collection("files").where("userId", "==", userId).where("copyOfFileId", "==", copy.id)),
-    tx.get(db.collection("fileConnections").where("userId", "==", userId).where("fileId", "==", copy.id)),
-    tx.get(db.collection("fileConnections").where("userId", "==", userId).where("fileId", "==", original.id)),
-  ]);
-
-  const originalTxIds = new Set<string>([
-    ...((original.data.transactionIds as string[] | undefined) ?? []),
-    ...origConnSnap.docs.map((d) => d.data().transactionId as string),
-  ]);
-
-  // Every Transaction the copy is on: by junction row, and by its
-  // denormalised list, which may name one with no junction row.
-  const touchedTxIds = new Set<string>([
-    ...copyConnSnap.docs.map((d) => d.data().transactionId as string).filter(Boolean),
-    ...((copy.data.transactionIds as string[] | undefined) ?? []),
-  ]);
-  const txSnaps = await Promise.all(
-    [...touchedTxIds].map((id) => tx.get(db.collection("transactions").doc(id)))
+  const followersSnap = await tx.get(
+    db.collection("files").where("userId", "==", userId).where("copyOfFileId", "==", copy.id)
   );
-  const ownedTx = txSnaps.filter((s) => s.exists && s.data()?.userId === userId);
-
-  // Which Transactions the original takes over, decided exactly as the
-  // writes below decide it, so the Partner revert can count the original as
-  // still connected there.
-  const gainsOriginal = new Set<string>();
-  {
-    const covered = new Set(originalTxIds);
-    const take = (id: string | undefined) => {
-      if (id && !covered.has(id)) {
-        covered.add(id);
-        gainsOriginal.add(id);
-      }
-    };
-    for (const conn of copyConnSnap.docs) take(conn.data().transactionId as string | undefined);
-    for (const txSnap of ownedTx) take(txSnap.id);
-  }
-
-  // A Partner the payee rule filled from the copy is derived again from the
-  // Files that remain, the original included where it takes over (#584).
-  const txReverts = new Map<string, PartnerRevert>();
-  const rematch: Array<string | null> = [];
-  for (const txSnap of ownedTx) {
-    const txData = txSnap.data()!;
-    const remainingFileIds = ((txData.fileIds || []) as string[]).filter((id) => id !== copy.id);
-    if (gainsOriginal.has(txSnap.id)) remainingFileIds.push(original.id);
-    const revert = await partnerRevertForRemovedConnection(
-      db,
-      userId,
-      {
-        fileId: copy.id,
-        fileData: copy.data,
-        transactionId: txSnap.id,
-        txData,
-        remainingFileIds,
-      },
-      (ref) => tx.get(ref)
-    );
-    txReverts.set(txSnap.id, revert);
-    rematch.push(revert.rematchTransactionId);
-  }
+  // The File Connections move through their one writer (#612).
+  const move = await planCopyMove(tx, db, userId, copy, original, {
+    recordedBy,
+    copyName: displayName(copy),
+    originalName: displayName(original),
+  });
 
   // ---- writes ----
   const now = Timestamp.now();
-  const moved: string[] = [];
-
-  for (const conn of copyConnSnap.docs) {
-    const data = conn.data();
-    tx.delete(conn.ref);
-    if (data.transactionId && !originalTxIds.has(data.transactionId)) {
-      tx.set(db.collection("fileConnections").doc(), {
-        ...data,
-        fileId: original.id,
-        movedFromCopyFileId: copy.id,
-        createdAt: now,
-      });
-      originalTxIds.add(data.transactionId);
-      moved.push(data.transactionId);
-    }
-  }
-  // A Transaction listing the copy with no junction row behind it still loses
-  // nothing: the original takes its place there too.
-  for (const txSnap of ownedTx) {
-    if (originalTxIds.has(txSnap.id)) continue;
-    tx.set(db.collection("fileConnections").doc(), {
-      fileId: original.id,
-      transactionId: txSnap.id,
-      userId,
-      connectionType: "manual",
-      movedFromCopyFileId: copy.id,
-      createdAt: now,
-    });
-    originalTxIds.add(txSnap.id);
-    moved.push(txSnap.id);
-  }
-  const dropped = ownedTx.map((s) => s.id).filter((id) => !moved.includes(id));
-
-  for (const txSnap of ownedTx) {
-    const gainsOriginal = moved.includes(txSnap.id);
-    const revert = txReverts.get(txSnap.id);
-    tx.update(txSnap.ref, {
-      ...(revert?.transaction ?? {}),
-      fileIds: FieldValue.arrayRemove(copy.id),
-      updatedAt: now,
-      automationHistory: FieldValue.arrayUnion({
-        type: "file_disconnected",
-        ranAt: now,
-        status: "completed",
-        actor: recordedBy === "user" ? "manual" : "auto",
-        level: "decision",
-        fileId: copy.id,
-        fileName: copy.data.fileName ?? null,
-        summary: gainsOriginal
-          ? `File "${displayName(copy)}" marked as a Copy of "${displayName(original)}"; the original now documents this line`
-          : `File "${displayName(copy)}" marked as a Copy of "${displayName(original)}"`,
-      }, ...(revert?.transactionActivity ?? [])),
-    });
-    if (gainsOriginal) {
-      tx.update(txSnap.ref, { fileIds: FieldValue.arrayUnion(original.id) });
-    }
-  }
+  move.write(tx);
 
   for (const follower of followersSnap.docs) {
     if (follower.id === original.id) continue;
@@ -440,7 +313,6 @@ async function applyCopy(
   }
 
   const originalUpdate: Record<string, unknown> = { ...CLEARED_COPY_MARK, copySuggestion: null, updatedAt: now };
-  if (moved.length > 0) originalUpdate.transactionIds = FieldValue.arrayUnion(...moved);
   if (recordedBy === "user") originalUpdate.notCopyOfFileIds = FieldValue.arrayRemove(copy.id);
   tx.update(original.ref, originalUpdate);
 
@@ -450,7 +322,6 @@ async function applyCopy(
     copyRecordedBy: recordedBy,
     copyRecordedAt: now,
     copySuggestion: null,
-    transactionIds: [],
     // Never proposed as a Match: nothing for the queue to show.
     transactionSuggestions: [],
     transactionMatchComplete: true,
@@ -461,7 +332,7 @@ async function applyCopy(
   if (recordedBy === "user") copyUpdate.notCopyOfFileIds = FieldValue.arrayRemove(original.id);
   tx.update(copy.ref, copyUpdate);
 
-  return { moved, dropped, rematch };
+  return { moved: move.moved, dropped: move.dropped, rematch: move.rematch };
 }
 
 /**

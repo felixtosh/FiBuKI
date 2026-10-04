@@ -15,6 +15,7 @@ import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { MODELS } from "../utils/models";
 import { readDismissedTransactionIds } from "./dismissedTransactions";
 import { liveCopyIds } from "../files/copyOps";
+import { connectFiles } from "../fileConnections/writer";
 import { filePaymentTotal } from "./transactionScoring";
 
 const db = getFirestore();
@@ -447,8 +448,8 @@ export async function matchFilesForPartnerInternal(
     }
   }
 
-  // Filter to unconnected files that are invoices (not "Not Invoice"), and
-  // not Copies (#162): a Copy is never proposed as a Match.
+  // Filter to unconnected, live files that are invoices (not "Not Invoice"),
+  // and not Copies (#162): a Copy is never proposed as a Match.
   const copies = await liveCopyIds(
     db,
     Array.from(fileMap.values()).map((doc) => ({ id: doc.id, data: doc.data() }))
@@ -457,7 +458,8 @@ export async function matchFilesForPartnerInternal(
     const data = doc.data();
     const isConnected = data.transactionIds && data.transactionIds.length > 0;
     const isNotInvoice = data.isNotInvoice === true;
-    return !isConnected && !isNotInvoice && !copies.has(doc.id);
+    const isDeleted = !!data.deletedAt || !!data.purgedAt;
+    return !isConnected && !isNotInvoice && !isDeleted && !copies.has(doc.id);
   });
 
   if (unconnectedFiles.length === 0) {
@@ -513,8 +515,7 @@ export async function matchFilesForPartnerInternal(
   // Greedy matching: each file to at most one transaction, each transaction to at most one file
   const usedFiles = new Set<string>();
   const usedTransactions = new Set<string>();
-  const batch = db.batch();
-  let batchCount = 0;
+  const chosen: FileMatchScore[] = [];
   let autoMatched = 0;
   let suggested = 0;
 
@@ -524,55 +525,9 @@ export async function matchFilesForPartnerInternal(
     }
 
     if (match.confidence >= CONFIG.AUTO_MATCH_THRESHOLD) {
-      // Auto-connect
-      const connectionRef = db.collection("fileConnections").doc();
-      batch.set(connectionRef, {
-        fileId: match.fileId,
-        transactionId: match.transactionId,
-        userId,
-        connectionType: "auto_matched",
-        matchSources: match.matchReasons.map((r) => r.toLowerCase().replace(/\s+/g, "_")),
-        matchConfidence: match.confidence,
-        createdAt: Timestamp.now(),
-      });
-
-      // Update file's transactionIds
-      const fileRef = db.collection("files").doc(match.fileId);
-      batch.update(fileRef, {
-        transactionIds: FieldValue.arrayUnion(match.transactionId),
-        updatedAt: Timestamp.now(),
-      });
-
-      // Update transaction's fileIds + activity log
-      const txRef = db.collection("transactions").doc(match.transactionId);
-      const matchedFileData = fileMap.get(match.fileId)?.data();
-      batch.update(txRef, {
-        fileIds: FieldValue.arrayUnion(match.fileId),
-        isComplete: true,
-        updatedAt: Timestamp.now(),
-        automationHistory: FieldValue.arrayUnion({
-          type: "file_connected",
-          ranAt: Timestamp.now(),
-          status: "completed",
-          actor: "auto",
-          level: "outcome" as const,
-          fileId: match.fileId,
-          fileName: matchedFileData?.fileName || null,
-          confidence: match.confidence,
-          summary: `File "${matchedFileData?.fileName || match.fileId}" auto-connected (${match.confidence}%)`,
-        }),
-      });
-
+      chosen.push(match);
       usedFiles.add(match.fileId);
       usedTransactions.add(match.transactionId);
-      autoMatched++;
-      batchCount += 3;
-
-      if (batchCount >= 450) {
-        await batch.commit();
-        console.log(`Committed batch of ${batchCount} operations`);
-        batchCount = 0;
-      }
     } else {
       // Store as suggestion on the transaction (not auto-connected)
       // Note: For now, just counting. Could store suggestions if needed.
@@ -580,9 +535,28 @@ export async function matchFilesForPartnerInternal(
     }
   }
 
-  if (batchCount > 0) {
-    await batch.commit();
-  }
+  // Through the File Connection writer (#612), which batches a run of any
+  // size and refuses what an automated connect may not do.
+  const scoreOutcomes = await connectFiles(
+    db,
+    userId,
+    chosen.map((match) => ({
+      fileId: match.fileId,
+      transactionId: match.transactionId,
+      matchSources: match.matchReasons.map((r) => r.toLowerCase().replace(/\s+/g, "_")),
+      matchConfidence: match.confidence,
+    })),
+    { origin: "auto" }
+  );
+  scoreOutcomes.forEach((outcome, i) => {
+    if (outcome.status === "connected") {
+      autoMatched++;
+    } else if (outcome.status === "refused") {
+      // Free for the AI pass, which the writer refuses the same way.
+      usedFiles.delete(chosen[i].fileId);
+      usedTransactions.delete(chosen[i].transactionId);
+    }
+  });
 
   console.log(
     `Score-based matching for partner ${partnerName}: ` +
@@ -613,66 +587,29 @@ export async function matchFilesForPartnerInternal(
         partnerName
       );
 
-      if (aiMatches.length > 0) {
-        const aiBatch = db.batch();
-        let aiBatchCount = 0;
-
-        for (const match of aiMatches) {
-          // Skip if already used (shouldn't happen but be safe)
-          if (usedFiles.has(match.fileId) || usedTransactions.has(match.transactionId)) {
-            continue;
-          }
-
-          // Create connection
-          const connectionRef = db.collection("fileConnections").doc();
-          aiBatch.set(connectionRef, {
+      const aiPairs = aiMatches.filter((match) => {
+        // Skip if already used (shouldn't happen but be safe)
+        if (usedFiles.has(match.fileId) || usedTransactions.has(match.transactionId)) return false;
+        usedFiles.add(match.fileId);
+        usedTransactions.add(match.transactionId);
+        return true;
+      });
+      if (aiPairs.length > 0) {
+        const aiOutcomes = await connectFiles(
+          db,
+          userId,
+          aiPairs.map((match) => ({
             fileId: match.fileId,
             transactionId: match.transactionId,
-            userId,
-            connectionType: "ai_matched",
             matchSources: ["ai_analysis"],
             matchConfidence: CONFIG.AI_MATCH_CONFIDENCE,
             aiReasoning: match.reasoning,
-            createdAt: Timestamp.now(),
-          });
-
-          // Update file's transactionIds
-          const fileRef = db.collection("files").doc(match.fileId);
-          aiBatch.update(fileRef, {
-            transactionIds: FieldValue.arrayUnion(match.transactionId),
-            updatedAt: Timestamp.now(),
-          });
-
-          // Update transaction's fileIds + activity log
-          const txRef = db.collection("transactions").doc(match.transactionId);
-          const aiMatchedFileData = fileMap.get(match.fileId)?.data();
-          aiBatch.update(txRef, {
-            fileIds: FieldValue.arrayUnion(match.fileId),
-            isComplete: true,
-            updatedAt: Timestamp.now(),
-            automationHistory: FieldValue.arrayUnion({
-              type: "file_connected",
-              ranAt: Timestamp.now(),
-              status: "completed",
-              actor: "ai",
-              level: "outcome" as const,
-              fileId: match.fileId,
-              fileName: aiMatchedFileData?.fileName || null,
-              confidence: CONFIG.AI_MATCH_CONFIDENCE,
-              summary: `File "${aiMatchedFileData?.fileName || match.fileId}" AI-matched`,
-            }),
-          });
-
-          usedFiles.add(match.fileId);
-          usedTransactions.add(match.transactionId);
-          autoMatched++;
-          aiBatchCount += 3;
-        }
-
-        if (aiBatchCount > 0) {
-          await aiBatch.commit();
-          console.log(`AI matching: ${aiMatches.length} additional matches`);
-        }
+          })),
+          { origin: "ai" }
+        );
+        const aiConnected = aiOutcomes.filter((o) => o.status === "connected").length;
+        autoMatched += aiConnected;
+        console.log(`AI matching: ${aiConnected} additional matches`);
       }
     } catch (error) {
       console.error("AI matching failed:", error);

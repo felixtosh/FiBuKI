@@ -123,19 +123,6 @@ describe("Tool Registry Handlers: Sources and the registry", () => {
   });
 
   describe("duplicate operations", () => {
-    it("connectFileToTransaction should handle already connected file (adds duplicate)", async () => {
-      store.setDoc("files", "f-1", createTestFile({ userId, transactionIds: ["tx-1"] }));
-      store.setDoc("transactions", "tx-1", createTestTransaction({ userId, fileIds: ["f-1"] }));
-
-      // Should still succeed (creates another connection record)
-      const result = await handlers.connectFileToTransaction(userId, {
-        fileId: "f-1",
-        transactionId: "tx-1",
-      });
-
-      expect(result.success).toBe(true);
-    });
-
     it("assignNoReceiptCategory should overwrite existing category", async () => {
       store.setDoc("transactions", "tx-1", createTestTransaction({
         userId,
