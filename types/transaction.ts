@@ -416,35 +416,10 @@ export interface Transaction {
 }
 
 /**
- * The fields the `updateTransaction` callable writes (#621). It refuses any
- * other key: the owner, the bank figures and the timestamps never change
- * through it.
+ * The fields the `updateTransaction` callable writes (#621): the Reports
+ * page's answers to the UVA review. It refuses any other key.
  */
-export type TransactionUpdate = Partial<
-  Pick<
-    Transaction,
-    | "description"
-    | "isComplete"
-    | "partnerId"
-    | "partnerType"
-    | "partnerMatchConfidence"
-    | "partnerMatchedBy"
-    | "noReceiptCategoryId"
-    | "noReceiptCategoryTemplateId"
-    | "noReceiptCategoryMatchedBy"
-    | "noReceiptCategoryConfidence"
-    | "receiptLostEntry"
-    | "rejectedFileIds"
-    | "aiSearchQueries"
-    | "aiSearchQueriesForPartnerId"
-    | "vatRate"
-    | "vatAmount"
-    | "isEuTransaction"
-    | "isReverseCharge"
-    | "foreignSupplyKind"
-    | "saleSupplyKind"
-  >
->;
+export type TransactionUpdate = Partial<Pick<Transaction, "foreignSupplyKind" | "saleSupplyKind">>;
 
 /**
  * Derive the activity level from an automation history entry's type and actor.

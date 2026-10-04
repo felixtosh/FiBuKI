@@ -74,6 +74,11 @@ function ownPayloads(): Array<Record<string, unknown>> {
     all,
     ...ID_KEYS.map((k) => ({ [k]: attackerValueFor(k) })),
     { id: A.transaction, data: { description: "probe" } },
+    // #621: the Transaction update callables take only their callers' fields.
+    { id: A.transaction, data: { foreignSupplyKind: "goods" } },
+    { ids: [A.transaction], data: { description: "probe" } },
+    { ids: [A.transaction], data: { partnerId: A.partner, partnerType: "user" } },
+    { ids: [A.transaction], data: { noReceiptCategoryId: A.category } },
     { id: A.file, data: { fileName: "probe.pdf" } },
     { id: A.partner, data: { name: "probe" } },
     { transactionId: A.transaction, updates: { description: "probe" } },
@@ -104,7 +109,7 @@ function handOverPayloads(): Array<Record<string, unknown>> {
     { ...all, data: handOver, updates: handOver },
     ...ID_KEYS.map((k) => ({ [k]: attackerValueFor(k), data: handOver, updates: handOver })),
     // Smuggled beside a field the callable does write.
-    { id: A.transaction, data: { description: "mine", userId: VICTIM } },
+    { id: A.transaction, data: { foreignSupplyKind: "goods", userId: VICTIM } },
     { ids: [A.transaction], data: { isComplete: true, userId: VICTIM } },
     { transactionId: A.transaction, updates: { description: "mine", userId: VICTIM } },
     { fileId: A.file, data: { fileName: "mine.pdf", userId: VICTIM } },
@@ -179,9 +184,9 @@ describe("cross-user isolation: every callable", () => {
     await freshAccounts();
     const update = callables.find(([n]) => n === "updateTransaction")?.[1];
     expect(update).toBeDefined();
-    await update!.run({ data: { id: A.transaction, data: { description: "mine, edited" } }, auth: ATTACKER_AUTH });
+    await update!.run({ data: { id: A.transaction, data: { foreignSupplyKind: "service" } }, auth: ATTACKER_AUTH });
     const mine = await getFirestore().doc(`transactions/${A.transaction}`).get();
-    expect(mine.data()?.description).toBe("mine, edited");
+    expect(mine.data()?.foreignSupplyKind).toBe("service");
   });
 
   it("refuses to set what another user's 0% sale is (#565)", async () => {

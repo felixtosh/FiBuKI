@@ -1129,7 +1129,10 @@ export const bulkUpdateTransactionsTool = tool(
     if (description !== undefined) data.description = description;
     if (isComplete !== undefined) data.isComplete = isComplete;
     if (partnerId !== undefined) {
+      // Like every tool here, a user Partner: the callable refuses one that
+      // is not the caller's.
       data.partnerId = partnerId;
+      data.partnerType = "user";
       data.partnerMatchedBy = "ai";
     }
     if (clearNoReceiptCategory) {

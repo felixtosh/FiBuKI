@@ -14,13 +14,12 @@ interface BulkUpdateTransactionsRequest {
     description?: string | null;
     isComplete?: boolean;
     partnerId?: string | null;
+    /** Required with a partnerId: which collection the id names. */
     partnerType?: "global" | "user" | null;
-    partnerMatchConfidence?: number | null;
     partnerMatchedBy?: "auto" | "manual" | "ai" | "suggestion" | null;
     noReceiptCategoryId?: string | null;
     noReceiptCategoryTemplateId?: string | null;
     noReceiptCategoryMatchedBy?: "manual" | "suggestion" | "auto" | null;
-    noReceiptCategoryConfidence?: number | null;
   };
 }
 
@@ -31,6 +30,62 @@ interface BulkUpdateTransactionsResponse {
 }
 
 const BATCH_SIZE = 500; // Firestore batch limit
+
+function isDocId(id: unknown): id is string {
+  return typeof id === "string" && id.length > 0 && !id.includes("/");
+}
+
+/**
+ * The Partner and the no-receipt category a request points the rows at must
+ * be ones the caller may use: their own, or a Global Partner. Every user
+ * shares one database, so without this a row could name another user's
+ * record, and everything that later resolves it (names in the UI, matching,
+ * the UVA run's category lookup) would read that user's data. Checked once
+ * for the whole request, since every row gets the same values; not usable
+ * answers like not found.
+ */
+async function assertUsableReferences(
+  db: FirebaseFirestore.Firestore,
+  userId: string,
+  data: BulkUpdateTransactionsRequest["data"]
+): Promise<void> {
+  const { partnerId, partnerType } = data;
+  if (partnerId !== undefined || partnerType !== undefined) {
+    if (partnerId === null || partnerId === undefined) {
+      // Clearing the Partner clears its type with it; a type alone names nothing.
+      if (partnerId === undefined || (partnerType !== undefined && partnerType !== null)) {
+        throw new HttpsError("invalid-argument", "partnerType is only written with a partnerId");
+      }
+    } else {
+      if (!isDocId(partnerId)) {
+        throw new HttpsError("invalid-argument", "partnerId must be a document id");
+      }
+      if (partnerType !== "user" && partnerType !== "global") {
+        throw new HttpsError("invalid-argument", 'partnerType must be "user" or "global" with a partnerId');
+      }
+      const partnerSnap = await db
+        .collection(partnerType === "global" ? "globalPartners" : "partners")
+        .doc(partnerId)
+        .get();
+      const usable =
+        partnerSnap.exists && (partnerType === "global" || partnerSnap.data()?.userId === userId);
+      if (!usable) {
+        throw new HttpsError("not-found", "Partner not found");
+      }
+    }
+  }
+
+  const { noReceiptCategoryId } = data;
+  if (noReceiptCategoryId !== undefined && noReceiptCategoryId !== null) {
+    if (!isDocId(noReceiptCategoryId)) {
+      throw new HttpsError("invalid-argument", "noReceiptCategoryId must be a document id");
+    }
+    const categorySnap = await db.collection("noReceiptCategories").doc(noReceiptCategoryId).get();
+    if (!categorySnap.exists || categorySnap.data()?.userId !== userId) {
+      throw new HttpsError("not-found", "No-receipt category not found");
+    }
+  }
+}
 
 export const bulkUpdateTransactionsCallable = createCallable<
   BulkUpdateTransactionsRequest,
@@ -56,6 +111,7 @@ export const bulkUpdateTransactionsCallable = createCallable<
     }
 
     assertWritableFields("bulkUpdateTransactions", data, BULK_WRITABLE_FIELDS);
+    await assertUsableReferences(ctx.db, ctx.userId, data);
 
     const result: BulkUpdateTransactionsResponse = {
       success: 0,

@@ -218,8 +218,8 @@ export function useCategories() {
 ### Available Callables
 
 **Transactions:**
-- `updateTransactionCallable` - Update a single transaction
-- `bulkUpdateTransactionsCallable` - Update multiple transactions
+- `updateTransactionCallable` - Write what a foreign or 0% line is for the UVA (`foreignSupplyKind`, `saleSupplyKind`); refuses any other field (#621)
+- `bulkUpdateTransactionsCallable` - Write description, completion, Partner or no-receipt category onto many transactions; refuses any other field, and a Partner or category the caller may not use (#621)
 - `deleteTransactionsBySourceCallable` - Delete all transactions for a source
 - `acceptReceiptOnlyCallable` - Record or revoke an Accepted Receipt ruling on a receipt-only transaction (#165)
 - `acceptPartialPaymentCallable` - Record or revoke an Accepted Partial Payment ruling on a tipped transaction the bank line does not cover (#554)

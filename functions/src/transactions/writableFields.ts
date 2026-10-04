@@ -13,38 +13,36 @@
  * `importJobId`), which change only through the import paths, and the
  * timestamps (`createdAt`, `updatedAt`), which the server stamps.
  *
- * The browser's `TransactionUpdate` type mirrors `WRITABLE_FIELDS` by hand.
+ * The sets are what the live callers send, nothing wider: a field no caller
+ * writes is a field nobody can be trusted to write. The browser's
+ * `TransactionUpdate` type mirrors `WRITABLE_FIELDS` by hand.
  */
 
 import { HttpsError } from "../utils/createCallable";
 
-/** What `bulkUpdateTransactions` writes: the same values onto many rows. */
+/**
+ * What `updateTransaction` writes on one row: the Reports page's answers to
+ * the UVA review, its only caller.
+ */
+export const WRITABLE_FIELDS: ReadonlySet<string> = new Set([
+  "foreignSupplyKind",
+  "saleSupplyKind",
+]);
+
+/**
+ * What `bulkUpdateTransactions` writes onto many rows: what the chat agent's
+ * bulk tool, its only caller, sends. Match confidences are the matchers' to
+ * write, not a caller's.
+ */
 export const BULK_WRITABLE_FIELDS: ReadonlySet<string> = new Set([
   "description",
   "isComplete",
   "partnerId",
   "partnerType",
-  "partnerMatchConfidence",
   "partnerMatchedBy",
   "noReceiptCategoryId",
   "noReceiptCategoryTemplateId",
   "noReceiptCategoryMatchedBy",
-  "noReceiptCategoryConfidence",
-]);
-
-/** What `updateTransaction` writes on one row. */
-export const WRITABLE_FIELDS: ReadonlySet<string> = new Set([
-  ...BULK_WRITABLE_FIELDS,
-  "receiptLostEntry",
-  "rejectedFileIds",
-  "aiSearchQueries",
-  "aiSearchQueriesForPartnerId",
-  "vatRate",
-  "vatAmount",
-  "isEuTransaction",
-  "isReverseCharge",
-  "foreignSupplyKind",
-  "saleSupplyKind",
 ]);
 
 /**
