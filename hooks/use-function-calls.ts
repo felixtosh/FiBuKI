@@ -292,6 +292,7 @@ export function formatFunctionDisplayName(functionName: string): string {
     findTransactionMatchesForFile: "Find Transaction Matches",
     refreshTransactionMatches: "Refresh Transaction Matches",
     findFileMatchesForTransaction: "Find File Matches",
+    findPartnerBatchTransactions: "Find Partner Batch Transactions",
     lookupCompany: "Lookup Company",
     retryFileExtraction: "Retry Extraction",
   };

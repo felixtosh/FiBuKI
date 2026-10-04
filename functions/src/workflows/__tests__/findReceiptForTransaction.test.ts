@@ -39,7 +39,7 @@ function storedFilesScore(...scores: Array<[fileId: string, confidence: number]>
       matchSources: ["amount_exact", "date_exact"],
       breakdown: {} as never,
     })) as never,
-    rejectedCount: 0,
+    rejectedFileIds: [],
   });
 }
 

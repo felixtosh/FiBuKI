@@ -9,6 +9,7 @@ import { getFirestore, Timestamp, __resetFirestoreShim } from "./firestore-shim"
 import { findTransactionMatchesForFile } from "../matching/findTransactionMatches";
 import { findFileMatchesForTransactionCallable } from "../matching/findFileMatches";
 import { findReceiptForTransactionCallable } from "../workflows/findReceiptForTransactionCallable";
+import { findPartnerBatchTransactionsCallable } from "../matching/findPartnerBatchTransactions";
 import type { FindReceiptResult } from "../workflows/findReceiptForTransaction";
 import { matchFilesForPartnerInternal } from "../matching/matchFilesForPartner";
 import { rescoreConnections, UNDATED_RECENT_TRANSACTIONS } from "../matching/matcher";
@@ -175,6 +176,42 @@ describe("Partner matching", () => {
     const result = await matchFilesForPartnerInternal(ME, "p", ["t"]);
 
     expect(result).toMatchObject({ autoMatched: 0, suggested: 0 });
+  });
+});
+
+describe("the agent's Partner batch pool", () => {
+  const pool = (fileIds: string[]) =>
+    (
+      findPartnerBatchTransactionsCallable as unknown as {
+        run: (req: unknown) => Promise<{ transactions: Array<{ transactionId: string; confidence: number | null }> }>;
+      }
+    ).run({ data: { partnerId: "p", fileIds }, auth: { uid: ME, token: {} } });
+
+  beforeEach(async () => {
+    await db.collection("partners").doc("p").set({ userId: ME, name: "Acme GmbH" });
+  });
+
+  it("is the matcher's window, not its own 45 days, and keeps out a rejected pair", async () => {
+    await seedFile("f", { partnerId: "p" });
+    await seedTx("t", { partnerId: "p" });
+    // 40 days off: inside the old 45-day pool, outside the window.
+    await seedTx("t-40", { partnerId: "p", date: day("2026-04-19") });
+    await seedTx("t-rejected", { partnerId: "p", rejectedFileIds: ["f"] });
+    await seedTx("t-other-partner", { partnerId: "p-other" });
+
+    const { transactions } = await pool(["f"]);
+
+    expect(transactions.map((t) => t.transactionId)).toEqual(["t"]);
+    expect(transactions[0].confidence).toBeGreaterThanOrEqual(85);
+  });
+
+  it("includes what a batch File is already on, so the worker can rebalance it", async () => {
+    await seedFile("f", { partnerId: "p", transactionIds: ["t-old"] });
+    await seedTx("t-old", { partnerId: "p", date: day("2025-01-01"), fileIds: ["f"] });
+
+    const { transactions } = await pool(["f"]);
+
+    expect(transactions).toContainEqual({ transactionId: "t-old", confidence: null });
   });
 });
 

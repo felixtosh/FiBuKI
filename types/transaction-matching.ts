@@ -134,7 +134,7 @@ export interface FindFileMatchesResponse {
   matches: FileMatchResult[];
   totalCandidates: number;
   /** Files held back because a Rejection names this pair; none in a search. */
-  rejectedCount: number;
+  rejectedFileIds: string[];
 }
 
 // === Config (mirrors server config) ===

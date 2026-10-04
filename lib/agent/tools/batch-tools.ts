@@ -9,7 +9,6 @@
 import { toDateSafe } from "@/lib/utils";
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import { Timestamp, FieldValue } from "firebase-admin/firestore";
 import { callFirebaseFunction } from "@/lib/api/firebase-callable";
 // See the note on the same import in search-tools: one reader of the dismissal
 // fields, not a per-call-site re-derivation.
@@ -150,6 +149,7 @@ function hungarianMinCost(cost: number[][]): number[] {
 export const loadPartnerBatchContextTool = tool(
   async ({ partnerId, fileIds }, config) => {
     const userId = config?.configurable?.userId;
+    const authHeader = config?.configurable?.authHeader;
     if (!userId) return { error: "User ID not provided" };
 
     const db = await getDb();
@@ -226,39 +226,25 @@ export const loadPartnerBatchContextTool = tool(
       }
     }
 
-    // Load candidate transactions for this partner (recent + date range from files)
-    const fileDates = files
-      .map((f) => f.extractedDate)
-      .filter(Boolean)
-      .map((d) => new Date(d!));
-
-    let startDate: Date;
-    let endDate: Date;
-
-    if (fileDates.length > 0) {
-      const earliest = new Date(Math.min(...fileDates.map((d) => d.getTime())));
-      const latest = new Date(Math.max(...fileDates.map((d) => d.getTime())));
-      startDate = new Date(earliest);
-      startDate.setDate(startDate.getDate() - 45); // Wider range for batch
-      endDate = new Date(latest);
-      endDate.setDate(endDate.getDate() + 45);
-    } else {
-      endDate = new Date();
-      startDate = new Date();
-      startDate.setMonth(startDate.getMonth() - 6);
+    // The candidate Transactions are the matcher's (#613): each of this
+    // Partner's that some batch File may be paired with (its date window,
+    // Rejections, over-quota), plus the ones the Files are already on.
+    let pool: { transactions: Array<{ transactionId: string; confidence: number | null }> };
+    try {
+      pool = await callFirebaseFunction<
+        { partnerId: string; fileIds: string[] },
+        { transactions: Array<{ transactionId: string; confidence: number | null }> }
+      >("findPartnerBatchTransactions", { partnerId, fileIds: files.map((f) => f.fileId) }, authHeader);
+    } catch (err) {
+      return { error: `Could not load candidate transactions: ${(err as Error).message}` };
     }
-
-    const txSnap = await db
-      .collection("transactions")
-      .where("userId", "==", userId)
-      .where("partnerId", "==", partnerId)
-      .where("date", ">=", Timestamp.fromDate(startDate))
-      .where("date", "<=", Timestamp.fromDate(endDate))
-      .orderBy("date", "desc")
-      .limit(200)
-      .get();
-
-    const txIds = txSnap.docs.filter((doc) => !doc.data().quotaExceeded).map((doc) => doc.id);
+    const bestConfidence = new Map(pool.transactions.map((t) => [t.transactionId, t.confidence]));
+    const txIds = [...bestConfidence.keys()];
+    const txDocs = txIds.length
+      ? (await db.getAll(...txIds.map((id) => db.collection("transactions").doc(id)))).filter(
+          (doc) => doc.exists && doc.data()?.userId === userId
+        )
+      : [];
     const txConnectionSummary = new Map<string, {
       total: number;
       auto: number;
@@ -297,13 +283,15 @@ export const loadPartnerBatchContextTool = tool(
       }
     }
 
-    const transactions = txSnap.docs
-      .filter((doc) => !doc.data().quotaExceeded)
+    const transactions = txDocs
       .map((doc) => {
-        const data = doc.data();
+        const data = doc.data()!;
         const conn = txConnectionSummary.get(doc.id);
         return {
           transactionId: doc.id,
+          // The best Confidence any batch File scored against it; null when a
+          // File is only already on it.
+          bestConfidence: bestConfidence.get(doc.id) ?? null,
           amount: data.amount,
           currency: data.currency || "EUR",
           date: toDateSafe(data.date)?.toISOString?.()?.split("T")[0],

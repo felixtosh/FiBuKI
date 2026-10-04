@@ -22,6 +22,12 @@ export function useFileMatching({
   limit?: number;
 }) {
   const [matches, setMatches] = useState<FileMatchResult[]>([]);
+  /**
+   * Files the matcher holds back from this Transaction because a Rejection
+   * names the pair (#613). From the last unsearched answer: a search shows
+   * them, so it does not overwrite the list it hides them from.
+   */
+  const [rejectedFileIds, setRejectedFileIds] = useState<ReadonlySet<string>>(EMPTY_IDS);
   const [isLoading, setIsLoading] = useState(false);
   /** Set once a response for the current Transaction has arrived. */
   const [hasLoaded, setHasLoaded] = useState(false);
@@ -35,6 +41,7 @@ export function useFileMatching({
       const currentRequestId = ++requestIdRef.current;
       if (!transactionId) {
         setMatches([]);
+        setRejectedFileIds(EMPTY_IDS);
         setHasLoaded(false);
         return;
       }
@@ -48,6 +55,7 @@ export function useFileMatching({
         );
         if (currentRequestId === requestIdRef.current) {
           setMatches(result.matches);
+          if (!searchQuery?.trim()) setRejectedFileIds(new Set(result.rejectedFileIds ?? []));
           setHasLoaded(true);
         }
       } catch (err) {
@@ -69,10 +77,13 @@ export function useFileMatching({
   const clearMatches = useCallback(() => {
     requestIdRef.current++;
     setMatches([]);
+    setRejectedFileIds(EMPTY_IDS);
     setHasLoaded(false);
     setError(null);
     setIsLoading(false);
   }, []);
 
-  return { matches, isLoading, hasLoaded, error, fetchMatches, clearMatches };
+  return { matches, rejectedFileIds, isLoading, hasLoaded, error, fetchMatches, clearMatches };
 }
+
+const EMPTY_IDS: ReadonlySet<string> = new Set();

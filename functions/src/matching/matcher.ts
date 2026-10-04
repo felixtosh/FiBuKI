@@ -541,8 +541,12 @@ export interface FilesForTransactionResult {
   /** Every candidate scored, best first. */
   matches: Array<Match & { fileId: string }>;
   totalCandidates: number;
-  /** Files left out because a Rejection on either side names this pair (none in a search). */
-  rejectedCount: number;
+  /**
+   * Files left out because a Rejection on either side names this pair, in or
+   * out of the window; none in a search. The Connect File window lists every
+   * File and hides these, so it never reads a Rejection itself.
+   */
+  rejectedFileIds: string[];
 }
 
 /**
@@ -573,7 +577,7 @@ export async function filesForTransaction(
   );
 
   let candidates: Array<{ id: string; data: Data; hidden: HiddenReason | null }>;
-  let rejectedCount = 0;
+  const rejectedFileIds: string[] = [];
   if (search) {
     candidates = files
       .filter((f) => fileSearchMatches(f.data, search).length > 0)
@@ -587,12 +591,12 @@ export async function filesForTransaction(
     candidates = files
       .filter((f) => {
         const hidden = hiddenReasonOf(f.id, f.data, transactionId, txData);
-        if (hidden === "rejected") rejectedCount++;
+        if (hidden === "rejected") rejectedFileIds.push(f.id);
         return hidden === null && inWindow(f.data, transactionId, txData, ctx);
       })
       .map((f) => ({ ...f, hidden: null }));
   }
-  if (candidates.length === 0) return { matches: [], totalCandidates: 0, rejectedCount };
+  if (candidates.length === 0) return { matches: [], totalCandidates: 0, rejectedFileIds };
 
   // No candidate is on this Transaction, so what its Files explain is the
   // figure the trigger reads with the candidate excluded.
@@ -608,7 +612,7 @@ export async function filesForTransaction(
       return f.hidden ? { ...score, fileId: f.id, hidden: f.hidden } : { ...score, fileId: f.id };
     })
   );
-  return { matches: matches.sort(byConfidence), totalCandidates: candidates.length, rejectedCount };
+  return { matches: matches.sort(byConfidence), totalCandidates: candidates.length, rejectedFileIds };
 }
 
 // ============================================================================

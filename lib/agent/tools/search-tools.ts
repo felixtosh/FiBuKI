@@ -69,7 +69,7 @@ async function dismissedFileIdsFor(
 interface FileMatchesResponse {
   matches: Array<{ fileId: string; confidence: number; matchSources: string[] }>;
   totalCandidates: number;
-  rejectedCount: number;
+  rejectedFileIds: string[];
 }
 
 // Server-side attachment scoring types (matches scoreAttachmentMatchCallable)
@@ -547,7 +547,7 @@ export const searchLocalFilesTool = tool(
         totalFound: 0,
       };
     }
-    const dismissedForThisTransaction = ranked.rejectedCount;
+    const dismissedForThisTransaction = ranked.rejectedFileIds.length;
 
     if (ranked.totalCandidates === 0) {
       // Build hint if partner prefers no-receipt

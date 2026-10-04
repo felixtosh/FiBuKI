@@ -65,8 +65,6 @@ import {
 } from "@/lib/matching/connect-candidate-order";
 import { classifyFileStrict } from "@/lib/files/file-kind";
 import { fileSearchMatches } from "@/functions/src/matching/fileSearch";
-import { readRejectedFileIds } from "@/functions/src/matching/rejectedFiles";
-import { readDismissedTransactionIds } from "@/functions/src/matching/dismissedTransactions";
 import {
   getMatchSourceLabel,
   heldBackKey,
@@ -465,6 +463,7 @@ export function ConnectFileOverlay({
 
   const {
     matches: fileMatches,
+    rejectedFileIds,
     hasLoaded: fileMatchesLoaded,
     isLoading: fileMatchesLoading,
     fetchMatches: fetchFileMatches,
@@ -503,18 +502,6 @@ export function ConnectFileOverlay({
   const transactionDateMs = transaction?.date.toMillis() ?? null;
   const transactionPartnerId = transaction?.partnerId ?? null;
 
-  // A Rejection of this pair, on either side, holds unless the user searches:
-  // the search is the way back to a rejected File by hand.
-  const rejectedFileIds = useMemo(() => {
-    const ids = readRejectedFileIds(transaction);
-    if (transaction?.id) {
-      for (const f of allFiles) {
-        if (readDismissedTransactionIds(f).has(transaction.id)) ids.add(f.id);
-      }
-    }
-    return ids;
-  }, [transaction, allFiles]);
-
   const visibleFiles = useMemo(() => {
     const candidates = allFiles
       .filter((f) => {
@@ -525,6 +512,9 @@ export function ConnectFileOverlay({
         const { isPdf, isImage } = classifyFileStrict(f.fileType);
         if (!isPdf && !isImage) return false;
         if (trimmedFilesQuery) return fileSearchMatches(f, trimmedFilesQuery).length > 0;
+        // A Rejection of this pair, on either side, holds unless the user
+        // searches: the search is the way back to a rejected File by hand.
+        // Which pairs are rejected is the matcher's answer (#613).
         return !rejectedFileIds.has(f.id);
       })
       .map((f) => ({

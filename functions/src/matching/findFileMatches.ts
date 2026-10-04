@@ -45,7 +45,7 @@ interface FindFileMatchesResponse {
   matches: FileMatchResult[];
   totalCandidates: number;
   /** Files held back because a Rejection names this pair; none in a search. */
-  rejectedCount: number;
+  rejectedFileIds: string[];
 }
 
 /** Upper bound on `limit`, whatever the caller asks for. */
@@ -77,7 +77,7 @@ export const findFileMatchesForTransactionCallable = createCallable<
 
     // Candidates, Rejections, the date window and the scores are the
     // matcher's (#613), so this window ranks what the trigger stores.
-    const { matches, totalCandidates, rejectedCount } = await filesForTransaction(ctx.db, ctx.userId, txDoc, {
+    const { matches, totalCandidates, rejectedFileIds } = await filesForTransaction(ctx.db, ctx.userId, txDoc, {
       search,
     });
     return {
@@ -92,7 +92,7 @@ export const findFileMatchesForTransactionCallable = createCallable<
         })
       ),
       totalCandidates,
-      rejectedCount,
+      rejectedFileIds,
     };
   }
 );

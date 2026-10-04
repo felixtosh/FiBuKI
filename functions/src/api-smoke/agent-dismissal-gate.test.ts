@@ -290,7 +290,7 @@ describe("searchLocalFiles — the matcher decides what is offered (#613)", () =
       return {
         matches: fileIds.map((fileId) => ({ fileId, confidence: 80, matchSources: ["amount_exact"] })),
         totalCandidates: fileIds.length,
-        rejectedCount,
+        rejectedFileIds: Array.from({ length: rejectedCount }, (_, i) => `f-rejected-${i}`),
       };
     });
   }
