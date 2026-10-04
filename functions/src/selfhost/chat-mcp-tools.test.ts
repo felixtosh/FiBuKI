@@ -248,6 +248,20 @@ describe("the model reads MCP's records, reformatted only", () => {
     const one = (await tool("getFile").invoke({ fileId: "f-amazon" }, CONFIG)) as Record<string, unknown>;
     expect(one.extractedText).toBe("Rechnung ".repeat(500));
   });
+
+  it("the chat's Files card shows a wrapper row's date, partner, amount and link", async () => {
+    const { fileResultFromRecord } = await import("@/design-system/tool-results/file-result-from-record");
+    const chat = (await tool("listFiles").invoke({ search: "amazon" }, CONFIG)) as { files: Array<Record<string, unknown>> };
+    expect(fileResultFromRecord(chat.files[0])).toMatchObject({
+      id: "f-amazon",
+      fileName: "amazon.pdf",
+      dateFormatted: "09.03.2026",
+      partnerName: "Amazon EU",
+      amount: -50,
+      amountFormatted: expect.stringMatching(/^-50,00\s€$/),
+      hasTransaction: true,
+    });
+  });
 });
 
 describe("the drifts, each a fixture", () => {
