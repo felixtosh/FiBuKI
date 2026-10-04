@@ -564,6 +564,51 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    name: "link_receipt",
+    description:
+      "Link a Receipt (a payment confirmation: GitHub's or Stripe's receipt, a card terminal slip) to the invoice it pays. Both stay connected to the transaction and count once: the invoice's figures, its payment total raised to the Receipt's when that is larger, the difference booked as Trinkgeld without VAT. If one of the two Files is on a transaction and the other on none, the other is connected there too. Also accepts a pairing suggestion (receiptPairSuggestions, see get_receipt_link). One Receipt pays one invoice; the invoice must not itself be a Receipt, and neither File may be a Copy. Reversible with unlink_receipt.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fileId: { type: "string", description: "The Receipt" },
+        invoiceFileId: { type: "string", description: "The invoice it pays" },
+      },
+      required: ["fileId", "invoiceFileId"],
+    },
+  },
+  {
+    name: "unlink_receipt",
+    description:
+      "Remove a Receipt Link, from the Receipt or from its invoice (pass the Receipt as otherFileId), or decline a pairing suggestion (pass otherFileId). The pair is recorded as declined on both Files and never linked or suggested automatically again; link_receipt on the pair revokes that. No transaction connection changes: both Files stay where they are and each counts as an ordinary File.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fileId: { type: "string", description: "A File of the pair" },
+        otherFileId: {
+          type: "string",
+          description: "Optional: the other File (a suggested pair to decline, or a Receipt linked to fileId). Omit to remove fileId's own link.",
+        },
+      },
+      required: ["fileId"],
+    },
+  },
+  {
+    name: "get_receipt_link",
+    description:
+      "Inspect a File's Receipt Link: the invoice number it cites as paid, the invoice it is the Receipt of, the Receipts linked to it when it is an invoice, its pairing suggestions (with the File prefilled as the Receipt, or null when the person picks), and, with withCandidates, Files of the same Partner that may be linked by hand.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fileId: { type: "string", description: "A File: a Receipt or an invoice" },
+        withCandidates: {
+          type: "boolean",
+          description: "Also list the Files of the same Partner this File may be linked to by hand",
+        },
+      },
+      required: ["fileId"],
+    },
+  },
+  {
     name: "unmark_file_as_not_invoice",
     description:
       "Restore a file previously flagged as not an invoice. Re-opens extraction, which recovers the fields marking cleared.",

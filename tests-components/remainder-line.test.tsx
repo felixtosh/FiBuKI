@@ -55,6 +55,25 @@ describe("remainderLineState", () => {
       remainderLineState(-10000, [{ payment: 6000, extractionPending: false, conversionFailed: true }])
     ).toEqual({ kind: "missing", pendingCount: 0 });
   });
+
+  // #571: a Receipt beside the invoice it pays counts once.
+  it("reads zero, not a negative Remainder, when an invoice and its Receipt explain the line", () => {
+    expect(
+      remainderLineState(-5500, [
+        { payment: 5080, extractionPending: false, fileId: "f-invoice" },
+        { payment: 5500, extractionPending: false, fileId: "f-slip", receiptOfFileId: "f-invoice" },
+      ])
+    ).toEqual({ kind: "figure", remainder: 0, pendingCount: 0 });
+  });
+
+  it("does not report missing amounts for a Receipt the pair folds in", () => {
+    expect(
+      remainderLineState(-12000, [
+        { payment: 12000, extractionPending: false, fileId: "f-invoice", currency: "EUR" },
+        { payment: 13000, extractionPending: false, fileId: "f-usd", currency: "USD", receiptOfFileId: "f-invoice", conversionFailed: true },
+      ])
+    ).toEqual({ kind: "figure", remainder: 0, pendingCount: 0 });
+  });
 });
 
 describe("pendingFilesLabel", () => {

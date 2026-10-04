@@ -93,3 +93,32 @@ describe("parsing the referenced invoice number (#564)", () => {
     expect((await parse({ amount: 1200, referencedInvoiceNumber: 4711 })).extracted.referencedInvoiceNumber).toBeNull();
   });
 });
+
+describe("the paid invoice number a Receipt cites (#571)", () => {
+  it("is asked for apart from the document's own number and from a correction's reference", async () => {
+    gemini.queue.push("{}");
+    await parseWithGemini(Buffer.from("x"), "application/pdf");
+    const prompt = gemini.requests[0].contents[0].parts.find((p) => typeof p.text === "string")
+      ?.text as string;
+    expect(prompt).toContain('"paidInvoiceNumber"');
+    for (const wording of ["Zahlung zu Rechnung", "Payment for invoice"]) {
+      expect(prompt).toContain(wording);
+    }
+  });
+
+  it("reads a Stripe receipt's cited number into its own field, never the other two", async () => {
+    const r = await parse({
+      amount: 2000,
+      selfDesignation: "Receipt",
+      invoiceNumber: "2438-6094",
+      paidInvoiceNumber: "A1B2C3-0007",
+    });
+    expect(r.extracted.paidInvoiceNumber).toBe("A1B2C3-0007");
+    expect(r.extracted.invoiceNumber).toBe("2438-6094");
+    expect(r.extracted.referencedInvoiceNumber).toBeNull();
+  });
+
+  it("reads an absence as null", async () => {
+    expect((await parse({ amount: 1200 })).extracted.paidInvoiceNumber).toBeNull();
+  });
+});

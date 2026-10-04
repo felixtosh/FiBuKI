@@ -290,6 +290,7 @@ export async function runExtraction(
         extractedSelfDesignation: null,
         extractedInvoiceNumber: null,
         extractedReferencedInvoiceNumber: null,
+        extractedPaidInvoiceNumber: null,
         extractedPayableAmount: null,
         ...documentTypeFields(classifyDocumentType({ grossTotal: null, isNotInvoice: true })),
         // Every printed rate was just cleared, so there is nothing left to
@@ -505,6 +506,7 @@ export async function runExtraction(
     updateData.extractedSelfDesignation = null;
     updateData.extractedInvoiceNumber = null;
     updateData.extractedReferencedInvoiceNumber = null;
+    updateData.extractedPaidInvoiceNumber = null;
     updateData.extractedPayableAmount = null;
     updateData.extractedInvoicingAgent = null;
     updateData.splitSuggestion = null;
@@ -538,6 +540,10 @@ export async function runExtraction(
     // #564: the invoice a credit note corrects, the key the correction link
     // matches on. Written unconditionally like the other transcriptions.
     updateData.extractedReferencedInvoiceNumber = extracted.referencedInvoiceNumber ?? null;
+    // #571: the invoice a Receipt confirms payment for, the key the Receipt
+    // Link is recorded on. Kept apart from the corrected invoice's number, so
+    // a Receipt never reads as a correction.
+    updateData.extractedPaidInvoiceNumber = extracted.paidInvoiceNumber ?? null;
 
     // #206: the figure the document itself designates as due, transcribed
     // beside the total rather than replacing it. Written unconditionally, so

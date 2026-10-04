@@ -47,7 +47,7 @@ const CALL_TIMEOUT_MS = 4000;
 const ID_KEYS = [
   "id", "ids", "docId", "documentId",
   "transactionId", "transactionIds", "txId",
-  "fileId", "fileIds", "originalFileId",
+  "fileId", "fileIds", "originalFileId", "invoiceFileId", "otherFileId",
   "partnerId", "partnerIds", "sourcePartnerId", "targetPartnerId",
   "sourceId", "sourceIds", "accountId",
   "categoryId", "noReceiptCategoryId",
@@ -141,6 +141,11 @@ function payloads(): Array<Record<string, unknown>> {
     // #162: a Copy and its original, each side someone else's.
     { fileId: V.file, originalFileId: A.file },
     { fileId: A.file, originalFileId: V.file },
+    // #571: a Receipt and the invoice it pays, each side someone else's.
+    { fileId: V.file, invoiceFileId: A.file },
+    { fileId: A.file, invoiceFileId: V.file },
+    { fileId: A.file, otherFileId: V.file },
+    { fileId: V.file, otherFileId: A.file },
     { sourcePartnerId: V.partner, targetPartnerId: A.partner },
     { sourcePartnerId: A.partner, targetPartnerId: V.partner },
     { categoryId: V.category, transactionId: A.transaction },

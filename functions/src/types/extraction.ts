@@ -144,6 +144,13 @@ export interface ExtractedData {
    * (#564). Optional for extractors that predate it.
    */
   referencedInvoiceNumber?: string | null;
+  /**
+   * The number of the invoice whose payment this document confirms, as a
+   * Receipt prints it ("Invoice number" on a receipt, "Zahlung zu Rechnung").
+   * Transcribed, never inferred; null when the document cites none (#571).
+   * Never the document's own number, never a corrected invoice's number.
+   */
+  paidInvoiceNumber?: string | null;
   partner: string | null;
   vatId: string | null; // VAT ID (e.g., ATU12345678, DE123456789)
   iban: string | null; // IBAN if visible

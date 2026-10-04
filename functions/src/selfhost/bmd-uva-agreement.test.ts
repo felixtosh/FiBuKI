@@ -629,3 +629,35 @@ describe("bmd/uva agreement (#565): a service supplied abroad", () => {
     expect(uvaReportFor(goods).kennzahlen["011"]?.value).toBe(50000);
   });
 });
+
+/**
+ * A Receipt beside the invoice it pays (#571, ADR-0012): the export and the
+ * UVA book the pair as one document, and agree on it. Before, both summed the
+ * two totals and read the line as a 50 % instalment.
+ */
+describe("bmd/uva agreement (#571): a Receipt and the invoice it pays", () => {
+  const pair = (name: string, bank: number, invoice: Partial<FileForExport>, receipt: Partial<FileForExport>): Fixture => ({
+    name,
+    // The Receipt first, as it often arrives.
+    tx: { id: "t", date: DATE, amount: bank, fileIds: ["f-receipt", "f-invoice"] },
+    files: [
+      { id: "f-receipt", fileName: "receipt.pdf", receiptLink: { fileId: "f-invoice" }, ...receipt },
+      { id: "f-invoice", fileName: "invoice.pdf", ...invoice },
+    ],
+  });
+  const invoice = { extractedAmount: 12000, extractedVatAmount: 2000, extractedVatPercent: 20 };
+
+  const cases: Array<[Fixture, number]> = [
+    [pair("GitHub: a Receipt printing the invoice's VAT", -12000, invoice, { ...invoice }), 2000],
+    [pair("a card slip with a tip the Rechnung lacks", -12500, invoice, { extractedAmount: 12500 }), 2000],
+    [pair("an instalment Receipt below the invoice", -6000, invoice, { extractedAmount: 6000 }), 1000],
+  ];
+
+  for (const [f, vat] of cases) {
+    it(`books it as one document on both sides: ${f.name}`, () => {
+      expect(reportVatCents(f)).toBe(vat);
+      expect(exportVatCents(f)).toBe(vat);
+      expect(uvaReportFor(f).unresolved).toEqual([]);
+    });
+  }
+});
