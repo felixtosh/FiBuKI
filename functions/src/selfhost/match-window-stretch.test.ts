@@ -16,6 +16,7 @@ import { rematchStretchedWindows } from "../matching/stretchedWindowRematch";
 
 const db = getFirestore();
 const ME = "stretch-me";
+const OTHER = "stretch-other";
 const DAY = "2026-09-10";
 
 const isoPlus = (n: number) =>
@@ -149,6 +150,8 @@ describe("the one-time rematch of stretched windows (#614)", () => {
   it("reports in a dry run and writes nothing", async () => {
     const report = await rematchStretchedWindows(db, { apply: false });
     expect(report).toMatchObject({ apply: false, filesScanned: 3, filesTouched: 1, newSuggestions: 1 });
+    expect(report.scope).toEqual({ kind: "allUsers" });
+    expect(report.users).toEqual([{ userId: ME, filesTouched: 1 }]);
     expect(report.changed.map((c) => c.fileId)).toEqual(["f-stretched"]);
     expect(await suggested("f-stretched")).toEqual([]);
     expect(await connections()).toEqual([]);
@@ -156,7 +159,7 @@ describe("the one-time rematch of stretched windows (#614)", () => {
 
   it("stores suggestions and auto-connects at the threshold, as an upload does", async () => {
     const dry = await rematchStretchedWindows(db, { apply: false });
-    const report = await rematchStretchedWindows(db, { apply: true });
+    const report = await rematchStretchedWindows(db, { apply: true, allUsers: true });
     expect(report).toMatchObject({ apply: true, filesTouched: 1, newSuggestions: 1 });
     expect(report.autoConnects).toBe(1);
     expect(dry.autoConnects).toBe(1);
@@ -169,9 +172,68 @@ describe("the one-time rematch of stretched windows (#614)", () => {
 
   it("makes suggestions only for a User in passive mode", async () => {
     await db.collection("subscriptions").doc(ME).set({ userId: ME, automationMode: "passive" });
-    const report = await rematchStretchedWindows(db, { apply: true });
+    const report = await rematchStretchedWindows(db, { apply: true, userId: ME });
     expect(report.autoConnects).toBe(0);
     expect(await suggested("f-stretched")).toEqual(["t-late"]);
+    expect(await connections()).toEqual([]);
+  });
+});
+
+describe("the one-time rematch's scope: one user, or every user said explicitly (#614)", () => {
+  beforeEach(async () => {
+    await seedFile("f-mine", { extractedDueDate: plus(45), transactionSuggestions: [] });
+    // Another user of the same tenant, with the same kind of File and Transaction.
+    await db.collection("transactions").doc("t-other").set({
+      userId: OTHER,
+      amount: -4990,
+      currency: "EUR",
+      date: plus(45),
+      name: "HETZNER ONLINE",
+      fileIds: [],
+    });
+    await seedFile("f-other", { userId: OTHER, extractedDueDate: plus(45), transactionSuggestions: [] });
+  });
+
+  it("refuses an apply that names no scope, and writes nothing", async () => {
+    await expect(rematchStretchedWindows(db, { apply: true })).rejects.toThrow(/needs a scope/);
+    expect(await suggested("f-mine")).toEqual([]);
+    expect(await suggested("f-other")).toEqual([]);
+    expect(await connections()).toEqual([]);
+  });
+
+  it("refuses a user and every user at once", async () => {
+    await expect(rematchStretchedWindows(db, { apply: false, userId: ME, allUsers: true })).rejects.toThrow(
+      /exclude each other/
+    );
+  });
+
+  it("with a user, reads and connects only that user's Files", async () => {
+    const report = await rematchStretchedWindows(db, { apply: true, userId: ME });
+    expect(report.scope).toEqual({ kind: "user", userId: ME });
+    expect(report).toMatchObject({ filesScanned: 1, filesTouched: 1 });
+    expect(report.users).toEqual([{ userId: ME, filesTouched: 1 }]);
+    expect(await suggested("f-mine")).toEqual(["t-late"]);
+    expect(await suggested("f-other")).toEqual([]);
+    const made = await connections();
+    expect(made.length).toBeGreaterThan(0);
+    for (const c of made) expect(c).toMatchObject({ fileId: "f-mine", transactionId: "t-late" });
+  });
+
+  it("with every user said, covers each user's Files against that user's own Transactions", async () => {
+    const report = await rematchStretchedWindows(db, { apply: true, allUsers: true });
+    expect(report.scope).toEqual({ kind: "allUsers" });
+    expect([...report.users].sort((a, b) => a.userId.localeCompare(b.userId))).toEqual([
+      { userId: OTHER, filesTouched: 1 },
+      { userId: ME, filesTouched: 1 },
+    ].sort((a, b) => a.userId.localeCompare(b.userId)));
+    expect(await suggested("f-mine")).toEqual(["t-late"]);
+    expect(await suggested("f-other")).toEqual(["t-other"]);
+  });
+
+  it("states in a dry run which users it covers", async () => {
+    const report = await rematchStretchedWindows(db, { apply: false });
+    expect(report.scope).toEqual({ kind: "allUsers" });
+    expect(report.users.map((u) => u.userId).sort()).toEqual([OTHER, ME].sort());
     expect(await connections()).toEqual([]);
   });
 });
