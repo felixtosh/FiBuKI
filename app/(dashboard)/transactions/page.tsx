@@ -33,7 +33,7 @@ import {
   hasUrlParams,
 } from "@/lib/filters/url-params";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Transaction } from "@/types/transaction";
+import { Transaction, type TransactionUpdate } from "@/types/transaction";
 import { cn } from "@/lib/utils";
 
 const PANEL_WIDTH_KEY = "transactionDetailPanelWidth";
@@ -325,7 +325,7 @@ function TransactionsContent() {
 
   // Update transaction
   const handleTransactionUpdate = useCallback(
-    async (updates: Partial<Transaction>) => {
+    async (updates: TransactionUpdate) => {
       if (!selectedTransaction) return;
       await updateTransaction(selectedTransaction.id, updates);
     },

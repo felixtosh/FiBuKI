@@ -11,7 +11,7 @@ import {
   checkFileDuplicate,
   OperationsContext,
 } from "@/lib/operations";
-import { Transaction } from "@/types/transaction";
+import { Transaction, type TransactionUpdate } from "@/types/transaction";
 import { TransactionSource } from "@/types/source";
 import { TransactionDetails } from "@/components/sidebar/transaction-details";
 import { TransactionFilesSection } from "@/components/transactions/transaction-files-section";
@@ -45,7 +45,7 @@ interface TransactionDetailPanelProps {
   transaction: Transaction;
   source?: TransactionSource;
   onClose: () => void;
-  onUpdate: (updates: Partial<Transaction>) => Promise<void>;
+  onUpdate: (updates: TransactionUpdate) => Promise<void>;
   onNavigatePrevious?: () => void;
   onNavigateNext?: () => void;
   hasPrevious?: boolean;
