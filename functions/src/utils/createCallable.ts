@@ -103,11 +103,22 @@ const CORS_ORIGINS = [
   "http://localhost:3000",
 ];
 
+/**
+ * The `config.name` each callable was created with. The name is not readable
+ * off the function Firebase returns, and the registry test needs it to check
+ * that a callable's wire name (its barrel export) is its `config.name`.
+ */
+const configNames = new WeakMap<object, string>();
+
+export function callableConfigName(fn: unknown): string | undefined {
+  return typeof fn === "function" ? configNames.get(fn) : undefined;
+}
+
 export function createCallable<TRequest, TResponse>(
   config: CallableConfig,
   handler: (ctx: HandlerContext, data: TRequest) => Promise<TResponse>
 ) {
-  return onCall<TRequest, Promise<TResponse>>(
+  const callable = onCall<TRequest, Promise<TResponse>>(
     {
       region: "europe-west1",
       memory: config.memory || "256MiB",
@@ -205,6 +216,8 @@ export function createCallable<TRequest, TResponse>(
       }
     }
   );
+  configNames.set(callable, config.name);
+  return callable;
 }
 
 async function logFunctionCall(
