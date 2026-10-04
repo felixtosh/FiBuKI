@@ -304,7 +304,10 @@ _Avoid_: payment QR
 **Due Date**:
 The date by which the User must pay an invoice. A deadline, not a payment date, and not
 the date the money moved. Chosen from the domain, not from the sample: one issuer's
-"Zahlungstermin" is a synonym, not the term.
+"Zahlungstermin" is a synonym, not the term. A booking on the Due Date or up to three days
+after it (a Due Date on a weekend is paid the next banking day) scores as the same day,
+and outranks a learned billing cycle; the billing cycle learns its payment term from the
+date the File states rather than from the booking (#618).
 _Deutsch (defining)_: Fälligkeitsdatum
 _Also printed as_: Zahlungstermin, fällig am, zahlbar bis, Zahlbar ohne Abzug bis
 _Avoid_: payment date, payment term, deadline bare
@@ -314,10 +317,10 @@ yields 1970 or today), Zahldatum, Valuta
 **Debit Date**:
 The date a Partner states it will collect under a SEPA mandate. An obligation on the
 Partner, where a Due Date is an obligation on the User; they coincide on many invoices and
-diverge on others, so they are two terms. Stronger Match evidence than a Due Date,
-because the bank line corroborates it: a booking on the Debit Date or up to three days
-after it (the next banking day) scores as the same day, and on a direct debit as
-near-proof (#136).
+diverge on others, so they are two terms. A booking on the Debit Date or up to three days
+after it (the next banking day) scores as the same day, as on a Due Date; stronger Match
+evidence than a Due Date only on a direct debit, where it is near-proof (#136). Where a
+File states both, the billing cycle learns the payment term from the Debit Date (#618).
 _Deutsch (defining)_: Einzugsdatum
 _Also printed as_: wird … eingezogen, Abbuchung erfolgt am, Einzug am, Lastschrift am
 _Avoid_: due date, collection date, direct-debit date

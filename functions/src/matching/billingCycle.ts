@@ -11,7 +11,8 @@
  * 3. If mode has 3+ occurrences and covers >50% of intervals -> detected cycle
  * 4. Compute typical day-of-month from transaction dates
  * 5. If charges carry a connected file's extracted date, compute the
- *    invoice-to-transaction delay
+ *    invoice-to-transaction delay: to the payment date the file states when
+ *    it states one (#618), else to the booking
  */
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
@@ -102,6 +103,19 @@ export interface BillingCycleTransaction {
    * a credit note) contributes one delay sample per file.
    */
   invoiceDates?: Date[];
+  /**
+   * Connected files that state a payment date (a Debit Date, else a Due
+   * Date) (#618). Each contributes the payment term it prints, file date to
+   * stated date, instead of file date to booking: the booking carries the
+   * weekend shift, the printed term does not. A file is in exactly one of
+   * `invoiceDates` and `statedTerms`.
+   */
+  statedTerms?: StatedPaymentTerm[];
+}
+
+export interface StatedPaymentTerm {
+  invoiceDate: Date;
+  statedDate: Date;
 }
 
 export interface DerivedBillingCycle {
@@ -217,11 +231,14 @@ function deriveBandCycle(
     Math.sqrt(daysOfMonth.reduce((s, d) => s + (d - dayMean) ** 2, 0) / daysOfMonth.length)
   );
 
-  const delays = sorted.flatMap((t) =>
-    (t.invoiceDates ?? []).map((invoiceDate) =>
+  const delays = sorted.flatMap((t) => [
+    ...(t.invoiceDates ?? []).map((invoiceDate) =>
       Math.round((t.date.getTime() - invoiceDate.getTime()) / MS_PER_DAY)
-    )
-  );
+    ),
+    ...(t.statedTerms ?? []).map(({ invoiceDate, statedDate }) =>
+      Math.round((statedDate.getTime() - invoiceDate.getTime()) / MS_PER_DAY)
+    ),
+  ]);
 
   let invoiceToTransactionDelay: number | undefined;
   let delayVariance: number | undefined;

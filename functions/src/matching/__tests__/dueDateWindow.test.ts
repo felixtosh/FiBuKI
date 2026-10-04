@@ -168,8 +168,11 @@ describe("calculateDateScore with a Due Date", () => {
   });
 
   it("scores from the nearer edge outside the window, not from the issue date", () => {
-    // 2 days after the due date: 17 days from issue would be 3 points.
-    expect(calculateDateScore(d(ISSUE), d("2026-01-22"), undefined, d(DUE)).score).toBe(22);
+    // 2 days after the due date is a Due Date hit since #618 (settlement
+    // lag); 17 days from issue would be 3 points.
+    expect(calculateDateScore(d(ISSUE), d("2026-01-22"), undefined, d(DUE)).score).toBe(25);
+    // 4 days after the due date, past the lag: scored from the edge.
+    expect(calculateDateScore(d(ISSUE), d("2026-01-24"), undefined, d(DUE)).score).toBe(15);
     // 5 days after the due date.
     expect(calculateDateScore(d(ISSUE), d("2026-01-25"), undefined, d(DUE)).score).toBe(15);
     // Before the window, the issue date is the nearer edge: identical to today.

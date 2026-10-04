@@ -11,6 +11,7 @@ import {
   selectEffectiveCycleForAmount,
   ResolvedEffectiveCycle,
 } from "../matching/billingCycle";
+import { learnedCycleSettlementLag } from "../matching/dueDate";
 import { MailSearchTerms } from "../mail/provider";
 import { termsFromQuery } from "../mail/search-terms";
 
@@ -65,7 +66,10 @@ const DEFAULT_DELAY_VARIANCE_DAYS = 3;
 export interface SearchDateWindow {
   /** Transaction date minus the learned delay — where the invoice is expected. */
   expectedAt: Date;
-  /** `expectedAt` minus `varianceDays`. */
+  /**
+   * `expectedAt` minus `varianceDays`, and on a monthly or longer cycle with a
+   * learned delay minus the settlement lag too (#618).
+   */
   from: Date;
   /** `expectedAt` plus `varianceDays`. */
   to: Date;
@@ -112,10 +116,15 @@ export function expectedInvoiceWindow(
       ? maxVarianceDays
       : Math.min((band.delayVariance ?? DEFAULT_DELAY_VARIANCE_DAYS) * 2, maxVarianceDays);
 
+  // #618: the scorer calls a booking up to the settlement lag after the
+  // expected day on time (monthly or longer cycles), so this charge's
+  // document can be dated that much earlier than `expectedAt`.
+  const lag = delay === undefined ? 0 : learnedCycleSettlementLag(band.frequencyDays);
+
   const expectedAt = addDays(transaction.date, -(delay ?? 0));
   return {
     expectedAt,
-    from: addDays(expectedAt, -varianceDays),
+    from: addDays(expectedAt, -(varianceDays + lag)),
     to: addDays(expectedAt, varianceDays),
     varianceDays,
   };
