@@ -215,6 +215,14 @@ export {
   backfillCorrectionLinksCallable as backfillCorrectionLinks,
 } from "./corrections/correctionCallables";
 
+// Receipt Links: a Receipt counts once with the invoice it pays (#571, ADR-0012)
+export {
+  linkReceiptCallable as linkReceipt,
+  unlinkReceiptCallable as unlinkReceipt,
+  getReceiptLinkCallable as getReceiptLink,
+  backfillReceiptPairsCallable as backfillReceiptPairs,
+} from "./receiptPairs/receiptPairCallables";
+
 // Import operations
 export {
   bulkCreateTransactionsCallable as bulkCreateTransactions,

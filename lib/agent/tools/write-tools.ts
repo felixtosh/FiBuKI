@@ -486,6 +486,71 @@ export const getCorrectionTool = tool(
 );
 
 // ============================================================================
+// Receipt Links (#571, ADR-0012)
+// ============================================================================
+
+/** The Receipt Link acts are callables, as for MCP; the tools only relay them. */
+async function relayReceiptLinkAct(
+  name: "linkReceipt" | "unlinkReceipt" | "getReceiptLink",
+  data: Record<string, string>,
+  authHeader: string | undefined
+): Promise<Record<string, unknown>> {
+  if (!authHeader) return { error: "Auth header not provided" };
+  try {
+    return await callFirebaseFunction<Record<string, string>, Record<string, unknown>>(name, data, authHeader);
+  } catch (err) {
+    return { error: (err as Error).message || `Failed: ${name}` };
+  }
+}
+
+export const linkReceiptTool = tool(
+  async ({ fileId, invoiceFileId }, config) =>
+    relayReceiptLinkAct("linkReceipt", { fileId, invoiceFileId }, config?.configurable?.authHeader),
+  {
+    name: "linkReceipt",
+    description:
+      "Link a Receipt (a payment confirmation: GitHub's or Stripe's receipt, a card terminal slip) to the invoice it pays. Both stay on the transaction and count once: the invoice's figures and Vorsteuer, the Receipt's surplus (a tip) as Trinkgeld without VAT. If one File is on a transaction and the other on none, the other follows. Also accepts a pairing suggestion. Reversible with unlinkReceipt.",
+    schema: z.object({
+      fileId: z.string().describe("The Receipt"),
+      invoiceFileId: z.string().describe("The invoice it pays"),
+    }),
+  }
+);
+
+export const unlinkReceiptTool = tool(
+  async ({ fileId, otherFileId }, config) =>
+    relayReceiptLinkAct(
+      "unlinkReceipt",
+      otherFileId ? { fileId, otherFileId } : { fileId },
+      config?.configurable?.authHeader
+    ),
+  {
+    name: "unlinkReceipt",
+    description:
+      "Remove a Receipt Link, or decline a pairing suggestion (pass otherFileId). The pair is never linked or suggested automatically again. No transaction connection changes.",
+    schema: z.object({
+      fileId: z.string().describe("A File of the pair"),
+      otherFileId: z
+        .string()
+        .optional()
+        .describe("The other File: a suggested pair to decline, or a Receipt linked to fileId; omit to remove fileId's own link"),
+    }),
+  }
+);
+
+export const getReceiptLinkTool = tool(
+  async ({ fileId }, config) => relayReceiptLinkAct("getReceiptLink", { fileId }, config?.configurable?.authHeader),
+  {
+    name: "getReceiptLink",
+    description:
+      "Inspect a File's Receipt Link: the invoice it is the Receipt of, or the Receipts linked to it, and its pairing suggestions.",
+    schema: z.object({
+      fileId: z.string().describe("A Receipt or an invoice File"),
+    }),
+  }
+);
+
+// ============================================================================
 // Create Partner
 // ============================================================================
 
@@ -1279,6 +1344,9 @@ export const WRITE_TOOLS = [
   linkCorrectionTool,
   unlinkCorrectionTool,
   getCorrectionTool,
+  linkReceiptTool,
+  unlinkReceiptTool,
+  getReceiptLinkTool,
   splitFileTool,
   dismissSplitSuggestionTool,
   bulkAssignPartnerToTransactionsTool,

@@ -91,8 +91,13 @@ export interface ConnectPair {
   matchConfidence?: number | null;
   matchSources?: unknown;
   scoreBreakdown?: unknown;
-  /** #242: why an auto-connect was allowed when it was not the full-amount case. */
-  autoConnectReason?: "remainder_same_day";
+  /**
+   * Why an auto-connect was allowed when it was not the full-amount case.
+   * `remainder_same_day` (#242): the File closed the Remainder of same-day
+   * evidence. `paired` (#571): the File followed its Receipt Link's other
+   * File onto the Transaction, past the Coverage gate.
+   */
+  autoConnectReason?: "remainder_same_day" | "paired";
   aiReasoning?: string;
   sourceInfo?: FileConnectionSourceInfo;
   /** A stored label other than the origin's own; only those in CONNECTION_TYPE_LABELS. */
@@ -187,6 +192,7 @@ export async function connectFiles(
 
   const prepared = await prepareConnects(db, userId, work.map((w) => w.pair), options);
 
+  const connected: ConnectedPair[] = [];
   for (let i = 0; i < work.length; i += CONNECT_CHUNK) {
     const chunk = work.slice(i, i + CONNECT_CHUNK);
     const plan = await db.runTransaction((tx) =>
@@ -196,7 +202,9 @@ export async function connectFiles(
       outcomes[w.index] = plan.outcomes[j];
     });
     await afterConnects(db, userId, plan, options);
+    connected.push(...plan.connected);
   }
+  await followReceiptLinks(db, userId, connected);
 
   for (const { index, of } of repeats) {
     const first = outcomes[of];
@@ -741,6 +749,71 @@ async function afterConnects(db: Db, userId: string, plan: ConnectPlan, options:
       fileData: c.fileData,
       sourceInfo: c.pair.sourceInfo,
     });
+  }
+}
+
+/**
+ * The matcher follows the pair (#571, ADR-0012 rule 6): whenever either File
+ * of a Receipt Link is connected, by any origin, the other File is connected
+ * to the same Transaction, origin `auto` and reason `paired`. The follow
+ * skips the Coverage gate (the other File adds only its surplus) but not the
+ * writer's own rules: a Rejection or the quota still refuse it.
+ *
+ * Never moves a File: one already connected anywhere stays where it is. A
+ * File that would follow onto two Transactions at once follows onto none.
+ * It fires on a connect only, so a person's Unlink of one File of a pair is
+ * never undone here.
+ */
+async function followReceiptLinks(db: Db, userId: string, connected: ConnectedPair[]): Promise<void> {
+  if (connected.length === 0) return;
+  const txOf = new Map<string, Set<string>>();
+  const note = (fileId: string, transactionId: string) => {
+    const set = txOf.get(fileId) ?? new Set<string>();
+    set.add(transactionId);
+    txOf.set(fileId, set);
+  };
+
+  // Receipt to invoice: the link sits on the connected File.
+  const invoiceIds = new Map<string, string[]>();
+  for (const c of connected) {
+    const invoiceId = c.fileData.receiptLink?.fileId;
+    if (typeof invoiceId === "string" && invoiceId) {
+      invoiceIds.set(invoiceId, [...(invoiceIds.get(invoiceId) ?? []), c.transactionId]);
+    }
+  }
+  const partners = await readOwned(db, "files", userId, [...invoiceIds.keys()]);
+  for (const [invoiceId, txIds] of invoiceIds) {
+    if (partners.has(invoiceId)) for (const t of txIds) note(invoiceId, t);
+  }
+
+  // Invoice to Receipts: the links that point at the connected File.
+  const byInvoice = new Map<string, string[]>();
+  for (const c of connected) byInvoice.set(c.fileId, [...(byInvoice.get(c.fileId) ?? []), c.transactionId]);
+  for (const ids of chunks([...byInvoice.keys()], IN_LIMIT)) {
+    const snap = await db
+      .collection("files")
+      .where("userId", "==", userId)
+      .where("receiptLink.fileId", "in", ids)
+      .get();
+    for (const doc of snap.docs) {
+      partners.set(doc.id, doc.data());
+      for (const t of byInvoice.get(doc.data().receiptLink.fileId) ?? []) note(doc.id, t);
+    }
+  }
+
+  const follows: ConnectPair[] = [];
+  for (const [fileId, txIds] of txOf) {
+    const data = partners.get(fileId);
+    if (!data || data.deletedAt || data.purgedAt || txIds.size !== 1) continue;
+    if (Array.isArray(data.transactionIds) && data.transactionIds.length > 0) continue;
+    follows.push({ fileId, transactionId: [...txIds][0], autoConnectReason: "paired" });
+  }
+  if (follows.length === 0) return;
+  const outcomes = await connectFiles(db, userId, follows, { origin: "auto" });
+  for (const o of outcomes) {
+    if (o.status === "refused") {
+      console.log(`[fileConnections] Pair follow ${o.fileId} -> ${o.transactionId} refused: ${o.reason}`);
+    }
   }
 }
 

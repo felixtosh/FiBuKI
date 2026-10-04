@@ -246,6 +246,11 @@ Next API route connects through the callable as the user (`lib/api/connect-file.
 - `getCorrectionCallable` - What a File corrects and who paid the original, or a Transaction's related refund or purchase
 - `backfillCorrectionLinksCallable` - Run the correction check over the user's existing Files once
 
+**Receipt Links (#571, ADR-0012):**
+- `linkReceiptCallable` / `unlinkReceiptCallable` - Link a Receipt to the invoice it pays (also accepts a suggestion), or unlink / decline a pair; a declined pair is never linked or suggested automatically again. Connecting either File of a linked pair connects the other (`auto`, reason `paired`)
+- `getReceiptLinkCallable` - A File's invoice or Receipts, and its pairing suggestions
+- `backfillReceiptPairsCallable` - Run the suggestion side of the pair check over the user's stored Files once; records no link
+
 **UVA filing:**
 - `markUvaPeriodFiledCallable` - Record what was filed for a period (append-only, editable figures); refused while the period has blockers
 - `getUvaFiledStatusCallable` - Blockers, filed vs now per Kennzahl, and earlier filed periods whose figures moved

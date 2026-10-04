@@ -730,8 +730,12 @@ function suggestedMatches(matches: Match[]): Match[] {
 
 export interface AutoConnectPick {
   match: Match;
-  /** #242: set only for a same-day Remainder auto-connect. */
-  autoConnectReason?: "remainder_same_day";
+  /**
+   * Set only for an auto-connect outside the full-amount case: a same-day
+   * Remainder (#242), or a covered Transaction holding the other File of this
+   * File's Receipt Link (#571).
+   */
+  autoConnectReason?: "remainder_same_day" | "paired";
 }
 
 /** Why a match at the auto-connect threshold stays a suggestion; logged by the trigger. */
@@ -745,10 +749,13 @@ export interface AutoConnectRefusal {
  * Which of a File's matches it connects itself (the upload trigger's rules):
  * at AUTO_MATCH_THRESHOLD, not on a Transaction already documented, a
  * Remainder Match only as the same-day case (#242, ADR-0008), and nothing at
- * all when the File's Partner prefers no receipt at least as strongly.
+ * all when the File's Partner prefers no receipt at least as strongly. A
+ * documented Transaction still takes this File when the other File of its
+ * Receipt Link is on it (#571): the pair counts once.
  */
 export async function selectAutoConnects(
   db: Db,
+  userId: string,
   file: MatcherFile,
   result: TransactionsForFileResult
 ): Promise<{ picks: AutoConnectPick[]; refusals: AutoConnectRefusal[] }> {
@@ -784,6 +791,8 @@ export async function selectAutoConnects(
     fileMatchingData.extractedTipAmount
   );
   const holdsFiles = (transactionId: string) => result.connectedFiles.has(transactionId);
+  const pairPartners =
+    potential.length > 0 && file.id ? await receiptPairPartnerIds(db, userId, file.id, file.data) : new Set<string>();
   const picks: AutoConnectPick[] = [];
 
   for (const match of potential) {
@@ -791,6 +800,13 @@ export async function selectAutoConnects(
       match.preview.amount,
       result.documentedAmounts.get(match.transactionId) ?? 0
     );
+    const holdsPartner = (result.connectedFiles.get(match.transactionId) ?? []).some((f) =>
+      pairPartners.has(f.fileId)
+    );
+    if (coverage.isCovered && holdsPartner) {
+      picks.push({ match, autoConnectReason: "paired" });
+      continue;
+    }
     if (coverage.isCovered) {
       // Prevents over-matching, e.g. six monthly invoices onto one line.
       refusals.push({
@@ -837,6 +853,24 @@ export async function selectAutoConnects(
   }
 
   return { picks, refusals };
+}
+
+/** The other Files of a File's Receipt Links (#571), from either side. */
+async function receiptPairPartnerIds(
+  db: Db,
+  userId: string,
+  fileId: string,
+  fileData: Data
+): Promise<Set<string>> {
+  const ids = new Set<string>();
+  if (typeof fileData.receiptLink?.fileId === "string") ids.add(fileData.receiptLink.fileId);
+  const receipts = await db
+    .collection("files")
+    .where("userId", "==", userId)
+    .where("receiptLink.fileId", "==", fileId)
+    .get();
+  for (const doc of receipts.docs) ids.add(doc.id);
+  return ids;
 }
 
 /**

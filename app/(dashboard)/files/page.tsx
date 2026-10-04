@@ -493,6 +493,15 @@ function FilesContent() {
       copies: copiesOf(detailFile.id),
     };
   }, [detailFile, copies, getFileById, copiesOf]);
+  // #571: the invoice this File is the Receipt of, while the pair counts:
+  // both live and on one Transaction.
+  const detailReceiptInvoice = useMemo(() => {
+    const invoiceId = detailFile?.receiptLink?.fileId;
+    const invoice = invoiceId ? getFileById(invoiceId) : undefined;
+    if (!detailFile || !invoice || invoice.deletedAt || invoice.purgedAt) return null;
+    const shared = (detailFile.transactionIds ?? []).some((id) => invoice.transactionIds?.includes(id));
+    return shared ? invoice : null;
+  }, [detailFile, getFileById]);
   const bulkSelectedFiles = useMemo(
     () => (showBulkPanel ? files.filter((f) => allSelectedIds.has(f.id)) : []),
     [showBulkPanel, files, allSelectedIds]
@@ -1327,6 +1336,7 @@ function FilesContent() {
               copyOriginal={detailCopy.original}
               copySuggestionOriginal={detailCopy.suggestedOriginal}
               copiesOfFile={detailCopy.copies}
+              receiptInvoice={detailReceiptInvoice}
               onMarkAsCopy={(originalFileId) => markAsCopy(detailFile.id, originalFileId)}
               onNotACopy={() => markNotACopy(detailFile.id)}
               onMakeOriginal={() => makeOriginal(detailFile.id)}

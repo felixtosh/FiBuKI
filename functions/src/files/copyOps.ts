@@ -23,6 +23,7 @@ import { isGeneratedInvoiceFile } from "./generatedInvoiceGuard";
 import { buildUnmarkNotInvoiceUpdates, queueExtractionAfterUnmark } from "./notInvoiceOps";
 import { rematchRevertedTransactions } from "../matching/partnerProvenance";
 import { planCopyMove } from "../fileConnections/writer";
+import { pairedForCopyCheck } from "../receiptPairs/pairMatcher";
 
 type Data = FirebaseFirestore.DocumentData;
 type Db = FirebaseFirestore.Firestore;
@@ -405,6 +406,15 @@ export async function markFileAsCopy(
       );
     }
 
+    // A Receipt and the invoice it pays are never a Copy of each other (#571).
+    const linked = (a: Data, bId: string) => a.receiptLink?.fileId === bId;
+    if (linked(copy.data, originalFileId) || linked(named.data, fileId)) {
+      throw new HttpsError(
+        "failed-precondition",
+        "RECEIPT_LINK_NOT_COPY: these Files are a Receipt and the invoice it pays, which is never a Copy. Unlink them first."
+      );
+    }
+
     // The system never unlinks (ADR-0010). The Copy check saw the File
     // unconnected before this transaction; a connect that landed since is
     // seen here, and the record is refused rather than taking it apart.
@@ -617,6 +627,8 @@ export async function runCopyCheck(
     if (copies.has(id)) continue;
     const other = { id, data };
     if (ruledNotCopy(self, other)) continue;
+    // A Receipt and the invoice it pays are never a Copy (#571, ADR-0012).
+    if (pairedForCopyCheck(self, other)) continue;
     const verdict = compareCopyEvidence(mine, copyEvidenceOf(data, await generatedNumber(db, userId, data)));
     if (!verdict) continue;
     if (!best || (verdict === "exact" && best.verdict !== "exact")) best = { other, verdict };

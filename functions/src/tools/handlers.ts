@@ -40,6 +40,7 @@ import {
 import { unmarkFileAsCopyAndRematch } from "../files/copyCallables";
 import { performDisconnectFile } from "../files/disconnectFileFromTransaction";
 import { getCorrection, linkCorrection, unlinkCorrection } from "../corrections/correctionOps";
+import { getReceiptLink, linkReceipt, unlinkReceipt } from "../receiptPairs/receiptPairOps";
 import {
   buildClearVatNotClaimableUpdates,
   buildMarkVatNotClaimableUpdates,
@@ -272,6 +273,12 @@ export async function handleTool(
       return linkCorrection(db, userId, args);
     case "unlink_correction":
       return unlinkCorrection(db, userId, args);
+    case "link_receipt":
+      return linkReceipt(db, userId, args);
+    case "unlink_receipt":
+      return unlinkReceipt(db, userId, args);
+    case "get_receipt_link":
+      return getReceiptLink(db, userId, args);
     case "get_correction":
       return getCorrection(db, userId, args);
     case "confirm_file_recipient_is_user":

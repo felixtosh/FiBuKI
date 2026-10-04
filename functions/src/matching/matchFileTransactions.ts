@@ -42,6 +42,7 @@ import {
 import { runCopyCheck } from "../files/copyOps";
 import { readDismissedTransactionIds } from "./dismissedTransactions";
 import { runCorrectionCheck } from "../corrections/correctionOps";
+import { runReceiptPairCheck } from "../receiptPairs/receiptPairOps";
 import { AutomationMeta } from "../automation/types";
 import { checkAIBudget } from "../billing/checkAIBudget";
 import { isPassiveMode } from "../utils/checkAutomationMode";
@@ -393,7 +394,7 @@ export async function runTransactionMatching(
   // threshold, Coverage, the same-day Remainder rule (#242, ADR-0008) and the
   // Partner's no-receipt preference. Written through the File Connection
   // writer (#612), which refuses what an automated connect may not do.
-  const { picks, refusals } = await selectAutoConnects(db, file, result);
+  const { picks, refusals } = await selectAutoConnects(db, userId, file, result);
   for (const r of refusals) {
     console.log(`[TxMatch] Suggestion only for ${r.transactionId} at ${r.confidence}% (${r.reason})`);
   }
@@ -402,6 +403,11 @@ export async function runTransactionMatching(
       console.log(
         `[TxMatch] Remainder auto-connect for ${pick.match.transactionId} at ${pick.match.confidence}% ` +
           "(closes the remainder, same day as the files already on it)"
+      );
+    } else if (pick.autoConnectReason === "paired") {
+      console.log(
+        `[TxMatch] Paired auto-connect for ${pick.match.transactionId} at ${pick.match.confidence}% ` +
+          "(the other File of this File's Receipt Link is on it)"
       );
     }
   }
@@ -920,23 +926,59 @@ export const matchFileTransactions = onDocumentUpdated(
       }
     }
 
-    if (!shouldRun) {
-      return;
+    if (shouldRun) {
+      console.log(`Starting transaction matching for file: ${fileId} (reason: ${reason})`);
+
+      try {
+        await runTransactionMatching(fileId, after);
+      } catch (error) {
+        console.error(`Transaction matching failed for file ${fileId}:`, error);
+        // Mark as complete with no matches (don't block the process)
+        await db.collection("files").doc(fileId).update({
+          transactionMatchComplete: true,
+          transactionMatchedAt: Timestamp.now(),
+          transactionSuggestions: [],
+          updatedAt: Timestamp.now(),
+        });
+      }
     }
 
-    console.log(`Starting transaction matching for file: ${fileId} (reason: ${reason})`);
-
-    try {
-      await runTransactionMatching(fileId, after);
-    } catch (error) {
-      console.error(`Transaction matching failed for file ${fileId}:`, error);
-      // Mark as complete with no matches (don't block the process)
-      await db.collection("files").doc(fileId).update({
-        transactionMatchComplete: true,
-        transactionMatchedAt: Timestamp.now(),
-        transactionSuggestions: [],
-        updatedAt: Timestamp.now(),
-      });
+    // #571: the pair check reads the numbers, the issuer, the Partner, the
+    // amount, the day and the Document Type. It runs whenever one of them
+    // moves, and on a restore. After matching, so the Copy check has had its
+    // say on a second File of the same document first; on the File as it
+    // stands now, so a Connection matching just made is seen. Not before
+    // Partner matching completes: until then the Copy check has not run.
+    if (after.partnerMatchComplete && pairInputsChanged(before, after, partnerMatchJustCompleted)) {
+      const fresh = (await db.collection("files").doc(fileId).get()).data();
+      if (fresh) {
+        await runReceiptPairCheck(db, fileId, fresh).catch((err) => {
+          console.error(`[ReceiptPair] Check failed for ${fileId}`, err);
+        });
+      }
     }
   }
 );
+
+function pairInputsChanged(
+  before: FirebaseFirestore.DocumentData,
+  after: FirebaseFirestore.DocumentData,
+  partnerMatchJustCompleted: boolean
+): boolean {
+  const day = (v: unknown) => toDateSafe(v)?.toISOString().slice(0, 10) ?? null;
+  const issuer = (d: FirebaseFirestore.DocumentData) =>
+    `${d.extractedIssuer?.vatId ?? ""}|${d.extractedIssuer?.name ?? ""}|${d.extractedPartner ?? ""}`;
+  return (
+    partnerMatchJustCompleted ||
+    before.partnerId !== after.partnerId ||
+    before.extractedInvoiceNumber !== after.extractedInvoiceNumber ||
+    before.extractedPaidInvoiceNumber !== after.extractedPaidInvoiceNumber ||
+    before.extractedAmount !== after.extractedAmount ||
+    before.extractedTipAmount !== after.extractedTipAmount ||
+    before.extractedCurrency !== after.extractedCurrency ||
+    before.documentType !== after.documentType ||
+    day(before.extractedDate) !== day(after.extractedDate) ||
+    issuer(before) !== issuer(after) ||
+    (!!before.deletedAt && !after.deletedAt)
+  );
+}

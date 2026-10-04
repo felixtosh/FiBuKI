@@ -23,6 +23,7 @@ export const READ_ONLY_TOOLS = [
   "list_files",
   "get_file",
   "get_correction",
+  "get_receipt_link",
   "score_file_transaction_match",
   "list_identity_entities",
   "list_partners",
@@ -85,6 +86,8 @@ export const WRITE_TOOLS = [
   "make_file_the_original",
   "link_correction",
   "unlink_correction", // the link is the only state; link_correction restores it
+  "link_receipt",
+  "unlink_receipt", // the link is the only state; link_receipt restores it
   "update_file_extraction",
   "auto_connect_file_suggestions",
   "upload_file",

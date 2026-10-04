@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useEffect } from "react";
+import { useTranslations } from "next-intl";
 import { format } from "date-fns";
 import {
   Loader2,
@@ -56,6 +57,7 @@ import { fileDisplayName } from "@/lib/files/file-display-name";
 import Link from "next/link";
 import { useState } from "react";
 import { useMountOnceOpened } from "@/hooks/use-mount-once-opened";
+import { orderPairEvidence, pairRoles } from "@/functions/src/matching/countedDocuments";
 
 // Consistent field row component (matches transaction-details.tsx)
 // Uses container queries to stack vertically when panel is narrow (<300px)
@@ -160,8 +162,16 @@ function RemainderLine({ transactionAmount, transactionCurrency, transactionDate
   const lineFiles: RemainderLineFile[] = files.map((file) => {
     const extractionPending = isExtractionPending(file);
     const payment = filePaymentTotal(file.extractedAmount, file.extractedTipAmount);
+    // Which File it is and what it pays, so a Receipt beside its invoice
+    // counts once (#571); the currency is the document's own, which decides
+    // whether a Receipt's surplus counts at all.
+    const pair = {
+      fileId: file.id,
+      currency: file.extractedCurrency ?? null,
+      receiptOfFileId: file.receiptLink?.fileId ?? null,
+    };
     if (payment == null || file.extractedCurrency === transactionCurrency) {
-      return { payment, extractionPending };
+      return { payment, extractionPending, ...pair };
     }
     const conversion = convert(
       payment,
@@ -170,8 +180,8 @@ function RemainderLine({ transactionAmount, transactionCurrency, transactionDate
       transactionDate
     );
     return conversion
-      ? { payment: conversion.amount, extractionPending }
-      : { payment, extractionPending, conversionFailed: true };
+      ? { payment: conversion.amount, extractionPending, ...pair }
+      : { payment, extractionPending, conversionFailed: true, ...pair };
   });
 
   const state = remainderLineState(transactionAmount, lineFiles);
@@ -226,16 +236,24 @@ function formatAmount(
   }).format(amount / 100);
 }
 
+/**
+ * The File's role while a Receipt and the invoice it pays count as one
+ * document on this Transaction (#571): the invoice, or the Receipt for it.
+ */
+type PairRole = { role: "invoice" } | { role: "receipt"; invoiceName: string };
+
 interface FileRowProps {
   file: TaxFile;
   transactionCurrency: string;
   transactionDate: Date;
   onDisconnect: () => void;
   disconnecting: boolean;
+  pairRole?: PairRole | null;
 }
 
-function FileRow({ file, transactionCurrency, transactionDate, onDisconnect, disconnecting }: FileRowProps) {
+function FileRow({ file, transactionCurrency, transactionDate, onDisconnect, disconnecting, pairRole }: FileRowProps) {
   const convert = useEcbConverter();
+  const tPair = useTranslations("files.receiptLink");
   const isExtracting = !file.extractionComplete && !file.isNotInvoice;
 
   // Check if file currency differs from transaction currency
@@ -263,8 +281,15 @@ function FileRow({ file, transactionCurrency, transactionDate, onDisconnect, dis
       href={`/files?id=${file.id}`}
       className="flex items-center justify-between gap-2 p-2 -mx-2 rounded hover:bg-muted/50 transition-colors group overflow-hidden"
     >
-      <div className="min-w-0 flex-1 overflow-hidden w-0">
+      <div className={cn("min-w-0 flex-1 overflow-hidden w-0", pairRole?.role === "receipt" && "pl-4")}>
         <p className="text-sm truncate">{fileDisplayName(file)}</p>
+        {pairRole ? (
+          <p className="text-xs text-muted-foreground truncate">
+            {pairRole.role === "invoice"
+              ? tPair("invoiceRole")
+              : tPair("receiptForInvoice", { invoice: pairRole.invoiceName })}
+          </p>
+        ) : null}
         <p className="text-xs text-muted-foreground">
           {toDateSafe(file.extractedDate)
             ? format(toDateSafe(file.extractedDate)!, "MMM d, yyyy")
@@ -468,6 +493,28 @@ export function TransactionFilesSection({
 
   // Check if transaction has files
   const hasFiles = files.length > 0;
+
+  // A Receipt beside the invoice it pays (#571): shown together, each
+  // labelled by its role, from the same rule the amount readers count by.
+  const pairedFiles = useMemo(() => {
+    const keyed = files.map((f) => ({
+      id: f.id,
+      payment: filePaymentTotal(f.extractedAmount, f.extractedTipAmount),
+      currency: f.extractedCurrency ?? null,
+      receiptOfFileId: f.receiptLink?.fileId ?? null,
+      file: f,
+    }));
+    const roles = pairRoles(keyed);
+    const byId = new Map(files.map((f) => [f.id, f]));
+    const roleOf = (id: string): PairRole | null => {
+      const r = roles.get(id);
+      if (!r) return null;
+      if (r.role === "invoice") return { role: "invoice" };
+      const invoice = byId.get(r.invoiceId);
+      return { role: "receipt", invoiceName: invoice ? fileDisplayName(invoice) : r.invoiceId };
+    };
+    return { ordered: orderPairEvidence(keyed).map((k) => k.file), roleOf };
+  }, [files]);
 
   // The chase case (#207): money moved, a document is attached, and none of
   // the attached documents is a Rechnung under § 11. The state is derived on
@@ -824,7 +871,7 @@ export function TransactionFilesSection({
                 <DocumentationStateBadge state={transaction.documentationState} />
               </div>
               <div className="space-y-0.5">
-                {files.map((file) => (
+                {pairedFiles.ordered.map((file) => (
                   <div key={file.id}>
                     <FileRow
                       file={file}
@@ -832,6 +879,7 @@ export function TransactionFilesSection({
                       transactionDate={toDateSafe(transaction.date) || new Date()}
                       onDisconnect={() => handleDisconnectFile(file.id)}
                       disconnecting={disconnecting === file.id}
+                      pairRole={pairedFiles.roleOf(file.id)}
                     />
                     {/* #162: the original's Copies, shown and never counted */}
                     <TransactionFileCopies copies={copiesOf(file.id)} />

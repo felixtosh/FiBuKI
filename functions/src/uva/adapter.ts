@@ -8,6 +8,8 @@
  * anything with toDate().
  */
 
+import { filePaymentTotal } from "../matching/coverage";
+import { countedDocuments } from "../matching/countedDocuments";
 import {
   isPartialPaymentAcceptanceLive,
   type PartialPaymentAcceptance,
@@ -108,6 +110,11 @@ export interface FileRecord {
    * consequence is a § 12 one: there is no Vorsteuer to claim.
    */
   foreignRecipient?: boolean;
+  /**
+   * The invoice this File is the Receipt of (#571, ADR-0012). Beside its
+   * invoice on one Transaction, the pair counts as one document.
+   */
+  receiptLink?: { fileId?: string | null } | null;
 }
 
 export interface CategoryRecord {
@@ -362,6 +369,32 @@ export function payableTotalOf(
   return total + (tip > 0 ? tip : 0);
 }
 
+/**
+ * A Transaction's Files as the documents it counts (#571, ADR-0012): a
+ * Receipt beside the invoice it pays is folded into the invoice, and the
+ * Receipt's surplus over the invoice joins the invoice's Trinkgeld, so it is
+ * part of the payment and no part of the VAT base, and the tip guards judge
+ * it like a printed one. The Receipt's own figures never reach the
+ * calculation, so neither its VAT nor the prior-instalment lookup sees it.
+ */
+export function countedFileRecords(records: FileRecord[]): FileRecord[] {
+  if (!records.some((f) => f.receiptLink?.fileId)) return records;
+  const documents = countedDocuments(
+    records.map((record) => ({
+      record,
+      id: record.id,
+      payment: filePaymentTotal(record.extractedAmount, record.extractedTipAmount),
+      currency: record.extractedCurrency ?? null,
+      receiptOfFileId: record.receiptLink?.fileId ?? null,
+    }))
+  );
+  return documents.map(({ file: { record }, surplus }) => {
+    if (surplus <= 0) return record;
+    const printed = record.extractedTipAmount ?? 0;
+    return { ...record, extractedTipAmount: (printed > 0 ? printed : 0) + surplus };
+  });
+}
+
 export interface BuildOptions {
   filesById: Map<string, FileRecord>;
   categoriesById: Map<string, CategoryRecord>;
@@ -380,9 +413,9 @@ export function buildUvaTransaction(
   tx: TransactionRecord,
   opts: BuildOptions
 ): UvaTransaction {
-  const fileRecords = (tx.fileIds ?? [])
-    .map((id) => opts.filesById.get(id))
-    .filter((f): f is FileRecord => !!f);
+  const fileRecords = countedFileRecords(
+    (tx.fileIds ?? []).map((id) => opts.filesById.get(id)).filter((f): f is FileRecord => !!f)
+  );
   const files = fileRecords.map(toUvaFile);
 
   let noReceiptCategory: UvaTransaction["noReceiptCategory"] = null;
