@@ -945,6 +945,12 @@
     "heldBack": {
       "rejected": "Abgelehnt",
       "overQuota": "Über dem Planlimit"
+    },
+    "ineligible": {
+      "deleted": "Dieser Beleg ist gelöscht und wird nicht zugeordnet.",
+      "copy": "Dieser Beleg ist eine Kopie; zugeordnet wird das Original.",
+      "notInvoice": "Dieser Beleg ist als keine Rechnung markiert und wird nicht zugeordnet.",
+      "foreignRecipient": "Dieser Beleg ist an jemand anderen adressiert und wird nicht zugeordnet. Bestätige den Empfänger, um ihn zuzuordnen."
     }
   }
 }

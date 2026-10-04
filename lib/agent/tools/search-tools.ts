@@ -9,6 +9,7 @@ import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { classifyEmail } from "@/lib/email-providers/interface";
 import { callFirebaseFunction } from "@/lib/api/firebase-callable";
+import { TRANSACTION_MATCH_CONFIG } from "@/types/transaction-matching";
 // The one reader of a file's dismissal fields (fork #94), imported rather than
 // re-derived here — a fourth hand-rolled reader of the same two fields is how
 // the enforcement drifts apart again. Dependency-free pure logic; the relative
@@ -616,7 +617,12 @@ export const searchLocalFilesTool = tool(
         id: `local_${match.fileId}`,
         sourceType: "local_file",
         score: match.confidence,
-        scoreLabel: match.confidence >= 85 ? "Strong" : match.confidence >= 50 ? "Likely" : null,
+        scoreLabel:
+          match.confidence >= TRANSACTION_MATCH_CONFIG.AUTO_MATCH_THRESHOLD
+            ? "Strong"
+            : match.confidence >= TRANSACTION_MATCH_CONFIG.SUGGESTION_THRESHOLD
+              ? "Likely"
+              : null,
         scoreReasons: match.matchSources,
         fileId: match.fileId,
         fileName: file.fileName,

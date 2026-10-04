@@ -68,9 +68,9 @@ import { fileSearchMatches } from "@/functions/src/matching/fileSearch";
 import { readRejectedFileIds } from "@/functions/src/matching/rejectedFiles";
 import { readDismissedTransactionIds } from "@/functions/src/matching/dismissedTransactions";
 import {
-  TRANSACTION_MATCH_CONFIG,
   getMatchSourceLabel,
   heldBackKey,
+  isSuggestedMatch,
 } from "@/types/transaction-matching";
 import { TaxFile } from "@/types/file";
 import { toDateSafe } from "@/lib/utils";
@@ -2024,9 +2024,7 @@ export function ConnectFileOverlay({
                       const match = fileMatchMap.get(file.id);
                       const isPdf = classifyFileStrict(file.fileType).isPdf;
                       const isStrategyMatch = localStrategyMatchFileIds.has(file.id);
-                      const isSuggested =
-                        match !== undefined &&
-                        TRANSACTION_MATCH_CONFIG.SUGGESTION_THRESHOLD <= match.confidence;
+                      const isSuggested = match !== undefined && isSuggestedMatch(match);
                       const fileDate = toDateSafe(file.extractedDate);
                       const matchedFields = trimmedFilesQuery
                         ? fileSearchMatches(file, trimmedFilesQuery)

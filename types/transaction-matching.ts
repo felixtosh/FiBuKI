@@ -152,6 +152,17 @@ export const TRANSACTION_MATCH_CONFIG = {
 
 // === Helper Functions ===
 
+export type IneligibleReason = NonNullable<FindTransactionMatchesResponse["ineligible"]>;
+
+/** The `connect` message key saying why a File is never matched (#613). */
+export function ineligibleKey(
+  reason: IneligibleReason
+): "ineligible.deleted" | "ineligible.copy" | "ineligible.notInvoice" | "ineligible.foreignRecipient" {
+  if (reason === "not-invoice") return "ineligible.notInvoice";
+  if (reason === "foreign-recipient") return "ineligible.foreignRecipient";
+  return reason === "copy" ? "ineligible.copy" : "ineligible.deleted";
+}
+
 /** The `connect` message key labelling a pair a search shows although it is held back (#613). */
 export function heldBackKey(reason: HeldBackReason): "heldBack.rejected" | "heldBack.overQuota" {
   return reason === "rejected" ? "heldBack.rejected" : "heldBack.overQuota";
@@ -190,8 +201,9 @@ export function getMatchSourceLabel(source: TransactionMatchSource): string {
 /**
  * Check if a match is above the suggestion threshold
  */
-export function isSuggestedMatch(match: TransactionMatchResult): boolean {
-  return match.confidence >= TRANSACTION_MATCH_CONFIG.SUGGESTION_THRESHOLD;
+export function isSuggestedMatch(match: { confidence: number; hidden?: HeldBackReason }): boolean {
+  // A held-back pair a search shows is never a suggestion (#613).
+  return !match.hidden && match.confidence >= TRANSACTION_MATCH_CONFIG.SUGGESTION_THRESHOLD;
 }
 
 /**
