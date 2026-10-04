@@ -14,9 +14,8 @@ import {
   type BillingCycleTransaction,
   type DerivedBillingCycle,
 } from "./billingCycle";
-import { rescoreFileConnectionsForPartner } from "./rescoreFileConnections";
+import { rescoreConnections } from "./matcher";
 import { checkRecurrence, isVerdictFresh, recurrenceKey, type RecurrenceCheckInput } from "./recurrenceCheck";
-import { derivePartnerAliases, deriveScoringWeights } from "./transactionScoring";
 
 /** Charges a partner needs before any cycle can be derived. */
 export const MIN_BILLING_CYCLE_TRANSACTIONS = 3;
@@ -157,15 +156,8 @@ export async function learnBillingCycleForPartner(
   // failure (e.g. a connection deleted by a concurrent session between the
   // query and the write) must not turn a successful learn into a failure.
   try {
-    await rescoreFileConnectionsForPartner(
-      db,
-      userId,
-      partnerId,
-      txDocs,
-      effective,
-      deriveScoringWeights(partnerData),
-      await derivePartnerAliases(db, partnerData)
-    );
+    // The matcher reads the Partner back, with the bands just written.
+    await rescoreConnections(db, userId, partnerId, txDocs);
   } catch (error) {
     console.warn(`[BillingCycle] Re-score failed for partner ${partnerId}:`, error);
   }

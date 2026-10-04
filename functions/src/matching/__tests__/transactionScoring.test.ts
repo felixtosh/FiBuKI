@@ -1221,7 +1221,6 @@ describe("SCORING_CONFIG", () => {
   it("has expected thresholds", () => {
     expect(SCORING_CONFIG.AUTO_MATCH_THRESHOLD).toBe(85);
     expect(SCORING_CONFIG.SUGGESTION_THRESHOLD).toBe(50);
-    expect(SCORING_CONFIG.DATE_RANGE_DAYS).toBe(30);
     expect(SCORING_CONFIG.MAX_SUGGESTIONS).toBe(5);
   });
 });

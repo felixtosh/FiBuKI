@@ -129,13 +129,14 @@ describe("find-receipt auto-connects at the matcher's threshold (#588)", () => {
     expect(await connections()).toHaveLength(0);
   });
 
-  it("does not auto-connect onto an over-quota Transaction", async () => {
+  it("neither offers nor auto-connects a stored File for an over-quota Transaction (#613)", async () => {
     await at85();
     await db.collection("transactions").doc("t").update({ quotaExceeded: true });
 
     const result = await findReceipt({ transactionId: "t" });
 
-    expect(result.status).toBe("needs_review");
+    // The matcher holds the pair back, as it does from the stored suggestions.
+    expect(result.status).toBe("no_match");
     expect(await connections()).toHaveLength(0);
   });
 });

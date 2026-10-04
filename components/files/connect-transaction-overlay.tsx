@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { format } from "date-fns";
+import { useTranslations } from "next-intl";
 import {
   Search,
   Receipt,
@@ -47,6 +48,8 @@ import {
   TransactionMatchResult,
   getMatchSourceLabel,
   isSuggestedMatch,
+  heldBackKey,
+  ineligibleKey,
 } from "@/types/transaction-matching";
 
 interface ConnectTransactionOverlayProps {
@@ -69,6 +72,7 @@ export function ConnectTransactionOverlay({
   file,
   suggestions = [],
 }: ConnectTransactionOverlayProps) {
+  const t = useTranslations("connect");
   const [search, setSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [previewTransaction, setPreviewTransaction] = useState<Transaction | null>(null);
@@ -88,25 +92,45 @@ export function ConnectTransactionOverlay({
     return map;
   }, [allFiles]);
 
-  // Memoize the fileInfo object to prevent unnecessary re-renders
+  // The File's scoring fields in its own names, dates as ISO strings. The
+  // server reads a stored File by id and ignores these; a File not stored
+  // yet is read from them through the matcher's assembly (#613). Primitive
+  // dependencies, so a re-extraction while the dialog is open refetches.
   const extractedDateValue = toDateSafe(file?.extractedDate);
+  const extractedDateMs = extractedDateValue?.getTime();
+  const dueDateMs = toDateSafe(file?.extractedDueDate)?.getTime();
+  const debitDateMs = toDateSafe(file?.extractedDebitDate)?.getTime();
   const memoizedFileInfo = useMemo(() => {
     if (!file) return undefined;
+    const iso = (ms: number | undefined) => (ms == null ? undefined : new Date(ms).toISOString());
     return {
       extractedAmount: file.extractedAmount ?? undefined,
-      extractedDate: extractedDateValue?.toISOString() ?? undefined,
+      extractedTipAmount: file.extractedTipAmount ?? undefined,
+      extractedCurrency: file.extractedCurrency ?? undefined,
+      extractedDate: iso(extractedDateMs),
+      extractedDueDate: iso(dueDateMs),
+      extractedDebitDate: iso(debitDateMs),
       extractedPartner: file.extractedPartner ?? undefined,
       extractedIban: file.extractedIban ?? undefined,
       extractedText: file.extractedText ?? undefined,
+      extractedInvoiceNumber: file.extractedInvoiceNumber ?? undefined,
       partnerId: file.partnerId ?? undefined,
+      documentType: file.documentType ?? undefined,
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     file?.extractedAmount,
-    extractedDateValue?.getTime(),
+    file?.extractedTipAmount,
+    file?.extractedCurrency,
+    extractedDateMs,
+    dueDateMs,
+    debitDateMs,
     file?.extractedPartner,
     file?.extractedIban,
     file?.extractedText,
+    file?.extractedInvoiceNumber,
     file?.partnerId,
+    file?.documentType,
   ]);
 
   // Memoize excludeTransactionIds to prevent unnecessary re-renders
@@ -119,6 +143,7 @@ export function ConnectTransactionOverlay({
   // Server-side transaction matching
   const {
     matches: serverMatches,
+    ineligible,
     isLoading: matchesLoading,
     fetchMatches,
   } = useTransactionMatching({
@@ -473,6 +498,10 @@ export function ConnectTransactionOverlay({
               </div>
             </div>
 
+            {ineligible ? (
+              <p className="px-4 py-2 text-xs text-muted-foreground border-b">{t(ineligibleKey(ineligible))}</p>
+            ) : null}
+
             {/* Transaction list */}
             <ScrollArea className="flex-1">
               {loading ? (
@@ -519,6 +548,8 @@ export function ConnectTransactionOverlay({
                         isHighlighted={isSuggested}
                         highlightVariant="suggestion"
                         confidence={matchResult?.confidence}
+                        // A search shows held-back pairs too, marked (#613).
+                        labelBadge={matchResult?.hidden ? t(heldBackKey(matchResult.hidden)) : undefined}
                         matchSignals={matchResult?.matchSources.map((s) => getMatchSourceLabel(s))}
                         onClick={() => toggleSelection(transaction)}
                       />

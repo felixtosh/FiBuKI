@@ -1,26 +1,24 @@
 /**
- * #308 / #327 — one File/Transaction pair, one score, whichever surface asks.
+ * #308 / #327 / #613 — one File/Transaction pair, one score, from either end.
  *
- * CLAUDE.md requires the agent's scorer and the UI's to agree. Five surfaces
- * score a pair:
+ * Every surface reaches the matcher (`matching/matcher.ts`; the guard in
+ * matching/__tests__/scoringInputs-guard.test.ts holds that), so parity is
+ * held at the matcher: each fixture's pair must score identically
  *
- *   - the matching trigger (`runTransactionMatching`), whose output the UI
- *     shows as the File's stored suggestions,
- *   - the connect dialog opened from a File (`findTransactionMatchesForFile`),
- *   - the connect window opened from a Transaction
- *     (`findFileMatchesForTransaction`, #555),
- *   - the agent's `score_file_transaction_match` (`scoreFileTransactionMatch`),
- *   - the find-receipt workflow the chat agent runs (`findReceiptForTransaction`,
- *     #588), for the File the fixture is about.
+ *   - for the File (`transactionsForFile`, what the trigger stores and the
+ *     connect dialog opened from a File ranks),
+ *   - for the Transaction (`filesForTransaction`, the connect window opened
+ *     from a Transaction, find-receipt and the agent's local search),
+ *   - by id (`scorePair`, the MCP tool and the agent's batch scorer),
  *
- * Each fixture below exercises one input that a hand-built copy of the
- * scoring inputs has dropped before: the tip (#217), the Remainder (#239), the
+ * and the trigger must store that score.
+ *
+ * Each fixture exercises one input that a hand-built copy of the scoring
+ * inputs has dropped before: the tip (#217), the Remainder (#239), the
  * bank-stated original amount (#112), the invoice number in the preserved raw
- * row (#137), the precision-search hint, and the assigned Partner's aliases
- * and learned weights, the published ECB rate for an old foreign-currency
- * pair (#555), and an undated File. All five surfaces run for real on the
- * self-host shim, and every pair the trigger suggests must score identically
- * on the others.
+ * row (#137), the precision-search hint, the assigned Partner's aliases and
+ * learned weights, the published ECB rate for an old foreign-currency pair
+ * (#555), and an undated File.
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
@@ -28,13 +26,8 @@ import { getFirestore, Timestamp, __resetFirestoreShim } from "./firestore-shim"
 import { __resetTriggerShim } from "./trigger-shim";
 
 import { runTransactionMatching } from "../matching/matchFileTransactions";
-import { findTransactionMatchesForFile } from "../matching/findTransactionMatches";
-import { findFileMatchesForTransactionCallable } from "../matching/findFileMatches";
+import { filesForTransaction, scorePair, transactionsForFile } from "../matching/matcher";
 import { storeEcbDays } from "../fx/ecbRateStore";
-import { scoreFileTransactionMatch } from "../tools/handlers";
-import { findReceiptForTransactionCallable } from "../workflows/findReceiptForTransactionCallable";
-import type { FindReceiptResult } from "../workflows/findReceiptForTransaction";
-import { formatScoreBreakdown, type ScoreBreakdown } from "../matching/transactionScoring";
 
 const db = getFirestore();
 const USER = "parity-user";
@@ -240,55 +233,21 @@ async function seed() {
   });
 }
 
-type DialogMatch = {
-  transactionId: string;
-  confidence: number;
-  matchSources: string[];
-  breakdown: ScoreBreakdown;
-};
-
-const dialog = findTransactionMatchesForFile as unknown as (req: {
-  auth: { uid: string };
-  data: Record<string, unknown>;
-}) => Promise<{ matches: DialogMatch[] }>;
-
-type WindowMatch = DialogMatch & { fileId: string; scoredAgainstRemainder: boolean };
-
-/** The Connect File window opened from a Transaction (#555). */
-const connectWindow = (data: Record<string, unknown>) =>
-  (
-    findFileMatchesForTransactionCallable as unknown as {
-      run: (req: unknown) => Promise<{ matches: WindowMatch[] }>;
-    }
-  ).run({ data, auth: { uid: USER, token: {} } });
-
-/** The find-receipt workflow (#588). Large maxCandidates: every File it scored. */
-const findReceipt = (transactionId: string) =>
-  (
-    findReceiptForTransactionCallable as unknown as {
-      run: (req: unknown) => Promise<FindReceiptResult>;
-    }
-  ).run({ data: { transactionId, maxCandidates: 100 }, auth: { uid: USER, token: {} } });
-
-/**
- * What find-receipt said about one File: its candidate entry, or the
- * Confidence it connected the File at. Reasons are the matcher's sources;
- * a connect does not echo them, so they are null there.
- */
-async function findReceiptScore(transactionId: string, fileId: string) {
-  const result = await findReceipt(transactionId);
-  if (result.status === "connected" && result.fileId === fileId) {
-    return { status: result.status, confidence: result.confidence, matchSources: null };
-  }
-  const candidate = result.candidates?.find((c) => c.fileId === fileId);
-  return {
-    status: result.status,
-    confidence: candidate?.score,
-    matchSources: candidate ? sorted(candidate.reasons) : undefined,
-  };
-}
-
+const fileOf = async (id: string) => ({ id, data: (await db.collection("files").doc(id).get()).data()! });
+const txOf = (id: string) => db.collection("transactions").doc(id).get();
 const sorted = (sources: string[]) => [...sources].sort();
+
+/** The pair's score for the File, for the Transaction, and by id. */
+async function fromEachEnd(fileId: string, transactionId: string) {
+  const forFile = (await transactionsForFile(db, USER, await fileOf(fileId))).matches.find(
+    (m) => m.transactionId === transactionId
+  );
+  const forTx = (await filesForTransaction(db, USER, await txOf(transactionId))).matches.find(
+    (m) => m.fileId === fileId
+  );
+  const byId = (await scorePair(db, USER, await fileOf(fileId), await txOf(transactionId))).match;
+  return { forFile, forTx, byId };
+}
 
 beforeEach(async () => {
   await __resetFirestoreShim();
@@ -296,14 +255,11 @@ beforeEach(async () => {
   await seed();
 });
 
-describe("the trigger, both connect windows and the agent tool score a pair identically", () => {
+describe("a pair scores the same from either end, and the trigger stores that score", () => {
   for (const fixture of FIXTURES) {
     it(fixture.name, async () => {
-      const fileData = (await db.collection("files").doc(fixture.fileId).get()).data()!;
-      await runTransactionMatching(fixture.fileId, fileData);
-
-      const stored = (await db.collection("files").doc(fixture.fileId).get()).data()!;
-      const suggestions = stored.transactionSuggestions as Array<{
+      await runTransactionMatching(fixture.fileId, (await fileOf(fixture.fileId)).data);
+      const suggestions = (await fileOf(fixture.fileId)).data.transactionSuggestions as Array<{
         transactionId: string;
         confidence: number;
         matchSources: string[];
@@ -311,153 +267,52 @@ describe("the trigger, both connect windows and the agent tool score a pair iden
       // Not vacuous: the pair the fixture is about reached the UI.
       expect(suggestions.map((s) => s.transactionId)).toContain(fixture.transactionId);
 
-      const { matches } = await dialog({ auth: { uid: USER }, data: { fileId: fixture.fileId } });
-
       for (const suggestion of suggestions) {
-        const inDialog = matches.find((m) => m.transactionId === suggestion.transactionId);
-        const fromAgent = await scoreFileTransactionMatch(USER, {
-          fileId: fixture.fileId,
-          transactionId: suggestion.transactionId,
+        const { forFile, forTx, byId } = await fromEachEnd(fixture.fileId, suggestion.transactionId);
+        expect(forFile, `for the File: ${suggestion.transactionId} missing`).toBeDefined();
+        expect(forTx, `for the Transaction: ${fixture.fileId} missing`).toBeDefined();
+        const shape = (m: { confidence: number; matchSources: string[]; breakdown: unknown }) => ({
+          confidence: m.confidence,
+          matchSources: sorted(m.matchSources),
+          breakdown: m.breakdown,
         });
-
-        // No search term: the window ranks before anything is typed.
-        const { matches: fromTransaction } = await connectWindow({
-          transactionId: suggestion.transactionId,
-          limit: 100,
+        expect(shape(forTx!)).toEqual(shape(forFile!));
+        expect(shape(byId)).toEqual(shape(forFile!));
+        expect({ confidence: suggestion.confidence, matchSources: sorted(suggestion.matchSources) }).toEqual({
+          confidence: forFile!.confidence,
+          matchSources: sorted(forFile!.matchSources),
         });
-        const inWindow = fromTransaction.find((m) => m.fileId === fixture.fileId);
-
-        expect(inDialog, `dialog is missing ${suggestion.transactionId}`).toBeDefined();
-        expect(inWindow, `window is missing ${fixture.fileId}`).toBeDefined();
-        expect({
-          confidence: inWindow!.confidence,
-          matchSources: sorted(inWindow!.matchSources),
-          breakdown: inWindow!.breakdown,
-        }).toEqual({
-          confidence: suggestion.confidence,
-          matchSources: sorted(suggestion.matchSources),
-          breakdown: inDialog!.breakdown,
-        });
-        expect({
-          confidence: inDialog!.confidence,
-          matchSources: sorted(inDialog!.matchSources),
-        }).toEqual({
-          confidence: suggestion.confidence,
-          matchSources: sorted(suggestion.matchSources),
-        });
-        expect({
-          confidence: fromAgent.confidence,
-          matchSources: sorted(fromAgent.matchSources),
-          breakdown: fromAgent.breakdown,
-        }).toEqual({
-          confidence: suggestion.confidence,
-          matchSources: sorted(suggestion.matchSources),
-          breakdown: formatScoreBreakdown(inDialog!.breakdown),
-        });
-      }
-
-      // Last: find-receipt may connect the File, which would change what the
-      // other surfaces see.
-      const own = suggestions.find((s) => s.transactionId === fixture.transactionId)!;
-      const fromWorkflow = await findReceiptScore(fixture.transactionId, fixture.fileId);
-      if (fixture.fileId === "f-remainder") {
-        // Its line already holds a File, and find-receipt only looks for the
-        // first one: the early exit stands (#588).
-        expect(fromWorkflow.status).toBe("skipped");
-        return;
-      }
-      expect(fromWorkflow.confidence).toBe(own.confidence);
-      if (fromWorkflow.matchSources) {
-        expect(fromWorkflow.matchSources).toEqual(sorted(own.matchSources));
       }
     });
   }
 });
 
-describe("find-receipt sees what the trigger sees (#588)", () => {
-  it("scores a foreign-currency pair off the bank-stated original amount", async () => {
-    const { matches } = await connectWindow({ transactionId: "t-fx" });
-    const fromWindow = matches.find((m) => m.fileId === "f-fx")!;
-    // The attachment scorer gave this pair nothing for amount; the matcher
-    // reads the 24.00 USD the bank states and calls it exact.
-    expect(fromWindow.matchSources).toContain("amount_exact");
-    expect(await findReceipt("t-fx")).toMatchObject({
-      status: "connected",
-      fileId: "f-fx",
-      confidence: fromWindow.confidence,
-    });
-  });
-});
+describe("each input reaches the score", () => {
+  const sourcesOf = async (fileId: string, transactionId: string) =>
+    (await fromEachEnd(fileId, transactionId)).forTx!.matchSources;
 
-describe("score_file_transaction_match sees what the trigger sees (#327)", () => {
-  it("scores the invoice number found only in the preserved raw row", async () => {
-    const result = await scoreFileTransactionMatch(USER, {
-      fileId: "f-rawrow",
-      transactionId: "t-rawrow",
-    });
-    expect(result.matchSources).toContain("reference");
+  it("the invoice number found only in the preserved raw row (#137)", async () => {
+    expect(await sourcesOf("f-rawrow", "t-rawrow")).toContain("reference");
   });
 
-  it("scores a foreign-currency pair off the bank-stated original amount", async () => {
-    const result = await scoreFileTransactionMatch(USER, {
-      fileId: "f-fx",
-      transactionId: "t-fx",
-    });
-    // Before #327 the tool fell back to the FX-plausibility band: amount_close.
-    expect(result.matchSources).toContain("amount_exact");
+  it("the bank-stated original amount (#112)", async () => {
+    // Without it the pair falls back to the FX-plausibility band: amount_close.
+    expect(await sourcesOf("f-fx", "t-fx")).toContain("amount_exact");
   });
 
-  it("scores against the Remainder the connected invoice leaves open", async () => {
-    const result = await scoreFileTransactionMatch(USER, {
-      fileId: "f-remainder",
-      transactionId: "t-remainder",
-    });
-    expect(result.matchSources).toContain("amount_remainder");
-    expect(result.matchSources).toContain("amount_exact");
+  it("the Remainder the connected invoice leaves open (#239)", async () => {
+    const sources = await sourcesOf("f-remainder", "t-remainder");
+    expect(sources).toContain("amount_remainder");
+    expect(sources).toContain("amount_exact");
   });
 
-  it("scores the precision-search hint", async () => {
-    const result = await scoreFileTransactionMatch(USER, {
-      fileId: "f-partner",
-      transactionId: "t-partner",
-    });
-    expect(result.matchSources).toContain("precision_hint");
-  });
-});
-
-describe("the Connect File window opened from a Transaction (#555)", () => {
-  it("ranks a File no typed text would have found", async () => {
-    // The old window searched for the Transaction's name first, and nothing
-    // on this File says SAMMELUEBERWEISUNG.
-    const { matches } = await connectWindow({ transactionId: "t-remainder" });
-    const hit = matches.find((m) => m.fileId === "f-remainder");
-    expect(hit?.matchSources).toContain("amount_remainder");
-    expect(hit?.scoredAgainstRemainder).toBe(true);
-  });
-
-  it("keeps a rejected pair out of the ranked list and lets a search reach it", async () => {
-    await db.collection("files").doc("f-tip").update({
-      dismissedTransactionIds: ["t-tip"],
-    });
-    const ranked = await connectWindow({ transactionId: "t-tip" });
-    expect(ranked.matches.map((m) => m.fileId)).not.toContain("f-tip");
-
-    const searched = await connectWindow({ transactionId: "t-tip", searchQuery: "gasthaus" });
-    expect(searched.matches.map((m) => m.fileId)).toContain("f-tip");
-  });
-
-  it("honours a Rejection written on the Transaction's side too", async () => {
-    await db.collection("transactions").doc("t-tip").update({ rejectedFileIds: ["f-tip"] });
-    const ranked = await connectWindow({ transactionId: "t-tip" });
-    expect(ranked.matches.map((m) => m.fileId)).not.toContain("f-tip");
+  it("the precision-search hint", async () => {
+    expect(await sourcesOf("f-partner", "t-partner")).toContain("precision_hint");
   });
 });
 
 describe("a foreign-currency pair is judged at the published rate (#555)", () => {
-  const amountOf = async () => {
-    const { matches } = await connectWindow({ transactionId: "t-ecb" });
-    return matches.find((m) => m.fileId === "f-ecb")!.breakdown.amount;
-  };
+  const amountOf = async () => (await fromEachEnd("f-ecb", "t-ecb")).forTx!.breakdown.amount;
 
   it("anchors on the ECB rate for the Transaction's date", async () => {
     // 23.90 / 24.00 is 0.4% off the published 1.0000: the tight band.

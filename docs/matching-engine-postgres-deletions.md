@@ -125,8 +125,8 @@ transactions carry `fileIds` with *no* `fileConnections` document. Until the
 relation is reconciled (case 7), the arrays are the more complete
 representation and the JS filters are *correct*, not just workarounds.
 
-**Verdict: Phase 2, after reconciliation.** The scoring
-(`scoreFileForTransaction`, greedy assignment, AI fallback) stays untouched.
+**Verdict: Phase 2, after reconciliation.** The scoring (the matcher since
+#613, greedy assignment, AI fallback) stays untouched.
 
 ### 5. `precisionSearchQueue.ts` strategies — `:1112`, `:1203`
 

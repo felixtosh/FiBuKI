@@ -14,10 +14,10 @@
  * Decision (Felix, 2026-09-27): batch re-scoring once per affected Partner at
  * the end of `applyPartnerMatchUpdates` and `rematchAssignedPartners`. Scope:
  * only unconnected Files of the old and the new Partner. Suggestions only,
- * never auto-connect. `scoreTransaction` is reused the way
- * `rescoreFileConnections.ts` does — via the shared assembly, one Partner
- * context per Partner, batched writes — so the sweep cannot drift from what
- * the initial match computes.
+ * never auto-connect. The candidates and the scores are the matcher's (#613),
+ * the trigger's own, so a refresh stores exactly what the trigger would:
+ * the Remainder a Transaction's Files leave open included, which this sweep
+ * used to drop by scoring every pair against the full amount.
  *
  * Deliberately additive: this writes `transactionSuggestions` and a timestamp
  * and nothing else. No connection is created, no Partner assignment is
@@ -26,51 +26,16 @@
  */
 
 import { Timestamp } from "firebase-admin/firestore";
-import {
-  SCORING_CONFIG,
-  TransactionMatchSource,
-  loadPartnerScoringContext,
-  scoreFileAgainstTransactions,
-} from "./transactionScoring";
-import { readDismissedTransactionIds } from "./dismissedTransactions";
-import { loadScoringEcbRates } from "./scoringEcbRates";
-import { liveCopyIds } from "../files/copyOps";
-import { isFileRejected } from "./rejectedFiles";
-import { toDateSafe } from "../utils/toDateSafe";
+import { storedSuggestionsOf, transactionsForFiles } from "./matcher";
 
 /** Firestore batch write cap is 500; chunk with headroom. */
 const BATCH_CHUNK_SIZE = 400;
 /** Cap per Partner — the sweep is a refresh, not a migration. */
 const MAX_FILES_PER_PARTNER = 200;
-/** Candidate pool cap over the union window of all files being re-scored. */
-const MAX_CANDIDATE_TRANSACTIONS = 1000;
-/** Fallback pool when no File carries an extracted date. */
-const MAX_RECENT_TRANSACTIONS = 200;
-
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
-
-/** The stored suggestion shape `matchFileTransactions` writes. */
-interface TransactionSuggestion {
-  transactionId: string;
-  confidence: number;
-  matchSources: TransactionMatchSource[];
-  preview: {
-    date: Timestamp;
-    amount: number;
-    currency: string;
-    name: string;
-    partner: string | null;
-  };
-}
 
 export interface RescorePartnerFilesResult {
   partnersProcessed: number;
   filesRescored: number;
-}
-
-function extractedDateOf(fileData: FirebaseFirestore.DocumentData): Date | null {
-  const raw = fileData.extractedDate;
-  return raw && typeof raw.toDate === "function" ? raw.toDate() : null;
 }
 
 /**
@@ -98,20 +63,11 @@ export async function rescoreUnconnectedFilesForPartners(
       .limit(MAX_FILES_PER_PARTNER)
       .get();
 
-    // Unconnected, already through the pipeline, and actually matchable. A
-    // File mid-pipeline (`transactionMatchComplete` not yet true) is left to
-    // its own trigger rather than raced.
-    // #162: a Copy is never proposed as a Match.
-    const copies = await liveCopyIds(
-      db,
-      filesSnapshot.docs.map((doc) => ({ id: doc.id, data: doc.data() }))
-    );
+    // Unconnected and already through the pipeline: a File mid-pipeline
+    // (`transactionMatchComplete` not yet true) is left to its own trigger
+    // rather than raced. Which of them can be matched at all is the matcher's.
     const files = filesSnapshot.docs.filter((doc) => {
       const data = doc.data();
-      if (data.deletedAt) return false;
-      if (copies.has(doc.id)) return false;
-      if (data.isNotInvoice === true) return false;
-      if (data.foreignRecipient === true) return false;
       if (data.transactionMatchComplete !== true) return false;
       const connected = Array.isArray(data.transactionIds) && data.transactionIds.length > 0;
       return !connected;
@@ -119,99 +75,22 @@ export async function rescoreUnconnectedFilesForPartners(
 
     if (files.length === 0) continue;
 
-    // One Partner context per Partner, exactly as the initial match reads it:
-    // aliases (own, Global Partner, preset), billing-cycle bands, weights.
-    const partner = await loadPartnerScoringContext(db, partnerId, userId);
-
-    // One candidate pool per Partner over the union of the Files' date
-    // windows, instead of one query per File. A File without an extracted
-    // date is scored against the whole pool.
-    const dates = files
-      .map((doc) => extractedDateOf(doc.data()))
-      .filter((d): d is Date => d !== null);
-
-    let candidates: FirebaseFirestore.QueryDocumentSnapshot[];
-    if (dates.length > 0) {
-      const startDate = new Date(
-        Math.min(...dates.map((d) => d.getTime())) -
-          SCORING_CONFIG.DATE_RANGE_DAYS * MS_PER_DAY
-      );
-      const endDate = new Date(
-        Math.max(...dates.map((d) => d.getTime())) +
-          SCORING_CONFIG.DATE_RANGE_DAYS * MS_PER_DAY
-      );
-      const snapshot = await db
-        .collection("transactions")
-        .where("userId", "==", userId)
-        .where("date", ">=", Timestamp.fromDate(startDate))
-        .where("date", "<=", Timestamp.fromDate(endDate))
-        .orderBy("date", "desc")
-        .limit(MAX_CANDIDATE_TRANSACTIONS)
-        .get();
-      candidates = snapshot.docs;
-      if (snapshot.size >= MAX_CANDIDATE_TRANSACTIONS) {
-        console.warn(
-          `[RescoreFiles] Candidate pool for partner ${partnerId} hit its cap of ` +
-            `${MAX_CANDIDATE_TRANSACTIONS}; files at the window's far edge may be under-scored`
-        );
-      }
-    } else {
-      const snapshot = await db
-        .collection("transactions")
-        .where("userId", "==", userId)
-        .orderBy("date", "desc")
-        .limit(MAX_RECENT_TRANSACTIONS)
-        .get();
-      candidates = snapshot.docs;
-    }
-
-    // One rate read per Partner too, over the same pool (#555).
-    const ecbRates = await loadScoringEcbRates(
+    // One window query, one Partner read and one rate read per Partner.
+    const results = await transactionsForFiles(
       db,
-      files.map((doc) => doc.data().extractedCurrency),
-      candidates
+      userId,
+      files.map((doc) => ({ id: doc.id, data: doc.data() }))
     );
 
     let batch = db.batch();
     let pending = 0;
 
-    for (const fileDoc of files) {
-      const fileData = fileDoc.data();
-      const dismissedIds = readDismissedTransactionIds(fileData);
-      const fileDate = extractedDateOf(fileData);
-
-      const eligible = candidates.filter((txDoc) => {
-        if (dismissedIds.has(txDoc.id)) return false;
-        const txData = txDoc.data();
-        if (txData.quotaExceeded) return false;
-        if (isFileRejected(txData, fileDoc.id)) return false;
-        if (fileDate) {
-          const txDate = toDateSafe(txData.date);
-          if (!txDate) return false;
-          const daysDiff = Math.abs(txDate.getTime() - fileDate.getTime()) / MS_PER_DAY;
-          if (daysDiff > SCORING_CONFIG.DATE_RANGE_DAYS) return false;
-        }
-        return true;
-      });
-
-      // Scored against full amounts (no documentedAmounts), the same way
-      // rescoreFileConnections.ts reuses the scorer: these are suggestions on
-      // unconnected Files, and a Remainder judgement is the connect paths' job.
-      const scores = scoreFileAgainstTransactions(fileData, eligible, partner, new Map(), ecbRates);
-
-      const suggestions: TransactionSuggestion[] = scores
-        .filter((m) => m.confidence >= SCORING_CONFIG.SUGGESTION_THRESHOLD)
-        .sort((a, b) => b.confidence - a.confidence)
-        .slice(0, SCORING_CONFIG.MAX_SUGGESTIONS)
-        .map((m) => ({
-          transactionId: m.transactionId,
-          confidence: m.confidence,
-          matchSources: m.matchSources,
-          preview: m.preview,
-        }));
-
+    for (const [i, fileDoc] of files.entries()) {
+      // Never matched (deleted, a Copy, not an invoice, addressed to someone
+      // else): left as it is.
+      if (results[i].ineligible) continue;
       batch.update(fileDoc.ref, {
-        transactionSuggestions: suggestions,
+        transactionSuggestions: storedSuggestionsOf(results[i].matches),
         transactionMatchedAt: Timestamp.now(),
         updatedAt: Timestamp.now(),
       });

@@ -102,7 +102,8 @@ describe("one predicate, no copies", () => {
 
   it.each([
     "components/files/connect-transaction-overlay.tsx",
-    "functions/src/matching/findTransactionMatches.ts",
+    // The server side: the matcher, which every connect window reaches (#613).
+    "functions/src/matching/matcher.ts",
   ])("%s filters through matchesTransactionSearch and keeps no copy", (file) => {
     const src = read(file);
     expect(src).toMatch(/matchesTransactionSearch/);

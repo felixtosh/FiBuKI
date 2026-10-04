@@ -337,13 +337,15 @@ cd .. && npm run generate:tool-definitions
 ```
 
 **Rules**:
-1. **Frontend scoring**: a stored File against a Transaction goes through the matcher's own callables, `findTransactionMatchesForFile` (File side) and `findFileMatchesForTransaction` (Transaction side, #555); both are surfaces in `scorer-parity.test.ts`. Mail results that are not Files yet go through `/api/matching/score-files`, which proxies to `scoreAttachmentMatchCallable`
-2. **Agent tools**: Score a File/Transaction pair by id with the `scoreFileTransactionMatch` callable (same scorer and input assembly as the matching trigger and MCP's `score_file_transaction_match`) via `callFirebaseFunction`. The `findReceiptForTransaction` workflow ranks stored Files with the same matcher (`scoreFilesForTransaction`) and auto-connects only at its threshold; Gmail results there keep the attachment scorer, for ranking only (#588)
-3. **Pre-computed scores**: Stored in `file.transactionSuggestions` (computed by `matchFileTransactions` trigger)
-4. **NEVER** implement local `scoreResult()` or similar functions in hooks/components
+1. **One matcher (#613)**: `functions/src/matching/matcher.ts` owns which File/Transaction pairs are possible (the eligibility rule and the date window), the scoring inputs, and the call into the scoring core, in both directions. Every surface calls it: the upload trigger, both connect windows, find-receipt, the agent's tools, MCP, Partner matching and both re-scores. A new surface calls it too; `scoringInputs-guard.test.ts` fails on a second caller of the core, a hand-built input or a date window
+2. **Frontend scoring**: a stored File against a Transaction goes through the matcher's own callables, `findTransactionMatchesForFile` (File side) and `findFileMatchesForTransaction` (Transaction side, #555). Mail results that are not Files yet go through `/api/matching/score-files`, which proxies to `scoreAttachmentMatchCallable`
+3. **Agent tools**: Score a File/Transaction pair by id with the `scoreFileTransactionMatch` callable via `callFirebaseFunction`; it also says whether the matcher could propose the pair (`ineligible`, `hidden`). The agent's local search ranks stored Files with `findFileMatchesForTransaction`, and the `findReceiptForTransaction` workflow with the same matcher, auto-connecting only at its threshold; Gmail results keep the attachment scorer, for ranking only (#588)
+4. **Pre-computed scores**: Stored in `file.transactionSuggestions` (computed by `matchFileTransactions` trigger)
+5. **NEVER** implement local `scoreResult()` or similar functions in hooks/components
 
 **Key Files**:
-- `functions/src/precision-search/scoreAttachmentMatch.ts` - Single source of truth for scoring
+- `functions/src/matching/matcher.ts` - The one matcher for stored Files: eligibility, date window, inputs, scoring
+- `functions/src/precision-search/scoreAttachmentMatch.ts` - Scoring for mail results that are not Files yet
 - `functions/src/precision-search/scoreAttachmentMatchCallable.ts` - Callable wrapper
 - `app/api/matching/score-files/route.ts` - API route for frontend
 - `functions/src/matching/matchFileTransactions.ts` - Pre-computes suggestions on file upload

@@ -1,14 +1,13 @@
 /**
  * Shared Transaction Scoring Module
  *
- * Contains scoring logic used by:
- * - matchFileTransactions.ts (auto-triggered on file upload)
- * - findTransactionMatches.ts (callable for UI dialog)
+ * The pure scoring core and the readers of its inputs. Every surface reaches
+ * it through the matcher (`matcher.ts`, #613), which decides which pairs are
+ * possible and assembles what each is scored with.
  */
 
 import { Timestamp } from "firebase-admin/firestore";
 import { assessImpliedFx, isSameCurrency, type FxAssessmentOptions } from "../fx/fxPlausibility";
-import { ecbCrossRate, type EcbRateTable } from "../fx/ecbRates";
 import {
   readBankOriginalAmount,
   type BankOriginalAmount,
@@ -84,8 +83,6 @@ export const SCORING_CONFIG = {
    * coincidence. Below this it keeps the pre-#137 score of 5.
    */
   MIN_INVOICE_NUMBER_LENGTH: 6,
-  /** Days to search before/after file date */
-  DATE_RANGE_DAYS: 30,
   /**
    * Widest payment window `[issueDate, dueDate]` scored as a window when no
    * billing cycle is learned (#236). A wider one scores only its two
@@ -1063,72 +1060,8 @@ export async function loadPartnerScoringContext(
 }
 
 /**
- * Score one File against candidate Transactions — the single place their
- * scoring inputs are assembled (#308, #327).
- *
- * The matching trigger, the connect dialog and the agent's
- * score_file_transaction_match all call this, so a field added to
- * `toFileMatchingData` / `toTransactionData` reaches every surface at once
- * instead of each hand-built copy having to remember it. The billing-cycle
- * band is selected per transaction, since which recurrence a charge belongs
- * to depends on that transaction's amount, not the file's.
- *
- * `documentedAmounts` is what the Files already on each candidate explain
- * (#239), from `loadConnectedFiles` with the scored File excluded.
- *
- * `ecbRates` anchors a foreign-currency pair's exchange-rate check on the
- * rate the ECB published for the Transaction's date (#555), from
- * `loadScoringEcbRates`. Required rather than optional, so a new caller has
- * to decide; one that passes EMPTY_ECB_RATE_TABLE keeps the static anchor and
- * scores differently from the trigger on old foreign-currency pairs.
- */
-export function scoreFileAgainstTransactions(
-  fileData: FirebaseFirestore.DocumentData,
-  transactions: Array<{ id: string; data(): FirebaseFirestore.DocumentData | undefined }>,
-  partner: PartnerScoringContext,
-  documentedAmounts: Map<string, number>,
-  ecbRates: EcbRateTable
-): TransactionMatchScore[] {
-  const fileMatchingData = toFileMatchingData(fileData);
-  return transactions.map((doc) => {
-    const txData = doc.data() ?? {};
-    const options = buildScoringOptions(partner.effectiveCycles, partner.weights, txData.amount);
-    const fxReferenceRate = publishedRateFor(
-      ecbRates,
-      fileMatchingData.extractedCurrency,
-      txData.currency,
-      txData.date
-    );
-    return scoreTransaction(
-      fileMatchingData,
-      toTransactionData(doc.id, txData, documentedAmounts.get(doc.id)),
-      partner.aliases,
-      fxReferenceRate == null ? options : { ...options, fxReferenceRate }
-    );
-  });
-}
-
-/**
- * The ECB cross rate for a File's currency into a Transaction's, on the
- * Transaction's date (#555). Null for a same-currency pair, an undated
- * Transaction, or a date the table does not reach within its lookback: the
- * static anchor stands in, exactly as the VAT return falls back.
- */
-function publishedRateFor(
-  ecbRates: EcbRateTable,
-  fileCurrency: string | null | undefined,
-  txCurrency: string | null | undefined,
-  txDate: unknown
-): number | null {
-  if (ecbRates.days.length === 0 || isSameCurrency(fileCurrency, txCurrency)) return null;
-  const date = toDateSafe(txDate);
-  if (!date) return null;
-  // The stored day is UTC midnight of the Vienna calendar day.
-  return ecbCrossRate(ecbRates, fileCurrency, txCurrency, date.toISOString().slice(0, 10))?.rate ?? null;
-}
-
-/**
- * Score a transaction against file data
+ * Score a transaction against file data: the pure scoring core. Reached only
+ * through the matcher (`matcher.ts`, #613), which assembles its inputs.
  */
 export function scoreTransaction(
   fileData: FileMatchingData,

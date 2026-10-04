@@ -3,7 +3,7 @@
  * against the Postgres-backed firestore shim like the sibling
  * matching-characterization.test.ts.
  *
- * Covers rescoreFileConnectionsForPartner's wiring into
+ * Covers the matcher's rescoreConnections, wired into
  * learnBillingCycleCallable: once a cycle is learned, a same-amount file
  * connected to more than one transaction of that partner must re-rank so the
  * charge matching its expected invoice date scores highest, while
@@ -104,7 +104,7 @@ beforeEach(async () => {
   __resetTriggerShim();
 });
 
-describe("rescoreFileConnectionsForPartner (via learnBillingCycleCallable)", () => {
+describe("rescoreConnections (via learnBillingCycleCallable)", () => {
   it("re-ranks a same-amount file connected to two transactions after the cycle is learned", async () => {
     await seedPartner("p-rs1");
 

@@ -965,6 +965,16 @@
       "searchNotApplied": "Showing all Files, ranked. The search above searched your mailboxes.",
       "narrowedBy": "Files narrowed by “{query}”",
       "applySearch": "Filter Files by “{query}”"
+    },
+    "heldBack": {
+      "rejected": "Rejected",
+      "overQuota": "Over plan limit"
+    },
+    "ineligible": {
+      "deleted": "This File is deleted, so it is not matched.",
+      "copy": "This File is a Copy; its original is the one matched.",
+      "notInvoice": "This File is marked as not an invoice, so it is not matched.",
+      "foreignRecipient": "This File is addressed to someone else, so it is not matched. Confirm the recipient to match it."
     }
   }
 }

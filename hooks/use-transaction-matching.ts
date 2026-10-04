@@ -8,6 +8,7 @@ import {
   FindTransactionMatchesResponse,
   TransactionMatchResult,
   FileMatchingInfo,
+  IneligibleReason,
 } from "@/types/transaction-matching";
 
 // Initialize the callable function
@@ -32,6 +33,8 @@ interface UseTransactionMatchingResult {
   matches: TransactionMatchResult[];
   /** Total candidate transactions found */
   totalCandidates: number;
+  /** Why the File is never matched, when it is not (#613). */
+  ineligible: IneligibleReason | null;
   /** Loading state */
   isLoading: boolean;
   /** Error if fetch failed */
@@ -50,6 +53,7 @@ export function useTransactionMatching({
 }: UseTransactionMatchingOptions = {}): UseTransactionMatchingResult {
   const [matches, setMatches] = useState<TransactionMatchResult[]>([]);
   const [totalCandidates, setTotalCandidates] = useState(0);
+  const [ineligible, setIneligible] = useState<IneligibleReason | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
 
@@ -84,6 +88,7 @@ export function useTransactionMatching({
         if (currentRequestId === requestIdRef.current) {
           setMatches(result.data.matches);
           setTotalCandidates(result.data.totalCandidates);
+          setIneligible(result.data.ineligible ?? null);
         }
       } catch (err) {
         // Only update error state if this is still the latest request
@@ -114,6 +119,7 @@ export function useTransactionMatching({
   return {
     matches,
     totalCandidates,
+    ineligible,
     isLoading,
     error,
     fetchMatches,

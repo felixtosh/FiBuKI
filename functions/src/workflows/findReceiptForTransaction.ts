@@ -34,7 +34,7 @@ import {
   QueryGenerationPartner,
 } from "../precision-search/generateSearchQueries";
 import { readBankOriginalAmount } from "../fx/bankOriginalAmount";
-import { scoreFilesForTransaction } from "../matching/findFileMatches";
+import { filesForTransaction } from "../matching/matcher";
 import { SCORING_CONFIG } from "../matching/transactionScoring";
 
 /**
@@ -242,10 +242,10 @@ export async function findReceiptForTransaction(
 
   // --- Score stored Files ---
   // The matcher, not the attachment scorer: currency, the bank-stated original
-  // amount, the tip, Partner aliases and learned weights all count, and a
-  // Rejection on either side or a Copy keeps a File out, as in the trigger.
+  // amount, the tip, Partner aliases and learned weights all count, and its
+  // eligibility rule and date window decide which Files are possible (#613).
   const candidates: FindReceiptCandidate[] = [];
-  const stored = await scoreFilesForTransaction(db, userId, txSnap);
+  const stored = await filesForTransaction(db, userId, txSnap);
   const localFileCount = stored.totalCandidates;
 
   for (const match of stored.matches) {

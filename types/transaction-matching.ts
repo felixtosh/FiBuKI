@@ -34,14 +34,29 @@ export interface ScoreBreakdown {
 
 // === Request Types ===
 
+/**
+ * A File that is not stored yet, in the stored File's own field names, dates
+ * as ISO strings. The server reads it through the matcher's assembly (#613),
+ * so every field it scores counts.
+ */
 export interface FileMatchingInfo {
   extractedAmount?: number | null;
+  extractedTipAmount?: number | null;
+  extractedCurrency?: string | null;
   extractedDate?: string | null; // ISO date string
+  extractedDueDate?: string | null; // ISO date string
+  extractedDebitDate?: string | null; // ISO date string
   extractedPartner?: string | null;
   extractedIban?: string | null;
   extractedText?: string | null;
+  extractedInvoiceNumber?: string | null;
   partnerId?: string | null;
+  precisionSearchHint?: { transactionId?: string } | null;
+  documentType?: string | null;
 }
+
+/** Why a pair is held back from suggestions; only a search shows it (#613). */
+export type HeldBackReason = "rejected" | "over-quota";
 
 export interface FindTransactionMatchesRequest {
   /** File ID to fetch data from Firestore */
@@ -72,6 +87,8 @@ export interface TransactionMatchResult {
   matchSources: TransactionMatchSource[];
   breakdown: ScoreBreakdown;
   preview: TransactionMatchPreview;
+  /** Set only in a search: the pair is held back from suggestions and auto-connect. */
+  hidden?: HeldBackReason;
   /**
    * What the Files already on this Transaction explain, as the scorer read it
    * (#239, #243). Absent when no connected File explains anything.
@@ -89,13 +106,15 @@ export interface TransactionMatchCoverage {
 export interface FindTransactionMatchesResponse {
   matches: TransactionMatchResult[];
   totalCandidates: number;
+  /** Set when the File is never matched: why the list is empty. */
+  ineligible?: "deleted" | "copy" | "not-invoice" | "foreign-recipient";
 }
 
 // === The mirror: File matches for a Transaction (#555) ===
 
 export interface FindFileMatchesRequest {
   transactionId: string;
-  /** Typed search text. Lifts the date gate and the Rejection filter. */
+  /** Typed search text. Lifts the date window and shows held-back pairs, marked. */
   searchQuery?: string;
   limit?: number;
 }
@@ -107,11 +126,15 @@ export interface FileMatchResult {
   breakdown: ScoreBreakdown;
   /** The amount was judged against the Transaction's Remainder (#239). */
   scoredAgainstRemainder: boolean;
+  /** Set only in a search: the pair is held back from suggestions and auto-connect. */
+  hidden?: HeldBackReason;
 }
 
 export interface FindFileMatchesResponse {
   matches: FileMatchResult[];
   totalCandidates: number;
+  /** Files held back because a Rejection names this pair; none in a search. */
+  rejectedFileIds: string[];
 }
 
 // === Config (mirrors server config) ===
@@ -121,13 +144,27 @@ export const TRANSACTION_MATCH_CONFIG = {
   AUTO_MATCH_THRESHOLD: 85,
   /** Minimum confidence to show as suggestion (highlighted in UI) */
   SUGGESTION_THRESHOLD: 50,
-  /** Days to search before/after file date */
-  DATE_RANGE_DAYS: 30,
   /** Max results to return */
   MAX_RESULTS: 20,
 };
 
 // === Helper Functions ===
+
+export type IneligibleReason = NonNullable<FindTransactionMatchesResponse["ineligible"]>;
+
+/** The `connect` message key saying why a File is never matched (#613). */
+export function ineligibleKey(
+  reason: IneligibleReason
+): "ineligible.deleted" | "ineligible.copy" | "ineligible.notInvoice" | "ineligible.foreignRecipient" {
+  if (reason === "not-invoice") return "ineligible.notInvoice";
+  if (reason === "foreign-recipient") return "ineligible.foreignRecipient";
+  return reason === "copy" ? "ineligible.copy" : "ineligible.deleted";
+}
+
+/** The `connect` message key labelling a pair a search shows although it is held back (#613). */
+export function heldBackKey(reason: HeldBackReason): "heldBack.rejected" | "heldBack.overQuota" {
+  return reason === "rejected" ? "heldBack.rejected" : "heldBack.overQuota";
+}
 
 /**
  * Get human-readable label for a match source
@@ -162,8 +199,9 @@ export function getMatchSourceLabel(source: TransactionMatchSource): string {
 /**
  * Check if a match is above the suggestion threshold
  */
-export function isSuggestedMatch(match: TransactionMatchResult): boolean {
-  return match.confidence >= TRANSACTION_MATCH_CONFIG.SUGGESTION_THRESHOLD;
+export function isSuggestedMatch(match: { confidence: number; hidden?: HeldBackReason }): boolean {
+  // A held-back pair a search shows is never a suggestion (#613).
+  return !match.hidden && match.confidence >= TRANSACTION_MATCH_CONFIG.SUGGESTION_THRESHOLD;
 }
 
 /**
