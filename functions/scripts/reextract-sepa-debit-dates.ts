@@ -11,13 +11,19 @@
  * that container's extraction worker; an applied run waits for them.
  *
  * A dry run unless --apply is passed: it lists the candidate Files and which
- * of them are hand-corrected (those are skipped, never overwritten). Every
- * run writes the report (JSON) into --out-dir.
+ * of them are hand-corrected (those are skipped, never overwritten), and says
+ * which users it covered. Every run writes the report (JSON) into --out-dir.
+ *
+ * --apply needs a scope: --user <uid> for one user's Files, or --all-users for
+ * every user's. fibuki.com is one tenant with many users, and a re-extraction
+ * spends each File owner's AI usage, so no applied run covers everyone by
+ * default.
  *
  * On fibuki.com, from /opt/fibuki/deploy/selfhost:
  *
  *   DC="docker compose -f docker-compose.yml -f docker-compose.prod.yml"
- *   $DC exec -T fibuki-api npm run selfhost:reextract-sepa-debit-dates -- --out-dir /tmp/sepa-pass [--user <uid>] [--apply]
+ *   $DC exec -T fibuki-api npm run selfhost:reextract-sepa-debit-dates -- --out-dir /tmp/sepa-pass [--user <uid>]
+ *   $DC exec -T fibuki-api npm run selfhost:reextract-sepa-debit-dates -- --out-dir /tmp/sepa-pass --user <uid> --apply
  *   $DC cp fibuki-api:/tmp/sepa-pass /root/sepa-pass-$(date +%F)
  *
  * /tmp in the container is gone on the next deploy, so copy the files out
@@ -33,13 +39,17 @@ import { migrateSepaDebitDate } from "../src/selfhost/migrate-sepa-debit-date";
 const USAGE = `reextract-sepa-debit-dates: re-extract Files whose SEPA collection sentence became a Due Date only (#619)
 
 Usage:
-  reextract-sepa-debit-dates --out-dir <dir> [--user <uid>] [--timeout-minutes <n>] [--apply]
+  reextract-sepa-debit-dates --out-dir <dir> [--user <uid> | --all-users]
+  reextract-sepa-debit-dates --out-dir <dir> (--user <uid> | --all-users) [--timeout-minutes <n>] --apply
 
 Options:
   --out-dir <dir>         where the report (JSON) is written
-  --user <uid>            only this user's Files (default: every user on the deployment)
+  --user <uid>            only this user's Files
+  --all-users             every user's Files on the deployment (a dry run without
+                          --user covers every user too; --apply needs it said)
   --timeout-minutes <n>   how long an applied run waits for the Extractions (default 60)
-  --apply                 queue the re-extractions and wait for them (default: dry run, list only)
+  --apply                 queue the re-extractions and wait for them (default: dry run, list only);
+                          refused without --user or --all-users
   -h, --help              show this help`;
 
 function flagValue(args: string[], flag: string): string | undefined {
@@ -66,7 +76,12 @@ async function main(): Promise<void> {
   const userId = flagValue(args, "--user");
   const timeoutArg = flagValue(args, "--timeout-minutes");
   if (!outDir) usageError("--out-dir <dir> is required");
+  const allUsers = args.includes("--all-users");
   if (args.includes("--user") && !userId) usageError("--user needs a uid");
+  if (userId && allUsers) usageError("--user and --all-users exclude each other");
+  if (apply && !userId && !allUsers) {
+    usageError("--apply needs --user <uid> or --all-users: a re-extraction spends each File owner's AI usage");
+  }
   const timeoutMinutes = timeoutArg === undefined ? 60 : Number(timeoutArg);
   if (!Number.isFinite(timeoutMinutes) || timeoutMinutes <= 0) {
     usageError(`--timeout-minutes: not a positive number: ${timeoutArg}`);
@@ -75,13 +90,13 @@ async function main(): Promise<void> {
   await fs.mkdir(outDir, { recursive: true });
   console.log(
     `re-extracting Files with a SEPA collection sentence and no Debit Date` +
-      (userId ? ` (user ${userId})` : "") +
+      (userId ? ` (user ${userId} only)` : " (every user on the deployment)") +
       (apply ? "" : " (dry run)"),
   );
 
   let report;
   try {
-    report = await migrateSepaDebitDate({ apply, userId, timeoutMs: timeoutMinutes * 60 * 1000 });
+    report = await migrateSepaDebitDate({ apply, userId, allUsers, timeoutMs: timeoutMinutes * 60 * 1000 });
   } catch (err) {
     console.error(`error: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(2);
@@ -92,13 +107,18 @@ async function main(): Promise<void> {
   await fs.writeFile(reportPath, JSON.stringify(report, null, 2));
 
   const handCorrected = report.candidates.filter((c) => c.handCorrected.length > 0).length;
+  const covers =
+    report.scope.kind === "user"
+      ? `user ${report.scope.userId} only`
+      : `every user on the deployment, ${report.users.length} with candidates` +
+        (report.users.length > 0 ? ` (${report.users.map((u) => `${u.userId}: ${u.candidates}`).join(", ")})` : "");
   console.log(
     apply
-      ? `\ndone: ${report.candidates.length} candidate(s) of ${report.filesScanned} File(s); ` +
+      ? `\ndone (${covers}): ${report.candidates.length} candidate(s) of ${report.filesScanned} File(s); ` +
           `${report.gainedDebitDate.length} gained a Debit Date, ${report.noDebitDate.length} still have none, ` +
           `${report.skippedHandCorrected.length} skipped as hand-corrected, ${report.failed.length} failed, ` +
           `${report.refused.length} refused, ${report.stillRunning.length} still running. Report: ${reportPath}`
-      : `\ndry run: ${report.candidates.length} candidate(s) of ${report.filesScanned} File(s), ` +
+      : `\ndry run (${covers}): ${report.candidates.length} candidate(s) of ${report.filesScanned} File(s), ` +
           `${handCorrected} hand-corrected (would be skipped). Report: ${reportPath}`,
   );
   for (const f of report.failed) console.log(`  failed ${f.fileId}: ${f.error}`);

@@ -129,12 +129,67 @@ describe("migrateSepaDebitDate: who is a candidate", () => {
   });
 });
 
+describe("migrateSepaDebitDate: whose Files a run covers", () => {
+  beforeEach(async () => {
+    await seed("f-mine");
+    await seed("f-theirs", { userId: "u2" });
+  });
+
+  it("refuses an applied run that names neither one user nor every user, before touching anything", async () => {
+    await expect(run({ apply: true })).rejects.toThrow(/needs a scope/);
+    expect(gemini.requests).toBe(0);
+    for (const id of ["f-mine", "f-theirs"]) {
+      const doc = await file(id);
+      expect(doc.extractionComplete).toBe(true);
+      expect(doc.extractedDueDate).not.toBeNull();
+    }
+  });
+
+  it("refuses userId and allUsers together", async () => {
+    await expect(run({ userId: "u1", allUsers: true })).rejects.toThrow(/exclude each other/);
+    await expect(run({ apply: true, userId: "u1", allUsers: true })).rejects.toThrow(/exclude each other/);
+    expect(gemini.requests).toBe(0);
+  });
+
+  it("a dry run without a user lists every user's candidates and says whose they are", async () => {
+    const lines: string[] = [];
+    const report = await run({ log: (l) => lines.push(l) });
+
+    expect(report.scope).toEqual({ kind: "allUsers" });
+    expect(report.users.sort((a, b) => a.userId.localeCompare(b.userId))).toEqual([
+      { userId: "u1", candidates: 1 },
+      { userId: "u2", candidates: 1 },
+    ]);
+    expect(lines.join("\n")).toMatch(/covers every user on the deployment; 2 with candidates: .*u1 \(1\)/);
+    expect(gemini.requests).toBe(0);
+  });
+
+  it("a dry run with a user says it covers that user only", async () => {
+    const lines: string[] = [];
+    const report = await run({ userId: "u2", log: (l) => lines.push(l) });
+
+    expect(report.scope).toEqual({ kind: "user", userId: "u2" });
+    expect(report.users).toEqual([{ userId: "u2", candidates: 1 }]);
+    expect(report.candidates.map((c) => c.fileId)).toEqual(["f-theirs"]);
+    expect(lines).toContain("  covers user u2 only");
+  });
+
+  it("with allUsers, re-extracts every user's candidate, each as its owner", async () => {
+    const report = await run({ apply: true, allUsers: true });
+
+    expect(report.queued.sort()).toEqual(["f-mine", "f-theirs"]);
+    expect(report.gainedDebitDate.map((g) => g.fileId).sort()).toEqual(["f-mine", "f-theirs"]);
+    expect((await file("f-theirs")).userId).toBe("u2");
+    expect(gemini.requests).toBe(2);
+  });
+});
+
 describe("migrateSepaDebitDate: the applied run", () => {
   it("re-extracts the candidate, which gains its Debit Date, and reports it", async () => {
     await seed("f-sepa");
     await seed("f-plain", { extractedText: "Zahlbar bis 20.06.2026." });
 
-    const report = await run({ apply: true });
+    const report = await run({ apply: true, allUsers: true });
 
     expect(report.queued).toEqual(["f-sepa"]);
     expect(report.gainedDebitDate).toEqual([{ fileId: "f-sepa", debitDate: "2026-06-20" }]);
@@ -158,7 +213,7 @@ describe("migrateSepaDebitDate: the applied run", () => {
       extractionCorrectedAt: Timestamp.now(),
     });
 
-    const report = await run({ apply: true });
+    const report = await run({ apply: true, allUsers: true });
 
     expect(report.skippedHandCorrected).toEqual(["f-corrected"]);
     expect(report.queued).toEqual(["f-sepa"]);
@@ -187,7 +242,7 @@ describe("migrateSepaDebitDate: the applied run", () => {
     await seed("f-sepa");
     gemini.reply = JSON.stringify({ extracted: { date: "2026-06-02", amount: 4990, confidence: 0.9 } });
 
-    const report = await run({ apply: true });
+    const report = await run({ apply: true, allUsers: true });
 
     expect(report.gainedDebitDate).toEqual([]);
     expect(report.noDebitDate).toEqual(["f-sepa"]);
@@ -196,7 +251,7 @@ describe("migrateSepaDebitDate: the applied run", () => {
   it("reports Files whose Extraction has not finished when the wait runs out", async () => {
     await seed("f-sepa");
 
-    const report = await run({ apply: true, drain: undefined, timeoutMs: 0 });
+    const report = await run({ apply: true, allUsers: true, drain: undefined, timeoutMs: 0 });
 
     expect(report.queued).toEqual(["f-sepa"]);
     expect(report.stillRunning).toEqual(["f-sepa"]);

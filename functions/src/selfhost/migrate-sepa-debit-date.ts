@@ -21,7 +21,12 @@
  * counted, never overwritten. The Extractions run on the extraction worker;
  * an applied run waits for them and reports which Files gained a Debit Date.
  *
- * Dry run unless `apply` is set. Postgres only, never wired into index.ts.
+ * Dry run unless `apply` is set. An applied run names its scope: one user
+ * (`userId`) or, explicitly, every user (`allUsers`). fibuki.com is one tenant
+ * with many users, and a re-extraction spends its owner's AI usage, so an
+ * applied run never reaches every user by default. A dry run may list every
+ * user's candidates, and the report says whose Files it covered.
+ * Postgres only, never wired into index.ts.
  */
 
 import type { Firestore } from "firebase-admin/firestore";
@@ -52,6 +57,10 @@ export interface SepaDebitDateCandidate {
 }
 
 export interface SepaDebitDateReport {
+  /** Whose Files the run covered: one user's, or every user's on the deployment. */
+  scope: { kind: "user"; userId: string } | { kind: "allUsers" };
+  /** Each user with candidates, and how many. */
+  users: Array<{ userId: string; candidates: number }>;
   filesScanned: number;
   candidates: SepaDebitDateCandidate[];
   /** Candidates queued for a fresh Extraction (applied run only). */
@@ -73,8 +82,13 @@ export interface SepaDebitDateReport {
 
 export interface SepaDebitDateOptions {
   apply?: boolean;
-  /** Only this user's Files. */
+  /** Only this user's Files. An applied run needs this or `allUsers`. */
   userId?: string;
+  /**
+   * Every user's Files. An applied run must say so: it re-extracts other
+   * people's Files on their AI usage. Excludes `userId`.
+   */
+  allUsers?: boolean;
   /** How long an applied run waits for the Extractions (default 60 minutes). */
   timeoutMs?: number;
   /** How often it looks (default 5 seconds). */
@@ -157,6 +171,15 @@ export async function migrateSepaDebitDate(
   opts: SepaDebitDateOptions = {},
 ): Promise<SepaDebitDateReport> {
   const log = opts.log ?? ((m: string) => console.log(m));
+  if (opts.userId && opts.allUsers) {
+    throw new Error("userId and allUsers exclude each other: name one user, or every user");
+  }
+  if (opts.apply && !opts.userId && !opts.allUsers) {
+    throw new Error(
+      "an applied run needs a scope: userId for one user's Files, or allUsers for every user's " +
+        "(re-extraction spends each File owner's AI usage)",
+    );
+  }
   const db = getFirestore();
 
   const files = opts.userId
@@ -164,6 +187,8 @@ export async function migrateSepaDebitDate(
     : await db.collection("files").get();
 
   const report: SepaDebitDateReport = {
+    scope: opts.userId ? { kind: "user", userId: opts.userId } : { kind: "allUsers" },
+    users: [],
     filesScanned: files.size,
     candidates: [],
     queued: [],
@@ -192,6 +217,18 @@ export async function migrateSepaDebitDate(
       handCorrected: correctedFieldsOf(data),
     });
   }
+
+  const perUser = new Map<string, number>();
+  for (const c of report.candidates) perUser.set(c.userId, (perUser.get(c.userId) ?? 0) + 1);
+  report.users = [...perUser].map(([userId, candidates]) => ({ userId, candidates }));
+  log(
+    report.scope.kind === "user"
+      ? `  covers user ${report.scope.userId} only`
+      : `  covers every user on the deployment; ${report.users.length} with candidates` +
+          (report.users.length > 0
+            ? `: ${report.users.map((u) => `${u.userId} (${u.candidates})`).join(", ")}`
+            : ""),
+  );
 
   for (const c of report.candidates) {
     log(
