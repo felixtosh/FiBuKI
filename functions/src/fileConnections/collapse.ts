@@ -11,6 +11,14 @@
  * - reports, without writing, a record only one list mentions, and a pair
  *   both lists carry with no record at all.
  *
+ * An orphan a paid invoice rests on (its File's invoice is paid by that
+ * Transaction) is held back and reported: removing it would turn the invoice
+ * back to issued. `revertPaidInvoices` removes it anyway.
+ *
+ * The app stays live while the pass runs, so each removal is checked again
+ * inside a Firestore transaction before it deletes anything: a pair connected
+ * since the read, or a kept record gone since, is skipped and reported.
+ *
  * Every record it removes or reports carries its writer fingerprint: the
  * stored `connectionType` and `origin` and the set of fields the record holds.
  * Each writer before #612 left its own shape (the MCP tool wrote no match
@@ -52,25 +60,46 @@ export interface CollapseReport {
   halfListed: Array<ConnectionRecordSummary & { listedBy: "file" | "transaction" }>;
   /** Pairs both lists carry with no record; reported, not changed. */
   unrecorded: Array<{ fileId: string; transactionId: string; userId: string | null }>;
+  /** Orphans a paid invoice rests on; held back unless `revertPaidInvoices`. */
+  paidInvoices: Array<{ invoiceId: string; fileId: string; transactionId: string; held: boolean }>;
+  /** Removals the check inside the transaction refused: the data changed since the read. */
+  skipped: Array<{ fileId: string; transactionId: string; reason: string }>;
   /** How many removed records share each writer fingerprint. */
   removedByFingerprint: Record<string, number>;
+  /** On a dry run, the records to remove; with `apply`, the records removed. */
   removedRecords: number;
 }
 
 export interface CollapseOptions {
   apply: boolean;
+  /** Remove an orphan a paid invoice rests on too; the invoice goes back to issued. */
+  revertPaidInvoices?: boolean;
   /** Called with every record about to be removed, before the first delete. */
   beforeDelete?: (records: Array<{ id: string; data: Data }>) => Promise<void>;
 }
 
+/** Records of one pair to remove, and what must still hold when they go. */
+interface Removal {
+  kind: "orphan" | "duplicate";
+  fileId: string;
+  transactionId: string;
+  docs: QueryDoc[];
+  /** A duplicate's kept record, which must still exist. */
+  keptId?: string;
+  /** An orphan's File invoice, which must not be paid by this Transaction (unless reverting). */
+  invoiceId?: string;
+}
+
 export async function collapseFileConnections(db: Db, options: CollapseOptions): Promise<CollapseReport> {
-  const [recordsSnap, filesSnap, txSnap] = await Promise.all([
+  const [recordsSnap, filesSnap, txSnap, invoicesSnap] = await Promise.all([
     db.collection("fileConnections").get(),
     db.collection("files").get(),
     db.collection("transactions").get(),
+    db.collection("invoices").get(),
   ]);
   const files = new Map(filesSnap.docs.map((d) => [d.id, d.data()]));
   const txs = new Map(txSnap.docs.map((d) => [d.id, d.data()]));
+  const invoices = new Map(invoicesSnap.docs.map((d) => [d.id, d.data()]));
   const listedByFile = (fileId: string, transactionId: string) =>
     idsOf(files.get(fileId)?.transactionIds).includes(transactionId);
   const listedByTx = (fileId: string, transactionId: string) =>
@@ -83,15 +112,12 @@ export async function collapseFileConnections(db: Db, options: CollapseOptions):
     orphans: [],
     halfListed: [],
     unrecorded: [],
+    paidInvoices: [],
+    skipped: [],
     removedByFingerprint: {},
     removedRecords: 0,
   };
-  const toRemove: QueryDoc[] = [];
-  const remove = (doc: QueryDoc) => {
-    toRemove.push(doc);
-    const fp = summarize(doc).fingerprint;
-    report.removedByFingerprint[fp] = (report.removedByFingerprint[fp] ?? 0) + 1;
-  };
+  const removals: Removal[] = [];
 
   const byPair = new Map<string, QueryDoc[]>();
   for (const doc of recordsSnap.docs) {
@@ -110,13 +136,25 @@ export async function collapseFileConnections(db: Db, options: CollapseOptions):
 
     if (!byFile && !byTx) {
       report.orphans.push(...docs.map(summarize));
-      docs.forEach(remove);
+      const invoiceId = files.get(fileId)?.invoiceId;
+      if (typeof invoiceId === "string" && invoiceId && paidBy(invoices.get(invoiceId), transactionId)) {
+        const held = options.revertPaidInvoices !== true;
+        report.paidInvoices.push({ invoiceId, fileId, transactionId, held });
+        if (held) continue;
+      }
+      removals.push({
+        kind: "orphan",
+        fileId,
+        transactionId,
+        docs,
+        invoiceId: typeof invoiceId === "string" && invoiceId ? invoiceId : undefined,
+      });
       continue;
     }
     if (docs.length > 1) {
       const extra = docs.filter((d) => d.id !== kept.id);
       report.duplicates.push({ kept: summarize(kept), removed: extra.map(summarize) });
-      extra.forEach(remove);
+      removals.push({ kind: "duplicate", fileId, transactionId, docs: extra, keptId: kept.id });
     }
     if (byFile !== byTx) {
       report.halfListed.push({ ...summarize(kept), listedBy: byFile ? "file" : "transaction" });
@@ -133,16 +171,72 @@ export async function collapseFileConnections(db: Db, options: CollapseOptions):
     }
   }
 
-  report.removedRecords = toRemove.length;
-  if (options.apply && toRemove.length > 0) {
-    await options.beforeDelete?.(toRemove.map((d) => ({ id: d.id, data: d.data() })));
-    for (let i = 0; i < toRemove.length; i += 400) {
-      const batch = db.batch();
-      for (const doc of toRemove.slice(i, i + 400)) batch.delete(doc.ref);
-      await batch.commit();
+  const planned = removals.flatMap((r) => r.docs);
+  if (!options.apply || planned.length === 0) {
+    for (const doc of planned) countFingerprint(report, doc);
+    report.removedRecords = planned.length;
+    return report;
+  }
+
+  await options.beforeDelete?.(planned.map((d) => ({ id: d.id, data: d.data() })));
+  for (const removal of removals) {
+    const outcome = await db.runTransaction((tx) => removeChecked(tx, db, removal, options));
+    if (outcome.skipped) {
+      report.skipped.push({ fileId: removal.fileId, transactionId: removal.transactionId, reason: outcome.skipped });
+      continue;
     }
+    for (const doc of outcome.removed) countFingerprint(report, doc);
+    report.removedRecords += outcome.removed.length;
   }
   return report;
+}
+
+/**
+ * One pair's removal, checked against the data as it is now: the pass read
+ * it a while ago, and the app kept writing since.
+ */
+async function removeChecked(
+  tx: FirebaseFirestore.Transaction,
+  db: Db,
+  removal: Removal,
+  options: CollapseOptions
+): Promise<{ removed: QueryDoc[]; skipped?: string }> {
+  const [fileSnap, txSnap, ...recordSnaps] = await tx.getAll(
+    db.collection("files").doc(removal.fileId),
+    db.collection("transactions").doc(removal.transactionId),
+    ...removal.docs.map((d) => d.ref)
+  );
+
+  if (removal.kind === "orphan") {
+    if (idsOf(fileSnap.data()?.transactionIds).includes(removal.transactionId)) {
+      return { removed: [], skipped: "the File lists the Transaction now" };
+    }
+    if (idsOf(txSnap.data()?.fileIds).includes(removal.fileId)) {
+      return { removed: [], skipped: "the Transaction lists the File now" };
+    }
+    if (removal.invoiceId && options.revertPaidInvoices !== true) {
+      const invoice = await tx.get(db.collection("invoices").doc(removal.invoiceId));
+      if (paidBy(invoice.data(), removal.transactionId)) {
+        return { removed: [], skipped: "a paid invoice rests on it now" };
+      }
+    }
+  } else {
+    const kept = await tx.get(db.collection("fileConnections").doc(removal.keptId!));
+    if (!kept.exists) return { removed: [], skipped: "the kept record is gone" };
+  }
+
+  const removed = removal.docs.filter((_, i) => recordSnaps[i].exists);
+  for (const doc of removed) tx.delete(doc.ref);
+  return { removed };
+}
+
+function paidBy(invoice: Data | undefined, transactionId: string): boolean {
+  return invoice?.status === "paid" && invoice.paidByTransactionId === transactionId;
+}
+
+function countFingerprint(report: CollapseReport, doc: QueryDoc): void {
+  const fp = summarize(doc).fingerprint;
+  report.removedByFingerprint[fp] = (report.removedByFingerprint[fp] ?? 0) + 1;
 }
 
 function idsOf(value: unknown): string[] {

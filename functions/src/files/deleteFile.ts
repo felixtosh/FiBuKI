@@ -39,25 +39,33 @@ export async function performDeleteFile(
   fileId: string,
   fileData: FirebaseFirestore.DocumentData
 ): Promise<PerformDeleteFileResult> {
-  // 1. Take the File off every Transaction, through the File Connection
-  // writer (#612). A Partner the payee rule filled from it is derived again
-  // from the Files that remain (#584).
-  const { removedConnections, detachedTransactions } = await detachFile(db, userId, fileId, fileData);
-
-  // 2. Hide the file. The row stays — a Sync-sourced File needs it to
+  // 1. Hide the file. The row stays — a Sync-sourced File needs it to
   // deduplicate against, and every File needs it to be restorable — and the
   // stored document is not touched at all.
+  // Hidden before it is detached: the File Connection writer refuses a
+  // deleted File, so no connect (auto-connect, Partner matching) can attach
+  // it again between the detach and the hide (#612).
   // A File that was attached when it was deleted is stamped as such, because
   // the delete clears the attachment fields the Purge confirmation would
   // otherwise read its retention warning from (#268).
   const now = Timestamp.now();
+  const fileRef = db.collection("files").doc(fileId);
   const fileTransactionIds = (fileData.transactionIds || []) as string[];
-  const wasAttached = detachedTransactions.length > 0 || fileTransactionIds.length > 0;
-  await db.collection("files").doc(fileId).update({
+  const listedAttached = fileTransactionIds.length > 0;
+  await fileRef.update({
     deletedAt: now,
     updatedAt: now,
-    ...(wasAttached ? { hadTransactionConnections: true } : {}),
+    ...(listedAttached ? { hadTransactionConnections: true } : {}),
   });
+
+  // 2. Take the File off every Transaction, through the File Connection
+  // writer (#612). A Partner the payee rule filled from it is derived again
+  // from the Files that remain (#584).
+  const { removedConnections, detachedTransactions } = await detachFile(db, userId, fileId, fileData);
+  if (!listedAttached && detachedTransactions.length > 0) {
+    // Attached by a record or a Transaction's list the File did not carry.
+    await fileRef.update({ hadTransactionConnections: true });
+  }
   console.log(`[deleteFile] Deleted file ${fileId} (reversible)`);
 
   return { success: true, deletedConnections: removedConnections, detachedTransactions };

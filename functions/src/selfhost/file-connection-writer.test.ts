@@ -20,6 +20,8 @@ import { deleteSourceCallable } from "../sources/deleteSource";
 import { matchFilesForPartnerInternal } from "../matching/matchFilesForPartner";
 import { markFileAsCopyCallable } from "../files/copyCallables";
 import * as billingCycle from "../matching/learnBillingCycle";
+import * as partnerProvenance from "../matching/partnerProvenance";
+import { performDeleteFile } from "../files/deleteFile";
 
 const db = getFirestore();
 const ME = "writer-me";
@@ -413,6 +415,43 @@ describe("deleting Transactions with their bank account or import", () => {
     await db.collection("imports").doc("imp-1").set({ userId: ME, sourceId: "s-1" });
     await call(deleteImportRecordCallable, { importId: "imp-1" });
     await expectNoFileListsAGoneTransaction();
+  });
+});
+
+describe("deleting a File", () => {
+  it("a connect that lands while the File is being detached is refused", async () => {
+    await seedPair();
+    await seedTx("t-2");
+    await connect("manual");
+
+    // Partner matching connects the File to another Transaction halfway
+    // through the delete, after its records were read.
+    const original = partnerProvenance.partnerRevertForRemovedConnection;
+    let raced: ConnectOutcome | undefined;
+    const spy = vi.spyOn(partnerProvenance, "partnerRevertForRemovedConnection").mockImplementation(async (...args) => {
+      raced ??= await connect("auto", {}, { fileId: "f-1", transactionId: "t-2" });
+      return original(...args);
+    });
+    try {
+      await performDeleteFile(db, ME, "f-1", await data("files", "f-1"));
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(raced).toMatchObject({ status: "refused", reason: "deleted" });
+    expect(await records("f-1")).toHaveLength(0);
+    expect((await data("transactions", "t-2")).fileIds).toEqual([]);
+    expect(await data("files", "f-1")).toMatchObject({ transactionIds: [], hadTransactionConnections: true });
+    expect((await data("files", "f-1")).deletedAt).toBeTruthy();
+  });
+
+  it("stamps a File attached only by a record as having been attached", async () => {
+    await seedPair();
+    await seedTx("t-2", { fileIds: ["f-1"] });
+    await db.collection("fileConnections").doc("legacy-unlisted").set({ userId: ME, fileId: "f-1", transactionId: "t-2", createdAt: DAY });
+    const result = await performDeleteFile(db, ME, "f-1", await data("files", "f-1"));
+    expect(result.detachedTransactions.map((t) => t.transactionId)).toEqual(["t-2"]);
+    expect(await data("files", "f-1")).toMatchObject({ hadTransactionConnections: true });
   });
 });
 

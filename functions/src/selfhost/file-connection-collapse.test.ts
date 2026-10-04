@@ -97,6 +97,52 @@ describe("collapsing File Connection records", () => {
     expect((await db.collection("invoices").doc("inv-1").get()).data()!.status).toBe("paid");
   });
 
+  it("holds back an orphan a paid invoice rests on, unless told to revert it", async () => {
+    await seed();
+    await db.collection("files").doc("f-inv").set({ userId: ME, transactionIds: [], invoiceId: "inv-2" });
+    await db.collection("transactions").doc("t-inv").set({ userId: ME, fileIds: [] });
+    await db.collection("invoices").doc("inv-2").set({ userId: ME, status: "paid", paidByTransactionId: "t-inv" });
+    await db.collection("fileConnections").doc("rec-inv").set({ userId: ME, fileId: "f-inv", transactionId: "t-inv" });
+
+    const dry = await collapseFileConnections(db, { apply: false });
+    expect(dry.paidInvoices).toEqual([{ invoiceId: "inv-2", fileId: "f-inv", transactionId: "t-inv", held: true }]);
+    expect(dry.removedRecords).toBe(2);
+
+    await collapseFileConnections(db, { apply: true });
+    await drainTriggers();
+    expect(await recordIds()).toContain("rec-inv");
+    expect((await db.collection("invoices").doc("inv-2").get()).data()!.status).toBe("paid");
+
+    const reverted = await collapseFileConnections(db, { apply: true, revertPaidInvoices: true });
+    await drainTriggers();
+    expect(reverted.paidInvoices).toEqual([{ invoiceId: "inv-2", fileId: "f-inv", transactionId: "t-inv", held: false }]);
+    expect(await recordIds()).not.toContain("rec-inv");
+    expect((await db.collection("invoices").doc("inv-2").get()).data()!.status).toBe("issued");
+  });
+
+  it("skips a removal the app's writes overtook during the run", async () => {
+    await seed();
+    const report = await collapseFileConnections(db, {
+      apply: true,
+      // Between the pass's read and its deletes: the orphan's pair is
+      // connected, and the duplicate's kept record is Unlinked.
+      beforeDelete: async () => {
+        await db.collection("files").doc("f-anthropic").update({ transactionIds: ["t-anthropic", "t-openai"] });
+        await db.collection("fileConnections").doc("rec-a").delete();
+      },
+    });
+
+    expect(report.removedRecords).toBe(0);
+    expect(report.skipped).toHaveLength(2);
+    expect(report.skipped).toEqual(
+      expect.arrayContaining([
+        { fileId: "f-anthropic", transactionId: "t-openai", reason: "the File lists the Transaction now" },
+        { fileId: "f-anthropic", transactionId: "t-anthropic", reason: "the kept record is gone" },
+      ])
+    );
+    expect(await recordIds()).toEqual(["rec-b", "rec-half", "rec-openai", "rec-orphan"]);
+  });
+
   it("finds nothing to remove on a second run", async () => {
     await seed();
     await collapseFileConnections(db, { apply: true });
