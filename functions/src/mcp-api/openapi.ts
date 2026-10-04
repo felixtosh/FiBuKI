@@ -67,6 +67,9 @@ const OPENAPI_SPEC = {
                       "link_correction",
                       "unlink_correction",
                       "get_correction",
+                      "link_receipt",
+                      "unlink_receipt",
+                      "get_receipt_link",
                       "dismiss_transaction_suggestion",
                       "undismiss_transaction_suggestion",
                       "retry_file_extraction",
@@ -256,6 +259,12 @@ const OPENAPI_SPEC = {
       "Remove a correction's link, or decline a suggestion (originalFileId); the File is never linked automatically again. Args: fileId (string), originalFileId? (string)",
     get_correction:
       "What a File corrects and who paid the original, its suggestions and linked corrections; or, for a transaction, the transactions related through a correction. Args: fileId? (string), transactionId? (string)",
+    link_receipt:
+      "Link a Receipt (GitHub's or Stripe's receipt, a card slip) to the invoice it pays. Both stay connected and count once: the invoice's figures, the Receipt's surplus as Trinkgeld without VAT. The other File follows onto the transaction the first is on. Also accepts a pairing suggestion. Args: fileId (string), invoiceFileId (string)",
+    unlink_receipt:
+      "Remove a Receipt Link, or decline a pairing suggestion (otherFileId); the pair is never linked or suggested automatically again. No connection changes. Args: fileId (string), otherFileId? (string)",
+    get_receipt_link:
+      "A File's Receipt Link: its invoice or its Receipts, its pairing suggestions and Files that may be linked by hand. Args: fileId (string)",
     dismiss_transaction_suggestion:
       "Reject a proposed file-to-transaction pair (coincidental amount or date, an own-side document scored against an expense line). Removes the suggestion and records the rejection so re-scoring does not propose it again; do not use when the pair is correct but the transaction already holds a document. Args: fileId (string), transactionId (string), reason? (string, max 500 characters)",
     undismiss_transaction_suggestion:

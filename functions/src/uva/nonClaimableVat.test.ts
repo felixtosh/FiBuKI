@@ -14,7 +14,7 @@
 import { describe, it, expect } from "vitest";
 import { calculateUva, deriveRateGroups } from "./calculateUva";
 import { deriveTransactionVat } from "./transactionVat";
-import { toUvaFile } from "./adapter";
+import { buildUvaTransaction, toUvaFile, type FileRecord } from "./adapter";
 import type { UvaPeriod, UvaReportResult, UvaTransaction } from "./types";
 
 const Q1_2026: UvaPeriod = { year: 2026, period: 1, type: "quarterly" };
@@ -318,6 +318,19 @@ describe("a File the § 11 classifier ruled not an invoice (#580)", () => {
     expect(r.totalInputVat).toBe(0);
     expect(r.nonClaimableVat).toEqual([]);
     expect(r.unresolved.map((u) => u.reason)).toEqual(["no-vat-data"]);
+  });
+
+  it("claims the invoice's VAT once when its linked Receipt prints the same figure (#571)", () => {
+    const invoice: FileRecord = { ...printsVat, id: "f-invoice", documentType: "invoice" };
+    const receipt: FileRecord = { ...printsVat, id: "f-receipt", documentType: "receipt", receiptLink: { fileId: "f-invoice" } };
+    const tx = buildUvaTransaction(
+      { id: "t-580", date: { toDate: () => new Date("2026-02-10T00:00:00Z") }, amount: -12000, fileIds: [invoice.id, receipt.id] },
+      { filesById: new Map([[invoice.id, invoice], [receipt.id, receipt]]), categoriesById: new Map() }
+    );
+    const r = run([tx]);
+
+    expect(r.totalInputVat).toBe(2000);
+    expect(r.nonClaimableVat).toEqual([]);
   });
 
   it("leaves output VAT alone: a sale's own document is not judged here", () => {

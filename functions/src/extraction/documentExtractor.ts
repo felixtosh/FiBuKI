@@ -116,6 +116,7 @@ async function extractWithGemini(
           selfDesignation: null,
           invoiceNumber: null,
           referencedInvoiceNumber: null,
+          paidInvoiceNumber: null,
           partner: null,
           vatId: null,
           iban: null,

@@ -33,6 +33,9 @@ export interface ConnectedFile {
    * `summarizeConnectedFiles`, the same helper the detail panels use.
    */
   extractionPending: boolean;
+  /** Its currency and Receipt Link (#571), so a pair on the Transaction counts once. */
+  currency?: string | null;
+  receiptOfFileId?: string | null;
 }
 
 /**
@@ -101,6 +104,8 @@ export async function loadConnectedFiles(
         payment: filePaymentTotal(fileData.extractedAmount, fileData.extractedTipAmount),
         extractedDate: fileData.extractedDate ?? null,
         extractionPending: isExtractionPending(fileData),
+        currency: fileData.extractedCurrency ?? null,
+        receiptOfFileId: fileData.receiptLink?.fileId ?? null,
       });
     }
   }
@@ -129,7 +134,13 @@ export function documentedAmountsOf(
     // The panels' own reading of the same Files (#246): a File still being
     // read with nothing to count yet adds nothing, one with an amount counts.
     const total = summarizeConnectedFiles(
-      files.map((f) => ({ payment: f.payment, extractionPending: f.extractionPending }))
+      files.map((f) => ({
+        payment: f.payment,
+        extractionPending: f.extractionPending,
+        fileId: f.fileId,
+        currency: f.currency,
+        receiptOfFileId: f.receiptOfFileId,
+      }))
     ).documentedAmount;
     if (total > 0) documented.set(transactionId, total);
   }

@@ -17,6 +17,8 @@
  * All amounts are integer cents.
  */
 
+import { countedDocuments } from "./countedDocuments";
+
 /**
  * Is this Transaction documented? A ratio, because it has to hold for a 12 EUR
  * line and a 12 000 EUR line alike. This is the coverage tolerance that has
@@ -148,6 +150,35 @@ export interface ConnectedFileAmount {
   payment: number | null | undefined;
   /** True while the File's Extraction has not finished (`isExtractionPending`). */
   extractionPending: boolean;
+  /**
+   * The File's id, currency and Receipt Link (#571), so a Receipt and the
+   * invoice it pays count once. A File without an id counts as an ordinary
+   * File.
+   */
+  fileId?: string;
+  currency?: string | null;
+  receiptOfFileId?: string | null;
+}
+
+/**
+ * The connected Files as the documents they count (#571, ADR-0012): a
+ * Receipt beside the invoice it pays is folded into the invoice, whose
+ * payment total is raised by the Receipt's surplus. Every other File passes
+ * through unchanged. Each reader of a Transaction's Files goes through here
+ * before it adds anything up.
+ */
+export function countConnectedFiles<T extends ConnectedFileAmount>(files: T[]): T[] {
+  if (!files.some((f) => f.receiptOfFileId)) return files;
+  const keyed = files.map((file, i) => ({
+    file,
+    id: file.fileId ?? `#${i}`,
+    payment: file.payment,
+    currency: file.currency,
+    receiptOfFileId: file.fileId ? file.receiptOfFileId : null,
+  }));
+  return countedDocuments(keyed).map(({ file: { file }, payment }) =>
+    payment === (file.payment ?? null) ? file : { ...file, payment }
+  );
 }
 
 /**
@@ -166,7 +197,7 @@ export function summarizeConnectedFiles(files: ConnectedFileAmount[]): {
 } {
   let pendingCount = 0;
   const finished: Array<number | null | undefined> = [];
-  for (const file of files) {
+  for (const file of countConnectedFiles(files)) {
     // Only a File with nothing to count yet is pending. One that already
     // carries an amount counts as it always has, so the scorers' sums are
     // unchanged by this split.

@@ -1208,3 +1208,58 @@ describe("bmd #550: the Personenkonto a bank line books to", () => {
     expect(booking[10]).toBe("Amazon EU S.a.r.l.");
   });
 });
+
+describe("bmd #571: a Receipt and the invoice it pays", () => {
+  it("books the pair as one document and ships both PDFs, the invoice first", async () => {
+    await db.collection("files").doc("f-receipt").set({
+      userId: USER,
+      fileName: "Receipt.pdf",
+      extractedDate: T("2026-03-15T12:00:00Z"),
+      storagePath: "users/stefan-test/files/receipt.pdf",
+      extractedAmount: 12500,
+      receiptLink: { fileId: "f-invoice", setBy: "auto" },
+    });
+    await db.collection("files").doc("f-invoice").set({
+      userId: USER,
+      fileName: "Invoice.pdf",
+      extractedDate: T("2026-03-10T12:00:00Z"),
+      storagePath: "users/stefan-test/files/invoice.pdf",
+      extractedAmount: 12000,
+      extractedVatAmount: 2000,
+      extractedVatPercent: 20,
+    });
+    await getStorage().bucket().file("users/stefan-test/files/receipt.pdf").save(Buffer.from("RECEIPT"));
+    await getStorage().bucket().file("users/stefan-test/files/invoice.pdf").save(Buffer.from("INVOICE"));
+    // The Receipt arrived first, so it is first on the line.
+    await db.collection("transactions").doc("t1").set({
+      userId: USER,
+      date: T("2026-03-15T12:00:00Z"),
+      amount: -12500,
+      name: "RESTAURANT",
+      fileIds: ["f-receipt", "f-invoice"],
+    });
+    await drainTriggers();
+
+    const res = await call(
+      { dateFrom: "2026-01-01", dateTo: "2026-12-31", onlyWithFiles: true, includeFiles: true },
+      { uid: USER },
+    );
+    const exportRef = db.collection("bmdExports").doc(res.exportId);
+    await waitFor(async () => (await exportRef.get()).data()!.status === "completed");
+    const doc = (await exportRef.get()).data()!;
+    expect(doc.skipped).toEqual([]);
+
+    const zip = await openZip(doc.storagePath);
+    expect(zip.dir.files.map((f) => f.path).filter((p) => p.startsWith("belege/"))).toEqual([
+      "belege/f-invoice_Invoice.pdf",
+      "belege/f-receipt_Receipt.pdf",
+    ]);
+    const rows = (await zip.entry("buchungen.csv")).slice(1).split("\n").slice(1);
+    // One booking: the invoice's 20 % on 120,00, the slip's 5,00 tip at 0 %,
+    // dated by the invoice and naming it first.
+    expect(rows).toEqual([
+      "0;200001;7000;2026000001;20260315;20260310;120,00;1;20,00;20;RESTAURANT;Invoice.pdf, Receipt.pdf;ER;",
+      "0;200001;7000;2026000001;20260315;20260310;5,00;1;0,00;0;RESTAURANT;Invoice.pdf, Receipt.pdf;ER;",
+    ]);
+  });
+});

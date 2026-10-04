@@ -38,6 +38,7 @@ import { loadCorrections } from "../corrections/loadCorrections";
 import { bookingSide } from "../uva/correction";
 import type { PartialPaymentAcceptance } from "../uva/partialPaymentAcceptance";
 import { personenkontoPartnerId, type FilePartnerRef } from "../partners/payeeRule";
+import { orderPairEvidence } from "../matching/countedDocuments";
 
 const PROCESSING_TIMEOUT_MS = 4 * 60 * 1000; // 4 minutes
 
@@ -187,9 +188,38 @@ async function processBmdExport(
           lineItemsUnreconciledRates: data?.lineItemsUnreconciledRates,
           extractedVatId: data?.extractedVatId,
           extractedIssuer: data?.extractedIssuer,
+          // A Receipt beside the invoice it pays is booked as one document
+          // with it (#571, ADR-0012); the ladder folds the pair.
+          receiptLink: data?.receiptLink ?? null,
         });
       }
     }
+
+    // Each invoice before the Receipts that pay it (#571): the Belegdatum is
+    // read off the first File, and the ZIP and `extbelegnr` name the invoice
+    // first. Every File stays; only the order changes.
+    transactions = transactions.map((tx) => {
+      const ids = (tx.fileIds as string[] | undefined) ?? [];
+      if (ids.length < 2) return tx;
+      const ordered = orderPairEvidence(
+        ids.map((id) => ({
+          id,
+          payment: null,
+          receiptOfFileId: filesMap.get(id)?.receiptLink?.fileId ?? null,
+        }))
+      ).map((f) => f.id);
+      return { ...tx, fileIds: ordered };
+    });
+    const orderedFiles = new Map<string, FileForExport & { storagePath?: string }>();
+    for (const tx of transactions) {
+      for (const id of (tx.fileIds as string[] | undefined) ?? []) {
+        const file = filesMap.get(id);
+        if (file && !orderedFiles.has(id)) orderedFiles.set(id, file);
+      }
+    }
+    for (const [id, file] of filesMap) if (!orderedFiles.has(id)) orderedFiles.set(id, file);
+    filesMap.clear();
+    for (const [id, file] of orderedFiles) filesMap.set(id, file);
 
     await exportRef.update({
       "counts.files": filesMap.size,

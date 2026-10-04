@@ -610,6 +610,37 @@ export interface TaxFile {
   /** Files a person declined or unlinked as this correction's original; never linked automatically again. */
   correctionDeclinedFileIds?: string[];
 
+  // === Receipt Link (#571, ADR-0012) ===
+
+  /**
+   * The number of the invoice whose payment this document confirms, as a
+   * Receipt prints it ("Invoice number" on a receipt, "Zahlung zu Rechnung").
+   * Transcribed by the Extraction; null when the document cites none. Never
+   * the document's own number (`extractedInvoiceNumber`), never the number a
+   * correction refers to (`extractedReferencedInvoiceNumber`).
+   */
+  extractedPaidInvoiceNumber?: string | null;
+
+  /**
+   * The invoice this File is the Receipt of. Held on the Receipt, points at
+   * the invoice's File. While both are live and connected to the same
+   * Transaction, the pair counts as one document (derived on read).
+   */
+  receiptLink?: {
+    fileId: string;
+    setBy: "auto" | "suggested-accepted" | "manual";
+    setAt: Timestamp;
+  } | null;
+
+  /**
+   * Files this one may pair with, by Partner, day and amount. Unoriented: a
+   * suggestion names the pair, not which File is the Receipt.
+   */
+  receiptPairSuggestions?: Array<{ fileId: string; suggestedAt: Timestamp }>;
+
+  /** Files a person declined or unlinked as this File's pair; written on both, never paired again. */
+  receiptPairDeclinedFileIds?: string[];
+
   /**
    * What kind of document this is, decided by the § 11 rules at extraction
    * time and stored here rather than recomputed at read time — two readers
@@ -947,9 +978,11 @@ export interface FileConnection {
    * Transaction's Remainder and carried the same extracted date as every File
    * already on it — see
    * [ADR-0008](../docs/adr/0008-remainder-auto-connect-is-same-day-only.md).
+   * `paired` (#571): the File followed the other File of its Receipt Link
+   * onto the Transaction, past the Coverage gate (ADR-0012 rule 6).
    * Absent on every other Connection, including a full-amount auto-connect.
    */
-  autoConnectReason?: "remainder_same_day";
+  autoConnectReason?: "remainder_same_day" | "paired";
 
   /** Score breakdown by factor (amount, date, partner, iban, reference, hint) */
   scoreBreakdown?: {
