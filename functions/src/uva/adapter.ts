@@ -8,6 +8,7 @@
  * anything with toDate().
  */
 
+import type { DocumentType } from "../documents/types";
 import {
   isPartialPaymentAcceptanceLive,
   type PartialPaymentAcceptance,
@@ -108,6 +109,11 @@ export interface FileRecord {
    * consequence is a § 12 one: there is no Vorsteuer to claim.
    */
   foreignRecipient?: boolean;
+  /**
+   * What the § 11 classifier ruled this File is (#580). Only an `invoice`
+   * carries Vorsteuer; `unknown` is no verdict and changes nothing.
+   */
+  documentType?: DocumentType | null;
 }
 
 export interface CategoryRecord {
@@ -175,11 +181,23 @@ export function toUvaFile(f: FileRecord): UvaFile {
     lineItemsUnreconciled: f.lineItemsUnreconciled ?? false,
     lineItemsUnreconciledRates: f.lineItemsUnreconciledRates ?? null,
     supplierVatId: f.extractedIssuer?.vatId ?? f.extractedVatId ?? null,
-    // A reason a human recorded outranks the derived one: both keep the VAT
-    // out, and the human's says something the rule does not know.
-    nonClaimableVatReason:
-      f.vatNotClaimableReason ?? (f.foreignRecipient === true ? "foreign-recipient" : null),
+    nonClaimableVatReason: nonClaimableVatReasonOf(f),
   };
+}
+
+/**
+ * Why this File's VAT stays out of Vorsteuer, or null when it may be claimed.
+ *
+ * A reason a human recorded outranks the derived ones: all keep the VAT out,
+ * and the human's says something the rules do not know. A third-party
+ * document is named for that before its Document Type, because a Receipt
+ * addressed to somebody else would stay out even if it were an invoice.
+ */
+function nonClaimableVatReasonOf(f: FileRecord): NonClaimableVatReason | null {
+  if (f.vatNotClaimableReason) return f.vatNotClaimableReason;
+  if (f.foreignRecipient === true) return "foreign-recipient";
+  if (f.documentType === "receipt" || f.documentType === "other") return "not-an-invoice";
+  return null;
 }
 
 const EU_UID_PREFIXES = new Set([

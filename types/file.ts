@@ -92,7 +92,9 @@ export type NonClaimableVatReason =
   | "discount-to-zero"
   | "private"
   /** Derived, never set by hand: the document is addressed to somebody else (#229). */
-  | "foreign-recipient";
+  | "foreign-recipient"
+  /** Derived, never set by hand: Document Type `receipt` or `other` (#580). */
+  | "not-an-invoice";
 
 /**
  * Whether the recipient a document names is the user (#229). See

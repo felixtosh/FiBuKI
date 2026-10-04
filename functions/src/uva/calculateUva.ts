@@ -737,7 +737,14 @@ export function deriveRateGroups(
       // Expenses only. The marker names input VAT that must not be deducted;
       // applied to income it would zero an output liability instead, which is
       // the understating direction the whole module is built to avoid (D1).
-      const excludedReason = isExcluded(f) ? f.nonClaimableVatReason ?? null : null;
+      //
+      // #580: a Receipt that prints no VAT has nothing to exclude. It stays the
+      // gap it always was, on the chasing list, because an invoice from the
+      // supplier is exactly what would recover its Vorsteuer.
+      const excludedReason =
+        isExcluded(f) && !(f.nonClaimableVatReason === "not-an-invoice" && fileGroups === null)
+          ? f.nonClaimableVatReason ?? null
+          : null;
       if (excludedReason) {
         sawVatData = true;
         let excludedVat = 0;

@@ -151,6 +151,10 @@ const NON_CLAIMABLE_BASIS: Record<NonClaimableVatReason, string> = {
     "Unternehmen. This document names a different Leistungsempfänger, so the " +
     "deduction is theirs and not this user's — however completely the document " +
     "satisfies § 11.",
+  "not-an-invoice":
+    "§ 12 Abs 1 Z 1 deducts the tax shown on an invoice within the meaning of " +
+    "§ 11. This document is not one: it lacks an element § 11 requires, or is " +
+    "not a financial document at all, so the VAT it prints is not Vorsteuer.",
 };
 
 const FX_EFFECTIVE_BASIS =
