@@ -303,7 +303,15 @@ class in `functions/src/mcp-api/tool-annotations.ts` (read-only / write / destru
 `lib/data/generated-tool-definitions.ts` (`npm run generate:tool-definitions`; CI's
 drift check runs only after the unit tests pass). The generator reads the compiled
 `functions/lib`; on a small host compile `src/tools/definitions.ts` alone instead of
-the whole project.
+the whole project, into `functions/lib` with `src` as the root (a narrower root writes
+stray `.js` files into `src/`, and an old `functions/lib/tools/definitions.js` is read
+silently, so check the new tool's name is in the regenerated file):
+
+```bash
+cd functions && rm -rf lib/tools && NODE_OPTIONS=--max-old-space-size=900 npx tsc --ignoreConfig \
+  src/tools/definitions.ts --outDir lib --rootDir src --module commonjs --target es2020 --skipLibCheck
+cd .. && npm run generate:tool-definitions
+```
 
 **Note**: Chat assistant (`lib/agent/tools/`) has separate implementations for performance (direct Admin SDK reads). Writes are already unified via Cloud Function callables.
 
