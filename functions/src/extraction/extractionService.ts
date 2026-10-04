@@ -145,12 +145,14 @@ const additionalField = z.looseObject({
 });
 
 const extracted = z.looseObject({
-  date: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/)
+  // A calendar date, not only its shape: the core builds the date from its
+  // parts, so "2026-13-45" would roll over into a valid day in 2027 and land
+  // the document in the wrong UVA period.
+  date: z.iso
+    .date()
     .nullable()
     .optional()
-    .meta({ description: "The issue date, YYYY-MM-DD." }),
+    .meta({ description: "The issue date, YYYY-MM-DD, a real calendar day." }),
   date_raw: text,
   amount: cents,
   amount_raw: text,

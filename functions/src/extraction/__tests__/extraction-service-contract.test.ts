@@ -104,6 +104,17 @@ describe("response schema", () => {
     ).toBe(false);
   });
 
+  it("refuses a date that is not a calendar day", () => {
+    for (const date of ["2026-13-01", "2026-02-31", "2025-02-29", "15.01.2026"]) {
+      expect(
+        extractionServiceResponseSchema.safeParse(transcriptionResponse({ extracted: { date } })).success
+      ).toBe(false);
+    }
+    expect(
+      extractionServiceResponseSchema.safeParse(transcriptionResponse({ extracted: { date: "2024-02-29" } })).success
+    ).toBe(true);
+  });
+
   it("accepts optional token counts and nothing negative", () => {
     const ok = { ...transcriptionResponse({}), usage: { inputTokens: 10, outputTokens: 2 } };
     expect(extractionServiceResponseSchema.safeParse(ok).success).toBe(true);
