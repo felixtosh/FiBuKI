@@ -192,11 +192,18 @@ function fileDateOf(fileData: Data): Date | null {
  * legacy keyless row second), so a File extracted before the typed fields
  * stretches without re-extraction. A printed payment term is a period, not a
  * date, and those readers never return one.
+ *
+ * With a File date, each of the two dates is checked on its own: one more
+ * than 90 days after the File date is a misread (a wrong year would open a
+ * window over a year wide) and is dropped, and the anchor is the later of
+ * the rest. The scorer still reads a dropped date as it always did.
  */
-function windowAnchorOf(fileData: Data): Date | null {
+function windowAnchorOf(fileData: Data, fileDate: Date | null): Date | null {
   const { extractedDueDate, extractedDebitDate } = toFileMatchingData(fileData);
   const dates = [toDateSafe(extractedDueDate), toDateSafe(extractedDebitDate)].filter(
-    (d): d is Date => d !== null
+    (d): d is Date =>
+      d !== null &&
+      (fileDate === null || dayNumber(d) - dayNumber(fileDate) <= MATCH_WINDOW_MAX_ANCHOR_DAYS)
   );
   if (dates.length === 0) return null;
   return dates.reduce((a, b) => (b.getTime() > a.getTime() ? b : a));
@@ -207,26 +214,23 @@ function windowAnchorOf(fileData: Data): Date | null {
  * (it is then scored against the most recent Transactions).
  *
  * - Dated: `[date − 30, max(date + 30, anchor + 7)]` in days. The back edge
- *   never moves; an anchor more than 90 days after the date is a misread and
- *   does not stretch it (the scorer still reads it as it always did).
+ *   never moves; a Due Date or Debit Date more than 90 days after the date is
+ *   a misread and is left out of the anchor (the scorer still reads it as it
+ *   always did).
  * - Undated, with an anchor: the anchor ± 30 days.
  *
  * The window decides which pairs are possible, never how strongly they score.
  */
 export function dateWindowOf(fileData: Data): DateWindow | null {
   const fileDate = fileDateOf(fileData);
-  const anchor = windowAnchorOf(fileData);
+  const anchor = windowAnchorOf(fileData, fileDate);
   if (fileDate) {
     const window = { start: fileDate.getTime() - WINDOW_MS, end: fileDate.getTime() + WINDOW_MS };
     const reach = anchor ? dayNumber(anchor) - dayNumber(fileDate) : 0;
     // Only an anchor whose week ends past day +30 stretches it: one ending on
     // day +30 or earlier leaves the ±30 edge exactly as it was, so the
     // rematch does not select the File for a half-day sliver.
-    if (
-      anchor &&
-      reach <= MATCH_WINDOW_MAX_ANCHOR_DAYS &&
-      reach + MATCH_WINDOW_ANCHOR_GRACE_DAYS > MATCH_WINDOW_DAYS
-    ) {
+    if (anchor && reach + MATCH_WINDOW_ANCHOR_GRACE_DAYS > MATCH_WINDOW_DAYS) {
       window.end = Math.max(window.end, dayRange(dayNumber(anchor) + MATCH_WINDOW_ANCHOR_GRACE_DAYS).end);
     }
     return window;
@@ -249,6 +253,17 @@ export function stretchesWindow(fileData: Data): boolean {
   const fileDate = fileDateOf(fileData);
   const window = dateWindowOf(fileData);
   return fileDate !== null && window !== null && window.end > fileDate.getTime() + WINDOW_MS;
+}
+
+/**
+ * Did #614 change which Transactions this File can reach? A dated File whose
+ * window a Due Date or Debit Date stretches, or an undated File with one,
+ * whose window moved from the most recent Transactions to that date ± 30
+ * days. The one-time rematch after release selects these Files.
+ */
+export function anchorChangesWindow(fileData: Data): boolean {
+  if (fileDateOf(fileData)) return stretchesWindow(fileData);
+  return dateWindowOf(fileData) !== null;
 }
 
 /**

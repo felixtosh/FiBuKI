@@ -4,7 +4,9 @@
  * A File's window now reaches to a week past its Due Date or Debit Date. A
  * File matched before that never saw the Transactions its stretch adds, so
  * this pass re-matches every unconnected File whose window reaches past its
- * date + 30 days, the same way an upload does: it stores the suggestions the
+ * date + 30 days, and every unconnected undated File with a Due Date or
+ * Debit Date (its window moved from the most recent Transactions to that
+ * date ± 30 days), the same way an upload does: it stores the suggestions the
  * matcher scores now and auto-connects at the normal threshold, through the
  * File Connection writer (#612). A User in passive mode gets suggestions only,
  * as on upload. It sends no notification and queues no agentic search.
@@ -23,10 +25,10 @@ import { Timestamp } from "firebase-admin/firestore";
 import { isPassiveMode } from "../utils/checkAutomationMode";
 import { toDateSafe } from "../utils/toDateSafe";
 import {
+  anchorChangesWindow,
   autoConnect,
   selectAutoConnects,
   storedSuggestionsOf,
-  stretchesWindow,
   transactionsForFile,
 } from "./matcher";
 
@@ -60,12 +62,12 @@ export interface StretchedRematchReport {
   changed: StretchedRematchFile[];
 }
 
-/** Is this File one the pass re-matches? Unconnected, finished, live, stretched. */
+/** Is this File one the pass re-matches? Unconnected, finished, live, its window changed by #614. */
 function isCandidate(data: Data): boolean {
   if (data.deletedAt || data.purgedAt) return false;
   if (Array.isArray(data.transactionIds) && data.transactionIds.length > 0) return false;
   if (data.extractionComplete !== true || data.transactionMatchComplete !== true) return false;
-  return stretchesWindow(data);
+  return anchorChangesWindow(data);
 }
 
 function suggestedIds(data: Data): Set<string> {

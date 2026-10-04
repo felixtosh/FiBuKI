@@ -369,6 +369,19 @@ describe("the date window reaches to the Due Date or Debit Date (#614)", () => {
     expect(await reaches(127)).toBe(false);
   });
 
+  it("drops a misread date on its own and stretches to the later of the rest", async () => {
+    await seedFile("f-1", { extractedDueDate: plus(45), extractedDebitDate: plus(120) });
+    expect(await reaches(52)).toBe(true);
+    expect(await reaches(53)).toBe(false);
+    expect(await reaches(127)).toBe(false);
+  });
+
+  it("drops a misread Due Date and stretches to the Debit Date", async () => {
+    await seedFile("f-1", { extractedDueDate: plus(200), extractedDebitDate: plus(40) });
+    expect(await reaches(47)).toBe(true);
+    expect(await reaches(48)).toBe(false);
+  });
+
   it("stretches the same for a legacy keyless Zahlungstermin row", async () => {
     await seedFile("f-1", {
       extractedAdditionalFields: [{ label: "Zahlungstermin", value: isoPlus(45) }],

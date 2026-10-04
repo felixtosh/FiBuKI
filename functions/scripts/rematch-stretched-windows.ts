@@ -1,7 +1,8 @@
 /**
  * Entry point for the #614 pass: re-match every unconnected File whose date
- * window a Due Date or Debit Date now stretches past its date + 30 days. It
- * stores suggestions and auto-connects at the normal threshold, as an upload
+ * window a Due Date or Debit Date now stretches past its date + 30 days, and
+ * every unconnected undated File with one (its window is now that date ± 30
+ * days instead of the most recent Transactions). It stores suggestions and auto-connects at the normal threshold, as an upload
  * does (suggestions only for a User in passive mode).
  *
  * Run it once, after #614 is deployed.
@@ -35,7 +36,7 @@ import * as path from "node:path";
 import { getFirestore } from "firebase-admin/firestore";
 import { rematchStretchedWindows } from "../src/matching/stretchedWindowRematch";
 
-const USAGE = `rematch-stretched-windows: re-match unconnected Files whose window a Due Date or Debit Date stretches (#614)
+const USAGE = `rematch-stretched-windows: re-match unconnected Files whose window a Due Date or Debit Date stretches or, on an undated File, sets (#614)
 
 Usage:
   rematch-stretched-windows --out-dir <dir> [--user <uid> | --all-users]

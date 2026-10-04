@@ -170,6 +170,28 @@ describe("the one-time rematch of stretched windows (#614)", () => {
     for (const c of made) expect(c).toMatchObject({ fileId: "f-stretched", transactionId: "t-late" });
   });
 
+  it("selects an undated File with a Due Date, whose window moved to the Due Date ± 30", async () => {
+    await seedFile("f-undated", {
+      extractedDate: null,
+      extractedDueDate: plus(45),
+      transactionSuggestions: [],
+    });
+    // Undated without any anchor: its window is still the most recent Transactions, untouched.
+    await seedFile("f-bare", { extractedDate: null, transactionSuggestions: [] });
+
+    const dry = await rematchStretchedWindows(db, { apply: false });
+    expect(dry).toMatchObject({ filesScanned: 5, filesTouched: 2 });
+    expect(dry.changed.map((c) => c.fileId).sort()).toEqual(["f-stretched", "f-undated"]);
+    expect(await suggested("f-undated")).toEqual([]);
+
+    const report = await rematchStretchedWindows(db, { apply: true, userId: ME });
+    expect(report).toMatchObject({ filesTouched: 2 });
+    expect(report.users).toEqual([{ userId: ME, filesTouched: 2 }]);
+    const undated = report.changed.find((c) => c.fileId === "f-undated");
+    expect(undated?.newSuggestions).toEqual(["t-late"]);
+    expect(await suggested("f-bare")).toEqual([]);
+  });
+
   it("makes suggestions only for a User in passive mode", async () => {
     await db.collection("subscriptions").doc(ME).set({ userId: ME, automationMode: "passive" });
     const report = await rematchStretchedWindows(db, { apply: true, userId: ME });
