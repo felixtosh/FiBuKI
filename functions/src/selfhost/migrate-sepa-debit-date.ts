@@ -90,10 +90,9 @@ export interface SepaDebitDateOptions {
 
 type FileData = Record<string, unknown>;
 
+/** A stored date is UTC midnight of the Vienna day: read the UTC date part. */
 function isoDay(date: Date | null): string | null {
-  if (!date) return null;
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  return date ? date.toISOString().slice(0, 10) : null;
 }
 
 /** The File's Debit Date as the scorer reads it: the typed field, else a row. */

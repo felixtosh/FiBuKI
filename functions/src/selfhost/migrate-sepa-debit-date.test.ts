@@ -55,11 +55,11 @@ async function seed(id: string, extra: Record<string, unknown> = {}) {
     extractionComplete: true,
     extractionError: null,
     isNotInvoice: false,
-    extractedDate: Timestamp.fromDate(new Date(2026, 5, 2)),
+    extractedDate: Timestamp.fromDate(new Date(Date.UTC(2026, 5, 2))),
     extractedText: SEPA_TEXT,
     // The legacy reading: the collection date as a keyless Zahlungstermin row.
     extractedAdditionalFields: [{ label: "Zahlungstermin", value: "2026-06-20" }],
-    extractedDueDate: Timestamp.fromDate(new Date(2026, 5, 20)),
+    extractedDueDate: Timestamp.fromDate(new Date(Date.UTC(2026, 5, 20))),
     ...extra,
   };
   await db.collection("files").doc(id).set(data);
@@ -93,7 +93,7 @@ describe("migrateSepaDebitDate: who is a candidate", () => {
     await seed("f-lastschrift", { extractedText: "Zahlung per Lastschrift." });
     await seed("f-mandate", { extractedText: "SEPA-Basis-Lastschriftmandat Ref. 123" });
     await seed("f-plain", { extractedText: "Zahlbar bis 20.06.2026 auf AT12 3456." });
-    await seed("f-has-debit", { extractedDebitDate: Timestamp.fromDate(new Date(2026, 5, 20)) });
+    await seed("f-has-debit", { extractedDebitDate: Timestamp.fromDate(new Date(Date.UTC(2026, 5, 20))) });
     await seed("f-legacy-debit-row", {
       extractedAdditionalFields: [{ label: "Einzugsdatum", value: "2026-06-20" }],
     });
@@ -145,7 +145,7 @@ describe("migrateSepaDebitDate: the applied run", () => {
     const doc = await file("f-sepa");
     expect(doc.extractionComplete).toBe(true);
     const debit = (doc.extractedDebitDate as Timestamp).toDate();
-    expect([debit.getFullYear(), debit.getMonth(), debit.getDate()]).toEqual([2026, 5, 20]);
+    expect(debit.toISOString().slice(0, 10)).toBe("2026-06-20");
     // The collection date is no longer read as a Due Date.
     expect(doc.extractedDueDate).toBeNull();
   });
