@@ -192,6 +192,27 @@ describe("the pair check (stories 15, 16, 18, 23, 43, 44)", () => {
     expect((await file("f-receipt")).receiptLink ?? null).toBeNull();
   });
 
+  it("pairs a customer's payment confirmation with an Invoice the User issued (story 37)", async () => {
+    await db.collection("invoices").doc("inv-42").set({ userId: USER, number: "2026-0042", fileId: "f-issued" });
+    await seedFile("f-issued", {
+      isFibukiGenerated: true,
+      invoiceId: "inv-42",
+      invoiceDirection: "outgoing",
+      extractedAmount: 50000,
+      extractedIssuer: { name: "Stefan EPU", vatId: "ATU11111111" },
+      extractedRecipient: { name: "Kunde GmbH", vatId: "ATU99999999" },
+      transactionIds: ["t-in"],
+    });
+    await seedFile("f-remittance", {
+      extractedAmount: 50000,
+      extractedIssuer: { name: "Kunde GmbH", vatId: "ATU99999999" },
+      extractedPaidInvoiceNumber: "2026-0042",
+      transactionIds: ["t-in"],
+    });
+    const outcome = await runReceiptPairCheck(db as never, "f-remittance", await file("f-remittance"));
+    expect(outcome.linked).toEqual([{ receiptId: "f-remittance", invoiceId: "f-issued" }]);
+  });
+
   it("never links to or suggests another user's File", async () => {
     await seedFile("f-theirs", invoiceFields, OTHER);
     await seedFile("f-receipt", receiptFields);
@@ -246,10 +267,17 @@ describe("the pair check (stories 15, 16, 18, 23, 43, 44)", () => {
     await drainTriggers();
     expect((await file("f-receipt")).receiptLink).toMatchObject({ fileId: "f-other-invoice", setBy: "auto" });
 
+    // The invoice's own number re-read: the Receipt citing the old one lets go.
+    await db.collection("files").doc("f-other-invoice").update({ extractedInvoiceNumber: "INV-3" });
+    await drainTriggers();
+    expect((await file("f-receipt")).receiptLink ?? null).toBeNull();
+
     await linkReceipt(db as never, USER, { fileId: "f-receipt", invoiceFileId: "f-invoice" });
     await db.collection("files").doc("f-receipt").update({ extractedPaidInvoiceNumber: "INV-9" });
     await drainTriggers();
-    expect((await file("f-receipt")).receiptLink).toMatchObject({ fileId: "f-invoice", setBy: "manual" });
+    // Same Partner, day and amount had suggested the pair, so the person's
+    // link is an accepted suggestion; either way a person's, and it stands.
+    expect((await file("f-receipt")).receiptLink).toMatchObject({ fileId: "f-invoice", setBy: "suggested-accepted" });
   });
 });
 

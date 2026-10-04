@@ -32,7 +32,7 @@ export const unlinkReceiptCallable = createCallable<
   unlinkReceipt(ctx.db, ctx.userId, (request ?? {}) as Record<string, unknown>)
 );
 
-export const getReceiptLinkCallable = createCallable<{ fileId: string }, ReceiptLinkView>(
+export const getReceiptLinkCallable = createCallable<{ fileId: string; withCandidates?: boolean }, ReceiptLinkView>(
   { name: "getReceiptLink" },
   async (ctx, request) => getReceiptLink(ctx.db, ctx.userId, (request ?? {}) as Record<string, unknown>)
 );

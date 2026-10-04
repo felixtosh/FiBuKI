@@ -54,6 +54,7 @@ import { FileExtractedInfo } from "./file-extracted-info";
 import { FileConnectionsList } from "./file-connections-list";
 import { FileCopySection, type CopyAct, type MarkCopyAct } from "./file-copy-section";
 import { FileCorrectionSection } from "./file-correction-section";
+import { FileReceiptLinkSection } from "./file-receipt-link-section";
 import { FileSplitSection, SplitFileDialog, canSplitFile } from "./file-split-section";
 import { Section11Reasoning } from "@/components/documents/section-11-details";
 import { describeInvoiceDirection } from "@/lib/documents/document-type-presentation";
@@ -119,6 +120,11 @@ interface FileDetailPanelProps {
   onMarkAsCopy?: MarkCopyAct;
   onNotACopy?: CopyAct;
   onMakeOriginal?: CopyAct;
+  /**
+   * #571: the invoice this File is the Receipt of, while the pair counts
+   * (both on one Transaction). Nothing is claimed from the Receipt then.
+   */
+  receiptInvoice?: TaxFile | null;
 }
 
 export function FileDetailPanel(props: FileDetailPanelProps) {
@@ -172,9 +178,11 @@ function FileDetailPanelInner({
   onMarkAsCopy,
   onNotACopy,
   onMakeOriginal,
+  receiptInvoice,
 }: FileDetailPanelProps) {
   const router = useRouter();
   const t = useTranslations("files.detail");
+  const tReceipt = useTranslations("files.receiptLink");
   const tSource = useTranslations("files.source");
   const tSplit = useTranslations("files.split");
   const storedDownload = useAuthenticatedDownload();
@@ -496,15 +504,23 @@ function FileDetailPanelInner({
                           />
                         </InfoPopover>
                       </span>
-                      <span
-                        className={cn(
-                          "flex-1 text-right file-meta-value",
-                          vatDeductible.tone === "no" && "text-amber-600 dark:text-amber-500",
-                          vatDeductible.tone === "unknown" && "text-muted-foreground"
-                        )}
-                      >
-                        {vatDeductible.text}
-                      </span>
+                      {receiptInvoice ? (
+                        // The pair counts as its invoice (#571): nothing is
+                        // claimed from this Receipt, whatever its § 11 verdict.
+                        <span className="flex-1 text-right file-meta-value text-muted-foreground">
+                          {tReceipt("receiptForInvoice", { invoice: fileDisplayName(receiptInvoice) })}
+                        </span>
+                      ) : (
+                        <span
+                          className={cn(
+                            "flex-1 text-right file-meta-value",
+                            vatDeductible.tone === "no" && "text-amber-600 dark:text-amber-500",
+                            vatDeductible.tone === "unknown" && "text-muted-foreground"
+                          )}
+                        >
+                          {vatDeductible.text}
+                        </span>
+                      )}
                     </div>
                   )}
                 </div>
@@ -661,6 +677,9 @@ function FileDetailPanelInner({
 
             {/* What this File corrects, or what corrects it (#564) */}
             <FileCorrectionSection file={file} />
+
+            {/* The invoice this Receipt pays, or this invoice's Receipts (#571) */}
+            <FileReceiptLinkSection file={file} />
 
             {/* Connected Transactions + Suggestions */}
             <FileConnectionsList

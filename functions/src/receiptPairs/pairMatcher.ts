@@ -28,6 +28,13 @@ export interface PairMatchFile {
   /** The issuer as the Copy check compares it: the normalised VAT ID, else the normalised name. */
   issuerVatId?: string | null;
   issuerName?: string | null;
+  /**
+   * An invoice the User issued (rule 7), and its recipient, compared the same
+   * way. A payment confirmation for it may come from either party.
+   */
+  outgoing?: boolean;
+  recipientVatId?: string | null;
+  recipientName?: string | null;
   /** The document's own invoice number (a receipt number counts). */
   invoiceNumber?: string | null;
   /** The number of the invoice this document confirms payment for. */
@@ -67,10 +74,33 @@ function currencyOf(f: PairMatchFile): string {
   return (f.currency || "EUR").toUpperCase();
 }
 
+function sameParty(
+  aVat: string | null | undefined,
+  aName: string | null | undefined,
+  bVat: string | null | undefined,
+  bName: string | null | undefined
+): boolean {
+  if (aVat && bVat) return aVat === bVat;
+  return !!aName && aName === bName;
+}
+
 /** Same issuer: the VAT ID when both carry one, otherwise the normalised name. */
 export function sameIssuer(a: PairMatchFile, b: PairMatchFile): boolean {
-  if (a.issuerVatId && b.issuerVatId) return a.issuerVatId === b.issuerVatId;
-  return !!a.issuerName && a.issuerName === b.issuerName;
+  return sameParty(a.issuerVatId, a.issuerName, b.issuerVatId, b.issuerName);
+}
+
+/**
+ * Does the Receipt's issuer agree with the invoice it cites? The same issuer,
+ * or, for an invoice the User issued, its recipient: the customer confirming
+ * the payment (rule 7). Either way a party to that invoice, whose numbers are
+ * unique.
+ */
+export function issuerAgrees(receipt: PairMatchFile, invoice: PairMatchFile): boolean {
+  if (sameIssuer(receipt, invoice)) return true;
+  return (
+    !!invoice.outgoing &&
+    sameParty(receipt.issuerVatId, receipt.issuerName, invoice.recipientVatId, invoice.recipientName)
+  );
 }
 
 /** A person declined this pair, on either side. */
@@ -129,7 +159,7 @@ export function matchReceiptPair(file: PairMatchFile, candidates: PairMatchFile[
       (c) =>
         normalizeInvoiceNumber(c.invoiceNumber) === cited &&
         normalizeInvoiceNumber(c.paidInvoiceNumber) !== cited &&
-        sameIssuer(file, c)
+        issuerAgrees(file, c)
     );
     if (invoices.length === 1) links.push({ receiptId: file.id, invoiceId: invoices[0].id });
   }
@@ -141,13 +171,13 @@ export function matchReceiptPair(file: PairMatchFile, candidates: PairMatchFile[
   const own = normalizeInvoiceNumber(file.invoiceNumber);
   if (own && !isReceipt) {
     for (const r of eligible) {
-      if (normalizeInvoiceNumber(r.paidInvoiceNumber) !== own || !sameIssuer(file, r)) continue;
+      if (normalizeInvoiceNumber(r.paidInvoiceNumber) !== own || !issuerAgrees(r, file)) continue;
       const rivals = eligible.filter(
         (c) =>
           c.id !== r.id &&
           normalizeInvoiceNumber(c.invoiceNumber) === own &&
           normalizeInvoiceNumber(c.paidInvoiceNumber) !== own &&
-          sameIssuer(r, c)
+          issuerAgrees(r, c)
       );
       if (rivals.length === 0) links.push({ receiptId: r.id, invoiceId: file.id });
     }

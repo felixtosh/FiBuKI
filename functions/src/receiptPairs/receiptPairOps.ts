@@ -27,6 +27,7 @@ import { copyEvidenceOf, isLiveCopy, liveCopyIds } from "../files/copyOps";
 import { filePaymentTotal } from "../matching/coverage";
 import { connectFiles } from "../fileConnections/writer";
 import { matchReceiptPair, suggestedReceipt, type PairLink, type PairMatchFile } from "./pairMatcher";
+import { normalizeInvoiceNumber } from "../corrections/linkMatcher";
 
 type Db = FirebaseFirestore.Firestore;
 type Data = FirebaseFirestore.DocumentData;
@@ -115,15 +116,21 @@ async function dropSuggestion(db: Db, userId: string, id: string, otherId: strin
 }
 
 /** The pair as the pure matcher reads it. */
-function pairFile(id: string, data: Data, liveCopy: boolean): PairMatchFile {
+function pairFile(id: string, data: Data, liveCopy: boolean, generatedNumber?: string | null): PairMatchFile {
   const evidence = copyEvidenceOf(data);
+  const recipient = data.extractedRecipient as { name?: string | null; vatId?: string | null } | null | undefined;
+  const recipientEvidence = copyEvidenceOf({ extractedIssuer: recipient ?? null });
   return {
     id,
     userId: data.userId,
     partnerId: data.partnerId ?? null,
     issuerVatId: evidence.vatId,
     issuerName: evidence.issuerName,
-    invoiceNumber: data.extractedInvoiceNumber ?? null,
+    outgoing: data.invoiceDirection === "outgoing",
+    recipientVatId: recipientEvidence.vatId,
+    recipientName: recipientEvidence.issuerName,
+    // A FiBuKI-generated invoice's number lives on its Invoice (ADR-0006).
+    invoiceNumber: generatedNumber ?? data.extractedInvoiceNumber ?? null,
     paidInvoiceNumber: data.extractedPaidInvoiceNumber ?? null,
     payment: filePaymentTotal(data.extractedAmount, data.extractedTipAmount),
     currency: data.extractedCurrency ?? null,
@@ -161,6 +168,23 @@ async function candidateDocs(db: Db, userId: string, data: Data): Promise<Array<
   // decides whether a cited number is this invoice's.
   if (typeof data.extractedPaidInvoiceNumber === "string" && data.extractedPaidInvoiceNumber) {
     add(await files.where("extractedInvoiceNumber", "==", data.extractedPaidInvoiceNumber).limit(CANDIDATE_LIMIT).get());
+    // An Invoice the User issued in FiBuKI carries its number on the Invoice.
+    const issued = await db
+      .collection("invoices")
+      .where("userId", "==", userId)
+      .where("number", "==", data.extractedPaidInvoiceNumber)
+      .limit(CANDIDATE_LIMIT)
+      .get();
+    const issuedFileIds = issued.docs
+      .map((d) => d.data().fileId)
+      .filter((id): id is string => typeof id === "string" && !!id);
+    if (issuedFileIds.length > 0) {
+      const snaps = await db.getAll(...issuedFileIds.map((id) => db.collection("files").doc(id)));
+      for (const snap of snaps) {
+        const d = snap.exists ? snap.data() : undefined;
+        if (d && d.userId === userId) byId.set(snap.id, d);
+      }
+    }
   }
   if (typeof data.extractedInvoiceNumber === "string" && data.extractedInvoiceNumber) {
     add(await files.where("extractedPaidInvoiceNumber", "==", data.extractedInvoiceNumber).limit(CANDIDATE_LIMIT).get());
@@ -168,6 +192,23 @@ async function candidateDocs(db: Db, userId: string, data: Data): Promise<Array<
   return [...byId]
     .map(([id, d]) => ({ id, data: d }))
     .filter((f) => isLive(f.data) && f.data.isNotInvoice !== true);
+}
+
+/** The numbers of the FiBuKI-generated invoices among these Files, read off their Invoices. */
+async function generatedNumbers(
+  db: Db,
+  userId: string,
+  files: Array<{ id: string; data: Data }>
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const generated = files.filter((f) => f.data.isFibukiGenerated === true && typeof f.data.invoiceId === "string" && f.data.invoiceId);
+  if (generated.length === 0) return out;
+  const snaps = await db.getAll(...generated.map((f) => db.collection("invoices").doc(f.data.invoiceId)));
+  snaps.forEach((snap, i) => {
+    const inv = snap.exists ? snap.data() : undefined;
+    if (inv && inv.userId === userId && inv.number) out.set(generated[i].id, String(inv.number));
+  });
+  return out;
 }
 
 async function isLiveCopyFile(db: Db, data: Data): Promise<boolean> {
@@ -245,10 +286,16 @@ export async function runReceiptPairCheck(
 
   const docs = await candidateDocs(db, userId, fileData);
   const copies = await liveCopyIds(db, docs);
-  const self = pairFile(fileId, { ...fileData, receiptLink: options.suggestOnly ? fileData.receiptLink : null }, false);
+  const numbers = await generatedNumbers(db, userId, [{ id: fileId, data: fileData }, ...docs]);
+  const self = pairFile(
+    fileId,
+    { ...fileData, receiptLink: options.suggestOnly ? fileData.receiptLink : null },
+    false,
+    numbers.get(fileId)
+  );
   const result = matchReceiptPair(
     self,
-    docs.filter((d) => d.id !== fileId).map((d) => pairFile(d.id, d.data, copies.has(d.id)))
+    docs.filter((d) => d.id !== fileId).map((d) => pairFile(d.id, d.data, copies.has(d.id), numbers.get(d.id)))
   );
   const dataOf = new Map(docs.map((d) => [d.id, d.data]));
   dataOf.set(fileId, fileData);
@@ -312,6 +359,24 @@ export async function runReceiptPairCheck(
     });
     if (connected) outcome.connectedFileIds.push(connected);
   }
+  // Receipts the system linked to this File on a number it no longer
+  // carries are re-decided too: a re-extracted invoice number moves them.
+  if (!options.suggestOnly) {
+    const own = normalizeInvoiceNumber(self.invoiceNumber);
+    const linkedHere = await db
+      .collection("files")
+      .where("userId", "==", userId)
+      .where("receiptLink.fileId", "==", fileId)
+      .get();
+    for (const doc of linkedHere.docs) {
+      const d = doc.data();
+      if (linkOf(d)?.setBy !== "auto" || normalizeInvoiceNumber(d.extractedPaidInvoiceNumber) === own) continue;
+      await runReceiptPairCheck(db, doc.id, d).catch((err) => {
+        console.error(`[ReceiptPair] Re-deciding ${doc.id} failed`, err);
+      });
+    }
+  }
+
   outcome.linked = toRecord;
   outcome.suggested = suggestedNow;
   return outcome;
@@ -490,7 +555,10 @@ export interface ReceiptLinkView {
    * Receipt; null when the two tie and the person picks.
    */
   suggestions: Array<ReceiptPairFileRef & { suggestedReceiptId: string | null }>;
-  /** Files of the same Partner a person may link by hand, newest first. */
+  /**
+   * Files of the same Partner a person may link this File to as its invoice,
+   * newest first. Read only when asked for (`withCandidates`).
+   */
   candidates: ReceiptPairFileRef[];
 }
 
@@ -540,8 +608,9 @@ export async function getReceiptLink(db: Db, userId: string, args: Record<string
     suggestions.push({ ...fileRef(f.id, f.data), suggestedReceiptId: suggestedReceipt(self, pairFile(f.id, f.data, false)) });
   }
 
+  // Only on request: the manual picker reads the Partner's Files.
   let candidates: ReceiptPairFileRef[] = [];
-  if (!own && typeof file.data.partnerId === "string" && file.data.partnerId) {
+  if (args.withCandidates === true && !own && typeof file.data.partnerId === "string" && file.data.partnerId) {
     const snap = await db
       .collection("files")
       .where("userId", "==", userId)
