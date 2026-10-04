@@ -5,7 +5,8 @@
  *
  * Each drift the two implementations had is a fixture here, run through the
  * chat tool as the User's session (the callable, in-process) and through
- * handleTool, and the two outputs must be identical:
+ * handleTool, and the two outputs must be identical (MCP's as the model
+ * reads it: forTheModel only reformats):
  *   - listing Files leaves out Purged Files and non-invoices,
  *   - the amount filters take cents on both lists,
  *   - a Merged Partner says so and names its survivor (#264),
@@ -81,6 +82,7 @@ let handleTool: (uid: string, name: string, args: Record<string, unknown>) => Pr
 let tools: Map<string, AgentTool>;
 let wrapped: Record<string, string>;
 let wrappedTools: AgentTool[];
+let forTheModel: (mcpName: string, result: unknown) => unknown;
 
 const db = getFirestore();
 const day = (iso: string) => Timestamp.fromDate(new Date(`${iso}T00:00:00Z`));
@@ -94,6 +96,7 @@ beforeAll(async () => {
   const twins = await import("@/lib/agent/tools/mcp-tools");
   wrapped = twins.MCP_TWINS as Record<string, string>;
   wrappedTools = twins.MCP_TOOLS as unknown as AgentTool[];
+  forTheModel = twins.forTheModel;
 }, 120_000);
 
 async function seed() {
@@ -158,14 +161,18 @@ function tool(name: string): AgentTool {
 
 const wire = (v: unknown) => JSON.parse(JSON.stringify(v ?? null));
 
-/** The chat tool's answer and MCP's answer to the same arguments. */
+/**
+ * The chat tool's answer and MCP's answer to the same arguments, the latter
+ * as the model reads it (forTheModel: Timestamps as ISO strings, OCR text out
+ * of list rows; the cases below pin that this is all it changes).
+ */
 async function both(chatName: string, args: Record<string, unknown>) {
   const t = tool(chatName);
   const parsed = t.schema.parse(args);
   const chat = await t.invoke(args, CONFIG);
   let mcp: unknown;
   try {
-    mcp = wire(await handleTool(USER, wrapped[chatName], parsed));
+    mcp = forTheModel(wrapped[chatName], wire(await handleTool(USER, wrapped[chatName], parsed)));
   } catch (err) {
     mcp = { error: (err as Error).message };
   }
@@ -212,6 +219,34 @@ describe("what reaches the model", () => {
     )) as { content: unknown };
     expect(typeof msg.content).toBe("string");
     expect(JSON.parse(msg.content as string)[0]).toMatchObject({ id: "s-giro", type: "manual" });
+  });
+});
+
+describe("the model reads MCP's records, reformatted only", () => {
+  it("a Timestamp reads as an ISO date, not epoch seconds", async () => {
+    const { chat } = await both("getFile", { fileId: "f-amazon" });
+    expect(chat.extractedDate).toBe("2026-03-09T00:00:00.000Z");
+    expect(typeof chat.uploadedAt).toBe("string");
+    const raw = wire(await handleTool(USER, "get_file", { fileId: "f-amazon" }));
+    expect(raw.extractedDate).toEqual({ _seconds: Date.UTC(2026, 2, 9) / 1000, _nanoseconds: 0 });
+  });
+
+  it("a Files list row leaves out the OCR text, and nothing else; getFile keeps it", async () => {
+    await db.collection("files").doc("f-amazon").update({ extractedText: "Rechnung ".repeat(500) });
+    const t = tool("listFiles");
+    const chat = (await t.invoke({ search: "amazon" }, CONFIG)) as { files: Array<Record<string, unknown>> };
+    const raw = wire(await handleTool(USER, "list_files", t.schema.parse({ search: "amazon" }))) as {
+      files: Array<Record<string, unknown>>;
+    };
+    expect(raw.files[0].extractedText).toBeTruthy();
+    expect(chat.files[0]).not.toHaveProperty("extractedText");
+    expect(Object.keys(chat.files[0]).sort()).toEqual(
+      Object.keys(raw.files[0]).filter((k) => k !== "extractedText").sort()
+    );
+    expect(chat.files.map((f) => f.id)).toEqual(raw.files.map((f) => f.id));
+
+    const one = (await tool("getFile").invoke({ fileId: "f-amazon" }, CONFIG)) as Record<string, unknown>;
+    expect(one.extractedText).toBe("Rechnung ".repeat(500));
   });
 });
 

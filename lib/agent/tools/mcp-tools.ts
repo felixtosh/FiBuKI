@@ -6,7 +6,9 @@
  * session's User. So there is one implementation of each: filtering,
  * validation and every computed figure live in the shared tool, and the chat
  * sees exactly what an external integration sees. The MCP output shape is the
- * contract; a wrapper passes it through unchanged.
+ * contract; a wrapper passes it through, reformatted for reading only
+ * (forTheModel: Timestamps as ISO strings, a File's OCR text left out of list
+ * rows). It never filters rows or computes a figure.
  *
  * The parameters come from the MCP definition (lib/data/generated-tool-definitions.ts),
  * so a parameter added there reaches the chat without a second edit. Only the
@@ -61,6 +63,68 @@ export function callableErrorMessage(err: unknown): string {
   return message || "Tool failed";
 }
 
+// ============================================================================
+// Display: what the model reads (reformatting only, never filtering or computing)
+// ============================================================================
+
+/** A Firestore Timestamp after a JSON round trip: exactly these two keys. */
+function isWireTimestamp(value: unknown): value is { _seconds: number; _nanoseconds: number } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const keys = Object.keys(value);
+  const v = value as Record<string, unknown>;
+  return (
+    keys.length === 2 &&
+    typeof v._seconds === "number" &&
+    typeof v._nanoseconds === "number"
+  );
+}
+
+/** Every Timestamp as an ISO string: the model cannot be trusted to turn epoch seconds into a calendar day. */
+function readableTimestamps(value: unknown): unknown {
+  if (isWireTimestamp(value)) {
+    return new Date(value._seconds * 1000 + Math.floor(value._nanoseconds / 1e6)).toISOString();
+  }
+  if (Array.isArray(value)) return value.map(readableTimestamps);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, readableTimestamps(v)]));
+  }
+  return value;
+}
+
+/**
+ * Fields a list row leaves out of the model's context. A File's OCR text is
+ * often kilobytes; a page of twenty would crowd out the conversation, and
+ * getFile still returns it for the one File that needs reading.
+ */
+const LIST_ROW_OMIT: Record<string, { rows: string; fields: string[] }> = {
+  list_files: { rows: "files", fields: ["extractedText"] },
+};
+
+/**
+ * The MCP output as the model reads it: Timestamps as ISO strings and, on a
+ * list, the bulky fields above left out of each row. Rows, values and every
+ * other field pass through unchanged.
+ */
+export function forTheModel(mcpName: string, result: unknown): unknown {
+  let out = readableTimestamps(result);
+  const omit = LIST_ROW_OMIT[mcpName];
+  if (omit && out && typeof out === "object" && !Array.isArray(out)) {
+    const page = out as Record<string, unknown>;
+    const rows = page[omit.rows];
+    if (Array.isArray(rows)) {
+      out = {
+        ...page,
+        [omit.rows]: rows.map((row) =>
+          row && typeof row === "object"
+            ? Object.fromEntries(Object.entries(row).filter(([k]) => !omit.fields.includes(k)))
+            : row
+        ),
+      };
+    }
+  }
+  return out;
+}
+
 /** Run one MCP tool as the session's User. A failure is returned, not thrown, as every chat tool does. */
 export async function runMcpTool(
   name: string,
@@ -71,10 +135,13 @@ export async function runMcpTool(
   if (!authHeader) return { error: "Auth header not provided" };
   const defined = Object.fromEntries(Object.entries(args ?? {}).filter(([, v]) => v !== undefined));
   try {
-    const result = await callFirebaseFunction<{ tool: string; arguments: Record<string, unknown> }, unknown>(
-      "runTool",
-      { tool: name, arguments: defined },
-      authHeader
+    const result = forTheModel(
+      name,
+      await callFirebaseFunction<{ tool: string; arguments: Record<string, unknown> }, unknown>(
+        "runTool",
+        { tool: name, arguments: defined },
+        authHeader
+      )
     );
     // LangChain stringifies an object result for the model, but reads an
     // array whose items all have a `type` key as message content blocks, and

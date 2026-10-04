@@ -163,7 +163,7 @@ describe("no oracle on another user's File state", () => {
     // (listTransactions returns whole records since #616, seed stamps included.)
     return JSON.stringify(await t.invoke(args, CONFIG))
       .replace(/"(connectionId|date)":"[^"]+"/g, "")
-      .replace(/"(createdAt|updatedAt)":\{[^}]*\}/g, "");
+      .replace(/"(createdAt|updatedAt)":("[^"]*"|\{[^}]*\})/g, "");
   }
 
   async function withVictimFile(state: Record<string, unknown>, run: () => Promise<string>): Promise<string> {
