@@ -306,7 +306,9 @@ The date by which the User must pay an invoice. A deadline, not a payment date, 
 the date the money moved. Chosen from the domain, not from the sample: one issuer's
 "Zahlungstermin" is a synonym, not the term. A booking on the Due Date or up to three days
 after it (a Due Date on a weekend is paid the next banking day) scores as the same day,
-and outranks a learned billing cycle. Where the booking lands on it, the billing cycle
+and outranks the delay a billing cycle learned, but not its rule that a booking on a
+neighbouring period's expected day is that period's charge (the same holds for a Debit
+Date). Where the booking lands on it, the billing cycle
 learns its payment term from the date the File states rather than from the booking (#618).
 _Deutsch (defining)_: Fälligkeitsdatum
 _Also printed as_: Zahlungstermin, fällig am, zahlbar bis, Zahlbar ohne Abzug bis

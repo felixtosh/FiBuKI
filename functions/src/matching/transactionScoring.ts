@@ -493,6 +493,12 @@ export interface DateScoreResult {
    * whenever there is no window, and on the learned-delay path.
    */
   endpointScore: number;
+  /**
+   * Set when the learned cycle's period penalty zeroed the date: the booking
+   * sits on a neighbouring period's expected day, so it is that period's
+   * charge. Neither a Due Date nor a Debit Date hit overrides it (#618).
+   */
+  neighbouringPeriod?: true;
 }
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
@@ -520,10 +526,13 @@ function scoreDayDistance(daysDiff: number): { score: number; source: Transactio
  * this is an interval and not a precedence rule.
  *
  * The learned `invoiceToTransactionDelay` is observed behaviour, so it (and
- * its frequencyDays period penalty) is consulted before the window. One thing
- * outranks it (#618): a Due Date hit, a booking on the Due Date or within the
- * settlement lag after it. A date the Partner printed beats a gap the learner
- * inferred, as a Debit Date hit already does in `scoreTransaction`.
+ * its frequencyDays period penalty) is consulted before the window. A Due Date
+ * hit (#618), a booking on the Due Date or within the settlement lag after it,
+ * outranks the learned delay: a date the Partner printed beats a gap the
+ * learner inferred, as a Debit Date hit does in `scoreTransaction`. It does
+ * not outrank the period penalty: a booking on a neighbouring period's
+ * expected day is that period's charge, and the result says so
+ * (`neighbouringPeriod`) so the Debit Date yields to it too.
  */
 export function calculateDateScore(
   fileDate: Date,
@@ -540,9 +549,7 @@ export function calculateDateScore(
   // A Due Date on or before the issue date opens no window (see below), so it
   // gets no settlement lag either.
   const windowEnd = dueDate && dueDate.getTime() > fileDate.getTime() ? dueDate : null;
-  if (windowEnd && isDueDateHit(windowEnd, txDate)) {
-    return { score: 25, source: "date_exact", endpointScore: 25 };
-  }
+  const dueDateHit = windowEnd !== null && isDueDateHit(windowEnd, txDate);
 
   // If billing cycle has a learned invoice-to-transaction delay, check against it
   // This handles cases like "Telekom invoice Dec 1 → bank debit Dec 15" where
@@ -578,22 +585,32 @@ export function calculateDateScore(
     // `offset` is the booking's signed distance from the neighbouring
     // period's expected day; that charge gets the same forward lag as this
     // one (#618), so the penalty reaches `lag` days further after it.
+    //
+    // It also outranks a stated-date hit (#618, decided on the PR): a net-30
+    // invoice paid on issue has its Due Date right where next month's charge
+    // lands, and that charge must not tie the real one.
     if (billingCycle.frequencyDays) {
       const periodsAway = Math.round(delayDiff / billingCycle.frequencyDays);
       if (periodsAway >= 1) {
         const periodVariance = Math.min(variance, Math.floor(billingCycle.frequencyDays / 2));
         const offset = late - Math.sign(late) * periodsAway * billingCycle.frequencyDays;
         if (offset >= -periodVariance && offset <= periodVariance + lag) {
-          return { score: 0, source: null, endpointScore: 0 };
+          return { score: 0, source: null, endpointScore: 0, neighbouringPeriod: true };
         }
       }
     }
+
+    // Anywhere else a Due Date hit beats the learned delay: a date the
+    // Partner printed beats a gap the learner inferred.
+    if (dueDateHit) return { score: 25, source: "date_exact", endpointScore: 25 };
 
     if (late >= -variance && late <= variance + lag) {
       return { score: 25, source: "date_exact", endpointScore: 25 };
     }
     if (delayDiff <= variance * 2) return { score: 22, source: "date_close", endpointScore: 22 };
   }
+
+  if (dueDateHit) return { score: 25, source: "date_exact", endpointScore: 25 };
 
   // Standard date proximity scoring, over the payment window when there is one.
   // A Due Date on or before the issue date is no window: equal collapses to
@@ -1178,6 +1195,7 @@ export function scoreTransaction(
   // 2. Date scoring (0-25, boosted when partner matches), over the payment
   // window when the File states a Due Date (#236).
   let endpointDateScore = 0;
+  let neighbouringPeriod = false;
   if (fileData.extractedDate) {
     const result = calculateDateScore(
       fileData.extractedDate.toDate(),
@@ -1187,14 +1205,20 @@ export function scoreTransaction(
     );
     dateScore = result.score;
     endpointDateScore = result.endpointScore;
+    neighbouringPeriod = result.neighbouringPeriod === true;
     if (result.source) matchSources.push(result.source);
   }
 
   // 2a. Debit Date (#136). What the Partner said it would do, so a hit is a
-  // same-day endpoint across the settlement lag, and it overrides a learned
-  // cycle's period penalty: a stated collection date beats an inferred one.
+  // same-day endpoint across the settlement lag, and it overrides the learned
+  // delay: a stated collection date beats an inferred one. Except where the
+  // learned cycle puts the booking on a neighbouring period's expected day:
+  // that is the next (or previous) charge, whatever this File states (#618).
   const debitDate = toDateSafe(fileData.extractedDebitDate);
-  const debitHit = debitDate !== null && isDebitDateHit(debitDate, txData.date.toDate());
+  const debitHit =
+    !neighbouringPeriod &&
+    debitDate !== null &&
+    isDebitDateHit(debitDate, txData.date.toDate());
   if (debitHit) {
     dateScore = Math.max(dateScore, 25);
     endpointDateScore = 25;

@@ -138,24 +138,13 @@ describe("scoreTransaction: the observed telecom invoice", () => {
 });
 
 // ============================================================================
-// Decision 2: a stated-date hit overrides the learned cycle
+// Decision 2, as decided on the PR (option b): a stated-date hit overrides
+// the learned delay, but not the rule that a booking on a neighbouring
+// period's expected day is that period's charge
 // ============================================================================
 
 describe("a Due Date hit against a learned cycle", () => {
-  it("wins over a period penalty that would zero the booking", () => {
-    // Weekly biller, learned delay 3 +/- 0. A booking ten days after issue is
-    // one period past the learned day, so the penalty zeros it; the File's
-    // own Due Date (two days earlier) says it is this File's payment.
-    const cycle: BillingCycleHint = { invoiceToTransactionDelay: 3, delayVariance: 0, frequencyDays: 7 };
-    const issue = d("2026-07-02");
-    const booking = d("2026-07-12");
-    expect(calculateDateScore(issue, booking, cycle).score).toBe(0);
-
-    const result = calculateDateScore(issue, booking, cycle, d("2026-07-10"));
-    expect(result).toEqual({ score: 25, source: "date_exact", endpointScore: 25 });
-  });
-
-  it("is not undercut by the learned delay's close band either", () => {
+  it("is not undercut by the learned delay's close band", () => {
     // Learned 15 +/- 1 on a monthly cycle: a booking 19 days after issue is
     // close at best. It is the day after the stated Due Date.
     const cycle: BillingCycleHint = { invoiceToTransactionDelay: 15, delayVariance: 1, frequencyDays: 30 };
@@ -163,22 +152,94 @@ describe("a Due Date hit against a learned cycle", () => {
     expect(result).toEqual({ score: 25, source: "date_exact", endpointScore: 25 });
   });
 
+  it("is not undercut by a learned delay the booking misses entirely", () => {
+    // Learned 10 +/- 1, monthly: a booking 19 days after issue is neither on
+    // time nor close, and no neighbouring period is near. The Due Date is.
+    const cycle: BillingCycleHint = { invoiceToTransactionDelay: 10, delayVariance: 1, frequencyDays: 30 };
+    expect(calculateDateScore(d(ISSUE), d("2026-06-24"), cycle).score).toBe(3);
+    const result = calculateDateScore(d(ISSUE), d("2026-06-24"), cycle, d("2026-06-23"));
+    expect(result).toEqual({ score: 25, source: "date_exact", endpointScore: 25 });
+  });
+
   it("carries the same-day hard-facts bonus through scoreTransaction", () => {
     const file: FileMatchingData = {
-      extractedAmount: 38.25,
+      extractedAmount: 45.9,
       extractedCurrency: "EUR",
-      extractedDate: ts("2026-07-02"),
-      extractedDueDate: ts("2026-07-10"),
+      extractedDate: ts(ISSUE),
+      extractedDueDate: ts("2026-06-23"),
       extractedPartner: null,
       extractedIban: null,
       extractedText: null,
       partnerId: null,
     };
-    const tx: TransactionData = { id: "t", amount: -38.25, date: ts("2026-07-12"), currency: "EUR", name: "x" };
-    const billingCycle: BillingCycleHint = { invoiceToTransactionDelay: 3, delayVariance: 0, frequencyDays: 7 };
+    const tx: TransactionData = { id: "t", amount: -45.9, date: ts("2026-06-24"), currency: "EUR", name: "x" };
+    const billingCycle: BillingCycleHint = { invoiceToTransactionDelay: 10, delayVariance: 1, frequencyDays: 30 };
     const result = scoreTransaction(file, tx, undefined, { billingCycle });
     expect(result.breakdown.date).toBe(25);
     expect(result.breakdown.hardFacts).toBe(SCORING_CONFIG.HARD_FACTS_BONUS_SAME_DAY);
+  });
+
+  it("loses to the period penalty when the booking is the neighbouring period's charge", () => {
+    // Weekly biller, learned delay 3 +/- 0. A booking ten days after issue
+    // sits on next week's expected day. The File's Due Date two days earlier
+    // does not make it this File's payment.
+    const cycle: BillingCycleHint = { invoiceToTransactionDelay: 3, delayVariance: 0, frequencyDays: 7 };
+    const issue = d("2026-07-02");
+    const booking = d("2026-07-12");
+    expect(calculateDateScore(issue, booking, cycle).score).toBe(0);
+    expect(calculateDateScore(issue, booking, cycle, d("2026-07-10")).score).toBe(0);
+  });
+});
+
+describe("the reviewer's case: net-30 invoice paid by card on issue, next month's charge on the Due Date + 1", () => {
+  // A monthly invoice dated 01.03 with a net-30 Due Date (31.03), paid by
+  // card on 01.03; the same amount is charged again on 01.04. The learned
+  // cycle says: paid on the issue day, every 30 days.
+  const billingCycle: BillingCycleHint = { invoiceToTransactionDelay: 0, delayVariance: 1, frequencyDays: 30 };
+  const file: FileMatchingData = {
+    extractedAmount: 29.99,
+    extractedCurrency: "EUR",
+    extractedDate: ts("2026-03-01"),
+    extractedDueDate: ts("2026-03-31"),
+    extractedPartner: null,
+    extractedIban: null,
+    extractedText: null,
+    partnerId: null,
+  };
+  const rightCharge: TransactionData = {
+    id: "march",
+    amount: -29.99,
+    date: ts("2026-03-01"),
+    currency: "EUR",
+    name: "Card payment",
+    transactionType: "card",
+  };
+  const nextCharge: TransactionData = { ...rightCharge, id: "april", date: ts("2026-04-01") };
+  const withPartner = (f: FileMatchingData): FileMatchingData => ({ ...f, partnerId: "p-1" });
+  const txWithPartner = (t: TransactionData): TransactionData => ({ ...t, partnerId: "p-1" });
+
+  it("the 01.04 charge stays below the auto-connect threshold, with or without a Partner match", () => {
+    const bare = scoreTransaction(file, nextCharge, undefined, { billingCycle });
+    const partnered = scoreTransaction(withPartner(file), txWithPartner(nextCharge), undefined, { billingCycle });
+    expect(bare.confidence).toBe(40);
+    expect(partnered.confidence).toBe(55);
+    expect(partnered.confidence).toBeLessThan(SCORING_CONFIG.AUTO_MATCH_THRESHOLD);
+  });
+
+  it("the 01.03 charge keeps its score", () => {
+    const bare = scoreTransaction(file, rightCharge, undefined, { billingCycle });
+    const partnered = scoreTransaction(withPartner(file), txWithPartner(rightCharge), undefined, { billingCycle });
+    expect(bare.confidence).toBe(85);
+    expect(partnered.confidence).toBe(100);
+  });
+
+  it("the same holds when the File states the date as a Debit Date", () => {
+    const asDebit: FileMatchingData = { ...file, extractedDueDate: null, extractedDebitDate: ts("2026-03-31") };
+    const next = scoreTransaction(withPartner(asDebit), txWithPartner(nextCharge), undefined, { billingCycle });
+    expect(next.confidence).toBeLessThan(SCORING_CONFIG.AUTO_MATCH_THRESHOLD);
+    expect(next.matchSources).not.toContain("debit_date");
+    const right = scoreTransaction(withPartner(asDebit), txWithPartner(rightCharge), undefined, { billingCycle });
+    expect(right.confidence).toBe(100);
   });
 });
 
