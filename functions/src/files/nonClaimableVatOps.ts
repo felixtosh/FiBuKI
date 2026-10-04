@@ -18,8 +18,8 @@ import type { NonClaimableVatReason } from "../uva/types";
 
 /**
  * The closed set a HUMAN can set, as data. The union in `uva/types.ts` is the
- * type and carries one more value — `foreign-recipient`, which a rule derives
- * (#229) and no caller may assert by hand.
+ * type and carries two more values — `foreign-recipient` (#229) and
+ * `not-an-invoice` (#580), which rules derive and no caller may assert by hand.
  */
 export const NON_CLAIMABLE_VAT_REASONS: NonClaimableVatReason[] = [
   "insurance-tax",

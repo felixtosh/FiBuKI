@@ -145,6 +145,7 @@ const NON_CLAIMABLE_LABELS: Record<string, string> = {
   "discount-to-zero": "100% discount — nothing due",
   private: "Private consumption",
   "foreign-recipient": "Addressed to somebody else — not this Unternehmen's Vorsteuer",
+  "not-an-invoice": "Not an invoice — a Receipt carries no Vorsteuer",
 };
 
 /** Why a claimed input-VAT figure has no document under it (#85). */

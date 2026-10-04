@@ -266,6 +266,34 @@ function reportVatCents(f: Fixture, ecbRates: EcbRateTable | null = null): numbe
     : report.totalInputVat - (report.reverseCharge.length ? report.totalOutputVat : 0);
 }
 
+/**
+ * The same 120,00 charge printing 20,00 VAT, under each Document Type (#580).
+ * Only an invoice carries Vorsteuer, so the export must book a Receipt's
+ * figure at no tax exactly as the UVA keeps it out; agreement at zero alone
+ * would prove nothing, so the invoice case is in the set to show the VAT is real.
+ */
+const BY_DOCUMENT_TYPE: Array<[FileForExport["documentType"], number]> = [
+  ["invoice", 2000],
+  ["unknown", 2000],
+  ["receipt", 0],
+  ["other", 0],
+];
+
+describe("bmd/uva agreement (#580): only an invoice carries Vorsteuer", () => {
+  for (const [documentType, vat] of BY_DOCUMENT_TYPE) {
+    it(`states ${vat} cents of VAT on both sides for a ${documentType}`, () => {
+      const f = withFile(`documentType ${documentType}`, -12000, {
+        extractedAmount: 12000,
+        extractedVatAmount: 2000,
+        extractedVatPercent: 20,
+        documentType,
+      });
+      expect(exportVatCents(f)).toBe(vat);
+      expect(reportVatCents(f)).toBe(vat);
+    });
+  }
+});
+
 describe("bmd/uva agreement (#66)", () => {
   for (const f of FIXTURES) {
     it(`states the same VAT for: ${f.name}`, () => {

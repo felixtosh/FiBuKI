@@ -368,3 +368,36 @@ describe("toUvaFile — an invoice addressed to somebody else (#229)", () => {
     expect(marked.nonClaimableVatReason).toBe("private");
   });
 });
+
+describe("toUvaFile — only an invoice carries Vorsteuer (#580)", () => {
+  const printsVat = (documentType: FileRecord["documentType"]): FileRecord => ({
+    id: "f-printed-vat",
+    extractedAmount: 12000,
+    extractedVatAmount: 2000,
+    extractedVatPercent: 20,
+    documentType,
+  });
+
+  it("keeps a Receipt's VAT out", () => {
+    expect(toUvaFile(printsVat("receipt")).nonClaimableVatReason).toBe("not-an-invoice");
+  });
+
+  it("keeps the VAT of a File that is not a financial document out", () => {
+    expect(toUvaFile(printsVat("other")).nonClaimableVatReason).toBe("not-an-invoice");
+  });
+
+  it("leaves an invoice, an unjudged File and an unclassified one claimable", () => {
+    expect(toUvaFile(printsVat("invoice")).nonClaimableVatReason).toBeNull();
+    expect(toUvaFile(printsVat("unknown")).nonClaimableVatReason).toBeNull();
+    expect(toUvaFile(printsVat(undefined)).nonClaimableVatReason).toBeNull();
+  });
+
+  it("names a human's reason, then a foreign recipient, before the Document Type", () => {
+    expect(
+      toUvaFile({ ...printsVat("receipt"), vatNotClaimableReason: "private" }).nonClaimableVatReason
+    ).toBe("private");
+    expect(
+      toUvaFile({ ...printsVat("receipt"), foreignRecipient: true }).nonClaimableVatReason
+    ).toBe("foreign-recipient");
+  });
+});

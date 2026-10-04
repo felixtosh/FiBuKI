@@ -14,7 +14,7 @@
 import { describe, it, expect } from "vitest";
 import { calculateUva, deriveRateGroups } from "./calculateUva";
 import { deriveTransactionVat } from "./transactionVat";
-import { toUvaFile } from "./adapter";
+import { buildUvaTransaction, toUvaFile, type FileRecord } from "./adapter";
 import type { UvaPeriod, UvaReportResult, UvaTransaction } from "./types";
 
 const Q1_2026: UvaPeriod = { year: 2026, period: 1, type: "quarterly" };
@@ -278,5 +278,63 @@ describe("non-claimable VAT rules", () => {
       toUvaFile({ id: "f1", vatNotClaimableReason: "levy" }).nonClaimableVatReason
     ).toBe("levy");
     expect(toUvaFile({ id: "f2" }).nonClaimableVatReason).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #580: the Document Type decides, through the adapter
+// ---------------------------------------------------------------------------
+
+describe("a File the § 11 classifier ruled not an invoice (#580)", () => {
+  /** One 120,00 expense with one File printing 20,00 VAT at 20%. */
+  const expense = (file: Parameters<typeof toUvaFile>[0]): UvaTransaction => ({
+    id: "t-580",
+    date: "2026-02-10",
+    amount: -12000,
+    partnerName: "Shop",
+    files: [toUvaFile(file)],
+  });
+  const printsVat = { id: "f-580", extractedAmount: 12000, extractedVatAmount: 2000, extractedVatPercent: 20 };
+
+  it("claims the VAT of an invoice and of a File the classifier could not judge", () => {
+    expect(run([expense({ ...printsVat, documentType: "invoice" })]).totalInputVat).toBe(2000);
+    expect(run([expense({ ...printsVat, documentType: "unknown" })]).totalInputVat).toBe(2000);
+  });
+
+  it.each(["receipt", "other"] as const)("claims nothing from a %s, and reports the figure it kept out", (documentType) => {
+    const r = run([expense({ ...printsVat, documentType })]);
+
+    expect(r.totalInputVat).toBe(0);
+    expect(r.nonClaimableVat).toEqual([
+      { transactionId: "t-580", fileId: "f-580", reason: "not-an-invoice", excludedVat: 2000 },
+    ]);
+    // The payment is still fully covered: the gross books at 0%.
+    expect(r.unresolved).toHaveLength(0);
+  });
+
+  it("leaves a Receipt that prints no VAT on the chasing list, where an invoice would recover it", () => {
+    const r = run([expense({ id: "f-580", extractedAmount: 12000, documentType: "receipt" })]);
+
+    expect(r.totalInputVat).toBe(0);
+    expect(r.nonClaimableVat).toEqual([]);
+    expect(r.unresolved.map((u) => u.reason)).toEqual(["no-vat-data"]);
+  });
+
+  it("claims the invoice's VAT once when its linked Receipt prints the same figure (#571)", () => {
+    const invoice: FileRecord = { ...printsVat, id: "f-invoice", documentType: "invoice" };
+    const receipt: FileRecord = { ...printsVat, id: "f-receipt", documentType: "receipt", receiptLink: { fileId: "f-invoice" } };
+    const tx = buildUvaTransaction(
+      { id: "t-580", date: { toDate: () => new Date("2026-02-10T00:00:00Z") }, amount: -12000, fileIds: [invoice.id, receipt.id] },
+      { filesById: new Map([[invoice.id, invoice], [receipt.id, receipt]]), categoriesById: new Map() }
+    );
+    const r = run([tx]);
+
+    expect(r.totalInputVat).toBe(2000);
+    expect(r.nonClaimableVat).toEqual([]);
+  });
+
+  it("leaves output VAT alone: a sale's own document is not judged here", () => {
+    const sale: UvaTransaction = { ...expense({ ...printsVat, documentType: "receipt" }), amount: 12000 };
+    expect(run([sale]).totalOutputVat).toBe(2000);
   });
 });

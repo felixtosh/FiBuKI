@@ -98,10 +98,10 @@ export interface UvaFile {
  * A closed set — an open note would not survive being read by a rule.
  *
  * The first four are a human's standing decision, set through
- * `mark_file_vat_not_claimable`. The fifth is derived by a rule (#229) and is
- * deliberately not settable by hand: it says the document is addressed to
- * somebody else, which is a fact about the document, and the way to overrule
- * it is to correct that fact rather than to record a judgement about the VAT.
+ * `mark_file_vat_not_claimable`. The last two are derived by a rule and are
+ * deliberately not settable by hand: each says something about the document
+ * itself, and the way to overrule one is to correct that fact rather than to
+ * record a judgement about the VAT.
  *
  *  - insurance-tax    Versicherungssteuer. Insurance is VAT-exempt (§ 6 Abs 1
  *                     Z 9 lit. c UStG), so the 11% line on a policy is a
@@ -115,13 +115,20 @@ export interface UvaFile {
  *                     user (#229). § 11 is satisfied and § 12 still is not:
  *                     the supply was rendered to somebody else's Unternehmen,
  *                     so the deduction belongs to them.
+ *  - not-an-invoice   the § 11 classifier ruled the document a Receipt or not
+ *                     a financial document at all (#580). Only an invoice
+ *                     carries Vorsteuer (§ 12 Abs 1 Z 1), so a VAT figure
+ *                     printed on anything else is never claimed. `unknown`
+ *                     is not this: the classifier could not judge, which is
+ *                     no finding against the document.
  */
 export type NonClaimableVatReason =
   | "insurance-tax"
   | "levy"
   | "discount-to-zero"
   | "private"
-  | "foreign-recipient";
+  | "foreign-recipient"
+  | "not-an-invoice";
 
 /** One document whose printed VAT the derivation refused to claim (#203). */
 export interface NonClaimableVatEntry {
@@ -666,10 +673,10 @@ export interface UvaReportResult {
    */
   fxConversions: FxConversionEntry[];
   /**
-   * Documents whose VAT was excluded from Vorsteuer because a human marked
-   * them non-claimable (#203). The exclusion is reported rather than applied
-   * silently: a figure that leaves the report has to be readable as a
-   * decision, not as a gap.
+   * Documents whose VAT was excluded from Vorsteuer: a human marked them
+   * non-claimable (#203), or a rule did (#229, #580). The exclusion is
+   * reported rather than applied silently: a figure that leaves the report
+   * has to be readable as a decision, not as a gap.
    */
   nonClaimableVat: NonClaimableVatEntry[];
   foreignVat: ForeignVatEntry[];
