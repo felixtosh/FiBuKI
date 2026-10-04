@@ -12,6 +12,7 @@ import {
   pairsAmong,
   scorePair,
   storedSuggestionsOf,
+  stretchesWindow,
   transactionsForFile,
   transactionsForFiles,
   unsavedFileData,
@@ -334,6 +335,24 @@ describe("the date window reaches to the Due Date or Debit Date (#614)", () => {
     await seedFile("f-1", { extractedDebitDate: plus(10) });
     expect(await reaches(30)).toBe(true);
     expect(await reaches(31)).toBe(false);
+  });
+
+  it("is not stretched at all by an anchor whose week ends on day +30", async () => {
+    // A Due Date at +23: a week past it is day +30, where ±30 already ends.
+    // The window keeps its exact pre-#614 edge, and the rematch skips the File.
+    await seedFile("f-1", { extractedDueDate: plus(23) });
+    expect(stretchesWindow((await file("f-1")).data)).toBe(false);
+    await seedTx("t-1", { date: Timestamp.fromDate(new Date(`${isoPlus(30)}T06:00:00Z`)) });
+    const { fromFile, fromTx } = await bothDirections();
+    expect(fromFile).toBeUndefined();
+    expect(fromTx).toBeUndefined();
+  });
+
+  it("is stretched by an anchor whose week ends on day +31", async () => {
+    await seedFile("f-1", { extractedDueDate: plus(24) });
+    expect(stretchesWindow((await file("f-1")).data)).toBe(true);
+    expect(await reaches(31)).toBe(true);
+    expect(await reaches(32)).toBe(false);
   });
 
   it("stretches up to an anchor at +90", async () => {

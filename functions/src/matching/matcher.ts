@@ -218,7 +218,15 @@ export function dateWindowOf(fileData: Data): DateWindow | null {
   const anchor = windowAnchorOf(fileData);
   if (fileDate) {
     const window = { start: fileDate.getTime() - WINDOW_MS, end: fileDate.getTime() + WINDOW_MS };
-    if (anchor && dayNumber(anchor) - dayNumber(fileDate) <= MATCH_WINDOW_MAX_ANCHOR_DAYS) {
+    const reach = anchor ? dayNumber(anchor) - dayNumber(fileDate) : 0;
+    // Only an anchor whose week ends past day +30 stretches it: one ending on
+    // day +30 or earlier leaves the ±30 edge exactly as it was, so the
+    // rematch does not select the File for a half-day sliver.
+    if (
+      anchor &&
+      reach <= MATCH_WINDOW_MAX_ANCHOR_DAYS &&
+      reach + MATCH_WINDOW_ANCHOR_GRACE_DAYS > MATCH_WINDOW_DAYS
+    ) {
       window.end = Math.max(window.end, dayRange(dayNumber(anchor) + MATCH_WINDOW_ANCHOR_GRACE_DAYS).end);
     }
     return window;
