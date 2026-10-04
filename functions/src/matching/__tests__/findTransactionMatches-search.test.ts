@@ -1,13 +1,7 @@
 /**
- * Fork #94, third enforcement path: the on-demand match lookup.
- *
- * findTransactionMatchesForFile is what the UI's refresh-matches action calls
- * (lib/operations/file-transaction-matching-ops.ts), and its top result is
- * auto-connected at AUTO_MATCH_THRESHOLD — so pressing refresh used to undo a
- * rejection made seconds earlier.
- *
- * An explicit searchQuery is deliberately exempt: it is the only way back to a
- * dismissed pair by hand, and dismissal is not meant to be irreversible.
+ * The connect dialog's search by amount (#183): a typed amount, in any of the
+ * ways a person writes one, reaches the Transaction that carries it. Which
+ * pairs a search may show is the matcher's (selfhost/matcher.test.ts).
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -109,34 +103,6 @@ function seed(fileOver: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   seed();
-});
-
-describe("findTransactionMatchesForFile: dismissed pairs", () => {
-  it("returns a strong pair the file has not dismissed", async () => {
-    const result = await call({ auth: { uid: USER }, data: { fileId: "f1" } });
-
-    expect(result.matches.map((m) => m.transactionId)).toEqual(["t1"]);
-  });
-
-  it("drops a pair the file dismissed", async () => {
-    seed({ dismissedTransactionIds: ["t1"] });
-
-    const result = await call({ auth: { uid: USER }, data: { fileId: "f1" } });
-
-    expect(result.matches).toEqual([]);
-    expect(result.totalCandidates).toBe(0);
-  });
-
-  it("still returns a dismissed pair for an explicit search", async () => {
-    seed({ dismissedTransactionIds: ["t1"] });
-
-    const result = await call({
-      auth: { uid: USER },
-      data: { fileId: "f1", searchQuery: "Hetzner" },
-    });
-
-    expect(result.matches.map((m) => m.transactionId)).toEqual(["t1"]);
-  });
 });
 
 describe("findTransactionMatchesForFile: search by amount (#183)", () => {

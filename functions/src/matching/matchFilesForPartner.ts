@@ -1,8 +1,10 @@
 /**
  * Cloud Function: Match Files for Partner
  *
- * Searches for files matching a partner's file source patterns
- * and connects them to transactions assigned to that partner.
+ * Connects a Partner's open Transactions to its Files and to unassigned ones,
+ * scored by the matcher (#613) and auto-connected at its threshold, each File
+ * to at most one Transaction. What is left goes to an AI pass, then to the
+ * agentic receipt search.
  *
  * Called:
  * 1. After learnPartnerPatterns completes (chained)
@@ -11,26 +13,18 @@
  */
 
 import { onCall, HttpsError } from "firebase-functions/v2/https";
-import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
+import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { MODELS } from "../utils/models";
-import { readDismissedTransactionIds } from "./dismissedTransactions";
-import { liveCopyIds } from "../files/copyOps";
 import { connectFiles } from "../fileConnections/writer";
-import { filePaymentTotal } from "./transactionScoring";
+import { matchableFiles, pairsAmong, windowAround } from "./matcher";
+import { SCORING_CONFIG } from "./transactionScoring";
+import { toDateSafe } from "../utils/toDateSafe";
 
 const db = getFirestore();
 
 // === Configuration ===
 
 const CONFIG = {
-  /** Minimum confidence for auto-matching (creates connection) */
-  AUTO_MATCH_THRESHOLD: 85,
-  /** Minimum confidence to show as suggestion */
-  SUGGESTION_THRESHOLD: 50,
-  /** Days to search before transaction date */
-  DATE_RANGE_DAYS_BEFORE: 30,
-  /** Days to search after transaction date */
-  DATE_RANGE_DAYS_AFTER: 7,
   /** Max files to process per partner */
   MAX_FILES_PER_PARTNER: 100,
   /** Max transactions to process per partner */
@@ -47,23 +41,6 @@ const CONFIG = {
 
 // === Types ===
 
-interface FileSourcePattern {
-  sourceType: "local" | "gmail";
-  pattern: string;
-  integrationId?: string;
-  resultType?: "local_file" | "gmail_attachment" | "gmail_html_invoice" | "gmail_invoice_link";
-  confidence: number;
-  usageCount: number;
-  sourceTransactionIds: string[];
-}
-
-interface FileMatchScore {
-  fileId: string;
-  transactionId: string;
-  confidence: number;
-  matchReasons: string[];
-}
-
 interface MatchFilesForPartnerRequest {
   partnerId: string;
   transactionIds?: string[]; // Optional: specific transactions to match
@@ -73,121 +50,6 @@ interface MatchFilesForPartnerResponse {
   processed: number;
   autoMatched: number;
   suggested: number;
-}
-
-// === Scoring Functions ===
-
-/**
- * Match a glob-style pattern against text
- */
-function globMatch(pattern: string, text: string): boolean {
-  if (!pattern || !text) return false;
-
-  const normalizedText = text.toLowerCase();
-  const normalizedPattern = pattern.toLowerCase();
-
-  const regexPattern = normalizedPattern
-    .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
-    .replace(/\*/g, ".*");
-
-  try {
-    return new RegExp(`^${regexPattern}$`).test(normalizedText);
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Score how well a file matches a transaction
- */
-function scoreFileForTransaction(
-  fileData: FirebaseFirestore.DocumentData,
-  txData: FirebaseFirestore.DocumentData,
-  partnerPatterns: FileSourcePattern[]
-): { score: number; matchReasons: string[] } {
-  let score = 0;
-  const matchReasons: string[] = [];
-
-  // 1. Amount match (0-40)
-  // The bank was charged the document total plus any printed Trinkgeld (#172).
-  const filePayment = filePaymentTotal(fileData.extractedAmount, fileData.extractedTipAmount);
-  if (filePayment != null && txData.amount != null) {
-    const fileAmount = Math.abs(filePayment);
-    const txAmount = Math.abs(txData.amount);
-
-    if (fileAmount > 0 && txAmount > 0) {
-      const diff = Math.abs(fileAmount - txAmount) / txAmount;
-
-      if (diff === 0) {
-        score += 40;
-        matchReasons.push("Exact amount");
-      } else if (diff <= 0.01) {
-        score += 38;
-        matchReasons.push("Amount ±1%");
-      } else if (diff <= 0.05) {
-        score += 30;
-        matchReasons.push("Amount ±5%");
-      } else if (diff <= 0.1) {
-        score += 20;
-        matchReasons.push("Amount ±10%");
-      }
-    }
-  }
-
-  // 2. Date proximity (0-25)
-  if (fileData.extractedDate && txData.date) {
-    const fileDate = fileData.extractedDate.toDate();
-    const txDate = txData.date.toDate();
-    const daysDiff = Math.abs(
-      Math.floor((fileDate.getTime() - txDate.getTime()) / (1000 * 60 * 60 * 24))
-    );
-
-    if (daysDiff === 0) {
-      score += 25;
-      matchReasons.push("Same day");
-    } else if (daysDiff <= 3) {
-      score += 22;
-      matchReasons.push("Within 3 days");
-    } else if (daysDiff <= 7) {
-      score += 15;
-      matchReasons.push("Within 7 days");
-    } else if (daysDiff <= 14) {
-      score += 8;
-      matchReasons.push("Within 14 days");
-    } else if (daysDiff <= 30) {
-      score += 3;
-      matchReasons.push("Within 30 days");
-    }
-  }
-
-  // 3. Partner match (already guaranteed since we filter by partner) (0-20)
-  // Both file and transaction are assigned to same partner
-  if (fileData.partnerId && txData.partnerId && fileData.partnerId === txData.partnerId) {
-    score += 20;
-    matchReasons.push("Same partner");
-  }
-
-  // 4. Source pattern match (0-10)
-  if (partnerPatterns.length > 0) {
-    const fileName = fileData.fileName?.toLowerCase() || "";
-    const matchesPattern = partnerPatterns.some(
-      (p) => p.sourceType === "local" && globMatch(p.pattern, fileName)
-    );
-    if (matchesPattern) {
-      score += 10;
-      matchReasons.push("Matches source pattern");
-    }
-  }
-
-  // 5. File is likely a receipt (0-5)
-  // PDFs and images are more likely receipts
-  const mimeType = fileData.fileType || "";
-  if (mimeType === "application/pdf" || mimeType.startsWith("image/")) {
-    score += 5;
-    matchReasons.push("Likely receipt");
-  }
-
-  return { score, matchReasons };
 }
 
 // === AI Matching ===
@@ -334,7 +196,7 @@ export async function matchFilesForPartnerInternal(
 ): Promise<MatchFilesForPartnerResponse> {
   console.log(`Starting file matching for partner ${partnerId} (user: ${userId})`);
 
-  // 1. Get partner with file source patterns
+  // 1. Get the partner
   const partnerDoc = await db.collection("partners").doc(partnerId).get();
   if (!partnerDoc.exists) {
     console.log(`Partner ${partnerId} not found`);
@@ -348,9 +210,6 @@ export async function matchFilesForPartnerInternal(
   }
 
   const partnerName = partnerData.name || "Unknown";
-  const fileSourcePatterns: FileSourcePattern[] = partnerData.fileSourcePatterns || [];
-
-  console.log(`Partner ${partnerName} has ${fileSourcePatterns.length} file source patterns`);
 
   // 2. Get transactions with this partner that need files
   let transactionsQuery = db
@@ -394,27 +253,14 @@ export async function matchFilesForPartnerInternal(
 
   console.log(`Found ${unfiledTransactions.length} unfiled transactions for partner ${partnerName}`);
 
-  // 3. Get candidate files
-  // Strategy: Search for files with same partner OR unassigned files
-  // within date range of the transactions
+  // 3. Get candidate files: this Partner's, and unassigned ones dated near
+  // the Transactions. Which pairs among them are possible (eligibility, the
+  // date window, Rejections) and what each scores is the matcher's (#613).
+  const span = windowAround(
+    unfiledTransactions.map((doc) => toDateSafe(doc.data().date)).filter((d): d is Date => d !== null)
+  );
 
-  // Find date range across all transactions
-  const txDates = unfiledTransactions.map((doc) => {
-    const date = doc.data().date;
-    return date ? date.toDate() : new Date();
-  });
-  const minTxDate = new Date(Math.min(...txDates.map((d) => d.getTime())));
-  const maxTxDate = new Date(Math.max(...txDates.map((d) => d.getTime())));
-
-  // Expand date range
-  const searchStartDate = new Date(minTxDate);
-  searchStartDate.setDate(searchStartDate.getDate() - CONFIG.DATE_RANGE_DAYS_BEFORE);
-  const searchEndDate = new Date(maxTxDate);
-  searchEndDate.setDate(searchEndDate.getDate() + CONFIG.DATE_RANGE_DAYS_AFTER);
-
-  // Query files: same partner OR unassigned, within date range, not connected
   const [partnerFilesSnapshot, unassignedFilesSnapshot] = await Promise.all([
-    // Files assigned to this partner
     db
       .collection("files")
       .where("userId", "==", userId)
@@ -422,25 +268,24 @@ export async function matchFilesForPartnerInternal(
       .where("extractionComplete", "==", true)
       .limit(CONFIG.MAX_FILES_PER_PARTNER)
       .get(),
-    // Unassigned files within date range
-    db
-      .collection("files")
-      .where("userId", "==", userId)
-      .where("extractionComplete", "==", true)
-      .where("extractedDate", ">=", Timestamp.fromDate(searchStartDate))
-      .where("extractedDate", "<=", Timestamp.fromDate(searchEndDate))
-      .limit(CONFIG.MAX_FILES_PER_PARTNER)
-      .get(),
+    span
+      ? db
+          .collection("files")
+          .where("userId", "==", userId)
+          .where("extractionComplete", "==", true)
+          .where("extractedDate", ">=", span.start)
+          .where("extractedDate", "<=", span.end)
+          .limit(CONFIG.MAX_FILES_PER_PARTNER)
+          .get()
+      : null,
   ]);
 
   // Merge and deduplicate files
   const fileMap = new Map<string, FirebaseFirestore.QueryDocumentSnapshot>();
-
   for (const doc of partnerFilesSnapshot.docs) {
     fileMap.set(doc.id, doc);
   }
-
-  for (const doc of unassignedFilesSnapshot.docs) {
+  for (const doc of unassignedFilesSnapshot?.docs ?? []) {
     const data = doc.data();
     // Only include unassigned files (no partnerId or partnerId matches)
     if (!data.partnerId || data.partnerId === partnerId) {
@@ -448,19 +293,13 @@ export async function matchFilesForPartnerInternal(
     }
   }
 
-  // Filter to unconnected, live files that are invoices (not "Not Invoice"),
-  // and not Copies (#162): a Copy is never proposed as a Match.
-  const copies = await liveCopyIds(
+  // Unconnected, and possible at all.
+  const unconnectedFiles = await matchableFiles(
     db,
-    Array.from(fileMap.values()).map((doc) => ({ id: doc.id, data: doc.data() }))
+    Array.from(fileMap.values())
+      .filter((doc) => !(Array.isArray(doc.data().transactionIds) && doc.data().transactionIds.length > 0))
+      .map((doc) => ({ id: doc.id, data: doc.data(), doc }))
   );
-  const unconnectedFiles = Array.from(fileMap.values()).filter((doc) => {
-    const data = doc.data();
-    const isConnected = data.transactionIds && data.transactionIds.length > 0;
-    const isNotInvoice = data.isNotInvoice === true;
-    const isDeleted = !!data.deletedAt || !!data.purgedAt;
-    return !isConnected && !isNotInvoice && !isDeleted && !copies.has(doc.id);
-  });
 
   if (unconnectedFiles.length === 0) {
     console.log(`No candidate files found for partner ${partnerName}`);
@@ -469,45 +308,17 @@ export async function matchFilesForPartnerInternal(
 
   console.log(`Found ${unconnectedFiles.length} candidate files to match`);
 
-  // 4. Score all file-transaction pairs
-  const allScores: FileMatchScore[] = [];
-
-  for (const fileDoc of unconnectedFiles) {
-    const fileData = fileDoc.data();
-    // Pairs the user already rejected on this file. This matcher auto-connects
-    // at AUTO_MATCH_THRESHOLD, so without the check a dismissal is undone the
-    // next time a partner assignment or a learned pattern runs the sweep.
-    const dismissedIds = readDismissedTransactionIds(fileData);
-
-    for (const txDoc of unfiledTransactions) {
-      if (dismissedIds.has(txDoc.id)) continue;
-
-      const txData = txDoc.data();
-
-      const { score, matchReasons } = scoreFileForTransaction(
-        fileData,
-        txData,
-        fileSourcePatterns
-      );
-
-      if (score >= CONFIG.SUGGESTION_THRESHOLD) {
-        allScores.push({
-          fileId: fileDoc.id,
-          transactionId: txDoc.id,
-          confidence: score,
-          matchReasons,
-        });
-      }
-    }
-  }
+  // 4. Score all file-transaction pairs with the matcher. Its own points
+  // formula is gone: "same Partner" is worth what the matcher gives it, so a
+  // pair connects on the same evidence the upload trigger needs.
+  const allScores = (await pairsAmong(db, userId, unconnectedFiles, unfiledTransactions)).filter(
+    (m) => m.confidence >= SCORING_CONFIG.SUGGESTION_THRESHOLD
+  );
 
   if (allScores.length === 0) {
     console.log(`No file-transaction matches above threshold for partner ${partnerName}`);
     return { processed: unfiledTransactions.length, autoMatched: 0, suggested: 0 };
   }
-
-  // Sort by confidence
-  allScores.sort((a, b) => b.confidence - a.confidence);
 
   console.log(`Found ${allScores.length} potential matches, top score: ${allScores[0]?.confidence}`);
 
@@ -515,7 +326,7 @@ export async function matchFilesForPartnerInternal(
   // Greedy matching: each file to at most one transaction, each transaction to at most one file
   const usedFiles = new Set<string>();
   const usedTransactions = new Set<string>();
-  const chosen: FileMatchScore[] = [];
+  const chosen: typeof allScores = [];
   let autoMatched = 0;
   let suggested = 0;
 
@@ -524,13 +335,12 @@ export async function matchFilesForPartnerInternal(
       continue;
     }
 
-    if (match.confidence >= CONFIG.AUTO_MATCH_THRESHOLD) {
+    if (match.confidence >= SCORING_CONFIG.AUTO_MATCH_THRESHOLD) {
       chosen.push(match);
       usedFiles.add(match.fileId);
       usedTransactions.add(match.transactionId);
     } else {
-      // Store as suggestion on the transaction (not auto-connected)
-      // Note: For now, just counting. Could store suggestions if needed.
+      // Counted only; the File's own suggestions are the trigger's.
       suggested++;
     }
   }
@@ -543,8 +353,9 @@ export async function matchFilesForPartnerInternal(
     chosen.map((match) => ({
       fileId: match.fileId,
       transactionId: match.transactionId,
-      matchSources: match.matchReasons.map((r) => r.toLowerCase().replace(/\s+/g, "_")),
+      matchSources: match.matchSources,
       matchConfidence: match.confidence,
+      scoreBreakdown: match.breakdown,
     })),
     { origin: "auto" }
   );
@@ -565,9 +376,9 @@ export async function matchFilesForPartnerInternal(
 
   // 6. AI fallback matching for remaining unmatched items
   // If there are multiple unmatched files AND transactions, use AI to match them
-  const remainingUnmatchedFiles = unconnectedFiles.filter(
-    (doc) => !usedFiles.has(doc.id)
-  );
+  const remainingUnmatchedFiles = unconnectedFiles
+    .filter((f) => !usedFiles.has(f.id))
+    .map((f) => f.doc);
   const remainingUnmatchedTxs = unfiledTransactions.filter(
     (doc) => !usedTransactions.has(doc.id)
   );

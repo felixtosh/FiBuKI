@@ -1,14 +1,15 @@
 /**
- * #308 — keep File/Transaction scoring inputs assembled in one place.
+ * #308, #613 — one matcher, reached by every surface.
  *
- * Every hand-built copy of `scoreTransaction`'s inputs has drifted: the agent
- * tool dropped the tip (#217), the Remainder (#239) and the bank-stated
- * original (#112), the connect dialog the precision-search hint. Each surface
- * now goes through `scoreFileAgainstTransactions`, which builds both sides via
- * `toFileMatchingData` / `toTransactionData`. A new direct caller of
- * `scoreTransaction` would be a new copy to keep in step, so it fails here and
- * has to either use that function or be added below with its reason.
- * `selfhost/scorer-parity.test.ts` checks that the surfaces agree.
+ * Every hand-built copy of the scoring inputs has drifted: the agent tool
+ * dropped the tip (#217), the Remainder (#239) and the bank-stated original
+ * (#112), the connect dialog the precision-search hint; every hand-built
+ * candidate filter dropped a Rejection, the over-quota block or the
+ * foreign-recipient rule somewhere (#613). The matcher (`matching/matcher.ts`)
+ * now owns candidate selection, the date window, input assembly and the call
+ * into the scoring core. A second caller of any of them is a second copy to
+ * keep in step, so it fails here. There are no exceptions: a new surface
+ * calls the matcher.
  */
 
 import { describe, it, expect } from "vitest";
@@ -16,14 +17,9 @@ import { readdirSync, readFileSync, statSync } from "fs";
 import { join, relative } from "path";
 
 const SRC = join(__dirname, "..", "..");
-
-const ALLOWED_CALLERS = new Set([
-  // Home of the shared assembly itself.
-  "matching/transactionScoring.ts",
-  // Re-scores already-connected pairs: builds via toFileMatchingData /
-  // toTransactionData, and deliberately scores against the full amount.
-  "matching/rescoreFileConnections.ts",
-]);
+const MATCHER = "matching/matcher.ts";
+/** The scoring core itself, which defines what is guarded. */
+const CORE = "matching/transactionScoring.ts";
 
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
@@ -35,12 +31,25 @@ function sourceFiles(dir: string): string[] {
   });
 }
 
-describe("scoreTransaction callers", () => {
-  it("are only the shared input assembly and the allowlisted re-scorer", () => {
-    const callers = sourceFiles(SRC)
-      .filter((path) => /\bscoreTransaction\s*\(/.test(readFileSync(path, "utf8")))
-      .map((path) => relative(SRC, path).split("\\").join("/"));
+function filesMatching(pattern: RegExp): string[] {
+  return sourceFiles(SRC)
+    .filter((path) => pattern.test(readFileSync(path, "utf8")))
+    .map((path) => relative(SRC, path).split("\\").join("/"))
+    .filter((file) => file !== MATCHER && file !== CORE);
+}
 
-    expect(callers.filter((c) => !ALLOWED_CALLERS.has(c))).toEqual([]);
+describe("only the matcher", () => {
+  it("calls the scoring core", () => {
+    expect(filesMatching(/\bscoreTransaction\s*\(/)).toEqual([]);
+  });
+
+  it("assembles the scoring inputs", () => {
+    expect(
+      filesMatching(/\b(toFileMatchingData|toTransactionData|loadPartnerScoringContext|buildScoringOptions)\s*\(/)
+    ).toEqual([]);
+  });
+
+  it("computes the date window", () => {
+    expect(filesMatching(/\bDATE_RANGE_DAYS\b/)).toEqual([]);
   });
 });

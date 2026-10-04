@@ -10,30 +10,21 @@
  * so its Confidence is the one the trigger stores.
  *
  * Takes a Transaction id and nothing about any File: everything scored is
- * read here, from the caller's own records.
+ * read by the matcher, from the caller's own records.
  */
 
 import { createCallable, HttpsError } from "../utils/createCallable";
-import { isLiveFile, liveCopyIds } from "../files/copyOps";
-import { loadDocumentedAmounts } from "./documentedAmounts";
-import { readDismissedTransactionIds } from "./dismissedTransactions";
-import { readRejectedFileIds } from "./rejectedFiles";
-import { fileSearchMatches } from "./fileSearch";
-import { loadScoringEcbRates } from "./scoringEcbRates";
+import { filesForTransaction, type HiddenReason } from "./matcher";
 import {
   SCORING_CONFIG,
   isRemainderMatch,
-  loadPartnerScoringContext,
-  scoreFileAgainstTransactions,
-  type PartnerScoringContext,
   type ScoreBreakdown,
   type TransactionMatchSource,
 } from "./transactionScoring";
-import { toDateSafe } from "../utils/toDateSafe";
 
 interface FindFileMatchesRequest {
   transactionId: string;
-  /** Typed search text. Lifts the date gate and the Rejection filter. */
+  /** Typed search text. Lifts the date window and shows held-back pairs, marked. */
   searchQuery?: string;
   /** Max results (default SCORING_CONFIG.MAX_RESULTS). */
   limit?: number;
@@ -46,17 +37,19 @@ export interface FileMatchResult {
   breakdown: ScoreBreakdown;
   /** The amount was judged against the Transaction's Remainder (#239). */
   scoredAgainstRemainder: boolean;
+  /** Set only in a User's search: the pair is held back from suggestions and auto-connect. */
+  hidden?: HiddenReason;
 }
 
 interface FindFileMatchesResponse {
   matches: FileMatchResult[];
   totalCandidates: number;
+  /** Files held back because a Rejection names this pair; none in a search. */
+  rejectedCount: number;
 }
 
 /** Upper bound on `limit`, whatever the caller asks for. */
 const MAX_LIMIT = 100;
-
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 export const findFileMatchesForTransactionCallable = createCallable<
   FindFileMatchesRequest,
@@ -82,122 +75,24 @@ export const findFileMatchesForTransactionCallable = createCallable<
       throw new HttpsError("not-found", "Transaction not found");
     }
 
-    const { matches, totalCandidates } = await scoreFilesForTransaction(
-      ctx.db,
-      ctx.userId,
-      txDoc,
-      search
-    );
-    return { matches: matches.slice(0, limit), totalCandidates };
+    // Candidates, Rejections, the date window and the scores are the
+    // matcher's (#613), so this window ranks what the trigger stores.
+    const { matches, totalCandidates, rejectedCount } = await filesForTransaction(ctx.db, ctx.userId, txDoc, {
+      search,
+    });
+    return {
+      matches: matches.slice(0, limit).map(
+        (m): FileMatchResult => ({
+          fileId: m.fileId,
+          confidence: m.confidence,
+          matchSources: m.matchSources,
+          breakdown: m.breakdown,
+          scoredAgainstRemainder: isRemainderMatch(m),
+          ...(m.hidden ? { hidden: m.hidden } : {}),
+        })
+      ),
+      totalCandidates,
+      rejectedCount,
+    };
   }
 );
-
-/**
- * Every File of the user's the matcher could pair with this Transaction,
- * scored with the trigger's own input assembly, best first. Shared by the
- * Connect File window and the find-receipt workflow (#588), so both report
- * the Confidence the trigger stores for the same pair.
- *
- * The caller has checked that `txDoc` is the user's.
- */
-export async function scoreFilesForTransaction(
-  db: FirebaseFirestore.Firestore,
-  userId: string,
-  txDoc: FirebaseFirestore.DocumentSnapshot,
-  search = ""
-): Promise<FindFileMatchesResponse> {
-  const transactionId = txDoc.id;
-  const txData = txDoc.data()!;
-  const txDateMs = toDateSafe(txData.date)?.getTime() ?? null;
-
-  // Every File of the caller's, narrowed here rather than in the query: an
-  // undated File has no extractedDate at all on some records and a null one
-  // on others, and no single query reaches both. The browser already holds
-  // this same list.
-  const snapshot = await db.collection("files").where("userId", "==", userId).get();
-
-  const rejectedHere = readRejectedFileIds(txData);
-  const windowMs = SCORING_CONFIG.DATE_RANGE_DAYS * MS_PER_DAY;
-
-  const eligible = snapshot.docs.filter((doc) => {
-    const data = doc.data();
-    if (!isLiveFile(data) || data.isNotInvoice === true) return false;
-    // Already on this Transaction: the window shows it as connected.
-    if (Array.isArray(data.transactionIds) && data.transactionIds.includes(transactionId)) {
-      return false;
-    }
-    // An explicit search reaches every File, including dated outside the
-    // window and pairs rejected earlier: it is the way back to one by hand.
-    if (search) return fileSearchMatches(data, search).length > 0;
-
-    // A Rejection on either side holds without a search.
-    if (rejectedHere.has(doc.id)) return false;
-    if (readDismissedTransactionIds(data).has(transactionId)) return false;
-
-    // The trigger's own date range, from the other end: the pairs it can
-    // store are a File within DATE_RANGE_DAYS of the Transaction, an
-    // undated File (scored against recent Transactions), and a File whose
-    // precision-search hint names this Transaction.
-    const fileDate = toDateSafe(data.extractedDate);
-    if (!fileDate || txDateMs === null) return true;
-    if (data.precisionSearchHint?.transactionId === transactionId) return true;
-    return Math.abs(fileDate.getTime() - txDateMs) <= windowMs;
-  });
-
-  // #162: a Copy is never proposed as a Match; its original is.
-  const copies = await liveCopyIds(
-    db,
-    eligible.map((doc) => ({ id: doc.id, data: doc.data() }))
-  );
-  const candidates = eligible.filter((doc) => !copies.has(doc.id));
-
-  if (candidates.length === 0) return { matches: [], totalCandidates: 0 };
-
-  // No candidate is connected to this Transaction, so what its connected
-  // Files explain is the same figure the trigger reads with the candidate
-  // excluded.
-  const [documentedAmounts, ecbRates] = await Promise.all([
-    loadDocumentedAmounts([transactionId]),
-    loadScoringEcbRates(
-      db,
-      candidates.map((doc) => doc.data().extractedCurrency),
-      [txDoc]
-    ),
-  ]);
-
-  // One scoring context per Partner, as the trigger reads it per File.
-  const partners = new Map<string, Promise<PartnerScoringContext>>();
-  const partnerFor = (partnerId: string | null | undefined) => {
-    const key = partnerId ?? "";
-    if (!partners.has(key)) {
-      partners.set(key, loadPartnerScoringContext(db, partnerId, userId));
-    }
-    return partners.get(key)!;
-  };
-
-  const scored = await Promise.all(
-    candidates.map(async (doc) => {
-      const fileData = doc.data();
-      const partner = await partnerFor(fileData.partnerId);
-      const [match] = scoreFileAgainstTransactions(
-        fileData,
-        [txDoc],
-        partner,
-        documentedAmounts,
-        ecbRates
-      );
-      return {
-        fileId: doc.id,
-        confidence: match.confidence,
-        matchSources: match.matchSources,
-        breakdown: match.breakdown,
-        scoredAgainstRemainder: isRemainderMatch(match),
-      };
-    })
-  );
-
-  return {
-    matches: scored.sort((a, b) => b.confidence - a.confidence),
-    totalCandidates: candidates.length,
-  };
-}

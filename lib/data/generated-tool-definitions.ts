@@ -1072,7 +1072,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "score_file_transaction_match",
-    "description": "Score how well a file matches a transaction (0-100 confidence)",
+    "description": "Score how well a file matches a transaction (0-100 confidence), with the same scorer the matching uses. Also says whether matching could propose the pair: `ineligible` names why the file is never matched (deleted, copy, not-invoice, foreign-recipient), `hidden` why the pair is held back from suggestions (rejected, over-quota). Both null when it could.",
     "requiredFeature": "aiMatching",
     "inputSchema": {
       "type": "object",

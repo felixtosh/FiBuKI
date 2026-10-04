@@ -21,13 +21,13 @@ import {
   findReceiptForTransaction,
   FindReceiptDeps,
 } from "../findReceiptForTransaction";
-import { scoreFilesForTransaction } from "../../matching/findFileMatches";
+import { filesForTransaction } from "../../matching/matcher";
 
-vi.mock("../../matching/findFileMatches", () => ({
-  scoreFilesForTransaction: vi.fn(),
+vi.mock("../../matching/matcher", () => ({
+  filesForTransaction: vi.fn(),
 }));
 
-const scoreStoredFiles = vi.mocked(scoreFilesForTransaction);
+const scoreStoredFiles = vi.mocked(filesForTransaction);
 
 /** The matcher's answer for the Transaction: these Files at these Confidences. */
 function storedFilesScore(...scores: Array<[fileId: string, confidence: number]>) {
@@ -38,8 +38,8 @@ function storedFilesScore(...scores: Array<[fileId: string, confidence: number]>
       confidence,
       matchSources: ["amount_exact", "date_exact"],
       breakdown: {} as never,
-      scoredAgainstRemainder: false,
-    })),
+    })) as never,
+    rejectedCount: 0,
   });
 }
 

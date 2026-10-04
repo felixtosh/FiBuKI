@@ -3168,30 +3168,18 @@ export async function scoreFileTransactionMatch(userId: string, args: Record<str
     throw new Error("Transaction not found");
   }
 
-  // The same input assembly the matching trigger and the connect dialog use
-  // (#308, #327): the tip (#217), the Remainder (#239), the bank-stated
-  // original amount and raw row (#112, #137), the precision-search hint and
-  // the Partner's aliases, bands and weights all reach this scorer too.
-  const {
-    formatScoreBreakdown,
-    loadPartnerScoringContext,
-    scoreFileAgainstTransactions,
-  } = await import("../matching/transactionScoring");
-  const { loadDocumentedAmounts } = await import("../matching/documentedAmounts");
-  const { loadScoringEcbRates } = await import("../matching/scoringEcbRates");
-
-  const fileData = fileDoc.data()!;
-  const [partner, documentedAmounts, ecbRates] = await Promise.all([
-    loadPartnerScoringContext(db, fileData.partnerId, userId),
-    loadDocumentedAmounts([txDoc.id], fileDoc.id),
-    loadScoringEcbRates(db, [fileData.extractedCurrency], [txDoc]),
-  ]);
-  const [result] = scoreFileAgainstTransactions(
-    fileData,
-    [txDoc],
-    partner,
-    documentedAmounts,
-    ecbRates
+  // The matcher's own assembly and eligibility rule (#308, #327, #613): the
+  // tip (#217), the Remainder (#239), the bank-stated original amount and raw
+  // row (#112, #137), the precision-search hint, the ECB rate (#555) and the
+  // Partner's aliases, bands and weights all reach this score too. The pair
+  // is scored whatever its date, since the caller named it.
+  const { scorePair } = await import("../matching/matcher");
+  const { formatScoreBreakdown } = await import("../matching/transactionScoring");
+  const { match: result, ineligible, hidden } = await scorePair(
+    db,
+    userId,
+    { id: fileDoc.id, data: fileDoc.data()! },
+    txDoc
   );
 
   return {
@@ -3203,6 +3191,11 @@ export async function scoreFileTransactionMatch(userId: string, args: Record<str
     // #104: why a confident pair still scored zero, or why it will not
     // auto-connect. Absent when the transaction has no documentation state.
     documentation: result.documentation ?? null,
+    // #613: the File is never matched (deleted, a Copy, not an invoice,
+    // addressed to someone else), or the pair is held back (rejected, an
+    // over-quota Transaction). Null when the matcher could propose it.
+    ineligible,
+    hidden,
   };
 }
 

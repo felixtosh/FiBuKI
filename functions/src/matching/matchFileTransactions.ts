@@ -29,24 +29,22 @@ import {
   SCORING_CONFIG,
   formatScoreBreakdown,
   TransactionMatchScore,
-  TransactionMatchSource,
-  isRemainderMatch,
-  toFileMatchingData,
-  loadPartnerScoringContext,
-  scoreFileAgainstTransactions,
 } from "./transactionScoring";
-import { deriveCoverage, isRemainderClosed, filePaymentTotal } from "./coverage";
-import { loadConnectedFiles, documentedAmountsOf } from "./documentedAmounts";
-import { isSameDayEvidence, hasUndocumentedRival } from "./remainderAutoConnect";
-import { readDismissedTransactionIds } from "./dismissedTransactions";
-import { loadScoringEcbRates } from "./scoringEcbRates";
-import { isFileRejected } from "./rejectedFiles";
+import {
+  autoConnect,
+  ineligibleReasonOf,
+  selectAutoConnects,
+  storedSuggestionsOf,
+  transactionsForFile,
+  MATCH_WINDOW_DAYS,
+  type StoredSuggestion,
+} from "./matcher";
 import { runCopyCheck } from "../files/copyOps";
+import { readDismissedTransactionIds } from "./dismissedTransactions";
 import { runCorrectionCheck } from "../corrections/correctionOps";
 import { AutomationMeta } from "../automation/types";
 import { checkAIBudget } from "../billing/checkAIBudget";
 import { isPassiveMode } from "../utils/checkAutomationMode";
-import { connectFiles } from "../fileConnections/writer";
 
 // =============================================================================
 // AUTOMATION METADATA
@@ -106,7 +104,7 @@ export const AUTOMATION_META: AutomationMeta = {
   config: {
     autoMatchThreshold: SCORING_CONFIG.AUTO_MATCH_THRESHOLD,
     suggestionThreshold: SCORING_CONFIG.SUGGESTION_THRESHOLD,
-    dateRangeDays: SCORING_CONFIG.DATE_RANGE_DAYS,
+    dateRangeDays: MATCH_WINDOW_DAYS,
     maxSuggestions: SCORING_CONFIG.MAX_SUGGESTIONS,
   },
   icon: "FileSearch",
@@ -125,18 +123,7 @@ const CONFIG = SCORING_CONFIG;
 
 // === Types ===
 
-interface TransactionSuggestion {
-  transactionId: string;
-  confidence: number;
-  matchSources: TransactionMatchSource[];
-  preview: {
-    date: Timestamp;
-    amount: number;
-    currency: string;
-    name: string;
-    partner: string | null;
-  };
-}
+type TransactionSuggestion = StoredSuggestion;
 
 interface PartnerBatchStateDoc {
   userId: string;
@@ -287,214 +274,79 @@ export async function runTransactionMatching(
   fileData: FirebaseFirestore.DocumentData,
   options: TransactionMatchingOptions = {}
 ): Promise<void> {
-  // Skip soft-deleted files
-  if (fileData.deletedAt) {
+  const markComplete = (suggestions: StoredSuggestion[]) =>
+    db.collection("files").doc(fileId).update({
+      transactionMatchComplete: true,
+      transactionMatchedAt: Timestamp.now(),
+      transactionSuggestions: suggestions,
+      updatedAt: Timestamp.now(),
+    });
+
+  // A deleted File is left as it is: nothing to mark.
+  const before = ineligibleReasonOf(fileData, false);
+  if (before === "deleted") {
     console.log(`[TxMatch] Skipping deleted file: ${fileId}`);
     return;
   }
 
-  // Skip "Not Invoice" files - no transaction matching needed
-  if (fileData.isNotInvoice === true) {
-    console.log(`[TxMatch] File ${fileId} is not an invoice, skipping transaction matching`);
-    await db.collection("files").doc(fileId).update({
-      transactionMatchComplete: true,
-      transactionMatchedAt: Timestamp.now(),
-      transactionSuggestions: [],
-      updatedAt: Timestamp.now(),
+  // #162: the Copy check runs here, after Extraction and before scoring, so a
+  // File it records as a Copy is never scored at all; one it only suggests is
+  // matched as usual.
+  if (before !== "not-invoice") {
+    const copyCheck = await runCopyCheck(db, fileId, fileData).catch((err) => {
+      console.error(`[TxMatch] Copy check failed for ${fileId}, matching as usual`, err);
+      return { kind: "none" as const };
     });
-    return;
-  }
-
-  // #162: a Copy is never proposed as a Match. The Copy check runs here,
-  // after Extraction and before scoring, so a File it records as a Copy is
-  // never scored at all; one it only suggests is matched as usual.
-  const copyCheck = await runCopyCheck(db, fileId, fileData).catch((err) => {
-    console.error(`[TxMatch] Copy check failed for ${fileId}, matching as usual`, err);
-    return { kind: "none" as const };
-  });
-  if (copyCheck.kind === "recorded-this") {
-    console.log(`[TxMatch] File ${fileId} is a Copy of ${copyCheck.originalFileId}, skipping transaction matching`);
-    await db.collection("files").doc(fileId).update({
-      transactionMatchComplete: true,
-      transactionMatchedAt: Timestamp.now(),
-      transactionSuggestions: [],
-      updatedAt: Timestamp.now(),
-    });
-    return;
-  }
-
-  // #229: a document addressed to somebody else is a valid invoice and not
-  // this user's. Suggesting it against their bank lines is the step that puts
-  // its VAT into the UVA as recoverable, so the suggestion is never offered —
-  // a person who means it can still connect the file by hand, and confirming
-  // the recipient (`recipientConfirmedAsUser`) reopens matching outright.
-  if (fileData.foreignRecipient === true) {
-    console.log(
-      `[TxMatch] File ${fileId} names a recipient who is not the user, skipping transaction matching`
-    );
-    await db.collection("files").doc(fileId).update({
-      transactionMatchComplete: true,
-      transactionMatchedAt: Timestamp.now(),
-      transactionSuggestions: [],
-      updatedAt: Timestamp.now(),
-    });
-    return;
+    if (copyCheck.kind === "recorded-this") {
+      console.log(`[TxMatch] File ${fileId} is a Copy of ${copyCheck.originalFileId}, skipping transaction matching`);
+      await markComplete([]);
+      return;
+    }
   }
 
   const userId = fileData.userId;
   const t0 = Date.now();
 
-  // Log file info
   const fileAmount = fileData.extractedAmount != null ? (fileData.extractedAmount / 100).toFixed(2) : "N/A";
-  const fileDate = fileData.extractedDate ? fileData.extractedDate.toDate().toISOString().split("T")[0] : "N/A";
+  const fileDate = toDateSafe(fileData.extractedDate)?.toISOString().slice(0, 10) ?? "N/A";
   console.log(`[TxMatch] File: ${fileData.fileName || fileId}`);
   console.log(`[TxMatch]   Amount: ${fileAmount} ${fileData.extractedCurrency || "EUR"}, Date: ${fileDate}`);
   console.log(`[TxMatch]   Extracted partner: "${fileData.extractedPartner || "none"}"`);
   console.log(`[TxMatch]   Assigned partnerId: ${fileData.partnerId || "none"}`);
 
-  // Get candidate transactions (within date range)
-  let transactions: FirebaseFirestore.QueryDocumentSnapshot[] = [];
-  let dateRangeStr = "";
-
-  if (fileData.extractedDate) {
-    const centerDate = fileData.extractedDate.toDate();
-    const startDate = new Date(centerDate);
-    startDate.setDate(startDate.getDate() - CONFIG.DATE_RANGE_DAYS);
-    const endDate = new Date(centerDate);
-    endDate.setDate(endDate.getDate() + CONFIG.DATE_RANGE_DAYS);
-    dateRangeStr = `${startDate.toISOString().split("T")[0]} to ${endDate.toISOString().split("T")[0]}`;
-
-    const snapshot = await db
-      .collection("transactions")
-      .where("userId", "==", userId)
-      .where("date", ">=", Timestamp.fromDate(startDate))
-      .where("date", "<=", Timestamp.fromDate(endDate))
-      .orderBy("date", "desc")
-      .limit(500)
-      .get();
-
-    transactions = snapshot.docs;
-  } else {
-    // No date? Query recent transactions
-    dateRangeStr = "recent (no file date)";
-    const snapshot = await db
-      .collection("transactions")
-      .where("userId", "==", userId)
-      .orderBy("date", "desc")
-      .limit(200)
-      .get();
-
-    transactions = snapshot.docs;
-  }
-
-  console.log(`[TxMatch] Found ${transactions.length} candidate transactions (${dateRangeStr})`);
-
-  // A hinted or nominated transaction is a candidate even outside the date
-  // range: a search already found it relevant, and an invoice paid on a
-  // 45-day term is still this file's (#589). Only joins the candidates; what
-  // it scores is the scorer's business.
-  const extraCandidateIds = new Set<string>(options.nominatedTransactionIds ?? []);
-  if (fileData.precisionSearchHint?.transactionId) {
-    extraCandidateIds.add(fileData.precisionSearchHint.transactionId);
-  }
-  for (const extraTxId of extraCandidateIds) {
-    if (transactions.some((doc) => doc.id === extraTxId)) continue;
-    const extraTxDoc = await db.collection("transactions").doc(extraTxId).get();
-    if (extraTxDoc.exists && extraTxDoc.data()?.userId === userId) {
-      transactions.push(extraTxDoc as FirebaseFirestore.QueryDocumentSnapshot);
-      console.log(`[TxMatch] Added transaction ${extraTxId} to candidates (searched for, outside date range)`);
-    }
-  }
-
-  if (transactions.length === 0) {
-    await db.collection("files").doc(fileId).update({
-      transactionMatchComplete: true,
-      transactionMatchedAt: Timestamp.now(),
-      transactionSuggestions: [],
-      updatedAt: Timestamp.now(),
-    });
-    console.log(`[TxMatch] No transactions found, marking complete`);
+  // Candidates, the date window, Rejections, over-quota Transactions and the
+  // scores are the matcher's (#613), so what is stored here is what every
+  // other surface ranks.
+  const file = { id: fileId, data: fileData };
+  const result = await transactionsForFile(db, userId, file, {
+    nominatedTransactionIds: options.nominatedTransactionIds,
+  });
+  if (result.ineligible) {
+    // A non-invoice, a Copy, or (#229) a document addressed to somebody else:
+    // suggesting that against the User's bank lines is the step that puts its
+    // VAT into the UVA as recoverable. Confirming the recipient reopens it.
+    console.log(`[TxMatch] File ${fileId} is never matched (${result.ineligible}), skipping`);
+    await markComplete([]);
     return;
   }
 
-  // Fetch partner aliases, billing cycle bands, and scoring weights if file has an assigned partner.
-  // Band selection happens per candidate transaction below (each charge can belong to a
-  // different recurrence band, e.g. a weekly API charge vs. a monthly subscription), not once
-  // here — a single upfront band would silently mis-score every candidate outside band 0.
-  const partner = await loadPartnerScoringContext(db, fileData.partnerId, userId);
-  if (partner.aliases.length > 0) {
-    console.log(`[TxMatch] Partner aliases: [${partner.aliases.map(a => `"${a}"`).join(", ")}]`);
-  }
-  if (partner.effectiveCycles.length > 0) {
-    console.log(`[TxMatch] Partner has ${partner.effectiveCycles.length} billing-cycle band(s)`);
-  }
-  if (partner.weights) {
-    const w = partner.weights;
-    console.log(`[TxMatch] Using scoring weights: amt=${w.amountWeight} date=${w.dateWeight} partner=${w.partnerWeight}`);
+  if (result.windowSize === 0) {
+    console.log(`[TxMatch] No transactions found, marking complete`);
+    await markComplete([]);
+    return;
   }
 
-  // Exclude already connected transactions and transactions that rejected this file
-  const connectedIds = new Set(fileData.transactionIds || []);
-  let rejectedCount = 0;
-
-  // Pairs the user dismissed on this file. Read off the file document already
-  // in hand — no extra query — so a re-score cannot resurrect them.
-  const dismissedIds = readDismissedTransactionIds(fileData);
-  let dismissedCount = 0;
-
-  // Filter out transactions that have rejected this file. Both stored shapes,
-  // and a rejection the user took back no longer counts — matching/rejectedFiles
-  // owns that rule for every reader (fork #102).
-  const eligibleTransactions = transactions.filter((doc) => {
-    if (connectedIds.has(doc.id)) return false;
-    if (dismissedIds.has(doc.id)) {
-      dismissedCount++;
-      return false;
-    }
-    const txData = doc.data();
-    // Skip over-quota transactions (soft limit)
-    if (txData.quotaExceeded) return false;
-    if (isFileRejected(txData, fileId)) {
-      rejectedCount++;
-      return false;
-    }
-    return true;
-  });
-
-  const candidateCount = eligibleTransactions.length;
-  console.log(
-    `[TxMatch] Scoring ${candidateCount} transactions (${connectedIds.size} connected, ` +
-      `${rejectedCount} rejected this file, ${dismissedCount} dismissed by this file)`
-  );
-
-  // The Files already sitting on each candidate (#239). Only the candidates
-  // that hold Files cost a read; the rest are scored against their full amount
-  // exactly as before. The Files themselves, not just their total, because
-  // #242's same-day rule reads their extracted dates off the same read.
-  const connectedFiles = await loadConnectedFiles(eligibleTransactions.map((t) => t.id), fileId);
-  const documentedAmounts = documentedAmountsOf(connectedFiles);
-  if (documentedAmounts.size > 0) {
+  const allScores = result.matches;
+  const candidateCount = result.totalCandidates;
+  console.log(`[TxMatch] Scored ${candidateCount} candidate transactions`);
+  if (result.documentedAmounts.size > 0) {
     console.log(
-      `[TxMatch] ${documentedAmounts.size} candidate(s) already hold files — scoring those against their remainder`
+      `[TxMatch] ${result.documentedAmounts.size} candidate(s) already hold files — scoring those against their remainder`
     );
   }
 
-  // Score each transaction. The same assembly the connect dialog and the
-  // agent's score_file_transaction_match use (#308, #327).
-  const fileMatchingData = toFileMatchingData(fileData);
-  const ecbRates = await loadScoringEcbRates(db, [fileData.extractedCurrency], eligibleTransactions);
-  const allScores = scoreFileAgainstTransactions(
-    fileData,
-    eligibleTransactions,
-    partner,
-    documentedAmounts,
-    ecbRates
-  );
-
-  const matches = allScores
-    .filter((m) => m.confidence >= CONFIG.SUGGESTION_THRESHOLD)
-    .sort((a, b) => b.confidence - a.confidence)
-    .slice(0, CONFIG.MAX_SUGGESTIONS);
+  const suggestions = storedSuggestionsOf(allScores);
+  const matches = suggestions.map((s) => allScores.find((m) => m.transactionId === s.transactionId)!);
 
   // Helper to format score breakdown (using shared function)
   const formatBreakdown = (m: TransactionMatchScore) => formatScoreBreakdown(m.breakdown);
@@ -511,7 +363,7 @@ export async function runTransactionMatching(
     }
   } else {
     // Log best non-qualifying match for debugging
-    const bestNonMatch = allScores.sort((a, b) => b.confidence - a.confidence)[0];
+    const bestNonMatch = allScores[0];
     if (bestNonMatch) {
       const txAmount = (bestNonMatch.preview.amount / 100).toFixed(2);
       const txDate = bestNonMatch.preview.date.toDate().toISOString().split("T")[0];
@@ -528,21 +380,7 @@ export async function runTransactionMatching(
   const passive = await isPassiveMode(userId);
   if (passive) {
     console.log(`[TxMatch] Passive mode for user ${userId} — storing suggestions only, skipping auto-connect`);
-
-    const suggestions: TransactionSuggestion[] = matches.map((m) => ({
-      transactionId: m.transactionId,
-      confidence: m.confidence,
-      matchSources: m.matchSources,
-      preview: m.preview,
-    }));
-
-    await db.collection("files").doc(fileId).update({
-      transactionMatchComplete: true,
-      transactionMatchedAt: Timestamp.now(),
-      transactionSuggestions: suggestions,
-      updatedAt: Timestamp.now(),
-    });
-
+    await markComplete(suggestions);
     const elapsed = Date.now() - t0;
     console.log(
       `[TxMatch] Passive mode complete for ${fileData.fileName || fileId}: ` +
@@ -551,145 +389,25 @@ export async function runTransactionMatching(
     return;
   }
 
-  // Separate auto-matches from suggestions
-  let potentialAutoMatches = matches.filter((m) => m.confidence >= CONFIG.AUTO_MATCH_THRESHOLD);
-
-  // Check partner's resolution preference - if partner strongly prefers no-receipt,
-  // demote file matches to suggestions only (don't auto-connect)
-  if (potentialAutoMatches.length > 0 && fileData.partnerId) {
-    try {
-      const partnerDoc = await db.collection("partners").doc(fileData.partnerId).get();
-      if (partnerDoc.exists) {
-        const partnerData = partnerDoc.data()!;
-        const resolutionPref = partnerData.resolutionPreference;
-
-        if (resolutionPref?.type === "no_receipt" && resolutionPref.confidence > 0) {
-          const topFileMatch = potentialAutoMatches[0];
-          // If partner's no-receipt preference is stronger than file match, demote
-          if (resolutionPref.confidence >= topFileMatch.confidence) {
-            console.log(
-              `[TxMatch] Partner ${fileData.partnerId} prefers no-receipt ` +
-              `(${resolutionPref.confidence}%) over file match (${topFileMatch.confidence}%) - ` +
-              `demoting ${potentialAutoMatches.length} matches to suggestions`
-            );
-            potentialAutoMatches = []; // All become suggestions only
-          }
-        }
-      }
-    } catch (err) {
-      console.warn("[TxMatch] Failed to check partner resolution preference:", err);
-      // Continue with normal matching if preference check fails
-    }
+  // The upload trigger's auto-connect rules, the matcher's (#613): the
+  // threshold, Coverage, the same-day Remainder rule (#242, ADR-0008) and the
+  // Partner's no-receipt preference. Written through the File Connection
+  // writer (#612), which refuses what an automated connect may not do.
+  const { picks, refusals } = await selectAutoConnects(db, file, result);
+  for (const r of refusals) {
+    console.log(`[TxMatch] Suggestion only for ${r.transactionId} at ${r.confidence}% (${r.reason})`);
   }
-
-  // Filter out auto-matches for transactions that are already "covered"
-  // This prevents over-matching (e.g., 6 monthly invoices all matching one transaction)
-  let autoMatches: typeof potentialAutoMatches = [];
-  // The Remainder Matches among them, so the Connection each writes can say so
-  // (#242). A wrong same-day auto-connect has to be findable afterwards.
-  const sameDayRemainderMatches = new Set<string>();
-  const holdsFiles = (transactionId: string) => connectedFiles.has(transactionId);
-  // What the bank was charged for this File, the figure a Remainder is closed
-  // with (#172's Trinkgeld included, as the scorer counts it).
-  const candidatePayment = filePaymentTotal(
-    fileMatchingData.extractedAmount,
-    fileMatchingData.extractedTipAmount
-  );
-  for (const match of potentialAutoMatches) {
-    const coverage = deriveCoverage(
-      match.preview.amount,
-      documentedAmounts.get(match.transactionId) ?? 0
-    );
-    if (coverage.isCovered) {
+  for (const pick of picks) {
+    if (pick.autoConnectReason === "remainder_same_day") {
       console.log(
-        `[TxMatch] Skipping auto-match for ${match.transactionId} (already covered by existing files: ` +
-        `${(coverage.documentedAmount / 100).toFixed(2)} / ${(coverage.transactionAmount / 100).toFixed(2)}, ` +
-        `${(coverage.ratio * 100).toFixed(0)}%)`
+        `[TxMatch] Remainder auto-connect for ${pick.match.transactionId} at ${pick.match.confidence}% ` +
+          "(closes the remainder, same day as the files already on it)"
       );
-    } else if (isRemainderMatch(match)) {
-      // #239 left every Remainder Match a suggestion: it says "this File
-      // explains what is left", which is a claim about a split the user has
-      // not confirmed. #242 opens the one case where it may connect itself —
-      // the documents are from the same day, the File closes what is open,
-      // and no Transaction holding nothing wants this File at least as much.
-      // See ADR-0008.
-      const connected = connectedFiles.get(match.transactionId) ?? [];
-      const sameDay = isSameDayEvidence(
-        fileData.extractedDate,
-        connected.map((f) => f.extractedDate)
-      );
-      // `isRemainderMatch` only says the pair was JUDGED against the
-      // Remainder — one found wanting is a Remainder Match too, and a
-      // Confidence built out of date, partner and an invoice number alone
-      // would otherwise connect a File that explains none of what is open.
-      const closes =
-        candidatePayment != null &&
-        isRemainderClosed(coverage.remainder - Math.abs(candidatePayment));
-      const rival =
-        sameDay && closes && hasUndocumentedRival(match, allScores, holdsFiles);
-
-      if (sameDay && closes && !rival) {
-        sameDayRemainderMatches.add(match.transactionId);
-        autoMatches.push(match);
-        console.log(
-          `[TxMatch] Remainder auto-connect for ${match.transactionId} at ${match.confidence}% ` +
-          `(closes ${(coverage.remainder / 100).toFixed(2)}, same day as the files already on it)`
-        );
-      } else {
-        let refusal: string;
-        if (!sameDay) refusal = "not same-day evidence";
-        else if (!closes) refusal = "does not close the remainder";
-        else refusal = "an undocumented transaction scores at least as well";
-        console.log(
-          `[TxMatch] Suggestion only for ${match.transactionId} at ${match.confidence}% ` +
-          `(scored against its remainder, not its full amount; ${refusal})`
-        );
-      }
-    } else {
-      autoMatches.push(match);
     }
   }
+  const autoMatches = (await autoConnect(db, userId, fileId, picks)).map((p) => p.match);
 
-  // Build suggestions for storage (still show covered transactions as suggestions,
-  // but mark them so UI can indicate they're already covered)
-  const suggestions: TransactionSuggestion[] = matches.map((m) => ({
-    transactionId: m.transactionId,
-    confidence: m.confidence,
-    matchSources: m.matchSources,
-    preview: m.preview,
-  }));
-
-  // Auto-connections (only for non-covered transactions), through the File
-  // Connection writer (#612): automated origin, so a rejected or over-quota
-  // pair is refused there and only the email domain is learned.
-  const connectOutcomes = await connectFiles(
-    db,
-    userId,
-    autoMatches.map((match) => ({
-      fileId,
-      transactionId: match.transactionId,
-      matchSources: match.matchSources,
-      matchConfidence: match.confidence,
-      scoreBreakdown: match.breakdown,
-      // #242: only a same-day Remainder auto-connect carries this. A
-      // full-amount auto-connect writes the record it always wrote.
-      ...(sameDayRemainderMatches.has(match.transactionId)
-        ? { autoConnectReason: "remainder_same_day" as const }
-        : {}),
-    })),
-    { origin: "auto" }
-  );
-  const autoConnectedIds = new Set(
-    connectOutcomes.filter((o) => o.status === "connected").map((o) => o.transactionId)
-  );
-  autoMatches = autoMatches.filter((m) => autoConnectedIds.has(m.transactionId));
-
-  await db.collection("files").doc(fileId).update({
-    transactionMatchComplete: true,
-    transactionMatchedAt: Timestamp.now(),
-    transactionSuggestions: suggestions,
-    updatedAt: Timestamp.now(),
-  });
+  await markComplete(suggestions);
 
   const elapsed = Date.now() - t0;
   console.log(
