@@ -5,6 +5,7 @@ import {
   useEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   type HTMLAttributes,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
@@ -13,6 +14,18 @@ import {
 import { cn } from "@/lib/utils";
 
 type MainProps = HTMLAttributes<HTMLDivElement> & { ref?: Ref<HTMLDivElement> };
+
+// Only this component writes the key, and it keeps the committed width in
+// state, so there is nothing to subscribe to.
+const subscribeNever = () => () => {};
+const noStoredWidth = () => null;
+
+function parseStoredWidth(saved: string | null, min: number, max: number): number | null {
+  if (!saved) return null;
+  const parsed = parseInt(saved, 10);
+  if (isNaN(parsed) || parsed < min || parsed > max) return null;
+  return parsed;
+}
 
 interface DetailPanelLayoutProps {
   /** localStorage key the width is saved under; each page keeps its own. */
@@ -51,20 +64,21 @@ export function DetailPanelLayout({
   mainProps,
   handleVariant = "subtle",
 }: DetailPanelLayoutProps) {
-  const [width, setWidth] = useState(defaultWidth);
+  // The stored width is read during render, so a layout that mounts with its
+  // panel open (the pages mount it once their data has loaded) opens at that
+  // width instead of painting the default first. The server snapshot keeps a
+  // server render and hydration at the default.
+  const saved = useSyncExternalStore(
+    subscribeNever,
+    () => localStorage.getItem(storageKey),
+    noStoredWidth
+  );
+  const [committedWidth, setCommittedWidth] = useState<number | null>(null);
+  const width = committedWidth ?? parseStoredWidth(saved, minWidth, maxWidth) ?? defaultWidth;
   const [isResizing, setIsResizing] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
-  const currentWidthRef = useRef(defaultWidth);
-
-  useEffect(() => {
-    const saved = localStorage.getItem(storageKey);
-    if (!saved) return;
-    const parsed = parseInt(saved, 10);
-    if (isNaN(parsed) || parsed < minWidth || parsed > maxWidth) return;
-    // Deferred so setState runs event-handler-style, not from the effect body.
-    queueMicrotask(() => setWidth(parsed));
-  }, [storageKey, minWidth, maxWidth]);
+  const currentWidthRef = useRef(width);
 
   const handleResizeStart = useCallback(
     (e: ReactMouseEvent) => {
@@ -89,7 +103,7 @@ export function DetailPanelLayout({
 
     const handleMouseUp = () => {
       setIsResizing(false);
-      setWidth(currentWidthRef.current);
+      setCommittedWidth(currentWidthRef.current);
       localStorage.setItem(storageKey, currentWidthRef.current.toString());
       dragRef.current = null;
     };

@@ -49,6 +49,28 @@ describe("DetailPanelLayout", () => {
     expect(main().style.marginRight).toBe("550px");
   });
 
+  it("opens at a stored width on its first render, not a tick later", () => {
+    // The pages mount the layout only after their data loads, often with the
+    // panel already open (?id= in the URL). A width restored after the first
+    // paint shows the default first and slides the list's margin across.
+    localStorage.setItem(KEY, "550");
+    const view = render(
+      <DetailPanelLayout {...LIMITS} open panel={<p>detail</p>}>
+        <p>list</p>
+      </DetailPanelLayout>
+    );
+    const panel = view.container.querySelector<HTMLElement>("[data-slot='detail-panel']")!;
+    const main = view.container.querySelector<HTMLElement>("[data-slot='detail-panel-main']")!;
+    expect(panel.style.width).toBe("550px");
+    expect(main.style.marginRight).toBe("550px");
+  });
+
+  it("ignores a stored width that is not a number", async () => {
+    localStorage.setItem(KEY, "wide");
+    const { panel } = await renderLayout();
+    expect(panel()!.style.width).toBe("480px");
+  });
+
   it("ignores a stored width outside the limits", async () => {
     localStorage.setItem(KEY, "950");
     const { panel } = await renderLayout();
@@ -97,6 +119,14 @@ describe("DetailPanelLayout", () => {
     fireEvent.mouseUp(document);
     expect(panel()!.style.width).toBe("600px");
     expect(localStorage.getItem(KEY)).toBe("600");
+  });
+
+  it("stops listening when unmounted mid-drag", async () => {
+    const { handle, unmount } = await renderLayout();
+    drag(handle(), 1000, 900, false);
+    unmount();
+    fireEvent.mouseUp(document);
+    expect(localStorage.getItem(KEY)).toBeNull();
   });
 
   it("stops following the mouse after the release", async () => {
