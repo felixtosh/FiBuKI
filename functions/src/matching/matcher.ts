@@ -179,8 +179,8 @@ export function windowAround(dates: Date[]): { start: Timestamp; end: Timestamp 
   if (dates.length === 0) return null;
   const times = dates.map((d) => d.getTime());
   return {
-    start: Timestamp.fromMillis(Math.min(...times) - WINDOW_MS),
-    end: Timestamp.fromMillis(Math.max(...times) + WINDOW_MS),
+    start: Timestamp.fromDate(new Date(Math.min(...times) - WINDOW_MS)),
+    end: Timestamp.fromDate(new Date(Math.max(...times) + WINDOW_MS)),
   };
 }
 

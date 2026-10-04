@@ -12,7 +12,9 @@
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { filePaymentTotal, isExtractionPending, summarizeConnectedFiles } from "./coverage";
 
-const db = getFirestore();
+// Read when called, not at import: the matcher imports this module, and
+// every module that imports the matcher must load without a Firebase app.
+const db = () => getFirestore();
 
 /** One File already connected to a candidate Transaction. */
 export interface ConnectedFile {
@@ -63,7 +65,7 @@ export async function loadConnectedFiles(
   // used to cost.
   for (let i = 0; i < transactionIds.length; i += 30) {
     const chunk = transactionIds.slice(i, i + 30);
-    const connections = await db
+    const connections = await db()
       .collection("fileConnections")
       .where("transactionId", "in", chunk)
       .get();
@@ -88,7 +90,7 @@ export async function loadConnectedFiles(
   const allFileIds = Array.from(wantedFileIds);
   for (let i = 0; i < allFileIds.length; i += 30) {
     const batch = allFileIds.slice(i, i + 30);
-    const filesSnapshot = await db
+    const filesSnapshot = await db()
       .collection("files")
       .where("__name__", "in", batch)
       .get();
