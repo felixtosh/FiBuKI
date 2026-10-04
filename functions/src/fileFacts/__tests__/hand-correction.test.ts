@@ -639,6 +639,8 @@ describe("re-scoring the suggestions (#637 user stories 12 and 13)", () => {
     extractedAmount: 5000,
     extractedDate: day("2026-03-01"),
     extractedPartner: "ACME GmbH",
+    extractedIban: "AT611904300234573201",
+    extractedVatId: "ATU12345678",
     extractedAdditionalFields: [{ key: "debitDate", label: "Einzug am", value: "2026-03-12" }],
     extractedDebitDate: day("2026-03-12"),
     transactionIds: ["t-1"],
@@ -687,6 +689,19 @@ describe("re-scoring the suggestions (#637 user stories 12 and 13)", () => {
         })
       )
     ).toContain("rescore-suggestions");
+  });
+
+  it("re-scores after a moved IBAN or VAT ID, through either door", () => {
+    for (const origin of ["ui-correction", "mcp-correction"] as const) {
+      expect(kinds(followUpsOf({ origin, details: { iban: "AT021100000012345678" } }))).toContain(
+        "rescore-suggestions"
+      );
+      expect(kinds(followUpsOf({ origin, details: { vatId: "ATU87654321" } }))).toContain("rescore-suggestions");
+    }
+    // A save that re-posts them unchanged moved nothing.
+    expect(
+      kinds(followUpsOf({ origin: "ui-correction", details: { iban: "AT611904300234573201", vatId: "ATU12345678" } }))
+    ).not.toContain("rescore-suggestions");
   });
 
   it("does not re-score after a correction the scorer does not read", () => {

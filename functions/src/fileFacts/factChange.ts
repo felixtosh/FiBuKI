@@ -155,13 +155,18 @@ export function reExtractionRefusal(
 // A Hand Correction
 // ---------------------------------------------------------------------------
 
-/** The stored fields the scorer reads; a Hand Correction that moves one re-scores. */
+/**
+ * The stored fields a Hand Correction re-scores on: the ones the scorer reads,
+ * and the IBAN and VAT ID that identify the counterparty (Stefan, 2026-10-04).
+ */
 const SCORED_FIELDS = [
   "extractedAmount",
   "extractedDate",
   "extractedDueDate",
   "extractedDebitDate",
   "extractedPartner",
+  "extractedIban",
+  "extractedVatId",
 ] as const;
 
 export function decideFactChange(current: CurrentFile, change: FactChange): FactOutcome {

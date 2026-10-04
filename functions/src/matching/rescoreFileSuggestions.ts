@@ -4,9 +4,9 @@
  *
  * The one entry point for "a File's facts changed, refresh what it suggests":
  * the File facts module asks for it after a Hand Correction that moved the
- * amount, the date, a Due or Debit Date or the partner, and any other path
- * that changes those facts by hand calls this rather than a matcher of its
- * own, so the rule lives in one place.
+ * amount, the date, a Due or Debit Date, the partner, the IBAN or the VAT ID,
+ * and any other path that changes those facts by hand calls this rather than
+ * a matcher of its own, so the rule lives in one place.
  *
  * Suggestions only. The candidates and scores are the matcher's (#613), the
  * upload trigger's own, so what is stored here is what the trigger would
