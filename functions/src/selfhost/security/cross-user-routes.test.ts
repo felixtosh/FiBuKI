@@ -54,12 +54,32 @@ vi.mock("@/lib/email-providers/gmail-client", () => {
   return { GmailClient, default: GmailClient };
 });
 
+// The PDF renderer is stubbed. A connect goes to the real callable, as the
+// user whose bearer token the route forwards (#612): the File Connection
+// writer is what decides whether the Transaction is theirs.
 vi.mock("@/lib/api/firebase-callable", () => ({
-  callFirebaseFunction: async () => ({
-    success: true,
-    pdfBase64: Buffer.from(`%PDF rendered ${Math.random()}`).toString("base64"),
-    pageCount: 1,
-  }),
+  callFirebaseFunction: async (name: string, data: unknown, token?: string) => {
+    if (name === "connectFileToTransaction") {
+      const { connectFileToTransactionCallable } = await import("../../files/connectFileToTransaction");
+      const uid = (token ?? "").replace(/^Bearer /, "");
+      try {
+        return await (connectFileToTransactionCallable as unknown as { run: (r: unknown) => Promise<unknown> }).run({
+          data,
+          auth: { uid, token: {} },
+        });
+      } catch (err) {
+        // The shape the real helper throws on an HTTP error.
+        throw new Error(
+          `Firebase function ${name} failed: 400 - ${JSON.stringify({ error: { message: (err as Error).message } })}`
+        );
+      }
+    }
+    return {
+      success: true,
+      pdfBase64: Buffer.from(`%PDF rendered ${Math.random()}`).toString("base64"),
+      pageCount: 1,
+    };
+  },
 }));
 
 // The worker's agent loop needs a model; what is under test is everything the
@@ -204,6 +224,11 @@ async function expectRefused(res: Response, label: string): Promise<void> {
 }
 
 describe("mail attach routes: a Transaction id must be the caller's", () => {
+  // These routes forward the caller's bearer token to the connect callable,
+  // as the browser's requests carry it.
+  const asBearer = (uid: string, url: string, init: { body?: unknown } = {}) =>
+    asUser(uid, url, { ...init, headers: { Authorization: `Bearer ${uid}` } });
+
   const attachBody = (transactionId: string) => ({
     integrationId: A.integration,
     messageId: "m-1",
@@ -213,7 +238,7 @@ describe("mail attach routes: a Transaction id must be the caller's", () => {
 
   it("positive control: attaching to my own Transaction connects it", async () => {
     const { POST } = await import("@/app/api/gmail/attachment/route");
-    const res = await POST(asUser(ATTACKER, "/api/gmail/attachment", { body: attachBody(A.transaction) }));
+    const res = await POST(asBearer(ATTACKER, "/api/gmail/attachment", { body: attachBody(A.transaction) }));
     expect(res.status).toBe(200);
     const tx = (await getFirestore().doc(`transactions/${A.transaction}`).get()).data();
     expect(tx?.fileIds?.length).toBe(1);
@@ -222,7 +247,7 @@ describe("mail attach routes: a Transaction id must be the caller's", () => {
   it("positive control: converting a mail onto my own Transaction connects it", async () => {
     const { POST } = await import("@/app/api/gmail/convert-to-pdf/route");
     const res = await POST(
-      asUser(ATTACKER, "/api/gmail/convert-to-pdf", { body: { integrationId: A.integration, messageId: "m-1", transactionId: A.transaction } }),
+      asBearer(ATTACKER, "/api/gmail/convert-to-pdf", { body: { integrationId: A.integration, messageId: "m-1", transactionId: A.transaction } }),
     );
     expect(res.status, await res.clone().text()).toBe(200);
     const tx = (await getFirestore().doc(`transactions/${A.transaction}`).get()).data();
@@ -242,23 +267,23 @@ describe("mail attach routes: a Transaction id must be the caller's", () => {
   for (const route of ["gmail", "mail"] as const) {
     it(`/api/${route}/attachment refuses the victim's Transaction`, async () => {
       const { POST } = await ATTACH[route]();
-      const res = await POST(asUser(ATTACKER, `/api/${route}/attachment`, { body: attachBody(V.transaction) }));
+      const res = await POST(asBearer(ATTACKER, `/api/${route}/attachment`, { body: attachBody(V.transaction) }));
       await expectRefused(res, `${route}/attachment`);
     });
 
     it(`/api/${route}/attachment refuses the victim's Transaction for an already-stored File`, async () => {
       // The dedup branch connects an existing File; it had its own unchecked write.
       const { POST } = await ATTACH[route]();
-      const first = await POST(asUser(ATTACKER, `/api/${route}/attachment`, { body: { ...attachBody(A.transaction), attachmentId: "same" } }));
+      const first = await POST(asBearer(ATTACKER, `/api/${route}/attachment`, { body: { ...attachBody(A.transaction), attachmentId: "same" } }));
       expect(first.status).toBe(200);
-      const res = await POST(asUser(ATTACKER, `/api/${route}/attachment`, { body: { ...attachBody(V.transaction), attachmentId: "same" } }));
+      const res = await POST(asBearer(ATTACKER, `/api/${route}/attachment`, { body: { ...attachBody(V.transaction), attachmentId: "same" } }));
       await expectRefused(res, `${route}/attachment (existing file)`);
     });
 
     it(`/api/${route}/convert-to-pdf refuses the victim's Transaction`, async () => {
       const { POST } = await CONVERT[route]();
       const res = await POST(
-        asUser(ATTACKER, `/api/${route}/convert-to-pdf`, { body: { integrationId: A.integration, messageId: "m-1", transactionId: V.transaction } }),
+        asBearer(ATTACKER, `/api/${route}/convert-to-pdf`, { body: { integrationId: A.integration, messageId: "m-1", transactionId: V.transaction } }),
       );
       await expectRefused(res, `${route}/convert-to-pdf`);
     });
@@ -267,15 +292,15 @@ describe("mail attach routes: a Transaction id must be the caller's", () => {
   it("a path-shaped or non-string Transaction id is refused the same way", async () => {
     const { POST } = await import("@/app/api/gmail/attachment/route");
     for (const transactionId of [`../transactions/${V.transaction}`, { id: V.transaction }, [V.transaction]]) {
-      const res = await POST(asUser(ATTACKER, "/api/gmail/attachment", { body: attachBody(transactionId as string) }));
+      const res = await POST(asBearer(ATTACKER, "/api/gmail/attachment", { body: attachBody(transactionId as string) }));
       await expectRefused(res, `attachment(${JSON.stringify(transactionId)})`);
     }
   });
 
   it("a missing Transaction answers exactly like a foreign one (no existence oracle)", async () => {
     const { POST } = await import("@/app/api/gmail/attachment/route");
-    const foreign = await POST(asUser(ATTACKER, "/api/gmail/attachment", { body: attachBody(V.transaction) }));
-    const missing = await POST(asUser(ATTACKER, "/api/gmail/attachment", { body: attachBody("does-not-exist") }));
+    const foreign = await POST(asBearer(ATTACKER, "/api/gmail/attachment", { body: attachBody(V.transaction) }));
+    const missing = await POST(asBearer(ATTACKER, "/api/gmail/attachment", { body: attachBody("does-not-exist") }));
     expect(foreign.status).toBe(missing.status);
     expect(await foreign.text()).toBe(await missing.text());
   });

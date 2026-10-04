@@ -730,6 +730,7 @@ export const bulkConnectFilesTool = tool(
           {
             fileId: string;
             transactionId: string;
+            origin: "agent";
             connectionType: string;
             matchConfidence: number;
             allowAutoReassign: boolean;
@@ -740,6 +741,7 @@ export const bulkConnectFilesTool = tool(
           {
             fileId: conn.fileId,
             transactionId: conn.transactionId,
+            origin: "agent",
             connectionType: "auto_matched",
             matchConfidence: conn.confidence,
             allowAutoReassign: true,

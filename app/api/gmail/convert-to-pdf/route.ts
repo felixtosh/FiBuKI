@@ -1,12 +1,13 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminDb, getAdminBucket, getFirebaseStorageDownloadUrl } from "@/lib/firebase/admin";
-import { Timestamp, FieldValue } from "firebase-admin/firestore";
+import { Timestamp } from "firebase-admin/firestore";
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { createHash, randomUUID } from "crypto";
 import { createFileRecord } from "@/functions/src/files/createFileRecord";
 import { getOwnedDoc } from "@/lib/auth/owned-doc";
 import { callFirebaseFunction } from "@/lib/api/firebase-callable";
+import { connectFileAsUser } from "@/lib/api/connect-file";
 import { GmailResolutionError, resolveGmailIntegration } from "@/lib/gmail/resolve-integration";
 import {
   fetchProviderBody,
@@ -23,7 +24,6 @@ interface ConvertHtmlToPdfResponse {
 
 const db = getAdminDb();
 
-const FILES_COLLECTION = "files";
 const TRANSACTIONS_COLLECTION = "transactions";
 const GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1";
 
@@ -194,33 +194,35 @@ export async function POST(request: NextRequest) {
       gmailSenderDomain: senderDomain || null,
       // Extraction will happen via Cloud Function trigger
       extractionComplete: false,
-      transactionIds: transactionId ? [transactionId] : [],
+      transactionIds: [],
     };
 
-    const { fileId, duplicate } = await createFileRecord(db, fileData);
-    if (duplicate && transactionId) {
-      await db.collection(FILES_COLLECTION).doc(fileId).update({
-        transactionIds: FieldValue.arrayUnion(transactionId),
-        updatedAt: now,
-      });
-    }
+    const { fileId } = await createFileRecord(db, fileData);
 
-    // If transactionId provided, connect file to transaction
-    if (transactionId) {
-      await db.collection(TRANSACTIONS_COLLECTION).doc(transactionId).update({
-        fileIds: FieldValue.arrayUnion(fileId),
-        isComplete: true,
-        updatedAt: now,
-      });
-
-      // Also create file connection document
-      await db.collection("fileConnections").add({
-        fileId,
-        transactionId,
-        userId,
-        connectionType: "gmail_html_conversion",
-        createdAt: now,
-      });
+    // If transactionId provided, connect file to transaction, through the
+    // File Connection writer (#612).
+    const connectionError = transactionId
+      ? await connectFileAsUser(request, {
+          fileId,
+          transactionId,
+          connectionType: "gmail_html_conversion",
+          sourceInfo: {
+            sourceType: "gmail",
+            ...(searchPattern ? { searchPattern } : {}),
+            ...(integrationId ? { gmailIntegrationId: integrationId } : {}),
+            ...(content.integrationEmail ? { gmailIntegrationEmail: content.integrationEmail } : {}),
+            mailMessageId: messageId,
+            ...(gmailMessageFrom ? { gmailMessageFrom } : {}),
+            ...(gmailMessageFromName ? { gmailMessageFromName } : {}),
+            resultType: "gmail_html_invoice",
+          },
+        })
+      : null;
+    if (connectionError) {
+      return NextResponse.json(
+        { error: `Saved, but not connected: ${connectionError}`, fileId },
+        { status: 409 }
+      );
     }
 
     return NextResponse.json({

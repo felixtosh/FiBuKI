@@ -14,7 +14,6 @@ import {
 } from "firebase/firestore";
 import { Transaction, TransactionFilters } from "@/types/transaction";
 import { OperationsContext, BulkOperationResult } from "./types";
-import { deleteFileConnectionsForTransaction } from "./file-ops";
 
 const TRANSACTIONS_COLLECTION = "transactions";
 
@@ -163,45 +162,6 @@ export async function _deleteTransactionInternal(
   }
 
   await deleteDoc(doc(ctx.db, TRANSACTIONS_COLLECTION, transactionId));
-}
-
-/**
- * Delete all transactions for a source - used when deleting a bank account
- */
-export async function deleteTransactionsBySource(
-  ctx: OperationsContext,
-  sourceId: string
-): Promise<{ deleted: number }> {
-  const q = query(
-    collection(ctx.db, TRANSACTIONS_COLLECTION),
-    where("userId", "==", ctx.userId),
-    where("sourceId", "==", sourceId)
-  );
-
-  const snapshot = await getDocs(q);
-
-  const BATCH_SIZE = 500;
-  let deleted = 0;
-
-  for (let i = 0; i < snapshot.docs.length; i += BATCH_SIZE) {
-    const chunk = snapshot.docs.slice(i, i + BATCH_SIZE);
-
-    // Clean up file connections BEFORE deleting transactions
-    for (const docSnap of chunk) {
-      await deleteFileConnectionsForTransaction(ctx, docSnap.id);
-    }
-
-    // Then batch delete transactions
-    const batch = writeBatch(ctx.db);
-    for (const docSnap of chunk) {
-      batch.delete(docSnap.ref);
-      deleted++;
-    }
-
-    await batch.commit();
-  }
-
-  return { deleted };
 }
 
 /**

@@ -4,13 +4,13 @@ import { Timestamp } from "firebase-admin/firestore";
 import { createHash, randomUUID } from "crypto";
 import { getAdminDb, getAdminBucket, getFirebaseStorageDownloadUrl } from "@/lib/firebase/admin";
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
+import { connectFileAsUser } from "@/lib/api/connect-file";
 import {
   createFileRecord,
   findFileByContentHash,
 } from "@/functions/src/files/createFileRecord";
 
 const db = getAdminDb();
-const FILES_COLLECTION = "files";
 
 function sanitizeFilename(name: string): string {
   return name.replace(/[^a-zA-Z0-9.-]/g, "_");
@@ -133,36 +133,16 @@ export async function POST(request: NextRequest) {
       ({ fileId, duplicate } = await createFileRecord(db, fileDoc));
     }
 
-    // Auto-connect to transaction if transactionId was provided (learn mode)
+    // Auto-connect to transaction if transactionId was provided (learn mode),
+    // through the File Connection writer (#612). Non-fatal: the File is
+    // stored either way.
     if (typeof transactionId === "string" && transactionId) {
-      try {
-        const txRef = db.collection("transactions").doc(transactionId);
-        const txDoc = await txRef.get();
-        if (txDoc.exists && txDoc.data()?.userId === userId) {
-          const existingFileIds: string[] = txDoc.data()?.fileIds || [];
-          if (!existingFileIds.includes(fileId)) {
-            await txRef.update({
-              fileIds: [...existingFileIds, fileId],
-              updatedAt: Timestamp.now(),
-            });
-            // Also update the file with the transaction connection. The
-            // File here can be one we already held (#182), and an existing
-            // File can already be connected — so the new Transaction is added
-            // to its transactionIds rather than replacing them, which would
-            // strand every Transaction whose fileIds still point at it.
-            const fileRef = db.collection(FILES_COLLECTION).doc(fileId);
-            const connectedTo: string[] = (await fileRef.get()).data()?.transactionIds || [];
-            if (!connectedTo.includes(transactionId)) {
-              await fileRef.update({
-                transactionIds: [...connectedTo, transactionId],
-                updatedAt: Timestamp.now(),
-              });
-            }
-          }
-        }
-      } catch (connectErr) {
-        console.error("Auto-connect failed (non-fatal):", connectErr);
-      }
+      const connectionError = await connectFileAsUser(request, {
+        fileId,
+        transactionId,
+        sourceInfo: { sourceType: "browser", resultType: "browser_invoice" },
+      });
+      if (connectionError) console.error("Auto-connect failed (non-fatal):", connectionError);
     }
 
     return NextResponse.json({

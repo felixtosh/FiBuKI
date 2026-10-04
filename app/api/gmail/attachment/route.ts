@@ -17,6 +17,7 @@ import {
   findFileByContentHash,
 } from "@/functions/src/files/createFileRecord";
 import { getOwnedDoc } from "@/lib/auth/owned-doc";
+import { connectFileAsUser } from "@/lib/api/connect-file";
 
 const db = getAdminDb();
 
@@ -273,6 +274,18 @@ export async function POST(request: NextRequest) {
 
     const contentHash = createHash("sha256").update(attachment.data).digest("hex");
 
+    // How the File was found, for the File Connection and what it teaches.
+    const gmailSourceInfo = {
+      sourceType: "gmail",
+      ...(searchPattern ? { searchPattern } : {}),
+      ...(resolvedIntegrationId ? { gmailIntegrationId: resolvedIntegrationId } : {}),
+      ...(integrationEmail ? { gmailIntegrationEmail: integrationEmail } : {}),
+      mailMessageId: messageId,
+      ...(gmailMessageFrom ? { gmailMessageFrom } : {}),
+      ...(gmailMessageFromName ? { gmailMessageFromName } : {}),
+      resultType: resultType || "gmail_attachment",
+    };
+
     // Check for existing file with same Gmail message + attachment ID
     // Query without deletedAt filter to catch soft-deleted files too
     const existingByGmail = await db
@@ -309,28 +322,21 @@ export async function POST(request: NextRequest) {
         console.log(`[Gmail Attachment] Restored soft-deleted file ${existingFile.id}`);
       }
 
-      // If transactionId provided, connect existing file to transaction
-      if (transactionId) {
-        await db.collection(TRANSACTIONS_COLLECTION).doc(transactionId).update({
-          fileIds: FieldValue.arrayUnion(existingFile.id),
-          isComplete: true,
-          updatedAt: now,
-        });
-
-        // Update file's transactionIds
-        await existingFile.ref.update({
-          transactionIds: FieldValue.arrayUnion(transactionId),
-          updatedAt: now,
-        });
-
-        // Create file connection document
-        await db.collection("fileConnections").add({
-          fileId: existingFile.id,
-          transactionId,
-          userId,
-          connectionType: "gmail_import",
-          createdAt: now,
-        });
+      // If transactionId provided, connect existing file to transaction,
+      // through the File Connection writer (#612).
+      const connectionError = transactionId
+        ? await connectFileAsUser(request, {
+            fileId: existingFile.id,
+            transactionId,
+            connectionType: "gmail_import",
+            sourceInfo: gmailSourceInfo,
+          })
+        : null;
+      if (connectionError) {
+        return NextResponse.json(
+          { error: `Saved, but not connected: ${connectionError}`, fileId: existingFile.id },
+          { status: 409 }
+        );
       }
 
       return NextResponse.json({
@@ -404,33 +410,26 @@ export async function POST(request: NextRequest) {
       gmailSenderDomain: senderDomain || null,
       // These will be populated by AI extraction
       extractionComplete: false,
-      transactionIds: transactionId ? [transactionId] : [],
+      transactionIds: [],
     };
 
-    const { fileId, duplicate } = await createFileRecord(db, fileData);
-    if (duplicate && transactionId) {
-      await db.collection(FILES_COLLECTION).doc(fileId).update({
-        transactionIds: FieldValue.arrayUnion(transactionId),
-        updatedAt: now,
-      });
-    }
+    const { fileId } = await createFileRecord(db, fileData);
 
-    // If transactionId provided, connect file to transaction
-    if (transactionId) {
-      await db.collection(TRANSACTIONS_COLLECTION).doc(transactionId).update({
-        fileIds: FieldValue.arrayUnion(fileId),
-        isComplete: true,
-        updatedAt: now,
-      });
-
-      // Also create file connection document
-      await db.collection("fileConnections").add({
-        fileId,
-        transactionId,
-        userId,
-        connectionType: "gmail_import",
-        createdAt: now,
-      });
+    // If transactionId provided, connect file to transaction, through the
+    // File Connection writer (#612).
+    const connectionError = transactionId
+      ? await connectFileAsUser(request, {
+          fileId,
+          transactionId,
+          connectionType: "gmail_import",
+          sourceInfo: gmailSourceInfo,
+        })
+      : null;
+    if (connectionError) {
+      return NextResponse.json(
+        { error: `Saved, but not connected: ${connectionError}`, fileId },
+        { status: 409 }
+      );
     }
 
     return NextResponse.json({

@@ -343,13 +343,7 @@ function FileDetailPanelInner({
 
   const handleAcceptTransactionSuggestion = useCallback(
     async (suggestion: TransactionSuggestion) => {
-      await acceptTransactionSuggestion(
-        ctx,
-        file.id,
-        suggestion.transactionId,
-        suggestion.confidence,
-        suggestion.matchSources
-      );
+      await acceptTransactionSuggestion(ctx, file.id, suggestion.transactionId);
     },
     [ctx, file.id]
   );

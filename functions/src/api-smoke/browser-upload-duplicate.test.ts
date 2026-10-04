@@ -20,10 +20,20 @@
  *     --config vitest.api-smoke.config.ts --pool=forks --maxWorkers=1
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { createHash } from "crypto";
 import { setupRouteHarness } from "./route-harness";
+
+// Learn mode connects through the connect callable, as the user (#612): the
+// File Connection writer, which has its own suite, makes the connection.
+const connects = vi.hoisted(() => [] as Array<{ name: string; data: unknown; token?: string }>);
+vi.mock("@/lib/api/firebase-callable", () => ({
+  callFirebaseFunction: async (name: string, data: unknown, token?: string) => {
+    connects.push({ name, data, token });
+    return { success: true, connectionId: "c", alreadyConnected: false };
+  },
+}));
 
 const { store, uploads } = setupRouteHarness();
 
@@ -100,7 +110,7 @@ describe("POST /api/browser/upload", () => {
     // Learn mode posts a transactionId. The duplicate creating nothing must not
     // cost the user the connection they were making.
     const bytes = "%PDF-1.4 a second invoice";
-    store.seed("transactions", "tx-1", { userId: USER, fileIds: [] });
+    connects.length = 0;
 
     const first = (await (await post(upload(bytes))).json()) as { fileId: string };
     const second = (await (
@@ -108,27 +118,29 @@ describe("POST /api/browser/upload", () => {
     ).json()) as { fileId: string; duplicate: boolean };
 
     expect(second).toMatchObject({ fileId: first.fileId, duplicate: true });
-    const tx = await store.collection("transactions").doc("tx-1").get();
-    expect(tx.data()?.fileIds).toEqual([first.fileId]);
+    expect(connects).toEqual([
+      {
+        name: "connectFileToTransaction",
+        data: expect.objectContaining({ fileId: first.fileId, transactionId: "tx-1", origin: "manual" }),
+        token: `Bearer ${USER}`,
+      },
+    ]);
   });
 
-  it("keeps the connections the existing File already had", async () => {
-    // The duplicate is an existing File, so its transactionIds are not the
-    // empty list a fresh write starts from. Replacing them would leave tx-1
-    // pointing at a File that no longer points back.
+  it("writes no File Connection itself, so the File keeps the ones it had", async () => {
+    // The connect adds a pair; it never replaces the File's list, which the
+    // route used to rewrite from what it had read.
     const bytes = "%PDF-1.4 one invoice, two transactions";
     store.seed("transactions", "tx-1", { userId: USER, fileIds: [] });
-    store.seed("transactions", "tx-2", { userId: USER, fileIds: [] });
 
     const first = (await (
       await post(upload(bytes, { transactionId: "tx-1" }))
     ).json()) as { fileId: string };
-    await post(upload(bytes, { transactionId: "tx-2" }));
 
     const file = await store.collection("files").doc(first.fileId).get();
-    expect(file.data()?.transactionIds).toEqual(["tx-1", "tx-2"]);
-    const txOne = await store.collection("transactions").doc("tx-1").get();
-    expect(txOne.data()?.fileIds).toEqual([first.fileId]);
+    expect(file.data()?.transactionIds).toEqual([]);
+    const tx = await store.collection("transactions").doc("tx-1").get();
+    expect(tx.data()?.fileIds).toEqual([]);
   });
 
   it("keeps another user's identical bytes apart", async () => {
