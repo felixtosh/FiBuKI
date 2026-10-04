@@ -19,13 +19,14 @@ import { updateFileExtractedFieldsCallable } from "../files/updateFileExtractedF
 import { updateFileExtraction } from "../tools/handlers";
 import { retryExtractionForFile, RetryExtractionError } from "../extraction/retryExtractionOps";
 import { deriveDocumentationState } from "../documents/documentationState";
+import { toDateSafe } from "../utils/toDateSafe";
 
 const db = getFirestore();
 const ME = "facts-me";
 const OTHER = "facts-other";
 
 const day = (iso: string) => Timestamp.fromDate(new Date(`${iso}T00:00:00Z`));
-const isoOf = (value: unknown) => (value as Timestamp | null)?.toDate().toISOString().slice(0, 10) ?? null;
+const isoOf = (value: unknown) => toDateSafe(value)?.toISOString().slice(0, 10) ?? null;
 
 async function seedFile(id: string, extra: Record<string, unknown> = {}) {
   await db.collection("files").doc(id).set({
