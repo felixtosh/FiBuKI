@@ -68,7 +68,8 @@ export interface SearchDateWindow {
   expectedAt: Date;
   /**
    * `expectedAt` minus `varianceDays`, and on a monthly or longer cycle with a
-   * learned delay minus the settlement lag too (#618).
+   * learned delay minus the settlement lag too (#618), never more than half
+   * a period.
    */
   from: Date;
   /** `expectedAt` plus `varianceDays`. */
@@ -118,13 +119,15 @@ export function expectedInvoiceWindow(
 
   // #618: the scorer calls a booking up to the settlement lag after the
   // expected day on time (monthly or longer cycles), so this charge's
-  // document can be dated that much earlier than `expectedAt`.
+  // document can be dated that much earlier than `expectedAt`. Still inside
+  // the half-period clamp, or the back edge reaches the previous charge.
   const lag = delay === undefined ? 0 : learnedCycleSettlementLag(band.frequencyDays);
+  const backDays = Math.min(varianceDays + lag, maxVarianceDays);
 
   const expectedAt = addDays(transaction.date, -(delay ?? 0));
   return {
     expectedAt,
-    from: addDays(expectedAt, -(varianceDays + lag)),
+    from: addDays(expectedAt, -backDays),
     to: addDays(expectedAt, varianceDays),
     varianceDays,
   };

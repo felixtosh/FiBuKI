@@ -143,6 +143,21 @@ describe("expectedInvoiceWindow", () => {
     expect(window!.varianceDays).toBe(3);
   });
 
+  it("keeps the settlement lag inside the half-period clamp on a noisy monthly cycle (#618)", () => {
+    const noisyMonthly: QueryGenerationPartner = {
+      name: "Magenta Telekom",
+      // delayVariance 8 doubled is 16, clamped to 15; the lag must not push
+      // the back edge past half the 30-day period into the previous charge.
+      effectiveCycles: [
+        { source: "learned", frequencyDays: 30, invoiceToTransactionDelay: 15, delayVariance: 8 },
+      ],
+    };
+
+    const window = expectedInvoiceWindow({ name: "MAGENTA", date: TX_DATE, amount: 4590 }, noisyMonthly);
+    expect(daysBetween(window!.from, window!.expectedAt)).toBe(15);
+    expect(daysBetween(window!.expectedAt, window!.to)).toBe(15);
+  });
+
   it("centres on the transaction date when the recurrence has no learned delay", () => {
     const declaredOnly: QueryGenerationPartner = {
       name: "Magenta Telekom",
