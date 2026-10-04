@@ -251,6 +251,16 @@ _Deutsch_: Extraktion
 _Avoid_: parse, OCR result, AI output
 _Avoid (de)_: OCR, KI-Ergebnis, Erkennung, Erfassung (manual entry at the Tax Advisor's desk)
 
+**Extraction Service**:
+What performs an Extraction end to end: takes a File's bytes, decides whether it is a
+financial document, and returns its transcription. Gemini is the built-in one; a deployment
+may configure an external one instead. FiBuKI applies its own rules to whatever the service
+returns. Every Extraction records which service produced it (#161).
+_Deutsch_: Extraktionsdienst
+_Avoid_: plugin, extractor, OCR backend, parser
+Pre-OCR'd text from a document management system is not an input to it. If that case
+returns, it is an ingestion question.
+
 **Line Item**:
 One priced row transcribed from a File's body.
 _Deutsch_: Position (the word English avoids is the one German requires)

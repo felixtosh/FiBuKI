@@ -35,6 +35,12 @@ export interface AIUsageParams {
     categoryId?: string;
     webSearchUsed?: boolean;
   } | null;
+  /**
+   * A call FiBuKI does not pay for, such as an external Extraction Service
+   * (#161): logged with its token counts, no cost computed and nothing
+   * charged to the user's budget.
+   */
+  unpriced?: boolean;
 }
 
 /**
@@ -65,8 +71,8 @@ export async function logAIUsage(
   params: AIUsageParams
 ): Promise<void> {
   const db = getFirestore();
-  const cost = calculateAICost(params.model, params.inputTokens, params.outputTokens);
-  const userCostEur = calculateUserCostEur(params.inputTokens, params.outputTokens);
+  const cost = params.unpriced ? 0 : calculateAICost(params.model, params.inputTokens, params.outputTokens);
+  const userCostEur = params.unpriced ? 0 : calculateUserCostEur(params.inputTokens, params.outputTokens);
 
   try {
     // 1. Log to aiUsage collection (existing behavior)
@@ -90,7 +96,7 @@ export async function logAIUsage(
     });
 
     // 2. Accumulate budget on subscription doc (non-blocking)
-    await accumulateBudget(db, userId, userCostEur);
+    if (!params.unpriced) await accumulateBudget(db, userId, userCostEur);
   } catch (error) {
     // Don't fail the main request if logging fails
     console.error("[AI Usage] Failed to log usage:", error);
