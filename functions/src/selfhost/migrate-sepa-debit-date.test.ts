@@ -98,6 +98,8 @@ describe("migrateSepaDebitDate: who is a candidate", () => {
       extractedAdditionalFields: [{ label: "Einzugsdatum", value: "2026-06-20" }],
     });
     await seed("f-deleted", { deletedAt: Timestamp.now() });
+    await seed("f-purged", { deletedAt: Timestamp.now(), purgedAt: Timestamp.now() });
+    await seed("f-purged-no-deleted", { purgedAt: Timestamp.now() });
     await seed("f-not-invoice", { isNotInvoice: true });
     await seed("f-errored", { extractionError: "boom" });
     await seed("f-running", { extractionComplete: false });
@@ -117,6 +119,19 @@ describe("migrateSepaDebitDate: who is a candidate", () => {
     expect(sepa).toMatchObject({ userId: "u1", matched: "SEPA-Mandat", dueDate: "2026-06-20", handCorrected: [] });
     expect(report.candidates.find((c) => c.fileId === "f-mandate")!.matched).toBe("SEPA-Basis-Lastschriftmandat");
     expect(report.candidates.find((c) => c.fileId === "f-corrected")!.handCorrected).toEqual(["amount"]);
+  });
+
+  it("reads the Files page by page and finds the same candidates", async () => {
+    await seed("f-other-user", { userId: "u2" });
+    const whole = await run();
+    const paged = await run({ pageSize: 2 });
+    expect(paged.filesScanned).toBe(15);
+    expect(paged.candidates.map((c) => c.fileId).sort()).toEqual(
+      whole.candidates.map((c) => c.fileId).sort(),
+    );
+    const pagedOne = await run({ userId: "u1", pageSize: 3 });
+    expect(pagedOne.filesScanned).toBe(14);
+    expect(pagedOne.candidates.map((c) => c.userId)).not.toContain("u2");
   });
 
   it("is a dry run by default: nothing is queued, reset or extracted", async () => {

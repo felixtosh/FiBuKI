@@ -29,7 +29,7 @@
  * Postgres only, never wired into index.ts.
  */
 
-import type { Firestore } from "firebase-admin/firestore";
+import type { Firestore, Query, QueryDocumentSnapshot } from "firebase-admin/firestore";
 import { getFirestore } from "firebase-admin/firestore";
 import { debitDateFromAdditionalFields } from "../matching/debitDate";
 import { dueDateFromAdditionalFields } from "../matching/dueDate";
@@ -91,6 +91,11 @@ export interface SepaDebitDateOptions {
   allUsers?: boolean;
   /** How long an applied run waits for the Extractions (default 60 minutes). */
   timeoutMs?: number;
+  /**
+   * Files read per page while looking for candidates (default 200). Only one
+   * page of documents, extracted text included, is held at a time.
+   */
+  pageSize?: number;
   /** How often it looks (default 5 seconds). */
   pollMs?: number;
   /**
@@ -182,14 +187,10 @@ export async function migrateSepaDebitDate(
   }
   const db = getFirestore();
 
-  const files = opts.userId
-    ? await db.collection("files").where("userId", "==", opts.userId).get()
-    : await db.collection("files").get();
-
   const report: SepaDebitDateReport = {
     scope: opts.userId ? { kind: "user", userId: opts.userId } : { kind: "allUsers" },
     users: [],
-    filesScanned: files.size,
+    filesScanned: 0,
     candidates: [],
     queued: [],
     skippedHandCorrected: [],
@@ -201,10 +202,27 @@ export async function migrateSepaDebitDate(
     applied: !!opts.apply,
   };
 
-  for (const doc of files.docs) {
+  // Paged by document id, so only one page of Files (extracted text included)
+  // is held at a time; a candidate keeps only its summary.
+  const pageSize = opts.pageSize ?? 200;
+  const base: Query = opts.userId
+    ? db.collection("files").where("userId", "==", opts.userId)
+    : db.collection("files");
+  let cursor: QueryDocumentSnapshot | null = null;
+  for (;;) {
+    let page = base.orderBy("__name__").limit(pageSize);
+    if (cursor) page = page.startAfter(cursor);
+    const snap = await page.get();
+    for (const doc of snap.docs) collectCandidate(doc);
+    report.filesScanned += snap.size;
+    if (snap.size < pageSize) break;
+    cursor = snap.docs[snap.docs.length - 1];
+  }
+
+  function collectCandidate(doc: QueryDocumentSnapshot): void {
     const data = (doc.data() ?? {}) as FileData;
     const matched = sepaCandidatePhrase(data);
-    if (!matched) continue;
+    if (!matched) return;
     report.candidates.push({
       fileId: doc.id,
       userId: String(data.userId),
@@ -240,7 +258,7 @@ export async function migrateSepaDebitDate(
   if (!opts.apply) {
     const skipped = report.candidates.filter((c) => c.handCorrected.length > 0).length;
     log(
-      `  ${report.candidates.length} candidate(s) of ${files.size} File(s) scanned, ` +
+      `  ${report.candidates.length} candidate(s) of ${report.filesScanned} File(s) scanned, ` +
         `${skipped} of them hand-corrected and skipped (dry run, nothing queued)`,
     );
     return report;
