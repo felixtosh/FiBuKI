@@ -41,12 +41,12 @@ import { isSameDayEvidence, hasUndocumentedRival } from "./remainderAutoConnect"
 import { readDismissedTransactionIds } from "./dismissedTransactions";
 import { loadScoringEcbRates } from "./scoringEcbRates";
 import { isFileRejected } from "./rejectedFiles";
-import { runCopyCheck, CLEARED_COPY_MARK } from "../files/copyOps";
+import { runCopyCheck } from "../files/copyOps";
 import { runCorrectionCheck } from "../corrections/correctionOps";
 import { AutomationMeta } from "../automation/types";
 import { checkAIBudget } from "../billing/checkAIBudget";
 import { isPassiveMode } from "../utils/checkAutomationMode";
-import { payeeFillForTransaction } from "../partners/payeeSync";
+import { connectFiles } from "../fileConnections/writer";
 
 // =============================================================================
 // AUTOMATION METADATA
@@ -269,63 +269,6 @@ function buildMatchingTranscript(
   addMessage(summary);
 
   return messages;
-}
-
-// === Email Domain Learning ===
-
-/**
- * Learn email domain from successful auto-match.
- * When a file with a Gmail sender is matched to a transaction with a partner,
- * we add the sender domain to the partner's known email domains.
- *
- * This enables future auto-matching: files from known domains get a confidence boost.
- */
-async function learnEmailDomainFromMatch(
-  fileData: FirebaseFirestore.DocumentData,
-  transactionId: string
-): Promise<void> {
-  // Only learn from Gmail files with sender domain
-  if (!fileData.gmailSenderDomain) {
-    return;
-  }
-
-  // Get transaction to check for partner
-  const txDoc = await db.collection("transactions").doc(transactionId).get();
-  if (!txDoc.exists) {
-    return;
-  }
-
-  const txData = txDoc.data()!;
-  if (!txData.partnerId) {
-    return;
-  }
-
-  const domain = fileData.gmailSenderDomain.toLowerCase().trim();
-
-  // Get partner and check if domain already known
-  const partnerDoc = await db.collection("partners").doc(txData.partnerId).get();
-  if (!partnerDoc.exists) {
-    return;
-  }
-
-  const partnerData = partnerDoc.data()!;
-  const existingDomains: string[] = partnerData.emailDomains || [];
-
-  if (existingDomains.includes(domain)) {
-    return; // Already known
-  }
-
-  // Add domain to partner
-  await partnerDoc.ref.update({
-    emailDomains: FieldValue.arrayUnion(domain),
-    emailDomainsUpdatedAt: Timestamp.now(),
-    updatedAt: Timestamp.now(),
-  });
-
-  console.log(
-    `[EmailDomain] Learned domain "${domain}" for partner ${txData.partnerId} ` +
-    `from file ${fileData.fileName} matched to transaction ${transactionId}`
-  );
 }
 
 // === Main Function ===
@@ -641,7 +584,7 @@ export async function runTransactionMatching(
 
   // Filter out auto-matches for transactions that are already "covered"
   // This prevents over-matching (e.g., 6 monthly invoices all matching one transaction)
-  const autoMatches: typeof potentialAutoMatches = [];
+  let autoMatches: typeof potentialAutoMatches = [];
   // The Remainder Matches among them, so the Connection each writes can say so
   // (#242). A wrong same-day auto-connect has to be findable afterwards.
   const sameDayRemainderMatches = new Set<string>();
@@ -716,18 +659,15 @@ export async function runTransactionMatching(
     preview: m.preview,
   }));
 
-  const batch = db.batch();
-  const fileRef = db.collection("files").doc(fileId);
-  const newTransactionIds: string[] = [];
-
-  // Create auto-connections (only for non-covered transactions)
-  for (const match of autoMatches) {
-    const connectionRef = db.collection("fileConnections").doc();
-    batch.set(connectionRef, {
+  // Auto-connections (only for non-covered transactions), through the File
+  // Connection writer (#612): automated origin, so a rejected or over-quota
+  // pair is refused there and only the email domain is learned.
+  const connectOutcomes = await connectFiles(
+    db,
+    userId,
+    autoMatches.map((match) => ({
       fileId,
       transactionId: match.transactionId,
-      userId,
-      connectionType: "auto_matched",
       matchSources: match.matchSources,
       matchConfidence: match.confidence,
       scoreBreakdown: match.breakdown,
@@ -736,57 +676,20 @@ export async function runTransactionMatching(
       ...(sameDayRemainderMatches.has(match.transactionId)
         ? { autoConnectReason: "remainder_same_day" as const }
         : {}),
-      createdAt: Timestamp.now(),
-    });
+    })),
+    { origin: "auto" }
+  );
+  const autoConnectedIds = new Set(
+    connectOutcomes.filter((o) => o.status === "connected").map((o) => o.transactionId)
+  );
+  autoMatches = autoMatches.filter((m) => autoConnectedIds.has(m.transactionId));
 
-    // Update transaction's fileIds array
-    const txRef = db.collection("transactions").doc(match.transactionId);
-    // isComplete is set here, not left to onTransactionUpdate: that trigger
-    // only syncs it when fileIds change, so a lost delivery never heals.
-    batch.update(txRef, {
-      fileIds: FieldValue.arrayUnion(fileId),
-      isComplete: true,
-      updatedAt: Timestamp.now(),
-    });
-
-    newTransactionIds.push(match.transactionId);
-
-    // Learn email domain from Gmail files (non-blocking)
-    learnEmailDomainFromMatch(fileData, match.transactionId).catch((err) => {
-      console.error(`Failed to learn email domain for tx ${match.transactionId}:`, err);
-    });
-
-    // The payee rule (#550, ADR-0011): fill an empty Partner only when every
-    // File on the Transaction, this one included, names the same Partner.
-    const txDoc = await db.collection("transactions").doc(match.transactionId).get();
-    if (txDoc.exists) {
-      const payeeFill = await payeeFillForTransaction(db, userId, txDoc.data()!, {
-        connectingFileId: fileId,
-        known: new Map([[fileId, fileData]]),
-      });
-      if (payeeFill) batch.update(txRef, { ...payeeFill });
-    }
-  }
-
-  // Update file document
-  const fileUpdate: Record<string, unknown> = {
+  await db.collection("files").doc(fileId).update({
     transactionMatchComplete: true,
     transactionMatchedAt: Timestamp.now(),
     transactionSuggestions: suggestions,
     updatedAt: Timestamp.now(),
-  };
-
-  if (newTransactionIds.length > 0) {
-    fileUpdate.transactionIds = FieldValue.arrayUnion(...newTransactionIds);
-    // A mark whose original is gone (the File was matched as an ordinary
-    // File) ends here: a File holding a File Connection is never a Copy, so
-    // restoring the original must not turn this one back into one.
-    if (fileData.copyOfFileId) Object.assign(fileUpdate, CLEARED_COPY_MARK);
-  }
-
-  batch.update(fileRef, fileUpdate);
-
-  await batch.commit();
+  });
 
   const elapsed = Date.now() - t0;
   console.log(
@@ -838,7 +741,7 @@ export async function runTransactionMatching(
   // - No partner: keep legacy per-file fallback only when no auto-match, and
   //   not on a search's nomination run (#589): that run checks one pair, and
   //   a search nominates to several files per transaction.
-  const shouldQueuePartnerBatch = Boolean(fileData.partnerId) && newTransactionIds.length > 0;
+  const shouldQueuePartnerBatch = Boolean(fileData.partnerId) && autoMatches.length > 0;
   const shouldQueueSingleFileWorker =
     !fileData.partnerId && autoMatches.length === 0 && !options.nominatedTransactionIds?.length;
 

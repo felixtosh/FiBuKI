@@ -42,7 +42,8 @@ export const TOP_LEVEL_POLICIES: Readonly<Record<string, CollectionPolicy>> = {
   emailIntegrations: ownerCrud,
   imports: ownerCrud,
   noReceiptCategories: ownerCrud,
-  fileConnections: ownerCrud,
+  // File Connections are written only by their one writer on the server (#612).
+  fileConnections: ownerReadOnly,
   inboundEmailAddresses: ownerCrud,
   agentSearchSessions: ownerCrud,
 

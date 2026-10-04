@@ -7,6 +7,7 @@
 
 import { FieldValue } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
+import { detachTransactions } from "../fileConnections/writer";
 
 interface DeleteTransactionsBySourceRequest {
   /** Source ID whose transactions should be deleted */
@@ -63,27 +64,16 @@ export const deleteTransactionsBySourceCallable = createCallable<
 
     let deleted = 0;
 
-    // Delete file connections first, then transactions in batches
+    // Take every File off these Transactions first, through the File
+    // Connection writer (#612), so no File keeps listing a deleted one.
     for (let i = 0; i < snapshot.docs.length; i += BATCH_SIZE) {
       const chunk = snapshot.docs.slice(i, i + BATCH_SIZE);
+      await detachTransactions(
+        ctx.db,
+        ctx.userId,
+        chunk.map((d) => ({ id: d.id, data: d.data() }))
+      );
 
-      // Delete file connections for each transaction
-      for (const docSnap of chunk) {
-        const connectionsQuery = ctx.db
-          .collection("fileConnections")
-          .where("transactionId", "==", docSnap.id);
-        const connectionsSnap = await connectionsQuery.get();
-
-        if (!connectionsSnap.empty) {
-          const connectionsBatch = ctx.db.batch();
-          for (const connDoc of connectionsSnap.docs) {
-            connectionsBatch.delete(connDoc.ref);
-          }
-          await connectionsBatch.commit();
-        }
-      }
-
-      // Batch delete transactions
       const batch = ctx.db.batch();
       for (const docSnap of chunk) {
         batch.delete(docSnap.ref);

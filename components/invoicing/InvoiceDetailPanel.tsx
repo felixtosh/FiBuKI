@@ -84,7 +84,6 @@ import { toDateSafe } from "@/lib/utils";
 import {
   OperationsContext,
   acceptTransactionSuggestion,
-  connectFileToTransaction,
   disconnectFileFromTransaction,
   dismissTransactionSuggestion,
   refreshTransactionMatches,
@@ -888,13 +887,7 @@ export function InvoiceDetailPanel({
   const handleAcceptTxSuggestion = useCallback(
     async (suggestion: TransactionSuggestion) => {
       if (!issuedFile) return;
-      await acceptTransactionSuggestion(
-        opsCtx,
-        issuedFile.id,
-        suggestion.transactionId,
-        suggestion.confidence,
-        suggestion.matchSources,
-      );
+      await acceptTransactionSuggestion(opsCtx, issuedFile.id, suggestion.transactionId);
     },
     [opsCtx, issuedFile],
   );

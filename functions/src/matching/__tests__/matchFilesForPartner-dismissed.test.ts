@@ -71,6 +71,16 @@ vi.mock("firebase-admin/firestore", async () => {
   };
 });
 
+// The File Connection writer (#612) is the boundary: this test is about which
+// pairs Partner matching hands it.
+vi.mock("../../fileConnections/writer", () => ({
+  connectFiles: async (_db: unknown, _userId: string, pairs: Array<Record<string, unknown>>) =>
+    pairs.map((pair) => {
+      h.state.connections.push(pair);
+      return { fileId: pair.fileId, transactionId: pair.transactionId, status: "connected", connectionId: "c", reassignedConnections: 0 };
+    }),
+}));
+
 vi.mock("firebase-functions/v2/https", () => ({
   onCall: () => ({}),
   HttpsError: class extends Error {},

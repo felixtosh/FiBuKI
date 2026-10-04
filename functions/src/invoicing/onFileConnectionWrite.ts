@@ -43,6 +43,17 @@ async function syncInvoicePaidStatus(
   }
 
   if (invoice.status === "paid" && invoice.paidByTransactionId === connection.transactionId) {
+    // A pair written twice before #612 keeps its other record when the
+    // duplicate is collapsed: the pair is still connected, so still paid.
+    const remaining = await db
+      .collection("fileConnections")
+      .where("userId", "==", connection.userId)
+      .where("fileId", "==", connection.fileId)
+      .where("transactionId", "==", connection.transactionId)
+      .limit(1)
+      .get();
+    if (!remaining.empty) return;
+
     await invoiceRef.update({
       status: "issued",
       paidByTransactionId: FieldValue.delete(),

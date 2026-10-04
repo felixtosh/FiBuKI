@@ -5,6 +5,7 @@
 
 import { getStorage } from "firebase-admin/storage";
 import { createCallable, HttpsError } from "../utils/createCallable";
+import { detachTransactions } from "../fileConnections/writer";
 
 interface DeleteImportRecordRequest {
   importId: string;
@@ -73,21 +74,17 @@ export const deleteImportRecordCallable = createCallable<
 
     for (let i = 0; i < docs.length; i += BATCH_SIZE) {
       const chunk = docs.slice(i, i + BATCH_SIZE);
+      // Take every File off them first, through the File Connection writer
+      // (#612): only these Transactions leave the Files' lists, and their
+      // records go with them.
+      await detachTransactions(
+        ctx.db,
+        ctx.userId,
+        chunk.map((d) => ({ id: d.id, data: d.data() }))
+      );
+
       const batch = ctx.db.batch();
-
       for (const txDoc of chunk) {
-        // Also clean up file connections
-        const txData = txDoc.data();
-        if (txData.fileIds && Array.isArray(txData.fileIds)) {
-          for (const fileId of txData.fileIds) {
-            const fileRef = ctx.db.collection("files").doc(fileId);
-            batch.update(fileRef, {
-              transactionId: null,
-              transactionIds: [], // Clear array if used
-            });
-          }
-        }
-
         batch.delete(txDoc.ref);
         deletedTransactions++;
       }

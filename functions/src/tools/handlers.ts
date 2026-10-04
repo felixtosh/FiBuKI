@@ -36,8 +36,6 @@ import {
   liveCopyIds,
   markFileAsCopy,
   makeFileTheOriginal,
-  copyConnectCheck,
-  CLEARED_COPY_MARK,
 } from "../files/copyOps";
 import { unmarkFileAsCopyAndRematch } from "../files/copyCallables";
 import { performDisconnectFile } from "../files/disconnectFileFromTransaction";
@@ -67,7 +65,6 @@ import {
   buildDismissSuggestionUpdates,
   buildUndismissSuggestionUpdates,
   checkDismissalReason,
-  isTransactionDismissedForFile,
   type DismissibleFileState,
 } from "../files/dismissSuggestionOps";
 import {
@@ -82,7 +79,7 @@ import { fetchPublicUrl, UnsafeUrlError } from "../utils/safeFetch";
 import { syncOnboarding, toStatus, updateOnboarding } from "../onboarding/onboardingState";
 import { isOnboardingOrigin, isOnboardingStep } from "../onboarding/onboardingRules";
 import { generatedInvoiceRefusal } from "../files/generatedInvoiceGuard";
-import { payeeFillForTransaction } from "../partners/payeeSync";
+import { connectFiles } from "../fileConnections/writer";
 import { syncDocumentationStateForTransactions } from "../documents/syncDocumentationState";
 import { assignNoReceiptCategoryToTransaction } from "../matching/assignNoReceiptCategory";
 import { TOOL_DEFINITIONS, TOOL_NAMES } from "./definitions";
@@ -1045,79 +1042,33 @@ export async function connectFileToTransaction(userId: string, args: Record<stri
     throw new Error("fileId and transactionId are required");
   }
 
-  const [fileDoc, txDoc] = await Promise.all([
-    db.collection("files").doc(fileId as string).get(),
-    db.collection("transactions").doc(transactionId as string).get(),
-  ]);
-
-  if (!fileDoc.exists || fileDoc.data()?.userId !== userId) {
-    throw new Error("File not found");
-  }
-  if (!txDoc.exists || txDoc.data()?.userId !== userId) {
-    throw new Error("Transaction not found");
-  }
-
-  if (txDoc.data()?.quotaExceeded) {
-    throw new Error("Cannot connect files to over-quota transactions via API");
-  }
-
-  // A rejected pair does not reconnect (fork #101). This handler backs both
+  // The File Connection writer (#612) owns the rules: a rejected pair does not
+  // reconnect (fork #101), an over-quota Transaction refuses, a Copy holds no
+  // File Connection (ADR-0010). This handler backs both
   // connect_file_to_transaction and the best-suggestion loop in
-  // auto_connect_file_suggestions, so the check belongs here rather than at
-  // either caller.
+  // auto_connect_file_suggestions.
   //
   // Unlike the chat tool, there is no override argument on the MCP surface: an
   // external caller that means it can lift the rejection first with
   // undismiss_transaction_suggestion, which leaves a record of having done so.
-  if (
-    isTransactionDismissedForFile(
-      fileDoc.data() as DismissibleFileState,
-      transactionId as string
-    )
-  ) {
-    throw new Error(
-      "PAIR_REJECTED: this file was rejected for this transaction. " +
-        "Use undismiss_transaction_suggestion first if connecting it is genuinely intended."
-    );
+  const [outcome] = await connectFiles(
+    db,
+    userId,
+    [{ fileId: fileId as string, transactionId: transactionId as string }],
+    { origin: "mcp" }
+  );
+  if (outcome.status === "refused") {
+    if (outcome.reason === "missing" || outcome.reason === "foreign") {
+      throw new Error(outcome.message.startsWith("File") ? "File not found" : "Transaction not found");
+    }
+    throw new Error(outcome.message);
   }
-
-  // #162, ADR-0010: a Copy holds no File Connection.
-  const copyCheck = await copyConnectCheck(db, fileDoc.data()!);
-  if (copyCheck.refusal) throw new Error(copyCheck.refusal);
-
-  const batch = db.batch();
-  const now = FieldValue.serverTimestamp();
-  if (copyCheck.clearMark) batch.update(fileDoc.ref, { ...CLEARED_COPY_MARK });
-
-  const connRef = db.collection("fileConnections").doc();
-  batch.set(connRef, {
+  return {
+    success: true,
     fileId,
     transactionId,
-    userId,
-    connectionType: "api",
-    createdAt: now,
-  });
-
-  batch.update(fileDoc.ref, {
-    transactionIds: FieldValue.arrayUnion(transactionId),
-    updatedAt: now,
-  });
-
-  // The payee rule (#550, ADR-0011), as every connect applies it.
-  const payeeFill = await payeeFillForTransaction(db, userId, txDoc.data()!, {
-    connectingFileId: fileId as string,
-    known: new Map([[fileId as string, fileDoc.data()!]]),
-  });
-
-  batch.update(txDoc.ref, {
-    fileIds: FieldValue.arrayUnion(fileId),
-    isComplete: true,
-    updatedAt: now,
-    ...(payeeFill ?? {}),
-  });
-
-  await batch.commit();
-  return { success: true, fileId, transactionId };
+    ...(outcome.status === "already-connected" ? { alreadyConnected: true } : {}),
+  };
 }
 
 export async function disconnectFileFromTransaction(userId: string, args: Record<string, unknown>) {

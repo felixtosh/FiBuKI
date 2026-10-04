@@ -16,7 +16,6 @@ import {
   TaxFile,
   FileFilters,
   FileCreateData,
-  TransactionMatchSource,
 } from "@/types/file";
 import { useAuth } from "@/components/auth";
 
@@ -202,72 +201,12 @@ export function useFiles(filters?: FileFilters) {
     return rawFiles.filter((f) => !f.deletedAt).length;
   }, [rawFiles]);
 
-  const connectToTransaction = useCallback(
-    async (
-      fileId: string,
-      transactionId: string,
-      connectionType: "manual" | "auto_matched" = "manual",
-      matchConfidence?: number
-    ): Promise<string> => {
-      const result = await callFunction<
-        {
-          fileId: string;
-          transactionId: string;
-          connectionType?: "manual" | "auto_matched";
-          matchConfidence?: number;
-        },
-        { connectionId: string }
-      >("connectFileToTransaction", {
-        fileId,
-        transactionId,
-        connectionType,
-        matchConfidence,
-      });
-      return result.connectionId;
-    },
-    []
-  );
-
-  const disconnectFromTransaction = useCallback(
-    async (fileId: string, transactionId: string): Promise<void> => {
-      await callFunction("disconnectFileFromTransaction", { fileId, transactionId });
-    },
-    []
-  );
-
   const fetchFilesForTransaction = useCallback(
     async (transactionId: string): Promise<TaxFile[]> => {
       // This is a read operation - use the local cached files
       return rawFiles.filter((f) => f.transactionIds.includes(transactionId) && !f.deletedAt);
     },
     [rawFiles]
-  );
-
-  const acceptSuggestion = useCallback(
-    async (
-      fileId: string,
-      transactionId: string,
-      confidence: number,
-      matchSources: TransactionMatchSource[]
-    ): Promise<string> => {
-      // Accept suggestion by connecting the file to the transaction
-      const result = await callFunction<
-        {
-          fileId: string;
-          transactionId: string;
-          connectionType: "auto_matched";
-          matchConfidence: number;
-        },
-        { connectionId: string }
-      >("connectFileToTransaction", {
-        fileId,
-        transactionId,
-        connectionType: "auto_matched",
-        matchConfidence: confidence,
-      });
-      return result.connectionId;
-    },
-    []
   );
 
   const dismissSuggestion = useCallback(
@@ -296,10 +235,7 @@ export function useFiles(filters?: FileFilters) {
     copies,
     copiesOf,
     getFileById,
-    connectToTransaction,
-    disconnectFromTransaction,
     fetchFilesForTransaction,
-    acceptSuggestion,
     dismissSuggestion,
   };
 }

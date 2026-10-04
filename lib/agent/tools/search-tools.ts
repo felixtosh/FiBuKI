@@ -1649,6 +1649,9 @@ export const analyzeEmailTool = tool(
 interface ConnectFileRequest {
   fileId: string;
   transactionId: string;
+  /** The chat agent's own Connection Origin (#612): refused on over-quota and rejected pairs. */
+  origin: "agent";
+  overrideRejection?: boolean;
   connectionType?: "manual" | "auto_matched";
   matchConfidence?: number | null;
   allowAutoReassign?: boolean;
@@ -2088,6 +2091,8 @@ export const connectFileToTransactionTool = tool(
       {
         fileId,
         transactionId,
+        origin: "agent",
+        overrideRejection: Boolean(overrideDismissal),
         connectionType: "manual",
         matchConfidence: confidence || null,
         allowAutoReassign: shouldAllowAutoReassign,

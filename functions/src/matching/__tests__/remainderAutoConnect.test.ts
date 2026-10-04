@@ -132,6 +132,21 @@ vi.mock("firebase-functions/v2/firestore", () => ({
   onDocumentUpdated: () => ({}),
 }));
 
+// The File Connection writer (#612) is the boundary: this test is about which
+// pairs the matcher hands it, and the writer's own rules have their suite.
+vi.mock("../../fileConnections/writer", () => ({
+  connectFiles: async (
+    _db: unknown,
+    _userId: string,
+    pairs: Array<Record<string, unknown>>,
+    options: { origin: string }
+  ) =>
+    pairs.map((pair) => {
+      h.state.batchWrites.push({ collection: "fileConnections", data: { ...pair, origin: options.origin } });
+      return { fileId: pair.fileId, transactionId: pair.transactionId, status: "connected", connectionId: "c", reassignedConnections: 0 };
+    }),
+}));
+
 // Active mode: the auto-connect decision this test is about actually runs.
 vi.mock("../../utils/checkAutomationMode", () => ({
   isPassiveMode: async () => false,
@@ -482,7 +497,7 @@ describe("runTransactionMatching: full-amount auto-connect is unchanged (#242)",
     const connection = connectionsCreated()[0].data;
     // Not a remainder connection: the record says nothing new about it.
     expect(connection.autoConnectReason).toBeUndefined();
-    expect(connection.connectionType).toBe("auto_matched");
+    expect(connection.origin).toBe("auto");
     expect(connection.matchSources).not.toContain("amount_remainder");
   });
 

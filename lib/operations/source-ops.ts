@@ -8,18 +8,13 @@ import {
   doc,
   updateDoc,
   addDoc,
-  deleteDoc,
   Timestamp,
 } from "firebase/firestore";
 import { TransactionSource, SourceFormData, SavedFieldMapping } from "@/types/source";
-import { TrueLayerApiConfig } from "@/types/truelayer";
 import { normalizeIban } from "@/lib/import/deduplication";
 import { OperationsContext } from "./types";
-import { deleteImportsBySource } from "./import-ops";
-import { deleteTransactionsBySource } from "./transaction-ops";
 
 const SOURCES_COLLECTION = "sources";
-const TRUELAYER_CONNECTIONS_COLLECTION = "truelayerConnections";
 
 /**
  * List all active sources for the current user
@@ -108,71 +103,6 @@ export async function updateSource(
     ...data,
     updatedAt: Timestamp.now(),
   });
-}
-
-/**
- * Delete a source and all associated imports/transactions
- *
- * This performs a cascade delete:
- * 1. Clears linkedSourceId on any credit cards linked to this bank account
- * 2. Deletes all imports for this source (and their transactions)
- * 3. Deletes any remaining transactions without an import
- * 4. Cleans up API provider connection if this was an API source
- * 5. Deletes the source document itself
- */
-export async function deleteSource(
-  ctx: OperationsContext,
-  sourceId: string
-): Promise<{ deletedImports: number; deletedTransactions: number }> {
-  // Verify ownership first
-  const existing = await getSourceById(ctx, sourceId);
-  if (!existing) {
-    throw new Error(`Source ${sourceId} not found or access denied`);
-  }
-
-  // 1. Clear linkedSourceId on any credit cards that link to this bank account
-  const linkedCardsQuery = query(
-    collection(ctx.db, SOURCES_COLLECTION),
-    where("userId", "==", ctx.userId),
-    where("linkedSourceId", "==", sourceId)
-  );
-  const linkedCardsSnapshot = await getDocs(linkedCardsQuery);
-
-  for (const cardDoc of linkedCardsSnapshot.docs) {
-    await updateDoc(cardDoc.ref, {
-      linkedSourceId: null,
-      updatedAt: Timestamp.now(),
-    });
-  }
-
-  // 2. Delete all imports (which cascade-deletes their transactions)
-  const importResult = await deleteImportsBySource(ctx, sourceId);
-
-  // 3. Delete any orphaned transactions (e.g., those without importJobId)
-  const txResult = await deleteTransactionsBySource(ctx, sourceId);
-
-  // 4. Clean up TrueLayer connection if this was a TrueLayer API source
-  if (existing.type === "api" && existing.apiConfig) {
-    const apiConfig = existing.apiConfig as unknown as TrueLayerApiConfig;
-    if (apiConfig.provider === "truelayer" && apiConfig.connectionId) {
-      try {
-        const connectionRef = doc(ctx.db, TRUELAYER_CONNECTIONS_COLLECTION, apiConfig.connectionId);
-        await deleteDoc(connectionRef);
-      } catch (err) {
-        // Log but don't fail - connection might already be deleted
-        console.warn(`Failed to delete TrueLayer connection ${apiConfig.connectionId}:`, err);
-      }
-    }
-  }
-
-  // 5. Delete the source document itself
-  const docRef = doc(ctx.db, SOURCES_COLLECTION, sourceId);
-  await deleteDoc(docRef);
-
-  return {
-    deletedImports: importResult.deletedImports,
-    deletedTransactions: importResult.deletedTransactions + txResult.deleted,
-  };
 }
 
 /**

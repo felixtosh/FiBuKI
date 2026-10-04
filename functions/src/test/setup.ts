@@ -97,6 +97,7 @@ export interface MockFirestore {
   doc: (path: string) => MockDocRef;
   batch: () => MockWriteBatch;
   runTransaction: <T>(fn: (tx: MockTransaction) => Promise<T>) => Promise<T>;
+  getAll: (...refs: MockDocRef[]) => Promise<MockDocSnapshot[]>;
 }
 
 export interface MockWriteBatch {
@@ -108,6 +109,7 @@ export interface MockWriteBatch {
 
 export interface MockTransaction {
   get: (ref: MockDocRef) => Promise<MockDocSnapshot>;
+  getAll: (...refs: MockDocRef[]) => Promise<MockDocSnapshot[]>;
   set: (ref: MockDocRef, data: Record<string, unknown>) => MockTransaction;
   update: (ref: MockDocRef, data: Record<string, unknown>) => MockTransaction;
   delete: (ref: MockDocRef) => MockTransaction;
@@ -432,9 +434,11 @@ export function createMockFirestore(): MockFirestore {
       };
       return batch;
     },
+    getAll: async (...refs: MockDocRef[]) => Promise.all(refs.map((ref) => ref.get())),
     runTransaction: async <T>(fn: (tx: MockTransaction) => Promise<T>): Promise<T> => {
       const tx: MockTransaction = {
         get: async (ref) => ref.get(),
+        getAll: async (...refs) => Promise.all(refs.map((ref) => ref.get())),
         set: (ref, data) => {
           const collection = ref._collection || "unknown";
           store.setDoc(collection, ref.id, data);

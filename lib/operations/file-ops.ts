@@ -14,7 +14,6 @@ import {
 } from "firebase/firestore";
 import {
   TaxFile,
-  FileConnection,
   FileFilters,
   FileCreateData,
   ExtractedLineItem,
@@ -52,7 +51,6 @@ export interface FileConnectionSourceInfo {
 }
 
 const FILES_COLLECTION = "files";
-const FILE_CONNECTIONS_COLLECTION = "fileConnections";
 const TRANSACTIONS_COLLECTION = "transactions";
 
 function normalizeFileMonetaryFields(file: TaxFile): TaxFile {
@@ -559,36 +557,6 @@ export async function reextractFilesForPartner(
 }
 
 /**
- * Delete a file: hide it, keep the record, leave the stored document alone.
- * The record is what a later Sync deduplicates against, so a deleted Gmail file
- * is not re-imported, and it is what `restoreFile` brings back.
- * See docs/adr/0006-deleting-a-file-is-reversible.md.
- */
-export async function softDeleteFile(
-  ctx: OperationsContext,
-  fileId: string
-): Promise<{ deletedConnections: number }> {
-  const existing = await getFile(ctx, fileId);
-  if (!existing) {
-    throw new Error(`File ${fileId} not found or access denied`);
-  }
-
-  // 1. Delete all connections and update transactions
-  const connectionsResult = await deleteFileConnections(ctx, fileId);
-
-  // 2. Soft delete the file document (keep for deduplication)
-  // Clear transactionIds to prevent showing in transaction file lists
-  const docRef = doc(ctx.db, FILES_COLLECTION, fileId);
-  await updateDoc(docRef, {
-    deletedAt: Timestamp.now(),
-    transactionIds: [],
-    updatedAt: Timestamp.now(),
-  });
-
-  return { deletedConnections: connectionsResult.deleted };
-}
-
-/**
  * Restore a soft-deleted file
  */
 export async function restoreFile(
@@ -716,26 +684,6 @@ export async function getFilesForTransaction(
 }
 
 /**
- * Get all connections for a file
- */
-export async function getFileConnections(
-  ctx: OperationsContext,
-  fileId: string
-): Promise<FileConnection[]> {
-  const q = query(
-    collection(ctx.db, FILE_CONNECTIONS_COLLECTION),
-    where("fileId", "==", fileId),
-    where("userId", "==", ctx.userId)
-  );
-  const snapshot = await getDocs(q);
-
-  return snapshot.docs.map((doc) => ({
-    id: doc.id,
-    ...doc.data(),
-  })) as FileConnection[];
-}
-
-/**
  * Get all transactions connected to a file
  */
 export async function getTransactionsForFile(
@@ -763,99 +711,6 @@ export async function getTransactionsForFile(
   }
 
   return transactions;
-}
-
-/**
- * Delete all connections for a file (internal use)
- * Handles both fileConnections documents AND legacy connections where
- * transactions have fileIds but no fileConnections document.
- */
-async function deleteFileConnections(
-  ctx: OperationsContext,
-  fileId: string
-): Promise<{ deleted: number }> {
-  const now = Timestamp.now();
-  let deleted = 0;
-
-  // 1. Delete fileConnections documents and track which transactions were updated
-  const connections = await getFileConnections(ctx, fileId);
-  const updatedTransactionIds = new Set<string>();
-
-  if (connections.length > 0) {
-    const BATCH_SIZE = 500;
-
-    for (let i = 0; i < connections.length; i += BATCH_SIZE) {
-      const chunk = connections.slice(i, i + BATCH_SIZE);
-
-      // Delete connection documents
-      const deleteBatch = writeBatch(ctx.db);
-      for (const conn of chunk) {
-        deleteBatch.delete(doc(ctx.db, FILE_CONNECTIONS_COLLECTION, conn.id));
-        deleted++;
-      }
-      await deleteBatch.commit();
-
-      // Update transactions
-      for (const conn of chunk) {
-        const transactionRef = doc(ctx.db, TRANSACTIONS_COLLECTION, conn.transactionId);
-        const transactionSnap = await getDoc(transactionRef);
-        if (transactionSnap.exists()) {
-          const txData = transactionSnap.data();
-          const currentFileIds = (txData.fileIds || []) as string[];
-          const remainingFileIds = currentFileIds.filter((id: string) => id !== fileId);
-
-          // Recalculate isComplete: needs files OR noReceiptCategoryId
-          const hasFiles = remainingFileIds.length > 0;
-          const hasNoReceiptCategory = !!txData.noReceiptCategoryId;
-          const isComplete = hasFiles || hasNoReceiptCategory;
-
-          await updateDoc(transactionRef, {
-            fileIds: arrayRemove(fileId),
-            isComplete,
-            updatedAt: now,
-          });
-          updatedTransactionIds.add(conn.transactionId);
-        }
-      }
-    }
-  }
-
-  // 2. Handle legacy connections: check file's transactionIds array
-  // and remove fileId from any transactions not already updated
-  const fileDoc = await getDoc(doc(ctx.db, FILES_COLLECTION, fileId));
-  if (fileDoc.exists()) {
-    const fileData = fileDoc.data();
-    const transactionIds = (fileData.transactionIds || []) as string[];
-
-    for (const transactionId of transactionIds) {
-      // Skip if already updated via fileConnections
-      if (updatedTransactionIds.has(transactionId)) {
-        continue;
-      }
-
-      const transactionRef = doc(ctx.db, TRANSACTIONS_COLLECTION, transactionId);
-      const transactionSnap = await getDoc(transactionRef);
-      if (transactionSnap.exists() && transactionSnap.data().userId === ctx.userId) {
-        const txData = transactionSnap.data();
-        const currentFileIds = (txData.fileIds || []) as string[];
-        const remainingFileIds = currentFileIds.filter((id: string) => id !== fileId);
-
-        // Recalculate isComplete: needs files OR noReceiptCategoryId
-        const hasFiles = remainingFileIds.length > 0;
-        const hasNoReceiptCategory = !!txData.noReceiptCategoryId;
-        const isComplete = hasFiles || hasNoReceiptCategory;
-
-        await updateDoc(transactionRef, {
-          fileIds: arrayRemove(fileId),
-          isComplete,
-          updatedAt: now,
-        });
-        deleted++;
-      }
-    }
-  }
-
-  return { deleted };
 }
 
 // === Partner Assignment Operations ===
@@ -1009,54 +864,6 @@ export async function removePartnerFromFile(
   }
 }
 
-/**
- * Delete all file connections for a transaction (used when transaction is deleted)
- */
-export async function deleteFileConnectionsForTransaction(
-  ctx: OperationsContext,
-  transactionId: string
-): Promise<{ deleted: number }> {
-  const q = query(
-    collection(ctx.db, FILE_CONNECTIONS_COLLECTION),
-    where("transactionId", "==", transactionId),
-    where("userId", "==", ctx.userId)
-  );
-  const snapshot = await getDocs(q);
-
-  if (snapshot.empty) {
-    return { deleted: 0 };
-  }
-
-  const BATCH_SIZE = 500;
-  let deleted = 0;
-  const now = Timestamp.now();
-
-  for (let i = 0; i < snapshot.docs.length; i += BATCH_SIZE) {
-    const batch = writeBatch(ctx.db);
-    const chunk = snapshot.docs.slice(i, i + BATCH_SIZE);
-
-    for (const docSnap of chunk) {
-      const conn = docSnap.data() as FileConnection;
-
-      // Delete connection document
-      batch.delete(docSnap.ref);
-
-      // Update file's transactionIds array
-      const fileRef = doc(ctx.db, FILES_COLLECTION, conn.fileId);
-      batch.update(fileRef, {
-        transactionIds: arrayRemove(transactionId),
-        updatedAt: now,
-      });
-
-      deleted++;
-    }
-
-    await batch.commit();
-  }
-
-  return { deleted };
-}
-
 // === Integration File Operations ===
 
 /**
@@ -1181,30 +988,6 @@ export async function restoreFilesForIntegration(
 }
 
 // === Bulk Operations ===
-
-/**
- * Bulk soft delete multiple files
- */
-export async function bulkSoftDeleteFiles(
-  ctx: OperationsContext,
-  fileIds: string[]
-): Promise<{ deleted: number; errors: string[] }> {
-  let deleted = 0;
-  const errors: string[] = [];
-
-  for (const fileId of fileIds) {
-    try {
-      await softDeleteFile(ctx, fileId);
-      deleted++;
-    } catch (error) {
-      errors.push(
-        `Failed to delete ${fileId}: ${error instanceof Error ? error.message : "Unknown error"}`
-      );
-    }
-  }
-
-  return { deleted, errors };
-}
 
 // === Agent-Friendly Matching Operations ===
 
@@ -1394,101 +1177,3 @@ export async function listTransactionsNeedingFiles(
   return transactions;
 }
 
-/**
- * Result of auto-connecting suggestions
- */
-export interface AutoConnectResult {
-  connected: number;
-  skipped: number;
-  errors: string[];
-  connections: Array<{
-    fileId: string;
-    transactionId: string;
-    confidence: number;
-  }>;
-}
-
-/**
- * Auto-connect files to their suggested transactions above a confidence threshold.
- * Uses the server-side matching results stored in transactionSuggestions.
- *
- * @param fileId - Optional specific file to connect, or all unconnected files if omitted
- * @param minConfidence - Minimum confidence to auto-connect (default 89, matches server threshold)
- */
-export async function autoConnectFileSuggestions(
-  ctx: OperationsContext,
-  fileId?: string,
-  minConfidence: number = 89
-): Promise<AutoConnectResult> {
-  const result: AutoConnectResult = {
-    connected: 0,
-    skipped: 0,
-    errors: [],
-    connections: [],
-  };
-
-  // Get files to process
-  let files: FileWithSuggestions[];
-  if (fileId) {
-    const file = await getFile(ctx, fileId);
-    if (!file) {
-      result.errors.push(`File ${fileId} not found`);
-      return result;
-    }
-    files = [{
-      ...file,
-      transactionSuggestions: (file as unknown as { transactionSuggestions?: TransactionSuggestion[] }).transactionSuggestions || [],
-      transactionMatchComplete: (file as unknown as { transactionMatchComplete?: boolean }).transactionMatchComplete || false,
-    }];
-  } else {
-    // Get all unconnected files with suggestions
-    files = await listFilesWithSuggestions(ctx, {
-      hasConnections: false,
-      hasSuggestions: true,
-      minSuggestionConfidence: minConfidence,
-    });
-  }
-
-  // Process each file
-  for (const file of files) {
-    // Skip files already connected
-    if (file.transactionIds.length > 0) {
-      result.skipped++;
-      continue;
-    }
-
-    // Find highest-confidence suggestion above threshold
-    const bestSuggestion = (file.transactionSuggestions ?? [])
-      .filter((s) => s.confidence >= minConfidence)
-      .sort((a, b) => b.confidence - a.confidence)[0];
-
-    if (!bestSuggestion) {
-      result.skipped++;
-      continue;
-    }
-
-    // Connect the file to the transaction
-    try {
-      await connectFileToTransaction(
-        ctx,
-        file.id,
-        bestSuggestion.transactionId,
-        "auto_matched",
-        bestSuggestion.confidence
-      );
-
-      result.connected++;
-      result.connections.push({
-        fileId: file.id,
-        transactionId: bestSuggestion.transactionId,
-        confidence: bestSuggestion.confidence,
-      });
-    } catch (error) {
-      result.errors.push(
-        `Failed to connect ${file.id}: ${error instanceof Error ? error.message : "Unknown error"}`
-      );
-    }
-  }
-
-  return result;
-}
