@@ -8,7 +8,7 @@ FROM node:22-slim
 # Tini for correct signal handling (the host installs SIGTERM/SIGINT teardown).
 #
 # Chromium: htmlToPdf.ts is reached by four live paths (precisionSearchQueue,
-# generateUvaPdf, receiveEmail, convertHtmlToPdf). Its default branch
+# generateUvaPdf, receiveEmail, the convertHtmlToPdf callable). Its default branch
 # uses @sparticuz/chromium, whose bundled binary is x86_64-only and needs shared
 # libraries node:22-slim does not carry — every PDF call would throw here. We
 # install Debian's Chromium and point htmlToPdf at it via FIBUKI_CHROME_PATH
