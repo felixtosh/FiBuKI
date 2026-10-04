@@ -295,10 +295,9 @@ describe("characterization: runExtraction extraction + counterparty", () => {
     expect(doc.extractedVatAmount).toBe(2000);
     expect(doc.extractedVatPercent).toBe(20);
 
-    // characterization: ISO date is parsed into a LOCAL-timezone midnight Date
-    // (new Date(y, m-1, d)), so the stored UTC instant shifts with server TZ
+    // ISO date is stored as UTC midnight of that day, whatever the server's zone
     const ts = doc.extractedDate as Timestamp;
-    expect(ts.toDate().getTime()).toBe(new Date(2024, 11, 15).getTime());
+    expect(ts.toDate().toISOString()).toBe("2024-12-15T00:00:00.000Z");
 
     // raw text: counterparty (issuer) raw values override the partner raws
     expect(doc.extractedRaw).toEqual({

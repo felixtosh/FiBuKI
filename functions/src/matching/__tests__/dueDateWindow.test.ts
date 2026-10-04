@@ -44,14 +44,14 @@ describe("dueDateFromAdditionalFields", () => {
       { label: "Due Date", value: "2026-01-20", rawValue: "20.01.2026" },
     ]);
     expect(date).not.toBeNull();
-    expect([date!.getFullYear(), date!.getMonth(), date!.getDate()]).toEqual([2026, 0, 20]);
+    expect([date!.getUTCFullYear(), date!.getUTCMonth(), date!.getUTCDate()]).toEqual([2026, 0, 20]);
   });
 
   it("reads the vocabulary key whatever the printed label", () => {
     const date = dueDateFromAdditionalFields([
       { key: "dueDate", label: "Zahlungstermin", value: "2026-01-20" },
     ]);
-    expect(date?.getDate()).toBe(20);
+    expect(date?.getUTCDate()).toBe(20);
   });
 
   it("never reads a Zahlungsziel, even filed under the dueDate key", () => {
@@ -75,7 +75,7 @@ describe("dueDateFromAdditionalFields", () => {
       "Zahlbar bis",
       "Zahlbar ohne Abzug bis",
     ]) {
-      expect(dueDateFromAdditionalFields([{ label, value: "2026-01-20" }])?.getDate()).toBe(20);
+      expect(dueDateFromAdditionalFields([{ label, value: "2026-01-20" }])?.getUTCDate()).toBe(20);
     }
   });
 
@@ -86,28 +86,28 @@ describe("dueDateFromAdditionalFields", () => {
   });
 
   it("rejects a Due Date earlier than the issue date, which inverts the window (#135)", () => {
-    const issue = new Date(2026, 0, 5);
+    const issue = new Date(Date.UTC(2026, 0, 5));
     expect(
       dueDateFromAdditionalFields([{ key: "dueDate", label: "Fällig am", value: "2026-01-02" }], issue)
     ).toBeNull();
     // Equal is zahlbar sofort, a real document, and stays accepted.
     expect(
       dueDateFromAdditionalFields([{ key: "dueDate", label: "Fällig am", value: "2026-01-05" }], issue)
-        ?.getDate()
+        ?.getUTCDate()
     ).toBe(5);
     // Day-level: an issue date carrying a time of day does not push the
     // boundary past its own calendar day.
-    const issueWithTime = new Date(2026, 0, 5, 14, 30);
+    const issueWithTime = new Date(Date.UTC(2026, 0, 5, 14, 30));
     expect(
       dueDateFromAdditionalFields(
         [{ key: "dueDate", label: "Fällig am", value: "2026-01-05" }],
         issueWithTime
-      )?.getDate()
+      )?.getUTCDate()
     ).toBe(5);
     // Without an issue date there is nothing to reject against.
     expect(
       dueDateFromAdditionalFields([{ key: "dueDate", label: "Fällig am", value: "2026-01-02" }])
-        ?.getDate()
+        ?.getUTCDate()
     ).toBe(2);
   });
 
@@ -130,7 +130,7 @@ describe("toFileMatchingData: extractedDueDate", () => {
     });
     const due = toDateSafe(data.extractedDueDate);
     expect(due).toBeDefined();
-    expect([due!.getFullYear(), due!.getMonth(), due!.getDate()]).toEqual([2026, 0, 20]);
+    expect([due!.getUTCFullYear(), due!.getUTCMonth(), due!.getUTCDate()]).toEqual([2026, 0, 20]);
   });
 
   it("prefers the typed field, and a typed null means extraction found none", () => {

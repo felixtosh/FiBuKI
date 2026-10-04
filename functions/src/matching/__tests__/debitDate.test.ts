@@ -34,11 +34,11 @@ describe("debitDateFromAdditionalFields", () => {
     const date = debitDateFromAdditionalFields([
       { key: "debitDate", label: "wird eingezogen am", value: DEBIT },
     ]);
-    expect(date?.getDate()).toBe(20);
+    expect(date?.getUTCDate()).toBe(20);
   });
 
   it("reads a keyless legacy row printed as Einzugsdatum", () => {
-    expect(debitDateFromAdditionalFields([{ label: "Einzugsdatum:", value: DEBIT }])?.getDate()).toBe(20);
+    expect(debitDateFromAdditionalFields([{ label: "Einzugsdatum:", value: DEBIT }])?.getUTCDate()).toBe(20);
   });
 
   it("is not a Due Date, and a Due Date is not it", () => {
@@ -48,7 +48,7 @@ describe("debitDateFromAdditionalFields", () => {
 
   it("rejects a Debit Date earlier than the issue date", () => {
     expect(
-      debitDateFromAdditionalFields([{ key: "debitDate", value: "2026-01-02" }], new Date(2026, 0, 5))
+      debitDateFromAdditionalFields([{ key: "debitDate", value: "2026-01-02" }], new Date(Date.UTC(2026, 0, 5)))
     ).toBeNull();
   });
 
@@ -58,22 +58,22 @@ describe("debitDateFromAdditionalFields", () => {
 });
 
 describe("isDebitDateHit", () => {
-  const debit = new Date(2026, 0, 16); // a Friday
+  const debit = new Date(Date.UTC(2026, 0, 16)); // a Friday
 
   it("hits on the Debit Date itself", () => {
-    expect(isDebitDateHit(debit, new Date(2026, 0, 16))).toBe(true);
+    expect(isDebitDateHit(debit, new Date(Date.UTC(2026, 0, 16)))).toBe(true);
   });
 
   it("hits when the collection settles after a weekend", () => {
-    expect(isDebitDateHit(debit, new Date(2026, 0, 19))).toBe(true);
+    expect(isDebitDateHit(debit, new Date(Date.UTC(2026, 0, 19)))).toBe(true);
   });
 
   it("does not hit before the Debit Date: the Partner collects on it, never earlier", () => {
-    expect(isDebitDateHit(debit, new Date(2026, 0, 15))).toBe(false);
+    expect(isDebitDateHit(debit, new Date(Date.UTC(2026, 0, 15)))).toBe(false);
   });
 
   it("does not hit past the settlement lag", () => {
-    expect(isDebitDateHit(debit, new Date(2026, 0, 16 + SCORING_CONFIG.DEBIT_DATE_SETTLEMENT_DAYS + 1))).toBe(false);
+    expect(isDebitDateHit(debit, new Date(Date.UTC(2026, 0, 16 + SCORING_CONFIG.DEBIT_DATE_SETTLEMENT_DAYS + 1)))).toBe(false);
   });
 });
 
@@ -207,7 +207,7 @@ describe("scoreTransaction with a Debit Date", () => {
     const legacy = toFileMatchingData({
       extractedAdditionalFields: [{ key: "debitDate", label: "Einzugsdatum", value: DEBIT }],
     });
-    expect(toDateSafe(legacy.extractedDebitDate)?.getDate()).toBe(20);
+    expect(toDateSafe(legacy.extractedDebitDate)?.getUTCDate()).toBe(20);
   });
 
   it("carries the Transaction's type into the scorer", () => {

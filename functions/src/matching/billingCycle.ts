@@ -228,7 +228,7 @@ function deriveBandCycle(
     Math.round(consistencyRatio * 80 + Math.max(0, 20 - avgDeviation * 2))
   );
 
-  const daysOfMonth = dates.map((d) => d.getDate());
+  const daysOfMonth = dates.map((d) => d.getUTCDate());
   const typicalDayOfMonth = computeMode(daysOfMonth);
   const dayMean = daysOfMonth.reduce((s, d) => s + d, 0) / daysOfMonth.length;
   const dayVariance = Math.round(

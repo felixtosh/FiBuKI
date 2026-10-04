@@ -83,8 +83,9 @@ export function debitDateFromAdditionalFields(
  * day, shortly after. Never before: the Partner may not collect early. Day-level.
  */
 export function isDebitDateHit(debitDate: Date, txDate: Date): boolean {
-  const debitDay = new Date(debitDate.getFullYear(), debitDate.getMonth(), debitDate.getDate()).getTime();
-  const txDay = new Date(txDate.getFullYear(), txDate.getMonth(), txDate.getDate()).getTime();
+  const debitDay = utcDayOf(debitDate);
+  const txDay = utcDayOf(txDate);
+  if (debitDay === null || txDay === null) return false;
   const lag = Math.round((txDay - debitDay) / MS_PER_DAY);
   return lag >= 0 && lag <= DEBIT_DATE_SETTLEMENT_DAYS;
 }
