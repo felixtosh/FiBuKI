@@ -251,6 +251,18 @@ _Deutsch_: Extraktion
 _Avoid_: parse, OCR result, AI output
 _Avoid (de)_: OCR, KI-Ergebnis, Erkennung, Erfassung (manual entry at the Tax Advisor's desk)
 
+**Hand Correction**:
+A User's change to an Extraction's figures, its direction, or the Due Date or Debit Date,
+recorded on the File so a re-extraction does not discard it: a re-extraction of a File
+carrying one is refused as a whole unless it is forced. Made in the File detail panel or
+through the MCP correction tool, which take the same fields. Changing the counterparty's
+name, VAT id, IBAN or address is not recorded. One that moves the amount, the date, the
+Due Date, the Debit Date or the counterparty's name re-scores the File's suggestions; none
+connects or disconnects a Transaction.
+_Deutsch_: von Hand geändert
+_Avoid_: correction (that is the **Invoice Correction**), override, edit
+_Avoid (de)_: Korrektur, Rechnungskorrektur (both name the **Invoice Correction**)
+
 **Line Item**:
 One priced row transcribed from a File's body.
 _Deutsch_: Position (the word English avoids is the one German requires)
