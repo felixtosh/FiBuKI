@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted, amended by ADR-0012 (2026-10-04)
 date: 2026-08-24
 ---
 
@@ -29,3 +29,11 @@ now called `needs-document`.
 Keeping "receipt" as the everyday word for any incoming Beleg and renaming the
 `DocumentType` value to `kassenbeleg` / `non-invoice`. Cheaper in field names, but it puts
 imprecise language exactly where § 11 deductibility is decided.
+
+## Amended by ADR-0012
+
+The § 11 decision now lives in the **Document Type** values alone, and "Receipt" names the
+document that confirms a payment, whatever its Document Type: GitHub's and Stripe's
+Receipts print every § 11 element and are classified `invoice`. The half of this decision
+that moved "no document at all" to document language is unchanged. See
+[ADR-0012](0012-a-receipt-counts-once-with-the-invoice-it-pays.md).

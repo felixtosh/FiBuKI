@@ -144,8 +144,11 @@ _Deutsch_: Aufteilen
 _Avoid_: bundle (prose only, never a domain term), separate, divide, unmerge
 
 **Document Type**:
-What a File is under § 11 UStG: `invoice`, `receipt`, `other`, or `unknown`. Decides
-whether the File can carry an input VAT (Vorsteuer) deduction. A reverse-charge document
+How a File stands under § 11 UStG: `invoice`, `receipt`, `other`, or `unknown`. Decides
+whether the File can carry an input VAT (Vorsteuer) deduction. `invoice` means
+§ 11-sufficient, whatever the document calls itself; `receipt` is proof of spend that is
+not. It is not what the document *is*: a **Receipt** that prints every § 11 element has
+Document Type `invoice` ([ADR-0012](docs/adr/0012-a-receipt-counts-once-with-the-invoice-it-pays.md)). A reverse-charge document
 is an invoice; so is a simplified invoice (Kleinbetragsrechnung, § 11 Abs 6).
 **Derived, never hand-set**: the § 11 classifier is its only writer, and it re-decides on
 every classification. The user's one lever is `isNotInvoice`, a stored flag that is an
@@ -159,10 +162,14 @@ type *means* for input VAT, not what the File is)
 _Avoid (de)_: Dokumenttyp, Dateityp
 
 **Receipt**:
-A File that is a document but neither a § 11-complete invoice nor a simplified invoice —
-proof of spend that never carries an input VAT deduction. "Receipt" has this one meaning
-and is never the everyday word for an incoming document; that word is **File**. See
-[ADR-0001](docs/adr/0001-receipt-means-section-11-only.md).
+A File that confirms a payment was made; an invoice states what is owed. GitHub and
+Stripe send both for one charge, and a card terminal prints one beside the restaurant's
+Rechnung. Most Receipts are not § 11 invoices and have Document Type `receipt`, which
+never carries an input VAT deduction; one that prints every § 11 element has Document
+Type `invoice`. A Receipt beside the invoice it pays is linked to it by a **Receipt Link**.
+"Receipt" is never the everyday word for an incoming document; that word is **File**.
+See [ADR-0001](docs/adr/0001-receipt-means-section-11-only.md) and
+[ADR-0012](docs/adr/0012-a-receipt-counts-once-with-the-invoice-it-pays.md).
 _Deutsch (defining)_: Zahlungsbeleg
 _Also printed as_: Quittung, Zahlungsbestätigung, Kontoauszug, Kreditkartenbeleg,
 Kassabon (only when the § 11 Abs 6 elements are missing)
@@ -385,7 +392,7 @@ _Avoid (de)_: Grund, Quelle
 
 **Coverage**:
 How much of a Transaction its connected Files explain — their payment totals against the
-bank line, as a ratio. At or above the coverage tolerance the Transaction counts as
+bank line, as a ratio. A Receipt and the invoice it pays count once (**Receipt Link**). At or above the coverage tolerance the Transaction counts as
 documented and stops taking auto-connections. A ratio and not a sum, because it has to
 hold for a 12 EUR line and a 12 000 EUR line alike.
 _Deutsch_: Deckung
@@ -435,8 +442,23 @@ The system records a Copy only when no File Connection is lost by it, and sugges
 otherwise; every Copy can be undone, and undoing one is not a Rejection. A pair the User
 ruled not a Copy is never suggested again. See
 [ADR-0010](docs/adr/0010-a-copy-holds-no-file-connection.md). A Receipt for
-the same charge as an invoice is not a Copy, and neither is a **Dunning Letter**: both
-are different documents.
+the same charge as an invoice is not a Copy, even when it prints the invoice's number,
+amount and day, and neither is a **Dunning Letter**: both are different documents.
+
+**Receipt Link**:
+The record that a Receipt pays a particular invoice, held on the Receipt and pointing at
+the invoice's File, with who set it. One Receipt pays one invoice; an invoice may have
+several Receipts. The system records it only when the Receipt cites the invoice's number
+and the issuer agrees; same Partner, same day and a Receipt total at or above the
+invoice's only suggest it. While both are live and connected to the same Transaction,
+the pair counts as one document: the invoice's figures, its payment total raised to the
+Receipt's when that is larger, the difference as Trinkgeld. With one of the pair
+connected, the matcher connects the other to the same Transaction. A declined pair is
+never suggested again. See
+[ADR-0012](docs/adr/0012-a-receipt-counts-once-with-the-invoice-it-pays.md).
+_Deutsch_: Zahlungsbeleg zur Rechnung
+_Avoid_: payment confirmation, pairing, attachment, Copy
+_Avoid (de)_: Zuordnung (that is the **File Connection**), Kopie
 _Deutsch_: Kopie
 _Also printed as_: Duplikat, Kopie, Zweitschrift, Rechnungskopie
 _Avoid_: duplicate (identical bytes, which are never stored a second time), second copy,
