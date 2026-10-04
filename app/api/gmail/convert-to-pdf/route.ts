@@ -411,7 +411,7 @@ async function convertHtmlToPdf(
     },
     ConvertHtmlToPdfResponse
   >(
-    "convertHtmlToPdfCallable",
+    "convertHtmlToPdf",
     {
       html,
       metadata: metadata
