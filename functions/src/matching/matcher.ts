@@ -41,6 +41,7 @@ import { fileSearchMatches } from "./fileSearch";
 import { isFileRejected } from "./rejectedFiles";
 import { hasUndocumentedRival, isSameDayEvidence } from "./remainderAutoConnect";
 import { loadScoringEcbRates } from "./scoringEcbRates";
+import { MATCH_WINDOW_DAYS } from "./matchWindow";
 import { matchesTransactionSearch } from "./transactionSearch";
 import {
   SCORING_CONFIG,
@@ -62,8 +63,7 @@ type TxDoc = { id: string; data(): Data | undefined };
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
-/** Days either side of a File's date a Transaction may be. #614 widens it to the payment term. */
-export const MATCH_WINDOW_DAYS = SCORING_CONFIG.DATE_RANGE_DAYS;
+export { MATCH_WINDOW_DAYS };
 const WINDOW_MS = MATCH_WINDOW_DAYS * MS_PER_DAY;
 
 /** An undated File is scored against this many of the User's most recent Transactions. */

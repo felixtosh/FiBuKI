@@ -15,8 +15,6 @@ export const TRANSACTION_MATCH_CONFIG = {
   AUTO_MATCH_THRESHOLD: 85,
   /** Minimum confidence to show as suggestion */
   SUGGESTION_THRESHOLD: 50,
-  /** Days to search before/after file date */
-  DATE_RANGE_DAYS: 30,
   /** Max suggestions to store per file */
   MAX_SUGGESTIONS: 5,
 };

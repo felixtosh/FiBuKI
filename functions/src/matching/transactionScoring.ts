@@ -83,8 +83,6 @@ export const SCORING_CONFIG = {
    * coincidence. Below this it keeps the pre-#137 score of 5.
    */
   MIN_INVOICE_NUMBER_LENGTH: 6,
-  /** Days to search before/after file date */
-  DATE_RANGE_DAYS: 30,
   /**
    * Widest payment window `[issueDate, dueDate]` scored as a window when no
    * billing cycle is learned (#236). A wider one scores only its two
