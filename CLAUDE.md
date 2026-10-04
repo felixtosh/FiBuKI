@@ -225,8 +225,16 @@ export function useCategories() {
 - `acceptPartialPaymentCallable` - Record or revoke an Accepted Partial Payment ruling on a tipped transaction the bank line does not cover (#554)
 
 **Files:**
-- `connectFileToTransactionCallable` - Connect file to transaction
+- `connectFileToTransactionCallable` - Connect file to transaction. Takes the Connection Origin (`manual`, `suggestion`, `agent`, `auto`); an accepted suggestion sends no score, the server reads the stored one
 - `disconnectFileFromTransactionCallable` - Disconnect file from transaction
+- `refreshTransactionMatchesCallable` - Run the matcher on one File ("refresh matches"); it auto-connects under the upload trigger's rules
+
+**File Connections have one writer** (`functions/src/fileConnections/`, #612): connect,
+Unlink and the bulk removals (deleting a File, deleting Transactions with their bank
+account or import, the Copy swap) all go through it, and no other code writes a
+`fileConnections` record, a File's `transactionIds` or a Transaction's `fileIds`. Its
+rules key on the Connection Origin (`rules.ts`). A guard test fails on a new writer; a
+Next API route connects through the callable as the user (`lib/api/connect-file.ts`).
 - `updateFileCallable` - Update file metadata
 - `deleteFileCallable` - Delete a file: hides it, undone by `restoreFile`, never touches the stored bytes. Refuses a FiBuKI-generated invoice document (ADR-0006)
 - `purgeFilesCallable` - Purge deleted files: destroys the stored bytes (verified) and reduces the record to dedup keys. Deleted-files view only; never on the MCP/tool surface

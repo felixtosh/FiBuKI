@@ -371,10 +371,14 @@ _Avoid (de)_: Verknüpfung, Anhang, Vorschlag
 
 **Connection Origin**:
 Who or what made a File Connection: a User's pick, an accepted suggestion, auto-connect, AI,
-the agent, MCP, or an import. The rules for a connect key on it: whether a Rejection
-refuses it, whether an over-quota Transaction accepts it (only a User's click in the app
-does), and what is learned from it. Today those rules differ by code path; #612 puts them in
-one table. Stored as `connectionType`; the rename is deferred, as in ADR-0002.
+the agent, MCP, or an import (an import is a User's pick of a mail attachment). The rules
+for a connect key on it, in one table: a User's pick of a rejected pair takes the Rejection
+back, every other origin is refused it (the agent too, unless a human asked for that pair);
+only a User's click in the app connects to an over-quota Transaction; what a User or agent
+directed teaches the Partner everything a manual connect does, automation only the email
+domain, so it never trains on its own guesses. A Copy and a deleted File refuse every
+origin. Stored as `origin` on the File Connection; the older `connectionType` keeps the
+label readers filter on, and its rename is deferred, as in ADR-0002.
 _Deutsch_: Herkunft (Zuordnungsherkunft when it must stand alone)
 _Avoid_: Match Source (that is evidence for a Score), channel, connection type
 _Avoid (de)_: Grund, Quelle
