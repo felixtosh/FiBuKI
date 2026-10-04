@@ -12,8 +12,10 @@
  * 4. Compute typical day-of-month from transaction dates
  * 5. If charges carry a connected file's extracted date, compute the
  *    invoice-to-transaction delay: to the payment date the file states when
- *    it states one (#618), else to the booking
+ *    the booking landed on it (#618), else to the booking
  */
+
+import { isDueDateHit } from "./dueDate";
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
 
@@ -105,10 +107,12 @@ export interface BillingCycleTransaction {
   invoiceDates?: Date[];
   /**
    * Connected files that state a payment date (a Debit Date, else a Due
-   * Date) (#618). Each contributes the payment term it prints, file date to
-   * stated date, instead of file date to booking: the booking carries the
-   * weekend shift, the printed term does not. A file is in exactly one of
-   * `invoiceDates` and `statedTerms`.
+   * Date) (#618). Where the booking landed on that date or within the
+   * settlement lag after it, each contributes the payment term it prints,
+   * file date to stated date, instead of file date to booking: the booking
+   * carries the weekend shift, the printed term does not. A booking anywhere
+   * else is measured as an `invoiceDates` entry would be. A file is in
+   * exactly one of `invoiceDates` and `statedTerms`.
    */
   statedTerms?: StatedPaymentTerm[];
 }
@@ -235,8 +239,16 @@ function deriveBandCycle(
     ...(t.invoiceDates ?? []).map((invoiceDate) =>
       Math.round((t.date.getTime() - invoiceDate.getTime()) / MS_PER_DAY)
     ),
+    // #618: the printed term, where the booking landed on the stated date (or
+    // within the settlement lag after it). Anywhere else the User paid on a
+    // habit of their own, and the booking is what the learned check must
+    // recognise next month.
     ...(t.statedTerms ?? []).map(({ invoiceDate, statedDate }) =>
-      Math.round((statedDate.getTime() - invoiceDate.getTime()) / MS_PER_DAY)
+      Math.round(
+        ((isDueDateHit(statedDate, t.date) ? statedDate : t.date).getTime() -
+          invoiceDate.getTime()) /
+          MS_PER_DAY
+      )
     ),
   ]);
 

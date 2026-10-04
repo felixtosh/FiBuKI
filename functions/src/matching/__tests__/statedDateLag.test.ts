@@ -267,6 +267,26 @@ describe("deriveLearnedCycles with stated payment dates", () => {
     expect(cycles[0].sampleSize).toBe(8);
   });
 
+  it("a booking that is not on the stated date keeps measuring to the booking", () => {
+    // A User who pays ten days past the Zahlungstermin every month: the
+    // printed term says 15, the habit says 25, and the habit is what the
+    // learned check must recognise.
+    const latePayer = MONTHS.map((m) => ({
+      date: d(`2026-${m}-30`),
+      amount: 45.9,
+      statedTerms: [{ invoiceDate: d(`2026-${m}-05`), statedDate: d(`2026-${m}-20`) }],
+    }));
+    expect(deriveLearnedCycles(latePayer)[0].invoiceToTransactionDelay).toBe(25);
+
+    // One who pays on receipt, well before it.
+    const earlyPayer = MONTHS.map((m) => ({
+      date: d(`2026-${m}-07`),
+      amount: 45.9,
+      statedTerms: [{ invoiceDate: d(`2026-${m}-05`), statedDate: d(`2026-${m}-20`) }],
+    }));
+    expect(deriveLearnedCycles(earlyPayer)[0].invoiceToTransactionDelay).toBe(2);
+  });
+
   it("counts stated-date samples towards the three-sample minimum", () => {
     const cycles = deriveLearnedCycles([
       charge("05", { stated: true }),
