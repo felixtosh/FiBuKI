@@ -369,6 +369,16 @@ _Deutsch_: Zuordnung
 _Avoid_: match (that is the candidate), attachment, link
 _Avoid (de)_: Verknüpfung, Anhang, Vorschlag
 
+**Connection Origin**:
+Who or what made a File Connection: a User's pick, an accepted suggestion, auto-connect, AI,
+the agent, MCP, or an import. The rules for a connect key on it: whether a Rejection
+refuses it, whether an over-quota Transaction accepts it (only a User's click in the app
+does), and what is learned from it. Today those rules differ by code path; #612 puts them in
+one table. Stored as `connectionType`; the rename is deferred, as in ADR-0002.
+_Deutsch_: Herkunft (Zuordnungsherkunft when it must stand alone)
+_Avoid_: Match Source (that is evidence for a Score), channel, connection type
+_Avoid (de)_: Grund, Quelle
+
 **Coverage**:
 How much of a Transaction its connected Files explain — their payment totals against the
 bank line, as a ratio. At or above the coverage tolerance the Transaction counts as
