@@ -464,4 +464,96 @@ describe("Transaction Cloud Functions", () => {
       expect(store.getDoc("transactions", "tx-other")?.isComplete).toBeFalsy();
     });
   });
+
+  // #621: both callables write a named set of fields and refuse any other key,
+  // so a User cannot hand their own Transaction to someone else or rewrite
+  // what the bank import wrote.
+  describe("field whitelist", () => {
+    const userId = "user-123";
+    const makeCtx = () => ({
+      userId,
+      db: createMockFirestore(),
+      request: { auth: { uid: userId }, data: {} },
+      logAIUsage: vi.fn(),
+    });
+    const NEVER_WRITABLE: Record<string, unknown> = {
+      userId: "other-user",
+      sourceId: "other-source",
+      amount: 1_000_000,
+      date: new Date("2020-01-01"),
+      currency: "USD",
+      name: "Rewritten",
+      dedupeHash: "rewritten",
+      _original: { rewritten: true },
+      importJobId: "other-import",
+      createdAt: new Date("2020-01-01"),
+      updatedAt: new Date("2020-01-01"),
+    };
+
+    it.each(Object.entries(NEVER_WRITABLE))("updateTransaction refuses %s", async (field, value) => {
+      store.setDoc("transactions", "tx-1", createTestTransaction({ userId }));
+      const before = { ...store.getDoc("transactions", "tx-1") };
+
+      await expect(
+        updateTransactionCallable(makeCtx() as any, {
+          id: "tx-1",
+          data: { description: "allowed", [field]: value } as never,
+        })
+      ).rejects.toThrow(`updateTransaction does not write ${field}`);
+      expect(store.getDoc("transactions", "tx-1")).toEqual(before);
+    });
+
+    it.each(Object.entries(NEVER_WRITABLE))("bulkUpdateTransactions refuses %s", async (field, value) => {
+      store.setDoc("transactions", "tx-1", createTestTransaction({ userId }));
+      store.setDoc("transactions", "tx-2", createTestTransaction({ userId }));
+      const before = [{ ...store.getDoc("transactions", "tx-1") }, { ...store.getDoc("transactions", "tx-2") }];
+
+      await expect(
+        bulkUpdateTransactionsCallable(makeCtx() as any, {
+          ids: ["tx-1", "tx-2"],
+          data: { isComplete: true, [field]: value } as never,
+        })
+      ).rejects.toThrow(`bulkUpdateTransactions does not write ${field}`);
+      expect([store.getDoc("transactions", "tx-1"), store.getDoc("transactions", "tx-2")]).toEqual(before);
+    });
+
+    it("refuses a key outside the set, the File Connection id list included", async () => {
+      store.setDoc("transactions", "tx-1", createTestTransaction({ userId }));
+
+      await expect(
+        updateTransactionCallable(makeCtx() as any, { id: "tx-1", data: { fileIds: ["f-1"] } as never })
+      ).rejects.toThrow("updateTransaction does not write fileIds");
+      await expect(
+        bulkUpdateTransactionsCallable(makeCtx() as any, { ids: ["tx-1"], data: { vatRate: 20 } as never })
+      ).rejects.toThrow("bulkUpdateTransactions does not write vatRate");
+      await expect(
+        updateTransactionCallable(makeCtx() as any, { id: "tx-1", data: undefined as never })
+      ).rejects.toThrow("data must be an object");
+    });
+
+    it("bulkUpdateTransactions still takes what the chat agent's tool sends", async () => {
+      store.setDoc("transactions", "tx-1", createTestTransaction({ userId }));
+
+      const result = await bulkUpdateTransactionsCallable(makeCtx() as any, {
+        ids: ["tx-1"],
+        data: {
+          description: "Bank fees",
+          isComplete: true,
+          partnerId: "partner-1",
+          partnerMatchedBy: "ai",
+          noReceiptCategoryId: "cat-1",
+          noReceiptCategoryTemplateId: "bank-fees",
+          noReceiptCategoryMatchedBy: "manual",
+        },
+      });
+
+      expect(result).toMatchObject({ success: 1, failed: 0 });
+      expect(store.getDoc("transactions", "tx-1")).toMatchObject({
+        userId,
+        description: "Bank fees",
+        partnerId: "partner-1",
+        noReceiptCategoryId: "cat-1",
+      });
+    });
+  });
 });

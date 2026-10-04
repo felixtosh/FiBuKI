@@ -6,6 +6,7 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { SALE_SUPPLY_KINDS, type SaleSupplyKind } from "../uva/types";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { deriveActivityLevel } from "../utils/activityLevel";
+import { assertWritableFields, WRITABLE_FIELDS } from "./writableFields";
 
 interface UpdateTransactionRequest {
   /** Transaction ID to update */
@@ -13,7 +14,6 @@ interface UpdateTransactionRequest {
   /** Fields to update */
   data: {
     description?: string | null;
-    fileIds?: string[];
     isComplete?: boolean;
     partnerId?: string | null;
     partnerType?: "global" | "user" | null;
@@ -59,6 +59,8 @@ export const updateTransactionCallable = createCallable<
     if (!id) {
       throw new HttpsError("invalid-argument", "Transaction ID is required");
     }
+
+    assertWritableFields("updateTransaction", data, WRITABLE_FIELDS);
 
     if (
       data.foreignSupplyKind !== undefined &&

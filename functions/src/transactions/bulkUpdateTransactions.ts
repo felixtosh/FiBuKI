@@ -4,6 +4,7 @@
 
 import { FieldValue } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
+import { assertWritableFields, BULK_WRITABLE_FIELDS } from "./writableFields";
 
 interface BulkUpdateTransactionsRequest {
   /** Transaction IDs to update */
@@ -53,6 +54,8 @@ export const bulkUpdateTransactionsCallable = createCallable<
         "Cannot update more than 1000 transactions at once"
       );
     }
+
+    assertWritableFields("bulkUpdateTransactions", data, BULK_WRITABLE_FIELDS);
 
     const result: BulkUpdateTransactionsResponse = {
       success: 0,
