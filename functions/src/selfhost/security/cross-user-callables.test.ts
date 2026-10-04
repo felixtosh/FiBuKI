@@ -92,6 +92,11 @@ function ownPayloads(): Array<Record<string, unknown>> {
     { sourceId: A.source, transactions: [{ sourceId: A.source, amount: -1, name: "probe", date: new Date().toISOString(), dedupeHash: "probe" }] },
     { invoiceId: A.invoice },
     { sessionId: A.chat },
+    // #616: a rollback names a Transaction and one of its history entries; the
+    // tool-running callable names a tool and its arguments.
+    { transactionId: A.transaction, historyId: "a-hist-1" },
+    { tool: "get_transaction", arguments: { transactionId: A.transaction } },
+    { tool: "update_transaction", arguments: { transactionId: A.transaction, description: "probe" } },
   ];
 }
 
@@ -117,6 +122,8 @@ function handOverPayloads(): Array<Record<string, unknown>> {
     { categoryId: A.category, data: { name: "Mine", userId: VICTIM } },
     { sourceId: A.source, data: { name: "Mine", userId: VICTIM } },
     { invoiceId: A.invoice, data: { recipientName: "Mine", userId: VICTIM } },
+    // #616: a tool's arguments carry no owner; one smuggled in is just an argument.
+    { tool: "update_transaction", arguments: { transactionId: A.transaction, description: "mine", userId: VICTIM } },
   ];
 }
 
@@ -153,6 +160,15 @@ function payloads(): Array<Record<string, unknown>> {
     // Writing INTO the victim's account from the attacker's side.
     { sourceId: V.source, transactions: [{ sourceId: V.source, amount: -1, name: "planted", date: new Date().toISOString(), dedupeHash: "x" }] },
     { userId: VICTIM, name: "planted", data: { userId: VICTIM } },
+    // #616: the victim's history entry, under their Transaction and under the attacker's.
+    { transactionId: V.transaction, historyId: "v-hist-1" },
+    { transactionId: A.transaction, historyId: "v-hist-1" },
+    // #616: any named tool, aimed at the victim, or with an identity smuggled in.
+    { tool: "get_transaction", arguments: { transactionId: V.transaction } },
+    { tool: "get_file", arguments: { fileId: V.file } },
+    { tool: "update_transaction", arguments: { transactionId: V.transaction, description: "pwned" } },
+    { tool: "list_transactions", arguments: { userId: VICTIM, uid: VICTIM } },
+    { tool: "list_files", userId: VICTIM, uid: VICTIM, arguments: {} },
     // Every id at once, in arrays, in case a handler takes "ids" generically.
     { ids: ALL_VICTIM_IDS, items: ALL_VICTIM_IDS.map((id) => ({ id })) },
   ];

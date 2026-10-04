@@ -44,14 +44,14 @@ export const READ_TOOLS: ChatToolDefinition[] = [
     inputSchema: {
       required: [],
       optional: [
-        "startDate",
-        "endDate",
+        "dateFrom",
+        "dateTo",
         "search",
         "minAmount",
         "maxAmount",
         "sourceId",
         "partnerId",
-        "categoryId",
+        "noReceiptCategoryId",
         "hasFile",
         "limit",
       ],
@@ -59,8 +59,8 @@ export const READ_TOOLS: ChatToolDefinition[] = [
     outputFields: [
       "transactions[]",
       "total",
-      "dateRange",
-      "amountSum",
+      "aggregates",
+      "nextCursor",
     ],
     examples: [
       "Show me my Amazon purchases from last month",
@@ -159,18 +159,17 @@ export const READ_TOOLS: ChatToolDefinition[] = [
       optional: [
         "search",
         "partnerId",
-        "startDate",
-        "endDate",
+        "dateFrom",
+        "dateTo",
         "minAmount",
         "maxAmount",
-        "hasTransaction",
+        "hasConnections",
         "limit",
       ],
     },
     outputFields: [
       "files[]",
-      "total",
-      "hasMore",
+      "nextCursor",
     ],
     relatedTools: ["searchLocalFiles", "listTransactions"],
     examples: [
