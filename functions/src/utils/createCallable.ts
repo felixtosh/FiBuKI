@@ -8,13 +8,18 @@ import { onCall, HttpsError, CallableRequest } from "firebase-functions/v2/https
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { SecretParam } from "firebase-functions/params";
 import { MODEL_PRICING, PRICING_FALLBACK_MODEL } from "./models";
+import type { CallableName } from "../callableRegistry";
 
 // Re-export HttpsError for convenience
 export { HttpsError };
 
 export interface CallableConfig {
-  /** Function name - used for logging and identification */
-  name: string;
+  /**
+   * The callable's wire name: its barrel export, and the key of its usage log
+   * and AI usage records. Registered in `callableRegistry.ts`, or this does not
+   * compile.
+   */
+  name: CallableName;
   /** Memory allocation (default: 256MiB) */
   memory?: "256MiB" | "512MiB" | "1GiB" | "2GiB";
   /** Timeout in seconds (default: 60) */
