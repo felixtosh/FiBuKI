@@ -32,6 +32,16 @@ const SET_BY_KEY: SetByKeys = {
   manual: "linkedManual",
 };
 
+function isReceiptLinkView(value: unknown): value is ReceiptLinkView {
+  const v = value as Partial<ReceiptLinkView> | null | undefined;
+  return (
+    !!v &&
+    Array.isArray(v.receipts) &&
+    Array.isArray(v.suggestions) &&
+    Array.isArray(v.candidates)
+  );
+}
+
 function refLabel(ref: ReceiptPairFileRef): string {
   return ref.invoiceNumber || ref.fileName || ref.fileId;
 }
@@ -55,12 +65,12 @@ export function FileReceiptLinkSection({ file }: { file: TaxFile }) {
 
   const load = useCallback(async () => {
     try {
-      setView(
-        await callFunction<{ fileId: string; withCandidates: boolean }, ReceiptLinkView>("getReceiptLink", {
-          fileId: file.id,
-          withCandidates: picking,
-        })
-      );
+      const reply = await callFunction<{ fileId: string; withCandidates: boolean }, ReceiptLinkView>("getReceiptLink", {
+        fileId: file.id,
+        withCandidates: picking,
+      });
+      // Only a well-formed view is drawn: a reply without its lists renders nothing.
+      setView(isReceiptLinkView(reply) ? reply : null);
     } catch {
       setView(null);
     }
