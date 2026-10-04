@@ -61,6 +61,7 @@ vi.mock("@/lib/firebase/admin", () => {
         return { docs, empty: docs.length === 0, size: docs.length };
       },
       doc: (id: string) => ({
+        id,
         get: async () => {
           const store =
             name === "files"
@@ -75,7 +76,9 @@ vi.mock("@/lib/firebase/admin", () => {
     return query;
   };
 
-  return { getAdminDb: () => ({ collection }) };
+  const getAll = (...refs: Array<{ get: () => Promise<unknown> }>) => Promise.all(refs.map((r) => r.get()));
+
+  return { getAdminDb: () => ({ collection, getAll }) };
 });
 
 const { connectFileToTransactionTool, searchLocalFilesTool, searchGmailAttachmentsTool } =
@@ -279,63 +282,51 @@ describe("bulkConnectFiles — the partner-batch write path", () => {
   });
 });
 
-describe("searchLocalFiles — dismissed candidates are not offered", () => {
-  beforeEach(() => {
-    // The scorer is exercised by its own suite; here it just has to answer for
-    // whatever survives the filter, so the assertion is about which keys arrive.
-    h.callFirebaseFunction.mockImplementation(async (_name: string, payload: Doc) => ({
-      scores: ((payload.attachments as Array<{ key: string }>) || []).map((a) => ({
-        key: a.key,
-        score: 80,
-        label: "Strong",
-        reasons: ["amount match"],
-      })),
-    }));
-  });
+describe("searchLocalFiles — the matcher decides what is offered (#613)", () => {
+  /** The matcher's answer: these Files, and how many it held back as rejected. */
+  function matcherAnswers(fileIds: string[], rejectedCount = 0) {
+    h.callFirebaseFunction.mockImplementation(async (name: string) => {
+      if (name !== "findFileMatchesForTransaction") throw new Error(`unexpected ${name}`);
+      return {
+        matches: fileIds.map((fileId) => ({ fileId, confidence: 80, matchSources: ["amount_exact"] })),
+        totalCandidates: fileIds.length,
+        rejectedCount,
+      };
+    });
+  }
 
-  it("drops a file that has rejected this transaction, before scoring it", async () => {
-    seedFile("f-1", { dismissedTransactionIds: ["tx-1"] });
+  it("offers what the matcher ranks, and says how many it held back as rejected", async () => {
     seedFile("f-2");
     seedTransaction("tx-1");
+    matcherAnswers(["f-2"], 1);
 
     const result = (await searchLocalFilesTool.invoke(
       { transactionId: "tx-1" },
       chatConfig
     )) as {
-      candidates: Array<{ fileId: string }>;
+      candidates: Array<{ fileId: string; score: number; scoreReasons: string[] }>;
       totalFound: number;
       dismissedForThisTransaction: number;
       summary: string;
     };
 
-    expect(result.candidates.map((c) => c.fileId)).toEqual(["f-2"]);
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ fileId: "f-2", score: 80, scoreReasons: ["amount_exact"] }),
+    ]);
     expect(result.totalFound).toBe(1);
     expect(result.dismissedForThisTransaction).toBe(1);
     expect(result.summary).toContain("previously rejected");
-
-    // Dropped before scoring, not filtered out of the scored list.
-    const scored = h.callFirebaseFunction.mock.calls[0][1] as {
-      attachments: Array<{ key: string }>;
-    };
-    expect(scored.attachments.map((a) => a.key)).toEqual(["local_f-2"]);
-  });
-
-  it("offers a file that dismissed a different transaction", async () => {
-    seedFile("f-1", { dismissedTransactionIds: ["tx-other"] });
-    seedTransaction("tx-1");
-
-    const result = (await searchLocalFilesTool.invoke(
-      { transactionId: "tx-1" },
-      chatConfig
-    )) as { candidates: Array<{ fileId: string }>; dismissedForThisTransaction: number };
-
-    expect(result.candidates.map((c) => c.fileId)).toEqual(["f-1"]);
-    expect(result.dismissedForThisTransaction).toBe(0);
+    expect(h.callFirebaseFunction).toHaveBeenCalledWith(
+      "findFileMatchesForTransaction",
+      expect.objectContaining({ transactionId: "tx-1" }),
+      "Bearer test"
+    );
   });
 
   it("says so rather than reporting an empty library when every file was rejected", async () => {
     seedFile("f-1", { dismissedTransactionIds: ["tx-1"] });
     seedTransaction("tx-1");
+    matcherAnswers([], 1);
 
     const result = (await searchLocalFilesTool.invoke(
       { transactionId: "tx-1" },
@@ -347,16 +338,23 @@ describe("searchLocalFiles — dismissed candidates are not offered", () => {
     // Otherwise an agent reads "no files" and goes looking for a document that
     // is already here and was deliberately refused.
     expect(result.summary).toContain("previously rejected");
-    expect(h.callFirebaseFunction).not.toHaveBeenCalled();
   });
 });
 
 describe("scoreBatchMatches — the NxM matrix the batcher connects from", () => {
   beforeEach(() => {
-    h.callFirebaseFunction.mockImplementation(async () => ({ confidence: 95, breakdown: null }));
+    // The matcher's answer per pair: f-1 rejected tx-1.
+    h.callFirebaseFunction.mockImplementation(
+      async (_name: string, pair: { fileId: string; transactionId: string }) => ({
+        confidence: 95,
+        breakdown: null,
+        ineligible: null,
+        hidden: pair.fileId === "f-1" && pair.transactionId === "tx-1" ? "rejected" : null,
+      })
+    );
   });
 
-  it("does not score a dismissed pair, so it cannot win an assignment slot", async () => {
+  it("leaves a pair the matcher holds back out, so it cannot win an assignment slot", async () => {
     seedFile("f-1", { dismissedTransactionIds: ["tx-1"] });
     seedFile("f-2");
     seedTransaction("tx-1");
@@ -383,7 +381,6 @@ describe("scoreBatchMatches — the NxM matrix the batcher connects from", () =>
       result.recommendedAssignments.some((a) => a.fileId === "f-1" && a.transactionId === "tx-1")
     ).toBe(false);
     expect(result.summary).toContain("do not propose");
-    expect(h.callFirebaseFunction).toHaveBeenCalledTimes(1);
   });
 
   it("still scores the same file against a transaction it has not rejected", async () => {

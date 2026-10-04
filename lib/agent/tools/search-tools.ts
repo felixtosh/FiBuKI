@@ -14,7 +14,6 @@ import { callFirebaseFunction } from "@/lib/api/firebase-callable";
 // the enforcement drifts apart again. Dependency-free pure logic; the relative
 // path across the package boundary mirrors lib/selfhost/firestore-admin-shim.
 import { readDismissedTransactionIds } from "../../../functions/src/matching/dismissedTransactions";
-import { liveCopies } from "@/lib/files/copy-state";
 
 // Lazy-load admin DB to avoid initialization at build time
 let _db: ReturnType<typeof import("@/lib/firebase/admin").getAdminDb> | null = null;
@@ -63,6 +62,13 @@ async function dismissedFileIdsFor(
     }
   }
   return dismissed;
+}
+
+/** What findFileMatchesForTransaction answers: the matcher's ranking of stored Files (#613). */
+interface FileMatchesResponse {
+  matches: Array<{ fileId: string; confidence: number; matchSources: string[] }>;
+  totalCandidates: number;
+  rejectedCount: number;
 }
 
 // Server-side attachment scoring types (matches scoreAttachmentMatchCallable)
@@ -436,7 +442,6 @@ export const searchLocalFilesTool = tool(
 
     const tx = txDoc.data()!;
     const txDate = toDateSafe(tx.date) || new Date(tx.date);
-    const rejectedFileIds = new Set<string>(tx.rejectedFileIds || []);
 
     // Get partner info if available - includes all context useful for agent
     let partnerContext: {
@@ -456,14 +461,10 @@ export const searchLocalFilesTool = tool(
       } | null;
     } | null = null;
 
-    // Also keep partner data for scoring API
-    let partner = null;
-
     if (tx.partnerId) {
       const partnerDoc = await db.collection("partners").doc(tx.partnerId).get();
       if (partnerDoc.exists) {
         const partnerData = partnerDoc.data()!;
-        partner = partnerData;
 
         // Build comprehensive partner context
         partnerContext = {
@@ -514,67 +515,40 @@ export const searchLocalFilesTool = tool(
       }
     }
 
-    // Get all unconnected files
-    const filesSnapshot = await db
-      .collection("files")
-      .where("userId", "==", userId)
-      .where("transactionIds", "==", [])
-      .where("isNotInvoice", "!=", true)
-      .get();
-
-    // Define file type for eligible files
-    interface EligibleFile {
-      id: string;
-      fileName: string;
-      fileType: string;
-      deletedAt?: unknown;
-      extractedAmount?: number;
-      extractedCurrency?: string;
-      extractedDate?: { toDate?: () => Date };
-      extractedPartner?: string;
+    // The matcher ranks the stored Files (#613), through the Connect File
+    // window's own callable: the scorer the trigger stores suggestions with,
+    // and its eligibility rule (no deleted Files, Copies, non-invoices or
+    // Files addressed to someone else; no rejected pair or over-quota
+    // Transaction) and date window. A rejected pair is never offered back:
+    // the agent has no other way to know it was refused (fork #101).
+    let ranked: FileMatchesResponse;
+    try {
+      ranked = await callFirebaseFunction<{ transactionId: string; limit: number }, FileMatchesResponse>(
+        "findFileMatchesForTransaction",
+        { transactionId, limit: 100 },
+        authHeader
+      );
+    } catch (err) {
+      console.error("[searchLocalFiles] Error scoring files:", err);
+      return {
+        searchType: "local_files",
+        strategy: strategy || "all",
+        searchedTransaction: {
+          id: transactionId,
+          name: tx.name,
+          partner: tx.partner,
+          amount: tx.amount,
+          date: txDate.toISOString(),
+        },
+        partnerContext,
+        summary: "Error scoring files - please try again",
+        candidates: [],
+        totalFound: 0,
+      };
     }
+    const dismissedForThisTransaction = ranked.rejectedCount;
 
-    // A Copy is never offered (#162): its original is the File to connect.
-    // The original may be connected, so it can sit outside the query above.
-    const listedIds = new Set(filesSnapshot.docs.map((d) => d.id));
-    const missingOriginalIds = [
-      ...new Set(
-        filesSnapshot.docs
-          .map((d) => d.data().copyOfFileId as string | undefined)
-          .filter((id): id is string => !!id && !listedIds.has(id))
-      ),
-    ];
-    const missingOriginals = missingOriginalIds.length
-      ? await db.getAll(...missingOriginalIds.map((id) => db.collection("files").doc(id)))
-      : [];
-    const copies = liveCopies([
-      ...filesSnapshot.docs.map((d) => ({ id: d.id, ...d.data() })),
-      ...missingOriginals.filter((d) => d.exists).map((d) => ({ id: d.id, ...d.data() })),
-    ]);
-
-    // Filter to eligible files (PDFs and images, not soft-deleted, not Copies)
-    const typeEligibleFiles: EligibleFile[] = filesSnapshot.docs
-      .map((doc) => ({ id: doc.id, ...doc.data() } as EligibleFile))
-      .filter((file) => {
-        if (file.deletedAt) return false;
-        if (copies.has(file.id)) return false;
-        return file.fileType === "application/pdf" || file.fileType?.startsWith("image/");
-      });
-
-    // Drop files that have rejected THIS transaction (fork #101). Offering a
-    // dismissed pair back to the agent is how a rejection gets undone one step
-    // later: the agent has no other way to know the pair was refused, and the
-    // scorer will happily rank it first again. Dropped before scoring rather
-    // than after, so a dismissed pair does not occupy a candidate slot.
-    //
-    // Per-file, not per-transaction: dismissal lives on the file document,
-    // unlike the transaction's `rejectedFileIds` this tool already reads.
-    const eligibleFiles: EligibleFile[] = typeEligibleFiles.filter(
-      (file) => !readDismissedTransactionIds(file).has(transactionId)
-    );
-    const dismissedForThisTransaction = typeEligibleFiles.length - eligibleFiles.length;
-
-    if (eligibleFiles.length === 0) {
+    if (ranked.totalCandidates === 0) {
       // Build hint if partner prefers no-receipt
       let resolutionHint: string | undefined;
       if (partnerContext?.resolution?.type === "no_receipt") {
@@ -607,19 +581,14 @@ export const searchLocalFilesTool = tool(
       };
     }
 
-    // Build attachments list for scoring API
-    const attachmentsToScore = eligibleFiles.map((file) => ({
-      key: `local_${file.id}`,
-      filename: file.fileName,
-      mimeType: file.fileType,
-      // Pass file extracted data for accurate scoring
-      fileExtractedAmount: getFileAmountForValidation(file, tx.amount),
-      fileExtractedDate: toDateSafe(file.extractedDate)?.toISOString() ?? null,
-      fileExtractedPartner: file.extractedPartner ?? null,
-    }));
+    // The ranked Files' own records, for what the agent is shown.
+    const ranks = ranked.matches.filter((m) => m.confidence > 0);
+    const fileSnaps = ranks.length
+      ? await db.getAll(...ranks.map((m) => db.collection("files").doc(m.fileId)))
+      : [];
+    const fileById = new Map(fileSnaps.filter((d) => d.exists).map((d) => [d.id, d.data()!]));
 
-    // Score all files using real-time scoring (same as UI does)
-    let candidates: Array<{
+    const candidates: Array<{
       id: string;
       sourceType: "local_file";
       score: number;
@@ -631,91 +600,34 @@ export const searchLocalFilesTool = tool(
       extractedCurrency?: string;
       extractedDate?: string;
       extractedPartner?: string;
-      isRejected?: boolean;
+      connectedElsewhere: boolean;
     }> = [];
 
-    try {
-      const scoreResponse = await callFirebaseFunction<ScoreAttachmentRequest, ScoreAttachmentResponse>(
-        "scoreAttachmentMatchCallable",
-        {
-          attachments: attachmentsToScore,
-          transaction: {
-            // The server derives Coverage from the id (#239). Without it this
-            // path would score every candidate against the full amount.
-            id: transactionId,
-            amount: tx.amount,
-            date: txDate.toISOString(),
-            name: tx.name,
-            partner: tx.partner,
-          },
-          partner: partner ? {
-            name: partner.name,
-            emailDomains: partner.emailDomains,
-            fileSourcePatterns: partner.fileSourcePatterns,
-          } : null,
-        },
-        authHeader
-      );
+    for (const match of ranks) {
+      const file = fileById.get(match.fileId);
+      if (!file) continue;
 
-      // Map scores back to candidates
-      const scoreMap = new Map(scoreResponse.scores.map((s) => [s.key, s]));
+      // Strategy filters read the matcher's Match Sources.
+      if (strategy === "partner_files" && !match.matchSources.includes("partner")) continue;
+      if (strategy === "amount_files" && !match.matchSources.some((s) => s.startsWith("amount"))) continue;
 
-      for (const file of eligibleFiles) {
-        const key = `local_${file.id}`;
-        const scoreResult = scoreMap.get(key);
-
-        if (scoreResult && scoreResult.score > 0) {
-          // Apply strategy filter based on score reasons
-          if (strategy === "partner_files") {
-            const hasPartnerSignal = scoreResult.reasons.some(
-              (r) => r.toLowerCase().includes("partner") || r.toLowerCase().includes("vendor")
-            );
-            if (!hasPartnerSignal) continue;
-          }
-
-          if (strategy === "amount_files") {
-            const hasAmountSignal = scoreResult.reasons.some(
-              (r) => r.toLowerCase().includes("amount")
-            );
-            if (!hasAmountSignal) continue;
-          }
-
-          const candidateAmount = getFileAmountForValidation(file, tx.amount);
-
-          candidates.push({
-            id: key,
-            sourceType: "local_file",
-            score: scoreResult.score,
-            scoreLabel: scoreResult.label,
-            scoreReasons: scoreResult.reasons,
-            fileId: file.id,
-            fileName: file.fileName,
-            // Convert from cents to whole units for display
-            extractedAmount: candidateAmount != null ? candidateAmount / 100 : undefined,
-            extractedCurrency: file.extractedCurrency || "EUR",
-            extractedDate: toDateSafe(file.extractedDate)?.toISOString() ?? undefined,
-            extractedPartner: file.extractedPartner ?? undefined,
-            isRejected: rejectedFileIds.has(file.id),
-          });
-        }
-      }
-    } catch (err) {
-      console.error("[searchLocalFiles] Error scoring files:", err);
-      return {
-        searchType: "local_files",
-        strategy: strategy || "all",
-        searchedTransaction: {
-          id: transactionId,
-          name: tx.name,
-          partner: tx.partner,
-          amount: tx.amount,
-          date: txDate.toISOString(),
-        },
-        partnerContext,
-        summary: "Error scoring files - please try again",
-        candidates: [],
-        totalFound: 0,
-      };
+      const candidateAmount = getFileAmountForValidation(file, tx.amount);
+      candidates.push({
+        id: `local_${match.fileId}`,
+        sourceType: "local_file",
+        score: match.confidence,
+        scoreLabel: match.confidence >= 85 ? "Strong" : match.confidence >= 50 ? "Likely" : null,
+        scoreReasons: match.matchSources,
+        fileId: match.fileId,
+        fileName: file.fileName,
+        // Convert from cents to whole units for display
+        extractedAmount: candidateAmount != null ? candidateAmount / 100 : undefined,
+        extractedCurrency: file.extractedCurrency || "EUR",
+        extractedDate: toDateSafe(file.extractedDate)?.toISOString() ?? undefined,
+        extractedPartner: file.extractedPartner ?? undefined,
+        // A File can belong to more than one Transaction; say so.
+        connectedElsewhere: Array.isArray(file.transactionIds) && file.transactionIds.length > 0,
+      });
     }
 
     // Sort by score

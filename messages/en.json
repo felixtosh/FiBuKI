@@ -941,6 +941,10 @@
       "searchNotApplied": "Showing all Files, ranked. The search above searched your mailboxes.",
       "narrowedBy": "Files narrowed by “{query}”",
       "applySearch": "Filter Files by “{query}”"
+    },
+    "heldBack": {
+      "rejected": "Rejected",
+      "overQuota": "Over plan limit"
     }
   }
 }

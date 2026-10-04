@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { format } from "date-fns";
+import { useTranslations } from "next-intl";
 import {
   Search,
   Receipt,
@@ -47,6 +48,7 @@ import {
   TransactionMatchResult,
   getMatchSourceLabel,
   isSuggestedMatch,
+  heldBackKey,
 } from "@/types/transaction-matching";
 
 interface ConnectTransactionOverlayProps {
@@ -69,6 +71,7 @@ export function ConnectTransactionOverlay({
   file,
   suggestions = [],
 }: ConnectTransactionOverlayProps) {
+  const t = useTranslations("connect");
   const [search, setSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [previewTransaction, setPreviewTransaction] = useState<Transaction | null>(null);
@@ -88,26 +91,27 @@ export function ConnectTransactionOverlay({
     return map;
   }, [allFiles]);
 
-  // Memoize the fileInfo object to prevent unnecessary re-renders
+  // A File that is not stored yet is sent in its own field names; the server
+  // reads it through the matcher's assembly (#613). A stored one is read by id.
   const extractedDateValue = toDateSafe(file?.extractedDate);
   const memoizedFileInfo = useMemo(() => {
-    if (!file) return undefined;
+    if (!file || file.id) return undefined;
     return {
       extractedAmount: file.extractedAmount ?? undefined,
+      extractedTipAmount: file.extractedTipAmount ?? undefined,
+      extractedCurrency: file.extractedCurrency ?? undefined,
       extractedDate: extractedDateValue?.toISOString() ?? undefined,
+      extractedDueDate: toDateSafe(file.extractedDueDate)?.toISOString() ?? undefined,
+      extractedDebitDate: toDateSafe(file.extractedDebitDate)?.toISOString() ?? undefined,
       extractedPartner: file.extractedPartner ?? undefined,
       extractedIban: file.extractedIban ?? undefined,
       extractedText: file.extractedText ?? undefined,
+      extractedInvoiceNumber: file.extractedInvoiceNumber ?? undefined,
       partnerId: file.partnerId ?? undefined,
+      documentType: file.documentType ?? undefined,
     };
-  }, [
-    file?.extractedAmount,
-    extractedDateValue?.getTime(),
-    file?.extractedPartner,
-    file?.extractedIban,
-    file?.extractedText,
-    file?.partnerId,
-  ]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [file?.id, file?.updatedAt?.toMillis?.(), extractedDateValue?.getTime()]);
 
   // Memoize excludeTransactionIds to prevent unnecessary re-renders
   const memoizedExcludeIds = useMemo(
@@ -519,6 +523,8 @@ export function ConnectTransactionOverlay({
                         isHighlighted={isSuggested}
                         highlightVariant="suggestion"
                         confidence={matchResult?.confidence}
+                        // A search shows held-back pairs too, marked (#613).
+                        labelBadge={matchResult?.hidden ? t(heldBackKey(matchResult.hidden)) : undefined}
                         matchSignals={matchResult?.matchSources.map((s) => getMatchSourceLabel(s))}
                         onClick={() => toggleSelection(transaction)}
                       />

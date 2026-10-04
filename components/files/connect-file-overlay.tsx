@@ -70,6 +70,7 @@ import { readDismissedTransactionIds } from "@/functions/src/matching/dismissedT
 import {
   TRANSACTION_MATCH_CONFIG,
   getMatchSourceLabel,
+  heldBackKey,
 } from "@/types/transaction-matching";
 import { TaxFile } from "@/types/file";
 import { toDateSafe } from "@/lib/utils";
@@ -2053,6 +2054,8 @@ export function ConnectFileOverlay({
                           isHighlighted={isStrategyMatch || isSuggested}
                           highlightVariant={isStrategyMatch ? "strategy" : "suggestion"}
                           confidence={match?.confidence}
+                          // A search shows held-back pairs too, marked (#613).
+                          labelBadge={match?.hidden ? t(heldBackKey(match.hidden)) : undefined}
                           matchSignals={
                             match?.matchSources.length
                               ? match.matchSources.map((source) => getMatchSourceLabel(source))

@@ -553,18 +553,16 @@ export const scoreBatchMatchesTool = tool(
     const authHeader = config?.configurable?.authHeader;
     if (!authHeader) return { error: "Auth not provided" };
 
-    // Drop pairs the file side has rejected before spending a scoring call on
-    // them (fork #101). A dismissed pair that reaches the matrix is worse than
-    // wasted work: the Hungarian assignment can hand it the optimal slot, and
-    // it arrives at bulkConnectFiles as a recommendation.
-    const dismissedPairs = await dismissedPairsAmong(pairs, config?.configurable?.userId);
-    const scorablePairs = pairs.filter(
-      (p) => !dismissedPairs.has(pairKey(p.fileId, p.transactionId))
-    );
-
-    // Score each pair via the server-side scoring callable
+    // Score each pair via the server-side scoring callable. The matcher says
+    // whether it could propose the pair at all (#613): a rejected one, or one
+    // it never matches, is left out of the matrix. A dismissed pair that
+    // reaches the matrix is worse than wasted work: the Hungarian assignment
+    // can hand it the optimal slot, and it arrives at bulkConnectFiles as a
+    // recommendation (fork #101).
     const results = [];
-    for (const pair of scorablePairs) {
+    const dismissedPairs = new Set<string>();
+    let scorablePairs = 0;
+    for (const pair of pairs) {
       try {
         // By id, through the same scorer and input assembly the matching
         // trigger and the connect dialog use. This called scoreAttachmentMatch
@@ -572,7 +570,7 @@ export const scoreBatchMatchesTool = tool(
         // objects), so every pair failed and scored 0.
         const result = await callFirebaseFunction<
           { fileId: string; transactionId: string },
-          { confidence?: number; breakdown?: unknown }
+          { confidence?: number; breakdown?: unknown; ineligible?: string | null; hidden?: string | null }
         >(
           "scoreFileTransactionMatch",
           {
@@ -581,6 +579,11 @@ export const scoreBatchMatchesTool = tool(
           },
           authHeader
         );
+        if (result?.ineligible || result?.hidden) {
+          dismissedPairs.add(pairKey(pair.fileId, pair.transactionId));
+          continue;
+        }
+        scorablePairs++;
         results.push({
           fileId: pair.fileId,
           transactionId: pair.transactionId,
@@ -588,6 +591,7 @@ export const scoreBatchMatchesTool = tool(
           breakdown: result?.breakdown || null,
         });
       } catch (err) {
+        scorablePairs++;
         results.push({
           fileId: pair.fileId,
           transactionId: pair.transactionId,
@@ -665,10 +669,10 @@ export const scoreBatchMatchesTool = tool(
       recommendedAssignments: assignments,
       dismissedPairsSkipped: dismissedPairs.size,
       summary:
-        `Scored ${scorablePairs.length} pairs. ` +
+        `Scored ${scorablePairs} pairs. ` +
         `${assignments.length} recommended assignments (optimal one-to-one, ≥50% confidence).` +
         (dismissedPairs.size > 0
-          ? ` ${dismissedPairs.size} pair${dismissedPairs.size === 1 ? " was" : "s were"} previously rejected and ${dismissedPairs.size === 1 ? "was" : "were"} not scored — do not propose ${dismissedPairs.size === 1 ? "it" : "them"} again.`
+          ? ` ${dismissedPairs.size} pair${dismissedPairs.size === 1 ? " was" : "s were"} rejected or cannot be matched and ${dismissedPairs.size === 1 ? "was" : "were"} left out — do not propose ${dismissedPairs.size === 1 ? "it" : "them"} again.`
           : ""),
     };
   },

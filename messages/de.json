@@ -941,6 +941,10 @@
       "searchNotApplied": "Alle Belege, gereiht. Die Suche oben hat deine Postfächer durchsucht.",
       "narrowedBy": "Belege gefiltert nach „{query}“",
       "applySearch": "Belege nach „{query}“ filtern"
+    },
+    "heldBack": {
+      "rejected": "Abgelehnt",
+      "overQuota": "Über dem Planlimit"
     }
   }
 }
