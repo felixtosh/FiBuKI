@@ -334,6 +334,14 @@ reads. Every amount the chat reads is integer cents, the chat-only tools' includ
 `functions/src/selfhost/chat-mcp-tools.test.ts` holds each wrapper to its twin's output
 and fails if one reads or writes the database itself.
 
+**Who called is the server's to say (#665).** `handleTool` takes a caller
+(`functions/src/tools/caller.ts`): MCP and the REST API by default, the chat agent when
+`runTool` calls it, with the worker type the worker runtime sends beside the arguments.
+A handler that records who made a write (a Partner assignment's `ai` / `api`, a File
+Connection's origin `agent` / `mcp`) or applies the agent's connect checks reads that
+parameter, never an argument. A User reaching `runTool` gets nothing the existing
+callables do not already allow.
+
 ## Business Rules
 
 ### Server-Side Scoring Only
