@@ -11,8 +11,10 @@
  * DATABASE_URL, which that container has). Never touches Firebase.
  *
  * A dry run unless --apply is passed. Every run writes the report (JSON) into
- * --out-dir: each record whose score changes, from and to. Idempotent: a
- * second --apply writes nothing.
+ * --out-dir: each record whose score changes, from and to. With --apply that
+ * list is written as a "planned" file before the first record is touched.
+ * Idempotent: a second --apply writes nothing, so a run that failed part-way
+ * is finished by running it again.
  *
  * On fibuki.com, from /opt/fibuki/deploy/selfhost:
  *
@@ -68,15 +70,24 @@ async function main(): Promise<void> {
   await fs.mkdir(outDir, { recursive: true });
   console.log(`re-scoring File Connections that carry rescoredAt${apply ? "" : " (dry run)"}`);
 
+  const reportPath = path.join(outDir, `rescored-connections-report-${stamp}.json`);
   let report;
   try {
-    report = await repairRescoredConnections(getFirestore(), { apply });
+    report = await repairRescoredConnections(getFirestore(), {
+      apply,
+      // The from -> to list is on disk before the first write, so a run that
+      // fails part-way still says which records it set out to overwrite.
+      beforeWrite: async (planned) => {
+        const plannedPath = path.join(outDir, `rescored-connections-planned-${stamp}.json`);
+        await fs.writeFile(plannedPath, JSON.stringify(planned, null, 2));
+        console.log(`planned changes written to ${plannedPath}`);
+      },
+    });
   } catch (err) {
     console.error(`error: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(2);
   }
 
-  const reportPath = path.join(outDir, `rescored-connections-report-${stamp}.json`);
   await fs.writeFile(reportPath, JSON.stringify(report, null, 2));
 
   console.log(

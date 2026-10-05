@@ -74,10 +74,14 @@ async function readByIds(db: Firestore, collection: string, ids: string[]): Prom
 
 export async function repairRescoredConnections(
   db: Firestore,
-  options: { apply: boolean }
+  options: {
+    apply: boolean;
+    /** Called with the planned report before anything is written, so a run that fails mid-write leaves its from -> to list. */
+    beforeWrite?: (planned: RepairRescoredReport) => Promise<void>;
+  }
 ): Promise<RepairRescoredReport> {
-  const all = await db.collection("fileConnections").get();
-  const records = all.docs.filter((doc) => doc.data().rescoredAt != null);
+  // Only the records the re-score wrote: a record without the field is never read.
+  const records = (await db.collection("fileConnections").where("rescoredAt", "!=", null).get()).docs;
 
   const report: RepairRescoredReport = {
     apply: options.apply,
@@ -148,6 +152,9 @@ export async function repairRescoredConnections(
   }
 
   // Written by the File Connection writer (#612), the records' one writer.
-  if (options.apply && toWrite.length > 0) report.written = await writeConnectionScores(db, toWrite);
+  if (options.apply && toWrite.length > 0) {
+    await options.beforeWrite?.(report);
+    report.written = await writeConnectionScores(db, toWrite);
+  }
   return report;
 }

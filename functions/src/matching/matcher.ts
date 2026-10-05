@@ -474,6 +474,12 @@ function withoutFile(
  * holds the scored File itself, and the pair would read as a duplicate of
  * itself. A Transaction with no stored state keeps none: the scorer skips the
  * rule, as it does for every caller that does not know the state.
+ *
+ * Only the scored File is left out. Another File on the Transaction still
+ * counts, so a second invoice on the line keeps the pair suppressed (decided
+ * on #644), and so does a Receipt's own linked invoice (ADR-0012): the
+ * Receipt reads as `receipt-against-invoice`, as it did before #644. Whether a
+ * linked pair should count once here too is not settled by #644.
  */
 function documentationStateFor(
   fileId: string | null,
