@@ -10,6 +10,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
+import { handCorrectedFieldsOf } from "@/lib/files/hand-correction-refusal";
 import { Copy, Loader2 } from "lucide-react";
 import { TaxFile, CopySuggestionReason } from "@/types/file";
 import { Button } from "@/components/ui/button";
@@ -67,7 +68,13 @@ export function FileCopySection({
     try {
       await act();
     } catch (err) {
-      setError(t("failed", { message: (err as Error)?.message ?? String(err) }));
+      // Marking a hidden File as a Copy un-marks it, which a Hand Correction
+      // refuses; there is no override here (#639).
+      setError(
+        handCorrectedFieldsOf(err)
+          ? t("handCorrected")
+          : t("failed", { message: (err as Error)?.message ?? String(err) })
+      );
     } finally {
       setBusy(null);
     }

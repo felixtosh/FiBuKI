@@ -432,7 +432,11 @@ export async function markFileAsCopy(
     // The un-mark re-extracts the File, which a Hand Correction refuses (#639).
     const unmarkRefused = unmark ? unmarkRefusal(copy.data) : null;
     if (unmarkRefused) {
-      throw new HttpsError("failed-precondition", `HAND_CORRECTED: ${unmarkRefused}`);
+      throw new HttpsError(
+        "failed-precondition",
+        `HAND_CORRECTED: ${unmarkRefused.message}`,
+        unmarkRefused.details
+      );
     }
     const extra = unmark ? buildUnmarkNotInvoiceUpdates(copy.data, false) : {};
 

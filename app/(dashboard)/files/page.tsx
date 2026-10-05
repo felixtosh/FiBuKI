@@ -7,7 +7,15 @@ import { useDropzone } from "react-dropzone";
 import { Upload } from "lucide-react";
 import { db } from "@/lib/firebase/config";
 import { uploadFile, UPLOAD_ACCEPTED_TYPES, UPLOAD_MAX_FILE_SIZE } from "@/lib/files/upload-file";
-import { connectFileToTransaction, assignPartnerToFile, OperationsContext } from "@/lib/operations";
+import {
+  connectFileToTransaction,
+  assignPartnerToFile,
+  retryFileExtraction,
+  OperationsContext,
+} from "@/lib/operations";
+import { useTranslations } from "next-intl";
+import { useHandCorrectionGuard } from "@/components/files/hand-correction-dialog";
+import { bulkMarkAsInvoiceSummary, markFilesAsInvoice } from "@/lib/files/hand-correction-refusal";
 import { FileTable } from "@/components/files/file-table";
 import { FileDetailPanel } from "@/components/files/file-detail-panel";
 import { FileBulkPanel } from "@/components/files/file-bulk-panel";
@@ -117,6 +125,11 @@ function FilesContent() {
     () => ({ db, userId: userId ?? "" }),
     [userId]
   );
+  const tBulkMarkAsInvoice = useTranslations("files.bulkMarkAsInvoice");
+  // Un-marking a File with a Hand Correction is refused by the server; the
+  // guard asks before the forced re-extraction overwrites it (#639).
+  const handCorrection = useHandCorrectionGuard();
+  const guardHandCorrection = handCorrection.guard;
 
   // Parse filters from URL using centralized utility
   const filters: FileFilters = useMemo(() => {
@@ -750,17 +763,33 @@ function FilesContent() {
 
   const handleUnmarkAsNotInvoice = useCallback(async () => {
     if (!selectedFile) return;
+    const fileId = selectedFile.id;
     // Set parsing state FIRST before any Firestore updates (prevents race condition)
-    setParsingFileId(selectedFile.id);
+    setParsingFileId(fileId);
     // Unmarking queues the re-extraction itself, without re-classifying:
-    // the user says it IS an invoice.
+    // the user says it IS an invoice. A File with a Hand Correction is
+    // refused; "Extract anyway" is the forced Retry, which re-extracts a File
+    // marked not an invoice as an invoice (#639).
     try {
-      await unmarkAsNotInvoice(selectedFile.id);
+      const outcome = await guardHandCorrection(
+        () => unmarkAsNotInvoice(fileId),
+        async () => {
+          setParsingFileId(fileId);
+          try {
+            await retryFileExtraction(ctx, fileId, true, { overwriteCorrections: true });
+          } catch (error) {
+            console.error("Failed to re-extract as invoice:", error);
+            setParsingFileId(null);
+          }
+        }
+      );
+      // Nothing was queued: the spinner waits for the person's answer.
+      if (outcome === "asked") setParsingFileId(null);
     } catch (error) {
       console.error("Failed to mark as invoice:", error);
       setParsingFileId(null);
     }
-  }, [selectedFile, unmarkAsNotInvoice]);
+  }, [selectedFile, unmarkAsNotInvoice, guardHandCorrection, ctx]);
 
 
   // FAB: create an empty draft invoice and open the sidebar. Partner and
@@ -956,33 +985,19 @@ function FilesContent() {
 
     setIsBulkUpdating(true);
     setBulkProgress({ completed: 0, total: fileIds.length });
-    let successCount = 0;
-    let failureCount = 0;
     try {
-      for (const fileId of fileIds) {
-        try {
-          // Queues the re-extraction too.
-          await unmarkAsNotInvoice(fileId);
-          successCount++;
-        } catch (error) {
-          console.error(`Failed to mark file ${fileId} as invoice:`, error);
-          failureCount++;
-        }
-        setBulkProgress((prev) => (prev ? { ...prev, completed: prev.completed + 1 } : prev));
-      }
+      // Each un-mark queues its re-extraction too. A File with a Hand
+      // Correction is skipped, never overridden in bulk (#639).
+      const result = await markFilesAsInvoice(fileIds, unmarkAsNotInvoice, () =>
+        setBulkProgress((prev) => (prev ? { ...prev, completed: prev.completed + 1 } : prev))
+      );
       setAdditionalSelectedIds(new Set());
-      setBulkToast({
-        message:
-          failureCount > 0
-            ? `Updated ${successCount} of ${fileIds.length} files (${failureCount} failed)`
-            : `Marked ${successCount} file${successCount === 1 ? "" : "s"} as invoice`,
-        tone: failureCount > 0 ? "error" : "success",
-      });
+      setBulkToast(bulkMarkAsInvoiceSummary(tBulkMarkAsInvoice, result));
     } finally {
       setIsBulkUpdating(false);
       setBulkProgress(null);
     }
-  }, [allSelectedIds, unmarkAsNotInvoice]);
+  }, [allSelectedIds, unmarkAsNotInvoice, tBulkMarkAsInvoice]);
 
   // Multi-select: bulk assign partner. Iterates the same single-file operation
   // the detail panel calls, so twenty files end up recorded exactly as twenty
@@ -1243,6 +1258,7 @@ function FilesContent() {
         globalPartners={globalPartners}
       />
       <SummaryToast toast={bulkToast} />
+      {handCorrection.dialog}
     </TooltipProvider>
   );
 }

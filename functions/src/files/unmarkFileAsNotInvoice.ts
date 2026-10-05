@@ -45,7 +45,7 @@ export const unmarkFileAsNotInvoiceCallable = createCallable<
     // Un-marking re-extracts the File, which a Hand Correction refuses (#639).
     const refused = unmarkRefusal(fileData);
     if (refused) {
-      throw new HttpsError("failed-precondition", refused);
+      throw new HttpsError("failed-precondition", refused.message, refused.details);
     }
 
     // Check for manual transaction connections before resetting transaction matching
