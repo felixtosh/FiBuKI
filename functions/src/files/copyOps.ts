@@ -20,7 +20,7 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { HttpsError } from "../utils/createCallable";
 import { normalizeCompanyName } from "../utils/partner-matcher";
 import { isGeneratedInvoiceFile } from "./generatedInvoiceGuard";
-import { buildUnmarkNotInvoiceUpdates, queueExtractionAfterUnmark } from "./notInvoiceOps";
+import { buildUnmarkNotInvoiceUpdates, queueExtractionAfterUnmark, unmarkRefusal } from "./notInvoiceOps";
 import { rematchRevertedTransactions } from "../matching/partnerProvenance";
 import { planCopyMove } from "../fileConnections/writer";
 import { pairedForCopyCheck } from "../receiptPairs/pairMatcher";
@@ -429,6 +429,11 @@ export async function markFileAsCopy(
     // re-opens Extraction, which brings back the fields it cleared; it is
     // queued once the transaction has committed.
     const unmark = recordedBy === "user" && copy.data.isNotInvoice === true;
+    // The un-mark re-extracts the File, which a Hand Correction refuses (#639).
+    const unmarkRefused = unmark ? unmarkRefusal(copy.data) : null;
+    if (unmarkRefused) {
+      throw new HttpsError("failed-precondition", `HAND_CORRECTED: ${unmarkRefused}`);
+    }
     const extra = unmark ? buildUnmarkNotInvoiceUpdates(copy.data, false) : {};
 
     const applied = await applyCopy(tx, db, userId, copy, root, recordedBy, extra);

@@ -10,6 +10,7 @@
 
 import { FieldValue } from "firebase-admin/firestore";
 import { enqueueExtraction } from "../extraction/extractionQueue";
+import { reExtractionRefusal } from "../fileFacts/factChange";
 
 /**
  * Fields the transition reads. Deliberately narrow: everything else on the
@@ -134,6 +135,26 @@ export function buildUnmarkNotInvoiceUpdates(
   }
 
   return updates;
+}
+
+/**
+ * Why this File may not be un-marked, or null when it may (#639).
+ *
+ * Un-marking re-extracts the File, so a File with a Hand Correction is
+ * refused as every re-extraction is (#184), before anything is written. The
+ * caller hears it at once instead of finding the File re-read later. Un-mark
+ * takes no overwrite of its own: the forced re-extraction is a Retry with
+ * `overwriteCorrections`, which on a File marked Not Invoice re-extracts it as
+ * an invoice, the same as un-marking would.
+ */
+export function unmarkRefusal(fileData: Record<string, unknown>): string | null {
+  const refusal = reExtractionRefusal(fileData, {});
+  if (!refusal) return null;
+  return (
+    `File carries hand corrections a re-extraction would discard (${(refusal.fields ?? []).join(", ")}). ` +
+    "Un-marking it as not an invoice re-extracts it, so it is refused. " +
+    "Retry its extraction with overwriteCorrections to re-extract it as an invoice anyway."
+  );
 }
 
 /**
