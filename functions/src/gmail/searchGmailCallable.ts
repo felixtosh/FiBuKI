@@ -24,6 +24,7 @@ import {
 import { MAX_EMAILS_PER_BATCH } from "../mail/constants";
 import { buildGmailQuery } from "../mail/gmail-query";
 import { imapConfigFromIntegration } from "../mail/imap/config";
+import { dayOf } from "../utils/storedDay";
 
 // Secrets for token refresh
 const googleClientId = defineSecret("GOOGLE_CLIENT_ID");
@@ -195,13 +196,11 @@ function buildGmailSearchQuery(params: {
   }
 
   if (params.dateFrom) {
-    const d = params.dateFrom;
-    parts.push(`after:${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`);
+    parts.push(`after:${dayOf(params.dateFrom).replace(/-/g, "/")}`);
   }
 
   if (params.dateTo) {
-    const d = params.dateTo;
-    parts.push(`before:${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`);
+    parts.push(`before:${dayOf(params.dateTo).replace(/-/g, "/")}`);
   }
 
   return parts.join(" ");

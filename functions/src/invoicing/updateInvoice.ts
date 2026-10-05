@@ -26,6 +26,7 @@ import {
   pickIssuerIban,
 } from "./snapshots";
 import { supplyAbroadIssueProblem, withoutVat } from "./supplyAbroad";
+import { addDays, yearOf } from "../utils/storedDay";
 
 export interface UpdateInvoiceLineItemInput {
   id?: string;
@@ -90,12 +91,6 @@ function normalizeLineItems(
 function parseIsoDateToTimestamp(iso: string): Timestamp | null {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return null;
-  return Timestamp.fromDate(d);
-}
-
-function addDaysToTimestamp(ts: Timestamp, days: number): Timestamp {
-  const d = ts.toDate();
-  d.setDate(d.getDate() + days);
   return Timestamp.fromDate(d);
 }
 
@@ -236,7 +231,7 @@ export async function performUpdateInvoice(
   } else if (nextIssueDate || patch.paymentTerms !== undefined) {
     const baseDate = nextIssueDate || current.issueDate;
     const terms = patch.paymentTerms ?? current.paymentTerms;
-    updates.dueDate = addDaysToTimestamp(baseDate, parsePaymentTermsToDays(terms));
+    updates.dueDate = Timestamp.fromDate(addDays(baseDate.toDate(), parsePaymentTermsToDays(terms)));
   }
 
   // Line items + totals
@@ -305,7 +300,7 @@ export async function performUpdateInvoice(
         updates.number = composeInvoiceName({
           namePrefix: effectiveNamePrefix ?? undefined,
           recipientName: effectiveRecipientName,
-          year: effectiveIssueDate.toDate().getFullYear(),
+          year: yearOf(effectiveIssueDate.toDate()),
           numberSeq: effectiveNumberSeq,
         });
       }

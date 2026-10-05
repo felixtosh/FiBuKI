@@ -9,7 +9,6 @@ import {
   BmdExportRequest,
   BmdExportResponse,
   BmdExport,
-  BMD_EXPORT_EXPIRY_DAYS,
 } from "../types/bmd-export";
 
 export const requestBmdExportCallable = createCallable<
@@ -59,10 +58,6 @@ export const requestBmdExportCallable = createCallable<
 
     // Create new export document
     const exportRef = db.collection("bmdExports").doc();
-
-    // Calculate expiry date
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + BMD_EXPORT_EXPIRY_DAYS);
 
     const exportDoc: Omit<BmdExport, "id"> = {
       userId,

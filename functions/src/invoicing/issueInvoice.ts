@@ -20,6 +20,7 @@ import { allocateInvoiceNumber, assertInvoiceNumberFree } from "./numberAllocato
 import { renderInvoicePdf } from "./renderInvoicePdf";
 import { buildInvoiceFileFields } from "./buildInvoiceFileFields";
 import { supplyAbroadIssueProblem } from "./supplyAbroad";
+import { yearOf } from "../utils/storedDay";
 
 export interface IssueInvoiceRequest {
   invoiceId: string;
@@ -107,7 +108,7 @@ export async function performIssueInvoice(
   // 1. Compose the invoice number from namePrefix + year + numberSeq. Legacy
   // drafts without numberSeq fall back to the atomic per-user allocator so we
   // never end up with an unnumbered issued invoice.
-  const issueYear = current.issueDate.toDate().getFullYear();
+  const issueYear = yearOf(current.issueDate.toDate());
   let number: string;
   if (typeof current.numberSeq === "number" && current.numberSeq >= 1) {
     number = composeInvoiceName({

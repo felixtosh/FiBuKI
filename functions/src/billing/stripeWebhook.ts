@@ -209,8 +209,8 @@ async function handleCheckoutCompleted(
 
   const now = new Date();
   const periodEnd = new Date(now);
-  periodEnd.setMonth(periodEnd.getMonth() + (billingPeriod === "yearly" ? 12 : 1));
-  const yearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  periodEnd.setUTCMonth(periodEnd.getUTCMonth() + (billingPeriod === "yearly" ? 12 : 1));
+  const yearMonth = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
 
   await db.collection("subscriptions").doc(userId).set(
     {
@@ -336,7 +336,7 @@ async function handleInvoicePaymentSucceeded(
 
   const subDoc = subQuery.docs[0];
   const now = new Date();
-  const yearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const yearMonth = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
 
   // Derive period from the invoice's own line items (avoids extra Stripe API call).
   // Invoice lines contain the subscription period that was just paid for.
@@ -346,7 +346,7 @@ async function handleInvoicePaymentSucceeded(
     : now;
   const periodEnd = firstLine?.period?.end
     ? new Date(firstLine.period.end * 1000)
-    : new Date(now.getFullYear(), now.getMonth() + 1, now.getDate());
+    : new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, now.getUTCDate()));
 
   await subDoc.ref.update({
     stripeSubscriptionStatus: "active",

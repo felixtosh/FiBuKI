@@ -45,8 +45,8 @@ export const calculateCapitalGainsSummaryCallable = createCallable<
     const country: TaxCountryCode = (userDataSnap.data()?.country as TaxCountryCode) || "AT";
 
     // Fetch all trades for this user in the given year
-    const yearStart = new Date(year, 0, 1);
-    const yearEnd = new Date(year + 1, 0, 1);
+    const yearStart = new Date(Date.UTC(year, 0, 1));
+    const yearEnd = new Date(Date.UTC(year + 1, 0, 1));
 
     const tradesSnap = await ctx.db
       .collection("investmentTrades")
@@ -164,7 +164,7 @@ export const calculateCapitalGainsSummaryCallable = createCallable<
       const allTradesSnap = await ctx.db
         .collection("investmentTrades")
         .where("userId", "==", ctx.userId)
-        .where("date", "<=", Timestamp.fromDate(new Date(year, 11, 31, 23, 59, 59)))
+        .where("date", "<", Timestamp.fromDate(yearEnd))
         .orderBy("date", "asc")
         .get();
 

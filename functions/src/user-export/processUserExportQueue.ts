@@ -184,8 +184,7 @@ async function processExport(
     });
 
     // Generate download URL with token (works for both emulator and production)
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + EXPORT_EXPIRY_DAYS);
+    const expiresAt = new Date(Date.now() + EXPORT_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
 
     const downloadUrl = buildDownloadUrl(bucket.name, storagePath, downloadToken);
 

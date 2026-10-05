@@ -31,6 +31,7 @@ import {
 } from "./types";
 import { draftFileStubFields, draftPlaceholderNumber } from "./buildInvoiceFileFields";
 import { nextInvoiceNumberSeq } from "./numberAllocator";
+import { addDays, viennaToday, yearOf } from "../utils/storedDay";
 
 function buildBlankIssuerSnapshot(): InvoiceIssuerSnapshot {
   return { entityId: "", name: "", iban: "" };
@@ -79,16 +80,10 @@ function genLineItemId(): string {
   return `li_${Math.random().toString(36).slice(2, 10)}`;
 }
 
+/** The stated issue date, or today's Vienna day when none (or no valid one) is given. */
 function parseIsoDateToTimestamp(iso?: string): Timestamp {
-  if (!iso) return Timestamp.now();
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return Timestamp.now();
-  return Timestamp.fromDate(d);
-}
-
-function addDaysToTimestamp(ts: Timestamp, days: number): Timestamp {
-  const d = ts.toDate();
-  d.setDate(d.getDate() + days);
+  const d = iso ? new Date(iso) : null;
+  if (!d || Number.isNaN(d.getTime())) return Timestamp.fromDate(viennaToday());
   return Timestamp.fromDate(d);
 }
 
@@ -153,7 +148,7 @@ export async function performCreateInvoice(
   // Dates
   const issueDate = parseIsoDateToTimestamp(request.issueDate);
   const paymentTerms = request.paymentTerms || DEFAULT_PAYMENT_TERMS;
-  const dueDate = addDaysToTimestamp(issueDate, parsePaymentTermsToDays(paymentTerms));
+  const dueDate = Timestamp.fromDate(addDays(issueDate.toDate(), parsePaymentTermsToDays(paymentTerms)));
 
   // Line items + totals. Drafts always carry at least one empty row so the
   // editor opens with an actionable line, and issueInvoice's
@@ -180,7 +175,7 @@ export async function performCreateInvoice(
   // affects what the upcoming draft's seq looks like.
   let numberSeq = 1;
   try {
-    numberSeq = await nextInvoiceNumberSeq(db, userId, issueDate.toDate().getFullYear());
+    numberSeq = await nextInvoiceNumberSeq(db, userId, yearOf(issueDate.toDate()));
   } catch (err) {
     // Non-fatal — fall back to 1 and let the user adjust manually.
     console.warn("createInvoice: failed to compute next numberSeq", err);

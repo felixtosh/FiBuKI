@@ -439,8 +439,7 @@ async function processBmdExport(
     });
 
     // Generate download URL
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + BMD_EXPORT_EXPIRY_DAYS);
+    const expiresAt = new Date(Date.now() + BMD_EXPORT_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
 
     const downloadUrl = buildDownloadUrl(bucket.name, storagePath, downloadToken);
 
