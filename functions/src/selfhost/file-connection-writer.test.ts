@@ -8,9 +8,10 @@ process.env.FIBUKI_STORAGE = "memory";
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { getFirestore, Timestamp, __resetFirestoreShim, __whenShimIdle } from "./firestore-shim";
-import { __resetTriggerShim } from "./trigger-shim";
+import { drainTriggers, __resetTriggerShim } from "./trigger-shim";
 
 // REAL application code, unmodified:
+import "../invoicing/onFileConnectionWrite";
 import { connectFiles, unlinkFile, type ConnectOutcome } from "../fileConnections/writer";
 import { CONNECTION_ORIGINS, connectionDocId, type ConnectionOrigin } from "../fileConnections/rules";
 import { connectFileToTransactionCallable } from "../files/connectFileToTransaction";
@@ -303,6 +304,17 @@ describe("one record per pair", () => {
     expect(await records()).toHaveLength(1);
   });
 
+  it("a pair with two agreeing records answers already-connected and writes nothing", async () => {
+    await seedPair({ transactionIds: ["t-1"] }, { fileIds: ["f-1"] });
+    for (const id of ["dup-a", "dup-b"]) {
+      await db.collection("fileConnections").doc(id).set({ userId: ME, fileId: "f-1", transactionId: "t-1", createdAt: DAY });
+    }
+    const before = [await data("files", "f-1"), await data("transactions", "t-1")];
+    expect(await connect("manual")).toMatchObject({ status: "already-connected" });
+    expect((await records()).map((d) => d.id).sort()).toEqual(["dup-a", "dup-b"]);
+    expect([await data("files", "f-1"), await data("transactions", "t-1")]).toEqual(before);
+  });
+
   it("Unlink removes every record of the pair, and both lists", async () => {
     await seedPair({ transactionIds: ["t-1"] }, { fileIds: ["f-1"], isComplete: true });
     for (const id of ["dup-a", "dup-b"]) {
@@ -315,6 +327,54 @@ describe("one record per pair", () => {
     const tx = await data("transactions", "t-1");
     expect(tx.isComplete).toBe(false);
     expect(tx.rejectedFileIds).toEqual(["f-1"]);
+  });
+});
+
+// #642: a record whose lists do not both name the pair is no File Connection.
+const DISAGREEING = [
+  { shape: "orphan", fileLists: [] as string[], txLists: [] as string[] },
+  { shape: "file-only", fileLists: ["t-1"], txLists: [] as string[] },
+  { shape: "tx-only", fileLists: [] as string[], txLists: ["f-1"] },
+];
+
+describe.each(DISAGREEING)("a connect of a $shape pair (#642)", ({ fileLists, txLists }) => {
+  async function seedDisagreeing(recordId: string, fileExtra: Record<string, unknown> = {}, txExtra: Record<string, unknown> = {}) {
+    await seedPair({ transactionIds: fileLists, ...fileExtra }, { fileIds: txLists, ...txExtra });
+    await db.collection("fileConnections").doc(recordId).set({ userId: ME, fileId: "f-1", transactionId: "t-1", connectionType: "manual", createdAt: DAY });
+  }
+
+  it.each(["legacy-random", connectionDocId("f-1", "t-1")])(
+    "connects it: both lists, one record under the derived id (record %s)",
+    async (recordId) => {
+      await seedDisagreeing(recordId);
+      expect(await connect("manual")).toMatchObject({ status: "connected", connectionId: connectionDocId("f-1", "t-1") });
+      expect((await data("files", "f-1")).transactionIds).toEqual(["t-1"]);
+      expect((await data("transactions", "t-1")).fileIds).toEqual(["f-1"]);
+      const recs = await records();
+      expect(recs.map((d) => d.id)).toEqual([connectionDocId("f-1", "t-1")]);
+      expect(recs[0].data().origin).toBe("manual");
+      const tx = await data("transactions", "t-1");
+      expect(tx.isComplete).toBe(true);
+      expect(tx.automationHistory.filter((e: { type: string }) => e.type === "file_connected")).toHaveLength(1);
+    }
+  );
+
+  it("follows its origin's rules: an auto connect over quota is refused and changes nothing", async () => {
+    await seedDisagreeing("legacy-random", {}, { quotaExceeded: true });
+    const before = [await data("files", "f-1"), await data("transactions", "t-1")];
+    expect(await connect("auto")).toMatchObject({ status: "refused", reason: "over-quota" });
+    expect((await records()).map((d) => d.id)).toEqual(["legacy-random"]);
+    expect([await data("files", "f-1"), await data("transactions", "t-1")]).toEqual(before);
+  });
+
+  it("leaves an invoice paid by the Transaction paid when the legacy record gives way to the derived one", async () => {
+    await seedDisagreeing("legacy-random", { invoiceId: "inv-1" });
+    await db.collection("invoices").doc("inv-1").set({ userId: ME, status: "paid", paidByTransactionId: "t-1" });
+    await drainTriggers();
+    expect(await connect("manual")).toMatchObject({ status: "connected" });
+    await drainTriggers();
+    expect((await records()).map((d) => d.id)).toEqual([connectionDocId("f-1", "t-1")]);
+    expect(await data("invoices", "inv-1")).toMatchObject({ status: "paid", paidByTransactionId: "t-1" });
   });
 });
 

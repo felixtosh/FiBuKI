@@ -12,6 +12,9 @@
  *   same pair, from any writer and at the same moment, finds the first and
  *   changes nothing. Records written before #612 carry random ids and are
  *   still found by their fields; Unlink removes every record of a pair.
+ * - A record counts only while both lists name its pair (#642). Connecting a
+ *   pair whose record a list misses is a fresh connect: it completes both
+ *   lists and leaves the one record under the derived id.
  * - A connect takes a list of pairs and writes them in Firestore transactions
  *   of at most `CONNECT_CHUNK` pairs, so a run of any size neither exceeds a
  *   batch nor reuses one.
@@ -492,8 +495,12 @@ async function planConnects(
       continue;
     }
 
+    // A File Connection is the record and both lists (#642). A record a list
+    // does not name (written before #612) is none: the pair connects afresh,
+    // under every rule below, and its record moves to the derived id.
     const existing = pairRecords(fileId, transactionId);
-    if (existing.length > 0) {
+    const listed = file.ids("transactionIds").includes(transactionId) && t.ids("fileIds").includes(fileId);
+    if (existing.length > 0 && listed) {
       outcomes.push({
         fileId,
         transactionId,
@@ -588,6 +595,9 @@ async function planConnects(
     }
 
     // ---- connect ----
+    const connectionId = connectionDocId(fileId, transactionId);
+    for (const rec of existing) if (rec.id !== connectionId) removed.add(rec.id);
+
     const suggestions: Array<{ transactionId: string; confidence?: number; matchSources?: unknown }> =
       Array.isArray(file.data.transactionSuggestions) ? file.data.transactionSuggestions : [];
     const suggestedIndex = suggestions.findIndex((s) => s?.transactionId === transactionId);
@@ -637,7 +647,6 @@ async function planConnects(
       const value = pair.sourceInfo?.[key];
       if (typeof value === "string" && value) record[key] = value;
     }
-    const connectionId = connectionDocId(fileId, transactionId);
     sets.push({ ref: db.collection(CONNECTIONS).doc(connectionId), data: record });
 
     if (stored && origin === "suggestion") {
