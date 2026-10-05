@@ -4,7 +4,6 @@ import {
   orderBy,
   where,
   getDocs,
-  addDoc,
   Timestamp,
   limit,
 } from "firebase/firestore";
@@ -37,38 +36,6 @@ export function calculateCost(
 ): number {
   const pricing = AI_MODEL_PRICING[model] || AI_MODEL_PRICING["claude-sonnet-4-20250514"];
   return (inputTokens * pricing.input + outputTokens * pricing.output) / 1_000_000;
-}
-
-/**
- * Log an AI usage record
- */
-export async function logAIUsage(
-  ctx: OperationsContext,
-  params: LogAIUsageParams
-): Promise<string> {
-  const cost = calculateCost(params.model, params.inputTokens, params.outputTokens);
-
-  const record = {
-    userId: ctx.userId,
-    function: params.function,
-    model: params.model,
-    inputTokens: params.inputTokens,
-    outputTokens: params.outputTokens,
-    estimatedCost: cost,
-    createdAt: Timestamp.now(),
-    metadata: params.metadata || null,
-  };
-
-  const docRef = await addDoc(collection(ctx.db, AI_USAGE_COLLECTION), record);
-
-  console.log(`[AI Usage] ${params.function}`, {
-    model: params.model,
-    inputTokens: params.inputTokens,
-    outputTokens: params.outputTokens,
-    estimatedCost: `$${cost.toFixed(4)}`,
-  });
-
-  return docRef.id;
 }
 
 /**

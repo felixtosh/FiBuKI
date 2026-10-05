@@ -167,7 +167,6 @@
   "components/settings/settings-sidebar.tsx": 2,
   "components/settings/user-usage-dashboard.tsx": 23,
   "components/sidebar/ai-suggestion-card.tsx": 3,
-  "components/sidebar/file-upload-zone.tsx": 2,
   "components/sidebar/receipt-list.tsx": 3,
   "components/sidebar/transaction-detail-sheet.tsx": 2,
   "components/sidebar/transaction-details.tsx": 20,

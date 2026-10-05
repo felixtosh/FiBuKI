@@ -13,9 +13,6 @@ export * from "./import-ops";
 // Partner operations
 export * from "./partner-ops";
 
-// Test data operations
-export * from "./test-data-ops";
-
 // Chat operations
 export * from "./chat-ops";
 

@@ -7,11 +7,9 @@ import {
   getDoc,
   doc,
   updateDoc,
-  addDoc,
   Timestamp,
 } from "firebase/firestore";
-import { TransactionSource, SourceFormData, SavedFieldMapping } from "@/types/source";
-import { normalizeIban } from "@/lib/import/deduplication";
+import { TransactionSource } from "@/types/source";
 import { OperationsContext } from "./types";
 
 const SOURCES_COLLECTION = "sources";
@@ -58,33 +56,6 @@ export async function getSourceById(
 }
 
 /**
- * Create a new source
- */
-export async function createSource(
-  ctx: OperationsContext,
-  data: SourceFormData
-): Promise<string> {
-  const now = Timestamp.now();
-  const newSource = {
-    name: data.name,
-    accountKind: data.accountKind,
-    iban: data.iban ? normalizeIban(data.iban) : null,
-    linkedSourceId: data.linkedSourceId || null,
-    cardLast4: data.cardLast4 || null,
-    cardBrand: data.cardBrand || null,
-    currency: data.currency,
-    type: data.type,
-    isActive: true,
-    userId: ctx.userId,
-    createdAt: now,
-    updatedAt: now,
-  };
-
-  const docRef = await addDoc(collection(ctx.db, SOURCES_COLLECTION), newSource);
-  return docRef.id;
-}
-
-/**
  * Update a source
  */
 export async function updateSource(
@@ -101,27 +72,6 @@ export async function updateSource(
   const docRef = doc(ctx.db, SOURCES_COLLECTION, sourceId);
   await updateDoc(docRef, {
     ...data,
-    updatedAt: Timestamp.now(),
-  });
-}
-
-/**
- * Save field mappings for future imports
- */
-export async function saveFieldMappings(
-  ctx: OperationsContext,
-  sourceId: string,
-  mappings: SavedFieldMapping
-): Promise<void> {
-  // Verify ownership first
-  const existing = await getSourceById(ctx, sourceId);
-  if (!existing) {
-    throw new Error(`Source ${sourceId} not found or access denied`);
-  }
-
-  const docRef = doc(ctx.db, SOURCES_COLLECTION, sourceId);
-  await updateDoc(docRef, {
-    fieldMappings: mappings,
     updatedAt: Timestamp.now(),
   });
 }
