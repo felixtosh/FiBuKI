@@ -206,3 +206,108 @@ export function summarizeConnectedFiles(files: ConnectedFileAmount[]): {
   }
   return { documentedAmount: documentedAmountOf(finished), pendingCount };
 }
+
+// ============================================================================
+// Outstanding: the File-side mirror of the Remainder (#615, ADR-0013)
+// ============================================================================
+
+/** One Transaction a File is connected to, as Outstanding reads it. */
+export interface PaymentTowardFile {
+  /** The bank line's amount, as stored; read as a magnitude. */
+  transactionAmount: number;
+  /** The bank line's currency. A missing one reads as EUR. */
+  transactionCurrency?: string | null;
+  /**
+   * Every File connected to that Transaction, the File itself included, read
+   * the way Coverage reads them, so a Receipt and the invoice it pays count
+   * once (#571).
+   */
+  files: ConnectedFileAmount[];
+}
+
+/** The File being asked about. */
+export interface OutstandingFile {
+  fileId: string;
+  /** `filePaymentTotal` for the File; null when it has no extracted amount. */
+  payment: number | null | undefined;
+  currency?: string | null;
+  /** Its Receipt Link's invoice (#571), when it is a Receipt. */
+  receiptOfFileId?: string | null;
+}
+
+export interface Outstanding {
+  /** The File's payment total, as a magnitude. */
+  total: number;
+  /** What its connected Transactions pay toward it, as a magnitude. */
+  paid: number;
+  /** total minus paid, never below zero: an overpaid File is paid, not owed money. */
+  outstanding: number;
+  /**
+   * A payment is connected and part of the File is still unpaid: the figure a
+   * further Transaction is scored against. Before any payment there is
+   * nothing Outstanding (ADR-0013 rule 1), and a paid File is scored against
+   * its full total again, as a documented Transaction is.
+   */
+  isOutstanding: boolean;
+}
+
+function currencyKey(currency: string | null | undefined): string {
+  return (currency || "EUR").toUpperCase();
+}
+
+/**
+ * What a File's connected Transactions pay toward it, and what is left: the
+ * one derivation, read by the matcher and by the File panel.
+ *
+ * What one Transaction pays toward the File: when the documents it counts
+ * (`summarizeConnectedFiles`, a Receipt Link pair once) total at most the
+ * bank amount, it pays each in full; when they total more, it pays each in
+ * proportion, bank / counted total × the document's total. That is the R2
+ * scaling the UVA claims Vorsteuer by. A Receipt folded into its invoice is
+ * paid what the pair is paid, up to its own total.
+ *
+ * Same currency only: a payment in another currency than the File, or beside
+ * a File in another currency, makes no Outstanding at all (null), and the
+ * scorer falls back to the full total. No exchange rate is guessed. Null too
+ * when the File has no amount to subtract from.
+ */
+export function deriveOutstanding(
+  file: OutstandingFile,
+  payments: PaymentTowardFile[]
+): Outstanding | null {
+  if (file.payment == null || file.payment === 0) return null;
+  const total = Math.abs(file.payment);
+  const currency = currencyKey(file.currency);
+  const self: ConnectedFileAmount = {
+    fileId: file.fileId,
+    payment: file.payment,
+    extractionPending: false,
+    currency: file.currency,
+    receiptOfFileId: file.receiptOfFileId,
+  };
+
+  let paid = 0;
+  for (const payment of payments) {
+    if (currencyKey(payment.transactionCurrency) !== currency) return null;
+    // The File as given stands for itself, whatever the read behind `files` held.
+    const files = [self, ...payment.files.filter((f) => f.fileId !== file.fileId)];
+    if (files.some((f) => f.payment != null && currencyKey(f.currency) !== currency)) return null;
+
+    const documents = countConnectedFiles(files);
+    const { documentedAmount } = summarizeConnectedFiles(files);
+    const bank = Math.abs(payment.transactionAmount);
+    const share = documentedAmount > bank ? bank / documentedAmount : 1;
+
+    // The document this File is counted as: itself, or the invoice its
+    // Receipt Link folds it into.
+    const asItself = documents.find((d) => d.fileId === file.fileId);
+    const document =
+      asItself ?? documents.find((d) => d.fileId != null && d.fileId === file.receiptOfFileId);
+    if (!document || document.payment == null) continue;
+    const towardDocument = Math.abs(document.payment) * share;
+    paid += Math.round(asItself ? towardDocument : Math.min(total, towardDocument));
+  }
+
+  const outstanding = Math.max(0, total - paid);
+  return { total, paid, outstanding, isOutstanding: paid > 0 && outstanding > 0 };
+}
