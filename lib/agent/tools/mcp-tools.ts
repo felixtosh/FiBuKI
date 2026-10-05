@@ -11,9 +11,15 @@
  * Transaction's import and automation bookkeeping left out of list rows). It
  * never filters rows or computes a figure.
  *
+ * Where the shared tool differs for the chat agent (#665: the provenance a
+ * Partner assignment or a File Connection records, the agent's connect
+ * checks), it is because runTool calls it as the agent, never because of
+ * anything a wrapper sends.
+ *
  * The parameters come from the MCP definition (lib/data/generated-tool-definitions.ts),
  * so a parameter added there reaches the chat without a second edit. Only the
- * description and the default page size are the chat's own.
+ * description, the default page size and the agent's own connect parameters
+ * are the chat's.
  *
  * Nothing in this file touches the database; the guard in
  * functions/src/selfhost/chat-mcp-tools.test.ts fails if it does.
@@ -37,12 +43,16 @@ export const MCP_TWINS = {
   listPartners: "list_partners",
   getPartner: "get_partner",
   listCategories: "list_no_receipt_categories",
+  connectFileToTransaction: "connect_file_to_transaction",
+  assignPartnerToTransaction: "assign_partner_to_transaction",
+  assignPartnerToFile: "assign_partner_to_file",
+  updatePartner: "update_partner",
 } as const;
 
 type ChatTwin = keyof typeof MCP_TWINS;
 
 interface ToolConfig {
-  configurable?: { authHeader?: string };
+  configurable?: { authHeader?: string; workerType?: string };
 }
 
 /**
@@ -150,7 +160,15 @@ export function forTheModel(mcpName: string, result: unknown): unknown {
   return out;
 }
 
-/** Run one MCP tool as the session's User. A failure is returned, not thrown, as every chat tool does. */
+/**
+ * Run one MCP tool as the session's User. A failure is returned, not thrown,
+ * as every chat tool does.
+ *
+ * runTool runs it as the chat agent (#665), which the few writes that record
+ * who made them read. When one of the agent's workers runs it, the worker
+ * type goes along beside the arguments, never among them: the agent's connect
+ * checks differ per worker. It is the worker runtime's, not the model's.
+ */
 export async function runMcpTool(
   name: string,
   args: Record<string, unknown>,
@@ -159,14 +177,14 @@ export async function runMcpTool(
   const authHeader = config?.configurable?.authHeader;
   if (!authHeader) return { error: "Auth header not provided" };
   const defined = Object.fromEntries(Object.entries(args ?? {}).filter(([, v]) => v !== undefined));
+  const workerType = config?.configurable?.workerType;
   try {
     const result = forTheModel(
       name,
-      await callFirebaseFunction<{ tool: string; arguments: Record<string, unknown> }, unknown>(
-        "runTool",
-        { tool: name, arguments: defined },
-        authHeader
-      )
+      await callFirebaseFunction<
+        { tool: string; arguments: Record<string, unknown>; workerType?: string },
+        unknown
+      >("runTool", { tool: name, arguments: defined, ...(workerType ? { workerType } : {}) }, authHeader)
     );
     // LangChain stringifies an object result for the model, but reads an
     // array whose items all have a `type` key as message content blocks, and
@@ -326,7 +344,76 @@ export const createSourceTool = wrap(
   mcpSchema("create_source", { pick: ["name", "iban", "currency"] })
 );
 
-/** Every wrapper, for the guard test. The agent lists them in READ_TOOLS / WRITE_TOOLS. */
+// The writes that record who made them (#665): runTool calls them as the chat
+// agent, so the shared tool records the agent's provenance (`ai`, Connection
+// Origin `agent`) where MCP records its own.
+
+export const assignPartnerToTransactionTool = wrap(
+  "assignPartnerToTransaction",
+  "Assign a partner (vendor/supplier) to a transaction. Use after finding/creating the partner. A partner the " +
+    "user removed from this transaction before is refused: do not retry it. A merged partner is refused naming " +
+    "its survivor: use the survivor's id.",
+  mcpSchema("assign_partner_to_transaction")
+);
+
+export const assignPartnerToFileTool = wrap(
+  "assignPartnerToFile",
+  "Assign a partner (vendor/supplier) to a file/invoice. Use after finding/creating the partner. This directly " +
+    "assigns the partner to the file without needing a transaction. A merged partner is refused naming its " +
+    "survivor: use the survivor's id.",
+  mcpSchema("assign_partner_to_file")
+);
+
+export const updatePartnerTool = wrap(
+  "updatePartner",
+  "Update an existing partner's details. VAT IDs are automatically validated via EU VIES: the reply is the " +
+    "partner record, plus vatIdCheck ({ vatId, valid, name, error }) when you passed a VAT ID, where valid is " +
+    "null when VIES could not be asked. The VAT ID is stored either way. Use this to correct partner " +
+    "information like name, VAT ID, website, or country. aliases replaces the stored list.",
+  mcpSchema("update_partner", { pick: ["partnerId", "name", "aliases", "vatId", "website", "country"] })
+);
+
+/**
+ * The chat's connect: MCP's tool, plus the agent's checks, which the shared
+ * handler applies because runTool calls it as the agent. The extra parameters
+ * are the agent's only; MCP's surface has none of them.
+ */
+export const connectFileToTransactionTool = wrap(
+  "connectFileToTransaction",
+  `Connect an existing local file to a transaction. Use when searchLocalFiles finds a good match.
+
+IMPORTANT: This tool validates that the file matches the transaction before connecting:
+- Amount must be within 50-200% of transaction amount
+- Partner mismatch is treated as a warning unless amount/date evidence is strong
+
+If validation fails, the connection is blocked (error VALIDATION_FAILED, with extractedAmount and transactionAmount in integer cents). Review the warnings before proceeding.
+Only use skipValidation=true if you're certain the file belongs to this transaction despite the mismatch.
+Note: In receipt_search worker mode, skipValidation is ignored for safety.
+
+Separately, a pair the file has previously rejected is refused outright with error PAIR_REJECTED. skipValidation does NOT lift that. Treat it as final: choose a different file, or leave the transaction unmatched.`,
+  mcpSchema("connect_file_to_transaction", {
+    overrides: {
+      confidence: z.number().optional().describe("Match confidence score (0-100)"),
+      skipValidation: z
+        .boolean()
+        .optional()
+        .describe("Set to true to skip amount/partner validation (use with caution)"),
+      overrideDismissal: z
+        .boolean()
+        .optional()
+        .describe(
+          "Connect even though this pair was previously rejected. Only when a human has explicitly asked for this exact pair — never to retry your own PAIR_REJECTED error."
+        ),
+      searchQuery: z.string().optional().describe("The search query that found this file"),
+      sourceType: z
+        .string()
+        .optional()
+        .describe("How file was found: local, gmail_attachment, gmail_email, browser"),
+    },
+  })
+);
+
+/** Every wrapper, for the guard test. The agent lists them in READ_TOOLS / WRITE_TOOLS / SEARCH_TOOLS. */
 export const MCP_TOOLS = [
   listSourcesTool,
   getSourceTool,
@@ -339,4 +426,8 @@ export const MCP_TOOLS = [
   listCategoriesTool,
   updateTransactionTool,
   createSourceTool,
+  assignPartnerToTransactionTool,
+  assignPartnerToFileTool,
+  updatePartnerTool,
+  connectFileToTransactionTool,
 ];

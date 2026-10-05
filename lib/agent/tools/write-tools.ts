@@ -7,7 +7,14 @@
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { lookupCompany, lookupByVatId, callFirebaseFunction } from "@/lib/api/firebase-callable";
-import { callableErrorMessage, createSourceTool, updateTransactionTool } from "./mcp-tools";
+import {
+  assignPartnerToFileTool,
+  assignPartnerToTransactionTool,
+  callableErrorMessage,
+  createSourceTool,
+  updatePartnerTool,
+  updateTransactionTool,
+} from "./mcp-tools";
 import { getOwnedDoc } from "@/lib/auth/owned-doc";
 
 // Lazy-load admin DB to avoid initialization at build time
@@ -36,8 +43,9 @@ async function ownedPartnerName(partnerId: unknown, userId: unknown): Promise<st
 // ============================================================================
 
 // The rollback is the server's (#616): rollbackTransaction restores only what
-// an edit may write, through the same rules as update_transaction. updateTransaction
-// and createSource wrap their MCP twins in ./mcp-tools.
+// an edit may write, through the same rules as update_transaction. updateTransaction,
+// createSource, assignPartnerToTransaction, assignPartnerToFile and updatePartner
+// wrap their MCP twins in ./mcp-tools (#616, #665).
 
 export const rollbackTransactionTool = tool(
   async ({ transactionId, historyId }, config) => {
@@ -61,135 +69,6 @@ export const rollbackTransactionTool = tool(
     schema: z.object({
       transactionId: z.string().describe("The transaction ID"),
       historyId: z.string().describe("The history entry ID to rollback to"),
-    }),
-  }
-);
-
-// ============================================================================
-// Assign Partner to Transaction
-// ============================================================================
-
-export const assignPartnerToTransactionTool = tool(
-  async ({ transactionId, partnerId }, config) => {
-    const userId = config?.configurable?.userId;
-    const authHeader = config?.configurable?.authHeader;
-    if (!authHeader) {
-      return { error: "Auth header not provided" };
-    }
-
-    const partnerName = await ownedPartnerName(partnerId, userId);
-    if (partnerName === null) {
-      return { error: "Partner not found" };
-    }
-
-    try {
-      // Call Cloud Function - handles validation, pattern learning, and receipt search
-      const result = await callFirebaseFunction<
-        { transactionId: string; partnerId: string; partnerType: "user"; matchedBy: "ai" },
-        { success: boolean }
-      >(
-        "assignPartnerToTransaction",
-        {
-          transactionId,
-          partnerId,
-          partnerType: "user",
-          matchedBy: "ai",
-        },
-        authHeader
-      );
-
-      if (!result.success) {
-        return { error: "Failed to assign partner" };
-      }
-
-      return {
-        success: true,
-        transactionId,
-        partnerId,
-        partnerName,
-        message: `Assigned partner "${partnerName}" to transaction`,
-      };
-    } catch (err) {
-      const error = err as Error;
-      // Check for rejection error from Cloud Function
-      if (error.message?.includes("rejected") || error.message?.includes("removed")) {
-        return {
-          error: error.message,
-          wasRejected: true,
-        };
-      }
-      return { error: error.message || "Failed to assign partner" };
-    }
-  },
-  {
-    name: "assignPartnerToTransaction",
-    description:
-      "Assign a partner (vendor/supplier) to a transaction. Use after finding/creating the partner.",
-    schema: z.object({
-      transactionId: z.string().describe("The transaction ID"),
-      partnerId: z.string().describe("The partner ID to assign"),
-    }),
-  }
-);
-
-// ============================================================================
-// Assign Partner to File
-// ============================================================================
-
-export const assignPartnerToFileTool = tool(
-  async ({ fileId, partnerId }, config) => {
-    const userId = config?.configurable?.userId;
-    const authHeader = config?.configurable?.authHeader;
-    if (!authHeader) {
-      return { error: "Auth header not provided" };
-    }
-
-    const partnerName = await ownedPartnerName(partnerId, userId);
-    if (partnerName === null) {
-      return { error: "Partner not found" };
-    }
-
-    try {
-      // Call updateFile Cloud Function to assign the partner
-      const result = await callFirebaseFunction<
-        { fileId: string; data: { partnerId: string; partnerType: "user"; partnerMatchedBy: "ai" } },
-        { success: boolean }
-      >(
-        "updateFile",
-        {
-          fileId,
-          data: {
-            partnerId,
-            partnerType: "user",
-            partnerMatchedBy: "ai",
-          },
-        },
-        authHeader
-      );
-
-      if (!result.success) {
-        return { error: "Failed to assign partner to file" };
-      }
-
-      return {
-        success: true,
-        fileId,
-        partnerId,
-        partnerName,
-        message: `Assigned partner "${partnerName}" to file`,
-      };
-    } catch (err) {
-      const error = err as Error;
-      return { error: error.message || "Failed to assign partner to file" };
-    }
-  },
-  {
-    name: "assignPartnerToFile",
-    description:
-      "Assign a partner (vendor/supplier) to a file/invoice. Use after finding/creating the partner. This directly assigns the partner to the file without needing a transaction.",
-    schema: z.object({
-      fileId: z.string().describe("The file ID"),
-      partnerId: z.string().describe("The partner ID to assign"),
     }),
   }
 );
@@ -436,130 +315,6 @@ export const createPartnerTool = tool(
       vatId: z.string().optional().describe("VAT ID (e.g., DE123456789)"),
       website: z.string().optional().describe("Website URL"),
       country: z.string().optional().describe("Country code (e.g., DE, AT)"),
-    }),
-  }
-);
-
-// ============================================================================
-// Update Partner
-// ============================================================================
-
-export const updatePartnerTool = tool(
-  async ({ partnerId, name, aliases, vatId, website, country }, config) => {
-    const userId = config?.configurable?.userId;
-    const authHeader = config?.configurable?.authHeader;
-    if (!authHeader) {
-      return { error: "Auth header not provided" };
-    }
-
-    const db = await getDb();
-
-    // Get current partner for comparison (read-only)
-    const partnerDoc = await db.collection("partners").doc(partnerId).get();
-    if (!partnerDoc.exists) {
-      return { error: "Partner not found" };
-    }
-
-    const partnerData = partnerDoc.data()!;
-    if (partnerData.userId !== userId) {
-      return { error: "Partner not found" };
-    }
-
-    // Build update object and track changes
-    const updateData: Record<string, unknown> = {};
-    const changes: string[] = [];
-
-    if (name !== undefined && name !== partnerData.name) {
-      updateData.name = name.trim();
-      changes.push(`name: "${partnerData.name}" → "${name.trim()}"`);
-    }
-
-    if (aliases !== undefined) {
-      updateData.aliases = aliases.map((a: string) => a.trim()).filter(Boolean);
-      changes.push(`aliases updated`);
-    }
-
-    if (vatId !== undefined && vatId !== partnerData.vatId) {
-      const normalizedVat = vatId ? vatId.toUpperCase().replace(/\s/g, "") : null;
-
-      if (normalizedVat) {
-        try {
-          const validation = await lookupByVatId(normalizedVat, authHeader);
-          if (validation.viesValid) {
-            updateData.vatId = normalizedVat;
-            changes.push(`vatId: "${partnerData.vatId || "none"}" → "${normalizedVat}" (✓ valid)`);
-            if (validation.name && name === undefined && !partnerData.name) {
-              updateData.name = validation.name;
-              changes.push(`name set from VIES: "${validation.name}"`);
-            }
-          } else {
-            changes.push(`vatId: "${normalizedVat}" (⚠ invalid: ${validation.viesError})`);
-            updateData.vatId = normalizedVat;
-          }
-        } catch (error) {
-          console.error("[updatePartner] VAT validation failed:", error);
-          updateData.vatId = normalizedVat;
-          changes.push(`vatId: "${normalizedVat}" (validation failed)`);
-        }
-      } else {
-        updateData.vatId = null;
-        changes.push(`vatId removed`);
-      }
-    }
-
-    if (website !== undefined && website !== partnerData.website) {
-      updateData.website = website || null;
-      changes.push(`website: "${partnerData.website || "none"}" → "${website || "none"}"`);
-    }
-
-    if (country !== undefined && country !== partnerData.country) {
-      updateData.country = country || null;
-      changes.push(`country: "${partnerData.country || "none"}" → "${country || "none"}"`);
-    }
-
-    if (changes.length === 0) {
-      return {
-        success: true,
-        partnerId,
-        partnerName: partnerData.name,
-        message: "No changes to apply",
-      };
-    }
-
-    // Call Cloud Function to update
-    try {
-      await callFirebaseFunction<
-        { partnerId: string; data: Record<string, unknown> },
-        { success: boolean }
-      >(
-        "updateUserPartner",
-        { partnerId, data: updateData },
-        authHeader
-      );
-
-      return {
-        success: true,
-        partnerId,
-        partnerName: (updateData.name as string) || partnerData.name,
-        changes,
-        message: `Updated partner "${(updateData.name as string) || partnerData.name}"`,
-      };
-    } catch (err) {
-      const error = err as Error;
-      return { error: error.message || "Failed to update partner" };
-    }
-  },
-  {
-    name: "updatePartner",
-    description: `Update an existing partner's details. VAT IDs are automatically validated via EU VIES.
-Use this to correct partner information like name, VAT ID, website, or country.`,
-    schema: z.object({
-      partnerId: z.string().describe("The partner ID to update"),
-      name: z.string().optional().describe("New partner name"),
-      aliases: z.array(z.string()).optional().describe("New list of aliases/patterns"),
-      vatId: z.string().optional().describe("New VAT ID (will be validated via VIES)"),
-      website: z.string().optional().describe("New website URL"),
-      country: z.string().optional().describe("New country code (e.g., AT, DE)"),
     }),
   }
 );
