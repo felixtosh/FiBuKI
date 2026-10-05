@@ -51,16 +51,17 @@ import {
 } from "../files/recipientConfirmationOps";
 import { runTransactionMatching } from "../matching/matchFileTransactions";
 import {
-  ExtractionCorrectionError,
-  FileExtractionCorrection,
-} from "../files/extractionCorrectionOps";
+  DESCRIPTIVE_FIELDS,
+  type ExtractedDetails,
+  type FileExtractionCorrection,
+} from "../fileFacts/handCorrection";
 import { classifyFileRecord, documentTypeFields } from "../documents/adapter";
-import { buildCorrectedFileUpdate } from "../files/correctedFileUpdate";
+import { applyFactChange } from "../fileFacts/applyFactChange";
 import {
   CORRECTABLE_FIELDS,
   correctedFieldsOf,
   hasHandCorrections,
-} from "../files/extractionProvenanceOps";
+} from "../fileFacts/provenance";
 import {
   buildDismissSuggestionUpdates,
   buildUndismissSuggestionUpdates,
@@ -80,7 +81,7 @@ import { syncOnboarding, toStatus, updateOnboarding } from "../onboarding/onboar
 import { isOnboardingOrigin, isOnboardingStep } from "../onboarding/onboardingRules";
 import { generatedInvoiceRefusal } from "../files/generatedInvoiceGuard";
 import { connectFiles } from "../fileConnections/writer";
-import { syncDocumentationStateForTransactions } from "../documents/syncDocumentationState";
+import { toDateSafe } from "../utils/toDateSafe";
 import { assignNoReceiptCategoryToTransaction } from "../matching/assignNoReceiptCategory";
 import { TOOL_DEFINITIONS, TOOL_NAMES } from "./definitions";
 import type { ToolName } from "./definitions";
@@ -1382,10 +1383,10 @@ export async function disconnectFileFromTransaction(userId: string, args: Record
  * transaction whose receipt has silently become a non-receipt.
  */
 /**
- * Correct a file's extracted record by hand (fork #147).
- *
- * The shape rules live in `buildCorrectedFileUpdate` so they can be tested
- * without a database; this owns ownership, the write, and the reply.
+ * Correct a file's extracted record by hand (fork #147): a Hand Correction
+ * from the MCP door. The same contract as the UI's correction callable, the
+ * figures and the descriptive fields alike, defined once by the File facts
+ * module (#638); this owns only reading the arguments and the reply.
  */
 export async function updateFileExtraction(userId: string, args: Record<string, unknown>) {
   const fileId = args.fileId as string;
@@ -1393,66 +1394,53 @@ export async function updateFileExtraction(userId: string, args: Record<string, 
     throw new Error("fileId is required");
   }
 
-  const fileRef = db.collection("files").doc(fileId);
-  const fileSnap = await fileRef.get();
-
-  if (!fileSnap.exists || fileSnap.data()?.userId !== userId) {
-    throw new Error("File not found");
-  }
-
   // Read the keys off `args` rather than spreading it: a caller passing an
   // unknown key must not reach the update, and "absent" has to stay distinct
   // from "null" all the way down.
-  const fields: FileExtractionCorrection = {};
+  const correction: FileExtractionCorrection = {};
   for (const key of CORRECTABLE_FIELDS) {
     if (args[key] !== undefined) {
-      (fields as Record<string, unknown>)[key] = args[key];
+      (correction as Record<string, unknown>)[key] = args[key];
+    }
+  }
+  const details: ExtractedDetails = {};
+  for (const key of Object.keys(DESCRIPTIVE_FIELDS)) {
+    if (args[key] !== undefined) {
+      (details as Record<string, unknown>)[key] = args[key];
     }
   }
 
-  // Not a correctable field and deliberately not one (#310): it states how to
-  // read the tip in this call, not a value the record keeps, so it is never
-  // stamped as hand-corrected. The declaration IS kept, as extractedTipBound.
-  if (args.tipNotPrinted !== undefined && typeof args.tipNotPrinted !== "boolean") {
-    throw new Error("tipNotPrinted must be a boolean");
+  // `tipNotPrinted` is not a correctable field and deliberately not one
+  // (#310): it states how to read the tip in this call, so it is never
+  // recorded as hand-corrected. What it decided is kept, as extractedTipBound.
+  const result = await applyFactChange(db, {
+    fileId,
+    userId,
+    change: {
+      origin: "mcp-correction",
+      correction,
+      details,
+      tipNotPrinted: args.tipNotPrinted as boolean | undefined,
+    },
+  });
+
+  if (result.refused) {
+    throw new Error(result.message);
   }
 
-  let built;
-  try {
-    // The stored record goes in so the correction's provenance stamp (#184)
-    // merges onto the marks earlier corrections left, instead of replacing
-    // them, and so everything derived from the corrected values moves with them
-    // rather than going stale: the § 11 classification (#104), the rate-review
-    // flag (#203) and the direction review (#233). Shared with the UI's
-    // correction callable since #149, so both surfaces write the same set.
-    built = await buildCorrectedFileUpdate(db, fields, fileSnap.data()!, {
-      tipNotPrinted: args.tipNotPrinted === true,
-    });
-  } catch (error) {
-    if (error instanceof ExtractionCorrectionError) {
-      throw new Error(error.message);
-    }
-    throw error;
-  }
-
-  await fileRef.update(built.updates);
-
-  const previousDocumentType = fileSnap.data()?.documentType;
-  const connectedTransactionIds = (fileSnap.data()?.transactionIds as string[] | undefined) ?? [];
-  if (previousDocumentType !== built.updates.documentType && connectedTransactionIds.length > 0) {
-    await syncDocumentationStateForTransactions(db, connectedTransactionIds);
-  }
-
-  const after = (await fileRef.get()).data() ?? {};
+  const after = result.after;
   console.log(`[updateFileExtraction] Corrected file ${fileId}`, {
     userId,
-    changed: built.changed,
+    changed: result.changed,
   });
 
   return {
     success: true,
     fileId,
-    changed: built.changed,
+    changed: result.changed,
+    // The descriptive fields this call moved, by their stored names. They are
+    // written but never recorded in the Hand Correction.
+    detailsChanged: result.movedDetails,
     // Every field a human has ever set on this record, not only the ones this
     // call moved — this is what a re-extraction now refuses on (#184).
     correctedFields: correctedFieldsOf(after),
@@ -1468,6 +1456,10 @@ export async function updateFileExtraction(userId: string, args: Record<string, 
       extractedVatPercent: after.extractedVatPercent ?? null,
       lineItemsUnreconciled: after.lineItemsUnreconciled ?? false,
       extractedRateGroups: after.extractedRateGroups ?? null,
+      extractedPartner: after.extractedPartner ?? null,
+      // #638: the dates the rows state, read against the issue date, as days.
+      extractedDueDate: toDateSafe(after.extractedDueDate)?.toISOString().slice(0, 10) ?? null,
+      extractedDebitDate: toDateSafe(after.extractedDebitDate)?.toISOString().slice(0, 10) ?? null,
     },
   };
 }

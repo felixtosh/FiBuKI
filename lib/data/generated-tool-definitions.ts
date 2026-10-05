@@ -1019,7 +1019,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     "name": "update_file_extraction",
     "annotation": "write",
-    "description": "Correct a file's extracted record by hand. Use when re-extraction cannot get there because the right value needs judgement the document does not state unambiguously — a Schlussrechnung printing both the full amount and the part already invoiced, VAT that is correctly read but not claimable, a one-cent OCR slip inside the reconciliation tolerance. Only the fields you pass are touched; pass null to clear one. The corrected total is NOT re-derived from the line items, so an amount that deliberately differs from them survives. Correcting anything VAT-bearing makes you the authority on the file: stored reconciliation flags and extraction-provenance markers are cleared, because they would otherwise outrank what you just set. Every correction records which fields you set and when, in extractionCorrectedFields — from then on retry_file_extraction refuses the file unless overwriteCorrections is passed, and list_files can return the corrected population with handCorrected: true.",
+    "description": "Correct a file's extracted record by hand. Use when re-extraction cannot get there because the right value needs judgement the document does not state unambiguously — a Schlussrechnung printing both the full amount and the part already invoiced, VAT that is correctly read but not claimable, a one-cent OCR slip inside the reconciliation tolerance. Only the fields you pass are touched; pass null to clear one. The corrected total is NOT re-derived from the line items, so an amount that deliberately differs from them survives. Correcting anything VAT-bearing makes you the authority on the file: stored reconciliation flags and extraction-provenance markers are cleared, because they would otherwise outrank what you just set. Every correction records which fields you set and when, in extractionCorrectedFields — from then on retry_file_extraction refuses the file unless overwriteCorrections is passed, and list_files can return the corrected population with handCorrected: true. Takes the same fields as the file detail panel: the figures, the direction, the descriptive fields (partner, vatId, iban, address) and the additional fields, which carry the Due Date and Debit Date. Correcting the document date re-reads the Due Date and Debit Date against it. A correction that moves the amount, the date, the Due or Debit Date, the partner, the IBAN or the VAT ID re-scores the file's transaction suggestions; it never connects or disconnects a transaction.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1108,6 +1108,59 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
             null
           ],
           "description": "Which way the document points: incoming is a purchase, outgoing a sale. Setting it clears any direction-review flag on the file. null stores unknown. Direction is otherwise decided by comparing the document's parties against the user's identity data, so a document those data cannot place stays unknown until it is set here — and an unknown direction renders as a positive figure, indistinguishable from income."
+        },
+        "partner": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The counterparty's name as the document prints it. Descriptive: written, never recorded as a hand correction. A changed name re-scores the file's transaction suggestions."
+        },
+        "vatId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The counterparty's VAT id (UID). Descriptive."
+        },
+        "iban": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The counterparty's IBAN. Descriptive."
+        },
+        "address": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The counterparty's address. Descriptive."
+        },
+        "additionalFields": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "description": "Replace the extra rows wholesale: read the file first (get_file, extractedAdditionalFields) and send every row back, changed or not, or the rows you leave out are deleted. Each row: key (one of invoiceNumber, customerNumber, dueDate, debitDate, serviceDate, paymentTerms, paymentMethod, orderNumber, deliveryNoteNumber, referenceNumber, poNumber), label (as printed), value; a key outside that list is refused. The Due Date and Debit Date are read from the dueDate and debitDate rows (value YYYY-MM-DD), against the document date: one earlier than the document date is not stored. Changing the date one of those rows states records dueDate or debitDate in extractionCorrectedFields, so a later re-extraction refuses the file. This is how to correct a Due Date or Debit Date.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "label",
+              "value"
+            ]
+          }
         }
       },
       "required": [

@@ -464,6 +464,9 @@ to everything above: it runs in a worker inside every replica, claims its jobs
 from Postgres without a lock, and needs no switch. Each replica runs
 `FIBUKI_EXTRACTION_CONCURRENCY` Extractions at once (default 4 with Gemini, 1 with
 an external Extraction Service), each limited to `FIBUKI_EXTRACTION_TIMEOUT_SECONDS`
-(default 300). The rest of the trigger bus is in-process, so other heavy trigger
+(default 300). `FIBUKI_EXTRACTION_SERVICE_URL` (and an optional
+`FIBUKI_EXTRACTION_SERVICE_TOKEN`) hands every Extraction to an external Extraction
+Service instead of Gemini, under the contract in `docs/extraction-service`. The rest of
+the trigger bus is in-process, so other heavy trigger
 and PDF work cannot be isolated onto a dedicated worker until pg-boss lands in
 Phase 3.

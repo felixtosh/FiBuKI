@@ -30,6 +30,8 @@ import {
   unlinkReceiptCallable,
 } from "../receiptPairs/receiptPairCallables";
 import { markFileAsCopy } from "../files/copyOps";
+import { updateFileExtractedFieldsCallable } from "../files/updateFileExtractedFields";
+import { applyFactChange } from "../fileFacts/applyFactChange";
 
 const db = getFirestore();
 const USER = "stefan-test";
@@ -338,6 +340,36 @@ describe("a person's acts, through the callables (stories 17, 19, 20, 28, 31, 38
     await expect(
       linkReceiptCallable.run({ data: { fileId: "f-receipt", invoiceFileId: "f-theirs" }, auth } as never)
     ).rejects.toThrow(/not found/i);
+  });
+
+  it("a Hand Correction connects nothing: the pair check after it only suggests (#638)", async () => {
+    // A pair from before #571: the invoice sits on the line, the Receipt
+    // citing it on none, and no link was ever recorded.
+    await seedFile("f-invoice", invoiceFields);
+    await connectFile(db as never, USER, { fileId: "f-invoice", transactionId: "t-gh" }, { origin: "manual" });
+    await seedFile("f-receipt", receiptFields);
+    await drainTriggers();
+    expect((await file("f-receipt")).transactionIds).toEqual([]);
+
+    // The panel corrects the Receipt's amount, an agent its date.
+    await updateFileExtractedFieldsCallable.run({
+      data: { fileId: "f-receipt", correction: { amount: 2100 } },
+      auth,
+    } as never);
+    await drainTriggers();
+    await applyFactChange(db as never, {
+      fileId: "f-receipt",
+      userId: USER,
+      change: { origin: "mcp-correction", correction: { date: "2026-07-02" } },
+    });
+    await drainTriggers();
+
+    const receipt = await file("f-receipt");
+    expect(receipt.transactionIds).toEqual([]);
+    expect(await connectionOf("f-receipt", "t-gh")).toBeUndefined();
+    // No link recorded behind the User's back; the pair is offered instead.
+    expect(receipt.receiptLink ?? null).toBeNull();
+    expect(receipt.receiptPairSuggestions.map((s: { fileId: string }) => s.fileId)).toEqual(["f-invoice"]);
   });
 
   it("the backfill only suggests, even where a cited number would link", async () => {

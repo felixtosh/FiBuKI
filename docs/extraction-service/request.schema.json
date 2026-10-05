@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "contractVersion": {
+      "type": "string",
+      "const": "1"
+    },
+    "file": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The File's name, or empty."
+        },
+        "mimeType": {
+          "type": "string",
+          "description": "Sniffed from the bytes."
+        },
+        "contentBase64": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "mimeType",
+        "contentBase64"
+      ],
+      "additionalProperties": false
+    },
+    "treatAsInvoice": {
+      "type": "boolean",
+      "description": "The user overrode the invoice check: the answer must be a transcription."
+    }
+  },
+  "required": [
+    "contractVersion",
+    "file",
+    "treatAsInvoice"
+  ],
+  "additionalProperties": false,
+  "title": "FiBuKI Extraction Service request"
+}

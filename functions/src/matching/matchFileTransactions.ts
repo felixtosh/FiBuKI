@@ -33,6 +33,7 @@ import {
 import {
   autoConnect,
   ineligibleReasonOf,
+  matchDatesKey,
   selectAutoConnects,
   storedSuggestionsOf,
   transactionsForFile,
@@ -43,6 +44,8 @@ import { runCopyCheck } from "../files/copyOps";
 import { readDismissedTransactionIds } from "./dismissedTransactions";
 import { runCorrectionCheck } from "../corrections/correctionOps";
 import { runReceiptPairCheck } from "../receiptPairs/receiptPairOps";
+import { isHandCorrectionWrite } from "../fileFacts/factChange";
+import { rescoreFileSuggestions } from "./rescoreFileSuggestions";
 import { AutomationMeta } from "../automation/types";
 import { checkAIBudget } from "../billing/checkAIBudget";
 import { isPassiveMode } from "../utils/checkAutomationMode";
@@ -464,10 +467,13 @@ export async function runTransactionMatching(
   // - Partner batch: only on explicit "new successful match for this partner" signal
   // - No partner: keep legacy per-file fallback only when no auto-match, and
   //   not on a search's nomination run (#589): that run checks one pair, and
-  //   a search nominates to several files per transaction.
+  //   a search nominates to several files per transaction. Not on a tie
+  //   either (#667): the worker connects a strong suggestion itself, so it
+  //   would pick one of the tied Transactions the rule leaves to the User.
+  const tied = refusals.some((r) => r.tie);
   const shouldQueuePartnerBatch = Boolean(fileData.partnerId) && autoMatches.length > 0;
   const shouldQueueSingleFileWorker =
-    !fileData.partnerId && autoMatches.length === 0 && !options.nominatedTransactionIds?.length;
+    !fileData.partnerId && autoMatches.length === 0 && !options.nominatedTransactionIds?.length && !tied;
 
   if (shouldQueuePartnerBatch || shouldQueueSingleFileWorker) {
     // Check AI budget before queuing agentic workers (rule-based scoring above stays free)
@@ -837,6 +843,26 @@ async function hasManualTransactionConnections(fileId: string): Promise<boolean>
   return !manualConnections.empty;
 }
 
+// === Helper: Re-score suggestions after a date edit (#614) ===
+
+/**
+ * A finished File whose File date, Due Date or Debit Date changed. Only
+ * once matching has run and is not being re-run: extraction and a retry
+ * write these dates while `transactionMatchComplete` is false, and that run
+ * stores its own suggestions.
+ */
+function matchDatesEdited(
+  before: FirebaseFirestore.DocumentData,
+  after: FirebaseFirestore.DocumentData
+): boolean {
+  return (
+    before.transactionMatchComplete === true &&
+    after.transactionMatchComplete === true &&
+    !after.deletedAt &&
+    matchDatesKey(before) !== matchDatesKey(after)
+  );
+}
+
 // === Firestore Trigger ===
 
 /**
@@ -844,6 +870,8 @@ async function hasManualTransactionConnections(fileId: string): Promise<boolean>
  * Runs transaction matching:
  * 1. After partner matching completes (initial run)
  * 2. When partnerId changes (re-run to update match scores)
+ * And re-scores the stored suggestions, connecting nothing, when a hand edit
+ * moves the File date, Due Date or Debit Date (#614).
  */
 export const matchFileTransactions = onDocumentUpdated(
   {
@@ -924,6 +952,16 @@ export const matchFileTransactions = onDocumentUpdated(
       } else {
         console.log(`Skipping transaction re-matching for file ${fileId}: has manual connections`);
       }
+    } else if (matchDatesEdited(before, after) && !isHandCorrectionWrite(before, after)) {
+      // #614: an edit of the File date, Due Date or Debit Date moves the
+      // window and the date score, so the stored suggestions are re-scored
+      // through the one re-scorer (suggestions only, skipped when the File
+      // has a manual File Connection). A Hand Correction is skipped here:
+      // the File facts module already re-scored it.
+      console.log(`Re-scoring transaction suggestions for file ${fileId} (reason: dates_edited)`);
+      await rescoreFileSuggestions(db, fileId).catch((err) => {
+        console.error(`Suggestion re-score failed for file ${fileId}:`, err);
+      });
     }
 
     if (shouldRun) {
@@ -949,10 +987,13 @@ export const matchFileTransactions = onDocumentUpdated(
     // say on a second File of the same document first; on the File as it
     // stands now, so a Connection matching just made is seen. Not before
     // Partner matching completes: until then the Copy check has not run.
+    // After a Hand Correction it only suggests: a correction records no link
+    // and connects nothing, Receipt Links included (#638, Stefan 2026-10-04).
     if (after.partnerMatchComplete && pairInputsChanged(before, after, partnerMatchJustCompleted)) {
       const fresh = (await db.collection("files").doc(fileId).get()).data();
       if (fresh) {
-        await runReceiptPairCheck(db, fileId, fresh).catch((err) => {
+        const suggestOnly = isHandCorrectionWrite(before, after);
+        await runReceiptPairCheck(db, fileId, fresh, { suggestOnly }).catch((err) => {
           console.error(`[ReceiptPair] Check failed for ${fileId}`, err);
         });
       }

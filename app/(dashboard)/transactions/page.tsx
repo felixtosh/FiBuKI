@@ -18,9 +18,7 @@ import { usePartners } from "@/hooks/use-partners";
 import { useGlobalPartners } from "@/hooks/use-global-partners";
 import { useFilteredTransactions } from "@/hooks/use-filtered-transactions";
 import { useTransactionFiles } from "@/hooks/use-files";
-import { getNeighbourRowId } from "@/lib/navigation/row-neighbour";
-import { useRowNavigationKeys } from "@/hooks/use-row-navigation-keys";
-import { isRowNavigationEnabled } from "@/lib/navigation/arrow-key-navigation";
+import { useListNavigation } from "@/hooks/use-list-navigation";
 import { functions, storage, db } from "@/lib/firebase/config";
 import { createFile, checkFileDuplicate, OperationsContext } from "@/lib/operations";
 import { useAuth } from "@/components/auth";
@@ -34,7 +32,7 @@ import {
 } from "@/lib/filters/url-params";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Transaction, type TransactionUpdate } from "@/types/transaction";
-import { cn } from "@/lib/utils";
+import { DetailPanelLayout } from "@/components/ui/detail-panel-layout";
 
 const PANEL_WIDTH_KEY = "transactionDetailPanelWidth";
 const DEFAULT_PANEL_WIDTH = 480;
@@ -102,9 +100,6 @@ function TransactionsContent() {
   const { partners, createPartner, assignToTransaction, removeFromTransaction } = usePartners();
   const { globalPartners } = useGlobalPartners();
 
-  const [panelWidth, setPanelWidth] = useState<number>(DEFAULT_PANEL_WIDTH);
-  const [isResizing, setIsResizing] = useState(false);
-  const resizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
   // Connect file overlay state - driven by URL param
   const isConnectFileOpen = searchParams.get("connect") === "true";
@@ -163,8 +158,6 @@ function TransactionsContent() {
     },
     [router]
   );
-  const panelRef = useRef<HTMLDivElement>(null);
-  const currentWidthRef = useRef(panelWidth);
   const tableRef = useRef<DataTableHandle>(null);
 
   // Get selected transaction ID from URL
@@ -185,10 +178,6 @@ function TransactionsContent() {
         : filteredTransactions.map((t) => t.id),
     [tableOrderedIds, filteredTransactions]
   );
-
-  const hasPrevious =
-    getNeighbourRowId(orderedTransactionIds, selectedId, -1) !== null;
-  const hasNext = getNeighbourRowId(orderedTransactionIds, selectedId, 1) !== null;
 
   // Find selected transaction
   const selectedTransaction = useMemo(() => {
@@ -249,53 +238,6 @@ function TransactionsContent() {
 
   // Close overlay when transaction is deselected
 
-  // Load panel width from localStorage
-  useEffect(() => {
-    const saved = localStorage.getItem(PANEL_WIDTH_KEY);
-    if (saved) {
-      const parsed = parseInt(saved, 10);
-      if (!isNaN(parsed) && parsed >= MIN_PANEL_WIDTH && parsed <= MAX_PANEL_WIDTH) {
-        setPanelWidth(parsed);
-      }
-    }
-  }, []);
-
-  // Handle resize
-  const handleResizeStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    setIsResizing(true);
-    resizeRef.current = { startX: e.clientX, startWidth: panelWidth };
-  }, [panelWidth]);
-
-  useEffect(() => {
-    if (!isResizing) return;
-
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!resizeRef.current || !panelRef.current) return;
-      const delta = resizeRef.current.startX - e.clientX;
-      const newWidth = Math.min(MAX_PANEL_WIDTH, Math.max(MIN_PANEL_WIDTH, resizeRef.current.startWidth + delta));
-      // Update DOM directly during drag - no React re-render
-      panelRef.current.style.width = `${newWidth}px`;
-      currentWidthRef.current = newWidth;
-    };
-
-    const handleMouseUp = () => {
-      setIsResizing(false);
-      // Commit to state only on drag end
-      setPanelWidth(currentWidthRef.current);
-      localStorage.setItem(PANEL_WIDTH_KEY, currentWidthRef.current.toString());
-      resizeRef.current = null;
-    };
-
-    document.addEventListener("mousemove", handleMouseMove);
-    document.addEventListener("mouseup", handleMouseUp);
-
-    return () => {
-      document.removeEventListener("mousemove", handleMouseMove);
-      document.removeEventListener("mouseup", handleMouseUp);
-    };
-  }, [isResizing]);
-
   // Select transaction (update URL)
   const handleSelectTransaction = useCallback(
     (transaction: Transaction, options?: { keepConnect?: boolean }) => {
@@ -332,36 +274,26 @@ function TransactionsContent() {
     [selectedTransaction, updateTransaction]
   );
 
-  // Step through the displayed order (-1 previous, 1 next)
-  const navigateTransactionBy = useCallback(
-    (step: number) => {
-      const targetId = getNeighbourRowId(orderedTransactionIds, selectedId, step);
-      const target = targetId ? transactions.find((t) => t.id === targetId) : undefined;
+  // Prev/next and the left/right keys walk the displayed order while the
+  // transaction panel is open; the connect-file overlay switches the keys off.
+  const navigateToTransaction = useCallback(
+    (id: string) => {
+      const target = transactions.find((t) => t.id === id);
       if (target) handleSelectTransaction(target, { keepConnect: true });
     },
-    [orderedTransactionIds, selectedId, transactions, handleSelectTransaction]
+    [transactions, handleSelectTransaction]
   );
-
-  const handleNavigatePrevious = useCallback(
-    () => navigateTransactionBy(-1),
-    [navigateTransactionBy]
-  );
-
-  const handleNavigateNext = useCallback(
-    () => navigateTransactionBy(1),
-    [navigateTransactionBy]
-  );
-
-  // Left/right walk the displayed order while the transaction panel is open.
-  // The connect-file overlay renders inline with no dialog role of its own, so
-  // it has to be named here; portalled dialogs and menus the hook sees itself.
-  useRowNavigationKeys({
-    enabled: isRowNavigationEnabled({
-      panelOpen: Boolean(selectedTransaction),
-      connectOverlayOpen: isConnectFileOpen,
-    }),
-    onPrevious: handleNavigatePrevious,
-    onNext: handleNavigateNext,
+  const {
+    hasPrevious,
+    hasNext,
+    goPrevious: handleNavigatePrevious,
+    goNext: handleNavigateNext,
+  } = useListNavigation({
+    orderedIds: orderedTransactionIds,
+    currentId: selectedId,
+    onNavigate: navigateToTransaction,
+    panelOpen: Boolean(selectedTransaction),
+    connectOverlayOpen: isConnectFileOpen,
   });
 
 
@@ -510,11 +442,35 @@ function TransactionsContent() {
 
   return (
     <div className="h-full overflow-hidden">
-      {/* Main content - adjusts margin when panel is open */}
-      <div
-        {...getGlobalRootProps()}
-        className="h-full transition-[margin] duration-200 ease-in-out"
-        style={{ marginRight: selectedTransaction ? panelWidth : 0 }}
+      <DetailPanelLayout
+        storageKey={PANEL_WIDTH_KEY}
+        defaultWidth={DEFAULT_PANEL_WIDTH}
+        minWidth={MIN_PANEL_WIDTH}
+        maxWidth={MAX_PANEL_WIDTH}
+        open={!!selectedTransaction}
+        mainProps={getGlobalRootProps()}
+        panel={
+          selectedTransaction ? (
+            <TransactionDetailPanel
+              transaction={selectedTransaction}
+              source={selectedSource}
+              onClose={handleCloseDetail}
+              onUpdate={handleTransactionUpdate}
+              onNavigatePrevious={handleNavigatePrevious}
+              onNavigateNext={handleNavigateNext}
+              hasPrevious={hasPrevious}
+              hasNext={hasNext}
+              partners={partners}
+              globalPartners={globalPartners}
+              onAssignPartner={assignToTransaction}
+              onRemovePartner={removeFromTransaction}
+              onCreatePartner={createPartner}
+              onOpenConnectFile={toggleConnectFileOverlay}
+              onPreviewSuggestedFile={openConnectFileOverlay}
+              isConnectFileOpen={isConnectFileOpen}
+            />
+          ) : null
+        }
       >
         <input {...getGlobalInputProps()} />
         {/* Relative container for overlay positioning — overflow-hidden clips drag overlay to visible table area */}
@@ -568,54 +524,10 @@ function TransactionsContent() {
             </div>
           )}
         </div>
-      </div>
+      </DetailPanelLayout>
 
       {/* Onboarding guide - show when no transaction selected */}
       {!selectedTransaction && <TransactionSelectionGuide />}
-
-      {/* Right sidebar - fixed position, z-50 to stay above overlays */}
-      {selectedTransaction && (
-        <div
-          ref={panelRef}
-          className="fixed right-0 top-14 bottom-0 z-50 bg-background border-l flex"
-          style={{ width: panelWidth }}
-        >
-          {/* Resize handle */}
-          <div
-            className={cn(
-              "w-1 cursor-col-resize bg-border hover:bg-primary/20 active:bg-primary/30 flex-shrink-0",
-              isResizing && "bg-primary/30"
-            )}
-            onMouseDown={handleResizeStart}
-          />
-          {/* Panel content */}
-          <div className="flex-1 overflow-hidden detail-panel-container">
-            <TransactionDetailPanel
-              transaction={selectedTransaction}
-              source={selectedSource}
-              onClose={handleCloseDetail}
-              onUpdate={handleTransactionUpdate}
-              onNavigatePrevious={handleNavigatePrevious}
-              onNavigateNext={handleNavigateNext}
-              hasPrevious={hasPrevious}
-              hasNext={hasNext}
-              partners={partners}
-              globalPartners={globalPartners}
-              onAssignPartner={assignToTransaction}
-              onRemovePartner={removeFromTransaction}
-              onCreatePartner={createPartner}
-              onOpenConnectFile={toggleConnectFileOverlay}
-              onPreviewSuggestedFile={openConnectFileOverlay}
-              isConnectFileOpen={isConnectFileOpen}
-            />
-          </div>
-        </div>
-      )}
-
-      {/* Prevent text selection while resizing */}
-      {isResizing && (
-        <div className="fixed inset-0 z-50 cursor-col-resize" />
-      )}
     </div>
   );
 }

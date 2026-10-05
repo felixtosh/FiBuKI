@@ -9,8 +9,8 @@
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import {
-  extractDocument,
-  getDefaultProvider,
+  createExtractionService,
+  extractionProvenanceFields,
 } from "./documentExtractor";
 import { logAIUsage } from "../utils/ai-usage-logger";
 import { MODELS } from "../utils/models";
@@ -218,34 +218,32 @@ export async function runExtraction(
   const pageCount = await pdfPageCount(fileBuffer);
 
   // Get provider and model config
-  const provider = getDefaultProvider();
   const geminiModel = options.geminiModel || process.env.GEMINI_MODEL || MODELS.geminiLite;
   const userId = fileData.userId as string;
-  console.log(`[+${Date.now() - t0}ms] Starting ${provider} extraction (model: ${geminiModel})`);
+
+  // #161: the one seam where the File's bytes reach an Extraction Service,
+  // the built-in Gemini or the deployment's external one. Whichever answers,
+  // everything below is FiBuKI's own and runs the same.
+  const service = createExtractionService({
+    fileBuffer,
+    fileType: fileData.fileType as string,
+    fileName: fileData.fileName as string | undefined,
+    geminiModel,
+    logUsage: async ({ unpriced, ...usage }) => {
+      if (!userId) return;
+      await logAIUsage(userId, { ...usage, ...(unpriced ? { unpriced } : {}), metadata: { fileId } });
+    },
+  });
+  console.log(`[+${Date.now() - t0}ms] Starting extraction (Gemini model if built-in: ${geminiModel})`);
 
   // ============================================================
   // PHASE 1: Classification (unless skipped by user override)
   // ============================================================
   if (!options.skipClassification) {
-    const { classifyDocument, DEFAULT_GEMINI_MODEL } = await import("./geminiParser");
-    type GeminiModel = import("./geminiParser").GeminiModel;
-    const model = (geminiModel || DEFAULT_GEMINI_MODEL) as GeminiModel;
-
     console.log(`[+${Date.now() - t0}ms] Phase 1: Classification...`);
     const tClassify = Date.now();
-    const classification = await classifyDocument(fileBuffer, fileData.fileType as string, model);
+    const classification = await service.classify();
     console.log(`[+${Date.now() - t0}ms] Classification complete (took ${Date.now() - tClassify}ms): isInvoice=${classification.isInvoice}`);
-
-    // Log classification token usage
-    if (classification.usage && userId) {
-      await logAIUsage(userId, {
-        function: "classification",
-        model: classification.usage.model,
-        inputTokens: classification.usage.inputTokens,
-        outputTokens: classification.usage.outputTokens,
-        metadata: { fileId },
-      });
-    }
 
     // Save classification result immediately (enables "Analyzing..." → result transition)
     await fileRef.update({
@@ -262,6 +260,7 @@ export async function runExtraction(
       await fileRef.update({
         extractionComplete: true,
         extractionError: null,
+        ...extractionProvenanceFields(service.provenance()),
         extractionConfidence: Math.round(classification.confidence * 100),
         extractedDate: null,
         extractedAmount: null,
@@ -334,11 +333,9 @@ export async function runExtraction(
   // ============================================================
   console.log(`[+${Date.now() - t0}ms] Phase 2: Extraction...`);
   const t3 = Date.now();
-  const result = await extractDocument(fileBuffer, fileData.fileType as string, {
-    provider,
-    geminiModel,
-    skipClassification: true, // Already classified above
-  });
+  // Already classified above, or overridden by the user. Token usage is
+  // logged by the service.
+  const result = await service.transcribe();
   const t4 = Date.now();
 
   console.log(`[+${t4 - t0}ms] Extraction complete (${result.provider}) - API took ${t4 - t3}ms`, {
@@ -349,17 +346,6 @@ export async function runExtraction(
     confidence: result.extracted.confidence,
     isNotInvoice: result.isNotInvoice,
   });
-
-  // Log extraction token usage
-  if (result.usage && userId) {
-    await logAIUsage(userId, {
-      function: "extraction",
-      model: result.usage.model,
-      inputTokens: result.usage.inputTokens,
-      outputTokens: result.usage.outputTokens,
-      metadata: { fileId },
-    });
-  }
 
   // Determine counterparty and invoice direction based on user data
   let invoiceDirection: InvoiceDirection = "unknown";
@@ -431,7 +417,8 @@ export async function runExtraction(
   const updateData: Record<string, unknown> = {
     extractedText: result.text,
     extractionConfidence: Math.round(result.extracted.confidence * 100),
-    extractionProvider: result.provider,
+    // #161: which Extraction Service produced this reading.
+    ...extractionProvenanceFields(service.provenance()),
     extractionComplete: true,
     extractionError: null,
     extractedFields: [], // Bounding box overlays removed - using text search instead
