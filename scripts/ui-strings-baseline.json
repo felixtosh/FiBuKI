@@ -6,7 +6,6 @@
   "app/(dashboard)/admin/testing/page.tsx": 29,
   "app/(dashboard)/admin/user-data/page.tsx": 33,
   "app/(dashboard)/admin/users/page.tsx": 63,
-  "app/(dashboard)/categories/page.tsx": 1,
   "app/(dashboard)/design/page.tsx": 339,
   "app/(dashboard)/files/page.tsx": 10,
   "app/(dashboard)/integrations/[id]/page.tsx": 20,
