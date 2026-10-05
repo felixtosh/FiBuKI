@@ -375,12 +375,9 @@ export const waitForFileExtractionTool = tool(
         const extractedDate = toDateSafe(data.extractedDate);
         const uploadedAt = toDateSafe(data.uploadedAt);
 
-        // Get amount with sign based on direction (convert from cents to whole units)
-        const rawAmount = getEffectiveExtractedAmount(data);
-        const signedAmountCents = rawAmount != null
-          ? (data.invoiceDirection === "incoming" ? -rawAmount : rawAmount)
-          : null;
-        const signedAmount = signedAmountCents != null ? signedAmountCents / 100 : null;
+        // The document total in integer cents, unsigned, as getFile (MCP's
+        // get_file) reports it: invoiceDirection says money in or out (#616).
+        const amountCents = getEffectiveExtractedAmount(data);
 
         console.log(`[waitForFileExtraction] Extraction complete for ${fileId}`);
 
@@ -391,12 +388,12 @@ export const waitForFileExtractionTool = tool(
           // Extracted data
           fileName: data.fileName,
           extractedPartner: data.extractedPartner || null,
-          extractedAmount: signedAmount,
-          extractedAmountFormatted: signedAmount != null
+          extractedAmount: amountCents,
+          extractedAmountFormatted: amountCents != null
             ? new Intl.NumberFormat("de-DE", {
                 style: "currency",
                 currency: data.extractedCurrency || "EUR",
-              }).format(signedAmount)
+              }).format(amountCents / 100)
             : null,
           extractedCurrency: data.extractedCurrency || "EUR",
           extractedDate: extractedDate?.toISOString() || null,
@@ -457,7 +454,7 @@ Use this AFTER downloading a Gmail attachment to:
 
 Returns extracted data including:
 - extractedPartner: Company name from the document
-- extractedAmount: Amount in currency units (negative for expenses)
+- extractedAmount: Document total in integer cents, unsigned (invoiceDirection says money in or out)
 - extractedDate: Invoice date
 - extractedVatId, extractedIban: Tax/bank identifiers
 - partnerSuggestions: Auto-matched partner suggestions

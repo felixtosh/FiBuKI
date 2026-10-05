@@ -25,7 +25,7 @@ export interface LocalFileCandidate {
   score: number;
   scoreLabel?: "Strong" | "Likely" | null;
   scoreReasons?: string[];
-  /** Amount in currency units (NOT cents) - already divided by 100 */
+  /** The document total in integer cents (#616) */
   extractedAmount?: number;
   /** Currency code (e.g., "EUR", "USD") */
   extractedCurrency?: string;
