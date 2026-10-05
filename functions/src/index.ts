@@ -184,6 +184,8 @@ export {
 export {
   createFileCallable as createFile,
   updateFileCallable as updateFile,
+  assignPartnerToFileCallable as assignPartnerToFile,
+  removePartnerFromFileCallable as removePartnerFromFile,
   updateFileExtractedFieldsCallable as updateFileExtractedFields,
   deleteFileCallable as deleteFile,
   restoreFileCallable as restoreFile,

@@ -2952,12 +2952,11 @@ async function loadWritablePartner(userId: string, partnerId: string) {
 }
 
 /**
- * Attach a Partner to a File the way a person does in the UI
- * (`assignPartnerToFile` in lib/operations/file-ops.ts): `partnerMatchedBy:
- * "manual"`, confidence 100, and the File cleared from the Partner's
- * `manualFileRemovals` if a person had pulled it off earlier. The File write
- * goes through `updateFileInternal`, the same contract as the `updateFile`
- * callable, which also cancels running partner workers for the File.
+ * Attach a Partner to a File through the shared server path the UI uses
+ * (`files/filePartner.ts`, #627): `partnerMatchedBy: "manual"`, confidence
+ * 100, and the File cleared from the Partner's `manualFileRemovals` if a
+ * person had pulled it off earlier. The File write goes through the
+ * `updateFile` contract, which also cancels running partner workers for it.
  *
  * Alias learning is not done here. `matchFilePartner` learns the File's
  * extracted name on any manual assignment, and refuses the name the
@@ -2978,44 +2977,21 @@ export async function assignPartnerToFileTool(
   if (!fileId) throw new Error("fileId is required");
   if (!partnerId) throw new Error("partnerId is required");
 
-  const fileDoc = await db.collection("files").doc(fileId).get();
-  if (!fileDoc.exists || fileDoc.data()?.userId !== userId) {
-    throw new Error("File not found");
-  }
-
-  const partnerDoc = await loadWritablePartner(userId, partnerId);
   const byAgent = caller.kind === "agent";
-
-  const { updateFileInternal } = await import("../files/updateFile");
-  await updateFileInternal(db, userId, {
-    fileId,
-    data: byAgent
-      ? { partnerId, partnerType: "user", partnerMatchedBy: "ai" }
-      : { partnerId, partnerType: "user", partnerMatchedBy: "manual", partnerMatchConfidence: 100 },
-  });
-
-  // A person changing their mind about a removal: the pair is no longer a
-  // false positive.
-  const removals = (partnerDoc.data()!.manualFileRemovals || []) as Array<{ fileId?: string }>;
-  if (!byAgent && removals.some((r) => r.fileId === fileId)) {
-    await partnerDoc.ref.update({
-      manualFileRemovals: removals.filter((r) => r.fileId !== fileId),
-      updatedAt: Timestamp.now(),
-    });
-  }
-
-  return {
-    success: true,
+  const { assignPartnerToFile } = await import("../files/filePartner");
+  const result = await assignPartnerToFile(db, userId, {
     fileId,
     partnerId,
-    partnerName: (partnerDoc.data()!.name as string) || null,
-    previousPartnerId: (fileDoc.data()!.partnerId as string | undefined) ?? null,
-  };
+    partnerType: "user",
+    ...(byAgent ? { matchedBy: "ai" as const } : { matchedBy: "manual" as const, confidence: 100 }),
+  });
+
+  return { success: true, ...result };
 }
 
 /**
- * Detach a File's Partner the way the UI does (`removePartnerFromFile` in
- * lib/operations/file-ops.ts). A system-recommended assignment (`auto` or
+ * Detach a File's Partner through the shared server path the UI uses
+ * (`files/filePartner.ts`, #627). A system-recommended assignment (`auto` or
  * `suggestion`) is recorded on the Partner's `manualFileRemovals`, so the
  * matcher learns the pair was wrong; a manual one is simply cleared.
  */
@@ -3023,47 +2999,9 @@ export async function removePartnerFromFileTool(userId: string, args: Record<str
   const fileId = args.fileId as string;
   if (!fileId) throw new Error("fileId is required");
 
-  const fileDoc = await db.collection("files").doc(fileId).get();
-  if (!fileDoc.exists || fileDoc.data()?.userId !== userId) {
-    throw new Error("File not found");
-  }
-  const fileData = fileDoc.data()!;
-  const previousPartnerId = (fileData.partnerId as string | undefined) ?? null;
-  const matchedBy = fileData.partnerMatchedBy as string | undefined;
-
-  const { updateFileInternal } = await import("../files/updateFile");
-  await updateFileInternal(db, userId, {
-    fileId,
-    data: {
-      partnerId: null,
-      partnerType: null,
-      partnerMatchedBy: null,
-      partnerMatchConfidence: null,
-    },
-  });
-
-  let recordedAsFalsePositive = false;
-  if (previousPartnerId && (matchedBy === "auto" || matchedBy === "suggestion")) {
-    const partnerRef = db.collection("partners").doc(previousPartnerId);
-    const partnerSnap = await partnerRef.get();
-    if (partnerSnap.exists && partnerSnap.data()?.userId === userId) {
-      const removals = (partnerSnap.data()!.manualFileRemovals || []) as Array<{ fileId?: string }>;
-      if (!removals.some((r) => r.fileId === fileId)) {
-        await partnerRef.update({
-          manualFileRemovals: FieldValue.arrayUnion({
-            fileId,
-            removedAt: Timestamp.now(),
-            extractedPartner: fileData.extractedPartner || null,
-            fileName: fileData.fileName,
-          }),
-          updatedAt: Timestamp.now(),
-        });
-      }
-      recordedAsFalsePositive = true;
-    }
-  }
-
-  return { success: true, fileId, previousPartnerId, recordedAsFalsePositive };
+  const { removePartnerFromFile } = await import("../files/filePartner");
+  const result = await removePartnerFromFile(db, userId, fileId);
+  return { success: true, ...result };
 }
 
 /** The fields `update_partner` writes: `create_partner`'s set, nothing else. */

@@ -2,10 +2,11 @@
  * The Partner write tools (#213, #264): attaching a Partner to a File, editing
  * a Partner, and merging duplicates over the tool surface.
  *
- * Each tool wraps the operation the UI runs (`updateFile`, `updateUserPartner`,
+ * Each tool wraps the operation the UI runs (`updateUserPartner`,
  * `mergeUserPartners`), so these tests assert what the tool adds or must keep:
- * the manual stamp, the wholesale alias replacement, and the Merge's refusals
- * arriving intact through `handleTool`.
+ * the wholesale alias replacement and the Merge's refusals arriving intact
+ * through `handleTool`. A Partner on a File is tested at its shared function
+ * (`files/__tests__/filePartner.test.ts`, #627).
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -112,140 +113,6 @@ describe("Partner write tools", () => {
 
   afterEach(() => {
     vi.clearAllMocks();
-  });
-
-  // ==========================================================================
-  // #213: a Partner on a File
-  // ==========================================================================
-
-  describe("assign_partner_to_file", () => {
-    it("writes the Partner as a manual assignment, the way the UI does", async () => {
-      seedPartner("p-1", { name: "AL&FA Taxi KG" });
-      seedFile("f-1", { partnerId: "p-wrong", partnerType: "user", partnerMatchedBy: "auto" });
-
-      const result = (await handlers.handleTool(USER, "assign_partner_to_file", {
-        fileId: "f-1",
-        partnerId: "p-1",
-      })) as Doc;
-
-      expect(result).toMatchObject({
-        success: true,
-        fileId: "f-1",
-        partnerId: "p-1",
-        partnerName: "AL&FA Taxi KG",
-        previousPartnerId: "p-wrong",
-      });
-      expect(doc("files", "f-1")).toMatchObject({
-        partnerId: "p-1",
-        partnerType: "user",
-        partnerMatchedBy: "manual",
-        partnerMatchConfidence: 100,
-      });
-      // updateFile's own side effect for a manual assignment.
-      expect(cancelWorkers.cancelPartnerWorkersForFile).toHaveBeenCalledWith(USER, "f-1");
-    });
-
-    it("writes no alias itself", async () => {
-      seedPartner("p-1", { name: "AL&FA Taxi KG", aliases: ["AL&FA"] });
-      seedFile("f-1", {
-        extractedPartner: "Agent Platform GmbH",
-        extractedInvoicingAgent: { name: "Agent Platform GmbH" },
-      });
-
-      await handlers.handleTool(USER, "assign_partner_to_file", { fileId: "f-1", partnerId: "p-1" });
-
-      expect(doc("partners", "p-1").aliases).toEqual(["AL&FA"]);
-    });
-
-    it("clears an earlier removal of the same pair", async () => {
-      seedPartner("p-1", {
-        manualFileRemovals: [
-          { fileId: "f-1", extractedPartner: "X" },
-          { fileId: "f-other", extractedPartner: "Y" },
-        ],
-      });
-      seedFile("f-1");
-
-      await handlers.handleTool(USER, "assign_partner_to_file", { fileId: "f-1", partnerId: "p-1" });
-
-      expect(doc("partners", "p-1").manualFileRemovals).toEqual([
-        { fileId: "f-other", extractedPartner: "Y" },
-      ]);
-    });
-
-    it("refuses a Merged Partner, naming its survivor", async () => {
-      seedPartner("p-old", { isActive: false, mergedInto: "p-new" });
-      seedFile("f-1");
-
-      await expect(
-        handlers.handleTool(USER, "assign_partner_to_file", { fileId: "f-1", partnerId: "p-old" })
-      ).rejects.toThrow(/merged into p-new/);
-      expect(doc("files", "f-1").partnerId).toBeUndefined();
-    });
-
-    it("refuses another user's File or Partner", async () => {
-      seedPartner("p-1");
-      store.setDoc("partners", "p-theirs", createTestPartner({ userId: OTHER_USER }));
-      seedFile("f-1");
-      store.setDoc("files", "f-theirs", createTestFile({ userId: OTHER_USER }));
-
-      await expect(
-        handlers.handleTool(USER, "assign_partner_to_file", { fileId: "f-theirs", partnerId: "p-1" })
-      ).rejects.toThrow("File not found");
-      await expect(
-        handlers.handleTool(USER, "assign_partner_to_file", { fileId: "f-1", partnerId: "p-theirs" })
-      ).rejects.toThrow("Partner not found");
-    });
-  });
-
-  describe("remove_partner_from_file", () => {
-    it("clears the assignment and records an automatic one as a false positive", async () => {
-      seedPartner("p-1");
-      seedFile("f-1", {
-        partnerId: "p-1",
-        partnerType: "user",
-        partnerMatchedBy: "auto",
-        partnerMatchConfidence: 91,
-        extractedPartner: "Agent Platform GmbH",
-        fileName: "rechnung.pdf",
-      });
-
-      const result = (await handlers.handleTool(USER, "remove_partner_from_file", {
-        fileId: "f-1",
-      })) as Doc;
-
-      expect(result).toMatchObject({
-        success: true,
-        previousPartnerId: "p-1",
-        recordedAsFalsePositive: true,
-      });
-      expect(doc("files", "f-1")).toMatchObject({
-        partnerId: null,
-        partnerType: null,
-        partnerMatchedBy: null,
-        partnerMatchConfidence: null,
-      });
-      expect(doc("partners", "p-1").manualFileRemovals).toEqual([
-        expect.objectContaining({
-          fileId: "f-1",
-          extractedPartner: "Agent Platform GmbH",
-          fileName: "rechnung.pdf",
-        }),
-      ]);
-    });
-
-    it("does not record a manual assignment as a false positive", async () => {
-      seedPartner("p-1");
-      seedFile("f-1", { partnerId: "p-1", partnerType: "user", partnerMatchedBy: "manual" });
-
-      const result = (await handlers.handleTool(USER, "remove_partner_from_file", {
-        fileId: "f-1",
-      })) as Doc;
-
-      expect(result.recordedAsFalsePositive).toBe(false);
-      expect(doc("partners", "p-1").manualFileRemovals).toBeUndefined();
-      expect(doc("files", "f-1").partnerId).toBeNull();
-    });
   });
 
   // ==========================================================================

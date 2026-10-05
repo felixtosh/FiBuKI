@@ -8,7 +8,6 @@ import {
   doc,
   updateDoc,
   Timestamp,
-  arrayUnion,
 } from "firebase/firestore";
 import {
   TaxFile,
@@ -18,13 +17,11 @@ import {
   TransactionSuggestion,
 } from "@/types/file";
 import { Transaction } from "@/types/transaction";
-import { FileSourceResultType, FileSourceType, ManualFileRemoval } from "@/types/partner";
+import { FileSourceResultType, FileSourceType } from "@/types/partner";
 import { OperationsContext } from "./types";
 import { liveCopies } from "@/lib/files/copy-state";
 import { callFunction } from "@/lib/firebase/callable";
 import { fileDocumentAmount, fileDocumentVatAmount } from "@/lib/files/document-amount";
-
-const PARTNERS_COLLECTION = "partners";
 
 /**
  * Source info for tracking how a file was found when connecting
@@ -674,8 +671,11 @@ export async function getTransactionsForFile(
 
 /**
  * Assign a partner to a file.
- * If the file was previously in manualFileRemovals for this partner (user changed mind),
- * clears it from the removals array.
+ *
+ * Through the callable, the server path MCP's `assign_partner_to_file` uses
+ * too (#627): it checks the Partner is the user's own or a global one, writes
+ * the File through `updateFile`'s whitelist, cancels the Partner worker on a
+ * manual assign, and clears an earlier removal of the pair from the Partner.
  */
 export async function assignPartnerToFile(
   ctx: OperationsContext,
@@ -685,45 +685,13 @@ export async function assignPartnerToFile(
   matchedBy: "manual" | "suggestion" | "auto" = "manual",
   confidence?: number
 ): Promise<void> {
-  const existing = await getFile(ctx, fileId);
-  if (!existing) {
-    throw new Error(`File ${fileId} not found or access denied`);
-  }
-
-  const docRef = doc(ctx.db, FILES_COLLECTION, fileId);
-  await updateDoc(docRef, {
+  await callFunction("assignPartnerToFile", {
+    fileId,
     partnerId,
     partnerType,
-    partnerMatchedBy: matchedBy,
-    partnerMatchConfidence: confidence ?? null,
-    updatedAt: Timestamp.now(),
+    matchedBy,
+    confidence: confidence ?? null,
   });
-
-  // Remove from manualFileRemovals if this file was previously removed
-  // (user changed their mind about the removal)
-  try {
-    const partnerDocRef = doc(ctx.db, PARTNERS_COLLECTION, partnerId);
-    const partnerSnapshot = await getDoc(partnerDocRef);
-
-    if (partnerSnapshot.exists()) {
-      const partnerData = partnerSnapshot.data();
-      const manualFileRemovals = (partnerData.manualFileRemovals || []) as ManualFileRemoval[];
-
-      if (manualFileRemovals.some((r) => r.fileId === fileId)) {
-        const updatedRemovals = manualFileRemovals.filter((r) => r.fileId !== fileId);
-        await updateDoc(partnerDocRef, {
-          manualFileRemovals: updatedRemovals,
-          updatedAt: Timestamp.now(),
-        });
-        console.log(
-          `[Manual File Removal] Cleared false positive for file ${fileId} (user reassigned)`
-        );
-      }
-    }
-  } catch (error) {
-    console.error("Failed to clear manual file removal on reassign:", error);
-    // Non-critical - don't throw
-  }
 
   // Trigger batch matching for this partner (non-blocking)
   // This will try to match other unmatched files/transactions for the same partner
@@ -755,70 +723,16 @@ async function triggerPartnerBatchMatching(partnerId: string): Promise<void> {
 
 /**
  * Remove partner assignment from a file.
- * If the file was auto/suggestion matched, stores the removal as a false positive
- * in the partner's manualFileRemovals array for pattern learning.
+ *
+ * Through the callable, the server path MCP's `remove_partner_from_file` uses
+ * too (#627): a system-recommended assignment (auto or suggestion) is recorded
+ * on the Partner's manualFileRemovals as a false positive.
  */
 export async function removePartnerFromFile(
   ctx: OperationsContext,
   fileId: string
 ): Promise<void> {
-  const existing = await getFile(ctx, fileId);
-  if (!existing) {
-    throw new Error(`File ${fileId} not found or access denied`);
-  }
-
-  const partnerId = existing.partnerId;
-  const matchedBy = existing.partnerMatchedBy;
-
-  // Determine if this was a system-recommended assignment
-  const wasSystemRecommended = matchedBy === "auto" || matchedBy === "suggestion";
-
-  // Clear the assignment
-  const docRef = doc(ctx.db, FILES_COLLECTION, fileId);
-  await updateDoc(docRef, {
-    partnerId: null,
-    partnerType: null,
-    partnerMatchedBy: null,
-    partnerMatchConfidence: null,
-    updatedAt: Timestamp.now(),
-  });
-
-  // If this was a system-recommended assignment, track as false positive
-  if (wasSystemRecommended && partnerId) {
-    try {
-      const partnerDocRef = doc(ctx.db, PARTNERS_COLLECTION, partnerId);
-      const partnerSnapshot = await getDoc(partnerDocRef);
-
-      if (partnerSnapshot.exists()) {
-        const partnerData = partnerSnapshot.data();
-        const existingRemovals = (partnerData.manualFileRemovals || []) as ManualFileRemoval[];
-
-        // Check if this file is already in manualFileRemovals
-        const alreadyRemoved = existingRemovals.some((r) => r.fileId === fileId);
-
-        if (!alreadyRemoved) {
-          const removalEntry: ManualFileRemoval = {
-            fileId,
-            removedAt: Timestamp.now(),
-            extractedPartner: existing.extractedPartner || null,
-            fileName: existing.fileName,
-          };
-
-          await updateDoc(partnerDocRef, {
-            manualFileRemovals: arrayUnion(removalEntry),
-            updatedAt: Timestamp.now(),
-          });
-
-          console.log(
-            `[Manual File Removal] Stored false positive for partner ${partnerId}: file ${fileId}`
-          );
-        }
-      }
-    } catch (error) {
-      console.error("Failed to store manual file removal:", error);
-      // Non-critical - don't throw
-    }
-  }
+  await callFunction("removePartnerFromFile", { fileId });
 }
 
 // === Bulk Operations ===

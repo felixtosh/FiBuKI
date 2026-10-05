@@ -38,7 +38,7 @@ const BROWSER_ALLOWED: Allowances = {
   "lib/operations/chat-ops.ts": { count: 5, why: "chat sessions stay writable (ADR-0016)" },
   "lib/operations/email-inbound-ops.ts": { count: 4, why: "inbound email addresses (#626)" },
   "lib/operations/email-integration-ops.ts": { count: 1, why: "removeEmailPatternFromPartner: Partner email learning (#631)" },
-  "lib/operations/file-ops.ts": { count: 5, why: "assigning a Partner to a File (#627); Files lock in #635" },
+  "lib/operations/file-ops.ts": { count: 1, why: "updateFile (name, thumbnail); Files lock in #635" },
   "lib/operations/invite-ops.ts": { count: 3, why: "allowed emails: an admin table, admins only (ADR-0016)" },
   "lib/operations/notification-ops.ts": { count: 2, why: "marking notifications read stays writable (ADR-0016)" },
   "lib/operations/partner-ops.ts": {
