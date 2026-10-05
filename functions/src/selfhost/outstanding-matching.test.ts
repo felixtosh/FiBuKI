@@ -80,7 +80,7 @@ async function connectionTo(fileId: string, transactionId: string) {
 
 async function matchFor(fileId: string, transactionId: string) {
   const data = (await db.collection("files").doc(fileId).get()).data()!;
-  const result = await transactionsForFile(db, ME, { id: fileId, data });
+  const result = await transactionsForFile(db as never, ME, { id: fileId, data });
   return result.matches.find((m) => m.transactionId === transactionId);
 }
 
@@ -88,7 +88,7 @@ async function matchFor(fileId: string, transactionId: string) {
 async function refusalFor(fileId: string, transactionId: string) {
   const data = (await db.collection("files").doc(fileId).get()).data()!;
   const file = { id: fileId, data };
-  const { refusals } = await selectAutoConnects(db, ME, file, await transactionsForFile(db, ME, file));
+  const { refusals } = await selectAutoConnects(db as never, ME, file, await transactionsForFile(db as never, ME, file));
   return refusals.find((r) => r.transactionId === transactionId)?.reason;
 }
 
@@ -125,7 +125,7 @@ describe("a File with one payment connected", () => {
     await seedPayment("t-1", 40000, "2026-03-01");
     await connectByHand("f", "t-1");
     const data = (await db.collection("files").doc("f").get()).data()!;
-    const { match } = await scorePair(db, ME, { id: "f", data }, await db.collection("transactions").doc("t-1").get());
+    const { match } = await scorePair(db as never, ME, { id: "f", data }, await db.collection("transactions").doc("t-1").get());
     expect(match.breakdown.scoredAgainstOutstanding).toBeUndefined();
     expect(match.breakdown.instalmentCandidate).toBeUndefined();
   });
