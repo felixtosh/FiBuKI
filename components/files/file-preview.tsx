@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { useState } from "react";
 import { useFileObjectUrl } from "@/hooks/use-file-object-url";
 import { classifyPreviewFile, previewFileExtensionLabel } from "@/lib/files/file-kind";
+import { PdfThumbnail } from "./pdf-page-viewer";
 
 interface FilePreviewProps {
   downloadUrl: string;
@@ -112,12 +113,11 @@ export function FilePreview({
       onClick={onClick}
     >
       {isPdf && srcUrl ? (
-        <div className="aspect-[3/4] flex items-center justify-center bg-background">
-          <iframe
-            src={`${srcUrl}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`}
-            className="w-full h-full border-0 pointer-events-none"
-            title={fileName}
-          />
+        // FiBuKI's own renderer, not the browser's PDF viewer in an iframe:
+        // for a protected PDF that viewer asked for the password and took
+        // keyboard focus, so the list's arrow keys stopped working (#676).
+        <div className="aspect-[3/4] bg-background">
+          <PdfThumbnail url={srcUrl} />
         </div>
       ) : isPdf ? (
         // Resolving, or failed — show the placeholder rather than a broken frame.

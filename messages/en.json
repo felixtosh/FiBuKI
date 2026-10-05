@@ -332,7 +332,8 @@
       "open": "Direction open"
     },
     "viewer": {
-      "passwordProtected": "This PDF is password-protected, so it cannot be previewed."
+      "passwordProtected": "This PDF is password-protected, so it cannot be previewed.",
+      "passwordProtectedShort": "Password-protected"
     }
   },
   "settings": {
