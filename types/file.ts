@@ -743,6 +743,19 @@ export interface TaxFile {
   extractionError?: string | null;
 
   /**
+   * Which Extraction Service produced the Extraction (#161): the built-in
+   * Gemini or the deployment's external one. Absent on Files extracted
+   * before #161, which read as Gemini.
+   */
+  extractionProvider?: "gemini" | "external";
+
+  /** The service's own name and version; for Gemini, "gemini" and the model id (#161). */
+  extractionService?: { name: string; version: string };
+
+  /** The Extraction Service contract version the Extraction was made under (#161). */
+  extractionContractVersion?: string;
+
+  /**
    * When an extraction worker picked this File up (#603). Until then an
    * incomplete Extraction is only queued; after it, it is being analyzed.
    * Cleared when a Retry queues the File again.
@@ -1182,6 +1195,11 @@ export interface ExtractedFieldLocation {
 export interface ExtractedQrCode {
   format: "rksv" | "epc" | "swissQr" | "url" | "unknown";
   payload: string;
+  /**
+   * How the payload was decoded (#161): by a barcode decoder, or transcribed
+   * by a model. Absent on codes stored before the field existed: "model".
+   */
+  decodedBy?: "barcode" | "model";
   cashRegisterId?: string;
   receiptNumber?: string;
   date?: string;

@@ -12,7 +12,7 @@
  * files it under the key.
  */
 
-import { parseIsoDueDate, SETTLEMENT_LAG_DAYS } from "./dueDate";
+import { parseIsoDueDate, SETTLEMENT_LAG_DAYS, utcDayOf } from "./dueDate";
 
 /**
  * Days after the Debit Date a collection may still be booked: the Debit Date
@@ -53,7 +53,8 @@ function isDebitDateRow(field: AdditionalFieldLike): boolean {
 
 /**
  * The Debit Date among a File's additional fields, or null. With `issueDate`
- * given, a Debit Date before the issue day is a misread and is rejected.
+ * given, a Debit Date before the issue day is a misread and is rejected; the
+ * issue day is its UTC date part, as for the Due Date.
  */
 export function debitDateFromAdditionalFields(
   fields: unknown,
@@ -61,10 +62,7 @@ export function debitDateFromAdditionalFields(
 ): Date | null {
   if (!Array.isArray(fields)) return null;
 
-  const issueDay =
-    issueDate instanceof Date && !isNaN(issueDate.getTime())
-      ? new Date(issueDate.getFullYear(), issueDate.getMonth(), issueDate.getDate()).getTime()
-      : null;
+  const issueDay = utcDayOf(issueDate);
 
   for (const raw of fields) {
     if (!raw || typeof raw !== "object") continue;

@@ -1,5 +1,8 @@
 /**
- * Human corrections to a file's extracted record (fork #147).
+ * The values of a Hand Correction to a File's extracted record (fork #147):
+ * what each correctable field and descriptive field may hold, and which ones a
+ * form save actually moved. Part of the File facts module (#638); the Fact
+ * Change that uses them is `factChange.ts`.
  *
  * `retry_file_extraction` re-rolls the model, which converges only when the
  * answer is on the page. It cannot converge when the right value depends on
@@ -16,7 +19,8 @@ import { Timestamp } from "firebase-admin/firestore";
 import { ExtractedLineItem } from "../types/extraction";
 import { reconcileLineItemsWithDocumentTotal } from "../extraction/lineItemReconciliation";
 import { enforceLineItemVat } from "../extraction/taxFacts";
-import { buildCorrectionProvenance, CORRECTABLE_FIELDS } from "./extractionProvenanceOps";
+import { isAdditionalFieldKey, normalizePaymentMethod } from "../extraction/fieldVocabulary";
+import { buildCorrectionProvenance, CORRECTABLE_FIELDS } from "./provenance";
 
 /**
  * A correction. **Omitted is not null**: a key absent here is left untouched,
@@ -185,7 +189,8 @@ export interface BuiltCorrection {
  */
 export function buildExtractionCorrection(
   fields: FileExtractionCorrection,
-  previous: Record<string, unknown> = {}
+  previous: Record<string, unknown> = {},
+  at: Timestamp = Timestamp.now()
 ): BuiltCorrection {
   const updates: Record<string, unknown> = {};
   const changed: string[] = [];
@@ -322,9 +327,9 @@ export function buildExtractionCorrection(
       reconciled.unreconciledRates.length > 0 ? reconciled.unreconciledRates : null;
   }
 
-  Object.assign(updates, buildCorrectionProvenance(previous, changed));
+  Object.assign(updates, buildCorrectionProvenance(previous, changed, at));
 
-  updates.updatedAt = Timestamp.now();
+  updates.updatedAt = at;
 
   return { updates, changed };
 }
@@ -502,4 +507,103 @@ function lineItemsMatch(proposed: unknown, stored: unknown): boolean {
       item.amount === other.amount
     );
   });
+}
+
+// ---------------------------------------------------------------------------
+// The descriptive fields
+// ---------------------------------------------------------------------------
+
+/** An extra field the extractor kept but nothing else reads structurally. */
+export interface EditedAdditionalField {
+  /** Canonical key from the extraction vocabulary (#252); absent on a row a person added. */
+  key?: string;
+  label: string;
+  value: string;
+  rawValue?: string;
+}
+
+/**
+ * The half of a correction that is description rather than judgement: who the
+ * counterparty is, their VAT id, the address on the page, and the rows the
+ * extractor kept beside the figures. None of it is a ruling on the figures, so
+ * none of it stamps the Hand Correction record. The one exception is a row
+ * the Due Date or Debit Date is read from: the date it states is recorded.
+ */
+export interface ExtractedDetails {
+  partner?: string | null;
+  vatId?: string | null;
+  iban?: string | null;
+  address?: string | null;
+  additionalFields?: EditedAdditionalField[] | null;
+}
+
+/** Where each descriptive field is stored on the File record. */
+export const DESCRIPTIVE_FIELDS: Record<keyof ExtractedDetails, string> = {
+  partner: "extractedPartner",
+  vatId: "extractedVatId",
+  iban: "extractedIban",
+  address: "extractedAddress",
+  additionalFields: "extractedAdditionalFields",
+};
+
+/**
+ * The descriptive boxes are free text, so they are taken as text and nothing
+ * else. Blank is no value.
+ */
+export function normalizeDetailText(value: unknown, field: string): string | null {
+  if (value === null) return null;
+  if (typeof value !== "string") {
+    throw new ExtractionCorrectionError(`${field} must be a string or null`);
+  }
+  const trimmed = value.trim();
+  return trimmed === "" ? null : trimmed;
+}
+
+/**
+ * Label/value pairs, each under a key from the closed vocabulary (#252, #540).
+ *
+ * A row with a key outside the vocabulary is refused rather than dropped: the
+ * editor only offers vocabulary keys, so anything else is a stale or hostile
+ * client, and silently losing a row a person typed is worse than saying so.
+ * A row WITHOUT a key is legacy: stored before the vocabulary closed. It is
+ * carried through a save (its value may be edited) only when the stored record
+ * already holds a keyless row under the same label, so the open bag cannot be
+ * re-created by hand.
+ */
+export function normalizeAdditionalFields(
+  value: unknown,
+  stored: unknown
+): Array<Record<string, string>> | null {
+  if (value === null) return null;
+  if (!Array.isArray(value)) {
+    throw new ExtractionCorrectionError("additionalFields must be an array or null");
+  }
+  const legacyLabels = new Set(
+    (Array.isArray(stored) ? stored : [])
+      .map((raw) => (raw ?? {}) as Partial<EditedAdditionalField>)
+      .filter((field) => !field.key && typeof field.label === "string")
+      .map((field) => (field.label as string).trim())
+  );
+
+  const fields = value
+    .map((raw) => (raw ?? {}) as Partial<EditedAdditionalField>)
+    .filter((field) => typeof field.label === "string" && typeof field.value === "string")
+    .map((field) => {
+      const hasKey = typeof field.key === "string" && field.key !== "";
+      if (hasKey && !isAdditionalFieldKey(field.key)) {
+        throw new ExtractionCorrectionError(`additionalFields: unknown key "${field.key}"`);
+      }
+      const label = (field.label as string).trim();
+      const text = (field.value as string).trim();
+      return {
+        ...(hasKey ? { key: field.key as string } : {}),
+        label,
+        value: field.key === "paymentMethod" ? normalizePaymentMethod(text) : text,
+        rawValue: typeof field.rawValue === "string" ? field.rawValue.trim() : text,
+      };
+    })
+    .filter((field) => field.label && field.value)
+    .filter((field) => field.key !== undefined || legacyLabels.has(field.label));
+
+  return fields.length > 0 ? fields : null;
 }

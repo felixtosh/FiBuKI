@@ -15,7 +15,8 @@
  *     and detects email-as-invoice candidates. Those are not Files yet, so the
  *     attachment scorer ranks them, and they are never auto-connected
  *   - Picks the best candidate; if it's a stored File at the matcher's auto threshold
- *     with a clear lead, auto-connects through the real connect path; otherwise
+ *     with a clear lead and no tie on the File's side (#667), auto-connects through
+ *     the real connect path; otherwise
  *     surfaces top candidates for review (so the chat agent / UI / MCP caller can
  *     chain `downloadGmailAttachment` + `connectFileToTransaction` after user confirm)
  *
@@ -34,7 +35,7 @@ import {
   QueryGenerationPartner,
 } from "../precision-search/generateSearchQueries";
 import { readBankOriginalAmount } from "../fx/bankOriginalAmount";
-import { filesForTransaction } from "../matching/matcher";
+import { autoConnectTies, filesForTransaction } from "../matching/matcher";
 import { SCORING_CONFIG } from "../matching/transactionScoring";
 
 /**
@@ -161,6 +162,19 @@ function toDate(value: unknown): Date | null {
 
 function emptySources(): FindReceiptResult["sourcesChecked"] {
   return { localFiles: 0, gmailAttachments: 0, gmailEmails: 0 };
+}
+
+/**
+ * Whether the File ties on this Transaction at the threshold (#667): another
+ * uncovered Transaction of the same amount wants it as much. Judged on the
+ * File's own matches, as the upload trigger judges them, so a tie connects
+ * nothing from this side either.
+ */
+async function tiesOn(db: Firestore, userId: string, fileId: string, transactionId: string): Promise<boolean> {
+  const snap = await db.collection("files").doc(fileId).get();
+  if (!snap.exists || snap.data()?.userId !== userId) return false;
+  const ties = await autoConnectTies(db, userId, [{ id: fileId, data: snap.data()! }]);
+  return ties.get(fileId)?.has(transactionId) ?? false;
 }
 
 export async function findReceiptForTransaction(
@@ -459,7 +473,13 @@ export async function findReceiptForTransaction(
   // step (and async extraction verification) which the caller orchestrates.
   // An over-quota Transaction takes no automated connect; the connect path
   // would refuse it.
-  if (isClearWinner && top.source === "local_file" && top.fileId && !tx.quotaExceeded) {
+  if (
+    isClearWinner &&
+    top.source === "local_file" &&
+    top.fileId &&
+    !tx.quotaExceeded &&
+    !(await tiesOn(db, userId, top.fileId, transactionId))
+  ) {
     await connectFileToTransaction({
       userId,
       transactionId,

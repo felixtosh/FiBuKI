@@ -15,10 +15,11 @@
  *   from suggestions and auto-connect. A User's search lifts the hidden rule
  *   and shows those pairs marked, so a manual pick stays possible; what that
  *   pick does is the File Connection writer's business (#612).
- * - **the date window**: within MATCH_WINDOW_DAYS of the File's date; an
- *   undated File against the UNDATED_RECENT_TRANSACTIONS most recent
- *   Transactions; the hinted or nominated Transaction always. A User's search
- *   lifts it.
+ * - **the date window**: within MATCH_WINDOW_DAYS of the File's date,
+ *   reaching forward to a week past its Due Date or Debit Date (#614); an
+ *   undated File around that date, or without one against the
+ *   UNDATED_RECENT_TRANSACTIONS most recent Transactions; the hinted or
+ *   nominated Transaction always. A User's search lifts it.
  * - **input assembly**: the Partner's aliases, bands and learned weights, what
  *   the Files already on a Transaction explain (the Remainder, #239) and the
  *   ECB rate for a foreign-currency pair (#555). The pure scoring core in
@@ -41,7 +42,11 @@ import { fileSearchMatches } from "./fileSearch";
 import { isFileRejected } from "./rejectedFiles";
 import { hasUndocumentedRival, isSameDayEvidence } from "./remainderAutoConnect";
 import { loadScoringEcbRates } from "./scoringEcbRates";
-import { MATCH_WINDOW_DAYS } from "./matchWindow";
+import {
+  MATCH_WINDOW_ANCHOR_GRACE_DAYS,
+  MATCH_WINDOW_DAYS,
+  MATCH_WINDOW_MAX_ANCHOR_DAYS,
+} from "./matchWindow";
 import { matchesTransactionSearch } from "./transactionSearch";
 import {
   SCORING_CONFIG,
@@ -148,40 +153,208 @@ export async function matchableFiles<F extends MatcherFile>(db: Db, files: F[]):
 // ============================================================================
 
 interface WindowContext {
-  /** The User's UNDATED_RECENT_TRANSACTIONS most recent Transactions, for an undated File. */
+  /** The User's UNDATED_RECENT_TRANSACTIONS most recent Transactions, for a File with no window. */
   recentIds: Set<string>;
   /** Transactions a search nominated for this File (#589). */
   nominatedIds?: Set<string>;
+}
+
+/** A File's date window: the Transaction dates it may be matched with, in ms, both ends included. */
+export interface DateWindow {
+  start: number;
+  end: number;
+}
+
+const HALF_DAY_MS = MS_PER_DAY / 2;
+
+/**
+ * The calendar day a stored date names, as a day number. Rounded, not
+ * floored: a date is stored as UTC midnight of the Vienna day, and a legacy
+ * row is read as local midnight, which on a host east of UTC is the evening
+ * before. Both round to the day they name.
+ */
+function dayNumber(date: Date): number {
+  return Math.round(date.getTime() / MS_PER_DAY);
+}
+
+/** Every instant that rounds to day `n`. */
+function dayRange(n: number): DateWindow {
+  return { start: n * MS_PER_DAY - HALF_DAY_MS, end: n * MS_PER_DAY + HALF_DAY_MS - 1 };
 }
 
 function fileDateOf(fileData: Data): Date | null {
   return toDateSafe(fileData.extractedDate);
 }
 
-/** Is this Transaction within the File's date window? */
-function inWindow(fileData: Data, transactionId: string, txData: Data, ctx: WindowContext): boolean {
+/**
+ * What the window reaches to (#614): the later of the File's Due Date and
+ * Debit Date, read through the scorer's own readers (typed field first, a
+ * legacy keyless row second), so a File extracted before the typed fields
+ * stretches without re-extraction. A printed payment term is a period, not a
+ * date, and those readers never return one.
+ *
+ * With a File date, each of the two dates is checked on its own: one more
+ * than 90 days after the File date is a misread (a wrong year would open a
+ * window over a year wide) and is dropped, and the anchor is the later of
+ * the rest. The scorer still reads a dropped date as it always did.
+ */
+function windowAnchorOf(fileData: Data, fileDate: Date | null): Date | null {
+  const { extractedDueDate, extractedDebitDate } = toFileMatchingData(fileData);
+  const dates = [toDateSafe(extractedDueDate), toDateSafe(extractedDebitDate)].filter(
+    (d): d is Date =>
+      d !== null &&
+      (fileDate === null || dayNumber(d) - dayNumber(fileDate) <= MATCH_WINDOW_MAX_ANCHOR_DAYS)
+  );
+  if (dates.length === 0) return null;
+  return dates.reduce((a, b) => (b.getTime() > a.getTime() ? b : a));
+}
+
+/**
+ * A File's date window, or null when it has neither a date nor an anchor
+ * (it is then scored against the most recent Transactions).
+ *
+ * - Dated: `[date − 30, max(date + 30, anchor + 7)]` in days. The back edge
+ *   never moves; a Due Date or Debit Date more than 90 days after the date is
+ *   a misread and is left out of the anchor (the scorer still reads it as it
+ *   always did).
+ * - Undated, with an anchor: the anchor ± 30 days.
+ *
+ * The window decides which pairs are possible, never how strongly they score.
+ */
+export function dateWindowOf(fileData: Data): DateWindow | null {
+  const fileDate = fileDateOf(fileData);
+  const anchor = windowAnchorOf(fileData, fileDate);
+  if (fileDate) {
+    const window = { start: fileDate.getTime() - WINDOW_MS, end: fileDate.getTime() + WINDOW_MS };
+    const reach = anchor ? dayNumber(anchor) - dayNumber(fileDate) : 0;
+    // Only an anchor whose week ends past day +30 stretches it: one ending on
+    // day +30 or earlier leaves the ±30 edge exactly as it was, so the
+    // rematch does not select the File for a half-day sliver.
+    if (anchor && reach + MATCH_WINDOW_ANCHOR_GRACE_DAYS > MATCH_WINDOW_DAYS) {
+      window.end = Math.max(window.end, dayRange(dayNumber(anchor) + MATCH_WINDOW_ANCHOR_GRACE_DAYS).end);
+    }
+    return window;
+  }
+  if (anchor) {
+    return {
+      start: dayRange(dayNumber(anchor) - MATCH_WINDOW_DAYS).start,
+      end: dayRange(dayNumber(anchor) + MATCH_WINDOW_DAYS).end,
+    };
+  }
+  return null;
+}
+
+/**
+ * Does the File's window reach past its date + 30 days, a Due Date or Debit
+ * Date stretching it (#614)? The one-time rematch after release selects
+ * these Files.
+ */
+export function stretchesWindow(fileData: Data): boolean {
+  const fileDate = fileDateOf(fileData);
+  const window = dateWindowOf(fileData);
+  return fileDate !== null && window !== null && window.end > fileDate.getTime() + WINDOW_MS;
+}
+
+/**
+ * Did #614 change which Transactions this File can reach? A dated File whose
+ * window a Due Date or Debit Date stretches, or an undated File with one,
+ * whose window moved from the most recent Transactions to that date ± 30
+ * days. The one-time rematch after release selects these Files.
+ */
+export function anchorChangesWindow(fileData: Data): boolean {
+  if (fileDateOf(fileData)) return stretchesWindow(fileData);
+  return dateWindowOf(fileData) !== null;
+}
+
+/**
+ * The dates matching reads off a File, as calendar days: its date, Due Date
+ * and Debit Date, read as the scorer reads them (a legacy row included). Two
+ * versions of a File with different keys are matched differently, so a hand
+ * edit that changes the key re-scores the File's suggestions (#614).
+ */
+export function matchDatesKey(fileData: Data): string {
+  const { extractedDueDate, extractedDebitDate } = toFileMatchingData(fileData);
+  return [fileDateOf(fileData), toDateSafe(extractedDueDate), toDateSafe(extractedDebitDate)]
+    .map((d) => (d ? d.toISOString().slice(0, 10) : "-"))
+    .join("|");
+}
+
+/**
+ * Is this Transaction within the File's date window? `window` is
+ * `dateWindowOf(fileData)`, worked out once per File by the caller.
+ */
+function inWindow(
+  fileData: Data,
+  window: DateWindow | null,
+  transactionId: string,
+  txData: Data,
+  ctx: WindowContext
+): boolean {
   // A search already found it relevant, and an invoice paid on a 45-day term
   // is still this File's (#589).
   if (fileData.precisionSearchHint?.transactionId === transactionId) return true;
   if (ctx.nominatedIds?.has(transactionId)) return true;
-  const fileDate = fileDateOf(fileData);
-  if (!fileDate) return ctx.recentIds.has(transactionId);
+  if (!window) return ctx.recentIds.has(transactionId);
   const txDate = toDateSafe(txData.date);
   if (!txDate) return false;
-  return Math.abs(txDate.getTime() - fileDate.getTime()) <= WINDOW_MS;
+  return txDate.getTime() >= window.start && txDate.getTime() <= window.end;
+}
+
+/** The span ±30 days around these dates reaches. */
+function baseSpan(dates: Date[]): DateWindow | null {
+  if (dates.length === 0) return null;
+  const times = dates.map((d) => d.getTime());
+  return { start: Math.min(...times) - WINDOW_MS, end: Math.max(...times) + WINDOW_MS };
+}
+
+/** The parts of `outer` outside `inner`, at most two. */
+function outside(outer: DateWindow, inner: DateWindow | null): DateWindow[] {
+  if (!inner) return [outer];
+  const parts: DateWindow[] = [];
+  if (outer.start < inner.start) parts.push({ start: outer.start, end: Math.min(outer.end, inner.start) });
+  if (outer.end > inner.end) parts.push({ start: Math.max(outer.start, inner.end), end: outer.end });
+  return parts;
+}
+
+/** These spans with every overlapping pair joined, earliest first. */
+function merged(spans: DateWindow[]): DateWindow[] {
+  const out: DateWindow[] = [];
+  for (const span of [...spans].sort((a, b) => a.start - b.start)) {
+    const last = out[out.length - 1];
+    if (last && span.start <= last.end) last.end = Math.max(last.end, span.end);
+    else out.push({ ...span });
+  }
+  return out;
 }
 
 /**
- * The span every Transaction in the window of some File dated `dates` falls
- * in, for a caller that bounds a query by it. Null when there are no dates.
+ * The date ranges to read a pool from: `base`, the span ±30 days reaches
+ * exactly as before #614, then what the windows add beyond it, joined where
+ * they overlap. Each range is read under its own cap, so a stretch never
+ * crowds a Transaction of the ±30-day span out of the pool.
  */
-export function windowAround(dates: Date[]): { start: Timestamp; end: Timestamp } | null {
-  if (dates.length === 0) return null;
-  const times = dates.map((d) => d.getTime());
-  return {
-    start: Timestamp.fromDate(new Date(Math.min(...times) - WINDOW_MS)),
-    end: Timestamp.fromDate(new Date(Math.max(...times) + WINDOW_MS)),
-  };
+function readRanges(base: DateWindow | null, windows: DateWindow[]): DateWindow[] {
+  return [...(base ? [base] : []), ...merged(windows.flatMap((w) => outside(w, base)))];
+}
+
+const toTimestamps = (span: DateWindow) => ({
+  start: Timestamp.fromMillis(span.start),
+  end: Timestamp.fromMillis(span.end),
+});
+
+/**
+ * The File-date ranges to read for a caller that pools Files by date around
+ * these Transaction dates (Partner matching): the Files dated within ±30 days
+ * of them, as before #614, and the earlier ones a Due Date or Debit Date can
+ * stretch to them, each read under its own cap. Which pairs among them are
+ * possible is still `pairsAmong`'s answer.
+ */
+export function fileDateRangesFor(transactionDates: Date[]): Array<{ start: Timestamp; end: Timestamp }> {
+  const base = baseSpan(transactionDates);
+  if (!base) return [];
+  const longestStretch = (MATCH_WINDOW_MAX_ANCHOR_DAYS + MATCH_WINDOW_ANCHOR_GRACE_DAYS + 1) * MS_PER_DAY;
+  const reach = { start: base.start + WINDOW_MS - longestStretch, end: base.end };
+  return readRanges(base, [reach]).map(toTimestamps);
 }
 
 async function recentTransactionIds(db: Db, userId: string): Promise<Set<string>> {
@@ -195,9 +368,10 @@ async function recentTransactionIds(db: Db, userId: string): Promise<Set<string>
 }
 
 /**
- * Every Transaction in the window of any of these Files: one query over the
- * union of their windows, the most recent ones for an undated File, and each
- * hinted or nominated Transaction wherever it is dated.
+ * Every Transaction in the window of any of these Files: the span ±30 days
+ * around their dates as one query, what a Due Date or Debit Date stretches
+ * beyond it (#614) as others, the most recent ones for a File with no window,
+ * and each hinted or nominated Transaction wherever it is dated.
  */
 async function windowPool(
   db: Db,
@@ -206,9 +380,11 @@ async function windowPool(
   nominatedIds: Set<string>
 ): Promise<{ pool: TxDoc[]; ctx: WindowContext }> {
   const byId = new Map<string, TxDoc>();
-  const span = windowAround(files.map((f) => fileDateOf(f.data)).filter((d): d is Date => d !== null));
+  const base = baseSpan(files.map((f) => fileDateOf(f.data)).filter((d): d is Date => d !== null));
+  const windows = files.map((f) => dateWindowOf(f.data));
 
-  if (span) {
+  for (const range of readRanges(base, windows.filter((w): w is DateWindow => w !== null))) {
+    const span = toTimestamps(range);
     const snapshot = await db
       .collection("transactions")
       .where("userId", "==", userId)
@@ -223,11 +399,11 @@ async function windowPool(
           "Transactions at its far edge are not scored"
       );
     }
-    for (const doc of snapshot.docs) byId.set(doc.id, doc);
+    for (const doc of snapshot.docs) if (!byId.has(doc.id)) byId.set(doc.id, doc);
   }
 
   let recentIds = new Set<string>();
-  if (files.some((f) => !fileDateOf(f.data))) {
+  if (windows.some((w) => w === null)) {
     const snapshot = await db
       .collection("transactions")
       .where("userId", "==", userId)
@@ -457,7 +633,8 @@ async function windowMatches(
     files.map(async (file, i) => {
       if (reasons[i]) return NO_TRANSACTIONS(reasons[i]);
       const excluded = excludedTransactionIds(file, options);
-      const inFileWindow = pool.filter((doc) => inWindow(file.data, doc.id, doc.data() ?? {}, ctx));
+      const window = dateWindowOf(file.data);
+      const inFileWindow = pool.filter((doc) => inWindow(file.data, window, doc.id, doc.data() ?? {}, ctx));
       const candidates = inFileWindow.filter(
         (doc) =>
           !excluded.has(doc.id) && hiddenReasonOf(file.id, file.data, doc.id, doc.data() ?? {}) === null
@@ -583,16 +760,17 @@ export async function filesForTransaction(
       .filter((f) => fileSearchMatches(f.data, search).length > 0)
       .map((f) => ({ ...f, hidden: hiddenReasonOf(f.id, f.data, transactionId, txData) }));
   } else {
+    // Each File's own window, stretched or not (#614): a Transaction finds a
+    // File exactly when that File's window holds the Transaction's date.
+    const windows = files.map((f) => dateWindowOf(f.data));
     const ctx: WindowContext = {
-      recentIds: files.some((f) => !fileDateOf(f.data))
-        ? await recentTransactionIds(db, userId)
-        : new Set(),
+      recentIds: windows.some((w) => w === null) ? await recentTransactionIds(db, userId) : new Set(),
     };
     candidates = files
-      .filter((f) => {
+      .filter((f, i) => {
         const hidden = hiddenReasonOf(f.id, f.data, transactionId, txData);
         if (hidden === "rejected") rejectedFileIds.push(f.id);
-        return hidden === null && inWindow(f.data, transactionId, txData, ctx);
+        return hidden === null && inWindow(f.data, windows[i], transactionId, txData, ctx);
       })
       .map((f) => ({ ...f, hidden: null }));
   }
@@ -634,8 +812,9 @@ export async function pairsAmong(
   const matchable = await matchableFiles(db, files);
   if (matchable.length === 0 || transactions.length === 0) return [];
 
+  const windows = new Map(matchable.map((f) => [f, dateWindowOf(f.data)]));
   const ctx: WindowContext = {
-    recentIds: matchable.some((f) => !fileDateOf(f.data))
+    recentIds: [...windows.values()].some((w) => w === null)
       ? await recentTransactionIds(db, userId)
       : new Set(),
   };
@@ -653,7 +832,7 @@ export async function pairsAmong(
         const txData = doc.data() ?? {};
         return (
           hiddenReasonOf(file.id, file.data, doc.id, txData) === null &&
-          inWindow(file.data, doc.id, txData, ctx)
+          inWindow(file.data, windows.get(file) ?? null, doc.id, txData, ctx)
         );
       });
       const documentedAmounts = documentedAmountsOf(withoutFile(connected, file.id));
@@ -743,6 +922,8 @@ export interface AutoConnectRefusal {
   transactionId: string;
   confidence: number;
   reason: string;
+  /** Set for the tie rule (#667), which other auto-connecting surfaces read. */
+  tie?: true;
 }
 
 /**
@@ -751,7 +932,10 @@ export interface AutoConnectRefusal {
  * Remainder Match only as the same-day case (#242, ADR-0008), and nothing at
  * all when the File's Partner prefers no receipt at least as strongly. A
  * documented Transaction still takes this File when the other File of its
- * Receipt Link is on it (#571): the pair counts once.
+ * Receipt Link is on it (#571): the pair counts once. A tie connects nothing
+ * (#667): two or more of what is left with the same amount in the same
+ * currency all stay suggestions, unless one is that paired Transaction,
+ * which then keeps the File alone.
  */
 export async function selectAutoConnects(
   db: Db,
@@ -852,7 +1036,60 @@ export async function selectAutoConnects(
     });
   }
 
-  return { picks, refusals };
+  const tied = tiedPicks(picks);
+  for (const { match } of tied) {
+    refusals.push({
+      transactionId: match.transactionId,
+      confidence: match.confidence,
+      reason:
+        `a tie: another Transaction of ${(Math.abs(match.preview.amount) / 100).toFixed(2)} ` +
+        `${currencyOf(match)} reaches the threshold too`,
+      tie: true,
+    });
+  }
+  return { picks: picks.filter((p) => !tied.includes(p)), refusals };
+}
+
+function currencyOf(match: Match): string {
+  return (match.preview.currency || "EUR").toUpperCase();
+}
+
+/**
+ * The picks that tie (#667): two or more with the same amount in the same
+ * currency. Where one of them is a paired pick (#571), the Receipt Link
+ * decides: the paired pick stays and only the others are tied.
+ */
+function tiedPicks(picks: AutoConnectPick[]): AutoConnectPick[] {
+  const byAmount = new Map<string, AutoConnectPick[]>();
+  for (const pick of picks) {
+    const key = `${currencyOf(pick.match)}|${pick.match.preview.amount}`;
+    byAmount.set(key, [...(byAmount.get(key) ?? []), pick]);
+  }
+  return [...byAmount.values()]
+    .filter((group) => group.length > 1)
+    .flatMap((group) => group.filter((p) => p.autoConnectReason !== "paired"));
+}
+
+/**
+ * For a surface that auto-connects a File from elsewhere (Partner matching,
+ * find-receipt): the Transactions each File ties on at the threshold (#667),
+ * judged on the File's own matches exactly as the upload trigger judges them,
+ * so every surface refuses the same pairs. Keyed by File id; a File with no
+ * tie is absent.
+ */
+export async function autoConnectTies(
+  db: Db,
+  userId: string,
+  files: MatcherFile[]
+): Promise<Map<string, Set<string>>> {
+  const ties = new Map<string, Set<string>>();
+  const results = await transactionsForFiles(db, userId, files);
+  for (let i = 0; i < files.length; i++) {
+    const { refusals } = await selectAutoConnects(db, userId, files[i], results[i]);
+    const tied = refusals.filter((r) => r.tie).map((r) => r.transactionId);
+    if (tied.length > 0 && files[i].id) ties.set(files[i].id!, new Set(tied));
+  }
+  return ties;
 }
 
 /** The other Files of a File's Receipt Links (#571), from either side. */

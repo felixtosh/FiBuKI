@@ -213,6 +213,13 @@ const nextConfig: NextConfig = {
   async headers() {
     return securityHeaderRules(CSP);
   },
+  async redirects() {
+    // /categories was a duplicate of /settings/categories (#650). Next keeps the
+    // query string on a config redirect, so /categories?id=x still opens x.
+    return [
+      { source: "/categories", destination: "/settings/categories", permanent: false },
+    ];
+  },
   async rewrites() {
     // In dev the Firebase Auth emulator hosts its own /__/auth/ handler at
     // 127.0.0.1:9099; forwarding to prod intercepts the OAuth callback and

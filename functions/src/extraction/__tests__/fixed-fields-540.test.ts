@@ -25,7 +25,7 @@ import {
   rateGroupsFromRksv,
   rksvReceiptKindOf,
 } from "../qrCodes";
-import { buildExtractionCorrection } from "../../files/extractionCorrectionOps";
+import { buildExtractionCorrection } from "../../fileFacts/handCorrection";
 import { ExtractedLineItem } from "../../types/extraction";
 
 const row = (description: string, amount: number, vatPercent: number | null = null, vatAmount = 0): ExtractedLineItem => ({
