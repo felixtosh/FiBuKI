@@ -325,9 +325,11 @@ with an MCP twin is a thin wrapper in `lib/agent/tools/mcp-tools.ts` over the `r
 callable, which runs the named tool through `handleTool` as the session's User, with the
 plan feature gate and without the API-key rate limit. The MCP output shape is the contract
 external integrations depend on: a wrapper passes it through, reformatted for reading
-only (`forTheModel`: Timestamps as ISO strings, a File's OCR text left out of list rows),
-and filtering or computing lives only in the shared tool. Chat-only tools (queue status, Transaction history,
-navigation, Gmail search, the Partner batch context) keep their own reads.
+only (`forTheModel`: Timestamps as ISO strings; a File's OCR text and a Transaction's
+import and automation bookkeeping left out of list rows, the single get keeps them), and
+filtering or computing lives only in the shared tool. Chat-only tools (queue status,
+Transaction history, navigation, Gmail search, the Partner batch context) keep their own
+reads. Every amount the chat reads is integer cents, the chat-only tools' included.
 `functions/src/selfhost/chat-mcp-tools.test.ts` holds each wrapper to its twin's output
 and fails if one reads or writes the database itself.
 
