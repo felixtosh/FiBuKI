@@ -141,7 +141,8 @@ the retained document survives. The original cannot be restored while any of its
 exists. The Extraction may suggest a Split; FiBuKI never splits on its own, and a File the
 User ruled not to be several documents is not suggested again.
 _Deutsch_: Aufteilen
-_Avoid_: bundle (prose only, never a domain term), separate, divide, unmerge
+_Avoid_: bundle (that is a **Bundle**: several documents, not one File holding several),
+separate, divide, unmerge
 
 **Document Type**:
 How a File stands under § 11 UStG: `invoice`, `receipt`, `other`, or `unknown`. Decides
@@ -186,7 +187,11 @@ _Avoid_: required field, invoice attribute
 _Avoid (de)_: Pflichtangabe (any legally required statement, wider than § 11), Merkmal bare
 
 **Invoice**:
-A § 11 document the User issues to a Partner, numbered and immutable once issued. An
+A § 11 document the User issues to a Partner, numbered once issued. Until it is paid
+(its File connected to a Transaction) the User may edit it or take it back to a draft,
+which keeps its number; once paid it is locked, and changing it means unlinking the
+payment first or issuing an **Invoice Correction** — see
+[ADR-0015](docs/adr/0015-an-invoice-is-locked-once-paid.md). An
 invoice the User *receives* is a File with Document Type `invoice`, not an Invoice.
 _Deutsch (defining)_: Ausgangsrechnung
 _Also printed as_: Rechnung, Honorarnote, Faktura, Invoice
@@ -233,6 +238,32 @@ Mahnschreiben, Zahlungsaufforderung
 _Avoid_: payment reminder as the concept (a Zahlungserinnerung is its first stage),
 overdue notice, collection letter
 _Avoid (de)_: Inkasso (third-party collection), Mahnspesen (a fee it may carry), Rechnung
+
+**Offer**:
+A document proposing a supply at a price before anything is owed, in either direction:
+the User's own offer to a customer, or a supplier's to the User. An Offer the recipient
+signed or otherwise accepted is a **signed Offer**, the point from which an invoice is
+expected. It states no supply that happened, so it is never an invoice and never a
+Match: a File with Document Type `other` that sits only in its **Bundle**. See
+[ADR-0014](docs/adr/0014-a-bundle-is-one-business-case.md).
+_Deutsch (defining)_: Angebot (signed: angenommenes Angebot)
+_Also printed as_: Angebot, Kostenvoranschlag, Offert, Quote, Proposal
+_Avoid_: quote, estimate, proposal as our own words
+_Avoid (de)_: Auftragsbestätigung for a signed Offer (that is an **Order Confirmation**),
+Rechnung
+
+**Order Confirmation**:
+A supplier's or marketplace's confirmation that an order was accepted, before or beside
+the invoice for it. It states what will be owed, not what is, so it is never an invoice
+and never a Match: a File with Document Type `other` that sits only in its **Bundle**,
+where it says an invoice is expected. See
+[ADR-0014](docs/adr/0014-a-bundle-is-one-business-case.md).
+_Deutsch (defining)_: Auftragsbestätigung
+_Also printed as_: Auftragsbestätigung, Bestellbestätigung, Order Confirmation, Your
+order
+_Avoid_: order receipt (a **Receipt** confirms a payment), purchase order (what the buyer
+sends)
+_Avoid (de)_: Bestellung (the buyer's act), Rechnung
 
 **Invoicing Agent**:
 A business that writes a File in the name of another, as § 11 Abs 2 UStG permits (Uber
@@ -441,6 +472,24 @@ _Deutsch_: Restbetrag
 _Avoid_: difference, open amount, balance, remaining amount, delta
 _Avoid (de)_: Differenz, offener Betrag, Saldo
 
+**Outstanding**:
+The part of a File its connected Transactions do not yet pay: the File's total minus what
+those payments come to. The File-side mirror of the **Remainder**, for one File paid by
+several Transactions (instalments, a deposit and a final payment, a charge the bank
+splits). Once a File has a payment connected and is still Outstanding, a further
+Transaction is scored against the Outstanding amount, and a payment that closes it is a
+Match, never an amount mismatch against the full total. Before any payment there is
+nothing Outstanding; the first instalment is recognised only by what the File prints or
+the bank line cites. A Match on the Outstanding amount is a suggestion unless the File
+prints that instalment — see
+[ADR-0013](docs/adr/0013-an-instalment-auto-connects-only-on-printed-evidence.md). The
+UVA needs nothing from it: a partly paid File already claims the paid fraction, capped
+at the whole.
+_Deutsch_: Ausstehender Betrag (ausstehend)
+_Avoid_: unpaid part, File Remainder, open amount, balance due
+_Avoid (de)_: offener Teil, offener Betrag, Restbetrag (that is the **Remainder**),
+Restschuld
+
 **Rejection**:
 The standing "this File and this Transaction do not belong together", whoever recorded it
 — a click, an agent, an MCP call. Survives re-scoring and re-extraction; a rejected pair
@@ -472,6 +521,12 @@ ruled not a Copy is never suggested again. See
 [ADR-0010](docs/adr/0010-a-copy-holds-no-file-connection.md). A Receipt for
 the same charge as an invoice is not a Copy, even when it prints the invoice's number,
 amount and day, and neither is a **Dunning Letter**: both are different documents.
+_Deutsch_: Kopie
+_Also printed as_: Duplikat, Kopie, Zweitschrift, Rechnungskopie
+_Avoid_: duplicate (identical bytes, which are never stored a second time), second copy,
+sibling
+_Avoid (de)_: Duplikat, Zweitschrift as our own word (a second invoice the supplier
+issues and marks as such; a Copy is often an unmarked second original)
 
 **Receipt Link**:
 The record that a Receipt pays a particular invoice, held on the Receipt and pointing at
@@ -487,12 +542,24 @@ never suggested again. See
 _Deutsch_: Zahlungsbeleg zur Rechnung
 _Avoid_: payment confirmation, pairing, attachment, Copy
 _Avoid (de)_: Zuordnung (that is the **File Connection**), Kopie
-_Deutsch_: Kopie
-_Also printed as_: Duplikat, Kopie, Zweitschrift, Rechnungskopie
-_Avoid_: duplicate (identical bytes, which are never stored a second time), second copy,
-sibling
-_Avoid (de)_: Duplikat, Zweitschrift as our own word (a second invoice the supplier
-issues and marks as such; a Copy is often an unmarked second original)
+
+**Bundle**:
+The Files of one business case with one counterparty, from the **Offer** to the last
+payment: Offers and signed Offers, **Order Confirmations**, invoices and Receipts. It may
+span several invoices and several payments (a deposit and a final invoice are one
+Bundle). A Bundle forms as soon as two Files share a key — a printed order number, or
+one File citing another's invoice, order or Offer number — before any Transaction is
+involved. Its Offers and Order Confirmations are never a Match; its invoices are scored
+together against a Transaction, and while a known member is still unconnected a single
+member does not connect itself on its own amount. A Bundle says what is missing: a
+signed Offer with no Invoice issued, an Order Confirmation or payment with no invoice
+received, an invoice still Outstanding after its Due Date. Removing a member is a standing
+ruling, like a **Rejection**; a member can be added by hand. A **Copy** is never a member,
+its original is. See [ADR-0014](docs/adr/0014-a-bundle-is-one-business-case.md).
+_Deutsch_: Geschäftsfall (proposed, see #570)
+_Avoid_: group, order (an **Order Confirmation** is one member), deal, project
+_Avoid (de)_: Sammelbeleg (one File holding several documents, which a **Split** takes
+apart), Bestellung, Projekt, Vorgang
 
 **Learned Pattern**:
 A rule the system inferred from the user's own corrections, stored on a Partner and used
@@ -518,8 +585,20 @@ _Deutsch_: Kategorie ohne Beleg
 _Avoid_: no-receipt category, exception, uncategorised, missing-receipt flag.
 (Stored as `noReceiptCategoryId` / collection `noReceiptCategories`; the rename is
 deferred — see [ADR-0001](docs/adr/0001-receipt-means-section-11-only.md).)
-_Avoid (de)_: Eigenbeleg (a document the User writes, which is the opposite of having
-none), Ausnahme
+_Avoid (de)_: Eigenbeleg (the document FiBuKI generates for one of these, Receipt Lost,
+not the category), Ausnahme
+
+**Eigenbeleg**:
+The document FiBuKI generates when the User marks a Transaction "receipt lost": a PDF
+stating the date and amount (from the bank line), the payee, what was bought and why no
+receipt exists, stored as a generated File connected to the Transaction and, like an
+Invoice's PDF, never deleted (ADR-0006). It makes the expense credible (§ 138 BAO); it
+never creates an input VAT deduction, because § 12 UStG needs another business's
+§ 11 invoice. The alternative for a line with no receipt is the No-document Category
+"private", which is not a business expense at all.
+_English_: none, cite verbatim
+_Avoid_: self-receipt, substitute receipt, own receipt, replacement document
+_Avoid (de)_: Ersatzbeleg, Quittung
 
 **VAT Treatment**:
 What a No-document Category means for the UVA: `exempt-class` (zero input VAT by law),
