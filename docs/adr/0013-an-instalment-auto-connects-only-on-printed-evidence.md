@@ -73,6 +73,8 @@ claimed fraction capped so a File's instalments never claim more than the whole 
 - The matcher's scoring inputs gain the File's Outstanding amount, read through the same
   connected-payments summary Coverage uses, so the Receipt Link's "a pair counts once"
   holds here too.
-- Auto-connects made under rule 4 carry their own reason, beside `remainder_same_day` and
-  `paired`, so they are findable as a class.
-- The File detail panel shows the Outstanding amount.
+- Auto-connects made under rule 4 carry their own reason, `instalment`, beside
+  `remainder_same_day` and `paired`, so they are findable as a class.
+- The File detail panel shows the Outstanding amount, and an overpayment beside "paid in
+  full": Outstanding never goes below zero, but what the payments came to beyond the File
+  stays visible.

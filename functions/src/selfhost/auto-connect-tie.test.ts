@@ -17,7 +17,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { getFirestore, Timestamp, __resetFirestoreShim } from "./firestore-shim";
 import { connectFile } from "../fileConnections/writer";
 import {
-  autoConnectTies,
+  autoConnectHolds,
   selectAutoConnects,
   storedSuggestionsOf,
   transactionsForFile,
@@ -274,7 +274,7 @@ describe("a Receipt whose invoice is already on the charge of this month (#667, 
 
     expect(picks.map((p) => [p.match.transactionId, p.autoConnectReason])).toEqual([["t-apr", "paired"]]);
     expect(refusals).toEqual([expect.objectContaining({ transactionId: "t-may", tie: true })]);
-    expect((await autoConnectTies(db, ME, [f])).get("f-rec")).toEqual(new Set(["t-may"]));
+    expect((await autoConnectHolds(db, ME, [f])).get("f-rec")).toEqual(new Set(["t-may"]));
 
     await refresh("f-rec");
     expect((await connectionsOf("f-rec")).map((c) => c.transactionId)).toEqual(["t-apr"]);

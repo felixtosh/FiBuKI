@@ -489,6 +489,20 @@ _Avoid_: unpaid part, File Remainder, open amount, balance due
 _Avoid (de)_: offener Teil, offener Betrag, Restbetrag (that is the **Remainder**),
 Restschuld
 
+**Instalment**:
+One printed part of a File's total: a deposit, a part payment, a numbered instalment
+("Rate 2/3") or one row of a payment schedule, with its amount and, where printed, its due
+date. Read off the document by the Extraction, never computed from the total. Not an
+instalment: a single due date for the full amount, a cash discount (Skonto) and its reduced
+amount, and a schedule whose parts add up to more than the File's total (such as next
+year's advance payments on an annual utility bill). Before any payment, a Transaction is
+scored against the nearest printed Instalment; one paying exactly a printed Instalment may
+connect itself, a payment of any other part stays a suggestion — see
+[ADR-0013](docs/adr/0013-an-instalment-auto-connects-only-on-printed-evidence.md).
+_Deutsch_: Rate / Teilzahlung
+_Avoid_: partial invoice, split, tranche
+_Avoid (de)_: Teilrechnung (that is a document of its own), Tranche
+
 **Rejection**:
 The standing "this File and this Transaction do not belong together", whoever recorded it
 — a click, an agent, an MCP call. Survives re-scoring and re-extraction; a rejected pair

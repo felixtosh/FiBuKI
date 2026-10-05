@@ -35,6 +35,7 @@ const FACTS = [
   "extractedTipBound",
   "extractedDueDate",
   "extractedDebitDate",
+  "extractedInstalments",
   "extractedPartner",
   "extractedVatId",
   "extractedIban",
