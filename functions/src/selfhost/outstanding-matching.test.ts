@@ -231,9 +231,10 @@ describe("a part payment nothing prints or cites", () => {
   });
 });
 
-describe("two equal instalments in one window", () => {
+describe("equal instalments in one run", () => {
   // Rate 1 due on the invoice day, Rate 2 a fortnight later: both charges sit
-  // inside the payment window and reach the threshold.
+  // inside the payment window and reach the threshold. Each competes only for
+  // the printed due date nearest it (#716).
   const schedule = [
     { amount: 40000, dueDate: day("2026-03-01"), label: "Rate 1/3" },
     { amount: 40000, dueDate: day("2026-03-15"), label: "Rate 2/3" },
@@ -241,35 +242,74 @@ describe("two equal instalments in one window", () => {
   ];
   const seed = () => seedInvoice("f", { extractedInstalments: schedule, extractedDueDate: day("2026-03-15") });
 
-  it("connects the one booked nearest its printed due date", async () => {
+  it("connects each payment booked nearest a different printed due date", async () => {
     await seed();
     await seedPayment("t-near", 40000, "2026-03-01");
     await seedPayment("t-far", 40000, "2026-03-13");
-    const near = await matchFor("f", "t-near");
-    const far = await matchFor("f", "t-far");
-    expect(near!.confidence).toBeGreaterThanOrEqual(THRESHOLD);
-    expect(far!.confidence).toBeGreaterThanOrEqual(THRESHOLD);
-    expect(await refusalFor("f", "t-far")).toMatch(/tie/);
+    expect((await matchFor("f", "t-near"))?.breakdown.scoredAgainstDueDate).toBe("2026-03-01");
+    expect((await matchFor("f", "t-far"))?.breakdown.scoredAgainstDueDate).toBe("2026-03-15");
     expect(await refusalFor("f", "t-near")).toBeUndefined();
+    expect(await refusalFor("f", "t-far")).toBeUndefined();
 
     await refresh("f");
     expect(await connectionTo("f", "t-near")).toMatchObject({ autoConnectReason: "instalment" });
-    expect(await connectionTo("f", "t-far")).toBeNull();
+    expect(await connectionTo("f", "t-far")).toMatchObject({ autoConnectReason: "instalment" });
   });
 
-  it("connects neither when both are as near to a printed due date", async () => {
+  it("connects both when each is as near to its own printed due date", async () => {
     await seed();
     await seedPayment("t-a", 40000, "2026-03-02");
     await seedPayment("t-b", 40000, "2026-03-14");
     expect((await matchFor("f", "t-a"))!.confidence).toBeGreaterThanOrEqual(THRESHOLD);
     expect((await matchFor("f", "t-b"))!.confidence).toBeGreaterThanOrEqual(THRESHOLD);
-    expect(await refusalFor("f", "t-a")).toMatch(/tie/);
-    expect(await refusalFor("f", "t-b")).toMatch(/tie/);
 
     await refresh("f");
-    expect(await connectionTo("f", "t-a")).toBeNull();
-    expect(await connectionTo("f", "t-b")).toBeNull();
-    expect(await suggestedIds("f")).toEqual(["t-a", "t-b"]);
+    expect(await connectionTo("f", "t-a")).toMatchObject({ autoConnectReason: "instalment" });
+    expect(await connectionTo("f", "t-b")).toMatchObject({ autoConnectReason: "instalment" });
+  });
+
+  it("of two nearest the same printed due date, connects the nearer", async () => {
+    await seed();
+    await seedPayment("t-on", 40000, "2026-03-01");
+    await seedPayment("t-late", 40000, "2026-03-04");
+    expect((await matchFor("f", "t-late"))?.breakdown.scoredAgainstDueDate).toBe("2026-03-01");
+    expect((await matchFor("f", "t-late"))!.confidence).toBeGreaterThanOrEqual(THRESHOLD);
+    expect(await refusalFor("f", "t-late")).toMatch(/tie/);
+    expect(await refusalFor("f", "t-on")).toBeUndefined();
+
+    await refresh("f");
+    expect(await connectionTo("f", "t-on")).toMatchObject({ autoConnectReason: "instalment" });
+    expect(await connectionTo("f", "t-late")).toBeNull();
+  });
+
+  it("connects neither on an exact tie for the same printed due date", async () => {
+    await seed();
+    await seedPayment("t-before", 40000, "2026-02-28");
+    await seedPayment("t-after", 40000, "2026-03-02");
+    expect((await matchFor("f", "t-before"))!.confidence).toBeGreaterThanOrEqual(THRESHOLD);
+    expect((await matchFor("f", "t-after"))!.confidence).toBeGreaterThanOrEqual(THRESHOLD);
+    expect(await refusalFor("f", "t-before")).toMatch(/tie/);
+    expect(await refusalFor("f", "t-after")).toMatch(/tie/);
+
+    await refresh("f");
+    expect(await connectionTo("f", "t-before")).toBeNull();
+    expect(await connectionTo("f", "t-after")).toBeNull();
+    expect(await suggestedIds("f")).toEqual(["t-after", "t-before"]);
+  });
+
+  it("connects none when together they would pay more than the File's total", async () => {
+    // A schedule adding up to more than the total (the extraction would not
+    // keep one): three rates of 400 on a 1 000 invoice.
+    await seedInvoice("f", { extractedAmount: 100000, extractedInstalments: schedule });
+    await seedPayment("t-1", 40000, "2026-03-01");
+    await seedPayment("t-2", 40000, "2026-03-15");
+    await seedPayment("t-3", 40000, "2026-04-01");
+    expect(await refusalFor("f", "t-2")).toMatch(/more than the File's total/);
+
+    await refresh("f");
+    expect(await connectionTo("f", "t-1")).toBeNull();
+    expect(await connectionTo("f", "t-2")).toBeNull();
+    expect(await connectionTo("f", "t-3")).toBeNull();
   });
 });
 
@@ -445,15 +485,62 @@ describe("a later instalment of a six-month plan (#716)", () => {
     expect(await connectionTo("f", "t-rate")).toMatchObject({ autoConnectReason: "instalment" });
   });
 
-  it("keeps the File's own dates for a payment that does not close the Outstanding amount", async () => {
+  it("auto-connects Rate 2 at the exact amount near its due date, with Rate 1 connected", async () => {
     await seedInvoice("f", { extractedInstalments: SIX_MONTH_PLAN });
     await seedPayment("t-1", 40000, "2026-03-01");
     await connectByHand("f", "t-1");
-    // A second instalment against 800 Outstanding: no printed row is known to be it.
+    await seedPayment("t-2", 40000, "2026-06-02");
+
+    const match = await matchFor("f", "t-2");
+    expect(match?.breakdown).toMatchObject({ scoredAgainstInstalment: 40000, scoredAgainstDueDate: "2026-06-01" });
+    expect(match?.breakdown.scoredAgainstOutstanding).toBeUndefined();
+    expect(match!.confidence).toBeGreaterThanOrEqual(THRESHOLD);
+
+    await refresh("f");
+    expect(await connectionTo("f", "t-2")).toMatchObject({ autoConnectReason: "instalment" });
+  });
+
+  it("scores a middle payment far from any unpaid due date low on date, and does not connect it", async () => {
+    await seedInvoice("f", { extractedInstalments: SIX_MONTH_PLAN });
+    await seedPayment("t-1", 40000, "2026-03-01");
+    await connectByHand("f", "t-1");
+    // Right after Rate 1: Rate 1's due date is paid, so Rate 2's is the nearest.
     await seedPayment("t-2", 40000, "2026-03-05");
 
     const match = await matchFor("f", "t-2");
-    expect(match?.breakdown.scoredAgainstOutstanding).toBe(80000);
+    expect(match?.breakdown).toMatchObject({ scoredAgainstInstalment: 40000, scoredAgainstDueDate: "2026-06-01" });
+    expect(match!.breakdown.date).toBe(0);
+    await refresh("f");
+    expect(await connectionTo("f", "t-2")).toBeNull();
+  });
+
+  it("finds a deposit paid after a later rate unpaid", async () => {
+    await seedInvoice("f", {
+      extractedInstalments: [
+        { amount: 60000, dueDate: day("2026-03-01"), label: "Anzahlung" },
+        { amount: 30000, dueDate: day("2026-04-01"), label: "Rate 1/2" },
+        { amount: 30000, dueDate: day("2026-05-01"), label: "Rate 2/2" },
+      ],
+    });
+    await seedPayment("t-rate", 30000, "2026-04-01");
+    await connectByHand("f", "t-rate");
+    await seedPayment("t-deposit", 60000, "2026-03-02");
+
+    const match = await matchFor("f", "t-deposit");
+    expect(match?.breakdown).toMatchObject({ scoredAgainstInstalment: 60000, scoredAgainstDueDate: "2026-03-01" });
+    await refresh("f");
+    expect(await connectionTo("f", "t-deposit")).toMatchObject({ autoConnectReason: "instalment" });
+  });
+
+  it("keeps the Outstanding amount and the File's own dates when no printed rows add up to what is paid", async () => {
+    await seedInvoice("f", { extractedInstalments: SIX_MONTH_PLAN });
+    await seedPayment("t-odd", 50000, "2026-03-01");
+    await connectByHand("f", "t-odd");
+    await seedPayment("t-2", 40000, "2026-03-05");
+
+    const match = await matchFor("f", "t-2");
+    expect(match?.breakdown.scoredAgainstOutstanding).toBe(70000);
+    expect(match?.breakdown.scoredAgainstInstalment).toBeUndefined();
     expect(match?.breakdown.scoredAgainstDueDate).toBeUndefined();
   });
 });
@@ -521,5 +608,35 @@ describe("find-receipt on a later instalment (#716)", () => {
     const stored = await connectionTo("f", "t-1");
     expect(stored).not.toBeNull();
     expect(stored?.autoConnectReason).toBeUndefined();
+  });
+});
+
+describe("several instalments in one run, on every surface (#716)", () => {
+  it("Partner matching connects each payment nearest a different printed due date", async () => {
+    await seedInvoice("f", { extractedInstalments: SIX_MONTH_PLAN });
+    await seedPayment("t-a", 40000, "2026-03-01");
+    await seedPayment("t-b", 40000, "2026-06-01");
+    const result = await matchFilesForPartnerInternal(ME, "p", ["t-a", "t-b"]);
+    expect(result.autoMatched).toBe(2);
+    expect(await connectionTo("f", "t-a")).toMatchObject({ autoConnectReason: "instalment" });
+    expect(await connectionTo("f", "t-b")).toMatchObject({ autoConnectReason: "instalment" });
+  });
+
+  it("find-receipt connects the second of them too", async () => {
+    await seedInvoice("f", { extractedInstalments: SIX_MONTH_PLAN });
+    await seedPayment("t-a", 40000, "2026-03-01");
+    await seedPayment("t-b", 40000, "2026-06-01");
+    expect(await findReceipt("t-b")).toMatchObject({ status: "connected", fileId: "f" });
+    expect(await connectionTo("f", "t-b")).toMatchObject({ autoConnectReason: "instalment" });
+  });
+
+  it("find-receipt leaves an exact tie for one due date unconnected", async () => {
+    await seedInvoice("f", { extractedInstalments: SIX_MONTH_PLAN });
+    await seedPayment("t-before", 40000, "2026-05-31");
+    await seedPayment("t-after", 40000, "2026-06-02");
+    expect((await matchFor("f", "t-after"))!.confidence).toBeGreaterThanOrEqual(THRESHOLD);
+    expect(await refusalFor("f", "t-after")).toMatch(/tie/);
+    expect((await findReceipt("t-after")).status).not.toBe("connected");
+    expect(await connectionTo("f", "t-after")).toBeNull();
   });
 });
