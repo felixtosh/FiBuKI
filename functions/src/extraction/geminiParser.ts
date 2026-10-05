@@ -884,11 +884,8 @@ export function normalizeSplitSegments(raw: unknown): SplitSegment[] | null {
   return segments;
 }
 
-export async function parseWithGemini(
-  fileBuffer: Buffer,
-  fileType: string,
-  model: GeminiModel = DEFAULT_GEMINI_MODEL
-): Promise<{
+/** What FiBuKI reads off one transcription, whichever Extraction Service wrote it (#161). */
+export interface TranscriptionReading {
   extracted: ExtractedData;
   rawText: string;
   boundingBoxes: GeminiBoundingBox[];
@@ -902,8 +899,13 @@ export async function parseWithGemini(
   repairAmbiguousFields: string[];
   /** Separately issued documents the model read in this File, or null (#550). */
   splitSegments: SplitSegment[] | null;
-  usage: { inputTokens: number; outputTokens: number; model: string };
-}> {
+}
+
+export async function parseWithGemini(
+  fileBuffer: Buffer,
+  fileType: string,
+  model: GeminiModel = DEFAULT_GEMINI_MODEL
+): Promise<TranscriptionReading & { usage: { inputTokens: number; outputTokens: number; model: string } }> {
   const projectId = getProjectId();
   const vertexAI = new VertexAI({ project: projectId, location: VERTEX_LOCATION });
   const geminiModel = vertexAI.getGenerativeModel({ model });
@@ -1312,6 +1314,16 @@ JSON only: exactly one object, no markdown, no explanation.`;
     model,
   };
 
+  return { ...readTranscription(text), usage };
+}
+
+/**
+ * Read a transcription: the JSON the prompt above asks for, from Gemini or
+ * from an external Extraction Service (#161). Everything FiBuKI decides about
+ * a reply happens here, for every service alike: normalisation, the
+ * Invoicing Agent guard, QR parsing and the closed field vocabulary.
+ */
+export function readTranscription(text: string): TranscriptionReading {
   // Parse JSON from response, handling potential markdown code blocks
   let jsonStr = text.trim();
   if (jsonStr.startsWith("```json")) {
@@ -1642,6 +1654,5 @@ JSON only: exactly one object, no markdown, no explanation.`;
     additionalFields,
     repairAmbiguousFields,
     splitSegments: normalizeSplitSegments(parsed.segments ?? parsed.extracted?.segments),
-    usage,
   };
 }
