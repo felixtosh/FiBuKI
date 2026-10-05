@@ -15,7 +15,8 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { getFirestore, Timestamp, __resetFirestoreShim } from "./firestore-shim";
 import { connectFile } from "../fileConnections/writer";
-import { scorePair, selectAutoConnects, transactionsForFile } from "../matching/matcher";
+import { instalmentWindowsOf, scorePair, selectAutoConnects, transactionsForFile } from "../matching/matcher";
+import { connectFileToTransactionCallable } from "../files/connectFileToTransaction";
 import { SCORING_CONFIG } from "../matching/transactionScoring";
 import { refreshTransactionMatchesCallable } from "../matching/refreshTransactionMatchesCallable";
 import { matchFilesForPartnerInternal } from "../matching/matchFilesForPartner";
@@ -363,5 +364,162 @@ describe("a payment in another currency than the File", () => {
     const match = await matchFor("f", "t-usd");
     expect(match?.breakdown.scoredAgainstOutstanding).toBeUndefined();
     expect(match?.breakdown.amount).toBe(0);
+  });
+});
+
+/**
+ * #716: a later instalment's date is scored against its printed due date, and
+ * the File's window reaches that date.
+ */
+const SIX_MONTH_PLAN = [
+  { amount: 40000, dueDate: day("2026-03-01"), label: "Rate 1/3" },
+  { amount: 40000, dueDate: day("2026-06-01"), label: "Rate 2/3" },
+  { amount: 40000, dueDate: day("2026-09-01"), label: "Rate 3/3" },
+];
+
+/** The plan's File with its first two instalments paid. */
+async function seedTwoPaid() {
+  await seedInvoice("f", { extractedInstalments: SIX_MONTH_PLAN });
+  await seedPayment("t-1", 40000, "2026-03-01");
+  await connectByHand("f", "t-1");
+  await seedPayment("t-2", 40000, "2026-06-01");
+  await connectByHand("f", "t-2");
+}
+
+const findReceipt = (transactionId: string) =>
+  (findReceiptForTransactionCallable as unknown as { run: (req: unknown) => Promise<FindReceiptResult> }).run({
+    data: { transactionId },
+    auth: { uid: ME, token: {} },
+  });
+
+describe("a later instalment of a six-month plan (#716)", () => {
+  it("auto-connects the third payment, booked near its printed due date, as an instalment", async () => {
+    await seedTwoPaid();
+    // The Wednesday after a due date on a Tuesday: within the settlement lag.
+    await seedPayment("t-3", 40000, "2026-09-02");
+
+    const match = await matchFor("f", "t-3");
+    expect(match?.breakdown).toMatchObject({ scoredAgainstOutstanding: 40000, scoredAgainstDueDate: "2026-09-01" });
+    expect(match?.matchSources).toContain("date_exact");
+    expect(match!.confidence).toBeGreaterThanOrEqual(THRESHOLD);
+
+    await refresh("f");
+    expect(await connectionTo("f", "t-3")).toMatchObject({
+      autoConnectReason: "instalment",
+      scoreBreakdown: expect.objectContaining({ scoredAgainstDueDate: "2026-09-01" }),
+    });
+  });
+
+  it("scores the same payment lower when it is booked far from that due date, and does not connect it", async () => {
+    await seedTwoPaid();
+    await seedPayment("t-near", 40000, "2026-09-01");
+    const near = await matchFor("f", "t-near");
+    await db.collection("transactions").doc("t-near").delete();
+
+    // Four weeks late: still around the due date, so still a candidate.
+    await seedPayment("t-late", 40000, "2026-09-28");
+    // Right after the invoice: before #716 its date rode the invoice date.
+    await seedPayment("t-early", 40000, "2026-03-04");
+    const late = await matchFor("f", "t-late");
+    const early = await matchFor("f", "t-early");
+
+    expect(late?.breakdown.scoredAgainstDueDate).toBe("2026-09-01");
+    expect(late!.breakdown.date).toBeLessThan(near!.breakdown.date);
+    expect(late!.confidence).toBeLessThan(THRESHOLD);
+    expect(early?.breakdown.scoredAgainstDueDate).toBe("2026-09-01");
+    expect(early!.breakdown.date).toBe(0);
+    expect(early!.confidence).toBeLessThan(THRESHOLD);
+
+    await refresh("f");
+    expect(await connectionTo("f", "t-late")).toBeNull();
+    expect(await connectionTo("f", "t-early")).toBeNull();
+  });
+
+  it("dates a first payment equal to a printed instalment against that instalment's due date", async () => {
+    await seedInvoice("f", { extractedInstalments: SIX_MONTH_PLAN });
+    await seedPayment("t-rate", 40000, "2026-06-02");
+
+    const match = await matchFor("f", "t-rate");
+    expect(match?.breakdown).toMatchObject({ scoredAgainstInstalment: 40000, scoredAgainstDueDate: "2026-06-01" });
+    await refresh("f");
+    expect(await connectionTo("f", "t-rate")).toMatchObject({ autoConnectReason: "instalment" });
+  });
+
+  it("keeps the File's own dates for a payment that does not close the Outstanding amount", async () => {
+    await seedInvoice("f", { extractedInstalments: SIX_MONTH_PLAN });
+    await seedPayment("t-1", 40000, "2026-03-01");
+    await connectByHand("f", "t-1");
+    // A second instalment against 800 Outstanding: no printed row is known to be it.
+    await seedPayment("t-2", 40000, "2026-03-05");
+
+    const match = await matchFor("f", "t-2");
+    expect(match?.breakdown.scoredAgainstOutstanding).toBe(80000);
+    expect(match?.breakdown.scoredAgainstDueDate).toBeUndefined();
+  });
+});
+
+describe("a File printing no instalments (#716)", () => {
+  it("keeps its window: a payment closing the Outstanding amount six months on is no candidate", async () => {
+    await seedInvoice("f");
+    await seedPayment("t-1", 40000, "2026-03-01");
+    await connectByHand("f", "t-1");
+    await seedPayment("t-near", 80000, "2026-03-03");
+    await seedPayment("t-far", 80000, "2026-09-01");
+
+    const near = await matchFor("f", "t-near");
+    expect(near?.breakdown.scoredAgainstOutstanding).toBe(80000);
+    expect(near?.breakdown.scoredAgainstDueDate).toBeUndefined();
+    expect(await matchFor("f", "t-far")).toBeUndefined();
+  });
+});
+
+describe("the windows a File's printed instalments add (#716)", () => {
+  it("are each due date ± 30 days, none for a File printing none, and none for a misread year", () => {
+    expect(instalmentWindowsOf({ extractedDate: day("2026-03-01") })).toEqual([]);
+    const windows = instalmentWindowsOf({
+      extractedDate: day("2026-03-01"),
+      extractedInstalments: [
+        { amount: 40000, dueDate: day("2026-06-01"), label: null },
+        { amount: 40000, dueDate: null, label: null },
+        // A wrong year either way is a misread.
+        { amount: 40000, dueDate: day("2025-06-01"), label: null },
+        { amount: 40000, dueDate: day("2027-06-01"), label: null },
+      ],
+    });
+    expect(windows).toHaveLength(1);
+    const dayOf = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+    expect(dayOf(windows[0].start + 12 * 3600 * 1000)).toBe("2026-05-02");
+    expect(dayOf(windows[0].end)).toBe("2026-07-01");
+  });
+});
+
+describe("find-receipt on a later instalment (#716)", () => {
+  it("stamps the connection as an instalment", async () => {
+    await seedTwoPaid();
+    await seedPayment("t-3", 40000, "2026-09-01");
+
+    expect(await findReceipt("t-3")).toMatchObject({ status: "connected", fileId: "f" });
+    expect(await connectionTo("f", "t-3")).toMatchObject({ autoConnectReason: "instalment" });
+  });
+
+  it("stamps nothing on a full-amount connect", async () => {
+    await seedInvoice("f");
+    await seedPayment("t-full", 120000, "2026-03-01");
+    expect((await findReceipt("t-full")).status).toBe("connected");
+    const stored = await connectionTo("f", "t-full");
+    expect(stored).not.toBeNull();
+    expect(stored?.autoConnectReason).toBeUndefined();
+  });
+
+  it("takes no reason from a client of the connect callable", async () => {
+    await seedInvoice("f");
+    await seedPayment("t-1", 40000, "2026-03-01");
+    await (connectFileToTransactionCallable as unknown as { run: (req: unknown) => Promise<unknown> }).run({
+      data: { fileId: "f", transactionId: "t-1", connectionType: "auto_matched", autoConnectReason: "instalment" },
+      auth: { uid: ME, token: {} },
+    });
+    const stored = await connectionTo("f", "t-1");
+    expect(stored).not.toBeNull();
+    expect(stored?.autoConnectReason).toBeUndefined();
   });
 });
