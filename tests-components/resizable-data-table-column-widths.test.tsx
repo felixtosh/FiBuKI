@@ -6,6 +6,9 @@
  * jsdom has no layout, so the virtualizer renders no rows; the header and the
  * <colgroup> are all these tests need. The widths asserted are the ones the
  * table puts on its <col> elements, which is what decides the layout.
+ *
+ * Touch and pen drags (#714) arrive as pointer events; a mouse keeps its
+ * mousedown / mousemove / mouseup path, so the mouse cases below are untouched.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -153,5 +156,79 @@ describe("ResizableDataTable remembered column widths", () => {
     fireEvent.mouseMove(document, { clientX: 150 });
     expect(() => fireEvent.mouseUp(document)).not.toThrow();
     expect(colWidths(container)[1]).toBe("250px");
+  });
+
+  describe.each(["touch", "pen"] as const)("a %s drag", (pointerType) => {
+    const pointer = { pointerId: 7, pointerType, isPrimary: true };
+
+    it("resizes the column and writes once when the drag ends, never per move", () => {
+      const setItem = vi.spyOn(Storage.prototype, "setItem");
+      const { container } = renderTable();
+      const handle = handleOf(container, "name");
+
+      fireEvent.pointerDown(handle, { ...pointer, clientX: 100 });
+      fireEvent.pointerMove(document, { ...pointer, clientX: 120 });
+      fireEvent.pointerMove(document, { ...pointer, clientX: 150 });
+      fireEvent.pointerMove(document, { ...pointer, clientX: 180 });
+      expect(setItem).not.toHaveBeenCalled();
+      expect(colWidths(container)[1]).toBe("280px");
+
+      fireEvent.pointerUp(document, { ...pointer, clientX: 180 });
+      expect(setItem).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(localStorage.getItem(KEY)!)).toEqual({ name: 280 });
+
+      // The drag is over: a later move changes nothing
+      fireEvent.pointerMove(document, { ...pointer, clientX: 300 });
+      expect(colWidths(container)[1]).toBe("280px");
+    });
+
+    it("keeps the width it reached when the browser cancels the drag", () => {
+      const { container } = renderTable();
+      fireEvent.pointerDown(handleOf(container, "amount"), { ...pointer, clientX: 100 });
+      fireEvent.pointerMove(document, { ...pointer, clientX: 140 });
+      fireEvent.pointerCancel(document, pointer);
+      expect(JSON.parse(localStorage.getItem(KEY)!)).toEqual({ amount: 160 });
+      expect(colWidths(container)[2]).toBe("160px");
+    });
+
+    it("does not write for a tap on the edge that resized nothing", () => {
+      const setItem = vi.spyOn(Storage.prototype, "setItem");
+      const { container } = renderTable();
+      fireEvent.pointerDown(handleOf(container, "name"), { ...pointer, clientX: 100 });
+      fireEvent.pointerUp(document, { ...pointer, clientX: 100 });
+      expect(setItem).not.toHaveBeenCalled();
+    });
+
+    it("ignores a second finger or pen while one drag is running", () => {
+      const { container } = renderTable();
+      fireEvent.pointerDown(handleOf(container, "name"), { ...pointer, clientX: 100 });
+      fireEvent.pointerMove(document, { ...pointer, pointerId: 8, clientX: 400 });
+      fireEvent.pointerUp(document, { ...pointer, pointerId: 8, clientX: 400 });
+      expect(colWidths(container)[1]).toBe("200px");
+      fireEvent.pointerMove(document, { ...pointer, clientX: 130 });
+      fireEvent.pointerUp(document, { ...pointer, clientX: 130 });
+      expect(JSON.parse(localStorage.getItem(KEY)!)).toEqual({ name: 230 });
+    });
+
+    it("neither scrolls the table nor selects text", () => {
+      const { container } = renderTable();
+      const handle = handleOf(container, "name");
+      // touch-action: none keeps the browser from panning on a drag from here
+      expect(handle.style.touchAction).toBe("none");
+      // A cancelled pointerdown also stops the emulated mouse events and the
+      // long-press text selection that would follow it
+      expect(fireEvent.pointerDown(handle, { ...pointer, clientX: 100 })).toBe(false);
+    });
+  });
+
+  it("leaves a mouse's pointer events to its mouse events, so double-click auto-fit still works", () => {
+    // A browser sends pointerdown before mousedown; cancelling it would swallow
+    // the mousedown that carries the click count
+    const { container } = renderTable();
+    const handle = handleOf(container, "name");
+    const mouse = { pointerId: 1, pointerType: "mouse", isPrimary: true };
+    expect(fireEvent.pointerDown(handle, { ...mouse, clientX: 100 })).toBe(true);
+    fireEvent.pointerMove(document, { ...mouse, clientX: 400 });
+    expect(colWidths(container)[1]).toBe("200px");
   });
 });
