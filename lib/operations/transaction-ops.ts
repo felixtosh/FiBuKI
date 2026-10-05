@@ -6,14 +6,11 @@ import {
   getDocs,
   getDoc,
   doc,
-  updateDoc,
-  deleteDoc,
   Timestamp,
   limit as firestoreLimit,
-  writeBatch,
 } from "firebase/firestore";
 import { Transaction, TransactionFilters } from "@/types/transaction";
-import { OperationsContext, BulkOperationResult } from "./types";
+import { OperationsContext } from "./types";
 
 const TRANSACTIONS_COLLECTION = "transactions";
 
@@ -118,100 +115,6 @@ export async function getTransaction(
   }
 
   return { id: snapshot.id, ...data } as Transaction;
-}
-
-/**
- * Update a transaction
- */
-export async function updateTransaction(
-  ctx: OperationsContext,
-  transactionId: string,
-  data: Partial<Pick<Transaction, "description" | "fileIds" | "isComplete">>
-): Promise<void> {
-  // Verify ownership first
-  const existing = await getTransaction(ctx, transactionId);
-  if (!existing) {
-    throw new Error(`Transaction ${transactionId} not found or access denied`);
-  }
-
-  const docRef = doc(ctx.db, TRANSACTIONS_COLLECTION, transactionId);
-  await updateDoc(docRef, {
-    ...data,
-    updatedAt: Timestamp.now(),
-  });
-}
-
-/**
- * Delete a transaction - INTERNAL USE ONLY
- *
- * Individual transaction deletion is NOT allowed in the UI or MCP.
- * Transactions must be deleted together with their source to maintain
- * accounting integrity. Use deleteTransactionsBySource() instead.
- *
- * This function exists only for internal/migration purposes.
- * @internal
- */
-export async function _deleteTransactionInternal(
-  ctx: OperationsContext,
-  transactionId: string
-): Promise<void> {
-  // Verify ownership first
-  const existing = await getTransaction(ctx, transactionId);
-  if (!existing) {
-    throw new Error(`Transaction ${transactionId} not found or access denied`);
-  }
-
-  await deleteDoc(doc(ctx.db, TRANSACTIONS_COLLECTION, transactionId));
-}
-
-/**
- * Bulk update transactions (e.g., assign category to multiple)
- */
-export async function bulkUpdateTransactions(
-  ctx: OperationsContext,
-  transactionIds: string[],
-  data: Partial<Pick<Transaction, "description" | "isComplete">>
-): Promise<BulkOperationResult> {
-  const result: BulkOperationResult = {
-    success: 0,
-    failed: 0,
-    errors: [],
-  };
-
-  // Process in batches of 500 (Firestore limit)
-  const BATCH_SIZE = 500;
-  const now = Timestamp.now();
-
-  for (let i = 0; i < transactionIds.length; i += BATCH_SIZE) {
-    const batchIds = transactionIds.slice(i, i + BATCH_SIZE);
-    const batch = writeBatch(ctx.db);
-
-    for (const id of batchIds) {
-      try {
-        // Verify ownership
-        const existing = await getTransaction(ctx, id);
-        if (!existing) {
-          result.failed++;
-          result.errors.push({ id, error: "Not found or access denied" });
-          continue;
-        }
-
-        const docRef = doc(ctx.db, TRANSACTIONS_COLLECTION, id);
-        batch.update(docRef, {
-          ...data,
-          updatedAt: now,
-        });
-        result.success++;
-      } catch (err) {
-        result.failed++;
-        result.errors.push({ id, error: String(err) });
-      }
-    }
-
-    await batch.commit();
-  }
-
-  return result;
 }
 
 // NOTE: bulkDeleteTransactions has been removed.

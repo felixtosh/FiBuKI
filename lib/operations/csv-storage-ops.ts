@@ -2,7 +2,6 @@ import {
   ref,
   uploadBytes,
   getDownloadURL,
-  deleteObject,
   getBytes,
 } from "firebase/storage";
 import { storage } from "@/lib/firebase/config";
@@ -57,28 +56,4 @@ export async function downloadImportCSV(storagePath: string): Promise<string> {
   // Decode as UTF-8 text
   const decoder = new TextDecoder("utf-8");
   return decoder.decode(bytes);
-}
-
-/**
- * Delete a CSV file from Firebase Storage.
- *
- * @param storagePath - The Firebase Storage path to delete
- */
-export async function deleteImportCSV(storagePath: string): Promise<void> {
-  const storageRef = ref(storage, storagePath);
-
-  try {
-    await deleteObject(storageRef);
-  } catch (error: unknown) {
-    // Ignore "object not found" errors - file may have already been deleted
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      (error as { code: string }).code === "storage/object-not-found"
-    ) {
-      console.warn(`CSV file not found at ${storagePath}, skipping deletion`);
-      return;
-    }
-    throw error;
-  }
 }

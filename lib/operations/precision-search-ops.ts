@@ -17,21 +17,14 @@ import {
   getDocs,
   getDoc,
   doc,
-  addDoc,
-  updateDoc,
   Timestamp,
 } from "firebase/firestore";
 import { OperationsContext } from "./types";
 import {
   PrecisionSearchQueueItem,
-  PrecisionSearchStatus,
   TransactionSearchEntry,
-  SearchStrategy,
-  CreatePrecisionSearchData,
   DiscoveredInvoiceLink,
-  SearchAttempt,
 } from "@/types/precision-search";
-import { ChangeAuthor } from "@/types/transaction-history";
 import { Transaction } from "@/types/transaction";
 import { TaxFile } from "@/types/file";
 import { UserPartner } from "@/types/partner";
@@ -42,80 +35,7 @@ const TRANSACTION_SEARCHES_SUBCOLLECTION = "searches";
 const FILES_COLLECTION = "files";
 const PARTNERS_COLLECTION = "partners";
 
-// Default strategies to run (in order)
-const DEFAULT_STRATEGIES: SearchStrategy[] = [
-  "partner_files",
-  "amount_files",
-  "email_attachment",
-  "email_invoice",
-];
-
 // ============ Queue Operations ============
-
-/**
- * Queue a precision search for processing.
- * Creates a queue item for batch processing or single transaction search.
- *
- * @returns The queue item ID
- */
-export async function queuePrecisionSearch(
-  ctx: OperationsContext,
-  data: CreatePrecisionSearchData
-): Promise<string> {
-  const now = Timestamp.now();
-
-  // Count transactions to process if scope is all_incomplete
-  let transactionsToProcess = 1;
-  if (data.scope === "all_incomplete") {
-    const countQuery = query(
-      collection(ctx.db, TRANSACTIONS_COLLECTION),
-      where("userId", "==", ctx.userId),
-      where("isComplete", "==", false)
-    );
-    const snapshot = await getDocs(countQuery);
-    transactionsToProcess = snapshot.size;
-  }
-
-  // Build queue item, excluding undefined values (Firestore doesn't allow undefined)
-  const queueItem: Record<string, unknown> = {
-    userId: ctx.userId,
-    scope: data.scope,
-    triggeredBy: data.triggeredBy,
-    status: "pending",
-    transactionsToProcess,
-    transactionsProcessed: 0,
-    transactionsWithMatches: 0,
-    totalFilesConnected: 0,
-    strategies: data.strategies || DEFAULT_STRATEGIES,
-    currentStrategyIndex: 0,
-    errors: [],
-    retryCount: 0,
-    maxRetries: 3,
-    createdAt: now,
-  };
-
-  // Only add optional fields if they have values
-  if (data.transactionId) {
-    queueItem.transactionId = data.transactionId;
-  }
-  if (data.triggeredByAuthor) {
-    queueItem.triggeredByAuthor = data.triggeredByAuthor;
-  }
-  if (data.gmailSyncQueueId) {
-    queueItem.gmailSyncQueueId = data.gmailSyncQueueId;
-  }
-
-  const docRef = await addDoc(
-    collection(ctx.db, PRECISION_SEARCH_QUEUE_COLLECTION),
-    queueItem
-  );
-
-  console.log(
-    `[PrecisionSearch] Queued ${data.scope} search (${data.triggeredBy}): ${docRef.id}, ${transactionsToProcess} transactions to process`
-  );
-
-  return docRef.id;
-}
 
 /**
  * Get a precision search queue item by ID
@@ -154,107 +74,6 @@ export async function getNextPrecisionSearchQueueItem(
 
   const docSnap = snapshot.docs[0];
   return { id: docSnap.id, ...docSnap.data() } as PrecisionSearchQueueItem;
-}
-
-/**
- * Update precision search queue item progress
- */
-export async function updatePrecisionSearchProgress(
-  ctx: OperationsContext,
-  queueId: string,
-  updates: Partial<{
-    status: PrecisionSearchStatus;
-    transactionsProcessed: number;
-    transactionsWithMatches: number;
-    totalFilesConnected: number;
-    lastProcessedTransactionId: string;
-    currentStrategyIndex: number;
-    errors: string[];
-    lastError: string;
-    retryCount: number;
-    startedAt: Timestamp;
-    completedAt: Timestamp;
-  }>
-): Promise<void> {
-  const docRef = doc(ctx.db, PRECISION_SEARCH_QUEUE_COLLECTION, queueId);
-  await updateDoc(docRef, updates);
-}
-
-/**
- * Mark a precision search queue item as started
- */
-export async function startPrecisionSearchQueueItem(
-  ctx: OperationsContext,
-  queueId: string
-): Promise<void> {
-  await updatePrecisionSearchProgress(ctx, queueId, {
-    status: "processing",
-    startedAt: Timestamp.now(),
-  });
-}
-
-/**
- * Complete a precision search queue item
- */
-export async function completePrecisionSearchQueueItem(
-  ctx: OperationsContext,
-  queueId: string,
-  result: {
-    success: boolean;
-    transactionsProcessed: number;
-    transactionsWithMatches: number;
-    totalFilesConnected: number;
-    error?: string;
-  }
-): Promise<void> {
-  const updates: Record<string, unknown> = {
-    status: result.success ? "completed" : "failed",
-    transactionsProcessed: result.transactionsProcessed,
-    transactionsWithMatches: result.transactionsWithMatches,
-    totalFilesConnected: result.totalFilesConnected,
-    completedAt: Timestamp.now(),
-  };
-
-  if (result.error) {
-    updates.lastError = result.error;
-  }
-
-  await updatePrecisionSearchProgress(ctx, queueId, updates);
-
-  console.log(
-    `[PrecisionSearch] Completed queue ${queueId}: ${result.totalFilesConnected} files connected, ${result.transactionsWithMatches}/${result.transactionsProcessed} transactions matched`
-  );
-}
-
-/**
- * Mark a precision search queue item for retry
- */
-export async function retryPrecisionSearchQueueItem(
-  ctx: OperationsContext,
-  queueId: string,
-  error: string
-): Promise<boolean> {
-  const item = await getPrecisionSearchQueueItem(ctx, queueId);
-  if (!item) return false;
-
-  if (item.retryCount >= item.maxRetries) {
-    // Max retries exceeded, mark as failed
-    await updatePrecisionSearchProgress(ctx, queueId, {
-      status: "failed",
-      lastError: `Max retries exceeded: ${error}`,
-      completedAt: Timestamp.now(),
-    });
-    return false;
-  }
-
-  // Increment retry count and reset to pending
-  await updatePrecisionSearchProgress(ctx, queueId, {
-    status: "pending",
-    retryCount: item.retryCount + 1,
-    lastError: error,
-  });
-
-  return true;
 }
 
 /**
@@ -297,125 +116,6 @@ export async function hasPendingPrecisionSearch(
 }
 
 // ============ Transaction Search History ============
-
-/**
- * Create a transaction search entry.
- * Stored in transactions/{id}/searches subcollection.
- */
-export async function createTransactionSearch(
-  ctx: OperationsContext,
-  transactionId: string,
-  data: {
-    triggeredBy: "gmail_sync" | "manual" | "scheduled";
-    triggeredByAuthor?: ChangeAuthor;
-    gmailSyncQueueId?: string;
-    precisionSearchQueueId?: string;
-    strategies?: SearchStrategy[];
-  }
-): Promise<string> {
-  const now = Timestamp.now();
-
-  // Build search entry, excluding undefined values (Firestore doesn't allow undefined)
-  const searchEntry: Record<string, unknown> = {
-    triggeredBy: data.triggeredBy,
-    status: "pending",
-    strategiesAttempted: [],
-    attempts: [],
-    totalFilesConnected: 0,
-    totalGeminiCalls: 0,
-    totalGeminiTokens: 0,
-    createdAt: now,
-  };
-
-  // Only add optional fields if they have values
-  if (data.triggeredByAuthor) {
-    searchEntry.triggeredByAuthor = data.triggeredByAuthor;
-  }
-  if (data.gmailSyncQueueId) {
-    searchEntry.gmailSyncQueueId = data.gmailSyncQueueId;
-  }
-  if (data.precisionSearchQueueId) {
-    searchEntry.precisionSearchQueueId = data.precisionSearchQueueId;
-  }
-
-  const searchesRef = collection(
-    ctx.db,
-    TRANSACTIONS_COLLECTION,
-    transactionId,
-    TRANSACTION_SEARCHES_SUBCOLLECTION
-  );
-
-  const docRef = await addDoc(searchesRef, searchEntry);
-
-  return docRef.id;
-}
-
-/**
- * Update a transaction search entry
- */
-export async function updateTransactionSearch(
-  ctx: OperationsContext,
-  transactionId: string,
-  searchId: string,
-  updates: Partial<{
-    status: PrecisionSearchStatus;
-    strategiesAttempted: SearchStrategy[];
-    attempts: SearchAttempt[];
-    totalFilesConnected: number;
-    automationSource: SearchStrategy;
-    totalGeminiCalls: number;
-    totalGeminiTokens: number;
-    startedAt: Timestamp;
-    completedAt: Timestamp;
-  }>
-): Promise<void> {
-  const searchRef = doc(
-    ctx.db,
-    TRANSACTIONS_COLLECTION,
-    transactionId,
-    TRANSACTION_SEARCHES_SUBCOLLECTION,
-    searchId
-  );
-
-  await updateDoc(searchRef, updates);
-}
-
-/**
- * Add an attempt to a transaction search
- */
-export async function addSearchAttempt(
-  ctx: OperationsContext,
-  transactionId: string,
-  searchId: string,
-  attempt: SearchAttempt
-): Promise<void> {
-  const searchRef = doc(
-    ctx.db,
-    TRANSACTIONS_COLLECTION,
-    transactionId,
-    TRANSACTION_SEARCHES_SUBCOLLECTION,
-    searchId
-  );
-
-  const snapshot = await getDoc(searchRef);
-  if (!snapshot.exists()) return;
-
-  const data = snapshot.data();
-  const existingAttempts = data.attempts || [];
-  const existingStrategies = data.strategiesAttempted || [];
-
-  await updateDoc(searchRef, {
-    attempts: [...existingAttempts, attempt],
-    strategiesAttempted: existingStrategies.includes(attempt.strategy)
-      ? existingStrategies
-      : [...existingStrategies, attempt.strategy],
-    totalGeminiCalls: (data.totalGeminiCalls || 0) + (attempt.geminiCalls || 0),
-    totalGeminiTokens:
-      (data.totalGeminiTokens || 0) + (attempt.geminiTokensUsed || 0),
-    totalFilesConnected:
-      (data.totalFilesConnected || 0) + attempt.fileIdsConnected.length,
-  });
-}
 
 /**
  * Get transaction search history
@@ -679,56 +379,6 @@ export async function getAllUnassociatedFiles(
 // ============ Partner Invoice Links ============
 
 /**
- * Add a discovered invoice link to a partner.
- * Called by Strategy 4 (email_invoice) when analyzing email content.
- */
-export async function addInvoiceLinkToPartner(
-  ctx: OperationsContext,
-  partnerId: string,
-  link: DiscoveredInvoiceLink
-): Promise<void> {
-  const partnerRef = doc(ctx.db, PARTNERS_COLLECTION, partnerId);
-  const partnerSnapshot = await getDoc(partnerRef);
-
-  if (!partnerSnapshot.exists() || partnerSnapshot.data().userId !== ctx.userId) {
-    throw new Error(`Partner ${partnerId} not found or access denied`);
-  }
-
-  const existingLinks: DiscoveredInvoiceLink[] =
-    partnerSnapshot.data().invoiceLinks || [];
-
-  // Check if link already exists (by URL)
-  const linkExists = existingLinks.some((l) => l.url === link.url);
-  if (linkExists) {
-    console.log(
-      `[InvoiceLink] Link already exists for partner ${partnerId}: ${link.url}`
-    );
-    return;
-  }
-
-  // Add the new link
-  const now = Timestamp.now();
-  const updatedLinks = [
-    ...existingLinks,
-    {
-      ...link,
-      discoveredAt: now,
-      verified: false,
-    },
-  ];
-
-  await updateDoc(partnerRef, {
-    invoiceLinks: updatedLinks,
-    invoiceLinksUpdatedAt: now,
-    updatedAt: now,
-  });
-
-  console.log(
-    `[InvoiceLink] Added invoice link to partner ${partnerId}: ${link.url}`
-  );
-}
-
-/**
  * Get invoice links for a partner
  */
 export async function getInvoiceLinksForPartner(
@@ -743,61 +393,6 @@ export async function getInvoiceLinksForPartner(
   }
 
   return partnerSnapshot.data().invoiceLinks || [];
-}
-
-/**
- * Mark an invoice link as verified (downloaded)
- */
-export async function markInvoiceLinkVerified(
-  ctx: OperationsContext,
-  partnerId: string,
-  linkUrl: string
-): Promise<void> {
-  const partnerRef = doc(ctx.db, PARTNERS_COLLECTION, partnerId);
-  const partnerSnapshot = await getDoc(partnerRef);
-
-  if (!partnerSnapshot.exists() || partnerSnapshot.data().userId !== ctx.userId) {
-    throw new Error(`Partner ${partnerId} not found or access denied`);
-  }
-
-  const existingLinks: DiscoveredInvoiceLink[] =
-    partnerSnapshot.data().invoiceLinks || [];
-
-  const updatedLinks = existingLinks.map((link) =>
-    link.url === linkUrl ? { ...link, verified: true } : link
-  );
-
-  await updateDoc(partnerRef, {
-    invoiceLinks: updatedLinks,
-    updatedAt: Timestamp.now(),
-  });
-}
-
-/**
- * Remove an invoice link from a partner
- */
-export async function removeInvoiceLinkFromPartner(
-  ctx: OperationsContext,
-  partnerId: string,
-  linkUrl: string
-): Promise<void> {
-  const partnerRef = doc(ctx.db, PARTNERS_COLLECTION, partnerId);
-  const partnerSnapshot = await getDoc(partnerRef);
-
-  if (!partnerSnapshot.exists() || partnerSnapshot.data().userId !== ctx.userId) {
-    throw new Error(`Partner ${partnerId} not found or access denied`);
-  }
-
-  const existingLinks: DiscoveredInvoiceLink[] =
-    partnerSnapshot.data().invoiceLinks || [];
-
-  const updatedLinks = existingLinks.filter((link) => link.url !== linkUrl);
-
-  await updateDoc(partnerRef, {
-    invoiceLinks: updatedLinks,
-    invoiceLinksUpdatedAt: Timestamp.now(),
-    updatedAt: Timestamp.now(),
-  });
 }
 
 // ============ Helper Functions ============

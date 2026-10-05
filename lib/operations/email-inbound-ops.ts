@@ -240,44 +240,6 @@ export async function deleteInboundEmailAddress(
   });
 }
 
-/**
- * Pause an inbound email address (stops accepting emails)
- */
-export async function pauseInboundEmailAddress(
-  ctx: OperationsContext,
-  addressId: string
-): Promise<void> {
-  const existing = await getInboundEmailAddress(ctx, addressId);
-  if (!existing) {
-    throw new Error("Inbound email address not found");
-  }
-
-  const docRef = doc(ctx.db, INBOUND_ADDRESSES_COLLECTION, addressId);
-  await updateDoc(docRef, {
-    isActive: false,
-    updatedAt: Timestamp.now(),
-  });
-}
-
-/**
- * Resume an inbound email address (starts accepting emails)
- */
-export async function resumeInboundEmailAddress(
-  ctx: OperationsContext,
-  addressId: string
-): Promise<void> {
-  const existing = await getInboundEmailAddress(ctx, addressId);
-  if (!existing) {
-    throw new Error("Inbound email address not found");
-  }
-
-  const docRef = doc(ctx.db, INBOUND_ADDRESSES_COLLECTION, addressId);
-  await updateDoc(docRef, {
-    isActive: true,
-    updatedAt: Timestamp.now(),
-  });
-}
-
 // ============================================================================
 // Stats and Rate Limiting Operations (used by webhook)
 // ============================================================================
@@ -342,38 +304,6 @@ export function checkSenderDomainAllowed(
 }
 
 /**
- * Increment email stats after processing (called by webhook)
- */
-export async function incrementInboundEmailStats(
-  ctx: OperationsContext,
-  addressId: string,
-  filesCreated: number
-): Promise<void> {
-  const docRef = doc(ctx.db, INBOUND_ADDRESSES_COLLECTION, addressId);
-  const snapshot = await getDoc(docRef);
-
-  if (!snapshot.exists()) {
-    return;
-  }
-
-  const data = snapshot.data() as InboundEmailAddress;
-  const today = new Date().toISOString().split("T")[0];
-
-  // Calculate new todayCount (reset if new day)
-  const newTodayCount =
-    data.todayDate === today ? data.todayCount + 1 : 1;
-
-  await updateDoc(docRef, {
-    emailsReceived: data.emailsReceived + 1,
-    filesCreated: data.filesCreated + filesCreated,
-    lastEmailAt: Timestamp.now(),
-    todayCount: newTodayCount,
-    todayDate: today,
-    updatedAt: Timestamp.now(),
-  });
-}
-
-/**
  * Get stats summary for an inbound email address
  */
 export async function getInboundEmailStats(
@@ -399,49 +329,6 @@ export async function getInboundEmailStats(
 // ============================================================================
 // Inbound Email Log Operations
 // ============================================================================
-
-/**
- * Create a log entry for a received email
- */
-export async function createInboundEmailLog(
-  ctx: OperationsContext,
-  data: Omit<InboundEmailLog, "id" | "createdAt">
-): Promise<string> {
-  const now = Timestamp.now();
-  const logData = {
-    ...data,
-    createdAt: now,
-  };
-
-  const docRef = await addDoc(
-    collection(ctx.db, INBOUND_LOGS_COLLECTION),
-    logData
-  );
-
-  return docRef.id;
-}
-
-/**
- * Update a log entry (e.g., mark as completed)
- */
-export async function updateInboundEmailLog(
-  ctx: OperationsContext,
-  logId: string,
-  updates: Partial<
-    Pick<
-      InboundEmailLog,
-      | "status"
-      | "filesCreated"
-      | "bodyConvertedToFile"
-      | "attachmentsProcessed"
-      | "error"
-      | "rejectionReason"
-    >
-  >
-): Promise<void> {
-  const docRef = doc(ctx.db, INBOUND_LOGS_COLLECTION, logId);
-  await updateDoc(docRef, updates);
-}
 
 /**
  * List logs for an inbound email address
@@ -488,34 +375,3 @@ export async function checkInboundEmailDuplicate(
 // ============================================================================
 // Daily Reset Operation (for scheduled function)
 // ============================================================================
-
-/**
- * Reset daily counts for all addresses (called by scheduled function)
- * This runs server-side without user context
- */
-export async function resetAllDailyCounts(
-  db: OperationsContext["db"]
-): Promise<number> {
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  const yesterdayStr = yesterday.toISOString().split("T")[0];
-
-  // Find all addresses with yesterday's date (need reset)
-  const q = query(
-    collection(db, INBOUND_ADDRESSES_COLLECTION),
-    where("todayDate", "==", yesterdayStr)
-  );
-
-  const snapshot = await getDocs(q);
-  let resetCount = 0;
-
-  for (const docSnap of snapshot.docs) {
-    await updateDoc(docSnap.ref, {
-      todayCount: 0,
-      todayDate: null,
-    });
-    resetCount++;
-  }
-
-  return resetCount;
-}

@@ -7,8 +7,6 @@ import {
   getDocs,
   getDoc,
   doc,
-  addDoc,
-  updateDoc,
   Timestamp,
 } from "firebase/firestore";
 import { OperationsContext } from "./types";
@@ -321,26 +319,6 @@ export async function calculateUVAReport(
 }
 
 /**
- * Create a draft UVA report
- */
-export async function createUVADraft(
-  ctx: OperationsContext,
-  period: ReportPeriod,
-  country: TaxCountryCode = "AT"
-): Promise<string> {
-  const reportData = await calculateUVAReport(ctx, period, country);
-
-  const now = Timestamp.now();
-  const docRef = await addDoc(collection(ctx.db, `users/${ctx.userId}/reports`), {
-    ...reportData,
-    createdAt: now,
-    updatedAt: now,
-  });
-
-  return docRef.id;
-}
-
-/**
  * Get a report by ID
  */
 export async function getReport(
@@ -389,58 +367,6 @@ export async function listReports(
       createdAt: data.createdAt,
       updatedAt: data.updatedAt,
     } as ReportSummary;
-  });
-}
-
-/**
- * Update report status
- */
-export async function updateReportStatus(
-  ctx: OperationsContext,
-  reportId: string,
-  status: UVAReport["status"],
-  finanzonlineRef?: string
-): Promise<void> {
-  const docRef = doc(ctx.db, `users/${ctx.userId}/reports`, reportId);
-  const updates: Record<string, unknown> = {
-    status,
-    updatedAt: Timestamp.now(),
-  };
-
-  if (status === "submitted") {
-    updates.submittedAt = Timestamp.now();
-  }
-
-  if (finanzonlineRef) {
-    updates.finanzonlineRef = finanzonlineRef;
-  }
-
-  await updateDoc(docRef, updates);
-}
-
-/**
- * Recalculate an existing report
- */
-export async function recalculateReport(
-  ctx: OperationsContext,
-  reportId: string
-): Promise<void> {
-  const existingReport = await getReport(ctx, reportId);
-  if (!existingReport) {
-    throw new Error("Report not found");
-  }
-
-  const reportData = await calculateUVAReport(
-    ctx,
-    existingReport.period,
-    existingReport.country
-  );
-
-  const docRef = doc(ctx.db, `users/${ctx.userId}/reports`, reportId);
-  await updateDoc(docRef, {
-    ...reportData,
-    status: "draft", // Reset to draft when recalculating
-    updatedAt: Timestamp.now(),
   });
 }
 
