@@ -48,6 +48,8 @@ export interface ConnectedFile {
   receiptOfFileId?: string | null;
   /** Its document type, from which the Transaction's Documentation State without the scored File is derived (#644). */
   documentType?: DocumentType | null;
+  /** The Files it declined a Receipt Link with (#571): a declined pair counts as unlinked (#713). */
+  declinedPairFileIds?: string[];
 }
 
 /**
@@ -119,6 +121,9 @@ export async function loadConnectedFiles(
         currency: fileData.extractedCurrency ?? null,
         receiptOfFileId: fileData.receiptLink?.fileId ?? null,
         documentType: asDocumentType(fileData.documentType),
+        declinedPairFileIds: Array.isArray(fileData.receiptPairDeclinedFileIds)
+          ? fileData.receiptPairDeclinedFileIds
+          : [],
       });
     }
   }

@@ -180,26 +180,67 @@ describe("the billing-cycle re-score of a connected pair (#644)", () => {
   });
 });
 
-describe("a Receipt beside the invoice it pays (ADR-0012), unchanged by #644", () => {
-  it("re-scores the Receipt against its own linked invoice as receipt-against-invoice, at 0", async () => {
-    // Its invoice is another File on the line, so it still counts; whether a
-    // linked pair should count once here is left open on #644.
+describe("a Receipt beside the invoice on its line (#713, ADR-0012)", () => {
+  /** A Receipt for t1's charge, connected beside f1, the invoice already on t1. */
+  async function receiptOnT1(extra: Record<string, unknown>) {
     await seedFile("f-receipt", invoiceDay(CHARGES[1]));
-    await db.collection("files").doc("f-receipt").update({
-      documentType: "receipt",
-      receiptLink: { fileId: "f1", setBy: "auto" },
-    });
+    await db.collection("files").doc("f-receipt").update({ documentType: "receipt", ...extra });
     await connect("c-receipt", "f-receipt", "t1");
     await drainTriggers();
+  }
+  const receiptScore = async () =>
+    (await scorePair(db as never, USER, await fileOf("f-receipt"), (await txOf("t1")) as never)).match;
+
+  it("re-scores a Receipt linked to that invoice to its real confidence: the pair counts once", async () => {
+    await receiptOnT1({ receiptLink: { fileId: "f1", setBy: "auto" } });
 
     await learnCycle();
     const connection = await connectionOf("c-receipt");
     expect(connection.rescoredAt).toBeDefined();
-    expect(connection.matchConfidence).toBe(0);
-    const { match } = await scorePair(db as never, USER, await fileOf("f-receipt"), (await txOf("t1")) as never);
-    expect(match.documentation).toMatchObject({ outcome: "suppressed", reason: "receipt-against-invoice" });
-    // The invoice beside it is judged by the Receipt: an upgrade, never suppressed.
-    expect((await connectionOf("c1")).matchConfidence).toBeGreaterThan(0);
+    expect(connection.matchConfidence).toBeGreaterThan(0);
+    const match = await receiptScore();
+    expect(match.documentation?.outcome).not.toBe("suppressed");
+    expect(connection.matchConfidence).toBe(match.confidence);
+  });
+
+  it("re-scores the invoice beside its linked Receipt to its real confidence", async () => {
+    await receiptOnT1({ receiptLink: { fileId: "f1", setBy: "auto" } });
+
+    await learnCycle();
+    const connection = await connectionOf("c1");
+    const { match } = await scorePair(db as never, USER, await fileOf("f1"), (await txOf("t1")) as never);
+    expect(connection.matchConfidence).toBeGreaterThan(0);
+    expect(connection.matchConfidence).toBe(match.confidence);
+    // Judged as if the line held nothing else: the pair is one document.
+    expect(match.documentation).toMatchObject({ outcome: "clear", reason: "target-undocumented" });
+  });
+
+  it("still suppresses a Receipt not linked to the invoice on the line (#104 unchanged)", async () => {
+    await receiptOnT1({});
+
+    await learnCycle();
+    expect((await connectionOf("c-receipt")).matchConfidence).toBe(0);
+    expect((await receiptScore()).documentation).toMatchObject({
+      outcome: "suppressed",
+      reason: "receipt-against-invoice",
+    });
+  });
+
+  it("treats a declined pair as unlinked", async () => {
+    // Declining removes the link and records the pair on both Files; a link
+    // left behind next to a declined pair is not trusted either.
+    await receiptOnT1({
+      receiptLink: { fileId: "f1", setBy: "auto" },
+      receiptPairDeclinedFileIds: ["f1"],
+    });
+    await db.collection("files").doc("f1").update({ receiptPairDeclinedFileIds: ["f-receipt"] });
+
+    await learnCycle();
+    expect((await connectionOf("c-receipt")).matchConfidence).toBe(0);
+    expect((await receiptScore()).documentation).toMatchObject({
+      outcome: "suppressed",
+      reason: "receipt-against-invoice",
+    });
   });
 });
 

@@ -475,11 +475,12 @@ function withoutFile(
  * itself. A Transaction with no stored state keeps none: the scorer skips the
  * rule, as it does for every caller that does not know the state.
  *
- * Only the scored File is left out. Another File on the Transaction still
- * counts, so a second invoice on the line keeps the pair suppressed (decided
- * on #644), and so does a Receipt's own linked invoice (ADR-0012): the
- * Receipt reads as `receipt-against-invoice`, as it did before #644. Whether a
- * linked pair should count once here too is not settled by #644.
+ * The scored File's Receipt Link partner is left out too (#713, ADR-0012):
+ * a Receipt and the invoice it pays document the payment once, so neither is
+ * a second document beside the other. A pair either File declined counts as
+ * unlinked. Any other File on the Transaction still counts, so a second
+ * invoice, or a Receipt not linked to the invoice on the line, keeps the pair
+ * suppressed (decided on #644).
  */
 function documentationStateFor(
   fileId: string | null,
@@ -494,8 +495,16 @@ function documentationStateFor(
     (Array.isArray(txData.fileIds) && txData.fileIds.includes(fileId)) ||
     (Array.isArray(fileData.transactionIds) && fileData.transactionIds.includes(transactionId));
   if (!onTransaction) return stored;
+  const declinedByMe: string[] = Array.isArray(fileData.receiptPairDeclinedFileIds)
+    ? fileData.receiptPairDeclinedFileIds
+    : [];
+  const myInvoiceId: string | null = fileData.receiptLink?.fileId ?? null;
+  const pairedWithMe = (f: ConnectedFile) =>
+    (f.fileId === myInvoiceId || f.receiptOfFileId === fileId) &&
+    !declinedByMe.includes(f.fileId) &&
+    !(f.declinedPairFileIds ?? []).includes(fileId);
   return deriveDocumentationState({
-    fileTypes: others.map((f) => f.documentType ?? null),
+    fileTypes: others.filter((f) => !pairedWithMe(f)).map((f) => f.documentType ?? null),
     hasNoReceiptCategory: !!txData.noReceiptCategoryId,
   });
 }
