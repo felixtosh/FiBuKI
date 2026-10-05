@@ -1275,6 +1275,14 @@ DEBIT DATE (key "debitDate"):
   eingezogen", "wird frühestens am ... eingezogen", "Abbuchung erfolgt am",
   "Einzug am", "Lastschrift am". Transcribe the date under "debitDate", with
   "label" the printed wording (shortened to the phrase around the date)
+- A sentence saying the amount "wird (frühestens) am <date> ... eingezogen"
+  under a SEPA mandate is a debit date, however many words sit between the
+  date and "eingezogen", e.g. "Der Gesamtbetrag wird frühestens am
+  20.06.2026 von Ihrem Konto per SEPA-Mandat eingezogen" -> "debitDate"
+  "2026-06-20". "frühestens" (at the earliest) does not make it anything
+  other than a debit date
+- A SEPA collection sentence is never a due date: do not file its date under
+  "dueDate", not even when the document prints no other date to pay by
 - It is NOT the due date: a due date is when the customer must pay, a debit
   date is when the issuer will take the money. When a document prints both,
   return both. When it prints only a due date, return no "debitDate"
