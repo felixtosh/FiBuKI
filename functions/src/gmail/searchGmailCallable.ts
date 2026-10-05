@@ -163,7 +163,7 @@ function isLikelyReceiptAttachment(filename: string, mimeType: string): boolean 
  * The terms half is `buildGmailQuery`, shared with GmailProvider so a keyword
  * cannot mean one thing to Sync and another to the attach path. The raw `query`
  * from the automation callers is prepended untouched, and the date window keeps
- * this callable's own (unpadded, exclusive-`before:`) spelling.
+ * this callable's own spelling: `before:` exclusive, the day read in UTC.
  */
 function buildGmailSearchQuery(params: {
   query?: string;
