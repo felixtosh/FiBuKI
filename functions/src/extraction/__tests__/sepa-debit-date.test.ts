@@ -50,7 +50,7 @@ import { parseWithGemini } from "../geminiParser";
 import { debitDateFromAdditionalFields } from "../../matching/debitDate";
 import { dueDateFromAdditionalFields } from "../../matching/dueDate";
 
-const ISSUE = new Date(2026, 5, 2);
+const ISSUE = new Date(Date.UTC(2026, 5, 2));
 const SENTENCE =
   "Der Gesamtbetrag wird frühestens am 20.06.2026 von Ihrem Konto per SEPA-Mandat eingezogen";
 
@@ -117,7 +117,7 @@ describe("a document printing only the SEPA collection sentence", () => {
     // …and the reader that writes `extractedDebitDate` accepts it, "frühestens" and all.
     const debit = debitDateFromAdditionalFields(res.additionalFields, ISSUE);
     expect(debit).not.toBeNull();
-    expect([debit!.getFullYear(), debit!.getMonth(), debit!.getDate()]).toEqual([2026, 5, 20]);
+    expect([debit!.getUTCFullYear(), debit!.getUTCMonth(), debit!.getUTCDate()]).toEqual([2026, 5, 20]);
     // It is not also a Due Date.
     expect(dueDateFromAdditionalFields(res.additionalFields, ISSUE)).toBeNull();
   });

@@ -503,13 +503,11 @@ export async function runExtraction(
     const extracted = result.extracted;
 
     if (extracted.date) {
-      // Parse ISO date string to Timestamp
+      // Parse ISO date string to Timestamp: UTC midnight of that day
       const dateParts = extracted.date.split("-");
       if (dateParts.length === 3) {
         const date = new Date(
-          parseInt(dateParts[0]),
-          parseInt(dateParts[1]) - 1,
-          parseInt(dateParts[2])
+          Date.UTC(parseInt(dateParts[0]), parseInt(dateParts[1]) - 1, parseInt(dateParts[2]))
         );
         updateData.extractedDate = Timestamp.fromDate(date);
       }
