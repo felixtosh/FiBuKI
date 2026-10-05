@@ -870,6 +870,7 @@ describe("Tool Registry Handlers: Files", () => {
       expect(extraction.runExtraction).toHaveBeenCalledTimes(1);
       expect(extraction.runExtraction).toHaveBeenCalledWith("f-1", expect.anything(), {
         skipClassification: true,
+        overwriteCorrections: false,
       });
 
       const file = store.getDoc("files", "f-1");

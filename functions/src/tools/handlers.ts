@@ -30,6 +30,7 @@ import {
   buildMarkNotInvoiceUpdates,
   buildUnmarkNotInvoiceUpdates,
   queueExtractionAfterUnmark,
+  unmarkRefusal,
 } from "../files/notInvoiceOps";
 import {
   liveCopyIds,
@@ -1539,6 +1540,12 @@ export async function unmarkFileAsNotInvoice(userId: string, args: Record<string
   }
 
   const fileData = fileSnap.data()!;
+
+  // Un-marking re-extracts the File, which a Hand Correction refuses (#639).
+  const refused = unmarkRefusal(fileData);
+  if (refused) {
+    throw new Error(refused);
+  }
 
   // Manual connections outrank a re-run of transaction matching.
   const manualConnections = await db

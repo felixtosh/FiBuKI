@@ -1002,7 +1002,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     "name": "unmark_file_as_not_invoice",
     "annotation": "write",
-    "description": "Restore a file previously flagged as not an invoice. Re-opens extraction, which recovers the fields marking cleared.",
+    "description": "Restore a file previously flagged as not an invoice. Re-opens extraction, which recovers the fields marking cleared. A file carrying hand corrections (extractionCorrectedFields) is refused, because the re-extraction would discard them; retry_file_extraction with overwriteCorrections re-extracts it as an invoice instead.",
     "inputSchema": {
       "type": "object",
       "properties": {
