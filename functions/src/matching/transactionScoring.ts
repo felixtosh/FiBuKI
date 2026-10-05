@@ -166,7 +166,9 @@ export interface ScoreBreakdown {
   scoredAgainstOutstanding?: number;
   /**
    * Present only when `amount` was scored against the nearest instalment the
-   * File prints, nothing being paid yet (#615). That instalment, in cents.
+   * File prints (#615): nothing being paid yet, or the nearest unpaid one
+   * when it fits better than the Outstanding amount (#716). That instalment,
+   * in cents.
    */
   scoredAgainstInstalment?: number;
   /**
@@ -994,17 +996,75 @@ const INSTALMENT_CANDIDATE_AMOUNT_SCORE = 20;
 
 /** How a Transaction's amount is judged when it may be one of several payments of a File. */
 type FurtherPayment =
-  | { kind: "outstanding"; against: number }
-  | { kind: "instalment"; against: number }
+  | {
+      kind: "outstanding";
+      against: number;
+      /** The printed instalments still unpaid (`unpaidInstalmentsOf`), or null when unknown. */
+      unpaid: FileInstalment[] | null;
+    }
+  | {
+      kind: "instalment";
+      against: number;
+      /** The printed rows of that amount it may be (unpaid ones once a payment is connected). */
+      rows: FileInstalment[];
+    }
   | { kind: "candidate" };
+
+/** The printed row whose amount is nearest `amount`, the first of equals, or null for none. */
+function nearestInstalment(rows: FileInstalment[], amount: number): FileInstalment | null {
+  let nearest: FileInstalment | null = null;
+  for (const row of rows) {
+    if (!nearest || Math.abs(row.amount - amount) < Math.abs(nearest.amount - amount)) nearest = row;
+  }
+  return nearest;
+}
+
+/** A schedule longer than this is not searched for which rows are paid (2^n subsets). */
+const MAX_SCHEDULE_ROWS = 16;
+
+/**
+ * Which printed instalments are still unpaid (#716), from what the connected
+ * payments pay toward the File (its total minus the Outstanding amount): the
+ * paid rows are the EARLIEST rows, in printed order, whose amounts add up to
+ * what is paid, within REMAINDER_CLOSE_TOLERANCE; every other row is unpaid.
+ * Paid in schedule order that is the head of the schedule; one paid out of
+ * order (a 300 rate before the 600 deposit) is found as well, and of equal
+ * rows the earliest count as paid.
+ *
+ * Nothing paid: every row. Null when no rows add up to what is paid (the
+ * payments did not follow the schedule), or the schedule is too long to
+ * search: no printed row is then known to be unpaid.
+ */
+export function unpaidInstalmentsOf(instalments: FileInstalment[], paid: number): FileInstalment[] | null {
+  if (paid <= 0) return instalments;
+  if (instalments.length > MAX_SCHEDULE_ROWS) return null;
+  const chosen: number[] = [];
+  // Depth first, taking each row before leaving it out: the first set found
+  // is the one made of the earliest rows.
+  const search = (i: number, sum: number): boolean => {
+    if (chosen.length > 0 && isRemainderClosed(paid - sum)) return true;
+    if (i >= instalments.length || sum > paid + REMAINDER_CLOSE_TOLERANCE) return false;
+    chosen.push(i);
+    if (search(i + 1, sum + instalments[i].amount)) return true;
+    chosen.pop();
+    return search(i + 1, sum);
+  };
+  if (!search(0, 0)) return null;
+  const paidRows = new Set(chosen);
+  return instalments.filter((_, i) => !paidRows.has(i));
+}
 
 /**
  * Is this Transaction judged as one of several payments of the File (#615,
  * ADR-0013), and against what? Only in the File's own currency, and never for
  * a Transaction the File is already on.
  *
- *  - A payment is connected and part is Outstanding: against that, always.
- *    Paid in full, or with no figure in its currency: the full total.
+ *  - A payment is connected and part is Outstanding: against the Outstanding
+ *    amount or, on a File that prints instalments, the nearest unpaid printed
+ *    instalment (`unpaidInstalmentsOf`), whichever scores better (#716): a
+ *    middle instalment is no mismatch against what is left. Equal scores keep
+ *    the Outstanding amount (the last instalment closes it). Paid in full, or
+ *    with no figure in its currency: the full total.
  *  - Nothing paid yet and the File prints instalments: against the nearest
  *    one, when it scores better than the full total does (a File paid in one
  *    go keeps its full-total Match).
@@ -1024,23 +1084,32 @@ function furtherPaymentOf(
   if (fileData.transactionIds?.includes(txData.id)) return null;
   const absTx = Math.abs(txData.amount);
   if (absTx === 0) return null;
+  const instalments = fileData.extractedInstalments ?? [];
 
   if (fileData.outstanding !== undefined) {
-    // A payment is connected: what is left is the only figure. Paid in full,
-    // or in another currency, it is the full total, as before.
-    return fileData.outstanding != null && fileData.outstanding > 0
-      ? { kind: "outstanding", against: fileData.outstanding }
-      : null;
+    // A payment is connected: what is left decides. Paid in full, or in
+    // another currency, it is the full total, as before.
+    const outstanding = fileData.outstanding;
+    if (outstanding == null || outstanding <= 0) return null;
+    const unpaid =
+      instalments.length > 0 ? unpaidInstalmentsOf(instalments, Math.abs(filePayment) - outstanding) : null;
+    const nearest = nearestInstalment(unpaid ?? [], absTx);
+    if (
+      nearest &&
+      calculateRemainderAmountScore(nearest.amount, absTx).score >
+        calculateRemainderAmountScore(outstanding, absTx).score
+    ) {
+      return { kind: "instalment", against: nearest.amount, rows: unpaid!.filter((r) => r.amount === nearest.amount) };
+    }
+    return { kind: "outstanding", against: outstanding, unpaid };
   }
 
-  const instalments = fileData.extractedInstalments ?? [];
-  if (instalments.length > 0) {
-    let nearest: FileInstalment | null = null;
-    for (const row of instalments) {
-      if (!nearest || Math.abs(row.amount - absTx) < Math.abs(nearest.amount - absTx)) nearest = row;
+  const nearest = nearestInstalment(instalments, absTx);
+  if (nearest) {
+    const score = calculateRemainderAmountScore(nearest.amount, absTx).score;
+    if (score > 0 && score > fullScore) {
+      return { kind: "instalment", against: nearest.amount, rows: instalments.filter((r) => r.amount === nearest.amount) };
     }
-    const score = calculateRemainderAmountScore(nearest!.amount, absTx).score;
-    if (score > 0 && score > fullScore) return { kind: "instalment", against: nearest!.amount };
   }
 
   if (
@@ -1069,33 +1138,16 @@ export function instalmentDueDateOf(row: FileInstalment, fileDate: Date | null):
 }
 
 /**
- * The instalments a payment closing the Outstanding amount pays (#716): the
- * trailing rows of the schedule, as printed, that add up to the Outstanding
- * amount within REMAINDER_CLOSE_TOLERANCE. Paid in the printed order, what is
- * left is the end of the schedule. Null when no tail adds up to it: the
- * payments did not follow the schedule, and no printed row is known to be
- * this one.
- */
-function unpaidInstalments(instalments: FileInstalment[], outstanding: number): FileInstalment[] | null {
-  let sum = 0;
-  for (let i = instalments.length - 1; i >= 0; i--) {
-    sum += instalments[i].amount;
-    if (isRemainderClosed(outstanding - sum)) return instalments.slice(i);
-    if (sum > outstanding + REMAINDER_CLOSE_TOLERANCE) return null;
-  }
-  return null;
-}
-
-/**
  * The printed due date a Transaction's date is scored against instead of the
  * File's own dates (#716), or null for the File's own dates, as before.
  *
- *  - Judged against a printed instalment (nothing paid yet): the due date of
- *    an instalment of that amount, the one nearest the booking of several.
+ *  - Judged against a printed instalment: the due date of a row of that
+ *    amount (an unpaid one once a payment is connected), the one nearest the
+ *    booking of several.
  *  - Judged against the Outstanding amount of a File that prints
  *    instalments, and closing it (within REMAINDER_CLOSE_TOLERANCE, the rule
- *    ADR-0013's auto-connect reads): the due date of the instalment still
- *    unpaid, the one nearest the booking when several are.
+ *    ADR-0013's auto-connect reads): the due date of an unpaid row, the one
+ *    nearest the booking of several.
  *
  * Only a due date `instalmentDueDateOf` reads counts; with none, the File's
  * own dates. A File printing no instalments never gets here.
@@ -1105,17 +1157,15 @@ function instalmentDueDateFor(
   further: FurtherPayment | null,
   txData: TransactionData
 ): Date | null {
-  const instalments = fileData.extractedInstalments ?? [];
-  if (!further || further.kind === "candidate" || instalments.length === 0) return null;
-
+  if (!further || further.kind === "candidate") return null;
   let rows: FileInstalment[] | null;
   if (further.kind === "instalment") {
-    rows = instalments.filter((row) => row.amount === further.against);
+    rows = further.rows;
   } else {
     if (!isRemainderClosed(further.against - Math.abs(txData.amount))) return null;
-    rows = unpaidInstalments(instalments, further.against);
+    rows = further.unpaid;
   }
-  if (!rows) return null;
+  if (!rows || rows.length === 0) return null;
 
   const fileDate = toDateSafe(fileData.extractedDate);
   const booked = txData.date.toDate();
