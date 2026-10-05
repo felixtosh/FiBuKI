@@ -22,6 +22,7 @@
     "selfhost:export": "vite-node scripts/export-firebase-dump.ts",
     "selfhost:rewrite-urls": "vite-node --config vitest.selfhost.config.ts scripts/rewrite-download-urls.ts",
     "selfhost:strip-line-item-fields": "vite-node --config vitest.selfhost.config.ts scripts/strip-line-item-fields.ts",
+    "selfhost:gross-up-net-line-items": "vite-node --config vitest.selfhost.config.ts scripts/gross-up-net-line-items.ts",
     "selfhost:decode-partner-name-entities": "vite-node --config vitest.selfhost.config.ts scripts/decode-partner-name-entities.ts",
     "selfhost:migrate-file-hash": "vite-node --config vitest.selfhost.config.ts scripts/migrate-file-hash.ts",
     "selfhost:migrate-transaction-type": "vite-node --config vitest.selfhost.config.ts scripts/migrate-transaction-type.ts",

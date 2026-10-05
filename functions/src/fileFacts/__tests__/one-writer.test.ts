@@ -90,6 +90,9 @@ const ALLOWED: Record<string, string> = {
   [f("functions", "src", "selfhost", "security", "victim.ts")]: "seeds the cross-user suites' fixture",
   [f("functions", "src", "selfhost", "migrate-strip-line-item-fields.ts")]:
     "a one-off migration (#252) that drops two keys from stored rows and changes no fact",
+  [f("functions", "src", "selfhost", "migrate-gross-up-net-line-items.ts")]:
+    "a one-off migration that restates net rows in the gross form the row contract names; " +
+    "every row keeps its net and VAT, and no document figure moves",
 };
 
 const repoRoot = join(__dirname, "..", "..", "..", "..");
