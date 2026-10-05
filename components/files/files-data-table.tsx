@@ -120,6 +120,7 @@ function FilesDataTableInner(
   return (
     <ResizableDataTable
       ref={ref as React.Ref<DataTableHandle>}
+      columnWidthsStorageKey="fibuki.columnWidths.files"
       columns={columns}
       data={data}
       onRowClick={onRowClick}

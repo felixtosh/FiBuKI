@@ -105,6 +105,7 @@ function DataTableInner<TData extends { id: string }>(
   return (
     <ResizableDataTable
       ref={ref}
+      columnWidthsStorageKey="fibuki.columnWidths.transactions"
       columns={columns}
       data={data}
       onRowClick={onRowClick}

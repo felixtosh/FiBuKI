@@ -3,11 +3,14 @@
 import * as React from "react";
 import { Header } from "@tanstack/react-table";
 import { cn } from "@/lib/utils";
+import { useLatestCallback } from "@/hooks/use-latest-callback";
 
 interface ResizeHandleProps {
   header: Header<unknown, unknown>;
   /** Double-click: fit the column to its content */
   onAutoFit: () => void;
+  /** A drag ended at this width; called once per drag, never per mouse move */
+  onResizeEnd?: (width: number) => void;
   /** The width the column renders at, which header.getSize() does not know */
   currentSize: number;
   /**
@@ -22,6 +25,7 @@ interface ResizeHandleProps {
 export function ResizeHandle({
   header,
   onAutoFit,
+  onResizeEnd,
   currentSize,
   isLastColumn = false,
   minColumnWidth,
@@ -29,6 +33,9 @@ export function ResizeHandle({
   const [isResizing, setIsResizing] = React.useState(false);
   const startXRef = React.useRef(0);
   const startWidthRef = React.useRef(0);
+  const lastWidthRef = React.useRef<number | null>(null);
+  // Stable, so an inline callback does not re-attach the drag listeners
+  const endResize = useLatestCallback((width: number) => onResizeEnd?.(width));
 
   const handleMouseDown = React.useCallback(
     (e: React.MouseEvent) => {
@@ -44,6 +51,7 @@ export function ResizeHandle({
       setIsResizing(true);
       startXRef.current = e.clientX;
       startWidthRef.current = currentSize;
+      lastWidthRef.current = null;
     },
     [currentSize, onAutoFit]
   );
@@ -54,6 +62,7 @@ export function ResizeHandle({
     const handleMouseMove = (e: MouseEvent) => {
       const delta = e.clientX - startXRef.current;
       const newSize = Math.max(minColumnWidth, startWidthRef.current + delta);
+      lastWidthRef.current = newSize;
       // Only this column changes; the table grows or shrinks with it
       header.getContext().table.setColumnSizing((old) => ({
         ...old,
@@ -63,6 +72,9 @@ export function ResizeHandle({
 
     const handleMouseUp = () => {
       setIsResizing(false);
+      // A click on the edge without a move resized nothing
+      if (lastWidthRef.current !== null) endResize(lastWidthRef.current);
+      lastWidthRef.current = null;
     };
 
     document.addEventListener("mousemove", handleMouseMove);
@@ -72,7 +84,7 @@ export function ResizeHandle({
       document.removeEventListener("mousemove", handleMouseMove);
       document.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [isResizing, header, minColumnWidth]);
+  }, [isResizing, header, minColumnWidth, endResize]);
 
   return (
     <>

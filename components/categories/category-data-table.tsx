@@ -43,6 +43,7 @@ function CategoryDataTableInner(
   return (
     <ResizableDataTable
       ref={ref as React.Ref<DataTableHandle>}
+      columnWidthsStorageKey="fibuki.columnWidths.categories"
       columns={columns}
       data={data}
       onRowClick={onRowClick}
