@@ -119,6 +119,15 @@ describe("a hand edit of a date re-scores the stored suggestions (#614)", () => 
     expect(await suggested("f-1")).toEqual(["t-stale"]);
   });
 
+  it("leaves a Hand Correction to the File facts module, which re-scores it itself", async () => {
+    await seedFile("f-1");
+    await edit("f-1", {
+      extractedDueDate: plus(45),
+      lastFactChange: { origin: "ui-correction", at: Timestamp.now() },
+    });
+    expect(await suggested("f-1")).toEqual(["t-stale"]);
+  });
+
   it("leaves them for an edit that moves no date", async () => {
     await seedFile("f-1", { extractedDueDate: plus(45) });
     await edit("f-1", { fileName: "renamed.pdf", extractedDueDate: plus(45) });
