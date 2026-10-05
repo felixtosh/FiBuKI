@@ -1013,9 +1013,12 @@ export interface FileConnection {
    * [ADR-0008](../docs/adr/0008-remainder-auto-connect-is-same-day-only.md).
    * `paired` (#571): the File followed the other File of its Receipt Link
    * onto the Transaction, past the Coverage gate (ADR-0012 rule 6).
+   * `instalment` (#615): one payment of several of the File, its amount a
+   * printed instalment or the exact close of the File's Outstanding amount —
+   * see [ADR-0013](../docs/adr/0013-an-instalment-auto-connects-only-on-printed-evidence.md).
    * Absent on every other Connection, including a full-amount auto-connect.
    */
-  autoConnectReason?: "remainder_same_day" | "paired";
+  autoConnectReason?: "remainder_same_day" | "paired" | "instalment";
 
   /** Score breakdown by factor (amount, date, partner, iban, reference, hint) */
   scoreBreakdown?: {

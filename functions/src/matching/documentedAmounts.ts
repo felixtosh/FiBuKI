@@ -10,7 +10,13 @@
  */
 
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
-import { filePaymentTotal, isExtractionPending, summarizeConnectedFiles } from "./coverage";
+import {
+  deriveOutstanding,
+  filePaymentTotal,
+  isExtractionPending,
+  summarizeConnectedFiles,
+  type PaymentTowardFile,
+} from "./coverage";
 import type { DocumentType } from "../documents/types";
 
 // Read when called, not at import: the matcher imports this module, and
@@ -178,4 +184,76 @@ export async function loadDocumentedAmounts(
   excludeFileId?: string
 ): Promise<Map<string, number>> {
   return documentedAmountsOf(await loadConnectedFiles(transactionIds, excludeFileId));
+}
+
+/**
+ * The Outstanding amount of each File that has one (#615, ADR-0013), keyed by
+ * File id: what a further Transaction is scored against. A File with no
+ * payment connected, a paid one and one whose payments are in another
+ * currency are absent, which callers read as "score against the full total".
+ *
+ * Read from each File's `transactionIds` and every File on each of those
+ * Transactions (`loadConnectedFiles`, the read Coverage uses, so a Receipt
+ * Link pair counts once), then `deriveOutstanding`. Not the UVA's
+ * prior-instalment query: that one is bounded by the period and blind to
+ * currency.
+ */
+export async function loadOutstandingAmounts(
+  files: Array<{ id: string | null; data: FirebaseFirestore.DocumentData }>
+): Promise<Map<string, number>> {
+  const outstanding = new Map<string, number>();
+  const paid = files.filter(
+    (f): f is { id: string; data: FirebaseFirestore.DocumentData } =>
+      typeof f.id === "string" && transactionIdsOf(f.data).length > 0
+  );
+  if (paid.length === 0) return outstanding;
+
+  const transactionIds = [...new Set(paid.flatMap((f) => transactionIdsOf(f.data)))];
+  const [transactions, connected] = await Promise.all([
+    readTransactions(transactionIds),
+    loadConnectedFiles(transactionIds),
+  ]);
+
+  for (const file of paid) {
+    const payments: PaymentTowardFile[] = [];
+    for (const transactionId of transactionIdsOf(file.data)) {
+      const tx = transactions.get(transactionId);
+      // Only the File owner's own Transactions pay toward it.
+      if (!tx || (file.data.userId && tx.userId && tx.userId !== file.data.userId)) continue;
+      payments.push({
+        transactionAmount: typeof tx.amount === "number" ? tx.amount : 0,
+        transactionCurrency: tx.currency ?? null,
+        files: connected.get(transactionId) ?? [],
+      });
+    }
+    const result = deriveOutstanding(
+      {
+        fileId: file.id,
+        payment: filePaymentTotal(file.data.extractedAmount, file.data.extractedTipAmount),
+        currency: file.data.extractedCurrency ?? null,
+        receiptOfFileId: file.data.receiptLink?.fileId ?? null,
+      },
+      payments
+    );
+    if (result?.isOutstanding) outstanding.set(file.id, result.outstanding);
+  }
+  return outstanding;
+}
+
+function transactionIdsOf(data: FirebaseFirestore.DocumentData): string[] {
+  return Array.isArray(data.transactionIds)
+    ? data.transactionIds.filter((id: unknown): id is string => typeof id === "string")
+    : [];
+}
+
+async function readTransactions(ids: string[]): Promise<Map<string, FirebaseFirestore.DocumentData>> {
+  const byId = new Map<string, FirebaseFirestore.DocumentData>();
+  for (let i = 0; i < ids.length; i += 30) {
+    const snapshot = await db()
+      .collection("transactions")
+      .where("__name__", "in", ids.slice(i, i + 30))
+      .get();
+    for (const doc of snapshot.docs) byId.set(doc.id, doc.data());
+  }
+  return byId;
 }

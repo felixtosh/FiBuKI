@@ -98,9 +98,10 @@ export interface ConnectPair {
    * Why an auto-connect was allowed when it was not the full-amount case.
    * `remainder_same_day` (#242): the File closed the Remainder of same-day
    * evidence. `paired` (#571): the File followed its Receipt Link's other
-   * File onto the Transaction, past the Coverage gate.
+   * File onto the Transaction, past the Coverage gate. `instalment` (#615):
+   * one payment of several of the File, on printed evidence (ADR-0013).
    */
-  autoConnectReason?: "remainder_same_day" | "paired";
+  autoConnectReason?: "remainder_same_day" | "paired" | "instalment";
   aiReasoning?: string;
   sourceInfo?: FileConnectionSourceInfo;
   /** A stored label other than the origin's own; only those in CONNECTION_TYPE_LABELS. */
