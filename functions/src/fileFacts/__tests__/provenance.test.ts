@@ -19,7 +19,7 @@ import {
   buildCorrectionProvenance,
   correctedFieldsOf,
   hasHandCorrections,
-} from "../extractionProvenanceOps";
+} from "../provenance";
 
 const AT = { _seconds: 42 } as never;
 

@@ -56,6 +56,17 @@ export const CORRECTABLE_FIELDS = [
 
 export type CorrectableField = (typeof CORRECTABLE_FIELDS)[number];
 
+/**
+ * What the Hand Correction record can name: the correctable figures, plus the
+ * Due Date and Debit Date (#638). Those two are not correction fields of their
+ * own. A person sets them by editing the row the document's date was read
+ * from, and the module records the date that row now states, so a later
+ * re-extraction refuses the File instead of re-reading the old date.
+ */
+export const RECORDED_FIELDS = [...CORRECTABLE_FIELDS, "dueDate", "debitDate"] as const;
+
+export type RecordedField = (typeof RECORDED_FIELDS)[number];
+
 /** The stored marker: which fields a human set, and when each was set. */
 export type ExtractionCorrectedFields = Record<string, unknown>;
 
@@ -107,13 +118,13 @@ function readStampMap(record: CorrectionProvenanceRecord | undefined): Extractio
 
 /**
  * Which fields a human set on this record, sorted in the order
- * `CORRECTABLE_FIELDS` declares so a refusal message reads the same way twice.
+ * `RECORDED_FIELDS` declares so a refusal message reads the same way twice.
  * A field the marker names that is not in that set is kept and sorted last,
  * rather than dropped: an unknown key still means a person touched something.
  */
 export function correctedFieldsOf(record: CorrectionProvenanceRecord | undefined): string[] {
   const keys = Object.keys(readStampMap(record));
-  const known = CORRECTABLE_FIELDS.filter((field) => keys.includes(field)) as string[];
+  const known = RECORDED_FIELDS.filter((field) => keys.includes(field)) as string[];
   const rest = keys.filter((key) => !known.includes(key)).sort();
   return [...known, ...rest];
 }

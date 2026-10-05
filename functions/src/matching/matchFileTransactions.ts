@@ -43,6 +43,7 @@ import { runCopyCheck } from "../files/copyOps";
 import { readDismissedTransactionIds } from "./dismissedTransactions";
 import { runCorrectionCheck } from "../corrections/correctionOps";
 import { runReceiptPairCheck } from "../receiptPairs/receiptPairOps";
+import { isHandCorrectionWrite } from "../fileFacts/factChange";
 import { AutomationMeta } from "../automation/types";
 import { checkAIBudget } from "../billing/checkAIBudget";
 import { isPassiveMode } from "../utils/checkAutomationMode";
@@ -949,10 +950,13 @@ export const matchFileTransactions = onDocumentUpdated(
     // say on a second File of the same document first; on the File as it
     // stands now, so a Connection matching just made is seen. Not before
     // Partner matching completes: until then the Copy check has not run.
+    // After a Hand Correction it only suggests: a correction records no link
+    // and connects nothing, Receipt Links included (#638, Stefan 2026-10-04).
     if (after.partnerMatchComplete && pairInputsChanged(before, after, partnerMatchJustCompleted)) {
       const fresh = (await db.collection("files").doc(fileId).get()).data();
       if (fresh) {
-        await runReceiptPairCheck(db, fileId, fresh).catch((err) => {
+        const suggestOnly = isHandCorrectionWrite(before, after);
+        await runReceiptPairCheck(db, fileId, fresh, { suggestOnly }).catch((err) => {
           console.error(`[ReceiptPair] Check failed for ${fileId}`, err);
         });
       }

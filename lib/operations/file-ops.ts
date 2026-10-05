@@ -372,7 +372,7 @@ function normalizeEditableLineItems(lineItems: EditableLineItem[] | undefined): 
  * `extractionCorrectedAt`, which is what `retry_file_extraction` refuses on
  * (#147/#184) and what a re-extraction sweep reads to build its exclusion
  * list. Those stamps are built in exactly one place,
- * functions/src/files/extractionCorrectionOps, shared by the callable and the
+ * the File facts module on the server, shared by the callable and the
  * MCP tool. A client-side copy would be a second writer of the same rule, and
  * the rule includes the comparison of what actually moved — this form posts
  * every field on every save, so without that comparison a save that typed
