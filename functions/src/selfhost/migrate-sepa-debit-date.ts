@@ -34,7 +34,7 @@ import { getFirestore } from "firebase-admin/firestore";
 import { debitDateFromAdditionalFields } from "../matching/debitDate";
 import { dueDateFromAdditionalFields } from "../matching/dueDate";
 import { toDateSafe } from "../utils/toDateSafe";
-import { correctedFieldsOf } from "../files/extractionProvenanceOps";
+import { correctedFieldsOf } from "../fileFacts/provenance";
 import { RetryExtractionError, retryExtractionForFile } from "../extraction/retryExtractionOps";
 
 /**
