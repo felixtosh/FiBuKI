@@ -171,10 +171,17 @@ describe("scoreTransaction with a Debit Date", () => {
     expect(result.confidence).toBe(85);
   });
 
-  it("weighs above a Due Date: the same day off a Due Date does not earn the same-day bonus", () => {
-    const asDue = scoreTransaction({ ...file, extractedDebitDate: null, extractedDueDate: ts(DEBIT) }, tx);
-    expect(asDue.breakdown.hardFacts).toBeLessThan(SCORING_CONFIG.HARD_FACTS_BONUS_SAME_DAY);
-    expect(scoreTransaction(file, tx).confidence).toBeGreaterThan(asDue.confidence);
+  it("weighs above a Due Date: the direct-debit near-proof bonus is a Debit Date matter", () => {
+    // Since #618 a Due Date gets the same settlement lag, so a booking one
+    // day after it earns the same-day bonus too. What stays the Debit Date's
+    // alone is the bonus for a direct debit landing on it.
+    const directDebit = { ...tx, transactionType: "direct_debit" as const };
+    const asDue = scoreTransaction(
+      { ...file, extractedDebitDate: null, extractedDueDate: ts(DEBIT) },
+      directDebit
+    );
+    expect(asDue.breakdown.hardFacts).toBe(SCORING_CONFIG.HARD_FACTS_BONUS_SAME_DAY);
+    expect(scoreTransaction(file, directDebit).confidence).toBeGreaterThan(asDue.confidence);
   });
 
   it("is near-proof when the bank line is a direct debit", () => {

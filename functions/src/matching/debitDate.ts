@@ -12,14 +12,14 @@
  * files it under the key.
  */
 
-import { parseIsoDueDate, utcDayOf } from "./dueDate";
+import { parseIsoDueDate, SETTLEMENT_LAG_DAYS, utcDayOf } from "./dueDate";
 
 /**
  * Days after the Debit Date a collection may still be booked: the Debit Date
  * can fall on a weekend or bank holiday, and the bank then books the next
- * banking day. Three covers a Friday-holiday-weekend run.
+ * banking day. The same lag a Due Date gets (#618).
  */
-export const DEBIT_DATE_SETTLEMENT_DAYS = 3;
+export const DEBIT_DATE_SETTLEMENT_DAYS = SETTLEMENT_LAG_DAYS;
 
 interface AdditionalFieldLike {
   key?: unknown;
