@@ -16,7 +16,7 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { MODELS } from "../utils/models";
 import { connectFiles } from "../fileConnections/writer";
-import { fileDateRangesFor, matchableFiles, pairsAmong } from "./matcher";
+import { autoConnectTies, fileDateRangesFor, matchableFiles, pairsAmong } from "./matcher";
 import { SCORING_CONFIG } from "./transactionScoring";
 import { toDateSafe } from "../utils/toDateSafe";
 
@@ -324,6 +324,17 @@ export async function matchFilesForPartnerInternal(
 
   console.log(`Found ${allScores.length} potential matches, top score: ${allScores[0]?.confidence}`);
 
+  // A File tied at the threshold (#667) connects none of the tied
+  // Transactions, judged on the File's own matches as on upload, not on this
+  // Partner's pool alone.
+  const filesAtThreshold = new Set(
+    allScores.filter((m) => m.confidence >= SCORING_CONFIG.AUTO_MATCH_THRESHOLD).map((m) => m.fileId)
+  );
+  const ties =
+    filesAtThreshold.size > 0
+      ? await autoConnectTies(db, userId, unconnectedFiles.filter((f) => filesAtThreshold.has(f.id)))
+      : new Map<string, Set<string>>();
+
   // 5. Create connections for auto-matches
   // Greedy matching: each file to at most one transaction, each transaction to at most one file
   const usedFiles = new Set<string>();
@@ -337,7 +348,14 @@ export async function matchFilesForPartnerInternal(
       continue;
     }
 
-    if (match.confidence >= SCORING_CONFIG.AUTO_MATCH_THRESHOLD) {
+    const tied = ties.get(match.fileId)?.has(match.transactionId) ?? false;
+    if (match.confidence >= SCORING_CONFIG.AUTO_MATCH_THRESHOLD && tied) {
+      console.log(
+        `Suggestion only for ${match.fileId} on ${match.transactionId} at ${match.confidence}% ` +
+          "(a tie: another uncovered Transaction of the same amount reaches the threshold too)"
+      );
+      suggested++;
+    } else if (match.confidence >= SCORING_CONFIG.AUTO_MATCH_THRESHOLD) {
       chosen.push(match);
       usedFiles.add(match.fileId);
       usedTransactions.add(match.transactionId);
@@ -378,8 +396,9 @@ export async function matchFilesForPartnerInternal(
 
   // 6. AI fallback matching for remaining unmatched items
   // If there are multiple unmatched files AND transactions, use AI to match them
+  // A tied File stays a suggestion (#667): the AI pass does not pick for it.
   const remainingUnmatchedFiles = unconnectedFiles
-    .filter((f) => !usedFiles.has(f.id))
+    .filter((f) => !usedFiles.has(f.id) && !ties.has(f.id))
     .map((f) => f.doc);
   const remainingUnmatchedTxs = unfiledTransactions.filter(
     (doc) => !usedTransactions.has(doc.id)

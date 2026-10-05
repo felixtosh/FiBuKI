@@ -922,6 +922,8 @@ export interface AutoConnectRefusal {
   transactionId: string;
   confidence: number;
   reason: string;
+  /** Set for the tie rule (#667), which other auto-connecting surfaces read. */
+  tie?: true;
 }
 
 /**
@@ -930,7 +932,10 @@ export interface AutoConnectRefusal {
  * Remainder Match only as the same-day case (#242, ADR-0008), and nothing at
  * all when the File's Partner prefers no receipt at least as strongly. A
  * documented Transaction still takes this File when the other File of its
- * Receipt Link is on it (#571): the pair counts once.
+ * Receipt Link is on it (#571): the pair counts once. A tie connects nothing
+ * (#667): two or more of what is left with the same amount in the same
+ * currency all stay suggestions, unless one is that paired Transaction,
+ * which then keeps the File alone.
  */
 export async function selectAutoConnects(
   db: Db,
@@ -1031,7 +1036,60 @@ export async function selectAutoConnects(
     });
   }
 
-  return { picks, refusals };
+  const tied = tiedPicks(picks);
+  for (const { match } of tied) {
+    refusals.push({
+      transactionId: match.transactionId,
+      confidence: match.confidence,
+      reason:
+        `a tie: another Transaction of ${(Math.abs(match.preview.amount) / 100).toFixed(2)} ` +
+        `${currencyOf(match)} reaches the threshold too`,
+      tie: true,
+    });
+  }
+  return { picks: picks.filter((p) => !tied.includes(p)), refusals };
+}
+
+function currencyOf(match: Match): string {
+  return (match.preview.currency || "EUR").toUpperCase();
+}
+
+/**
+ * The picks that tie (#667): two or more with the same amount in the same
+ * currency. Where one of them is a paired pick (#571), the Receipt Link
+ * decides: the paired pick stays and only the others are tied.
+ */
+function tiedPicks(picks: AutoConnectPick[]): AutoConnectPick[] {
+  const byAmount = new Map<string, AutoConnectPick[]>();
+  for (const pick of picks) {
+    const key = `${currencyOf(pick.match)}|${pick.match.preview.amount}`;
+    byAmount.set(key, [...(byAmount.get(key) ?? []), pick]);
+  }
+  return [...byAmount.values()]
+    .filter((group) => group.length > 1)
+    .flatMap((group) => group.filter((p) => p.autoConnectReason !== "paired"));
+}
+
+/**
+ * For a surface that auto-connects a File from elsewhere (Partner matching,
+ * find-receipt): the Transactions each File ties on at the threshold (#667),
+ * judged on the File's own matches exactly as the upload trigger judges them,
+ * so every surface refuses the same pairs. Keyed by File id; a File with no
+ * tie is absent.
+ */
+export async function autoConnectTies(
+  db: Db,
+  userId: string,
+  files: MatcherFile[]
+): Promise<Map<string, Set<string>>> {
+  const ties = new Map<string, Set<string>>();
+  const results = await transactionsForFiles(db, userId, files);
+  for (let i = 0; i < files.length; i++) {
+    const { refusals } = await selectAutoConnects(db, userId, files[i], results[i]);
+    const tied = refusals.filter((r) => r.tie).map((r) => r.transactionId);
+    if (tied.length > 0 && files[i].id) ties.set(files[i].id!, new Set(tied));
+  }
+  return ties;
 }
 
 /** The other Files of a File's Receipt Links (#571), from either side. */
