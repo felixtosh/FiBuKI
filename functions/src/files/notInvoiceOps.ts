@@ -147,14 +147,28 @@ export function buildUnmarkNotInvoiceUpdates(
  * `overwriteCorrections`, which on a File marked Not Invoice re-extracts it as
  * an invoice, the same as un-marking would.
  */
-export function unmarkRefusal(fileData: Record<string, unknown>): string | null {
+export function unmarkRefusal(
+  fileData: Record<string, unknown>
+): { message: string; details: HandCorrectionRefusalDetails } | null {
   const refusal = reExtractionRefusal(fileData, {});
   if (!refusal) return null;
-  return (
-    `File carries hand corrections a re-extraction would discard (${(refusal.fields ?? []).join(", ")}). ` +
-    "Un-marking it as not an invoice re-extracts it, so it is refused. " +
-    "Retry its extraction with overwriteCorrections to re-extract it as an invoice anyway."
-  );
+  const fields = refusal.fields ?? [];
+  return {
+    message:
+      `File carries hand corrections a re-extraction would discard (${fields.join(", ")}). ` +
+      "Un-marking it as not an invoice re-extracts it, so it is refused. " +
+      "Retry its extraction with overwriteCorrections to re-extract it as an invoice anyway.",
+    details: { code: "HAND_CORRECTED", fields },
+  };
+}
+
+/**
+ * The structured details of a Hand Correction refusal on a callable (#639):
+ * the UI reads the fields from here and asks before overwriting them.
+ */
+export interface HandCorrectionRefusalDetails {
+  code: "HAND_CORRECTED";
+  fields: string[];
 }
 
 /**

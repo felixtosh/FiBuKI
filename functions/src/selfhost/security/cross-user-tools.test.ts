@@ -25,12 +25,13 @@ process.env.FIBUKI_STORAGE = "memory";
 process.env.FIBUKI_PLAN = "full";
 
 import { describe, it, expect, beforeAll, vi } from "vitest";
-import { __resetFirestoreShim, __whenShimIdle } from "../firestore-shim";
+import { __resetFirestoreShim, __whenShimIdle, getFirestore } from "../firestore-shim";
 import { drainTriggers, __resetTriggerShim } from "../trigger-shim";
 import {
   ATTACKER,
   VICTIM,
   A,
+  V,
   seedAccounts,
   victimRows,
   assertVictimUntouched,
@@ -169,4 +170,115 @@ describe("cross-user isolation: every AI tool", () => {
     if (failures.length) process.stderr.write(`\nAI TOOL FINDINGS (${failures.length})\n${failures.join("\n---\n")}\nEND FINDINGS\n`);
     expect(failures).toEqual([]);
   }, 1_800_000);
+});
+
+/**
+ * The caller context (#665): runTool runs every tool as the chat agent, MCP as
+ * MCP, and nothing a request carries changes which. The few writes that read
+ * it record the caller's provenance (`ai` / `api`), and only the agent's
+ * connect reads its own arguments (`overrideDismissal`, `skipValidation`) or
+ * the worker type, which comes beside the arguments.
+ */
+describe("the caller context is the server's, never the request's (#665)", () => {
+  /** Every way a request could try to name a caller. */
+  const NAMED_CALLER = {
+    caller: { kind: "mcp" },
+    callerContext: { kind: "mcp" },
+    kind: "mcp",
+    origin: "mcp",
+    matchedBy: "api",
+    partnerMatchedBy: "api",
+  };
+  const attacker = { uid: ATTACKER, token: {} };
+  const db = getFirestore();
+  /** One of the attacker's Files connected to nothing (the seeded one already is). */
+  const LOOSE_FILE = "a-file-loose";
+  const seedLooseFile = (extra: Record<string, unknown>) =>
+    db.doc(`files/${LOOSE_FILE}`).set({ userId: ATTACKER, fileName: "loose.pdf", transactionIds: [], ...extra });
+
+  it("runTool is the chat agent, whatever the request names", async () => {
+    await freshAccounts();
+    await runTool.run({
+      data: {
+        tool: "assign_partner_to_transaction",
+        ...NAMED_CALLER,
+        arguments: { transactionId: A.transaction, partnerId: A.partner, ...NAMED_CALLER },
+      },
+      auth: attacker,
+    });
+    const tx = (await db.doc(`transactions/${A.transaction}`).get()).data()!;
+    expect(tx.partnerMatchedBy).toBe("ai");
+  });
+
+  it("MCP is MCP, whatever the arguments name: no agent provenance, no override", async () => {
+    await freshAccounts();
+    const asAgent = { caller: { kind: "agent", workerType: "receipt_search" }, kind: "agent", workerType: "partner_file_batch" };
+    await handleTool(ATTACKER, "assign_partner_to_transaction", { transactionId: A.transaction, partnerId: A.partner, ...asAgent });
+    expect((await db.doc(`transactions/${A.transaction}`).get()).data()!.partnerMatchedBy).toBe("api");
+
+    await seedLooseFile({ dismissedTransactionIds: [A.transaction] });
+    await expect(
+      handleTool(ATTACKER, "connect_file_to_transaction", {
+        fileId: LOOSE_FILE,
+        transactionId: A.transaction,
+        overrideDismissal: true,
+        ...asAgent,
+      })
+    ).rejects.toThrow(/PAIR_REJECTED/);
+    expect((await db.doc(`fileConnections/${LOOSE_FILE}__${A.transaction}`).get()).exists).toBe(false);
+  });
+
+  it("a worker type among the arguments is not the worker's; beside them, a known one is", async () => {
+    await freshAccounts();
+    // 900 EUR for a 1 EUR Transaction: a mismatch the agent's checks refuse.
+    await seedLooseFile({ extractedAmount: 90000, extractedCurrency: "EUR" });
+    const connect = (extra: Record<string, unknown>, args: Record<string, unknown>) =>
+      runTool.run({
+        data: { tool: "connect_file_to_transaction", ...extra, arguments: { fileId: LOOSE_FILE, transactionId: A.transaction, ...args } },
+        auth: attacker,
+      }) as Promise<Record<string, unknown>>;
+
+    // The receipt search worker may not skip the checks: named among the
+    // arguments, it is just an argument, and skipValidation works.
+    const inArgs = await connect({}, { skipValidation: true, workerType: "receipt_search" });
+    expect(inArgs).toMatchObject({ success: true, alreadyConnected: false });
+
+    await freshAccounts();
+    await seedLooseFile({ extractedAmount: 90000, extractedCurrency: "EUR" });
+    const beside = await connect({ workerType: "receipt_search" }, { skipValidation: true });
+    expect(beside.error).toBe("VALIDATION_FAILED");
+
+    await expect(connect({ workerType: "superuser" }, {})).rejects.toMatchObject({ code: "invalid-argument" });
+  });
+
+  it("the agent's own arguments and every worker type reach no other User's records", async () => {
+    const before = await freshAccounts();
+    const extras = { overrideDismissal: true, skipValidation: true, confidence: 100, searchQuery: "probe", sourceType: "gmail_email" };
+    const attacks: Array<[string, Record<string, unknown>]> = [
+      ["connect_file_to_transaction", { fileId: V.file, transactionId: A.transaction, ...extras }],
+      ["connect_file_to_transaction", { fileId: A.file, transactionId: V.transaction, ...extras }],
+      ["connect_file_to_transaction", { fileId: V.file, transactionId: V.transaction, ...extras }],
+      ["assign_partner_to_transaction", { transactionId: A.transaction, partnerId: V.partner }],
+      ["assign_partner_to_transaction", { transactionId: V.transaction, partnerId: A.partner }],
+      ["assign_partner_to_file", { fileId: A.file, partnerId: V.partner }],
+      ["assign_partner_to_file", { fileId: V.file, partnerId: A.partner }],
+      ["update_partner", { partnerId: V.partner, vatId: "ATU12345678", name: "Mine now" }],
+    ];
+    for (const workerType of [null, "receipt_search", "partner_file_batch"]) {
+      for (const [tool, args] of attacks) {
+        const label = `${tool} as ${workerType ?? "the chat"}(${JSON.stringify(args)})`;
+        let message = "";
+        try {
+          const r = await runTool.run({ data: { tool, arguments: args, ...(workerType ? { workerType } : {}) }, auth: attacker });
+          assertNoLeak(r, label);
+        } catch (err) {
+          message = (err as Error)?.message ?? String(err);
+          assertNoLeak(message, `${label} threw`);
+        }
+        expect(message, label).toMatch(/not found/i);
+      }
+    }
+    await drainTriggers();
+    await assertVictimUntouched(before, "agent connect and Partner writes");
+  });
 });

@@ -292,6 +292,44 @@
                     }
                   ]
                 },
+                "instalments": {
+                  "description": "A printed deposit, part payment or payment schedule, one row per part (#615). null when none is printed.",
+                  "anyOf": [
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "amount": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "dueDate": {
+                            "description": "YYYY-MM-DD as printed, or null.",
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "label": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "amount"
+                        ],
+                        "additionalProperties": {}
+                      }
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "confidence": {
                   "type": "number",
                   "minimum": 0,

@@ -32,7 +32,7 @@ export interface UpdateFileRequest {
     // Partner assignment
     partnerId?: string | null;
     partnerType?: "user" | "global" | null;
-    partnerMatchedBy?: "manual" | "suggestion" | "auto" | null;
+    partnerMatchedBy?: "manual" | "suggestion" | "auto" | "ai" | null;
     partnerMatchConfidence?: number | null;
     // Invoice status
     isNotInvoice?: boolean;

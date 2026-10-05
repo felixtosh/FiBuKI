@@ -1,9 +1,15 @@
 /**
- * Assign a partner to a transaction
+ * Assign a partner to a transaction.
+ *
+ * One implementation of the write (#665): the callable (the UI, the chat's
+ * batch tools) and the `assign_partner_to_transaction` tool, for MCP and the
+ * chat agent alike, all run assignPartnerToTransactionInternal. Who assigned
+ * is `matchedBy`: the tool records `ai` for the chat agent and `api` for an
+ * external client.
  */
 
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
-import { createCallable, HttpsError } from "../utils/createCallable";
+import { createCallable, HttpsError, type HandlerContext } from "../utils/createCallable";
 import { cancelPartnerWorkersForTransaction } from "../utils/cancelWorkers";
 import { deriveActivityLevel } from "../utils/activityLevel";
 import { CLEAR_TX_PROVENANCE } from "../matching/partnerProvenance";
@@ -20,215 +26,250 @@ interface AssignPartnerToTransactionResponse {
   success: boolean;
 }
 
+/**
+ * Who assigned, as stored in `partnerMatchedBy`. The callable takes the first
+ * four; `api` is the tool surface's external client (MCP, the REST API), set
+ * by the server only. An `api` assignment is the client acting for the User:
+ * it is neither refused on nor clears a Partner the User removed from the
+ * Transaction before (the tool never did either), it is logged as the User's
+ * decision, and it is not learned from (pattern learning reads `manual`,
+ * `suggestion` and `ai` assignments only). Replacing another Partner relearns
+ * that Partner, as every assignment does.
+ */
+export type PartnerMatchedBy = AssignPartnerToTransactionRequest["matchedBy"] | "api";
+
+export interface AssignPartnerToTransactionInput {
+  transactionId: string;
+  partnerId: string;
+  partnerType: "global" | "user";
+  matchedBy: PartnerMatchedBy;
+  confidence?: number;
+}
+
 export const assignPartnerToTransactionCallable = createCallable<
   AssignPartnerToTransactionRequest,
   AssignPartnerToTransactionResponse
 >(
   { name: "assignPartnerToTransaction" },
   async (ctx, request) => {
-    const { transactionId, partnerId, partnerType, matchedBy, confidence } = request;
-
-    if (!transactionId) {
-      throw new HttpsError("invalid-argument", "transactionId is required");
+    if ((request?.matchedBy as string) === "api") {
+      // The tool surface's own value: a client of the callable is not it.
+      throw new HttpsError("invalid-argument", "matchedBy must be manual, suggestion, auto or ai");
     }
-    if (!partnerId) {
-      throw new HttpsError("invalid-argument", "partnerId is required");
-    }
-    if (!partnerType) {
-      throw new HttpsError("invalid-argument", "partnerType is required");
-    }
-    if (!matchedBy) {
-      throw new HttpsError("invalid-argument", "matchedBy is required");
-    }
-
-    // Verify transaction ownership
-    const transactionRef = ctx.db.collection("transactions").doc(transactionId);
-    const transactionSnap = await transactionRef.get();
-
-    if (!transactionSnap.exists) {
-      throw new HttpsError("not-found", "Transaction not found");
-    }
-
-    const txData = transactionSnap.data()!;
-    if (txData.userId !== ctx.userId) {
-      throw new HttpsError("permission-denied", "Access denied");
-    }
-
-    // Verify partner exists - check correct collection based on type
-    const collectionName = partnerType === "global" ? "globalPartners" : "partners";
-    const partnerRef = ctx.db.collection(collectionName).doc(partnerId);
-    const partnerSnap = await partnerRef.get();
-
-    if (!partnerSnap.exists) {
-      throw new HttpsError("not-found", "Partner not found");
-    }
-
-    // For user partners, verify ownership
-    const partnerData = partnerSnap.data()!;
-    if (partnerType === "user" && partnerData.userId !== ctx.userId) {
-      throw new HttpsError("permission-denied", "Partner access denied");
-    }
-
-    // Convert global partner to local partner
-    // This creates a user-owned copy and allows pattern learning
-    let effectivePartnerId = partnerId;
-    let effectivePartnerType: "global" | "user" = partnerType;
-
-    if (partnerType === "global") {
-      try {
-        const { createLocalPartnerFromGlobal } = await import(
-          "../matching/createLocalPartnerFromGlobal"
-        );
-        effectivePartnerId = await createLocalPartnerFromGlobal(ctx.userId, partnerId);
-        effectivePartnerType = "user";
-        console.log(
-          `[assignPartnerToTransaction] Converted global partner ${partnerId} to local ${effectivePartnerId}`
-        );
-      } catch (err) {
-        console.error(`[assignPartnerToTransaction] Failed to convert global partner:`, err);
-        // Continue with global partner if conversion fails
-      }
-    }
-
-    // Re-fetch partner data if we converted to local (for manualRemovals check)
-    let effectivePartnerData = partnerData;
-    if (effectivePartnerId !== partnerId) {
-      const localPartnerSnap = await ctx.db.collection("partners").doc(effectivePartnerId).get();
-      if (localPartnerSnap.exists) {
-        effectivePartnerData = localPartnerSnap.data()!;
-      }
-    }
-
-    // Check if user previously rejected this partner for this transaction
-    // Only block for auto/ai matches - manual/suggestion assignments are deliberate user overrides
-    // manualRemovals is an array of { transactionId: string, ... }
-    const manualRemovals = effectivePartnerData.manualRemovals || [];
-    const wasRejected = manualRemovals.some(
-      (r: { transactionId: string }) => r.transactionId === transactionId
-    );
-
-    if (wasRejected && (matchedBy === "auto" || matchedBy === "ai")) {
-      console.log(
-        `[assignPartnerToTransaction] Blocked: Partner ${partnerId} was previously rejected for transaction ${transactionId} (matchedBy: ${matchedBy})`
-      );
-      throw new HttpsError(
-        "failed-precondition",
-        `Partner was previously rejected for this transaction. To reassign, first remove it from the partner's rejection list.`
-      );
-    }
-
-    if (wasRejected) {
-      // Manual/suggestion override of a previously rejected partner
-      // Remove from manualRemovals since user is explicitly re-adding
-      console.log(
-        `[assignPartnerToTransaction] Manual override: Partner ${effectivePartnerId} was previously rejected but user is re-adding via ${matchedBy}`
-      );
-
-      const updatedRemovals = manualRemovals.filter(
-        (r: { transactionId: string }) => r.transactionId !== transactionId
-      );
-
-      await ctx.db.collection("partners").doc(effectivePartnerId).update({
-        manualRemovals: updatedRemovals,
-        updatedAt: FieldValue.serverTimestamp(),
-      });
-
-      console.log(
-        `[assignPartnerToTransaction] Removed transaction ${transactionId} from manualRemovals (${manualRemovals.length} -> ${updatedRemovals.length})`
-      );
-    }
-
-    // Cancel running partner automation when user manually assigns or accepts suggestion
-    if (matchedBy === "manual" || matchedBy === "suggestion") {
-      cancelPartnerWorkersForTransaction(ctx.userId, transactionId).catch((err) => {
-        console.error("[assignPartnerToTransaction] Failed to cancel partner workers:", err);
-      });
-    }
-
-    // Capture previous partner info before overwriting (used for relearning + receipt search)
-    const previousPartnerId = txData.partnerId;
-    const previousPartnerType = txData.partnerType;
-    const partnerChanged = previousPartnerId !== effectivePartnerId;
-
-    // Update transaction with partner assignment + activity log
-    const actor = (matchedBy === "manual" ? "manual" : matchedBy === "suggestion" ? "suggestion" : matchedBy === "ai" ? "ai" : "auto") as "manual" | "suggestion" | "ai" | "auto";
-    await transactionRef.update({
-      ...CLEAR_TX_PROVENANCE,
-      partnerId: effectivePartnerId,
-      partnerType: effectivePartnerType,
-      partnerMatchedBy: matchedBy,
-      partnerMatchConfidence: confidence ?? null,
-      updatedAt: FieldValue.serverTimestamp(),
-      automationHistory: FieldValue.arrayUnion({
-        type: "partner_assigned",
-        ranAt: Timestamp.now(),
-        status: "completed",
-        actor,
-        level: deriveActivityLevel({ type: "partner_assigned", actor }),
-        partnerName: partnerData.name || null,
-        forPartnerId: effectivePartnerId,
-        confidence: confidence ?? null,
-        summary: `Partner "${partnerData.name || effectivePartnerId}" assigned`,
-      }),
-    });
-
-    console.log(`[assignPartnerToTransaction] Assigned partner ${effectivePartnerId} to transaction ${transactionId}`, {
-      userId: ctx.userId,
-      partnerType: effectivePartnerType,
-      originalPartnerType: partnerType,
-      matchedBy,
-    });
-
-    // Trigger pattern learning for user/AI assignments
-    // Manual, suggestion clicks, and AI assignments should inform pattern learning
-    // Note: effectivePartnerType is always "user" now (global partners are converted)
-    if ((matchedBy === "manual" || matchedBy === "suggestion" || matchedBy === "ai") && effectivePartnerType === "user") {
-      try {
-        const { learnPatternsForPartnersBatch } = await import("../matching/learnPartnerPatterns");
-
-        // For manual/suggestion assignments, await pattern learning for immediate feedback
-        // For AI assignments, run in background to not slow down batch operations
-        if (matchedBy === "manual" || matchedBy === "suggestion") {
-          console.log(`[assignPartnerToTransaction] Running pattern learning synchronously for ${matchedBy} assignment`);
-          await learnPatternsForPartnersBatch(ctx.userId, [effectivePartnerId]);
-          console.log(`[assignPartnerToTransaction] Pattern learning completed for partner ${effectivePartnerId}`);
-        } else {
-          // Run pattern learning in background for AI assignments
-          learnPatternsForPartnersBatch(ctx.userId, [effectivePartnerId])
-            .then(() => {
-              console.log(`[assignPartnerToTransaction] Pattern learning completed (background)`);
-            })
-            .catch((err) => {
-              console.error(`[assignPartnerToTransaction] Pattern learning failed:`, err);
-            });
-        }
-      } catch (err) {
-        console.error(`[assignPartnerToTransaction] Pattern learning failed:`, err);
-        // Don't throw - assignment succeeded, just pattern learning failed
-      }
-    }
-
-    // Trigger pattern relearning for the PREVIOUS partner when overwriting
-    // The old partner's patterns may now be based on fewer/no manual assignments,
-    // so cascade-unassign will clean up stale auto-matches
-    if (previousPartnerId && previousPartnerType === "user" && partnerChanged) {
-      try {
-        const { learnPatternsForPartnersBatch } = await import("../matching/learnPartnerPatterns");
-        learnPatternsForPartnersBatch(ctx.userId, [previousPartnerId])
-          .then(() => {
-            console.log(`[assignPartnerToTransaction] Previous partner ${previousPartnerId} pattern relearning completed`);
-          })
-          .catch((err) => {
-            console.error(`[assignPartnerToTransaction] Previous partner pattern relearning failed:`, err);
-          });
-      } catch (err) {
-        console.error(`[assignPartnerToTransaction] Failed to trigger previous partner relearning:`, err);
-      }
-    }
-
-    // Receipt search is handled by onTransactionUpdate trigger when it sees the
-    // partnerId change — no need to queue it here (would be a duplicate).
-
-    return { success: true };
+    return assignPartnerToTransactionInternal(ctx, request);
   }
 );
+
+/** The assignment itself, for a caller that already holds the User. */
+export async function assignPartnerToTransactionInternal(
+  ctx: Pick<HandlerContext, "db" | "userId">,
+  request: AssignPartnerToTransactionInput
+): Promise<AssignPartnerToTransactionResponse> {
+  const { transactionId, partnerId, partnerType, matchedBy, confidence } = request;
+
+  if (!transactionId) {
+    throw new HttpsError("invalid-argument", "transactionId is required");
+  }
+  if (!partnerId) {
+    throw new HttpsError("invalid-argument", "partnerId is required");
+  }
+  if (!partnerType) {
+    throw new HttpsError("invalid-argument", "partnerType is required");
+  }
+  if (!matchedBy) {
+    throw new HttpsError("invalid-argument", "matchedBy is required");
+  }
+
+  // Verify transaction ownership
+  const transactionRef = ctx.db.collection("transactions").doc(transactionId);
+  const transactionSnap = await transactionRef.get();
+
+  if (!transactionSnap.exists) {
+    throw new HttpsError("not-found", "Transaction not found");
+  }
+
+  const txData = transactionSnap.data()!;
+  if (txData.userId !== ctx.userId) {
+    throw new HttpsError("permission-denied", "Access denied");
+  }
+
+  // Verify partner exists - check correct collection based on type
+  const collectionName = partnerType === "global" ? "globalPartners" : "partners";
+  const partnerRef = ctx.db.collection(collectionName).doc(partnerId);
+  const partnerSnap = await partnerRef.get();
+
+  if (!partnerSnap.exists) {
+    throw new HttpsError("not-found", "Partner not found");
+  }
+
+  // For user partners, verify ownership
+  const partnerData = partnerSnap.data()!;
+  if (partnerType === "user" && partnerData.userId !== ctx.userId) {
+    throw new HttpsError("permission-denied", "Partner access denied");
+  }
+
+  // Convert global partner to local partner
+  // This creates a user-owned copy and allows pattern learning
+  let effectivePartnerId = partnerId;
+  let effectivePartnerType: "global" | "user" = partnerType;
+
+  if (partnerType === "global") {
+    try {
+      const { createLocalPartnerFromGlobal } = await import(
+        "../matching/createLocalPartnerFromGlobal"
+      );
+      effectivePartnerId = await createLocalPartnerFromGlobal(ctx.userId, partnerId);
+      effectivePartnerType = "user";
+      console.log(
+        `[assignPartnerToTransaction] Converted global partner ${partnerId} to local ${effectivePartnerId}`
+      );
+    } catch (err) {
+      console.error(`[assignPartnerToTransaction] Failed to convert global partner:`, err);
+      // Continue with global partner if conversion fails
+    }
+  }
+
+  // Re-fetch partner data if we converted to local (for manualRemovals check)
+  let effectivePartnerData = partnerData;
+  if (effectivePartnerId !== partnerId) {
+    const localPartnerSnap = await ctx.db.collection("partners").doc(effectivePartnerId).get();
+    if (localPartnerSnap.exists) {
+      effectivePartnerData = localPartnerSnap.data()!;
+    }
+  }
+
+  // Check if user previously rejected this partner for this transaction
+  // Only block for auto/ai matches - manual/suggestion assignments are deliberate user overrides
+  // manualRemovals is an array of { transactionId: string, ... }
+  const manualRemovals = effectivePartnerData.manualRemovals || [];
+  const wasRejected = manualRemovals.some(
+    (r: { transactionId: string }) => r.transactionId === transactionId
+  );
+
+  if (wasRejected && (matchedBy === "auto" || matchedBy === "ai")) {
+    console.log(
+      `[assignPartnerToTransaction] Blocked: Partner ${partnerId} was previously rejected for transaction ${transactionId} (matchedBy: ${matchedBy})`
+    );
+    throw new HttpsError(
+      "failed-precondition",
+      `Partner was previously rejected for this transaction. To reassign, first remove it from the partner's rejection list.`
+    );
+  }
+
+  if (wasRejected && matchedBy !== "api") {
+    // Manual/suggestion override of a previously rejected partner
+    // Remove from manualRemovals since user is explicitly re-adding
+    console.log(
+      `[assignPartnerToTransaction] Manual override: Partner ${effectivePartnerId} was previously rejected but user is re-adding via ${matchedBy}`
+    );
+
+    const updatedRemovals = manualRemovals.filter(
+      (r: { transactionId: string }) => r.transactionId !== transactionId
+    );
+
+    await ctx.db.collection("partners").doc(effectivePartnerId).update({
+      manualRemovals: updatedRemovals,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    console.log(
+      `[assignPartnerToTransaction] Removed transaction ${transactionId} from manualRemovals (${manualRemovals.length} -> ${updatedRemovals.length})`
+    );
+  }
+
+  // Cancel running partner automation when user manually assigns or accepts suggestion
+  if (matchedBy === "manual" || matchedBy === "suggestion") {
+    cancelPartnerWorkersForTransaction(ctx.userId, transactionId).catch((err) => {
+      console.error("[assignPartnerToTransaction] Failed to cancel partner workers:", err);
+    });
+  }
+
+  // Capture previous partner info before overwriting (used for relearning + receipt search)
+  const previousPartnerId = txData.partnerId;
+  const previousPartnerType = txData.partnerType;
+  const partnerChanged = previousPartnerId !== effectivePartnerId;
+
+  // Update transaction with partner assignment + activity log. An external
+  // client's assignment is the User's decision, made through it.
+  const actor = (matchedBy === "manual" || matchedBy === "api" ? "manual" : matchedBy === "suggestion" ? "suggestion" : matchedBy === "ai" ? "ai" : "auto") as "manual" | "suggestion" | "ai" | "auto";
+  await transactionRef.update({
+    ...CLEAR_TX_PROVENANCE,
+    partnerId: effectivePartnerId,
+    partnerType: effectivePartnerType,
+    partnerMatchedBy: matchedBy,
+    partnerMatchConfidence: confidence ?? null,
+    updatedAt: FieldValue.serverTimestamp(),
+    automationHistory: FieldValue.arrayUnion({
+      type: "partner_assigned",
+      ranAt: Timestamp.now(),
+      status: "completed",
+      actor,
+      level: deriveActivityLevel({ type: "partner_assigned", actor }),
+      partnerName: partnerData.name || null,
+      forPartnerId: effectivePartnerId,
+      confidence: confidence ?? null,
+      summary: matchedBy === "api"
+        ? `Partner "${partnerData.name || effectivePartnerId}" assigned via API`
+        : `Partner "${partnerData.name || effectivePartnerId}" assigned`,
+    }),
+  });
+
+  console.log(`[assignPartnerToTransaction] Assigned partner ${effectivePartnerId} to transaction ${transactionId}`, {
+    userId: ctx.userId,
+    partnerType: effectivePartnerType,
+    originalPartnerType: partnerType,
+    matchedBy,
+  });
+
+  // Trigger pattern learning for user/AI assignments
+  // Manual, suggestion clicks, and AI assignments should inform pattern learning
+  // Note: effectivePartnerType is always "user" now (global partners are converted)
+  if ((matchedBy === "manual" || matchedBy === "suggestion" || matchedBy === "ai") && effectivePartnerType === "user") {
+    try {
+      const { learnPatternsForPartnersBatch } = await import("../matching/learnPartnerPatterns");
+
+      // For manual/suggestion assignments, await pattern learning for immediate feedback
+      // For AI assignments, run in background to not slow down batch operations
+      if (matchedBy === "manual" || matchedBy === "suggestion") {
+        console.log(`[assignPartnerToTransaction] Running pattern learning synchronously for ${matchedBy} assignment`);
+        await learnPatternsForPartnersBatch(ctx.userId, [effectivePartnerId]);
+        console.log(`[assignPartnerToTransaction] Pattern learning completed for partner ${effectivePartnerId}`);
+      } else {
+        // Run pattern learning in background for AI assignments
+        learnPatternsForPartnersBatch(ctx.userId, [effectivePartnerId])
+          .then(() => {
+            console.log(`[assignPartnerToTransaction] Pattern learning completed (background)`);
+          })
+          .catch((err) => {
+            console.error(`[assignPartnerToTransaction] Pattern learning failed:`, err);
+          });
+      }
+    } catch (err) {
+      console.error(`[assignPartnerToTransaction] Pattern learning failed:`, err);
+      // Don't throw - assignment succeeded, just pattern learning failed
+    }
+  }
+
+  // Trigger pattern relearning for the PREVIOUS partner when overwriting
+  // The old partner's patterns may now be based on fewer/no manual assignments,
+  // so cascade-unassign will clean up stale auto-matches
+  if (previousPartnerId && previousPartnerType === "user" && partnerChanged) {
+    try {
+      const { learnPatternsForPartnersBatch } = await import("../matching/learnPartnerPatterns");
+      learnPatternsForPartnersBatch(ctx.userId, [previousPartnerId])
+        .then(() => {
+          console.log(`[assignPartnerToTransaction] Previous partner ${previousPartnerId} pattern relearning completed`);
+        })
+        .catch((err) => {
+          console.error(`[assignPartnerToTransaction] Previous partner pattern relearning failed:`, err);
+        });
+    } catch (err) {
+      console.error(`[assignPartnerToTransaction] Failed to trigger previous partner relearning:`, err);
+    }
+  }
+
+  // Receipt search is handled by onTransactionUpdate trigger when it sees the
+  // partnerId change — no need to queue it here (would be a duplicate).
+
+  return { success: true };
+}

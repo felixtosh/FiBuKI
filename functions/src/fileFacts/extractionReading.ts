@@ -15,7 +15,12 @@
  */
 
 import { Timestamp } from "firebase-admin/firestore";
-import type { ExtractedEntity, ExtractedLineItem, ExtractedRateGroup } from "../types/extraction";
+import type {
+  ExtractedEntity,
+  ExtractedInstalment,
+  ExtractedLineItem,
+  ExtractedRateGroup,
+} from "../types/extraction";
 import type { ExtractedAdditionalField, ExtractedRawText } from "../extraction/geminiParser";
 import type { ParsedQrCode } from "../extraction/qrCodes";
 import type { InvoiceDirection } from "../utils/identity-matcher";
@@ -67,6 +72,12 @@ export interface ExtractedFacts {
   referencedInvoiceNumber: string | null;
   paidInvoiceNumber: string | null;
   payableAmount: number | null;
+  /**
+   * The instalments the document prints (#615, ADR-0013), due dates as
+   * `YYYY-MM-DD`; stored with each due date as the stored day. null when it
+   * prints none.
+   */
+  instalments: ExtractedInstalment[] | null;
   /** Recorded only, never a Partner (#156). */
   invoicingAgent: ExtractedEntity | null;
 }
@@ -141,6 +152,7 @@ const FACT_FIELD: Record<
   referencedInvoiceNumber: "extractedReferencedInvoiceNumber",
   paidInvoiceNumber: "extractedPaidInvoiceNumber",
   payableAmount: "extractedPayableAmount",
+  instalments: "extractedInstalments",
   invoicingAgent: "extractedInvoicingAgent",
 };
 
@@ -213,6 +225,10 @@ export function extractionFields(
       if (date) update[field] = date;
       continue;
     }
+    if (key === "instalments") {
+      update[field] = storedInstalments(facts.instalments);
+      continue;
+    }
     if (value === undefined && (key === "currency" || key === "raw")) continue;
     update[field] = value ?? null;
   }
@@ -265,6 +281,18 @@ function storedIssueDate(value: string | undefined): Timestamp | null {
   if (parts.length !== 3) return null;
   const date = new Date(Date.UTC(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2])));
   return Timestamp.fromDate(date);
+}
+
+/** The instalments as stored (#615): each due date the stored day, a missing list null. */
+function storedInstalments(
+  instalments: ExtractedInstalment[] | null | undefined
+): Array<{ amount: number; dueDate: Timestamp | null; label: string | null }> | null {
+  if (!Array.isArray(instalments) || instalments.length === 0) return null;
+  return instalments.map((row) => ({
+    amount: row.amount,
+    dueDate: row.dueDate ? storedIssueDate(row.dueDate) : null,
+    label: row.label ?? null,
+  }));
 }
 
 function asStoredDate(date: Date | null): Timestamp | null {

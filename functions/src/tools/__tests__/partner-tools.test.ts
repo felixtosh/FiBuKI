@@ -78,6 +78,12 @@ vi.mock("../../utils/cancelWorkers", () => ({
 }));
 
 vi.mock("../../extraction/extractionCore", () => ({ runExtraction: vi.fn() }));
+// update_partner checks a VAT ID with VIES (#665); never the real register here.
+const lookupVatId = vi.fn(async (vatId: string) => ({ vatId, viesValid: true, name: "VIES NAME" }));
+vi.mock("../../ai/lookupCompany", () => ({
+  lookupVatId: (vatId: string) => lookupVatId(vatId),
+  VIES_NOT_VALID: "VAT ID not valid according to VIES",
+}));
 vi.mock("firebase-functions/params", () => ({
   defineSecret: (name: string) => ({ value: () => `test-${name}` }),
 }));
@@ -266,15 +272,18 @@ describe("Partner write tools", () => {
     it("writes create_partner's field set through the Partners page's normalisation", async () => {
       seedPartner("p-1", { name: "Old", vatId: "ATU1", ibans: ["AT00 1"], website: null });
 
-      await handlers.handleTool(USER, "update_partner", {
+      const result = (await handlers.handleTool(USER, "update_partner", {
         partnerId: "p-1",
         name: "  New GmbH ",
         vatId: "atu 123 456 78",
         ibans: ["at61 1904 3002 3457 3201"],
         website: "Example.com/",
         country: "AT",
-      });
+      })) as Doc;
 
+      // VIES is asked about the normalised VAT ID; a name given wins over VIES's.
+      expect(lookupVatId).toHaveBeenLastCalledWith("ATU12345678");
+      expect(result.vatIdCheck).toEqual({ vatId: "ATU12345678", valid: true, name: "VIES NAME", error: null });
       expect(doc("partners", "p-1")).toMatchObject({
         name: "New GmbH",
         vatId: "ATU12345678",

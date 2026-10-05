@@ -13,6 +13,7 @@ import {
   COVERAGE_RATIO,
   REMAINDER_CLOSE_TOLERANCE,
   deriveCoverage,
+  deriveOutstanding,
   documentedAmountOf,
   filePaymentTotal,
   isRemainderClosed,
@@ -328,5 +329,101 @@ describe("scoreAttachmentMatch against a remainder", () => {
 
     expect(withoutCoverage.scoredAgainstRemainder).toBe(false);
     expect(withoutCoverage).toEqual(explicitlyEmpty);
+  });
+});
+
+// ============================================================================
+// deriveOutstanding (#615, ADR-0013)
+// ============================================================================
+
+describe("deriveOutstanding", () => {
+  const F = { fileId: "f", payment: 120000, currency: "EUR" };
+  const on = (fileId: string, payment: number | null, extra: Record<string, unknown> = {}) => ({
+    fileId,
+    payment,
+    extractionPending: false,
+    currency: "EUR",
+    ...extra,
+  });
+  const paying = (amount: number, files: ReturnType<typeof on>[], currency = "EUR") => ({
+    transactionAmount: amount,
+    transactionCurrency: currency,
+    files,
+  });
+
+  it.each([
+    ["one full payment", F, [paying(-120000, [on("f", 120000)])], { paid: 120000, outstanding: 0, overpaid: 0, isOutstanding: false }],
+    [
+      "two partial payments",
+      F,
+      [paying(-40000, [on("f", 120000)]), paying(-30000, [on("f", 120000)])],
+      { paid: 70000, outstanding: 50000, overpaid: 0, isOutstanding: true },
+    ],
+    [
+      "one Transaction paying two Files in full",
+      { ...F, payment: 30000 },
+      [paying(-50000, [on("f", 30000), on("g", 20000)])],
+      { paid: 30000, outstanding: 0, overpaid: 0, isOutstanding: false },
+    ],
+    [
+      "one Transaction short of its two Files (proportional)",
+      { ...F, payment: 30000 },
+      [paying(-40000, [on("f", 30000), on("g", 20000)])],
+      // 400 / 500 of the 300: 240 paid, 60 outstanding.
+      { paid: 24000, outstanding: 6000, overpaid: 0, isOutstanding: true },
+    ],
+    [
+      "an overpaid File (zero, never negative)",
+      F,
+      [paying(-100000, [on("f", 120000)]), paying(-100000, [on("f", 120000)])],
+      { paid: 200000, outstanding: 0, overpaid: 80000, isOutstanding: false },
+    ],
+    [
+      "a Receipt Link pair on the first payment counts once",
+      F,
+      [paying(-40000, [on("f", 120000), on("r", 40000, { receiptOfFileId: "f" })])],
+      // The pair is one 1 200 document: 400 / 1 200 of it, not 400 / 1 600.
+      { paid: 40000, outstanding: 80000, overpaid: 0, isOutstanding: true },
+    ],
+    ["nothing connected yet", F, [], { paid: 0, outstanding: 120000, overpaid: 0, isOutstanding: false }],
+    [
+      "a bank line larger than its only File (overpaid)",
+      F,
+      [paying(-125000, [on("f", 120000)])],
+      { paid: 125000, outstanding: 0, overpaid: 5000, isOutstanding: false },
+    ],
+    [
+      "a bank line larger than its two Files: the rest is the Transaction's Remainder, not this File's",
+      { ...F, payment: 30000 },
+      [paying(-60000, [on("f", 30000), on("g", 20000)])],
+      { paid: 30000, outstanding: 0, overpaid: 0, isOutstanding: false },
+    ],
+  ])("%s", (_name, file, payments, expected) => {
+    expect(deriveOutstanding(file, payments)).toEqual({ total: Math.abs(file.payment!), ...expected });
+  });
+
+  it("is null for a mixed-currency payment", () => {
+    expect(deriveOutstanding(F, [paying(-40000, [on("f", 120000)], "USD")])).toBeNull();
+    expect(
+      deriveOutstanding(F, [paying(-40000, [on("f", 120000), on("g", 5000, { currency: "USD" })])])
+    ).toBeNull();
+  });
+
+  it("is null for a File with no amount", () => {
+    expect(deriveOutstanding({ ...F, payment: null }, [paying(-40000, [on("f", null)])])).toBeNull();
+  });
+
+  it("counts the File as given even where the connected read missed it", () => {
+    expect(deriveOutstanding(F, [paying(-40000, [])])?.paid).toBe(40000);
+  });
+
+  it("pays a Receipt folded into its invoice what the pair is paid, up to its own total", () => {
+    const receipt = { fileId: "r", payment: 40000, currency: "EUR", receiptOfFileId: "f" };
+    const result = deriveOutstanding(receipt, [paying(-40000, [on("f", 120000), on("r", 40000, { receiptOfFileId: "f" })])]);
+    expect(result).toEqual({ total: 40000, paid: 40000, outstanding: 0, overpaid: 0, isOutstanding: false });
+  });
+
+  it("reads magnitudes, so a credit note and its refund agree", () => {
+    expect(deriveOutstanding({ ...F, payment: -120000 }, [paying(40000, [on("f", -120000)])])?.outstanding).toBe(80000);
   });
 });

@@ -78,6 +78,21 @@ export interface ExtractedRateGroup {
   gross: number;
 }
 
+/**
+ * One instalment the document prints (#615, ADR-0013): a deposit, a part
+ * payment, "Rate 2/3", or one row of a schedule of due dates with amounts.
+ * Transcribed, never computed: an invoice that prints no schedule has none,
+ * and a single due date for the full amount is not an instalment.
+ */
+export interface ExtractedInstalment {
+  /** Cents, as printed. */
+  amount: number;
+  /** The day it is due, `YYYY-MM-DD`, or null when the row prints none. */
+  dueDate: string | null;
+  /** The wording the row prints ("Anzahlung", "Rate 1/3"), or null. */
+  label: string | null;
+}
+
 export interface ExtractedData {
   date: string | null; // ISO format YYYY-MM-DD
   amount: number | null; // cents
@@ -107,6 +122,12 @@ export interface ExtractedData {
    * `amount`.
    */
   payableAmount: number | null;
+  /**
+   * The instalments the document prints (#615): two or more rows, or one
+   * deposit or part payment below the total. null when it prints none.
+   * Optional for extractors that predate it.
+   */
+  instalments?: ExtractedInstalment[] | null;
   currency: string | null;
   vatPercent: number | null;
   /**

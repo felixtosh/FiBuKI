@@ -113,6 +113,13 @@ import { KNOWN_AUSTRIAN_RATES } from "../uva/rateSet";
 import { runUvaForPeriod } from "../reports/uvaPeriodRun";
 import type { PlanId, PlanFeatures } from "../billing/config";
 import { CLEAR_TX_PROVENANCE } from "../matching/partnerProvenance";
+import { MCP_CALLER, type ToolCaller } from "./caller";
+import {
+  agentConfidence,
+  agentConnectRefusal,
+  agentMayReplaceAutomated,
+  agentSourceInfo,
+} from "./agentConnectChecks";
 
 /**
  * Convert a Firestore Timestamp to the YYYY-MM-DD calendar day it stands for.
@@ -195,12 +202,18 @@ async function checkToolFeatureGate(userId: string, tool: string): Promise<strin
 }
 
 /**
- * Main tool dispatcher - routes tool calls to handlers
+ * Main tool dispatcher - routes tool calls to handlers.
+ *
+ * `caller` is set by the server, never by the arguments (#665): MCP and the
+ * REST API leave it at the MCP caller, the runTool callable passes the chat
+ * agent. Only the writes that record who made them, and the agent's connect
+ * checks, read it.
  */
 export async function handleTool(
   userId: string,
   tool: string,
-  args: Record<string, unknown> = {}
+  args: Record<string, unknown> = {},
+  caller: ToolCaller = MCP_CALLER
 ): Promise<unknown> {
   // Check feature gate before executing
   const gateError = await checkToolFeatureGate(userId, tool);
@@ -255,7 +268,7 @@ export async function handleTool(
     case "dismiss_split_suggestion":
       return dismissSplitSuggestionTool(userId, args);
     case "connect_file_to_transaction":
-      return connectFileToTransaction(userId, args);
+      return connectFileToTransaction(userId, args, caller);
     case "disconnect_file_from_transaction":
       return disconnectFileFromTransaction(userId, args);
     case "auto_connect_file_suggestions":
@@ -332,11 +345,11 @@ export async function handleTool(
     case "list_recurring_partners":
       return listRecurringPartners(userId, args);
     case "assign_partner_to_transaction":
-      return assignPartnerToTx(userId, args);
+      return assignPartnerToTx(userId, args, caller);
     case "remove_partner_from_transaction":
       return removePartnerFromTx(userId, args);
     case "assign_partner_to_file":
-      return assignPartnerToFileTool(userId, args);
+      return assignPartnerToFileTool(userId, args, caller);
     case "remove_partner_from_file":
       return removePartnerFromFileTool(userId, args);
     case "update_partner":
@@ -1315,10 +1328,20 @@ export async function dismissSplitSuggestionTool(userId: string, args: Record<st
   return performDismissSplitSuggestion(db, userId, args.fileId as string);
 }
 
-export async function connectFileToTransaction(userId: string, args: Record<string, unknown>) {
+export async function connectFileToTransaction(
+  userId: string,
+  args: Record<string, unknown>,
+  caller: ToolCaller = MCP_CALLER
+) {
   const { fileId, transactionId } = args;
   if (!fileId || !transactionId) {
     throw new Error("fileId and transactionId are required");
+  }
+  if (caller.kind === "agent") {
+    if (typeof fileId !== "string" || typeof transactionId !== "string") {
+      throw new Error("fileId and transactionId are required");
+    }
+    return connectFileAsAgent(userId, fileId, transactionId, args, caller.workerType);
   }
 
   // The File Connection writer (#612) owns the rules: a rejected pair does not
@@ -1327,9 +1350,11 @@ export async function connectFileToTransaction(userId: string, args: Record<stri
   // connect_file_to_transaction and the best-suggestion loop in
   // auto_connect_file_suggestions.
   //
-  // Unlike the chat tool, there is no override argument on the MCP surface: an
-  // external caller that means it can lift the rejection first with
-  // undismiss_transaction_suggestion, which leaves a record of having done so.
+  // There is no override argument on the MCP surface, and an argument named
+  // like the agent's is ignored here: an external caller that means it can
+  // lift the rejection first with undismiss_transaction_suggestion, which
+  // leaves a record of having done so. Only the agent caller, which the server
+  // sets (#665), reads `overrideDismissal`.
   const [outcome] = await connectFiles(
     db,
     userId,
@@ -1347,6 +1372,74 @@ export async function connectFileToTransaction(userId: string, args: Record<stri
     fileId,
     transactionId,
     ...(outcome.status === "already-connected" ? { alreadyConnected: true } : {}),
+  };
+}
+
+/**
+ * The chat agent's connect (#665): its checks first (agentConnectChecks.ts),
+ * then the File Connection writer with Connection Origin `agent`, the
+ * confidence and how the File was found. A refusal of the checks comes back
+ * as the reply the model reads (PAIR_REJECTED, VALIDATION_FAILED), not thrown,
+ * so the model sees its fields.
+ */
+async function connectFileAsAgent(
+  userId: string,
+  fileId: string,
+  transactionId: string,
+  args: Record<string, unknown>,
+  workerType: string | null
+) {
+  const [fileSnap, txSnap] = await Promise.all([
+    db.collection("files").doc(fileId).get(),
+    db.collection("transactions").doc(transactionId).get(),
+  ]);
+  if (!fileSnap.exists || fileSnap.data()?.userId !== userId) throw new Error("File not found");
+  if (!txSnap.exists || txSnap.data()?.userId !== userId) throw new Error("Transaction not found");
+  const file = fileSnap.data()!;
+  const tx = txSnap.data()!;
+
+  if (tx.quotaExceeded) {
+    throw new Error(
+      "Cannot connect files to over-quota transactions. This transaction exceeds the plan's transaction limit."
+    );
+  }
+
+  const refusal = agentConnectRefusal(fileId, transactionId, file, tx, args, workerType);
+  if (refusal) return refusal;
+
+  const [outcome] = await connectFiles(
+    db,
+    userId,
+    [
+      {
+        fileId,
+        transactionId,
+        matchConfidence: agentConfidence(args),
+        sourceInfo: agentSourceInfo(file, args),
+        connectionType: "manual",
+      },
+    ],
+    {
+      origin: "agent",
+      overrideRejection: args.overrideDismissal === true,
+      replaceAutomated: agentMayReplaceAutomated(workerType),
+    }
+  );
+  if (outcome.status === "refused") throw new Error(outcome.message);
+
+  const fileName = file.fileName;
+  const reassigned = outcome.status === "connected" ? outcome.reassignedConnections : 0;
+  return {
+    success: true,
+    connectionId: outcome.connectionId,
+    alreadyConnected: outcome.status === "already-connected",
+    fileName,
+    message:
+      outcome.status === "already-connected"
+        ? `File "${fileName}" was already connected to this transaction.`
+        : reassigned > 0
+          ? `Connected "${fileName}" and reassigned ${reassigned} previous auto match${reassigned === 1 ? "" : "es"}.`
+          : `Connected "${fileName}" to transaction.`,
   };
 }
 
@@ -1548,7 +1641,7 @@ export async function unmarkFileAsNotInvoice(userId: string, args: Record<string
   // Un-marking re-extracts the File, which a Hand Correction refuses (#639).
   const refused = unmarkRefusal(fileData);
   if (refused) {
-    throw new Error(refused);
+    throw new Error(refused.message);
   }
 
   // Manual connections outrank a re-run of transaction matching.
@@ -2634,42 +2727,41 @@ function toApiWindow(window: ExpectedChargeWindow | null) {
   };
 }
 
-export async function assignPartnerToTx(userId: string, args: Record<string, unknown>) {
+/**
+ * Assign a Partner to a Transaction through the assignment the callable runs
+ * (#665), so MCP and the chat agent share one implementation of the write. The
+ * agent's assignment is recorded as `ai`: refused for a Partner the User
+ * removed from this Transaction before, learned from, shown in the re-match
+ * review. An external client's is recorded as `api` (see PartnerMatchedBy).
+ * Replacing another Partner relearns that one. A Merged Partner is refused
+ * naming its survivor.
+ */
+export async function assignPartnerToTx(
+  userId: string,
+  args: Record<string, unknown>,
+  caller: ToolCaller = MCP_CALLER
+) {
   const { transactionId, partnerId } = args;
   if (!transactionId) throw new Error("transactionId is required");
   if (!partnerId) throw new Error("partnerId is required");
 
-  // Verify transaction ownership
+  // Ownership first: another User's record reads as missing, not as denied.
   const txDoc = await db.collection("transactions").doc(transactionId as string).get();
   if (!txDoc.exists || txDoc.data()?.userId !== userId) {
     throw new Error("Transaction not found");
   }
+  await loadWritablePartner(userId, partnerId as string);
 
-  // Verify partner ownership
-  const partnerDoc = await db.collection("partners").doc(partnerId as string).get();
-  if (!partnerDoc.exists || partnerDoc.data()?.userId !== userId) {
-    throw new Error("Partner not found");
-  }
-
-  const now = FieldValue.serverTimestamp();
-  await db.collection("transactions").doc(transactionId as string).update({
-    ...CLEAR_TX_PROVENANCE,
-    partnerId,
-    partnerType: "user",
-    partnerMatchedBy: "api",
-    partnerMatchConfidence: null,
-    updatedAt: now,
-    automationHistory: FieldValue.arrayUnion({
-      type: "partner_assigned",
-      ranAt: Timestamp.now(),
-      status: "completed",
-      actor: "manual",
-      level: "decision",
-      partnerName: partnerDoc.data()!.name || null,
-      forPartnerId: partnerId,
-      summary: `Partner "${partnerDoc.data()!.name}" assigned via API`,
-    }),
-  });
+  const { assignPartnerToTransactionInternal } = await import("../partners/assignPartnerToTransaction");
+  await assignPartnerToTransactionInternal(
+    { db, userId },
+    {
+      transactionId: transactionId as string,
+      partnerId: partnerId as string,
+      partnerType: "user",
+      matchedBy: caller.kind === "agent" ? "ai" : "api",
+    }
+  );
 
   return { success: true, transactionId, partnerId };
 }
@@ -2754,8 +2846,16 @@ async function loadWritablePartner(userId: string, partnerId: string) {
  * extracted name on any manual assignment, and refuses the name the
  * Extraction recorded as the Invoicing Agent (`learnPartnerAlias`, #156,
  * #265), so this path inherits that guard rather than re-deciding it.
+ *
+ * The chat agent's assignment is not a person's (#665): it is recorded as
+ * `ai`, keeps the File's stored confidence, leaves the Partner's removal list
+ * alone and teaches no alias, as the chat's assignment always has.
  */
-export async function assignPartnerToFileTool(userId: string, args: Record<string, unknown>) {
+export async function assignPartnerToFileTool(
+  userId: string,
+  args: Record<string, unknown>,
+  caller: ToolCaller = MCP_CALLER
+) {
   const fileId = args.fileId as string;
   const partnerId = args.partnerId as string;
   if (!fileId) throw new Error("fileId is required");
@@ -2767,22 +2867,20 @@ export async function assignPartnerToFileTool(userId: string, args: Record<strin
   }
 
   const partnerDoc = await loadWritablePartner(userId, partnerId);
+  const byAgent = caller.kind === "agent";
 
   const { updateFileInternal } = await import("../files/updateFile");
   await updateFileInternal(db, userId, {
     fileId,
-    data: {
-      partnerId,
-      partnerType: "user",
-      partnerMatchedBy: "manual",
-      partnerMatchConfidence: 100,
-    },
+    data: byAgent
+      ? { partnerId, partnerType: "user", partnerMatchedBy: "ai" }
+      : { partnerId, partnerType: "user", partnerMatchedBy: "manual", partnerMatchConfidence: 100 },
   });
 
   // A person changing their mind about a removal: the pair is no longer a
   // false positive.
   const removals = (partnerDoc.data()!.manualFileRemovals || []) as Array<{ fileId?: string }>;
-  if (removals.some((r) => r.fileId === fileId)) {
+  if (!byAgent && removals.some((r) => r.fileId === fileId)) {
     await partnerDoc.ref.update({
       manualFileRemovals: removals.filter((r) => r.fileId !== fileId),
       updatedAt: Timestamp.now(),
@@ -2858,6 +2956,8 @@ const UPDATE_PARTNER_FIELDS = ["name", "aliases", "vatId", "ibans", "website", "
  * Edit a Partner through `updateUserPartnerInternal`, the Partners page's own
  * edit. `aliases` and `ibans` replace the stored arrays wholesale: an agent
  * reads them with get_partner or list_partners, changes them, writes them back.
+ * A VAT ID is checked against VIES and the reply carries `vatIdCheck`; VIES
+ * fills the name only for a Partner that has none.
  */
 export async function updatePartnerTool(userId: string, args: Record<string, unknown>) {
   const partnerId = args.partnerId as string;
@@ -2880,12 +2980,51 @@ export async function updatePartnerTool(userId: string, args: Record<string, unk
     }
   }
 
-  await loadWritablePartner(userId, partnerId);
+  if (data.vatId !== undefined && typeof data.vatId !== "string") {
+    throw new Error("vatId must be a string (empty string clears it)");
+  }
+
+  const partnerDoc = await loadWritablePartner(userId, partnerId);
+
+  // A VAT ID is checked against VIES on every surface (#665): checking one is
+  // domain logic, not the chat's. VIES never blocks the write: an unknown or
+  // unreachable VAT ID is stored as given, and the reply says what VIES said.
+  let vatIdCheck: VatIdCheck | undefined;
+  if (typeof data.vatId === "string" && data.vatId.trim()) {
+    vatIdCheck = await checkVatId(data.vatId.toUpperCase().replace(/\s/g, ""));
+    if (vatIdCheck.valid && vatIdCheck.name && data.name === undefined && !partnerDoc.data()!.name) {
+      data.name = vatIdCheck.name;
+    }
+  }
 
   const { updateUserPartnerInternal } = await import("../partners/updateUserPartner");
   await updateUserPartnerInternal(db, userId, { partnerId, data });
 
-  return getPartner(userId, partnerId);
+  const partner = await getPartner(userId, partnerId);
+  return vatIdCheck ? { ...partner, vatIdCheck } : partner;
+}
+
+/** What VIES said about a VAT ID: `valid` is null when VIES could not be asked. */
+interface VatIdCheck {
+  vatId: string;
+  valid: boolean | null;
+  name: string | null;
+  error: string | null;
+}
+
+async function checkVatId(vatId: string): Promise<VatIdCheck> {
+  try {
+    const { lookupVatId, VIES_NOT_VALID } = await import("../ai/lookupCompany");
+    const result = await lookupVatId(vatId);
+    if (result.viesValid === true) return { vatId, valid: true, name: result.name ?? null, error: null };
+    // VIES said no, or VIES could not be asked (a timeout, an outage).
+    const error = result.viesError ?? null;
+    return { vatId, valid: error === VIES_NOT_VALID ? false : null, name: null, error };
+  } catch (err) {
+    // Not shaped like an EU VAT ID is a no; anything else is VIES not asked.
+    const malformed = (err as { code?: unknown })?.code === "invalid-argument";
+    return { vatId, valid: malformed ? false : null, name: null, error: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 /**

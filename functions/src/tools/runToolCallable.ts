@@ -10,15 +10,29 @@
  *
  * The User is the session's, always. Nothing in the request names one: a
  * `userId` among the arguments is just an argument, and no handler reads one.
+ *
+ * The caller is the chat agent, always (#665): this callable sets it, so the
+ * few writes that record who made them record the agent (`ai`, Connection
+ * Origin `agent`) and the agent's connect checks apply. Nothing in the
+ * request can make a call the MCP caller or another caller, and nothing in
+ * the arguments is read as the caller. The worker type, when one of the
+ * agent's workers is running, comes from the web container's worker runtime
+ * as its own field, outside the arguments, and only a known worker type is
+ * taken. It unlocks nothing the User's session lacks: `receipt_search`
+ * connects with stricter checks, and replacing automated File Connections is
+ * open to the User through the connectFileToTransaction callable already.
  */
 
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { handleTool } from "./handlers";
 import { TOOL_NAMES } from "./definitions";
+import { agentCaller, isAgentWorkerType } from "./caller";
 
 export interface RunToolRequest {
   tool: string;
   arguments?: Record<string, unknown>;
+  /** The agent worker making the call, if one is (types/worker.ts). */
+  workerType?: string | null;
 }
 
 const KNOWN_TOOLS = new Set(TOOL_NAMES);
@@ -52,8 +66,12 @@ export const runToolCallable = createCallable<RunToolRequest, unknown>(
     if (!isPlainObject(args)) {
       throw new HttpsError("invalid-argument", "arguments must be an object");
     }
+    const workerType = request?.workerType ?? null;
+    if (workerType !== null && !isAgentWorkerType(workerType)) {
+      throw new HttpsError("invalid-argument", "Unknown worker type");
+    }
     try {
-      return (await handleTool(ctx.userId, tool, args)) ?? null;
+      return (await handleTool(ctx.userId, tool, args, agentCaller(workerType))) ?? null;
     } catch (err) {
       throw toolError(err);
     }

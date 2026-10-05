@@ -56,6 +56,7 @@ import { FileCopySection, type CopyAct, type MarkCopyAct } from "./file-copy-sec
 import { FileCorrectionSection } from "./file-correction-section";
 import { FileReceiptLinkSection } from "./file-receipt-link-section";
 import { FileSplitSection, SplitFileDialog, canSplitFile } from "./file-split-section";
+import { useHandCorrectionGuard } from "./hand-correction-dialog";
 import { Section11Reasoning } from "@/components/documents/section-11-details";
 import { describeInvoiceDirection } from "@/lib/documents/document-type-presentation";
 import { InfoPopover } from "@/components/ui/info-popover";
@@ -365,17 +366,33 @@ function FileDetailPanelInner({
 
   // Always forced: the retry is offered on files that extracted without
   // erroring too (fork #74), and the callable refuses those without it. On a
-  // file that did error, force changes nothing.
+  // file that did error, force changes nothing. A File with a Hand Correction
+  // is refused by the server; the guard then asks before overwriting (#639).
+  const handCorrection = useHandCorrectionGuard();
+  const guardHandCorrection = handCorrection.guard;
   const handleRetryExtraction = useCallback(async () => {
+    const fileId = file.id;
     setIsRetryingExtraction(true);
     try {
-      await retryFileExtraction(ctx, file.id, true);
+      await guardHandCorrection(
+        () => retryFileExtraction(ctx, fileId, true),
+        async () => {
+          setIsRetryingExtraction(true);
+          try {
+            await retryFileExtraction(ctx, fileId, true, { overwriteCorrections: true });
+          } catch (error) {
+            console.error("Failed to retry extraction:", error);
+          } finally {
+            setIsRetryingExtraction(false);
+          }
+        }
+      );
     } catch (error) {
       console.error("Failed to retry extraction:", error);
     } finally {
       setIsRetryingExtraction(false);
     }
-  }, [ctx, file.id]);
+  }, [ctx, file.id, guardHandCorrection]);
 
   const handleDirectionChange = useCallback(async (direction: InvoiceDirection) => {
     try {
@@ -761,6 +778,8 @@ function FileDetailPanelInner({
       </div>
 
       <SplitFileDialog file={file} open={isSplitOpen} onClose={() => setIsSplitOpen(false)} />
+
+      {handCorrection.dialog}
 
       {/* Add Partner Dialog */}
       <AddPartnerDialog

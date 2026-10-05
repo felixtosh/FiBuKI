@@ -35,9 +35,15 @@ import { ecbCrossRate, type EcbRateTable } from "../fx/ecbRates";
 import { isSameCurrency } from "../fx/fxPlausibility";
 import { toDateSafe } from "../utils/toDateSafe";
 import { connectFiles, writeConnectionScores, type ConnectionScore } from "../fileConnections/writer";
+import { deriveDocumentationState } from "../documents/documentationState";
 import { deriveCoverage, filePaymentTotal, isRemainderClosed } from "./coverage";
 import { readDismissedTransactionIds } from "./dismissedTransactions";
-import { documentedAmountsOf, loadConnectedFiles, type ConnectedFile } from "./documentedAmounts";
+import {
+  documentedAmountsOf,
+  loadConnectedFiles,
+  loadOutstandingAmounts,
+  type ConnectedFile,
+} from "./documentedAmounts";
 import { fileSearchMatches } from "./fileSearch";
 import { isFileRejected } from "./rejectedFiles";
 import { hasUndocumentedRival, isSameDayEvidence } from "./remainderAutoConnect";
@@ -51,11 +57,13 @@ import { matchesTransactionSearch } from "./transactionSearch";
 import {
   SCORING_CONFIG,
   buildScoringOptions,
+  isOutstandingMatch,
   isRemainderMatch,
   loadPartnerScoringContext,
   scoreTransaction,
   toFileMatchingData,
   toTransactionData,
+  type FileInstalment,
   type PartnerScoringContext,
   type TransactionMatchScore,
   type TransactionMatchSource,
@@ -466,6 +474,49 @@ function withoutFile(
 }
 
 /**
+ * The Documentation State a File is judged against (#104, #644): the
+ * Transaction's Files other than the scored one, derived as
+ * `deriveForTransaction` derives the stored state. The stored state counts
+ * every File on the Transaction, so for a pair that is already connected it
+ * holds the scored File itself, and the pair would read as a duplicate of
+ * itself. A Transaction with no stored state keeps none: the scorer skips the
+ * rule, as it does for every caller that does not know the state.
+ *
+ * The scored File's Receipt Link partner is left out too (#713, ADR-0012):
+ * a Receipt and the invoice it pays document the payment once, so neither is
+ * a second document beside the other. A pair either File declined counts as
+ * unlinked. Any other File on the Transaction still counts, so a second
+ * invoice, or a Receipt not linked to the invoice on the line, keeps the pair
+ * suppressed (decided on #644).
+ */
+function documentationStateFor(
+  fileId: string | null,
+  fileData: Data,
+  transactionId: string,
+  txData: Data,
+  others: ConnectedFile[]
+): Data["documentationState"] {
+  const stored = txData.documentationState;
+  if (!stored || !fileId) return stored;
+  const onTransaction =
+    (Array.isArray(txData.fileIds) && txData.fileIds.includes(fileId)) ||
+    (Array.isArray(fileData.transactionIds) && fileData.transactionIds.includes(transactionId));
+  if (!onTransaction) return stored;
+  const declinedByMe: string[] = Array.isArray(fileData.receiptPairDeclinedFileIds)
+    ? fileData.receiptPairDeclinedFileIds
+    : [];
+  const myInvoiceId: string | null = fileData.receiptLink?.fileId ?? null;
+  const pairedWithMe = (f: ConnectedFile) =>
+    (f.fileId === myInvoiceId || f.receiptOfFileId === fileId) &&
+    !declinedByMe.includes(f.fileId) &&
+    !(f.declinedPairFileIds ?? []).includes(fileId);
+  return deriveDocumentationState({
+    fileTypes: others.filter((f) => !pairedWithMe(f)).map((f) => f.documentType ?? null),
+    hasNoReceiptCategory: !!txData.noReceiptCategoryId,
+  });
+}
+
+/**
  * The ECB cross rate for a File's currency into a Transaction's, on the
  * Transaction's date (#555). Null for a same-currency pair, an undated
  * Transaction, or a date the table does not reach within its lookback: the
@@ -488,18 +539,31 @@ function publishedRateFor(
  * Score one File against Transactions: the single place their scoring inputs
  * are assembled (#308, #327). The billing-cycle band is selected per
  * Transaction, since which recurrence a charge belongs to depends on that
- * Transaction's amount, not the File's.
+ * Transaction's amount, not the File's. `connected` holds the Files on each
+ * Transaction other than this one: the Documentation State it is judged
+ * against comes from them (#644).
  */
 function scoreAgainst(
-  fileData: Data,
+  file: { id: string | null; data: Data },
   transactions: TxDoc[],
   partner: PartnerScoringContext,
+  connected: Map<string, ConnectedFile[]>,
   documentedAmounts: Map<string, number>,
-  ecbRates: EcbRateTable
+  ecbRates: EcbRateTable,
+  outstanding?: number | null
 ): TransactionMatchScore[] {
-  const fileMatchingData = toFileMatchingData(fileData);
+  const fileData = file.data;
+  // #615: what the File still has Outstanding, and the Transactions already
+  // paying it, which are never judged as a further payment.
+  const fileMatchingData = {
+    ...toFileMatchingData(fileData),
+    outstanding,
+    transactionIds: Array.isArray(fileData.transactionIds) ? (fileData.transactionIds as string[]) : [],
+  };
   return transactions.map((doc) => {
-    const txData = doc.data() ?? {};
+    const stored = doc.data() ?? {};
+    const documentationState = documentationStateFor(file.id, fileData, doc.id, stored, connected.get(doc.id) ?? []);
+    const txData = documentationState === stored.documentationState ? stored : { ...stored, documentationState };
     const options = buildScoringOptions(partner.effectiveCycles, partner.weights, txData.amount);
     const fxReferenceRate = publishedRateFor(
       ecbRates,
@@ -623,9 +687,10 @@ async function windowMatches(
     matchable,
     new Set(options.nominatedTransactionIds ?? [])
   );
-  const [connected, ecbRates] = await Promise.all([
+  const [connected, ecbRates, outstanding] = await Promise.all([
     loadConnectedFiles(pool.map((t) => t.id)),
     loadScoringEcbRates(db, matchable.map((f) => f.data.extractedCurrency), pool),
+    loadOutstandingAmounts(matchable),
   ]);
   const partnerFor = partnerCache(db, userId);
 
@@ -642,7 +707,15 @@ async function windowMatches(
       const connectedFiles = withoutFile(connected, file.id);
       const documentedAmounts = documentedAmountsOf(connectedFiles);
       const partner = await partnerFor(file.data.partnerId);
-      const matches = scoreAgainst(file.data, candidates, partner, documentedAmounts, ecbRates)
+      const matches = scoreAgainst(
+        file,
+        candidates,
+        partner,
+        connectedFiles,
+        documentedAmounts,
+        ecbRates,
+        file.id ? outstanding.get(file.id) : undefined
+      )
         .map((m): Match => ({ ...m, fileId: file.id }))
         .sort(byConfidence);
       return {
@@ -665,16 +738,25 @@ async function scoreFileAgainstPool(
   candidates: TxDoc[],
   markHidden: boolean
 ): Promise<TransactionsForFileResult> {
-  const [connected, ecbRates, partner] = await Promise.all([
+  const [connected, ecbRates, partner, outstanding] = await Promise.all([
     loadConnectedFiles(candidates.map((t) => t.id), file.id ?? undefined),
     loadScoringEcbRates(db, [file.data.extractedCurrency], candidates),
     loadPartnerScoringContext(db, file.data.partnerId, userId),
+    loadOutstandingAmounts([file]),
   ]);
   const documentedAmounts = documentedAmountsOf(connected);
   const hiddenById = new Map(
     candidates.map((doc) => [doc.id, hiddenReasonOf(file.id, file.data, doc.id, doc.data() ?? {})])
   );
-  const matches = scoreAgainst(file.data, candidates, partner, documentedAmounts, ecbRates)
+  const matches = scoreAgainst(
+    file,
+    candidates,
+    partner,
+    connected,
+    documentedAmounts,
+    ecbRates,
+    file.id ? outstanding.get(file.id) : undefined
+  )
     .map((m): Match => {
       const hidden = markHidden ? hiddenById.get(m.transactionId) : null;
       return hidden ? { ...m, fileId: file.id, hidden } : { ...m, fileId: file.id };
@@ -778,15 +860,26 @@ export async function filesForTransaction(
 
   // No candidate is on this Transaction, so what its Files explain is the
   // figure the trigger reads with the candidate excluded.
-  const [documentedAmounts, ecbRates] = await Promise.all([
-    loadConnectedFiles([transactionId]).then(documentedAmountsOf),
+  const [connected, ecbRates, outstanding] = await Promise.all([
+    loadConnectedFiles([transactionId]),
     loadScoringEcbRates(db, candidates.map((f) => f.data.extractedCurrency), [txDoc]),
+    loadOutstandingAmounts(candidates),
   ]);
+  const documentedAmounts = documentedAmountsOf(connected);
   const partnerFor = partnerCache(db, userId);
 
   const matches = await Promise.all(
     candidates.map(async (f) => {
-      const [score] = scoreAgainst(f.data, [txDoc], await partnerFor(f.data.partnerId), documentedAmounts, ecbRates);
+      const partner = await partnerFor(f.data.partnerId);
+      const [score] = scoreAgainst(
+        f,
+        [txDoc],
+        partner,
+        connected,
+        documentedAmounts,
+        ecbRates,
+        outstanding.get(f.id)
+      );
       return f.hidden ? { ...score, fileId: f.id, hidden: f.hidden } : { ...score, fileId: f.id };
     })
   );
@@ -818,9 +911,10 @@ export async function pairsAmong(
       ? await recentTransactionIds(db, userId)
       : new Set(),
   };
-  const [connected, ecbRates] = await Promise.all([
+  const [connected, ecbRates, outstanding] = await Promise.all([
     loadConnectedFiles(transactions.map((t) => t.id)),
     loadScoringEcbRates(db, matchable.map((f) => f.data.extractedCurrency), transactions),
+    loadOutstandingAmounts(matchable),
   ]);
   const partnerFor = partnerCache(db, userId);
 
@@ -835,9 +929,18 @@ export async function pairsAmong(
           inWindow(file.data, windows.get(file) ?? null, doc.id, txData, ctx)
         );
       });
-      const documentedAmounts = documentedAmountsOf(withoutFile(connected, file.id));
+      const others = withoutFile(connected, file.id);
+      const documentedAmounts = documentedAmountsOf(others);
       const partner = await partnerFor(file.data.partnerId);
-      return scoreAgainst(file.data, candidates, partner, documentedAmounts, ecbRates).map((m) => ({
+      return scoreAgainst(
+        file,
+        candidates,
+        partner,
+        others,
+        documentedAmounts,
+        ecbRates,
+        outstanding.get(file.id)
+      ).map((m) => ({
         ...m,
         fileId: file.id,
       }));
@@ -911,10 +1014,11 @@ export interface AutoConnectPick {
   match: Match;
   /**
    * Set only for an auto-connect outside the full-amount case: a same-day
-   * Remainder (#242), or a covered Transaction holding the other File of this
-   * File's Receipt Link (#571).
+   * Remainder (#242), a covered Transaction holding the other File of this
+   * File's Receipt Link (#571), or one payment of several of this File on
+   * printed evidence (#615, ADR-0013).
    */
-  autoConnectReason?: "remainder_same_day" | "paired";
+  autoConnectReason?: "remainder_same_day" | "paired" | "instalment";
 }
 
 /** Why a match at the auto-connect threshold stays a suggestion; logged by the trigger. */
@@ -924,6 +1028,11 @@ export interface AutoConnectRefusal {
   reason: string;
   /** Set for the tie rule (#667), which other auto-connecting surfaces read. */
   tie?: true;
+  /**
+   * Set for an Outstanding Match without printed evidence (#615, ADR-0013),
+   * which other auto-connecting surfaces read too.
+   */
+  instalment?: true;
 }
 
 /**
@@ -935,7 +1044,11 @@ export interface AutoConnectRefusal {
  * Receipt Link is on it (#571): the pair counts once. A tie connects nothing
  * (#667): two or more of what is left with the same amount in the same
  * currency all stay suggestions, unless one is that paired Transaction,
- * which then keeps the File alone.
+ * which then keeps the File alone. An Outstanding Match (#615, ADR-0013)
+ * connects only on printed evidence: a printed instalment's amount, or the
+ * exact close of the Outstanding amount, with the Partner agreeing and no
+ * undocumented Transaction wanting the File as much; between equal instalment
+ * picks the one nearest its printed due date wins.
  */
 export async function selectAutoConnects(
   db: Db,
@@ -1002,6 +1115,20 @@ export async function selectAutoConnects(
       });
       continue;
     }
+    if (isOutstandingMatch(match)) {
+      const refusal = instalmentRefusal(match, fileMatchingData.extractedInstalments ?? [], result.matches, holdsFiles);
+      if (refusal) {
+        refusals.push({
+          transactionId: match.transactionId,
+          confidence: match.confidence,
+          reason: refusal,
+          instalment: true,
+        });
+      } else {
+        picks.push({ match, autoConnectReason: "instalment" });
+      }
+      continue;
+    }
     if (!isRemainderMatch(match)) {
       picks.push({ match });
       continue;
@@ -1036,7 +1163,7 @@ export async function selectAutoConnects(
     });
   }
 
-  const tied = tiedPicks(picks);
+  const tied = tiedPicks(picks, fileMatchingData.extractedInstalments ?? []);
   for (const { match } of tied) {
     refusals.push({
       transactionId: match.transactionId,
@@ -1054,12 +1181,57 @@ function currencyOf(match: Match): string {
   return (match.preview.currency || "EUR").toUpperCase();
 }
 
+const sameAmount = (a: Match, b: Match) =>
+  currencyOf(a) === currencyOf(b) && Math.abs(a.preview.amount) === Math.abs(b.preview.amount);
+
+/**
+ * Why an Outstanding Match (#615) stays a suggestion, or null when it may
+ * connect itself (ADR-0013 rule 4): the amount is a printed instalment or
+ * closes the Outstanding amount, the Partner agrees, and no Transaction
+ * holding no Files scores at or above it (ADR-0008's guard). A Transaction of
+ * the same amount is no rival: two equal instalments are the tie rule's to
+ * decide, by their printed due dates. A part payment only the bank line's
+ * reference names never connects itself: the reference names the document,
+ * not the amount.
+ */
+function instalmentRefusal(
+  match: Match,
+  instalments: FileInstalment[],
+  scored: Match[],
+  holdsFiles: (transactionId: string) => boolean
+): string | null {
+  const { breakdown } = match;
+  if (breakdown.instalmentCandidate) {
+    return "an instalment the bank reference names, not one the File prints";
+  }
+  const paid = Math.abs(match.preview.amount);
+  const printed = instalments.some((row) => row.amount === paid);
+  const closes =
+    breakdown.scoredAgainstOutstanding != null && isRemainderClosed(breakdown.scoredAgainstOutstanding - paid);
+  if (!printed && !closes) {
+    return breakdown.scoredAgainstOutstanding != null
+      ? "scored against its Outstanding amount, does not close it and is no printed instalment"
+      : "scored against a printed instalment, does not equal it";
+  }
+  if (!match.matchSources.includes("partner")) {
+    return "an instalment, but the Partner does not agree";
+  }
+  const rivals = scored.filter((other) => !sameAmount(other, match));
+  if (hasUndocumentedRival(match, rivals, holdsFiles)) {
+    return "an instalment, but an undocumented Transaction scores at least as well";
+  }
+  return null;
+}
+
 /**
  * The picks that tie (#667): two or more with the same amount in the same
  * currency. Where one of them is a paired pick (#571), the Receipt Link
- * decides: the paired pick stays and only the others are tied.
+ * decides: the paired pick stays and only the others are tied. Where all of
+ * them are instalment picks (#615), the one booked nearest the printed due
+ * date of an instalment of that amount stays; a tie on that too, or no
+ * printed due date, ties them all.
  */
-function tiedPicks(picks: AutoConnectPick[]): AutoConnectPick[] {
+function tiedPicks(picks: AutoConnectPick[], instalments: FileInstalment[]): AutoConnectPick[] {
   const byAmount = new Map<string, AutoConnectPick[]>();
   for (const pick of picks) {
     const key = `${currencyOf(pick.match)}|${pick.match.preview.amount}`;
@@ -1067,29 +1239,63 @@ function tiedPicks(picks: AutoConnectPick[]): AutoConnectPick[] {
   }
   return [...byAmount.values()]
     .filter((group) => group.length > 1)
-    .flatMap((group) => group.filter((p) => p.autoConnectReason !== "paired"));
+    .flatMap((group) => {
+      if (group.every((p) => p.autoConnectReason === "instalment")) {
+        const nearest = nearestToDueDate(group, instalments);
+        return nearest ? group.filter((p) => p !== nearest) : group;
+      }
+      return group.filter((p) => p.autoConnectReason !== "paired");
+    });
+}
+
+/**
+ * Of equal instalment picks, the one whose bank day is nearest the printed due
+ * date of an instalment of that amount, or null when none is nearest alone.
+ * Days are read as the stored day (UTC midnight of the Vienna day).
+ */
+function nearestToDueDate(group: AutoConnectPick[], instalments: FileInstalment[]): AutoConnectPick | null {
+  const amount = Math.abs(group[0].match.preview.amount);
+  const dueDays = instalments
+    .filter((row) => row.amount === amount)
+    .map((row) => toDateSafe(row.dueDate))
+    .filter((d): d is Date => d !== null)
+    .map(dayNumber);
+  if (dueDays.length === 0) return null;
+
+  const distanceOf = (pick: AutoConnectPick): number => {
+    const booked = toDateSafe(pick.match.preview.date);
+    if (!booked) return Infinity;
+    const day = dayNumber(booked);
+    return Math.min(...dueDays.map((due) => Math.abs(day - due)));
+  };
+  const ranked = group
+    .map((pick) => ({ pick, distance: distanceOf(pick) }))
+    .sort((a, b) => a.distance - b.distance);
+  if (!Number.isFinite(ranked[0].distance) || ranked[0].distance === ranked[1].distance) return null;
+  return ranked[0].pick;
 }
 
 /**
  * For a surface that auto-connects a File from elsewhere (Partner matching,
- * find-receipt): the Transactions each File ties on at the threshold (#667),
- * judged on the File's own matches exactly as the upload trigger judges them,
- * so every surface refuses the same pairs. Keyed by File id; a File with no
- * tie is absent.
+ * find-receipt): the Transactions each File may not connect itself to at the
+ * threshold, a tie (#667) or an instalment without printed evidence (#615,
+ * ADR-0013), judged on the File's own matches exactly as the upload trigger
+ * judges them, so every surface refuses the same pairs. Keyed by File id; a
+ * File with none is absent.
  */
-export async function autoConnectTies(
+export async function autoConnectHolds(
   db: Db,
   userId: string,
   files: MatcherFile[]
 ): Promise<Map<string, Set<string>>> {
-  const ties = new Map<string, Set<string>>();
+  const holds = new Map<string, Set<string>>();
   const results = await transactionsForFiles(db, userId, files);
   for (let i = 0; i < files.length; i++) {
     const { refusals } = await selectAutoConnects(db, userId, files[i], results[i]);
-    const tied = refusals.filter((r) => r.tie).map((r) => r.transactionId);
-    if (tied.length > 0 && files[i].id) ties.set(files[i].id!, new Set(tied));
+    const held = refusals.filter((r) => r.tie || r.instalment).map((r) => r.transactionId);
+    if (held.length > 0 && files[i].id) holds.set(files[i].id!, new Set(held));
   }
-  return ties;
+  return holds;
 }
 
 /** The other Files of a File's Receipt Links (#571), from either side. */
@@ -1171,6 +1377,29 @@ export async function rescoreConnections(
   }
   if (connections.length === 0) return { rescored: 0 };
 
+  const scores = await scoreConnectionRecords(db, userId, partnerId, txDocs, connections);
+
+  // Written by the File Connection writer (#612), the records' one writer.
+  const rescored = await writeConnectionScores(db, scores);
+  console.log(`[Matcher] Re-scored ${rescored} connection(s) for partner ${partnerId}`);
+  return { rescored };
+}
+
+/**
+ * The score of each stored File Connection on these Transactions of one
+ * Partner, as the billing-cycle re-score stores it: the Partner's own
+ * context, the full amount, the ECB rate (#555), and the Files beside the
+ * scored one (#644). A record whose Transaction or File is not given or not
+ * found is left out. Writes nothing.
+ */
+export async function scoreConnectionRecords(
+  db: Db,
+  userId: string,
+  partnerId: string | null,
+  txDocs: TxDoc[],
+  connections: Array<{ id: string; data(): Data }>
+): Promise<ConnectionScore[]> {
+  const txById = new Map(txDocs.map((doc) => [doc.id, doc]));
   const fileIds = [...new Set(connections.map((c) => c.data().fileId as string))];
   const filesById = new Map<string, Data>();
   for (let i = 0; i < fileIds.length; i += IN_LIMIT) {
@@ -1178,12 +1407,13 @@ export async function rescoreConnections(
       .collection("files")
       .where("__name__", "in", fileIds.slice(i, i + IN_LIMIT))
       .get();
-    for (const doc of snapshot.docs) filesById.set(doc.id, doc.data());
+    for (const doc of snapshot.docs) if (doc.data().userId === userId) filesById.set(doc.id, doc.data());
   }
 
-  const [partner, ecbRates] = await Promise.all([
+  const [partner, ecbRates, connected] = await Promise.all([
     loadPartnerScoringContext(db, partnerId, userId),
     loadScoringEcbRates(db, [...filesById.values()].map((f) => f.extractedCurrency), txDocs),
+    loadConnectedFiles([...txById.keys()]),
   ]);
 
   const scores: ConnectionScore[] = [];
@@ -1192,7 +1422,9 @@ export async function rescoreConnections(
     const txDoc = txById.get(transactionId);
     const fileData = filesById.get(fileId);
     if (!txDoc || !fileData) continue;
-    const [result] = scoreAgainst(fileData, [txDoc], partner, new Map(), ecbRates);
+    // Against the full amount, but judged by the Files beside this one, never by itself (#644).
+    const others = withoutFile(connected, fileId);
+    const [result] = scoreAgainst({ id: fileId, data: fileData }, [txDoc], partner, others, new Map(), ecbRates);
     scores.push({
       connectionId: connectionDoc.id,
       matchConfidence: result.confidence,
@@ -1200,9 +1432,5 @@ export async function rescoreConnections(
       matchSources: result.matchSources,
     });
   }
-
-  // Written by the File Connection writer (#612), the records' one writer.
-  const rescored = await writeConnectionScores(db, scores);
-  console.log(`[Matcher] Re-scored ${rescored} connection(s) for partner ${partnerId}`);
-  return { rescored };
+  return scores;
 }
