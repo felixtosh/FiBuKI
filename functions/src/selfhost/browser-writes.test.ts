@@ -87,7 +87,7 @@ function escapeRegExp(text: string): string {
 /** Local names a write function is imported under (`import { setDoc as put }`), so a call through one counts. */
 function writeAliases(source: string): string[] {
   const aliases: string[] = [];
-  for (const m of stripComments(source).matchAll(/import\s*(?:type\s*)?\{([^}]*)\}\s*from/g)) {
+  for (const m of stripComments(source).matchAll(/import\s+(?:[\w$]+\s*,\s*)?(?:type\s*)?\{([^}]*)\}\s*from/g)) {
     for (const a of m[1].matchAll(new RegExp(`\\b(?:${WRITE_FUNCTIONS.join("|")})\\s+as\\s+([\\w$]+)`, "g"))) {
       aliases.push(a[1]);
     }
@@ -137,7 +137,8 @@ function operationsWriters(files: Record<string, string>): Set<string> {
 
 /** Whether an import specifier in the file at `path` names the operations layer: by alias or by relative path. */
 function isOperationsModule(specifier: string, path: string): boolean {
-  const target = specifier.startsWith(".") ? posix.join(posix.dirname(path), specifier) : specifier.replace(/^@\//, "");
+  const resolved = specifier.startsWith(".") ? posix.join(posix.dirname(path), specifier) : specifier.replace(/^@\//, "");
+  const target = resolved.replace(/\/+$/, "");
   return /^lib\/operations(?:\/[\w-]+)?(?:\/index)?(?:\.[jt]s)?$/.test(target);
 }
 
@@ -149,7 +150,7 @@ function isOperationsModule(specifier: string, path: string): boolean {
 function operationsImports(source: string, path: string): string[] {
   const names: string[] = [];
   const text = stripComments(source);
-  for (const m of text.matchAll(/import\s*(?:type\s*)?\{([^}]*)\}\s*from\s*["']([^"']+)["']/g)) {
+  for (const m of text.matchAll(/import\s+(?:[\w$]+\s*,\s*)?(?:type\s*)?\{([^}]*)\}\s*from\s*["']([^"']+)["']/g)) {
     if (!isOperationsModule(m[2], path)) continue;
     for (const part of m[1].split(",")) {
       const name = part.trim().replace(/^type\s+/, "").split(/\s+as\s+/)[0];
@@ -170,7 +171,7 @@ const rel = (path: string) => relative(repoRoot, path).split(sep).join("/");
 
 /** A source file the walk reads: TypeScript or JavaScript, not a test. */
 function isSourceFile(name: string): boolean {
-  return /\.m?[jt]sx?$/.test(name) && !/\.test\.m?[jt]sx?$/.test(name);
+  return /\.[mc]?[jt]sx?$/.test(name) && !/\.test\.[mc]?[jt]sx?$/.test(name);
 }
 
 function sourceFiles(dir: string, skipDir: (path: string) => boolean = () => false): string[] {
@@ -261,6 +262,7 @@ describe("the patterns", () => {
       `await put(doc(db, "files", "1"), {});`,
     ].join("\n");
     expect(countClientWrites(source)).toBe(1);
+    expect(countClientWrites(`import firebase, { setDoc as put } from "firebase/firestore";\nput(ref, {});`)).toBe(1);
     const writers = operationsWriters({
       "a-ops.ts": [
         `import { deleteDoc as remove } from "firebase/firestore";`,
@@ -271,8 +273,8 @@ describe("the patterns", () => {
   });
 
   it("read JavaScript files as well as TypeScript, never tests", () => {
-    for (const name of ["a.ts", "a.tsx", "a.js", "a.jsx", "a.mjs", "a.mts"]) expect(isSourceFile(name), name).toBe(true);
-    for (const name of ["a.test.ts", "a.test.tsx", "a.test.js", "a.test.mjs", "a.json", "a.css"]) {
+    for (const name of ["a.ts", "a.tsx", "a.js", "a.jsx", "a.mjs", "a.mts", "a.cjs", "a.cts"]) expect(isSourceFile(name), name).toBe(true);
+    for (const name of ["a.test.ts", "a.test.tsx", "a.test.js", "a.test.mjs", "a.test.cjs", "a.json", "a.css"]) {
       expect(isSourceFile(name), name).toBe(false);
     }
   });
@@ -321,9 +323,10 @@ describe("the patterns", () => {
       `import { updateSource } from "../../../lib/operations/source-ops";`,
       `import * as ops from "../../../lib/operations";`,
       `import { notOps } from "../../lib/operations";`,
+      `import x, { createSource } from "../../../lib/operations/";`,
       `ops.deleteSource(ctx, id);`,
     ].join("\n");
-    expect(operationsImports(source, "app/api/x/route.ts")).toEqual(["updateSource", "deleteSource"]);
+    expect(operationsImports(source, "app/api/x/route.ts")).toEqual(["updateSource", "createSource", "deleteSource"]);
   });
 });
 
