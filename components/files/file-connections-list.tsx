@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { useTranslations } from "next-intl";
 import { format } from "date-fns";
 import { X, Loader2, ChevronRight, Check, AlertTriangle, Search, Sparkles, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -18,8 +19,16 @@ import { cn, toDateSafe } from "@/lib/utils";
 import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
 import { useEcbConverter } from "@/lib/currency";
-// The one tolerance that decides whether a Remainder is closed (#239).
-import { filePaymentTotal, isRemainderClosed } from "@/functions/src/matching/coverage";
+// The one derivation of a File's Outstanding amount (#615), and the one
+// tolerance that decides whether it is closed (#239).
+import {
+  deriveOutstanding,
+  filePaymentTotal,
+  isExtractionPending,
+  isRemainderClosed,
+  type ConnectedFileAmount,
+} from "@/functions/src/matching/coverage";
+import { useFiles } from "@/hooks/use-files";
 import Link from "next/link";
 import {
   getTransactionMatchConfidenceColor,
@@ -219,89 +228,65 @@ function TransactionRow({ transaction, fileCurrency, onRemove, disabled }: Trans
   );
 }
 
-interface RemainderLineProps {
-  fileAmount: number;
-  fileCurrency: string;
+interface OutstandingLineProps {
+  file: TaxFile;
   transactions: Transaction[];
+  /** The User's Files, from the shared list: what else sits on each Transaction. */
+  allFiles: TaxFile[];
+}
+
+/** A File as Coverage and Outstanding read it. */
+function asConnectedFile(file: TaxFile): ConnectedFileAmount {
+  return {
+    fileId: file.id,
+    payment: filePaymentTotal(file.extractedAmount, file.extractedTipAmount),
+    extractionPending: isExtractionPending(file),
+    currency: file.extractedCurrency ?? null,
+    receiptOfFileId: file.receiptLink?.fileId ?? null,
+  };
 }
 
 /**
- * The Remainder seen from the File's side: what this document still has open
- * against the Transactions it sits on (#239). The subtraction runs the other
- * way round from the Transaction panel's, but it is the same figure and the
- * same tolerance — `isRemainderClosed`, not a second 1 EUR literal.
+ * The File's Outstanding amount (#615, ADR-0013): what its connected
+ * Transactions do not yet pay, worked out by `deriveOutstanding`, the helper
+ * the matcher scores a further payment against, so the panel and the scores
+ * cannot disagree. A Transaction that also pays other Files pays this one its
+ * share. Nothing is shown when a payment is in another currency: the helper
+ * guesses no exchange rate, and neither does the panel.
  */
-function RemainderLine({ fileAmount, fileCurrency, transactions }: RemainderLineProps) {
-  const convert = useEcbConverter();
-  // Determine the target currency for the Remainder (use first transaction's currency)
-  // This ensures it is shown in accounting/transaction currency
-  const targetCurrency = transactions[0]?.currency || fileCurrency;
+function OutstandingLine({ file, transactions, allFiles }: OutstandingLineProps) {
+  const t = useTranslations("files.outstanding");
+  const self = asConnectedFile(file);
+  const result = deriveOutstanding(
+    { fileId: file.id, payment: self.payment, currency: self.currency, receiptOfFileId: self.receiptOfFileId },
+    transactions.map((tx) => ({
+      transactionAmount: tx.amount,
+      transactionCurrency: tx.currency,
+      files: allFiles.filter((f) => f.transactionIds?.includes(tx.id)).map(asConnectedFile),
+    }))
+  );
+  if (!result || transactions.length === 0) return null;
 
-  // Convert file amount to target currency if needed
-  let convertedFileAmount = fileAmount;
-  let fileConversionFailed = false;
-  if (fileCurrency !== targetCurrency && transactions[0]?.date) {
-    const txDate = transactions[0].date.toDate();
-    const conversion = convert(fileAmount, fileCurrency, targetCurrency, txDate);
-    if (conversion) {
-      convertedFileAmount = conversion.amount;
-    } else {
-      fileConversionFailed = true;
-    }
-  }
-
-  // Sum transaction amounts in target currency
-  let transactionsSum = 0;
-  let txConversionFailed = false;
-
-  for (const tx of transactions) {
-    const txDate = toDateSafe(tx.date);
-    if (tx.currency === targetCurrency) {
-      transactionsSum += Math.abs(tx.amount);
-    } else if (txDate) {
-      const conversion = convert(
-        Math.abs(tx.amount),
-        tx.currency,
-        targetCurrency,
-        txDate
-      );
-      if (conversion) {
-        transactionsSum += conversion.amount;
-      } else {
-        txConversionFailed = true;
-      }
-    } else {
-      txConversionFailed = true;
-    }
-  }
-
-  const hasAllAmounts = !fileConversionFailed && !txConversionFailed;
-  const remainder = convertedFileAmount - transactionsSum;
-  const isMatched = isRemainderClosed(remainder);
-  const wasConverted = fileCurrency !== targetCurrency;
-
-  if (transactions.length === 0) {
-    return null;
-  }
+  const currency = file.extractedCurrency || "EUR";
+  const isPaid = isRemainderClosed(result.outstanding);
 
   return (
     <div className="flex items-center justify-between p-2 -mx-2 border-t">
-      <span className="text-sm text-muted-foreground">Remainder</span>
+      {isPaid ? (
+        <span className="text-sm text-muted-foreground">{t("paid")}</span>
+      ) : (
+        <span className="text-sm tabular-nums text-amount-negative">
+          {t("figure", {
+            outstanding: formatAmount(result.outstanding, currency),
+            total: formatAmount(result.total, currency),
+          })}
+        </span>
+      )}
       <div className="flex items-center gap-2 shrink-0">
-        {!hasAllAmounts ? (
-          <span className="text-muted-foreground text-xs">Missing amounts</span>
-        ) : isMatched ? (
-          <span className="tabular-nums font-medium text-amount-positive flex items-center gap-1 text-sm">
-            {formatAmount(0, targetCurrency)} <Check className="h-3.5 w-3.5" />
-          </span>
+        {isPaid ? (
+          <Check className="h-3.5 w-3.5 text-amount-positive" />
         ) : (
-          <span className={cn(
-            "tabular-nums font-medium flex items-center gap-1 text-sm",
-            remainder > 0 ? "text-amount-negative" : "text-amber-600"
-          )}>
-            {wasConverted ? "~" : ""}{remainder > 0 ? "-" : "+"}{formatAmount(Math.abs(remainder), targetCurrency)}
-            <AlertTriangle className="h-3.5 w-3.5" />
-          </span>
+          <AlertTriangle className="h-3.5 w-3.5 text-amount-negative" />
         )}
         {/* Spacer to align with TransactionRow's remove button + chevron */}
         <div className="w-[28px]" />
@@ -349,6 +334,9 @@ export function FileConnectionsList({
   const [loading, setLoading] = useState(true);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
   const [processingId, setProcessingId] = useState<string | null>(null);
+  // The shared list every Files screen already holds: what else sits on each
+  // connected Transaction, for the Outstanding line (#615).
+  const { files: allFiles } = useFiles();
 
   // Track previous file ID to detect actual file changes vs. data updates
   const prevFileIdRef = useRef<string | null>(null);
@@ -491,17 +479,9 @@ export function FileConnectionsList({
                 label="Add"
               />
             </div>
-            {/* Remainder line at bottom */}
+            {/* What the File still has Outstanding (#615); the Remainder is the Transaction's word */}
             {file.extractedAmount != null && (
-              <RemainderLine
-                // The payment total, not the raw extracted amount, so a printed
-                // Trinkgeld counts here exactly as it does in the Transaction's
-                // Files section (#172). Passing extractedAmount made the two
-                // panels print different Remainders for the same pair.
-                fileAmount={filePaymentTotal(file.extractedAmount, file.extractedTipAmount)!}
-                fileCurrency={currency}
-                transactions={transactions}
-              />
+              <OutstandingLine file={file} transactions={transactions} allFiles={allFiles} />
             )}
           </div>
         ) : (

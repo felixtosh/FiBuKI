@@ -429,6 +429,10 @@
       "upload": "Hochladen",
       "invoice": "Rechnung"
     },
+    "outstanding": {
+      "figure": "{outstanding} von {total} ausstehend",
+      "paid": "Vollständig bezahlt"
+    },
     "extracted": {
       "fields": {
         "invoiceNumber": "Rechnungsnummer",
@@ -452,6 +456,8 @@
         "other": "Andere"
       },
       "country": "Land",
+      "instalments": "Raten",
+      "instalmentDue": "fällig am {date}",
       "addField": "Feld hinzufügen",
       "chooseField": "Feld wählen",
       "value": "Wert",
