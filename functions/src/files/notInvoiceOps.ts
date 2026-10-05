@@ -29,17 +29,17 @@ export interface NotInvoiceFileState {
  * from a document that is not an invoice, resets the partner and transaction
  * matching derived from it, and clears the Hand Correction record for the
  * figures it wipes, all in one write. A manually-set Partner survives. The
- * caller has checked the File is the User's; a File that is not answers
- * `false` here and nothing is written.
+ * caller has checked the File is the User's; a File that is gone by now, or
+ * is not theirs, throws and nothing is written.
  */
 export async function markFileNotInvoice(
   db: Firestore,
   fileId: string,
   userId: string,
   reason?: string
-): Promise<boolean> {
+): Promise<void> {
   const outcome = await applyFactChange(db, { fileId, userId, change: { origin: "not-invoice", reason } });
-  return !outcome.refused;
+  if (outcome.refused) throw new Error(outcome.message);
 }
 
 /**
