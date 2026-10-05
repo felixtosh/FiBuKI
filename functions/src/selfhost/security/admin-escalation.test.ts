@@ -3,9 +3,9 @@
  * write.
  *
  * users/{uid} is the caller's own document on the client data plane
- * (USER_DOC_POLICY: create and update when the uid matches), so an admin
- * check that reads a flag from it is a check the caller answers for
- * themselves. The admin bit lives in the verified token's claims.
+ * (USER_DOC_POLICY: create when the uid matches), so an admin check that
+ * reads a flag from it is a check the caller answers for themselves. The
+ * admin bit lives in the verified token's claims.
  */
 
 process.env.FIBUKI_STORAGE = "memory";
@@ -51,8 +51,13 @@ beforeEach(async () => {
   before = await victimRows();
 });
 
-/** The attacker grants themselves every admin-looking flag, through the real data plane. */
+/**
+ * The attacker grants themselves every admin-looking flag, through the real data
+ * plane. A client cannot update its user doc (ADR-0016), but it can still create
+ * it, so the attacker writes the flags into a user doc that does not exist yet.
+ */
 async function selfGrantAdmin(): Promise<void> {
+  await getFirestore().doc(`users/${ATTACKER}`).delete();
   const res = await fetch(`${base}/__data/write`, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: "Bearer tok-attacker" },
@@ -60,7 +65,7 @@ async function selfGrantAdmin(): Promise<void> {
       ops: [{ type: "set", path: `users/${ATTACKER}`, data: { admin: true, isAdmin: true, role: "admin" }, merge: true }],
     }),
   });
-  expect(res.status, "the data plane lets a user write their own user doc").toBe(200);
+  expect(res.status, "the data plane lets a user create their own user doc").toBe(200);
 }
 
 const ADMIN_CALLS: Array<[string, Record<string, unknown>]> = [
