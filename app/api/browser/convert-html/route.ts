@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
       },
       ConvertHtmlToPdfResponse
     >(
-      "convertHtmlToPdfCallable",
+      "convertHtmlToPdf",
       {
         html,
         metadata: {

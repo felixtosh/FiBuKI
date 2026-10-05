@@ -87,15 +87,18 @@ export { onTransactionsImported } from "./gmail/onTransactionsImported";
 export { onTransactionsImportedCompanyCheck } from "./matching/onTransactionsImportedCompanyCheck";
 export { searchGmailCallable } from "./gmail/searchGmailCallable";
 export {
-  listFolderChoicesCallable,
-  setFolderIntegrationFolderCallable,
-  updateFolderIntegrationSettingsCallable,
-  syncFolderIntegrationCallable,
-  disconnectFolderIntegrationCallable,
+  listFolderChoicesCallable as listFolderChoices,
+  setFolderIntegrationFolderCallable as setFolderIntegrationFolder,
+  updateFolderIntegrationSettingsCallable as updateFolderIntegrationSettings,
+  syncFolderIntegrationCallable as syncFolderIntegration,
+  disconnectFolderIntegrationCallable as disconnectFolderIntegration,
   syncFolderIntegrations,
 } from "./folder-sync/folderIntegrationCallables";
 // One IMAP attachment / message body for the manual attach path (#245)
-export { getMailAttachmentCallable, getMailBodyCallable } from "./mail/mailMessageCallables";
+export {
+  getMailAttachmentCallable as getMailAttachment,
+  getMailBodyCallable as getMailBody,
+} from "./mail/mailMessageCallables";
 
 // Export precision search functions
 export {
@@ -109,7 +112,7 @@ export { scoreFileTransactionMatchCallable as scoreFileTransactionMatch } from "
 export { refreshTransactionMatchesCallable as refreshTransactionMatches } from "./matching/refreshTransactionMatchesCallable";
 export { catchUpPartnerMatchingCallable as catchUpPartnerMatching } from "./matching/catchUpPartnerMatching";
 export { onGlobalPartnerWritten } from "./matching/partnerCatalogVersion";
-export { convertHtmlToPdfCallable } from "./precision-search/convertHtmlToPdfCallable";
+export { convertHtmlToPdfCallable as convertHtmlToPdf } from "./precision-search/convertHtmlToPdfCallable";
 
 // Export inbound email functions
 export { receiveInboundEmail, testInboundEmail } from "./email-inbound/receiveEmail";

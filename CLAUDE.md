@@ -155,7 +155,8 @@ Things that cost real time to find. All of `fibuki.com` runs the self-host stack
    1. Add types to /types/new-entity.ts
    2. Create callable in /functions/src/feature/newFeatureCallable.ts
    3. Use createCallable() wrapper for automatic usage tracking
-   4. Export from /functions/src/index.ts
+   4. Register its config.name in /functions/src/callableRegistry.ts and export it
+      from /functions/src/index.ts under that name (the host serves the export name)
    5. Call from frontend via callFunction() in /lib/firebase/callable.ts
    ```
 
