@@ -5,15 +5,7 @@
 
 import { Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
-
-interface FieldMapping {
-  csvColumn: string;
-  targetField: string | null;
-  confidence: number;
-  userConfirmed: boolean;
-  keepAsMetadata: boolean;
-  format?: string | null;
-}
+import { validateFieldMappings, type StoredFieldMapping } from "./fieldMappings";
 
 interface ParseOptions {
   delimiter?: string;
@@ -32,7 +24,7 @@ interface CreateDraftImportRequest {
   detectedHeaders: string[];
   sampleRows: Record<string, string>[];
   totalRows: number;
-  fieldMappings?: FieldMapping[] | null;
+  fieldMappings?: StoredFieldMapping[] | null;
 }
 
 interface CreateDraftImportResponse {
@@ -60,7 +52,6 @@ export const createDraftImportCallable = createCallable<
       detectedHeaders,
       sampleRows,
       totalRows,
-      fieldMappings,
     } = request;
 
     // Validate required fields
@@ -70,6 +61,7 @@ export const createDraftImportCallable = createCallable<
         "sourceId, fileName, csvHash, and csvStoragePath are required"
       );
     }
+    const fieldMappings = request.fieldMappings == null ? request.fieldMappings : validateFieldMappings(request.fieldMappings);
 
     // Verify source ownership
     const sourceRef = ctx.db.collection("sources").doc(sourceId);

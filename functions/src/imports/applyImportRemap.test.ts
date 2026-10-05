@@ -76,6 +76,12 @@ describe("applyImportRemap", () => {
     expect(mappingsOf("job-1")).toEqual(MAPPINGS);
   });
 
+  it("keeps a format the wizard stored as null as null", async () => {
+    const withNull = [{ ...MAPPINGS[2], format: null }];
+    await run(createTestContext(USER), { importJobId: "job-1", sourceId: "s1", fieldMappings: withNull, rows: [] });
+    expect(mappingsOf("job-1")).toEqual(withNull);
+  });
+
   it("repeating a chunk is harmless", async () => {
     const request = { importJobId: "job-1", sourceId: "s1", fieldMappings: MAPPINGS, rows: [row("t1")] };
     await run(createTestContext(USER), request);
@@ -126,6 +132,7 @@ describe("applyImportRemap", () => {
     ["mappings that are not a list", { csvColumn: "Datum" }],
     ["a mapping without a column", [{ targetField: "date", confidence: 1, userConfirmed: true, keepAsMetadata: false }]],
     ["a mapping with an unknown field", [{ ...MAPPINGS[0], userId: "intruder" }]],
+    ["a mapping to an unknown target field", [{ ...MAPPINGS[0], targetField: "userId" }]],
   ])("refuses %s and writes nothing", async (_name, fieldMappings) => {
     await expect(
       run(createTestContext(USER), { importJobId: "job-1", sourceId: "s1", fieldMappings, rows: [row("t1")] })

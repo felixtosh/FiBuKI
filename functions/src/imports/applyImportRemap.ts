@@ -6,14 +6,16 @@
  * checks, the dedupe hash (imports/dedupe.ts, the one copy) and the write.
  *
  * The same call saves the new column mappings on the Import (#628): the browser never writes the
- * Imports table. The client sends its rows in chunks with the mappings on each; every chunk writes
- * the same values, so a repeated chunk changes nothing. Draft Imports keep their mappings through
+ * Imports table. The client sends its rows in chunks with the mappings on each; the last batch of
+ * each call commits them with its Transactions, and every chunk writes the same values, so a
+ * repeated chunk changes nothing. Draft Imports keep their mappings through
  * updateDraftMappings, the import wizard's callable.
  */
 
 import { Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { computeDedupeHash } from "./dedupe";
+import { validateFieldMappings, type StoredFieldMapping } from "./fieldMappings";
 
 export interface RemapRow {
   transactionId: string;
@@ -28,21 +30,11 @@ export interface RemapRow {
   original: { date: string; amount: string; rawRow: Record<string, string> };
 }
 
-/** A column mapping as types/import.ts FieldMapping holds it. */
-export interface RemapFieldMapping {
-  csvColumn: string;
-  targetField: string | null;
-  confidence: number;
-  userConfirmed: boolean;
-  keepAsMetadata: boolean;
-  format?: string;
-}
-
 interface ApplyImportRemapRequest {
   importJobId: string;
   sourceId: string;
   /** The mappings the rows were parsed with; saved on the Import. */
-  fieldMappings: RemapFieldMapping[];
+  fieldMappings: StoredFieldMapping[];
   rows: RemapRow[];
 }
 
@@ -55,38 +47,6 @@ interface ApplyImportRemapResponse {
 
 const MAX_ROWS = 5000;
 const CHUNK = 400;
-const MAX_MAPPINGS = 500;
-const MAPPING_FIELDS = new Set(["csvColumn", "targetField", "confidence", "userConfirmed", "keepAsMetadata", "format"]);
-
-/** Refuses unknown fields and wrong types; returns only the fields a mapping holds. */
-function validateMappings(input: unknown): RemapFieldMapping[] {
-  if (!Array.isArray(input)) throw new HttpsError("invalid-argument", "fieldMappings is required");
-  if (input.length > MAX_MAPPINGS) throw new HttpsError("invalid-argument", `Cannot save more than ${MAX_MAPPINGS} mappings`);
-  return input.map((m: unknown, index) => {
-    const fail = (what: string): never => {
-      throw new HttpsError("invalid-argument", `fieldMappings[${index}]: ${what}`);
-    };
-    if (!m || typeof m !== "object" || Array.isArray(m)) return fail("must be an object");
-    const mapping = m as Record<string, unknown>;
-    const unknown = Object.keys(mapping).filter((key) => !MAPPING_FIELDS.has(key));
-    if (unknown.length > 0) fail(`unknown field ${unknown.join(", ")}`);
-    if (typeof mapping.csvColumn !== "string" || !mapping.csvColumn) fail("csvColumn is required");
-    if (mapping.targetField !== null && typeof mapping.targetField !== "string") fail("targetField must be a string or null");
-    if (typeof mapping.confidence !== "number" || !Number.isFinite(mapping.confidence)) fail("confidence must be a number");
-    if (typeof mapping.userConfirmed !== "boolean") fail("userConfirmed must be a boolean");
-    if (typeof mapping.keepAsMetadata !== "boolean") fail("keepAsMetadata must be a boolean");
-    if (mapping.format !== undefined && mapping.format !== null && typeof mapping.format !== "string") fail("format must be a string");
-    const clean: RemapFieldMapping = {
-      csvColumn: mapping.csvColumn as string,
-      targetField: mapping.targetField as string | null,
-      confidence: mapping.confidence as number,
-      userConfirmed: mapping.userConfirmed as boolean,
-      keepAsMetadata: mapping.keepAsMetadata as boolean,
-    };
-    if (typeof mapping.format === "string") clean.format = mapping.format;
-    return clean;
-  });
-}
 
 function validateRow(row: RemapRow, index: number): void {
   const fail = (what: string) => {
@@ -108,7 +68,7 @@ export const applyImportRemapCallable = createCallable<ApplyImportRemapRequest, 
     if (!Array.isArray(rows)) throw new HttpsError("invalid-argument", "rows is required");
     if (rows.length > MAX_ROWS) throw new HttpsError("invalid-argument", `Cannot remap more than ${MAX_ROWS} rows at once`);
     rows.forEach(validateRow);
-    const fieldMappings = validateMappings(request.fieldMappings);
+    const fieldMappings = validateFieldMappings(request.fieldMappings);
 
     const sourceSnap = await ctx.db.collection("sources").doc(sourceId).get();
     if (!sourceSnap.exists) throw new HttpsError("not-found", "Source not found");
@@ -132,7 +92,8 @@ export const applyImportRemapCallable = createCallable<ApplyImportRemapRequest, 
     let updated = 0;
     let skipped = 0;
 
-    for (let i = 0; i < rows.length; i += CHUNK) {
+    // At least one pass, so a call with no rows still saves the mappings.
+    for (let i = 0; i === 0 || i < rows.length; i += CHUNK) {
       const chunk = rows.slice(i, i + CHUNK);
       const refs = chunk.map((row) => ctx.db.collection("transactions").doc(row.transactionId));
       const snaps = await Promise.all(refs.map((ref) => ref.get()));
@@ -165,11 +126,11 @@ export const applyImportRemapCallable = createCallable<ApplyImportRemapRequest, 
         inBatch += 1;
       });
 
-      if (inBatch > 0) await batch.commit();
+      const last = i + CHUNK >= rows.length;
+      if (last) batch.update(importRef, { fieldMappings, updatedAt: Timestamp.now() });
+      if (inBatch > 0 || last) await batch.commit();
       updated += inBatch;
     }
-
-    await importRef.update({ fieldMappings, updatedAt: Timestamp.now() });
 
     return { success: true, updated, skipped };
   }
