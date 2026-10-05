@@ -16,7 +16,8 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { MODELS } from "../utils/models";
 import { connectFiles } from "../fileConnections/writer";
-import { autoConnectTies, fileDateRangesFor, matchableFiles, pairsAmong } from "./matcher";
+import { autoConnectHolds, fileDateRangesFor, matchableFiles, pairsAmong } from "./matcher";
+import { isOutstandingMatch } from "./transactionScoring";
 import { SCORING_CONFIG } from "./transactionScoring";
 import { toDateSafe } from "../utils/toDateSafe";
 
@@ -325,14 +326,15 @@ export async function matchFilesForPartnerInternal(
   console.log(`Found ${allScores.length} potential matches, top score: ${allScores[0]?.confidence}`);
 
   // A File tied at the threshold (#667) connects none of the tied
-  // Transactions, judged on the File's own matches as on upload, not on this
+  // Transactions, and an instalment without printed evidence (#615) stays a
+  // suggestion, judged on the File's own matches as on upload, not on this
   // Partner's pool alone.
   const filesAtThreshold = new Set(
     allScores.filter((m) => m.confidence >= SCORING_CONFIG.AUTO_MATCH_THRESHOLD).map((m) => m.fileId)
   );
   const ties =
     filesAtThreshold.size > 0
-      ? await autoConnectTies(db, userId, unconnectedFiles.filter((f) => filesAtThreshold.has(f.id)))
+      ? await autoConnectHolds(db, userId, unconnectedFiles.filter((f) => filesAtThreshold.has(f.id)))
       : new Map<string, Set<string>>();
 
   // 5. Create connections for auto-matches
@@ -352,7 +354,7 @@ export async function matchFilesForPartnerInternal(
     if (match.confidence >= SCORING_CONFIG.AUTO_MATCH_THRESHOLD && tied) {
       console.log(
         `Suggestion only for ${match.fileId} on ${match.transactionId} at ${match.confidence}% ` +
-          "(a tie: another uncovered Transaction of the same amount reaches the threshold too)"
+          "(a tie at the threshold, or an instalment without printed evidence)"
       );
       suggested++;
     } else if (match.confidence >= SCORING_CONFIG.AUTO_MATCH_THRESHOLD) {
@@ -376,6 +378,8 @@ export async function matchFilesForPartnerInternal(
       matchSources: match.matchSources,
       matchConfidence: match.confidence,
       scoreBreakdown: match.breakdown,
+      // #615: one payment of several of the File, findable as its own class.
+      ...(isOutstandingMatch(match) ? { autoConnectReason: "instalment" as const } : {}),
     })),
     { origin: "auto" }
   );

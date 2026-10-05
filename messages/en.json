@@ -429,6 +429,11 @@
       "upload": "Upload",
       "invoice": "Invoice"
     },
+    "outstanding": {
+      "figure": "{outstanding} of {total} outstanding",
+      "paid": "Paid in full",
+      "overpaid": "Paid in full, +{amount}"
+    },
     "extracted": {
       "fields": {
         "invoiceNumber": "Invoice number",
@@ -452,6 +457,8 @@
         "other": "Other"
       },
       "country": "Country",
+      "instalments": "Instalments",
+      "instalmentDue": "due {date}",
       "addField": "Add field",
       "chooseField": "Choose a field",
       "value": "Value",
