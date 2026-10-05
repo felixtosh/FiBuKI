@@ -38,12 +38,13 @@ import { getSqlClient } from "./firestore-shim";
 import { getTenantId } from "./db/tenant";
 import type { ExtractionRequest } from "../extraction/extractionQueue";
 import { extractQueuedFile, recordExtractionFailure } from "../extraction/extractQueuedFile";
+import {
+  externalExtractionServiceConfigured,
+  extractionTimeoutMs,
+} from "../extraction/extractionService";
 
 /** Reclaims after which a File is marked failed rather than put back again. */
 export const MAX_RECLAIMS = 3;
-
-/** The #161 contract's default service timeout. */
-const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 
 /** Idle poll interval. A finished run wakes the worker at once. */
 const POLL_INTERVAL_MS = 2000;
@@ -56,21 +57,14 @@ function positiveNumberFromEnv(name: string): number | undefined {
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
+// The service configuration and the timeout live with the Extraction Service
+// contract (#161), so the worker and the service call agree on both.
+export { externalExtractionServiceConfigured, extractionTimeoutMs };
+
 /**
- * True when an external Extraction Service replaces the built-in Gemini
- * (#161). One local model rarely takes more than one document at a time.
+ * How many Extractions one replica runs at once. One local model rarely
+ * takes more than one document at a time.
  */
-export function externalExtractionServiceConfigured(): boolean {
-  return !!process.env.FIBUKI_EXTRACTION_SERVICE_URL;
-}
-
-/** How long one Extraction may run before its File is marked failed. */
-export function extractionTimeoutMs(): number {
-  const seconds = positiveNumberFromEnv("FIBUKI_EXTRACTION_TIMEOUT_SECONDS");
-  return seconds ? seconds * 1000 : DEFAULT_TIMEOUT_MS;
-}
-
-/** How many Extractions one replica runs at once. */
 export function extractionConcurrency(): number {
   const n = positiveNumberFromEnv("FIBUKI_EXTRACTION_CONCURRENCY");
   if (n) return Math.floor(n);
