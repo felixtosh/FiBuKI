@@ -135,7 +135,8 @@ export interface InboundEmailLog {
 }
 
 /**
- * Data for creating a new inbound email address
+ * Data for creating a new inbound email address. The daily limit and the
+ * counters are the server's (#626).
  */
 export interface CreateInboundEmailAddressData {
   /** Optional display name */
@@ -143,13 +144,11 @@ export interface CreateInboundEmailAddressData {
 
   /** Optional allowed sender domains */
   allowedDomains?: string[];
-
-  /** Daily limit override (default: 100) */
-  dailyLimit?: number;
 }
 
 /**
- * Data for updating an inbound email address
+ * Data for updating an inbound email address: the only fields the
+ * `updateInboundEmailAddress` callable writes (#626).
  */
 export interface UpdateInboundEmailAddressData {
   /** Update display name */
@@ -157,9 +156,6 @@ export interface UpdateInboundEmailAddressData {
 
   /** Update allowed domains */
   allowedDomains?: string[];
-
-  /** Update daily limit */
-  dailyLimit?: number;
 
   /** Pause/resume the address */
   isActive?: boolean;

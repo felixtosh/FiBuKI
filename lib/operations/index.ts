@@ -54,9 +54,6 @@ export * from "./precision-search-ops";
 // Frequency inference (kept from invoice-source-ops after merge to browser recipes)
 export * from "./invoice-source-ops";
 
-// Inbound email operations (for email forwarding integration)
-export * from "./email-inbound-ops";
-
 // Invite operations (for user invitations)
 export * from "./invite-ops";
 

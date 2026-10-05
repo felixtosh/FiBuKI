@@ -43,7 +43,6 @@ export const TOP_LEVEL_POLICIES: Readonly<Record<string, CollectionPolicy>> = {
   noReceiptCategories: ownerCrud,
   // File Connections are written only by their one writer on the server (#612).
   fileConnections: ownerReadOnly,
-  inboundEmailAddresses: ownerCrud,
 
   // The browser reads domain data; only the server writes it (ADR-0016). These
   // lost their last browser writer in #625.
@@ -51,6 +50,8 @@ export const TOP_LEVEL_POLICIES: Readonly<Record<string, CollectionPolicy>> = {
   agentSearchSessions: ownerReadOnly,
   aiUsage: ownerReadOnly,
   precisionSearchQueue: ownerReadOnly,
+  // Their four callables are the only writers (#626).
+  inboundEmailAddresses: ownerReadOnly,
 
   invoices: ownerReadOnly,
   functionCalls: ownerReadOnly,
