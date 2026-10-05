@@ -13,7 +13,7 @@ import {
   AIUsageDailyStats,
   AIFunction,
 } from "@/types/ai-usage";
-import { MODEL_PRICING, PRICING_FALLBACK_MODEL } from "@/functions/src/utils/models";
+import { estimateModelCost } from "@/functions/src/utils/models";
 import { OperationsContext } from "./types";
 
 const AI_USAGE_COLLECTION = "aiUsage";
@@ -34,8 +34,7 @@ export function calculateCost(
   inputTokens: number,
   outputTokens: number
 ): number {
-  const pricing = MODEL_PRICING[model] || MODEL_PRICING[PRICING_FALLBACK_MODEL];
-  return (inputTokens * pricing.input + outputTokens * pricing.output) / 1_000_000;
+  return estimateModelCost(model, inputTokens, outputTokens);
 }
 
 /**

@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { MODELS, MODEL_PRICING, PRICING_FALLBACK_MODEL } from "./models";
+import { MODELS, MODEL_PRICING, PRICING_FALLBACK_MODEL, estimateModelCost } from "./models";
 
 describe("model registry", () => {
   it("prices every model a role points at", () => {
@@ -28,9 +28,19 @@ describe("model registry", () => {
     for (const retired of [
       "gemini-2.5-flash",
       "gemini-2.5-flash-lite",
+      "gemini-2.0-flash-001",
+      "gemini-2.0-flash-lite-001",
+      "gemini-2.5-flash-preview-05-20",
+      "claude-3-5-haiku-20241022",
       "claude-3-haiku-20240307",
     ]) {
       expect(MODEL_PRICING[retired], `${retired} must stay priced`).toBeDefined();
     }
+  });
+
+  it("bills a priced model at its own rate and an unpriced one as the fallback", () => {
+    expect(estimateModelCost(MODELS.geminiLite, 1_000_000, 1_000_000)).toBeCloseTo(0.25 + 1.5);
+    const fallback = MODEL_PRICING[PRICING_FALLBACK_MODEL];
+    expect(estimateModelCost("no-such-model", 1_000_000, 1_000_000)).toBeCloseTo(fallback.input + fallback.output);
   });
 });

@@ -529,8 +529,9 @@ All Gemini calls use **Vertex AI** (not Google AI Studio). This provides:
 **Pattern for new Gemini functions:**
 ```typescript
 import { VertexAI } from "@google-cloud/vertexai";
+import { MODELS } from "../utils/models";
 
-const GEMINI_MODEL = "gemini-2.0-flash-lite-001";
+const GEMINI_MODEL = MODELS.geminiLite;
 const VERTEX_LOCATION = process.env.VERTEX_LOCATION || "europe-west1";
 
 function getProjectId(): string {

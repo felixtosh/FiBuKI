@@ -79,5 +79,18 @@ export const MODEL_PRICING: Record<string, { input: number; output: number }> = 
   "gemini-2.5-flash-preview-05-20": { input: 0.15, output: 0.6 },
 };
 
-/** Fallback model used when a usage record's model isn't in the pricing table. */
+/**
+ * The model an unpriced model is billed as: Claude Sonnet ($3/$15), the dearest
+ * entry a role points at, so a gap overstates cost rather than hiding it.
+ */
 export const PRICING_FALLBACK_MODEL = "claude-sonnet-4-20250514";
+
+/**
+ * Estimated cost in USD of one model call. The one cost rule every surface uses
+ * (callables, the AI usage logger, the chat, the usage summaries): a model
+ * missing from MODEL_PRICING costs as PRICING_FALLBACK_MODEL.
+ */
+export function estimateModelCost(model: string, inputTokens: number, outputTokens: number): number {
+  const pricing = MODEL_PRICING[model] ?? MODEL_PRICING[PRICING_FALLBACK_MODEL];
+  return (inputTokens * pricing.input + outputTokens * pricing.output) / 1_000_000;
+}

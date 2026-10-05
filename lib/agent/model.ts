@@ -12,7 +12,7 @@
 
 import { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { StructuredToolInterface } from "@langchain/core/tools";
-import { MODEL_PRICING, MODELS } from "@/functions/src/utils/models";
+import { estimateModelCost, MODELS } from "@/functions/src/utils/models";
 
 export type ModelProvider = "anthropic" | "gemini";
 
@@ -30,14 +30,6 @@ const MODEL_IDS = {
 // Vertex AI config - uses same region as Cloud Functions
 // Project is determined from ADC/service account credentials
 const VERTEX_LOCATION = process.env.VERTEX_LOCATION || "europe-west1";
-
-// Fallback cost per 1M tokens (input/output), only for a model missing from
-// MODEL_PRICING.
-export const MODEL_COSTS = {
-  anthropic: { input: 3, output: 15 },
-  gemini: { input: 1.5, output: 7.5 },
-} as const;
-
 /** The Gemini API key, when there is one: it selects the Generative Language API. */
 function geminiApiKey(): string | undefined {
   return process.env.FIBUKI_GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
@@ -132,6 +124,5 @@ export function calculateCost(
   outputTokens: number
 ): number {
   // Priced at the model that ran, so a FIBUKI_CHAT_MODEL change is billed right.
-  const costs = MODEL_PRICING[getModelId(provider)] ?? MODEL_COSTS[provider];
-  return (inputTokens * costs.input + outputTokens * costs.output) / 1_000_000;
+  return estimateModelCost(getModelId(provider), inputTokens, outputTokens);
 }

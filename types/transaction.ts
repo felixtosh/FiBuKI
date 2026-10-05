@@ -127,7 +127,7 @@ export interface AutomationHistoryEntry {
 }
 
 /** Canonical bank-line kinds (#136); one copy, in the backend module (#689). */
-export type { TransactionType } from "@/functions/src/imports/transactionType";
+export type { TransactionType };
 
 /**
  * A financial transaction imported from a bank account.
