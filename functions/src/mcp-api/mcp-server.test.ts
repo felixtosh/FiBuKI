@@ -11,8 +11,7 @@ vi.mock("./handlers", () => ({ handleToolInternal: vi.fn() }));
 import { handleToolInternal } from "./handlers";
 import { handleMcpRequest, MCP_INSTRUCTIONS } from "./mcp-server";
 import { toFetchRequest } from "./mcp-sse";
-import { TOOL_NAMES } from "../tools/definitions";
-import { DESTRUCTIVE_TOOLS, READ_ONLY_TOOLS, WRITE_TOOLS } from "./tool-annotations";
+import { TOOL_DEFINITIONS, TOOL_NAMES } from "../tools/definitions";
 
 const handleTool = vi.mocked(handleToolInternal);
 const USER = "user-1";
@@ -186,11 +185,19 @@ describe("tools/call", () => {
   });
 });
 
-describe("annotation lists", () => {
-  it("classify every tool exactly once", () => {
-    const all = [...READ_ONLY_TOOLS, ...WRITE_TOOLS, ...DESTRUCTIVE_TOOLS] as string[];
-    expect(new Set(all).size).toBe(all.length);
-    expect([...all].sort()).toEqual([...TOOL_NAMES].sort());
+describe("annotation classes (#616)", () => {
+  it("every tool definition carries one, and the MCP hints follow it", async () => {
+    const classes = new Set(["read-only", "write", "destructive"]);
+    const { result } = await (await post(rpc("tools/list"))).json();
+    const byName = Object.fromEntries(result.tools.map((t: { name: string }) => [t.name, t]));
+    for (const def of TOOL_DEFINITIONS) {
+      expect(classes.has(def.annotation), `${def.name} has no annotation class`).toBe(true);
+      const hints = byName[def.name].annotations;
+      expect(hints.readOnlyHint).toBe(def.annotation === "read-only");
+      expect(hints.destructiveHint).toBe(def.annotation === "destructive");
+      expect(hints.openWorldHint).toBe(def.openWorld === true);
+    }
+    expect(new Set(TOOL_NAMES).size).toBe(TOOL_NAMES.length);
   });
 });
 

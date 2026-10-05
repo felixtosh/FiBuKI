@@ -159,6 +159,7 @@ export {
   deleteTransactionsBySourceCallable as deleteTransactionsBySource,
   acceptReceiptOnlyCallable as acceptReceiptOnly,
   acceptPartialPaymentCallable as acceptPartialPayment,
+  rollbackTransactionCallable as rollbackTransaction,
 } from "./transactions";
 
 // Invoicing operations
@@ -438,6 +439,8 @@ export { sendPasswordResetCallable as sendPasswordReset } from "./auth/sendPassw
 
 // MCP HTTP API (for OpenClaw, Claude Desktop, ChatGPT, etc.)
 export { mcpApi, mcpToolsList, mcpSse } from "./mcp-api";
+// The same tools with the User's login session: what the chat assistant's
+// tools with an MCP twin run (#616).
+export { runToolCallable as runTool } from "./tools/runToolCallable";
 export { oauthMetadata, oauthRegister, oauthToken, oauthClientInfo } from "./oauth/oauthHttp";
 export { createOAuthAuthorizationCallable as createOAuthAuthorization } from "./oauth/oauthCallable";
-export { openApiSpec, aiPluginManifest } from "./mcp-api/openapi";

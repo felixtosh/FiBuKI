@@ -33,13 +33,14 @@ export function LocalFilesResult({
     }
   };
 
-  /**
-   * Format amount for display.
-   * Note: amount is already in currency units (not cents) - tool divides by 100
-   */
+  // The tool reports integer cents since #616 and says so; a result saved
+  // in a conversation before then carries euros and no unit.
+  const toUnits = result.amountsIn === "cents" ? 100 : 1;
+
+  /** Format a candidate's amount for display. */
   const formatAmount = (amount: number, currency?: string) => {
     const currencyCode = currency || "EUR";
-    return amount.toLocaleString("de-DE", {
+    return (amount / toUnits).toLocaleString("de-DE", {
       style: "currency",
       currency: currencyCode,
       minimumFractionDigits: 2,

@@ -83,13 +83,21 @@ describe("admin-shim: the surface app code actually uses", () => {
 });
 
 describe("admin-shim: a real chat tool, the thing that was broken", () => {
-  it("getTransactionTool reads through the shim", async () => {
+  // A chat-only read (#616 moved the tools with an MCP twin behind the runTool
+  // callable; this one still reads the database from the web container).
+  it("getTransactionHistoryTool reads through the shim", async () => {
     // lib/agent/tools/read-tools.ts does `await import("@/lib/firebase/admin")`,
     // which the alias redirects. This is unmodified product code: if the shim's
     // shape were wrong, this throws instead of returning the row.
-    const { getTransactionTool } = await import("../../../lib/agent/tools/read-tools");
+    await getAdminDb().doc(`transactions/${TX_ID}/history/h-admin-shim-1`).set({
+      changedAt: new Date("2026-03-05T00:00:00Z"),
+      changedBy: USER,
+      previousValues: { description: null },
+      newValues: { description: "Admin shim characterization" },
+    });
+    const { getTransactionHistoryTool } = await import("../../../lib/agent/tools/read-tools");
 
-    const out = await getTransactionTool.invoke(
+    const out = await getTransactionHistoryTool.invoke(
       { transactionId: TX_ID },
       { configurable: { userId: USER } },
     );
@@ -99,9 +107,9 @@ describe("admin-shim: a real chat tool, the thing that was broken", () => {
   });
 
   it("scopes reads by user — a tool must not serve another user's row", async () => {
-    const { getTransactionTool } = await import("../../../lib/agent/tools/read-tools");
+    const { getTransactionHistoryTool } = await import("../../../lib/agent/tools/read-tools");
 
-    const out = await getTransactionTool.invoke(
+    const out = await getTransactionHistoryTool.invoke(
       { transactionId: TX_ID },
       { configurable: { userId: "someone-else" } },
     );

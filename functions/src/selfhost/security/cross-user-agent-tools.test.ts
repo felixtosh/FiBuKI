@@ -160,7 +160,10 @@ describe("no oracle on another user's File state", () => {
   async function invoke(name: string, args: unknown): Promise<string> {
     const t = tools.find((x) => x.name === name)!;
     // Generated ids and seed timestamps differ run to run; nothing else may.
-    return JSON.stringify(await t.invoke(args, CONFIG)).replace(/"(connectionId|date)":"[^"]+"/g, "");
+    // (listTransactions returns whole records since #616, seed stamps included.)
+    return JSON.stringify(await t.invoke(args, CONFIG))
+      .replace(/"(connectionId|date)":"[^"]+"/g, "")
+      .replace(/"(createdAt|updatedAt)":("[^"]*"|\{[^}]*\})/g, "");
   }
 
   async function withVictimFile(state: Record<string, unknown>, run: () => Promise<string>): Promise<string> {
@@ -190,6 +193,27 @@ describe("no oracle on another user's File state", () => {
       const plain = await withVictimFile({}, run);
       const marked = await withVictimFile(state, run);
       expect(marked).toBe(plain);
+    });
+  }
+
+  // #616: another user's File must read exactly like one that does not exist,
+  // or the answer confirms the id is real. Both ids are the same length, and
+  // the id is masked so only the shape and wording are compared.
+  for (const name of ["getFile", "waitForFileExtraction"]) {
+    it(`${name} / another user's File answers like a missing one`, async () => {
+      await freshAccounts();
+      const missing = "x".repeat(V.file.length);
+      const ask = async (fileId: string) => {
+        const started = Date.now();
+        const out = JSON.stringify(await tools.find((x) => x.name === name)!.invoke({ fileId, timeoutSeconds: 4 }, CONFIG));
+        return { out: out.split(fileId).join("<id>"), ms: Date.now() - started };
+      };
+      const foreign = await ask(V.file);
+      const absent = await ask(missing);
+      expect(foreign.out).toBe(absent.out);
+      expect(foreign.out).not.toMatch(/authori[sz]ed/i);
+      // Same path: neither waits out a poll the other skips.
+      expect(Math.abs(foreign.ms - absent.ms)).toBeLessThan(1500);
     });
   }
 });

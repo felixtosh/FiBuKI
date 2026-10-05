@@ -39,6 +39,8 @@ function main() {
     "",
     "export interface ToolDefinition {",
     "  name: string;",
+    '  annotation: "read-only" | "write" | "destructive";',
+    "  openWorld?: boolean;",
     "  description: string;",
     '  inputSchema: { type: "object"; properties: Record<string, unknown>; required?: string[] };',
     "  requiredFeature?: string;",

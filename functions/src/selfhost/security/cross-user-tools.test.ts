@@ -1,8 +1,10 @@
 /**
  * Cross-user isolation, AI tool registry: EVERY tool in TOOL_DEFINITIONS (the
- * one surface MCP, the REST API and external AI clients all reach) called
- * through handleTool as the attacker, with arguments generated from the
- * tool's own parameter schema:
+ * one surface MCP, the REST API, external AI clients and, through the runTool
+ * callable, the chat assistant all reach) called as the attacker, with
+ * arguments generated from the tool's own parameter schema. The attacks go
+ * through runTool (#616), the session-authenticated way in, which runs
+ * handleTool, the very function MCP runs, so one sweep covers both doors:
  *
  *   - every id-like parameter at the victim's id, all together and each one
  *     alone with the rest at the attacker's (the "my transaction, your file"
@@ -27,6 +29,7 @@ import { __resetFirestoreShim, __whenShimIdle } from "../firestore-shim";
 import { drainTriggers, __resetTriggerShim } from "../trigger-shim";
 import {
   ATTACKER,
+  VICTIM,
   A,
   seedAccounts,
   victimRows,
@@ -42,10 +45,22 @@ const CALL_TIMEOUT_MS = 5000;
 
 let handleTool: (uid: string, name: string, args: Record<string, unknown>) => Promise<unknown>;
 
+type Callable = {
+  run: (req: { data: unknown; auth?: { uid: string; token: Record<string, unknown> } }) => Promise<unknown>;
+};
+let runTool: Callable;
+
+/** One tool as the attacker's session, through the callable the chat uses. */
+const asAttacker = (tool: string, args: Record<string, unknown>) =>
+  runTool.run({ data: { tool, arguments: args }, auth: { uid: ATTACKER, token: {} } });
+
 beforeAll(async () => {
   // No network: anything a handler would fetch fails fast.
   vi.stubGlobal("fetch", vi.fn(async () => new Response("offline", { status: 503 })));
   ({ handleTool } = await import("../../tools/handlers"));
+  ({ runToolCallable: runTool } = (await import("../../tools/runToolCallable")) as unknown as {
+    runToolCallable: Callable;
+  });
 }, 120_000);
 
 async function freshAccounts(): Promise<Map<string, string>> {
@@ -79,6 +94,20 @@ describe("cross-user isolation: every AI tool", () => {
     }
   });
 
+  it("runTool takes the User from the session, never from the request", async () => {
+    await freshAccounts();
+    // An identity anywhere in the request is just data.
+    const smuggled = (await runTool.run({
+      data: { tool: "get_transaction", userId: VICTIM, uid: VICTIM, arguments: { transactionId: A.transaction, userId: VICTIM } },
+      auth: { uid: ATTACKER, token: {} },
+    })) as { id?: string; userId?: string };
+    expect(smuggled.userId).toBe(ATTACKER);
+    await expect(
+      runTool.run({ data: { tool: "get_transaction", userId: ATTACKER, arguments: { transactionId: A.transaction } } })
+    ).rejects.toMatchObject({ code: "unauthenticated" });
+    await expect(asAttacker("delete_transaction", {})).rejects.toMatchObject({ code: "invalid-argument" });
+  });
+
   it("no tool reads, changes or creates anything in another user's account", async () => {
     const failures: string[] = [];
     const reached: string[] = [];
@@ -110,7 +139,7 @@ describe("cross-user isolation: every AI tool", () => {
         attacks++;
         const label = `${def.name}(${JSON.stringify(args).slice(0, 160)})`;
         try {
-          const r = await withTimeout(handleTool(ATTACKER, def.name, args), CALL_TIMEOUT_MS);
+          const r = await withTimeout(asAttacker(def.name, args), CALL_TIMEOUT_MS);
           assertNoLeak(r, label);
         } catch (err) {
           const msg = (err as Error)?.message ?? String(err);

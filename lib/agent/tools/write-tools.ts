@@ -6,8 +6,8 @@
 
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import { Timestamp } from "firebase-admin/firestore";
 import { lookupCompany, lookupByVatId, callFirebaseFunction } from "@/lib/api/firebase-callable";
+import { callableErrorMessage, createSourceTool, updateTransactionTool } from "./mcp-tools";
 import { getOwnedDoc } from "@/lib/auth/owned-doc";
 
 // Lazy-load admin DB to avoid initialization at build time
@@ -32,192 +32,27 @@ async function ownedPartnerName(partnerId: unknown, userId: unknown): Promise<st
 }
 
 // ============================================================================
-// Update Transaction
-// ============================================================================
-
-export const updateTransactionTool = tool(
-  async ({ transactionId, description, isComplete }, config) => {
-    const userId = config?.configurable?.userId;
-    if (!userId) {
-      return { error: "User ID not provided" };
-    }
-
-    const db = await getDb();
-    const txRef = db.collection("transactions").doc(transactionId);
-    const txDoc = await txRef.get();
-
-    if (!txDoc.exists) {
-      return { error: "Transaction not found" };
-    }
-
-    const txData = txDoc.data()!;
-    if (txData.userId !== userId) {
-      return { error: "Transaction not found" };
-    }
-
-    // Build update object
-    const updates: Record<string, unknown> = {
-      updatedAt: Timestamp.now(),
-    };
-
-    const previousValues: Record<string, unknown> = {};
-    const newValues: Record<string, unknown> = {};
-
-    if (description !== undefined && description !== txData.description) {
-      previousValues.description = txData.description;
-      newValues.description = description;
-      updates.description = description;
-    }
-
-    if (isComplete !== undefined && isComplete !== txData.isComplete) {
-      previousValues.isComplete = txData.isComplete;
-      newValues.isComplete = isComplete;
-      updates.isComplete = isComplete;
-    }
-
-    if (Object.keys(newValues).length === 0) {
-      return {
-        success: true,
-        message: "No changes to apply",
-        transactionId,
-      };
-    }
-
-    // Create history entry
-    const historyRef = txRef.collection("history").doc();
-    await historyRef.set({
-      changedAt: Timestamp.now(),
-      changedBy: userId,
-      previousValues,
-      newValues,
-    });
-
-    // Apply updates
-    await txRef.update(updates);
-
-    return {
-      success: true,
-      transactionId,
-      historyId: historyRef.id,
-      changes: newValues,
-    };
-  },
-  {
-    name: "updateTransaction",
-    description:
-      "Update a transaction's description or completion status. REQUIRES USER CONFIRMATION.",
-    schema: z.object({
-      transactionId: z.string().describe("The transaction ID"),
-      description: z.string().optional().describe("New description"),
-      isComplete: z.boolean().optional().describe("Mark as complete/incomplete"),
-    }),
-  }
-);
-
-// ============================================================================
-// Create Source
-// ============================================================================
-
-export const createSourceTool = tool(
-  async ({ name, iban, currency }, config) => {
-    const userId = config?.configurable?.userId;
-    if (!userId) {
-      return { error: "User ID not provided" };
-    }
-
-    const db = await getDb();
-    const sourceRef = await db.collection("sources").add({
-      userId,
-      name,
-      iban,
-      currency: currency || "EUR",
-      isActive: true,
-      transactionCount: 0,
-      createdAt: Timestamp.now(),
-      updatedAt: Timestamp.now(),
-    });
-
-    return {
-      success: true,
-      sourceId: sourceRef.id,
-      name,
-      iban,
-    };
-  },
-  {
-    name: "createSource",
-    description: "Create a new bank account/source. REQUIRES USER CONFIRMATION.",
-    schema: z.object({
-      name: z.string().describe("Display name for the account"),
-      iban: z.string().describe("IBAN of the account"),
-      currency: z.string().optional().describe("Currency code (default EUR)"),
-    }),
-  }
-);
-
-// ============================================================================
 // Rollback Transaction
 // ============================================================================
 
+// The rollback is the server's (#616): rollbackTransaction restores only what
+// an edit may write, through the same rules as update_transaction. updateTransaction
+// and createSource wrap their MCP twins in ./mcp-tools.
+
 export const rollbackTransactionTool = tool(
   async ({ transactionId, historyId }, config) => {
-    const userId = config?.configurable?.userId;
-    if (!userId) {
-      return { error: "User ID not provided" };
+    const authHeader = config?.configurable?.authHeader;
+    if (!authHeader) {
+      return { error: "Auth header not provided" };
     }
-
-    const db = await getDb();
-    const txRef = db.collection("transactions").doc(transactionId);
-    const txDoc = await txRef.get();
-
-    if (!txDoc.exists) {
-      return { error: "Transaction not found" };
+    try {
+      return await callFirebaseFunction<
+        { transactionId: string; historyId: string },
+        { success: boolean; transactionId: string; restoredValues: Record<string, unknown>; historyId: string | null }
+      >("rollbackTransaction", { transactionId, historyId }, authHeader);
+    } catch (err) {
+      return { error: callableErrorMessage(err) };
     }
-
-    const txData = txDoc.data()!;
-    if (txData.userId !== userId) {
-      return { error: "Transaction not found" };
-    }
-
-    // Get the history entry
-    const historyRef = txRef.collection("history").doc(historyId);
-    const historyDoc = await historyRef.get();
-
-    if (!historyDoc.exists) {
-      return { error: "History entry not found" };
-    }
-
-    const historyData = historyDoc.data()!;
-    const { previousValues } = historyData;
-
-    if (!previousValues || Object.keys(previousValues).length === 0) {
-      return { error: "No previous values to restore" };
-    }
-
-    // Create a new history entry for the rollback
-    const rollbackHistoryRef = txRef.collection("history").doc();
-    await rollbackHistoryRef.set({
-      changedAt: Timestamp.now(),
-      changedBy: userId,
-      previousValues: Object.fromEntries(
-        Object.keys(previousValues).map((key) => [key, txData[key]])
-      ),
-      newValues: previousValues,
-      rollbackFrom: historyId,
-    });
-
-    // Apply the rollback
-    await txRef.update({
-      ...previousValues,
-      updatedAt: Timestamp.now(),
-    });
-
-    return {
-      success: true,
-      transactionId,
-      restoredValues: previousValues,
-      historyId: rollbackHistoryRef.id,
-    };
   },
   {
     name: "rollbackTransaction",

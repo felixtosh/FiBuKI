@@ -533,6 +533,7 @@ export const searchLocalFilesTool = tool(
       console.error("[searchLocalFiles] Error scoring files:", err);
       return {
         searchType: "local_files",
+        amountsIn: "cents",
         strategy: strategy || "all",
         searchedTransaction: {
           id: transactionId,
@@ -558,6 +559,7 @@ export const searchLocalFilesTool = tool(
 
       return {
         searchType: "local_files",
+        amountsIn: "cents",
         strategy: strategy || "all",
         searchedTransaction: {
           id: transactionId,
@@ -626,8 +628,8 @@ export const searchLocalFilesTool = tool(
         scoreReasons: match.matchSources,
         fileId: match.fileId,
         fileName: file.fileName,
-        // Convert from cents to whole units for display
-        extractedAmount: candidateAmount != null ? candidateAmount / 100 : undefined,
+        // Integer cents, as every amount the chat reads (#616).
+        extractedAmount: candidateAmount ?? undefined,
         extractedCurrency: file.extractedCurrency || "EUR",
         extractedDate: toDateSafe(file.extractedDate)?.toISOString() ?? undefined,
         extractedPartner: file.extractedPartner ?? undefined,
@@ -651,6 +653,8 @@ export const searchLocalFilesTool = tool(
 
     return {
       searchType: "local_files",
+      // Every amount here is integer cents (#616); a result saved before said euros.
+      amountsIn: "cents",
       strategy: strategy || "all",
       searchedTransaction: {
         id: transactionId,
@@ -681,7 +685,7 @@ export const searchLocalFilesTool = tool(
   {
     name: "searchLocalFiles",
     description:
-      "Search uploaded files that might match a transaction. Scores files by amount, date, and partner match. Returns candidates with scores.",
+      "Search uploaded files that might match a transaction. Scores files by amount, date, and partner match. Returns candidates with scores. Amounts are integer cents: each candidate's extractedAmount (unsigned document total) and searchedTransaction.amount (negative = expense).",
     schema: z.object({
       transactionId: z.string().describe("The transaction ID to find files for"),
       strategy: z
@@ -1950,10 +1954,11 @@ export const connectFileToTransactionTool = tool(
           transactionId,
           fileName: file.fileName,
           extractedPartner: file.extractedPartner || null,
-          extractedAmount: fileAmount != null ? fileAmount / 100 : null,
+          // Integer cents, as every amount the chat reads (#616).
+          extractedAmount: fileAmount ?? null,
           extractedCurrency: file.extractedCurrency || "EUR",
           transactionName: tx.name,
-          transactionAmount: tx.amount != null ? tx.amount / 100 : null,
+          transactionAmount: tx.amount ?? null,
           transactionCurrency: tx.currency || "EUR",
           message: isReceiptSearchWorker
             ? `Cannot connect in receipt_search mode: ${warnings.join(" ")} Continue searching and verify another candidate.`
@@ -2046,7 +2051,7 @@ IMPORTANT: This tool validates that the file matches the transaction before conn
 - Amount must be within 50-200% of transaction amount
 - Partner mismatch is treated as a warning unless amount/date evidence is strong
 
-If validation fails, the connection is blocked. Review the warnings before proceeding.
+If validation fails, the connection is blocked (error VALIDATION_FAILED, with extractedAmount and transactionAmount in integer cents). Review the warnings before proceeding.
 Only use skipValidation=true if you're certain the file belongs to this transaction despite the mismatch.
 Note: In receipt_search worker mode, skipValidation is ignored for safety.
 

@@ -4,6 +4,8 @@
 
 export interface ToolDefinition {
   name: string;
+  annotation: "read-only" | "write" | "destructive";
+  openWorld?: boolean;
   description: string;
   inputSchema: { type: "object"; properties: Record<string, unknown>; required?: string[] };
   requiredFeature?: string;
@@ -12,14 +14,21 @@ export interface ToolDefinition {
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     "name": "list_sources",
+    "annotation": "read-only",
     "description": "List all bank accounts/sources for the user",
     "inputSchema": {
       "type": "object",
-      "properties": {}
+      "properties": {
+        "includeInactive": {
+          "type": "boolean",
+          "description": "Also list inactive bank accounts (default false)"
+        }
+      }
     }
   },
   {
     "name": "get_source",
+    "annotation": "read-only",
     "description": "Get details of a specific bank account by ID",
     "inputSchema": {
       "type": "object",
@@ -36,6 +45,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "create_source",
+    "annotation": "write",
     "description": "Create a new bank account/source",
     "inputSchema": {
       "type": "object",
@@ -68,6 +78,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "delete_source",
+    "annotation": "destructive",
     "description": "Delete a bank account and all associated imports/transactions (cascade). Requires confirm: true.",
     "inputSchema": {
       "type": "object",
@@ -89,7 +100,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "list_transactions",
-    "description": "List transactions with optional filters. Dates are YYYY-MM-DD (local timezone). Amounts in cents. Returns { transactions, nextCursor, count }. Pass nextCursor back as cursor for the next page.",
+    "annotation": "read-only",
+    "description": "List transactions with optional filters. Dates are YYYY-MM-DD (local timezone). Amounts in cents. Returns { transactions, nextCursor, count, total, aggregates }. Pass nextCursor back as cursor for the next page. search, the amount bounds and the has*/only* filters run over a window of the most recent 5000 matching rows: `total` and `aggregates` (counts with/without a partner, a file, a no-receipt category, per category template) cover every match in that window, and `scanTruncated: true` says the window was full, so the answer is partial, not a total.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -113,6 +125,58 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           "type": "boolean",
           "description": "Filter by completion status"
         },
+        "minAmount": {
+          "type": "number",
+          "description": "Minimum absolute amount in cents (e.g. 4700 = 47.00)"
+        },
+        "maxAmount": {
+          "type": "number",
+          "description": "Maximum absolute amount in cents"
+        },
+        "partnerId": {
+          "type": "string",
+          "description": "Only transactions with this partner assigned"
+        },
+        "hasPartner": {
+          "type": "boolean",
+          "description": "true = any partner assigned, false = none yet"
+        },
+        "noReceiptCategoryId": {
+          "type": "string",
+          "description": "Only transactions in this no-receipt category (an id from list_no_receipt_categories)"
+        },
+        "noReceiptCategoryTemplateId": {
+          "type": "string",
+          "enum": [
+            "bank-fees",
+            "interest",
+            "bank-rewards",
+            "internal-transfers",
+            "payment-provider-settlements",
+            "taxes-government",
+            "payroll",
+            "private-personal",
+            "zero-value",
+            "receipt-lost"
+          ],
+          "description": "Only transactions in a no-receipt category made from this template ('private-personal' is 'private')"
+        },
+        "hasNoReceiptCategory": {
+          "type": "boolean",
+          "description": "true = has a no-receipt category, false = none"
+        },
+        "hasFile": {
+          "type": "boolean",
+          "description": "true = at least one file connected, false = none"
+        },
+        "onlyIncome": {
+          "type": "boolean",
+          "description": "Only money in (positive amounts)"
+        },
+        "onlyExpenses": {
+          "type": "boolean",
+          "description": "Only money out (negative amounts)"
+        },
         "limit": {
           "type": "number",
           "description": "Max results per page (default 50, max 500)"
@@ -126,6 +190,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "get_transaction",
+    "annotation": "read-only",
     "description": "Get full details of a transaction by ID",
     "inputSchema": {
       "type": "object",
@@ -142,7 +207,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "update_transaction",
-    "description": "Update a transaction's description, completion status, or manual VAT-rate override (the override feeds the UVA calculation when no receipt resolves the rate)",
+    "annotation": "write",
+    "description": "Update a transaction's description, completion status, or manual VAT-rate override (the override feeds the UVA calculation when no receipt resolves the rate). A change is recorded in the transaction's history; the reply then carries historyId and the new values (changes).",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -205,6 +271,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "accept_receipt_only",
+    "annotation": "write",
     "description": "Record - or revoke - an Accepted Receipt ruling on a receipt-only transaction: a standing, recorded ruling (who, when, why, over which files) that no § 11 invoice is obtainable and the receipt is as good as the evidence will ever get, so the chase queue stops holding the line. It changes nothing else: documentationState stays receipt-only, isComplete, the UVA and the BMD export are untouched, and no Vorsteuer becomes claimable. The ruling goes stale on its own when the connected files or the documentation state change; revoke with revoke: true reverses it explicitly. If input VAT appears to be claimed on the line, the response carries a warning - never a refusal; deductibility stays the Tax Advisor's call.",
     "inputSchema": {
       "type": "object",
@@ -229,6 +296,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "accept_partial_payment",
+    "annotation": "write",
     "description": "Record - or revoke - an Accepted Partial Payment ruling on a transaction whose connected files carry a tip and whose bank amount is short of document total + tip: a recorded ruling (who, when, why, over which figures) that the shortfall is real - a split bill where only a share was paid, or an instalment - and not a mistyped tip. Without it the UVA lists such a line as tip-partial-payment and claims nothing, and the BMD export refuses it. With a live ruling the UVA claims the paid fraction of the document's Vorsteuer and the BMD export books the tip row scaled to the same fraction. Do not use it to make a mistyped tip go away - correct the tip with update_file_extraction instead. The ruling goes stale on its own when the connected files, a file's total or tip, or the bank amount change; revoke: true removes it. Requires at least one connected file with a tip.",
     "inputSchema": {
       "type": "object",
@@ -253,6 +321,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "list_transactions_needing_files",
+    "annotation": "read-only",
     "description": "Find transactions without receipts (no files, no category). Returns { transactions, nextCursor, count }. `count` is the size of this page, not a total — page with nextCursor until it comes back null to see everything that still needs a receipt.",
     "inputSchema": {
       "type": "object",
@@ -274,6 +343,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "list_transactions_missing_invoice",
+    "annotation": "read-only",
     "description": "Find transactions documented by a receipt only - money moved, a document is attached, but no invoice satisfying § 11 UStG was ever received, so no Vorsteuer may be claimed. These lines look complete everywhere else. Returns { transactions, nextCursor, count, acceptedCount } where each row carries the vendor, the amount, the date and the § 11 elements the attached document is missing, so a request to the supplier can name the defect. Lines with a live Accepted Receipt ruling (accept_receipt_only) are excluded; `acceptedCount` says how many this page's scan excluded. Like `count`, both are per page, not totals - page with nextCursor until it comes back null.",
     "inputSchema": {
       "type": "object",
@@ -295,6 +365,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "import_transactions",
+    "annotation": "destructive",
     "description": "Import pre-mapped transactions into a source. Transactions must include date, amount, name, and currency. Lines an earlier import already stored for the same bank account are skipped (same date, amount and reference), so re-sending an overlapping export is safe; the response says how many in duplicateCount. When a file is sent in several calls, pass the same importJobId on each so identical lines of that file are all kept.",
     "inputSchema": {
       "type": "object",
@@ -363,10 +434,35 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "list_files",
+    "annotation": "read-only",
     "description": "List uploaded files (receipts/invoices) with match suggestions. Returns { files, nextCursor, count }. `count` is the size of this page, not a total — page with nextCursor until it comes back null to see every file.",
     "inputSchema": {
       "type": "object",
       "properties": {
+        "search": {
+          "type": "string",
+          "description": "Substring match on the file name and the extracted partner name"
+        },
+        "partnerId": {
+          "type": "string",
+          "description": "Only files with this partner assigned"
+        },
+        "dateFrom": {
+          "type": "string",
+          "description": "Document date (else upload date) on or after this day (YYYY-MM-DD)"
+        },
+        "dateTo": {
+          "type": "string",
+          "description": "Document date (else upload date) on or before this day (YYYY-MM-DD)"
+        },
+        "minAmount": {
+          "type": "number",
+          "description": "Minimum absolute document total in cents (e.g. 4700 = 47.00)"
+        },
+        "maxAmount": {
+          "type": "number",
+          "description": "Maximum absolute document total in cents"
+        },
         "hasConnections": {
           "type": "boolean",
           "description": "true = matched, false = unmatched (leaves out Copies, which are never work)"
@@ -416,6 +512,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "get_file",
+    "annotation": "read-only",
     "description": "Get file details including extracted data and suggestions. splitSuggestion, when present, means the Extraction read several separately issued invoices or Receipts in this one PDF: segments lists each one's pages with the invoice number, issuer and total it read; confirm or adjust it with split_file. splitFrom (on a part) and splitInto (on a split original) link the two sides of a Split.",
     "inputSchema": {
       "type": "object",
@@ -432,6 +529,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "delete_file",
+    "annotation": "write",
     "description": "Delete a file. The deletion is reversible: the file is hidden, its stored document is kept, and restore_file puts it back. Nothing on this surface destroys a document. The file is detached from every transaction it was connected to (no need to disconnect first); the response lists reopenedTransactions (now incomplete again, with date, amount and counterparty, so you can tell the user) separately from stillCompleteTransactions (another document or a no-receipt category keeps them complete). A document FiBuKI generated for an invoice is refused with GENERATED_INVOICE, naming the invoice; withdraw an issued invoice with cancel_invoice instead. Requires confirm: true.",
     "inputSchema": {
       "type": "object",
@@ -453,6 +551,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "restore_file",
+    "annotation": "write",
     "description": "Restore a deleted file, making it visible again. Its previous transaction connections are NOT recreated; reconnect with connect_file_to_transaction where they still apply. Find deleted files with list_files includeDeleted: true.",
     "inputSchema": {
       "type": "object",
@@ -469,6 +568,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "split_file",
+    "annotation": "write",
     "description": "Split a PDF that holds several separately issued invoices or Receipts (an Amazon Marketplace order download with one Rechnung or Quittung per seller) into one file per invoice or Receipt. Give the page ranges in order; together they must cover every page exactly once. Each part is a new file holding those pages unedited; it is extracted, classified and partner-matched from scratch, and connected to every transaction the original was connected to. The original is then deleted (reversible), and restore_file refuses it while any part exists, so undo by deleting the parts first. Refused for a single-page PDF, an image, a deleted or encrypted file, a document FiBuKI generated for an invoice, and when a part's pages are already on file. Use get_file's splitSuggestion for the ranges when it has one.",
     "inputSchema": {
       "type": "object",
@@ -507,6 +607,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "dismiss_split_suggestion",
+    "annotation": "write",
     "description": "Say a file is one document, not several: removes get_file's splitSuggestion, and re-extraction never stores a new one for this file. Use it when the suggestion is wrong, for example one invoice that runs over several pages. It cannot be undone, but nothing is lost: split_file still splits the file by explicit page ranges.",
     "inputSchema": {
       "type": "object",
@@ -523,6 +624,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "connect_file_to_transaction",
+    "annotation": "write",
     "description": "Connect a file (receipt) to a transaction, marking it complete. A pair that was previously rejected is refused with PAIR_REJECTED; lift the rejection with undismiss_transaction_suggestion first if the connection is genuinely intended.",
     "inputSchema": {
       "type": "object",
@@ -544,6 +646,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "disconnect_file_from_transaction",
+    "annotation": "write",
     "description": "Disconnect a file from a transaction",
     "inputSchema": {
       "type": "object",
@@ -565,6 +668,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "confirm_file_recipient_is_user",
+    "annotation": "write",
     "description": "Rule that the recipient printed on this document is the user, despite the identity comparison saying otherwise — a maiden name, a c/o address, an employer's name on a folio, OCR noise. Lifts the foreignRecipient block: the file reclassifies, its VAT becomes claimable again and transaction matching is re-run for it. Nothing extracted is touched. Reversible with unconfirm_file_recipient_is_user.",
     "inputSchema": {
       "type": "object",
@@ -581,6 +685,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "unconfirm_file_recipient_is_user",
+    "annotation": "write",
     "description": "Withdraw a recipient confirmation, so the identity comparison's own verdict stands again. A document that names somebody else goes back to being excluded from Vorsteuer and from transaction matching.",
     "inputSchema": {
       "type": "object",
@@ -597,6 +702,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "mark_file_vat_not_claimable",
+    "annotation": "write",
     "description": "Record that the VAT this document prints must not be claimed as Vorsteuer, with the reason. Use for a figure that looks like VAT and is not: 11% on an insurance policy is Versicherungssteuer and insurance is VAT-exempt (insurance-tax), another public charge printed in the VAT column (levy), a 100% discount leaving nothing due (discount-to-zero), or private consumption (private). The UVA derivation then books the document's gross at 0% and lists the excluded VAT under nonClaimableVat instead of putting it on the receipt-chasing list as recoverable. Nothing extracted is touched — the document still says what it says. Reversible with unmark_file_vat_not_claimable.",
     "inputSchema": {
       "type": "object",
@@ -628,6 +734,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "unmark_file_vat_not_claimable",
+    "annotation": "write",
     "description": "Clear a file's non-claimable VAT marker, so its VAT is deductible again. The extracted figures never changed, so the derivation resumes reading them as printed.",
     "inputSchema": {
       "type": "object",
@@ -644,6 +751,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "dismiss_transaction_suggestion",
+    "annotation": "write",
     "description": "Reject a proposed file-to-transaction pair. Removes the suggestion from the file's suggestion list and records the rejection so re-scoring does not propose it again. Use for a genuinely wrong pair (coincidental amount or date, an own-side document scored against an expense line). Do NOT use when the pair is correct but the transaction already holds a document. Reversible with undismiss_transaction_suggestion.",
     "inputSchema": {
       "type": "object",
@@ -669,6 +777,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "undismiss_transaction_suggestion",
+    "annotation": "write",
     "description": "Clear a previous rejection of a file-to-transaction pair, making it eligible to be suggested again. Does not itself regenerate the suggestion — the pair reappears when matching next runs for that file (a partner change, a precision search, or the UI's refresh-matches action), or can be scored on demand with score_file_transaction_match. The earlier rejection stays in the file's history.",
     "inputSchema": {
       "type": "object",
@@ -690,6 +799,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "mark_file_as_not_invoice",
+    "annotation": "write",
     "description": "Flag a file as not an invoice (payment reminder, statement, anything that documents nothing). Clears its extracted data and takes it out of the unmatched-file queue. Refuses while the file is still connected to a transaction. Reversible with unmark_file_as_not_invoice. For a second copy of an invoice already held, use mark_file_as_copy instead: it records which File it is a copy of.",
     "inputSchema": {
       "type": "object",
@@ -710,6 +820,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "mark_file_as_copy",
+    "annotation": "write",
     "description": "Record a file as a Copy of another file: a second File of the same invoice that arrived by another route (a mailbox Sync and a document system, a mailed copy of an invoice the user issued). A Copy holds no transaction connection and is never proposed as a match, so the original alone carries the coverage, the input VAT and the BMD export. If the Copy is connected, its connections are taken off it; where the original is not on that transaction, the connection moves to the original, so no transaction loses its document. Not a rejection. Also accepts a Copy suggestion (copySuggestion on the file). A FiBuKI-generated invoice is always the original and is refused as the Copy. A Receipt for the same charge as an invoice is NOT a Copy, nor is a payment reminder. Reversible with unmark_file_as_copy.",
     "inputSchema": {
       "type": "object",
@@ -731,6 +842,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "unmark_file_as_copy",
+    "annotation": "write",
     "description": "Not a Copy: undo a Copy, or decline a Copy suggestion on a file. Stores a standing ruling for the pair, so it is never suggested or recorded again (marking the pair with mark_file_as_copy revokes the ruling). Undoing reconnects nothing: the file goes back to matching like any unconnected file.",
     "inputSchema": {
       "type": "object",
@@ -747,6 +859,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "make_file_the_original",
+    "annotation": "write",
     "description": "Swap a Copy and its original: the given Copy becomes the original, the former original becomes its Copy, and the transaction connections move to the given file in the same act. Refused when the original is a FiBuKI-generated invoice, which is always the original.",
     "inputSchema": {
       "type": "object",
@@ -763,6 +876,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "link_correction",
+    "annotation": "write",
     "description": "Link an Invoice Correction (a supplier's credit note, a Gutschrift that reduces an earlier invoice, a Rechnungskorrektur) to the File it corrects: the original invoice. The UVA and the BMD export then book the refund as a correction of that original, at the original's rates (a purchase refund reduces Vorsteuer in KZ 067), and an unlinked correction blocks the period's filing. Also accepts a suggestion (correctionSuggestions, see get_correction). The original must not itself be a correction. Reversible with unlink_correction.",
     "inputSchema": {
       "type": "object",
@@ -784,6 +898,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "unlink_correction",
+    "annotation": "write",
     "description": "Remove an Invoice Correction's link to its original, or decline one of its suggestions (pass originalFileId). The named File is never linked to this correction automatically again; link_correction on the pair revokes that. An unlinked correction blocks the period's filing until it is linked again or the line is reclassified.",
     "inputSchema": {
       "type": "object",
@@ -804,6 +919,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "get_correction",
+    "annotation": "read-only",
     "description": "Inspect Invoice Corrections. With fileId: what the File reads as (invoice-correction or self-billed-invoice, and whether the signals disagree), its referenced invoice number, the File it corrects and the transactions that paid that File, its link suggestions, and the corrections linked to it when it is an original. With transactionId: the transactions related to it through a correction (the purchase a refund refunds, or the refunds of a purchase).",
     "inputSchema": {
       "type": "object",
@@ -821,6 +937,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "link_receipt",
+    "annotation": "write",
     "description": "Link a Receipt (a payment confirmation: GitHub's or Stripe's receipt, a card terminal slip) to the invoice it pays. Both stay connected to the transaction and count once: the invoice's figures, its payment total raised to the Receipt's when that is larger, the difference booked as Trinkgeld without VAT. If one of the two Files is on a transaction and the other on none, the other is connected there too. Also accepts a pairing suggestion (receiptPairSuggestions, see get_receipt_link). One Receipt pays one invoice; the invoice must not itself be a Receipt, and neither File may be a Copy. Reversible with unlink_receipt.",
     "inputSchema": {
       "type": "object",
@@ -842,6 +959,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "unlink_receipt",
+    "annotation": "write",
     "description": "Remove a Receipt Link, from the Receipt or from its invoice (pass the Receipt as otherFileId), or decline a pairing suggestion (pass otherFileId). The pair is recorded as declined on both Files and never linked or suggested automatically again; link_receipt on the pair revokes that. No transaction connection changes: both Files stay where they are and each counts as an ordinary File.",
     "inputSchema": {
       "type": "object",
@@ -862,6 +980,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "get_receipt_link",
+    "annotation": "read-only",
     "description": "Inspect a File's Receipt Link: the invoice number it cites as paid, the invoice it is the Receipt of, the Receipts linked to it when it is an invoice, its pairing suggestions (with the File prefilled as the Receipt, or null when the person picks), and, with withCandidates, Files of the same Partner that may be linked by hand.",
     "inputSchema": {
       "type": "object",
@@ -882,6 +1001,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "unmark_file_as_not_invoice",
+    "annotation": "write",
     "description": "Restore a file previously flagged as not an invoice. Re-opens extraction, which recovers the fields marking cleared.",
     "inputSchema": {
       "type": "object",
@@ -898,6 +1018,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "update_file_extraction",
+    "annotation": "write",
     "description": "Correct a file's extracted record by hand. Use when re-extraction cannot get there because the right value needs judgement the document does not state unambiguously — a Schlussrechnung printing both the full amount and the part already invoiced, VAT that is correctly read but not claimable, a one-cent OCR slip inside the reconciliation tolerance. Only the fields you pass are touched; pass null to clear one. The corrected total is NOT re-derived from the line items, so an amount that deliberately differs from them survives. Correcting anything VAT-bearing makes you the authority on the file: stored reconciliation flags and extraction-provenance markers are cleared, because they would otherwise outrank what you just set. Every correction records which fields you set and when, in extractionCorrectedFields — from then on retry_file_extraction refuses the file unless overwriteCorrections is passed, and list_files can return the corrected population with handCorrected: true. Takes the same fields as the file detail panel: the figures, the direction, the descriptive fields (partner, vatId, iban, address) and the additional fields, which carry the Due Date and Debit Date. Correcting the document date re-reads the Due Date and Debit Date against it. A correction that moves the amount, the date, the Due or Debit Date, the partner, the IBAN or the VAT ID re-scores the file's transaction suggestions; it never connects or disconnects a transaction.",
     "inputSchema": {
       "type": "object",
@@ -1049,6 +1170,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "retry_file_extraction",
+    "annotation": "destructive",
     "description": "Re-run extraction on a file. Use when a file extracted without erroring but produced nothing usable — no line items, no VAT amount, a wrong total — which is the case the UI's retry button did not cover. Returns { queued: true, fileId } at once: the extraction waits its turn and runs in the background, so read the file again later (get_file) — extractionComplete turns true when it is done, with extractionError set if it failed. Re-extracting resets partner and transaction matching for the file so both re-run against the new data; a manual partner assignment is kept. A file that already extracted cleanly needs force: true. A file carrying hand corrections is refused with HAND_CORRECTED, naming the fields a person set — re-extraction would discard them, so overwriting takes its own flag, per file. Sweep over list_files with handCorrected: true first if you want to know which files that will be.",
     "requiredFeature": "aiExtraction",
     "inputSchema": {
@@ -1074,6 +1196,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "reclassify_documents",
+    "annotation": "destructive",
     "description": "Re-run the § 11 UStG document classifier over every stored file and then re-derive the documentation state of every transaction, whole account, in that order. This is what puts invoice/receipt on records that were stored before the classifier existed or before a rule fix — it never re-extracts, spends no AI call and touches no extracted field, so a hand correction cannot be destroyed. Defaults to a dry run: pass dryRun=false to write. Writes only where the value actually moved, so a second run in a row writes nothing. Returns summary counts only — by document type, by basis reason and by documentation state, never per-file rows. Inspect the result with list_transactions_missing_invoice.",
     "inputSchema": {
       "type": "object",
@@ -1087,6 +1210,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "auto_connect_file_suggestions",
+    "annotation": "write",
     "description": "Auto-connect files to transactions above confidence threshold",
     "requiredFeature": "aiMatching",
     "inputSchema": {
@@ -1105,6 +1229,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "upload_file",
+    "annotation": "write",
+    "openWorld": true,
     "description": "Upload a file from a URL or base64 data. Byte-identical re-uploads create nothing: the existing file is returned with duplicate: true.",
     "requiredFeature": "fileUpload",
     "inputSchema": {
@@ -1152,6 +1278,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "get_period_status",
+    "annotation": "read-only",
     "description": "How far the bookkeeping for a period is: per month, how many Transactions are covered (a File connected or a No-document Category), still missing a receipt, or parked on the plan limit, plus the newest missing lines and how many Matches wait for a yes. Defaults to the last three months. Shows a progress board in clients that support widgets. Read-only; the coverage rules are the same ones list_transactions_needing_files uses.",
     "inputSchema": {
       "type": "object",
@@ -1169,6 +1296,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "list_pending_matches",
+    "annotation": "read-only",
     "description": "Files FiBuKI has matched to a Transaction but nobody has connected yet, best first, with FiBuKI's own confidence. Shows a review list in clients that support widgets. Connect one with connect_file_to_transaction, refuse one with dismiss_transaction_suggestion, or connect all at the bar with auto_connect_file_suggestions. Read-only; never re-score.",
     "inputSchema": {
       "type": "object",
@@ -1186,6 +1314,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "score_file_transaction_match",
+    "annotation": "read-only",
     "description": "Score how well a file matches a transaction (0-100 confidence), with the same scorer the matching uses. Also says whether matching could propose the pair: `ineligible` names why the file is never matched (deleted, copy, not-invoice, foreign-recipient), `hidden` why the pair is held back from suggestions (rejected, over-quota). Both null when it could.",
     "requiredFeature": "aiMatching",
     "inputSchema": {
@@ -1208,6 +1337,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "list_identity_entities",
+    "annotation": "read-only",
     "description": "List the user's identity entities (personalEntity + companies). Each entry has id, name, type (person|company), optional vatId, ibans[], and optional address. Use the returned id as `issuerEntityId` in update_invoice / create_invoice.",
     "inputSchema": {
       "type": "object",
@@ -1216,6 +1346,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "update_identity_entity",
+    "annotation": "write",
     "description": "Patch an existing identity entity (personal or company). Accepts a sparse patch of name, vatId, ibans (full replacement array), aliases, and address ({street, postalCode, city, country}). Use this to bring an entity up to invoice-ready state without going through the settings UI.",
     "inputSchema": {
       "type": "object",
@@ -1274,6 +1405,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "create_identity_entity",
+    "annotation": "write",
     "description": "Create the user's identity: their personal entity (a freelancer) or a company they run. Use it when list_identity_entities is empty, then update_identity_entity for later changes. FiBuKI needs it to tell the user's own issued invoices from the invoices they receive, so ask for the name, the UID (vatId, like ATU12345678), their own IBANs and any other names the business uses, and show what you will save before saving. Refuses a second personal entity or a company with the same name.",
     "inputSchema": {
       "type": "object",
@@ -1336,6 +1468,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "get_onboarding_status",
+    "annotation": "write",
     "description": "Where the user is in setting up FiBuKI: identity, mailbox, bank account, transactions, first partner, first document. Each step is done, skipped or open, with the page on fibuki.com where it is done. Records any step the user's data has completed since the last look, using the same rules as the web app, so call it at the start of a session and after the user finished something. Starts onboarding for a user who has none.",
     "inputSchema": {
       "type": "object",
@@ -1356,6 +1489,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "skip_onboarding_step",
+    "annotation": "write",
     "description": "Skip one onboarding step the user does not want (for example the mailbox step when they prefer to use their assistant's mail). Only on the user's say-so. Returns the new status.",
     "inputSchema": {
       "type": "object",
@@ -1380,13 +1514,14 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "list_partners",
+    "annotation": "read-only",
     "description": "List user partners with optional search. Returns { partners, nextCursor, count } — `count` is the size of this page, not a total; page with nextCursor until it comes back null to see every partner. Each partner carries `billingCycle`: the effective cycle plus the learned and declared halves it was resolved from, one entry per recurrence (null when the partner does not bill on a schedule).",
     "inputSchema": {
       "type": "object",
       "properties": {
         "search": {
           "type": "string",
-          "description": "Search in partner name and aliases"
+          "description": "Search in partner name, aliases and VAT ID"
         },
         "limit": {
           "type": "number",
@@ -1401,6 +1536,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "get_partner",
+    "annotation": "read-only",
     "description": "Get partner details by ID, including `billingCycle`: the effective cycle plus the learned and declared halves it was resolved from, one entry per recurrence (a partner can bill in more than one amount band). A partner merged away by merge_partners reads back as itself with isActive false, `mergedInto` and `survivor` ({ id, name }): switch to the survivor's id.",
     "inputSchema": {
       "type": "object",
@@ -1417,6 +1553,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "set_partner_billing_cycle",
+    "annotation": "write",
     "description": "Declare, change or clear the DECLARED billing cycle of a partner. A declaration wins over what Fibuki learned from the transaction history; the learned half stays visible beside it and is never touched here. Pass one recurrence or an array of them (a partner can bill in more than one amount band), or `declared: null` to clear every declaration and fall back to what was learned.",
     "inputSchema": {
       "type": "object",
@@ -1478,6 +1615,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "list_recurring_partners",
+    "annotation": "read-only",
     "description": "List the partners that bill on a schedule, with everything a subscription view needs per partner: the billing cycle, the last charge seen (date, amount in the billed currency and in EUR, transaction id), the next expected charge window, and how many of its charges in the date range carry their expected document. `recurrences` splits all of that per amount band, so a vendor billing weekly and monthly reads as two rows. Amounts are absolute cents; `amountEur` is null when the account is not booked in EUR. Returns { partners, nextCursor, count, dateFrom, dateTo } — pass nextCursor back as `cursor` for the next page. Up to 200 charges per partner, ending at dateTo, are read.",
     "inputSchema": {
       "type": "object",
@@ -1503,6 +1641,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "create_partner",
+    "annotation": "write",
     "description": "Create a new user partner for transaction matching",
     "inputSchema": {
       "type": "object",
@@ -1545,6 +1684,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "update_partner",
+    "annotation": "write",
     "description": "Edit a user partner: the same fields create_partner takes. Only the fields you pass are written. `aliases` and `ibans` REPLACE the stored lists wholesale, so read the partner first (get_partner or list_partners), change the list, and write the whole list back; pass [] to clear it. Use this to strip a wrong alias, e.g. an Invoicing Agent's name a partner learned by mistake. To fold a duplicate partner into another, use merge_partners, not an alias copy. Returns the partner as get_partner does.",
     "inputSchema": {
       "type": "object",
@@ -1591,6 +1731,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "merge_partners",
+    "annotation": "destructive",
     "description": "Merge duplicate partners: fold one or more losing partners into a named survivor. The same operation as the Partners page. Transactions, files and invoices pointing at a loser move to the survivor; each loser's name and aliases join the survivor's aliases; the losers become Merged Partners (inactive, gone from list_partners, get_partner names the survivor). CANNOT BE UNDONE: requires confirm: true. Partners holding different VAT IDs are refused unless you ALSO pass confirmVatIdConflict: true, a separate claim that the differing VAT IDs really are one business. Refused: merging into a Merged Partner, and merging a bank account's own partner in either role, loser or survivor. Nothing is re-matched: `rematchPreview.newlyMatchable` counts unmatched transactions the survivor would now hit, and partner_rematch_report is the reviewed path to act on them. Returns mergedPartnerIds, aliasesAdded, repointed counts (transactions, files, invoices, ...), conflicts and rematchPreview.",
     "inputSchema": {
       "type": "object",
@@ -1624,6 +1765,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "assign_partner_to_transaction",
+    "annotation": "write",
     "description": "Assign a partner to a transaction for categorization",
     "inputSchema": {
       "type": "object",
@@ -1645,6 +1787,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "remove_partner_from_transaction",
+    "annotation": "write",
     "description": "Remove a partner assignment from a transaction",
     "inputSchema": {
       "type": "object",
@@ -1661,6 +1804,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "assign_partner_to_file",
+    "annotation": "write",
     "description": "Assign a partner to a file (receipt/invoice), as a person does in the UI: recorded as a manual assignment (partnerMatchedBy: \"manual\"), which automatic partner matching never overwrites. Replaces any partner the file had. The partner reaches connected transactions the same way a UI assignment does. The file's extracted name may be learned as an alias of the partner, except a name the extraction recorded as the Invoicing Agent.",
     "inputSchema": {
       "type": "object",
@@ -1682,6 +1826,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "remove_partner_from_file",
+    "annotation": "write",
     "description": "Remove the partner assignment from a file. If the partner had been assigned automatically (auto or suggestion), the pair is recorded as a false positive on the partner so matching does not suggest it again; a manual assignment is simply cleared.",
     "inputSchema": {
       "type": "object",
@@ -1698,6 +1843,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "partner_rematch_report",
+    "annotation": "read-only",
     "description": "READ-ONLY. Re-runs the current partner matcher over transactions that ALREADY have a partner assigned and returns only the cases where its answer differs from what is stored: a different partner would be applied, or nothing would be applied because no candidate reaches the auto-apply threshold. Writes nothing — no assignment is changed and no false positive is recorded. Use it to review assignments made before a matcher fix; partner matching itself skips any transaction that already has a partner, so those are never re-scored on their own. An assignment that a connected file backs with the same partner is supported evidence the bank-data matcher cannot see: it is left out and counted in `fileBacked`. Counts cover every evaluated transaction; `rows` is capped by `limit` and sets `truncated`.",
     "inputSchema": {
       "type": "object",
@@ -1734,6 +1880,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "rematch_assigned_partners",
+    "annotation": "destructive",
     "description": "Re-run the current partner matcher over transactions that already have an AUTO-assigned partner, whole account, and write the corrected answer WITHOUT recording a false positive — unlike remove_partner_from_transaction, which blacklists the pair forever. Defaults to a dry run: pass dryRun=false to write. Reassigns where the matcher now picks a different partner and keeps where it agrees; an assignment it no longer reproduces is reported but left alone unless clearUnconfirmed=true. Never touches manual, suggestion or ai assignments, nor one that a connected file backs with the same partner. Review with partner_rematch_report first.",
     "inputSchema": {
       "type": "object",
@@ -1775,6 +1922,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "list_no_receipt_categories",
+    "annotation": "read-only",
     "description": "List categories for transactions that don't need receipts",
     "inputSchema": {
       "type": "object",
@@ -1783,6 +1931,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "assign_no_receipt_category",
+    "annotation": "write",
     "description": "Assign a no-receipt category to a transaction",
     "inputSchema": {
       "type": "object",
@@ -1804,6 +1953,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "remove_no_receipt_category",
+    "annotation": "write",
     "description": "Remove a no-receipt category from a transaction",
     "inputSchema": {
       "type": "object",
@@ -1820,6 +1970,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "get_uva_report",
+    "annotation": "read-only",
     "description": "Read the UVA figures for one period: the same Kennzahlen, derived by the same calculation, that the reports page shows for that period. Read-only: FiBuKI derives and reconciles the UVA, it does not file it, and this tool changes nothing. Amounts in cents. Returns { period (with start/end calendar days, Europe/Vienna), kennzahlen (keyed by Kennzahl, e.g. \"000\", \"060\", \"095\"), totalOutputVat, totalInputVat, balance (KZ 095: >0 Zahllast, <0 Gutschrift), unresolved (transactions still needing a receipt or rate), transactionCount }. A period with no data returns zeroed figures.",
     "inputSchema": {
       "type": "object",
@@ -1850,6 +2001,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "create_invoice",
+    "annotation": "write",
     "description": "Create a new draft invoice for a customer (partner). Amounts in cents, net (pre-VAT). Returns the new invoiceId and a placeholder DRAFT-XXX number. The real number is allocated when the invoice is issued.",
     "inputSchema": {
       "type": "object",
@@ -1932,6 +2084,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "update_invoice",
+    "annotation": "write",
     "description": "Patch a draft invoice. Server recomputes totals and due date. Rejected if status is not 'draft'.",
     "inputSchema": {
       "type": "object",
@@ -2011,6 +2164,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "issue_invoice",
+    "annotation": "destructive",
     "description": "Issue a draft invoice: allocates real number, renders the PDF, uploads to Storage, creates the linked TaxFile, and triggers the matching pipeline. Optionally creates a public share link.",
     "inputSchema": {
       "type": "object",
@@ -2031,6 +2185,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "list_invoices",
+    "annotation": "read-only",
     "description": "List invoices with optional filters",
     "inputSchema": {
       "type": "object",
@@ -2067,6 +2222,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "get_invoice",
+    "annotation": "read-only",
     "description": "Get a single invoice with downloadUrl and shareUrl if available",
     "inputSchema": {
       "type": "object",
@@ -2083,6 +2239,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "duplicate_invoice",
+    "annotation": "write",
     "description": "Duplicate an existing invoice as a new draft. Resets number, file link, share token, and lifecycle timestamps. issueDate becomes today.",
     "inputSchema": {
       "type": "object",
@@ -2099,6 +2256,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "cancel_invoice",
+    "annotation": "destructive",
     "description": "Cancel an issued/sent/paid invoice (Storno). Issues an Invoice Correction (Rechnungskorrektur): a new invoice with its own next number, the original's line items negated, referencing the original. The original and its file stay on record with status 'cancelled'. Returns the correction's invoiceId, number and fileId. A correction itself cannot be cancelled; undo its issue (undo_issue_invoice), then discarding that draft in the app takes the Cancel back.",
     "inputSchema": {
       "type": "object",
@@ -2115,6 +2273,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "undo_issue_invoice",
+    "annotation": "destructive",
     "description": "Undo a misclicked issue: the invoice returns to an editable draft with the same number, and its generated PDF is destroyed. Allowed only while it is the newest invoice issued this year, was never sent, never paid and never opened through a share link. Anything else is refused with a pointer to cancel_invoice (Storno).",
     "inputSchema": {
       "type": "object",
@@ -2131,6 +2290,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "get_automation_status",
+    "annotation": "read-only",
     "description": "Get user's automation mode, AI budget, and plan info",
     "inputSchema": {
       "type": "object",
@@ -2139,6 +2299,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     "name": "get_profile",
+    "annotation": "read-only",
     "description": "A stable, opaque identifier for the signed-in FiBuKI user. Lets an assistant recognise the same person across conversations without learning their email or user id. Read-only.",
     "inputSchema": {
       "type": "object",

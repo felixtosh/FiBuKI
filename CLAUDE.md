@@ -224,6 +224,10 @@ export function useCategories() {
 - `deleteTransactionsBySourceCallable` - Delete all transactions for a source
 - `acceptReceiptOnlyCallable` - Record or revoke an Accepted Receipt ruling on a receipt-only transaction (#165)
 - `acceptPartialPaymentCallable` - Record or revoke an Accepted Partial Payment ruling on a tipped transaction the bank line does not cover (#554)
+- `rollbackTransactionCallable` - Restore the values one history entry says an edit replaced, through `update_transaction`'s rules (only the fields an edit writes; #616)
+
+**AI tools:**
+- `runToolCallable` (`runTool`) - Run one tool from `functions/src/tools/definitions.ts` as the session's User, through the handler MCP uses (#616)
 
 **Files:**
 - `connectFileToTransactionCallable` - Connect file to transaction. Takes the Connection Origin (`manual`, `suggestion`, `agent`, `auto`); an accepted suggestion sends no score, the server reads the stored one
@@ -273,17 +277,19 @@ AI usage is logged separately to `aiUsage` collection via `ctx.logAIUsage()`
 
 ### Server-Side Tool Registry (MCP/API)
 
-External AI integrations (OpenClaw, Claude Desktop, ChatGPT) use a shared tool registry:
+External AI integrations (OpenClaw, Claude Desktop, ChatGPT) and the chat assistant use
+one shared tool registry:
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    EXTERNAL AI TOOLS                            │
-│  OpenClaw  │  Claude Desktop (MCP)  │  ChatGPT  │  REST API     │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                    HTTP + API Key Auth
-                              │
-                              ▼
+┌──────────────────────────────────────────────┐  ┌──────────────────────────┐
+│               EXTERNAL AI TOOLS              │  │  Chat assistant          │
+│  OpenClaw │ Claude Desktop (MCP) │ ChatGPT   │  │  (lib/agent/tools/)      │
+└──────────────────────────────────────────────┘  └──────────────────────────┘
+                       │                                       │
+             HTTP + API key auth                  runTool callable, session auth
+                       │                                       │
+                       └───────────────────┬───────────────────┘
+                                           ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │              functions/src/tools/handlers.ts                    │
 │              (Single source of truth)                           │
@@ -295,14 +301,15 @@ External AI integrations (OpenClaw, Claude Desktop, ChatGPT) use a shared tool r
 - `functions/src/tools/handlers.ts` - All tool implementations
 - `functions/src/mcp-api/index.ts` - REST API endpoint (mcpApi)
 - `functions/src/mcp-api/mcp-sse.ts` - MCP protocol endpoint (mcpSse)
+- `functions/src/tools/runToolCallable.ts` - the same tools with the User's login session (#616)
+- `app/api/openapi.json/route.ts` - the one OpenAPI spec, derived from the definitions
 
-**A new tool touches five places**, and CI catches only some of them, one at a time:
-the definition in `functions/src/tools/definitions.ts`, its case in `handlers.ts`, its
-class in `functions/src/mcp-api/tool-annotations.ts` (read-only / write / destructive;
-`mcp-server.test.ts` fails without it), its entry and description in
-`functions/src/mcp-api/openapi.ts`, and the regenerated
-`lib/data/generated-tool-definitions.ts` (`npm run generate:tool-definitions`; CI's
-drift check runs only after the unit tests pass). The generator reads the compiled
+**A new tool is its definition and its handler.** The definition in
+`functions/src/tools/definitions.ts` carries its annotation class (`annotation`:
+read-only / write / destructive, required by the type), its case goes in `handlers.ts`,
+and `lib/data/generated-tool-definitions.ts` is regenerated
+(`npm run generate:tool-definitions`; CI's drift check runs only after the unit tests
+pass). The OpenAPI spec, llm.txt and the chat's wrappers all read that file. The generator reads the compiled
 `functions/lib`; on a small host compile `src/tools/definitions.ts` alone instead of
 the whole project, into `functions/lib` with `src` as the root (a narrower root writes
 stray `.js` files into `src/`, and an old `functions/lib/tools/definitions.js` is read
@@ -314,7 +321,18 @@ cd functions && rm -rf lib/tools && NODE_OPTIONS=--max-old-space-size=900 npx ts
 cd .. && npm run generate:tool-definitions
 ```
 
-**Note**: Chat assistant (`lib/agent/tools/`) has separate implementations for performance (direct Admin SDK reads). Writes are already unified via Cloud Function callables.
+**The chat assistant runs these tools, it does not reimplement them (#616).** A chat tool
+with an MCP twin is a thin wrapper in `lib/agent/tools/mcp-tools.ts` over the `runTool`
+callable, which runs the named tool through `handleTool` as the session's User, with the
+plan feature gate and without the API-key rate limit. The MCP output shape is the contract
+external integrations depend on: a wrapper passes it through, reformatted for reading
+only (`forTheModel`: Timestamps as ISO strings; a File's OCR text and a Transaction's
+import and automation bookkeeping left out of list rows, the single get keeps them), and
+filtering or computing lives only in the shared tool. Chat-only tools (queue status,
+Transaction history, navigation, Gmail search, the Partner batch context) keep their own
+reads. Every amount the chat reads is integer cents, the chat-only tools' included.
+`functions/src/selfhost/chat-mcp-tools.test.ts` holds each wrapper to its twin's output
+and fails if one reads or writes the database itself.
 
 ## Business Rules
 

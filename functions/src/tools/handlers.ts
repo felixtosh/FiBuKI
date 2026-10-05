@@ -5,10 +5,9 @@
  * Used by:
  * - HTTP API (mcpApi) - external AI tools
  * - MCP SSE (mcpSse) - Anthropic Claude
- *
- * Note: Chat assistant (lib/agent/tools/) has its own implementation
- * for performance (direct Admin SDK reads). Writes are already unified
- * via Cloud Function callables.
+ * - The chat assistant, through the runTool callable (#616): a chat tool
+ *   with a twin here is a thin wrapper, so this file is the one
+ *   implementation of what it reads and writes.
  */
 
 import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
@@ -207,7 +206,7 @@ export async function handleTool(
   switch (tool) {
     // Sources
     case "list_sources":
-      return listSources(userId);
+      return listSources(userId, args);
     case "get_source":
       return getSource(userId, args.sourceId as string);
     case "create_source":
@@ -389,13 +388,10 @@ export async function handleTool(
 // Sources
 // ============================================================================
 
-export async function listSources(userId: string) {
-  const snapshot = await db
-    .collection("sources")
-    .where("userId", "==", userId)
-    .where("isActive", "==", true)
-    .orderBy("name", "asc")
-    .get();
+export async function listSources(userId: string, args: Record<string, unknown> = {}) {
+  let query: FirebaseFirestore.Query = db.collection("sources").where("userId", "==", userId);
+  if (args.includeInactive !== true) query = query.where("isActive", "==", true);
+  const snapshot = await query.orderBy("name", "asc").get();
 
   return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
 }
@@ -414,6 +410,26 @@ export async function getSource(userId: string, sourceId: string) {
 // Transactions
 // ============================================================================
 
+/**
+ * The most Transactions an in-memory filter reads (#616). Substring search,
+ * amount bounds and the presence filters cannot be pushed into the query, so
+ * the read is a scan window, not a page: anything outside it is invisible to
+ * the filter. 5000 covers a typical single-user account outright; past it the
+ * answer says it is partial (`scanTruncated`) instead of reading as a total.
+ * A real account of 13,844 transactions held 631 Amazon rows, none in the
+ * newest 500, so a narrower window answered "no Amazon spend".
+ */
+const TRANSACTION_SCAN_WINDOW = 5000;
+
+/** An amount bound in cents, compared against the absolute amount. */
+function amountBound(value: unknown, field: string): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`${field} must be an amount in cents`);
+  }
+  return Math.abs(value);
+}
+
 export async function listTransactions(userId: string, args: Record<string, unknown>) {
   let query: FirebaseFirestore.Query = db
     .collection("transactions")
@@ -424,6 +440,15 @@ export async function listTransactions(userId: string, args: Record<string, unkn
   }
   if (args.isComplete !== undefined) {
     query = query.where("isComplete", "==", args.isComplete);
+  }
+  if (args.partnerId) {
+    query = query.where("partnerId", "==", args.partnerId);
+  }
+  if (args.noReceiptCategoryId) {
+    query = query.where("noReceiptCategoryId", "==", args.noReceiptCategoryId);
+  }
+  if (args.noReceiptCategoryTemplateId) {
+    query = query.where("noReceiptCategoryTemplateId", "==", args.noReceiptCategoryTemplateId);
   }
 
   // Date range pushed into the query so filters apply BEFORE the limit.
@@ -454,17 +479,24 @@ export async function listTransactions(userId: string, args: Record<string, unkn
   // Cursor pagination: cursor is the last document id from the previous page.
   query = await startAfterCursor(query, "transactions", userId, args.cursor);
 
-  // Search is a substring match that Firestore can't push down. When set we
-  // overfetch (up to 5x the requested limit) and filter in memory, capped to
-  // avoid runaway scans. Callers that need stable pagination should avoid
-  // combining `search` with `cursor`.
   const requestedLimit = Math.min(Math.max((args.limit as number) || 50, 1), 500);
   const search = (args.search as string | undefined)?.toLowerCase();
-  const fetchLimit = search ? Math.min(requestedLimit * 5, 1000) : requestedLimit;
+  const minAmount = amountBound(args.minAmount, "minAmount");
+  const maxAmount = amountBound(args.maxAmount, "maxAmount");
+  const inMemory =
+    !!search ||
+    minAmount !== undefined ||
+    maxAmount !== undefined ||
+    args.hasPartner !== undefined ||
+    args.hasNoReceiptCategory !== undefined ||
+    args.hasFile !== undefined ||
+    args.onlyIncome === true ||
+    args.onlyExpenses === true;
+  const fetchLimit = inMemory ? TRANSACTION_SCAN_WINDOW : requestedLimit;
   query = query.limit(fetchLimit);
 
   const snapshot = await query.get();
-  let transactions = snapshot.docs.map((doc) => {
+  const scanned = snapshot.docs.map((doc) => {
     const data = doc.data();
     return {
       id: doc.id,
@@ -474,22 +506,84 @@ export async function listTransactions(userId: string, args: Record<string, unkn
     } as Record<string, unknown>;
   });
 
-  if (search) {
-    transactions = transactions.filter(
-      (t) =>
+  const amountOf = (t: Record<string, unknown>) => (typeof t.amount === "number" ? t.amount : 0);
+  const fileCount = (t: Record<string, unknown>) => ((t.fileIds as unknown[] | undefined) || []).length;
+  const matches = scanned.filter((t) => {
+    if (
+      search &&
+      !(
         (t.name as string | undefined)?.toLowerCase().includes(search) ||
         (t.description as string | undefined)?.toLowerCase().includes(search) ||
         (t.partner as string | undefined)?.toLowerCase().includes(search)
-    );
-    transactions = transactions.slice(0, requestedLimit);
+      )
+    ) {
+      return false;
+    }
+    if (minAmount !== undefined && Math.abs(amountOf(t)) < minAmount) return false;
+    if (maxAmount !== undefined && Math.abs(amountOf(t)) > maxAmount) return false;
+    if (args.hasPartner !== undefined && !!t.partnerId !== (args.hasPartner === true)) return false;
+    if (args.hasNoReceiptCategory !== undefined && !!t.noReceiptCategoryId !== (args.hasNoReceiptCategory === true)) {
+      return false;
+    }
+    if (args.hasFile !== undefined && fileCount(t) > 0 !== (args.hasFile === true)) return false;
+    if (args.onlyIncome === true && !(amountOf(t) > 0)) return false;
+    if (args.onlyExpenses === true && args.onlyIncome !== true && !(amountOf(t) < 0)) return false;
+    return true;
+  });
+
+  // Counts over every match in the scan, not just this page, so a caller can
+  // report a breakdown without paging through the rest.
+  const aggregates = {
+    withPartner: 0,
+    withoutPartner: 0,
+    withFile: 0,
+    withoutFile: 0,
+    withoutNoReceiptCategory: 0,
+    byNoReceiptCategoryTemplateId: {} as Record<string, number>,
+  };
+  for (const t of matches) {
+    if (t.partnerId) aggregates.withPartner++;
+    else aggregates.withoutPartner++;
+    if (fileCount(t) > 0) aggregates.withFile++;
+    else aggregates.withoutFile++;
+    const templateId = t.noReceiptCategoryTemplateId as string | undefined;
+    if (templateId) {
+      aggregates.byNoReceiptCategoryTemplateId[templateId] =
+        (aggregates.byNoReceiptCategoryTemplateId[templateId] || 0) + 1;
+    } else {
+      aggregates.withoutNoReceiptCategory++;
+    }
   }
 
-  const hasMore = snapshot.docs.length === fetchLimit;
-  const nextCursor = hasMore && transactions.length > 0
+  // The cursor is the last row CONSUMED: a page cut short by the limit
+  // resumes after its last row, a scan that ran out resumes after its last
+  // scanned row, so rows the filters skipped are not read twice.
+  const transactions = matches.slice(0, requestedLimit);
+  const truncated = matches.length > requestedLimit;
+  const scanFull = snapshot.docs.length === fetchLimit;
+  const nextCursor = truncated
     ? (transactions[transactions.length - 1].id as string)
-    : null;
+    : scanFull
+      ? ((scanned[scanned.length - 1]?.id as string) ?? null)
+      : null;
 
-  return { transactions, nextCursor, count: transactions.length };
+  return {
+    transactions,
+    nextCursor,
+    count: transactions.length,
+    total: matches.length,
+    aggregates,
+    ...(inMemory && scanFull
+      ? {
+          scanTruncated: true,
+          scanned: scanned.length,
+          note:
+            `Filters were applied to the ${scanned.length} most recent transactions only, so this ` +
+            `is NOT a complete answer. Narrow the range with dateFrom/dateTo or filter with ` +
+            `sourceId/partnerId, or continue from nextCursor, and say the result is partial.`,
+        }
+      : {}),
+  };
 }
 
 export async function getTransaction(userId: string, transactionId: string) {
@@ -509,7 +603,33 @@ export async function getTransaction(userId: string, transactionId: string) {
   };
 }
 
-export async function updateTransaction(userId: string, args: Record<string, unknown>) {
+/**
+ * What update_transaction writes, and so what an edit's history entry holds
+ * and what a rollback may restore (#616). Everything else on a Transaction
+ * has its own writer.
+ */
+export const UPDATE_TRANSACTION_FIELDS = [
+  "description",
+  "isComplete",
+  "vatRate",
+  "isReverseCharge",
+  "foreignSupplyKind",
+  "saleSupplyKind",
+] as const;
+
+/**
+ * Update a Transaction's description, completion or UVA answers.
+ *
+ * Every edit that changes a value leaves a history entry (previous and new
+ * values of the fields it changed) under the Transaction, which is what
+ * rollbackTransaction restores from. `rollbackFrom` marks the entry a
+ * rollback writes.
+ */
+export async function updateTransaction(
+  userId: string,
+  args: Record<string, unknown>,
+  options: { rollbackFrom?: string } = {}
+) {
   const {
     transactionId,
     description,
@@ -581,8 +701,83 @@ export async function updateTransaction(userId: string, args: Record<string, unk
   if (foreignSupplyKind !== undefined) updates.foreignSupplyKind = foreignSupplyKind;
   if (saleSupplyKind !== undefined) updates.saleSupplyKind = saleSupplyKind;
 
+  const stored = doc.data()!;
+  const previousValues: Record<string, unknown> = {};
+  const newValues: Record<string, unknown> = {};
+  for (const field of UPDATE_TRANSACTION_FIELDS) {
+    if (!(field in updates)) continue;
+    const before = stored[field] ?? null;
+    const after = updates[field] ?? null;
+    if (before === after) continue;
+    previousValues[field] = before;
+    newValues[field] = after;
+  }
+
+  let historyId: string | undefined;
+  if (Object.keys(newValues).length > 0) {
+    const historyRef = docRef.collection("history").doc();
+    await historyRef.set({
+      changedAt: FieldValue.serverTimestamp(),
+      changedBy: userId,
+      previousValues,
+      newValues,
+      ...(options.rollbackFrom ? { rollbackFrom: options.rollbackFrom } : {}),
+    });
+    historyId = historyRef.id;
+  }
+
   await docRef.update(updates);
-  return { success: true, transactionId };
+  return {
+    success: true,
+    transactionId,
+    ...(historyId ? { historyId, changes: newValues } : {}),
+  };
+}
+
+/**
+ * Restore the values one history entry says an edit replaced (#616), through
+ * updateTransaction: the entry may name only UPDATE_TRANSACTION_FIELDS (any
+ * other field refuses the whole entry), the values are validated as an edit,
+ * and the rollback leaves its own entry marked `rollbackFrom`.
+ */
+export async function rollbackTransaction(userId: string, args: Record<string, unknown>) {
+  const { transactionId, historyId } = args;
+  if (typeof transactionId !== "string" || !transactionId) throw new Error("transactionId is required");
+  if (typeof historyId !== "string" || !historyId || historyId.includes("/")) {
+    throw new Error("historyId is required");
+  }
+
+  const txRef = db.collection("transactions").doc(transactionId);
+  const tx = await txRef.get();
+  if (!tx.exists || tx.data()?.userId !== userId) {
+    throw new Error("Transaction not found");
+  }
+
+  const entry = await txRef.collection("history").doc(historyId).get();
+  if (!entry.exists) throw new Error("History entry not found");
+
+  const previous = entry.data()?.previousValues as unknown;
+  if (!previous || typeof previous !== "object" || Array.isArray(previous) || Object.keys(previous).length === 0) {
+    throw new Error("No previous values to restore");
+  }
+  const restorable = new Set<string>(UPDATE_TRANSACTION_FIELDS);
+  const refused = Object.keys(previous).filter((field) => !restorable.has(field)).sort();
+  if (refused.length > 0) {
+    throw new Error(`A rollback restores only what an edit writes; this entry names ${refused.join(", ")}`);
+  }
+
+  const restoredValues = previous as Record<string, unknown>;
+  const result = await updateTransaction(
+    userId,
+    { ...restoredValues, transactionId },
+    { rollbackFrom: historyId }
+  );
+  return {
+    success: true,
+    transactionId,
+    restoredValues,
+    historyId: result.historyId ?? null,
+  };
 }
 
 /**
@@ -830,16 +1025,35 @@ export async function listTransactionsMissingInvoice(userId: string, args: Recor
  * filtered out in memory are skipped, rows that simply did not fit are not.
  */
 export async function listFiles(userId: string, args: Record<string, unknown>) {
-  let query: FirebaseFirestore.Query = db
-    .collection("files")
-    .where("userId", "==", userId)
-    .orderBy("uploadedAt", "desc");
+  let query: FirebaseFirestore.Query = db.collection("files").where("userId", "==", userId);
+  if (args.partnerId) {
+    query = query.where("partnerId", "==", args.partnerId);
+  }
+  query = query.orderBy("uploadedAt", "desc");
 
   // Cursor pagination: cursor is the last document id from the previous page.
   query = await startAfterCursor(query, "files", userId, args.cursor);
 
+  const search = (args.search as string | undefined)?.toLowerCase();
+  const minAmount = amountBound(args.minAmount, "minAmount");
+  const maxAmount = amountBound(args.maxAmount, "maxAmount");
+  let fromDay: Date | null = null;
+  let toDayExclusive: Date | null = null;
+  if (args.dateFrom) {
+    fromDay = dayStartUtc(args.dateFrom as string);
+    if (!fromDay) throw new Error(`dateFrom must be a calendar day as YYYY-MM-DD, got "${args.dateFrom}"`);
+  }
+  if (args.dateTo) {
+    toDayExclusive = dayEndExclusiveUtc(args.dateTo as string);
+    if (!toDayExclusive) throw new Error(`dateTo must be a calendar day as YYYY-MM-DD, got "${args.dateTo}"`);
+  }
+  const narrowing =
+    !!search || minAmount !== undefined || maxAmount !== undefined || !!fromDay || !!toDayExclusive;
+
   const requestedLimit = Math.min(Math.max((args.limit as number) || 50, 1), 500);
-  const scanLimit = Math.min(requestedLimit * 5, 1000);
+  // Search, amount and date bounds run in memory (#616), so a narrow page
+  // still scans a useful window.
+  const scanLimit = Math.min(narrowing ? Math.max(requestedLimit * 5, 500) : requestedLimit * 5, 1000);
   query = query.limit(scanLimit);
 
   const snapshot = await query.get();
@@ -929,6 +1143,36 @@ export async function listFiles(userId: string, args: Record<string, unknown>) {
     );
   }
 
+  // #616: what the chat assistant's own listing filtered on. Amounts are the
+  // document's total in cents (#504: the stored total, else the line items
+  // unless they contradict the document), compared without sign; the date is
+  // the document's date, else the upload's, as a calendar day.
+  if (search) {
+    files = files.filter(
+      (f) =>
+        (f.fileName as string | undefined)?.toLowerCase().includes(search) ||
+        (f.extractedPartner as string | undefined)?.toLowerCase().includes(search)
+    );
+  }
+  if (minAmount !== undefined || maxAmount !== undefined) {
+    files = files.filter((f) => {
+      const amount = documentAmountCents(f);
+      if (amount === null) return false;
+      if (minAmount !== undefined && Math.abs(amount) < minAmount) return false;
+      if (maxAmount !== undefined && Math.abs(amount) > maxAmount) return false;
+      return true;
+    });
+  }
+  if (fromDay || toDayExclusive) {
+    files = files.filter((f) => {
+      const date = asDate(f.extractedDate) ?? asDate(f.uploadedAt);
+      if (!date) return false;
+      if (fromDay && date < fromDay) return false;
+      if (toDayExclusive && date >= toDayExclusive) return false;
+      return true;
+    });
+  }
+
   // The page ends either at the requested limit or at the end of the scan.
   const page = files
     .slice(0, requestedLimit)
@@ -943,6 +1187,28 @@ export async function listFiles(userId: string, args: Record<string, unknown>) {
       : ((scanned[scanned.length - 1]?.id as string) ?? null);
 
   return { files: page, nextCursor, count: page.length };
+}
+
+/** A File's document total in cents, by the rule of lib/files/document-amount (#504). */
+function documentAmountCents(f: Record<string, unknown>): number | null {
+  if (typeof f.extractedAmount === "number" && Number.isFinite(f.extractedAmount)) return f.extractedAmount;
+  const items = f.extractedLineItems;
+  if (!Array.isArray(items) || items.length === 0 || f.lineItemsUnreconciled) return null;
+  return items.reduce((sum: number, item) => {
+    const amount = (item as { amount?: unknown })?.amount;
+    return sum + (typeof amount === "number" && Number.isFinite(amount) ? amount : 0);
+  }, 0);
+}
+
+function asDate(value: unknown): Date | null {
+  if (!value) return null;
+  if (value instanceof Date) return isNaN(value.getTime()) ? null : value;
+  if (typeof (value as { toDate?: unknown }).toDate === "function") return (value as Timestamp).toDate();
+  if (typeof value === "string") {
+    const d = new Date(value);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  return null;
 }
 
 export async function getFile(userId: string, fileId: string) {
@@ -1981,7 +2247,8 @@ export async function listPartners(userId: string, args: Record<string, unknown>
     ? scanned.filter(
         (p) =>
           p.name?.toLowerCase().includes(search) ||
-          p.aliases?.some((a: string) => a.toLowerCase().includes(search))
+          p.aliases?.some((a: string) => a.toLowerCase().includes(search)) ||
+          (p.vatId as string | null)?.toLowerCase().includes(search)
       )
     : scanned;
 

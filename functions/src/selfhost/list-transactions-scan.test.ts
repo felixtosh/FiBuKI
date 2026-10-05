@@ -1,5 +1,7 @@
 /**
- * listTransactions must never report "no matches" when it simply stopped scanning.
+ * list_transactions must never report "no matches" when it simply stopped scanning.
+ * One implementation since #616: the MCP tool, which the chat's listTransactions
+ * wraps.
  *
  * Its search/date/amount filters run IN MEMORY over whatever the query returns,
  * because Firestore has no substring search. The fetch limit is therefore a scan
@@ -42,9 +44,8 @@ beforeAll(async () => {
 }, 120_000);
 
 async function listTransactions(args: Record<string, unknown>) {
-  const { listTransactionsTool } = await import("../../../lib/agent/tools/read-tools");
-  const out = await listTransactionsTool.invoke(args, { configurable: { userId: USER } });
-  return typeof out === "string" ? JSON.parse(out) : out;
+  const { handleTool } = await import("../tools/handlers");
+  return (await handleTool(USER, "list_transactions", { limit: 20, ...args })) as Record<string, any>;
 }
 
 describe("listTransactions scan window", () => {
