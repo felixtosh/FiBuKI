@@ -93,7 +93,7 @@ const CALLABLE_RATCHET: Record<string, Pinned> = {
     uses: 4,
     calls: "assignNoReceiptCategory, matchCategories, learnPartnerCategoryPatterns",
   },
-  "lib/operations/file-ops.ts": { uses: 6, calls: "matchFilesForPartner, retryFileExtraction" },
+  "lib/operations/file-ops.ts": { uses: 4, calls: "matchFilesForPartner, retryFileExtraction" },
 };
 
 const CODE = /\.(?:tsx?|jsx?|mjs|cjs)$/;
