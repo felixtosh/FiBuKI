@@ -7,7 +7,7 @@
  */
 
 import { createCallable, HttpsError, type HandlerContext } from "../utils/createCallable";
-import { connectFile, type FileConnectionSourceInfo } from "../fileConnections/writer";
+import { connectFile, type ConnectPair, type FileConnectionSourceInfo } from "../fileConnections/writer";
 import { isConnectionOrigin, type ConnectionOrigin } from "../fileConnections/rules";
 
 /** The origins a caller of the callable may claim; the tool surface and the matcher are server-side. */
@@ -50,12 +50,26 @@ export const connectFileToTransactionCallable = createCallable<
 );
 
 /**
+ * What only server code may add to a connect, beside the request. The
+ * callable passes none, so no client can set it.
+ */
+export interface ServerConnectFields {
+  /**
+   * Why an automated connect was allowed outside the full-amount case: the
+   * find-receipt workflow's instalment (#716, ADR-0013). Stored only on an
+   * `auto` connect.
+   */
+  autoConnectReason?: ConnectPair["autoConnectReason"];
+}
+
+/**
  * The connect itself, for a caller that already holds the user: the
  * find-receipt workflow's auto-connect (#588) and the Split's parts.
  */
 export async function performConnectFileToTransaction(
   ctx: Pick<HandlerContext, "db" | "userId">,
-  request: ConnectFileRequest
+  request: ConnectFileRequest,
+  server: ServerConnectFields = {}
 ): Promise<ConnectFileResponse> {
   const { fileId, transactionId } = request;
   if (typeof fileId !== "string" || !fileId || typeof transactionId !== "string" || !transactionId) {
@@ -79,6 +93,7 @@ export async function performConnectFileToTransaction(
       matchConfidence: typeof request.matchConfidence === "number" ? request.matchConfidence : null,
       sourceInfo: request.sourceInfo,
       connectionType: typeof request.connectionType === "string" ? request.connectionType : undefined,
+      ...(server.autoConnectReason && origin === "auto" ? { autoConnectReason: server.autoConnectReason } : {}),
     },
     {
       origin,

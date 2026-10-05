@@ -66,15 +66,15 @@ export const findReceiptForTransactionCallable = createCallable<
       {
         db: ctx.db,
         searchGmail: (args) => searchGmailForWorkflow(ctx.db, args),
-        connectFileToTransaction: async ({ fileId, transactionId, matchConfidence, connectionType }) => {
+        connectFileToTransaction: async ({ fileId, transactionId, matchConfidence, connectionType, autoConnectReason }) => {
           // The connect the UI makes, Copy refusal, Partner sync and learning
-          // included.
-          await performConnectFileToTransaction(ctx, {
-            fileId,
-            transactionId,
-            connectionType,
-            matchConfidence,
-          });
+          // included. The reason travels beside the request, never in it: the
+          // callable's request takes none (#716).
+          await performConnectFileToTransaction(
+            ctx,
+            { fileId, transactionId, connectionType, matchConfidence },
+            autoConnectReason ? { autoConnectReason } : {}
+          );
           return { fileId };
         },
       }
