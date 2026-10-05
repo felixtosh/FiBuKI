@@ -116,7 +116,7 @@ export function FilePreview({
         // FiBuKI's own renderer, not the browser's PDF viewer in an iframe:
         // for a protected PDF that viewer asked for the password and took
         // keyboard focus, so the list's arrow keys stopped working (#676).
-        <div className="aspect-[3/4] bg-background">
+        <div className="aspect-[3/4] bg-background" role="img" aria-label={fileName}>
           <PdfThumbnail url={srcUrl} />
         </div>
       ) : isPdf ? (
