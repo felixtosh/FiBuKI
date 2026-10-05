@@ -1299,3 +1299,71 @@ describe("bmd #571: a Receipt and the invoice it pays", () => {
     ]);
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* 9. #652 — the export reads the File the UVA reads                   */
+/* ------------------------------------------------------------------ */
+
+describe("bmd #652: the export loads the stored File, as the UVA does", () => {
+  /** Exports one Transaction carrying one File through the real queue. */
+  async function exportOne(file: Record<string, unknown>, tx: Record<string, unknown>) {
+    await db.collection("files").doc("f1").set({
+      userId: USER,
+      fileName: "Beleg.pdf",
+      extractedDate: T("2026-03-10T12:00:00Z"),
+      ...file,
+    });
+    await db.collection("transactions").doc("t1").set({
+      userId: USER,
+      date: T("2026-03-15T12:00:00Z"),
+      fileIds: ["f1"],
+      ...tx,
+    });
+    await drainTriggers();
+    const res = await call(
+      { dateFrom: "2026-01-01", dateTo: "2026-12-31", onlyWithFiles: true, includeFiles: false },
+      { uid: USER },
+    );
+    const exportRef = db.collection("bmdExports").doc(res.exportId);
+    await waitFor(async () => (await exportRef.get()).data()!.status === "completed");
+    const zip = await openZip((await exportRef.get()).data()!.storagePath);
+    return (await zip.entry("buchungen.csv")).slice(1).split("\n").slice(1);
+  }
+
+  const purchase = { amount: -12000, name: "HOTEL" };
+  const at20 = { extractedAmount: 12000, extractedVatAmount: 2000, extractedVatPercent: 20 };
+
+  it("books 0,00 VAT on a File ruled \"VAT not claimable\" (#203)", async () => {
+    const rows = await exportOne({ ...at20, vatNotClaimableReason: "private" }, purchase);
+    expect(rows).toEqual(["0;200001;7000;2026000001;20260315;20260310;120,00;1;0,00;0;HOTEL;Beleg.pdf;ER;"]);
+  });
+
+  it("books 0,00 VAT on a Receipt, which carries no input VAT (#580)", async () => {
+    const rows = await exportOne({ ...at20, documentType: "receipt" }, purchase);
+    expect(rows).toEqual(["0;200001;7000;2026000001;20260315;20260310;120,00;1;0,00;0;HOTEL;Beleg.pdf;ER;"]);
+  });
+
+  it("books 0,00 VAT on a File addressed to someone else (#229)", async () => {
+    const rows = await exportOne({ ...at20, foreignRecipient: true }, purchase);
+    expect(rows).toEqual(["0;200001;7000;2026000001;20260315;20260310;120,00;1;0,00;0;HOTEL;Beleg.pdf;ER;"]);
+  });
+
+  it("labels a 0 % sale by the Invoice's Supply Kind and the customer's UID (#565)", async () => {
+    const rows = await exportOne(
+      {
+        isFibukiGenerated: true,
+        invoiceSupplyKind: "service-eu",
+        extractedRecipient: { name: "Kunde GmbH", vatId: "DE123456789" },
+        extractedAmount: 50000,
+        extractedVatAmount: 0,
+        extractedVatPercent: 0,
+      },
+      { amount: 50000, name: "KUNDE GMBH" },
+    );
+    expect(rows).toHaveLength(1);
+    const row = rows[0].split(";");
+    expect(row[8]).toBe("0,00");
+    expect(row[10]).toBe("§3a Abs6 EU: KUNDE GMBH");
+    expect(row[13]).toBe("DE123456789");
+  });
+});
