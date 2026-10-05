@@ -172,16 +172,10 @@ async function processBmdExport(
       // hand-written field list here dropped what it reads (the "VAT not
       // claimable" ruling, the Document Type, the Supply Kind facts), so the
       // export and the UVA stated different VAT (#652, fork #66).
-      // `storagePath` is dropped before the CSVs are generated.
-      const record = { ...data, id: fileId } as FileRecord;
-      correctionFiles.set(fileId, record);
+      // `storagePath` rides along for the ZIP and is dropped before the CSVs.
+      correctionFiles.set(fileId, { ...data, id: fileId } as FileRecord);
       filePartners.set(fileId, { partnerId: data?.partnerId ?? null });
-      filesMap.set(fileId, {
-        ...data,
-        id: fileId,
-        fileName: data?.fileName || "document",
-        storagePath: data?.storagePath,
-      });
+      filesMap.set(fileId, { ...data, id: fileId, fileName: data?.fileName || "document" });
     }
 
     // Each invoice before the Receipts that pay it (#571): the Belegdatum is

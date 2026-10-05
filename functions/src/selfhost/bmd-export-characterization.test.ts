@@ -1366,4 +1366,15 @@ describe("bmd #652: the export loads the stored File, as the UVA does", () => {
     expect(row[10]).toBe("§3a Abs6 EU: KUNDE GMBH");
     expect(row[13]).toBe("DE123456789");
   });
+
+  it("labels an uploaded 0 % sale by the customer's country the File names (#565)", async () => {
+    const rows = await exportOne(
+      { extractedCountry: "DE", extractedAmount: 50000, extractedVatAmount: 0, extractedVatPercent: 0 },
+      { amount: 50000, name: "KUNDE GMBH" },
+    );
+    expect(rows).toHaveLength(1);
+    const row = rows[0].split(";");
+    expect(row[8]).toBe("0,00");
+    expect(row[10]).toBe("§3a Abs6 EU: KUNDE GMBH");
+  });
 });
