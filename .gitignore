@@ -89,3 +89,7 @@ PLAN-*.md
 # The runbook uses ./fibuki-dump; ignore it wherever it lands.
 fibuki-dump/
 **/fibuki-dump/
+
+# Replay sets hold a real account (docs/replay.md)
+*.replay-set.json
+*.sheet.json

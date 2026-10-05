@@ -26,7 +26,8 @@
     "selfhost:migrate-file-hash": "vite-node --config vitest.selfhost.config.ts scripts/migrate-file-hash.ts",
     "selfhost:migrate-transaction-type": "vite-node --config vitest.selfhost.config.ts scripts/migrate-transaction-type.ts",
     "selfhost:remove-local-file-hints": "vite-node --config vitest.selfhost.config.ts scripts/remove-local-file-hints.ts",
-    "selfhost:collapse-file-connections": "vite-node --config vitest.selfhost.config.ts scripts/collapse-file-connections.ts"
+    "selfhost:collapse-file-connections": "vite-node --config vitest.selfhost.config.ts scripts/collapse-file-connections.ts",
+    "selfhost:replay": "vite-node --config vitest.selfhost.config.ts scripts/replay.ts"
   },
   "engines": {
     "node": "22"

@@ -350,6 +350,7 @@ cd .. && npm run generate:tool-definitions
 - `app/api/matching/score-files/route.ts` - API route for frontend
 - `functions/src/matching/matchFileTransactions.ts` - Pre-computes suggestions on file upload
 - `lib/partners/partner-suggestions.ts` - Which stored Partner suggestions a surface shows (list cell and detail panel use the same one; it filters, it never scores)
+- `functions/src/replay/` - The before/after replay: runs the matcher over a real account on `main` and on a branch and diffs the decisions ([`docs/replay.md`](docs/replay.md)). A PR touching `functions/src/matching/` carries its report counts in the Evidence section
 
 **Claude Code Hook**: `.claude/hooks/check-cloud-function-pattern.sh` warns if local scoring is detected.
 

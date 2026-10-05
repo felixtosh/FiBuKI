@@ -13,7 +13,9 @@ Closes #
 
 <!-- Name the test file. A screenshot for a visual change, a test run or console output
      otherwise. "Tested manually" counts only with what was done and what was seen.
-     Lint, typecheck and the builds run in CI; do not restate them here. -->
+     Lint, typecheck and the builds run in CI; do not restate them here.
+     A change under functions/src/matching/ adds the replay counts (docs/replay.md):
+     how many Files and Transactions decide differently, and the ❌ / ❓ counts. -->
 
 ## Merge Danger
 
