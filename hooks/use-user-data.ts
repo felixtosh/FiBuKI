@@ -5,8 +5,6 @@ import { doc, onSnapshot, Timestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
 import { UserData, UserDataFormData, IdentityEntity, IdentityEntityFormData } from "@/types/user-data";
 import {
-  OperationsContext,
-  saveUserData,
   generateEntityId,
   isPartnerLinkedToIdentity as checkPartnerLinked,
 } from "@/lib/operations";
@@ -68,6 +66,21 @@ function migrateUserDataFormat(data: Partial<UserData>): UserData {
   } as UserData;
 }
 
+/** An entity as the saveIdentity callable takes it: the form's fields, not the stored ones (createdAt). */
+function toEntityRequest(e: IdentityEntityFormData): IdentityEntityFormData {
+  const { id, type, name, aliases, vatId, ibans, address, partnerId, order } = e;
+  return { id, type, name, aliases, vatId, ibans, address, partnerId, order };
+}
+
+/** The request saveIdentity takes; it refuses fields the identity does not hold. */
+function toIdentityRequest(data: UserDataFormData): UserDataFormData {
+  return {
+    ...data,
+    personalEntity: data.personalEntity ? toEntityRequest(data.personalEntity) : undefined,
+    companies: data.companies?.map(toEntityRequest),
+  };
+}
+
 /**
  * Hook for managing user data (identity entities)
  * Used for extraction prompts and invoice direction detection
@@ -78,14 +91,6 @@ export function useUserData() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<Error | null>(null);
-
-  const ctx: OperationsContext = useMemo(
-    () => ({
-      db,
-      userId: userId ?? "",
-    }),
-    [userId]
-  );
 
   // Realtime listener for user data
   useEffect(() => {
@@ -123,14 +128,14 @@ export function useUserData() {
   }, [userId]);
 
   /**
-   * Save user data
+   * Save user data. The server's identity module normalises and writes it (#632).
    */
   const save = useCallback(
     async (data: UserDataFormData): Promise<void> => {
       setSaving(true);
       setError(null);
       try {
-        await saveUserData(ctx, data);
+        await callFunction("saveIdentity", toIdentityRequest(data));
       } catch (err) {
         setError(err as Error);
         throw err;
@@ -138,7 +143,7 @@ export function useUserData() {
         setSaving(false);
       }
     },
-    [ctx]
+    []
   );
 
   /**
