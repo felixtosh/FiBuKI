@@ -75,7 +75,7 @@ import {
   type UserRow,
 } from "@/components/admin/user-columns";
 import { UserDetailPanel } from "@/components/admin/user-detail-panel";
-import { cn } from "@/lib/utils";
+import { DetailPanelLayout } from "@/components/ui/detail-panel-layout";
 
 const PANEL_WIDTH_KEY = "userDetailPanelWidth";
 const DEFAULT_PANEL_WIDTH = 400;
@@ -144,58 +144,6 @@ export default function AdminUsersPage() {
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
 
   // Detail panel
-  const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_WIDTH);
-  const [isResizing, setIsResizing] = useState(false);
-  const resizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
-
-  // Load panel width from localStorage
-  useEffect(() => {
-    const saved = localStorage.getItem(PANEL_WIDTH_KEY);
-    if (saved) {
-      const parsed = parseInt(saved, 10);
-      if (!isNaN(parsed) && parsed >= MIN_PANEL_WIDTH && parsed <= MAX_PANEL_WIDTH) {
-        setPanelWidth(parsed);
-      }
-    }
-  }, []);
-
-  // Handle resize
-  const handleResizeStart = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault();
-      setIsResizing(true);
-      resizeRef.current = { startX: e.clientX, startWidth: panelWidth };
-    },
-    [panelWidth]
-  );
-
-  useEffect(() => {
-    if (!isResizing) return;
-
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!resizeRef.current) return;
-      const delta = resizeRef.current.startX - e.clientX;
-      const newWidth = Math.min(
-        MAX_PANEL_WIDTH,
-        Math.max(MIN_PANEL_WIDTH, resizeRef.current.startWidth + delta)
-      );
-      setPanelWidth(newWidth);
-    };
-
-    const handleMouseUp = () => {
-      setIsResizing(false);
-      localStorage.setItem(PANEL_WIDTH_KEY, panelWidth.toString());
-      resizeRef.current = null;
-    };
-
-    document.addEventListener("mousemove", handleMouseMove);
-    document.addEventListener("mouseup", handleMouseUp);
-
-    return () => {
-      document.removeEventListener("mousemove", handleMouseMove);
-      document.removeEventListener("mouseup", handleMouseUp);
-    };
-  }, [isResizing, panelWidth]);
 
   // Listen for open seats config
   useEffect(() => {
@@ -687,10 +635,36 @@ export default function AdminUsersPage() {
   return (
     <ProtectedRoute requireAdmin>
       <div className="h-full overflow-hidden">
-        {/* Main content - adjusts margin when panel is open */}
-        <div
-          className="h-full flex flex-col transition-[margin] duration-200 ease-in-out"
-          style={{ marginRight: showPanel ? panelWidth : 0 }}
+        <DetailPanelLayout
+          storageKey={PANEL_WIDTH_KEY}
+          defaultWidth={DEFAULT_PANEL_WIDTH}
+          minWidth={MIN_PANEL_WIDTH}
+          maxWidth={MAX_PANEL_WIDTH}
+          open={showPanel}
+          mainClassName="h-full flex flex-col"
+          panel={
+            selectedUser ? (
+              <UserDetailPanel
+                user={selectedUser}
+                onClose={handleClosePanel}
+                onMakeAdmin={handleMakeAdmin}
+                onRemoveAdmin={handleRemoveAdminFromPanel}
+                onSetOverride={(uid, override) =>
+                  handleSetOverride(uid, override)
+                }
+                onDeleteUser={handleDeleteUser}
+                onImpersonate={handleImpersonate}
+                onBulkRescan={handleBulkRescan}
+                loading={
+                  togglingAdmin === selectedUser.uid ||
+                  settingOverride === selectedUser.uid
+                }
+                deletingUser={deletingUser === selectedUser.uid}
+                impersonating={impersonatingUser === selectedUser.uid}
+                bulkRescanning={bulkRescanning === selectedUser.uid}
+              />
+            ) : null
+          }
         >
           {/* Error/Success Messages */}
           {(error || success) && (
@@ -1270,51 +1244,7 @@ export default function AdminUsersPage() {
               )}
             </TabsContent>
           </Tabs>
-        </div>
-
-        {/* Right sidebar - fixed position */}
-        {showPanel && selectedUser && (
-          <div
-            className="fixed right-0 top-14 bottom-0 z-50 bg-background border-l flex"
-            style={{ width: panelWidth }}
-          >
-            {/* Resize handle */}
-            <div
-              className={cn(
-                "w-1 cursor-col-resize hover:bg-primary/20 transition-colors flex-shrink-0",
-                isResizing && "bg-primary/30"
-              )}
-              onMouseDown={handleResizeStart}
-            />
-            {/* Panel content */}
-            <div className="flex-1 overflow-hidden">
-              <UserDetailPanel
-                user={selectedUser}
-                onClose={handleClosePanel}
-                onMakeAdmin={handleMakeAdmin}
-                onRemoveAdmin={handleRemoveAdminFromPanel}
-                onSetOverride={(uid, override) =>
-                  handleSetOverride(uid, override)
-                }
-                onDeleteUser={handleDeleteUser}
-                onImpersonate={handleImpersonate}
-                onBulkRescan={handleBulkRescan}
-                loading={
-                  togglingAdmin === selectedUser.uid ||
-                  settingOverride === selectedUser.uid
-                }
-                deletingUser={deletingUser === selectedUser.uid}
-                impersonating={impersonatingUser === selectedUser.uid}
-                bulkRescanning={bulkRescanning === selectedUser.uid}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Prevent text selection while resizing */}
-        {isResizing && (
-          <div className="fixed inset-0 z-50 cursor-col-resize" />
-        )}
+        </DetailPanelLayout>
       </div>
     </ProtectedRoute>
   );
