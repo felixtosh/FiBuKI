@@ -20,6 +20,14 @@ import { cn } from "@/lib/utils";
 import { useLatestCallback } from "@/hooks/use-latest-callback";
 import { ResizableDataTableProps, DataTableHandle, DataTableSection, RowClickModifiers } from "./types";
 import { ResizeHandle } from "./resize-handle";
+import {
+  columnWidthsToStore,
+  parseColumnWidths,
+  readStoredColumnWidths,
+  sizedColumnWidth,
+  writeStoredColumnWidths,
+  type ColumnWidthLimits,
+} from "@/lib/tables/column-widths";
 import { VirtualRow } from "./virtual-row";
 
 const DEFAULT_MIN_COLUMN_WIDTH = 60;
@@ -30,6 +38,12 @@ const HEADER_HEIGHT = 56; // h-14 = 3.5rem = 56px
 const SCROLL_RENDER_DELAY = 150;
 /** A long description must not fit its column wider than a screen */
 const MAX_AUTOFIT_WIDTH = 640;
+
+// Only this table writes its key, and it keeps the widths it sets in state, so
+// there is nothing to subscribe to (as in DetailPanelLayout).
+const subscribeNever = () => () => {};
+const noStoredWidths = () => null;
+const getLocalStorage = () => window.localStorage;
 
 /**
  * Data table item - either a section header or a data row
@@ -46,6 +60,7 @@ function ResizableDataTableInner<TData extends { id: string }>(
     onRowClick,
     selectedRowId,
     defaultColumnSizes,
+    columnWidthsStorageKey,
     minColumnWidth = DEFAULT_MIN_COLUMN_WIDTH,
     getRowClassName,
     getRowDataAttributes,
@@ -111,7 +126,27 @@ function ResizableDataTableInner<TData extends { id: string }>(
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>(
     []
   );
-  const [columnSizing, setColumnSizing] = React.useState<ColumnSizingState>({});
+  // Remembered widths are read during render, so a table opens at them instead
+  // of painting the defaults first; the server snapshot keeps a server render
+  // and hydration at the defaults. Until the user resizes, the stored widths
+  // are the sizing; from the first resize the table's own state takes over.
+  const savedWidths = React.useSyncExternalStore(
+    subscribeNever,
+    () => (columnWidthsStorageKey ? readStoredColumnWidths(getLocalStorage, columnWidthsStorageKey) : null),
+    noStoredWidths
+  );
+  const storedSizing = React.useMemo(() => parseColumnWidths(savedWidths), [savedWidths]);
+  const [resizedSizing, setResizedSizing] = React.useState<ColumnSizingState | null>(null);
+  const columnSizing = resizedSizing ?? storedSizing;
+  const setColumnSizing = React.useCallback(
+    (updater: React.SetStateAction<ColumnSizingState>) => {
+      setResizedSizing((prev) => {
+        const current = prev ?? storedSizing;
+        return typeof updater === "function" ? updater(current) : updater;
+      });
+    },
+    [storedSizing]
+  );
 
   const table = useReactTable({
     data: flatData,
@@ -357,13 +392,42 @@ function ResizableDataTableInner<TData extends { id: string }>(
     });
   }, [selectedRowId, autoScrollToSelected, displayItems, virtualizer, isElementInView]);
 
-  // Get column sizes from table state, using defaults
+  // Each column's min/max: its own, else the table's defaults (columnDef is
+  // already merged with defaultColumn). getAllColumns() is memoised by the
+  // table and only changes identity when the columns do.
+  const allColumns = table.getAllColumns();
+  const columnLimits = React.useMemo(() => {
+    const limits: Record<string, ColumnWidthLimits> = {};
+    allColumns.forEach((col) => {
+      limits[col.id] = {
+        min: col.columnDef.minSize ?? minColumnWidth,
+        max: col.columnDef.maxSize ?? Number.MAX_SAFE_INTEGER,
+      };
+    });
+    return limits;
+  }, [allColumns, minColumnWidth]);
+
+  // Get column sizes from table state, using defaults. A sized width is held
+  // inside its column's limits, so a remembered width from an older column
+  // definition cannot render out of range.
   const columnSizes = React.useMemo(() => {
     return table.getAllColumns().map((col) => {
       const defaultSize = defaultColumnSizes[col.id] || 150;
-      return columnSizing[col.id] ?? defaultSize;
+      return sizedColumnWidth(columnSizing, col.id, columnLimits[col.id]) ?? defaultSize;
     });
-  }, [table, columnSizing, defaultColumnSizes]);
+  }, [table, columnSizing, columnLimits, defaultColumnSizes]);
+
+  // Remember the widths once a resize is over (drag release or auto-fit),
+  // never on each drag tick. The changed column's final width is passed in,
+  // because the render that carries it may not have committed yet.
+  const rememberColumnWidth = useLatestCallback((columnId: string, width: number) => {
+    if (!columnWidthsStorageKey) return;
+    writeStoredColumnWidths(
+      getLocalStorage,
+      columnWidthsStorageKey,
+      columnWidthsToStore({ ...columnSizing, [columnId]: width }, columnLimits)
+    );
+  });
 
   // Calculate total table width
   const totalTableWidth = columnSizes.reduce((sum, w) => sum + w, 0);
@@ -407,15 +471,14 @@ function ResizableDataTableInner<TData extends { id: string }>(
       });
       probe.remove();
 
-      setColumnSizing((prev) => ({
-        ...prev,
-        [columnId]: Math.min(
-          MAX_AUTOFIT_WIDTH,
-          Math.max(defaultColumnSizes[columnId] || 150, Math.ceil(widest))
-        ),
-      }));
+      const width = Math.min(
+        MAX_AUTOFIT_WIDTH,
+        Math.max(defaultColumnSizes[columnId] || 150, Math.ceil(widest))
+      );
+      setColumnSizing((prev) => ({ ...prev, [columnId]: width }));
+      rememberColumnWidth(columnId, width);
     },
-    [defaultColumnSizes]
+    [defaultColumnSizes, setColumnSizing, rememberColumnWidth]
   );
 
   // Row click handler with multi-select support.
@@ -538,6 +601,7 @@ function ResizableDataTableInner<TData extends { id: string }>(
                     <ResizeHandle
                       header={header as Header<unknown, unknown>}
                       onAutoFit={() => fitColumnToContent(header.column.id)}
+                      onResizeEnd={(width) => rememberColumnWidth(header.column.id, width)}
                       currentSize={columnSizes[index]}
                       isLastColumn={index === headerGroup.headers.length - 1}
                       minColumnWidth={minColumnWidth}

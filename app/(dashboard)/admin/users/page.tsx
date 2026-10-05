@@ -1236,6 +1236,7 @@ export default function AdminUsersPage() {
                   columns={columns}
                   data={filteredUsers}
                   defaultColumnSizes={DEFAULT_USER_COLUMN_SIZES}
+                  columnWidthsStorageKey="fibuki.columnWidths.adminUsers"
                   onRowClick={handleRowClick}
                   selectedRowId={selectedUserId}
                   emptyMessage="No users match your filters"
