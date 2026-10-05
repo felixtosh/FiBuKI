@@ -7,7 +7,8 @@
  * self-hoster to set the server's zone: Invoice due dates a day early across
  * a clock change, a BMD Export dated the day before, a New Year's Day Invoice
  * numbered into the old year. Stored days go through `utils/storedDay.ts`;
- * instants use `Date.now()` arithmetic or the explicit `getUTC*` calls.
+ * instants use `Date.now()` arithmetic or the explicit `getUTC*` calls. A
+ * date formatted for a person names its `timeZone` (`viennaDateLabel`).
  *
  * The one exception is listed with its reason, and with how many calls it
  * holds, so a new call in the same file fails too.
@@ -46,31 +47,50 @@ function stripComments(source: string): string {
     .replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
 }
 
-/** Index of each `new Date(` whose arguments hold a top-level comma. */
-function localConstructors(code: string): number[] {
-  const found: number[] = [];
-  const opener = /\bnew\s+Date\s*\(/g;
+/** Index and argument text of each call `opener` starts, up to its closing parenthesis. */
+function calls(code: string, opener: RegExp): Array<{ index: number; args: string; topLevelComma: boolean }> {
+  const found: Array<{ index: number; args: string; topLevelComma: boolean }> = [];
   let match: RegExpExecArray | null;
   while ((match = opener.exec(code))) {
+    const start = match.index + match[0].length;
     let depth = 1;
-    for (let i = match.index + match[0].length; i < code.length && depth > 0; i++) {
+    let topLevelComma = false;
+    let i = start;
+    for (; i < code.length && depth > 0; i++) {
       const ch = code[i];
       if (ch === "(" || ch === "[" || ch === "{") depth++;
       else if (ch === ")" || ch === "]" || ch === "}") depth--;
-      else if (ch === "," && depth === 1) {
-        found.push(match.index);
-        break;
-      }
+      else if (ch === "," && depth === 1) topLevelComma = true;
     }
+    found.push({ index: match.index, args: code.slice(start, i - 1), topLevelComma });
   }
   return found;
+}
+
+/** Each `new Date(` whose arguments hold a top-level comma: a local-time constructor. */
+function localConstructors(code: string): number[] {
+  return calls(code, /\bnew\s+Date\s*\(/g)
+    .filter((call) => call.topLevelComma)
+    .map((call) => call.index);
+}
+
+/**
+ * Each date formatted for display without a `timeZone`, which formats in the
+ * host's zone. `toLocaleString` is left alone: here it only formats amounts.
+ */
+function unzonedFormats(code: string): number[] {
+  return calls(code, /(\.toLocaleDateString|\.toLocaleTimeString|\bIntl\.DateTimeFormat)\s*\(/g)
+    .filter((call) => !/\btimeZone\b/.test(call.args))
+    .map((call) => call.index);
 }
 
 /** `line: code` for every host-zone date call in a source text. */
 export function hostZoneCalls(source: string): string[] {
   const code = stripComments(source);
   const lineOf = (index: number) => code.slice(0, index).split("\n").length;
-  const at = [...code.matchAll(HOST_ZONE_CALL)].map((m) => m.index!).concat(localConstructors(code));
+  const at = [...code.matchAll(HOST_ZONE_CALL)]
+    .map((m) => m.index!)
+    .concat(localConstructors(code), unzonedFormats(code));
   const lines = source.split("\n");
   return at.sort((a, b) => a - b).map((index) => `${lineOf(index)}: ${lines[lineOf(index) - 1].trim()}`);
 }
@@ -84,6 +104,15 @@ describe("the guard's detector", () => {
     expect(hostZoneCalls("const end = new Date(now.getUTCFullYear(), 11, 31);")).toHaveLength(1);
   });
 
+  it("finds a date formatted for display without a time zone", () => {
+    const unzoned = [
+      'const label = new Date().toLocaleDateString("de-AT");',
+      "const t = d.toLocaleTimeString();",
+      'const f = new Intl.DateTimeFormat("de-AT", { day: "2-digit" });',
+    ].join("\n");
+    expect(hostZoneCalls(unzoned)).toHaveLength(3);
+  });
+
   it("lets the UTC forms, single-argument constructors and comments through", () => {
     const fine = [
       "const y = d.getUTCFullYear();",
@@ -92,6 +121,9 @@ describe("the guard's detector", () => {
       "const p = new Date(`${day}T00:00:00Z`);",
       "// written with new Date(y, m - 1, d) and read with getDate()",
       "/* d.setHours(23, 59, 59) */",
+      'const label = d.toLocaleDateString("de-AT", { timeZone: "Europe/Vienna" });',
+      'const f = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Vienna" });',
+      'const amount = (cents / 100).toLocaleString("de-AT", { minimumFractionDigits: 2 });',
     ].join("\n");
     expect(hostZoneCalls(fine)).toEqual([]);
   });

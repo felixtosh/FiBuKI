@@ -42,3 +42,11 @@ export function viennaToday(now: Date = new Date()): Date {
 export function viennaYear(now: Date = new Date()): number {
   return yearOf(viennaToday(now));
 }
+
+/**
+ * An instant as the Vienna calendar date a person reads, in `locale`'s
+ * spelling (`de-AT` gives `15.7.2026`). For display only, never stored.
+ */
+export function viennaDateLabel(instant: Date, locale: string): string {
+  return instant.toLocaleDateString(locale, { timeZone: "Europe/Vienna" });
+}

@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, afterEach } from "vitest";
-import { dayOf, yearOf, addDays, viennaToday, viennaYear } from "./storedDay";
+import { dayOf, yearOf, addDays, viennaToday, viennaYear, viennaDateLabel } from "./storedDay";
 
 const HOST_ZONES = ["UTC", "Europe/Vienna", "America/Los_Angeles", "Pacific/Kiritimati"];
 
@@ -13,6 +13,9 @@ const HOST_ZONES = ["UTC", "Europe/Vienna", "America/Los_Angeles", "Pacific/Kiri
 function day(iso: string): Date {
   return new Date(`${iso}T00:00:00Z`);
 }
+
+/** 00:30 on 1 January 2027 in Vienna. */
+const NEW_YEARS_EVE_2330_UTC = new Date("2026-12-31T23:30:00Z");
 
 const originalZone = process.env.TZ;
 
@@ -71,5 +74,11 @@ describe.each(HOST_ZONES)("on a host in %s", (zone) => {
     pin();
     expect(viennaToday(new Date("2026-07-14T22:30:00Z")).toISOString()).toBe("2026-07-15T00:00:00.000Z");
     expect(viennaToday(new Date("2026-07-14T21:30:00Z")).toISOString()).toBe("2026-07-14T00:00:00.000Z");
+  });
+
+  it("labels an instant with its Vienna calendar date, for a person to read", () => {
+    pin();
+    expect(viennaDateLabel(new Date("2026-07-14T22:30:00Z"), "de-AT")).toBe("15.7.2026");
+    expect(viennaDateLabel(NEW_YEARS_EVE_2330_UTC, "de-DE")).toBe("1.1.2027");
   });
 });
