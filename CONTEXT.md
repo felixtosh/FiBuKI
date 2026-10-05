@@ -500,10 +500,13 @@ amount, and a schedule whose parts add up to more than the File's total (such as
 year's advance payments on an annual utility bill). Before any payment, a Transaction is
 scored against the nearest printed Instalment; one paying exactly a printed Instalment may
 connect itself, a payment of any other part stays a suggestion — see
-[ADR-0013](docs/adr/0013-an-instalment-auto-connects-only-on-printed-evidence.md). A
-payment judged as a printed Instalment, or closing the **Outstanding** amount of a File
-that prints them, is dated against that Instalment's due date, not the File's date, and
-the File is matched around each printed due date as well as its own.
+[ADR-0013](docs/adr/0013-an-instalment-auto-connects-only-on-printed-evidence.md). Once
+a payment is connected, the paid Instalments are the earliest printed ones that add up to
+what is paid; a further payment is judged against the **Outstanding** amount or the nearest
+unpaid Instalment, whichever fits better. A payment judged as a printed Instalment, or
+closing the Outstanding amount of a File that prints them, is dated against that
+Instalment's due date, not the File's date, and the File is matched around each printed
+due date as well as its own. Equal payments compete only for the same due date.
 _Deutsch_: Rate / Teilzahlung
 _Avoid_: partial invoice, split, tranche
 _Avoid (de)_: Teilrechnung (that is a document of its own), Tranche
