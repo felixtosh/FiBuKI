@@ -183,6 +183,16 @@ export interface SplitSegment {
   total: number | null;
 }
 
+/** One instalment a document prints (#615): its amount, due day and printed wording. */
+export interface ExtractedInstalment {
+  /** Cents, as printed. */
+  amount: number;
+  /** The day it is due, UTC midnight of that day; null when the row prints none. */
+  dueDate: Timestamp | null;
+  /** The printed wording ("Anzahlung", "Rate 1/3"), or null. */
+  label: string | null;
+}
+
 export interface TaxFile {
   id: string;
 
@@ -309,6 +319,16 @@ export interface TaxFile {
   extractedDueDate?: Timestamp | null;
   /** The Debit Date (Einzugsdatum) a SEPA direct-debit invoice states (#136). */
   extractedDebitDate?: Timestamp | null;
+
+  /**
+   * The instalments the document prints (#615, ADR-0013): a deposit, part
+   * payments or a schedule of due dates with amounts, each due date the
+   * stored day. A payment of exactly one of them may connect itself; the
+   * matcher scores a first payment against the nearest one. null when the
+   * document prints none (a single due date of the full amount is none);
+   * absent on Files extracted before the field existed.
+   */
+  extractedInstalments?: ExtractedInstalment[] | null;
 
   /** AI-extracted amount in cents */
   extractedAmount?: number | null;

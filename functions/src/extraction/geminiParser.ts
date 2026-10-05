@@ -25,6 +25,7 @@ const VERTEX_LOCATION = process.env.VERTEX_LOCATION || "europe-west1";
 import {
   ExtractedData,
   ExtractedEntity,
+  ExtractedInstalment,
   ExtractedLineItem,
   ExtractedRateGroup,
 } from "../types/extraction";
@@ -837,6 +838,42 @@ function normalizeTipAmount(value: unknown): number | null {
   return cents > 0 ? cents : null;
 }
 
+/** The most instalment rows a document is read as printing; more is a misread table. */
+const MAX_INSTALMENTS = 24;
+
+/** `YYYY-MM-DD` that is a real calendar day, else null. */
+function asCalendarDay(value: unknown): string | null {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value.trim())) return null;
+  const day = value.trim();
+  const date = new Date(`${day}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === day ? day : null;
+}
+
+/**
+ * The instalments a document prints (#615, ADR-0013), as transcribed. A row
+ * needs a positive amount; its due date must be a real calendar day or it is
+ * dropped to null. A row larger than the document total is a misread and
+ * goes. What is left is no schedule at all when it is empty, or one row for
+ * the whole total: a single due date of the full amount is not an instalment.
+ */
+export function normalizeInstalments(raw: unknown, documentTotal: number | null): ExtractedInstalment[] | null {
+  if (!Array.isArray(raw)) return null;
+  const total = documentTotal != null ? Math.abs(documentTotal) : null;
+  const rows: ExtractedInstalment[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue;
+    const row = entry as Record<string, unknown>;
+    const cents = toCents(row.amount);
+    if (cents === null || cents === 0) continue;
+    const amount = Math.abs(cents);
+    if (total !== null && total > 0 && amount > total) continue;
+    rows.push({ amount, dueDate: asCalendarDay(row.dueDate), label: asTranscribedString(row.label) });
+  }
+  if (rows.length === 0 || rows.length > MAX_INSTALMENTS) return null;
+  if (rows.length === 1 && (total === null || rows[0].amount === total)) return null;
+  return rows;
+}
+
 /**
  * One separately issued invoice or Receipt inside a File (#550): its pages,
  * 1-based and inclusive, and what the Extraction read off them.
@@ -1175,6 +1212,7 @@ JSON structure:
     "invoiceNumber": "2024-0042",
     "referencedInvoiceNumber": null,
     "paidInvoiceNumber": null,
+    "instalments": null,
     "lineItems": [
       {
         "description": "USB-C Cable",
@@ -1291,6 +1329,22 @@ DEBIT DATE (key "debitDate"):
 - If the document prints no debit date, return NO "debitDate" field
 - Never return a "debitDate" earlier than the invoice date
 
+INSTALMENTS ("instalments" in "extracted"):
+- Only when the document PRINTS that it is paid in parts: a deposit
+  ("Anzahlung", "Akontozahlung"), a part payment ("Teilzahlung"), numbered
+  instalments ("Rate 1/3", "1. Rate", "Instalment 2 of 3"), or a payment
+  schedule table of due dates with amounts
+- Return one object per printed part: {"amount": <cents as printed>,
+  "dueDate": "YYYY-MM-DD" or null, "label": <the printed wording> or null},
+  e.g. "Rate 1/3: 400,00 EUR fällig am 01.03.2026" -> {"amount": 40000,
+  "dueDate": "2026-03-01", "label": "Rate 1/3"}
+- Copy what is printed - never divide the total into parts yourself, never
+  compute a date from a payment period
+- A single due date for the whole amount is NOT an instalment: it stays the
+  "dueDate" additional field and "instalments" is null
+- If the document prints no deposit, part payment or schedule, return
+  "instalments": null
+
 JSON only: exactly one object, no markdown, no explanation.`;
 
   const apiStart = Date.now();
@@ -1361,6 +1415,7 @@ export function readTranscription(text: string): TranscriptionReading {
       amount_raw?: string | null;
       tipAmount?: number | null;
       payableAmount?: number | null;
+      instalments?: unknown;
       currency?: string | null;
       vatPercent?: number | null;
       vatPercent_raw?: string | null;
@@ -1551,6 +1606,12 @@ export function readTranscription(text: string): TranscriptionReading {
     // A payment code's amount IS the figure the document designates as due,
     // in machine form, so it fills the slot when no printed wording does.
     payableAmount: toCents(parsed.extracted?.payableAmount) ?? amountFromPaymentCodes(qrCodes),
+    // #615: the instalments or schedule the document prints, transcribed. A
+    // single row for the whole total is no schedule (ADR-0013).
+    instalments: normalizeInstalments(
+      parsed.extracted?.instalments,
+      typeof parsed.extracted?.amount === "number" ? parsed.extracted.amount : null
+    ),
     currency: normalizeCurrency(parsed.extracted?.currency),
     vatPercent: typeof parsed.extracted?.vatPercent === "number" ? parsed.extracted.vatPercent : null,
     documentVatAmount: toCents(parsed.extracted?.documentVatAmount),
