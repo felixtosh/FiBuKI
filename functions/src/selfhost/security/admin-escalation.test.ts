@@ -57,7 +57,7 @@ beforeEach(async () => {
  * refuses it (ADR-0016, #711), so the flags are then planted server-side: the
  * callables must refuse even a user doc that carries them.
  */
-async function selfGrantAdmin(): Promise<void> {
+async function plantAdminFlagsAfterRefusedSelfGrant(): Promise<void> {
   const flags = { admin: true, isAdmin: true, role: "admin" };
   await getFirestore().doc(`users/${ATTACKER}`).delete();
   for (const merge of [false, true]) {
@@ -81,8 +81,8 @@ const ADMIN_CALLS: Array<[string, Record<string, unknown>]> = [
 
 describe("admin-only callables", () => {
   for (const [name, data] of ADMIN_CALLS) {
-    it(`${name}(${JSON.stringify(data)}) refuses a user who wrote admin flags into their own user doc`, async () => {
-      await selfGrantAdmin();
+    it(`${name}(${JSON.stringify(data)}) refuses a user whose user doc carries admin flags (their own write of them is refused)`, async () => {
+      await plantAdminFlagsAfterRefusedSelfGrant();
       for (const auth of [ATTACKER_AUTH, NO_EMAIL_AUTH]) {
         let code: string | undefined;
         try {

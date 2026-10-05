@@ -39,7 +39,13 @@ describe("the policy", () => {
   });
 
   it("notifications can only be read and marked read by the client", () => {
-    expect(SUBTREE_POLICIES.notifications).toEqual({ read: "authed", create: "none", update: "authed", delete: "none" });
+    expect(SUBTREE_POLICIES.notifications).toEqual({
+      read: "authed",
+      create: "none",
+      update: "authed",
+      delete: "none",
+      updateFields: ["readAt"],
+    });
   });
 });
 
@@ -146,6 +152,27 @@ describe("the data plane enforces it", () => {
       const r = await call("write", { ops: [{ type: "delete", path: `${NOTIFICATIONS}/n-1` }] });
       expect(r.status, r.text).toBe(403);
       expect((await getFirestore().doc(`${NOTIFICATIONS}/n-1`).get()).data()).toEqual(unread);
+    });
+
+    it("refuses a client update of any field but readAt and leaves the notification unchanged", async () => {
+      const path = `${NOTIFICATIONS}/n-1`;
+      for (const op of [
+        { type: "update", path, data: { title: "Rewritten" } },
+        { type: "update", path, data: { readAt: 1, title: "Rewritten" } },
+        { type: "update", path, data: { "readAt.nested": 1 } },
+        { type: "set", path, data: { type: "planted" }, merge: true },
+      ]) {
+        const r = await call("write", { ops: [op] });
+        expect(r.status, `${JSON.stringify(op)} -> ${r.text}`).toBe(403);
+      }
+      expect((await getFirestore().doc(path).get()).data()).toEqual(unread);
+    });
+
+    it("refuses a client overwrite of the whole notification, even with readAt alone", async () => {
+      const path = `${NOTIFICATIONS}/n-1`;
+      const r = await call("write", { ops: [{ type: "set", path, data: { readAt: 1 } }] });
+      expect(r.status, r.text).toBe(403);
+      expect((await getFirestore().doc(path).get()).data()).toEqual(unread);
     });
 
     it("still lets the client mark one read", async () => {

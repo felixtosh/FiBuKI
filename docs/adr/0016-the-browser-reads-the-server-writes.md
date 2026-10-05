@@ -8,7 +8,8 @@ SDK. The data policy (`functions/src/selfhost/data-policy.ts`) marks each domain
 read-only for the client.
 
 Three kinds of table stay writable from the browser, each for a stated reason:
-notifications (marking one read changes only the User's own view), chat sessions (the
+notifications (marking one read changes only the User's own view, so the client may
+write `readAt` and nothing else), chat sessions (the
 User's own conversation history, which no rule governs), and admin tables (the policy
 already allows only admins).
 
@@ -42,5 +43,7 @@ route breaks the day its table locks. It moves to the admin SDK with its table.
   locked table against the real data plane.
 - Dead browser writers are deleted, not ported. #625 deleted the ones nothing called
   and locked Mail Integrations, agent search sessions, AI usage, the precision-search
-  queue, reports, and update on the user document. The other tables lock with the child
+  queue, reports, and update on the user document. #711 locked create on the user
+  document, and create and delete on notifications; a notification update may write
+  only `readAt` (the policy's `updateFields`). The other tables lock with the child
   tickets of #624 that move their last writer.
