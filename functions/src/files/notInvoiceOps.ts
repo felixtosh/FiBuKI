@@ -44,7 +44,7 @@ export async function markFileNotInvoice(
 
 /**
  * Unmarking restores the file as an invoice and re-opens extraction, which is
- * what recovers the data `buildMarkNotInvoiceUpdates` cleared. Nothing fires
+ * what recovers the data `markFileNotInvoice` cleared. Nothing fires
  * on the write itself: whoever writes these updates calls
  * `queueExtractionAfterUnmark` once the write has committed.
  *

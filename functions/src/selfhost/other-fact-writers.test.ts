@@ -149,8 +149,10 @@ describe("marking a File Not Invoice clears its Hand Correction record (#640)", 
     await expect(unmarkFileAsNotInvoice(ME, { fileId: "old" })).rejects.toThrow(
       "hand corrections a re-extraction would discard"
     );
+    // The structured refusal the "corrections will be lost" dialog opens on (#699).
     await expect(asUser(unmarkFileAsNotInvoiceCallable, { fileId: "old" })).rejects.toMatchObject({
       code: "failed-precondition",
+      details: { code: "HAND_CORRECTED", fields: ["amount", "invoiceDirection", "tipAmount", "dueDate"] },
     });
     await drainTriggers();
     expect(await jobs()).toHaveLength(0);
