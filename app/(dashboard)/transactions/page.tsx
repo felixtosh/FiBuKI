@@ -18,9 +18,7 @@ import { usePartners } from "@/hooks/use-partners";
 import { useGlobalPartners } from "@/hooks/use-global-partners";
 import { useFilteredTransactions } from "@/hooks/use-filtered-transactions";
 import { useTransactionFiles } from "@/hooks/use-files";
-import { getNeighbourRowId } from "@/lib/navigation/row-neighbour";
-import { useRowNavigationKeys } from "@/hooks/use-row-navigation-keys";
-import { isRowNavigationEnabled } from "@/lib/navigation/arrow-key-navigation";
+import { useListNavigation } from "@/hooks/use-list-navigation";
 import { functions, storage, db } from "@/lib/firebase/config";
 import { createFile, checkFileDuplicate, OperationsContext } from "@/lib/operations";
 import { useAuth } from "@/components/auth";
@@ -181,10 +179,6 @@ function TransactionsContent() {
     [tableOrderedIds, filteredTransactions]
   );
 
-  const hasPrevious =
-    getNeighbourRowId(orderedTransactionIds, selectedId, -1) !== null;
-  const hasNext = getNeighbourRowId(orderedTransactionIds, selectedId, 1) !== null;
-
   // Find selected transaction
   const selectedTransaction = useMemo(() => {
     if (!selectedId || !transactions.length) return null;
@@ -280,36 +274,26 @@ function TransactionsContent() {
     [selectedTransaction, updateTransaction]
   );
 
-  // Step through the displayed order (-1 previous, 1 next)
-  const navigateTransactionBy = useCallback(
-    (step: number) => {
-      const targetId = getNeighbourRowId(orderedTransactionIds, selectedId, step);
-      const target = targetId ? transactions.find((t) => t.id === targetId) : undefined;
+  // Prev/next and the left/right keys walk the displayed order while the
+  // transaction panel is open; the connect-file overlay switches the keys off.
+  const navigateToTransaction = useCallback(
+    (id: string) => {
+      const target = transactions.find((t) => t.id === id);
       if (target) handleSelectTransaction(target, { keepConnect: true });
     },
-    [orderedTransactionIds, selectedId, transactions, handleSelectTransaction]
+    [transactions, handleSelectTransaction]
   );
-
-  const handleNavigatePrevious = useCallback(
-    () => navigateTransactionBy(-1),
-    [navigateTransactionBy]
-  );
-
-  const handleNavigateNext = useCallback(
-    () => navigateTransactionBy(1),
-    [navigateTransactionBy]
-  );
-
-  // Left/right walk the displayed order while the transaction panel is open.
-  // The connect-file overlay renders inline with no dialog role of its own, so
-  // it has to be named here; portalled dialogs and menus the hook sees itself.
-  useRowNavigationKeys({
-    enabled: isRowNavigationEnabled({
-      panelOpen: Boolean(selectedTransaction),
-      connectOverlayOpen: isConnectFileOpen,
-    }),
-    onPrevious: handleNavigatePrevious,
-    onNext: handleNavigateNext,
+  const {
+    hasPrevious,
+    hasNext,
+    goPrevious: handleNavigatePrevious,
+    goNext: handleNavigateNext,
+  } = useListNavigation({
+    orderedIds: orderedTransactionIds,
+    currentId: selectedId,
+    onNavigate: navigateToTransaction,
+    panelOpen: Boolean(selectedTransaction),
+    connectOverlayOpen: isConnectFileOpen,
   });
 
 
