@@ -141,8 +141,7 @@ the retained document survives. The original cannot be restored while any of its
 exists. The Extraction may suggest a Split; FiBuKI never splits on its own, and a File the
 User ruled not to be several documents is not suggested again.
 _Deutsch_: Aufteilen
-_Avoid_: bundle (that is a **Bundle**: several documents, not one File holding several),
-separate, divide, unmerge
+_Avoid_: bundle (prose only, never a domain term), separate, divide, unmerge
 
 **Document Type**:
 How a File stands under § 11 UStG: `invoice`, `receipt`, `other`, or `unknown`. Decides
@@ -244,8 +243,8 @@ A document proposing a supply at a price before anything is owed, in either dire
 the User's own offer to a customer, or a supplier's to the User. An Offer the recipient
 signed or otherwise accepted is a **signed Offer**, the point from which an invoice is
 expected. It states no supply that happened, so it is never an invoice and never a
-Match: a File with Document Type `other` that sits only in its **Bundle**. See
-[ADR-0014](docs/adr/0014-a-bundle-is-one-business-case.md).
+Match: a File with Document Type `other` that sits only in its **Deal**. See
+[ADR-0014](docs/adr/0014-a-deal-is-one-business-case.md).
 _Deutsch (defining)_: Angebot (signed: angenommenes Angebot)
 _Also printed as_: Angebot, Kostenvoranschlag, Offert, Quote, Proposal
 _Avoid_: quote, estimate, proposal as our own words
@@ -255,9 +254,9 @@ Rechnung
 **Order Confirmation**:
 A supplier's or marketplace's confirmation that an order was accepted, before or beside
 the invoice for it. It states what will be owed, not what is, so it is never an invoice
-and never a Match: a File with Document Type `other` that sits only in its **Bundle**,
+and never a Match: a File with Document Type `other` that sits only in its **Deal**,
 where it says an invoice is expected. See
-[ADR-0014](docs/adr/0014-a-bundle-is-one-business-case.md).
+[ADR-0014](docs/adr/0014-a-deal-is-one-business-case.md).
 _Deutsch (defining)_: Auftragsbestätigung
 _Also printed as_: Auftragsbestätigung, Bestellbestätigung, Order Confirmation, Your
 order
@@ -543,23 +542,24 @@ _Deutsch_: Zahlungsbeleg zur Rechnung
 _Avoid_: payment confirmation, pairing, attachment, Copy
 _Avoid (de)_: Zuordnung (that is the **File Connection**), Kopie
 
-**Bundle**:
+**Deal**:
 The Files of one business case with one counterparty, from the **Offer** to the last
 payment: Offers and signed Offers, **Order Confirmations**, invoices and Receipts. It may
 span several invoices and several payments (a deposit and a final invoice are one
-Bundle). A Bundle forms as soon as two Files share a key — a printed order number, or
+Deal). A Deal forms as soon as two Files share a key — a printed order number, or
 one File citing another's invoice, order or Offer number — before any Transaction is
 involved. Its Offers and Order Confirmations are never a Match; its invoices are scored
 together against a Transaction, and while a known member is still unconnected a single
-member does not connect itself on its own amount. A Bundle says what is missing: a
+member does not connect itself on its own amount. A Deal says what is missing: a
 signed Offer with no Invoice issued, an Order Confirmation or payment with no invoice
 received, an invoice still Outstanding after its Due Date. Removing a member is a standing
 ruling, like a **Rejection**; a member can be added by hand. A **Copy** is never a member,
-its original is. See [ADR-0014](docs/adr/0014-a-bundle-is-one-business-case.md).
-_Deutsch_: Geschäftsfall (proposed, see #570)
-_Avoid_: group, order (an **Order Confirmation** is one member), deal, project
+its original is. See [ADR-0014](docs/adr/0014-a-deal-is-one-business-case.md).
+_Deutsch_: Geschäftsfall
+_Avoid_: bundle, group, order (an **Order Confirmation** is one member), project, business
+case (in English, a justification for a project)
 _Avoid (de)_: Sammelbeleg (one File holding several documents, which a **Split** takes
-apart), Bestellung, Projekt, Vorgang
+apart), Bestellung, Projekt, Vorgang, Geschäftsvorfall (a single booked transaction)
 
 **Learned Pattern**:
 A rule the system inferred from the user's own corrections, stored on a Partner and used
