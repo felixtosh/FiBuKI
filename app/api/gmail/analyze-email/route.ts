@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { VertexAI } from "@google-cloud/vertexai";
-import { MODELS } from "@/types/ai-usage";
+import { MODELS } from "@/functions/src/utils/models";
 import { GmailResolutionError, resolveGmailIntegration } from "@/lib/gmail/resolve-integration";
 
 const GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1";

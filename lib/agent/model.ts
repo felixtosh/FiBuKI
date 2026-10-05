@@ -12,7 +12,7 @@
 
 import { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { StructuredToolInterface } from "@langchain/core/tools";
-import { AI_MODEL_PRICING, MODELS } from "@/types/ai-usage";
+import { MODEL_PRICING, MODELS } from "@/functions/src/utils/models";
 
 export type ModelProvider = "anthropic" | "gemini";
 
@@ -32,7 +32,7 @@ const MODEL_IDS = {
 const VERTEX_LOCATION = process.env.VERTEX_LOCATION || "europe-west1";
 
 // Fallback cost per 1M tokens (input/output), only for a model missing from
-// AI_MODEL_PRICING.
+// MODEL_PRICING.
 export const MODEL_COSTS = {
   anthropic: { input: 3, output: 15 },
   gemini: { input: 1.5, output: 7.5 },
@@ -132,6 +132,6 @@ export function calculateCost(
   outputTokens: number
 ): number {
   // Priced at the model that ran, so a FIBUKI_CHAT_MODEL change is billed right.
-  const costs = AI_MODEL_PRICING[getModelId(provider)] ?? MODEL_COSTS[provider];
+  const costs = MODEL_PRICING[getModelId(provider)] ?? MODEL_COSTS[provider];
   return (inputTokens * costs.input + outputTokens * costs.output) / 1_000_000;
 }

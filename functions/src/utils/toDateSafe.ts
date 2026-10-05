@@ -1,8 +1,7 @@
 /**
- * Mirrors `toDateSafe` in `/lib/utils.ts`. Duplicated, not imported, because
- * `functions/tsconfig.json` pins `rootDir: "src"` — functions cannot reach
- * repo-root `lib/` (same constraint CLAUDE.md documents for the AI model
- * registry). Keep both copies in sync.
+ * Safely convert various date formats to a Date. The one copy (#689): the
+ * frontend reaches it through `@/lib/utils`, which re-exports it. Keep it
+ * browser-safe and import-free.
  *
  * Handles: Firestore Timestamp, serialized timestamp {seconds, nanoseconds},
  * Date, ISO string. A value that is present but the wrong shape degrades to

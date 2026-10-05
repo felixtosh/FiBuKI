@@ -1,10 +1,10 @@
 /**
- * Centralized AI model registry for Cloud Functions.
+ * The AI model registry: model roles and their pricing, the one copy (#689).
  *
- * IMPORTANT: This file is mirrored at `/types/ai-usage.ts` for frontend/API-route
- * consumption. `functions/tsconfig.json` has `rootDir: "src"`, so functions cannot
- * import from `../../types/`. Keep both files in sync when adding/changing models
- * or pricing.
+ * Browser-safe and import-free, so the frontend and API routes import it as
+ * `@/functions/src/utils/models` and bill against the same table the backend
+ * does. Keep it free of `firebase-admin` / `firebase-functions`; the #688 guard
+ * fails if browser code reaches either.
  *
  * To swap a model (e.g. when a Vertex AI model is retired), change the value here
  * in one place. Do NOT inline model IDs at callsites.
