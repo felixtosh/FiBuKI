@@ -235,6 +235,33 @@ describe("cross-user isolation: every callable", () => {
     await assertVictimUntouched(before, "updateTransaction saleSupplyKind");
   });
 
+  it("the identity cannot link an entity to another user's Partner (#632)", async () => {
+    await freshAccounts();
+    const save = callables.find(([n]) => n === "saveIdentity")?.[1];
+    expect(save).toBeDefined();
+    const company = { id: "a-company", type: "company", name: "Mine GmbH", aliases: [], ibans: [] };
+    const linked = (partnerId: string) => ({ companies: [{ ...company, partnerId }] });
+    const identity = async () => (await getFirestore().doc(`users/${ATTACKER}/settings/userData`).get()).data()!;
+
+    // "This is me" with the attacker's own Partner works.
+    await save!.run({ data: linked(A.partner), auth: ATTACKER_AUTH });
+    await drainTriggers();
+    expect((await identity()).companies[0].partnerId).toBe(A.partner);
+
+    // The same, unchanged, entity re-pointed at the victim's Partner; and the legacy id lists.
+    for (const data of [
+      linked(V.partner),
+      { ...linked(A.partner), markedAsMe: [V.partner] },
+      { ...linked(A.partner), identityPartnerIds: { name: V.partner } },
+      { ...linked(A.partner), identityPartnerIds: { companyName: V.partner } },
+    ]) {
+      await expect(save!.run({ data, auth: ATTACKER_AUTH }), JSON.stringify(data)).rejects.toThrow(/Partner/);
+    }
+    await drainTriggers();
+    expect(JSON.stringify(await identity())).not.toContain(V.partner);
+    expect((await identity()).companies[0].partnerId).toBe(A.partner);
+  });
+
   it("no callable hands the attacker's own row to another user (#621)", async () => {
     const failures: string[] = [];
     for (const [name, fn] of callables) {

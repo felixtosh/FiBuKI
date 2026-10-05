@@ -261,7 +261,7 @@ Next API route connects through the callable as the user (`lib/api/connect-file.
 - `backfillReceiptPairsCallable` - Run the suggestion side of the pair check over the user's stored Files once; records no link
 
 **Business identity (#632):**
-- `saveIdentityCallable` (`saveIdentity`) - The settings screen's and the Partner panel's "this is me" save. The identity module (`functions/src/identity/identity.ts`) is the one writer of `users/{uid}/settings/userData`'s identity fields, MCP's `create_identity_entity` / `update_identity_entity` included: it normalises as the browser did, merges (the FinanzOnline status survives) and refuses fields the identity does not hold. The browser only reads the document
+- `saveIdentityCallable` (`saveIdentity`) - The settings screen's and the Partner panel's "this is me" save. The identity module (`functions/src/identity/identity.ts`) is the one writer of what the User enters into `users/{uid}/settings/userData`, MCP's `create_identity_entity` / `update_identity_entity` included: it normalises as the browser did, merges (the FinanzOnline status survives), refuses fields the identity does not hold and a Partner id that is not the User's own. The browser only reads the document. Server-side write-backs (the identity Partner sync, Partner merging, account import) still write it directly (#734)
 
 **UVA filing:**
 - `markUvaPeriodFiledCallable` - Record what was filed for a period (append-only, editable figures); refused while the period has blockers

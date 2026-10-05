@@ -186,6 +186,19 @@ export function buildIdentity(existingData: Doc | undefined, form: IdentityForm,
 // The write
 // ============================================================================
 
+/** Every Partner id an identity document names: each entity's link and the legacy lists. */
+function identityPartnerIds(data: Doc | undefined): string[] {
+  if (!data) return [];
+  const ids: unknown[] = [
+    data.personalEntity?.partnerId,
+    ...(Array.isArray(data.companies) ? data.companies.map((c: Doc) => c?.partnerId) : []),
+    ...(Array.isArray(data.markedAsMe) ? data.markedAsMe : []),
+    data.identityPartnerIds?.name,
+    data.identityPartnerIds?.companyName,
+  ];
+  return ids.filter((id): id is string => typeof id === "string" && id.length > 0);
+}
+
 /**
  * Write the identity `change` returns for the stored document, in one
  * transaction. `change` may throw to refuse; it can run more than once, so it
@@ -201,6 +214,19 @@ export async function writeIdentity(
     const snap = await tx.get(ref);
     const existing = snap.exists ? (snap.data() as Doc) : undefined;
     const fields = buildIdentity(existing, change(existing), Timestamp.now());
+
+    // A Partner id the identity did not hold yet must be one of the User's own
+    // Partners ("this is me" sends one). The identity sync trusts an unchanged
+    // entity's partnerId, so this is where a foreign id is refused.
+    const stored = new Set(identityPartnerIds(existing));
+    const added = [...new Set(identityPartnerIds(fields))].filter((id) => !stored.has(id));
+    for (const id of added) {
+      const partner = await tx.get(db.collection("partners").doc(id));
+      if (!partner.exists || partner.data()?.userId !== userId) {
+        throw invalid(`Partner ${id} is not one of your Partners`);
+      }
+    }
+
     // The merge: an update replaces each identity field whole (so a cleared
     // vatId or address goes, which a deep set-merge would keep) and leaves every
     // other field of the document as it is.
