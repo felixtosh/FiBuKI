@@ -79,6 +79,11 @@ function stripComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 }
 
+/** `text` as a literal inside a RegExp. */
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /** Local names a write function is imported under (`import { setDoc as put }`), so a call through one counts. */
 function writeAliases(source: string): string[] {
   const aliases: string[] = [];
@@ -92,7 +97,7 @@ function writeAliases(source: string): string[] {
 
 /** Client write calls in `source`, by name or through an alias imported in `imports` (the whole file). */
 function countClientWrites(source: string, imports: string = source): number {
-  const names = [...WRITE_FUNCTIONS, ...writeAliases(imports)].map((n) => n.replace(/\$/g, "\\$"));
+  const names = [...WRITE_FUNCTIONS, ...writeAliases(imports)].map(escapeRegExp);
   const call = new RegExp(`(?<![\\w.$])(?:${names.join("|")})\\s*\\(`, "g");
   return [...stripComments(source).matchAll(call)].length;
 }
@@ -153,7 +158,7 @@ function operationsImports(source: string, path: string): string[] {
   }
   for (const m of text.matchAll(/import\s*(?:type\s*)?\*\s*as\s+([\w$]+)\s+from\s*["']([^"']+)["']/g)) {
     if (!isOperationsModule(m[2], path)) continue;
-    const ns = m[1].replace(/\$/g, "\\$");
+    const ns = escapeRegExp(m[1]);
     const members = new Set([...text.matchAll(new RegExp(`(?<![\\w.$])${ns}\\s*\\.\\s*(\\w+)`, "g"))].map((u) => u[1]));
     names.push(...members);
   }
