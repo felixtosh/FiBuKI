@@ -21,6 +21,7 @@ import {
   CardChargeData,
   BankPaymentCandidate,
 } from "./reconciliationScoring";
+import { addDays } from "../utils/storedDay";
 
 const db = getFirestore();
 
@@ -33,8 +34,7 @@ async function getUnreconciledCardCharges(
   beforeDate: Date,
   lookbackDays: number = RECONCILIATION_CONFIG.LOOKBACK_DAYS
 ): Promise<CardChargeData[]> {
-  const startDate = new Date(beforeDate);
-  startDate.setDate(startDate.getDate() - lookbackDays);
+  const startDate = addDays(beforeDate, -lookbackDays);
 
   const snapshot = await db
     .collection("transactions")

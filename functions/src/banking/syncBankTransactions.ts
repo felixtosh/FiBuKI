@@ -16,6 +16,7 @@ import type {
   SyncBankTransactionsRequest,
   SyncBankTransactionsResponse,
 } from "../types/banking-sync";
+import { viennaYear } from "../utils/storedDay";
 
 // Define secrets for finAPI credentials
 const finapiClientId = defineSecret("FINAPI_CLIENT_ID");
@@ -186,7 +187,7 @@ export const syncBankTransactionsCallable = createCallable<
     }
 
     // Determine sync start year (default to current year)
-    const syncFromYear = fromYear || new Date().getFullYear();
+    const syncFromYear = fromYear || viennaYear();
 
     const db = ctx.db;
     const userId = ctx.userId;

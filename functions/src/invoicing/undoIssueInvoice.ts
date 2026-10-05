@@ -21,6 +21,7 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { toDateSafe } from "../utils/toDateSafe";
+import { viennaYear, yearOf } from "../utils/storedDay";
 import { Invoice, InvoiceShare } from "./types";
 import { draftFileStubFields, draftPlaceholderNumber } from "./buildInvoiceFileFields";
 
@@ -57,7 +58,8 @@ function refuse(reason: string): never {
 
 /** The sequence number an invoice holds in `year`, or null. */
 function seqInYear(data: Partial<Invoice>, year: number): number | null {
-  const docYear = toDateSafe(data.issueDate)?.getFullYear() ?? null;
+  const issued = toDateSafe(data.issueDate);
+  const docYear = issued ? yearOf(issued) : null;
   if (docYear !== null && docYear !== year) return null;
   if (typeof data.numberSeq === "number") return data.numberSeq;
   const legacy = typeof data.number === "string" ? data.number.match(new RegExp(`${year}-(\\d{1,6})$`)) : null;
@@ -93,8 +95,9 @@ export async function performUndoIssueInvoice(
     refuse("This invoice was numbered by the legacy counter and cannot be taken back.");
   }
 
-  const year = new Date().getFullYear();
-  if (toDateSafe(inv.issueDate)?.getFullYear() !== year) {
+  const year = viennaYear();
+  const issued = toDateSafe(inv.issueDate);
+  if (!issued || yearOf(issued) !== year) {
     refuse("Only an invoice of the current year can be undone.");
   }
 

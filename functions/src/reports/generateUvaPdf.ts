@@ -7,6 +7,7 @@
 
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { convertHtmlToPdf } from "../precision-search/htmlToPdf";
+import { viennaDateLabel } from "../utils/storedDay";
 
 interface ReportPeriod {
   year: number;
@@ -123,7 +124,7 @@ function generateUvaPdfHtml(
   companyName?: string,
   taxNumber?: string
 ): string {
-  const generatedDate = new Date().toLocaleDateString("de-AT");
+  const generatedDate = viennaDateLabel(new Date(), "de-AT");
   const periodStr = formatPeriod(period);
 
   // Calculate if there's a payment or refund

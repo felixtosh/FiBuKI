@@ -20,7 +20,7 @@ export async function checkTransactionQuota(
   const subDoc = await subRef.get();
 
   const now = new Date();
-  const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const currentYearMonth = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
 
   if (!subDoc.exists) {
     // No subscription doc = free tier
@@ -82,7 +82,7 @@ export async function incrementTransactionCount(
 
   const sub = subDoc.data()!;
   const now = new Date();
-  const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const currentYearMonth = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
   const countMonth = (sub.transactionCountMonth as string) || "";
 
   // Build the update

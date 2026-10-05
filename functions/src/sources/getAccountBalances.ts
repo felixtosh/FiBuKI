@@ -6,6 +6,7 @@
 import { Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { toDateSafe } from "../utils/toDateSafe";
+import { addDays } from "../utils/storedDay";
 
 interface GetAccountBalancesRequest {
   date: string; // ISO string, e.g. "2025-12-31"
@@ -43,8 +44,8 @@ export const getAccountBalancesCallable = createCallable<
       throw new HttpsError("invalid-argument", "Invalid date format");
     }
 
-    // Set to end of day
-    targetDate.setHours(23, 59, 59, 999);
+    // The whole stored day counts: everything before the next day begins.
+    const nextDay = addDays(targetDate, 1);
 
     // Get all active sources for the user
     const sourcesSnap = await ctx.db
@@ -65,7 +66,7 @@ export const getAccountBalancesCallable = createCallable<
         .collection("transactions")
         .where("userId", "==", ctx.userId)
         .where("sourceId", "==", sourceDoc.id)
-        .where("date", "<=", Timestamp.fromDate(targetDate));
+        .where("date", "<", Timestamp.fromDate(nextDay));
 
       if (openingBalanceDate) {
         query = query.where("date", ">=", Timestamp.fromDate(openingBalanceDate));

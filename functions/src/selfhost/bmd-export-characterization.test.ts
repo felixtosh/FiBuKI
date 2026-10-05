@@ -13,11 +13,12 @@
  *      Firestore seed → bmdExports doc → ZIP in the memory blob store,
  *      unpacked and byte-checked (BOM, manifest, CSVs, belege/).
  *
- * Dates are seeded at 12:00 UTC — formatBmdDate uses LOCAL date parts, so
- * midday keeps the calendar day stable for any sane host timezone.
+ * Dates are seeded at 12:00 UTC. Since #673 the BMD dates are the stored
+ * day (the UTC date part), so a stored UTC midnight exports the same day on
+ * any host; the zone-pinned block below holds that.
  */
 
-import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
 import * as unzipper from "unzipper";
 import { getFirestore, Timestamp, __resetFirestoreShim, __whenShimIdle } from "./firestore-shim";
 import { drainTriggers, __resetTriggerShim, __registeredTriggers } from "./trigger-shim";
@@ -88,13 +89,48 @@ describe("bmd characterization: formatBmdDate", () => {
   });
 
   it("accepts plain Date objects", () => {
-    expect(formatBmdDate(new Date(2026, 0, 9))).toBe("20260109");
+    expect(formatBmdDate(new Date(Date.UTC(2026, 0, 9)))).toBe("20260109");
   });
 
   it("returns empty string for undefined", () => {
     expect(formatBmdDate(undefined)).toBe("");
   });
 });
+
+describe.each(["Europe/Vienna", "America/Los_Angeles", "Pacific/Kiritimati"])(
+  "bmd: a stored day exports as that day on a host in %s (#673)",
+  (zone) => {
+    const originalZone = process.env.TZ;
+    beforeEach(() => {
+      process.env.TZ = zone;
+    });
+    afterEach(() => {
+      // Node re-reads TZ when it is assigned.
+      if (originalZone === undefined) delete process.env.TZ;
+      else process.env.TZ = originalZone;
+    });
+
+    it("dates Buchungsdatum and Belegdatum by the stored day", () => {
+      expect(formatBmdDate(T("2027-01-01T00:00:00Z"))).toBe("20270101");
+      expect(formatBmdDate(T("2026-12-31T00:00:00Z"))).toBe("20261231");
+    });
+
+    it("numbers a New Year's Day booking in the new year, the same as on a UTC host", () => {
+      const files = new Map<string, FileForExport>([
+        ["f1", { id: "f1", fileName: "r.pdf", extractedDate: T("2026-12-31T00:00:00Z") }],
+      ]);
+      const csv = generateBuchungenCsv(
+        [tx({ amount: -12000, date: T("2027-01-01T00:00:00Z"), fileIds: ["f1"] })],
+        files,
+        new Map(),
+      );
+      const [, belegnr, buchdat, belegdat] = csv.split("\n")[1].split(";").slice(2, 6);
+      expect([belegnr, buchdat, belegdat]).toEqual(["2027000001", "20270101", "20261231"]);
+      const mapping = generateFileMapping([tx({ amount: -100, date: T("2027-01-01T00:00:00Z"), fileIds: ["f1"] })]);
+      expect(mapping.get("t1")!.belegnr).toBe("2027000001");
+    });
+  },
+);
 
 describe("bmd characterization: formatBmdAmount", () => {
   it("converts cents to euros with comma separator", () => {

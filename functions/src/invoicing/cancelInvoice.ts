@@ -20,6 +20,7 @@ import { Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { Invoice } from "./types";
 import { nextInvoiceNumberSeq } from "./numberAllocator";
+import { viennaToday, yearOf } from "../utils/storedDay";
 import { draftFileStubFields, draftPlaceholderNumber } from "./buildInvoiceFileFields";
 import { IssueInvoiceDeps, IssueInvoiceResponse, performIssueInvoice } from "./issueInvoice";
 
@@ -38,12 +39,6 @@ export interface CancelInvoiceResponse {
 }
 
 const CANCELLABLE = new Set(["issued", "sent", "paid"]);
-
-/** Today's Europe/Vienna calendar day, stored as UTC midnight. */
-function viennaToday(): Timestamp {
-  const day = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Vienna" }).format(new Date());
-  return Timestamp.fromDate(new Date(`${day}T00:00:00Z`));
-}
 
 /** The draft of the correction: the original with every line negated. */
 function correctionDraft(
@@ -94,7 +89,7 @@ async function renumberCorrection(
 ): Promise<void> {
   const ref = db.collection("invoices").doc(correctionId);
   const draft = (await ref.get()).data() as Invoice;
-  const numberSeq = await nextInvoiceNumberSeq(db, userId, draft.issueDate.toDate().getFullYear());
+  const numberSeq = await nextInvoiceNumberSeq(db, userId, yearOf(draft.issueDate.toDate()));
   await ref.update({ numberSeq, updatedAt: Timestamp.now() });
 }
 
@@ -180,8 +175,8 @@ export async function performCancelInvoice(
     );
   }
 
-  const issueDate = viennaToday();
-  const numberSeq = await nextInvoiceNumberSeq(db, userId, issueDate.toDate().getFullYear());
+  const issueDate = Timestamp.fromDate(viennaToday());
+  const numberSeq = await nextInvoiceNumberSeq(db, userId, yearOf(issueDate.toDate()));
   const correctionRef = db.collection("invoices").doc();
   const fileRef = db.collection("files").doc();
 

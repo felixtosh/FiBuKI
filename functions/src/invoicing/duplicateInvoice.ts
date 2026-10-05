@@ -7,6 +7,7 @@
 import { Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { Invoice, parsePaymentTermsToDays } from "./types";
+import { addDays, viennaToday } from "../utils/storedDay";
 
 export interface DuplicateInvoiceRequest {
   invoiceId: string;
@@ -21,12 +22,6 @@ export interface DuplicateInvoiceResponse {
 
 function shortRandomId(): string {
   return Math.random().toString(36).slice(2, 10).toUpperCase();
-}
-
-function addDaysToTimestamp(ts: Timestamp, days: number): Timestamp {
-  const d = ts.toDate();
-  d.setDate(d.getDate() + days);
-  return Timestamp.fromDate(d);
 }
 
 /**
@@ -53,7 +48,9 @@ export async function performDuplicateInvoice(
   }
 
   const now = Timestamp.now();
-  const dueDate = addDaysToTimestamp(now, parsePaymentTermsToDays(src.paymentTerms));
+  const today = viennaToday();
+  const issueDate = Timestamp.fromDate(today);
+  const dueDate = Timestamp.fromDate(addDays(today, parsePaymentTermsToDays(src.paymentTerms)));
 
   const newRef = db.collection("invoices").doc();
   const newFileRef = db.collection("files").doc();
@@ -63,7 +60,7 @@ export async function performDuplicateInvoice(
     status: "draft",
     issuer: src.issuer,
     recipient: src.recipient,
-    issueDate: now,
+    issueDate,
     paymentTerms: src.paymentTerms,
     dueDate,
     lineItems: src.lineItems.map((li) => ({ ...li })),

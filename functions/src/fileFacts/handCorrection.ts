@@ -435,12 +435,14 @@ function numbersMatch(proposed: unknown, stored: unknown, asCents: boolean): boo
  * the proposed one a `YYYY-MM-DD` string, so anything else would compare a
  * wrapper object against text and call every save a correction.
  *
- * **Both time frames count as the same day.** `extractionCore` writes the
- * stored Timestamp with `new Date(y, m - 1, d)`, which is midnight *local*.
- * Cloud Functions run in UTC so the two agree there, but a self-host container
- * running in Europe/Vienna stores 23:00 UTC of the day before, and reading that
- * back in UTC only would report the date as moved on every save of a file
- * nobody edited — stamping a correction that was never made. Where the two
+ * **Both time frames count as the same day.** Before #666, `extractionCore`
+ * wrote the stored Timestamp at midnight *local*. Cloud Functions run in UTC
+ * so the two agree there, but a self-host container running in Europe/Vienna
+ * stored 23:00 UTC of the day before, and reading that back in UTC only would
+ * report the date as moved on every save of a file nobody edited — stamping a
+ * correction that was never made. New Files are written at UTC midnight; the
+ * host-zone reading stays for the ones written before, and is the one
+ * exception the stored-day guard (#673) allows. Where the two
  * readings straddle midnight the ambiguity is unresolvable, so it is resolved
  * towards "unchanged": a phantom correction is the expensive answer, since it
  * is what a later re-extraction refuses on.

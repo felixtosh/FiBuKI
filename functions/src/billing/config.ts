@@ -413,8 +413,8 @@ export function createDefaultSubscriptionData(userId: string) {
   const plan = PLANS.free;
   const now = new Date();
   const periodEnd = new Date(now);
-  periodEnd.setMonth(periodEnd.getMonth() + 1);
-  const yearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  periodEnd.setUTCMonth(periodEnd.getUTCMonth() + 1);
+  const yearMonth = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
 
   return {
     userId,

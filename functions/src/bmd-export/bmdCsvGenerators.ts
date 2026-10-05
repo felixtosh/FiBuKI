@@ -19,6 +19,7 @@ import type { PartialPaymentAcceptance } from "../uva/partialPaymentAcceptance";
 import type { EcbRateTable } from "../fx/ecbRates";
 import { bookingSide } from "../uva/correction";
 import type { BookingSide, RateGroup, SaleSupplyKind, UvaCorrection, UvaSaleSupply } from "../uva/types";
+import { dayOf, yearOf } from "../utils/storedDay";
 
 /**
  * Maps no-receipt category templateIds to BMD Sachkonten.
@@ -43,10 +44,7 @@ export const NO_RECEIPT_SACHKONTO_MAP: Record<string, { expense: string | null; 
 export function formatBmdDate(date: Timestamp | Date | undefined): string {
   if (!date) return "";
   const d = date instanceof Timestamp ? date.toDate() : date;
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${year}${month}${day}`;
+  return dayOf(d).replace(/-/g, "");
 }
 
 /**
@@ -595,7 +593,7 @@ export function generateBuchungenCsvWithReport(
     const belegdat = firstFile?.extractedDate || tx.date;
 
     // Generate Belegnummer (YYYYNNNNNN format)
-    const year = tx.date.toDate().getFullYear();
+    const year = yearOf(tx.date.toDate());
     const belegnr = `${year}${String(belegnrCounter).padStart(6, "0")}`;
     belegnrCounter++;
 
@@ -726,7 +724,7 @@ export function generateFileMapping(
 
   for (const tx of transactions) {
     if (tx.fileIds && tx.fileIds.length > 0) {
-      const year = tx.date.toDate().getFullYear();
+      const year = yearOf(tx.date.toDate());
       const belegnr = `${year}${String(belegnrCounter).padStart(6, "0")}`;
       mapping.set(tx.id, { belegnr, fileIds: tx.fileIds });
     }
