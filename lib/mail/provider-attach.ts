@@ -56,7 +56,7 @@ export async function fetchProviderAttachment(
       dataBase64: string;
       integrationEmail: string | null;
     }
-  >("getMailAttachmentCallable", args, authToken);
+  >("getMailAttachment", args, authToken);
   const data = Buffer.from(res.dataBase64, "base64");
   return {
     data,
@@ -80,7 +80,7 @@ export async function fetchProviderBody(
   authToken: string,
   args: { integrationId: string; messageId: string }
 ): Promise<ProviderBody> {
-  return callFirebaseFunction<typeof args, ProviderBody>("getMailBodyCallable", args, authToken);
+  return callFirebaseFunction<typeof args, ProviderBody>("getMailBody", args, authToken);
 }
 
 /**

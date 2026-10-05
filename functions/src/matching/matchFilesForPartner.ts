@@ -16,7 +16,7 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { MODELS } from "../utils/models";
 import { connectFiles } from "../fileConnections/writer";
-import { autoConnectTies, matchableFiles, pairsAmong, windowAround } from "./matcher";
+import { autoConnectTies, fileDateRangesFor, matchableFiles, pairsAmong } from "./matcher";
 import { SCORING_CONFIG } from "./transactionScoring";
 import { toDateSafe } from "../utils/toDateSafe";
 
@@ -254,13 +254,15 @@ export async function matchFilesForPartnerInternal(
   console.log(`Found ${unfiledTransactions.length} unfiled transactions for partner ${partnerName}`);
 
   // 3. Get candidate files: this Partner's, and unassigned ones dated near
-  // the Transactions. Which pairs among them are possible (eligibility, the
-  // date window, Rejections) and what each scores is the matcher's (#613).
-  const span = windowAround(
+  // the Transactions, including earlier ones a Due Date or Debit Date
+  // stretches to them (#614). Which pairs among them are possible
+  // (eligibility, the date window, Rejections) and what each scores is the
+  // matcher's (#613).
+  const ranges = fileDateRangesFor(
     unfiledTransactions.map((doc) => toDateSafe(doc.data().date)).filter((d): d is Date => d !== null)
   );
 
-  const [partnerFilesSnapshot, unassignedFilesSnapshot] = await Promise.all([
+  const [partnerFilesSnapshot, ...unassignedFilesSnapshots] = await Promise.all([
     db
       .collection("files")
       .where("userId", "==", userId)
@@ -268,16 +270,16 @@ export async function matchFilesForPartnerInternal(
       .where("extractionComplete", "==", true)
       .limit(CONFIG.MAX_FILES_PER_PARTNER)
       .get(),
-    span
-      ? db
-          .collection("files")
-          .where("userId", "==", userId)
-          .where("extractionComplete", "==", true)
-          .where("extractedDate", ">=", span.start)
-          .where("extractedDate", "<=", span.end)
-          .limit(CONFIG.MAX_FILES_PER_PARTNER)
-          .get()
-      : null,
+    ...ranges.map((span) =>
+      db
+        .collection("files")
+        .where("userId", "==", userId)
+        .where("extractionComplete", "==", true)
+        .where("extractedDate", ">=", span.start)
+        .where("extractedDate", "<=", span.end)
+        .limit(CONFIG.MAX_FILES_PER_PARTNER)
+        .get()
+    ),
   ]);
 
   // Merge and deduplicate files
@@ -285,7 +287,7 @@ export async function matchFilesForPartnerInternal(
   for (const doc of partnerFilesSnapshot.docs) {
     fileMap.set(doc.id, doc);
   }
-  for (const doc of unassignedFilesSnapshot?.docs ?? []) {
+  for (const doc of unassignedFilesSnapshots.flatMap((s) => s.docs)) {
     const data = doc.data();
     // Only include unassigned files (no partnerId or partnerId matches)
     if (!data.partnerId || data.partnerId === partnerId) {

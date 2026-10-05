@@ -46,10 +46,10 @@
  *
  * The rule is pure and lives here alone, so both correction doors — the detail
  * panel callable and `update_file_extraction` — measure a tip the same way.
- * Reading the totals is the caller's job; `buildCorrectedFileUpdate` does it.
+ * Reading the totals is the caller's job; the File facts module does it.
  */
 
-import { ExtractionCorrectionError } from "./extractionCorrectionOps";
+import { ExtractionCorrectionError } from "./handCorrection";
 
 /**
  * What the guard decided, stored on the file so the check is reproducible

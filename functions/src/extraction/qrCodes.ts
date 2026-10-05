@@ -35,10 +35,24 @@ export type RksvBucket = "normal" | "reduced1" | "reduced2" | "zero" | "special"
 /** A receipt the till marks as not a sale: a cancellation or a training receipt. */
 export type RksvReceiptKind = "cancellation" | "training";
 
+/**
+ * How a payload was read off the page (#161, from #166): by a barcode decoder,
+ * or transcribed by a model. Only an Extraction Service can say "barcode";
+ * anything it does not say is "model", never a deterministic read FiBuKI was
+ * not told about.
+ */
+export type QrDecodedBy = "barcode" | "model";
+
 export interface ParsedQrCode {
   format: QrCodeFormat;
-  /** The decoded text as the model returned it (trimmed, capped). */
+  /** The decoded text as the Extraction returned it (trimmed, capped). */
   payload: string;
+  /**
+   * How the payload was decoded (#161). Set on every code parsed from an
+   * Extraction; absent only on codes stored before the field existed, which
+   * read as "model".
+   */
+  decodedBy?: QrDecodedBy;
   /** RKSV: till id and receipt number, as printed in the code. */
   cashRegisterId?: string;
   receiptNumber?: string;
@@ -203,14 +217,22 @@ export function parseQrPayload(raw: unknown): ParsedQrCode | null {
   return withoutUndefined(parsed);
 }
 
+/**
+ * Parse an Extraction's QR entries. An entry is a payload string, or an
+ * object `{ payload, decodedBy }` (#161). A string, or an object that does not
+ * say "barcode", is stored as decoded by a model.
+ */
 export function parseQrPayloads(raw: unknown): ParsedQrCode[] {
   if (!Array.isArray(raw)) return [];
   return raw
-    .map((entry) =>
-      parseQrPayload(
-        typeof entry === "string" ? entry : (entry as { payload?: unknown } | null)?.payload
-      )
-    )
+    .map((entry): ParsedQrCode | null => {
+      const object =
+        typeof entry === "string" ? null : (entry as { payload?: unknown; decodedBy?: unknown } | null);
+      const code = parseQrPayload(typeof entry === "string" ? entry : object?.payload);
+      if (!code) return null;
+      const decodedBy: QrDecodedBy = object?.decodedBy === "barcode" ? "barcode" : "model";
+      return { ...code, decodedBy };
+    })
     .filter((code): code is ParsedQrCode => code !== null);
 }
 

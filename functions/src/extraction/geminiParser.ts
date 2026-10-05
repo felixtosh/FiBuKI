@@ -884,11 +884,8 @@ export function normalizeSplitSegments(raw: unknown): SplitSegment[] | null {
   return segments;
 }
 
-export async function parseWithGemini(
-  fileBuffer: Buffer,
-  fileType: string,
-  model: GeminiModel = DEFAULT_GEMINI_MODEL
-): Promise<{
+/** What FiBuKI reads off one transcription, whichever Extraction Service wrote it (#161). */
+export interface TranscriptionReading {
   extracted: ExtractedData;
   rawText: string;
   boundingBoxes: GeminiBoundingBox[];
@@ -902,8 +899,13 @@ export async function parseWithGemini(
   repairAmbiguousFields: string[];
   /** Separately issued documents the model read in this File, or null (#550). */
   splitSegments: SplitSegment[] | null;
-  usage: { inputTokens: number; outputTokens: number; model: string };
-}> {
+}
+
+export async function parseWithGemini(
+  fileBuffer: Buffer,
+  fileType: string,
+  model: GeminiModel = DEFAULT_GEMINI_MODEL
+): Promise<TranscriptionReading & { usage: { inputTokens: number; outputTokens: number; model: string } }> {
   const projectId = getProjectId();
   const vertexAI = new VertexAI({ project: projectId, location: VERTEX_LOCATION });
   const geminiModel = vertexAI.getGenerativeModel({ model });
@@ -1275,6 +1277,14 @@ DEBIT DATE (key "debitDate"):
   eingezogen", "wird frühestens am ... eingezogen", "Abbuchung erfolgt am",
   "Einzug am", "Lastschrift am". Transcribe the date under "debitDate", with
   "label" the printed wording (shortened to the phrase around the date)
+- A sentence saying the amount "wird (frühestens) am <date> ... eingezogen"
+  under a SEPA mandate is a debit date, however many words sit between the
+  date and "eingezogen", e.g. "Der Gesamtbetrag wird frühestens am
+  20.06.2026 von Ihrem Konto per SEPA-Mandat eingezogen" -> "debitDate"
+  "2026-06-20". "frühestens" (at the earliest) does not make it anything
+  other than a debit date
+- A SEPA collection sentence is never a due date: do not file its date under
+  "dueDate", not even when the document prints no other date to pay by
 - It is NOT the due date: a due date is when the customer must pay, a debit
   date is when the issuer will take the money. When a document prints both,
   return both. When it prints only a due date, return no "debitDate"
@@ -1304,6 +1314,16 @@ JSON only: exactly one object, no markdown, no explanation.`;
     model,
   };
 
+  return { ...readTranscription(text), usage };
+}
+
+/**
+ * Read a transcription: the JSON the prompt above asks for, from Gemini or
+ * from an external Extraction Service (#161). Everything FiBuKI decides about
+ * a reply happens here, for every service alike: normalisation, the
+ * Invoicing Agent guard, QR parsing and the closed field vocabulary.
+ */
+export function readTranscription(text: string): TranscriptionReading {
   // Parse JSON from response, handling potential markdown code blocks
   let jsonStr = text.trim();
   if (jsonStr.startsWith("```json")) {
@@ -1634,6 +1654,5 @@ JSON only: exactly one object, no markdown, no explanation.`;
     additionalFields,
     repairAmbiguousFields,
     splitSegments: normalizeSplitSegments(parsed.segments ?? parsed.extracted?.segments),
-    usage,
   };
 }
