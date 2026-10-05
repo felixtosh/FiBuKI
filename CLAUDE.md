@@ -79,7 +79,10 @@ Things that cost real time to find. All of `fibuki.com` runs the self-host stack
 - **One tenant, many users.** `getTenantId()` is per deployment, so every
   fibuki.com user shares a tenant and RLS does not separate them; only the
   app's ownership checks do. The client access policy is
-  `functions/src/selfhost/data-policy.ts` (not `firestore.rules`). Never take a
+  `functions/src/selfhost/data-policy.ts` (not `firestore.rules`). The browser
+  reads domain data and never writes it ([ADR-0016](docs/adr/0016-the-browser-reads-the-server-writes.md)):
+  a new write is a callable, and `functions/src/selfhost/browser-writes.test.ts`
+  fails on a new client SDK write in browser code or a server route. Never take a
   uid from a body, query, header or cookie. A new Next API route checks
   ownership of every id it is given and gets a case in
   `functions/src/selfhost/security/cross-user-routes.test.ts`; callables, AI
