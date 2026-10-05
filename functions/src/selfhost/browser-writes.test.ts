@@ -16,16 +16,19 @@
  * allowance is lowered (or its entry removed), so the lists only ever shrink.
  * Never raise a number: a new write is a callable built with `createCallable()`.
  *
- * A static walk, so it counts call shapes, not intent: a call inside a string
- * is counted all the same, a write behind a helper outside lib/operations is
- * counted where the helper lives (browser code), not in the route.
+ * A static walk over TypeScript and JavaScript files, so it counts call
+ * shapes, not intent: a call through an aliased import (`setDoc as put`)
+ * counts, a call inside a string is counted all the same, a write behind a
+ * helper outside lib/operations is counted where the helper lives (browser
+ * code), not in the route. A route reaches the operations layer by named or
+ * namespace import, through `@/lib/operations` or a relative path.
  *
  *   npx vitest run --config vitest.selfhost.config.ts src/selfhost/browser-writes.test.ts --pool=forks --maxWorkers=1
  */
 
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "fs";
-import { join, relative, sep } from "path";
+import { join, posix, relative, sep } from "path";
 
 type Allowances = Record<string, { count: number; why: string }>;
 
@@ -68,16 +71,30 @@ const SKIPPED: Record<string, string> = {
   "lib/selfhost/firestore-client.ts": "the self-host client SDK itself: it defines these functions",
 };
 
-/** The client SDK's write calls: Firestore's free functions, not the Admin SDK's methods (`db.runTransaction`). */
-const CLIENT_WRITE = /(?<![\w.$])(?:addDoc|setDoc|updateDoc|deleteDoc|writeBatch|runTransaction)\s*\(/g;
+/** The client SDK's write functions: Firestore's free functions, not the Admin SDK's methods (`db.runTransaction`). */
+const WRITE_FUNCTIONS = ["addDoc", "setDoc", "updateDoc", "deleteDoc", "writeBatch", "runTransaction"];
 
 /** Drops comments, so a write named in a comment is not counted. Strings are left alone. */
 function stripComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 }
 
-function countClientWrites(source: string): number {
-  return [...stripComments(source).matchAll(CLIENT_WRITE)].length;
+/** Local names a write function is imported under (`import { setDoc as put }`), so a call through one counts. */
+function writeAliases(source: string): string[] {
+  const aliases: string[] = [];
+  for (const m of stripComments(source).matchAll(/import\s*(?:type\s*)?\{([^}]*)\}\s*from/g)) {
+    for (const a of m[1].matchAll(new RegExp(`\\b(?:${WRITE_FUNCTIONS.join("|")})\\s+as\\s+([\\w$]+)`, "g"))) {
+      aliases.push(a[1]);
+    }
+  }
+  return aliases;
+}
+
+/** Client write calls in `source`, by name or through an alias imported in `imports` (the whole file). */
+function countClientWrites(source: string, imports: string = source): number {
+  const names = [...WRITE_FUNCTIONS, ...writeAliases(imports)].map((n) => n.replace(/\$/g, "\\$"));
+  const call = new RegExp(`(?<![\\w.$])(?:${names.join("|")})\\s*\\(`, "g");
+  return [...stripComments(source).matchAll(call)].length;
 }
 
 /**
@@ -88,15 +105,18 @@ function countClientWrites(source: string): number {
 function operationsWriters(files: Record<string, string>): Set<string> {
   const bodies = new Map<string, string>();
   const decl = /^(?:export\s+)?(?:async\s+)?function\s+(\w+)|^(?:export\s+)?const\s+(\w+)\s*=/gm;
+  const writers = new Set<string>();
   for (const source of Object.values(files)) {
     const text = stripComments(source);
     const starts = [...text.matchAll(decl)];
     starts.forEach((m, i) => {
       const end = i + 1 < starts.length ? starts[i + 1].index : text.length;
-      bodies.set(m[1] ?? m[2], text.slice(m.index, end));
+      const name = m[1] ?? m[2];
+      const body = text.slice(m.index, end);
+      bodies.set(name, body);
+      if (countClientWrites(body, text) > 0) writers.add(name);
     });
   }
-  const writers = new Set([...bodies].filter(([, body]) => countClientWrites(body) > 0).map(([name]) => name));
   for (let grew = true; grew; ) {
     grew = false;
     for (const [name, body] of bodies) {
@@ -110,20 +130,43 @@ function operationsWriters(files: Record<string, string>): Set<string> {
   return writers;
 }
 
-/** Names a file imports from `@/lib/operations` (the barrel or one module). */
-function operationsImports(source: string): string[] {
+/** Whether an import specifier in the file at `path` names the operations layer: by alias or by relative path. */
+function isOperationsModule(specifier: string, path: string): boolean {
+  const target = specifier.startsWith(".") ? posix.join(posix.dirname(path), specifier) : specifier.replace(/^@\//, "");
+  return /^lib\/operations(?:\/[\w-]+)?(?:\/index)?(?:\.[jt]s)?$/.test(target);
+}
+
+/**
+ * Names the file at `path` (repo-relative) takes from the operations layer
+ * (the barrel or one module): each named import, and each member used
+ * through a namespace import (`ops.updateSource(...)`).
+ */
+function operationsImports(source: string, path: string): string[] {
   const names: string[] = [];
-  for (const m of source.matchAll(/import\s*(?:type\s*)?\{([^}]*)\}\s*from\s*["']@\/lib\/operations(?:\/[\w-]+)?["']/g)) {
+  const text = stripComments(source);
+  for (const m of text.matchAll(/import\s*(?:type\s*)?\{([^}]*)\}\s*from\s*["']([^"']+)["']/g)) {
+    if (!isOperationsModule(m[2], path)) continue;
     for (const part of m[1].split(",")) {
       const name = part.trim().replace(/^type\s+/, "").split(/\s+as\s+/)[0];
       if (name) names.push(name);
     }
+  }
+  for (const m of text.matchAll(/import\s*(?:type\s*)?\*\s*as\s+([\w$]+)\s+from\s*["']([^"']+)["']/g)) {
+    if (!isOperationsModule(m[2], path)) continue;
+    const ns = m[1].replace(/\$/g, "\\$");
+    const members = new Set([...text.matchAll(new RegExp(`(?<![\\w.$])${ns}\\s*\\.\\s*(\\w+)`, "g"))].map((u) => u[1]));
+    names.push(...members);
   }
   return names;
 }
 
 const repoRoot = join(__dirname, "..", "..", "..");
 const rel = (path: string) => relative(repoRoot, path).split(sep).join("/");
+
+/** A source file the walk reads: TypeScript or JavaScript, not a test. */
+function isSourceFile(name: string): boolean {
+  return /\.m?[jt]sx?$/.test(name) && !/\.test\.m?[jt]sx?$/.test(name);
+}
 
 function sourceFiles(dir: string, skipDir: (path: string) => boolean = () => false): string[] {
   const out: string[] = [];
@@ -132,7 +175,7 @@ function sourceFiles(dir: string, skipDir: (path: string) => boolean = () => fal
     if (entry.isDirectory()) {
       if (entry.name === "node_modules" || entry.name === "__tests__" || skipDir(path)) continue;
       out.push(...sourceFiles(path, skipDir));
-    } else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) {
+    } else if (isSourceFile(entry.name)) {
       out.push(path);
     }
   }
@@ -161,7 +204,7 @@ function routeWrites(): Record<string, number> {
   const counts: Record<string, number> = {};
   for (const file of sourceFiles(apiDir)) {
     const source = readFileSync(file, "utf8");
-    const n = countClientWrites(source) + operationsImports(source).filter((name) => writers.has(name)).length;
+    const n = countClientWrites(source) + operationsImports(source, rel(file)).filter((name) => writers.has(name)).length;
     if (n > 0) counts[rel(file)] = n;
   }
   return counts;
@@ -199,8 +242,34 @@ describe("the patterns", () => {
       `/* setDoc(ref, data) */`,
       `import { addDoc, setDoc } from "firebase/firestore";`,
       `await callFunction("updateFile", { fileId, data });`,
+      `import { setDoc as put } from "firebase/firestore";`,
     ];
     for (const shape of ignored) expect(countClientWrites(shape), shape).toBe(0);
+  });
+
+  it("count a write called through an aliased import", () => {
+    const source = [
+      `import {`,
+      `  doc,`,
+      `  setDoc as put,`,
+      `} from "firebase/firestore";`,
+      `await put(doc(db, "files", "1"), {});`,
+    ].join("\n");
+    expect(countClientWrites(source)).toBe(1);
+    const writers = operationsWriters({
+      "a-ops.ts": [
+        `import { deleteDoc as remove } from "firebase/firestore";`,
+        `export async function aliased(ctx) { await remove(doc(ctx.db, "x", "1")); }`,
+      ].join("\n"),
+    });
+    expect([...writers]).toEqual(["aliased"]);
+  });
+
+  it("read JavaScript files as well as TypeScript, never tests", () => {
+    for (const name of ["a.ts", "a.tsx", "a.js", "a.jsx", "a.mjs", "a.mts"]) expect(isSourceFile(name), name).toBe(true);
+    for (const name of ["a.test.ts", "a.test.tsx", "a.test.js", "a.test.mjs", "a.json", "a.css"]) {
+      expect(isSourceFile(name), name).toBe(false);
+    }
   });
 
   it("find operations-layer writers, through a helper too", () => {
@@ -223,7 +292,33 @@ describe("the patterns", () => {
       `import { getFile } from "@/lib/operations/file-ops";`,
       `import { other } from "@/lib/other";`,
     ].join("\n");
-    expect(operationsImports(source)).toEqual(["createSource", "listSources", "OperationsContext", "getFile"]);
+    expect(operationsImports(source, "app/api/x/route.ts")).toEqual([
+      "createSource",
+      "listSources",
+      "OperationsContext",
+      "getFile",
+    ]);
+  });
+
+  it("read the members a namespace import of the operations layer uses", () => {
+    const source = [
+      `import * as ops from "@/lib/operations";`,
+      `await ops.updateSource(ctx, id, data);`,
+      `await ops.updateSource(ctx, id, more);`,
+      `const s = await ops.getSource(ctx, id);`,
+      `await other.deleteSource(ctx, id);`,
+    ].join("\n");
+    expect(operationsImports(source, "app/api/x/route.ts")).toEqual(["updateSource", "getSource"]);
+  });
+
+  it("read the operations layer imported by relative path", () => {
+    const source = [
+      `import { updateSource } from "../../../lib/operations/source-ops";`,
+      `import * as ops from "../../../lib/operations";`,
+      `import { notOps } from "../../lib/operations";`,
+      `ops.deleteSource(ctx, id);`,
+    ].join("\n");
+    expect(operationsImports(source, "app/api/x/route.ts")).toEqual(["updateSource", "deleteSource"]);
   });
 });
 
