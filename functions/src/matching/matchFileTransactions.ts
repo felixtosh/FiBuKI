@@ -412,6 +412,11 @@ export async function runTransactionMatching(
         `[TxMatch] Paired auto-connect for ${pick.match.transactionId} at ${pick.match.confidence}% ` +
           "(the other File of this File's Receipt Link is on it)"
       );
+    } else if (pick.autoConnectReason === "instalment") {
+      console.log(
+        `[TxMatch] Instalment auto-connect for ${pick.match.transactionId} at ${pick.match.confidence}% ` +
+          "(a printed instalment, or closes what the File has outstanding)"
+      );
     }
   }
   const autoMatches = (await autoConnect(db, userId, fileId, picks)).map((p) => p.match);

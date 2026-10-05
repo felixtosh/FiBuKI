@@ -116,6 +116,12 @@ const lineItem = z.looseObject({
 
 const rateGroup = z.looseObject({ rate, net: cents, vat: cents, gross: cents });
 
+const instalment = z.looseObject({
+  amount: z.number().int(),
+  dueDate: z.string().nullable().optional().meta({ description: "YYYY-MM-DD as printed, or null." }),
+  label: text,
+});
+
 const qrEntry = z.union([
   z.string().meta({ description: "A decoded payload, character for character. Read as decodedBy \"model\"." }),
   z.strictObject({
@@ -168,6 +174,11 @@ const extracted = z.looseObject({
   paidInvoiceNumber: text,
   lineItems: z.array(lineItem).nullable().optional(),
   rateGroups: z.array(rateGroup).nullable().optional(),
+  instalments: z
+    .array(instalment)
+    .nullable()
+    .optional()
+    .meta({ description: "A printed deposit, part payment or payment schedule, one row per part (#615). null when none is printed." }),
   confidence: z.number().min(0).max(1).optional(),
   issuer: entity,
   issuer_raw: entity,
