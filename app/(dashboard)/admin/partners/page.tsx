@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo, useRef, useEffect, Suspense } from "react";
+import { useState, useCallback, useMemo, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useGlobalPartners } from "@/hooks/use-global-partners";
 import { AdminPartnersTable, CandidateMatch } from "@/components/admin/admin-partners-table";
@@ -9,7 +9,7 @@ import { GlobalPartnerDetailPanel } from "@/components/admin/global-partner-deta
 import { CandidateDetailPanel } from "@/components/admin/candidate-detail-panel";
 import { GlobalPartner, GlobalPartnerFormData, PromotionCandidate } from "@/types/partner";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cn } from "@/lib/utils";
+import { DetailPanelLayout } from "@/components/ui/detail-panel-layout";
 import { pushQuery, replaceQuery } from "@/lib/navigation/query-url";
 
 const PANEL_WIDTH_KEY = "globalPartnerDetailPanelWidth";
@@ -37,9 +37,6 @@ function AdminPartnersContent() {
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingPartner, setEditingPartner] = useState<GlobalPartner | null>(null);
-  const [panelWidth, setPanelWidth] = useState<number>(DEFAULT_PANEL_WIDTH);
-  const [isResizing, setIsResizing] = useState(false);
-  const resizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
   // Selected candidate state (separate from URL-based global partner selection)
   const [selectedCandidate, setSelectedCandidate] = useState<{
@@ -60,48 +57,6 @@ function AdminPartnersContent() {
 
   // Determine if panel should be shown
   const showPanel = selectedPartner || selectedCandidate;
-
-  // Load panel width from localStorage
-  useEffect(() => {
-    const saved = localStorage.getItem(PANEL_WIDTH_KEY);
-    if (!saved) return;
-    const parsed = parseInt(saved, 10);
-    if (isNaN(parsed) || parsed < MIN_PANEL_WIDTH || parsed > MAX_PANEL_WIDTH) return;
-    // Defer to microtask so setState runs event-handler-style, not from within the effect body.
-    queueMicrotask(() => setPanelWidth(parsed));
-  }, []);
-
-  // Handle resize
-  const handleResizeStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    setIsResizing(true);
-    resizeRef.current = { startX: e.clientX, startWidth: panelWidth };
-  }, [panelWidth]);
-
-  useEffect(() => {
-    if (!isResizing) return;
-
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!resizeRef.current) return;
-      const delta = resizeRef.current.startX - e.clientX;
-      const newWidth = Math.min(MAX_PANEL_WIDTH, Math.max(MIN_PANEL_WIDTH, resizeRef.current.startWidth + delta));
-      setPanelWidth(newWidth);
-    };
-
-    const handleMouseUp = () => {
-      setIsResizing(false);
-      localStorage.setItem(PANEL_WIDTH_KEY, panelWidth.toString());
-      resizeRef.current = null;
-    };
-
-    document.addEventListener("mousemove", handleMouseMove);
-    document.addEventListener("mouseup", handleMouseUp);
-
-    return () => {
-      document.removeEventListener("mousemove", handleMouseMove);
-      document.removeEventListener("mouseup", handleMouseUp);
-    };
-  }, [isResizing, panelWidth]);
 
   // Update search in URL
   const handleSearchChange = useCallback(
@@ -198,10 +153,28 @@ function AdminPartnersContent() {
 
   return (
     <div className="h-full overflow-hidden">
-      {/* Main content - adjusts margin when panel is open */}
-      <div
-        className="h-full transition-[margin] duration-200 ease-in-out"
-        style={{ marginRight: showPanel ? panelWidth : 0 }}
+      <DetailPanelLayout
+        storageKey={PANEL_WIDTH_KEY}
+        defaultWidth={DEFAULT_PANEL_WIDTH}
+        minWidth={MIN_PANEL_WIDTH}
+        maxWidth={MAX_PANEL_WIDTH}
+        open={!!showPanel}
+        panel={
+          selectedPartner ? (
+            <GlobalPartnerDetailPanel
+              partner={selectedPartner}
+              onClose={handleCloseDetail}
+            />
+          ) : selectedCandidate ? (
+            <CandidateDetailPanel
+              candidate={selectedCandidate.candidate}
+              match={selectedCandidate.match}
+              onClose={handleCloseDetail}
+              onApprove={handleApprove}
+              onReject={handleReject}
+            />
+          ) : null
+        }
       >
         <AdminPartnersTable
           globalPartners={globalPartners}
@@ -221,46 +194,7 @@ function AdminPartnersContent() {
           presetPartnersLoading={presetPartnersLoading}
           onTogglePresetPartners={togglePresetPartners}
         />
-      </div>
-
-      {/* Right sidebar - fixed position */}
-      {showPanel && (
-        <div
-          className="fixed right-0 top-14 bottom-0 z-50 bg-background border-l flex"
-          style={{ width: panelWidth }}
-        >
-          {/* Resize handle */}
-          <div
-            className={cn(
-              "w-1 cursor-col-resize hover:bg-primary/20 transition-colors flex-shrink-0",
-              isResizing && "bg-primary/30"
-            )}
-            onMouseDown={handleResizeStart}
-          />
-          {/* Panel content */}
-          <div className="flex-1 overflow-hidden detail-panel-container">
-            {selectedPartner ? (
-              <GlobalPartnerDetailPanel
-                partner={selectedPartner}
-                onClose={handleCloseDetail}
-              />
-            ) : selectedCandidate ? (
-              <CandidateDetailPanel
-                candidate={selectedCandidate.candidate}
-                match={selectedCandidate.match}
-                onClose={handleCloseDetail}
-                onApprove={handleApprove}
-                onReject={handleReject}
-              />
-            ) : null}
-          </div>
-        </div>
-      )}
-
-      {/* Prevent text selection while resizing */}
-      {isResizing && (
-        <div className="fixed inset-0 z-50 cursor-col-resize" />
-      )}
+      </DetailPanelLayout>
 
       <AddGlobalPartnerDialog
         open={isDialogOpen}

@@ -8,13 +8,18 @@ import { onCall, HttpsError, CallableRequest } from "firebase-functions/v2/https
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { SecretParam } from "firebase-functions/params";
 import { MODEL_PRICING, PRICING_FALLBACK_MODEL } from "./models";
+import type { CallableName } from "../callableRegistry";
 
 // Re-export HttpsError for convenience
 export { HttpsError };
 
 export interface CallableConfig {
-  /** Function name - used for logging and identification */
-  name: string;
+  /**
+   * The callable's wire name: its barrel export, and the key of its usage log
+   * and AI usage records. Registered in `callableRegistry.ts`, or this does not
+   * compile.
+   */
+  name: CallableName;
   /** Memory allocation (default: 256MiB) */
   memory?: "256MiB" | "512MiB" | "1GiB" | "2GiB";
   /** Timeout in seconds (default: 60) */
@@ -103,11 +108,22 @@ const CORS_ORIGINS = [
   "http://localhost:3000",
 ];
 
+/**
+ * The `config.name` each callable was created with. The name is not readable
+ * off the function Firebase returns, and the registry test needs it to check
+ * that a callable's wire name (its barrel export) is its `config.name`.
+ */
+const configNames = new WeakMap<object, string>();
+
+export function callableConfigName(fn: unknown): string | undefined {
+  return typeof fn === "function" ? configNames.get(fn) : undefined;
+}
+
 export function createCallable<TRequest, TResponse>(
   config: CallableConfig,
   handler: (ctx: HandlerContext, data: TRequest) => Promise<TResponse>
 ) {
-  return onCall<TRequest, Promise<TResponse>>(
+  const callable = onCall<TRequest, Promise<TResponse>>(
     {
       region: "europe-west1",
       memory: config.memory || "256MiB",
@@ -205,6 +221,8 @@ export function createCallable<TRequest, TResponse>(
       }
     }
   );
+  configNames.set(callable, config.name);
+  return callable;
 }
 
 async function logFunctionCall(

@@ -65,9 +65,9 @@ function isDueDateRow(field: AdditionalFieldLike): boolean {
 }
 
 /**
- * An ISO `YYYY-MM-DD` value as a local-midnight Date, the same construction
- * extraction uses for `extractedDate`, so the two compare day for day.
- * Anything else, including a rolled-over date like 2026-02-31, is null.
+ * An ISO `YYYY-MM-DD` value as UTC midnight of that day, which is how a stored
+ * date names a calendar day (#638). Anything else, including a rolled-over
+ * date like 2026-02-31, is null.
  */
 export function parseIsoDueDate(value: unknown): Date | null {
   if (typeof value !== "string") return null;
@@ -77,8 +77,12 @@ export function parseIsoDueDate(value: unknown): Date | null {
   const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
   if (year < EARLIEST_PLAUSIBLE_YEAR) return null;
 
-  const date = new Date(year, month - 1, day);
-  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
     return null;
   }
   return date;
@@ -91,7 +95,10 @@ export function parseIsoDueDate(value: unknown): Date | null {
  * With `issueDate` given, a date earlier than the issue day does not qualify:
  * it inverts the payment window #236 scores against, so it is a misread to
  * reject, not a value to write (#135). Equal is fine, zahlbar sofort is a
- * real document. Day-level, because both dates are calendar days.
+ * real document. Day-level, because both dates are calendar days, and the
+ * issue day is read from the UTC date part, as stored dates require: the
+ * host's local day of a UTC-midnight date is the day before west of
+ * Greenwich (#638).
  */
 export function dueDateFromAdditionalFields(
   fields: unknown,
@@ -99,10 +106,7 @@ export function dueDateFromAdditionalFields(
 ): Date | null {
   if (!Array.isArray(fields)) return null;
 
-  const issueDay =
-    issueDate instanceof Date && !isNaN(issueDate.getTime())
-      ? new Date(issueDate.getFullYear(), issueDate.getMonth(), issueDate.getDate()).getTime()
-      : null;
+  const issueDay = utcDayOf(issueDate);
 
   for (const raw of fields) {
     if (!raw || typeof raw !== "object") continue;
@@ -114,4 +118,13 @@ export function dueDateFromAdditionalFields(
     return date;
   }
   return null;
+}
+
+/**
+ * The calendar day a stored date names, as the epoch of its UTC midnight, or
+ * null for no date. Shared with the Debit Date, which applies the same guard.
+ */
+export function utcDayOf(date: Date | null | undefined): number | null {
+  if (!(date instanceof Date) || isNaN(date.getTime())) return null;
+  return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
 }

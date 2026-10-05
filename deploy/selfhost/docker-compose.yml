@@ -92,6 +92,11 @@ services:
       # 300-second limit per File.
       FIBUKI_EXTRACTION_CONCURRENCY: ${FIBUKI_EXTRACTION_CONCURRENCY:-}
       FIBUKI_EXTRACTION_TIMEOUT_SECONDS: ${FIBUKI_EXTRACTION_TIMEOUT_SECONDS:-}
+      # An external Extraction Service replaces Gemini for every File (#161,
+      # docs/extraction-service). Empty means the built-in Gemini. No fallback:
+      # a service that fails fails the Extraction.
+      FIBUKI_EXTRACTION_SERVICE_URL: ${FIBUKI_EXTRACTION_SERVICE_URL:-}
+      FIBUKI_EXTRACTION_SERVICE_TOKEN: ${FIBUKI_EXTRACTION_SERVICE_TOKEN:-}
       # storage-shim -> MinIO (blobstore-s3.ts)
       FIBUKI_STORAGE: s3
       FIBUKI_S3_ENDPOINT: seaweedfs
