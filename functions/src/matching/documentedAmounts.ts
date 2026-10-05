@@ -11,10 +11,18 @@
 
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { filePaymentTotal, isExtractionPending, summarizeConnectedFiles } from "./coverage";
+import type { DocumentType } from "../documents/types";
 
 // Read when called, not at import: the matcher imports this module, and
 // every module that imports the matcher must load without a Firebase app.
 const db = () => getFirestore();
+
+/** A stored document type, or null where it is not one: read as `deriveForTransaction` reads it. */
+function asDocumentType(value: unknown): DocumentType | null {
+  return value === "invoice" || value === "receipt" || value === "other" || value === "unknown"
+    ? value
+    : null;
+}
 
 /** One File already connected to a candidate Transaction. */
 export interface ConnectedFile {
@@ -38,6 +46,8 @@ export interface ConnectedFile {
   /** Its currency and Receipt Link (#571), so a pair on the Transaction counts once. */
   currency?: string | null;
   receiptOfFileId?: string | null;
+  /** Its document type, from which the Transaction's Documentation State without the scored File is derived (#644). */
+  documentType?: DocumentType | null;
 }
 
 /**
@@ -108,6 +118,7 @@ export async function loadConnectedFiles(
         extractionPending: isExtractionPending(fileData),
         currency: fileData.extractedCurrency ?? null,
         receiptOfFileId: fileData.receiptLink?.fileId ?? null,
+        documentType: asDocumentType(fileData.documentType),
       });
     }
   }

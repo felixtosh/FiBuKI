@@ -35,6 +35,7 @@ import { ecbCrossRate, type EcbRateTable } from "../fx/ecbRates";
 import { isSameCurrency } from "../fx/fxPlausibility";
 import { toDateSafe } from "../utils/toDateSafe";
 import { connectFiles, writeConnectionScores, type ConnectionScore } from "../fileConnections/writer";
+import { deriveDocumentationState } from "../documents/documentationState";
 import { deriveCoverage, filePaymentTotal, isRemainderClosed } from "./coverage";
 import { readDismissedTransactionIds } from "./dismissedTransactions";
 import { documentedAmountsOf, loadConnectedFiles, type ConnectedFile } from "./documentedAmounts";
@@ -466,6 +467,34 @@ function withoutFile(
 }
 
 /**
+ * The Documentation State a File is judged against (#104, #644): the
+ * Transaction's Files other than the scored one, derived as
+ * `deriveForTransaction` derives the stored state. The stored state counts
+ * every File on the Transaction, so for a pair that is already connected it
+ * holds the scored File itself, and the pair would read as a duplicate of
+ * itself. A Transaction with no stored state keeps none: the scorer skips the
+ * rule, as it does for every caller that does not know the state.
+ */
+function documentationStateFor(
+  fileId: string | null,
+  fileData: Data,
+  transactionId: string,
+  txData: Data,
+  others: ConnectedFile[]
+): Data["documentationState"] {
+  const stored = txData.documentationState;
+  if (!stored || !fileId) return stored;
+  const onTransaction =
+    (Array.isArray(txData.fileIds) && txData.fileIds.includes(fileId)) ||
+    (Array.isArray(fileData.transactionIds) && fileData.transactionIds.includes(transactionId));
+  if (!onTransaction) return stored;
+  return deriveDocumentationState({
+    fileTypes: others.map((f) => f.documentType ?? null),
+    hasNoReceiptCategory: !!txData.noReceiptCategoryId,
+  });
+}
+
+/**
  * The ECB cross rate for a File's currency into a Transaction's, on the
  * Transaction's date (#555). Null for a same-currency pair, an undated
  * Transaction, or a date the table does not reach within its lookback: the
@@ -488,18 +517,24 @@ function publishedRateFor(
  * Score one File against Transactions: the single place their scoring inputs
  * are assembled (#308, #327). The billing-cycle band is selected per
  * Transaction, since which recurrence a charge belongs to depends on that
- * Transaction's amount, not the File's.
+ * Transaction's amount, not the File's. `connected` holds the Files on each
+ * Transaction other than this one: the Documentation State it is judged
+ * against comes from them (#644).
  */
 function scoreAgainst(
-  fileData: Data,
+  file: { id: string | null; data: Data },
   transactions: TxDoc[],
   partner: PartnerScoringContext,
+  connected: Map<string, ConnectedFile[]>,
   documentedAmounts: Map<string, number>,
   ecbRates: EcbRateTable
 ): TransactionMatchScore[] {
+  const fileData = file.data;
   const fileMatchingData = toFileMatchingData(fileData);
   return transactions.map((doc) => {
-    const txData = doc.data() ?? {};
+    const stored = doc.data() ?? {};
+    const documentationState = documentationStateFor(file.id, fileData, doc.id, stored, connected.get(doc.id) ?? []);
+    const txData = documentationState === stored.documentationState ? stored : { ...stored, documentationState };
     const options = buildScoringOptions(partner.effectiveCycles, partner.weights, txData.amount);
     const fxReferenceRate = publishedRateFor(
       ecbRates,
@@ -642,7 +677,7 @@ async function windowMatches(
       const connectedFiles = withoutFile(connected, file.id);
       const documentedAmounts = documentedAmountsOf(connectedFiles);
       const partner = await partnerFor(file.data.partnerId);
-      const matches = scoreAgainst(file.data, candidates, partner, documentedAmounts, ecbRates)
+      const matches = scoreAgainst(file, candidates, partner, connectedFiles, documentedAmounts, ecbRates)
         .map((m): Match => ({ ...m, fileId: file.id }))
         .sort(byConfidence);
       return {
@@ -674,7 +709,7 @@ async function scoreFileAgainstPool(
   const hiddenById = new Map(
     candidates.map((doc) => [doc.id, hiddenReasonOf(file.id, file.data, doc.id, doc.data() ?? {})])
   );
-  const matches = scoreAgainst(file.data, candidates, partner, documentedAmounts, ecbRates)
+  const matches = scoreAgainst(file, candidates, partner, connected, documentedAmounts, ecbRates)
     .map((m): Match => {
       const hidden = markHidden ? hiddenById.get(m.transactionId) : null;
       return hidden ? { ...m, fileId: file.id, hidden } : { ...m, fileId: file.id };
@@ -778,15 +813,17 @@ export async function filesForTransaction(
 
   // No candidate is on this Transaction, so what its Files explain is the
   // figure the trigger reads with the candidate excluded.
-  const [documentedAmounts, ecbRates] = await Promise.all([
-    loadConnectedFiles([transactionId]).then(documentedAmountsOf),
+  const [connected, ecbRates] = await Promise.all([
+    loadConnectedFiles([transactionId]),
     loadScoringEcbRates(db, candidates.map((f) => f.data.extractedCurrency), [txDoc]),
   ]);
+  const documentedAmounts = documentedAmountsOf(connected);
   const partnerFor = partnerCache(db, userId);
 
   const matches = await Promise.all(
     candidates.map(async (f) => {
-      const [score] = scoreAgainst(f.data, [txDoc], await partnerFor(f.data.partnerId), documentedAmounts, ecbRates);
+      const partner = await partnerFor(f.data.partnerId);
+      const [score] = scoreAgainst(f, [txDoc], partner, connected, documentedAmounts, ecbRates);
       return f.hidden ? { ...score, fileId: f.id, hidden: f.hidden } : { ...score, fileId: f.id };
     })
   );
@@ -835,9 +872,10 @@ export async function pairsAmong(
           inWindow(file.data, windows.get(file) ?? null, doc.id, txData, ctx)
         );
       });
-      const documentedAmounts = documentedAmountsOf(withoutFile(connected, file.id));
+      const others = withoutFile(connected, file.id);
+      const documentedAmounts = documentedAmountsOf(others);
       const partner = await partnerFor(file.data.partnerId);
-      return scoreAgainst(file.data, candidates, partner, documentedAmounts, ecbRates).map((m) => ({
+      return scoreAgainst(file, candidates, partner, others, documentedAmounts, ecbRates).map((m) => ({
         ...m,
         fileId: file.id,
       }));
@@ -1171,6 +1209,29 @@ export async function rescoreConnections(
   }
   if (connections.length === 0) return { rescored: 0 };
 
+  const scores = await scoreConnectionRecords(db, userId, partnerId, txDocs, connections);
+
+  // Written by the File Connection writer (#612), the records' one writer.
+  const rescored = await writeConnectionScores(db, scores);
+  console.log(`[Matcher] Re-scored ${rescored} connection(s) for partner ${partnerId}`);
+  return { rescored };
+}
+
+/**
+ * The score of each stored File Connection on these Transactions of one
+ * Partner, as the billing-cycle re-score stores it: the Partner's own
+ * context, the full amount, the ECB rate (#555), and the Files beside the
+ * scored one (#644). A record whose Transaction or File is not given or not
+ * found is left out. Writes nothing.
+ */
+export async function scoreConnectionRecords(
+  db: Db,
+  userId: string,
+  partnerId: string | null,
+  txDocs: TxDoc[],
+  connections: Array<{ id: string; data(): Data }>
+): Promise<ConnectionScore[]> {
+  const txById = new Map(txDocs.map((doc) => [doc.id, doc]));
   const fileIds = [...new Set(connections.map((c) => c.data().fileId as string))];
   const filesById = new Map<string, Data>();
   for (let i = 0; i < fileIds.length; i += IN_LIMIT) {
@@ -1178,12 +1239,13 @@ export async function rescoreConnections(
       .collection("files")
       .where("__name__", "in", fileIds.slice(i, i + IN_LIMIT))
       .get();
-    for (const doc of snapshot.docs) filesById.set(doc.id, doc.data());
+    for (const doc of snapshot.docs) if (doc.data().userId === userId) filesById.set(doc.id, doc.data());
   }
 
-  const [partner, ecbRates] = await Promise.all([
+  const [partner, ecbRates, connected] = await Promise.all([
     loadPartnerScoringContext(db, partnerId, userId),
     loadScoringEcbRates(db, [...filesById.values()].map((f) => f.extractedCurrency), txDocs),
+    loadConnectedFiles([...txById.keys()]),
   ]);
 
   const scores: ConnectionScore[] = [];
@@ -1192,7 +1254,9 @@ export async function rescoreConnections(
     const txDoc = txById.get(transactionId);
     const fileData = filesById.get(fileId);
     if (!txDoc || !fileData) continue;
-    const [result] = scoreAgainst(fileData, [txDoc], partner, new Map(), ecbRates);
+    // Against the full amount, but judged by the Files beside this one, never by itself (#644).
+    const others = withoutFile(connected, fileId);
+    const [result] = scoreAgainst({ id: fileId, data: fileData }, [txDoc], partner, others, new Map(), ecbRates);
     scores.push({
       connectionId: connectionDoc.id,
       matchConfidence: result.confidence,
@@ -1200,9 +1264,5 @@ export async function rescoreConnections(
       matchSources: result.matchSources,
     });
   }
-
-  // Written by the File Connection writer (#612), the records' one writer.
-  const rescored = await writeConnectionScores(db, scores);
-  console.log(`[Matcher] Re-scored ${rescored} connection(s) for partner ${partnerId}`);
-  return { rescored };
+  return scores;
 }
