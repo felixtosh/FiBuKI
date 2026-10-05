@@ -21,6 +21,8 @@ tsconfig.scoped.json
 
 # production
 /build
+# pdf.js wasm decoders, copied from node_modules by scripts/copy-pdfjs-wasm.mjs
+/public/pdfjs/
 
 # misc
 .DS_Store

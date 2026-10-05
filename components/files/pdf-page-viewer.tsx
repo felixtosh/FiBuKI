@@ -5,6 +5,8 @@ import dynamic from "next/dynamic";
 import { useTranslations } from "next-intl";
 import { FileText, Loader2, Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { pdfjsWasmUrl } from "@/lib/pdf/pdfjs-wasm.mjs";
+import pdfjsPackage from "pdfjs-dist/package.json";
 
 // Import react-pdf styles for text layer
 import "react-pdf/dist/Page/TextLayer.css";
@@ -32,6 +34,16 @@ if (typeof window !== "undefined") {
     ).toString();
   });
 }
+
+// pdf.js options for every Document here, the viewer's and the thumbnail's.
+// `wasmUrl`: pdf.js decodes JPEG 2000 page images (most scanners' output) with
+// a wasm module fetched from there; without it a scan draws blank (#681).
+// The decoders are copied into public/ for the installed pdf.js version by
+// scripts/copy-pdfjs-wasm.mjs. One object at module scope: react-pdf reloads
+// the document whenever `options` changes identity.
+export const PDF_DOCUMENT_OPTIONS = {
+  wasmUrl: pdfjsWasmUrl(pdfjsPackage.version),
+};
 
 interface PdfPageViewerProps {
   url: string;
@@ -173,6 +185,7 @@ export function PdfPageViewer({
         ) : (
           <Document
             file={url}
+            options={PDF_DOCUMENT_OPTIONS}
             onLoadSuccess={handleDocumentLoadSuccess}
             onLoadError={handleDocumentLoadError}
             onPassword={handlePassword}
@@ -258,6 +271,7 @@ export function PdfThumbnail({ url }: { url: string }) {
       ) : (
         <Document
           file={url}
+          options={PDF_DOCUMENT_OPTIONS}
           onPassword={handlePassword}
           loading={<ThumbnailLoading />}
           error={<ThumbnailFailed />}
