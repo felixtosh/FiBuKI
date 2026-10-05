@@ -16,12 +16,15 @@
  * allowance is lowered (or its entry removed), so the lists only ever shrink.
  * Never raise a number: a new write is a callable built with `createCallable()`.
  *
- * A static walk over TypeScript and JavaScript files, so it counts call
- * shapes, not intent: a call through an aliased import (`setDoc as put`)
- * counts, a call inside a string is counted all the same, a write behind a
- * helper outside lib/operations is counted where the helper lives (browser
- * code), not in the route. A route reaches the operations layer by named or
- * namespace import, through `@/lib/operations` or a relative path.
+ * A static walk over the syntax tree of TypeScript and JavaScript files
+ * (`ts.createSourceFile`, as in browser-imports.test.ts). It follows a file's
+ * bindings, not its types: a write function is counted when called by name,
+ * through an alias or a re-bound name, through a namespace of the module
+ * (`fs.setDoc`, `fs["setDoc"]`), or off `import()` / `require()`. A route
+ * reaches the operations layer the same ways, by `@/lib/operations` or a
+ * relative path. Scope is ignored, so a shadowing name is counted too. A
+ * write behind a helper outside lib/operations is counted where the helper
+ * lives (browser code), not in the route.
  *
  *   npx vitest run --config vitest.selfhost.config.ts src/selfhost/browser-writes.test.ts --pool=forks --maxWorkers=1
  */
@@ -29,6 +32,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "fs";
 import { join, posix, relative, sep } from "path";
+import * as ts from "typescript";
 
 type Allowances = Record<string, { count: number; why: string }>;
 
@@ -72,61 +76,228 @@ const SKIPPED: Record<string, string> = {
 };
 
 /** The client SDK's write functions: Firestore's free functions, not the Admin SDK's methods (`db.runTransaction`). */
-const WRITE_FUNCTIONS = ["addDoc", "setDoc", "updateDoc", "deleteDoc", "writeBatch", "runTransaction"];
+const WRITE_FUNCTIONS = new Set(["addDoc", "setDoc", "updateDoc", "deleteDoc", "writeBatch", "runTransaction"]);
 
-/** Drops comments, so a write named in a comment is not counted. Strings are left alone. */
-function stripComments(source: string): string {
-  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+function scriptKind(path: string): ts.ScriptKind {
+  if (path.endsWith(".tsx")) return ts.ScriptKind.TSX;
+  if (/\.[mc]?ts$/.test(path)) return ts.ScriptKind.TS;
+  return path.endsWith(".jsx") ? ts.ScriptKind.JSX : ts.ScriptKind.JS;
 }
 
-/** `text` as a literal inside a RegExp. */
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-/** Local names a write function is imported under (`import { setDoc as put }`), so a call through one counts. */
-function writeAliases(source: string): string[] {
-  const aliases: string[] = [];
-  for (const m of stripComments(source).matchAll(/import\s+(?:[\w$]+\s*,\s*)?(?:type\s*)?\{([^}]*)\}\s*from/g)) {
-    for (const a of m[1].matchAll(new RegExp(`\\b(?:${WRITE_FUNCTIONS.join("|")})\\s+as\\s+([\\w$]+)`, "g"))) {
-      aliases.push(a[1]);
-    }
+/** `(x)`, `await x`, `x as T`, `x!` -> `x`. */
+function unwrap(node: ts.Expression): ts.Expression {
+  while (
+    ts.isParenthesizedExpression(node) ||
+    ts.isAwaitExpression(node) ||
+    ts.isAsExpression(node) ||
+    ts.isNonNullExpression(node) ||
+    ts.isSatisfiesExpression(node) ||
+    ts.isTypeAssertionExpression(node)
+  ) {
+    node = node.expression;
   }
-  return aliases;
+  return node;
 }
 
-/** Client write calls in `source`, by name or through an alias imported in `imports` (the whole file). */
-function countClientWrites(source: string, imports: string = source): number {
-  const names = [...WRITE_FUNCTIONS, ...writeAliases(imports)].map(escapeRegExp);
-  const call = new RegExp(`(?<![\\w.$])(?:${names.join("|")})\\s*\\(`, "g");
-  return [...stripComments(source).matchAll(call)].length;
+/** The module `import("x")` or `require("x")` loads. */
+function loadedModule(node: ts.Expression): string | undefined {
+  const call = unwrap(node);
+  if (!ts.isCallExpression(call) || !call.arguments[0] || !ts.isStringLiteralLike(call.arguments[0])) return undefined;
+  const callee = call.expression;
+  const loads = callee.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(callee) && callee.text === "require");
+  return loads ? call.arguments[0].text : undefined;
+}
+
+/** The member `x.name` or `x["name"]` reads. */
+function memberName(node: ts.Node): string | undefined {
+  if (ts.isPropertyAccessExpression(node)) return node.name.text;
+  if (ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression)) {
+    return node.argumentExpression.text;
+  }
+  return undefined;
+}
+
+/** A property name in a binding pattern or import: `a` in `{ a: b }`, `"a"` in `{ "a": b }`. */
+function propertyText(node: ts.Node): string | undefined {
+  return ts.isIdentifier(node) || ts.isStringLiteralLike(node) ? node.text : undefined;
+}
+
+function visitAll(node: ts.Node, visit: (node: ts.Node) => void): void {
+  visit(node);
+  ts.forEachChild(node, (child) => visitAll(child, visit));
+}
+
+/**
+ * One file's module bindings, by local name. A namespace is a name bound to a
+ * whole module (`import * as ns`, `const ns = await import(...)`,
+ * `require(...)`; not a default import, which is whatever the module chose to
+ * export, an Admin SDK instance included); a member is a name bound to one
+ * export (a named import, or one destructured off a namespace or a loaded
+ * module).
+ * Scope is ignored: a name bound anywhere in the file counts everywhere in it.
+ */
+interface Scan {
+  file: ts.SourceFile;
+  namespaces: Map<string, string>;
+  members: Map<string, { from: string; name: string }>;
+}
+
+function scanFile(source: string, path: string): Scan {
+  // Parsed as a module, so a top-level `await` is one even in a file without an import.
+  const options: ts.CreateSourceFileOptions = {
+    languageVersion: ts.ScriptTarget.Latest,
+    setExternalModuleIndicator: (f) => {
+      (f as { externalModuleIndicator?: unknown }).externalModuleIndicator = true;
+    },
+  };
+  const file = ts.createSourceFile(path, source, options, true, scriptKind(path));
+  const namespaces = new Map<string, string>();
+  const members = new Map<string, { from: string; name: string }>();
+  const scan: Scan = { file, namespaces, members };
+  let grew = true;
+  const bind = <V>(map: Map<string, V>, name: string, value: V) => {
+    if (!map.has(name)) {
+      map.set(name, value);
+      grew = true;
+    }
+  };
+  // A namespace bound from another (`const b = a`) needs the first one first.
+  while (grew) {
+    grew = false;
+    visitAll(file, (node) => {
+      if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+        const from = node.moduleSpecifier.text;
+        const clause = node.importClause;
+        const named = clause?.namedBindings;
+        if (named && ts.isNamespaceImport(named)) bind(namespaces, named.name.text, from);
+        if (named && ts.isNamedImports(named)) {
+          for (const el of named.elements) bind(members, el.name.text, { from, name: (el.propertyName ?? el.name).text });
+        }
+      }
+      if (
+        ts.isImportEqualsDeclaration(node) &&
+        ts.isExternalModuleReference(node.moduleReference) &&
+        ts.isStringLiteral(node.moduleReference.expression)
+      ) {
+        bind(namespaces, node.name.text, node.moduleReference.expression.text);
+      }
+      if (ts.isVariableDeclaration(node) && node.initializer) {
+        const from = moduleOf(scan, node.initializer);
+        if (from === undefined) return;
+        if (ts.isIdentifier(node.name)) bind(namespaces, node.name.text, from);
+        if (ts.isObjectBindingPattern(node.name)) {
+          for (const el of node.name.elements) {
+            const name = propertyText(el.propertyName ?? el.name);
+            if (name && ts.isIdentifier(el.name)) bind(members, el.name.text, { from, name });
+          }
+        }
+      }
+    });
+  }
+  return scan;
+}
+
+/** The module an expression stands for: a namespace's name, or `import(...)` / `require(...)` itself. */
+function moduleOf(scan: Scan, node: ts.Expression): string | undefined {
+  const inner = unwrap(node);
+  return ts.isIdentifier(inner) ? scan.namespaces.get(inner.text) : loadedModule(inner);
+}
+
+/**
+ * The local names that hold a client write function: the function's own name,
+ * a name it is imported or destructured under, and a name it is re-bound to
+ * (`const put = setDoc`, `put = fs.setDoc`).
+ */
+function writeNames(scan: Scan): Set<string> {
+  const names = new Set(WRITE_FUNCTIONS);
+  for (const [local, { name }] of scan.members) if (WRITE_FUNCTIONS.has(name)) names.add(local);
+  for (let grew = true; grew; ) {
+    grew = false;
+    visitAll(scan.file, (node) => {
+      let local: string | undefined;
+      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer && isWrite(scan, names, node.initializer)) {
+        local = node.name.text;
+      }
+      if (
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        ts.isIdentifier(node.left) &&
+        isWrite(scan, names, node.right)
+      ) {
+        local = node.left.text;
+      }
+      if (local && !names.has(local)) {
+        names.add(local);
+        grew = true;
+      }
+    });
+  }
+  return names;
+}
+
+/** Whether an expression is a client write function: one of `names`, `ns.setDoc`, `ns["setDoc"]`, `setDoc.bind(...)`. */
+function isWrite(scan: Scan, names: Set<string>, node: ts.Expression): boolean {
+  const inner = unwrap(node);
+  if (ts.isIdentifier(inner)) return names.has(inner.text);
+  if (ts.isCallExpression(inner) && memberName(inner.expression) === "bind") {
+    return isWrite(scan, names, (inner.expression as ts.PropertyAccessExpression | ts.ElementAccessExpression).expression);
+  }
+  const member = memberName(inner);
+  if (member === undefined || !(ts.isPropertyAccessExpression(inner) || ts.isElementAccessExpression(inner))) return false;
+  if (WRITE_FUNCTIONS.has(member) && moduleOf(scan, inner.expression) !== undefined) return true;
+  // `setDoc.call(...)`, `setDoc.apply(...)`
+  return (member === "call" || member === "apply") && isWrite(scan, names, inner.expression);
+}
+
+/** Client write calls under `node` (the whole file by default). */
+function countWriteCalls(scan: Scan, node: ts.Node = scan.file, names: Set<string> = writeNames(scan)): number {
+  let n = 0;
+  visitAll(node, (child) => {
+    if (ts.isCallExpression(child) && isWrite(scan, names, child.expression)) n++;
+  });
+  return n;
+}
+
+function countClientWrites(source: string, path = "file.ts"): number {
+  // Every shape starts from a write function's name, so a file without one needs no parse.
+  if (![...WRITE_FUNCTIONS].some((name) => source.includes(name))) return 0;
+  return countWriteCalls(scanFile(source, path));
 }
 
 /**
  * The top-level functions of the operations layer that write: a client write
  * call in their body, or a call to another one that does (across files, by
- * name). Chunks run from one top-level declaration to the next.
+ * name).
  */
 function operationsWriters(files: Record<string, string>): Set<string> {
-  const bodies = new Map<string, string>();
-  const decl = /^(?:export\s+)?(?:async\s+)?function\s+(\w+)|^(?:export\s+)?const\s+(\w+)\s*=/gm;
-  const writers = new Set<string>();
-  for (const source of Object.values(files)) {
-    const text = stripComments(source);
-    const starts = [...text.matchAll(decl)];
-    starts.forEach((m, i) => {
-      const end = i + 1 < starts.length ? starts[i + 1].index : text.length;
-      const name = m[1] ?? m[2];
-      const body = text.slice(m.index, end);
-      bodies.set(name, body);
-      if (countClientWrites(body, text) > 0) writers.add(name);
-    });
+  const bodies = new Map<string, { writes: boolean; calls: Set<string> }>();
+  for (const [path, source] of Object.entries(files)) {
+    const scan = scanFile(source, path);
+    const names = writeNames(scan);
+    const declare = (name: string, body: ts.Node) => {
+      const calls = new Set<string>();
+      visitAll(body, (node) => {
+        if (!ts.isCallExpression(node)) return;
+        const callee = unwrap(node.expression);
+        const called = ts.isIdentifier(callee) ? callee.text : memberName(callee);
+        if (called) calls.add(called);
+      });
+      bodies.set(name, { writes: countWriteCalls(scan, body, names) > 0, calls });
+    };
+    for (const statement of scan.file.statements) {
+      if (ts.isFunctionDeclaration(statement) && statement.name) declare(statement.name.text, statement);
+      if (ts.isVariableStatement(statement)) {
+        for (const decl of statement.declarationList.declarations) {
+          if (ts.isIdentifier(decl.name) && decl.initializer) declare(decl.name.text, decl.initializer);
+        }
+      }
+    }
   }
+  const writers = new Set([...bodies].filter(([, b]) => b.writes).map(([name]) => name));
   for (let grew = true; grew; ) {
     grew = false;
-    for (const [name, body] of bodies) {
-      if (writers.has(name)) continue;
-      if ([...writers].some((w) => new RegExp(`\\b${w}\\s*\\(`).test(body.slice(body.indexOf("{"))))) {
+    for (const [name, { calls }] of bodies) {
+      if (!writers.has(name) && [...calls].some((c) => writers.has(c))) {
         writers.add(name);
         grew = true;
       }
@@ -139,31 +310,27 @@ function operationsWriters(files: Record<string, string>): Set<string> {
 function isOperationsModule(specifier: string, path: string): boolean {
   const resolved = specifier.startsWith(".") ? posix.join(posix.dirname(path), specifier) : specifier.replace(/^@\//, "");
   const target = resolved.replace(/\/+$/, "");
-  return /^lib\/operations(?:\/[\w-]+)?(?:\/index)?(?:\.[jt]s)?$/.test(target);
+  return /^lib\/operations(?:\/[\w-]+)?(?:\/index)?(?:\.[mc]?[jt]s)?$/.test(target);
 }
 
 /**
  * Names the file at `path` (repo-relative) takes from the operations layer
- * (the barrel or one module): each named import, and each member used
- * through a namespace import (`ops.updateSource(...)`).
+ * (the barrel or one module), each once: a named import, a name destructured
+ * off it, and a member read off a namespace of it (`ops.x`, `ops["x"]`,
+ * `(await import(...)).x`).
  */
 function operationsImports(source: string, path: string): string[] {
-  const names: string[] = [];
-  const text = stripComments(source);
-  for (const m of text.matchAll(/import\s+(?:[\w$]+\s*,\s*)?(?:type\s*)?\{([^}]*)\}\s*from\s*["']([^"']+)["']/g)) {
-    if (!isOperationsModule(m[2], path)) continue;
-    for (const part of m[1].split(",")) {
-      const name = part.trim().replace(/^type\s+/, "").split(/\s+as\s+/)[0];
-      if (name) names.push(name);
-    }
-  }
-  for (const m of text.matchAll(/import\s*(?:type\s*)?\*\s*as\s+([\w$]+)\s+from\s*["']([^"']+)["']/g)) {
-    if (!isOperationsModule(m[2], path)) continue;
-    const ns = escapeRegExp(m[1]);
-    const members = new Set([...text.matchAll(new RegExp(`(?<![\\w.$])${ns}\\s*\\.\\s*(\\w+)`, "g"))].map((u) => u[1]));
-    names.push(...members);
-  }
-  return names;
+  if (!source.includes("operations")) return [];
+  const scan = scanFile(source, path);
+  const names = new Set<string>();
+  for (const { from, name } of scan.members.values()) if (isOperationsModule(from, path)) names.add(name);
+  visitAll(scan.file, (node) => {
+    const member = memberName(node);
+    if (member === undefined || !(ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node))) return;
+    const from = moduleOf(scan, node.expression);
+    if (from !== undefined && isOperationsModule(from, path)) names.add(member);
+  });
+  return [...names];
 }
 
 const repoRoot = join(__dirname, "..", "..", "..");
@@ -196,7 +363,7 @@ function browserWrites(): Record<string, number> {
     for (const file of sourceFiles(join(repoRoot, tree), (p) => p === apiDir)) {
       const path = rel(file);
       if (SKIPPED[path]) continue;
-      const n = countClientWrites(readFileSync(file, "utf8"));
+      const n = countClientWrites(readFileSync(file, "utf8"), path);
       if (n > 0) counts[path] = n;
     }
   }
@@ -210,8 +377,9 @@ function routeWrites(): Record<string, number> {
   const counts: Record<string, number> = {};
   for (const file of sourceFiles(apiDir)) {
     const source = readFileSync(file, "utf8");
-    const n = countClientWrites(source) + operationsImports(source, rel(file)).filter((name) => writers.has(name)).length;
-    if (n > 0) counts[rel(file)] = n;
+    const path = rel(file);
+    const n = countClientWrites(source, path) + operationsImports(source, path).filter((name) => writers.has(name)).length;
+    if (n > 0) counts[path] = n;
   }
   return counts;
 }
@@ -249,6 +417,10 @@ describe("the patterns", () => {
       `import { addDoc, setDoc } from "firebase/firestore";`,
       `await callFunction("updateFile", { fileId, data });`,
       `import { setDoc as put } from "firebase/firestore";`,
+      `const hint = "call setDoc(ref, data) from the server";`,
+      `await admin.firestore().runTransaction(async (tx) => tx.update(ref, data));`,
+      `import * as fs from "firebase/firestore"; const snap = await fs.getDoc(ref);`,
+      `import db from "@/lib/firebase/admin"; await db.runTransaction(async (tx) => tx.update(ref, data));`,
     ];
     for (const shape of ignored) expect(countClientWrites(shape), shape).toBe(0);
   });
@@ -270,6 +442,55 @@ describe("the patterns", () => {
       ].join("\n"),
     });
     expect([...writers]).toEqual(["aliased"]);
+  });
+
+  it("find operations-layer writers that write through a namespace of the client SDK", () => {
+    const writers = operationsWriters({
+      "a-ops.ts": [
+        `import * as fs from "firebase/firestore";`,
+        `export async function viaNamespace(ctx) { await fs.updateDoc(fs.doc(ctx.db, "x", "1"), { a: 1 }); }`,
+        `export async function readOnly(ctx) { return fs.getDoc(fs.doc(ctx.db, "x", "1")); }`,
+      ].join("\n"),
+    });
+    expect([...writers]).toEqual(["viaNamespace"]);
+  });
+
+  it("count a write called through a namespace of the client SDK", () => {
+    const source = [
+      `import * as fs from "firebase/firestore";`,
+      `await fs.setDoc(fs.doc(db, "files", "1"), {});`,
+      `await fs["updateDoc"](ref, {});`,
+      `const snap = await fs.getDoc(ref);`,
+    ].join("\n");
+    expect(countClientWrites(source)).toBe(2);
+  });
+
+  it("count a write called through a re-bound name", () => {
+    const source = [
+      `import { setDoc } from "firebase/firestore";`,
+      `const put = setDoc;`,
+      `let again;`,
+      `again = put;`,
+      `await put(ref, {});`,
+      `await again(ref, {});`,
+      `await setDoc.call(null, ref, {});`,
+      `const bound = setDoc.bind(null);`,
+      `await bound(ref, {});`,
+    ].join("\n");
+    expect(countClientWrites(source)).toBe(4);
+  });
+
+  it("count a write called through a dynamic import or require", () => {
+    const source = [
+      `const fs = await import("firebase/firestore");`,
+      `await fs.addDoc(col, {});`,
+      `const { deleteDoc: remove } = await import("firebase/firestore");`,
+      `await remove(ref);`,
+      `await (await import("firebase/firestore")).setDoc(ref, {});`,
+      `const sdk = require("firebase/firestore");`,
+      `sdk.writeBatch(db);`,
+    ].join("\n");
+    expect(countClientWrites(source)).toBe(4);
   });
 
   it("read JavaScript files as well as TypeScript, never tests", () => {
@@ -316,6 +537,27 @@ describe("the patterns", () => {
       `await other.deleteSource(ctx, id);`,
     ].join("\n");
     expect(operationsImports(source, "app/api/x/route.ts")).toEqual(["updateSource", "getSource"]);
+  });
+
+  it("read the members destructured off or bracket-read from the operations layer", () => {
+    const source = [
+      `import * as ops from "@/lib/operations";`,
+      `const { deleteSource, updateSource: update } = ops;`,
+      `await ops["createSource"](ctx, data);`,
+    ].join("\n");
+    expect(operationsImports(source, "app/api/x/route.ts")).toEqual(["deleteSource", "updateSource", "createSource"]);
+  });
+
+  it("read the operations layer loaded dynamically", () => {
+    const source = [
+      `const { deleteSource } = await import("@/lib/operations");`,
+      `await (await import("../../../lib/operations/source-ops")).updateSource(ctx, id, data);`,
+      `const later = await import("@/lib/operations");`,
+      `await later.createSource(ctx, data);`,
+      `const other = await import("@/lib/other");`,
+      `await other.removeSource(ctx, id);`,
+    ].join("\n");
+    expect(operationsImports(source, "app/api/x/route.ts")).toEqual(["deleteSource", "updateSource", "createSource"]);
   });
 
   it("read the operations layer imported by relative path", () => {
