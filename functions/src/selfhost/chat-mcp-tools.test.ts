@@ -249,6 +249,56 @@ describe("the model reads MCP's records, reformatted only", () => {
     expect(one.extractedText).toBe("Rechnung ".repeat(500));
   });
 
+  it("a Transactions list row leaves out the import and automation bookkeeping, and nothing else; getTransaction keeps it", async () => {
+    const bulky = {
+      _original: { date: "10.03.2026", amount: "-50,00", rawRow: { Buchungstext: "AMAZON MARKETPLACE" } },
+      automationHistory: [{ type: "partner_match", ranAt: Timestamp.now(), status: "completed", summary: "x".repeat(200) }],
+      partnerSuggestions: [{ partnerId: "p-amazon", partnerType: "user", confidence: 90, source: "name" }],
+      categorySuggestions: [{ categoryId: "c-fees", templateId: "bank-fees", confidence: 40 }],
+      searchSuggestions: { suggestions: [{ query: "amazon", type: "company_name", score: 1 }], generatedAt: Timestamp.now() },
+      aiSearchQueries: ["amazon invoice"],
+      aiSearchQueriesForPartnerId: "p-amazon",
+      reconciliationSuggestions: [{ bankTransactionId: "t-client", confidence: 10 }],
+      rejectedFiles: [{ fileId: "f-coffee", rejectedAt: Timestamp.now() }],
+      dedupeHash: "hash-amazon",
+      csvRowIndex: 7,
+    };
+    const trimmed = Object.keys(bulky);
+    await db.collection("transactions").doc("t-amazon").update({ ...bulky, rejectedFileIds: ["f-coffee"] });
+
+    const t = tool("listTransactions");
+    const args = t.schema.parse({});
+    const chat = (await t.invoke({}, CONFIG)) as { transactions: Array<Record<string, unknown>>; total: number };
+    const raw = forTheModel(
+      "get_transaction",
+      wire(await handleTool(USER, "list_transactions", args))
+    ) as { transactions: Array<Record<string, unknown>>; total: number };
+
+    // Rows, their order and the page's figures are unchanged.
+    expect(chat.transactions.map((r) => r.id)).toEqual(raw.transactions.map((r) => r.id));
+    expect(chat.total).toBe(raw.total);
+    for (const [i, row] of chat.transactions.entries()) {
+      const full = raw.transactions[i];
+      for (const field of trimmed) expect(row, `${row.id}.${field}`).not.toHaveProperty(field);
+      // Every other field is the MCP value as it stands.
+      const kept = Object.fromEntries(Object.entries(full).filter(([k]) => !trimmed.includes(k)));
+      expect(row).toEqual(kept);
+    }
+    const amazon = chat.transactions.find((r) => r.id === "t-amazon")!;
+    expect(amazon).toMatchObject({
+      date: "2026-03-10",
+      amount: -5000,
+      name: "AMAZON MARKETPLACE",
+      partnerId: "p-amazon",
+      fileIds: ["f-amazon"],
+      rejectedFileIds: ["f-coffee"],
+      isComplete: true,
+    });
+
+    const one = (await tool("getTransaction").invoke({ transactionId: "t-amazon" }, CONFIG)) as Record<string, unknown>;
+    for (const field of trimmed) expect(one, field).toHaveProperty(field);
+  });
+
   it("the chat's Files card shows a wrapper row's date, partner, amount and link", async () => {
     const { fileResultFromRecord } = await import("@/design-system/tool-results/file-result-from-record");
     const chat = (await tool("listFiles").invoke({ search: "amazon" }, CONFIG)) as { files: Array<Record<string, unknown>> };

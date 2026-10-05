@@ -7,8 +7,9 @@
  * validation and every computed figure live in the shared tool, and the chat
  * sees exactly what an external integration sees. The MCP output shape is the
  * contract; a wrapper passes it through, reformatted for reading only
- * (forTheModel: Timestamps as ISO strings, a File's OCR text left out of list
- * rows). It never filters rows or computes a figure.
+ * (forTheModel: Timestamps as ISO strings, a File's OCR text and a
+ * Transaction's import and automation bookkeeping left out of list rows). It
+ * never filters rows or computes a figure.
  *
  * The parameters come from the MCP definition (lib/data/generated-tool-definitions.ts),
  * so a parameter added there reaches the chat without a second edit. Only the
@@ -92,12 +93,36 @@ function readableTimestamps(value: unknown): unknown {
 }
 
 /**
- * Fields a list row leaves out of the model's context. A File's OCR text is
- * often kilobytes; a page of twenty would crowd out the conversation, and
- * getFile still returns it for the one File that needs reading.
+ * Fields a list row leaves out of the model's context; the single-record get
+ * still returns every one of them for the record that needs reading.
+ *
+ * - A File's OCR text is often kilobytes; a page of twenty would crowd out
+ *   the conversation.
+ * - A Transaction carries the import's raw CSV row (`_original`, `dedupeHash`,
+ *   `csvRowIndex`), the automation log, the matchers' stored suggestions
+ *   (Partner, category, search queries, card reconciliation) and the dated
+ *   rejection log. None of it answers a question about the row; what does
+ *   (ids, date, amount, name, partner, description, completion, file ids and
+ *   rejected file ids, category, documentation state, the UVA answers) stays.
  */
 const LIST_ROW_OMIT: Record<string, { rows: string; fields: string[] }> = {
   list_files: { rows: "files", fields: ["extractedText"] },
+  list_transactions: {
+    rows: "transactions",
+    fields: [
+      "_original",
+      "dedupeHash",
+      "csvRowIndex",
+      "automationHistory",
+      "partnerSuggestions",
+      "categorySuggestions",
+      "searchSuggestions",
+      "aiSearchQueries",
+      "aiSearchQueriesForPartnerId",
+      "reconciliationSuggestions",
+      "rejectedFiles",
+    ],
+  },
 };
 
 /**
