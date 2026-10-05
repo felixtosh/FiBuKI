@@ -136,9 +136,9 @@ describe("DetailPanelLayout", () => {
     expect(panel()!.style.width).toBe("580px");
   });
 
-  it("shows the handle on hover only, on every page", async () => {
+  it("draws the handle as a visible bar at rest, on every page", async () => {
     const { handle } = await renderLayout();
+    expect(handle().className.split(/\s+/)).toContain("bg-border");
     expect(handle().className).toContain("hover:bg-primary/20");
-    expect(handle().className).not.toContain("bg-border");
   });
 });

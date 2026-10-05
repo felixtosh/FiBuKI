@@ -137,7 +137,7 @@ export function DetailPanelLayout({
             role="separator"
             aria-orientation="vertical"
             className={cn(
-              "w-1 cursor-col-resize hover:bg-primary/20 transition-colors flex-shrink-0",
+              "w-1 cursor-col-resize bg-border hover:bg-primary/20 transition-colors flex-shrink-0",
               isResizing && "bg-primary/30"
             )}
             onMouseDown={handleResizeStart}
