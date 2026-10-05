@@ -11,7 +11,8 @@ export declare function sizedColumnWidth(
 ): number | undefined;
 export declare function columnWidthsToStore(
   sizing: Record<string, number>,
-  limitsById: Record<string, ColumnWidthLimits>
+  limitsById: Record<string, ColumnWidthLimits>,
+  previous?: Record<string, number>
 ): string;
 export declare function readStoredColumnWidths(
   getStorage: () => Pick<Storage, "getItem">,

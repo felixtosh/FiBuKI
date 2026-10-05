@@ -99,6 +99,16 @@ describe("ResizableDataTable remembered column widths", () => {
     expect(colWidths(container)).toEqual(["40px", "210px", "250px"]);
   });
 
+  it("keeps the stored width of a column this view does not show", () => {
+    // e.g. the Files table's Deleted column, shown in the deleted-files view only
+    localStorage.setItem(KEY, JSON.stringify({ deletedAt: 220 }));
+    const { container } = renderTable();
+    fireEvent.mouseDown(handleOf(container, "name"), { clientX: 100, detail: 1 });
+    fireEvent.mouseMove(document, { clientX: 130 });
+    fireEvent.mouseUp(document);
+    expect(JSON.parse(localStorage.getItem(KEY)!)).toEqual({ deletedAt: 220, name: 230 });
+  });
+
   it("writes after a double-click auto-fit", () => {
     localStorage.setItem(KEY, JSON.stringify({ name: 400 }));
     const { container } = renderTable();

@@ -44,12 +44,24 @@ test("sizedColumnWidth clamps a sized column and leaves an unsized one to its de
   assert.equal(sizedColumnWidth({}, "date", limits), undefined);
 });
 
-test("columnWidthsToStore keeps only columns that exist, clamped and rounded", () => {
+test("columnWidthsToStore clamps the table's columns and rounds", () => {
   const stored = columnWidthsToStore(
-    { date: 120.4, gone: 300, select: 200, amount: 10 },
+    { date: 120.4, select: 200, amount: 10 },
     { date: limits, amount: limits, select: { min: 40, max: 40 }, partner: limits }
   );
   assert.deepEqual(JSON.parse(stored), { date: 120, amount: 60, select: 40 });
+});
+
+test("columnWidthsToStore keeps a stored column the table does not show right now", () => {
+  // The Files table's Deleted column exists in the deleted-files view only
+  const stored = columnWidthsToStore(
+    { date: 150 },
+    { date: limits, amount: limits },
+    { deletedAt: 220, date: 100, amount: 90, broken: -1 }
+  );
+  // deletedAt is carried over as it is, date takes the new width, amount keeps
+  // what was stored, and an unreadable entry is not written back
+  assert.deepEqual(JSON.parse(stored), { deletedAt: 220, date: 150, amount: 90 });
 });
 
 test("a stored string reads back to what was stored", () => {

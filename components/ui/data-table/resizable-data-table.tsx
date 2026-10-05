@@ -422,10 +422,13 @@ function ResizableDataTableInner<TData extends { id: string }>(
   // because the render that carries it may not have committed yet.
   const rememberColumnWidth = useLatestCallback((columnId: string, width: number) => {
     if (!columnWidthsStorageKey) return;
+    // Read again rather than reuse the first render's copy: the other view of
+    // this table may have stored a column since
+    const previous = parseColumnWidths(readStoredColumnWidths(getLocalStorage, columnWidthsStorageKey));
     writeStoredColumnWidths(
       getLocalStorage,
       columnWidthsStorageKey,
-      columnWidthsToStore({ ...columnSizing, [columnId]: width }, columnLimits)
+      columnWidthsToStore({ ...columnSizing, [columnId]: width }, columnLimits, previous)
     );
   });
 
