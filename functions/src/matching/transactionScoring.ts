@@ -268,10 +268,11 @@ export interface FileMatchingData {
    */
   extractedInstalments?: FileInstalment[] | null;
   /**
-   * The File's Outstanding amount in cents (#615): set by the matcher when a
-   * payment is connected and part of the File is unpaid. A further
-   * Transaction is scored against it, never against the full total. Absent
-   * or null: nothing Outstanding.
+   * The File's Outstanding amount in cents (#615), set by the matcher once a
+   * payment is connected. Above zero, a further Transaction is scored against
+   * it, never against the full total. Zero (paid in full) or null (no figure,
+   * a payment in another currency): the full total, as before. Absent:
+   * nothing is paid yet.
    */
   outstanding?: number | null;
   /**
@@ -994,6 +995,7 @@ type FurtherPayment =
  * a Transaction the File is already on.
  *
  *  - A payment is connected and part is Outstanding: against that, always.
+ *    Paid in full, or with no figure in its currency: the full total.
  *  - Nothing paid yet and the File prints instalments: against the nearest
  *    one, when it scores better than the full total does (a File paid in one
  *    go keeps its full-total Match).
@@ -1014,8 +1016,12 @@ function furtherPaymentOf(
   const absTx = Math.abs(txData.amount);
   if (absTx === 0) return null;
 
-  if (fileData.outstanding != null && fileData.outstanding > 0) {
-    return { kind: "outstanding", against: fileData.outstanding };
+  if (fileData.outstanding !== undefined) {
+    // A payment is connected: what is left is the only figure. Paid in full,
+    // or in another currency, it is the full total, as before.
+    return fileData.outstanding != null && fileData.outstanding > 0
+      ? { kind: "outstanding", against: fileData.outstanding }
+      : null;
   }
 
   const instalments = fileData.extractedInstalments ?? [];

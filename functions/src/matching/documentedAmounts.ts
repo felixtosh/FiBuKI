@@ -187,10 +187,13 @@ export async function loadDocumentedAmounts(
 }
 
 /**
- * The Outstanding amount of each File that has one (#615, ADR-0013), keyed by
- * File id: what a further Transaction is scored against. A File with no
- * payment connected, a paid one and one whose payments are in another
- * currency are absent, which callers read as "score against the full total".
+ * What each File with a payment connected still has Outstanding (#615,
+ * ADR-0013), keyed by File id: the figure a further Transaction is scored
+ * against. Zero for a File paid in full, null when no figure can be derived
+ * (a payment in another currency); either way a further Transaction is scored
+ * against the full total, as before. A File with nothing paid is absent:
+ * nothing is Outstanding yet, and only what it prints or the bank line cites
+ * can make a first payment an instalment.
  *
  * Read from each File's `transactionIds` and every File on each of those
  * Transactions (`loadConnectedFiles`, the read Coverage uses, so a Receipt
@@ -200,8 +203,8 @@ export async function loadDocumentedAmounts(
  */
 export async function loadOutstandingAmounts(
   files: Array<{ id: string | null; data: FirebaseFirestore.DocumentData }>
-): Promise<Map<string, number>> {
-  const outstanding = new Map<string, number>();
+): Promise<Map<string, number | null>> {
+  const outstanding = new Map<string, number | null>();
   const paid = files.filter(
     (f): f is { id: string; data: FirebaseFirestore.DocumentData } =>
       typeof f.id === "string" && transactionIdsOf(f.data).length > 0
@@ -235,7 +238,8 @@ export async function loadOutstandingAmounts(
       },
       payments
     );
-    if (result?.isOutstanding) outstanding.set(file.id, result.outstanding);
+    if (!result) outstanding.set(file.id, null);
+    else if (result.paid > 0) outstanding.set(file.id, result.outstanding);
   }
   return outstanding;
 }

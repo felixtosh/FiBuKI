@@ -1342,6 +1342,8 @@ INSTALMENTS ("instalments" in "extracted"):
   compute a date from a payment period
 - A single due date for the whole amount is NOT an instalment: it stays the
   "dueDate" additional field and "instalments" is null
+- A cash discount is NOT an instalment: "Skonto", "bei Zahlung bis ... 2 %
+  Abzug" and its reduced amount or date never go in "instalments"
 - If the document prints no deposit, part payment or schedule, return
   "instalments": null
 

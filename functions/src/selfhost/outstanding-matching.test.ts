@@ -171,6 +171,20 @@ describe("a File printing three instalments, nothing paid", () => {
     expect(await connectionTo("f", "t-other")).toBeNull();
   });
 
+  it("takes no further instalment once the File is paid in full", async () => {
+    await seedInvoice("f", { extractedInstalments: schedule });
+    await seedPayment("t-all", 120000, "2026-02-27");
+    await connectByHand("f", "t-all");
+    await seedPayment("t-next", 40000, "2026-03-01");
+
+    const match = await matchFor("f", "t-next");
+    expect(match?.breakdown.scoredAgainstInstalment).toBeUndefined();
+    expect(match?.breakdown.scoredAgainstOutstanding).toBeUndefined();
+    expect(match?.breakdown.amount).toBe(0);
+    await refresh("f");
+    expect(await connectionTo("f", "t-next")).toBeNull();
+  });
+
   it("keeps the full-total Match for a File paid in one go", async () => {
     await seedInvoice("f", { extractedInstalments: schedule });
     await seedPayment("t-full", 120000, "2026-03-01");

@@ -550,7 +550,7 @@ function scoreAgainst(
   connected: Map<string, ConnectedFile[]>,
   documentedAmounts: Map<string, number>,
   ecbRates: EcbRateTable,
-  outstanding: number | null = null
+  outstanding?: number | null
 ): TransactionMatchScore[] {
   const fileData = file.data;
   // #615: what the File still has Outstanding, and the Transactions already
@@ -714,7 +714,7 @@ async function windowMatches(
         connectedFiles,
         documentedAmounts,
         ecbRates,
-        file.id ? outstanding.get(file.id) ?? null : null
+        file.id ? outstanding.get(file.id) : undefined
       )
         .map((m): Match => ({ ...m, fileId: file.id }))
         .sort(byConfidence);
@@ -755,7 +755,7 @@ async function scoreFileAgainstPool(
     connected,
     documentedAmounts,
     ecbRates,
-    file.id ? outstanding.get(file.id) ?? null : null
+    file.id ? outstanding.get(file.id) : undefined
   )
     .map((m): Match => {
       const hidden = markHidden ? hiddenById.get(m.transactionId) : null;
@@ -878,7 +878,7 @@ export async function filesForTransaction(
         connected,
         documentedAmounts,
         ecbRates,
-        outstanding.get(f.id) ?? null
+        outstanding.get(f.id)
       );
       return f.hidden ? { ...score, fileId: f.id, hidden: f.hidden } : { ...score, fileId: f.id };
     })
@@ -939,7 +939,7 @@ export async function pairsAmong(
         others,
         documentedAmounts,
         ecbRates,
-        outstanding.get(file.id) ?? null
+        outstanding.get(file.id)
       ).map((m) => ({
         ...m,
         fileId: file.id,
