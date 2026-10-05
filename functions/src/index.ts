@@ -211,6 +211,9 @@ export {
   getUvaFiledStatusCallable as getUvaFiledStatus,
 } from "./reports/uvaFiledRecords";
 
+// The business identity: the one writer of users/{uid}/settings/userData (#632)
+export { saveIdentityCallable as saveIdentity } from "./identity/saveIdentityCallable";
+
 // Invoice Corrections: the link to the File each one corrects (#564)
 export {
   linkCorrectionCallable as linkCorrection,
