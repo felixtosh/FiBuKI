@@ -871,8 +871,17 @@ export function normalizeInstalments(raw: unknown, documentTotal: number | null)
   }
   if (rows.length === 0 || rows.length > MAX_INSTALMENTS) return null;
   if (rows.length === 1 && (total === null || rows[0].amount === total)) return null;
+  // Parts of THIS document add up to at most its total (rounding aside). A
+  // schedule that adds up to more is someone else's: the advance payments
+  // for the next period a utility's annual bill prints (Teilbetrags-
+  // vorschreibung), which a payment of one of them must never be read as.
+  const sum = rows.reduce((acc, row) => acc + row.amount, 0);
+  if (total !== null && total > 0 && sum > total + INSTALMENT_SUM_TOLERANCE) return null;
   return rows;
 }
+
+/** Cents a schedule may add up to beyond the total: rounding of the parts. */
+const INSTALMENT_SUM_TOLERANCE = 100;
 
 /**
  * One separately issued invoice or Receipt inside a File (#550): its pages,
@@ -1330,10 +1339,10 @@ DEBIT DATE (key "debitDate"):
 - Never return a "debitDate" earlier than the invoice date
 
 INSTALMENTS ("instalments" in "extracted"):
-- Only when the document PRINTS that it is paid in parts: a deposit
-  ("Anzahlung", "Akontozahlung"), a part payment ("Teilzahlung"), numbered
-  instalments ("Rate 1/3", "1. Rate", "Instalment 2 of 3"), or a payment
-  schedule table of due dates with amounts
+- Only when the document PRINTS that ITS OWN total is paid in parts: a
+  deposit ("Anzahlung"), a part payment ("Teilzahlung"), numbered instalments
+  ("Rate 1/3", "1. Rate", "Instalment 2 of 3"), or a payment schedule table
+  of due dates with amounts that together make up this document's total
 - Return one object per printed part: {"amount": <cents as printed>,
   "dueDate": "YYYY-MM-DD" or null, "label": <the printed wording> or null},
   e.g. "Rate 1/3: 400,00 EUR fällig am 01.03.2026" -> {"amount": 40000,
@@ -1344,6 +1353,9 @@ INSTALMENTS ("instalments" in "extracted"):
   "dueDate" additional field and "instalments" is null
 - A cash discount is NOT an instalment: "Skonto", "bei Zahlung bis ... 2 %
   Abzug" and its reduced amount or date never go in "instalments"
+- Advance payments for a FUTURE period are NOT instalments of this document:
+  the "Teilbetrag" / "Akonto" schedule an annual utility or rent statement
+  prints for the coming year never goes in "instalments"
 - If the document prints no deposit, part payment or schedule, return
   "instalments": null
 

@@ -1136,6 +1136,25 @@ describe("runExtraction: printed instalments (#615)", () => {
     expect(rows).toEqual([{ amount: 36000, dueDate: null, label: "Anzahlung 30 %" }]);
   });
 
+  it("reads a schedule adding up to more than the total as someone else's: none", async () => {
+    // An annual electricity statement: 150,00 to pay now, and next year's
+    // monthly advance payments printed beneath it.
+    const fileData = await seedFile("f-inst-next-year");
+    q({
+      extracted: {
+        amount: 15000,
+        confidence: 0.9,
+        instalments: Array.from({ length: 11 }, (_, i) => ({
+          amount: 8500,
+          dueDate: `2027-${String(i + 1).padStart(2, "0")}-15`,
+          label: "Teilbetrag",
+        })),
+      },
+    });
+    await runExtraction("f-inst-next-year", fileData, { skipClassification: true });
+    expect((await fileDoc("f-inst-next-year")).extractedInstalments).toBeNull();
+  });
+
   it("records an absence when nothing is printed", async () => {
     const fileData = await seedFile("f-inst-none");
     q({ extracted: { amount: 4200, vatPercent: 20, confidence: 0.9 } });
