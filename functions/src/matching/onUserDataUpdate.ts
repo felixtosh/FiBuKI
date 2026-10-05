@@ -26,15 +26,20 @@
  * run summary stored at `users/{userId}/directionSweeps/{runId}` that says
  * whether the run covered the corpus. See `invoiceDirectionSweepReport.ts`
  * for why a count of "skipped" on its own was not enough (#158).
+ *
+ * What a File's re-derivation writes is the File facts module's decision
+ * (#640): a direction the User set by hand is kept, with the counterparty it
+ * chose, and named in the run summary as kept; the derived fields move with
+ * the facts. The sweep writes the decisions in batches of its own.
  */
 
 import { onDocumentUpdated, onDocumentCreated } from "firebase-functions/v2/firestore";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { ExtractedEntity } from "../types/extraction";
-import type { RecipientIdentity } from "./recipientIdentity";
 import { determineCounterparty, type InvoiceDirection } from "../utils/identity-matcher";
-import { classifyFileRecord, documentTypeFields } from "../documents/adapter";
 import { syncDocumentationStateForTransactions } from "../documents/syncDocumentationState";
+import { readLinkedTransactions } from "../documents/syncDirectionReview";
+import { decideFactChange } from "../fileFacts/factChange";
 import { decodeHtmlEntities } from "../utils/htmlEntities";
 import {
   SweepLedger,
@@ -417,13 +422,14 @@ function decodeEntityName(entity: ExtractedEntity | null): ExtractedEntity | nul
  * it, and the Files it never reached kept their pre-run `updatedAt` with
  * nothing anywhere saying so.
  */
-function planFileSweep(
+async function planFileSweep(
   fileDoc: FirebaseFirestore.QueryDocumentSnapshot,
   userData: UserData,
   sourceIbans: string[],
   ledger: SweepLedger,
-  planned: PlannedFileWrite[]
-): void {
+  planned: PlannedFileWrite[],
+  at: Timestamp
+): Promise<void> {
   const fileData = fileDoc.data();
 
   // Extraction has not finished, so extractedIssuer/extractedRecipient are not
@@ -468,85 +474,50 @@ function planFileSweep(
 
     const result = determineCounterparty(issuer, recipient, userData, sourceIbans);
 
-    // Decoded above, before the match, so the value written here and the one
-    // the skip comparison reads are the same string (#299).
-    //
-    // An absent name is spelled null on both sides of the comparison (#341):
-    // `name` is optional on a stored entity, and `undefined !== null` read a
-    // nameless counterparty as a change on every sweep, re-arming partner
-    // matching and wiping a Partner the user had assigned by hand.
-    const counterpartyName = result.counterparty?.name ?? null;
+    // The File facts module decides what of the derivation is written (#640):
+    // a direction the User set by hand is kept, and so is the counterparty it
+    // chose. Asked first without the connected Transactions, which only the
+    // direction review reads, so a File with nothing to write costs no read.
+    const change = {
+      origin: "identity-sweep" as const,
+      derived: {
+        invoiceDirection: result.invoiceDirection,
+        matchedUserAccount: result.matchedUserAccount,
+        recipientIdentityMatch: result.recipientIdentityMatch,
+        counterparty: result.counterparty,
+      },
+      at,
+    };
+    let outcome = decideFactChange({ record: fileData, linkedTransactions: [] }, change);
+    if (outcome.refused) throw new Error(outcome.message);
 
-    // Check if anything changed
-    const currentDirection = fileData.invoiceDirection as InvoiceDirection;
-    const currentMatchedAccount = fileData.matchedUserAccount as "issuer" | "recipient" | null;
-    const currentPartner = (fileData.extractedPartner as string | null | undefined) ?? null;
-    const currentRecipientIdentity = fileData.recipientIdentityMatch as RecipientIdentity | undefined;
+    if (outcome.keptDirection) {
+      ledger.kept(fileDoc.id, outcome.keptDirection.stored as InvoiceDirection, result.invoiceDirection);
+    }
 
-    if (
-      result.invoiceDirection === currentDirection &&
-      result.matchedUserAccount === currentMatchedAccount &&
-      result.recipientIdentityMatch === currentRecipientIdentity &&
-      counterpartyName === currentPartner
-    ) {
-      ledger.record(fileDoc.id, "already-correct", { direction: result.invoiceDirection });
+    // The direction the File holds after this run: a kept one stays.
+    const direction = (outcome.keptDirection?.stored ?? result.invoiceDirection) as InvoiceDirection;
+
+    if (Object.keys(outcome.update).length === 0) {
+      ledger.record(fileDoc.id, "already-correct", { direction });
       return;
     }
 
-    // Update file
-    const updateData: Record<string, unknown> = {
-      invoiceDirection: result.invoiceDirection,
-      matchedUserAccount: result.matchedUserAccount,
-      recipientIdentityMatch: result.recipientIdentityMatch,
-      updatedAt: Timestamp.now(),
-    };
-
-    // Update partner fields from counterparty. Copying them raw is what made
-    // #158 silent: an entity that carries only a name put `undefined` in the
-    // payload, Firestore refuses an undefined value, and the refusal took
-    // every File batched behind it down with it.
-    //
-    // The absent ones are written as null rather than left out, because these
-    // four fields mirror whoever the counterparty currently is, and this sweep
-    // is what re-points them when the identity moves. Leaving one out would
-    // keep the PREVIOUS counterparty's VAT ID or IBAN on the File, and partner
-    // matching — which the block below re-arms — matches on both.
-    if (result.counterparty) {
-      updateData.extractedPartner = counterpartyName ?? null;
-      updateData.extractedVatId = result.counterparty.vatId ?? null;
-      updateData.extractedIban = result.counterparty.iban ?? null;
-      updateData.extractedAddress = result.counterparty.address ?? null;
-      updateData.extractedWebsite = result.counterparty.website ?? null;
+    const transactionIds = (fileData.transactionIds as string[] | undefined) ?? [];
+    if (transactionIds.length > 0) {
+      const linkedTransactions = await readLinkedTransactions(db, transactionIds);
+      outcome = decideFactChange({ record: fileData, linkedTransactions }, change);
+      if (outcome.refused) throw new Error(outcome.message);
     }
-
-    // If extractedPartner changed, reset partner matching so it re-runs
-    if (counterpartyName !== currentPartner) {
-      updateData.partnerMatchComplete = false;
-      updateData.partnerId = null;
-      updateData.partnerMatchedBy = null;
-      updateData.partnerMatchConfidence = null;
-      updateData.partnerSuggestions = [];
-    }
-
-    // #229 / #104: the § 11 classification is stored, not recomputed at read
-    // time, and both facts this sweep moves feed it — whether the user
-    // issued the document, and whether its recipient is the user. Leaving it
-    // behind would mean a file that has just become somebody else's invoice
-    // keeps saying it is the user's Vorsteuer until it is next extracted.
-    const reclassified = { ...fileData, ...updateData };
-    Object.assign(updateData, documentTypeFields(classifyFileRecord(reclassified)));
-
-    const affectedTransactionIds =
-      fileData.documentType !== updateData.documentType
-        ? ((fileData.transactionIds as string[] | undefined) ?? [])
-        : [];
 
     planned.push({
       ref: fileDoc.ref,
       fileId: fileDoc.id,
-      updates: updateData,
-      direction: result.invoiceDirection,
-      affectedTransactionIds,
+      updates: outcome.update,
+      direction,
+      affectedTransactionIds: outcome.followUps.flatMap((followUp) =>
+        followUp.kind === "sync-documentation-state" ? followUp.transactionIds : []
+      ),
     });
   } catch (error) {
     ledger.record(fileDoc.id, "evaluation-failed", {
@@ -608,6 +579,9 @@ export const onUserDataUpdate = onDocumentUpdated(
     const runId = db.collection(`users/${userId}/directionSweeps`).doc().id;
     const ledger = new SweepLedger();
     const planned: PlannedFileWrite[] = [];
+    // One stamp for every write of the run, so a File replayed after a
+    // refused batch is written the same twice (#158).
+    const runAt = Timestamp.now();
 
     let scanned = 0;
     let cursor: FirebaseFirestore.QueryDocumentSnapshot | null = null;
@@ -626,7 +600,7 @@ export const onUserDataUpdate = onDocumentUpdated(
       for (const fileDoc of snapshot.docs) {
         scanned++;
         ledger.candidate();
-        planFileSweep(fileDoc, userData, sourceIbans, ledger, planned);
+        await planFileSweep(fileDoc, userData, sourceIbans, ledger, planned, runAt);
       }
 
       if (snapshot.size < CONFIG.PAGE_SIZE) break;
