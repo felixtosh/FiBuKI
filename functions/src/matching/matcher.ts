@@ -18,8 +18,9 @@
  * - **the date window**: within MATCH_WINDOW_DAYS of the File's date,
  *   reaching forward to a week past its Due Date or Debit Date (#614); an
  *   undated File around that date, or without one against the
- *   UNDATED_RECENT_TRANSACTIONS most recent Transactions; the hinted or
- *   nominated Transaction always. A User's search lifts it.
+ *   UNDATED_RECENT_TRANSACTIONS most recent Transactions; around each due
+ *   date a File prints for its instalments (#716); the hinted or nominated
+ *   Transaction always. A User's search lifts it.
  * - **input assembly**: the Partner's aliases, bands and learned weights, what
  *   the Files already on a Transaction explain (the Remainder, #239) and the
  *   ECB rate for a foreign-currency pair (#555). The pure scoring core in
@@ -63,6 +64,7 @@ import {
   scoreTransaction,
   toFileMatchingData,
   toTransactionData,
+  instalmentDueDateOf,
   type FileInstalment,
   type PartnerScoringContext,
   type TransactionMatchScore,
@@ -253,6 +255,48 @@ export function dateWindowOf(fileData: Data): DateWindow | null {
 }
 
 /**
+ * The windows a File's printed instalments add to its date window (#716):
+ * each printed due date ± MATCH_WINDOW_DAYS, so a later instalment paid
+ * months after the invoice is still a candidate, and is scored against that
+ * due date. Only the due dates the scorer reads (`instalmentDueDateOf`: on a
+ * dated File, none more than a month before it or a year after it, which is
+ * a misread). A File printing no
+ * instalments, or none with a due date, adds none: its window is exactly
+ * `dateWindowOf`'s.
+ */
+export function instalmentWindowsOf(fileData: Data): DateWindow[] {
+  const instalments = toFileMatchingData(fileData).extractedInstalments ?? [];
+  const fileDate = fileDateOf(fileData);
+  const windows: DateWindow[] = [];
+  for (const row of instalments) {
+    const due = instalmentDueDateOf(row, fileDate);
+    if (!due) continue;
+    windows.push({
+      start: dayRange(dayNumber(due) - MATCH_WINDOW_DAYS).start,
+      end: dayRange(dayNumber(due) + MATCH_WINDOW_DAYS).end,
+    });
+  }
+  return merged(windows);
+}
+
+/** Every window a File may be matched in: its date window and what its printed instalments add (#716). */
+interface FileWindows {
+  /** `dateWindowOf`; null sends the File to the most recent Transactions. */
+  main: DateWindow | null;
+  /** `instalmentWindowsOf`. */
+  instalments: DateWindow[];
+}
+
+function fileWindowsOf(fileData: Data): FileWindows {
+  return { main: dateWindowOf(fileData), instalments: instalmentWindowsOf(fileData) };
+}
+
+/** Every window of these Files that reads Transactions by date, for `readRanges`. */
+function datedWindows(windows: FileWindows[]): DateWindow[] {
+  return windows.flatMap((w) => (w.main ? [w.main, ...w.instalments] : w.instalments));
+}
+
+/**
  * Does the File's window reach past its date + 30 days, a Due Date or Debit
  * Date stretching it (#614)? The one-time rematch after release selects
  * these Files.
@@ -288,12 +332,12 @@ export function matchDatesKey(fileData: Data): string {
 }
 
 /**
- * Is this Transaction within the File's date window? `window` is
- * `dateWindowOf(fileData)`, worked out once per File by the caller.
+ * Is this Transaction within one of the File's windows? `windows` is
+ * `fileWindowsOf(fileData)`, worked out once per File by the caller.
  */
 function inWindow(
   fileData: Data,
-  window: DateWindow | null,
+  windows: FileWindows,
   transactionId: string,
   txData: Data,
   ctx: WindowContext
@@ -302,10 +346,12 @@ function inWindow(
   // is still this File's (#589).
   if (fileData.precisionSearchHint?.transactionId === transactionId) return true;
   if (ctx.nominatedIds?.has(transactionId)) return true;
-  if (!window) return ctx.recentIds.has(transactionId);
   const txDate = toDateSafe(txData.date);
-  if (!txDate) return false;
-  return txDate.getTime() >= window.start && txDate.getTime() <= window.end;
+  const within = (w: DateWindow) => txDate !== null && txDate.getTime() >= w.start && txDate.getTime() <= w.end;
+  // #716: around a printed instalment's due date.
+  if (windows.instalments.some(within)) return true;
+  if (!windows.main) return ctx.recentIds.has(transactionId);
+  return within(windows.main);
 }
 
 /** The span ±30 days around these dates reaches. */
@@ -389,9 +435,9 @@ async function windowPool(
 ): Promise<{ pool: TxDoc[]; ctx: WindowContext }> {
   const byId = new Map<string, TxDoc>();
   const base = baseSpan(files.map((f) => fileDateOf(f.data)).filter((d): d is Date => d !== null));
-  const windows = files.map((f) => dateWindowOf(f.data));
+  const windows = files.map((f) => fileWindowsOf(f.data));
 
-  for (const range of readRanges(base, windows.filter((w): w is DateWindow => w !== null))) {
+  for (const range of readRanges(base, datedWindows(windows))) {
     const span = toTimestamps(range);
     const snapshot = await db
       .collection("transactions")
@@ -411,7 +457,7 @@ async function windowPool(
   }
 
   let recentIds = new Set<string>();
-  if (windows.some((w) => w === null)) {
+  if (windows.some((w) => w.main === null)) {
     const snapshot = await db
       .collection("transactions")
       .where("userId", "==", userId)
@@ -698,8 +744,8 @@ async function windowMatches(
     files.map(async (file, i) => {
       if (reasons[i]) return NO_TRANSACTIONS(reasons[i]);
       const excluded = excludedTransactionIds(file, options);
-      const window = dateWindowOf(file.data);
-      const inFileWindow = pool.filter((doc) => inWindow(file.data, window, doc.id, doc.data() ?? {}, ctx));
+      const windows = fileWindowsOf(file.data);
+      const inFileWindow = pool.filter((doc) => inWindow(file.data, windows, doc.id, doc.data() ?? {}, ctx));
       const candidates = inFileWindow.filter(
         (doc) =>
           !excluded.has(doc.id) && hiddenReasonOf(file.id, file.data, doc.id, doc.data() ?? {}) === null
@@ -844,9 +890,9 @@ export async function filesForTransaction(
   } else {
     // Each File's own window, stretched or not (#614): a Transaction finds a
     // File exactly when that File's window holds the Transaction's date.
-    const windows = files.map((f) => dateWindowOf(f.data));
+    const windows = files.map((f) => fileWindowsOf(f.data));
     const ctx: WindowContext = {
-      recentIds: windows.some((w) => w === null) ? await recentTransactionIds(db, userId) : new Set(),
+      recentIds: windows.some((w) => w.main === null) ? await recentTransactionIds(db, userId) : new Set(),
     };
     candidates = files
       .filter((f, i) => {
@@ -905,9 +951,9 @@ export async function pairsAmong(
   const matchable = await matchableFiles(db, files);
   if (matchable.length === 0 || transactions.length === 0) return [];
 
-  const windows = new Map(matchable.map((f) => [f, dateWindowOf(f.data)]));
+  const windows = new Map(matchable.map((f) => [f, fileWindowsOf(f.data)]));
   const ctx: WindowContext = {
-    recentIds: [...windows.values()].some((w) => w === null)
+    recentIds: [...windows.values()].some((w) => w.main === null)
       ? await recentTransactionIds(db, userId)
       : new Set(),
   };
@@ -926,7 +972,7 @@ export async function pairsAmong(
         const txData = doc.data() ?? {};
         return (
           hiddenReasonOf(file.id, file.data, doc.id, txData) === null &&
-          inWindow(file.data, windows.get(file) ?? null, doc.id, txData, ctx)
+          inWindow(file.data, windows.get(file)!, doc.id, txData, ctx)
         );
       });
       const others = withoutFile(connected, file.id);
