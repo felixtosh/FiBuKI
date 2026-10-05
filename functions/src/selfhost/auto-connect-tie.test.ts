@@ -187,6 +187,29 @@ describe("every surface that auto-connects a File applies the tie rule (#667)", 
     expect(stored.map((s) => s.transactionId).sort()).toEqual(["t-apr", "t-may"]);
   });
 
+  it("the upload trigger queues no agentic search for a File without a Partner that ties", async () => {
+    // Without a Partner the trigger queues a per-file agentic search when
+    // nothing connected; that worker connects a strong suggestion itself, so
+    // on a tie it would pick one of the charges and undo the rule.
+    await seedInvoice("f", { partnerId: null, extractedPartner: "Acme SaaS GmbH" });
+    await seedCharge("t-apr", "2026-04-01", { partnerId: null });
+    await seedCharge("t-may", "2026-05-01", { partnerId: null });
+    await (
+      refreshTransactionMatchesCallable as unknown as { run: (req: unknown) => Promise<unknown> }
+    ).run({ data: { fileId: "f" }, auth: { uid: ME, token: {} } });
+
+    expect(await connectionsOf("f")).toEqual([]);
+    const stored = (await db.collection("files").doc("f").get()).data()!.transactionSuggestions as Array<{
+      transactionId: string;
+      confidence: number;
+    }>;
+    expect(stored.filter((s) => s.confidence >= THRESHOLD).map((s) => s.transactionId).sort()).toEqual([
+      "t-apr",
+      "t-may",
+    ]);
+    expect((await db.collection(`users/${ME}/workerRequests`).get()).size).toBe(0);
+  });
+
   it("Partner matching", async () => {
     await seedTie();
     const result = await matchFilesForPartnerInternal(ME, "p", ["t-apr", "t-may"]);

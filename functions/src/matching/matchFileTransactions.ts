@@ -464,10 +464,13 @@ export async function runTransactionMatching(
   // - Partner batch: only on explicit "new successful match for this partner" signal
   // - No partner: keep legacy per-file fallback only when no auto-match, and
   //   not on a search's nomination run (#589): that run checks one pair, and
-  //   a search nominates to several files per transaction.
+  //   a search nominates to several files per transaction. Not on a tie
+  //   either (#667): the worker connects a strong suggestion itself, so it
+  //   would pick one of the tied Transactions the rule leaves to the User.
+  const tied = refusals.some((r) => r.tie);
   const shouldQueuePartnerBatch = Boolean(fileData.partnerId) && autoMatches.length > 0;
   const shouldQueueSingleFileWorker =
-    !fileData.partnerId && autoMatches.length === 0 && !options.nominatedTransactionIds?.length;
+    !fileData.partnerId && autoMatches.length === 0 && !options.nominatedTransactionIds?.length && !tied;
 
   if (shouldQueuePartnerBatch || shouldQueueSingleFileWorker) {
     // Check AI budget before queuing agentic workers (rule-based scoring above stays free)
