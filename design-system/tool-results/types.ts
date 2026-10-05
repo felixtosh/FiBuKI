@@ -25,7 +25,7 @@ export interface LocalFileCandidate {
   score: number;
   scoreLabel?: "Strong" | "Likely" | null;
   scoreReasons?: string[];
-  /** The document total in integer cents (#616) */
+  /** The document total: integer cents when the result says `amountsIn: "cents"` (#616), else euros */
   extractedAmount?: number;
   /** Currency code (e.g., "EUR", "USD") */
   extractedCurrency?: string;
@@ -65,6 +65,8 @@ export interface GmailAttachmentCandidate {
  */
 export interface LocalFilesSearchResult {
   searchType: "local_files";
+  /** "cents" since #616; a result saved before carries no unit and its candidate amounts are euros. */
+  amountsIn?: "cents";
   strategy?: "partner_files" | "amount_files" | "both";
   searchedTransaction: SearchedTransactionContext;
   summary: string;

@@ -533,6 +533,7 @@ export const searchLocalFilesTool = tool(
       console.error("[searchLocalFiles] Error scoring files:", err);
       return {
         searchType: "local_files",
+        amountsIn: "cents",
         strategy: strategy || "all",
         searchedTransaction: {
           id: transactionId,
@@ -558,6 +559,7 @@ export const searchLocalFilesTool = tool(
 
       return {
         searchType: "local_files",
+        amountsIn: "cents",
         strategy: strategy || "all",
         searchedTransaction: {
           id: transactionId,
@@ -651,6 +653,8 @@ export const searchLocalFilesTool = tool(
 
     return {
       searchType: "local_files",
+      // Every amount here is integer cents (#616); a result saved before said euros.
+      amountsIn: "cents",
       strategy: strategy || "all",
       searchedTransaction: {
         id: transactionId,

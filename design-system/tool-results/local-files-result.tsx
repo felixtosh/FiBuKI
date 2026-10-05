@@ -33,10 +33,14 @@ export function LocalFilesResult({
     }
   };
 
-  /** Format an amount for display. The tool reports integer cents (#616). */
-  const formatAmount = (amountCents: number, currency?: string) => {
+  // The tool reports integer cents since #616 and says so; a result saved
+  // in a conversation before then carries euros and no unit.
+  const toUnits = result.amountsIn === "cents" ? 100 : 1;
+
+  /** Format a candidate's amount for display. */
+  const formatAmount = (amount: number, currency?: string) => {
     const currencyCode = currency || "EUR";
-    return (amountCents / 100).toLocaleString("de-DE", {
+    return (amount / toUnits).toLocaleString("de-DE", {
       style: "currency",
       currency: currencyCode,
       minimumFractionDigits: 2,

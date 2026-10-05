@@ -110,8 +110,17 @@ describe("chat-only tools report a File's amount in cents", () => {
     const html = renderToStaticMarkup(
       createElement(TooltipProvider, null, createElement(LocalFilesResult, { result: res as never }))
     );
+    expect((res as { amountsIn?: string }).amountsIn).toBe("cents");
     expect(html).toMatch(/123,45\s€/);
     expect(html).not.toMatch(/12\.345,00/);
+
+    // A result saved in a conversation before #616 carries euros and no unit.
+    const saved = { ...(res as Record<string, unknown>), amountsIn: undefined };
+    (saved.candidates as Array<{ extractedAmount?: number }>)[0].extractedAmount = 123.45;
+    const savedHtml = renderToStaticMarkup(
+      createElement(TooltipProvider, null, createElement(LocalFilesResult, { result: saved as never }))
+    );
+    expect(savedHtml).toMatch(/123,45\s€/);
   });
 
   it("connectFileToTransaction: a refusal states both amounts in cents", async () => {
