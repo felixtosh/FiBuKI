@@ -4,13 +4,15 @@
  * The callables (markFileAsNotInvoice / unmarkFileAsNotInvoice) drive the UI
  * buttons; the tool handlers of the same name drive the MCP surface. Both must
  * write the identical field set, or a file flagged by an agent and a file
- * flagged by a click end up in different states — so the update objects are
- * built here and nowhere else.
+ * flagged by a click end up in different states. Marking clears facts, so the
+ * File facts module decides it (#640); un-marking writes no fact and is
+ * built here.
  */
 
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldValue, type Firestore } from "firebase-admin/firestore";
 import { enqueueExtraction } from "../extraction/extractionQueue";
 import { reExtractionRefusal } from "../fileFacts/factChange";
+import { applyFactChange } from "../fileFacts/applyFactChange";
 
 /**
  * Fields the transition reads. Deliberately narrow: everything else on the
@@ -21,74 +23,23 @@ export interface NotInvoiceFileState {
 }
 
 /**
- * Marking a file as "not an invoice" clears the extracted data, because there
- * is nothing to extract from a document that is not an invoice, and resets the
- * downstream partner/transaction matching that was derived from it.
+ * Mark a File as "not an invoice", through the File facts module (#640).
  *
- * A manually-set partner survives: the user chose it, and the classification
- * being wrong does not make that choice wrong.
+ * The module clears the extracted data, because there is nothing to extract
+ * from a document that is not an invoice, resets the partner and transaction
+ * matching derived from it, and clears the Hand Correction record for the
+ * figures it wipes, all in one write. A manually-set Partner survives. The
+ * caller has checked the File is the User's; a File that is not answers
+ * `false` here and nothing is written.
  */
-export function buildMarkNotInvoiceUpdates(
-  fileData: NotInvoiceFileState,
+export async function markFileNotInvoice(
+  db: Firestore,
+  fileId: string,
+  userId: string,
   reason?: string
-): Record<string, unknown> {
-  const updates: Record<string, unknown> = {
-    isNotInvoice: true,
-    notInvoiceReason: reason || "Marked by user",
-    classificationComplete: true,
-    // Clear all extracted data since it's not an invoice
-    extractedDate: null,
-    extractedAmount: null,
-    extractedCurrency: null,
-    extractedVatPercent: null,
-    extractedVatAmount: null,
-    extractedLineItems: null,
-    extractedRateGroups: null,
-    extractedRateGroupsSource: null,
-    lineItemsUnreconciled: false,
-    lineItemsUnreconciledRates: null,
-    vatSourceDowngraded: false,
-    vatFieldsPreserved: false,
-    // The rates the review flag pointed at are among the fields just cleared
-    // (#203), so the flag goes with them.
-    needsVatRateReview: false,
-    vatRatesOutsideSet: [],
-    // Likewise a repaired escape's flag (#275): the transcribed values it
-    // pointed at are among the fields cleared here, so nothing is left to doubt.
-    needsRepairReview: false,
-    repairAmbiguousFields: [],
-    // And the RKSV Code's flag (#166): the printed block it compared is gone.
-    needsRksvCodeReview: false,
-    rksvCodeDisagreeingRates: [],
-    extractedPartner: null,
-    extractedVatId: null,
-    extractedIban: null,
-    extractedAddress: null,
-    extractedText: null,
-    extractedRaw: null,
-    extractedAdditionalFields: null,
-    extractedFields: null,
-    extractionConfidence: null,
-    invoiceDirection: null,
-    // Mark extraction as complete (nothing to extract for non-invoices)
-    extractionComplete: true,
-    // Reset downstream matching
-    partnerMatchComplete: false,
-    partnerSuggestions: [],
-    transactionMatchComplete: false,
-    transactionSuggestions: [],
-    updatedAt: FieldValue.serverTimestamp(),
-  };
-
-  // Only clear partner if NOT manually set (preserve user's intentional choice)
-  if (fileData.partnerMatchedBy !== "manual") {
-    updates.partnerId = null;
-    updates.partnerType = null;
-    updates.partnerMatchedBy = null;
-    updates.partnerMatchConfidence = null;
-  }
-
-  return updates;
+): Promise<boolean> {
+  const outcome = await applyFactChange(db, { fileId, userId, change: { origin: "not-invoice", reason } });
+  return !outcome.refused;
 }
 
 /**

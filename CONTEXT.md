@@ -299,7 +299,9 @@ through the MCP correction tool, which take the same fields. Changing the counte
 name, VAT id, IBAN or address is not recorded. One that moves the amount, the date, the
 Due Date, the Debit Date, or the counterparty's name, VAT id or IBAN re-scores the File's
 suggestions; none connects or disconnects a Transaction, a Receipt Link's paired File
-included: after one, the pair check only suggests.
+included: after one, the pair check only suggests. The identity sweep keeps a direction
+set by hand. Marking the File not an invoice clears the figures and the record with them,
+so un-marking it re-extracts it freely.
 _Deutsch_: von Hand geändert
 _Avoid_: correction (that is the **Invoice Correction**), override, edit
 _Avoid (de)_: Korrektur, Rechnungskorrektur (both name the **Invoice Correction**)
