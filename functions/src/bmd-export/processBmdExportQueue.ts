@@ -29,6 +29,7 @@ import {
   generateBuchungenCsvWithReport,
   PartnerForExport,
   TransactionForExport,
+  EveryField,
   FileForExport,
   PartnerAccountIndex,
 } from "./bmdCsvGenerators";
@@ -304,8 +305,9 @@ async function processBmdExport(
     );
 
     // Prepare transactions for CSV generation
+    // Every field listed (#715): a new one fails to compile until mapped here.
     const transactionsForExport: TransactionForExport[] = transactions.map(
-      (tx) => ({
+      (tx): EveryField<TransactionForExport> => ({
         id: tx.id,
         date: tx.date as Timestamp,
         amount: tx.amount as number,

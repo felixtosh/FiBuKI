@@ -14,10 +14,16 @@
  * field it reads. A read of a field the export did not pass fails here: that
  * field would be missing from every export, silently.
  *
- * The shapes below walk every branch of the adapter that reads a Transaction
- * field (purchase and sale, a no-receipt category without a template, a
- * Partner, an Accepted Partial Payment ruling, a linked correction). A new
+ * `SHAPES` walks every branch of the adapter that reads a Transaction field:
+ * a purchase, a reverse-charge purchase answered as goods, a sale to a
+ * Partner with a Supply Kind answer, a no-receipt category with and without
+ * its template, a live Accepted Partial Payment and a linked correction. A new
  * read on a branch none of them reaches needs a shape here too.
+ *
+ * The compile-time half: `vatRowsFor`'s object `satisfies
+ * EveryField<TransactionRecord>` and the export queue's mapping returns
+ * `EveryField<TransactionForExport>`, so a field added to either type fails
+ * typecheck until it is mapped.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
