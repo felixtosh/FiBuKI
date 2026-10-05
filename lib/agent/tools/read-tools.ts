@@ -359,15 +359,13 @@ export const waitForFileExtractionTool = tool(
     while (attempts < maxAttempts) {
       const doc = await db.collection("files").doc(fileId).get();
 
-      if (!doc.exists) {
+      // Another user's File answers exactly like a missing one, on the same
+      // path: anything else confirms the id is real (#616).
+      if (!doc.exists || doc.data()?.userId !== userId) {
         return { error: `File ${fileId} not found` };
       }
 
       const data = doc.data()!;
-
-      if (data.userId !== userId) {
-        return { error: "Not authorized to access this file" };
-      }
 
       // Check if extraction is complete
       if (data.extractionComplete) {
