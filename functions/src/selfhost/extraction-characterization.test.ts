@@ -1213,6 +1213,19 @@ describe("characterization: retryFileExtraction callable", () => {
     expect((await fileDoc("f-corrected")).extractedVatPercent).toBe(0);
   });
 
+  it("carries the corrected fields as structured details on the refusal (#639)", async () => {
+    await seedFile("f-details", {
+      extractionComplete: true,
+      extractionCorrectedFields: { amount: Timestamp.now(), dueDate: Timestamp.now() },
+      extractionCorrectedAt: Timestamp.now(),
+    });
+
+    await expect(call({ fileId: "f-details", force: true })).rejects.toMatchObject({
+      code: "failed-precondition",
+      details: { code: "HAND_CORRECTED", fields: ["amount", "dueDate"] },
+    });
+  });
+
   it("re-extracts a corrected file when the caller opts in per file", async () => {
     await seedFile("f-overwrite", {
       extractionComplete: true,

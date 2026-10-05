@@ -419,6 +419,8 @@ describe("a File with a Hand Correction, by every queuing path (#639)", () => {
     ).rejects.toMatchObject({
       code: "failed-precondition",
       message: expect.stringContaining("overwriteCorrections"),
+      // Structured, so the UI asks with the fields named (#639).
+      details: { code: "HAND_CORRECTED", fields: ["amount"] },
     });
 
     await drainTriggers();
@@ -440,7 +442,11 @@ describe("a File with a Hand Correction, by every queuing path (#639)", () => {
 
     await expect(
       markFileAsCopy(db as never, ALICE, { fileId: "hidden", originalFileId: "orig" }, "user")
-    ).rejects.toMatchObject({ code: "failed-precondition", message: expect.stringContaining("HAND_CORRECTED") });
+    ).rejects.toMatchObject({
+      code: "failed-precondition",
+      message: expect.stringContaining("HAND_CORRECTED"),
+      details: { code: "HAND_CORRECTED", fields: ["amount"] },
+    });
     await drainTriggers();
     expect(await jobs()).toHaveLength(0);
     expect((await file("hidden")).copyOfFileId).toBeUndefined();
