@@ -5,10 +5,6 @@ import {
   getDocs,
   getDoc,
   doc,
-  setDoc,
-  updateDoc,
-  deleteDoc,
-  Timestamp,
   onSnapshot,
   Unsubscribe,
 } from "firebase/firestore";
@@ -58,58 +54,6 @@ export function subscribeMfaSettings(
       return;
     }
     callback({ ...snapshot.data() } as MfaSettings);
-  });
-}
-
-/**
- * Initialize MFA settings for a user (creates default settings if none exist)
- */
-export async function initializeMfaSettings(
-  ctx: OperationsContext
-): Promise<MfaSettings> {
-  const existing = await getMfaSettings(ctx);
-  if (existing) return existing;
-
-  const now = Timestamp.now();
-  const settings: MfaSettings = {
-    userId: ctx.userId,
-    totpEnabled: false,
-    passkeysEnabled: false,
-    backupCodesGenerated: false,
-    backupCodesRemaining: 0,
-    createdAt: now,
-    updatedAt: now,
-  };
-
-  const docRef = doc(ctx.db, getMfaSettingsPath(ctx.userId), "config");
-  await setDoc(docRef, settings);
-
-  return settings;
-}
-
-/**
- * Update MFA settings
- */
-export async function updateMfaSettings(
-  ctx: OperationsContext,
-  updates: Partial<
-    Pick<
-      MfaSettings,
-      | "totpEnabled"
-      | "totpFactorId"
-      | "totpEnrolledAt"
-      | "passkeysEnabled"
-      | "backupCodesGenerated"
-      | "backupCodesGeneratedAt"
-      | "backupCodesRemaining"
-    >
-  >
-): Promise<void> {
-  const docRef = doc(ctx.db, getMfaSettingsPath(ctx.userId), "config");
-
-  await updateDoc(docRef, {
-    ...updates,
-    updatedAt: Timestamp.now(),
   });
 }
 
@@ -186,41 +130,6 @@ export async function getPasskeyByCredentialId(
   } as PasskeyCredential;
 }
 
-/**
- * Update passkey last used timestamp
- */
-export async function updatePasskeyLastUsed(
-  ctx: OperationsContext,
-  passkeyId: string,
-  counter: number
-): Promise<void> {
-  const docRef = doc(ctx.db, getPasskeysPath(ctx.userId), passkeyId);
-
-  await updateDoc(docRef, {
-    lastUsedAt: Timestamp.now(),
-    counter,
-  });
-}
-
-/**
- * Delete a passkey
- * Note: This is exposed for client-side operations. The Cloud Function
- * handles the actual deletion with proper validation.
- */
-export async function deletePasskey(
-  ctx: OperationsContext,
-  passkeyId: string
-): Promise<void> {
-  const docRef = doc(ctx.db, getPasskeysPath(ctx.userId), passkeyId);
-  await deleteDoc(docRef);
-
-  // Check if any passkeys remain and update settings
-  const remaining = await listPasskeys(ctx);
-  if (remaining.length === 0) {
-    await updateMfaSettings(ctx, { passkeysEnabled: false });
-  }
-}
-
 // ============ Backup Codes ============
 
 /**
@@ -270,49 +179,4 @@ export async function getMfaStatus(
       (settings?.passkeysEnabled ?? false) ||
       passkeys.length > 0,
   };
-}
-
-// ============ Admin Operations ============
-
-/**
- * Reset MFA for a user (admin only)
- * This should be called through a Cloud Function that validates admin permissions.
- * The operations layer provides the data access logic.
- */
-export async function adminResetMfaData(
-  ctx: OperationsContext,
-  targetUserId: string
-): Promise<void> {
-  // Delete all passkeys
-  const passkeysQuery = query(
-    collection(ctx.db, getPasskeysPath(targetUserId)),
-    where("userId", "==", targetUserId)
-  );
-  const passkeysSnapshot = await getDocs(passkeysQuery);
-  for (const passkey of passkeysSnapshot.docs) {
-    await deleteDoc(passkey.ref);
-  }
-
-  // Delete all backup codes
-  const codesQuery = query(
-    collection(ctx.db, getBackupCodesPath(targetUserId)),
-    where("userId", "==", targetUserId)
-  );
-  const codesSnapshot = await getDocs(codesQuery);
-  for (const code of codesSnapshot.docs) {
-    await deleteDoc(code.ref);
-  }
-
-  // Reset MFA settings
-  const settingsRef = doc(ctx.db, getMfaSettingsPath(targetUserId), "config");
-  await updateDoc(settingsRef, {
-    totpEnabled: false,
-    totpFactorId: null,
-    totpEnrolledAt: null,
-    passkeysEnabled: false,
-    backupCodesGenerated: false,
-    backupCodesGeneratedAt: null,
-    backupCodesRemaining: 0,
-    updatedAt: Timestamp.now(),
-  });
 }

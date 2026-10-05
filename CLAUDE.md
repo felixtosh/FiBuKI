@@ -389,14 +389,11 @@ and fails if one reads or writes the database itself.
 
 ## Test Data
 
-### Generating Test Data
-The app includes a test data toggle on the Bank Accounts page (`/sources`):
-- **Enable Test Data**: Creates "Test Bank Account" with 100 sample transactions
-- **Disable Test Data**: Removes the test source and all its transactions
-
 ### Test Data Files
 - `/lib/test-data/generate-test-transactions.ts` - Generates test source + 100 transactions
-- `/hooks/use-test-source.ts` - Hook for activating/deactivating test data
+
+The Bank Accounts page no longer has a test data toggle; its browser writer was
+deleted with the other dead writers (#625).
 
 ### Updating Test Data
 When modifying transaction-related types, also update the test data generator:

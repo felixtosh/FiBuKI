@@ -19,7 +19,6 @@ import {
   retriggerUserCategories,
   hasUserCategories,
   updateUserCategory,
-  clearManualRemoval,
   triggerCategoryMatchingForAll,
 } from "@/lib/operations";
 import { CategoryLearnedPattern } from "@/types/no-receipt-category";
@@ -134,19 +133,6 @@ export function useNoReceiptCategories() {
   }, [userId]);
 
   /**
-   * Initialize categories from templates (manual trigger)
-   */
-  const initializeCategories = useCallback(async () => {
-    setInitializing(true);
-    try {
-      const result = await initializeUserCategories(ctx);
-      return result;
-    } finally {
-      setInitializing(false);
-    }
-  }, [ctx]);
-
-  /**
    * Assign a category to a transaction
    */
   const assignToTransaction = useCallback(
@@ -243,17 +229,6 @@ export function useNoReceiptCategories() {
   );
 
   /**
-   * Clear a manual removal entry from a category.
-   * Allows the transaction to be auto-matched again.
-   */
-  const clearRemoval = useCallback(
-    async (categoryId: string, transactionId: string): Promise<void> => {
-      await clearManualRemoval(ctx, categoryId, transactionId);
-    },
-    [ctx]
-  );
-
-  /**
    * Trigger category matching for all unmatched transactions.
    * Populates categorySuggestions on transactions via Cloud Function.
    */
@@ -265,7 +240,6 @@ export function useNoReceiptCategories() {
     categories,
     loading: loading || initializing,
     error,
-    initializeCategories,
     assignToTransaction,
     removeFromTransaction,
     assignReceiptLost,
@@ -274,7 +248,6 @@ export function useNoReceiptCategories() {
     getSuggestionsForTransaction,
     retrigger,
     updateCategory,
-    clearRemoval,
     matchAllTransactions,
   };
 }
