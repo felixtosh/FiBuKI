@@ -297,3 +297,46 @@ describe("a Receipt whose invoice is already on the charge of this month (#667, 
     expect(await connectionsOf("f")).toEqual([]);
   });
 });
+
+describe("Felix's case on #662: a net-30 invoice paid on issue, the same amount charged next month (#618, #667)", () => {
+  // Invoice 01.03.2026 with a net-30 Due Date (31.03), paid by card on 01.03;
+  // next month's charge on 01.04 is one day after the Due Date, a Due Date hit
+  // under #618's settlement lag. No Partner on either side and no learned
+  // cycle: the shape a new Partner has in its first months. #614 stretches
+  // the window to the Due Date + 7, so 01.04 is a candidate.
+  async function seedNet30() {
+    await seedInvoice("f", {
+      partnerId: null,
+      extractedDate: day("2026-03-01"),
+      extractedDueDate: day("2026-03-31"),
+    });
+    await seedCharge("t-mar", "2026-03-01", { partnerId: null });
+    await seedCharge("t-apr", "2026-04-01", { partnerId: null });
+  }
+
+  it("scores both charges at the threshold, and connects neither", async () => {
+    await seedNet30();
+    const f = await file("f");
+    const result = await transactionsForFile(db, ME, f);
+    const scored = Object.fromEntries(result.matches.map((m) => [m.transactionId, m.confidence]));
+    expect(scored["t-mar"]).toBeGreaterThanOrEqual(THRESHOLD);
+    expect(scored["t-apr"]).toBeGreaterThanOrEqual(THRESHOLD);
+
+    const { picks, refusals } = await selectAutoConnects(db, ME, f, result);
+    expect(picks).toEqual([]);
+    expect(refusals.map((r) => r.transactionId).sort()).toEqual(["t-apr", "t-mar"]);
+  });
+
+  it("leaves both as suggestions through refresh matches, with no File Connection", async () => {
+    await seedNet30();
+    await (refreshTransactionMatchesCallable as unknown as { run: (req: unknown) => Promise<unknown> }).run({
+      data: { fileId: "f" },
+      auth: { uid: ME, token: {} },
+    });
+    expect(await connectionsOf("f")).toEqual([]);
+    const stored = (await db.collection("files").doc("f").get()).data()!.transactionSuggestions as Array<{
+      transactionId: string;
+    }>;
+    expect(stored.map((s) => s.transactionId).sort()).toEqual(expect.arrayContaining(["t-apr", "t-mar"]));
+  });
+});
