@@ -498,7 +498,8 @@
       "decline": "Keine Kopie",
       "copies": "Kopien",
       "copiesExplanation": "Weitere Belege dieses Dokuments. Sie zählen nicht mit.",
-      "failed": "Das hat nicht geklappt: {message}"
+      "failed": "Das hat nicht geklappt: {message}",
+      "handCorrected": "Dieser Beleg enthält deine Korrekturen und kann nicht als Kopie markiert werden, solange er als keine Rechnung markiert ist."
     },
     "correction": {
       "label": "Rechnungskorrektur",
@@ -579,6 +580,23 @@
       "parsing": "Wird ausgelesen...",
       "notInvoice": "Keine Rechnung",
       "failed": "Extraktion fehlgeschlagen"
+    },
+    "handCorrection": {
+      "title": "Deine Korrekturen gehen verloren",
+      "body": "Dieser Beleg enthält deine Korrekturen an {fields}. Eine neue Extraktion ersetzt sie durch die Werte aus dem Dokument.",
+      "keep": "Korrekturen behalten",
+      "extractAnyway": "Trotzdem extrahieren",
+      "fields": {
+        "amount": "Betrag",
+        "date": "Belegdatum",
+        "tipAmount": "Trinkgeld",
+        "other": "weiteren Feldern"
+      }
+    },
+    "bulkMarkAsInvoice": {
+      "marked": "{count, plural, one {# Beleg als Rechnung markiert.} other {# Belege als Rechnung markiert.}}",
+      "skipped": "{skipped, plural, one {# übersprungen, weil er deine Korrekturen enthält. Öffne ihn, um ihn neu zu extrahieren.} other {# übersprungen, weil sie deine Korrekturen enthalten. Öffne sie, um sie neu zu extrahieren.}}",
+      "failed": "{failed, plural, one {# fehlgeschlagen.} other {# fehlgeschlagen.}}"
     }
   },
   "progress": {

@@ -493,16 +493,24 @@ export async function updateFileExtractedFields(
  * Retry extraction for a file that had an error
  * Calls the Cloud Function to re-run extraction
  * @param force - If true, bypasses checks and forces re-extraction (used to upgrade old files)
+ * @param options.overwriteCorrections - The forced re-extraction of a File with
+ *   a Hand Correction, after the person confirmed it (#639). Without it the
+ *   server refuses such a File with `{ code: "HAND_CORRECTED", fields }`.
  */
 export async function retryFileExtraction(
   ctx: OperationsContext,
   fileId: string,
-  force?: boolean
+  force?: boolean,
+  options: { overwriteCorrections?: boolean } = {}
 ): Promise<void> {
   const { getFunctions, httpsCallable } = await import("firebase/functions");
   const functions = getFunctions(undefined, "europe-west1");
   const retryFn = httpsCallable(functions, "retryFileExtraction");
-  await retryFn({ fileId, force });
+  await retryFn({
+    fileId,
+    force,
+    ...(options.overwriteCorrections ? { overwriteCorrections: true } : {}),
+  });
 }
 
 /**
