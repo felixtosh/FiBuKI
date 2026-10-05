@@ -114,6 +114,9 @@ export const SUBTREE_DOC_POLICIES: Readonly<Record<string, CollectionPolicy>> = 
   // The lock every invoice-number claim goes through (invoicing/numberAllocator.ts). Server-only:
   // nothing on it is the client's to read or change.
   "settings/invoiceNumbering": { read: "none", create: "none", update: "none", delete: "none" },
+  // The lock that keeps a User at one active inbound email address
+  // (email-inbound/inboundAddressCallables.ts, #626). Server-only, like the one above.
+  "settings/inboundEmail": { read: "none", create: "none", update: "none", delete: "none" },
 };
 
 /** users/{uid}/<name>/... — uid must equal auth.uid, then this table. */

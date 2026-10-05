@@ -100,6 +100,21 @@ describe("the data plane enforces it", () => {
     expect(after.data()).toEqual(data);
   });
 
+  it("the inbound email lock (#626) is neither readable nor writable", async () => {
+    const path = `users/${USER}/settings/inboundEmail`;
+    await getFirestore().doc(path).set({ updatedAt: 1 });
+    expect((await call("get", { path })).status).toBe(403);
+    for (const op of [
+      { type: "set", path, data: { updatedAt: 2 } },
+      { type: "update", path, data: { updatedAt: 2 } },
+      { type: "delete", path },
+    ]) {
+      const r = await call("write", { ops: [op] });
+      expect(r.status, `${op.type} ${path} -> ${r.text}`).toBe(403);
+    }
+    expect((await getFirestore().doc(path).get()).data()).toEqual({ updatedAt: 1 });
+  });
+
   it.each(rows.filter(([path]) => path !== `users/${USER}`))("%s refuses a client create", async (path, data) => {
     const collection = path.slice(0, path.lastIndexOf("/"));
     for (const op of [

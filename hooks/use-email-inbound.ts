@@ -85,10 +85,11 @@ export function useEmailInbound(): UseEmailInboundResult {
     void (async () => {
       try {
         console.log("[useEmailInbound] Auto-creating inbound email address");
-        await callFunction<CreateInboundEmailAddressData, { id: string; email: string }>(
-          "createInboundEmailAddress",
-          {},
-        );
+        // Idempotent on the server: a second tab racing this one gets the same address.
+        await callFunction<
+          CreateInboundEmailAddressData,
+          { id: string; email: string; created: boolean }
+        >("createInboundEmailAddress", {});
       } catch (err) {
         console.error("[useEmailInbound] Failed to auto-create address:", err);
         setError(err instanceof Error ? err.message : "Failed to create address");

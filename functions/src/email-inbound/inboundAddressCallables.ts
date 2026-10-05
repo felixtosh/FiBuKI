@@ -9,6 +9,14 @@
  * naming any other field is refused, so a User cannot raise their own limit or
  * reset their counters.
  *
+ * A User holds at most one active address, since the daily limit is per
+ * address: N active addresses would accept N times the limit. Create returns
+ * the active address when there is one instead of making a second, so two tabs
+ * auto-creating at once end up with one. Resuming or regenerating an address
+ * while another is active is refused. Each of these decides inside a
+ * transaction that also writes the User's lock document, so two concurrent
+ * calls cannot both see "none active".
+ *
  * Every callable that takes an address loads it by id and refuses one the
  * caller does not own, with the same answer as for one that does not exist.
  */
@@ -22,6 +30,9 @@ const INBOUND_ADDRESSES_COLLECTION = "inboundEmailAddresses";
 
 /** Email domain for inbound addresses (receiveEmail.ts accepts the same one). */
 const INBOUND_EMAIL_DOMAIN = "fibuki.com";
+
+/** The per-User lock document under users/{uid}/settings (server-only in data-policy.ts). */
+export const INBOUND_LOCK_DOC = "inboundEmail";
 
 /** Emails an address accepts per day. The server's to set, never the User's. */
 export const DEFAULT_DAILY_LIMIT = 100;
@@ -103,6 +114,29 @@ async function ownedAddress(db: Db, userId: string, addressId: unknown) {
   return { ref, data: snap.data() as FirebaseFirestore.DocumentData };
 }
 
+/**
+ * Written by every transaction that can leave an address active, so two of them
+ * for the same User conflict and one re-runs. Holds nothing anyone reads.
+ */
+function activeLock(db: Db, userId: string) {
+  return db.doc(`users/${userId}/settings/${INBOUND_LOCK_DOC}`);
+}
+
+/** Within `tx`: the User's active addresses, after taking the User's lock. */
+async function activeAddresses(db: Db, tx: FirebaseFirestore.Transaction, userId: string) {
+  await tx.get(activeLock(db, userId));
+  const snap = await tx.get(
+    db.collection(INBOUND_ADDRESSES_COLLECTION).where("userId", "==", userId).where("isActive", "==", true)
+  );
+  return snap.docs;
+}
+
+function takeLock(db: Db, tx: FirebaseFirestore.Transaction, userId: string) {
+  tx.set(activeLock(db, userId), { updatedAt: Timestamp.now() });
+}
+
+const ANOTHER_ACTIVE = "Another inbound email address is active; pause or delete it first";
+
 /** 21 url-safe characters, ~126 bits: the address cannot be guessed. */
 function generateEmailPrefix(): string {
   return randomBytes(16).toString("base64url").slice(0, 21);
@@ -131,16 +165,26 @@ function newAddress(userId: string, chosen: InboundAddressSettings) {
   return { row, email };
 }
 
+/**
+ * Idempotent: with an active address already there, it is returned as it is
+ * (the settings sent are not applied) and nothing is written.
+ */
 export const createInboundEmailAddressCallable = createCallable<
   InboundAddressSettings,
-  { id: string; email: string }
+  { id: string; email: string; created: boolean }
 >({ name: "createInboundEmailAddress" }, async (ctx, request) => {
   const data = asObject(request, "request");
   refuseUnknown(data, CREATE_FIELDS);
-  const { row, email } = newAddress(ctx.userId, settings(data));
-  const ref = ctx.db.collection(INBOUND_ADDRESSES_COLLECTION).doc();
-  await ref.set(row);
-  return { id: ref.id, email };
+  const chosen = settings(data);
+  return ctx.db.runTransaction(async (tx) => {
+    const [active] = await activeAddresses(ctx.db, tx, ctx.userId);
+    if (active) return { id: active.id, email: String(active.data().email), created: false };
+    const { row, email } = newAddress(ctx.userId, chosen);
+    const ref = ctx.db.collection(INBOUND_ADDRESSES_COLLECTION).doc();
+    takeLock(ctx.db, tx, ctx.userId);
+    tx.set(ref, row);
+    return { id: ref.id, email, created: true };
+  });
 });
 
 export const updateInboundEmailAddressCallable = createCallable<
@@ -151,7 +195,16 @@ export const updateInboundEmailAddressCallable = createCallable<
   refuseUnknown(data, WRITABLE_FIELDS);
   const updates = settings(data);
   const { ref } = await ownedAddress(ctx.db, ctx.userId, request?.addressId);
-  await ref.update({ ...updates, updatedAt: Timestamp.now() });
+  if (updates.isActive !== true) {
+    await ref.update({ ...updates, updatedAt: Timestamp.now() });
+    return { success: true };
+  }
+  await ctx.db.runTransaction(async (tx) => {
+    const active = await activeAddresses(ctx.db, tx, ctx.userId);
+    if (active.some((d) => d.id !== ref.id)) throw new HttpsError("failed-precondition", ANOTHER_ACTIVE);
+    takeLock(ctx.db, tx, ctx.userId);
+    tx.update(ref, { ...updates, updatedAt: Timestamp.now() });
+  });
   return { success: true };
 });
 
@@ -159,22 +212,26 @@ export const updateInboundEmailAddressCallable = createCallable<
  * A new address with the same settings; the old one stops accepting mail. The
  * new one gets the server's limit, not the stored one: a stored limit above it
  * can only have come from the browser write this table no longer takes.
+ * Refused while a different address is active, as the new one would be a second.
  */
 export const regenerateInboundEmailAddressCallable = createCallable<
   { addressId: string },
   { id: string; email: string }
 >({ name: "regenerateInboundEmailAddress" }, async (ctx, request) => {
   const { ref: oldRef, data: existing } = await ownedAddress(ctx.db, ctx.userId, request?.addressId);
-  const { row, email } = newAddress(ctx.userId, {
-    displayName: existing.displayName,
-    allowedDomains: existing.allowedDomains,
+  return ctx.db.runTransaction(async (tx) => {
+    const active = await activeAddresses(ctx.db, tx, ctx.userId);
+    if (active.some((d) => d.id !== oldRef.id)) throw new HttpsError("failed-precondition", ANOTHER_ACTIVE);
+    const { row, email } = newAddress(ctx.userId, {
+      displayName: existing.displayName,
+      allowedDomains: existing.allowedDomains,
+    });
+    const newRef = ctx.db.collection(INBOUND_ADDRESSES_COLLECTION).doc();
+    takeLock(ctx.db, tx, ctx.userId);
+    tx.update(oldRef, { isActive: false, updatedAt: Timestamp.now() });
+    tx.set(newRef, row);
+    return { id: newRef.id, email };
   });
-  const newRef = ctx.db.collection(INBOUND_ADDRESSES_COLLECTION).doc();
-  const batch = ctx.db.batch();
-  batch.update(oldRef, { isActive: false, updatedAt: Timestamp.now() });
-  batch.set(newRef, row);
-  await batch.commit();
-  return { id: newRef.id, email };
 });
 
 /** A soft delete: the address is deactivated, its row and logs stay. */

@@ -113,6 +113,35 @@ describe("createInboundEmailAddress", () => {
   it("refuses a caller who is not signed in", async () => {
     await expect(create({}, null)).rejects.toMatchObject({ code: "unauthenticated" });
   });
+
+  it("returns the active address instead of making a second, and writes nothing", async () => {
+    const id = await seedAddress();
+    const before = await row(id);
+    const res = await create({ displayName: "Zweite" });
+    expect(res).toEqual({ id, email: "invoices-abc@fibuki.com", created: false });
+    expect(await rows()).toHaveLength(1);
+    expect(await row(id)).toEqual(before);
+  });
+
+  it("makes one address when two creates race, as two tabs auto-creating do", async () => {
+    const results = await Promise.all([create(), create(), create()]);
+    expect(await rows()).toHaveLength(1);
+    expect(new Set(results.map((r) => r.id)).size).toBe(1);
+    expect(results.filter((r) => r.created)).toHaveLength(1);
+  });
+
+  it("makes a new address when the User's only one is paused", async () => {
+    const id = await seedAddress();
+    await update({ addressId: id, data: { isActive: false } });
+    const res = await create();
+    expect(res.created).toBe(true);
+    expect(res.id).not.toBe(id);
+  });
+
+  it("does not count another User's active address", async () => {
+    await seedAddress("addr-other", OTHER);
+    expect((await create()).created).toBe(true);
+  });
 });
 
 describe("updateInboundEmailAddress", () => {
@@ -184,6 +213,31 @@ describe("updateInboundEmailAddress", () => {
     expect((await row(id))?.allowedDomains).toEqual(["rechnung.a1.at", "mail.example-shop.de"]);
   });
 
+  it("refuses to resume an address while another one is active", async () => {
+    const old = await seedAddress("addr-old");
+    await update({ addressId: old, data: { isActive: false } });
+    const current = String((await create()).id);
+    await expect(update({ addressId: old, data: { isActive: true } })).rejects.toMatchObject({
+      code: "failed-precondition",
+    });
+    expect((await row(old))?.isActive).toBe(false);
+    await update({ addressId: current, data: { isActive: true, displayName: "Still mine" } });
+    expect((await row(current))?.displayName).toBe("Still mine");
+  });
+
+  it("lets only one of two racing resumes through", async () => {
+    await seedAddress("addr-a");
+    await seedAddress("addr-b");
+    await update({ addressId: "addr-a", data: { isActive: false } });
+    await update({ addressId: "addr-b", data: { isActive: false } });
+    const outcomes = await Promise.allSettled([
+      update({ addressId: "addr-a", data: { isActive: true } }),
+      update({ addressId: "addr-b", data: { isActive: true } }),
+    ]);
+    expect(outcomes.filter((o) => o.status === "fulfilled")).toHaveLength(1);
+    expect((await rows()).filter((d) => d.data().isActive)).toHaveLength(1);
+  });
+
   it("refuses another User's address as if it did not exist", async () => {
     const id = await seedAddress("addr-other", OTHER);
     const before = await row(id);
@@ -221,6 +275,21 @@ describe("regenerateInboundEmailAddress", () => {
     await getFirestore().doc(`inboundEmailAddresses/${id}`).update({ dailyLimit: 100000 });
     const res = await regenerate({ addressId: id });
     expect((await row(String(res.id)))?.dailyLimit).toBe(DEFAULT_DAILY_LIMIT);
+  });
+
+  it("regenerates a paused address when no other one is active", async () => {
+    const id = await seedAddress();
+    await update({ addressId: id, data: { isActive: false } });
+    const res = await regenerate({ addressId: id });
+    expect((await row(String(res.id)))?.isActive).toBe(true);
+  });
+
+  it("refuses to regenerate a paused address while another one is active", async () => {
+    const old = await seedAddress("addr-old");
+    await update({ addressId: old, data: { isActive: false } });
+    await create();
+    await expect(regenerate({ addressId: old })).rejects.toMatchObject({ code: "failed-precondition" });
+    expect(await rows()).toHaveLength(2);
   });
 
   it("refuses another User's address and creates nothing", async () => {
