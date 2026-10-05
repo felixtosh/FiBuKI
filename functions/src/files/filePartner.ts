@@ -94,11 +94,12 @@ async function loadUsablePartner(
 }
 
 /**
- * Point a File at a Partner. Any assignment but the chat agent's (`ai`)
- * also clears the pair from the Partner's `manualFileRemovals`, so the pair is
- * no longer counted a false positive. That includes `auto`, the detail
- * panel's automatic apply, as the browser path always did. The chat agent's
- * leaves the list alone, as it always has.
+ * Point a File at a Partner. A person's own decision (`manual`, or an
+ * accepted `suggestion`) also clears the pair from the Partner's
+ * `manualFileRemovals`: they changed their mind, so it is no longer a false
+ * positive. An automatic assignment (`auto`, the detail panel applying a
+ * high-confidence suggestion) and the chat agent's (`ai`) leave the list
+ * alone: neither overrules a person's earlier rejection of the pair.
  *
  * The Partner write comes after the File write and is not critical: a
  * failure there is logged, never thrown, so the caller is not told an
@@ -123,7 +124,7 @@ export async function assignPartnerToFile(
     },
   });
 
-  if (matchedBy !== "ai" && partnerType === "user") {
+  if ((matchedBy === "manual" || matchedBy === "suggestion") && partnerType === "user") {
     const removals = (partnerDoc.data()!.manualFileRemovals || []) as Array<{ fileId?: string }>;
     if (removals.some((r) => r.fileId === fileId)) {
       try {

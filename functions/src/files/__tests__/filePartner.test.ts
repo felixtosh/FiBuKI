@@ -232,6 +232,27 @@ describe("assignPartnerToFile", () => {
     expect(doc("partners", "p-1").manualFileRemovals).toEqual([{ fileId: "f-other", extractedPartner: "Y" }]);
   });
 
+  it("an accepted suggestion clears the removal; an automatic assignment never overrules it", async () => {
+    seedPartner("p-1", {
+      manualFileRemovals: [
+        { fileId: "f-1", extractedPartner: "X" },
+        { fileId: "f-2", extractedPartner: "Y" },
+      ],
+    });
+    seedFile("f-1");
+    seedFile("f-2");
+
+    await filePartner.assignPartnerToFile(db(), USER, {
+      fileId: "f-1", partnerId: "p-1", partnerType: "user", matchedBy: "suggestion", confidence: 85,
+    });
+    await filePartner.assignPartnerToFile(db(), USER, {
+      fileId: "f-2", partnerId: "p-1", partnerType: "user", matchedBy: "auto", confidence: 93,
+    });
+
+    expect(doc("partners", "p-1").manualFileRemovals).toEqual([{ fileId: "f-2", extractedPartner: "Y" }]);
+    expect(doc("files", "f-2")).toMatchObject({ partnerId: "p-1", partnerMatchedBy: "auto" });
+  });
+
   it("writes no alias itself: matchFilePartner learns it, with its Invoicing Agent guard", async () => {
     seedPartner("p-1", { name: "AL&FA Taxi KG", aliases: ["AL&FA"] });
     seedFile("f-1", {
@@ -415,5 +436,37 @@ describe("the UI and MCP write the same records", () => {
     expect(records("f-1", "p-1")).toEqual(ui);
     expect(ui.removals).toEqual([{ fileId: "f-1", extractedPartner: "Taxi", fileName: "taxi.pdf" }]);
     expect(mcp).toEqual({ success: true, fileId: "f-1", previousPartnerId: "p-1", recordedAsFalsePositive: true });
+  });
+});
+
+describe("updateFileInternal cancels the Partner worker only for a call it accepts", () => {
+  beforeEach(() => store.clear());
+  afterEach(() => vi.clearAllMocks());
+
+  it("leaves the workers alone when the Partner or a field is refused", async () => {
+    const { updateFileInternal } = await import("../updateFile");
+    store.setDoc("partners", "p-theirs", createTestPartner({ userId: OTHER_USER }));
+    seedPartner("p-1");
+    seedFile("f-1");
+
+    await expect(
+      updateFileInternal(db(), USER, {
+        fileId: "f-1",
+        data: { partnerId: "p-theirs", partnerType: "user", partnerMatchedBy: "manual" },
+      })
+    ).rejects.toThrow("Partner not found");
+    await expect(
+      updateFileInternal(db(), USER, {
+        fileId: "f-1",
+        data: { partnerId: "p-1", partnerType: "user", partnerMatchedBy: "manual", userId: OTHER_USER } as never,
+      })
+    ).rejects.toThrow(/does not write userId/);
+    expect(cancelWorkers.cancelPartnerWorkersForFile).not.toHaveBeenCalled();
+
+    await updateFileInternal(db(), USER, {
+      fileId: "f-1",
+      data: { partnerId: "p-1", partnerType: "user", partnerMatchedBy: "manual" },
+    });
+    expect(cancelWorkers.cancelPartnerWorkersForFile).toHaveBeenCalledWith(USER, "f-1");
   });
 });
