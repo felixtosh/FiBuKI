@@ -15,6 +15,10 @@
  * trigger does not re-fire off this write. A correction never changes a
  * booking behind the User's back. "Refresh matches" keeps its own rule,
  * which auto-connects (#612).
+ *
+ * Skipped when the File has a manual File Connection, the rule a Partner
+ * change already follows: the User has decided what this File documents.
+ * The date-edit trigger (#614) calls this too, so one rule decides.
  */
 
 import { Timestamp } from "firebase-admin/firestore";
@@ -23,7 +27,7 @@ import { storedSuggestionsOf, transactionsForFile } from "./matcher";
 export interface RescoreFileSuggestionsResult {
   rescored: boolean;
   /** Why nothing was written, when nothing was. */
-  skipped?: "missing" | "not-yet-scored" | "ineligible";
+  skipped?: "missing" | "not-yet-scored" | "manual-connection" | "ineligible";
   suggestionCount?: number;
 }
 
@@ -39,6 +43,14 @@ export async function rescoreFileSuggestions(
   // A File still in its pipeline is scored by its own trigger, against the
   // facts as they now stand; racing it would store a second opinion.
   if (data.transactionMatchComplete !== true) return { rescored: false, skipped: "not-yet-scored" };
+
+  const manual = await db
+    .collection("fileConnections")
+    .where("fileId", "==", fileId)
+    .where("connectionType", "==", "manual")
+    .limit(1)
+    .get();
+  if (!manual.empty) return { rescored: false, skipped: "manual-connection" };
 
   const result = await transactionsForFile(db, data.userId as string, { id: fileId, data });
   // Never matched (deleted, a Copy, not an invoice, addressed to someone

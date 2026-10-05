@@ -27,7 +27,8 @@
     "selfhost:migrate-transaction-type": "vite-node --config vitest.selfhost.config.ts scripts/migrate-transaction-type.ts",
     "selfhost:remove-local-file-hints": "vite-node --config vitest.selfhost.config.ts scripts/remove-local-file-hints.ts",
     "selfhost:collapse-file-connections": "vite-node --config vitest.selfhost.config.ts scripts/collapse-file-connections.ts",
-    "selfhost:reextract-sepa-debit-dates": "vite-node --config vitest.selfhost.config.ts scripts/reextract-sepa-debit-dates.ts"
+    "selfhost:reextract-sepa-debit-dates": "vite-node --config vitest.selfhost.config.ts scripts/reextract-sepa-debit-dates.ts",
+    "selfhost:rematch-stretched-windows": "vite-node --config vitest.selfhost.config.ts scripts/rematch-stretched-windows.ts"
   },
   "engines": {
     "node": "22"

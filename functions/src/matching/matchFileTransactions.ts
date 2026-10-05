@@ -33,6 +33,7 @@ import {
 import {
   autoConnect,
   ineligibleReasonOf,
+  matchDatesKey,
   selectAutoConnects,
   storedSuggestionsOf,
   transactionsForFile,
@@ -44,6 +45,7 @@ import { readDismissedTransactionIds } from "./dismissedTransactions";
 import { runCorrectionCheck } from "../corrections/correctionOps";
 import { runReceiptPairCheck } from "../receiptPairs/receiptPairOps";
 import { isHandCorrectionWrite } from "../fileFacts/factChange";
+import { rescoreFileSuggestions } from "./rescoreFileSuggestions";
 import { AutomationMeta } from "../automation/types";
 import { checkAIBudget } from "../billing/checkAIBudget";
 import { isPassiveMode } from "../utils/checkAutomationMode";
@@ -838,6 +840,26 @@ async function hasManualTransactionConnections(fileId: string): Promise<boolean>
   return !manualConnections.empty;
 }
 
+// === Helper: Re-score suggestions after a date edit (#614) ===
+
+/**
+ * A finished File whose File date, Due Date or Debit Date changed. Only
+ * once matching has run and is not being re-run: extraction and a retry
+ * write these dates while `transactionMatchComplete` is false, and that run
+ * stores its own suggestions.
+ */
+function matchDatesEdited(
+  before: FirebaseFirestore.DocumentData,
+  after: FirebaseFirestore.DocumentData
+): boolean {
+  return (
+    before.transactionMatchComplete === true &&
+    after.transactionMatchComplete === true &&
+    !after.deletedAt &&
+    matchDatesKey(before) !== matchDatesKey(after)
+  );
+}
+
 // === Firestore Trigger ===
 
 /**
@@ -845,6 +867,8 @@ async function hasManualTransactionConnections(fileId: string): Promise<boolean>
  * Runs transaction matching:
  * 1. After partner matching completes (initial run)
  * 2. When partnerId changes (re-run to update match scores)
+ * And re-scores the stored suggestions, connecting nothing, when a hand edit
+ * moves the File date, Due Date or Debit Date (#614).
  */
 export const matchFileTransactions = onDocumentUpdated(
   {
@@ -925,6 +949,16 @@ export const matchFileTransactions = onDocumentUpdated(
       } else {
         console.log(`Skipping transaction re-matching for file ${fileId}: has manual connections`);
       }
+    } else if (matchDatesEdited(before, after) && !isHandCorrectionWrite(before, after)) {
+      // #614: an edit of the File date, Due Date or Debit Date moves the
+      // window and the date score, so the stored suggestions are re-scored
+      // through the one re-scorer (suggestions only, skipped when the File
+      // has a manual File Connection). A Hand Correction is skipped here:
+      // the File facts module already re-scored it.
+      console.log(`Re-scoring transaction suggestions for file ${fileId} (reason: dates_edited)`);
+      await rescoreFileSuggestions(db, fileId).catch((err) => {
+        console.error(`Suggestion re-score failed for file ${fileId}:`, err);
+      });
     }
 
     if (shouldRun) {

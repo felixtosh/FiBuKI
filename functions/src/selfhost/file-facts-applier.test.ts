@@ -95,6 +95,27 @@ describe("the applier", () => {
     expect(connections.size).toBe(0);
   });
 
+  it("leaves the suggestions of a File with a manual File Connection, the one re-scorer's rule", async () => {
+    await seedFile("f1", { transactionSuggestions: [{ transactionId: "t-kept", confidence: 50 }] });
+    await db.collection("fileConnections").doc("fc-manual").set({
+      userId: ME,
+      fileId: "f1",
+      transactionId: "t-other",
+      connectionType: "manual",
+    });
+
+    await applyFactChange(db, {
+      fileId: "f1",
+      userId: ME,
+      change: { origin: "mcp-correction", correction: { amount: 1000 } },
+    });
+
+    const file = await fileData("f1");
+    expect(file.extractedAmount).toBe(1000);
+    expect((file.transactionSuggestions as Array<{ transactionId: string }>).map((s) => s.transactionId))
+      .toEqual(["t-kept"]);
+  });
+
   it("syncs the Documentation State of a connected Transaction when the Document Type moved", async () => {
     // A stored classification no current rule produces, so any correction moves it.
     await db.collection("transactions").doc("t1").update({
