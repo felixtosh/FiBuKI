@@ -5,25 +5,28 @@
  * at any depth, imports `firebase-admin` or `firebase-functions`. A comment in a
  * module saying so is not a check, so this walk is.
  *
- * Three rules, over `app`, `components`, `hooks` and `lib` and everything they
- * import from `functions/src`:
+ * Three rules, over `app`, `components`, `hooks`, `lib`, `design-system`,
+ * `i18n` and `next.config.ts`, and everything they import from `functions/src`:
  *
  * 1. **Browser code reaches neither SDK.** Browser code is every file in
- *    `components/` and `hooks/`, every file that says "use client", and every
- *    file one of those imports, at any depth (client `lib` is what they reach).
- *    A route, a server component in `app/` (no "use client") and the `lib`
- *    reached only from those are server code.
+ *    `components/`, `hooks/` and `design-system/`, every file that says
+ *    "use client", and every file one of those imports, at any depth (client
+ *    `lib` is what they reach). A route, a server component in `app/` (no
+ *    "use client") and the `lib` reached only from those are server code.
  * 2. **Server code may reach `firebase-admin`** (the app has it), **never
  *    `firebase-functions`** (the app does not install it).
  * 3. **`httpsCallable` lives in the client wrapper and the self-host shim.**
- *    The files in CALLABLE_RATCHET call it directly today. The list only
- *    shrinks: a new caller fails, and so does an entry whose file stopped
- *    calling it, until the entry goes.
+ *    The files in CALLABLE_RATCHET use it directly today, each a pinned number
+ *    of times. The list only shrinks: a new file fails, a pinned file using it
+ *    more often fails, and so does one using it less often until its number
+ *    (or, at zero, its entry) comes down.
  *
- * A static walk of import shapes: `import`/`export ... from`, side-effect
- * `import "x"`, `import("x")` and `require("x")`. A type-only import (`import
- * type`, or braces holding only `type` names) is erased by the compiler, so it
- * is not followed.
+ * Each file is parsed with the TypeScript compiler, so comments and string
+ * literals (`"image/*"`) never read as code. The walk follows `import`/`export
+ * ... from`, side-effect `import "x"`, `import x = require("x")`, `import("x")`
+ * and `require("x")`. A type-only import (`import type`, braces holding only
+ * `type` names, `typeof import("x")`) is erased by the compiler, so it is not
+ * followed.
  *
  *   npx vitest run --config vitest.selfhost.config.ts src/selfhost/browser-imports.test.ts --pool=forks --maxWorkers=1
  */
@@ -31,10 +34,14 @@
 import { describe, it, expect } from "vitest";
 import { existsSync, readFileSync, readdirSync, statSync } from "fs";
 import { join, posix } from "path";
+import * as ts from "typescript";
 
 const repoRoot = join(__dirname, "..", "..", "..");
-const FRONTEND_TREES = ["app", "components", "hooks", "lib"];
-const BROWSER_TREES = ["components/", "hooks/"];
+// `design-system` holds "use client" tool results. next-intl loads `i18n/request.ts`
+// and Next loads `next.config.ts` without an `@/` import, so both are entries too.
+const FRONTEND_TREES = ["app", "components", "hooks", "lib", "design-system", "i18n"];
+const FRONTEND_FILES = ["next.config.ts"];
+const BROWSER_TREES = ["components/", "hooks/", "design-system/"];
 
 const ADMIN = /^firebase-admin(?:\/|$)/;
 const FUNCTIONS = /^firebase-functions(?:\/|$)/;
@@ -42,40 +49,57 @@ const FUNCTIONS = /^firebase-functions(?:\/|$)/;
 /** The two homes of `httpsCallable` (#647 decision 3). */
 const CALLABLE_HOMES = ["lib/firebase/callable.ts", "lib/selfhost/functions-client.ts"];
 
+interface Pinned {
+  /** References to `httpsCallable` outside its import. */
+  uses: number;
+  calls: string;
+}
+
 /**
- * Direct `httpsCallable` callers on 2026-10-05, by path from the repo root, with
- * what each calls. An entry goes when its file moves to `callFunction()`; a new
- * caller is never added.
+ * Direct `httpsCallable` users on 2026-10-05, by path from the repo root: how
+ * often each uses it, and what it calls. An entry shrinks or goes as its file
+ * moves to `callFunction()`; a new file is never added.
  */
-const CALLABLE_RATCHET: Record<string, string> = {
-  "app/(dashboard)/admin/users/page.tsx": "adminDeleteUser, setAdminClaim, setUserOverride",
-  "app/(dashboard)/settings/sign-in-security/page.tsx": "setUserPassword",
-  "app/(dashboard)/transactions/page.tsx": "matchPartners",
-  "components/auth/auth-provider.tsx": "markInviteUsed, submitAccessRequest",
-  "components/partners/add-partner-dialog.tsx": "lookupCompany, lookupByVatId",
-  "components/settings/billing-plan-card.tsx": "switchTesterPlan",
-  "components/settings/billing-plan-comparison.tsx": "switchTesterPlan",
-  "components/settings/delete-account-dialog.tsx": "scheduleAccountDeletion",
-  "components/settings/delete-account-section.tsx": "cancelAccountDeletion",
-  "components/sidebar/transaction-details.tsx": "matchPartners",
-  "hooks/use-global-partners.ts": "generatePromotionCandidates",
-  "hooks/use-gmail-search-queries.ts": "generateSearchQueriesCallable",
-  "hooks/use-gmail-search.ts": "searchGmailCallable",
-  "hooks/use-import.ts": "matchPartners",
-  "hooks/use-mfa-challenge.ts": "generatePasskeyAuthOptions, verifyPasskeyAuth, verifyBackupCode",
-  "hooks/use-mfa.ts": "getMfaStatus",
-  "hooks/use-passkeys.ts": "the passkey registration and authentication callables",
-  "hooks/use-transaction-matching.ts": "findTransactionMatchesForFile",
-  "lib/import/ai-matcher.ts": "matchColumns",
-  "lib/operations/category-ops.ts": "assignNoReceiptCategory, matchCategories, learnPartnerCategoryPatterns",
-  "lib/operations/file-ops.ts": "matchFilesForPartner, retryFileExtraction",
-  "lib/operations/partner-ops.ts": "matchFilesForPartner, learnPartnerPatterns",
+const CALLABLE_RATCHET: Record<string, Pinned> = {
+  "app/(dashboard)/admin/users/page.tsx": {
+    uses: 9,
+    calls: "listAllUsers, listAdmins, setAdminClaim, setUserOverride, adminDeleteUser, impersonateUser, bulkRetryExtraction",
+  },
+  "app/(dashboard)/settings/sign-in-security/page.tsx": { uses: 1, calls: "setUserPassword" },
+  "app/(dashboard)/transactions/page.tsx": { uses: 1, calls: "matchPartners" },
+  "components/auth/auth-provider.tsx": {
+    uses: 4,
+    calls: "validateRegistration, markInviteUsed, submitAccessRequest, getMfaStatus",
+  },
+  "components/partners/add-partner-dialog.tsx": { uses: 2, calls: "lookupCompany, lookupByVatId" },
+  "components/settings/billing-plan-card.tsx": { uses: 1, calls: "switchTesterPlan" },
+  "components/settings/billing-plan-comparison.tsx": { uses: 1, calls: "switchTesterPlan" },
+  "components/settings/delete-account-dialog.tsx": { uses: 1, calls: "scheduleAccountDeletion" },
+  "components/settings/delete-account-section.tsx": { uses: 1, calls: "cancelAccountDeletion" },
+  "components/sidebar/transaction-details.tsx": { uses: 1, calls: "matchPartners" },
+  "hooks/use-global-partners.ts": { uses: 1, calls: "generatePromotionCandidates" },
+  "hooks/use-gmail-search-queries.ts": { uses: 1, calls: "generateSearchQueriesCallable" },
+  "hooks/use-gmail-search.ts": { uses: 1, calls: "searchGmailCallable" },
+  "hooks/use-import.ts": { uses: 1, calls: "matchPartners" },
+  "hooks/use-mfa-challenge.ts": { uses: 3, calls: "generatePasskeyAuthOptions, verifyPasskeyAuth, verifyBackupCode" },
+  "hooks/use-mfa.ts": { uses: 4, calls: "getMfaStatus, generateBackupCodes, verifyBackupCode, updateTotpStatus" },
+  "hooks/use-passkeys.ts": {
+    uses: 5,
+    calls: "generatePasskeyRegistrationOptions, verifyPasskeyRegistration, generatePasskeyAuthOptions, verifyPasskeyAuth, deletePasskey",
+  },
+  "hooks/use-transaction-matching.ts": { uses: 1, calls: "findTransactionMatchesForFile" },
+  "lib/import/ai-matcher.ts": { uses: 1, calls: "matchColumns" },
+  "lib/operations/category-ops.ts": {
+    uses: 4,
+    calls: "assignNoReceiptCategory, matchCategories, learnPartnerCategoryPatterns",
+  },
+  "lib/operations/file-ops.ts": { uses: 6, calls: "matchFilesForPartner, retryFileExtraction" },
+  "lib/operations/partner-ops.ts": { uses: 2, calls: "matchFilesForPartner, learnPartnerPatterns" },
 };
 
 const CODE = /\.(?:tsx?|jsx?|mjs|cjs)$/;
 const TEST = /\.test\.(?:tsx?|jsx?|mjs)$/;
 const EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
-const USE_CLIENT = /^\s*["']use client["']/;
 
 /** The files the walk reads, by path from the repo root. The disk, or a fixture. */
 interface Tree {
@@ -88,31 +112,71 @@ const disk: Tree = {
   isFile: (path) => existsSync(join(repoRoot, path)) && statSync(join(repoRoot, path)).isFile(),
 };
 
-function stripComments(source: string): string {
-  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
+/** What the walk reads from one file. */
+interface Scan {
+  /** Runtime import specifiers; type-only ones are left out. */
+  imports: string[];
+  useClient: boolean;
+  /** References to `httpsCallable` outside its import. */
+  callableUses: number;
 }
 
-/** Runtime specifiers a source imports; type-only imports are left out. */
-function runtimeImports(source: string): string[] {
-  const code = stripComments(source);
-  const specifiers: string[] = [];
-  // A clause is names, braces, commas and `*`; anything else ends the match.
-  const fromClause = /\b(?:import|export)\s+(type\s+)?([\w\s{},*$]*?)\s*\bfrom\s*["']([^"']+)["']/g;
-  for (const [, typeOnly, clause, specifier] of code.matchAll(fromClause)) {
-    if (typeOnly) continue;
-    const braces = clause.trim().match(/^\{([\s\S]*)\}$/);
-    const names = braces ? braces[1].split(",").map((n) => n.trim()).filter(Boolean) : [];
-    if (names.length > 0 && names.every((n) => /^type\s/.test(n))) continue;
-    specifiers.push(specifier);
+function scriptKind(path: string): ts.ScriptKind {
+  if (path.endsWith(".tsx")) return ts.ScriptKind.TSX;
+  if (path.endsWith(".ts")) return ts.ScriptKind.TS;
+  return path.endsWith(".jsx") ? ts.ScriptKind.JSX : ts.ScriptKind.JS;
+}
+
+function scan(source: string, path = "file.tsx"): Scan {
+  const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, scriptKind(path));
+  const imports: string[] = [];
+  let callableUses = 0;
+  const onlyTypes = (names: ts.NodeArray<ts.ImportSpecifier | ts.ExportSpecifier>) =>
+    names.length > 0 && names.every((n) => n.isTypeOnly);
+  const visit = (node: ts.Node): void => {
+    if (ts.isImportDeclaration(node)) {
+      const clause = node.importClause;
+      const bindings = clause?.namedBindings;
+      const typeOnly =
+        clause?.isTypeOnly || (clause && !clause.name && bindings && ts.isNamedImports(bindings) && onlyTypes(bindings.elements));
+      if (!typeOnly && ts.isStringLiteral(node.moduleSpecifier)) imports.push(node.moduleSpecifier.text);
+      return; // the names it binds are not uses
+    }
+    if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
+      const names = node.exportClause;
+      const typeOnly = node.isTypeOnly || (names && ts.isNamedExports(names) && onlyTypes(names.elements));
+      if (!typeOnly) imports.push(node.moduleSpecifier.text);
+    }
+    if (
+      ts.isImportEqualsDeclaration(node) &&
+      !node.isTypeOnly &&
+      ts.isExternalModuleReference(node.moduleReference) &&
+      ts.isStringLiteral(node.moduleReference.expression)
+    ) {
+      imports.push(node.moduleReference.expression.text);
+    }
+    // `import("x")` and `require("x")`; `typeof import("x")` is an ImportType node, not a call.
+    if (ts.isCallExpression(node) && node.arguments.length > 0 && ts.isStringLiteralLike(node.arguments[0])) {
+      const callee = node.expression;
+      if (callee.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(callee) && callee.text === "require")) {
+        imports.push(node.arguments[0].text);
+      }
+    }
+    if (ts.isIdentifier(node) && node.text === "httpsCallable") callableUses++;
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return { imports, useClient: directives(file).includes("use client"), callableUses };
+}
+
+/** The file's directive prologue: the string statements before any other. */
+function directives(file: ts.SourceFile): string[] {
+  const found: string[] = [];
+  for (const statement of file.statements) {
+    if (!ts.isExpressionStatement(statement) || !ts.isStringLiteral(statement.expression)) break;
+    found.push(statement.expression.text);
   }
-  for (const pattern of [
-    /\bimport\s+["']([^"']+)["']/g,
-    /\bimport\(\s*["']([^"']+)["']\s*\)/g,
-    /\brequire\(\s*["']([^"']+)["']\s*\)/g,
-  ]) {
-    for (const match of code.matchAll(pattern)) specifiers.push(match[1]);
-  }
-  return specifiers;
+  return found;
 }
 
 /** The repo file a specifier names, a package, or null (a non-code file). */
@@ -128,7 +192,7 @@ function resolve(tree: Tree, from: string, specifier: string): { file: string } 
   return file && CODE.test(file) ? { file } : null;
 }
 
-type Graph = Map<string, { files: string[]; packages: string[] }>;
+type Graph = Map<string, { files: string[]; packages: string[]; scan: Scan }>;
 
 function buildGraph(tree: Tree, entries: string[]): Graph {
   const graph: Graph = new Map();
@@ -136,9 +200,9 @@ function buildGraph(tree: Tree, entries: string[]): Graph {
   while (queue.length > 0) {
     const file = queue.pop()!;
     if (graph.has(file)) continue;
-    const node = { files: [] as string[], packages: [] as string[] };
+    const node = { files: [] as string[], packages: [] as string[], scan: scan(tree.read(file), file) };
     graph.set(file, node);
-    for (const specifier of runtimeImports(tree.read(file))) {
+    for (const specifier of node.scan.imports) {
       const target = resolve(tree, file, specifier);
       if (!target) continue;
       if ("pkg" in target) node.packages.push(target.pkg);
@@ -149,16 +213,6 @@ function buildGraph(tree: Tree, entries: string[]): Graph {
     }
   }
   return graph;
-}
-
-/**
- * Where the browser bundle starts: the browser trees and "use client" files.
- * Everything they import is browser code too, which the chains below follow.
- */
-function browserRoots(tree: Tree, frontend: string[]): string[] {
-  return frontend.filter(
-    (f) => BROWSER_TREES.some((t) => f.startsWith(t)) || USE_CLIENT.test(stripComments(tree.read(f))),
-  );
 }
 
 /** For each root that reaches a package matching `forbidden`, its shortest chain: `root -> ... -> package`. */
@@ -219,16 +273,21 @@ function onePerEntry(chains: string[]): string[] {
 }
 
 /** The three rules' offenders over a tree. */
-function offenders(tree: Tree, frontend: string[], ratchet: Record<string, string>) {
+function offenders(tree: Tree, frontend: string[], ratchet: Record<string, Pinned>) {
   const graph = buildGraph(tree, frontend);
-  const browser = browserRoots(tree, frontend);
-  const callers = frontend.filter((f) => /\bhttpsCallable\b/.test(stripComments(tree.read(f))));
+  const scanOf = (f: string) => graph.get(f)!.scan;
+  // Where the browser bundle starts; everything these import is browser code
+  // too, which the chains follow.
+  const browser = frontend.filter((f) => BROWSER_TREES.some((t) => f.startsWith(t)) || scanOf(f).useClient);
+  const uses = (f: string) => scanOf(f).callableUses;
   return {
     browserReachesAdmin: onePerEntry(chainsTo(graph, browser, ADMIN)),
     browserReachesFunctions: onePerEntry(chainsTo(graph, browser, FUNCTIONS)),
     serverReachesFunctions: onePerEntry(chainsTo(graph, frontend, FUNCTIONS)),
-    newCallableCallers: callers.filter((f) => !CALLABLE_HOMES.includes(f) && !(f in ratchet)),
-    staleRatchetEntries: Object.keys(ratchet).filter((f) => !callers.includes(f)),
+    newCallableUsers: frontend.filter((f) => uses(f) > 0 && !CALLABLE_HOMES.includes(f) && !(f in ratchet)),
+    ratchetMismatches: Object.entries(ratchet)
+      .filter(([f, pinned]) => uses(f) !== pinned.uses)
+      .map(([f, pinned]) => `${f}: pinned ${pinned.uses}, uses ${uses(f)}`),
   };
 }
 
@@ -237,7 +296,7 @@ function fixture(files: Record<string, string>): Tree {
 }
 
 function listFrontend(): string[] {
-  const out: string[] = [];
+  const out = [...FRONTEND_FILES];
   const walk = (dir: string) => {
     for (const entry of readdirSync(join(repoRoot, dir), { withFileTypes: true })) {
       const path = `${dir}/${entry.name}`;
@@ -256,8 +315,8 @@ const clean = {
   browserReachesAdmin: [],
   browserReachesFunctions: [],
   serverReachesFunctions: [],
-  newCallableCallers: [],
-  staleRatchetEntries: [],
+  newCallableUsers: [],
+  ratchetMismatches: [],
 };
 
 describe("browser code reaches no Firebase server SDK (#688)", () => {
@@ -269,23 +328,36 @@ describe("browser code reaches no Firebase server SDK (#688)", () => {
       `export * from "./e";`,
       `import {\n  i,\n  type I,\n} from "./i";`,
       `import "./f";`,
+      `import j = require("./j");`,
       `const g = await import("./g");`,
       `const h = require("./h");`,
     ].join("\n");
-    expect(runtimeImports(runtime)).toEqual(["./a", "@/b", "./d", "./e", "./i", "./f", "./g", "./h"]);
+    expect(scan(runtime).imports).toEqual(["./a", "@/b", "./d", "./e", "./i", "./f", "./j", "./g", "./h"]);
     const erased = [
       `import type { A } from "./a";`,
       `export type { B } from "./b";`,
       `import { type C, type D } from "./c";`,
+      `type Db = ReturnType<typeof import("./db")["getAdminDb"]>;`,
       `// import { e } from "./e";`,
       `/* import { f } from "./f"; */`,
     ].join("\n");
-    expect(runtimeImports(erased)).toEqual([]);
+    expect(scan(erased).imports).toEqual([]);
+  });
+
+  it("is not blinded by a comment opener inside a string", () => {
+    const source = [
+      `"use client";`,
+      `export const accept = "image/*";`,
+      `export const load = () => import("./backend");`,
+      `/** a later doc comment */`,
+      `export const call = httpsCallable(functions, "x");`,
+    ].join("\n");
+    expect(scan(source)).toEqual({ imports: ["./backend"], useClient: true, callableUses: 1 });
   });
 
   it("fails a component that reaches firebase-admin through a backend module", () => {
     const tree = fixture({
-      "components/widget.tsx": `import { shared } from "@/functions/src/shared/helper";`,
+      "components/widget.tsx": `export const accept = "image/*";\nimport { shared } from "@/functions/src/shared/helper";`,
       "functions/src/shared/helper.ts": `export { shared } from "./inner";`,
       "functions/src/shared/inner.ts": `import { getFirestore } from "firebase-admin/firestore";`,
     });
@@ -319,17 +391,23 @@ describe("browser code reaches no Firebase server SDK (#688)", () => {
     ]);
   });
 
-  it("fails a new httpsCallable outside the wrappers, and a ratchet entry whose file stopped calling it", () => {
+  it("fails a new httpsCallable user, and a pinned file whose uses moved either way", () => {
     const tree = fixture({
-      "lib/firebase/callable.ts": `import { httpsCallable } from "firebase/functions";`,
+      "lib/firebase/callable.ts": `import { httpsCallable } from "firebase/functions";\nhttpsCallable(functions, name);`,
       "hooks/use-new.ts": `const fn = httpsCallable(functions, "newCallable");`,
-      "hooks/use-old.ts": `return callFunction("oldCallable", {}); // was httpsCallable`,
+      "hooks/use-more.ts": `httpsCallable(functions, "a");\nhttpsCallable(functions, "b");`,
+      "hooks/use-moved.ts": `return callFunction("oldCallable", {}); // was httpsCallable`,
     });
-    const result = offenders(tree, ["lib/firebase/callable.ts", "hooks/use-new.ts", "hooks/use-old.ts"], {
-      "hooks/use-old.ts": "oldCallable",
+    const frontend = ["lib/firebase/callable.ts", "hooks/use-new.ts", "hooks/use-more.ts", "hooks/use-moved.ts"];
+    const result = offenders(tree, frontend, {
+      "hooks/use-more.ts": { uses: 1, calls: "a" },
+      "hooks/use-moved.ts": { uses: 1, calls: "oldCallable" },
     });
-    expect(result.newCallableCallers).toEqual(["hooks/use-new.ts"]);
-    expect(result.staleRatchetEntries).toEqual(["hooks/use-old.ts"]);
+    expect(result.newCallableUsers).toEqual(["hooks/use-new.ts"]);
+    expect(result.ratchetMismatches).toEqual([
+      "hooks/use-more.ts: pinned 1, uses 2",
+      "hooks/use-moved.ts: pinned 1, uses 0",
+    ]);
   });
 
   it("holds on the repo", () => {
@@ -339,6 +417,6 @@ describe("browser code reaches no Firebase server SDK (#688)", () => {
     expect(frontend.length).toBeGreaterThan(500);
     expect(buildGraph(disk, frontend).size).toBeGreaterThan(frontend.length);
     expect(offenders(disk, frontend, CALLABLE_RATCHET)).toEqual(clean);
-    for (const home of CALLABLE_HOMES) expect(disk.read(home), home).toMatch(/\bhttpsCallable\b/);
+    for (const home of CALLABLE_HOMES) expect(scan(disk.read(home), home).callableUses, home).toBeGreaterThan(0);
   });
 });
