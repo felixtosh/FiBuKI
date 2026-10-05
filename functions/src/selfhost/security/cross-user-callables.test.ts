@@ -143,7 +143,7 @@ function payloads(): Array<Record<string, unknown>> {
     { transactionId: V.transaction, updates: { name: "pwned", userId: ATTACKER } },
     { fileId: V.file, data: { fileName: "pwned", userId: ATTACKER } },
     { partnerId: V.partner, data: { name: "pwned", userId: ATTACKER } },
-    { addressId: V.inboundAddress, data: { isActive: false, dailyLimit: 100000, todayCount: 0 } },
+    { addressId: V.inboundAddress, data: { isActive: false } },
     // One side mine, one side theirs: each pair both ways round.
     { fileId: V.file, transactionId: A.transaction },
     { fileId: A.file, transactionId: V.transaction },

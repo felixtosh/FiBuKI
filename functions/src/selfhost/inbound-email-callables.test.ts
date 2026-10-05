@@ -167,10 +167,21 @@ describe("updateInboundEmailAddress", () => {
     [{ displayName: "x".repeat(201) }],
     [{ allowedDomains: "a.at" }],
     [{ allowedDomains: ["not a domain"] }],
+    [{ allowedDomains: ["."] }],
+    [{ allowedDomains: ["-"] }],
+    [{ allowedDomains: ["a..b"] }],
+    [{ allowedDomains: ["localhost"] }],
+    [{ allowedDomains: ["-a.at"] }],
     [{ isActive: "yes" }],
   ])("refuses a malformed value %j", async (data) => {
     const id = await seedAddress();
     await expect(update({ addressId: id, data })).rejects.toMatchObject({ code: "invalid-argument" });
+  });
+
+  it("stores the allowed domains lowercased, as receiveEmail compares them", async () => {
+    const id = await seedAddress();
+    await update({ addressId: id, data: { allowedDomains: ["Rechnung.A1.AT", "mail.example-shop.de"] } });
+    expect((await row(id))?.allowedDomains).toEqual(["rechnung.a1.at", "mail.example-shop.de"]);
   });
 
   it("refuses another User's address as if it did not exist", async () => {
@@ -203,6 +214,13 @@ describe("regenerateInboundEmailAddress", () => {
       todayCount: 0,
     });
     expect(fresh?.emailPrefix).not.toBe("abc");
+  });
+
+  it("gives the new address the server's daily limit, not a raised one stored on the old", async () => {
+    const id = await seedAddress();
+    await getFirestore().doc(`inboundEmailAddresses/${id}`).update({ dailyLimit: 100000 });
+    const res = await regenerate({ addressId: id });
+    expect((await row(String(res.id)))?.dailyLimit).toBe(DEFAULT_DAILY_LIMIT);
   });
 
   it("refuses another User's address and creates nothing", async () => {

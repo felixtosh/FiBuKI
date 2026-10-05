@@ -33,7 +33,8 @@ const CREATE_FIELDS = new Set(["displayName", "allowedDomains"]);
 
 const MAX_DISPLAY_NAME = 200;
 const MAX_DOMAINS = 100;
-const DOMAIN = /^[a-z0-9.-]{1,253}$/i;
+/** Labels of letters, digits and inner hyphens, at least two of them, joined by dots. */
+const DOMAIN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 export interface InboundAddressSettings {
   displayName?: string;
@@ -74,11 +75,12 @@ function settings(data: Record<string, unknown>): UpdateInboundAddressData {
     if (
       !Array.isArray(domains) ||
       domains.length > MAX_DOMAINS ||
-      !domains.every((d) => typeof d === "string" && DOMAIN.test(d))
+      !domains.every((d) => typeof d === "string" && DOMAIN.test(d.toLowerCase()))
     ) {
       throw new HttpsError("invalid-argument", "allowedDomains must be a list of domains");
     }
-    out.allowedDomains = domains as string[];
+    // receiveEmail compares lowercased, so they are stored that way.
+    out.allowedDomains = (domains as string[]).map((d) => d.toLowerCase());
   }
   if (data.isActive !== undefined) {
     if (typeof data.isActive !== "boolean") {
@@ -107,7 +109,7 @@ function generateEmailPrefix(): string {
 }
 
 /** A new address row: the User's settings, the server's limit, zeroed counters. */
-function newAddress(userId: string, chosen: InboundAddressSettings, dailyLimit: number) {
+function newAddress(userId: string, chosen: InboundAddressSettings) {
   const emailPrefix = generateEmailPrefix();
   const email = `invoices-${emailPrefix}@${INBOUND_EMAIL_DOMAIN}`;
   const now = Timestamp.now();
@@ -119,7 +121,7 @@ function newAddress(userId: string, chosen: InboundAddressSettings, dailyLimit: 
     isActive: true,
     emailsReceived: 0,
     filesCreated: 0,
-    dailyLimit,
+    dailyLimit: DEFAULT_DAILY_LIMIT,
     todayCount: 0,
     createdAt: now,
     updatedAt: now,
@@ -135,7 +137,7 @@ export const createInboundEmailAddressCallable = createCallable<
 >({ name: "createInboundEmailAddress" }, async (ctx, request) => {
   const data = asObject(request, "request");
   refuseUnknown(data, CREATE_FIELDS);
-  const { row, email } = newAddress(ctx.userId, settings(data), DEFAULT_DAILY_LIMIT);
+  const { row, email } = newAddress(ctx.userId, settings(data));
   const ref = ctx.db.collection(INBOUND_ADDRESSES_COLLECTION).doc();
   await ref.set(row);
   return { id: ref.id, email };
@@ -153,17 +155,20 @@ export const updateInboundEmailAddressCallable = createCallable<
   return { success: true };
 });
 
-/** A new address with the same settings; the old one stops accepting mail. */
+/**
+ * A new address with the same settings; the old one stops accepting mail. The
+ * new one gets the server's limit, not the stored one: a stored limit above it
+ * can only have come from the browser write this table no longer takes.
+ */
 export const regenerateInboundEmailAddressCallable = createCallable<
   { addressId: string },
   { id: string; email: string }
 >({ name: "regenerateInboundEmailAddress" }, async (ctx, request) => {
   const { ref: oldRef, data: existing } = await ownedAddress(ctx.db, ctx.userId, request?.addressId);
-  const { row, email } = newAddress(
-    ctx.userId,
-    { displayName: existing.displayName, allowedDomains: existing.allowedDomains },
-    typeof existing.dailyLimit === "number" ? existing.dailyLimit : DEFAULT_DAILY_LIMIT
-  );
+  const { row, email } = newAddress(ctx.userId, {
+    displayName: existing.displayName,
+    allowedDomains: existing.allowedDomains,
+  });
   const newRef = ctx.db.collection(INBOUND_ADDRESSES_COLLECTION).doc();
   const batch = ctx.db.batch();
   batch.update(oldRef, { isActive: false, updatedAt: Timestamp.now() });
