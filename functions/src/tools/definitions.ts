@@ -9,11 +9,15 @@
  * - the web app, imported directly: the chat's wrappers
  *   (lib/agent/tools/mcp-tools.ts), /api/openapi.json and llm.txt
  *
- * The web app imports this file, so it stays free of server-only imports
- * (type-only imports are erased); the guard in
- * functions/src/selfhost/browser-imports.test.ts proves it.
+ * The web app imports this file, so keep it free of server-only imports
+ * (type-only imports are erased). The guard in
+ * functions/src/selfhost/browser-imports.test.ts fails only if it reaches
+ * firebase-functions (its importers are server code, which may reach
+ * firebase-admin), so the rest is on review.
  *
- * A new tool is a definition here and a case in handlers.ts.
+ * A new tool touches four places: its definition here, its case in
+ * handlers.ts, its test, and, when the chat should run it too, its wrapper in
+ * lib/agent/tools/mcp-tools.ts.
  */
 
 import type { PlanFeatureKey } from "../billing/config";
