@@ -94,10 +94,15 @@ async function loadUsablePartner(
 }
 
 /**
- * Point a File at a Partner. A person's assignment (anything but `ai`) also
- * clears the pair from the Partner's `manualFileRemovals`: they changed their
- * mind, so it is no longer a false positive. The chat agent's leaves the list
- * alone, as it always has.
+ * Point a File at a Partner. Any assignment but the chat agent's (`ai`)
+ * also clears the pair from the Partner's `manualFileRemovals`, so the pair is
+ * no longer counted a false positive. That includes `auto`, the detail
+ * panel's automatic apply, as the browser path always did. The chat agent's
+ * leaves the list alone, as it always has.
+ *
+ * The Partner write comes after the File write and is not critical: a
+ * failure there is logged, never thrown, so the caller is not told an
+ * assignment failed that already happened.
  */
 export async function assignPartnerToFile(
   db: Db,
@@ -121,10 +126,14 @@ export async function assignPartnerToFile(
   if (matchedBy !== "ai" && partnerType === "user") {
     const removals = (partnerDoc.data()!.manualFileRemovals || []) as Array<{ fileId?: string }>;
     if (removals.some((r) => r.fileId === fileId)) {
-      await partnerDoc.ref.update({
-        manualFileRemovals: removals.filter((r) => r.fileId !== fileId),
-        updatedAt: Timestamp.now(),
-      });
+      try {
+        await partnerDoc.ref.update({
+          manualFileRemovals: removals.filter((r) => r.fileId !== fileId),
+          updatedAt: Timestamp.now(),
+        });
+      } catch (error) {
+        console.error(`[filePartner] Failed to clear the removal of file ${fileId} on partner ${partnerId}:`, error);
+      }
     }
   }
 
@@ -140,6 +149,9 @@ export async function assignPartnerToFile(
  * Clear a File's Partner. A system-recommended assignment (`auto` or
  * `suggestion`) is recorded on the User's Partner's `manualFileRemovals`, so
  * the matcher learns the pair was wrong; any other is simply cleared.
+ *
+ * Recording it comes after the File write and is not critical: a failure is
+ * logged, never thrown, and `recordedAsFalsePositive` stays false.
  */
 export async function removePartnerFromFile(
   db: Db,
@@ -163,22 +175,26 @@ export async function removePartnerFromFile(
 
   let recordedAsFalsePositive = false;
   if (previousPartnerId && (matchedBy === "auto" || matchedBy === "suggestion")) {
-    const partnerRef = db.collection("partners").doc(previousPartnerId);
-    const partnerSnap = await partnerRef.get();
-    if (partnerSnap.exists && partnerSnap.data()?.userId === userId) {
-      const removals = (partnerSnap.data()!.manualFileRemovals || []) as Array<{ fileId?: string }>;
-      if (!removals.some((r) => r.fileId === fileId)) {
-        await partnerRef.update({
-          manualFileRemovals: FieldValue.arrayUnion({
-            fileId,
-            removedAt: Timestamp.now(),
-            extractedPartner: fileData.extractedPartner || null,
-            fileName: fileData.fileName,
-          }),
-          updatedAt: Timestamp.now(),
-        });
+    try {
+      const partnerRef = db.collection("partners").doc(previousPartnerId);
+      const partnerSnap = await partnerRef.get();
+      if (partnerSnap.exists && partnerSnap.data()?.userId === userId) {
+        const removals = (partnerSnap.data()!.manualFileRemovals || []) as Array<{ fileId?: string }>;
+        if (!removals.some((r) => r.fileId === fileId)) {
+          await partnerRef.update({
+            manualFileRemovals: FieldValue.arrayUnion({
+              fileId,
+              removedAt: Timestamp.now(),
+              extractedPartner: fileData.extractedPartner || null,
+              fileName: fileData.fileName,
+            }),
+            updatedAt: Timestamp.now(),
+          });
+        }
+        recordedAsFalsePositive = true;
       }
-      recordedAsFalsePositive = true;
+    } catch (error) {
+      console.error(`[filePartner] Failed to record the removal of file ${fileId} on partner ${previousPartnerId}:`, error);
     }
   }
 
@@ -215,8 +231,12 @@ export const assignPartnerToFileCallable = createCallable<
   if (!UI_MATCHED_BY.has(matchedBy)) {
     throw new HttpsError("invalid-argument", "matchedBy must be manual, suggestion or auto");
   }
-  if (confidence !== undefined && confidence !== null && (typeof confidence !== "number" || !Number.isFinite(confidence))) {
-    throw new HttpsError("invalid-argument", "confidence must be a number");
+  if (
+    confidence !== undefined &&
+    confidence !== null &&
+    (typeof confidence !== "number" || !Number.isFinite(confidence) || confidence < 0 || confidence > 100)
+  ) {
+    throw new HttpsError("invalid-argument", "confidence must be a number from 0 to 100");
   }
   const result = await assignPartnerToFile(ctx.db, ctx.userId, {
     fileId,

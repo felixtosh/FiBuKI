@@ -272,6 +272,11 @@ describe("assignPartnerToFile", () => {
     await expect(
       uiAssign({ fileId: "f-1", partnerId: "p-1", partnerType: "other", matchedBy: "manual" })
     ).rejects.toThrow(/partnerType/);
+    for (const confidence of [1e9, -1, "90"]) {
+      await expect(
+        uiAssign({ fileId: "f-1", partnerId: "p-1", partnerType: "user", matchedBy: "manual", confidence })
+      ).rejects.toThrow(/confidence/);
+    }
     await expect(uiRemove({ fileId: "f-1", partnerId: "p-1" })).rejects.toThrow(/does not take partnerId/);
     expect(doc("files", "f-1").partnerId).toBeUndefined();
   });
@@ -314,6 +319,28 @@ describe("removePartnerFromFile", () => {
 
     expect(result.recordedAsFalsePositive).toBe(true);
     expect(doc("partners", "p-1").manualFileRemovals).toHaveLength(1);
+  });
+
+  it("a failed Partner write is logged, not thrown: the File change stands", async () => {
+    seedPartner("p-1");
+    seedFile("f-1", { partnerId: "p-1", partnerType: "user", partnerMatchedBy: "auto" });
+    const realSet = store.setDoc.bind(store);
+    const spy = vi.spyOn(store, "setDoc").mockImplementation((collection, id, data) => {
+      if (collection === "partners") throw new Error("partner write failed");
+      realSet(collection, id, data);
+    });
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      const result = await filePartner.removePartnerFromFile(db(), USER, "f-1");
+
+      expect(result.recordedAsFalsePositive).toBe(false);
+      expect(doc("files", "f-1").partnerId).toBeNull();
+      expect(log).toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+      log.mockRestore();
+    }
   });
 
   it("does not record a manual assignment", async () => {
