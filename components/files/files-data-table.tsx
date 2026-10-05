@@ -43,8 +43,8 @@ export const SELECT_COLUMN_WIDTH = 48;
 // Default column sizes for files table
 const DEFAULT_FILE_COLUMN_SIZES: Record<string, number> = {
   select: SELECT_COLUMN_WIDTH,
-  extractedDate: 110,
-  extractedAmount: 90,
+  extractedDate: 156,
+  extractedAmount: 120,
   extractedVatPercent: 55,
   fileName: 190,
   sourceType: 180,
