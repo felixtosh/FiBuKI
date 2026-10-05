@@ -8,6 +8,10 @@
  * fit), and #94 makes a file whose only strong candidate was dismissed look
  * unmatched, which queues the single-file worker on every re-score.
  *
+ * The single-pair connect's gate moved into the shared connect tool (#665):
+ * connectFileToTransaction wraps it, and functions/src/selfhost/chat-mcp-tools.test.ts
+ * holds the gate there. Here only the wrapper's hand-off is checked.
+ *
  * Covers repo-root lib/agent/tools/, so it runs under vitest.api-smoke.config.ts
  * ONLY (needs the root dependency tree for @langchain/core).
  */
@@ -81,8 +85,8 @@ vi.mock("@/lib/firebase/admin", () => {
   return { getAdminDb: () => ({ collection, getAll }) };
 });
 
-const { connectFileToTransactionTool, searchLocalFilesTool, searchGmailAttachmentsTool } =
-  await import("@/lib/agent/tools/search-tools");
+const { searchLocalFilesTool, searchGmailAttachmentsTool } = await import("@/lib/agent/tools/search-tools");
+const { connectFileToTransactionTool } = await import("@/lib/agent/tools/mcp-tools");
 const { bulkConnectFilesTool, scoreBatchMatchesTool } = await import(
   "@/lib/agent/tools/batch-tools"
 );
@@ -128,100 +132,36 @@ beforeEach(() => {
   h.callFirebaseFunction.mockResolvedValue({ connectionId: "conn-1" });
 });
 
-describe("connectFileToTransaction — dismissal gate", () => {
-  it("refuses a pair the file has rejected, without writing", async () => {
+describe("connectFileToTransaction — the gate is the shared tool's (#665)", () => {
+  it("hands the pair, the override and skipValidation to runTool, the worker type beside them, and reads nothing itself", async () => {
+    h.callFirebaseFunction.mockResolvedValue({ error: "PAIR_REJECTED", message: "undismiss_transaction_suggestion" });
     seedFile("f-1", { dismissedTransactionIds: ["tx-1"] });
     seedTransaction("tx-1");
 
     const result = (await connectFileToTransactionTool.invoke(
-      { fileId: "f-1", transactionId: "tx-1", skipValidation: true },
-      chatConfig
-    )) as Doc;
-
-    expect(result.error).toBe("PAIR_REJECTED");
-    expect(String(result.message)).toContain("undismiss_transaction_suggestion");
-    expect(h.callFirebaseFunction).not.toHaveBeenCalled();
-  });
-
-  it("refuses on the record shape too, not only the legacy id array", async () => {
-    seedFile("f-1", {
-      dismissedTransactions: [{ transactionId: "tx-1", dismissedAt: new Date() }],
-    });
-    seedTransaction("tx-1");
-
-    const result = (await connectFileToTransactionTool.invoke(
-      { fileId: "f-1", transactionId: "tx-1", skipValidation: true },
-      chatConfig
-    )) as Doc;
-
-    expect(result.error).toBe("PAIR_REJECTED");
-  });
-
-  it("is not lifted by skipValidation", async () => {
-    // The whole point of putting the gate outside the validation block: the
-    // batch workers pass skipValidation routinely.
-    seedFile("f-1", { dismissedTransactionIds: ["tx-1"] });
-    seedTransaction("tx-1");
-
-    const result = (await connectFileToTransactionTool.invoke(
-      { fileId: "f-1", transactionId: "tx-1", skipValidation: true },
+      { fileId: "f-1", transactionId: "tx-1", skipValidation: true, overrideDismissal: true },
       batchConfig
     )) as Doc;
 
-    expect(result.error).toBe("PAIR_REJECTED");
-    expect(h.callFirebaseFunction).not.toHaveBeenCalled();
-  });
-
-  it("connects when the caller explicitly overrides", async () => {
-    seedFile("f-1", { dismissedTransactionIds: ["tx-1"] });
-    seedTransaction("tx-1");
-
-    const result = (await connectFileToTransactionTool.invoke(
-      {
-        fileId: "f-1",
-        transactionId: "tx-1",
-        skipValidation: true,
-        overrideDismissal: true,
-      },
-      chatConfig
-    )) as Doc;
-
-    expect(result.success).toBe(true);
+    // The shared tool's refusal reaches the model as it is.
+    expect(result).toEqual({ error: "PAIR_REJECTED", message: "undismiss_transaction_suggestion" });
+    expect(h.callFirebaseFunction).toHaveBeenCalledTimes(1);
     expect(h.callFirebaseFunction).toHaveBeenCalledWith(
-      "connectFileToTransaction",
-      expect.objectContaining({ fileId: "f-1", transactionId: "tx-1" }),
+      "runTool",
+      {
+        tool: "connect_file_to_transaction",
+        arguments: { fileId: "f-1", transactionId: "tx-1", skipValidation: true, overrideDismissal: true },
+        workerType: "partner_file_batch",
+      },
       "Bearer test"
     );
   });
 
-  it("connects a pair that was rejected and then un-rejected", async () => {
-    seedFile("f-1", {
-      dismissedTransactionIds: [],
-      dismissedTransactions: [
-        { transactionId: "tx-1", dismissedAt: new Date(), undismissedAt: new Date() },
-      ],
-    });
-    seedTransaction("tx-1");
-
-    const result = (await connectFileToTransactionTool.invoke(
-      { fileId: "f-1", transactionId: "tx-1", skipValidation: true },
-      chatConfig
-    )) as Doc;
-
-    expect(result.success).toBe(true);
-  });
-
-  it("leaves a non-dismissed pair connecting exactly as before", async () => {
-    seedFile("f-1", { dismissedTransactionIds: ["tx-other"] });
-    seedTransaction("tx-1");
-
-    const result = (await connectFileToTransactionTool.invoke(
-      { fileId: "f-1", transactionId: "tx-1", skipValidation: true },
-      chatConfig
-    )) as Doc;
-
-    expect(result.success).toBe(true);
-    expect(h.callFirebaseFunction).toHaveBeenCalledTimes(1);
+  it("the chat itself sends no worker type", async () => {
+    h.callFirebaseFunction.mockResolvedValue({ success: true });
+    await connectFileToTransactionTool.invoke({ fileId: "f-1", transactionId: "tx-1" }, chatConfig);
+    const [, data] = h.callFirebaseFunction.mock.calls[0] as [string, Record<string, unknown>];
+    expect(data).not.toHaveProperty("workerType");
   });
 });
 

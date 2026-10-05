@@ -15,6 +15,12 @@
  *   - a bank account is validated and its IBAN normalised,
  *   - rolling a Transaction back goes through a server rule.
  *
+ * The writes that record who made them (#665: assigning a Partner to a
+ * Transaction or a File, connecting a File, editing a Partner) run the shared
+ * tool as the chat agent: runTool sets that caller, so the chat's answer is
+ * handleTool's with the agent caller, and the stored provenance is the
+ * agent's (`ai`, Connection Origin `agent`) where MCP's stays its own.
+ *
  * The guard at the end fails when a chat tool with an MCP twin touches the
  * database itself: the web container's admin database throws in this file.
  */
@@ -24,10 +30,11 @@ process.env.FIBUKI_PLAN = "full";
 
 import { readFileSync } from "fs";
 import path from "path";
-import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { getFirestore, Timestamp, __resetFirestoreShim, __whenShimIdle } from "./firestore-shim";
 import { __resetTriggerShim } from "./trigger-shim";
 import { deriveDocumentationState } from "../documents/documentationState";
+import { AGENT_WORKER_TYPES, agentCaller, type ToolCaller } from "../tools/caller";
 
 type Callable = {
   __selfhostCallable: true;
@@ -78,7 +85,7 @@ interface AgentTool {
   invoke: (args: unknown, config?: unknown) => Promise<unknown>;
 }
 
-let handleTool: (uid: string, name: string, args: Record<string, unknown>) => Promise<unknown>;
+let handleTool: (uid: string, name: string, args: Record<string, unknown>, caller?: ToolCaller) => Promise<unknown>;
 let tools: Map<string, AgentTool>;
 let wrapped: Record<string, string>;
 let wrappedTools: AgentTool[];
@@ -447,6 +454,447 @@ describe("rolling a Transaction back", () => {
   });
 });
 
+// ============================================================================
+// The writes that record who made them (#665)
+// ============================================================================
+
+const AGENT = agentCaller(null);
+
+/** A reply without the record's write times: each run reseeds, so two runs cannot share them. */
+function stable(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  return Object.fromEntries(Object.entries(value).filter(([k]) => k !== "updatedAt" && k !== "createdAt"));
+}
+
+/** A Partner the User once removed from t-client: the agent may not put it back. */
+async function seedRemovedPartner() {
+  await db.collection("partners").doc("p-client").set({
+    userId: USER, name: "Client GmbH", aliases: [], isActive: true,
+    createdAt: Timestamp.now(), updatedAt: Timestamp.now(),
+    manualRemovals: [{ transactionId: "t-client", removedAt: Timestamp.now() }],
+  });
+}
+
+/** A File that fits t-client: same amount, same name, a day apart. */
+async function seedClientInvoice(extra: Record<string, unknown> = {}) {
+  await db.collection("files").doc("f-client").set({
+    userId: USER, fileName: "client.pdf", fileType: "application/pdf", extractionComplete: true,
+    extractedAmount: 120000, extractedCurrency: "EUR", invoiceDirection: "outgoing",
+    extractedPartner: "Client GmbH", extractedDate: day("2026-01-31"), uploadedAt: Timestamp.now(),
+    transactionIds: [], sourceType: "gmail", gmailIntegrationId: "mail-1", gmailSenderEmail: "billing@client.example",
+    createdAt: Timestamp.now(), updatedAt: Timestamp.now(),
+    ...extra,
+  });
+}
+
+const viesXml = (valid: boolean, name = "") =>
+  `<soap:Envelope><soap:Body><checkVatResponse><countryCode>AT</countryCode><vatNumber>U12345678</vatNumber>` +
+  `<valid>${valid}</valid><name>${name || "---"}</name><address>---</address></checkVatResponse></soap:Body></soap:Envelope>`;
+
+/** VIES answers with this XML (or is down, for null); every other fetch stays offline. */
+function viesAnswers(xml: string | null) {
+  const calls: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: unknown, init?: { body?: unknown }) => {
+      if (String(url).includes("ec.europa.eu")) {
+        calls.push(String(init?.body ?? ""));
+        return xml === null ? new Response("down", { status: 503 }) : new Response(xml, { status: 200 });
+      }
+      return new Response("offline", { status: 503 });
+    })
+  );
+  return calls;
+}
+
+describe("the four writes: the chat answers what the shared tool answers as the agent (#665)", () => {
+  afterEach(() => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("offline", { status: 503 })));
+  });
+
+  const cases: Array<[string, Record<string, unknown>]> = [
+    ["assignPartnerToTransaction", { transactionId: "t-client", partnerId: "p-amazon" }],
+    ["assignPartnerToFile", { fileId: "f-coffee", partnerId: "p-amazon" }],
+    ["updatePartner", { partnerId: "p-amazon", website: "https://amazon.example", vatId: "ATU12345678" }],
+    ["connectFileToTransaction", { fileId: "f-client", transactionId: "t-client", confidence: 91, searchQuery: "client" }],
+  ];
+
+  for (const [name, args] of cases) {
+    it(`${name}(${JSON.stringify(args)})`, async () => {
+      viesAnswers(viesXml(true, "AMAZON EU SARL"));
+      await seedClientInvoice();
+      const t = tool(name);
+      const chat = wire(await t.invoke(args, CONFIG));
+      expect((chat as { error?: unknown }).error).toBeUndefined();
+
+      await seed();
+      await seedClientInvoice();
+      const agent = forTheModel(wrapped[name], wire(await handleTool(USER, wrapped[name], t.schema.parse(args), AGENT)));
+      expect(stable(chat)).toEqual(stable(agent));
+    });
+  }
+
+  it("the Partner writes answer MCP in MCP's shape, the agent's connect in the chat's", async () => {
+    viesAnswers(viesXml(true, "AMAZON EU SARL"));
+    await seedClientInvoice();
+    for (const [name, args] of cases) {
+      const t = tool(name);
+      const chat = wire(await t.invoke(args, CONFIG)) as Record<string, unknown>;
+      await seed();
+      await seedClientInvoice();
+      const mcp = wire(await handleTool(USER, wrapped[name], t.schema.parse(args))) as Record<string, unknown>;
+      await seed();
+      await seedClientInvoice();
+      if (name === "connectFileToTransaction") {
+        // MCP's connect reply is unchanged; the agent's keeps the chat's.
+        expect(mcp).toEqual({ success: true, fileId: "f-client", transactionId: "t-client" });
+        expect(chat).toEqual({
+          success: true,
+          connectionId: "f-client__t-client",
+          alreadyConnected: false,
+          fileName: "client.pdf",
+          message: 'Connected "client.pdf" to transaction.',
+        });
+      } else {
+        expect(Object.keys(chat).sort(), name).toEqual(Object.keys(mcp).sort());
+      }
+    }
+  });
+});
+
+describe("assigning a Partner to a Transaction: one write, the caller's provenance (#665)", () => {
+  it("the chat records ai, learned from and shown in the re-match review; MCP records api", async () => {
+    const chat = (await tool("assignPartnerToTransaction").invoke(
+      { transactionId: "t-client", partnerId: "p-amazon" },
+      CONFIG
+    )) as Record<string, unknown>;
+    expect(chat).toEqual({ success: true, transactionId: "t-client", partnerId: "p-amazon" });
+    const byChat = (await db.collection("transactions").doc("t-client").get()).data()!;
+    expect(byChat.partnerMatchedBy).toBe("ai");
+    expect(byChat.partnerType).toBe("user");
+    const chatEntry = (byChat.automationHistory as Array<Record<string, unknown>>).at(-1)!;
+    expect(chatEntry).toMatchObject({ type: "partner_assigned", actor: "ai", level: "outcome", forPartnerId: "p-amazon" });
+
+    await seed();
+    const mcp = await handleTool(USER, "assign_partner_to_transaction", { transactionId: "t-client", partnerId: "p-amazon" });
+    expect(mcp).toEqual(chat);
+    const byMcp = (await db.collection("transactions").doc("t-client").get()).data()!;
+    expect(byMcp.partnerMatchedBy).toBe("api");
+    const mcpEntry = (byMcp.automationHistory as Array<Record<string, unknown>>).at(-1)!;
+    expect(mcpEntry).toMatchObject({ type: "partner_assigned", actor: "manual", level: "decision" });
+    expect(mcpEntry.summary).toBe('Partner "Amazon EU" assigned via API');
+  });
+
+  it("the chat keeps the refusal of a Partner the User removed; MCP assigns it and leaves the removal standing", async () => {
+    await seedRemovedPartner();
+    const chat = (await tool("assignPartnerToTransaction").invoke(
+      { transactionId: "t-client", partnerId: "p-client" },
+      CONFIG
+    )) as { error?: string };
+    expect(chat.error).toMatch(/previously rejected for this transaction/);
+    expect((await db.collection("transactions").doc("t-client").get()).data()!.partnerId).toBeUndefined();
+
+    const mcp = (await handleTool(USER, "assign_partner_to_transaction", {
+      transactionId: "t-client",
+      partnerId: "p-client",
+    })) as { success?: boolean };
+    expect(mcp.success).toBe(true);
+    expect((await db.collection("transactions").doc("t-client").get()).data()!.partnerId).toBe("p-client");
+    const partner = (await db.collection("partners").doc("p-client").get()).data()!;
+    expect(partner.manualRemovals).toHaveLength(1);
+  });
+
+  it("both refuse a Merged Partner, naming its survivor", async () => {
+    const chat = (await tool("assignPartnerToTransaction").invoke(
+      { transactionId: "t-client", partnerId: "p-amazon-old" },
+      CONFIG
+    )) as { error?: string };
+    expect(chat.error).toMatch(/Merged Partner .*use p-amazon instead/);
+    await expect(
+      handleTool(USER, "assign_partner_to_transaction", { transactionId: "t-client", partnerId: "p-amazon-old" })
+    ).rejects.toThrow(chat.error!);
+    expect((await db.collection("transactions").doc("t-client").get()).data()!.partnerId).toBeUndefined();
+  });
+
+  it("the callable refuses the tool surface's own value", async () => {
+    const barrel = (await barrelPromise) as Record<string, Callable>;
+    await expect(
+      barrel.assignPartnerToTransaction.run({
+        data: { transactionId: "t-client", partnerId: "p-amazon", partnerType: "user", matchedBy: "api" },
+        auth: { uid: USER, token: {} },
+      })
+    ).rejects.toMatchObject({ code: "invalid-argument" });
+  });
+});
+
+describe("assigning a Partner to a File: the caller's provenance (#665)", () => {
+  it("the chat records ai and leaves the removal list and confidence; MCP records a person's assignment", async () => {
+    await db.collection("files").doc("f-coffee").update({ partnerMatchConfidence: 40 });
+    await db.collection("partners").doc("p-amazon").update({
+      manualFileRemovals: [{ fileId: "f-coffee", removedAt: Timestamp.now() }],
+    });
+
+    const chat = (await tool("assignPartnerToFile").invoke({ fileId: "f-coffee", partnerId: "p-amazon" }, CONFIG)) as Record<
+      string,
+      unknown
+    >;
+    expect(chat).toEqual({ success: true, fileId: "f-coffee", partnerId: "p-amazon", partnerName: "Amazon EU", previousPartnerId: null });
+    const byChat = (await db.collection("files").doc("f-coffee").get()).data()!;
+    expect(byChat).toMatchObject({ partnerId: "p-amazon", partnerType: "user", partnerMatchedBy: "ai", partnerMatchConfidence: 40 });
+    expect((await db.collection("partners").doc("p-amazon").get()).data()!.manualFileRemovals).toHaveLength(1);
+
+    await seed();
+    await db.collection("partners").doc("p-amazon").update({
+      manualFileRemovals: [{ fileId: "f-coffee", removedAt: Timestamp.now() }],
+    });
+    await handleTool(USER, "assign_partner_to_file", { fileId: "f-coffee", partnerId: "p-amazon" });
+    const byMcp = (await db.collection("files").doc("f-coffee").get()).data()!;
+    expect(byMcp).toMatchObject({ partnerMatchedBy: "manual", partnerMatchConfidence: 100 });
+    expect((await db.collection("partners").doc("p-amazon").get()).data()!.manualFileRemovals).toEqual([]);
+  });
+
+  it("both refuse a Merged Partner", async () => {
+    const chat = (await tool("assignPartnerToFile").invoke({ fileId: "f-coffee", partnerId: "p-amazon-old" }, CONFIG)) as {
+      error?: string;
+    };
+    expect(chat.error).toMatch(/Merged Partner/);
+    expect((await db.collection("files").doc("f-coffee").get()).data()!.partnerId).toBeUndefined();
+  });
+});
+
+describe("connecting a File: the agent's checks, the agent's only (#665)", () => {
+  const connection = async () => (await db.collection("fileConnections").doc("f-client__t-client").get()).data();
+
+  it("the chat connects with origin agent, its confidence and how the File was found; MCP with origin mcp", async () => {
+    await seedClientInvoice();
+    await tool("connectFileToTransaction").invoke(
+      { fileId: "f-client", transactionId: "t-client", confidence: 91, searchQuery: "client invoice" },
+      CONFIG
+    );
+    const byChat = (await connection())!;
+    expect(byChat).toMatchObject({
+      origin: "agent",
+      connectionType: "manual",
+      matchConfidence: 91,
+      sourceType: "gmail_attachment",
+      searchPattern: "client invoice",
+      gmailIntegrationId: "mail-1",
+      gmailMessageFrom: "billing@client.example",
+      resultType: "gmail_attachment",
+    });
+
+    await seed();
+    await seedClientInvoice();
+    await handleTool(USER, "connect_file_to_transaction", { fileId: "f-client", transactionId: "t-client", confidence: 91 });
+    const byMcp = (await connection())!;
+    expect(byMcp).toMatchObject({ origin: "mcp", connectionType: "api" });
+    expect(byMcp.matchConfidence ?? null).toBeNull();
+    expect(byMcp.searchPattern).toBeUndefined();
+  });
+
+  it("the chat refuses a rejected pair unless a human asked; MCP has no override argument", async () => {
+    await seedClientInvoice({ dismissedTransactionIds: ["t-client"] });
+    const refused = (await tool("connectFileToTransaction").invoke(
+      { fileId: "f-client", transactionId: "t-client", skipValidation: true },
+      CONFIG
+    )) as Record<string, unknown>;
+    expect(refused.error).toBe("PAIR_REJECTED");
+    expect(String(refused.message)).toContain("overrideDismissal=true");
+    expect(await connection()).toBeUndefined();
+
+    // MCP: an argument named like the agent's override is just an argument.
+    await expect(
+      handleTool(USER, "connect_file_to_transaction", { fileId: "f-client", transactionId: "t-client", overrideDismissal: true })
+    ).rejects.toThrow(/PAIR_REJECTED/);
+    expect(await connection()).toBeUndefined();
+
+    const lifted = (await tool("connectFileToTransaction").invoke(
+      { fileId: "f-client", transactionId: "t-client", overrideDismissal: true },
+      CONFIG
+    )) as Record<string, unknown>;
+    expect(lifted.success).toBe(true);
+    expect((await connection())!.origin).toBe("agent");
+  });
+
+  it("the rejection gate (fork #101): either stored shape, not lifted by skipValidation in a worker, gone once un-rejected", async () => {
+    const batch = { configurable: { ...CONFIG.configurable, workerType: "partner_file_batch" } };
+    await seedClientInvoice({ dismissedTransactions: [{ transactionId: "t-client", dismissedAt: Timestamp.now() }] });
+    const refused = (await tool("connectFileToTransaction").invoke(
+      { fileId: "f-client", transactionId: "t-client", skipValidation: true },
+      batch
+    )) as Record<string, unknown>;
+    expect(refused.error).toBe("PAIR_REJECTED");
+    expect(await connection()).toBeUndefined();
+
+    await seed();
+    await seedClientInvoice({
+      dismissedTransactionIds: [],
+      dismissedTransactions: [{ transactionId: "t-client", dismissedAt: Timestamp.now(), undismissedAt: Timestamp.now() }],
+    });
+    const connected = (await tool("connectFileToTransaction").invoke(
+      { fileId: "f-client", transactionId: "t-client", skipValidation: true },
+      batch
+    )) as Record<string, unknown>;
+    expect(connected.success).toBe(true);
+  });
+
+  it("the chat checks amount and Partner first; skipValidation lifts it, except for the receipt search worker", async () => {
+    // 9 EUR for a 1,200 EUR Transaction.
+    const refused = (await tool("connectFileToTransaction").invoke({ fileId: "f-coffee", transactionId: "t-client" }, CONFIG)) as Record<
+      string,
+      unknown
+    >;
+    expect(refused).toMatchObject({ error: "VALIDATION_FAILED", extractedAmount: 900, transactionAmount: 120000 });
+    expect(String(refused.message)).toContain("skipValidation=true");
+
+    const receiptSearch = { configurable: { ...CONFIG.configurable, workerType: "receipt_search" } };
+    const strict = (await tool("connectFileToTransaction").invoke(
+      { fileId: "f-coffee", transactionId: "t-client", skipValidation: true },
+      receiptSearch
+    )) as Record<string, unknown>;
+    expect(strict.error).toBe("VALIDATION_FAILED");
+    expect(String(strict.message)).toContain("receipt_search mode");
+    expect((await db.collection("fileConnections").where("fileId", "==", "f-coffee").get()).size).toBe(0);
+
+    const forced = (await tool("connectFileToTransaction").invoke(
+      { fileId: "f-coffee", transactionId: "t-client", skipValidation: true },
+      CONFIG
+    )) as Record<string, unknown>;
+    expect(forced.success).toBe(true);
+
+    // MCP connects the same mismatched pair without the agent's checks, as before.
+    await seed();
+    const mcp = (await handleTool(USER, "connect_file_to_transaction", { fileId: "f-coffee", transactionId: "t-client" })) as {
+      success?: boolean;
+    };
+    expect(mcp.success).toBe(true);
+  });
+
+  it("the receipt search and Partner file batch workers replace an automated File Connection; the chat does not", async () => {
+    await seedClientInvoice();
+    const barrel = (await barrelPromise) as Record<string, Callable>;
+    const seedAutomated = async () => {
+      await barrel.connectFileToTransaction.run({
+        data: { fileId: "f-coffee", transactionId: "t-client", origin: "auto", connectionType: "auto_matched", matchConfidence: 90 },
+        auth: { uid: USER, token: {} },
+      });
+    };
+    await seedAutomated();
+    const chat = (await tool("connectFileToTransaction").invoke({ fileId: "f-client", transactionId: "t-client" }, CONFIG)) as Record<
+      string,
+      unknown
+    >;
+    expect(chat.message).toBe('Connected "client.pdf" to transaction.');
+    expect((await db.collection("fileConnections").doc("f-coffee__t-client").get()).exists).toBe(true);
+
+    for (const workerType of ["receipt_search", "partner_file_batch"]) {
+      await seed();
+      await seedClientInvoice();
+      await seedAutomated();
+      const worker = (await tool("connectFileToTransaction").invoke(
+        { fileId: "f-client", transactionId: "t-client" },
+        { configurable: { ...CONFIG.configurable, workerType } }
+      )) as Record<string, unknown>;
+      expect(worker.message, workerType).toBe('Connected "client.pdf" and reassigned 1 previous auto match.');
+      expect((await db.collection("fileConnections").doc("f-coffee__t-client").get()).exists, workerType).toBe(false);
+    }
+  });
+
+  it("an over-quota Transaction is refused with the agent's message", async () => {
+    await seedClientInvoice();
+    await db.collection("transactions").doc("t-client").update({ quotaExceeded: true });
+    const res = (await tool("connectFileToTransaction").invoke({ fileId: "f-client", transactionId: "t-client" }, CONFIG)) as {
+      error?: string;
+    };
+    expect(res.error).toMatch(/over-quota transactions/);
+    expect(await connection()).toBeUndefined();
+  });
+});
+
+describe("editing a Partner checks the VAT ID with VIES on both surfaces (#665)", () => {
+  afterEach(() => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("offline", { status: 503 })));
+  });
+
+  it("a VAT ID VIES knows: stored, and the reply says so on both surfaces", async () => {
+    const calls = viesAnswers(viesXml(true, "AMAZON EU SARL"));
+    const chat = (await tool("updatePartner").invoke({ partnerId: "p-amazon", vatId: "atu 1234 5678" }, CONFIG)) as Record<
+      string,
+      unknown
+    >;
+    expect(chat.vatIdCheck).toEqual({ vatId: "ATU12345678", valid: true, name: "Amazon Eu Sarl", error: null });
+    expect(chat).toMatchObject({ id: "p-amazon", name: "Amazon EU", vatId: "ATU12345678" });
+    expect(calls).toHaveLength(1);
+
+    await seed();
+    const mcp = (await handleTool(USER, "update_partner", { partnerId: "p-amazon", vatId: "ATU12345678" })) as Record<string, unknown>;
+    expect(mcp.vatIdCheck).toEqual(chat.vatIdCheck);
+    expect((await db.collection("partners").doc("p-amazon").get()).data()!.vatId).toBe("ATU12345678");
+  });
+
+  it("a VAT ID VIES does not know is stored as given, and the reply says it is not valid", async () => {
+    viesAnswers(viesXml(false));
+    const mcp = (await handleTool(USER, "update_partner", { partnerId: "p-amazon", vatId: "ATU99999999" })) as Record<string, unknown>;
+    expect(mcp.vatIdCheck).toEqual({
+      vatId: "ATU99999999",
+      valid: false,
+      name: null,
+      error: "VAT ID not valid according to VIES",
+    });
+    expect((await db.collection("partners").doc("p-amazon").get()).data()!.vatId).toBe("ATU99999999");
+  });
+
+  it("VIES down: the VAT ID is stored and the check says VIES was not asked", async () => {
+    viesAnswers(null);
+    const chat = (await tool("updatePartner").invoke({ partnerId: "p-amazon", vatId: "ATU12345678" }, CONFIG)) as Record<
+      string,
+      unknown
+    >;
+    expect(chat.vatIdCheck).toEqual({ vatId: "ATU12345678", valid: null, name: null, error: "HTTP 503" });
+    expect((await db.collection("partners").doc("p-amazon").get()).data()!.vatId).toBe("ATU12345678");
+  });
+
+  it("VIES names a Partner that has no name; a Partner with one keeps it", async () => {
+    viesAnswers(viesXml(true, "ACME HANDELS GMBH"));
+    await db.collection("partners").doc("p-nameless").set({
+      userId: USER, name: "", aliases: [], isActive: true, createdAt: Timestamp.now(), updatedAt: Timestamp.now(),
+    });
+    const named = (await handleTool(USER, "update_partner", { partnerId: "p-nameless", vatId: "ATU12345678" })) as Record<string, unknown>;
+    expect(named.name).toBe("Acme Handels Gmbh");
+    const kept = (await handleTool(USER, "update_partner", { partnerId: "p-amazon", vatId: "ATU12345678" })) as Record<string, unknown>;
+    expect(kept.name).toBe("Amazon EU");
+  });
+
+  it("no VAT ID, no check and no vatIdCheck; clearing one asks VIES nothing", async () => {
+    const calls = viesAnswers(viesXml(true, "X"));
+    const res = (await handleTool(USER, "update_partner", { partnerId: "p-amazon", website: "https://amazon.example" })) as Record<
+      string,
+      unknown
+    >;
+    expect(res).not.toHaveProperty("vatIdCheck");
+    const cleared = (await handleTool(USER, "update_partner", { partnerId: "p-amazon", vatId: "" })) as Record<string, unknown>;
+    expect(cleared).not.toHaveProperty("vatIdCheck");
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe("the caller context is the server's (#665)", () => {
+  it("runTool takes only a known worker type, beside the arguments", async () => {
+    const barrel = (await barrelPromise) as Record<string, Callable>;
+    await expect(
+      barrel.runTool.run({
+        data: { tool: "get_partner", arguments: { partnerId: "p-amazon" }, workerType: "admin" },
+        auth: { uid: USER, token: {} },
+      })
+    ).rejects.toMatchObject({ code: "invalid-argument" });
+  });
+
+  it("the worker types are the agent's", async () => {
+    const { getAllWorkerTypes } = await import("@/lib/agent/worker-configs");
+    expect([...AGENT_WORKER_TYPES].sort()).toEqual([...getAllWorkerTypes()].sort());
+  });
+});
+
 describe("guard: a chat tool with an MCP twin never touches the database itself", () => {
   /**
    * Chat tools whose name is an MCP tool's but which keep their own body:
@@ -454,9 +902,6 @@ describe("guard: a chat tool with an MCP twin never touches the database itself"
    * record first. Wrapping them is not part of #616; this list only shrinks.
    */
   const NOT_YET_WRAPPED = new Set([
-    "assignPartnerToFile",
-    "assignPartnerToTransaction",
-    "connectFileToTransaction",
     "createPartner",
     "dismissSplitSuggestion",
     "getCorrection",
@@ -469,7 +914,6 @@ describe("guard: a chat tool with an MCP twin never touches the database itself"
     "unlinkCorrection",
     "unlinkReceipt",
     "unmarkFileAsCopy",
-    "updatePartner",
   ]);
   const snake = (s: string) => s.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
 
@@ -510,6 +954,10 @@ describe("guard: a chat tool with an MCP twin never touches the database itself"
       getPartner: { partnerId: "p-amazon" },
       updateTransaction: { transactionId: "t-client", description: "probe" },
       createSource: { name: "Probe", iban: "AT611904300234573201" },
+      assignPartnerToTransaction: { transactionId: "t-client", partnerId: "p-amazon" },
+      assignPartnerToFile: { fileId: "f-coffee", partnerId: "p-amazon" },
+      updatePartner: { partnerId: "p-amazon", website: "https://amazon.example" },
+      connectFileToTransaction: { fileId: "f-coffee", transactionId: "t-fee", skipValidation: true },
     };
     for (const t of wrappedTools) {
       const res = JSON.stringify(await t.invoke(own[t.name] ?? {}, CONFIG));

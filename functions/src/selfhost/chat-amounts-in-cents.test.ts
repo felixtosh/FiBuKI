@@ -16,8 +16,17 @@ import { __resetTriggerShim } from "./trigger-shim";
 
 // searchLocalFiles asks the matcher for a ranking over HTTP; here the ranking
 // is fixed, since only what the tool reports about each File is under test.
+// connectFileToTransaction wraps its MCP twin (#665): runTool runs in-process
+// as the auth header's User.
 vi.mock("@/lib/api/firebase-callable", () => ({
-  callFirebaseFunction: async (name: string) => {
+  callFirebaseFunction: async (name: string, data: unknown, authHeader?: string) => {
+    if (name === "runTool") {
+      const { runToolCallable } = (await import("../tools/runToolCallable")) as unknown as {
+        runToolCallable: { run: (req: { data: unknown; auth: { uid: string; token: object } }) => Promise<unknown> };
+      };
+      const uid = (authHeader || "").replace(/^Bearer uid:/, "");
+      return JSON.parse(JSON.stringify((await runToolCallable.run({ data, auth: { uid, token: {} } })) ?? null));
+    }
     if (name === "findFileMatchesForTransaction") {
       return {
         matches: [{ fileId: "f-invoice", confidence: 92, matchSources: ["amount_exact", "partner"] }],
