@@ -568,7 +568,7 @@ describe("assigning a Partner to a Transaction: one write, the caller's provenan
       { transactionId: "t-client", partnerId: "p-amazon" },
       CONFIG
     )) as Record<string, unknown>;
-    expect(chat).toEqual({ success: true, transactionId: "t-client", partnerId: "p-amazon", partnerName: "Amazon EU" });
+    expect(chat).toEqual({ success: true, transactionId: "t-client", partnerId: "p-amazon" });
     const byChat = (await db.collection("transactions").doc("t-client").get()).data()!;
     expect(byChat.partnerMatchedBy).toBe("ai");
     expect(byChat.partnerType).toBe("user");

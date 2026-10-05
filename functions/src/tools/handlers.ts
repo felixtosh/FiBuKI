@@ -2860,7 +2860,7 @@ export async function assignPartnerToTx(
   if (!txDoc.exists || txDoc.data()?.userId !== userId) {
     throw new Error("Transaction not found");
   }
-  const partnerDoc = await loadWritablePartner(userId, partnerId as string);
+  await loadWritablePartner(userId, partnerId as string);
 
   const { assignPartnerToTransactionInternal } = await import("../partners/assignPartnerToTransaction");
   await assignPartnerToTransactionInternal(
@@ -2873,12 +2873,7 @@ export async function assignPartnerToTx(
     }
   );
 
-  return {
-    success: true,
-    transactionId,
-    partnerId,
-    partnerName: (partnerDoc.data()!.name as string) || null,
-  };
+  return { success: true, transactionId, partnerId };
 }
 
 export async function removePartnerFromTx(userId: string, args: Record<string, unknown>) {
