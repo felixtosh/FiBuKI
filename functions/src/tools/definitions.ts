@@ -1182,7 +1182,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "first (get_partner or list_partners), change the list, and write the whole list back; " +
       "pass [] to clear it. Use this to strip a wrong alias, e.g. an Invoicing Agent's name a " +
       "partner learned by mistake. To fold a duplicate partner into another, use merge_partners, " +
-      "not an alias copy. Returns the partner as get_partner does.",
+      "not an alias copy. A VAT ID is checked against the EU VIES register and stored either way; " +
+      "vatIdCheck in the reply says what VIES answered ({ vatId, valid, name, error }; valid is " +
+      "null when VIES could not be asked). Returns the partner as get_partner does, plus " +
+      "vatIdCheck when you passed a VAT ID.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1193,7 +1196,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           items: { type: "string" },
           description: "Alternative names. Replaces the stored list.",
         },
-        vatId: { type: "string", description: "VAT ID (e.g. ATU12345678); empty string clears it" },
+        vatId: { type: "string", description: "VAT ID (e.g. ATU12345678); checked via VIES; empty string clears it" },
         ibans: {
           type: "array",
           items: { type: "string" },
