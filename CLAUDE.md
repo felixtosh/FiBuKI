@@ -68,8 +68,9 @@ Things that cost real time to find. All of `fibuki.com` runs the self-host stack
   skips optional deps that need 22 (`@google-cloud/firestore` and ~70 others)
   and tests fail far from the cause. `node -v` first.
 - **Local dev = the self-host stack, not Firebase emulators.** API:
-  `cd functions && npm run selfhost:api` (port 8788); web: `npx next dev -p 3000`
-  with `FIBUKI_BACKEND=selfhost`, `NEXT_PUBLIC_FIBUKI_API_URL=http://localhost:8788`
+  `cd functions && npm run selfhost:api` (port 8788); web: `npm run dev -- -p 3000`
+  (not bare `next dev`: `predev` copies pdf.js's wasm decoders, without which
+  JPEG 2000 scans draw blank) with `FIBUKI_BACKEND=selfhost`, `NEXT_PUBLIC_FIBUKI_API_URL=http://localhost:8788`
   and `NEXT_PUBLIC_FUNCTIONS_URL=http://localhost:8788` (server-side callables, e.g.
   the chat's tools; without it they fall back to a dead Firebase emulator).
   Dev login: `FIBUKI_DEV_UID` (API) plus `NEXT_PUBLIC_FIBUKI_DEV_UID` /
