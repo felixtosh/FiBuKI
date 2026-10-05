@@ -6,8 +6,12 @@
  * - handlers.ts (ToolName type + dispatch)
  * - mcp-server.ts (MCP protocol tool listing and annotations)
  * - mcp-api/index.ts (REST API tool listing)
- * - lib/data/generated-tool-definitions.ts (the web app's copy: the chat's
- *   wrappers, /api/openapi.json, llm.txt), regenerated and checked by CI
+ * - the web app, imported directly: the chat's wrappers
+ *   (lib/agent/tools/mcp-tools.ts), /api/openapi.json and llm.txt
+ *
+ * The web app imports this file, so it stays free of server-only imports
+ * (type-only imports are erased); the guard in
+ * functions/src/selfhost/browser-imports.test.ts proves it.
  *
  * A new tool is a definition here and a case in handlers.ts.
  */
