@@ -118,7 +118,8 @@ export const SUBTREE_DOC_POLICIES: Readonly<Record<string, CollectionPolicy>> = 
 /** users/{uid}/<name>/... — uid must equal auth.uid, then this table. */
 export const SUBTREE_POLICIES: Readonly<Record<string, CollectionPolicy>> = {
   settings: { read: "authed", create: "authed", update: "authed", delete: "authed" },
-  notifications: { read: "authed", create: "authed", update: "authed", delete: "authed" },
+  // Created and pruned only on the server; the browser marks one or all read (ADR-0016, #711).
+  notifications: { read: "authed", create: "none", update: "authed", delete: "none" },
   chatSessions: { read: "authed", create: "authed", update: "authed", delete: "authed" },
   // Read by the reports screen; written only on the server (ADR-0016, #625).
   reports: { read: "authed", create: "none", update: "none", delete: "none" },
@@ -139,12 +140,12 @@ export const SUBTREE_POLICIES: Readonly<Record<string, CollectionPolicy>> = {
 };
 
 /**
- * The users/{uid} document itself, when uid matches: read and create. No browser
- * code updates it; the server does (ADR-0016, #625).
+ * The users/{uid} document itself, when uid matches: read only. The browser
+ * never creates or updates it; the server does (ADR-0016, #625, #711).
  */
 export const USER_DOC_POLICY: CollectionPolicy = {
   read: "authed",
-  create: "authed",
+  create: "none",
   update: "none",
   delete: "none",
 };
