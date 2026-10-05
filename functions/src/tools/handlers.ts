@@ -1544,7 +1544,7 @@ export async function unmarkFileAsNotInvoice(userId: string, args: Record<string
   // Un-marking re-extracts the File, which a Hand Correction refuses (#639).
   const refused = unmarkRefusal(fileData);
   if (refused) {
-    throw new Error(refused);
+    throw new Error(refused.message);
   }
 
   // Manual connections outrank a re-run of transaction matching.

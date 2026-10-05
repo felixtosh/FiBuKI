@@ -33,7 +33,12 @@ export type RetryRefusalCode =
   | "HAND_CORRECTED";
 
 export class RetryExtractionError extends Error {
-  constructor(readonly code: RetryRefusalCode, message: string) {
+  constructor(
+    readonly code: RetryRefusalCode,
+    message: string,
+    /** On `HAND_CORRECTED`: the fields a person corrected, which the UI names (#639). */
+    readonly fields?: string[]
+  ) {
     super(message);
     this.name = "RetryExtractionError";
   }
@@ -126,7 +131,7 @@ export async function retryExtractionForFile(
   // callable and the bulk retry all hear the same answer.
   const refusal = reExtractionRefusal(fileData, { overwriteCorrections });
   if (refusal) {
-    throw new RetryExtractionError("HAND_CORRECTED", refusal.message);
+    throw new RetryExtractionError("HAND_CORRECTED", refusal.message, refusal.fields ?? []);
   }
   const correctedFields = correctedFieldsOf(fileData);
 
