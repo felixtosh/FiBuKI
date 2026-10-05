@@ -498,7 +498,8 @@
       "decline": "Not a Copy",
       "copies": "Copies",
       "copiesExplanation": "Other Files of this document. They are not counted.",
-      "failed": "That did not work: {message}"
+      "failed": "That did not work: {message}",
+      "handCorrected": "This File has your corrections, so it can't be marked as a Copy while it is marked not an invoice."
     },
     "correction": {
       "label": "Invoice Correction",
@@ -579,6 +580,23 @@
       "parsing": "Parsing...",
       "notInvoice": "Not an invoice",
       "failed": "Extraction failed"
+    },
+    "handCorrection": {
+      "title": "Your corrections will be lost",
+      "body": "This File has your corrections to {fields}. Extracting it again replaces them with what the document says.",
+      "keep": "Keep corrections",
+      "extractAnyway": "Extract anyway",
+      "fields": {
+        "amount": "Amount",
+        "date": "Document date",
+        "tipAmount": "Tip",
+        "other": "other fields"
+      }
+    },
+    "bulkMarkAsInvoice": {
+      "marked": "{count, plural, one {Marked # File as an invoice.} other {Marked # Files as invoices.}}",
+      "skipped": "{skipped, plural, one {# skipped: it has your corrections. Open it to extract again.} other {# skipped: they have your corrections. Open them to extract again.}}",
+      "failed": "{failed, plural, one {# failed.} other {# failed.}}"
     }
   },
   "progress": {
