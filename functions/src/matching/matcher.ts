@@ -755,7 +755,8 @@ export interface AutoConnectRefusal {
  * documented Transaction still takes this File when the other File of its
  * Receipt Link is on it (#571): the pair counts once. A tie connects nothing
  * (#667): two or more of what is left with the same amount in the same
- * currency all stay suggestions.
+ * currency all stay suggestions, unless one is that paired Transaction,
+ * which then keeps the File alone.
  */
 export async function selectAutoConnects(
   db: Db,
@@ -862,7 +863,7 @@ export async function selectAutoConnects(
       transactionId: match.transactionId,
       confidence: match.confidence,
       reason:
-        `a tie: another uncovered Transaction of ${(Math.abs(match.preview.amount) / 100).toFixed(2)} ` +
+        `a tie: another Transaction of ${(Math.abs(match.preview.amount) / 100).toFixed(2)} ` +
         `${currencyOf(match)} reaches the threshold too`,
       tie: true,
     });
@@ -875,18 +876,19 @@ function currencyOf(match: Match): string {
 }
 
 /**
- * The picks that tie (#667): two or more on uncovered Transactions with the
- * same amount in the same currency. A paired pick sits on a covered
- * Transaction by definition, so it never counts.
+ * The picks that tie (#667): two or more with the same amount in the same
+ * currency. Where one of them is a paired pick (#571), the Receipt Link
+ * decides: the paired pick stays and only the others are tied.
  */
 function tiedPicks(picks: AutoConnectPick[]): AutoConnectPick[] {
   const byAmount = new Map<string, AutoConnectPick[]>();
   for (const pick of picks) {
-    if (pick.autoConnectReason === "paired") continue;
     const key = `${currencyOf(pick.match)}|${pick.match.preview.amount}`;
     byAmount.set(key, [...(byAmount.get(key) ?? []), pick]);
   }
-  return [...byAmount.values()].filter((group) => group.length > 1).flat();
+  return [...byAmount.values()]
+    .filter((group) => group.length > 1)
+    .flatMap((group) => group.filter((p) => p.autoConnectReason !== "paired"));
 }
 
 /**

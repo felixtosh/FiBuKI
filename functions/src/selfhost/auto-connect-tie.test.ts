@@ -15,7 +15,9 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import { getFirestore, Timestamp, __resetFirestoreShim } from "./firestore-shim";
+import { connectFile } from "../fileConnections/writer";
 import {
+  autoConnectTies,
   selectAutoConnects,
   storedSuggestionsOf,
   transactionsForFile,
@@ -234,5 +236,64 @@ describe("every surface that auto-connects a File applies the tie rule (#667)", 
     const result = await matchFilesForPartnerInternal(ME, "p", ["t-apr"]);
     expect(result.autoMatched).toBe(1);
     expect(await connectionsOf("f")).toEqual([expect.objectContaining({ transactionId: "t-apr" })]);
+  });
+});
+
+describe("a Receipt whose invoice is already on the charge of this month (#667, #571)", () => {
+  // Stefan, 2026-10-05: the paired charge keeps the Receipt, and a same-amount
+  // second charge at the threshold is refused as a tie. Before, it took both.
+  const receiptFields = {
+    extractedSelfDesignation: "Receipt",
+    extractedInvoiceNumber: "INV-1",
+    extractedPaidInvoiceNumber: "INV-1",
+  };
+
+  const seedInvoiceOnApril = async () => {
+    await seedInvoice("f-inv", { extractedInvoiceNumber: "INV-1" });
+    await seedCharge("t-apr", "2026-04-01");
+    await seedCharge("t-may", "2026-05-01");
+    await connectFile(db as never, ME, { fileId: "f-inv", transactionId: "t-apr" }, { origin: "manual" });
+  };
+
+  const refresh = (fileId: string) =>
+    (refreshTransactionMatchesCallable as unknown as { run: (req: unknown) => Promise<unknown> }).run({
+      data: { fileId },
+      auth: { uid: ME, token: {} },
+    });
+
+  it("connects only the paired charge and refuses the twin as a tie", async () => {
+    await seedInvoiceOnApril();
+    await seedInvoice("f-rec", { ...receiptFields, receiptLink: { fileId: "f-inv", setBy: "manual" } });
+    const f = await file("f-rec");
+    const result = await transactionsForFile(db, ME, f);
+    const scored = Object.fromEntries(result.matches.map((m) => [m.transactionId, m.confidence]));
+    expect(scored["t-apr"]).toBeGreaterThanOrEqual(THRESHOLD);
+    expect(scored["t-may"]).toBeGreaterThanOrEqual(THRESHOLD);
+
+    const { picks, refusals } = await selectAutoConnects(db, ME, f, result);
+
+    expect(picks.map((p) => [p.match.transactionId, p.autoConnectReason])).toEqual([["t-apr", "paired"]]);
+    expect(refusals).toEqual([expect.objectContaining({ transactionId: "t-may", tie: true })]);
+    expect((await autoConnectTies(db, ME, [f])).get("f-rec")).toEqual(new Set(["t-may"]));
+
+    await refresh("f-rec");
+    expect((await connectionsOf("f-rec")).map((c) => c.transactionId)).toEqual(["t-apr"]);
+  });
+
+  it("without a pairing, a covered charge does not count and the open one connects, as before", async () => {
+    await seedInvoiceOnApril();
+    await seedInvoice("f-rec", receiptFields);
+
+    await refresh("f-rec");
+    expect((await connectionsOf("f-rec")).map((c) => c.transactionId)).toEqual(["t-may"]);
+  });
+
+  it("an unpaired same-amount tie still connects neither", async () => {
+    await seedTie();
+    const f = await file("f");
+    const { picks } = await selectAutoConnects(db, ME, f, await transactionsForFile(db, ME, f));
+    expect(picks).toEqual([]);
+    await refresh("f");
+    expect(await connectionsOf("f")).toEqual([]);
   });
 });
