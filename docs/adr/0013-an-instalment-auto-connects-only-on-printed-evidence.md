@@ -74,7 +74,15 @@ claimed fraction capped so a File's instalments never claim more than the whole 
   connected-payments summary Coverage uses, so the Receipt Link's "a pair counts once"
   holds here too.
 - Auto-connects made under rule 4 carry their own reason, `instalment`, beside
-  `remainder_same_day` and `paired`, so they are findable as a class.
+  `remainder_same_day` and `paired`, so they are findable as a class, whichever surface
+  makes them (the upload trigger, Partner matching, find-receipt).
+- A later instalment is paid months after the invoice, on the day the schedule names. So a
+  payment judged as a printed instalment, or closing the Outstanding amount of a File that
+  prints instalments, has its date scored against that instalment's printed due date, and
+  the File is matched within the usual window around each printed due date too. A File
+  printing no instalments keeps its own dates and window. A printed due date more than a
+  month before the File's date, or more than a year after it, is taken for a misread and
+  counts for neither.
 - The File detail panel shows the Outstanding amount, and an overpayment beside "paid in
   full": Outstanding never goes below zero, but what the payments came to beyond the File
   stays visible.
