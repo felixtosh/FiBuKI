@@ -34,6 +34,12 @@ const run = applyImportRemapCallable as unknown as (
 ) => Promise<{ updated: number; skipped: number }>;
 
 const USER = "user-remap";
+const MAPPINGS = [
+  { csvColumn: "Datum", targetField: "date", confidence: 1, userConfirmed: true, keepAsMetadata: false, format: "de" },
+  { csvColumn: "Betrag", targetField: "amount", confidence: 1, userConfirmed: true, keepAsMetadata: false, format: "de" },
+  { csvColumn: "Notiz", targetField: null, confidence: 0, userConfirmed: true, keepAsMetadata: true },
+];
+const OLD_MAPPINGS = [{ csvColumn: "Datum", targetField: "name", confidence: 0.4, userConfirmed: false, keepAsMetadata: false }];
 const row = (transactionId: string, extra: Record<string, unknown> = {}) => ({
   transactionId,
   date: "2026-09-03T00:00:00.000Z",
@@ -49,14 +55,87 @@ const row = (transactionId: string, extra: Record<string, unknown> = {}) => ({
 beforeEach(() => {
   store.clear();
   store.setDoc("sources", "s1", createTestSource({ userId: USER, iban: "AT12 3456", currency: "EUR" }));
+  store.setDoc("imports", "job-1", { userId: USER, sourceId: "s1", status: "completed", fieldMappings: OLD_MAPPINGS });
+  store.setDoc("imports", "card-job", { userId: USER, sourceId: "card", status: "completed", fieldMappings: OLD_MAPPINGS });
   store.setDoc("transactions", "t1", { userId: USER, importJobId: "job-1", amount: 1, name: "old", dedupeHash: "old" });
   store.setDoc("transactions", "t-other-import", { userId: USER, importJobId: "job-2", name: "keep" });
   store.setDoc("transactions", "t-other-user", { userId: "someone-else", importJobId: "job-1", name: "keep" });
 });
 
+const mappingsOf = (id: string) => (store.getDoc("imports", id) as { fieldMappings: unknown }).fieldMappings;
+
 describe("applyImportRemap", () => {
+  // #628: the new mappings are saved by the call that rewrites the Transactions.
+  it("saves the new column mappings on the Import", async () => {
+    await run(createTestContext(USER), { importJobId: "job-1", sourceId: "s1", fieldMappings: MAPPINGS, rows: [row("t1")] });
+    expect(mappingsOf("job-1")).toEqual(MAPPINGS);
+  });
+
+  it("saves the mappings when no row parsed under them", async () => {
+    await run(createTestContext(USER), { importJobId: "job-1", sourceId: "s1", fieldMappings: MAPPINGS, rows: [] });
+    expect(mappingsOf("job-1")).toEqual(MAPPINGS);
+  });
+
+  it("repeating a chunk is harmless", async () => {
+    const request = { importJobId: "job-1", sourceId: "s1", fieldMappings: MAPPINGS, rows: [row("t1")] };
+    await run(createTestContext(USER), request);
+    const once = { ...(store.getDoc("transactions", "t1") as Record<string, unknown>) };
+    const again = await run(createTestContext(USER), request);
+
+    expect(again).toMatchObject({ updated: 1, skipped: 0 });
+    const twice = store.getDoc("transactions", "t1") as Record<string, unknown>;
+    const { updatedAt: _a, ...onceRest } = once;
+    const { updatedAt: _b, ...twiceRest } = twice;
+    expect(twiceRest).toEqual(onceRest);
+    expect(mappingsOf("job-1")).toEqual(MAPPINGS);
+  });
+
+  it("refuses another User's Import and writes nothing", async () => {
+    store.setDoc("sources", "s-intruder", createTestSource({ userId: "intruder", currency: "EUR" }));
+    await expect(
+      run(createTestContext("intruder"), { importJobId: "job-1", sourceId: "s-intruder", fieldMappings: MAPPINGS, rows: [] })
+    ).rejects.toThrow(/denied/);
+    expect(mappingsOf("job-1")).toEqual(OLD_MAPPINGS);
+  });
+
+  it("refuses an Import of another bank account and writes nothing", async () => {
+    store.setDoc("sources", "s2", createTestSource({ userId: USER, currency: "EUR" }));
+    await expect(
+      run(createTestContext(USER), { importJobId: "job-1", sourceId: "s2", fieldMappings: MAPPINGS, rows: [row("t1")] })
+    ).rejects.toThrow();
+    expect(mappingsOf("job-1")).toEqual(OLD_MAPPINGS);
+    expect((store.getDoc("transactions", "t1") as { name: string }).name).toBe("old");
+  });
+
+  it("refuses a missing Import", async () => {
+    await expect(
+      run(createTestContext(USER), { importJobId: "nope", sourceId: "s1", fieldMappings: MAPPINGS, rows: [] })
+    ).rejects.toThrow(/not found/i);
+  });
+
+  it("refuses a draft Import: its mappings belong to the import wizard", async () => {
+    store.setDoc("imports", "draft-1", { userId: USER, sourceId: "s1", status: "draft", fieldMappings: OLD_MAPPINGS });
+    await expect(
+      run(createTestContext(USER), { importJobId: "draft-1", sourceId: "s1", fieldMappings: MAPPINGS, rows: [] })
+    ).rejects.toThrow(/draft/);
+    expect(mappingsOf("draft-1")).toEqual(OLD_MAPPINGS);
+  });
+
+  it.each([
+    ["missing mappings", undefined],
+    ["mappings that are not a list", { csvColumn: "Datum" }],
+    ["a mapping without a column", [{ targetField: "date", confidence: 1, userConfirmed: true, keepAsMetadata: false }]],
+    ["a mapping with an unknown field", [{ ...MAPPINGS[0], userId: "intruder" }]],
+  ])("refuses %s and writes nothing", async (_name, fieldMappings) => {
+    await expect(
+      run(createTestContext(USER), { importJobId: "job-1", sourceId: "s1", fieldMappings, rows: [row("t1")] })
+    ).rejects.toThrow();
+    expect(mappingsOf("job-1")).toEqual(OLD_MAPPINGS);
+    expect((store.getDoc("transactions", "t1") as { name: string }).name).toBe("old");
+  });
+
   it("rewrites the transaction and computes the dedupe hash on the server", async () => {
-    const result = await run(createTestContext(USER), { importJobId: "job-1", sourceId: "s1", rows: [row("t1")] });
+    const result = await run(createTestContext(USER), { importJobId: "job-1", sourceId: "s1", fieldMappings: MAPPINGS, rows: [row("t1")] });
 
     expect(result).toMatchObject({ updated: 1, skipped: 0 });
     const stored = store.getDoc("transactions", "t1") as Record<string, unknown>;
@@ -68,8 +147,8 @@ describe("applyImportRemap", () => {
 
   it("uses the source id as identifier for an account without an IBAN", async () => {
     store.setDoc("sources", "card", createTestSource({ userId: USER, currency: "EUR", iban: undefined }));
-    store.setDoc("transactions", "t-card", { userId: USER, importJobId: "job-1" });
-    await run(createTestContext(USER), { importJobId: "job-1", sourceId: "card", rows: [row("t-card")] });
+    store.setDoc("transactions", "t-card", { userId: USER, importJobId: "card-job" });
+    await run(createTestContext(USER), { importJobId: "card-job", sourceId: "card", fieldMappings: MAPPINGS, rows: [row("t-card")] });
     const stored = store.getDoc("transactions", "t-card") as { dedupeHash: string };
     expect(stored.dedupeHash).toBe(
       computeDedupeHash({ date: "2026-09-03", amount: -2390, sourceIdentifier: "card", reference: "Einkauf 7" })
@@ -80,6 +159,7 @@ describe("applyImportRemap", () => {
     const result = await run(createTestContext(USER), {
       importJobId: "job-1",
       sourceId: "s1",
+      fieldMappings: MAPPINGS,
       rows: [row("t-other-user"), row("t-other-import"), row("nope"), row("t1")],
     });
     expect(result).toMatchObject({ updated: 1, skipped: 3 });
@@ -88,7 +168,7 @@ describe("applyImportRemap", () => {
   });
 
   it("refuses a source that is not the caller's", async () => {
-    await expect(run(createTestContext("intruder"), { importJobId: "job-1", sourceId: "s1", rows: [row("t1")] })).rejects.toThrow(/denied/);
+    await expect(run(createTestContext("intruder"), { importJobId: "job-1", sourceId: "s1", fieldMappings: MAPPINGS, rows: [row("t1")] })).rejects.toThrow(/denied/);
     expect((store.getDoc("transactions", "t1") as { name: string }).name).toBe("old");
   });
 
@@ -97,12 +177,12 @@ describe("applyImportRemap", () => {
     ["an invalid date", row("t1", { date: "yesterday" })],
     ["a missing transaction id", row("", {})],
   ])("rejects %s before writing anything", async (_name, bad) => {
-    await expect(run(createTestContext(USER), { importJobId: "job-1", sourceId: "s1", rows: [row("t1"), bad] })).rejects.toThrow();
+    await expect(run(createTestContext(USER), { importJobId: "job-1", sourceId: "s1", fieldMappings: MAPPINGS, rows: [row("t1"), bad] })).rejects.toThrow();
     expect((store.getDoc("transactions", "t1") as { name: string }).name).toBe("old");
   });
 
   it("rejects an oversized request", async () => {
     const many = Array.from({ length: 5001 }, (_, i) => row(`t${i}`));
-    await expect(run(createTestContext(USER), { importJobId: "job-1", sourceId: "s1", rows: many })).rejects.toThrow(/5000/);
+    await expect(run(createTestContext(USER), { importJobId: "job-1", sourceId: "s1", fieldMappings: MAPPINGS, rows: many })).rejects.toThrow(/5000/);
   });
 });

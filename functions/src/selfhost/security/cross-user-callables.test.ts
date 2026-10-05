@@ -62,6 +62,19 @@ const ID_KEYS = [
   "userId", "uid", "targetUserId", "ownerId",
 ];
 
+/** A column mapping and a parsed row as the import remap takes them (#628). */
+const REMAP_MAPPINGS = [{ csvColumn: "Datum", targetField: "date", confidence: 1, userConfirmed: true, keepAsMetadata: false, format: "de" }];
+const remapRow = (transactionId: string) => ({
+  transactionId,
+  date: "2026-09-03T00:00:00.000Z",
+  amount: -1,
+  name: "pwned",
+  partner: null,
+  reference: null,
+  partnerIban: null,
+  original: { date: "03.09.2026", amount: "-0,01", rawRow: {} },
+});
+
 /**
  * Payload shapes aimed at the attacker's OWN account. Whatever a callable
  * accepts here is a correctly shaped request for it, which `retarget` then
@@ -97,6 +110,8 @@ function ownPayloads(): Array<Record<string, unknown>> {
     { transactionId: A.transaction, historyId: "a-hist-1" },
     { tool: "get_transaction", arguments: { transactionId: A.transaction } },
     { tool: "update_transaction", arguments: { transactionId: A.transaction, description: "probe" } },
+    // #628: a remap saves its column mappings on the Import.
+    { importJobId: A.import, sourceId: A.source, fieldMappings: REMAP_MAPPINGS, rows: [] },
   ];
 }
 
@@ -169,6 +184,10 @@ function payloads(): Array<Record<string, unknown>> {
     { tool: "update_transaction", arguments: { transactionId: V.transaction, description: "pwned" } },
     { tool: "list_transactions", arguments: { userId: VICTIM, uid: VICTIM } },
     { tool: "list_files", userId: VICTIM, uid: VICTIM, arguments: {} },
+    // #628: the victim's Import under the attacker's bank account, and the other way round.
+    { importJobId: V.import, sourceId: A.source, fieldMappings: REMAP_MAPPINGS, rows: [] },
+    { importJobId: A.import, sourceId: V.source, fieldMappings: REMAP_MAPPINGS, rows: [] },
+    { importJobId: A.import, sourceId: A.source, fieldMappings: REMAP_MAPPINGS, rows: [remapRow(V.transaction)] },
     // Every id at once, in arrays, in case a handler takes "ids" generically.
     { ids: ALL_VICTIM_IDS, items: ALL_VICTIM_IDS.map((id) => ({ id })) },
   ];

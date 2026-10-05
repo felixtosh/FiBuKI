@@ -23,7 +23,7 @@ const TOKEN = "tok-policy-user";
 /** Read-only for the client: what each locked table still lets a browser do. */
 const readOnly = (read: CollectionPolicy["read"]): CollectionPolicy => ({ read, create: "none", update: "none", delete: "none" });
 
-const LOCKED_TOP_LEVEL = ["emailIntegrations", "agentSearchSessions", "aiUsage", "precisionSearchQueue"] as const;
+const LOCKED_TOP_LEVEL = ["emailIntegrations", "agentSearchSessions", "aiUsage", "precisionSearchQueue", "imports"] as const;
 
 describe("the policy", () => {
   it.each(LOCKED_TOP_LEVEL)("%s is read-only for the client", (name) => {
@@ -54,6 +54,7 @@ describe("the data plane enforces it", () => {
     ["agentSearchSessions/as-1", { userId: USER, status: "active" }],
     ["aiUsage/au-1", { userId: USER, function: "chat", inputTokens: 1 }],
     ["precisionSearchQueue/ps-1", { userId: USER, status: "pending" }],
+    ["imports/im-1", { userId: USER, sourceId: "s-1", status: "completed", fieldMappings: [] }],
     [`users/${USER}/reports/r-1`, { status: "draft" }],
     [`users/${USER}`, { email: "me@example.test" }],
   ];

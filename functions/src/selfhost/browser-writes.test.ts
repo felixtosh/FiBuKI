@@ -45,7 +45,6 @@ const BROWSER_ALLOWED: Allowances = {
     count: 8,
     why: "global Partners, promotion candidates and presets: admins only (ADR-0016); addEmailDomainToPartner (#631)",
   },
-  "lib/operations/remap-ops.ts": { count: 1, why: "import remap (#628)" },
   "lib/operations/source-ops.ts": { count: 1, why: "sources (#634)" },
   "lib/operations/user-data-ops.ts": { count: 1, why: "business identity (#632)" },
   "hooks/use-worker-queue.ts": { count: 6, why: "worker jobs (#633)" },

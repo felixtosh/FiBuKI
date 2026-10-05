@@ -39,7 +39,6 @@ export const TOP_LEVEL_POLICIES: Readonly<Record<string, CollectionPolicy>> = {
   transactions: ownerCrud,
   files: ownerCrud,
   partners: ownerCrud,
-  imports: ownerCrud,
   noReceiptCategories: ownerCrud,
   // File Connections are written only by their one writer on the server (#612).
   fileConnections: ownerReadOnly,
@@ -51,6 +50,8 @@ export const TOP_LEVEL_POLICIES: Readonly<Record<string, CollectionPolicy>> = {
   agentSearchSessions: ownerReadOnly,
   aiUsage: ownerReadOnly,
   precisionSearchQueue: ownerReadOnly,
+  // Remapping an Import saves its mappings in applyImportRemap (#628).
+  imports: ownerReadOnly,
 
   invoices: ownerReadOnly,
   functionCalls: ownerReadOnly,
