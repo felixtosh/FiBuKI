@@ -369,12 +369,24 @@ describe.each(DISAGREEING)("a connect of a $shape pair (#642)", ({ fileLists, tx
 
   it("leaves an invoice paid by the Transaction paid when the legacy record gives way to the derived one", async () => {
     await seedDisagreeing("legacy-random", { invoiceId: "inv-1" });
-    await db.collection("invoices").doc("inv-1").set({ userId: ME, status: "paid", paidByTransactionId: "t-1" });
+    // A revert followed by a re-pay would end `paid` too, with a new `paidAt`.
+    await db.collection("invoices").doc("inv-1").set({ userId: ME, status: "paid", paidByTransactionId: "t-1", paidAt: DAY });
     await drainTriggers();
     expect(await connect("manual")).toMatchObject({ status: "connected" });
     await drainTriggers();
     expect((await records()).map((d) => d.id)).toEqual([connectionDocId("f-1", "t-1")]);
-    expect(await data("invoices", "inv-1")).toMatchObject({ status: "paid", paidByTransactionId: "t-1" });
+    const invoice = await data("invoices", "inv-1");
+    expect(invoice).toMatchObject({ status: "paid", paidByTransactionId: "t-1" });
+    expect(invoice.paidAt.toMillis()).toBe(DAY.toMillis());
+  });
+
+  it("keeps one record under the derived id when the pair has a legacy record beside it", async () => {
+    await seedDisagreeing("dup-a");
+    await db.collection("fileConnections").doc(connectionDocId("f-1", "t-1")).set({ userId: ME, fileId: "f-1", transactionId: "t-1", connectionType: "manual", createdAt: DAY });
+    expect(await connect("manual")).toMatchObject({ status: "connected", connectionId: connectionDocId("f-1", "t-1") });
+    expect((await records()).map((d) => d.id)).toEqual([connectionDocId("f-1", "t-1")]);
+    expect((await data("files", "f-1")).transactionIds).toEqual(["t-1"]);
+    expect((await data("transactions", "t-1")).fileIds).toEqual(["f-1"]);
   });
 });
 
