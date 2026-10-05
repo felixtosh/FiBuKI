@@ -102,20 +102,27 @@ async function inTenant<T>(fn: (q: Exec) => Promise<T>): Promise<T> {
  * after this one.
  */
 export async function enqueueExtractionJob(request: ExtractionRequest): Promise<void> {
-  const params = [getTenantId(), request.fileId, request.userId, request.skipClassification];
+  const params = [
+    getTenantId(),
+    request.fileId,
+    request.userId,
+    request.skipClassification,
+    request.overwriteCorrections === true,
+  ];
   await inTenant((q) =>
     request.kind === "new"
       ? q(
-          `INSERT INTO extraction_jobs (tenant_id, file_id, user_id, skip_classification)
-           VALUES ($1, $2, $3, $4)
+          `INSERT INTO extraction_jobs (tenant_id, file_id, user_id, skip_classification, overwrite_corrections)
+           VALUES ($1, $2, $3, $4, $5)
            ON CONFLICT (tenant_id, file_id) DO NOTHING`,
           params,
         )
       : q(
-          `INSERT INTO extraction_jobs (tenant_id, file_id, user_id, skip_classification)
-           VALUES ($1, $2, $3, $4)
+          `INSERT INTO extraction_jobs (tenant_id, file_id, user_id, skip_classification, overwrite_corrections)
+           VALUES ($1, $2, $3, $4, $5)
            ON CONFLICT (tenant_id, file_id) DO UPDATE
              SET skip_classification = EXCLUDED.skip_classification,
+                 overwrite_corrections = EXCLUDED.overwrite_corrections,
                  user_id = EXCLUDED.user_id,
                  attempts = 0,
                  rerun = extraction_jobs.claimed_at IS NOT NULL`,
@@ -165,6 +172,8 @@ export interface ClaimedExtractionJob {
   fileId: string;
   userId: string;
   skipClassification: boolean;
+  /** The forced re-extraction: overwrite the File's Hand Correction (#184, #639). */
+  overwriteCorrections: boolean;
   /** A Retry arrived while the File last ran: apply its reset before extracting. */
   resetFirst: boolean;
   /** Names this claim, so a reclaimed worker cannot touch the next owner's row. */
@@ -189,7 +198,7 @@ export async function claimExtractionJob(): Promise<ClaimedExtractionJob | null>
            LIMIT 1
            FOR UPDATE OF j SKIP LOCKED
         )
-      RETURNING file_id, user_id, skip_classification, reset_on_claim`,
+      RETURNING file_id, user_id, skip_classification, overwrite_corrections, reset_on_claim`,
       [tenantId, token],
     );
     const row = res.rows[0];
@@ -208,6 +217,7 @@ export async function claimExtractionJob(): Promise<ClaimedExtractionJob | null>
       fileId: String(row.file_id),
       userId: String(row.user_id),
       skipClassification: row.skip_classification === true,
+      overwriteCorrections: row.overwrite_corrections === true,
       resetFirst: row.reset_on_claim === true,
       token,
     };
@@ -296,6 +306,7 @@ export async function runExtractionJob(
     const run = extractQueuedFile(job.fileId, {
       skipClassification: job.skipClassification,
       resetFirst: job.resetFirst,
+      overwriteCorrections: job.overwriteCorrections,
     });
     let timer: NodeJS.Timeout | undefined;
     const outcome = await Promise.race([

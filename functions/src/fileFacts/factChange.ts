@@ -7,15 +7,17 @@
  * the follow-ups that must run after it, or a refusal. It reads nothing and
  * writes nothing; `applyFactChange.ts` is the one applier that does both.
  *
- * A Fact Change names its origin, and the rules key on it. Today the origins
- * are the two Hand Correction doors: the File detail panel (`ui-correction`)
- * and the MCP correction tool (`mcp-correction`). They take one contract. The
- * one rule that differs is what counts as corrected: the panel posts the whole
- * record on every save, so only a value that differs from the stored one is a
+ * A Fact Change names its origin, and the rules key on it. The origins are
+ * the two Hand Correction doors, the File detail panel (`ui-correction`) and
+ * the MCP correction tool (`mcp-correction`), and Extraction (`extraction`,
+ * normal or forced, #639). The two doors take one contract. The one rule that
+ * differs is what counts as corrected: the panel posts the whole record on
+ * every save, so only a value that differs from the stored one is a
  * correction; an MCP caller names the fields it means, so what it passes is
- * what it corrects. Extraction, the identity sweep, Not Invoice and generated
- * invoices join as origins of their own (#639, #640); until then the
- * re-extraction check below is the module's whole say over Extraction.
+ * what it corrects. An Extraction hands over its reading
+ * (`extractionReading.ts`); on a File with a Hand Correction it is refused as
+ * a whole unless forced. The identity sweep, Not Invoice and generated
+ * invoices join as origins of their own (#640).
  *
  * Derived here, so no caller can forget one: the Document Type, the 11 % rate
  * review, the RKSV review, the direction review, the Line Item reconciliation,
@@ -29,7 +31,7 @@ import { reconcileLineItemsWithDocumentTotal } from "../extraction/lineItemRecon
 import { classifyFileRecord, documentTypeFields, type FileRecord } from "../documents/adapter";
 import { reviewFileRecordVatRates, vatRateReviewFields } from "../documents/vatRateReview";
 import { reviewFileRecordRksvCode, rksvCodeReviewFields } from "../documents/rksvCodeReview";
-import { retireRepairAmbiguity } from "../documents/repairReview";
+import { repairReviewFields, retireRepairAmbiguity, reviewRepair } from "../documents/repairReview";
 import {
   directionReviewFields,
   reviewDirection,
@@ -51,6 +53,7 @@ import {
   type FileExtractionCorrection,
 } from "./handCorrection";
 import { buildCorrectionProvenance, correctedFieldsOf, CORRECTABLE_FIELDS } from "./provenance";
+import { extractionFields, type ExtractionReading } from "./extractionReading";
 
 // ---------------------------------------------------------------------------
 // The interface
@@ -84,7 +87,20 @@ export interface HandCorrectionChange {
   at?: Timestamp;
 }
 
-export type FactChange = HandCorrectionChange;
+/** One Extraction's reading of the document, handed over to be written (#639). */
+export interface ExtractionChange {
+  origin: "extraction";
+  /**
+   * The forced re-extraction (`overwriteCorrections`): it overwrites a Hand
+   * Correction instead of being refused. The record of the correction stays.
+   */
+  forced?: boolean;
+  reading: ExtractionReading;
+  /** When the reading is written; stamps `lastFactChange` and `updatedAt`. */
+  at?: Timestamp;
+}
+
+export type FactChange = HandCorrectionChange | ExtractionChange;
 
 /**
  * What the applier does after the write.
@@ -201,6 +217,7 @@ const SCORED_FIELDS = [
 ] as const;
 
 export function decideFactChange(current: CurrentFile, change: FactChange): FactOutcome {
+  if (change.origin === "extraction") return decideExtraction(current, change);
   try {
     return decideHandCorrection(current, change);
   } catch (error) {
@@ -360,13 +377,69 @@ function decideHandCorrection(current: CurrentFile, change: HandCorrectionChange
 }
 
 // ---------------------------------------------------------------------------
+// An Extraction
+// ---------------------------------------------------------------------------
+
+/**
+ * One Extraction's reading, as the complete File update (#639).
+ *
+ * Refused as a whole on a File with a Hand Correction unless forced, never
+ * merged field by field (#184). Otherwise every derived field is computed on
+ * the File as the reading leaves it, after the VAT downgrade guard has decided
+ * which VAT evidence survives: the Document Type, the 11 % rate review, the
+ * direction review, the repair flags (computed from this reading, #275) and
+ * the RKSV review. The Due Date and Debit Date are read off the rows in
+ * `extractionFields`. An Extraction re-scores nothing itself: the File's
+ * matching runs after it, as it always has.
+ */
+function decideExtraction(current: CurrentFile, change: ExtractionChange): FactOutcome {
+  const { record } = current;
+  const refusal = reExtractionRefusal(record, { overwriteCorrections: change.forced === true });
+  if (refusal) return refusal;
+
+  const at = change.at ?? Timestamp.now();
+  const { reading } = change;
+  const update = extractionFields(record, reading);
+
+  const stored = { ...record, ...update } as FileRecord;
+  Object.assign(update, documentTypeFields(classifyFileRecord(stored)));
+  Object.assign(update, vatRateReviewFields(reviewFileRecordVatRates(stored)));
+  Object.assign(
+    update,
+    directionReviewFields(reviewDirection(toDirectionFacts(stored, current.linkedTransactions)))
+  );
+  Object.assign(
+    update,
+    repairReviewFields(
+      reviewRepair({
+        ambiguousFields: reading.kind === "invoice" ? reading.repairAmbiguousFields : [],
+        isNotInvoice: update.isNotInvoice === true,
+      })
+    )
+  );
+  Object.assign(update, rksvCodeReviewFields(reviewFileRecordRksvCode(stored)));
+
+  update[LAST_FACT_CHANGE_FIELD] = { origin: change.origin, at };
+  update.updatedAt = at;
+
+  return {
+    refused: false,
+    update,
+    followUps: followUpsOf(record, update, false),
+    changed: [],
+    movedDetails: [],
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Follow-ups
 // ---------------------------------------------------------------------------
 
+/** `mayRescore`: a Hand Correction that moved something. An Extraction never re-scores here. */
 function followUpsOf(
   record: Record<string, unknown>,
   update: Record<string, unknown>,
-  somethingMoved: boolean
+  mayRescore: boolean
 ): FollowUp[] {
   const followUps: FollowUp[] = [];
 
@@ -382,7 +455,7 @@ function followUpsOf(
   }
 
   if (
-    somethingMoved &&
+    mayRescore &&
     SCORED_FIELDS.some((field) => field in update && !sameStored(update[field], record[field]))
   ) {
     followUps.push({ kind: "rescore-suggestions" });

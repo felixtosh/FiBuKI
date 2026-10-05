@@ -154,6 +154,9 @@ export async function retryExtractionForFile(
     userId,
     skipClassification: isUserOverride,
     kind: "retry",
+    // The worker checks for a Hand Correction again when it runs (#639), so
+    // the overwrite this caller asked for travels with the request.
+    overwriteCorrections: overwriteCorrections === true,
   });
 
   return { queued: true, fileId };
