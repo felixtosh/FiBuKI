@@ -36,6 +36,8 @@ import {
 import type { TransactionType } from "../imports/transactionType";
 import { stripGenericBankingTerms } from "./genericBankingTerms";
 import { toDateSafe } from "../utils/toDateSafe";
+import { dayOf } from "../utils/storedDay";
+import { MATCH_WINDOW_DAYS, MATCH_WINDOW_MAX_INSTALMENT_DAYS } from "./matchWindow";
 
 // The payment total is Coverage's figure too, so it lives with Coverage (#239).
 // Re-exported here because this is where every caller already imports it from.
@@ -174,6 +176,13 @@ export interface ScoreBreakdown {
    * AUTO_MATCH_THRESHOLD, and it never connects itself.
    */
   instalmentCandidate?: true;
+  /**
+   * Present only when `date` was scored against a printed instalment's due
+   * date rather than the File's own dates (#716): the Transaction was judged
+   * against that instalment, or closed the Outstanding amount of a File that
+   * prints instalments. The stored day, as `YYYY-MM-DD`.
+   */
+  scoredAgainstDueDate?: string;
 }
 
 export interface TransactionPreview {
@@ -1045,6 +1054,94 @@ function furtherPaymentOf(
 }
 
 /**
+ * A printed instalment's due date as matching reads it (#716), or null. On a
+ * dated File, a due date more than MATCH_WINDOW_DAYS before the File's date
+ * or more than MATCH_WINDOW_MAX_INSTALMENT_DAYS after it is a misread (a wrong
+ * year) and is not read: it would otherwise open a window, and lend a date
+ * score, a year away from the File. Days are counted zone-free, as stored.
+ */
+export function instalmentDueDateOf(row: FileInstalment, fileDate: Date | null): Date | null {
+  const due = toDateSafe(row.dueDate);
+  if (!due) return null;
+  if (!fileDate) return due;
+  const after = daysAfter(fileDate, due);
+  return after >= -MATCH_WINDOW_DAYS && after <= MATCH_WINDOW_MAX_INSTALMENT_DAYS ? due : null;
+}
+
+/**
+ * The instalments a payment closing the Outstanding amount pays (#716): the
+ * trailing rows of the schedule, as printed, that add up to the Outstanding
+ * amount within REMAINDER_CLOSE_TOLERANCE. Paid in the printed order, what is
+ * left is the end of the schedule. Null when no tail adds up to it: the
+ * payments did not follow the schedule, and no printed row is known to be
+ * this one.
+ */
+function unpaidInstalments(instalments: FileInstalment[], outstanding: number): FileInstalment[] | null {
+  let sum = 0;
+  for (let i = instalments.length - 1; i >= 0; i--) {
+    sum += instalments[i].amount;
+    if (isRemainderClosed(outstanding - sum)) return instalments.slice(i);
+    if (sum > outstanding + REMAINDER_CLOSE_TOLERANCE) return null;
+  }
+  return null;
+}
+
+/**
+ * The printed due date a Transaction's date is scored against instead of the
+ * File's own dates (#716), or null for the File's own dates, as before.
+ *
+ *  - Judged against a printed instalment (nothing paid yet): the due date of
+ *    an instalment of that amount, the one nearest the booking of several.
+ *  - Judged against the Outstanding amount of a File that prints
+ *    instalments, and closing it (within REMAINDER_CLOSE_TOLERANCE, the rule
+ *    ADR-0013's auto-connect reads): the due date of the instalment still
+ *    unpaid, the one nearest the booking when several are.
+ *
+ * Only a due date `instalmentDueDateOf` reads counts; with none, the File's
+ * own dates. A File printing no instalments never gets here.
+ */
+function instalmentDueDateFor(
+  fileData: FileMatchingData,
+  further: FurtherPayment | null,
+  txData: TransactionData
+): Date | null {
+  const instalments = fileData.extractedInstalments ?? [];
+  if (!further || further.kind === "candidate" || instalments.length === 0) return null;
+
+  let rows: FileInstalment[] | null;
+  if (further.kind === "instalment") {
+    rows = instalments.filter((row) => row.amount === further.against);
+  } else {
+    if (!isRemainderClosed(further.against - Math.abs(txData.amount))) return null;
+    rows = unpaidInstalments(instalments, further.against);
+  }
+  if (!rows) return null;
+
+  const fileDate = toDateSafe(fileData.extractedDate);
+  const booked = txData.date.toDate();
+  const dues = rows
+    .map((row) => instalmentDueDateOf(row, fileDate))
+    .filter((d): d is Date => d !== null);
+  if (dues.length === 0) return null;
+  const distance = (due: Date) => Math.abs(daysAfter(due, booked));
+  return dues.reduce((best, due) => (distance(due) < distance(best) ? due : best));
+}
+
+/**
+ * Score a booking against a printed instalment's due date (#716): the
+ * standard proximity ladder on the day distance, and a booking on the due
+ * date or within the settlement lag after it is on time, as a Due Date hit
+ * is (#618).
+ */
+function calculateInstalmentDateScore(
+  dueDate: Date,
+  txDate: Date
+): { score: number; source: TransactionMatchSource | null } {
+  if (isDueDateHit(dueDate, txDate)) return { score: 25, source: "date_exact" };
+  return scoreDayDistance(Math.abs(daysAfter(dueDate, txDate)));
+}
+
+/**
  * Map a transaction Firestore doc's data into the shape `scoreTransaction`
  * expects. `documentedAmount` is what the Files already connected to this
  * transaction explain (#239); leave it out and the pair is scored against the
@@ -1362,10 +1459,20 @@ export function scoreTransaction(
   }
 
   // 2. Date scoring (0-25, boosted when partner matches), over the payment
-  // window when the File states a Due Date (#236).
+  // window when the File states a Due Date (#236). A Transaction judged
+  // against a printed instalment, or closing the Outstanding amount of a File
+  // that prints instalments, is dated against that instalment's due date
+  // instead (#716): a third instalment is paid months after the invoice, on
+  // the day the schedule names. It is a point, so it is its own endpoint.
   let endpointDateScore = 0;
   let neighbouringPeriod = false;
-  if (fileData.extractedDate) {
+  const instalmentDueDate = instalmentDueDateFor(fileData, further, txData);
+  if (instalmentDueDate) {
+    const result = calculateInstalmentDateScore(instalmentDueDate, txData.date.toDate());
+    dateScore = result.score;
+    endpointDateScore = result.score;
+    if (result.source) matchSources.push(result.source);
+  } else if (fileData.extractedDate) {
     const result = calculateDateScore(
       fileData.extractedDate.toDate(),
       txData.date.toDate(),
@@ -1426,7 +1533,7 @@ export function scoreTransaction(
   // Boost date score by 50% (max +12.5 pts) to prioritize correct month matching.
   // Also apply a date penalty when date is poor but partner matches - this prevents
   // a wrong-month transaction from scoring high just because partner/amount match.
-  if (partnerScore >= 15 && fileData.extractedDate) {
+  if (partnerScore >= 15 && (fileData.extractedDate || instalmentDueDate)) {
     if (dateScore >= 15) {
       // Good date match + partner match: boost date by 50%
       dateScore = Math.min(37, Math.round(dateScore * 1.5));
@@ -1550,6 +1657,7 @@ export function scoreTransaction(
       ...(further?.kind === "outstanding" ? { scoredAgainstOutstanding: further.against } : {}),
       ...(further?.kind === "instalment" ? { scoredAgainstInstalment: further.against } : {}),
       ...(further?.kind === "candidate" ? { instalmentCandidate: true as const } : {}),
+      ...(instalmentDueDate ? { scoredAgainstDueDate: dayOf(instalmentDueDate) } : {}),
     },
     preview: {
       date: txData.date,
@@ -1583,5 +1691,6 @@ export function formatScoreBreakdown(breakdown: ScoreBreakdown): string {
     parts.push(`vs-instalment:${(breakdown.scoredAgainstInstalment / 100).toFixed(2)}`);
   }
   if (breakdown.instalmentCandidate) parts.push("instalment-candidate");
+  if (breakdown.scoredAgainstDueDate) parts.push(`vs-due:${breakdown.scoredAgainstDueDate}`);
   return parts.join(" + ");
 }
