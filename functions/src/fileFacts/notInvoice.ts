@@ -8,7 +8,7 @@
  *
  * - The tip, its bound, the Due Date and the Debit Date go too. They are
  *   figures the Hand Correction record can name, and a File ruled not an
- *   invoice claims none (Stefan, 2026-10-05).
+ *   invoice claims none (Stefan, 2026-10-05). So do the instalments (#615).
  * - The Hand Correction record is cleared for the figures this wipes, in the
  *   same write. Every figure it can name is wiped here, so a record that
  *   named only those is gone, and un-marking the File later re-extracts it
@@ -42,6 +42,8 @@ export function notInvoiceFields(
     extractedTipBound: null,
     extractedDueDate: null,
     extractedDebitDate: null,
+    // The instalments the document printed (#615) go with the other figures.
+    extractedInstalments: null,
     lineItemsUnreconciled: false,
     lineItemsUnreconciledRates: null,
     vatSourceDowngraded: false,

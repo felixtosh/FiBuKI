@@ -72,6 +72,10 @@ async function seedCorrected(id: string, extra: Record<string, unknown> = {}) {
     extractedTipAmount: 200,
     extractedDueDate: day("2026-03-20"),
     extractedAdditionalFields: [{ key: "dueDate", label: "Fällig", value: "2026-03-20" }],
+    extractedInstalments: [
+      { amount: 5000, dueDate: day("2026-03-20") },
+      { amount: 4999, dueDate: day("2026-04-20") },
+    ],
     extractedPartner: "Lieferant GmbH",
     invoiceDirection: "outgoing",
     extractionCorrectedFields: {
@@ -110,6 +114,7 @@ describe("marking a File Not Invoice clears its Hand Correction record (#640)", 
       extractedAmount: null,
       extractedTipAmount: null,
       extractedDueDate: null,
+      extractedInstalments: null,
       invoiceDirection: null,
       extractionCorrectedFields: null,
       extractionCorrectedAt: null,

@@ -100,6 +100,10 @@ function invoiceFile(extra: Record<string, unknown> = {}): Record<string, unknow
     extractedDueDate: day("2026-03-15"),
     extractedDebitDate: null,
     extractedAdditionalFields: [{ key: "dueDate", label: "Fällig", value: "2026-03-15" }],
+    extractedInstalments: [
+      { amount: 6000, dueDate: day("2026-03-15") },
+      { amount: 6000, dueDate: day("2026-04-15") },
+    ],
     extractedPartner: "Lieferant GmbH",
     invoiceDirection: "incoming",
     documentType: "invoice",
@@ -120,13 +124,14 @@ describe("marking a File Not Invoice", () => {
     }
   });
 
-  it("also clears the tip, its bound, the Due Date and the Debit Date, and stamps the write", () => {
+  it("also clears the tip, its bound, the Due Date, the Debit Date and the instalments, and stamps the write", () => {
     const { update } = decide(invoiceFile(), { origin: "not-invoice", at: AT });
 
     expect(update.extractedTipAmount).toBeNull();
     expect(update.extractedTipBound).toBeNull();
     expect(update.extractedDueDate).toBeNull();
     expect(update.extractedDebitDate).toBeNull();
+    expect(update.extractedInstalments).toBeNull();
     expect(update.lastFactChange).toEqual({ origin: "not-invoice", at: AT });
     expect(update.updatedAt).toBe(AT);
 
@@ -137,6 +142,7 @@ describe("marking a File Not Invoice", () => {
       [
         "extractedDebitDate",
         "extractedDueDate",
+        "extractedInstalments",
         "extractedTipAmount",
         "extractedTipBound",
         "lastFactChange",
@@ -273,13 +279,16 @@ describe("the identity sweep", () => {
   });
 
   it("re-points direction and counterparty on a File nobody corrected, and re-arms partner matching", () => {
-    const outcome = decide(sweptFile({ partnerMatchedBy: "auto" }), {
+    const instalments = [{ amount: 6000, dueDate: day("2026-03-15") }];
+    const outcome = decide(sweptFile({ partnerMatchedBy: "auto", extractedInstalments: instalments }), {
       origin: "identity-sweep",
       derived: DERIVED_INCOMING,
       at: AT,
     });
 
     expect(outcome.keptDirection).toBeNull();
+    // The instalments are the document's, not the identity's (#615): the sweep leaves them.
+    expect("extractedInstalments" in outcome.update).toBe(false);
     expect(outcome.update).toMatchObject({
       invoiceDirection: "incoming",
       matchedUserAccount: "recipient",
@@ -432,6 +441,10 @@ describe("a generated invoice", () => {
     expect(stub.matchedUserAccount).toBe("issuer");
     expect(Object.keys(stub).filter((key) => key.startsWith("extracted"))).toEqual([]);
     expect((stub.lastFactChange as { origin: string }).origin).toBe("generated-invoice");
+  });
+
+  it("gives an issued invoice's File no instalments (#615)", () => {
+    expect("extractedInstalments" in generatedInvoiceFileFacts(INVOICE, AT)).toBe(false);
   });
 });
 
