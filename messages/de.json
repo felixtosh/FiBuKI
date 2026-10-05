@@ -332,7 +332,8 @@
       "open": "Richtung offen"
     },
     "viewer": {
-      "passwordProtected": "Dieses PDF ist passwortgeschützt und kann nicht in der Vorschau angezeigt werden."
+      "passwordProtected": "Dieses PDF ist passwortgeschützt und kann nicht in der Vorschau angezeigt werden.",
+      "passwordProtectedShort": "Passwort\u00adgeschützt"
     }
   },
   "settings": {
