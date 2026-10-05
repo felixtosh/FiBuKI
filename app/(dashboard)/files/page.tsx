@@ -1,7 +1,7 @@
 "use client";
 
 import { useRememberedListQuery } from "@/hooks/use-remembered-list-query";
-import { Suspense, useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { Suspense, useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useDropzone } from "react-dropzone";
 import { Upload } from "lucide-react";
@@ -55,7 +55,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
+import { DetailPanelLayout } from "@/components/ui/detail-panel-layout";
 import { useAuth, SmartFeatureGuard } from "@/components/auth";
 import { usePageTitle } from "@/hooks/use-page-title";
 import { callFunction } from "@/lib/firebase/callable";
@@ -176,11 +176,6 @@ function FilesContent() {
 
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
   const [creatingInvoice, setCreatingInvoice] = useState(false);
-  const [panelWidth, setPanelWidth] = useState<number>(DEFAULT_PANEL_WIDTH);
-  const [isResizing, setIsResizing] = useState(false);
-  const resizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
-  const panelRef = useRef<HTMLDivElement>(null);
-  const currentWidthRef = useRef(panelWidth);
   const tableRef = useRef<FilesDataTableHandle>(null);
 
   // Multi-file upload state
@@ -548,17 +543,6 @@ function FilesContent() {
   // Note: We intentionally do NOT close the viewer when navigating between files
   // The viewer should stay open so users can browse through files quickly
 
-  // Load panel width from localStorage
-  useEffect(() => {
-    const saved = localStorage.getItem(PANEL_WIDTH_KEY);
-    if (saved) {
-      const parsed = parseInt(saved, 10);
-      if (!isNaN(parsed) && parsed >= MIN_PANEL_WIDTH && parsed <= MAX_PANEL_WIDTH) {
-        setPanelWidth(parsed);
-      }
-    }
-  }, []);
-
   // Track previous extractionComplete to detect transitions
   const prevExtractionCompleteRef = useRef<boolean | undefined>(undefined);
 
@@ -577,40 +561,6 @@ function FilesContent() {
 
     prevExtractionCompleteRef.current = currComplete;
   }, [parsingFileId, selectedFile?.id, selectedFile?.extractionComplete]);
-
-  // Handle resize
-  const handleResizeStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    setIsResizing(true);
-    resizeRef.current = { startX: e.clientX, startWidth: panelWidth };
-  }, [panelWidth]);
-
-  useEffect(() => {
-    if (!isResizing) return;
-
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!resizeRef.current || !panelRef.current) return;
-      const delta = resizeRef.current.startX - e.clientX;
-      const newWidth = Math.min(MAX_PANEL_WIDTH, Math.max(MIN_PANEL_WIDTH, resizeRef.current.startWidth + delta));
-      panelRef.current.style.width = `${newWidth}px`;
-      currentWidthRef.current = newWidth;
-    };
-
-    const handleMouseUp = () => {
-      setIsResizing(false);
-      setPanelWidth(currentWidthRef.current);
-      localStorage.setItem(PANEL_WIDTH_KEY, currentWidthRef.current.toString());
-      resizeRef.current = null;
-    };
-
-    document.addEventListener("mousemove", handleMouseMove);
-    document.addEventListener("mouseup", handleMouseUp);
-
-    return () => {
-      document.removeEventListener("mousemove", handleMouseMove);
-      document.removeEventListener("mouseup", handleMouseUp);
-    };
-  }, [isResizing]);
 
   // URL update helpers using centralized utilities
   const handleSearchChange = useCallback(
@@ -1115,6 +1065,81 @@ function FilesContent() {
     return <FileTableFallback />;
   }
 
+  // The right panel: a bulk selection takes priority, then the invoice
+  // editor when the invoiceId param is set, then the File's details.
+  let detailPanel: ReactNode = null;
+  if (showBulkPanel) {
+    detailPanel = (
+      <FileBulkPanel
+        mode={filters.deletedOnly === true ? "deleted" : "live"}
+        files={bulkSelectedFiles}
+        onClearSelection={handleClearSelection}
+        onAssignPartner={() => setIsBulkPartnerPickerOpen(true)}
+        onMarkAsNotInvoice={handleBulkMarkAsNotInvoice}
+        onMarkAsInvoice={handleBulkMarkAsInvoice}
+        onDelete={handleBulkDelete}
+        onPurge={handleBulkPurge}
+        isDeleting={isBulkDeleting}
+        isPurging={isBulkPurging}
+        isUpdating={isBulkUpdating}
+        isAssigningPartner={isBulkAssigningPartner}
+        progress={bulkProgress}
+      />
+    );
+  } else if (!showBulkActionBar && invoiceIdParam) {
+    detailPanel = (
+      <InvoiceDetailPanel
+        invoiceId={invoiceIdParam}
+        fileId={invoiceFileId}
+        onClose={handleCloseInvoice}
+        onPreviewSourceChange={setInvoicePreviewSource}
+        viewerOpen={viewerOpen}
+        onToggleViewer={toggleInvoiceViewer}
+        onNavigatePrevious={handleInvoiceNavigatePrevious}
+        onNavigateNext={handleInvoiceNavigateNext}
+        hasPrevious={invoiceHasPrevious}
+        hasNext={invoiceHasNext}
+      />
+    );
+  } else if (detailFile) {
+    detailPanel = (
+      <FileDetailPanel
+        file={detailFile}
+        onClose={handleCloseDetail}
+        onNavigatePrevious={handleNavigatePrevious}
+        onNavigateNext={handleNavigateNext}
+        hasPrevious={hasPrevious}
+        hasNext={hasNext}
+        onDelete={handleDelete}
+        onRestore={handleRestore}
+        onMarkAsNotInvoice={handleMarkAsNotInvoice}
+        onUnmarkAsNotInvoice={handleUnmarkAsNotInvoice}
+        isParsing={parsingFileId === detailFile.id}
+        userPartners={userPartners}
+        globalPartners={globalPartners}
+        onCreatePartner={createPartner}
+        onOpenViewer={toggleViewer}
+        viewerOpen={viewerOpen}
+        onHighlightField={(text) => {
+          setHighlightText(text);
+          if (!viewerOpen) {
+            closeConnectTransactionOverlay();
+            setViewerOpen(true);
+          }
+        }}
+        onOpenConnectTransaction={toggleConnectTransactionOverlay}
+        isConnectTransactionOpen={isConnectTransactionOpen}
+        copyOriginal={detailCopy.original}
+        copySuggestionOriginal={detailCopy.suggestedOriginal}
+        copiesOfFile={detailCopy.copies}
+        receiptInvoice={detailReceiptInvoice}
+        onMarkAsCopy={(originalFileId) => markAsCopy(detailFile.id, originalFileId)}
+        onNotACopy={() => markNotACopy(detailFile.id)}
+        onMakeOriginal={() => makeOriginal(detailFile.id)}
+      />
+    );
+  }
+
   return (
     <TooltipProvider>
       <div {...getRootProps()} className="h-full overflow-hidden relative">
@@ -1130,12 +1155,14 @@ function FilesContent() {
         </DialogContent>
       </Dialog>
 
-      {/* Main content: makes room for the right-side detail panel. */}
-      <div
-        className="relative h-full flex flex-col transition-[margin] duration-200 ease-in-out"
-        style={{
-          marginRight: showBulkPanel || detailFile || invoiceIdParam ? panelWidth : 0,
-        }}
+      <DetailPanelLayout
+        storageKey={PANEL_WIDTH_KEY}
+        defaultWidth={DEFAULT_PANEL_WIDTH}
+        minWidth={MIN_PANEL_WIDTH}
+        maxWidth={MAX_PANEL_WIDTH}
+        open={!!(showBulkPanel || detailFile || invoiceIdParam)}
+        mainClassName="relative h-full flex flex-col"
+        panel={detailPanel}
       >
         <div className="flex-1 overflow-hidden relative">
           {/* Drag overlay — inside the margin-constrained area so it doesn't extend behind the detail panel */}
@@ -1227,128 +1254,7 @@ function FilesContent() {
         {showUploadProgress && uploads.length > 0 && (
           <UploadProgress uploads={uploads} onDismiss={handleDismissProgress} />
         )}
-      </div>
-
-      {/* Right sidebar - a bulk selection takes priority, then the invoice
-          editor when the invoiceId param is set, then the File's details */}
-      {showBulkPanel && (
-        <div
-          ref={panelRef}
-          className="fixed right-0 top-14 bottom-0 z-50 bg-background border-l flex"
-          style={{ width: panelWidth }}
-        >
-          <div
-            className={cn(
-              "w-1 cursor-col-resize bg-border hover:bg-primary/20 active:bg-primary/30 flex-shrink-0",
-              isResizing && "bg-primary/30"
-            )}
-            onMouseDown={handleResizeStart}
-          />
-          <div className="flex-1 overflow-hidden detail-panel-container">
-            <FileBulkPanel
-              mode={filters.deletedOnly === true ? "deleted" : "live"}
-              files={bulkSelectedFiles}
-              onClearSelection={handleClearSelection}
-              onAssignPartner={() => setIsBulkPartnerPickerOpen(true)}
-              onMarkAsNotInvoice={handleBulkMarkAsNotInvoice}
-              onMarkAsInvoice={handleBulkMarkAsInvoice}
-              onDelete={handleBulkDelete}
-              onPurge={handleBulkPurge}
-              isDeleting={isBulkDeleting}
-              isPurging={isBulkPurging}
-              isUpdating={isBulkUpdating}
-              isAssigningPartner={isBulkAssigningPartner}
-              progress={bulkProgress}
-            />
-          </div>
-        </div>
-      )}
-      {!showBulkActionBar && invoiceIdParam ? (
-        <div
-          ref={panelRef}
-          className="fixed right-0 top-14 bottom-0 z-50 bg-background border-l flex"
-          style={{ width: panelWidth }}
-        >
-          <div
-            className={cn(
-              "w-1 cursor-col-resize bg-border hover:bg-primary/20 active:bg-primary/30 flex-shrink-0",
-              isResizing && "bg-primary/30"
-            )}
-            onMouseDown={handleResizeStart}
-          />
-          <div className="flex-1 overflow-hidden detail-panel-container">
-            <InvoiceDetailPanel
-              invoiceId={invoiceIdParam}
-              fileId={invoiceFileId}
-              onClose={handleCloseInvoice}
-              onPreviewSourceChange={setInvoicePreviewSource}
-              viewerOpen={viewerOpen}
-              onToggleViewer={toggleInvoiceViewer}
-              onNavigatePrevious={handleInvoiceNavigatePrevious}
-              onNavigateNext={handleInvoiceNavigateNext}
-              hasPrevious={invoiceHasPrevious}
-              hasNext={invoiceHasNext}
-            />
-          </div>
-        </div>
-      ) : detailFile && (
-        <div
-          ref={panelRef}
-          className="fixed right-0 top-14 bottom-0 z-50 bg-background border-l flex"
-          style={{ width: panelWidth }}
-        >
-          {/* Resize handle */}
-          <div
-            className={cn(
-              "w-1 cursor-col-resize bg-border hover:bg-primary/20 active:bg-primary/30 flex-shrink-0",
-              isResizing && "bg-primary/30"
-            )}
-            onMouseDown={handleResizeStart}
-          />
-          {/* Panel content */}
-          <div className="flex-1 overflow-hidden detail-panel-container">
-            <FileDetailPanel
-              file={detailFile}
-              onClose={handleCloseDetail}
-              onNavigatePrevious={handleNavigatePrevious}
-              onNavigateNext={handleNavigateNext}
-              hasPrevious={hasPrevious}
-              hasNext={hasNext}
-              onDelete={handleDelete}
-              onRestore={handleRestore}
-              onMarkAsNotInvoice={handleMarkAsNotInvoice}
-              onUnmarkAsNotInvoice={handleUnmarkAsNotInvoice}
-              isParsing={parsingFileId === detailFile.id}
-              userPartners={userPartners}
-              globalPartners={globalPartners}
-              onCreatePartner={createPartner}
-              onOpenViewer={toggleViewer}
-              viewerOpen={viewerOpen}
-              onHighlightField={(text) => {
-                setHighlightText(text);
-                if (!viewerOpen) {
-                  closeConnectTransactionOverlay();
-                  setViewerOpen(true);
-                }
-              }}
-              onOpenConnectTransaction={toggleConnectTransactionOverlay}
-              isConnectTransactionOpen={isConnectTransactionOpen}
-              copyOriginal={detailCopy.original}
-              copySuggestionOriginal={detailCopy.suggestedOriginal}
-              copiesOfFile={detailCopy.copies}
-              receiptInvoice={detailReceiptInvoice}
-              onMarkAsCopy={(originalFileId) => markAsCopy(detailFile.id, originalFileId)}
-              onNotACopy={() => markNotACopy(detailFile.id)}
-              onMakeOriginal={() => makeOriginal(detailFile.id)}
-            />
-          </div>
-        </div>
-      )}
-
-        {/* Prevent text selection while resizing */}
-        {isResizing && (
-          <div className="fixed inset-0 z-50 cursor-col-resize" />
-        )}
+      </DetailPanelLayout>
       </div>
       {/* Bulk "Assign partner": the same picker the detail panel opens, minus
           the per-file suggestions (a selection has no single extracted partner). */}

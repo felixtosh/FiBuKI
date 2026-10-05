@@ -59,6 +59,11 @@ vi.mock("@/lib/email-providers/gmail-client", () => {
 // writer is what decides whether the Transaction is theirs.
 vi.mock("@/lib/api/firebase-callable", () => ({
   callFirebaseFunction: async (name: string, data: unknown, token?: string) => {
+    // The host answers 404 to a name it does not serve (#648).
+    const { CALLABLE_NAMES } = await import("../../callableRegistry");
+    if (!(CALLABLE_NAMES as readonly string[]).includes(name)) {
+      throw new Error(`Firebase function ${name} failed: 404 - no such callable`);
+    }
     if (name === "connectFileToTransaction") {
       const { connectFileToTransactionCallable } = await import("../../files/connectFileToTransaction");
       const uid = (token ?? "").replace(/^Bearer /, "");
