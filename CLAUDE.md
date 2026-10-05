@@ -313,9 +313,9 @@ one shared tool registry:
 read-only / write / destructive, required by the type); its case goes in `handlers.ts`;
 its test; and, when the chat should run it too, its wrapper in
 `lib/agent/tools/mcp-tools.ts`. The OpenAPI spec, llm.txt and the chat's wrappers import
-`definitions.ts` directly, so keep it free of server-only imports (type-only imports
-are erased). `functions/src/selfhost/browser-imports.test.ts` fails only if it reaches
-`firebase-functions`; its importers are server code, which may reach `firebase-admin`.
+`definitions.ts` directly, so it has no runtime import at all (type-only imports are
+erased and allowed); `functions/src/selfhost/browser-imports.test.ts` (`IMPORT_FREE`)
+fails on a runtime import there.
 
 **The chat assistant runs these tools, it does not reimplement them (#616).** A chat tool
 with an MCP twin is a thin wrapper in `lib/agent/tools/mcp-tools.ts` over the `runTool`
