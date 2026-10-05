@@ -36,10 +36,7 @@ import {
 } from "@/lib/files/delete-confirmation";
 import { isRetentionRelevant } from "@/lib/files/purge-policy";
 import { createDropReentryGuard } from "@/lib/files/drop-reentry-guard";
-import { getNeighbourRowId } from "@/lib/navigation/row-neighbour";
-import { advanceAfterDisposition } from "@/lib/navigation/advance-after-disposition";
-import { useRowNavigationKeys } from "@/hooks/use-row-navigation-keys";
-import { isRowNavigationEnabled } from "@/lib/navigation/arrow-key-navigation";
+import { useListNavigation } from "@/hooks/use-list-navigation";
 import {
   toggleFileCheckbox,
   toggleSelectAll,
@@ -510,14 +507,6 @@ function FilesContent() {
     return match?.id ?? null;
   }, [invoiceIdParam, files]);
 
-  // Invoices are also rows in the files list (each issued invoice has a
-  // backing TaxFile), so invoice navigation walks the same displayed order as
-  // the file panel.
-  const invoiceHasPrevious =
-    getNeighbourRowId(orderedFileIds, invoiceFileId, -1) !== null;
-  const invoiceHasNext =
-    getNeighbourRowId(orderedFileIds, invoiceFileId, 1) !== null;
-
   // Set page title
   usePageTitle("Files", selectedFile?.fileName);
 
@@ -534,11 +523,6 @@ function FilesContent() {
     },
     [ctx, selectedFile, closeConnectTransactionOverlay]
   );
-
-  const hasPrevious =
-    getNeighbourRowId(orderedFileIds, panelFileId, -1) !== null;
-  const hasNext =
-    getNeighbourRowId(orderedFileIds, panelFileId, 1) !== null;
 
   // Note: We intentionally do NOT close the viewer when navigating between files
   // The viewer should stay open so users can browse through files quickly
@@ -658,19 +642,32 @@ function FilesContent() {
     }
   }, [displayedFileIds, primarySelectedId, additionalSelectedIds, showBulkActionBar, handleCloseDetail]);
 
-  // Step through the displayed order (-1 previous, 1 next)
-  const navigateFileBy = useCallback(
-    (step: number) => {
-      const targetId = getNeighbourRowId(orderedFileIds, panelFileId, step);
-      const target = targetId ? files.find((f) => f.id === targetId) : undefined;
+  // Left/right walk the displayed order through the panel that is open: the
+  // invoice panel when ?invoiceId= is set, the file panel otherwise. They stay
+  // live while the full-screen viewer is open, which follows the selection just
+  // as it does for the prev/next buttons (#234). The connect overlay switches
+  // them off; portalled dialogs and menus (upload, the bulk partner picker, any
+  // dropdown) the hook sees for itself.
+  const navigateToFile = useCallback(
+    (id: string) => {
+      const target = files.find((f) => f.id === id);
       if (target) handleSelectFile(target);
     },
-    [orderedFileIds, panelFileId, files, handleSelectFile]
+    [files, handleSelectFile]
   );
-
-  const handleNavigatePrevious = useCallback(() => navigateFileBy(-1), [navigateFileBy]);
-
-  const handleNavigateNext = useCallback(() => navigateFileBy(1), [navigateFileBy]);
+  const {
+    hasPrevious,
+    hasNext,
+    goPrevious: handleNavigatePrevious,
+    goNext: handleNavigateNext,
+    advanceAfter: advanceFileAfter,
+  } = useListNavigation({
+    orderedIds: orderedFileIds,
+    currentId: panelFileId,
+    onNavigate: navigateToFile,
+    panelOpen: !invoiceIdParam && Boolean(detailFile),
+    connectOverlayOpen: isConnectTransactionOpen,
+  });
 
   // Navigate from the invoice panel through the files list. When the
   // destination row backs another invoice, route via ?invoiceId= so the
@@ -692,39 +689,27 @@ function FilesContent() {
     [router, filters, searchValue]
   );
 
-  const navigateInvoiceBy = useCallback(
-    (step: number) => {
-      const targetId = getNeighbourRowId(orderedFileIds, invoiceFileId, step);
-      const target = targetId ? files.find((f) => f.id === targetId) : undefined;
+  // Invoices are also rows in the files list (each issued invoice has a
+  // backing TaxFile), so invoice navigation walks the same displayed order as
+  // the file panel.
+  const navigateToInvoiceRow = useCallback(
+    (id: string) => {
+      const target = files.find((f) => f.id === id);
       if (target) navigateInvoiceTo(target);
     },
-    [orderedFileIds, invoiceFileId, files, navigateInvoiceTo]
+    [files, navigateInvoiceTo]
   );
-
-  const handleInvoiceNavigatePrevious = useCallback(
-    () => navigateInvoiceBy(-1),
-    [navigateInvoiceBy]
-  );
-
-  const handleInvoiceNavigateNext = useCallback(
-    () => navigateInvoiceBy(1),
-    [navigateInvoiceBy]
-  );
-
-  // Left/right walk the displayed order through the panel that is open: the
-  // invoice panel when ?invoiceId= is set, the file panel otherwise. They stay
-  // live while the full-screen viewer is open, which follows the selection just
-  // as it does for the prev/next buttons (#234). The connect overlay renders
-  // inline with no dialog role of its own, so it has to be named here;
-  // portalled dialogs and menus (upload, the bulk partner picker, any
-  // dropdown) the hook sees for itself.
-  useRowNavigationKeys({
-    enabled: isRowNavigationEnabled({
-      panelOpen: Boolean(invoiceIdParam || detailFile),
-      connectOverlayOpen: isConnectTransactionOpen,
-    }),
-    onPrevious: invoiceIdParam ? handleInvoiceNavigatePrevious : handleNavigatePrevious,
-    onNext: invoiceIdParam ? handleInvoiceNavigateNext : handleNavigateNext,
+  const {
+    hasPrevious: invoiceHasPrevious,
+    hasNext: invoiceHasNext,
+    goPrevious: handleInvoiceNavigatePrevious,
+    goNext: handleInvoiceNavigateNext,
+  } = useListNavigation({
+    orderedIds: orderedFileIds,
+    currentId: invoiceFileId,
+    onNavigate: navigateToInvoiceRow,
+    panelOpen: Boolean(invoiceIdParam),
+    connectOverlayOpen: isConnectTransactionOpen,
   });
 
   const handleDelete = useCallback(async () => {
@@ -760,17 +745,8 @@ function FilesContent() {
   // `other`). Bulk marking and unmarking deliberately do not advance.
   const handleMarkAsNotInvoice = useCallback(async () => {
     if (!selectedFile) return;
-    const filesBefore = files;
-    await advanceAfterDisposition({
-      orderedIds: orderedFileIds,
-      currentId: selectedFile.id,
-      mutate: () => markAsNotInvoice(selectedFile.id),
-      navigateTo: (id) => {
-        const target = filesBefore.find((f) => f.id === id);
-        if (target) handleSelectFile(target);
-      },
-    });
-  }, [selectedFile, files, orderedFileIds, markAsNotInvoice, handleSelectFile]);
+    await advanceFileAfter(() => markAsNotInvoice(selectedFile.id));
+  }, [selectedFile, advanceFileAfter, markAsNotInvoice]);
 
   const handleUnmarkAsNotInvoice = useCallback(async () => {
     if (!selectedFile) return;
