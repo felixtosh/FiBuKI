@@ -431,7 +431,8 @@
     },
     "outstanding": {
       "figure": "{outstanding} of {total} outstanding",
-      "paid": "Paid in full"
+      "paid": "Paid in full",
+      "overpaid": "Paid in full, +{amount}"
     },
     "extracted": {
       "fields": {

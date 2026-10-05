@@ -243,6 +243,11 @@ export interface Outstanding {
   /** total minus paid, never below zero: an overpaid File is paid, not owed money. */
   outstanding: number;
   /**
+   * paid minus total, never below zero: what the File's payments came to
+   * beyond it. The File panel shows it beside "Paid in full".
+   */
+  overpaid: number;
+  /**
    * A payment is connected and part of the File is still unpaid: the figure a
    * further Transaction is scored against. Before any payment there is
    * nothing Outstanding (ADR-0013 rule 1), and a paid File is scored against
@@ -264,7 +269,11 @@ function currencyKey(currency: string | null | undefined): string {
  * bank amount, it pays each in full; when they total more, it pays each in
  * proportion, bank / counted total × the document's total. That is the R2
  * scaling the UVA claims Vorsteuer by. A Receipt folded into its invoice is
- * paid what the pair is paid, up to its own total.
+ * paid what the pair is paid, up to its own total. A Transaction on which
+ * this File is the only document pays it the whole bank amount, so a bank
+ * line larger than the File shows as overpaid; where it carries other
+ * documents too, what it pays beyond them is that Transaction's Remainder,
+ * not this File's.
  *
  * Same currency only: a payment in another currency than the File, or beside
  * a File in another currency, makes no Outstanding at all (null), and the
@@ -304,10 +313,15 @@ export function deriveOutstanding(
     const document =
       asItself ?? documents.find((d) => d.fileId != null && d.fileId === file.receiptOfFileId);
     if (!document || document.payment == null) continue;
+    if (asItself && documents.length === 1) {
+      paid += bank;
+      continue;
+    }
     const towardDocument = Math.abs(document.payment) * share;
     paid += Math.round(asItself ? towardDocument : Math.min(total, towardDocument));
   }
 
   const outstanding = Math.max(0, total - paid);
-  return { total, paid, outstanding, isOutstanding: paid > 0 && outstanding > 0 };
+  const overpaid = Math.max(0, paid - total);
+  return { total, paid, outstanding, overpaid, isOutstanding: paid > 0 && outstanding > 0 };
 }

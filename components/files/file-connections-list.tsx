@@ -19,15 +19,8 @@ import { cn, toDateSafe } from "@/lib/utils";
 import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
 import { useEcbConverter } from "@/lib/currency";
-// The one derivation of a File's Outstanding amount (#615), and the one
-// tolerance that decides whether it is closed (#239).
-import {
-  deriveOutstanding,
-  filePaymentTotal,
-  isExtractionPending,
-  isRemainderClosed,
-  type ConnectedFileAmount,
-} from "@/functions/src/matching/coverage";
+// What the Outstanding line shows, from the matcher's own derivation (#615).
+import { outstandingLineState } from "@/lib/matching/outstanding-line";
 import { useFiles } from "@/hooks/use-files";
 import Link from "next/link";
 import {
@@ -235,58 +228,42 @@ interface OutstandingLineProps {
   allFiles: TaxFile[];
 }
 
-/** A File as Coverage and Outstanding read it. */
-function asConnectedFile(file: TaxFile): ConnectedFileAmount {
-  return {
-    fileId: file.id,
-    payment: filePaymentTotal(file.extractedAmount, file.extractedTipAmount),
-    extractionPending: isExtractionPending(file),
-    currency: file.extractedCurrency ?? null,
-    receiptOfFileId: file.receiptLink?.fileId ?? null,
-  };
-}
-
 /**
  * The File's Outstanding amount (#615, ADR-0013): what its connected
- * Transactions do not yet pay, worked out by `deriveOutstanding`, the helper
- * the matcher scores a further payment against, so the panel and the scores
- * cannot disagree. A Transaction that also pays other Files pays this one its
- * share. Nothing is shown when a payment is in another currency: the helper
- * guesses no exchange rate, and neither does the panel.
+ * Transactions do not yet pay, or what they paid beyond it. The state is
+ * `outstandingLineState`'s, worked out by the helper the matcher scores a
+ * further payment against. Nothing is shown when a payment is in another
+ * currency: no exchange rate is guessed.
  */
 function OutstandingLine({ file, transactions, allFiles }: OutstandingLineProps) {
   const t = useTranslations("files.outstanding");
-  const self = asConnectedFile(file);
-  const result = deriveOutstanding(
-    { fileId: file.id, payment: self.payment, currency: self.currency, receiptOfFileId: self.receiptOfFileId },
-    transactions.map((tx) => ({
-      transactionAmount: tx.amount,
-      transactionCurrency: tx.currency,
-      files: allFiles.filter((f) => f.transactionIds?.includes(tx.id)).map(asConnectedFile),
-    }))
-  );
-  if (!result || transactions.length === 0) return null;
-
+  const state = outstandingLineState(file, transactions, allFiles);
+  if (state.kind === "hidden") return null;
   const currency = file.extractedCurrency || "EUR";
-  const isPaid = isRemainderClosed(result.outstanding);
 
   return (
     <div className="flex items-center justify-between p-2 -mx-2 border-t">
-      {isPaid ? (
-        <span className="text-sm text-muted-foreground">{t("paid")}</span>
-      ) : (
+      {state.kind === "open" ? (
         <span className="text-sm tabular-nums text-amount-negative">
           {t("figure", {
-            outstanding: formatAmount(result.outstanding, currency),
-            total: formatAmount(result.total, currency),
+            outstanding: formatAmount(state.outstanding, currency),
+            total: formatAmount(state.total, currency),
           })}
         </span>
-      )}
+      ) : null}
+      {state.kind === "overpaid" ? (
+        <span className="text-sm tabular-nums text-amber-600">
+          {t("overpaid", { amount: formatAmount(state.overpaid, currency) })}
+        </span>
+      ) : null}
+      {state.kind === "paid" ? <span className="text-sm text-muted-foreground">{t("paid")}</span> : null}
       <div className="flex items-center gap-2 shrink-0">
-        {isPaid ? (
+        {state.kind === "paid" ? (
           <Check className="h-3.5 w-3.5 text-amount-positive" />
         ) : (
-          <AlertTriangle className="h-3.5 w-3.5 text-amount-negative" />
+          <AlertTriangle
+            className={cn("h-3.5 w-3.5", state.kind === "overpaid" ? "text-amber-600" : "text-amount-negative")}
+          />
         )}
         {/* Spacer to align with TransactionRow's remove button + chevron */}
         <div className="w-[28px]" />
