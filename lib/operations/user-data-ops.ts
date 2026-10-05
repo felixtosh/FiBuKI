@@ -287,29 +287,6 @@ export async function saveUserData(
 }
 
 /**
- * Create default user data with preset values
- * Used when enabling preset partners
- */
-export async function createDefaultUserData(ctx: OperationsContext): Promise<void> {
-  const existing = await getUserData(ctx);
-
-  // Don't overwrite existing user data
-  if (existing) {
-    return;
-  }
-
-  await saveUserData(ctx, {
-    name: "Felix Häusler",
-    companyName: "Infinity Vertigo GmbH",
-    aliases: ["Haeusler"],
-    vatIds: [],
-    ibans: [],
-  });
-
-  console.log("[UserData] Created default user data for preset partners");
-}
-
-/**
  * Check if text matches user data (name, company, or aliases)
  * Used during extraction to determine invoice direction.
  * Now checks ALL entities (personal + companies) for matches.

@@ -165,34 +165,17 @@ async function processBmdExport(
     const correctionFiles = new Map<string, FileRecord>();
     for (const fileId of allFileIds) {
       const fileDoc = await db.collection("files").doc(fileId).get();
-      if (fileDoc.exists) {
-        const data = fileDoc.data();
-        if (data?.userId === userId) correctionFiles.set(fileId, { ...data, id: fileId } as FileRecord);
-        filePartners.set(fileId, { partnerId: data?.partnerId ?? null });
-        filesMap.set(fileId, {
-          id: fileId,
-          fileName: data?.fileName || "document",
-          extractedDate: data?.extractedDate,
-          storagePath: data?.storagePath,
-          // Extraction fields feed the shared VAT ladder (fork #66). Without
-          // them every booking row falls back to 0% instead of reading the
-          // receipt it is attached to.
-          extractedAmount: data?.extractedAmount,
-          extractedTipAmount: data?.extractedTipAmount,
-          extractedCurrency: data?.extractedCurrency,
-          extractedVatAmount: data?.extractedVatAmount,
-          extractedVatPercent: data?.extractedVatPercent,
-          extractedLineItems: data?.extractedLineItems,
-          extractedRateGroups: data?.extractedRateGroups,
-          lineItemsUnreconciled: data?.lineItemsUnreconciled,
-          lineItemsUnreconciledRates: data?.lineItemsUnreconciledRates,
-          extractedVatId: data?.extractedVatId,
-          extractedIssuer: data?.extractedIssuer,
-          // A Receipt beside the invoice it pays is booked as one document
-          // with it (#571, ADR-0012); the ladder folds the pair.
-          receiptLink: data?.receiptLink ?? null,
-        });
-      }
+      const data = fileDoc.data();
+      // Only the user's own Files, as the UVA run loads them (#652).
+      if (!fileDoc.exists || data?.userId !== userId) continue;
+      // The stored record, whole: the VAT ladder is the UVA adapter, and a
+      // hand-written field list here dropped what it reads (the "VAT not
+      // claimable" ruling, the Document Type, the Supply Kind facts), so the
+      // export and the UVA stated different VAT (#652, fork #66).
+      // `storagePath` rides along for the ZIP and is dropped before the CSVs.
+      correctionFiles.set(fileId, { ...data, id: fileId } as FileRecord);
+      filePartners.set(fileId, { partnerId: data?.partnerId ?? null });
+      filesMap.set(fileId, { ...data, id: fileId, fileName: data?.fileName || "document" });
     }
 
     // Each invoice before the Receipts that pay it (#571): the Belegdatum is

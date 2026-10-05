@@ -6,9 +6,11 @@
     "node": "22.x"
   },
   "scripts": {
+    "predev": "node scripts/copy-pdfjs-wasm.mjs",
     "dev": "next dev",
     "dev:emulators": "dotenv -e .env.local -- firebase emulators:start",
     "dev:all": "concurrently \"npm run dev:emulators\" \"npm run dev\"",
+    "prebuild": "node scripts/copy-pdfjs-wasm.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",

@@ -13,14 +13,10 @@ import {
   getDocs,
   getDoc,
   doc,
-  updateDoc,
-  addDoc,
-  deleteDoc,
   Timestamp,
 } from "firebase/firestore";
 import { OperationsContext } from "./types";
 import { getSourceById, updateSource } from "./source-ops";
-import { normalizeIban } from "@/lib/import/deduplication";
 
 import {
   getBankingProvider,
@@ -108,67 +104,6 @@ export async function getInstitution(
 // =========================================
 
 /**
- * Create a new bank connection request
- * Returns the authorization URL for the user to visit
- */
-export async function createBankConnection(
-  ctx: OperationsContext,
-  providerId: BankingProviderId,
-  institutionId: string,
-  options?: {
-    sourceId?: string; // Existing source to link (for re-auth)
-    maxHistoryDays?: number;
-    language?: string;
-  }
-): Promise<{ connectionId: string; authUrl: string; expiresAt: Date }> {
-  const provider = getBankingProvider(providerId);
-
-  // Get institution info
-  const institution = await provider.getInstitution(institutionId);
-
-  // Get redirect URL from environment
-  const redirectUrl = getRedirectUrl(providerId);
-
-  // Create connection with provider
-  const result = await provider.createConnection({
-    institutionId,
-    redirectUrl,
-    maxHistoryDays: options?.maxHistoryDays,
-    language: options?.language,
-    reference: `conn_${ctx.userId}_${Date.now()}`,
-  });
-
-  // Store connection in Firestore
-  const connectionDoc: Omit<BankingConnection, "id"> = {
-    providerId,
-    providerConnectionId: result.connectionId,
-    institutionId,
-    institutionName: institution.name,
-    institutionLogo: institution.logoUrl,
-    status: "pending",
-    authUrl: result.authUrl,
-    accountIds: [],
-    expiresAt: Timestamp.fromDate(result.expiresAt),
-    providerData: result.providerData,
-    linkToSourceId: options?.sourceId,
-    userId: ctx.userId,
-    createdAt: Timestamp.now(),
-    updatedAt: Timestamp.now(),
-  };
-
-  const docRef = await addDoc(
-    collection(ctx.db, CONNECTIONS_COLLECTION),
-    connectionDoc
-  );
-
-  return {
-    connectionId: docRef.id,
-    authUrl: result.authUrl,
-    expiresAt: result.expiresAt,
-  };
-}
-
-/**
  * Get a connection by our internal ID
  */
 export async function getBankConnection(
@@ -224,84 +159,6 @@ export async function listBankConnections(
 }
 
 /**
- * Handle OAuth callback from banking provider
- */
-export async function handleBankCallback(
-  ctx: OperationsContext,
-  connectionId: string,
-  callbackParams: {
-    code?: string;
-    error?: string;
-    errorDescription?: string;
-  }
-): Promise<BankingConnection> {
-  const connection = await getBankConnection(ctx, connectionId);
-  if (!connection) {
-    throw new Error(`Connection ${connectionId} not found`);
-  }
-
-  const provider = getBankingProvider(connection.providerId);
-
-  // Handle callback with provider
-  const result = await provider.handleCallback({
-    connectionId: connection.providerConnectionId,
-    ...callbackParams,
-  });
-
-  // Update connection in Firestore
-  const docRef = doc(ctx.db, CONNECTIONS_COLLECTION, connectionId);
-  const updates: Partial<BankingConnection> = {
-    status: result.status,
-    accountIds: result.accountIds || connection.accountIds,
-    updatedAt: Timestamp.now(),
-  };
-
-  if (result.providerData) {
-    updates.providerData = {
-      ...connection.providerData,
-      ...result.providerData,
-    };
-  }
-
-  await updateDoc(docRef, updates);
-
-  return {
-    ...connection,
-    ...updates,
-  };
-}
-
-/**
- * Refresh connection status from provider
- */
-export async function refreshBankConnectionStatus(
-  ctx: OperationsContext,
-  connectionId: string
-): Promise<BankingConnection> {
-  const connection = await getBankConnection(ctx, connectionId);
-  if (!connection) {
-    throw new Error(`Connection ${connectionId} not found`);
-  }
-
-  const provider = getBankingProvider(connection.providerId);
-  const status = await provider.getConnectionStatus(connection.providerConnectionId);
-
-  // Update connection
-  const docRef = doc(ctx.db, CONNECTIONS_COLLECTION, connectionId);
-  await updateDoc(docRef, {
-    status: status.status,
-    accountIds: status.accountIds || connection.accountIds,
-    updatedAt: Timestamp.now(),
-  });
-
-  return {
-    ...connection,
-    status: status.status,
-    accountIds: status.accountIds || connection.accountIds,
-  };
-}
-
-/**
  * Get accounts available in a connection
  */
 export async function getBankConnectionAccounts(
@@ -321,82 +178,9 @@ export async function getBankConnectionAccounts(
   return provider.getAccounts(connection.providerConnectionId);
 }
 
-/**
- * Delete a connection (revokes access)
- */
-export async function deleteBankConnection(
-  ctx: OperationsContext,
-  connectionId: string
-): Promise<void> {
-  const connection = await getBankConnection(ctx, connectionId);
-  if (!connection) {
-    throw new Error(`Connection ${connectionId} not found`);
-  }
-
-  // Revoke at provider (may fail if already expired)
-  try {
-    const provider = getBankingProvider(connection.providerId);
-    await provider.revokeConnection(connection.providerConnectionId);
-  } catch {
-    // Ignore errors
-  }
-
-  // Delete from Firestore
-  const docRef = doc(ctx.db, CONNECTIONS_COLLECTION, connectionId);
-  await deleteDoc(docRef);
-}
-
 // =========================================
 // SOURCE CREATION / LINKING
 // =========================================
-
-/**
- * Create a source from a banking account
- */
-export async function createSourceFromBankAccount(
-  ctx: OperationsContext,
-  connectionId: string,
-  accountId: string,
-  name: string
-): Promise<string> {
-  const connection = await getBankConnection(ctx, connectionId);
-  if (!connection) {
-    throw new Error(`Connection ${connectionId} not found`);
-  }
-
-  if (!connection.accountIds.includes(accountId)) {
-    throw new Error(`Account ${accountId} not in connection`);
-  }
-
-  const provider = getBankingProvider(connection.providerId);
-  const accounts = await provider.getAccounts(connection.providerConnectionId);
-  const account = accounts.find((a) => a.id === accountId);
-
-  if (!account) {
-    throw new Error(`Account ${accountId} not found`);
-  }
-
-  // Build config based on provider
-  const apiConfig = buildApiConfig(connection, accountId);
-
-  // Create source
-  const now = Timestamp.now();
-  const sourceData = {
-    name,
-    accountKind: account.type === "credit_card" ? "credit_card" : "bank_account",
-    iban: account.iban ? normalizeIban(account.iban) : undefined,
-    currency: account.currency || "EUR",
-    type: "api" as const,
-    apiConfig,
-    isActive: true,
-    userId: ctx.userId,
-    createdAt: now,
-    updatedAt: now,
-  };
-
-  const docRef = await addDoc(collection(ctx.db, "sources"), sourceData);
-  return docRef.id;
-}
 
 /**
  * Link a banking account to an existing source
@@ -471,19 +255,6 @@ export async function getBankSyncStatus(
 // =========================================
 // HELPERS
 // =========================================
-
-function getRedirectUrl(providerId: BankingProviderId): string {
-  switch (providerId) {
-    case "truelayer":
-      return process.env.TRUELAYER_REDIRECT_URL || "";
-    case "plaid":
-      return process.env.PLAID_REDIRECT_URL || "";
-    case "finapi":
-      return process.env.FINAPI_REDIRECT_URL || "";
-    default:
-      throw new Error(`Unknown provider: ${providerId}`);
-  }
-}
 
 function buildApiConfig(
   connection: BankingConnection,

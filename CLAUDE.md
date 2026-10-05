@@ -68,8 +68,9 @@ Things that cost real time to find. All of `fibuki.com` runs the self-host stack
   skips optional deps that need 22 (`@google-cloud/firestore` and ~70 others)
   and tests fail far from the cause. `node -v` first.
 - **Local dev = the self-host stack, not Firebase emulators.** API:
-  `cd functions && npm run selfhost:api` (port 8788); web: `npx next dev -p 3000`
-  with `FIBUKI_BACKEND=selfhost`, `NEXT_PUBLIC_FIBUKI_API_URL=http://localhost:8788`
+  `cd functions && npm run selfhost:api` (port 8788); web: `npm run dev -- -p 3000`
+  (not bare `next dev`: `predev` copies pdf.js's wasm decoders, without which
+  JPEG 2000 scans draw blank) with `FIBUKI_BACKEND=selfhost`, `NEXT_PUBLIC_FIBUKI_API_URL=http://localhost:8788`
   and `NEXT_PUBLIC_FUNCTIONS_URL=http://localhost:8788` (server-side callables, e.g.
   the chat's tools; without it they fall back to a dead Firebase emulator).
   Dev login: `FIBUKI_DEV_UID` (API) plus `NEXT_PUBLIC_FIBUKI_DEV_UID` /
@@ -79,7 +80,10 @@ Things that cost real time to find. All of `fibuki.com` runs the self-host stack
 - **One tenant, many users.** `getTenantId()` is per deployment, so every
   fibuki.com user shares a tenant and RLS does not separate them; only the
   app's ownership checks do. The client access policy is
-  `functions/src/selfhost/data-policy.ts` (not `firestore.rules`). Never take a
+  `functions/src/selfhost/data-policy.ts` (not `firestore.rules`). The browser
+  reads domain data and never writes it ([ADR-0016](docs/adr/0016-the-browser-reads-the-server-writes.md)):
+  a new write is a callable, and `functions/src/selfhost/browser-writes.test.ts`
+  fails on a new client SDK write in browser code or a server route. Never take a
   uid from a body, query, header or cookie. A new Next API route checks
   ownership of every id it is given and gets a case in
   `functions/src/selfhost/security/cross-user-routes.test.ts`; callables, AI
@@ -389,14 +393,11 @@ and fails if one reads or writes the database itself.
 
 ## Test Data
 
-### Generating Test Data
-The app includes a test data toggle on the Bank Accounts page (`/sources`):
-- **Enable Test Data**: Creates "Test Bank Account" with 100 sample transactions
-- **Disable Test Data**: Removes the test source and all its transactions
-
 ### Test Data Files
 - `/lib/test-data/generate-test-transactions.ts` - Generates test source + 100 transactions
-- `/hooks/use-test-source.ts` - Hook for activating/deactivating test data
+
+The Bank Accounts page no longer has a test data toggle; its browser writer was
+deleted with the other dead writers (#625).
 
 ### Updating Test Data
 When modifying transaction-related types, also update the test data generator:

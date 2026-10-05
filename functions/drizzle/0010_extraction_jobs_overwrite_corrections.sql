@@ -1,0 +1,1 @@
+ALTER TABLE "extraction_jobs" ADD COLUMN "overwrite_corrections" boolean DEFAULT false NOT NULL;

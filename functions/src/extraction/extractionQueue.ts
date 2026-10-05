@@ -14,7 +14,10 @@
  *    inline, as it always has.
  *
  * The caller's checks (ownership, hand corrections, already extracted) run
- * before this, so a refusal still reaches the caller synchronously.
+ * before this, so a refusal still reaches the caller synchronously. A path
+ * with no caller to tell (upload, undelete, the boot resweep) is refused when
+ * the Extraction runs: `extractQueuedFile` checks every File for a Hand
+ * Correction before it extracts (#639).
  */
 
 export interface ExtractionRequest {
@@ -31,11 +34,20 @@ export interface ExtractionRequest {
    * again once that run ends instead of alongside it.
    */
   kind: "new" | "retry";
+  /**
+   * The forced re-extraction (#184): overwrite the File's Hand Correction
+   * instead of being refused. Only a Retry that asked for it per File sets
+   * it; the worker checks again when it runs (#639).
+   */
+  overwriteCorrections?: boolean;
 }
 
 export async function enqueueExtraction(request: ExtractionRequest): Promise<void> {
   // Loaded on first use: the Extraction code opens Firestore when it loads,
   // and small modules (the not-an-invoice builders) import this one.
   const { extractQueuedFile } = await import("./extractQueuedFile");
-  await extractQueuedFile(request.fileId, { skipClassification: request.skipClassification });
+  await extractQueuedFile(request.fileId, {
+    skipClassification: request.skipClassification,
+    overwriteCorrections: request.overwriteCorrections === true,
+  });
 }

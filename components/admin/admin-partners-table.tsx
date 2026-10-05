@@ -313,6 +313,7 @@ function AdminPartnersTableInner(
         <div className="flex-1 flex flex-col overflow-hidden">
           <ResizableDataTable
             ref={tableRef}
+            columnWidthsStorageKey="fibuki.columnWidths.adminPartners"
             columns={columns}
             sections={sections}
             onRowClick={handleRowClick}

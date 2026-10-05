@@ -2,12 +2,9 @@
 
 import { useCallback, useMemo } from "react";
 import {
-  Timestamp,
   collection,
-  doc,
   orderBy,
   query,
-  setDoc,
   where,
   type QueryDocumentSnapshot,
 } from "firebase/firestore";
@@ -57,26 +54,6 @@ export function useImports(sourceId?: string) {
   );
 
   /**
-   * Create a new import record with a specific ID
-   * The ID should match the importJobId stored on transactions
-   */
-  const createImport = useCallback(
-    async (
-      importId: string,
-      data: Omit<ImportRecord, "id" | "createdAt" | "userId">,
-    ): Promise<void> => {
-      if (!userId) return;
-      const docRef = doc(db, IMPORTS_COLLECTION, importId);
-      await setDoc(docRef, {
-        ...data,
-        userId,
-        createdAt: Timestamp.now(),
-      });
-    },
-    [userId],
-  );
-
-  /**
    * Delete an import and all its associated transactions
    * Uses Cloud Function which has Storage delete permissions
    */
@@ -109,7 +86,6 @@ export function useImports(sourceId?: string) {
     drafts,
     loading,
     error,
-    createImport,
     deleteImport,
     deleteDraft,
     getImportById,

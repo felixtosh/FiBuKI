@@ -7,14 +7,12 @@ import {
   getDoc,
   doc,
   updateDoc,
-  addDoc,
   Timestamp,
   limit,
   writeBatch,
 } from "firebase/firestore";
 import {
   AutoActionNotification,
-  CreateNotificationData,
 } from "@/types/notification";
 import { OperationsContext } from "./types";
 
@@ -85,29 +83,6 @@ export async function getNotification(
 }
 
 /**
- * Create a new notification
- */
-export async function createNotification(
-  ctx: OperationsContext,
-  data: CreateNotificationData
-): Promise<string> {
-  const collectionPath = getNotificationsCollection(ctx.userId);
-  const now = Timestamp.now();
-
-  const newNotification = {
-    ...data,
-    createdAt: now,
-    readAt: null,
-  };
-
-  const docRef = await addDoc(
-    collection(ctx.db, collectionPath),
-    newNotification
-  );
-  return docRef.id;
-}
-
-/**
  * Mark a notification as read
  */
 export async function markNotificationRead(
@@ -163,39 +138,5 @@ export async function getUnreadNotificationCount(
   );
 
   const snapshot = await getDocs(q);
-  return snapshot.size;
-}
-
-/**
- * Delete old read notifications (cleanup utility)
- * Deletes read notifications older than the specified days
- */
-export async function deleteOldNotifications(
-  ctx: OperationsContext,
-  olderThanDays: number = 30
-): Promise<number> {
-  const collectionPath = getNotificationsCollection(ctx.userId);
-  const cutoffDate = new Date();
-  cutoffDate.setDate(cutoffDate.getDate() - olderThanDays);
-  const cutoffTimestamp = Timestamp.fromDate(cutoffDate);
-
-  const q = query(
-    collection(ctx.db, collectionPath),
-    where("readAt", "!=", null),
-    where("createdAt", "<", cutoffTimestamp)
-  );
-
-  const snapshot = await getDocs(q);
-
-  if (snapshot.empty) {
-    return 0;
-  }
-
-  const batch = writeBatch(ctx.db);
-  snapshot.docs.forEach((docSnap) => {
-    batch.delete(docSnap.ref);
-  });
-
-  await batch.commit();
   return snapshot.size;
 }

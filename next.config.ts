@@ -104,6 +104,9 @@ const CSP_DIRECTIVES: Record<string, string[]> = {
   "script-src": [
     "'self'",
     "'unsafe-inline'",
+    // Also what lets pdf.js compile its JPEG 2000 decoder (WebAssembly, #681).
+    // Dropping 'unsafe-eval' needs 'wasm-unsafe-eval' in its place, or scans
+    // draw blank in the PDF viewer and thumbnail.
     "'unsafe-eval'",
     "https://apis.google.com",
     "https://www.gstatic.com",

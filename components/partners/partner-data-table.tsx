@@ -108,6 +108,7 @@ function PartnerDataTableInner(
   return (
     <ResizableDataTable
       ref={ref as React.Ref<DataTableHandle>}
+      columnWidthsStorageKey="fibuki.columnWidths.partners"
       columns={columns}
       data={data}
       selectedRowId={selectedRowId}

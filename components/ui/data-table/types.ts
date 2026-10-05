@@ -57,6 +57,11 @@ export interface ResizableDataTableProps<TData extends { id: string }> {
   onRowClick?: (row: TData) => void;
   selectedRowId?: string | null;
   defaultColumnSizes: Record<string, number>;
+  /**
+   * localStorage key the resized column widths are remembered under, per
+   * browser (#674); each table keeps its own. Without it widths last until reload.
+   */
+  columnWidthsStorageKey?: string;
   minColumnWidth?: number;
   getRowClassName?: (row: TData, isSelected: boolean) => string;
   getRowDataAttributes?: (row: TData) => Record<string, string>;

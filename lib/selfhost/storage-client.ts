@@ -519,7 +519,7 @@ export function uploadBytesResumable(ref: StorageReference, data: UploadData, me
  * directly. That was wrong here for two reasons, one security and one functional:
  *
  *  - Every caller of this function feeds the result straight into a Firestore
- *    document (files/page.tsx, file-upload-zone, use-file-upload,
+ *    document (files/page.tsx, file-upload-zone,
  *    transaction-detail-panel, csv-storage-ops). So a user's bearer token was being
  *    PERSISTED in the database, readable by anything that can read the file doc,
  *    and shipped off-box in every backup and export.

@@ -6,11 +6,12 @@
  * again, so this walk fails the build when one appears in `functions/src`,
  * `app`, `lib`, `components` or `hooks`.
  *
- * ALLOWED holds the writers the next two slices move into the module:
- * Extraction (#639) and the identity sweep, Not Invoice, generated invoices
- * and the entity-name backfill (#640). Those entries only shrink; when they are
- * gone the module is the one writer. Besides them it names two files that
- * write no File's facts: a test fixture and a one-off row-shape migration.
+ * ALLOWED holds the writers the next slice moves into the module: the
+ * identity sweep, Not Invoice, generated invoices and the entity-name backfill
+ * (#640). Extraction writes through the module since #639. Those entries only
+ * shrink; when they are gone the module is the one writer. Besides them it
+ * names files that write no File's facts: a test fixture and one-off
+ * row-shape migrations.
  *
  * A static walk, so it reads shapes, not intent. A line it flags that writes
  * no extracted fact goes in ALLOWED with the reason, never a looser pattern.
@@ -78,8 +79,6 @@ const f = (...parts: string[]) => parts.join(sep);
 
 /** Path (from the repo root) -> which slice moves it into the module, or why it writes no fact. */
 const ALLOWED: Record<string, string> = {
-  // #639: Extraction writes through the module.
-  [f("functions", "src", "extraction", "extractionCore.ts")]: "#639: the Extraction's own write",
   // #640: the other writers of extracted facts.
   [f("functions", "src", "matching", "onUserDataUpdate.ts")]: "#640: the identity sweep",
   [f("functions", "src", "files", "backfillFileEntityNames.ts")]: "#640: the entity-name backfill (#299)",

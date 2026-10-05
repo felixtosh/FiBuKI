@@ -8,9 +8,7 @@ import {
   doc,
   updateDoc,
   Timestamp,
-  writeBatch,
   arrayUnion,
-  arrayRemove,
 } from "firebase/firestore";
 import {
   TaxFile,
@@ -556,31 +554,6 @@ export async function reextractFilesForPartner(
   return { queuedCount: successfulIds.length, fileIds: successfulIds };
 }
 
-/**
- * Restore a soft-deleted file
- */
-export async function restoreFile(
-  ctx: OperationsContext,
-  fileId: string
-): Promise<void> {
-  const docRef = doc(ctx.db, FILES_COLLECTION, fileId);
-  const snapshot = await getDoc(docRef);
-
-  if (!snapshot.exists()) {
-    throw new Error(`File ${fileId} not found`);
-  }
-
-  const data = snapshot.data();
-  if (data.userId !== ctx.userId) {
-    throw new Error(`File ${fileId} access denied`);
-  }
-
-  await updateDoc(docRef, {
-    deletedAt: null,
-    updatedAt: Timestamp.now(),
-  });
-}
-
 // === File-Transaction Connection Operations ===
 
 /**
@@ -627,30 +600,6 @@ export async function disconnectFileFromTransaction(
   rejectFile: boolean = false
 ): Promise<void> {
   await callFunction("disconnectFileFromTransaction", { fileId, transactionId, rejectFile });
-}
-
-/**
- * Remove a file from the transaction's rejected list, allowing it to be auto-matched again
- */
-export async function unrejectFileFromTransaction(
-  ctx: OperationsContext,
-  fileId: string,
-  transactionId: string
-): Promise<void> {
-  // Verify transaction exists and belongs to user
-  const transactionDoc = await getDoc(doc(ctx.db, TRANSACTIONS_COLLECTION, transactionId));
-  if (!transactionDoc.exists()) {
-    throw new Error(`Transaction ${transactionId} not found`);
-  }
-  const txData = transactionDoc.data();
-  if (txData.userId !== ctx.userId) {
-    throw new Error(`Transaction ${transactionId} access denied`);
-  }
-
-  await updateDoc(doc(ctx.db, TRANSACTIONS_COLLECTION, transactionId), {
-    rejectedFileIds: arrayRemove(fileId),
-    updatedAt: Timestamp.now(),
-  });
 }
 
 /**
@@ -862,129 +811,6 @@ export async function removePartnerFromFile(
       // Non-critical - don't throw
     }
   }
-}
-
-// === Integration File Operations ===
-
-/**
- * Soft delete all files for an integration that have NO transaction connections.
- * Files WITH connections are left unchanged (they're still useful).
- *
- * Used when disconnecting a Gmail integration - preserves files that are
- * connected to transactions while hiding orphaned files.
- *
- * @returns Count of files soft-deleted and skipped
- */
-export async function softDeleteFilesForIntegration(
-  ctx: OperationsContext,
-  integrationId: string
-): Promise<{ softDeleted: number; skipped: number }> {
-  // Query all files for this integration
-  const q = query(
-    collection(ctx.db, FILES_COLLECTION),
-    where("userId", "==", ctx.userId),
-    where("gmailIntegrationId", "==", integrationId)
-  );
-  const snapshot = await getDocs(q);
-
-  let softDeleted = 0;
-  let skipped = 0;
-  const now = Timestamp.now();
-
-  const BATCH_SIZE = 500;
-  let batch = writeBatch(ctx.db);
-  let batchCount = 0;
-
-  for (const fileDoc of snapshot.docs) {
-    const data = fileDoc.data();
-
-    // Skip already deleted files
-    if (data.deletedAt) {
-      continue;
-    }
-
-    // Skip files with transaction connections - they're still useful
-    if (data.transactionIds && data.transactionIds.length > 0) {
-      skipped++;
-      continue;
-    }
-
-    // Soft delete this file
-    batch.update(fileDoc.ref, {
-      deletedAt: now,
-      updatedAt: now,
-    });
-    softDeleted++;
-    batchCount++;
-
-    // Commit in batches
-    if (batchCount >= BATCH_SIZE) {
-      await batch.commit();
-      batch = writeBatch(ctx.db);
-      batchCount = 0;
-    }
-  }
-
-  // Commit remaining
-  if (batchCount > 0) {
-    await batch.commit();
-  }
-
-  return { softDeleted, skipped };
-}
-
-/**
- * Restore all soft-deleted files for an integration.
- * Called when reconnecting a previously disconnected integration.
- *
- * @returns Count of files restored
- */
-export async function restoreFilesForIntegration(
-  ctx: OperationsContext,
-  integrationId: string
-): Promise<{ restored: number }> {
-  // Query all files for this integration (including soft-deleted)
-  const q = query(
-    collection(ctx.db, FILES_COLLECTION),
-    where("userId", "==", ctx.userId),
-    where("gmailIntegrationId", "==", integrationId)
-  );
-  const snapshot = await getDocs(q);
-
-  let restored = 0;
-  const now = Timestamp.now();
-
-  const BATCH_SIZE = 500;
-  let batch = writeBatch(ctx.db);
-  let batchCount = 0;
-
-  for (const fileDoc of snapshot.docs) {
-    const data = fileDoc.data();
-
-    // Only restore files that were soft-deleted
-    if (!data.deletedAt) {
-      continue;
-    }
-
-    batch.update(fileDoc.ref, {
-      deletedAt: null,
-      updatedAt: now,
-    });
-    restored++;
-    batchCount++;
-
-    if (batchCount >= BATCH_SIZE) {
-      await batch.commit();
-      batch = writeBatch(ctx.db);
-      batchCount = 0;
-    }
-  }
-
-  if (batchCount > 0) {
-    await batch.commit();
-  }
-
-  return { restored };
 }
 
 // === Bulk Operations ===

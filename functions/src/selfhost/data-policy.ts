@@ -39,16 +39,18 @@ export const TOP_LEVEL_POLICIES: Readonly<Record<string, CollectionPolicy>> = {
   transactions: ownerCrud,
   files: ownerCrud,
   partners: ownerCrud,
-  emailIntegrations: ownerCrud,
   imports: ownerCrud,
   noReceiptCategories: ownerCrud,
   // File Connections are written only by their one writer on the server (#612).
   fileConnections: ownerReadOnly,
   inboundEmailAddresses: ownerCrud,
-  agentSearchSessions: ownerCrud,
 
-  aiUsage: { read: "owner", create: "owner", update: "none", delete: "none" },
-  precisionSearchQueue: { read: "owner", create: "owner", update: "none", delete: "none" },
+  // The browser reads domain data; only the server writes it (ADR-0016). These
+  // lost their last browser writer in #625.
+  emailIntegrations: ownerReadOnly,
+  agentSearchSessions: ownerReadOnly,
+  aiUsage: ownerReadOnly,
+  precisionSearchQueue: ownerReadOnly,
 
   invoices: ownerReadOnly,
   functionCalls: ownerReadOnly,
@@ -118,7 +120,8 @@ export const SUBTREE_POLICIES: Readonly<Record<string, CollectionPolicy>> = {
   settings: { read: "authed", create: "authed", update: "authed", delete: "authed" },
   notifications: { read: "authed", create: "authed", update: "authed", delete: "authed" },
   chatSessions: { read: "authed", create: "authed", update: "authed", delete: "authed" },
-  reports: { read: "authed", create: "authed", update: "authed", delete: "authed" },
+  // Read by the reports screen; written only on the server (ADR-0016, #625).
+  reports: { read: "authed", create: "none", update: "none", delete: "none" },
   // The WebAuthn challenge a passkey signature is verified against. Written
   // only by generatePasskey*Options; a client that could write it could set it
   // to the challenge of an assertion it captured earlier and replay that.
@@ -135,11 +138,14 @@ export const SUBTREE_POLICIES: Readonly<Record<string, CollectionPolicy>> = {
   system: denied, // learningQueue etc. — server-only
 };
 
-/** The users/{uid} document itself: read/write when uid matches. */
+/**
+ * The users/{uid} document itself, when uid matches: read and create. No browser
+ * code updates it; the server does (ADR-0016, #625).
+ */
 export const USER_DOC_POLICY: CollectionPolicy = {
   read: "authed",
   create: "authed",
-  update: "authed",
+  update: "none",
   delete: "none",
 };
 
