@@ -55,8 +55,39 @@ describe("expectedInvoiceWindow", () => {
     expect(daysBetween(window!.expectedAt, TX_DATE)).toBe(5);
     // delayVariance 2, doubled to also admit what the scorer calls a "close" date
     expect(window!.varianceDays).toBe(4);
-    expect(daysBetween(window!.from, window!.expectedAt)).toBe(4);
+    // #618: plus the settlement lag backwards on a monthly cycle, since the
+    // scorer calls a booking up to three days late on time.
+    expect(daysBetween(window!.from, window!.expectedAt)).toBe(7);
     expect(daysBetween(window!.expectedAt, window!.to)).toBe(4);
+  });
+
+  it("admits the File of a charge booked after a weekend, once the cycle learned the exact term (#618)", () => {
+    // Learned from stated dates: 15 days, variance 0. The File is dated
+    // 05.06, its Zahlungstermin 20.06 is a Saturday, the bank books Monday 22.06.
+    const telecom: QueryGenerationPartner = {
+      name: "Magenta Telekom",
+      effectiveCycles: [
+        { source: "learned", frequencyDays: 30, invoiceToTransactionDelay: 15, delayVariance: 0 },
+      ],
+    };
+    const booked = new Date("2026-06-22T00:00:00.000Z");
+    const fileDate = new Date("2026-06-05T00:00:00.000Z");
+
+    const window = expectedInvoiceWindow({ name: "MAGENTA", date: booked, amount: 4590 }, telecom);
+    expect(window!.from.getTime()).toBeLessThanOrEqual(fileDate.getTime());
+    expect(window!.to.getTime()).toBeGreaterThanOrEqual(fileDate.getTime());
+    expect(daysBetween(window!.expectedAt, window!.to)).toBe(0);
+  });
+
+  it("adds no lag on a weekly cycle", () => {
+    const weekly: QueryGenerationPartner = {
+      name: "Anthropic PBC",
+      effectiveCycles: [
+        { source: "learned", frequencyDays: 7, invoiceToTransactionDelay: 1, delayVariance: 1 },
+      ],
+    };
+    const window = expectedInvoiceWindow({ name: "ANTHROPIC", date: TX_DATE, amount: 3825 }, weekly);
+    expect(daysBetween(window!.from, window!.expectedAt)).toBe(2);
   });
 
   it("yields no window for a partner with no billing cycle", () => {
@@ -110,6 +141,21 @@ describe("expectedInvoiceWindow", () => {
 
     const window = expectedInvoiceWindow({ name: "ANTHROPIC", date: TX_DATE, amount: 3825 }, noisyWeekly);
     expect(window!.varianceDays).toBe(3);
+  });
+
+  it("keeps the settlement lag inside the half-period clamp on a noisy monthly cycle (#618)", () => {
+    const noisyMonthly: QueryGenerationPartner = {
+      name: "Magenta Telekom",
+      // delayVariance 8 doubled is 16, clamped to 15; the lag must not push
+      // the back edge past half the 30-day period into the previous charge.
+      effectiveCycles: [
+        { source: "learned", frequencyDays: 30, invoiceToTransactionDelay: 15, delayVariance: 8 },
+      ],
+    };
+
+    const window = expectedInvoiceWindow({ name: "MAGENTA", date: TX_DATE, amount: 4590 }, noisyMonthly);
+    expect(daysBetween(window!.from, window!.expectedAt)).toBe(15);
+    expect(daysBetween(window!.expectedAt, window!.to)).toBe(15);
   });
 
   it("centres on the transaction date when the recurrence has no learned delay", () => {

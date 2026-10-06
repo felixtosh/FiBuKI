@@ -6,9 +6,11 @@
     "node": "22.x"
   },
   "scripts": {
+    "predev": "node scripts/copy-pdfjs-wasm.mjs",
     "dev": "next dev",
     "dev:emulators": "dotenv -e .env.local -- firebase emulators:start",
     "dev:all": "concurrently \"npm run dev:emulators\" \"npm run dev\"",
+    "prebuild": "node scripts/copy-pdfjs-wasm.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
@@ -32,7 +34,6 @@
     "test:components:watch": "vitest --config vitest.components.config.ts",
     "setup": "bash scripts/setup.sh",
     "generate:mcp-automations": "node scripts/generate-mcp-automations.js",
-    "generate:tool-definitions": "node scripts/generate-tool-definitions.js",
     "check:corpus-anchors": "node scripts/check-corpus-anchors.js"
   },
   "dependencies": {

@@ -12,14 +12,14 @@
  * files it under the key.
  */
 
-import { parseIsoDueDate } from "./dueDate";
+import { parseIsoDueDate, SETTLEMENT_LAG_DAYS, utcDayOf } from "./dueDate";
 
 /**
  * Days after the Debit Date a collection may still be booked: the Debit Date
  * can fall on a weekend or bank holiday, and the bank then books the next
- * banking day. Three covers a Friday-holiday-weekend run.
+ * banking day. The same lag a Due Date gets (#618).
  */
-export const DEBIT_DATE_SETTLEMENT_DAYS = 3;
+export const DEBIT_DATE_SETTLEMENT_DAYS = SETTLEMENT_LAG_DAYS;
 
 interface AdditionalFieldLike {
   key?: unknown;
@@ -53,7 +53,8 @@ function isDebitDateRow(field: AdditionalFieldLike): boolean {
 
 /**
  * The Debit Date among a File's additional fields, or null. With `issueDate`
- * given, a Debit Date before the issue day is a misread and is rejected.
+ * given, a Debit Date before the issue day is a misread and is rejected; the
+ * issue day is its UTC date part, as for the Due Date.
  */
 export function debitDateFromAdditionalFields(
   fields: unknown,
@@ -61,10 +62,7 @@ export function debitDateFromAdditionalFields(
 ): Date | null {
   if (!Array.isArray(fields)) return null;
 
-  const issueDay =
-    issueDate instanceof Date && !isNaN(issueDate.getTime())
-      ? new Date(issueDate.getFullYear(), issueDate.getMonth(), issueDate.getDate()).getTime()
-      : null;
+  const issueDay = utcDayOf(issueDate);
 
   for (const raw of fields) {
     if (!raw || typeof raw !== "object") continue;
@@ -85,8 +83,9 @@ export function debitDateFromAdditionalFields(
  * day, shortly after. Never before: the Partner may not collect early. Day-level.
  */
 export function isDebitDateHit(debitDate: Date, txDate: Date): boolean {
-  const debitDay = new Date(debitDate.getFullYear(), debitDate.getMonth(), debitDate.getDate()).getTime();
-  const txDay = new Date(txDate.getFullYear(), txDate.getMonth(), txDate.getDate()).getTime();
+  const debitDay = utcDayOf(debitDate);
+  const txDay = utcDayOf(txDate);
+  if (debitDay === null || txDay === null) return false;
   const lag = Math.round((txDay - debitDay) / MS_PER_DAY);
   return lag >= 0 && lag <= DEBIT_DATE_SETTLEMENT_DAYS;
 }

@@ -179,6 +179,17 @@ interface EmailIntegration {
   isActive: boolean;
   needsReauth: boolean;
   isPaused?: boolean;
+  /** Mail Provider; missing on Gmail integrations made before IMAP existed. */
+  provider?: string;
+}
+
+/**
+ * The email strategies speak only the Gmail API (#680). An IMAP mailbox has no
+ * OAuth token to read and nothing here could search it, so every check below
+ * passes over it until the search has an IMAP leg (yazzbert/homelab item 4).
+ */
+function isGmailIntegration(data: { provider?: unknown }): boolean {
+  return ((data.provider as string | undefined) || "gmail") === "gmail";
 }
 
 /**
@@ -199,11 +210,11 @@ async function shouldPauseForGmailReauth(userId: string): Promise<{
     .where("userId", "==", userId)
     .where("isActive", "==", true)
     .where("needsReauth", "==", true)
-    .limit(1)
     .get();
 
-  if (!needsReauthSnapshot.empty) {
-    const integration = needsReauthSnapshot.docs[0].data() as EmailIntegration;
+  const gmail = needsReauthSnapshot.docs.find((doc) => isGmailIntegration(doc.data()));
+  if (gmail) {
+    const integration = gmail.data() as EmailIntegration;
     return {
       shouldPause: true,
       reason: "Gmail connected but needs reconnection",
@@ -215,8 +226,8 @@ async function shouldPauseForGmailReauth(userId: string): Promise<{
 }
 
 /**
- * Check if user has ANY active email integration (connected and not needing reauth).
- * If no email integration exists, email strategies should be skipped entirely.
+ * Check if user has ANY active Gmail integration (connected and not needing reauth).
+ * If none exists, email strategies should be skipped entirely.
  */
 async function hasActiveEmailIntegration(userId: string): Promise<boolean> {
   const activeIntegrationSnapshot = await db
@@ -224,10 +235,9 @@ async function hasActiveEmailIntegration(userId: string): Promise<boolean> {
     .where("userId", "==", userId)
     .where("isActive", "==", true)
     .where("needsReauth", "==", false)
-    .limit(1)
     .get();
 
-  return !activeIntegrationSnapshot.empty;
+  return activeIntegrationSnapshot.docs.some((doc) => isGmailIntegration(doc.data()));
 }
 
 interface EmailTokenDocument {
@@ -525,7 +535,6 @@ async function getGmailClientsForUser(
     .where("userId", "==", userId)
     .where("isActive", "==", true)
     .where("needsReauth", "==", false)
-    .limit(5)
     .get();
 
   if (integrationsSnapshot.empty) {
@@ -534,8 +543,11 @@ async function getGmailClientsForUser(
 
   const clients: Array<{ client: GmailApiClient; integration: EmailIntegration }> = [];
 
+  // At most 5 Gmail mailboxes, counted after the IMAP ones are passed over.
   for (const doc of integrationsSnapshot.docs) {
+    if (clients.length >= 5) break;
     const integration = { id: doc.id, ...doc.data() } as EmailIntegration;
+    if (!isGmailIntegration(integration)) continue;
 
     // Get token
     const tokenDoc = await db.collection("emailTokens").doc(integration.id).get();
@@ -722,7 +734,9 @@ async function createFileFromAttachment(
     userId,
     fileName: attachment.filename,
     fileType: contentType, // Use corrected MIME type
-    fileSize: attachment.size,
+    // The stored bytes, not the provider's figure: IMAP reports the encoded
+    // part's size (#722).
+    fileSize: attachmentData.length,
     storagePath,
     downloadUrl,
     contentHash,

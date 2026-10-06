@@ -58,9 +58,23 @@ const ID_KEYS = [
   "sessionId", "chatSessionId",
   "notificationId",
   "keyId", "apiKeyId",
+  "addressId",
   "storagePath", "downloadUrl", "path",
   "userId", "uid", "targetUserId", "ownerId",
 ];
+
+/** A column mapping and a parsed row as the import remap takes them (#628). */
+const REMAP_MAPPINGS = [{ csvColumn: "Datum", targetField: "date", confidence: 1, userConfirmed: true, keepAsMetadata: false, format: "de" }];
+const remapRow = (transactionId: string) => ({
+  transactionId,
+  date: "2026-09-03T00:00:00.000Z",
+  amount: -1,
+  name: "pwned",
+  partner: null,
+  reference: null,
+  partnerIban: null,
+  original: { date: "03.09.2026", amount: "-0,01", rawRow: {} },
+});
 
 /**
  * Payload shapes aimed at the attacker's OWN account. Whatever a callable
@@ -92,7 +106,26 @@ function ownPayloads(): Array<Record<string, unknown>> {
     { sourceId: A.source, transactions: [{ sourceId: A.source, amount: -1, name: "probe", date: new Date().toISOString(), dedupeHash: "probe" }] },
     { invoiceId: A.invoice },
     { sessionId: A.chat },
+    // #616: a rollback names a Transaction and one of its history entries; the
+    // tool-running callable names a tool and its arguments.
+    { transactionId: A.transaction, historyId: "a-hist-1" },
+    { tool: "get_transaction", arguments: { transactionId: A.transaction } },
+    { tool: "update_transaction", arguments: { transactionId: A.transaction, description: "probe" } },
+    // #628: a remap saves its column mappings on the Import.
+    { importJobId: A.import, sourceId: A.source, fieldMappings: REMAP_MAPPINGS, rows: [] },
+    // #632: the identity, its entities linked to a Partner.
+    identityPayload(A.partner),
+    // #626: an inbound email address takes only its User's settings.
+    { addressId: A.inboundAddress, data: { displayName: "probe" } },
   ];
+}
+
+/** A whole identity as the settings screen saves it, each entity linked to `partnerId`. */
+function identityPayload(partnerId: string): Record<string, unknown> {
+  return {
+    personalEntity: { type: "person", name: "probe", aliases: [], ibans: [], partnerId },
+    companies: [{ type: "company", name: "probe co", aliases: [], ibans: [], partnerId }],
+  };
 }
 
 /**
@@ -117,6 +150,9 @@ function handOverPayloads(): Array<Record<string, unknown>> {
     { categoryId: A.category, data: { name: "Mine", userId: VICTIM } },
     { sourceId: A.source, data: { name: "Mine", userId: VICTIM } },
     { invoiceId: A.invoice, data: { recipientName: "Mine", userId: VICTIM } },
+    { addressId: A.inboundAddress, data: { displayName: "Mine", userId: VICTIM } },
+    // #616: a tool's arguments carry no owner; one smuggled in is just an argument.
+    { tool: "update_transaction", arguments: { transactionId: A.transaction, description: "mine", userId: VICTIM } },
   ];
 }
 
@@ -132,6 +168,7 @@ function payloads(): Array<Record<string, unknown>> {
     { transactionId: V.transaction, updates: { name: "pwned", userId: ATTACKER } },
     { fileId: V.file, data: { fileName: "pwned", userId: ATTACKER } },
     { partnerId: V.partner, data: { name: "pwned", userId: ATTACKER } },
+    { addressId: V.inboundAddress, data: { isActive: false } },
     // One side mine, one side theirs: each pair both ways round.
     { fileId: V.file, transactionId: A.transaction },
     { fileId: A.file, transactionId: V.transaction },
@@ -153,6 +190,21 @@ function payloads(): Array<Record<string, unknown>> {
     // Writing INTO the victim's account from the attacker's side.
     { sourceId: V.source, transactions: [{ sourceId: V.source, amount: -1, name: "planted", date: new Date().toISOString(), dedupeHash: "x" }] },
     { userId: VICTIM, name: "planted", data: { userId: VICTIM } },
+    // #616: the victim's history entry, under their Transaction and under the attacker's.
+    { transactionId: V.transaction, historyId: "v-hist-1" },
+    { transactionId: A.transaction, historyId: "v-hist-1" },
+    // #616: any named tool, aimed at the victim, or with an identity smuggled in.
+    { tool: "get_transaction", arguments: { transactionId: V.transaction } },
+    { tool: "get_file", arguments: { fileId: V.file } },
+    { tool: "update_transaction", arguments: { transactionId: V.transaction, description: "pwned" } },
+    { tool: "list_transactions", arguments: { userId: VICTIM, uid: VICTIM } },
+    { tool: "list_files", userId: VICTIM, uid: VICTIM, arguments: {} },
+    // #628: the victim's Import under the attacker's bank account, and the other way round.
+    { importJobId: V.import, sourceId: A.source, fieldMappings: REMAP_MAPPINGS, rows: [] },
+    { importJobId: A.import, sourceId: V.source, fieldMappings: REMAP_MAPPINGS, rows: [] },
+    { importJobId: A.import, sourceId: A.source, fieldMappings: REMAP_MAPPINGS, rows: [remapRow(V.transaction)] },
+    // #632: the attacker's identity claiming the victim's Partner as its own entity.
+    identityPayload(V.partner),
     // Every id at once, in arrays, in case a handler takes "ids" generically.
     { ids: ALL_VICTIM_IDS, items: ALL_VICTIM_IDS.map((id) => ({ id })) },
   ];
@@ -205,6 +257,33 @@ describe("cross-user isolation: every callable", () => {
     ).rejects.toThrow();
     await drainTriggers();
     await assertVictimUntouched(before, "updateTransaction saleSupplyKind");
+  });
+
+  it("the identity cannot link an entity to another user's Partner (#632)", async () => {
+    await freshAccounts();
+    const save = callables.find(([n]) => n === "saveIdentity")?.[1];
+    expect(save).toBeDefined();
+    const company = { id: "a-company", type: "company", name: "Mine GmbH", aliases: [], ibans: [] };
+    const linked = (partnerId: string) => ({ companies: [{ ...company, partnerId }] });
+    const identity = async () => (await getFirestore().doc(`users/${ATTACKER}/settings/userData`).get()).data()!;
+
+    // "This is me" with the attacker's own Partner works.
+    await save!.run({ data: linked(A.partner), auth: ATTACKER_AUTH });
+    await drainTriggers();
+    expect((await identity()).companies[0].partnerId).toBe(A.partner);
+
+    // The same, unchanged, entity re-pointed at the victim's Partner; and the legacy id lists.
+    for (const data of [
+      linked(V.partner),
+      { ...linked(A.partner), markedAsMe: [V.partner] },
+      { ...linked(A.partner), identityPartnerIds: { name: V.partner } },
+      { ...linked(A.partner), identityPartnerIds: { companyName: V.partner } },
+    ]) {
+      await expect(save!.run({ data, auth: ATTACKER_AUTH }), JSON.stringify(data)).rejects.toThrow(/Partner/);
+    }
+    await drainTriggers();
+    expect(JSON.stringify(await identity())).not.toContain(V.partner);
+    expect((await identity()).companies[0].partnerId).toBe(A.partner);
   });
 
   it("no callable hands the attacker's own row to another user (#621)", async () => {

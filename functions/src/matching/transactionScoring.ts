@@ -21,7 +21,13 @@ import {
   isRemainderClosed,
 } from "./coverage";
 import type { DocumentType, DocumentationState } from "../documents/types";
-import { dueDateFromAdditionalFields } from "./dueDate";
+import {
+  SETTLEMENT_LAG_MIN_FREQUENCY_DAYS,
+  daysAfter,
+  dueDateFromAdditionalFields,
+  isDueDateHit,
+  learnedCycleSettlementLag,
+} from "./dueDate";
 import {
   DEBIT_DATE_SETTLEMENT_DAYS,
   debitDateFromAdditionalFields,
@@ -30,6 +36,8 @@ import {
 import type { TransactionType } from "../imports/transactionType";
 import { stripGenericBankingTerms } from "./genericBankingTerms";
 import { toDateSafe } from "../utils/toDateSafe";
+import { dayOf } from "../utils/storedDay";
+import { MATCH_WINDOW_DAYS, MATCH_WINDOW_MAX_INSTALMENT_DAYS } from "./matchWindow";
 
 // The payment total is Coverage's figure too, so it lives with Coverage (#239).
 // Re-exported here because this is where every caller already imports it from.
@@ -54,10 +62,12 @@ export const SCORING_CONFIG = {
   HARD_FACTS_BONUS_CLOSE: 15,
   /**
    * Days after a Debit Date its collection may still be booked (#136). Inside
-   * that lag a Debit Date hit counts as a same-day endpoint, which a Due Date
-   * only earns on the exact day.
+   * that lag a Debit Date hit counts as a same-day endpoint, and since #618 a
+   * Due Date hit does too (SETTLEMENT_LAG_DAYS, the same three days).
    */
   DEBIT_DATE_SETTLEMENT_DAYS,
+  /** Shortest learned cycle whose expected day gets the settlement lag (#618). */
+  SETTLEMENT_LAG_MIN_FREQUENCY_DAYS,
   /**
    * On top of the same-day bonus when a Debit Date hit lands on a direct
    * debit with a cent-exact amount (#136): the Partner said when it would
@@ -148,6 +158,33 @@ export interface ScoreBreakdown {
    * This is what makes a stored Match identifiable as a Remainder Match.
    */
   scoredAgainstRemainder?: number;
+  /**
+   * Present only when `amount` was scored against the File's Outstanding
+   * amount (#615, ADR-0013): a payment is connected and this Transaction was
+   * judged as a further one. The figure, in cents.
+   */
+  scoredAgainstOutstanding?: number;
+  /**
+   * Present only when `amount` was scored against the nearest instalment the
+   * File prints (#615): nothing being paid yet, or the nearest unpaid one
+   * when it fits better than the Outstanding amount (#716). That instalment,
+   * in cents.
+   */
+  scoredAgainstInstalment?: number;
+  /**
+   * Present only when the bank line cites the File's invoice number and pays
+   * part of it, with no printed instalment or Outstanding amount to judge it
+   * by (#615): the amount is no mismatch, the Confidence stays below
+   * AUTO_MATCH_THRESHOLD, and it never connects itself.
+   */
+  instalmentCandidate?: true;
+  /**
+   * Present only when `date` was scored against a printed instalment's due
+   * date rather than the File's own dates (#716): the Transaction was judged
+   * against that instalment, or closed the Outstanding amount of a File that
+   * prints instalments. The stored day, as `YYYY-MM-DD`.
+   */
+  scoredAgainstDueDate?: string;
 }
 
 export interface TransactionPreview {
@@ -235,6 +272,34 @@ export interface FileMatchingData {
    * rather than as any particular type.
    */
   documentType?: DocumentType | null;
+  /**
+   * The instalments the File prints (#615), as stored. Before any payment
+   * the nearest one is what a Transaction's amount is judged against, and a
+   * payment of exactly one may connect itself (ADR-0013).
+   */
+  extractedInstalments?: FileInstalment[] | null;
+  /**
+   * The File's Outstanding amount in cents (#615), set by the matcher once a
+   * payment is connected. Above zero, a further Transaction is scored against
+   * it, never against the full total. Zero (paid in full) or null (no figure,
+   * a payment in another currency): the full total, as before. Absent:
+   * nothing is paid yet.
+   */
+  outstanding?: number | null;
+  /**
+   * The Transactions the File is already on, set by the matcher (#615). None
+   * of them is judged as a further payment.
+   */
+  transactionIds?: string[];
+}
+
+/** One instalment a File prints, as the scorer reads it (#615). */
+export interface FileInstalment {
+  /** Cents, as a magnitude. */
+  amount: number;
+  /** The stored day it is due (UTC midnight), or null. */
+  dueDate: Timestamp | null;
+  label: string | null;
 }
 
 export interface TransactionData {
@@ -485,6 +550,12 @@ export interface DateScoreResult {
    * whenever there is no window, and on the learned-delay path.
    */
   endpointScore: number;
+  /**
+   * Set when the learned cycle's period penalty zeroed the date: the booking
+   * sits on a neighbouring period's expected day, so it is that period's
+   * charge. Neither a Due Date nor a Debit Date hit overrides it (#618).
+   */
+  neighbouringPeriod?: true;
 }
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
@@ -511,10 +582,14 @@ function scoreDayDistance(daysDiff: number): { score: number; source: Transactio
  * and a User who pays on receipt is anchored by the issue date, which is why
  * this is an interval and not a precedence rule.
  *
- * The learned `invoiceToTransactionDelay` is observed behaviour and stays
- * stronger evidence than a stated intention, so it (and its frequencyDays
- * period penalty) is consulted first, exactly as before. The window only
- * replaces the fallback proximity check behind it.
+ * The learned `invoiceToTransactionDelay` is observed behaviour, so it (and
+ * its frequencyDays period penalty) is consulted before the window. A Due Date
+ * hit (#618), a booking on the Due Date or within the settlement lag after it,
+ * outranks the learned delay: a date the Partner printed beats a gap the
+ * learner inferred, as a Debit Date hit does in `scoreTransaction`. It does
+ * not outrank the period penalty: a booking on a neighbouring period's
+ * expected day is that period's charge, and the result says so
+ * (`neighbouringPeriod`) so the Debit Date yields to it too.
  */
 export function calculateDateScore(
   fileDate: Date,
@@ -528,6 +603,11 @@ export function calculateDateScore(
     )
   );
 
+  // A Due Date on or before the issue date opens no window (see below), so it
+  // gets no settlement lag either.
+  const windowEnd = dueDate && dueDate.getTime() > fileDate.getTime() ? dueDate : null;
+  const dueDateHit = windowEnd !== null && isDueDateHit(windowEnd, txDate);
+
   // If billing cycle has a learned invoice-to-transaction delay, check against it
   // This handles cases like "Telekom invoice Dec 1 → bank debit Dec 15" where
   // daysDiff=14 normally scores 8, but the learned delay makes it a strong match
@@ -537,7 +617,12 @@ export function calculateDateScore(
     const actualDelay = Math.floor(
       (txDate.getTime() - fileDate.getTime()) / (1000 * 60 * 60 * 24)
     );
-    const delayDiff = Math.abs(actualDelay - expectedDelay);
+    const late = actualDelay - expectedDelay;
+    const delayDiff = Math.abs(late);
+    // #618: the expected day may fall on a weekend too, so on a monthly or
+    // longer cycle a booking up to the settlement lag after it is on time,
+    // on top of the variance. Forward only.
+    const lag = learnedCycleSettlementLag(billingCycle.frequencyDays);
 
     // Checked before the near/close bands below, not after: for a short
     // frequency (e.g. weekly, 7d) with a loose delayVariance (e.g. 5d),
@@ -553,43 +638,57 @@ export function calculateDateScore(
     // check true for almost any delayDiff past the period midpoint — not
     // just delays that actually land near a period boundary — swallowing
     // same-period-but-late matches into a false rejection.
+    //
+    // `offset` is the booking's signed distance from the neighbouring
+    // period's expected day; that charge gets the same forward lag as this
+    // one (#618), so the penalty reaches `lag` days further after it.
+    //
+    // It also outranks a stated-date hit (#618, decided on the PR): a net-30
+    // invoice paid on issue has its Due Date right where next month's charge
+    // lands, and that charge must not tie the real one.
     if (billingCycle.frequencyDays) {
       const periodsAway = Math.round(delayDiff / billingCycle.frequencyDays);
       if (periodsAway >= 1) {
         const periodVariance = Math.min(variance, Math.floor(billingCycle.frequencyDays / 2));
-        const distanceFromPeriod = Math.abs(
-          delayDiff - periodsAway * billingCycle.frequencyDays
-        );
-        if (distanceFromPeriod <= periodVariance) {
-          return { score: 0, source: null, endpointScore: 0 };
+        const offset = late - Math.sign(late) * periodsAway * billingCycle.frequencyDays;
+        if (offset >= -periodVariance && offset <= periodVariance + lag) {
+          return { score: 0, source: null, endpointScore: 0, neighbouringPeriod: true };
         }
       }
     }
 
-    if (delayDiff <= variance) return { score: 25, source: "date_exact", endpointScore: 25 };
+    // Anywhere else a Due Date hit beats the learned delay: a date the
+    // Partner printed beats a gap the learner inferred.
+    if (dueDateHit) return { score: 25, source: "date_exact", endpointScore: 25 };
+
+    if (late >= -variance && late <= variance + lag) {
+      return { score: 25, source: "date_exact", endpointScore: 25 };
+    }
     if (delayDiff <= variance * 2) return { score: 22, source: "date_close", endpointScore: 22 };
   }
+
+  if (dueDateHit) return { score: 25, source: "date_exact", endpointScore: 25 };
 
   // Standard date proximity scoring, over the payment window when there is one.
   // A Due Date on or before the issue date is no window: equal collapses to
   // the point anyway, and an inverted one is a misread that would otherwise
   // manufacture confident matches.
-  if (!dueDate || dueDate.getTime() <= fileDate.getTime()) {
+  if (!windowEnd) {
     const point = scoreDayDistance(daysDiff);
     return { ...point, endpointScore: point.score };
   }
 
-  const dueDiff = Math.abs(Math.floor((dueDate.getTime() - txDate.getTime()) / MS_PER_DAY));
+  const dueDiff = Math.abs(Math.floor((windowEnd.getTime() - txDate.getTime()) / MS_PER_DAY));
   const endpointDiff = Math.min(daysDiff, dueDiff);
 
   // The bound: without a learned cycle there is no period penalty guarding a
   // wide window, so past the cap only the endpoints count.
   const cycleLearned =
     billingCycle?.invoiceToTransactionDelay != null && Boolean(billingCycle.frequencyDays);
-  const windowDays = (dueDate.getTime() - fileDate.getTime()) / MS_PER_DAY;
+  const windowDays = (windowEnd.getTime() - fileDate.getTime()) / MS_PER_DAY;
   const scoreInterior = cycleLearned || windowDays <= SCORING_CONFIG.DUE_DATE_WINDOW_CAP_DAYS;
   const inside =
-    txDate.getTime() >= fileDate.getTime() && txDate.getTime() <= dueDate.getTime();
+    txDate.getTime() >= fileDate.getTime() && txDate.getTime() <= windowEnd.getTime();
 
   const endpoint = scoreDayDistance(endpointDiff);
   const result = scoreInterior && inside ? scoreDayDistance(0) : endpoint;
@@ -873,6 +972,226 @@ export function isRemainderMatch(match: TransactionMatchScore): boolean {
 }
 
 /**
+ * Is this an Outstanding Match (#615, ADR-0013): a Transaction judged as one
+ * of several payments of the File, against its Outstanding amount, against a
+ * printed instalment, or as an instalment the bank line's reference names?
+ * Read off the breakdown, like `isRemainderMatch`.
+ */
+export function isOutstandingMatch(match: TransactionMatchScore): boolean {
+  const { breakdown } = match;
+  return (
+    breakdown.scoredAgainstOutstanding != null ||
+    breakdown.scoredAgainstInstalment != null ||
+    breakdown.instalmentCandidate === true
+  );
+}
+
+/**
+ * What a reference-only instalment candidate's amount scores (#615): the
+ * lowest rung of the amount ladder. The bank line names the document, so the
+ * part payment is no mismatch; it says nothing about whether the amount is
+ * right, so it earns no more than "within 10 %" would.
+ */
+const INSTALMENT_CANDIDATE_AMOUNT_SCORE = 20;
+
+/** How a Transaction's amount is judged when it may be one of several payments of a File. */
+type FurtherPayment =
+  | {
+      kind: "outstanding";
+      against: number;
+      /** The printed instalments still unpaid (`unpaidInstalmentsOf`), or null when unknown. */
+      unpaid: FileInstalment[] | null;
+    }
+  | {
+      kind: "instalment";
+      against: number;
+      /** The printed rows of that amount it may be (unpaid ones once a payment is connected). */
+      rows: FileInstalment[];
+    }
+  | { kind: "candidate" };
+
+/** The printed row whose amount is nearest `amount`, the first of equals, or null for none. */
+function nearestInstalment(rows: FileInstalment[], amount: number): FileInstalment | null {
+  let nearest: FileInstalment | null = null;
+  for (const row of rows) {
+    if (!nearest || Math.abs(row.amount - amount) < Math.abs(nearest.amount - amount)) nearest = row;
+  }
+  return nearest;
+}
+
+/** A schedule longer than this is not searched for which rows are paid (2^n subsets). */
+const MAX_SCHEDULE_ROWS = 16;
+
+/**
+ * Which printed instalments are still unpaid (#716), from what the connected
+ * payments pay toward the File (its total minus the Outstanding amount): the
+ * paid rows are the EARLIEST rows, in printed order, whose amounts add up to
+ * what is paid, within REMAINDER_CLOSE_TOLERANCE; every other row is unpaid.
+ * Paid in schedule order that is the head of the schedule; one paid out of
+ * order (a 300 rate before the 600 deposit) is found as well, and of equal
+ * rows the earliest count as paid.
+ *
+ * Nothing paid: every row. Null when no rows add up to what is paid (the
+ * payments did not follow the schedule), or the schedule is too long to
+ * search: no printed row is then known to be unpaid.
+ */
+export function unpaidInstalmentsOf(instalments: FileInstalment[], paid: number): FileInstalment[] | null {
+  if (paid <= 0) return instalments;
+  if (instalments.length > MAX_SCHEDULE_ROWS) return null;
+  const chosen: number[] = [];
+  // Depth first, taking each row before leaving it out: the first set found
+  // is the one made of the earliest rows.
+  const search = (i: number, sum: number): boolean => {
+    if (chosen.length > 0 && isRemainderClosed(paid - sum)) return true;
+    if (i >= instalments.length || sum > paid + REMAINDER_CLOSE_TOLERANCE) return false;
+    chosen.push(i);
+    if (search(i + 1, sum + instalments[i].amount)) return true;
+    chosen.pop();
+    return search(i + 1, sum);
+  };
+  if (!search(0, 0)) return null;
+  const paidRows = new Set(chosen);
+  return instalments.filter((_, i) => !paidRows.has(i));
+}
+
+/**
+ * Is this Transaction judged as one of several payments of the File (#615,
+ * ADR-0013), and against what? Only in the File's own currency, and never for
+ * a Transaction the File is already on.
+ *
+ *  - A payment is connected and part is Outstanding: against the Outstanding
+ *    amount or, on a File that prints instalments, the nearest unpaid printed
+ *    instalment (`unpaidInstalmentsOf`), whichever scores better (#716): a
+ *    middle instalment is no mismatch against what is left. Equal scores keep
+ *    the Outstanding amount (the last instalment closes it). Paid in full, or
+ *    with no figure in its currency: the full total.
+ *  - Nothing paid yet and the File prints instalments: against the nearest
+ *    one, when it scores better than the full total does (a File paid in one
+ *    go keeps its full-total Match).
+ *  - Neither, and the bank line cites the File's invoice number for less than
+ *    its total: a candidate, its amount no mismatch, when the full total
+ *    scores nothing better.
+ *
+ * Null: the full total, as before #615.
+ */
+function furtherPaymentOf(
+  fileData: FileMatchingData,
+  txData: TransactionData,
+  filePayment: number,
+  fullScore: number
+): FurtherPayment | null {
+  if (!isSameCurrency(fileData.extractedCurrency, txData.currency)) return null;
+  if (fileData.transactionIds?.includes(txData.id)) return null;
+  const absTx = Math.abs(txData.amount);
+  if (absTx === 0) return null;
+  const instalments = fileData.extractedInstalments ?? [];
+
+  if (fileData.outstanding !== undefined) {
+    // A payment is connected: what is left decides. Paid in full, or in
+    // another currency, it is the full total, as before.
+    const outstanding = fileData.outstanding;
+    if (outstanding == null || outstanding <= 0) return null;
+    const unpaid =
+      instalments.length > 0 ? unpaidInstalmentsOf(instalments, Math.abs(filePayment) - outstanding) : null;
+    const nearest = nearestInstalment(unpaid ?? [], absTx);
+    if (
+      nearest &&
+      calculateRemainderAmountScore(nearest.amount, absTx).score >
+        calculateRemainderAmountScore(outstanding, absTx).score
+    ) {
+      return { kind: "instalment", against: nearest.amount, rows: unpaid!.filter((r) => r.amount === nearest.amount) };
+    }
+    return { kind: "outstanding", against: outstanding, unpaid };
+  }
+
+  const nearest = nearestInstalment(instalments, absTx);
+  if (nearest) {
+    const score = calculateRemainderAmountScore(nearest.amount, absTx).score;
+    if (score > 0 && score > fullScore) {
+      return { kind: "instalment", against: nearest.amount, rows: instalments.filter((r) => r.amount === nearest.amount) };
+    }
+  }
+
+  if (
+    absTx < Math.abs(filePayment) &&
+    fullScore < INSTALMENT_CANDIDATE_AMOUNT_SCORE &&
+    calculateReferenceScore(fileData, txData, 0).score === SCORING_CONFIG.INVOICE_NUMBER_MATCH
+  ) {
+    return { kind: "candidate" };
+  }
+  return null;
+}
+
+/**
+ * A printed instalment's due date as matching reads it (#716), or null. On a
+ * dated File, a due date more than MATCH_WINDOW_DAYS before the File's date
+ * or more than MATCH_WINDOW_MAX_INSTALMENT_DAYS after it is a misread (a wrong
+ * year) and is not read: it would otherwise open a window, and lend a date
+ * score, a year away from the File. Days are counted zone-free, as stored.
+ */
+export function instalmentDueDateOf(row: FileInstalment, fileDate: Date | null): Date | null {
+  const due = toDateSafe(row.dueDate);
+  if (!due) return null;
+  if (!fileDate) return due;
+  const after = daysAfter(fileDate, due);
+  return after >= -MATCH_WINDOW_DAYS && after <= MATCH_WINDOW_MAX_INSTALMENT_DAYS ? due : null;
+}
+
+/**
+ * The printed due date a Transaction's date is scored against instead of the
+ * File's own dates (#716), or null for the File's own dates, as before.
+ *
+ *  - Judged against a printed instalment: the due date of a row of that
+ *    amount (an unpaid one once a payment is connected), the one nearest the
+ *    booking of several.
+ *  - Judged against the Outstanding amount of a File that prints
+ *    instalments, and closing it (within REMAINDER_CLOSE_TOLERANCE, the rule
+ *    ADR-0013's auto-connect reads): the due date of an unpaid row, the one
+ *    nearest the booking of several.
+ *
+ * Only a due date `instalmentDueDateOf` reads counts; with none, the File's
+ * own dates. A File printing no instalments never gets here.
+ */
+function instalmentDueDateFor(
+  fileData: FileMatchingData,
+  further: FurtherPayment | null,
+  txData: TransactionData
+): Date | null {
+  if (!further || further.kind === "candidate") return null;
+  let rows: FileInstalment[] | null;
+  if (further.kind === "instalment") {
+    rows = further.rows;
+  } else {
+    if (!isRemainderClosed(further.against - Math.abs(txData.amount))) return null;
+    rows = further.unpaid;
+  }
+  if (!rows || rows.length === 0) return null;
+
+  const fileDate = toDateSafe(fileData.extractedDate);
+  const booked = txData.date.toDate();
+  const dues = rows
+    .map((row) => instalmentDueDateOf(row, fileDate))
+    .filter((d): d is Date => d !== null);
+  if (dues.length === 0) return null;
+  const distance = (due: Date) => Math.abs(daysAfter(due, booked));
+  return dues.reduce((best, due) => (distance(due) < distance(best) ? due : best));
+}
+
+/**
+ * Score a booking against a printed instalment's due date (#716): the
+ * standard proximity ladder on the day distance, and a booking on the due
+ * date or within the settlement lag after it is on time, as a Due Date hit
+ * is (#618).
+ */
+function calculateInstalmentDateScore(
+  dueDate: Date,
+  txDate: Date
+): { score: number; source: TransactionMatchSource | null } {
+  if (isDueDateHit(dueDate, txDate)) return { score: 25, source: "date_exact" };
+  return scoreDayDistance(Math.abs(daysAfter(dueDate, txDate)));
+}
+
+/**
  * Map a transaction Firestore doc's data into the shape `scoreTransaction`
  * expects. `documentedAmount` is what the Files already connected to this
  * transaction explain (#239); leave it out and the pair is scored against the
@@ -944,7 +1263,53 @@ export function toFileMatchingData(data: FirebaseFirestore.DocumentData): FileMa
     partnerId: data.partnerId,
     precisionSearchHint: data.precisionSearchHint,
     documentType: data.documentType,
+    // #615: what the File prints it is paid in.
+    extractedInstalments: instalmentsOf(data.extractedInstalments),
   };
+}
+
+/**
+ * The stored instalments as the scorer reads them (#615). A File that is not
+ * stored yet sends them as JSON, its due dates as strings, so each row is read
+ * defensively: no positive amount, no row.
+ */
+function instalmentsOf(value: unknown): FileInstalment[] | null {
+  if (!Array.isArray(value)) return null;
+  const rows: FileInstalment[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") continue;
+    const row = entry as Record<string, unknown>;
+    if (typeof row.amount !== "number" || !Number.isFinite(row.amount) || row.amount === 0) continue;
+    const due = toDateSafe(row.dueDate);
+    rows.push({
+      amount: Math.abs(Math.round(row.amount)),
+      dueDate: due ? Timestamp.fromDate(due) : null,
+      label: typeof row.label === "string" ? row.label : null,
+    });
+  }
+  return rows.length > 0 ? rows : null;
+}
+
+/**
+ * The payment date a File states, as the scorer reads it (#618): the Debit
+ * Date when there is one, else the Due Date. What the billing-cycle learner
+ * measures the payment term to, so it learns what the Partner prints rather
+ * than when the bank happened to book it. Takes the File record as stored and
+ * reads it through `toFileMatchingData`, so a legacy record falls back to its
+ * additional-fields rows exactly as it does when scored.
+ *
+ * Each date only where the scorer would use it: a Due Date that opens a
+ * window (after the issue date), a Debit Date not before the issue date.
+ */
+export function statedPaymentDate(data: FirebaseFirestore.DocumentData): Date | null {
+  const file = toFileMatchingData(data);
+  const issue = toDateSafe(file.extractedDate);
+  if (!issue) return null;
+  const debit = toDateSafe(file.extractedDebitDate);
+  if (debit && daysAfter(issue, debit) >= 0) return debit;
+  const due = toDateSafe(file.extractedDueDate);
+  if (due && daysAfter(issue, due) > 0) return due;
+  return null;
 }
 
 /**
@@ -1105,6 +1470,7 @@ export function scoreTransaction(
   // documentation rule below, which was written for a candidate documenting
   // the SAME payment.
   let closesRemainder = false;
+  let further: FurtherPayment | null = null;
   if (filePayment != null && againstRemainder) {
     const result = calculateRemainderAmountScore(filePayment, coverage.remainder);
     amountScore = result.score;
@@ -1123,15 +1489,40 @@ export function scoreTransaction(
       readBankOriginalAmount(txData._original?.rawRow),
       { referenceRate: options?.fxReferenceRate }
     );
-    amountScore = result.score;
-    amountExact = result.source === "amount_exact" && !result.currencyMismatch;
-    if (result.source) matchSources.push(result.source);
+    // #615, ADR-0013: one File paid by several Transactions. A further
+    // payment is judged against what is Outstanding, a first one against the
+    // instalment the File prints, with the Remainder's amount scorer; a part
+    // payment the bank line's reference names is no mismatch.
+    further = furtherPaymentOf(fileData, txData, filePayment, result.score);
+    if (further && further.kind !== "candidate") {
+      const judged = calculateRemainderAmountScore(further.against, txData.amount);
+      amountScore = judged.score;
+      amountExact = judged.source === "amount_exact";
+      if (judged.source) matchSources.push(judged.source);
+    } else if (further) {
+      amountScore = INSTALMENT_CANDIDATE_AMOUNT_SCORE;
+    } else {
+      amountScore = result.score;
+      amountExact = result.source === "amount_exact" && !result.currencyMismatch;
+      if (result.source) matchSources.push(result.source);
+    }
   }
 
   // 2. Date scoring (0-25, boosted when partner matches), over the payment
-  // window when the File states a Due Date (#236).
+  // window when the File states a Due Date (#236). A Transaction judged
+  // against a printed instalment, or closing the Outstanding amount of a File
+  // that prints instalments, is dated against that instalment's due date
+  // instead (#716): a third instalment is paid months after the invoice, on
+  // the day the schedule names. It is a point, so it is its own endpoint.
   let endpointDateScore = 0;
-  if (fileData.extractedDate) {
+  let neighbouringPeriod = false;
+  const instalmentDueDate = instalmentDueDateFor(fileData, further, txData);
+  if (instalmentDueDate) {
+    const result = calculateInstalmentDateScore(instalmentDueDate, txData.date.toDate());
+    dateScore = result.score;
+    endpointDateScore = result.score;
+    if (result.source) matchSources.push(result.source);
+  } else if (fileData.extractedDate) {
     const result = calculateDateScore(
       fileData.extractedDate.toDate(),
       txData.date.toDate(),
@@ -1140,14 +1531,20 @@ export function scoreTransaction(
     );
     dateScore = result.score;
     endpointDateScore = result.endpointScore;
+    neighbouringPeriod = result.neighbouringPeriod === true;
     if (result.source) matchSources.push(result.source);
   }
 
   // 2a. Debit Date (#136). What the Partner said it would do, so a hit is a
-  // same-day endpoint across the settlement lag, and it overrides a learned
-  // cycle's period penalty: a stated collection date beats an inferred one.
+  // same-day endpoint across the settlement lag, and it overrides the learned
+  // delay: a stated collection date beats an inferred one. Except where the
+  // learned cycle puts the booking on a neighbouring period's expected day:
+  // that is the next (or previous) charge, whatever this File states (#618).
   const debitDate = toDateSafe(fileData.extractedDebitDate);
-  const debitHit = debitDate !== null && isDebitDateHit(debitDate, txData.date.toDate());
+  const debitHit =
+    !neighbouringPeriod &&
+    debitDate !== null &&
+    isDebitDateHit(debitDate, txData.date.toDate());
   if (debitHit) {
     dateScore = Math.max(dateScore, 25);
     endpointDateScore = 25;
@@ -1186,7 +1583,7 @@ export function scoreTransaction(
   // Boost date score by 50% (max +12.5 pts) to prioritize correct month matching.
   // Also apply a date penalty when date is poor but partner matches - this prevents
   // a wrong-month transaction from scoring high just because partner/amount match.
-  if (partnerScore >= 15 && fileData.extractedDate) {
+  if (partnerScore >= 15 && (fileData.extractedDate || instalmentDueDate)) {
     if (dateScore >= 15) {
       // Good date match + partner match: boost date by 50%
       dateScore = Math.min(37, Math.round(dateScore * 1.5));
@@ -1284,6 +1681,11 @@ export function scoreTransaction(
     confidence = applyDocumentationOutcome(scoredConfidence, outcome);
     documentation = { ...assessment, outcome, confidenceBefore: scoredConfidence };
   }
+  // #615: the reference names the document, not the amount, so a part
+  // payment it names is a suggestion at most.
+  if (further?.kind === "candidate") {
+    confidence = Math.min(confidence, SCORING_CONFIG.AUTO_MATCH_THRESHOLD - 1);
+  }
 
   return {
     transactionId: txData.id,
@@ -1302,6 +1704,10 @@ export function scoreTransaction(
       ...(filePayment != null && againstRemainder
         ? { scoredAgainstRemainder: coverage.remainder }
         : {}),
+      ...(further?.kind === "outstanding" ? { scoredAgainstOutstanding: further.against } : {}),
+      ...(further?.kind === "instalment" ? { scoredAgainstInstalment: further.against } : {}),
+      ...(further?.kind === "candidate" ? { instalmentCandidate: true as const } : {}),
+      ...(instalmentDueDate ? { scoredAgainstDueDate: dayOf(instalmentDueDate) } : {}),
     },
     preview: {
       date: txData.date,
@@ -1328,5 +1734,13 @@ export function formatScoreBreakdown(breakdown: ScoreBreakdown): string {
   if (breakdown.scoredAgainstRemainder != null) {
     parts.push(`vs-remainder:${(breakdown.scoredAgainstRemainder / 100).toFixed(2)}`);
   }
+  if (breakdown.scoredAgainstOutstanding != null) {
+    parts.push(`vs-outstanding:${(breakdown.scoredAgainstOutstanding / 100).toFixed(2)}`);
+  }
+  if (breakdown.scoredAgainstInstalment != null) {
+    parts.push(`vs-instalment:${(breakdown.scoredAgainstInstalment / 100).toFixed(2)}`);
+  }
+  if (breakdown.instalmentCandidate) parts.push("instalment-candidate");
+  if (breakdown.scoredAgainstDueDate) parts.push(`vs-due:${breakdown.scoredAgainstDueDate}`);
   return parts.join(" + ");
 }

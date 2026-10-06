@@ -11,6 +11,7 @@
 import { guardPage } from "./renderGuard";
 import chromium from "@sparticuz/chromium";
 import puppeteer, { Browser } from "puppeteer-core";
+import { viennaDateLabel } from "../utils/storedDay";
 
 export interface PdfConversionResult {
   pdfBuffer: Buffer;
@@ -187,7 +188,7 @@ export async function convertHtmlToPdf(
         <div style="margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid #ddd;">
           ${metadata.subject ? `<h2 style="margin: 0 0 8px 0; font-size: 18px; color: #333;">${escapeHtml(metadata.subject)}</h2>` : ""}
           ${metadata.from ? `<p style="margin: 0 0 4px 0; font-size: 12px; color: #666;">From: ${escapeHtml(metadata.from)}</p>` : ""}
-          ${metadata.date && !isNaN(metadata.date.getTime()) ? `<p style="margin: 0; font-size: 12px; color: #666;">Date: ${metadata.date.toLocaleDateString("de-DE")}</p>` : ""}
+          ${metadata.date && !isNaN(metadata.date.getTime()) ? `<p style="margin: 0; font-size: 12px; color: #666;">Date: ${viennaDateLabel(metadata.date, "de-DE")}</p>` : ""}
         </div>
       `
         : "";

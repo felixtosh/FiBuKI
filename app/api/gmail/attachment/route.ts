@@ -388,7 +388,8 @@ export async function POST(request: NextRequest) {
       userId,
       fileName: attachment.filename,
       fileType: normalizedMimeType,
-      fileSize: attachment.size,
+      // The stored bytes, not the provider's figure (#722).
+      fileSize: attachment.data.length,
       storagePath,
       downloadUrl,
       contentHash,

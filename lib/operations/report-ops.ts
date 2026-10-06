@@ -1,4 +1,5 @@
 import { toDateSafe } from "@/lib/utils";
+import { needsPartner } from "@/lib/reports/needs-partner";
 import {
   collection,
   query,
@@ -7,8 +8,6 @@ import {
   getDocs,
   getDoc,
   doc,
-  addDoc,
-  updateDoc,
   Timestamp,
 } from "firebase/firestore";
 import { OperationsContext } from "./types";
@@ -18,11 +17,9 @@ import {
   ReportReadiness,
   ReportBlockingIssue,
   ReportSummary,
-  VatBreakdown,
   getPeriodDateRange,
 } from "@/types/report";
 import { Transaction } from "@/types/transaction";
-import { TaxCountryCode } from "@/types/user-data";
 
 /**
  * Get transactions for a specific period
@@ -114,9 +111,7 @@ export async function getReportReadiness(
       missingReceipts.push(tx.id);
     }
 
-    // Check if partner is assigned (for significant amounts)
-    if (Math.abs(tx.amount) > 10000 && !tx.partnerId) {
-      // > 100 EUR
+    if (needsPartner(tx)) {
       missingPartners.push(tx.id);
     }
   }
@@ -153,191 +148,6 @@ export async function getReportReadiness(
     completionPercentage,
     blockingIssues,
   };
-}
-
-/**
- * Calculate UVA report from transactions
- *
- * @deprecated Fork #64: this browser-side calculation assumes 20% VAT on
- * every transaction and never reads the connected receipts — its figures
- * are wrong by construction. The reports page now calls the server-side
- * calculateUva callable (functions/src/uva) via POST /api/reports/calculate.
- * Only createUVADraft/recalculateReport below still reference this; both
- * are themselves unused from the UI.
- */
-export async function calculateUVAReport(
-  ctx: OperationsContext,
-  period: ReportPeriod,
-  country: TaxCountryCode = "AT"
-): Promise<Omit<UVAReport, "id" | "createdAt" | "updatedAt">> {
-  const transactions = await getTransactionsForPeriod(ctx, period);
-
-  // Initialize totals
-  const taxableRevenue = {
-    rate20Net: 0,
-    rate20Vat: 0,
-    rate10Net: 0,
-    rate10Vat: 0,
-    rate13Net: 0,
-    rate13Vat: 0,
-  };
-
-  const exemptRevenue = {
-    exports: 0,
-    euDeliveries: 0,
-    other: 0,
-  };
-
-  const euAcquisitions = {
-    netAmount: 0,
-    vatAmount: 0,
-  };
-
-  const inputVat = {
-    standard: 0,
-    euAcquisitions: 0,
-    imports: 0,
-  };
-
-  // Track breakdown by rate
-  const breakdownMap = new Map<number, VatBreakdown>();
-
-  // Count transactions
-  let incomeCount = 0;
-  let expenseCount = 0;
-  let completeCount = 0;
-
-  for (const tx of transactions) {
-    const isIncome = tx.amount > 0;
-    const amount = Math.abs(tx.amount);
-
-    if (isIncome) {
-      incomeCount++;
-    } else {
-      expenseCount++;
-    }
-
-    if (tx.isComplete) {
-      completeCount++;
-    }
-
-    // Default VAT rate based on transaction type
-    // In reality, this would come from the linked file/invoice
-    const vatRate = tx.vatRate ?? (isIncome ? 20 : 20);
-
-    // Calculate net and VAT amounts
-    // Assuming amounts are gross (including VAT)
-    const grossAmount = amount;
-    const netAmount = Math.round(grossAmount / (1 + vatRate / 100));
-    const vatAmount = grossAmount - netAmount;
-
-    if (isIncome) {
-      // Revenue
-      switch (vatRate) {
-        case 20:
-          taxableRevenue.rate20Net += netAmount;
-          taxableRevenue.rate20Vat += vatAmount;
-          break;
-        case 13:
-          taxableRevenue.rate13Net += netAmount;
-          taxableRevenue.rate13Vat += vatAmount;
-          break;
-        case 10:
-          taxableRevenue.rate10Net += netAmount;
-          taxableRevenue.rate10Vat += vatAmount;
-          break;
-        case 0:
-          // Check if it's an export or EU delivery
-          if (tx.isEuTransaction) {
-            exemptRevenue.euDeliveries += netAmount;
-          } else {
-            exemptRevenue.other += netAmount;
-          }
-          break;
-      }
-    } else {
-      // Expense - add to input VAT
-      if (tx.isEuTransaction) {
-        // EU acquisition (reverse charge)
-        euAcquisitions.netAmount += netAmount;
-        euAcquisitions.vatAmount += vatAmount;
-        inputVat.euAcquisitions += vatAmount;
-      } else {
-        inputVat.standard += vatAmount;
-      }
-    }
-
-    // Update breakdown
-    const existing = breakdownMap.get(vatRate);
-    if (existing) {
-      existing.netAmount += netAmount;
-      existing.vatAmount += vatAmount;
-      existing.grossAmount += grossAmount;
-      existing.transactionCount += 1;
-    } else {
-      breakdownMap.set(vatRate, {
-        rate: vatRate,
-        netAmount,
-        vatAmount,
-        grossAmount,
-        transactionCount: 1,
-      });
-    }
-  }
-
-  // Calculate totals
-  const totalVatPayable =
-    taxableRevenue.rate20Vat +
-    taxableRevenue.rate10Vat +
-    taxableRevenue.rate13Vat +
-    euAcquisitions.vatAmount;
-
-  const totalInputVat =
-    inputVat.standard + inputVat.euAcquisitions + inputVat.imports;
-
-  const vatBalance = totalVatPayable - totalInputVat;
-
-  return {
-    userId: ctx.userId,
-    period,
-    country,
-    status: "draft",
-    taxableRevenue,
-    exemptRevenue,
-    euAcquisitions,
-    inputVat,
-    totalVatPayable,
-    totalInputVat,
-    vatBalance,
-    breakdown: Array.from(breakdownMap.values()).sort((a, b) => b.rate - a.rate),
-    transactionCount: {
-      total: transactions.length,
-      income: incomeCount,
-      expense: expenseCount,
-      complete: completeCount,
-      incomplete: transactions.length - completeCount,
-    },
-  };
-}
-
-/**
- * Create a draft UVA report
- */
-export async function createUVADraft(
-  ctx: OperationsContext,
-  period: ReportPeriod,
-  country: TaxCountryCode = "AT"
-): Promise<string> {
-  const reportData = await calculateUVAReport(ctx, period, country);
-
-  const now = Timestamp.now();
-  const docRef = await addDoc(collection(ctx.db, `users/${ctx.userId}/reports`), {
-    ...reportData,
-    createdAt: now,
-    updatedAt: now,
-  });
-
-  return docRef.id;
 }
 
 /**
@@ -389,58 +199,6 @@ export async function listReports(
       createdAt: data.createdAt,
       updatedAt: data.updatedAt,
     } as ReportSummary;
-  });
-}
-
-/**
- * Update report status
- */
-export async function updateReportStatus(
-  ctx: OperationsContext,
-  reportId: string,
-  status: UVAReport["status"],
-  finanzonlineRef?: string
-): Promise<void> {
-  const docRef = doc(ctx.db, `users/${ctx.userId}/reports`, reportId);
-  const updates: Record<string, unknown> = {
-    status,
-    updatedAt: Timestamp.now(),
-  };
-
-  if (status === "submitted") {
-    updates.submittedAt = Timestamp.now();
-  }
-
-  if (finanzonlineRef) {
-    updates.finanzonlineRef = finanzonlineRef;
-  }
-
-  await updateDoc(docRef, updates);
-}
-
-/**
- * Recalculate an existing report
- */
-export async function recalculateReport(
-  ctx: OperationsContext,
-  reportId: string
-): Promise<void> {
-  const existingReport = await getReport(ctx, reportId);
-  if (!existingReport) {
-    throw new Error("Report not found");
-  }
-
-  const reportData = await calculateUVAReport(
-    ctx,
-    existingReport.period,
-    existingReport.country
-  );
-
-  const docRef = doc(ctx.db, `users/${ctx.userId}/reports`, reportId);
-  await updateDoc(docRef, {
-    ...reportData,
-    status: "draft", // Reset to draft when recalculating
-    updatedAt: Timestamp.now(),
   });
 }
 

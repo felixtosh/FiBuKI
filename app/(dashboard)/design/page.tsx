@@ -1194,7 +1194,7 @@ export default function DesignSystemPage() {
                     <CardTitle className="text-base text-yellow-800 dark:text-yellow-200">5. File Upload Zones (MEDIUM)</CardTitle>
                   </CardHeader>
                   <CardContent className="text-sm space-y-2">
-                    <p><strong>Files:</strong> files/file-upload-zone.tsx, sidebar/file-upload-zone.tsx</p>
+                    <p><strong>Files:</strong> files/file-upload-zone.tsx</p>
                     <p><strong>Issue:</strong> Different integration patterns for same functionality</p>
                     <p><strong>Solution:</strong> Unify with <code>mode</code> prop or shared hook</p>
                   </CardContent>

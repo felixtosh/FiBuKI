@@ -95,8 +95,7 @@ export const createApiKeyCallable = createCallable<CreateApiKeyRequest, CreateAp
 
     let expiresAt: Timestamp | null = null;
     if (expiresInDays && expiresInDays > 0) {
-      const expiryDate = new Date();
-      expiryDate.setDate(expiryDate.getDate() + expiresInDays);
+      const expiryDate = new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000);
       expiresAt = Timestamp.fromDate(expiryDate);
     }
 

@@ -52,7 +52,7 @@ vi.mock("firebase-admin/storage", () => ({ getStorage: () => ({}) }));
 import { parseWithGemini } from "../geminiParser";
 import { dueDateFromAdditionalFields } from "../../matching/dueDate";
 
-const ISSUE = new Date(2026, 0, 5);
+const ISSUE = new Date(Date.UTC(2026, 0, 5));
 
 beforeEach(() => {
   process.env.GCLOUD_PROJECT = "due-date-test-project";
@@ -115,7 +115,7 @@ describe("a document printing a synonym other than Zahlungstermin", () => {
     // …and the reader that writes `extractedDueDate` accepts it.
     const due = dueDateFromAdditionalFields(res.additionalFields, ISSUE);
     expect(due).not.toBeNull();
-    expect([due!.getFullYear(), due!.getMonth(), due!.getDate()]).toEqual([2026, 0, 20]);
+    expect([due!.getUTCFullYear(), due!.getUTCMonth(), due!.getUTCDate()]).toEqual([2026, 0, 20]);
   });
 });
 
@@ -193,6 +193,6 @@ describe("a due date earlier than the issue date", () => {
       })
     );
     const res = await parseWithGemini(Buffer.from("x"), "application/pdf");
-    expect(dueDateFromAdditionalFields(res.additionalFields, ISSUE)?.getDate()).toBe(5);
+    expect(dueDateFromAdditionalFields(res.additionalFields, ISSUE)?.getUTCDate()).toBe(5);
   });
 });

@@ -257,7 +257,10 @@ export interface ReceiptPairCheckOutcome {
 }
 
 export interface ReceiptPairCheckOptions {
-  /** Suggest only, never record a link (the one-time pass over stored Files). */
+  /**
+   * Suggest only, never record a link and so never connect: the one-time pass
+   * over stored Files, and the check after a Hand Correction (#638).
+   */
   suggestOnly?: boolean;
 }
 

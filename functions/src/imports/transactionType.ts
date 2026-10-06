@@ -4,8 +4,8 @@
  * "Einzugsermächtigung" and "Direct Debit" for the same thing; the Match needs
  * one name to treat a Debit Date on a direct debit as near-proof.
  *
- * Mirrored by `TransactionType` in types/transaction.ts (the functions build
- * cannot import from outside src); transactionType.sync.test.ts pins the two.
+ * The one copy (#689): types/transaction.ts re-exports `TransactionType`, so
+ * keep this module browser-safe and free of server SDKs.
  */
 
 export const TRANSACTION_TYPES = ["direct_debit", "standing_order", "transfer", "card"] as const;

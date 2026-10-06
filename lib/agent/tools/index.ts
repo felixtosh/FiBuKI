@@ -5,6 +5,7 @@
  * These tools are used by the LangGraph agent.
  */
 
+export * from "./mcp-tools";
 export * from "./read-tools";
 export * from "./navigation-tools";
 export * from "./write-tools";

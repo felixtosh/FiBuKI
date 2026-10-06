@@ -1,10 +1,12 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, type RefObject } from "react";
 import dynamic from "next/dynamic";
 import { useTranslations } from "next-intl";
-import { Loader2, Lock } from "lucide-react";
+import { FileText, Loader2, Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { pdfjsWasmUrl } from "@/lib/pdf/pdfjs-wasm.mjs";
+import pdfjsPackage from "pdfjs-dist/package.json";
 
 // Import react-pdf styles for text layer
 import "react-pdf/dist/Page/TextLayer.css";
@@ -32,6 +34,16 @@ if (typeof window !== "undefined") {
     ).toString();
   });
 }
+
+// pdf.js options for every Document here, the viewer's and the thumbnail's.
+// `wasmUrl`: pdf.js decodes JPEG 2000 page images (most scanners' output) with
+// a wasm module fetched from there; without it a scan draws blank (#681).
+// The decoders are copied into public/ for the installed pdf.js version by
+// scripts/copy-pdfjs-wasm.mjs. One object at module scope: react-pdf reloads
+// the document whenever `options` changes identity.
+export const PDF_DOCUMENT_OPTIONS = {
+  wasmUrl: pdfjsWasmUrl(pdfjsPackage.version),
+};
 
 interface PdfPageViewerProps {
   url: string;
@@ -173,6 +185,7 @@ export function PdfPageViewer({
         ) : (
           <Document
             file={url}
+            options={PDF_DOCUMENT_OPTIONS}
             onLoadSuccess={handleDocumentLoadSuccess}
             onLoadError={handleDocumentLoadError}
             onPassword={handlePassword}
@@ -221,4 +234,98 @@ export function PdfPageViewer({
       )}
     </div>
   );
+}
+
+/**
+ * The first page of a PDF, drawn at its container's width: the thumbnail in a
+ * File's detail panel (#676). It replaces an iframe of the browser's own PDF
+ * viewer, which for a password-protected PDF showed its own password box and
+ * took keyboard focus away from the list's arrow keys.
+ *
+ * Nothing in here can take focus: the page is a canvas, and the text and
+ * annotation layers (selectable text, link anchors) are not rendered. A
+ * protected PDF gets the same never-answer password handling as the viewer.
+ */
+export function PdfThumbnail({ url }: { url: string }) {
+  const t = useTranslations("documents.viewer");
+  const [containerRef, width] = useElementWidth();
+
+  // Keyed to the url, like the viewer: the detail panel keeps this mounted
+  // while the user steps to the next File, and that File must load normally.
+  // Never answered: flagging the url unmounts the Document, which drops the load.
+  const [protectedUrl, setProtectedUrl] = useState<string | null>(null);
+  const handlePassword = useCallback(() => {
+    setProtectedUrl(url);
+  }, [url]);
+
+  return (
+    <div ref={containerRef} className="relative w-full h-full overflow-hidden">
+      {protectedUrl === url ? (
+        <div
+          className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 px-2 text-center text-muted-foreground"
+          title={t("passwordProtected")}
+        >
+          <Lock className="h-6 w-6" />
+          <p className="text-[11px] leading-tight">{t("passwordProtectedShort")}</p>
+        </div>
+      ) : (
+        <Document
+          file={url}
+          options={PDF_DOCUMENT_OPTIONS}
+          onPassword={handlePassword}
+          loading={<ThumbnailLoading />}
+          error={<ThumbnailFailed />}
+          noData={<ThumbnailLoading />}
+        >
+          {width > 0 && (
+            <Page
+              pageNumber={1}
+              width={width}
+              renderTextLayer={false}
+              renderAnnotationLayer={false}
+              loading={<ThumbnailLoading />}
+              error={<ThumbnailFailed />}
+            />
+          )}
+        </Document>
+      )}
+    </div>
+  );
+}
+
+// In normal flow at the thumbnail's 3:4, not absolutely positioned: react-pdf
+// renders these inside its own Document div or its (relative, zero-height) Page div.
+function ThumbnailLoading() {
+  return (
+    <div className="flex aspect-[3/4] w-full items-center justify-center text-muted-foreground">
+      <Loader2 className="h-6 w-6 animate-spin" />
+    </div>
+  );
+}
+
+function ThumbnailFailed() {
+  return (
+    <div className="flex aspect-[3/4] w-full items-center justify-center text-muted-foreground">
+      <FileText className="h-8 w-8" />
+    </div>
+  );
+}
+
+/** A ref and its element's content width in whole pixels, kept current as it resizes. */
+function useElementWidth(): [RefObject<HTMLDivElement | null>, number] {
+  const ref = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(0);
+
+  useEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    const measure = () => setWidth(Math.floor(element.clientWidth));
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  return [ref, width];
 }

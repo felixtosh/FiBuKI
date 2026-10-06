@@ -186,7 +186,11 @@ _Avoid_: required field, invoice attribute
 _Avoid (de)_: Pflichtangabe (any legally required statement, wider than § 11), Merkmal bare
 
 **Invoice**:
-A § 11 document the User issues to a Partner, numbered and immutable once issued. An
+A § 11 document the User issues to a Partner, numbered once issued. Until it is paid
+(its File connected to a Transaction) the User may edit it or take it back to a draft,
+which keeps its number; once paid it is locked, and changing it means unlinking the
+payment first or issuing an **Invoice Correction** — see
+[ADR-0015](docs/adr/0015-an-invoice-is-locked-once-paid.md). An
 invoice the User *receives* is a File with Document Type `invoice`, not an Invoice.
 _Deutsch (defining)_: Ausgangsrechnung
 _Also printed as_: Rechnung, Honorarnote, Faktura, Invoice
@@ -234,6 +238,32 @@ _Avoid_: payment reminder as the concept (a Zahlungserinnerung is its first stag
 overdue notice, collection letter
 _Avoid (de)_: Inkasso (third-party collection), Mahnspesen (a fee it may carry), Rechnung
 
+**Offer**:
+A document proposing a supply at a price before anything is owed, in either direction:
+the User's own offer to a customer, or a supplier's to the User. An Offer the recipient
+signed or otherwise accepted is a **signed Offer**, the point from which an invoice is
+expected. It states no supply that happened, so it is never an invoice and never a
+Match: a File with Document Type `other` that sits only in its **Deal**. See
+[ADR-0014](docs/adr/0014-a-deal-is-one-business-case.md).
+_Deutsch (defining)_: Angebot (signed: angenommenes Angebot)
+_Also printed as_: Angebot, Kostenvoranschlag, Offert, Quote, Proposal
+_Avoid_: quote, estimate, proposal as our own words
+_Avoid (de)_: Auftragsbestätigung for a signed Offer (that is an **Order Confirmation**),
+Rechnung
+
+**Order Confirmation**:
+A supplier's or marketplace's confirmation that an order was accepted, before or beside
+the invoice for it. It states what will be owed, not what is, so it is never an invoice
+and never a Match: a File with Document Type `other` that sits only in its **Deal**,
+where it says an invoice is expected. See
+[ADR-0014](docs/adr/0014-a-deal-is-one-business-case.md).
+_Deutsch (defining)_: Auftragsbestätigung
+_Also printed as_: Auftragsbestätigung, Bestellbestätigung, Order Confirmation, Your
+order
+_Avoid_: order receipt (a **Receipt** confirms a payment), purchase order (what the buyer
+sends)
+_Avoid (de)_: Bestellung (the buyer's act), Rechnung
+
 **Invoicing Agent**:
 A business that writes a File in the name of another, as § 11 Abs 2 UStG permits (Uber
 Austria GmbH for a taxi operator). Recorded on the Extraction as
@@ -250,6 +280,31 @@ The structured facts read off a File — entities, dates, amounts, line items, r
 _Deutsch_: Extraktion
 _Avoid_: parse, OCR result, AI output
 _Avoid (de)_: OCR, KI-Ergebnis, Erkennung, Erfassung (manual entry at the Tax Advisor's desk)
+
+**Extraction Service**:
+What performs an Extraction end to end: takes a File's bytes, decides whether it is a
+financial document, and returns its transcription. Gemini is the built-in one; a deployment
+may configure an external one instead. FiBuKI applies its own rules to whatever the service
+returns. Every Extraction records which service produced it (#161).
+_Deutsch_: Extraktionsdienst
+_Avoid_: plugin, extractor, OCR backend, parser
+Pre-OCR'd text from a document management system is not an input to it. If that case
+returns, it is an ingestion question.
+
+**Hand Correction**:
+A User's change to an Extraction's figures, its direction, or the Due Date or Debit Date,
+recorded on the File so a re-extraction does not discard it: a re-extraction of a File
+carrying one is refused as a whole unless it is forced. Made in the File detail panel or
+through the MCP correction tool, which take the same fields. Changing the counterparty's
+name, VAT id, IBAN or address is not recorded. One that moves the amount, the date, the
+Due Date, the Debit Date, or the counterparty's name, VAT id or IBAN re-scores the File's
+suggestions; none connects or disconnects a Transaction, a Receipt Link's paired File
+included: after one, the pair check only suggests. The identity sweep keeps a direction
+set by hand. Marking the File not an invoice clears the figures and the record with them,
+so un-marking it re-extracts it freely.
+_Deutsch_: von Hand geändert
+_Avoid_: correction (that is the **Invoice Correction**), override, edit
+_Avoid (de)_: Korrektur, Rechnungskorrektur (both name the **Invoice Correction**)
 
 **Line Item**:
 One priced row transcribed from a File's body.
@@ -304,7 +359,12 @@ _Avoid_: payment QR
 **Due Date**:
 The date by which the User must pay an invoice. A deadline, not a payment date, and not
 the date the money moved. Chosen from the domain, not from the sample: one issuer's
-"Zahlungstermin" is a synonym, not the term.
+"Zahlungstermin" is a synonym, not the term. A booking on the Due Date or up to three days
+after it (a Due Date on a weekend is paid the next banking day) scores as the same day,
+and outranks the delay a billing cycle learned, but not its rule that a booking on a
+neighbouring period's expected day is that period's charge (the same holds for a Debit
+Date). Where the booking lands on it, the billing cycle
+learns its payment term from the date the File states rather than from the booking (#618).
 _Deutsch (defining)_: Fälligkeitsdatum
 _Also printed as_: Zahlungstermin, fällig am, zahlbar bis, Zahlbar ohne Abzug bis
 _Avoid_: payment date, payment term, deadline bare
@@ -314,10 +374,10 @@ yields 1970 or today), Zahldatum, Valuta
 **Debit Date**:
 The date a Partner states it will collect under a SEPA mandate. An obligation on the
 Partner, where a Due Date is an obligation on the User; they coincide on many invoices and
-diverge on others, so they are two terms. Stronger Match evidence than a Due Date,
-because the bank line corroborates it: a booking on the Debit Date or up to three days
-after it (the next banking day) scores as the same day, and on a direct debit as
-near-proof (#136).
+diverge on others, so they are two terms. A booking on the Debit Date or up to three days
+after it (the next banking day) scores as the same day, as on a Due Date; stronger Match
+evidence than a Due Date only on a direct debit, where it is near-proof (#136). Where a
+File states both, the billing cycle learns the payment term from the Debit Date (#618).
 _Deutsch (defining)_: Einzugsdatum
 _Also printed as_: wird … eingezogen, Abbuchung erfolgt am, Einzug am, Lastschrift am
 _Avoid_: due date, collection date, direct-debit date
@@ -413,6 +473,44 @@ _Deutsch_: Restbetrag
 _Avoid_: difference, open amount, balance, remaining amount, delta
 _Avoid (de)_: Differenz, offener Betrag, Saldo
 
+**Outstanding**:
+The part of a File its connected Transactions do not yet pay: the File's total minus what
+those payments come to. The File-side mirror of the **Remainder**, for one File paid by
+several Transactions (instalments, a deposit and a final payment, a charge the bank
+splits). Once a File has a payment connected and is still Outstanding, a further
+Transaction is scored against the Outstanding amount, and a payment that closes it is a
+Match, never an amount mismatch against the full total. Before any payment there is
+nothing Outstanding; the first instalment is recognised only by what the File prints or
+the bank line cites. A Match on the Outstanding amount is a suggestion unless the File
+prints that instalment — see
+[ADR-0013](docs/adr/0013-an-instalment-auto-connects-only-on-printed-evidence.md). The
+UVA needs nothing from it: a partly paid File already claims the paid fraction, capped
+at the whole.
+_Deutsch_: Ausstehender Betrag (ausstehend)
+_Avoid_: unpaid part, File Remainder, open amount, balance due
+_Avoid (de)_: offener Teil, offener Betrag, Restbetrag (that is the **Remainder**),
+Restschuld
+
+**Instalment**:
+One printed part of a File's total: a deposit, a part payment, a numbered instalment
+("Rate 2/3") or one row of a payment schedule, with its amount and, where printed, its due
+date. Read off the document by the Extraction, never computed from the total. Not an
+instalment: a single due date for the full amount, a cash discount (Skonto) and its reduced
+amount, and a schedule whose parts add up to more than the File's total (such as next
+year's advance payments on an annual utility bill). Before any payment, a Transaction is
+scored against the nearest printed Instalment; one paying exactly a printed Instalment may
+connect itself, a payment of any other part stays a suggestion — see
+[ADR-0013](docs/adr/0013-an-instalment-auto-connects-only-on-printed-evidence.md). Once
+a payment is connected, the paid Instalments are the earliest printed ones that add up to
+what is paid; a further payment is judged against the **Outstanding** amount or the nearest
+unpaid Instalment, whichever fits better. A payment judged as a printed Instalment, or
+closing the Outstanding amount of a File that prints them, is dated against that
+Instalment's due date, not the File's date, and the File is matched around each printed
+due date as well as its own. Equal payments compete only for the same due date.
+_Deutsch_: Rate / Teilzahlung
+_Avoid_: partial invoice, split, tranche
+_Avoid (de)_: Teilrechnung (that is a document of its own), Tranche
+
 **Rejection**:
 The standing "this File and this Transaction do not belong together", whoever recorded it
 — a click, an agent, an MCP call. Survives re-scoring and re-extraction; a rejected pair
@@ -444,6 +542,12 @@ ruled not a Copy is never suggested again. See
 [ADR-0010](docs/adr/0010-a-copy-holds-no-file-connection.md). A Receipt for
 the same charge as an invoice is not a Copy, even when it prints the invoice's number,
 amount and day, and neither is a **Dunning Letter**: both are different documents.
+_Deutsch_: Kopie
+_Also printed as_: Duplikat, Kopie, Zweitschrift, Rechnungskopie
+_Avoid_: duplicate (identical bytes, which are never stored a second time), second copy,
+sibling
+_Avoid (de)_: Duplikat, Zweitschrift as our own word (a second invoice the supplier
+issues and marks as such; a Copy is often an unmarked second original)
 
 **Receipt Link**:
 The record that a Receipt pays a particular invoice, held on the Receipt and pointing at
@@ -459,12 +563,25 @@ never suggested again. See
 _Deutsch_: Zahlungsbeleg zur Rechnung
 _Avoid_: payment confirmation, pairing, attachment, Copy
 _Avoid (de)_: Zuordnung (that is the **File Connection**), Kopie
-_Deutsch_: Kopie
-_Also printed as_: Duplikat, Kopie, Zweitschrift, Rechnungskopie
-_Avoid_: duplicate (identical bytes, which are never stored a second time), second copy,
-sibling
-_Avoid (de)_: Duplikat, Zweitschrift as our own word (a second invoice the supplier
-issues and marks as such; a Copy is often an unmarked second original)
+
+**Deal**:
+The Files of one business case with one counterparty, from the **Offer** to the last
+payment: Offers and signed Offers, **Order Confirmations**, invoices and Receipts. It may
+span several invoices and several payments (a deposit and a final invoice are one
+Deal). A Deal forms as soon as two Files share a key — a printed order number, or
+one File citing another's invoice, order or Offer number — before any Transaction is
+involved. Its Offers and Order Confirmations are never a Match; its invoices are scored
+together against a Transaction, and while a known member is still unconnected a single
+member does not connect itself on its own amount. A Deal says what is missing: a
+signed Offer with no Invoice issued, an Order Confirmation or payment with no invoice
+received, an invoice still Outstanding after its Due Date. Removing a member is a standing
+ruling, like a **Rejection**; a member can be added by hand. A **Copy** is never a member,
+its original is. See [ADR-0014](docs/adr/0014-a-deal-is-one-business-case.md).
+_Deutsch_: Geschäftsfall
+_Avoid_: bundle, group, order (an **Order Confirmation** is one member), project, business
+case (in English, a justification for a project)
+_Avoid (de)_: Sammelbeleg (one File holding several documents, which a **Split** takes
+apart), Bestellung, Projekt, Vorgang, Geschäftsvorfall (a single booked transaction)
 
 **Learned Pattern**:
 A rule the system inferred from the user's own corrections, stored on a Partner and used
@@ -490,8 +607,20 @@ _Deutsch_: Kategorie ohne Beleg
 _Avoid_: no-receipt category, exception, uncategorised, missing-receipt flag.
 (Stored as `noReceiptCategoryId` / collection `noReceiptCategories`; the rename is
 deferred — see [ADR-0001](docs/adr/0001-receipt-means-section-11-only.md).)
-_Avoid (de)_: Eigenbeleg (a document the User writes, which is the opposite of having
-none), Ausnahme
+_Avoid (de)_: Eigenbeleg (the document FiBuKI generates for one of these, Receipt Lost,
+not the category), Ausnahme
+
+**Eigenbeleg**:
+The document FiBuKI generates when the User marks a Transaction "receipt lost": a PDF
+stating the date and amount (from the bank line), the payee, what was bought and why no
+receipt exists, stored as a generated File connected to the Transaction and, like an
+Invoice's PDF, never deleted (ADR-0006). It makes the expense credible (§ 138 BAO); it
+never creates an input VAT deduction, because § 12 UStG needs another business's
+§ 11 invoice. The alternative for a line with no receipt is the No-document Category
+"private", which is not a business expense at all.
+_English_: none, cite verbatim
+_Avoid_: self-receipt, substitute receipt, own receipt, replacement document
+_Avoid (de)_: Ersatzbeleg, Quittung
 
 **VAT Treatment**:
 What a No-document Category means for the UVA: `exempt-class` (zero input VAT by law),

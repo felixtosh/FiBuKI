@@ -7,7 +7,7 @@
  * auth handling (missing header vs invalid token), body-shape validation,
  * HttpsError → HTTP status mapping, internal-error opacity, a real
  * bulkCreateTransactions import landing in the store, and a raw onRequest
- * function (openApiSpec) served as a plain Express handler.
+ * function (mcpToolsList) served as a plain Express handler.
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
@@ -76,7 +76,7 @@ describe("selfhost HTTP host: barrel mounting", () => {
     expect(inventory.callables).toContain("bulkCreateTransactions");
     expect(inventory.callables).toContain("matchPartners"); // raw onCall, not createCallable
     expect(inventory.requests).toContain("mcpApi");
-    expect(inventory.requests).toContain("openApiSpec");
+    expect(inventory.requests).toContain("mcpToolsList");
     expect(inventory.scheduled.length).toBeGreaterThanOrEqual(10);
     expect(inventory.scheduled).toContain("processLearningQueue");
   });
@@ -214,10 +214,10 @@ describe("selfhost HTTP host: callable protocol", () => {
 });
 
 describe("selfhost HTTP host: raw onRequest functions", () => {
-  it("serves openApiSpec as a plain Express handler", async () => {
-    const res = await fetch(`${base}/openApiSpec`);
+  it("serves mcpToolsList as a plain Express handler", async () => {
+    const res = await fetch(`${base}/mcpToolsList`);
     expect(res.status).toBe(200);
-    const spec = (await res.json()) as Record<string, any>;
-    expect(spec.openapi ?? spec.swagger).toBeDefined();
+    const body = (await res.json()) as { tools?: Array<{ name: string }> };
+    expect(body.tools?.map((t) => t.name)).toContain("list_transactions");
   });
 });

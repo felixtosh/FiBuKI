@@ -4,7 +4,11 @@
  */
 
 import { createCallable, HttpsError } from "../utils/createCallable";
-import { buildUnmarkNotInvoiceUpdates, queueExtractionAfterUnmark } from "./notInvoiceOps";
+import {
+  buildUnmarkNotInvoiceUpdates,
+  queueExtractionAfterUnmark,
+  unmarkRefusal,
+} from "./notInvoiceOps";
 
 interface UnmarkFileAsNotInvoiceRequest {
   fileId: string;
@@ -36,6 +40,12 @@ export const unmarkFileAsNotInvoiceCallable = createCallable<
     const fileData = fileSnap.data()!;
     if (fileData.userId !== ctx.userId) {
       throw new HttpsError("permission-denied", "Access denied");
+    }
+
+    // Un-marking re-extracts the File, which a Hand Correction refuses (#639).
+    const refused = unmarkRefusal(fileData);
+    if (refused) {
+      throw new HttpsError("failed-precondition", refused.message, refused.details);
     }
 
     // Check for manual transaction connections before resetting transaction matching

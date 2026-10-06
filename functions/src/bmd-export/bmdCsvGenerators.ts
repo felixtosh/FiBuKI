@@ -11,7 +11,7 @@ import {
   KREDITOR_ACCOUNT_BASE,
   DEBITOR_ACCOUNT_BASE,
 } from "../types/bmd-export";
-import { buildUvaTransaction, type CategoryRecord, type FileRecord } from "../uva/adapter";
+import { buildUvaTransaction, type CategoryRecord, type FileRecord, type TransactionRecord } from "../uva/adapter";
 import { deriveTransactionVat } from "../uva/transactionVat";
 import { assessTip, documentsTotalWithTip, isTipPartialPayment } from "../uva/tip";
 import { documentsInBankCurrency, RECONCILE_TOLERANCE_CENTS } from "../uva/calculateUva";
@@ -19,6 +19,7 @@ import type { PartialPaymentAcceptance } from "../uva/partialPaymentAcceptance";
 import type { EcbRateTable } from "../fx/ecbRates";
 import { bookingSide } from "../uva/correction";
 import type { BookingSide, RateGroup, SaleSupplyKind, UvaCorrection, UvaSaleSupply } from "../uva/types";
+import { dayOf, yearOf } from "../utils/storedDay";
 
 /**
  * Maps no-receipt category templateIds to BMD Sachkonten.
@@ -43,10 +44,7 @@ export const NO_RECEIPT_SACHKONTO_MAP: Record<string, { expense: string | null; 
 export function formatBmdDate(date: Timestamp | Date | undefined): string {
   if (!date) return "";
   const d = date instanceof Timestamp ? date.toDate() : date;
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${year}${month}${day}`;
+  return dayOf(d).replace(/-/g, "");
 }
 
 /**
@@ -175,6 +173,16 @@ export function generatePersonenkontenCsv(
 
   return [headers.join(";"), ...csvRows].join("\n");
 }
+
+/**
+ * Every field of `T` listed; an optional one may be listed as `undefined`. A
+ * hand-built record typed this way stops compiling when `T` gains a field
+ * nobody mapped, where an optional field would compile and silently drop out
+ * of the export (#715).
+ */
+export type EveryField<T> = {
+  [K in keyof Required<T>]: {} extends Pick<T, K> ? T[K] | undefined : T[K];
+};
 
 /**
  * Transaction data for export
@@ -343,7 +351,7 @@ function vatRowsFor(
       noReceiptCategoryTemplateId: tx.noReceiptCategoryTemplateId ?? null,
       fileIds: tx.fileIds,
       partialPaymentAcceptance: tx.partialPaymentAcceptance ?? null,
-    },
+    } satisfies EveryField<TransactionRecord>,
     {
       filesById,
       categoriesById,
@@ -595,7 +603,7 @@ export function generateBuchungenCsvWithReport(
     const belegdat = firstFile?.extractedDate || tx.date;
 
     // Generate Belegnummer (YYYYNNNNNN format)
-    const year = tx.date.toDate().getFullYear();
+    const year = yearOf(tx.date.toDate());
     const belegnr = `${year}${String(belegnrCounter).padStart(6, "0")}`;
     belegnrCounter++;
 
@@ -726,7 +734,7 @@ export function generateFileMapping(
 
   for (const tx of transactions) {
     if (tx.fileIds && tx.fileIds.length > 0) {
-      const year = tx.date.toDate().getFullYear();
+      const year = yearOf(tx.date.toDate());
       const belegnr = `${year}${String(belegnrCounter).padStart(6, "0")}`;
       mapping.set(tx.id, { belegnr, fileIds: tx.fileIds });
     }

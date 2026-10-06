@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { VertexAI } from "@google-cloud/vertexai";
-import { MODELS } from "@/types/ai-usage";
+import { MODELS } from "@/functions/src/utils/models";
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 
 const GEMINI_MODEL = MODELS.geminiLite;

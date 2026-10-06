@@ -13,11 +13,12 @@
  *      Firestore seed → bmdExports doc → ZIP in the memory blob store,
  *      unpacked and byte-checked (BOM, manifest, CSVs, belege/).
  *
- * Dates are seeded at 12:00 UTC — formatBmdDate uses LOCAL date parts, so
- * midday keeps the calendar day stable for any sane host timezone.
+ * Dates are seeded at 12:00 UTC. Since #673 the BMD dates are the stored
+ * day (the UTC date part), so a stored UTC midnight exports the same day on
+ * any host; the zone-pinned block below holds that.
  */
 
-import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
 import * as unzipper from "unzipper";
 import { getFirestore, Timestamp, __resetFirestoreShim, __whenShimIdle } from "./firestore-shim";
 import { drainTriggers, __resetTriggerShim, __registeredTriggers } from "./trigger-shim";
@@ -88,13 +89,48 @@ describe("bmd characterization: formatBmdDate", () => {
   });
 
   it("accepts plain Date objects", () => {
-    expect(formatBmdDate(new Date(2026, 0, 9))).toBe("20260109");
+    expect(formatBmdDate(new Date(Date.UTC(2026, 0, 9)))).toBe("20260109");
   });
 
   it("returns empty string for undefined", () => {
     expect(formatBmdDate(undefined)).toBe("");
   });
 });
+
+describe.each(["Europe/Vienna", "America/Los_Angeles", "Pacific/Kiritimati"])(
+  "bmd: a stored day exports as that day on a host in %s (#673)",
+  (zone) => {
+    const originalZone = process.env.TZ;
+    beforeEach(() => {
+      process.env.TZ = zone;
+    });
+    afterEach(() => {
+      // Node re-reads TZ when it is assigned.
+      if (originalZone === undefined) delete process.env.TZ;
+      else process.env.TZ = originalZone;
+    });
+
+    it("dates Buchungsdatum and Belegdatum by the stored day", () => {
+      expect(formatBmdDate(T("2027-01-01T00:00:00Z"))).toBe("20270101");
+      expect(formatBmdDate(T("2026-12-31T00:00:00Z"))).toBe("20261231");
+    });
+
+    it("numbers a New Year's Day booking in the new year, the same as on a UTC host", () => {
+      const files = new Map<string, FileForExport>([
+        ["f1", { id: "f1", fileName: "r.pdf", extractedDate: T("2026-12-31T00:00:00Z") }],
+      ]);
+      const csv = generateBuchungenCsv(
+        [tx({ amount: -12000, date: T("2027-01-01T00:00:00Z"), fileIds: ["f1"] })],
+        files,
+        new Map(),
+      );
+      const [, belegnr, buchdat, belegdat] = csv.split("\n")[1].split(";").slice(2, 6);
+      expect([belegnr, buchdat, belegdat]).toEqual(["2027000001", "20270101", "20261231"]);
+      const mapping = generateFileMapping([tx({ amount: -100, date: T("2027-01-01T00:00:00Z"), fileIds: ["f1"] })]);
+      expect(mapping.get("t1")!.belegnr).toBe("2027000001");
+    });
+  },
+);
 
 describe("bmd characterization: formatBmdAmount", () => {
   it("converts cents to euros with comma separator", () => {
@@ -1261,5 +1297,84 @@ describe("bmd #571: a Receipt and the invoice it pays", () => {
       "0;200001;7000;2026000001;20260315;20260310;120,00;1;20,00;20;RESTAURANT;Invoice.pdf, Receipt.pdf;ER;",
       "0;200001;7000;2026000001;20260315;20260310;5,00;1;0,00;0;RESTAURANT;Invoice.pdf, Receipt.pdf;ER;",
     ]);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* 9. #652 — the export reads the File the UVA reads                   */
+/* ------------------------------------------------------------------ */
+
+describe("bmd #652: the export loads the stored File, as the UVA does", () => {
+  /** Exports one Transaction carrying one File through the real queue. */
+  async function exportOne(file: Record<string, unknown>, tx: Record<string, unknown>) {
+    await db.collection("files").doc("f1").set({
+      userId: USER,
+      fileName: "Beleg.pdf",
+      extractedDate: T("2026-03-10T12:00:00Z"),
+      ...file,
+    });
+    await db.collection("transactions").doc("t1").set({
+      userId: USER,
+      date: T("2026-03-15T12:00:00Z"),
+      fileIds: ["f1"],
+      ...tx,
+    });
+    await drainTriggers();
+    const res = await call(
+      { dateFrom: "2026-01-01", dateTo: "2026-12-31", onlyWithFiles: true, includeFiles: false },
+      { uid: USER },
+    );
+    const exportRef = db.collection("bmdExports").doc(res.exportId);
+    await waitFor(async () => (await exportRef.get()).data()!.status === "completed");
+    const zip = await openZip((await exportRef.get()).data()!.storagePath);
+    return (await zip.entry("buchungen.csv")).slice(1).split("\n").slice(1);
+  }
+
+  const purchase = { amount: -12000, name: "HOTEL" };
+  const at20 = { extractedAmount: 12000, extractedVatAmount: 2000, extractedVatPercent: 20 };
+
+  it("books 0,00 VAT on a File ruled \"VAT not claimable\" (#203)", async () => {
+    const rows = await exportOne({ ...at20, vatNotClaimableReason: "private" }, purchase);
+    expect(rows).toEqual(["0;200001;7000;2026000001;20260315;20260310;120,00;1;0,00;0;HOTEL;Beleg.pdf;ER;"]);
+  });
+
+  it("books 0,00 VAT on a Receipt, which carries no input VAT (#580)", async () => {
+    const rows = await exportOne({ ...at20, documentType: "receipt" }, purchase);
+    expect(rows).toEqual(["0;200001;7000;2026000001;20260315;20260310;120,00;1;0,00;0;HOTEL;Beleg.pdf;ER;"]);
+  });
+
+  it("books 0,00 VAT on a File addressed to someone else (#229)", async () => {
+    const rows = await exportOne({ ...at20, foreignRecipient: true }, purchase);
+    expect(rows).toEqual(["0;200001;7000;2026000001;20260315;20260310;120,00;1;0,00;0;HOTEL;Beleg.pdf;ER;"]);
+  });
+
+  it("labels a 0 % sale by the Invoice's Supply Kind and the customer's UID (#565)", async () => {
+    const rows = await exportOne(
+      {
+        isFibukiGenerated: true,
+        invoiceSupplyKind: "service-eu",
+        extractedRecipient: { name: "Kunde GmbH", vatId: "DE123456789" },
+        extractedAmount: 50000,
+        extractedVatAmount: 0,
+        extractedVatPercent: 0,
+      },
+      { amount: 50000, name: "KUNDE GMBH" },
+    );
+    expect(rows).toHaveLength(1);
+    const row = rows[0].split(";");
+    expect(row[8]).toBe("0,00");
+    expect(row[10]).toBe("§3a Abs6 EU: KUNDE GMBH");
+    expect(row[13]).toBe("DE123456789");
+  });
+
+  it("labels an uploaded 0 % sale by the customer's country the File names (#565)", async () => {
+    const rows = await exportOne(
+      { extractedCountry: "DE", extractedAmount: 50000, extractedVatAmount: 0, extractedVatPercent: 0 },
+      { amount: 50000, name: "KUNDE GMBH" },
+    );
+    expect(rows).toHaveLength(1);
+    const row = rows[0].split(";");
+    expect(row[8]).toBe("0,00");
+    expect(row[10]).toBe("§3a Abs6 EU: KUNDE GMBH");
   });
 });

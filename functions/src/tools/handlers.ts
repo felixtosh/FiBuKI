@@ -5,10 +5,9 @@
  * Used by:
  * - HTTP API (mcpApi) - external AI tools
  * - MCP SSE (mcpSse) - Anthropic Claude
- *
- * Note: Chat assistant (lib/agent/tools/) has its own implementation
- * for performance (direct Admin SDK reads). Writes are already unified
- * via Cloud Function callables.
+ * - The chat assistant, through the runTool callable (#616): a chat tool
+ *   with a twin here is a thin wrapper, so this file is the one
+ *   implementation of what it reads and writes.
  */
 
 import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
@@ -28,9 +27,10 @@ import { buildDownloadUrl } from "../utils/buildDownloadUrl";
 import { dayStartUtc, dayEndExclusiveUtc } from "../uva/dateWindow";
 import { SALE_SUPPLY_KINDS, type SaleSupplyKind } from "../uva/types";
 import {
-  buildMarkNotInvoiceUpdates,
   buildUnmarkNotInvoiceUpdates,
+  markFileNotInvoice,
   queueExtractionAfterUnmark,
+  unmarkRefusal,
 } from "../files/notInvoiceOps";
 import {
   liveCopyIds,
@@ -52,16 +52,17 @@ import {
 } from "../files/recipientConfirmationOps";
 import { runTransactionMatching } from "../matching/matchFileTransactions";
 import {
-  ExtractionCorrectionError,
-  FileExtractionCorrection,
-} from "../files/extractionCorrectionOps";
+  DESCRIPTIVE_FIELDS,
+  type ExtractedDetails,
+  type FileExtractionCorrection,
+} from "../fileFacts/handCorrection";
 import { classifyFileRecord, documentTypeFields } from "../documents/adapter";
-import { buildCorrectedFileUpdate } from "../files/correctedFileUpdate";
+import { applyFactChange } from "../fileFacts/applyFactChange";
 import {
   CORRECTABLE_FIELDS,
   correctedFieldsOf,
   hasHandCorrections,
-} from "../files/extractionProvenanceOps";
+} from "../fileFacts/provenance";
 import {
   buildDismissSuggestionUpdates,
   buildUndismissSuggestionUpdates,
@@ -78,10 +79,14 @@ import { createFileRecord, findFileByContentHash } from "../files/createFileReco
 import { computeDedupeHash, splitDuplicates } from "../imports/dedupe";
 import { fetchPublicUrl, UnsafeUrlError } from "../utils/safeFetch";
 import { syncOnboarding, toStatus, updateOnboarding } from "../onboarding/onboardingState";
+import {
+  createIdentityEntity as createIdentityEntityInModule,
+  updateIdentityEntity as updateIdentityEntityInModule,
+} from "../identity/identity";
 import { isOnboardingOrigin, isOnboardingStep } from "../onboarding/onboardingRules";
 import { generatedInvoiceRefusal } from "../files/generatedInvoiceGuard";
 import { connectFiles } from "../fileConnections/writer";
-import { syncDocumentationStateForTransactions } from "../documents/syncDocumentationState";
+import { toDateSafe } from "../utils/toDateSafe";
 import { assignNoReceiptCategoryToTransaction } from "../matching/assignNoReceiptCategory";
 import { TOOL_DEFINITIONS, TOOL_NAMES } from "./definitions";
 import type { ToolName } from "./definitions";
@@ -108,6 +113,13 @@ import { KNOWN_AUSTRIAN_RATES } from "../uva/rateSet";
 import { runUvaForPeriod } from "../reports/uvaPeriodRun";
 import type { PlanId, PlanFeatures } from "../billing/config";
 import { CLEAR_TX_PROVENANCE } from "../matching/partnerProvenance";
+import { MCP_CALLER, type ToolCaller } from "./caller";
+import {
+  agentConfidence,
+  agentConnectRefusal,
+  agentMayReplaceAutomated,
+  agentSourceInfo,
+} from "./agentConnectChecks";
 
 /**
  * Convert a Firestore Timestamp to the YYYY-MM-DD calendar day it stands for.
@@ -190,12 +202,18 @@ async function checkToolFeatureGate(userId: string, tool: string): Promise<strin
 }
 
 /**
- * Main tool dispatcher - routes tool calls to handlers
+ * Main tool dispatcher - routes tool calls to handlers.
+ *
+ * `caller` is set by the server, never by the arguments (#665): MCP and the
+ * REST API leave it at the MCP caller, the runTool callable passes the chat
+ * agent. Only the writes that record who made them, and the agent's connect
+ * checks, read it.
  */
 export async function handleTool(
   userId: string,
   tool: string,
-  args: Record<string, unknown> = {}
+  args: Record<string, unknown> = {},
+  caller: ToolCaller = MCP_CALLER
 ): Promise<unknown> {
   // Check feature gate before executing
   const gateError = await checkToolFeatureGate(userId, tool);
@@ -206,7 +224,7 @@ export async function handleTool(
   switch (tool) {
     // Sources
     case "list_sources":
-      return listSources(userId);
+      return listSources(userId, args);
     case "get_source":
       return getSource(userId, args.sourceId as string);
     case "create_source":
@@ -250,7 +268,7 @@ export async function handleTool(
     case "dismiss_split_suggestion":
       return dismissSplitSuggestionTool(userId, args);
     case "connect_file_to_transaction":
-      return connectFileToTransaction(userId, args);
+      return connectFileToTransaction(userId, args, caller);
     case "disconnect_file_from_transaction":
       return disconnectFileFromTransaction(userId, args);
     case "auto_connect_file_suggestions":
@@ -327,11 +345,11 @@ export async function handleTool(
     case "list_recurring_partners":
       return listRecurringPartners(userId, args);
     case "assign_partner_to_transaction":
-      return assignPartnerToTx(userId, args);
+      return assignPartnerToTx(userId, args, caller);
     case "remove_partner_from_transaction":
       return removePartnerFromTx(userId, args);
     case "assign_partner_to_file":
-      return assignPartnerToFileTool(userId, args);
+      return assignPartnerToFileTool(userId, args, caller);
     case "remove_partner_from_file":
       return removePartnerFromFileTool(userId, args);
     case "update_partner":
@@ -388,13 +406,10 @@ export async function handleTool(
 // Sources
 // ============================================================================
 
-export async function listSources(userId: string) {
-  const snapshot = await db
-    .collection("sources")
-    .where("userId", "==", userId)
-    .where("isActive", "==", true)
-    .orderBy("name", "asc")
-    .get();
+export async function listSources(userId: string, args: Record<string, unknown> = {}) {
+  let query: FirebaseFirestore.Query = db.collection("sources").where("userId", "==", userId);
+  if (args.includeInactive !== true) query = query.where("isActive", "==", true);
+  const snapshot = await query.orderBy("name", "asc").get();
 
   return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
 }
@@ -413,6 +428,26 @@ export async function getSource(userId: string, sourceId: string) {
 // Transactions
 // ============================================================================
 
+/**
+ * The most Transactions an in-memory filter reads (#616). Substring search,
+ * amount bounds and the presence filters cannot be pushed into the query, so
+ * the read is a scan window, not a page: anything outside it is invisible to
+ * the filter. 5000 covers a typical single-user account outright; past it the
+ * answer says it is partial (`scanTruncated`) instead of reading as a total.
+ * A real account of 13,844 transactions held 631 Amazon rows, none in the
+ * newest 500, so a narrower window answered "no Amazon spend".
+ */
+const TRANSACTION_SCAN_WINDOW = 5000;
+
+/** An amount bound in cents, compared against the absolute amount. */
+function amountBound(value: unknown, field: string): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`${field} must be an amount in cents`);
+  }
+  return Math.abs(value);
+}
+
 export async function listTransactions(userId: string, args: Record<string, unknown>) {
   let query: FirebaseFirestore.Query = db
     .collection("transactions")
@@ -423,6 +458,15 @@ export async function listTransactions(userId: string, args: Record<string, unkn
   }
   if (args.isComplete !== undefined) {
     query = query.where("isComplete", "==", args.isComplete);
+  }
+  if (args.partnerId) {
+    query = query.where("partnerId", "==", args.partnerId);
+  }
+  if (args.noReceiptCategoryId) {
+    query = query.where("noReceiptCategoryId", "==", args.noReceiptCategoryId);
+  }
+  if (args.noReceiptCategoryTemplateId) {
+    query = query.where("noReceiptCategoryTemplateId", "==", args.noReceiptCategoryTemplateId);
   }
 
   // Date range pushed into the query so filters apply BEFORE the limit.
@@ -453,17 +497,24 @@ export async function listTransactions(userId: string, args: Record<string, unkn
   // Cursor pagination: cursor is the last document id from the previous page.
   query = await startAfterCursor(query, "transactions", userId, args.cursor);
 
-  // Search is a substring match that Firestore can't push down. When set we
-  // overfetch (up to 5x the requested limit) and filter in memory, capped to
-  // avoid runaway scans. Callers that need stable pagination should avoid
-  // combining `search` with `cursor`.
   const requestedLimit = Math.min(Math.max((args.limit as number) || 50, 1), 500);
   const search = (args.search as string | undefined)?.toLowerCase();
-  const fetchLimit = search ? Math.min(requestedLimit * 5, 1000) : requestedLimit;
+  const minAmount = amountBound(args.minAmount, "minAmount");
+  const maxAmount = amountBound(args.maxAmount, "maxAmount");
+  const inMemory =
+    !!search ||
+    minAmount !== undefined ||
+    maxAmount !== undefined ||
+    args.hasPartner !== undefined ||
+    args.hasNoReceiptCategory !== undefined ||
+    args.hasFile !== undefined ||
+    args.onlyIncome === true ||
+    args.onlyExpenses === true;
+  const fetchLimit = inMemory ? TRANSACTION_SCAN_WINDOW : requestedLimit;
   query = query.limit(fetchLimit);
 
   const snapshot = await query.get();
-  let transactions = snapshot.docs.map((doc) => {
+  const scanned = snapshot.docs.map((doc) => {
     const data = doc.data();
     return {
       id: doc.id,
@@ -473,22 +524,84 @@ export async function listTransactions(userId: string, args: Record<string, unkn
     } as Record<string, unknown>;
   });
 
-  if (search) {
-    transactions = transactions.filter(
-      (t) =>
+  const amountOf = (t: Record<string, unknown>) => (typeof t.amount === "number" ? t.amount : 0);
+  const fileCount = (t: Record<string, unknown>) => ((t.fileIds as unknown[] | undefined) || []).length;
+  const matches = scanned.filter((t) => {
+    if (
+      search &&
+      !(
         (t.name as string | undefined)?.toLowerCase().includes(search) ||
         (t.description as string | undefined)?.toLowerCase().includes(search) ||
         (t.partner as string | undefined)?.toLowerCase().includes(search)
-    );
-    transactions = transactions.slice(0, requestedLimit);
+      )
+    ) {
+      return false;
+    }
+    if (minAmount !== undefined && Math.abs(amountOf(t)) < minAmount) return false;
+    if (maxAmount !== undefined && Math.abs(amountOf(t)) > maxAmount) return false;
+    if (args.hasPartner !== undefined && !!t.partnerId !== (args.hasPartner === true)) return false;
+    if (args.hasNoReceiptCategory !== undefined && !!t.noReceiptCategoryId !== (args.hasNoReceiptCategory === true)) {
+      return false;
+    }
+    if (args.hasFile !== undefined && fileCount(t) > 0 !== (args.hasFile === true)) return false;
+    if (args.onlyIncome === true && !(amountOf(t) > 0)) return false;
+    if (args.onlyExpenses === true && args.onlyIncome !== true && !(amountOf(t) < 0)) return false;
+    return true;
+  });
+
+  // Counts over every match in the scan, not just this page, so a caller can
+  // report a breakdown without paging through the rest.
+  const aggregates = {
+    withPartner: 0,
+    withoutPartner: 0,
+    withFile: 0,
+    withoutFile: 0,
+    withoutNoReceiptCategory: 0,
+    byNoReceiptCategoryTemplateId: {} as Record<string, number>,
+  };
+  for (const t of matches) {
+    if (t.partnerId) aggregates.withPartner++;
+    else aggregates.withoutPartner++;
+    if (fileCount(t) > 0) aggregates.withFile++;
+    else aggregates.withoutFile++;
+    const templateId = t.noReceiptCategoryTemplateId as string | undefined;
+    if (templateId) {
+      aggregates.byNoReceiptCategoryTemplateId[templateId] =
+        (aggregates.byNoReceiptCategoryTemplateId[templateId] || 0) + 1;
+    } else {
+      aggregates.withoutNoReceiptCategory++;
+    }
   }
 
-  const hasMore = snapshot.docs.length === fetchLimit;
-  const nextCursor = hasMore && transactions.length > 0
+  // The cursor is the last row CONSUMED: a page cut short by the limit
+  // resumes after its last row, a scan that ran out resumes after its last
+  // scanned row, so rows the filters skipped are not read twice.
+  const transactions = matches.slice(0, requestedLimit);
+  const truncated = matches.length > requestedLimit;
+  const scanFull = snapshot.docs.length === fetchLimit;
+  const nextCursor = truncated
     ? (transactions[transactions.length - 1].id as string)
-    : null;
+    : scanFull
+      ? ((scanned[scanned.length - 1]?.id as string) ?? null)
+      : null;
 
-  return { transactions, nextCursor, count: transactions.length };
+  return {
+    transactions,
+    nextCursor,
+    count: transactions.length,
+    total: matches.length,
+    aggregates,
+    ...(inMemory && scanFull
+      ? {
+          scanTruncated: true,
+          scanned: scanned.length,
+          note:
+            `Filters were applied to the ${scanned.length} most recent transactions only, so this ` +
+            `is NOT a complete answer. Narrow the range with dateFrom/dateTo or filter with ` +
+            `sourceId/partnerId, or continue from nextCursor, and say the result is partial.`,
+        }
+      : {}),
+  };
 }
 
 export async function getTransaction(userId: string, transactionId: string) {
@@ -508,7 +621,33 @@ export async function getTransaction(userId: string, transactionId: string) {
   };
 }
 
-export async function updateTransaction(userId: string, args: Record<string, unknown>) {
+/**
+ * What update_transaction writes, and so what an edit's history entry holds
+ * and what a rollback may restore (#616). Everything else on a Transaction
+ * has its own writer.
+ */
+export const UPDATE_TRANSACTION_FIELDS = [
+  "description",
+  "isComplete",
+  "vatRate",
+  "isReverseCharge",
+  "foreignSupplyKind",
+  "saleSupplyKind",
+] as const;
+
+/**
+ * Update a Transaction's description, completion or UVA answers.
+ *
+ * Every edit that changes a value leaves a history entry (previous and new
+ * values of the fields it changed) under the Transaction, which is what
+ * rollbackTransaction restores from. `rollbackFrom` marks the entry a
+ * rollback writes.
+ */
+export async function updateTransaction(
+  userId: string,
+  args: Record<string, unknown>,
+  options: { rollbackFrom?: string } = {}
+) {
   const {
     transactionId,
     description,
@@ -580,8 +719,83 @@ export async function updateTransaction(userId: string, args: Record<string, unk
   if (foreignSupplyKind !== undefined) updates.foreignSupplyKind = foreignSupplyKind;
   if (saleSupplyKind !== undefined) updates.saleSupplyKind = saleSupplyKind;
 
+  const stored = doc.data()!;
+  const previousValues: Record<string, unknown> = {};
+  const newValues: Record<string, unknown> = {};
+  for (const field of UPDATE_TRANSACTION_FIELDS) {
+    if (!(field in updates)) continue;
+    const before = stored[field] ?? null;
+    const after = updates[field] ?? null;
+    if (before === after) continue;
+    previousValues[field] = before;
+    newValues[field] = after;
+  }
+
+  let historyId: string | undefined;
+  if (Object.keys(newValues).length > 0) {
+    const historyRef = docRef.collection("history").doc();
+    await historyRef.set({
+      changedAt: FieldValue.serverTimestamp(),
+      changedBy: userId,
+      previousValues,
+      newValues,
+      ...(options.rollbackFrom ? { rollbackFrom: options.rollbackFrom } : {}),
+    });
+    historyId = historyRef.id;
+  }
+
   await docRef.update(updates);
-  return { success: true, transactionId };
+  return {
+    success: true,
+    transactionId,
+    ...(historyId ? { historyId, changes: newValues } : {}),
+  };
+}
+
+/**
+ * Restore the values one history entry says an edit replaced (#616), through
+ * updateTransaction: the entry may name only UPDATE_TRANSACTION_FIELDS (any
+ * other field refuses the whole entry), the values are validated as an edit,
+ * and the rollback leaves its own entry marked `rollbackFrom`.
+ */
+export async function rollbackTransaction(userId: string, args: Record<string, unknown>) {
+  const { transactionId, historyId } = args;
+  if (typeof transactionId !== "string" || !transactionId) throw new Error("transactionId is required");
+  if (typeof historyId !== "string" || !historyId || historyId.includes("/")) {
+    throw new Error("historyId is required");
+  }
+
+  const txRef = db.collection("transactions").doc(transactionId);
+  const tx = await txRef.get();
+  if (!tx.exists || tx.data()?.userId !== userId) {
+    throw new Error("Transaction not found");
+  }
+
+  const entry = await txRef.collection("history").doc(historyId).get();
+  if (!entry.exists) throw new Error("History entry not found");
+
+  const previous = entry.data()?.previousValues as unknown;
+  if (!previous || typeof previous !== "object" || Array.isArray(previous) || Object.keys(previous).length === 0) {
+    throw new Error("No previous values to restore");
+  }
+  const restorable = new Set<string>(UPDATE_TRANSACTION_FIELDS);
+  const refused = Object.keys(previous).filter((field) => !restorable.has(field)).sort();
+  if (refused.length > 0) {
+    throw new Error(`A rollback restores only what an edit writes; this entry names ${refused.join(", ")}`);
+  }
+
+  const restoredValues = previous as Record<string, unknown>;
+  const result = await updateTransaction(
+    userId,
+    { ...restoredValues, transactionId },
+    { rollbackFrom: historyId }
+  );
+  return {
+    success: true,
+    transactionId,
+    restoredValues,
+    historyId: result.historyId ?? null,
+  };
 }
 
 /**
@@ -829,16 +1043,35 @@ export async function listTransactionsMissingInvoice(userId: string, args: Recor
  * filtered out in memory are skipped, rows that simply did not fit are not.
  */
 export async function listFiles(userId: string, args: Record<string, unknown>) {
-  let query: FirebaseFirestore.Query = db
-    .collection("files")
-    .where("userId", "==", userId)
-    .orderBy("uploadedAt", "desc");
+  let query: FirebaseFirestore.Query = db.collection("files").where("userId", "==", userId);
+  if (args.partnerId) {
+    query = query.where("partnerId", "==", args.partnerId);
+  }
+  query = query.orderBy("uploadedAt", "desc");
 
   // Cursor pagination: cursor is the last document id from the previous page.
   query = await startAfterCursor(query, "files", userId, args.cursor);
 
+  const search = (args.search as string | undefined)?.toLowerCase();
+  const minAmount = amountBound(args.minAmount, "minAmount");
+  const maxAmount = amountBound(args.maxAmount, "maxAmount");
+  let fromDay: Date | null = null;
+  let toDayExclusive: Date | null = null;
+  if (args.dateFrom) {
+    fromDay = dayStartUtc(args.dateFrom as string);
+    if (!fromDay) throw new Error(`dateFrom must be a calendar day as YYYY-MM-DD, got "${args.dateFrom}"`);
+  }
+  if (args.dateTo) {
+    toDayExclusive = dayEndExclusiveUtc(args.dateTo as string);
+    if (!toDayExclusive) throw new Error(`dateTo must be a calendar day as YYYY-MM-DD, got "${args.dateTo}"`);
+  }
+  const narrowing =
+    !!search || minAmount !== undefined || maxAmount !== undefined || !!fromDay || !!toDayExclusive;
+
   const requestedLimit = Math.min(Math.max((args.limit as number) || 50, 1), 500);
-  const scanLimit = Math.min(requestedLimit * 5, 1000);
+  // Search, amount and date bounds run in memory (#616), so a narrow page
+  // still scans a useful window.
+  const scanLimit = Math.min(narrowing ? Math.max(requestedLimit * 5, 500) : requestedLimit * 5, 1000);
   query = query.limit(scanLimit);
 
   const snapshot = await query.get();
@@ -928,6 +1161,36 @@ export async function listFiles(userId: string, args: Record<string, unknown>) {
     );
   }
 
+  // #616: what the chat assistant's own listing filtered on. Amounts are the
+  // document's total in cents (#504: the stored total, else the line items
+  // unless they contradict the document), compared without sign; the date is
+  // the document's date, else the upload's, as a calendar day.
+  if (search) {
+    files = files.filter(
+      (f) =>
+        (f.fileName as string | undefined)?.toLowerCase().includes(search) ||
+        (f.extractedPartner as string | undefined)?.toLowerCase().includes(search)
+    );
+  }
+  if (minAmount !== undefined || maxAmount !== undefined) {
+    files = files.filter((f) => {
+      const amount = documentAmountCents(f);
+      if (amount === null) return false;
+      if (minAmount !== undefined && Math.abs(amount) < minAmount) return false;
+      if (maxAmount !== undefined && Math.abs(amount) > maxAmount) return false;
+      return true;
+    });
+  }
+  if (fromDay || toDayExclusive) {
+    files = files.filter((f) => {
+      const date = asDate(f.extractedDate) ?? asDate(f.uploadedAt);
+      if (!date) return false;
+      if (fromDay && date < fromDay) return false;
+      if (toDayExclusive && date >= toDayExclusive) return false;
+      return true;
+    });
+  }
+
   // The page ends either at the requested limit or at the end of the scan.
   const page = files
     .slice(0, requestedLimit)
@@ -942,6 +1205,28 @@ export async function listFiles(userId: string, args: Record<string, unknown>) {
       : ((scanned[scanned.length - 1]?.id as string) ?? null);
 
   return { files: page, nextCursor, count: page.length };
+}
+
+/** A File's document total in cents, by the rule of lib/files/document-amount (#504). */
+function documentAmountCents(f: Record<string, unknown>): number | null {
+  if (typeof f.extractedAmount === "number" && Number.isFinite(f.extractedAmount)) return f.extractedAmount;
+  const items = f.extractedLineItems;
+  if (!Array.isArray(items) || items.length === 0 || f.lineItemsUnreconciled) return null;
+  return items.reduce((sum: number, item) => {
+    const amount = (item as { amount?: unknown })?.amount;
+    return sum + (typeof amount === "number" && Number.isFinite(amount) ? amount : 0);
+  }, 0);
+}
+
+function asDate(value: unknown): Date | null {
+  if (!value) return null;
+  if (value instanceof Date) return isNaN(value.getTime()) ? null : value;
+  if (typeof (value as { toDate?: unknown }).toDate === "function") return (value as Timestamp).toDate();
+  if (typeof value === "string") {
+    const d = new Date(value);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  return null;
 }
 
 export async function getFile(userId: string, fileId: string) {
@@ -1043,10 +1328,20 @@ export async function dismissSplitSuggestionTool(userId: string, args: Record<st
   return performDismissSplitSuggestion(db, userId, args.fileId as string);
 }
 
-export async function connectFileToTransaction(userId: string, args: Record<string, unknown>) {
+export async function connectFileToTransaction(
+  userId: string,
+  args: Record<string, unknown>,
+  caller: ToolCaller = MCP_CALLER
+) {
   const { fileId, transactionId } = args;
   if (!fileId || !transactionId) {
     throw new Error("fileId and transactionId are required");
+  }
+  if (caller.kind === "agent") {
+    if (typeof fileId !== "string" || typeof transactionId !== "string") {
+      throw new Error("fileId and transactionId are required");
+    }
+    return connectFileAsAgent(userId, fileId, transactionId, args, caller.workerType);
   }
 
   // The File Connection writer (#612) owns the rules: a rejected pair does not
@@ -1055,9 +1350,11 @@ export async function connectFileToTransaction(userId: string, args: Record<stri
   // connect_file_to_transaction and the best-suggestion loop in
   // auto_connect_file_suggestions.
   //
-  // Unlike the chat tool, there is no override argument on the MCP surface: an
-  // external caller that means it can lift the rejection first with
-  // undismiss_transaction_suggestion, which leaves a record of having done so.
+  // There is no override argument on the MCP surface, and an argument named
+  // like the agent's is ignored here: an external caller that means it can
+  // lift the rejection first with undismiss_transaction_suggestion, which
+  // leaves a record of having done so. Only the agent caller, which the server
+  // sets (#665), reads `overrideDismissal`.
   const [outcome] = await connectFiles(
     db,
     userId,
@@ -1075,6 +1372,74 @@ export async function connectFileToTransaction(userId: string, args: Record<stri
     fileId,
     transactionId,
     ...(outcome.status === "already-connected" ? { alreadyConnected: true } : {}),
+  };
+}
+
+/**
+ * The chat agent's connect (#665): its checks first (agentConnectChecks.ts),
+ * then the File Connection writer with Connection Origin `agent`, the
+ * confidence and how the File was found. A refusal of the checks comes back
+ * as the reply the model reads (PAIR_REJECTED, VALIDATION_FAILED), not thrown,
+ * so the model sees its fields.
+ */
+async function connectFileAsAgent(
+  userId: string,
+  fileId: string,
+  transactionId: string,
+  args: Record<string, unknown>,
+  workerType: string | null
+) {
+  const [fileSnap, txSnap] = await Promise.all([
+    db.collection("files").doc(fileId).get(),
+    db.collection("transactions").doc(transactionId).get(),
+  ]);
+  if (!fileSnap.exists || fileSnap.data()?.userId !== userId) throw new Error("File not found");
+  if (!txSnap.exists || txSnap.data()?.userId !== userId) throw new Error("Transaction not found");
+  const file = fileSnap.data()!;
+  const tx = txSnap.data()!;
+
+  if (tx.quotaExceeded) {
+    throw new Error(
+      "Cannot connect files to over-quota transactions. This transaction exceeds the plan's transaction limit."
+    );
+  }
+
+  const refusal = agentConnectRefusal(fileId, transactionId, file, tx, args, workerType);
+  if (refusal) return refusal;
+
+  const [outcome] = await connectFiles(
+    db,
+    userId,
+    [
+      {
+        fileId,
+        transactionId,
+        matchConfidence: agentConfidence(args),
+        sourceInfo: agentSourceInfo(file, args),
+        connectionType: "manual",
+      },
+    ],
+    {
+      origin: "agent",
+      overrideRejection: args.overrideDismissal === true,
+      replaceAutomated: agentMayReplaceAutomated(workerType),
+    }
+  );
+  if (outcome.status === "refused") throw new Error(outcome.message);
+
+  const fileName = file.fileName;
+  const reassigned = outcome.status === "connected" ? outcome.reassignedConnections : 0;
+  return {
+    success: true,
+    connectionId: outcome.connectionId,
+    alreadyConnected: outcome.status === "already-connected",
+    fileName,
+    message:
+      outcome.status === "already-connected"
+        ? `File "${fileName}" was already connected to this transaction.`
+        : reassigned > 0
+          ? `Connected "${fileName}" and reassigned ${reassigned} previous auto match${reassigned === 1 ? "" : "es"}.`
+          : `Connected "${fileName}" to transaction.`,
   };
 }
 
@@ -1116,10 +1481,10 @@ export async function disconnectFileFromTransaction(userId: string, args: Record
  * transaction whose receipt has silently become a non-receipt.
  */
 /**
- * Correct a file's extracted record by hand (fork #147).
- *
- * The shape rules live in `buildCorrectedFileUpdate` so they can be tested
- * without a database; this owns ownership, the write, and the reply.
+ * Correct a file's extracted record by hand (fork #147): a Hand Correction
+ * from the MCP door. The same contract as the UI's correction callable, the
+ * figures and the descriptive fields alike, defined once by the File facts
+ * module (#638); this owns only reading the arguments and the reply.
  */
 export async function updateFileExtraction(userId: string, args: Record<string, unknown>) {
   const fileId = args.fileId as string;
@@ -1127,66 +1492,53 @@ export async function updateFileExtraction(userId: string, args: Record<string, 
     throw new Error("fileId is required");
   }
 
-  const fileRef = db.collection("files").doc(fileId);
-  const fileSnap = await fileRef.get();
-
-  if (!fileSnap.exists || fileSnap.data()?.userId !== userId) {
-    throw new Error("File not found");
-  }
-
   // Read the keys off `args` rather than spreading it: a caller passing an
   // unknown key must not reach the update, and "absent" has to stay distinct
   // from "null" all the way down.
-  const fields: FileExtractionCorrection = {};
+  const correction: FileExtractionCorrection = {};
   for (const key of CORRECTABLE_FIELDS) {
     if (args[key] !== undefined) {
-      (fields as Record<string, unknown>)[key] = args[key];
+      (correction as Record<string, unknown>)[key] = args[key];
+    }
+  }
+  const details: ExtractedDetails = {};
+  for (const key of Object.keys(DESCRIPTIVE_FIELDS)) {
+    if (args[key] !== undefined) {
+      (details as Record<string, unknown>)[key] = args[key];
     }
   }
 
-  // Not a correctable field and deliberately not one (#310): it states how to
-  // read the tip in this call, not a value the record keeps, so it is never
-  // stamped as hand-corrected. The declaration IS kept, as extractedTipBound.
-  if (args.tipNotPrinted !== undefined && typeof args.tipNotPrinted !== "boolean") {
-    throw new Error("tipNotPrinted must be a boolean");
+  // `tipNotPrinted` is not a correctable field and deliberately not one
+  // (#310): it states how to read the tip in this call, so it is never
+  // recorded as hand-corrected. What it decided is kept, as extractedTipBound.
+  const result = await applyFactChange(db, {
+    fileId,
+    userId,
+    change: {
+      origin: "mcp-correction",
+      correction,
+      details,
+      tipNotPrinted: args.tipNotPrinted as boolean | undefined,
+    },
+  });
+
+  if (result.refused) {
+    throw new Error(result.message);
   }
 
-  let built;
-  try {
-    // The stored record goes in so the correction's provenance stamp (#184)
-    // merges onto the marks earlier corrections left, instead of replacing
-    // them, and so everything derived from the corrected values moves with them
-    // rather than going stale: the § 11 classification (#104), the rate-review
-    // flag (#203) and the direction review (#233). Shared with the UI's
-    // correction callable since #149, so both surfaces write the same set.
-    built = await buildCorrectedFileUpdate(db, fields, fileSnap.data()!, {
-      tipNotPrinted: args.tipNotPrinted === true,
-    });
-  } catch (error) {
-    if (error instanceof ExtractionCorrectionError) {
-      throw new Error(error.message);
-    }
-    throw error;
-  }
-
-  await fileRef.update(built.updates);
-
-  const previousDocumentType = fileSnap.data()?.documentType;
-  const connectedTransactionIds = (fileSnap.data()?.transactionIds as string[] | undefined) ?? [];
-  if (previousDocumentType !== built.updates.documentType && connectedTransactionIds.length > 0) {
-    await syncDocumentationStateForTransactions(db, connectedTransactionIds);
-  }
-
-  const after = (await fileRef.get()).data() ?? {};
+  const after = result.after;
   console.log(`[updateFileExtraction] Corrected file ${fileId}`, {
     userId,
-    changed: built.changed,
+    changed: result.changed,
   });
 
   return {
     success: true,
     fileId,
-    changed: built.changed,
+    changed: result.changed,
+    // The descriptive fields this call moved, by their stored names. They are
+    // written but never recorded in the Hand Correction.
+    detailsChanged: result.movedDetails,
     // Every field a human has ever set on this record, not only the ones this
     // call moved — this is what a re-extraction now refuses on (#184).
     correctedFields: correctedFieldsOf(after),
@@ -1202,6 +1554,10 @@ export async function updateFileExtraction(userId: string, args: Record<string, 
       extractedVatPercent: after.extractedVatPercent ?? null,
       lineItemsUnreconciled: after.lineItemsUnreconciled ?? false,
       extractedRateGroups: after.extractedRateGroups ?? null,
+      extractedPartner: after.extractedPartner ?? null,
+      // #638: the dates the rows state, read against the issue date, as days.
+      extractedDueDate: toDateSafe(after.extractedDueDate)?.toISOString().slice(0, 10) ?? null,
+      extractedDebitDate: toDateSafe(after.extractedDebitDate)?.toISOString().slice(0, 10) ?? null,
     },
   };
 }
@@ -1252,7 +1608,7 @@ export async function markFileAsNotInvoice(userId: string, args: Record<string, 
     );
   }
 
-  await fileRef.update(buildMarkNotInvoiceUpdates(fileData, args.reason as string | undefined));
+  await markFileNotInvoice(db, fileId, userId, args.reason as string | undefined);
 
   console.log(`[markFileAsNotInvoice] Marked file ${fileId} as not invoice`, {
     userId,
@@ -1281,6 +1637,12 @@ export async function unmarkFileAsNotInvoice(userId: string, args: Record<string
   }
 
   const fileData = fileSnap.data()!;
+
+  // Un-marking re-extracts the File, which a Hand Correction refuses (#639).
+  const refused = unmarkRefusal(fileData);
+  if (refused) {
+    throw new Error(refused.message);
+  }
 
   // Manual connections outrank a re-run of transaction matching.
   const manualConnections = await db
@@ -1787,140 +2149,19 @@ export async function listIdentityEntities(userId: string) {
 }
 
 /**
- * Patch an existing identity entity (personalEntity or one of companies[]).
- * Accepts a sparse patch of name / vatId / ibans / address. Used by MCP
- * agents to bring a company entity up to invoice-ready state (IBAN, VAT,
- * address) without forcing the user into the settings UI.
- */
-export async function updateIdentityEntity(
-  userId: string,
-  args: Record<string, unknown>,
-) {
-  const entityId = String(args.entityId || "");
-  if (!entityId) throw new Error("entityId is required");
-  const patch = (args.patch as Record<string, unknown>) || {};
-
-  const docRef = db.doc(`users/${userId}/settings/userData`);
-  await db.runTransaction(async (tx) => {
-    const snap = await tx.get(docRef);
-    if (!snap.exists) throw new Error("User data not found");
-    const data = snap.data() as Record<string, unknown>;
-
-    const personal = data.personalEntity as Record<string, unknown> | undefined;
-    if (personal && personal.id === entityId) {
-      data.personalEntity = applyIdentityPatch(personal, patch);
-    } else {
-      const companies = (data.companies as Array<Record<string, unknown>>) || [];
-      const idx = companies.findIndex((c) => c.id === entityId);
-      if (idx < 0) throw new Error(`Identity entity ${entityId} not found`);
-      companies[idx] = applyIdentityPatch(companies[idx], patch);
-      data.companies = companies;
-    }
-    data.updatedAt = FieldValue.serverTimestamp();
-    tx.set(docRef, data, { merge: true });
-  });
-
-  return { success: true, entityId };
-}
-
-/**
- * Apply a sparse patch of name / vatId / ibans / aliases / address to an identity
- * entity, with the same normalisation the settings page applies. Shared by
- * update_identity_entity and create_identity_entity so the two cannot drift.
- */
-function applyIdentityPatch(
-  entity: Record<string, unknown>,
-  patch: Record<string, unknown>
-): Record<string, unknown> {
-  const next: Record<string, unknown> = { ...entity };
-  if (typeof patch.name === "string") next.name = patch.name.trim();
-  if (typeof patch.vatId === "string") {
-    const v = patch.vatId.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-    if (v) next.vatId = v; else delete next.vatId;
-  }
-  if (Array.isArray(patch.ibans)) {
-    next.ibans = (patch.ibans as unknown[])
-      .map((i) => String(i).trim().toUpperCase().replace(/\s+/g, ""))
-      .filter(Boolean);
-  }
-  if (Array.isArray(patch.aliases)) {
-    next.aliases = (patch.aliases as unknown[])
-      .map((a) => String(a).trim())
-      .filter(Boolean);
-  }
-  if (patch.address !== undefined) {
-    const addr = (patch.address as Record<string, string> | null) || null;
-    if (addr) {
-      const clean: Record<string, string> = {};
-      if (addr.street?.trim()) clean.street = addr.street.trim();
-      if (addr.postalCode?.trim()) clean.postalCode = addr.postalCode.trim();
-      if (addr.city?.trim()) clean.city = addr.city.trim();
-      if (addr.country?.trim()) clean.country = addr.country.trim().toUpperCase();
-      if (Object.keys(clean).length > 0) next.address = clean;
-    } else {
-      delete next.address;
-    }
-  }
-  return next;
-}
-
-/**
- * Create the user's personal entity or a company, for someone who has none yet.
- * The settings page does the same; update_identity_entity only patches what exists,
- * so without this a new user would have to open fibuki.com before anything else.
+ * Patch an existing identity entity (personalEntity or one of companies[]), and
+ * create the personal entity or a company for someone who has none yet. Both
+ * write through the business identity module (#632), the same writer as the
+ * settings screen, so one input stores one identity whichever way it came in.
  * Writing the document is what makes FiBuKI create the identity Partner and tell
  * the user's own issued invoices from the ones they receive.
  */
+export async function updateIdentityEntity(userId: string, args: Record<string, unknown>) {
+  return updateIdentityEntityInModule(db, userId, args);
+}
+
 export async function createIdentityEntity(userId: string, args: Record<string, unknown>) {
-  const type = args.type;
-  if (type !== "person" && type !== "company") throw new Error("type must be 'person' or 'company'");
-  const name = typeof args.name === "string" ? args.name.trim() : "";
-  if (!name) throw new Error("name is required");
-
-  const docRef = db.doc(`users/${userId}/settings/userData`);
-  const entityId = `entity_${Date.now()}_${randomUUID().slice(0, 9)}`;
-
-  const entity = await db.runTransaction(async (tx) => {
-    const snap = await tx.get(docRef);
-    const data = (snap.exists ? snap.data() : {}) as Record<string, unknown>;
-    const companies = Array.isArray(data.companies) ? [...(data.companies as Array<Record<string, unknown>>)] : [];
-
-    if (type === "person" && (data.personalEntity as { id?: string } | undefined)?.id) {
-      throw new Error("A personal entity already exists. Use update_identity_entity to change it.");
-    }
-    if (type === "company" && companies.some((c) => String(c.name ?? "").trim().toLowerCase() === name.toLowerCase())) {
-      throw new Error(`A company named "${name}" already exists. Use update_identity_entity to change it.`);
-    }
-
-    const created = applyIdentityPatch(
-      {
-        id: entityId,
-        type,
-        name,
-        aliases: [],
-        ibans: [],
-        order: type === "person" ? 0 : companies.length,
-        createdAt: Timestamp.now(),
-      },
-      args
-    );
-
-    const next: Record<string, unknown> = {
-      country: data.country || "AT",
-      taxNumber: data.taxNumber || "",
-      ownEmails: data.ownEmails || [],
-      createdAt: data.createdAt || Timestamp.now(),
-      ...data,
-      updatedAt: FieldValue.serverTimestamp(),
-    };
-    if (type === "person") next.personalEntity = created;
-    else next.companies = [...companies, created];
-
-    tx.set(docRef, next);
-    return created;
-  });
-
-  return { success: true, entityId, entity };
+  return createIdentityEntityInModule(db, userId, args);
 }
 
 /**
@@ -1989,7 +2230,8 @@ export async function listPartners(userId: string, args: Record<string, unknown>
     ? scanned.filter(
         (p) =>
           p.name?.toLowerCase().includes(search) ||
-          p.aliases?.some((a: string) => a.toLowerCase().includes(search))
+          p.aliases?.some((a: string) => a.toLowerCase().includes(search)) ||
+          (p.vatId as string | null)?.toLowerCase().includes(search)
       )
     : scanned;
 
@@ -2485,42 +2727,41 @@ function toApiWindow(window: ExpectedChargeWindow | null) {
   };
 }
 
-export async function assignPartnerToTx(userId: string, args: Record<string, unknown>) {
+/**
+ * Assign a Partner to a Transaction through the assignment the callable runs
+ * (#665), so MCP and the chat agent share one implementation of the write. The
+ * agent's assignment is recorded as `ai`: refused for a Partner the User
+ * removed from this Transaction before, learned from, shown in the re-match
+ * review. An external client's is recorded as `api` (see PartnerMatchedBy).
+ * Replacing another Partner relearns that one. A Merged Partner is refused
+ * naming its survivor.
+ */
+export async function assignPartnerToTx(
+  userId: string,
+  args: Record<string, unknown>,
+  caller: ToolCaller = MCP_CALLER
+) {
   const { transactionId, partnerId } = args;
   if (!transactionId) throw new Error("transactionId is required");
   if (!partnerId) throw new Error("partnerId is required");
 
-  // Verify transaction ownership
+  // Ownership first: another User's record reads as missing, not as denied.
   const txDoc = await db.collection("transactions").doc(transactionId as string).get();
   if (!txDoc.exists || txDoc.data()?.userId !== userId) {
     throw new Error("Transaction not found");
   }
+  await loadWritablePartner(userId, partnerId as string);
 
-  // Verify partner ownership
-  const partnerDoc = await db.collection("partners").doc(partnerId as string).get();
-  if (!partnerDoc.exists || partnerDoc.data()?.userId !== userId) {
-    throw new Error("Partner not found");
-  }
-
-  const now = FieldValue.serverTimestamp();
-  await db.collection("transactions").doc(transactionId as string).update({
-    ...CLEAR_TX_PROVENANCE,
-    partnerId,
-    partnerType: "user",
-    partnerMatchedBy: "api",
-    partnerMatchConfidence: null,
-    updatedAt: now,
-    automationHistory: FieldValue.arrayUnion({
-      type: "partner_assigned",
-      ranAt: Timestamp.now(),
-      status: "completed",
-      actor: "manual",
-      level: "decision",
-      partnerName: partnerDoc.data()!.name || null,
-      forPartnerId: partnerId,
-      summary: `Partner "${partnerDoc.data()!.name}" assigned via API`,
-    }),
-  });
+  const { assignPartnerToTransactionInternal } = await import("../partners/assignPartnerToTransaction");
+  await assignPartnerToTransactionInternal(
+    { db, userId },
+    {
+      transactionId: transactionId as string,
+      partnerId: partnerId as string,
+      partnerType: "user",
+      matchedBy: caller.kind === "agent" ? "ai" : "api",
+    }
+  );
 
   return { success: true, transactionId, partnerId };
 }
@@ -2594,64 +2835,46 @@ async function loadWritablePartner(userId: string, partnerId: string) {
 }
 
 /**
- * Attach a Partner to a File the way a person does in the UI
- * (`assignPartnerToFile` in lib/operations/file-ops.ts): `partnerMatchedBy:
- * "manual"`, confidence 100, and the File cleared from the Partner's
- * `manualFileRemovals` if a person had pulled it off earlier. The File write
- * goes through `updateFileInternal`, the same contract as the `updateFile`
- * callable, which also cancels running partner workers for the File.
+ * Attach a Partner to a File through the shared server path the UI uses
+ * (`files/filePartner.ts`, #627): `partnerMatchedBy: "manual"`, confidence
+ * 100, and the File cleared from the Partner's `manualFileRemovals` if a
+ * person had pulled it off earlier. The File write goes through the
+ * `updateFile` contract, which also cancels running partner workers for it.
  *
  * Alias learning is not done here. `matchFilePartner` learns the File's
  * extracted name on any manual assignment, and refuses the name the
  * Extraction recorded as the Invoicing Agent (`learnPartnerAlias`, #156,
  * #265), so this path inherits that guard rather than re-deciding it.
+ *
+ * The chat agent's assignment is not a person's (#665): it is recorded as
+ * `ai`, keeps the File's stored confidence, leaves the Partner's removal list
+ * alone and teaches no alias, as the chat's assignment always has.
  */
-export async function assignPartnerToFileTool(userId: string, args: Record<string, unknown>) {
+export async function assignPartnerToFileTool(
+  userId: string,
+  args: Record<string, unknown>,
+  caller: ToolCaller = MCP_CALLER
+) {
   const fileId = args.fileId as string;
   const partnerId = args.partnerId as string;
   if (!fileId) throw new Error("fileId is required");
   if (!partnerId) throw new Error("partnerId is required");
 
-  const fileDoc = await db.collection("files").doc(fileId).get();
-  if (!fileDoc.exists || fileDoc.data()?.userId !== userId) {
-    throw new Error("File not found");
-  }
-
-  const partnerDoc = await loadWritablePartner(userId, partnerId);
-
-  const { updateFileInternal } = await import("../files/updateFile");
-  await updateFileInternal(db, userId, {
-    fileId,
-    data: {
-      partnerId,
-      partnerType: "user",
-      partnerMatchedBy: "manual",
-      partnerMatchConfidence: 100,
-    },
-  });
-
-  // A person changing their mind about a removal: the pair is no longer a
-  // false positive.
-  const removals = (partnerDoc.data()!.manualFileRemovals || []) as Array<{ fileId?: string }>;
-  if (removals.some((r) => r.fileId === fileId)) {
-    await partnerDoc.ref.update({
-      manualFileRemovals: removals.filter((r) => r.fileId !== fileId),
-      updatedAt: Timestamp.now(),
-    });
-  }
-
-  return {
-    success: true,
+  const byAgent = caller.kind === "agent";
+  const { assignPartnerToFile } = await import("../files/filePartner");
+  const result = await assignPartnerToFile(db, userId, {
     fileId,
     partnerId,
-    partnerName: (partnerDoc.data()!.name as string) || null,
-    previousPartnerId: (fileDoc.data()!.partnerId as string | undefined) ?? null,
-  };
+    partnerType: "user",
+    ...(byAgent ? { matchedBy: "ai" as const } : { matchedBy: "manual" as const, confidence: 100 }),
+  });
+
+  return { success: true, ...result };
 }
 
 /**
- * Detach a File's Partner the way the UI does (`removePartnerFromFile` in
- * lib/operations/file-ops.ts). A system-recommended assignment (`auto` or
+ * Detach a File's Partner through the shared server path the UI uses
+ * (`files/filePartner.ts`, #627). A system-recommended assignment (`auto` or
  * `suggestion`) is recorded on the Partner's `manualFileRemovals`, so the
  * matcher learns the pair was wrong; a manual one is simply cleared.
  */
@@ -2659,47 +2882,9 @@ export async function removePartnerFromFileTool(userId: string, args: Record<str
   const fileId = args.fileId as string;
   if (!fileId) throw new Error("fileId is required");
 
-  const fileDoc = await db.collection("files").doc(fileId).get();
-  if (!fileDoc.exists || fileDoc.data()?.userId !== userId) {
-    throw new Error("File not found");
-  }
-  const fileData = fileDoc.data()!;
-  const previousPartnerId = (fileData.partnerId as string | undefined) ?? null;
-  const matchedBy = fileData.partnerMatchedBy as string | undefined;
-
-  const { updateFileInternal } = await import("../files/updateFile");
-  await updateFileInternal(db, userId, {
-    fileId,
-    data: {
-      partnerId: null,
-      partnerType: null,
-      partnerMatchedBy: null,
-      partnerMatchConfidence: null,
-    },
-  });
-
-  let recordedAsFalsePositive = false;
-  if (previousPartnerId && (matchedBy === "auto" || matchedBy === "suggestion")) {
-    const partnerRef = db.collection("partners").doc(previousPartnerId);
-    const partnerSnap = await partnerRef.get();
-    if (partnerSnap.exists && partnerSnap.data()?.userId === userId) {
-      const removals = (partnerSnap.data()!.manualFileRemovals || []) as Array<{ fileId?: string }>;
-      if (!removals.some((r) => r.fileId === fileId)) {
-        await partnerRef.update({
-          manualFileRemovals: FieldValue.arrayUnion({
-            fileId,
-            removedAt: Timestamp.now(),
-            extractedPartner: fileData.extractedPartner || null,
-            fileName: fileData.fileName,
-          }),
-          updatedAt: Timestamp.now(),
-        });
-      }
-      recordedAsFalsePositive = true;
-    }
-  }
-
-  return { success: true, fileId, previousPartnerId, recordedAsFalsePositive };
+  const { removePartnerFromFile } = await import("../files/filePartner");
+  const result = await removePartnerFromFile(db, userId, fileId);
+  return { success: true, ...result };
 }
 
 /** The fields `update_partner` writes: `create_partner`'s set, nothing else. */
@@ -2709,6 +2894,8 @@ const UPDATE_PARTNER_FIELDS = ["name", "aliases", "vatId", "ibans", "website", "
  * Edit a Partner through `updateUserPartnerInternal`, the Partners page's own
  * edit. `aliases` and `ibans` replace the stored arrays wholesale: an agent
  * reads them with get_partner or list_partners, changes them, writes them back.
+ * A VAT ID is checked against VIES and the reply carries `vatIdCheck`; VIES
+ * fills the name only for a Partner that has none.
  */
 export async function updatePartnerTool(userId: string, args: Record<string, unknown>) {
   const partnerId = args.partnerId as string;
@@ -2731,12 +2918,51 @@ export async function updatePartnerTool(userId: string, args: Record<string, unk
     }
   }
 
-  await loadWritablePartner(userId, partnerId);
+  if (data.vatId !== undefined && typeof data.vatId !== "string") {
+    throw new Error("vatId must be a string (empty string clears it)");
+  }
+
+  const partnerDoc = await loadWritablePartner(userId, partnerId);
+
+  // A VAT ID is checked against VIES on every surface (#665): checking one is
+  // domain logic, not the chat's. VIES never blocks the write: an unknown or
+  // unreachable VAT ID is stored as given, and the reply says what VIES said.
+  let vatIdCheck: VatIdCheck | undefined;
+  if (typeof data.vatId === "string" && data.vatId.trim()) {
+    vatIdCheck = await checkVatId(data.vatId.toUpperCase().replace(/\s/g, ""));
+    if (vatIdCheck.valid && vatIdCheck.name && data.name === undefined && !partnerDoc.data()!.name) {
+      data.name = vatIdCheck.name;
+    }
+  }
 
   const { updateUserPartnerInternal } = await import("../partners/updateUserPartner");
   await updateUserPartnerInternal(db, userId, { partnerId, data });
 
-  return getPartner(userId, partnerId);
+  const partner = await getPartner(userId, partnerId);
+  return vatIdCheck ? { ...partner, vatIdCheck } : partner;
+}
+
+/** What VIES said about a VAT ID: `valid` is null when VIES could not be asked. */
+interface VatIdCheck {
+  vatId: string;
+  valid: boolean | null;
+  name: string | null;
+  error: string | null;
+}
+
+async function checkVatId(vatId: string): Promise<VatIdCheck> {
+  try {
+    const { lookupVatId, VIES_NOT_VALID } = await import("../ai/lookupCompany");
+    const result = await lookupVatId(vatId);
+    if (result.viesValid === true) return { vatId, valid: true, name: result.name ?? null, error: null };
+    // VIES said no, or VIES could not be asked (a timeout, an outage).
+    const error = result.viesError ?? null;
+    return { vatId, valid: error === VIES_NOT_VALID ? false : null, name: null, error };
+  } catch (err) {
+    // Not shaped like an EU VAT ID is a no; anything else is VIES not asked.
+    const malformed = (err as { code?: unknown })?.code === "invalid-argument";
+    return { vatId, valid: malformed ? false : null, name: null, error: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 /**

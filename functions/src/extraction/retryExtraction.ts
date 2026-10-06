@@ -65,7 +65,16 @@ export const retryFileExtraction = onCall(
       });
     } catch (error) {
       if (error instanceof RetryExtractionError) {
-        throw new HttpsError(ERROR_CODES[error.code], error.message);
+        // A Hand Correction refusal carries its fields as structured details,
+        // so the UI can ask before overwriting them without a copy of the rule
+        // that decides which fields count (#639).
+        throw new HttpsError(
+          ERROR_CODES[error.code],
+          error.message,
+          error.code === "HAND_CORRECTED"
+            ? { code: "HAND_CORRECTED", fields: error.fields ?? [] }
+            : undefined
+        );
       }
       throw error;
     }

@@ -87,15 +87,18 @@ export { onTransactionsImported } from "./gmail/onTransactionsImported";
 export { onTransactionsImportedCompanyCheck } from "./matching/onTransactionsImportedCompanyCheck";
 export { searchGmailCallable } from "./gmail/searchGmailCallable";
 export {
-  listFolderChoicesCallable,
-  setFolderIntegrationFolderCallable,
-  updateFolderIntegrationSettingsCallable,
-  syncFolderIntegrationCallable,
-  disconnectFolderIntegrationCallable,
+  listFolderChoicesCallable as listFolderChoices,
+  setFolderIntegrationFolderCallable as setFolderIntegrationFolder,
+  updateFolderIntegrationSettingsCallable as updateFolderIntegrationSettings,
+  syncFolderIntegrationCallable as syncFolderIntegration,
+  disconnectFolderIntegrationCallable as disconnectFolderIntegration,
   syncFolderIntegrations,
 } from "./folder-sync/folderIntegrationCallables";
 // One IMAP attachment / message body for the manual attach path (#245)
-export { getMailAttachmentCallable, getMailBodyCallable } from "./mail/mailMessageCallables";
+export {
+  getMailAttachmentCallable as getMailAttachment,
+  getMailBodyCallable as getMailBody,
+} from "./mail/mailMessageCallables";
 
 // Export precision search functions
 export {
@@ -109,11 +112,17 @@ export { scoreFileTransactionMatchCallable as scoreFileTransactionMatch } from "
 export { refreshTransactionMatchesCallable as refreshTransactionMatches } from "./matching/refreshTransactionMatchesCallable";
 export { catchUpPartnerMatchingCallable as catchUpPartnerMatching } from "./matching/catchUpPartnerMatching";
 export { onGlobalPartnerWritten } from "./matching/partnerCatalogVersion";
-export { convertHtmlToPdfCallable } from "./precision-search/convertHtmlToPdfCallable";
+export { convertHtmlToPdfCallable as convertHtmlToPdf } from "./precision-search/convertHtmlToPdfCallable";
 
 // Export inbound email functions
 export { receiveInboundEmail, testInboundEmail } from "./email-inbound/receiveEmail";
 export { resetInboundDailyLimits } from "./email-inbound/resetDailyLimits";
+export {
+  createInboundEmailAddressCallable as createInboundEmailAddress,
+  updateInboundEmailAddressCallable as updateInboundEmailAddress,
+  regenerateInboundEmailAddressCallable as regenerateInboundEmailAddress,
+  deleteInboundEmailAddressCallable as deleteInboundEmailAddress,
+} from "./email-inbound/inboundAddressCallables";
 
 // Export auth functions
 export {
@@ -156,6 +165,7 @@ export {
   deleteTransactionsBySourceCallable as deleteTransactionsBySource,
   acceptReceiptOnlyCallable as acceptReceiptOnly,
   acceptPartialPaymentCallable as acceptPartialPayment,
+  rollbackTransactionCallable as rollbackTransaction,
 } from "./transactions";
 
 // Invoicing operations
@@ -180,6 +190,8 @@ export {
 export {
   createFileCallable as createFile,
   updateFileCallable as updateFile,
+  assignPartnerToFileCallable as assignPartnerToFile,
+  removePartnerFromFileCallable as removePartnerFromFile,
   updateFileExtractedFieldsCallable as updateFileExtractedFields,
   deleteFileCallable as deleteFile,
   restoreFileCallable as restoreFile,
@@ -206,6 +218,9 @@ export {
   markUvaPeriodFiledCallable as markUvaPeriodFiled,
   getUvaFiledStatusCallable as getUvaFiledStatus,
 } from "./reports/uvaFiledRecords";
+
+// The business identity: the one writer of users/{uid}/settings/userData (#632)
+export { saveIdentityCallable as saveIdentity } from "./identity/saveIdentityCallable";
 
 // Invoice Corrections: the link to the File each one corrects (#564)
 export {
@@ -435,6 +450,8 @@ export { sendPasswordResetCallable as sendPasswordReset } from "./auth/sendPassw
 
 // MCP HTTP API (for OpenClaw, Claude Desktop, ChatGPT, etc.)
 export { mcpApi, mcpToolsList, mcpSse } from "./mcp-api";
+// The same tools with the User's login session: what the chat assistant's
+// tools with an MCP twin run (#616).
+export { runToolCallable as runTool } from "./tools/runToolCallable";
 export { oauthMetadata, oauthRegister, oauthToken, oauthClientInfo } from "./oauth/oauthHttp";
 export { createOAuthAuthorizationCallable as createOAuthAuthorization } from "./oauth/oauthCallable";
-export { openApiSpec, aiPluginManifest } from "./mcp-api/openapi";

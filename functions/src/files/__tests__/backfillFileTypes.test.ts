@@ -62,7 +62,7 @@ function call() {
 const file = (id: string) => store.getDoc("files", id) as Record<string, unknown>;
 const receipt = (id: string) => store.getDoc("receipts", id) as Record<string, unknown>;
 
-/** The fields hooks/use-file-upload.ts writes for a receipt, minus fileType. */
+/** The fields the browser upload hook (hooks/use-file-upload.ts, removed in #625) wrote for a receipt, minus fileType. */
 function createTestReceipt(overrides: Record<string, unknown> = {}) {
   return {
     transactionId: "tx-1",

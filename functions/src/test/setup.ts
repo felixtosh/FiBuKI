@@ -68,6 +68,8 @@ export interface MockDocRef {
   set: (data: Record<string, unknown>) => Promise<void>;
   update: (data: Record<string, unknown>) => Promise<void>;
   delete: () => Promise<void>;
+  /** A subcollection, stored under the path "<collection>/<id>/<name>". */
+  collection: (name: string) => MockCollectionRef;
 }
 
 export interface MockQuerySnapshot {
@@ -307,6 +309,7 @@ export function createMockFirestore(): MockFirestore {
     delete: async () => {
       store.deleteDoc(collection, id);
     },
+    collection: (name: string) => createCollectionRef(`${collection}/${id}/${name}`),
   });
 
   // orderBy / startAfter / limit are honoured, not ignored: a handler that

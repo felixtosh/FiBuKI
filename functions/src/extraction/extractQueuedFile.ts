@@ -14,14 +14,24 @@
  * `resetFirst` is for a Retry that arrived while the File was being
  * extracted: that run has since written its results, so the Retry's reset
  * is applied again here, and the File runs even though it reads complete.
+ *
+ * A File with a Hand Correction is refused here, before anything is read
+ * from the document, unless the request is the forced re-extraction (#184,
+ * #639). This is the one check every queuing path passes through: upload,
+ * undelete, the boot resweep, Retry, the bulk retry, un-marking Not Invoice.
+ * The paths with a caller have already refused it synchronously; this catches
+ * the ones without one, and a correction made while the request waited. The
+ * refused File is marked complete, so it does not read "Queued" forever, and
+ * keeps its facts as the person left them.
  */
 
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { runExtraction } from "./extractionCore";
 import { buildRetryResetUpdates } from "./retryReset";
+import { reExtractionRefusal } from "../fileFacts/factChange";
 
 /** What became of one waiting Extraction. */
-export type QueuedExtractionOutcome = "extracted" | "failed" | "dropped";
+export type QueuedExtractionOutcome = "extracted" | "failed" | "dropped" | "refused";
 
 /**
  * Mark a File failed. A failed Extraction is not retried by itself (#161
@@ -37,7 +47,7 @@ export async function recordExtractionFailure(fileId: string, message: string): 
 
 export async function extractQueuedFile(
   fileId: string,
-  options: { skipClassification: boolean; resetFirst?: boolean }
+  options: { skipClassification: boolean; resetFirst?: boolean; overwriteCorrections?: boolean }
 ): Promise<QueuedExtractionOutcome> {
   const fileRef = getFirestore().collection("files").doc(fileId);
   const fileDoc = await fileRef.get();
@@ -55,6 +65,19 @@ export async function extractQueuedFile(
     return "dropped";
   }
 
+  const refusal = reExtractionRefusal(fileData, {
+    overwriteCorrections: options.overwriteCorrections === true,
+  });
+  if (refusal) {
+    console.warn(`File ${fileId}: Extraction refused. ${refusal.message}`);
+    await fileRef.update({
+      extractionComplete: true,
+      extractionError: null,
+      updatedAt: Timestamp.now(),
+    });
+    return "refused";
+  }
+
   // "Queued" turns into "Analyzing" here, and nowhere else.
   await fileRef.update({
     ...(options.resetFirst ? buildRetryResetUpdates(fileData) : {}),
@@ -66,7 +89,10 @@ export async function extractQueuedFile(
   );
 
   try {
-    await runExtraction(fileId, fileData, { skipClassification: options.skipClassification });
+    await runExtraction(fileId, fileData, {
+      skipClassification: options.skipClassification,
+      overwriteCorrections: options.overwriteCorrections === true,
+    });
     return "extracted";
   } catch (error) {
     console.error(`Extraction failed for file ${fileId}:`, error);

@@ -351,6 +351,9 @@ export const extractionJobs = pgTable(
     file_id: text("file_id").notNull(),
     user_id: text("user_id").notNull(),
     skip_classification: boolean("skip_classification").notNull().default(false),
+    // The forced re-extraction (#184, #639): the worker overwrites a Hand
+    // Correction only when the Retry that asked for the job said so.
+    overwrite_corrections: boolean("overwrite_corrections").notNull().default(false),
     created_at: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     claimed_at: timestamp("claimed_at", { withTimezone: true }),
     claim_token: text("claim_token"),

@@ -22,7 +22,8 @@ import { buildRetryResetUpdates } from "./retryReset";
 // The reset is its own module so the extraction worker can apply it too
 // without importing this one (which imports the queue).
 export { buildRetryResetUpdates };
-import { correctedFieldsOf } from "../files/extractionProvenanceOps";
+import { correctedFieldsOf } from "../fileFacts/provenance";
+import { reExtractionRefusal } from "../fileFacts/factChange";
 
 /** Why a retry was refused. Each surface maps these onto its own error type. */
 export type RetryRefusalCode =
@@ -32,7 +33,12 @@ export type RetryRefusalCode =
   | "HAND_CORRECTED";
 
 export class RetryExtractionError extends Error {
-  constructor(readonly code: RetryRefusalCode, message: string) {
+  constructor(
+    readonly code: RetryRefusalCode,
+    message: string,
+    /** On `HAND_CORRECTED`: the fields a person corrected, which the UI names (#639). */
+    readonly fields?: string[]
+  ) {
     super(message);
     this.name = "RetryExtractionError";
   }
@@ -121,14 +127,13 @@ export async function retryExtractionForFile(
   // Ahead of the force check, because a corrected file has almost always
   // extracted cleanly: whichever refusal fires, the caller needs to hear about
   // the corrections rather than be told to pass the flag that destroys them.
-  const correctedFields = correctedFieldsOf(fileData);
-  if (correctedFields.length > 0 && overwriteCorrections !== true) {
-    throw new RetryExtractionError(
-      "HAND_CORRECTED",
-      `File carries hand corrections a re-extraction would discard (${correctedFields.join(", ")}). ` +
-        "Pass overwriteCorrections to re-extract it anyway."
-    );
+  // The check is the File facts module's (#638), so the retry tool, the retry
+  // callable and the bulk retry all hear the same answer.
+  const refusal = reExtractionRefusal(fileData, { overwriteCorrections });
+  if (refusal) {
+    throw new RetryExtractionError("HAND_CORRECTED", refusal.message, refusal.fields ?? []);
   }
+  const correctedFields = correctedFieldsOf(fileData);
 
   if (!canRetryExtraction(fileData, force)) {
     throw new RetryExtractionError(
@@ -154,6 +159,9 @@ export async function retryExtractionForFile(
     userId,
     skipClassification: isUserOverride,
     kind: "retry",
+    // The worker checks for a Hand Correction again when it runs (#639), so
+    // the overwrite this caller asked for travels with the request.
+    overwriteCorrections: overwriteCorrections === true,
   });
 
   return { queued: true, fileId };

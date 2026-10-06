@@ -611,118 +611,124 @@ interface LookupByVatIdRequest {
   vatId: string;
 }
 
-interface LookupByVatIdResponse extends CompanyInfo {
+/** The answer when VIES says a VAT ID is not registered, as opposed to VIES being unreachable. */
+export const VIES_NOT_VALID = "VAT ID not valid according to VIES";
+
+export interface LookupByVatIdResponse extends CompanyInfo {
   viesValid?: boolean;
   viesError?: string;
 }
 
-/**
- * Look up company information by EU VAT ID using the VIES service.
- * This is the official EU VAT validation service - results are authoritative.
- * Results are cached for 30 days to reduce VIES API load and improve reliability.
- */
 export const lookupByVatId = onCall<LookupByVatIdRequest>(
   {
     region: "europe-west1",
     memory: "256MiB",
     timeoutSeconds: 30,
   },
-  async (request): Promise<LookupByVatIdResponse> => {
-    const { vatId } = request.data;
+  async (request): Promise<LookupByVatIdResponse> => lookupVatId(request.data?.vatId)
+);
 
-    if (!vatId || typeof vatId !== "string") {
-      throw new HttpsError("invalid-argument", "VAT ID is required");
+/**
+ * Look up company information by EU VAT ID using the VIES service.
+ * This is the official EU VAT validation service - results are authoritative.
+ * Results are cached for 30 days to reduce VIES API load and improve reliability.
+ *
+ * The lookupByVatId callable and the update_partner tool (#665) both check
+ * through this one function.
+ */
+export async function lookupVatId(vatId: unknown): Promise<LookupByVatIdResponse> {
+  if (!vatId || typeof vatId !== "string") {
+    throw new HttpsError("invalid-argument", "VAT ID is required");
+  }
+
+  // Parse VAT ID
+  const parsed = parseVatId(vatId);
+  if (!parsed) {
+    throw new HttpsError("invalid-argument", "Invalid VAT ID format. Expected EU format like ATU12345678");
+  }
+
+  const cacheKey = `${parsed.countryCode}${parsed.vatNumber}`;
+  const cacheRef = db.collection(VIES_CACHE_COLLECTION).doc(cacheKey);
+
+  // Check cache first
+  const cachedDoc = await cacheRef.get();
+  if (cachedDoc.exists) {
+    const cached = cachedDoc.data()!;
+    const age = Date.now() - (cached.timestamp as Timestamp).toMillis();
+    const maxAge = VIES_CACHE_DAYS * 24 * 60 * 60 * 1000;
+
+    if (age < maxAge) {
+      console.log(`[VIES] Cache hit for ${cacheKey} (age: ${Math.round(age / 86400000)}d)`);
+      return cached.result as LookupByVatIdResponse;
     }
+  }
 
-    // Parse VAT ID
-    const parsed = parseVatId(vatId);
-    if (!parsed) {
-      throw new HttpsError("invalid-argument", "Invalid VAT ID format. Expected EU format like ATU12345678");
-    }
+  console.log(`[VIES] Looking up VAT ID: ${cacheKey}`);
 
-    const cacheKey = `${parsed.countryCode}${parsed.vatNumber}`;
-    const cacheRef = db.collection(VIES_CACHE_COLLECTION).doc(cacheKey);
+  // Query VIES API
+  const viesResult = await queryViesApi(parsed.countryCode, parsed.vatNumber);
 
-    // Check cache first
-    const cachedDoc = await cacheRef.get();
+  // Handle VIES errors
+  if ("code" in viesResult) {
+    console.warn(`[VIES] API error: ${viesResult.code} - ${viesResult.message}`);
+
+    // On VIES timeout/error, return stale cache if available
     if (cachedDoc.exists) {
-      const cached = cachedDoc.data()!;
-      const age = Date.now() - (cached.timestamp as Timestamp).toMillis();
-      const maxAge = VIES_CACHE_DAYS * 24 * 60 * 60 * 1000;
-
-      if (age < maxAge) {
-        console.log(`[VIES] Cache hit for ${cacheKey} (age: ${Math.round(age / 86400000)}d)`);
-        return cached.result as LookupByVatIdResponse;
-      }
+      console.log(`[VIES] Returning stale cache for ${cacheKey} due to API error`);
+      return cachedDoc.data()!.result as LookupByVatIdResponse;
     }
 
-    console.log(`[VIES] Looking up VAT ID: ${cacheKey}`);
+    // Return partial info for known errors (still return the formatted VAT ID)
+    return {
+      vatId: cacheKey,
+      country: parsed.countryCode,
+      viesValid: false,
+      viesError: viesResult.message,
+    };
+  }
 
-    // Query VIES API
-    const viesResult = await queryViesApi(parsed.countryCode, parsed.vatNumber);
-
-    // Handle VIES errors
-    if ("code" in viesResult) {
-      console.warn(`[VIES] API error: ${viesResult.code} - ${viesResult.message}`);
-
-      // On VIES timeout/error, return stale cache if available
-      if (cachedDoc.exists) {
-        console.log(`[VIES] Returning stale cache for ${cacheKey} due to API error`);
-        return cachedDoc.data()!.result as LookupByVatIdResponse;
-      }
-
-      // Return partial info for known errors (still return the formatted VAT ID)
-      return {
-        vatId: cacheKey,
-        country: parsed.countryCode,
-        viesValid: false,
-        viesError: viesResult.message,
-      };
-    }
-
-    // VAT is invalid
-    if (!viesResult.valid) {
-      const result: LookupByVatIdResponse = {
-        vatId: cacheKey,
-        country: parsed.countryCode,
-        viesValid: false,
-        viesError: "VAT ID not valid according to VIES",
-      };
-
-      // Cache invalid results too (VAT status doesn't change often)
-      await cacheRef.set({
-        vatId: cacheKey,
-        result,
-        timestamp: FieldValue.serverTimestamp(),
-      });
-
-      return result;
-    }
-
-    // VIES returned valid + data
+  // VAT is invalid
+  if (!viesResult.valid) {
     const result: LookupByVatIdResponse = {
       vatId: cacheKey,
       country: parsed.countryCode,
-      viesValid: true,
+      viesValid: false,
+      viesError: VIES_NOT_VALID,
     };
 
-    if (viesResult.name) {
-      result.name = viesResult.name;
-    }
-
-    if (viesResult.address) {
-      result.address = parseViesAddress(viesResult.address, parsed.countryCode);
-    }
-
-    // Cache the successful result
+    // Cache invalid results too (VAT status doesn't change often)
     await cacheRef.set({
       vatId: cacheKey,
       result,
       timestamp: FieldValue.serverTimestamp(),
     });
 
-    console.log(`[VIES] Found and cached: name="${result.name || "none"}", country=${result.country}`);
-
     return result;
   }
-);
+
+  // VIES returned valid + data
+  const result: LookupByVatIdResponse = {
+    vatId: cacheKey,
+    country: parsed.countryCode,
+    viesValid: true,
+  };
+
+  if (viesResult.name) {
+    result.name = viesResult.name;
+  }
+
+  if (viesResult.address) {
+    result.address = parseViesAddress(viesResult.address, parsed.countryCode);
+  }
+
+  // Cache the successful result
+  await cacheRef.set({
+    vatId: cacheKey,
+    result,
+    timestamp: FieldValue.serverTimestamp(),
+  });
+
+  console.log(`[VIES] Found and cached: name="${result.name || "none"}", country=${result.country}`);
+
+  return result;
+}

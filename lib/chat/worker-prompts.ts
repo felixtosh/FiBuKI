@@ -44,9 +44,9 @@ You are given information about an uploaded file (invoice/receipt). Find the bes
 
 When the file has a **non-EUR currency** (e.g., USD, GBP, CHF):
 - The bank transaction will be in EUR (converted at bank's exchange rate)
-- Use \`listTransactions\` with **minAmount/maxAmount range** (±15-25%)
+- Use \`listTransactions\` with **minAmount/maxAmount range** in cents, absolute (±15-25%)
 - Example: File shows 690.70 USD (~650 EUR)
-  → Search with minAmount=470, maxAmount=790 to account for exchange rate variance
+  → Search with minAmount=47000, maxAmount=79000 (cents) to account for exchange rate variance
 - **Do NOT search for exact non-EUR amounts** - they won't match EUR transactions
 
 ### Search Strategy

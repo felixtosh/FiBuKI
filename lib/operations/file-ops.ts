@@ -8,9 +8,6 @@ import {
   doc,
   updateDoc,
   Timestamp,
-  writeBatch,
-  arrayUnion,
-  arrayRemove,
 } from "firebase/firestore";
 import {
   TaxFile,
@@ -20,13 +17,11 @@ import {
   TransactionSuggestion,
 } from "@/types/file";
 import { Transaction } from "@/types/transaction";
-import { FileSourceResultType, FileSourceType, ManualFileRemoval } from "@/types/partner";
+import { FileSourceResultType, FileSourceType } from "@/types/partner";
 import { OperationsContext } from "./types";
 import { liveCopies } from "@/lib/files/copy-state";
 import { callFunction } from "@/lib/firebase/callable";
 import { fileDocumentAmount, fileDocumentVatAmount } from "@/lib/files/document-amount";
-
-const PARTNERS_COLLECTION = "partners";
 
 /**
  * Source info for tracking how a file was found when connecting
@@ -372,7 +367,7 @@ function normalizeEditableLineItems(lineItems: EditableLineItem[] | undefined): 
  * `extractionCorrectedAt`, which is what `retry_file_extraction` refuses on
  * (#147/#184) and what a re-extraction sweep reads to build its exclusion
  * list. Those stamps are built in exactly one place,
- * functions/src/files/extractionCorrectionOps, shared by the callable and the
+ * the File facts module on the server, shared by the callable and the
  * MCP tool. A client-side copy would be a second writer of the same rule, and
  * the rule includes the comparison of what actually moved — this form posts
  * every field on every save, so without that comparison a save that typed
@@ -493,91 +488,23 @@ export async function updateFileExtractedFields(
  * Retry extraction for a file that had an error
  * Calls the Cloud Function to re-run extraction
  * @param force - If true, bypasses checks and forces re-extraction (used to upgrade old files)
+ * @param options.overwriteCorrections - The forced re-extraction of a File with
+ *   a Hand Correction, after the person confirmed it (#639). Without it the
+ *   server refuses such a File with `{ code: "HAND_CORRECTED", fields }`.
  */
 export async function retryFileExtraction(
   ctx: OperationsContext,
   fileId: string,
-  force?: boolean
+  force?: boolean,
+  options: { overwriteCorrections?: boolean } = {}
 ): Promise<void> {
   const { getFunctions, httpsCallable } = await import("firebase/functions");
   const functions = getFunctions(undefined, "europe-west1");
   const retryFn = httpsCallable(functions, "retryFileExtraction");
-  await retryFn({ fileId, force });
-}
-
-/**
- * Re-extract all files connected to a partner.
- * Used when a partner is marked as "this is my company" to recalculate counterparties.
- * Returns the number of files queued for re-extraction.
- *
- * Files are processed in parallel batches for better performance.
- */
-export async function reextractFilesForPartner(
-  ctx: OperationsContext,
-  partnerId: string
-): Promise<{ queuedCount: number; fileIds: string[] }> {
-  // Find all files with this partner
-  const q = query(
-    collection(ctx.db, FILES_COLLECTION),
-    where("userId", "==", ctx.userId),
-    where("partnerId", "==", partnerId)
-  );
-
-  const snapshot = await getDocs(q);
-  const allFileIds = snapshot.docs.map((doc) => doc.id);
-
-  if (allFileIds.length === 0) {
-    return { queuedCount: 0, fileIds: [] };
-  }
-
-  // Queue re-extraction in parallel batches for better performance
-  const { getFunctions, httpsCallable } = await import("firebase/functions");
-  const functions = getFunctions(undefined, "europe-west1");
-  const retryFn = httpsCallable(functions, "retryFileExtraction");
-
-  const BATCH_SIZE = 5; // Process 5 files in parallel at a time
-  const successfulIds: string[] = [];
-
-  for (let i = 0; i < allFileIds.length; i += BATCH_SIZE) {
-    const batch = allFileIds.slice(i, i + BATCH_SIZE);
-    const results = await Promise.allSettled(
-      batch.map((fileId) => retryFn({ fileId, force: true }).then(() => fileId))
-    );
-
-    for (const result of results) {
-      if (result.status === "fulfilled") {
-        successfulIds.push(result.value);
-      } else {
-        console.error(`Failed to queue re-extraction:`, result.reason);
-      }
-    }
-  }
-
-  return { queuedCount: successfulIds.length, fileIds: successfulIds };
-}
-
-/**
- * Restore a soft-deleted file
- */
-export async function restoreFile(
-  ctx: OperationsContext,
-  fileId: string
-): Promise<void> {
-  const docRef = doc(ctx.db, FILES_COLLECTION, fileId);
-  const snapshot = await getDoc(docRef);
-
-  if (!snapshot.exists()) {
-    throw new Error(`File ${fileId} not found`);
-  }
-
-  const data = snapshot.data();
-  if (data.userId !== ctx.userId) {
-    throw new Error(`File ${fileId} access denied`);
-  }
-
-  await updateDoc(docRef, {
-    deletedAt: null,
-    updatedAt: Timestamp.now(),
+  await retryFn({
+    fileId,
+    force,
+    ...(options.overwriteCorrections ? { overwriteCorrections: true } : {}),
   });
 }
 
@@ -627,30 +554,6 @@ export async function disconnectFileFromTransaction(
   rejectFile: boolean = false
 ): Promise<void> {
   await callFunction("disconnectFileFromTransaction", { fileId, transactionId, rejectFile });
-}
-
-/**
- * Remove a file from the transaction's rejected list, allowing it to be auto-matched again
- */
-export async function unrejectFileFromTransaction(
-  ctx: OperationsContext,
-  fileId: string,
-  transactionId: string
-): Promise<void> {
-  // Verify transaction exists and belongs to user
-  const transactionDoc = await getDoc(doc(ctx.db, TRANSACTIONS_COLLECTION, transactionId));
-  if (!transactionDoc.exists()) {
-    throw new Error(`Transaction ${transactionId} not found`);
-  }
-  const txData = transactionDoc.data();
-  if (txData.userId !== ctx.userId) {
-    throw new Error(`Transaction ${transactionId} access denied`);
-  }
-
-  await updateDoc(doc(ctx.db, TRANSACTIONS_COLLECTION, transactionId), {
-    rejectedFileIds: arrayRemove(fileId),
-    updatedAt: Timestamp.now(),
-  });
 }
 
 /**
@@ -717,8 +620,11 @@ export async function getTransactionsForFile(
 
 /**
  * Assign a partner to a file.
- * If the file was previously in manualFileRemovals for this partner (user changed mind),
- * clears it from the removals array.
+ *
+ * Through the callable, the server path MCP's `assign_partner_to_file` uses
+ * too (#627): it checks the Partner is the user's own or a global one, writes
+ * the File through `updateFile`'s whitelist, cancels the Partner worker on a
+ * manual assign, and clears an earlier removal of the pair from the Partner.
  */
 export async function assignPartnerToFile(
   ctx: OperationsContext,
@@ -728,45 +634,13 @@ export async function assignPartnerToFile(
   matchedBy: "manual" | "suggestion" | "auto" = "manual",
   confidence?: number
 ): Promise<void> {
-  const existing = await getFile(ctx, fileId);
-  if (!existing) {
-    throw new Error(`File ${fileId} not found or access denied`);
-  }
-
-  const docRef = doc(ctx.db, FILES_COLLECTION, fileId);
-  await updateDoc(docRef, {
+  await callFunction("assignPartnerToFile", {
+    fileId,
     partnerId,
     partnerType,
-    partnerMatchedBy: matchedBy,
-    partnerMatchConfidence: confidence ?? null,
-    updatedAt: Timestamp.now(),
+    matchedBy,
+    confidence: confidence ?? null,
   });
-
-  // Remove from manualFileRemovals if this file was previously removed
-  // (user changed their mind about the removal)
-  try {
-    const partnerDocRef = doc(ctx.db, PARTNERS_COLLECTION, partnerId);
-    const partnerSnapshot = await getDoc(partnerDocRef);
-
-    if (partnerSnapshot.exists()) {
-      const partnerData = partnerSnapshot.data();
-      const manualFileRemovals = (partnerData.manualFileRemovals || []) as ManualFileRemoval[];
-
-      if (manualFileRemovals.some((r) => r.fileId === fileId)) {
-        const updatedRemovals = manualFileRemovals.filter((r) => r.fileId !== fileId);
-        await updateDoc(partnerDocRef, {
-          manualFileRemovals: updatedRemovals,
-          updatedAt: Timestamp.now(),
-        });
-        console.log(
-          `[Manual File Removal] Cleared false positive for file ${fileId} (user reassigned)`
-        );
-      }
-    }
-  } catch (error) {
-    console.error("Failed to clear manual file removal on reassign:", error);
-    // Non-critical - don't throw
-  }
 
   // Trigger batch matching for this partner (non-blocking)
   // This will try to match other unmatched files/transactions for the same partner
@@ -798,193 +672,16 @@ async function triggerPartnerBatchMatching(partnerId: string): Promise<void> {
 
 /**
  * Remove partner assignment from a file.
- * If the file was auto/suggestion matched, stores the removal as a false positive
- * in the partner's manualFileRemovals array for pattern learning.
+ *
+ * Through the callable, the server path MCP's `remove_partner_from_file` uses
+ * too (#627): a system-recommended assignment (auto or suggestion) is recorded
+ * on the Partner's manualFileRemovals as a false positive.
  */
 export async function removePartnerFromFile(
   ctx: OperationsContext,
   fileId: string
 ): Promise<void> {
-  const existing = await getFile(ctx, fileId);
-  if (!existing) {
-    throw new Error(`File ${fileId} not found or access denied`);
-  }
-
-  const partnerId = existing.partnerId;
-  const matchedBy = existing.partnerMatchedBy;
-
-  // Determine if this was a system-recommended assignment
-  const wasSystemRecommended = matchedBy === "auto" || matchedBy === "suggestion";
-
-  // Clear the assignment
-  const docRef = doc(ctx.db, FILES_COLLECTION, fileId);
-  await updateDoc(docRef, {
-    partnerId: null,
-    partnerType: null,
-    partnerMatchedBy: null,
-    partnerMatchConfidence: null,
-    updatedAt: Timestamp.now(),
-  });
-
-  // If this was a system-recommended assignment, track as false positive
-  if (wasSystemRecommended && partnerId) {
-    try {
-      const partnerDocRef = doc(ctx.db, PARTNERS_COLLECTION, partnerId);
-      const partnerSnapshot = await getDoc(partnerDocRef);
-
-      if (partnerSnapshot.exists()) {
-        const partnerData = partnerSnapshot.data();
-        const existingRemovals = (partnerData.manualFileRemovals || []) as ManualFileRemoval[];
-
-        // Check if this file is already in manualFileRemovals
-        const alreadyRemoved = existingRemovals.some((r) => r.fileId === fileId);
-
-        if (!alreadyRemoved) {
-          const removalEntry: ManualFileRemoval = {
-            fileId,
-            removedAt: Timestamp.now(),
-            extractedPartner: existing.extractedPartner || null,
-            fileName: existing.fileName,
-          };
-
-          await updateDoc(partnerDocRef, {
-            manualFileRemovals: arrayUnion(removalEntry),
-            updatedAt: Timestamp.now(),
-          });
-
-          console.log(
-            `[Manual File Removal] Stored false positive for partner ${partnerId}: file ${fileId}`
-          );
-        }
-      }
-    } catch (error) {
-      console.error("Failed to store manual file removal:", error);
-      // Non-critical - don't throw
-    }
-  }
-}
-
-// === Integration File Operations ===
-
-/**
- * Soft delete all files for an integration that have NO transaction connections.
- * Files WITH connections are left unchanged (they're still useful).
- *
- * Used when disconnecting a Gmail integration - preserves files that are
- * connected to transactions while hiding orphaned files.
- *
- * @returns Count of files soft-deleted and skipped
- */
-export async function softDeleteFilesForIntegration(
-  ctx: OperationsContext,
-  integrationId: string
-): Promise<{ softDeleted: number; skipped: number }> {
-  // Query all files for this integration
-  const q = query(
-    collection(ctx.db, FILES_COLLECTION),
-    where("userId", "==", ctx.userId),
-    where("gmailIntegrationId", "==", integrationId)
-  );
-  const snapshot = await getDocs(q);
-
-  let softDeleted = 0;
-  let skipped = 0;
-  const now = Timestamp.now();
-
-  const BATCH_SIZE = 500;
-  let batch = writeBatch(ctx.db);
-  let batchCount = 0;
-
-  for (const fileDoc of snapshot.docs) {
-    const data = fileDoc.data();
-
-    // Skip already deleted files
-    if (data.deletedAt) {
-      continue;
-    }
-
-    // Skip files with transaction connections - they're still useful
-    if (data.transactionIds && data.transactionIds.length > 0) {
-      skipped++;
-      continue;
-    }
-
-    // Soft delete this file
-    batch.update(fileDoc.ref, {
-      deletedAt: now,
-      updatedAt: now,
-    });
-    softDeleted++;
-    batchCount++;
-
-    // Commit in batches
-    if (batchCount >= BATCH_SIZE) {
-      await batch.commit();
-      batch = writeBatch(ctx.db);
-      batchCount = 0;
-    }
-  }
-
-  // Commit remaining
-  if (batchCount > 0) {
-    await batch.commit();
-  }
-
-  return { softDeleted, skipped };
-}
-
-/**
- * Restore all soft-deleted files for an integration.
- * Called when reconnecting a previously disconnected integration.
- *
- * @returns Count of files restored
- */
-export async function restoreFilesForIntegration(
-  ctx: OperationsContext,
-  integrationId: string
-): Promise<{ restored: number }> {
-  // Query all files for this integration (including soft-deleted)
-  const q = query(
-    collection(ctx.db, FILES_COLLECTION),
-    where("userId", "==", ctx.userId),
-    where("gmailIntegrationId", "==", integrationId)
-  );
-  const snapshot = await getDocs(q);
-
-  let restored = 0;
-  const now = Timestamp.now();
-
-  const BATCH_SIZE = 500;
-  let batch = writeBatch(ctx.db);
-  let batchCount = 0;
-
-  for (const fileDoc of snapshot.docs) {
-    const data = fileDoc.data();
-
-    // Only restore files that were soft-deleted
-    if (!data.deletedAt) {
-      continue;
-    }
-
-    batch.update(fileDoc.ref, {
-      deletedAt: null,
-      updatedAt: now,
-    });
-    restored++;
-    batchCount++;
-
-    if (batchCount >= BATCH_SIZE) {
-      await batch.commit();
-      batch = writeBatch(ctx.db);
-      batchCount = 0;
-    }
-  }
-
-  if (batchCount > 0) {
-    await batch.commit();
-  }
-
-  return { restored };
+  await callFunction("removePartnerFromFile", { fileId });
 }
 
 // === Bulk Operations ===

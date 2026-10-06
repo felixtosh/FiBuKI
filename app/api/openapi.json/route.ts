@@ -3,12 +3,11 @@
  *
  * https://fibuki.com/api/openapi.json
  *
- * Tool list is auto-generated from functions/src/tools/definitions.ts
- * via: npm run generate:tool-definitions
+ * Tool list is read from functions/src/tools/definitions.ts
  */
 
 import { NextResponse } from "next/server";
-import { TOOL_DEFINITIONS } from "@/lib/data/generated-tool-definitions";
+import { TOOL_DEFINITIONS } from "@/functions/src/tools/definitions";
 
 export async function GET() {
   const toolNames = TOOL_DEFINITIONS.map((t) => t.name);

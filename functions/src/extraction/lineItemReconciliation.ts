@@ -453,6 +453,86 @@ function grossUpNetLineItems(
   return null;
 }
 
+/**
+ * Convert NET rows to gross against the document's printed VAT summary block.
+ *
+ * The block-less gross-up above never runs when a block is printed, and the
+ * per-group check accepts a group as gross or as net plus VAT, so net rows
+ * used to reconcile while staying net: the row editor then showed the VAT as
+ * a delta, and the file view showed the net figure as the row's amount.
+ *
+ * Each printed group decides on its own, because a receipt can itemise one
+ * rate gross and another net. A group whose rows sum to its printed gross is
+ * left alone; a group whose rows sum to its printed NET is grossed up, the
+ * rows keeping their own VAT when it adds up to the group's printed VAT and
+ * otherwise taking it at the group's rate. Rows join a group by their rate;
+ * an unrated row joins only a single-rate block, since on a multi-rate one
+ * the page does not say where it belongs. Anything else returns null and
+ * goes down the ordinary reconciliation path unchanged.
+ *
+ * The residual lands on the group's largest row, so the converted rows sum to
+ * the printed gross exactly.
+ */
+function grossUpNetRowsAgainstRateGroups(
+  lineItems: ExtractedLineItem[],
+  rateGroups: ExtractedRateGroup[]
+): ExtractedLineItem[] | null {
+  const groupOf = lineItems.map((item) => {
+    if (item.vatPercent === null) {
+      return rateGroups.length === 1 && item.vatAmount === 0 ? 0 : -1;
+    }
+    return rateGroups.findIndex((group) => Math.abs(group.rate - (item.vatPercent as number)) < 0.0001);
+  });
+  if (groupOf.some((index) => index < 0)) {
+    return null;
+  }
+
+  const converted = lineItems.map((item) => ({ ...item }));
+  let changed = false;
+
+  for (let g = 0; g < rateGroups.length; g++) {
+    const group = rateGroups[g];
+    const members = groupOf.flatMap((index, i) => (index === g ? [i] : []));
+    if (members.length === 0) continue;
+
+    const tolerance = amountTolerance(group.gross);
+    const netSum = members.reduce((sum, i) => sum + lineItems[i].amount, 0);
+    if (Math.abs(netSum - group.gross) <= tolerance) continue;
+    if (group.vat <= 0 || Math.abs(netSum - group.net) > tolerance) continue;
+
+    const ownVat = members.reduce((sum, i) => sum + lineItems[i].vatAmount, 0);
+    const keepOwnVat =
+      members.every((i) => lineItems[i].vatPercent !== null) &&
+      Math.abs(ownVat - group.vat) <= tolerance;
+    const vats = members.map((i) =>
+      keepOwnVat ? lineItems[i].vatAmount : Math.round((lineItems[i].amount * group.rate) / 100)
+    );
+
+    let largest = 0;
+    for (let k = 1; k < members.length; k++) {
+      if (lineItems[members[k]].amount > lineItems[members[largest]].amount) {
+        largest = k;
+      }
+    }
+    const residual = group.gross - (netSum + vats.reduce((sum, vat) => sum + vat, 0));
+    if (Math.abs(residual) > tolerance) continue;
+    vats[largest] += residual;
+    if (vats.some((vat, k) => vat * lineItems[members[k]].amount < 0)) continue;
+
+    members.forEach((i, k) => {
+      converted[i] = {
+        ...lineItems[i],
+        vatPercent: group.rate,
+        vatAmount: vats[k],
+        amount: lineItems[i].amount + vats[k],
+      };
+    });
+    changed = true;
+  }
+
+  return changed ? converted : null;
+}
+
 export function reconcileLineItemsWithDocumentTotal(
   lineItems: ExtractedLineItem[],
   extractedAmount: number | null | undefined,
@@ -516,6 +596,17 @@ export function reconcileLineItemsWithDocumentTotal(
         unreconciledRates: [],
         rateGroups: null,
       };
+    }
+  }
+
+  if (validatedGroups && validatedGroups.length > 0) {
+    const grossedUp = grossUpNetRowsAgainstRateGroups(candidateLineItems, validatedGroups);
+    if (grossedUp) {
+      console.log(
+        "[ExtractionCore] Line items were net against the printed VAT summary block; " +
+        "converted to gross at each group's rate."
+      );
+      candidateLineItems = grossedUp;
     }
   }
 

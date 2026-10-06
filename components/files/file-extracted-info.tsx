@@ -48,7 +48,7 @@ import {
   PAYMENT_METHODS,
   isAdditionalFieldKey,
   isPaymentMethod,
-} from "@/types/extraction-fields";
+} from "@/functions/src/extraction/fieldVocabulary";
 
 // Consistent field row component (matching transaction-details.tsx)
 // Uses container queries to stack vertically when panel is narrow (<340px)
@@ -130,6 +130,21 @@ function parseAmountToCents(value: string): number | null {
   if (!normalized) return null;
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? Math.round(parsed * 100) : null;
+}
+
+/**
+ * A stored day (UTC midnight of the Vienna day) as dd.mm.yyyy, read in UTC so
+ * a browser west of UTC does not show the day before.
+ */
+const STORED_DAY_FORMAT = new Intl.DateTimeFormat("de-DE", {
+  timeZone: "UTC",
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+});
+function formatStoredDay(value: unknown): string {
+  const date = toDateSafe(value);
+  return date ? STORED_DAY_FORMAT.format(date) : "";
 }
 
 export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsing, onFieldClick, onUpdate, isUpdating }: FileExtractedInfoProps) {
@@ -770,6 +785,29 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
               "—"
             )}
           </FieldRow>
+
+          {/*
+            The instalments the document prints (#615, ADR-0013): a payment of
+            exactly one of them may connect itself. Read-only, as printed.
+          */}
+          {!isEditing && file.extractedInstalments && file.extractedInstalments.length > 0 && (
+            <FieldRow label={tx("instalments")}>
+              <div className="space-y-0.5">
+                {file.extractedInstalments.map((row, i) => (
+                  <div key={i} className="tabular-nums">
+                    {row.label ? `${row.label}: ` : ""}
+                    {formatDocumentAmount(row.amount, file.extractedCurrency)}
+                    {row.dueDate ? (
+                      <span className="text-xs text-muted-foreground">
+                        {" · "}
+                        {tx("instalmentDue", { date: formatStoredDay(row.dueDate) })}
+                      </span>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </FieldRow>
+          )}
 
           <FieldRow
             label="Partner"

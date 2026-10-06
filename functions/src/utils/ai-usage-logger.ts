@@ -1,7 +1,7 @@
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { USER_TOKEN_RATE_PER_100K_EUR } from "../billing/config";
 import { resolveBudgetFields } from "../billing/checkAIBudget";
-import { MODEL_PRICING, PRICING_FALLBACK_MODEL } from "./models";
+import { estimateModelCost } from "./models";
 
 type AIFunction =
   | "chat"
@@ -35,6 +35,12 @@ export interface AIUsageParams {
     categoryId?: string;
     webSearchUsed?: boolean;
   } | null;
+  /**
+   * A call FiBuKI does not pay for, such as an external Extraction Service
+   * (#161): logged with its token counts, no cost computed and nothing
+   * charged to the user's budget.
+   */
+  unpriced?: boolean;
 }
 
 /**
@@ -45,8 +51,7 @@ export function calculateAICost(
   inputTokens: number,
   outputTokens: number
 ): number {
-  const pricing = MODEL_PRICING[model] || MODEL_PRICING[PRICING_FALLBACK_MODEL];
-  return (inputTokens * pricing.input + outputTokens * pricing.output) / 1_000_000;
+  return estimateModelCost(model, inputTokens, outputTokens);
 }
 
 /**
@@ -65,8 +70,8 @@ export async function logAIUsage(
   params: AIUsageParams
 ): Promise<void> {
   const db = getFirestore();
-  const cost = calculateAICost(params.model, params.inputTokens, params.outputTokens);
-  const userCostEur = calculateUserCostEur(params.inputTokens, params.outputTokens);
+  const cost = params.unpriced ? 0 : calculateAICost(params.model, params.inputTokens, params.outputTokens);
+  const userCostEur = params.unpriced ? 0 : calculateUserCostEur(params.inputTokens, params.outputTokens);
 
   try {
     // 1. Log to aiUsage collection (existing behavior)
@@ -90,7 +95,7 @@ export async function logAIUsage(
     });
 
     // 2. Accumulate budget on subscription doc (non-blocking)
-    await accumulateBudget(db, userId, userCostEur);
+    if (!params.unpriced) await accumulateBudget(db, userId, userCostEur);
   } catch (error) {
     // Don't fail the main request if logging fails
     console.error("[AI Usage] Failed to log usage:", error);

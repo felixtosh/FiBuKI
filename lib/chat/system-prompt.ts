@@ -119,13 +119,13 @@ Do NOT use \`findOrCreatePartner\` for ID-based requests - use step-by-step for 
 
 When asked to find transaction for a file ID:
 1. \`getFile\` FIRST - the ID is a database ID!
-2. Note extractedAmount (in currency units), extractedCurrency, extractedDate, extractedPartner
+2. Note extractedAmount (integer cents, unsigned: invoiceDirection says money in or out), extractedCurrency, extractedDate, extractedPartner
 3. **CRITICAL - Currency handling:**
    - If file currency is EUR: search with amount range (±10%)
    - If file currency is NOT EUR (USD, GBP, etc.): **Bank transactions are in EUR!**
      - Convert roughly: 690 USD ≈ 630 EUR, 100 GBP ≈ 117 EUR
-     - Use \`listTransactions\` with \`minAmount\`/\`maxAmount\` wide range (±25%)
-     - Example: 690 USD (~630 EUR) → minAmount=470, maxAmount=790
+     - Use \`listTransactions\` with \`minAmount\`/\`maxAmount\` (absolute cents) wide range (±25%)
+     - Example: 690 USD (~630 EUR) → minAmount=47000, maxAmount=79000
      - **NEVER search for the foreign currency amount directly**
 4. **Search strategy** (invoice dates often differ from payment dates by MONTHS!):
    - **Use \`search\` parameter with partner NAME, NOT \`partnerId\`!**

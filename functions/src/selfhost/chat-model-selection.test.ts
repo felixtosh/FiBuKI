@@ -81,7 +81,7 @@ describe("chat agent Gemini client selection", () => {
   });
 
   it("overrides the model id from env, since the registry id is retired for API keys", async () => {
-    // types/ai-usage.ts pins "gemini-2.5-flash", which answers 404 for new API-key
+    // The registry once pinned "gemini-2.5-flash", which answers 404 for new API-key
     // consumers while still working on Vertex — so the override is the whole reason
     // the key path is usable at all.
     process.env.FIBUKI_GEMINI_API_KEY = "k";

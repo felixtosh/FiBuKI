@@ -62,7 +62,7 @@ vi.mock("firebase-functions/params", () => ({
   defineSecret: (name: string) => ({ value: () => `test-${name}` }),
 }));
 
-const { checkTipBound } = await import("../tipBound");
+const { checkTipBound } = await import("../../fileFacts/tipBound");
 const { updateFileExtractedFieldsCallable } = await import("../updateFileExtractedFields");
 const { updateFileExtraction } = await import("../../tools/handlers");
 
@@ -318,7 +318,7 @@ describe("a tip declared as not printed (#554)", () => {
 });
 
 describe("the total the bound is measured against", () => {
-  // `buildCorrectedFileUpdate` measures the record as it will be AFTER this
+  // The File facts module measures the record as it will be AFTER this
   // write, which matters because the two figures move together: the reason a
   // tip does not fit is often that the total beside it is the one that is
   // wrong, and correcting both in one call is the ordinary repair.

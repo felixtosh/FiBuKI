@@ -9,7 +9,6 @@ import {
   UserExportRequest,
   UserExportResponse,
   UserExport,
-  EXPORT_EXPIRY_DAYS,
 } from "../types/user-export";
 
 export const requestUserExportCallable = createCallable<
@@ -44,10 +43,6 @@ export const requestUserExportCallable = createCallable<
 
     // Create new export document
     const exportRef = db.collection("userExports").doc();
-
-    // Calculate expiry date
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + EXPORT_EXPIRY_DAYS);
 
     const exportDoc: Omit<UserExport, "id"> = {
       userId,

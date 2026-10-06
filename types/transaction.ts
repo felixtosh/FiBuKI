@@ -1,4 +1,5 @@
 import { Timestamp } from "firebase/firestore";
+import type { TransactionType } from "@/functions/src/imports/transactionType";
 
 /**
  * How a transaction is documented (#104).
@@ -125,12 +126,8 @@ export interface AutomationHistoryEntry {
   level?: "decision" | "outcome" | "info";
 }
 
-/**
- * Canonical bank-line kinds (#136). Mirrors TRANSACTION_TYPES in
- * functions/src/imports/transactionType.ts; transactionType.sync.test.ts pins
- * the two.
- */
-export type TransactionType = "direct_debit" | "standing_order" | "transfer" | "card";
+/** Canonical bank-line kinds (#136); one copy, in the backend module (#689). */
+export type { TransactionType };
 
 /**
  * A financial transaction imported from a bank account.

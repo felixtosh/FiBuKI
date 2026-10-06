@@ -295,10 +295,9 @@ describe("characterization: runExtraction extraction + counterparty", () => {
     expect(doc.extractedVatAmount).toBe(2000);
     expect(doc.extractedVatPercent).toBe(20);
 
-    // characterization: ISO date is parsed into a LOCAL-timezone midnight Date
-    // (new Date(y, m-1, d)), so the stored UTC instant shifts with server TZ
+    // ISO date is stored as UTC midnight of that day, whatever the server's zone
     const ts = doc.extractedDate as Timestamp;
-    expect(ts.toDate().getTime()).toBe(new Date(2024, 11, 15).getTime());
+    expect(ts.toDate().toISOString()).toBe("2024-12-15T00:00:00.000Z");
 
     // raw text: counterparty (issuer) raw values override the partner raws
     expect(doc.extractedRaw).toEqual({
@@ -1071,6 +1070,171 @@ describe("runExtraction: designated payable amount", () => {
   });
 });
 
+describe("runExtraction: printed instalments (#615)", () => {
+  const isoOf = (v: unknown) =>
+    v && typeof (v as { toDate?: unknown }).toDate === "function"
+      ? (v as { toDate: () => Date }).toDate().toISOString()
+      : v;
+
+  it("reads a printed schedule into extractedInstalments, each due date the stored day", async () => {
+    const fileData = await seedFile("f-inst-schedule");
+    q({
+      extracted: {
+        amount: 120000,
+        vatPercent: 20,
+        confidence: 0.9,
+        instalments: [
+          { amount: 40000, dueDate: "2026-03-01", label: "Rate 1/3" },
+          { amount: 40000, dueDate: "2026-04-01", label: "Rate 2/3" },
+          { amount: "400.00", dueDate: "2026-02-30", label: "Rate 3/3" },
+        ],
+      },
+    });
+    await runExtraction("f-inst-schedule", fileData, { skipClassification: true });
+
+    const rows = (await fileDoc("f-inst-schedule")).extractedInstalments as Array<Record<string, unknown>>;
+    expect(rows.map((r) => [r.amount, isoOf(r.dueDate), r.label])).toEqual([
+      [40000, "2026-03-01T00:00:00.000Z", "Rate 1/3"],
+      [40000, "2026-04-01T00:00:00.000Z", "Rate 2/3"],
+      // Not a calendar day: the row stays, its due date does not.
+      [400, null, "Rate 3/3"],
+    ]);
+  });
+
+  it("reads a single due date of the full amount as no instalments", async () => {
+    const fileData = await seedFile("f-inst-single");
+    q({
+      extracted: {
+        amount: 120000,
+        vatPercent: 20,
+        confidence: 0.9,
+        instalments: [{ amount: 120000, dueDate: "2026-03-01", label: "Fällig am" }],
+      },
+    });
+    await runExtraction("f-inst-single", fileData, { skipClassification: true });
+
+    const doc = await fileDoc("f-inst-single");
+    expect(doc.extractedInstalments).toBeNull();
+    expect(doc.extractedAmount).toBe(120000);
+  });
+
+  it("keeps one printed deposit below the total, and drops a row larger than the total", async () => {
+    const fileData = await seedFile("f-inst-deposit");
+    q({
+      extracted: {
+        amount: 120000,
+        confidence: 0.9,
+        instalments: [
+          { amount: 36000, dueDate: null, label: "Anzahlung 30 %" },
+          { amount: 999999, dueDate: null, label: "misread" },
+        ],
+      },
+    });
+    await runExtraction("f-inst-deposit", fileData, { skipClassification: true });
+
+    const rows = (await fileDoc("f-inst-deposit")).extractedInstalments as Array<Record<string, unknown>>;
+    expect(rows).toEqual([{ amount: 36000, dueDate: null, label: "Anzahlung 30 %" }]);
+  });
+
+  it("reads a schedule adding up to more than the total as someone else's: none", async () => {
+    // An annual electricity statement: 150,00 to pay now, and next year's
+    // monthly advance payments printed beneath it.
+    const fileData = await seedFile("f-inst-next-year");
+    q({
+      extracted: {
+        amount: 15000,
+        confidence: 0.9,
+        instalments: Array.from({ length: 11 }, (_, i) => ({
+          amount: 8500,
+          dueDate: `2027-${String(i + 1).padStart(2, "0")}-15`,
+          label: "Teilbetrag",
+        })),
+      },
+    });
+    await runExtraction("f-inst-next-year", fileData, { skipClassification: true });
+    expect((await fileDoc("f-inst-next-year")).extractedInstalments).toBeNull();
+  });
+
+  it("records an absence when nothing is printed", async () => {
+    const fileData = await seedFile("f-inst-none");
+    q({ extracted: { amount: 4200, vatPercent: 20, confidence: 0.9 } });
+    await runExtraction("f-inst-none", fileData, { skipClassification: true });
+    expect((await fileDoc("f-inst-none")).extractedInstalments).toBeNull();
+  });
+});
+
+// ===========================================================================
+// runExtraction — the File facts module writes it (#639)
+// ===========================================================================
+
+describe("runExtraction: writes through the File facts module (#639)", () => {
+  const storedDay = (iso: string) => Timestamp.fromDate(new Date(`${iso}T00:00:00Z`));
+  const dueRow = { key: "dueDate", label: "Fällig am", value: "2026-03-15" };
+
+  it("a re-extraction whose document has no Due Date row clears the stored Due Date", async () => {
+    const fileData = await seedFile("f-due-gone", {
+      extractionComplete: true,
+      extractedDate: storedDay("2026-03-01"),
+      extractedAdditionalFields: [dueRow],
+      extractedDueDate: storedDay("2026-03-15"),
+    });
+    q({
+      extracted: { date: "2026-03-01", amount: 12000, vatPercent: 20, confidence: 0.9 },
+      additionalFields: [{ key: "invoiceNumber", label: "Rechnung Nr.", value: "R-7" }],
+    });
+    await runExtraction("f-due-gone", fileData, { skipClassification: true });
+
+    const doc = await fileDoc("f-due-gone");
+    expect(doc.extractedDueDate).toBeNull();
+    expect(doc.extractedAdditionalFields).toEqual([
+      expect.objectContaining({ key: "invoiceNumber", value: "R-7" }),
+    ]);
+  });
+
+  it("a re-extraction that reads no rows at all clears the stored rows and the Due Date", async () => {
+    const fileData = await seedFile("f-rows-gone", {
+      extractionComplete: true,
+      extractedDate: storedDay("2026-03-01"),
+      extractedAdditionalFields: [dueRow],
+      extractedDueDate: storedDay("2026-03-15"),
+    });
+    q({ extracted: { date: "2026-03-01", amount: 12000, vatPercent: 20, confidence: 0.9 } });
+    await runExtraction("f-rows-gone", fileData, { skipClassification: true });
+
+    const doc = await fileDoc("f-rows-gone");
+    expect(doc.extractedAdditionalFields).toBeNull();
+    expect(doc.extractedDueDate).toBeNull();
+  });
+
+  it("a File corrected by hand while it was read keeps its facts; the run is finished, nothing else written", async () => {
+    // The run started from the File as it was; the correction landed after.
+    const fileData = await seedFile("f-race", { extractionComplete: false, isNotInvoice: null });
+    await db.collection("files").doc("f-race").update({
+      extractedAmount: 9900,
+      extractionCorrectedFields: { amount: Timestamp.now() },
+      extractionCorrectedAt: Timestamp.now(),
+    });
+    q({ isInvoice: false, reason: "Bank statement", confidence: 0.9 });
+    await runExtraction("f-race", fileData, {});
+
+    const doc = await fileDoc("f-race");
+    expect(doc.extractedAmount).toBe(9900);
+    expect(doc.extractionComplete).toBe(true);
+    expect(doc.extractionError).toBeNull();
+    // The classification this run wrote on its way is put back.
+    expect(doc.isNotInvoice).toBeNull();
+    expect(doc.lastFactChange).toBeUndefined();
+  });
+
+  it("stamps its write as an Extraction's", async () => {
+    const fileData = await seedFile("f-stamp");
+    q({ extracted: { amount: 4200, vatPercent: 20, confidence: 0.9 } });
+    await runExtraction("f-stamp", fileData, { skipClassification: true });
+
+    expect((await fileDoc("f-stamp")).lastFactChange).toMatchObject({ origin: "extraction" });
+  });
+});
+
 // ===========================================================================
 // retryFileExtraction — gating, reset semantics, error persistence
 // ===========================================================================
@@ -1140,6 +1304,19 @@ describe("characterization: retryFileExtraction callable", () => {
     });
     expect(gemini.requests).toHaveLength(0);
     expect((await fileDoc("f-corrected")).extractedVatPercent).toBe(0);
+  });
+
+  it("carries the corrected fields as structured details on the refusal (#639)", async () => {
+    await seedFile("f-details", {
+      extractionComplete: true,
+      extractionCorrectedFields: { amount: Timestamp.now(), dueDate: Timestamp.now() },
+      extractionCorrectedAt: Timestamp.now(),
+    });
+
+    await expect(call({ fileId: "f-details", force: true })).rejects.toMatchObject({
+      code: "failed-precondition",
+      details: { code: "HAND_CORRECTED", fields: ["amount", "dueDate"] },
+    });
   });
 
   it("re-extracts a corrected file when the caller opts in per file", async () => {

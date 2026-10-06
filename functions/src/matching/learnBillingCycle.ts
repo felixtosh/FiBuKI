@@ -13,8 +13,11 @@ import {
   resolveEffectiveCycles,
   type BillingCycleTransaction,
   type DerivedBillingCycle,
+  type StatedPaymentTerm,
 } from "./billingCycle";
 import { rescoreConnections } from "./matcher";
+import { statedPaymentDate } from "./transactionScoring";
+import { toDateSafe } from "../utils/toDateSafe";
 import { checkRecurrence, isVerdictFresh, recurrenceKey, type RecurrenceCheckInput } from "./recurrenceCheck";
 
 /** Charges a partner needs before any cycle can be derived. */
@@ -83,13 +86,15 @@ export async function learnBillingCycleForPartner(
     return null;
   }
 
-  const invoiceDates = await getInvoiceDates(db, userId, partnerId, txDocs);
+  const samples = await getDelaySamples(db, userId, partnerId, txDocs);
   const transactions: BillingCycleTransaction[] = txDocs.map((doc) => {
     const data = doc.data();
+    const sample = samples.get(doc.id);
     return {
       date: data.date.toDate(),
       amount: data.amount,
-      invoiceDates: invoiceDates.get(doc.id),
+      invoiceDates: sample?.invoiceDates,
+      statedTerms: sample?.statedTerms,
     };
   });
 
@@ -194,18 +199,37 @@ export const learnBillingCycleCallable = createCallable<
 );
 
 /**
- * Map transaction id -> extracted dates of its connected files, for
- * transactions of this partner that have any. A transaction connected to
- * more than one file contributes one date per file.
+ * One connected file's delay sample (#618): its extracted date, and the
+ * payment date it states, read through the scorer's own readers (typed field,
+ * then legacy row). Null `statedDate` keeps measuring to the booking. Null
+ * for a file with no extracted date.
  */
-async function getInvoiceDates(
+export function delaySampleForFile(
+  fileData: FirebaseFirestore.DocumentData
+): { invoiceDate: Date; statedDate: Date | null } | null {
+  const invoiceDate = toDateSafe(fileData.extractedDate);
+  if (!invoiceDate) return null;
+  return { invoiceDate, statedDate: statedPaymentDate(fileData) };
+}
+
+interface DelaySamples {
+  invoiceDates: Date[];
+  statedTerms: StatedPaymentTerm[];
+}
+
+/**
+ * Map transaction id -> delay samples of its connected files, for
+ * transactions of this partner that have any. A transaction connected to
+ * more than one file contributes one sample per file.
+ */
+async function getDelaySamples(
   db: FirebaseFirestore.Firestore,
   userId: string,
   partnerId: string,
   txDocs: FirebaseFirestore.QueryDocumentSnapshot[]
-): Promise<Map<string, Date[]>> {
+): Promise<Map<string, DelaySamples>> {
   const txIds = txDocs.map((d) => d.id);
-  const invoiceDates = new Map<string, Date[]>();
+  const samples = new Map<string, DelaySamples>();
 
   // Process in batches of 30 (Firestore 'in' limit)
   for (let i = 0; i < txIds.length; i += 30) {
@@ -229,18 +253,24 @@ async function getInvoiceDates(
 
       for (const fileDoc of files.docs) {
         const fileData = fileDoc.data();
-        if (!fileData.extractedDate || fileData.partnerId !== partnerId) continue;
+        if (fileData.partnerId !== partnerId) continue;
+        const sample = delaySampleForFile(fileData);
+        if (!sample) continue;
 
         const conn = connections.docs.find((c) => c.data().fileId === fileDoc.id);
         if (!conn) continue;
 
         const transactionId = conn.data().transactionId;
-        const existing = invoiceDates.get(transactionId) ?? [];
-        existing.push(fileData.extractedDate.toDate());
-        invoiceDates.set(transactionId, existing);
+        const existing = samples.get(transactionId) ?? { invoiceDates: [], statedTerms: [] };
+        if (sample.statedDate) {
+          existing.statedTerms.push({ invoiceDate: sample.invoiceDate, statedDate: sample.statedDate });
+        } else {
+          existing.invoiceDates.push(sample.invoiceDate);
+        }
+        samples.set(transactionId, existing);
       }
     }
   }
 
-  return invoiceDates;
+  return samples;
 }

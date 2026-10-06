@@ -9,8 +9,8 @@
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import {
-  extractDocument,
-  getDefaultProvider,
+  createExtractionService,
+  extractionProvenanceFields,
 } from "./documentExtractor";
 import { logAIUsage } from "../utils/ai-usage-logger";
 import { MODELS } from "../utils/models";
@@ -22,7 +22,6 @@ export const RKSV_TRAINING_RECEIPT_REASON =
   "RKSV training receipt (Trainingsbeleg): the till marks it as not a sale";
 
 import { ExtractedEntity, ExtractedLineItem } from "../types/extraction";
-import { applyVatDowngradeGuard } from "./vatSourceGuard";
 import type { RecipientIdentity } from "../matching/recipientIdentity";
 import {
   determineCounterparty,
@@ -32,7 +31,6 @@ import {
   type InvoiceDirection,
   type UserIdentityData,
 } from "../utils/identity-matcher";
-import { classifyFileRecord, documentTypeFields } from "../documents/adapter";
 import {
   consolidateLineItems,
   rateGroupTotals,
@@ -43,7 +41,6 @@ import {
 } from "./lineItemReconciliation";
 import { rateFromDocumentVat } from "./taxFacts";
 import { rateGroupsFromRksv, rksvReceiptKindOf } from "./qrCodes";
-import { reviewFileRecordRksvCode, rksvCodeReviewFields } from "../documents/rksvCodeReview";
 // Re-exported so existing importers (tests included) keep their path; the
 // implementations moved to lineItemReconciliation.ts, which stays free of the
 // extraction pipeline's imports so the correction path can share them (#203).
@@ -53,16 +50,13 @@ export {
   validateRateGroups,
 } from "./lineItemReconciliation";
 export type { ReconciliationResult } from "./lineItemReconciliation";
-import { reviewFileRecordVatRates, vatRateReviewFields } from "../documents/vatRateReview";
-import { classifyDocumentType } from "../documents/classifyDocumentType";
-import { syncDocumentationStateForTransactions } from "../documents/syncDocumentationState";
-import { computeDirectionReviewFields } from "../documents/syncDirectionReview";
-import { directionReviewFields } from "../documents/directionReview";
-import { repairReviewFields, reviewRepair } from "../documents/repairReview";
-import { dueDateFromAdditionalFields } from "../matching/dueDate";
-import { debitDateFromAdditionalFields } from "../matching/debitDate";
-import { toDateSafe } from "../utils/toDateSafe";
 import { pdfPageCount, splitSuggestionFor } from "../files/splitSuggestion";
+import { applyFactChange } from "../fileFacts/applyFactChange";
+import type {
+  ExtractedCounterparty,
+  ExtractedFacts,
+  ExtractionReading,
+} from "../fileFacts/extractionReading";
 
 /**
  * Options for running extraction
@@ -72,6 +66,11 @@ export interface ExtractionOptions {
   skipClassification?: boolean;
   /** Gemini model to use */
   geminiModel?: string;
+  /**
+   * The forced re-extraction: overwrite a Hand Correction instead of being
+   * refused (#184, #639). Decided per File by whoever asked for the run.
+   */
+  overwriteCorrections?: boolean;
 }
 
 /**
@@ -218,34 +217,32 @@ export async function runExtraction(
   const pageCount = await pdfPageCount(fileBuffer);
 
   // Get provider and model config
-  const provider = getDefaultProvider();
   const geminiModel = options.geminiModel || process.env.GEMINI_MODEL || MODELS.geminiLite;
   const userId = fileData.userId as string;
-  console.log(`[+${Date.now() - t0}ms] Starting ${provider} extraction (model: ${geminiModel})`);
+
+  // #161: the one seam where the File's bytes reach an Extraction Service,
+  // the built-in Gemini or the deployment's external one. Whichever answers,
+  // everything below is FiBuKI's own and runs the same.
+  const service = createExtractionService({
+    fileBuffer,
+    fileType: fileData.fileType as string,
+    fileName: fileData.fileName as string | undefined,
+    geminiModel,
+    logUsage: async ({ unpriced, ...usage }) => {
+      if (!userId) return;
+      await logAIUsage(userId, { ...usage, ...(unpriced ? { unpriced } : {}), metadata: { fileId } });
+    },
+  });
+  console.log(`[+${Date.now() - t0}ms] Starting extraction (Gemini model if built-in: ${geminiModel})`);
 
   // ============================================================
   // PHASE 1: Classification (unless skipped by user override)
   // ============================================================
   if (!options.skipClassification) {
-    const { classifyDocument, DEFAULT_GEMINI_MODEL } = await import("./geminiParser");
-    type GeminiModel = import("./geminiParser").GeminiModel;
-    const model = (geminiModel || DEFAULT_GEMINI_MODEL) as GeminiModel;
-
     console.log(`[+${Date.now() - t0}ms] Phase 1: Classification...`);
     const tClassify = Date.now();
-    const classification = await classifyDocument(fileBuffer, fileData.fileType as string, model);
+    const classification = await service.classify();
     console.log(`[+${Date.now() - t0}ms] Classification complete (took ${Date.now() - tClassify}ms): isInvoice=${classification.isInvoice}`);
-
-    // Log classification token usage
-    if (classification.usage && userId) {
-      await logAIUsage(userId, {
-        function: "classification",
-        model: classification.usage.model,
-        inputTokens: classification.usage.inputTokens,
-        outputTokens: classification.usage.outputTokens,
-        metadata: { fileId },
-      });
-    }
 
     // Save classification result immediately (enables "Analyzing..." → result transition)
     await fileRef.update({
@@ -256,64 +253,22 @@ export async function runExtraction(
     });
     console.log(`[+${Date.now() - t0}ms] Classification saved to Firestore`);
 
-    // If not an invoice, we're done - no extraction needed
+    // If not an invoice, we're done - no extraction needed. Every fact is
+    // cleared through the File facts module, which owns that list (#639).
     if (!classification.isInvoice) {
-      // Clear any existing extracted data and mark extraction complete
-      await fileRef.update({
-        extractionComplete: true,
-        extractionError: null,
-        extractionConfidence: Math.round(classification.confidence * 100),
-        extractedDate: null,
-        extractedAmount: null,
-        extractedCurrency: null,
-        extractedVatPercent: null,
-        extractedVatAmount: null,
-        extractedDocumentVatAmount: null,
-        extractedQrCodes: null,
-        extractedCountry: null,
-        extractedLineItems: null,
-        extractedRateGroups: null,
-        extractedRateGroupsSource: null,
-        lineItemsUnreconciled: false,
-        lineItemsUnreconciledRates: null,
-        vatSourceDowngraded: false,
-        vatFieldsPreserved: false,
-        extractedPartner: null,
-        extractedVatId: null,
-        extractedIban: null,
-        extractedAddress: null,
-        extractedWebsite: null,
-        extractedRaw: null,
-        extractedAdditionalFields: null,
-        extractedDueDate: null,
-        extractedDebitDate: null,
-        extractedSelfDesignation: null,
-        extractedInvoiceNumber: null,
-        extractedReferencedInvoiceNumber: null,
-        extractedPaidInvoiceNumber: null,
-        extractedPayableAmount: null,
-        ...documentTypeFields(classifyDocumentType({ grossTotal: null, isNotInvoice: true })),
-        // Every printed rate was just cleared, so there is nothing left to
-        // review (#203).
-        ...vatRateReviewFields({ ratesOutsideSet: [], needsReview: false }),
-        // Nor a direction: a document that is not a financial document has
-        // none to hold, so any flag it carried from an earlier pass goes (#233).
-        ...directionReviewFields({
-          needsReview: false,
-          reason: null,
-          conflictingTransactionIds: [],
-          suggestedDirection: null,
-        }),
-        // Nothing was transcribed on this pass, so no transcription was
-        // guessed at either — any flag an earlier pass left goes (#275).
-        ...repairReviewFields({ ambiguousFields: [], needsReview: false }),
-        // Nor a printed block for an RKSV Code to contradict (#166).
-        ...rksvCodeReviewFields({ disagreeingRates: [], needsReview: false }),
-        extractedText: "(classification only - not an invoice)",
-        extractedFields: [],
-        pageCount,
-        splitSuggestion: null,
-        updatedAt: Timestamp.now(),
+      await writeReading(fileId, fileData, options, t0, {
+        kind: "not-invoice",
+        reason: classification.reason || "Not an invoice",
+        run: {
+          extractionComplete: true,
+          extractionError: null,
+          ...extractionProvenanceFields(service.provenance()),
+          extractionConfidence: Math.round(classification.confidence * 100),
+          extractedText: "(classification only - not an invoice)",
+          extractedFields: [],
+          pageCount,
+          splitSuggestion: null,
+        },
       });
       console.log(`[+${Date.now() - t0}ms] DONE - Not an invoice, skipping extraction`);
       return { success: true, duration: Date.now() - t0 };
@@ -334,11 +289,9 @@ export async function runExtraction(
   // ============================================================
   console.log(`[+${Date.now() - t0}ms] Phase 2: Extraction...`);
   const t3 = Date.now();
-  const result = await extractDocument(fileBuffer, fileData.fileType as string, {
-    provider,
-    geminiModel,
-    skipClassification: true, // Already classified above
-  });
+  // Already classified above, or overridden by the user. Token usage is
+  // logged by the service.
+  const result = await service.transcribe();
   const t4 = Date.now();
 
   console.log(`[+${t4 - t0}ms] Extraction complete (${result.provider}) - API took ${t4 - t3}ms`, {
@@ -349,17 +302,6 @@ export async function runExtraction(
     confidence: result.extracted.confidence,
     isNotInvoice: result.isNotInvoice,
   });
-
-  // Log extraction token usage
-  if (result.usage && userId) {
-    await logAIUsage(userId, {
-      function: "extraction",
-      model: result.usage.model,
-      inputTokens: result.usage.inputTokens,
-      outputTokens: result.usage.outputTokens,
-      metadata: { fileId },
-    });
-  }
 
   // Determine counterparty and invoice direction based on user data
   let invoiceDirection: InvoiceDirection = "unknown";
@@ -427,28 +369,17 @@ export async function runExtraction(
     }
   }
 
-  // Build update data for Firestore
-  const updateData: Record<string, unknown> = {
+  // The fields of this run that are no fact of the document. The facts go to
+  // the File facts module as a reading, and it writes them (#639).
+  const run: Record<string, unknown> = {
     extractedText: result.text,
     extractionConfidence: Math.round(result.extracted.confidence * 100),
-    extractionProvider: result.provider,
+    // #161: which Extraction Service produced this reading.
+    ...extractionProvenanceFields(service.provenance()),
     extractionComplete: true,
     extractionError: null,
     extractedFields: [], // Bounding box overlays removed - using text search instead
-    invoiceDirection,
-    matchedUserAccount,
-    // #229: whether the recipient this document names is the user, decided
-    // here where the identity data is loaded and read by the § 11 classifier
-    // below. The legacy no-entity path leaves it "unknown", which is honest:
-    // that path never looked at a recipient at all.
-    recipientIdentityMatch,
-    // Store extracted entities for future re-calculation
-    extractedIssuer: extractedIssuer || null,
-    extractedRecipient: extractedRecipient || null,
-    extractedInvoicingAgent,
     classificationComplete: true,
-    isNotInvoice: false, // If we got here, it's confirmed to be an invoice
-    notInvoiceReason: null,
     pageCount,
     // #550: read in the same call, stored as a suggestion only. Written on
     // every pass, so a re-extraction that reads one document clears an old
@@ -458,7 +389,19 @@ export async function runExtraction(
       pageCount,
       fileData.splitSuggestionDismissed === true
     ),
-    updatedAt: Timestamp.now(),
+  };
+
+  const counterpartyFacts: ExtractedCounterparty = {
+    invoiceDirection,
+    matchedUserAccount,
+    // #229: whether the recipient this document names is the user, decided
+    // here where the identity data is loaded and read by the § 11 classifier.
+    // The legacy no-entity path leaves it "unknown", which is honest: that
+    // path never looked at a recipient at all.
+    recipientIdentityMatch,
+    // Stored for future re-calculation
+    issuer: extractedIssuer || null,
+    recipient: extractedRecipient || null,
   };
 
   // #166: a till marks a training receipt in its RKSV Code. It is never a
@@ -470,111 +413,35 @@ export async function runExtraction(
     !result.isNotInvoice &&
     rksvReceiptKindOf(result.extracted.qrCodes ?? []) === "training";
 
-  // Handle "not an invoice" classification
+  let reading: ExtractionReading;
+
+  // Handle "not an invoice" classification: the module clears any
+  // hallucinated extracted data.
   if (result.isNotInvoice || trainingReceipt) {
-    updateData.isNotInvoice = true;
-    updateData.notInvoiceReason = trainingReceipt
+    const reason = trainingReceipt
       ? RKSV_TRAINING_RECEIPT_REASON
       : result.notInvoiceReason || "Not an invoice";
-    // Clear any hallucinated extracted data for non-invoices
-    updateData.extractedDate = null;
-    updateData.extractedAmount = null;
-    updateData.extractedTipAmount = null;
-    updateData.extractedTipBound = null;
-    updateData.extractedCurrency = null;
-    updateData.extractedVatPercent = null;
-    updateData.extractedVatAmount = null;
-    updateData.extractedDocumentVatAmount = null;
-    updateData.extractedQrCodes = null;
-    updateData.extractedCountry = null;
-    updateData.extractedLineItems = null;
-    updateData.extractedRateGroups = null;
-    updateData.extractedRateGroupsSource = null;
-    updateData.lineItemsUnreconciled = false;
-    updateData.lineItemsUnreconciledRates = null;
-    updateData.vatSourceDowngraded = false;
-    updateData.vatFieldsPreserved = false;
-    updateData.extractedPartner = null;
-    updateData.extractedVatId = null;
-    updateData.extractedIban = null;
-    updateData.extractedAddress = null;
-    updateData.extractedWebsite = null;
-    updateData.extractedRaw = null;
-    updateData.extractedAdditionalFields = null;
-    updateData.extractedDueDate = null;
-    updateData.extractedDebitDate = null;
-    updateData.extractedSelfDesignation = null;
-    updateData.extractedInvoiceNumber = null;
-    updateData.extractedReferencedInvoiceNumber = null;
-    updateData.extractedPaidInvoiceNumber = null;
-    updateData.extractedPayableAmount = null;
-    updateData.extractedInvoicingAgent = null;
-    updateData.splitSuggestion = null;
-    console.log(`[+${Date.now() - t0}ms] Classified as NOT an invoice: ${updateData.notInvoiceReason}`);
+    reading = {
+      kind: "not-invoice",
+      reason,
+      counterparty: counterpartyFacts,
+      run: { ...run, splitSuggestion: null },
+    };
+    console.log(`[+${Date.now() - t0}ms] Classified as NOT an invoice: ${reason}`);
   } else {
-    // Add extracted fields if found
     const extracted = result.extracted;
 
-    if (extracted.date) {
-      // Parse ISO date string to Timestamp
-      const dateParts = extracted.date.split("-");
-      if (dateParts.length === 3) {
-        const date = new Date(
-          parseInt(dateParts[0]),
-          parseInt(dateParts[1]) - 1,
-          parseInt(dateParts[2])
-        );
-        updateData.extractedDate = Timestamp.fromDate(date);
-      }
-    }
-
-    if (extracted.currency) {
-      updateData.extractedCurrency = extracted.currency;
-    }
-
-    // Transcribed, not inferred (#104). Written unconditionally — a document
-    // that prints no heading and no invoice number must record that as an
-    // absence, or the §11 classifier reads the record as merely legacy.
-    updateData.extractedSelfDesignation = extracted.selfDesignation ?? null;
-    updateData.extractedInvoiceNumber = extracted.invoiceNumber ?? null;
-    // #564: the invoice a credit note corrects, the key the correction link
-    // matches on. Written unconditionally like the other transcriptions.
-    updateData.extractedReferencedInvoiceNumber = extracted.referencedInvoiceNumber ?? null;
-    // #571: the invoice a Receipt confirms payment for, the key the Receipt
-    // Link is recorded on. Kept apart from the corrected invoice's number, so
-    // a Receipt never reads as a correction.
-    updateData.extractedPaidInvoiceNumber = extracted.paidInvoiceNumber ?? null;
-
-    // #206: the figure the document itself designates as due, transcribed
-    // beside the total rather than replacing it. Written unconditionally, so
-    // "designates no figure as due" is recorded as an absence rather than
-    // left indistinguishable from a record written before the field existed.
-    updateData.extractedPayableAmount = extracted.payableAmount ?? null;
-
     // #172: the printed Trinkgeld is its own figure and stays out of every
-    // total below. Written unconditionally, like the §11 transcriptions — a
-    // document that prints no tip line must record that as an absence rather
-    // than leave a stale figure from an earlier pass standing.
+    // total below.
     const tipAmount = extracted.tipAmount ?? null;
-    updateData.extractedTipAmount = tipAmount;
-    // #310: the bound belongs to the tip it measured. This figure is the
-    // extractor's, so the record of what bounded a hand-set one goes with the
-    // figure it described — left standing it would say a tip transcribed from
-    // the page had been declared as not printed (#554), and the panel would
-    // re-offer "not printed" for a tip the page prints.
-    updateData.extractedTipBound = null;
     const documentTotal = totalWithoutPrintedTip(
       extracted.amount,
       tipAmount,
       extracted.rateGroups
     );
 
-    // #540: the printed VAT total and the decoded QR codes, stored as read.
-    // Written unconditionally like the other transcriptions, so a document
-    // that prints neither records an absence.
+    // #540: the printed VAT total, stored as read.
     const documentVatAmount = extracted.documentVatAmount ?? null;
-    updateData.extractedDocumentVatAmount = documentVatAmount;
-    updateData.extractedQrCodes = extracted.qrCodes && extracted.qrCodes.length > 0 ? extracted.qrCodes : null;
 
     // #540: one stored shape whatever the layout. A document that prints a
     // VAT amount and no rate ("Tax 11,25") gets the one rate that reproduces
@@ -603,241 +470,294 @@ export async function runExtraction(
     }
     const printedRateGroups = rksvGroups ?? extracted.rateGroups;
 
-    const normalizedLineItems = normalizeExtractedLineItems(extracted.lineItems);
-    if (normalizedLineItems.length > 0) {
-      const reconciled = reconcileLineItemsWithDocumentTotal(
-        normalizedLineItems,
-        documentTotal,
-        printedRateGroups,
-        documentVatPercent
-      );
-      updateData.extractedLineItems = reconciled.lineItems;
-      updateData.extractedRateGroups = reconciled.rateGroups;
-      updateData.lineItemsUnreconciled = reconciled.unreconciled;
-      updateData.lineItemsUnreconciledRates =
-        reconciled.unreconciledRates.length > 0 ? reconciled.unreconciledRates : null;
+    const figures = readFigures(
+      normalizeExtractedLineItems(extracted.lineItems),
+      documentTotal,
+      printedRateGroups,
+      documentVatPercent,
+      documentVatAmount
+    );
 
-      if (reconciled.unreconciled) {
-        // The item sum contradicts the document total — keep the document's
-        // own top-level extraction and let the flagged items wait for a
-        // human repair (fork #64, spec §6).
-        updateData.extractedAmount = documentTotal;
-        if (reconciled.rateGroups) {
-          // Fork #67: the printed VAT summary is a SECOND reading of the
-          // document, not a derivation from the broken rows — it survives
-          // a line-item failure and still carries the document's VAT.
-          const totals = rateGroupTotals(reconciled.rateGroups);
-          updateData.extractedVatAmount = totals.totalVatAmount;
-          updateData.extractedVatPercent = totals.consolidatedVatPercent ?? documentVatPercent;
-        } else {
-          // #511: a single-rate document's VAT is its total at that rate,
-          // whatever its rows say. Only a mixed-rate or rate-less document
-          // loses its VAT with its rows, and keeps the VAT total it printed
-          // when it printed one (#540).
-          const singleRate = singleRateDocumentVat(reconciled.lineItems, documentTotal, documentVatPercent);
-          updateData.extractedVatAmount = singleRate?.vatAmount ?? documentVatAmount;
-          updateData.extractedVatPercent = documentVatPercent;
-        }
-      } else if (reconciled.rateGroups) {
-        // Both readings agree: prefer the printed block's VAT, which is one
-        // transcribed number per rate rather than a sum of N item rows.
-        const consolidated = consolidateLineItems(reconciled.lineItems, documentTotal);
-        const totals = rateGroupTotals(reconciled.rateGroups);
-        updateData.extractedAmount = consolidated.totalAmount;
-        updateData.extractedVatAmount = totals.totalVatAmount;
-        updateData.extractedVatPercent = totals.consolidatedVatPercent;
-      } else {
-        const consolidated = consolidateLineItems(reconciled.lineItems, documentTotal);
-        updateData.extractedAmount = consolidated.totalAmount;
-        updateData.extractedVatAmount = consolidated.totalVatAmount;
-        updateData.extractedVatPercent = consolidated.consolidatedVatPercent;
-      }
-    } else {
-      // No itemisation — but a receipt can still print its VAT summary
-      // block, and that alone is a §11-sufficient record (fork #67).
-      const validatedGroups = validateRateGroups(printedRateGroups, documentTotal);
-      updateData.extractedLineItems = null;
-      updateData.extractedRateGroups = validatedGroups;
-      updateData.lineItemsUnreconciled = false;
-      updateData.lineItemsUnreconciledRates = null;
-      updateData.extractedAmount = documentTotal;
-      if (validatedGroups) {
-        const totals = rateGroupTotals(validatedGroups);
-        updateData.extractedVatAmount = totals.totalVatAmount;
-        updateData.extractedVatPercent = totals.consolidatedVatPercent ?? documentVatPercent;
-      } else {
-        // #540: the VAT total the document printed, when it printed one. Not
-        // derived from the rate: a derivation here would be stored as if read.
-        updateData.extractedVatAmount = documentVatAmount;
-        updateData.extractedVatPercent = documentVatPercent;
-      }
-    }
-
-    // #166: where the stored Rate Groups came from, written with them. A
-    // later reader cannot otherwise tell a till-attested split from a
-    // transcribed one.
-    const storedGroups = updateData.extractedRateGroups;
-    updateData.extractedRateGroupsSource =
-      Array.isArray(storedGroups) && storedGroups.length > 0
-        ? rksvGroups
-          ? "rksvCode"
-          : "document"
-        : null;
-
-    // #540: the counterparty's country decides which tax rules apply.
-    updateData.extractedCountry = counterparty?.country ?? null;
-
-    // Use counterparty data if available, otherwise fall back to legacy extracted.partner
-    // This ensures extractedPartner is always the counterparty (not the user's own company)
-    //
-    // Every field is written, null included (#376). This is an update, so a
-    // field this run did not read would otherwise keep the previous run's value:
-    // a re-extraction that rightly refuses an Invoicing Agent's footer UID left
-    // the agent's UID from the pre-#156 run on the File. Both sources are the
-    // same party, so a field one of them lacks is not borrowed from the other.
-    //
-    // Names: already decoded. #299 moved the character-reference decode to
-    // entity normalisation, so neither source carries "&amp;". Decoding again
-    // here would be a second layer whose harmlessness depends on the decoder
-    // staying single-pass.
+    // Use counterparty data if available, otherwise fall back to legacy
+    // extracted.partner, so the Partner is always the counterparty (not the
+    // user's own company). Both sources are the same party, so a field one of
+    // them lacks is not borrowed from the other (#376). Names are already
+    // decoded (#299).
     const party = counterparty ?? extracted;
-    updateData.extractedPartner = (counterparty ? counterparty.name : extracted.partner) || null;
-    updateData.extractedVatId = party.vatId || null;
-    updateData.extractedIban = party.iban || null;
-    updateData.extractedAddress = party.address || null;
-    updateData.extractedWebsite = party.website || null;
 
-    // Store raw text values for PDF search/highlight
-    if (result.extractedRaw) {
-      // Update raw text to use counterparty's raw values if available
-      const rawData = { ...result.extractedRaw };
-
-      // If we determined counterparty from entities, use the appropriate raw text
-      if (counterparty && result.extractedRaw) {
-        const isCounterpartyIssuer = counterparty === extractedIssuer;
-        const counterpartyRaw = isCounterpartyIssuer
-          ? result.extractedRaw.issuer
-          : result.extractedRaw.recipient;
-
-        if (counterpartyRaw) {
-          // Override partner raw fields with counterparty's raw values
-          rawData.partner = counterpartyRaw.name || rawData.partner;
-          rawData.vatId = counterpartyRaw.vatId || rawData.vatId;
-          rawData.iban = counterpartyRaw.iban || rawData.iban;
-          rawData.address = counterpartyRaw.address || rawData.address;
-          rawData.website = counterpartyRaw.website || rawData.website;
-        }
-      }
-
-      updateData.extractedRaw = rawData;
+    const facts: ExtractedFacts = {
+      ...(extracted.date ? { date: extracted.date } : {}),
+      ...(extracted.currency ? { currency: extracted.currency } : {}),
+      ...figures,
+      tipAmount,
+      documentVatAmount,
+      qrCodes: extracted.qrCodes && extracted.qrCodes.length > 0 ? extracted.qrCodes : null,
+      // #166: where the stored Rate Groups came from. A later reader cannot
+      // otherwise tell a till-attested split from a transcribed one.
+      rateGroupsSource:
+        Array.isArray(figures.rateGroups) && figures.rateGroups.length > 0
+          ? rksvGroups
+            ? "rksvCode"
+            : "document"
+          : null,
+      // #540: the counterparty's country decides which tax rules apply.
+      country: counterparty?.country ?? null,
+      partner: (counterparty ? counterparty.name : extracted.partner) || null,
+      vatId: party.vatId || null,
+      iban: party.iban || null,
+      address: party.address || null,
+      website: party.website || null,
+      ...(result.extractedRaw
+        ? { raw: counterpartyRawText(result.extractedRaw, counterparty, extractedIssuer) }
+        : {}),
+      // The rows the Due Date and Debit Date are read from (#236, #136).
+      additionalFields:
+        result.additionalFields && result.additionalFields.length > 0 ? result.additionalFields : null,
+      // Transcribed, not inferred (#104), and written unconditionally, so a
+      // document that prints no heading or number records an absence.
+      selfDesignation: extracted.selfDesignation ?? null,
+      invoiceNumber: extracted.invoiceNumber ?? null,
+      // #564: the invoice a credit note corrects.
+      referencedInvoiceNumber: extracted.referencedInvoiceNumber ?? null,
+      // #571: the invoice a Receipt confirms payment for.
+      paidInvoiceNumber: extracted.paidInvoiceNumber ?? null,
+      // #206: the figure the document itself designates as due.
+      payableAmount: extracted.payableAmount ?? null,
+      // #615: the deposit, part payments or schedule the document prints.
+      instalments: extracted.instalments ?? null,
+      // #156: recorded only, never a Partner.
+      invoicingAgent: extractedInvoicingAgent,
+    };
+    if (facts.additionalFields) {
+      console.log(`[+${Date.now() - t0}ms] Read ${facts.additionalFields.length} additional fields`);
     }
 
-    // Store additional fields extracted from the document
-    if (result.additionalFields && result.additionalFields.length > 0) {
-      updateData.extractedAdditionalFields = result.additionalFields;
-      // #236: the Due Date typed beside the bag it was read from, so the
-      // Match scores the payment window. Written with the bag, never apart
-      // from it, so the two cannot disagree. The issue date this same pass
-      // read is handed along so a due date earlier than it is rejected
-      // rather than written, since it would invert the window (#135).
-      const issueDate = toDateSafe(updateData.extractedDate ?? fileData.extractedDate);
-      const dueDate = dueDateFromAdditionalFields(result.additionalFields, issueDate);
-      updateData.extractedDueDate = dueDate ? Timestamp.fromDate(dueDate) : null;
-      // #136: the Debit Date under the same rule.
-      const debitDate = debitDateFromAdditionalFields(result.additionalFields, issueDate);
-      updateData.extractedDebitDate = debitDate ? Timestamp.fromDate(debitDate) : null;
-      console.log(`[+${Date.now() - t0}ms] Stored ${result.additionalFields.length} additional fields`);
-    }
+    reading = {
+      kind: "invoice",
+      facts,
+      counterparty: counterpartyFacts,
+      repairAmbiguousFields: result.repairAmbiguousFields ?? [],
+      run,
+    };
   }
 
-  // Fork #137: never let a weaker pass overwrite a stronger record's VAT.
-  // Re-extraction is destructive by default, and a pass that comes back with
-  // no derivable VAT source used to replace one that had it, silently and
-  // invisibly.
-  const vatGuard = applyVatDowngradeGuard(fileData, updateData);
-  if (vatGuard.downgraded) {
-    console.warn(
-      `[ExtractionCore] VAT evidence downgraded ${vatGuard.from} -> ${vatGuard.to} for ${fileId}. ` +
-      (vatGuard.preserved
-        ? "Kept the previous VAT fields; the rest of the extraction was written."
-        : "Document total moved too, so the previous VAT fields do not describe this reading — " +
-          "wrote the weaker record and flagged it for review.")
-    );
-  }
-
-  // §11 classification runs on the record as it will actually be stored —
-  // after the VAT guard, which can keep the PREVIOUS VAT fields and so change
-  // the answer. Persisted rather than recomputed at read time, so two readers
-  // cannot disagree about the same document (#104).
-  const storedRecord = { ...fileData, ...updateData };
-  Object.assign(updateData, documentTypeFields(classifyFileRecord(storedRecord)));
-
-  // #203: the same pass answers "does this document print a rate Austria does
-  // not have". Reading it off the stored record rather than the raw parse means
-  // the VAT guard above has already decided which figures survive, so the flag
-  // describes the rates the derivation will actually see.
-  const rateReview = reviewFileRecordVatRates(storedRecord);
-  Object.assign(updateData, vatRateReviewFields(rateReview));
-
-  // #233: extraction is where a file's direction is decided, so it is also
-  // where the direction can start disagreeing with the transactions the file
-  // is already attached to. Folded into this write rather than run after it —
-  // the record is in hand and a second write would re-fire every file trigger.
-  Object.assign(updateData, await computeDirectionReviewFields(db, storedRecord));
-
-  // #275: the JSON repair is the only place that knows a value's escape was
-  // ambiguous, and it reports it here rather than leaving the guess invisible.
-  // Read off the parse result, not the stored record: what is stored is exactly
-  // the byte sequence the guess produced, and nothing in it says so.
-  const repairReview = reviewRepair({
-    ambiguousFields: result.repairAmbiguousFields,
-    isNotInvoice: updateData.isNotInvoice === true,
-  });
-  Object.assign(updateData, repairReviewFields(repairReview));
-  if (repairReview.needsReview) {
-    console.warn(
-      `[ExtractionCore] ${fileId} carries a repaired escape sequence in ` +
-      `${repairReview.ambiguousFields.join(", ")}; the stored text may not be ` +
-      "what the document prints. Flagged for review."
-    );
-  }
-  // #166: a printed Rate Group block the RKSV Code contradicts. Read off the
-  // stored record, after the VAT guard, like the rate review above.
-  const rksvReview = reviewFileRecordRksvCode(storedRecord);
-  Object.assign(updateData, rksvCodeReviewFields(rksvReview));
-  if (rksvReview.needsReview) {
-    console.warn(
-      `[ExtractionCore] ${fileId}: the printed Rate Group block and the RKSV Code ` +
-      `disagree at ${rksvReview.disagreeingRates.join(", ")}%. Kept the printed block; flagged for review.`
-    );
-  }
-  if (rateReview.needsReview) {
-    console.warn(
-      `[ExtractionCore] ${fileId} prints VAT rate(s) outside the Austrian set: ` +
-      `${rateReview.ratesOutsideSet.join(", ")}. Flagged for review.`
-    );
-  }
-  console.log(
-    `[+${Date.now() - t0}ms] Document type: ${updateData.documentType} ` +
-    `(${(updateData.documentTypeBasis as { reason?: string })?.reason})`
-  );
-
-  // Save to Firestore
   const t6 = Date.now();
-  const documentTypeChanged = fileData.documentType !== updateData.documentType;
-  await db.collection("files").doc(fileId).update(updateData);
-
-  // A file's classification changing is invisible to onTransactionUpdate —
-  // nothing on the transaction document moved — so the propagation happens
-  // here, through the same derivation the trigger uses (#104). Only on an
-  // actual change: re-extraction that lands on the same type owes no writes.
-  const connectedTransactionIds = (fileData.transactionIds as string[] | undefined) ?? [];
-  if (documentTypeChanged && connectedTransactionIds.length > 0) {
-    await syncDocumentationStateForTransactions(db, connectedTransactionIds);
-  }
+  await writeReading(fileId, fileData, options, t0, reading);
 
   const tEnd = Date.now();
   console.log(`[+${tEnd - t0}ms] DONE - Firestore write took ${tEnd - t6}ms | Total: ${tEnd - t0}ms`);
 
   return { success: true, duration: tEnd - t0 };
+}
+
+type Figures = Pick<
+  ExtractedFacts,
+  | "amount"
+  | "vatAmount"
+  | "vatPercent"
+  | "lineItems"
+  | "rateGroups"
+  | "lineItemsUnreconciled"
+  | "unreconciledRates"
+>;
+
+/**
+ * The stored figures of one reading: the rows reconciled with the document
+ * total, and the total and VAT that follow from them. This is Extraction's
+ * own reading of the document; what is derived from it is the File facts
+ * module's.
+ */
+function readFigures(
+  lineItems: ExtractedLineItem[],
+  documentTotal: number | null | undefined,
+  printedRateGroups: Parameters<typeof reconcileLineItemsWithDocumentTotal>[2],
+  documentVatPercent: number | null,
+  documentVatAmount: number | null
+): Figures {
+  if (lineItems.length > 0) {
+    const reconciled = reconcileLineItemsWithDocumentTotal(
+      lineItems,
+      documentTotal,
+      printedRateGroups,
+      documentVatPercent
+    );
+    const rows = {
+      lineItems: reconciled.lineItems,
+      rateGroups: reconciled.rateGroups,
+      lineItemsUnreconciled: reconciled.unreconciled,
+      unreconciledRates: reconciled.unreconciledRates.length > 0 ? reconciled.unreconciledRates : null,
+    };
+
+    if (reconciled.unreconciled) {
+      // The item sum contradicts the document total — keep the document's
+      // own top-level extraction and let the flagged items wait for a human
+      // repair (fork #64, spec §6).
+      if (reconciled.rateGroups) {
+        // Fork #67: the printed VAT summary is a SECOND reading of the
+        // document, not a derivation from the broken rows — it survives a
+        // line-item failure and still carries the document's VAT.
+        const totals = rateGroupTotals(reconciled.rateGroups);
+        return {
+          ...rows,
+          amount: documentTotal ?? null,
+          vatAmount: totals.totalVatAmount,
+          vatPercent: totals.consolidatedVatPercent ?? documentVatPercent,
+        };
+      }
+      // #511: a single-rate document's VAT is its total at that rate,
+      // whatever its rows say. Only a mixed-rate or rate-less document loses
+      // its VAT with its rows, and keeps the VAT total it printed when it
+      // printed one (#540).
+      const singleRate = singleRateDocumentVat(reconciled.lineItems, documentTotal, documentVatPercent);
+      return {
+        ...rows,
+        amount: documentTotal ?? null,
+        vatAmount: singleRate?.vatAmount ?? documentVatAmount,
+        vatPercent: documentVatPercent,
+      };
+    }
+
+    const consolidated = consolidateLineItems(reconciled.lineItems, documentTotal);
+    if (reconciled.rateGroups) {
+      // Both readings agree: prefer the printed block's VAT, which is one
+      // transcribed number per rate rather than a sum of N item rows.
+      const totals = rateGroupTotals(reconciled.rateGroups);
+      return {
+        ...rows,
+        amount: consolidated.totalAmount,
+        vatAmount: totals.totalVatAmount,
+        vatPercent: totals.consolidatedVatPercent,
+      };
+    }
+    return {
+      ...rows,
+      amount: consolidated.totalAmount,
+      vatAmount: consolidated.totalVatAmount,
+      vatPercent: consolidated.consolidatedVatPercent,
+    };
+  }
+
+  // No itemisation — but a receipt can still print its VAT summary block,
+  // and that alone is a §11-sufficient record (fork #67).
+  const validatedGroups = validateRateGroups(printedRateGroups, documentTotal);
+  const rows = {
+    lineItems: null,
+    rateGroups: validatedGroups,
+    lineItemsUnreconciled: false,
+    unreconciledRates: null,
+    amount: documentTotal ?? null,
+  };
+  if (validatedGroups) {
+    const totals = rateGroupTotals(validatedGroups);
+    return {
+      ...rows,
+      vatAmount: totals.totalVatAmount,
+      vatPercent: totals.consolidatedVatPercent ?? documentVatPercent,
+    };
+  }
+  // #540: the VAT total the document printed, when it printed one. Not
+  // derived from the rate: a derivation here would be stored as if read.
+  return { ...rows, vatAmount: documentVatAmount, vatPercent: documentVatPercent };
+}
+
+type RawText = NonNullable<ExtractedFacts["raw"]>;
+
+/**
+ * The raw text values for PDF search and highlight. When the counterparty
+ * came from the entities, the partner's raw values are that party's own.
+ */
+function counterpartyRawText(
+  extractedRaw: RawText,
+  counterparty: ExtractedEntity | null,
+  extractedIssuer: ExtractedEntity | null | undefined
+): RawText {
+  const rawData = { ...extractedRaw };
+  if (counterparty) {
+    const counterpartyRaw =
+      counterparty === extractedIssuer ? extractedRaw.issuer : extractedRaw.recipient;
+    if (counterpartyRaw) {
+      rawData.partner = counterpartyRaw.name || rawData.partner;
+      rawData.vatId = counterpartyRaw.vatId || rawData.vatId;
+      rawData.iban = counterpartyRaw.iban || rawData.iban;
+      rawData.address = counterpartyRaw.address || rawData.address;
+      rawData.website = counterpartyRaw.website || rawData.website;
+    }
+  }
+  return rawData;
+}
+
+/**
+ * Hand one reading to the File facts module and let its applier write it
+ * (#639). The module derives every field that follows from the facts, and
+ * the applier re-derives the Documentation State of connected Transactions
+ * when the Document Type moved (#104).
+ *
+ * A File that took a Hand Correction while this run was reading it is
+ * refused (#184): its facts stay as the person left them. The run is still
+ * finished, so the File does not wait forever, and the classification this
+ * run wrote on its way is put back as the run found it.
+ */
+async function writeReading(
+  fileId: string,
+  fileData: Record<string, unknown>,
+  options: ExtractionOptions,
+  t0: number,
+  reading: ExtractionReading
+): Promise<void> {
+  const applied = await applyFactChange(db, {
+    fileId,
+    userId: fileData.userId as string,
+    change: { origin: "extraction", forced: options.overwriteCorrections === true, reading },
+  });
+
+  if (applied.refused) {
+    if (applied.code === "NOT_FOUND") {
+      console.warn(`[ExtractionCore] ${fileId} is gone; nothing to write`);
+      return;
+    }
+    console.warn(`[ExtractionCore] ${fileId}: Extraction refused, nothing written. ${applied.message}`);
+    await db.collection("files").doc(fileId).update({
+      extractionComplete: true,
+      extractionError: null,
+      isNotInvoice: fileData.isNotInvoice ?? null,
+      notInvoiceReason: fileData.notInvoiceReason ?? null,
+      updatedAt: Timestamp.now(),
+    });
+    return;
+  }
+
+  const { update } = applied;
+  if (update.vatSourceDowngraded === true) {
+    console.warn(
+      `[ExtractionCore] VAT evidence downgraded for ${fileId}. ` +
+      (update.vatFieldsPreserved === true
+        ? "Kept the previous VAT fields; the rest of the extraction was written."
+        : "Document total moved too, so the previous VAT fields do not describe this reading — " +
+          "wrote the weaker record and flagged it for review.")
+    );
+  }
+  if (update.needsRepairReview === true) {
+    console.warn(
+      `[ExtractionCore] ${fileId} carries a repaired escape sequence in ` +
+      `${(update.repairAmbiguousFields as string[]).join(", ")}; the stored text may not be ` +
+      "what the document prints. Flagged for review."
+    );
+  }
+  if (update.needsRksvCodeReview === true) {
+    console.warn(
+      `[ExtractionCore] ${fileId}: the printed Rate Group block and the RKSV Code ` +
+      `disagree at ${(update.rksvCodeDisagreeingRates as number[]).join(", ")}%. ` +
+      "Kept the printed block; flagged for review."
+    );
+  }
+  if (update.needsVatRateReview === true) {
+    console.warn(
+      `[ExtractionCore] ${fileId} prints VAT rate(s) outside the Austrian set: ` +
+      `${(update.vatRatesOutsideSet as number[]).join(", ")}. Flagged for review.`
+    );
+  }
+  console.log(
+    `[+${Date.now() - t0}ms] Document type: ${update.documentType} ` +
+    `(${(update.documentTypeBasis as { reason?: string })?.reason})`
+  );
 }

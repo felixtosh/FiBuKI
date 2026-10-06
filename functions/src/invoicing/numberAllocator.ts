@@ -15,6 +15,7 @@
 import { Timestamp } from "firebase-admin/firestore";
 import { HttpsError } from "../utils/createCallable";
 import { toDateSafe } from "../utils/toDateSafe";
+import { viennaYear, yearOf } from "../utils/storedDay";
 
 /**
  * Every write that gives an invoice its final number reads and writes this
@@ -82,7 +83,8 @@ export async function nextInvoiceNumberSeq(
     // to parsing the year from the number string.
     let docYear: number | null = null;
     try {
-      docYear = toDateSafe(data.issueDate)?.getFullYear() ?? null;
+      const issued = toDateSafe(data.issueDate);
+      docYear = issued ? yearOf(issued) : null;
     } catch {
       docYear = null;
     }
@@ -115,7 +117,7 @@ export async function allocateInvoiceNumber(
     .collection("settings")
     .doc("invoiceCounter");
 
-  const currentYear = new Date().getFullYear();
+  const currentYear = viennaYear();
 
   const seq = await db.runTransaction(async (tx) => {
     const snap = await tx.get(counterRef);

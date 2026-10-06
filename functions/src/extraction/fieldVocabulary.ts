@@ -9,9 +9,9 @@
  * against the PDF, never as the display name.
  *
  * Kept in its own module, free of the Vertex client, so the correction
- * callable can enforce the same list without importing the parser. Mirrored by
- * hand in `types/extraction-fields.ts` (functions/tsconfig pins
- * `rootDir: "src"`); `fieldVocabulary.sync.test.ts` fails when they drift.
+ * callable can enforce the same list without importing the parser. The one
+ * copy (#689): the frontend imports it as
+ * `@/functions/src/extraction/fieldVocabulary`, so keep it browser-safe.
  *
  * Scope: what matters for matching a document to a Transaction and a Partner,
  * and for getting its VAT right. A table number, a till id or a loyalty
@@ -48,6 +48,10 @@ export function isAdditionalFieldKey(value: unknown): value is AdditionalFieldKe
 export const PAYMENT_METHODS = ["cash", "card", "bankTransfer", "directDebit", "paypal", "other"] as const;
 
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
+
+export function isPaymentMethod(value: unknown): value is PaymentMethod {
+  return typeof value === "string" && (PAYMENT_METHODS as readonly string[]).includes(value);
+}
 
 export function normalizePaymentMethod(value: string): PaymentMethod {
   const compact = value.trim();

@@ -15,7 +15,8 @@
  *     and detects email-as-invoice candidates. Those are not Files yet, so the
  *     attachment scorer ranks them, and they are never auto-connected
  *   - Picks the best candidate; if it's a stored File at the matcher's auto threshold
- *     with a clear lead, auto-connects through the real connect path; otherwise
+ *     with a clear lead and no tie on the File's side (#667), auto-connects through
+ *     the real connect path; otherwise
  *     surfaces top candidates for review (so the chat agent / UI / MCP caller can
  *     chain `downloadGmailAttachment` + `connectFileToTransaction` after user confirm)
  *
@@ -34,8 +35,8 @@ import {
   QueryGenerationPartner,
 } from "../precision-search/generateSearchQueries";
 import { readBankOriginalAmount } from "../fx/bankOriginalAmount";
-import { filesForTransaction } from "../matching/matcher";
-import { SCORING_CONFIG } from "../matching/transactionScoring";
+import { autoConnectHolds, filesForTransaction } from "../matching/matcher";
+import { SCORING_CONFIG, isOutstandingMatch } from "../matching/transactionScoring";
 
 /**
  * Below this a Gmail candidate is not surfaced. On the attachment scorer's
@@ -139,6 +140,12 @@ export interface ConnectFileArgs {
   fileId: string;
   matchConfidence: number;
   connectionType: "auto_matched";
+  /**
+   * Set when the File is connected as one payment of several on printed
+   * evidence (#615, #716, ADR-0013), as every other auto-connecting surface
+   * stamps it. Server-side only: the connect callable takes no reason.
+   */
+  autoConnectReason?: "instalment";
 }
 
 export interface FindReceiptDeps {
@@ -161,6 +168,20 @@ function toDate(value: unknown): Date | null {
 
 function emptySources(): FindReceiptResult["sourcesChecked"] {
   return { localFiles: 0, gmailAttachments: 0, gmailEmails: 0 };
+}
+
+/**
+ * Whether the File is held back from this Transaction at the threshold: a tie
+ * (#667), another uncovered Transaction of the same amount wanting it as
+ * much, or an instalment without printed evidence (#615, ADR-0013). Judged on
+ * the File's own matches, as the upload trigger judges them, so neither
+ * connects from this side either.
+ */
+async function heldBackOn(db: Firestore, userId: string, fileId: string, transactionId: string): Promise<boolean> {
+  const snap = await db.collection("files").doc(fileId).get();
+  if (!snap.exists || snap.data()?.userId !== userId) return false;
+  const holds = await autoConnectHolds(db, userId, [{ id: fileId, data: snap.data()! }]);
+  return holds.get(fileId)?.has(transactionId) ?? false;
 }
 
 export async function findReceiptForTransaction(
@@ -247,6 +268,7 @@ export async function findReceiptForTransaction(
   const candidates: FindReceiptCandidate[] = [];
   const stored = await filesForTransaction(db, userId, txSnap);
   const localFileCount = stored.totalCandidates;
+  const storedMatchOf = new Map(stored.matches.map((m) => [m.fileId, m]));
 
   for (const match of stored.matches) {
     if (match.confidence < suggestionThreshold) break;
@@ -459,13 +481,24 @@ export async function findReceiptForTransaction(
   // step (and async extraction verification) which the caller orchestrates.
   // An over-quota Transaction takes no automated connect; the connect path
   // would refuse it.
-  if (isClearWinner && top.source === "local_file" && top.fileId && !tx.quotaExceeded) {
+  if (
+    isClearWinner &&
+    top.source === "local_file" &&
+    top.fileId &&
+    !tx.quotaExceeded &&
+    !(await heldBackOn(db, userId, top.fileId, transactionId))
+  ) {
+    // An Outstanding Match that is not held back carries printed evidence
+    // (the holds refuse one without it), so it is stamped as an instalment
+    // like Partner matching and the upload trigger stamp it (#716).
+    const topMatch = storedMatchOf.get(top.fileId);
     await connectFileToTransaction({
       userId,
       transactionId,
       fileId: top.fileId,
       matchConfidence: top.score,
       connectionType: "auto_matched",
+      ...(topMatch && isOutstandingMatch(topMatch) ? { autoConnectReason: "instalment" as const } : {}),
     });
     return {
       status: "connected",

@@ -68,8 +68,9 @@ Things that cost real time to find. All of `fibuki.com` runs the self-host stack
   skips optional deps that need 22 (`@google-cloud/firestore` and ~70 others)
   and tests fail far from the cause. `node -v` first.
 - **Local dev = the self-host stack, not Firebase emulators.** API:
-  `cd functions && npm run selfhost:api` (port 8788); web: `npx next dev -p 3000`
-  with `FIBUKI_BACKEND=selfhost`, `NEXT_PUBLIC_FIBUKI_API_URL=http://localhost:8788`
+  `cd functions && npm run selfhost:api` (port 8788); web: `npm run dev -- -p 3000`
+  (not bare `next dev`: `predev` copies pdf.js's wasm decoders, without which
+  JPEG 2000 scans draw blank) with `FIBUKI_BACKEND=selfhost`, `NEXT_PUBLIC_FIBUKI_API_URL=http://localhost:8788`
   and `NEXT_PUBLIC_FUNCTIONS_URL=http://localhost:8788` (server-side callables, e.g.
   the chat's tools; without it they fall back to a dead Firebase emulator).
   Dev login: `FIBUKI_DEV_UID` (API) plus `NEXT_PUBLIC_FIBUKI_DEV_UID` /
@@ -79,7 +80,10 @@ Things that cost real time to find. All of `fibuki.com` runs the self-host stack
 - **One tenant, many users.** `getTenantId()` is per deployment, so every
   fibuki.com user shares a tenant and RLS does not separate them; only the
   app's ownership checks do. The client access policy is
-  `functions/src/selfhost/data-policy.ts` (not `firestore.rules`). Never take a
+  `functions/src/selfhost/data-policy.ts` (not `firestore.rules`). The browser
+  reads domain data and never writes it ([ADR-0016](docs/adr/0016-the-browser-reads-the-server-writes.md)):
+  a new write is a callable, and `functions/src/selfhost/browser-writes.test.ts`
+  fails on a new client SDK write in browser code or a server route. Never take a
   uid from a body, query, header or cookie. A new Next API route checks
   ownership of every id it is given and gets a case in
   `functions/src/selfhost/security/cross-user-routes.test.ts`; callables, AI
@@ -155,7 +159,8 @@ Things that cost real time to find. All of `fibuki.com` runs the self-host stack
    1. Add types to /types/new-entity.ts
    2. Create callable in /functions/src/feature/newFeatureCallable.ts
    3. Use createCallable() wrapper for automatic usage tracking
-   4. Export from /functions/src/index.ts
+   4. Register its config.name in /functions/src/callableRegistry.ts and export it
+      from /functions/src/index.ts under that name (the host serves the export name)
    5. Call from frontend via callFunction() in /lib/firebase/callable.ts
    ```
 
@@ -223,6 +228,10 @@ export function useCategories() {
 - `deleteTransactionsBySourceCallable` - Delete all transactions for a source
 - `acceptReceiptOnlyCallable` - Record or revoke an Accepted Receipt ruling on a receipt-only transaction (#165)
 - `acceptPartialPaymentCallable` - Record or revoke an Accepted Partial Payment ruling on a tipped transaction the bank line does not cover (#554)
+- `rollbackTransactionCallable` - Restore the values one history entry says an edit replaced, through `update_transaction`'s rules (only the fields an edit writes; #616)
+
+**AI tools:**
+- `runToolCallable` (`runTool`) - Run one tool from `functions/src/tools/definitions.ts` as the session's User, through the handler MCP uses (#616)
 
 **Files:**
 - `connectFileToTransactionCallable` - Connect file to transaction. Takes the Connection Origin (`manual`, `suggestion`, `agent`, `auto`); an accepted suggestion sends no score, the server reads the stored one
@@ -236,6 +245,7 @@ account or import, the Copy swap) all go through it, and no other code writes a
 rules key on the Connection Origin (`rules.ts`). A guard test fails on a new writer; a
 Next API route connects through the callable as the user (`lib/api/connect-file.ts`).
 - `updateFileCallable` - Update file metadata
+- `assignPartnerToFileCallable` / `removePartnerFromFileCallable` - A File's Partner, through `functions/src/files/filePartner.ts`, the path MCP's `assign_partner_to_file` / `remove_partner_from_file` use too: the User's own or a Global Partner, the Partner worker cancelled on a manual assign, a removed automatic assignment recorded on the Partner (#627)
 - `deleteFileCallable` - Delete a file: hides it, undone by `restoreFile`, never touches the stored bytes. Refuses a FiBuKI-generated invoice document (ADR-0006)
 - `purgeFilesCallable` - Purge deleted files: destroys the stored bytes (verified) and reduces the record to dedup keys. Deleted-files view only; never on the MCP/tool surface
 - `splitFileCallable` / `dismissSplitSuggestionCallable` - Split a PDF holding several invoices or Receipts into one File per range (parts take over the File Connections, the original is deleted and cannot be restored while a part lives), and "not a bundle" for the Extraction's split suggestion (#550)
@@ -251,9 +261,15 @@ Next API route connects through the callable as the user (`lib/api/connect-file.
 - `getReceiptLinkCallable` - A File's invoice or Receipts, and its pairing suggestions
 - `backfillReceiptPairsCallable` - Run the suggestion side of the pair check over the user's stored Files once; records no link
 
+**Business identity (#632):**
+- `saveIdentityCallable` (`saveIdentity`) - The settings screen's and the Partner panel's "this is me" save. The identity module (`functions/src/identity/identity.ts`) is the one writer of what the User enters into `users/{uid}/settings/userData`, MCP's `create_identity_entity` / `update_identity_entity` included: it normalises as the browser did, merges (the FinanzOnline status survives), refuses fields the identity does not hold and a Partner id that is not the User's own. The browser only reads the document. Server-side write-backs (the identity Partner sync, Partner merging, account import) still write it directly (#734)
+
 **UVA filing:**
 - `markUvaPeriodFiledCallable` - Record what was filed for a period (append-only, editable figures); refused while the period has blockers
 - `getUvaFiledStatusCallable` - Blockers, filed vs now per Kennzahl, and earlier filed periods whose figures moved
+
+**Inbound email addresses (#626):**
+- `createInboundEmailAddressCallable` / `updateInboundEmailAddressCallable` / `regenerateInboundEmailAddressCallable` / `deleteInboundEmailAddressCallable` - The table's only writers. The User sets the display name, allowed domains and active/paused; the daily limit and the counters are the server's, and a request naming them is refused. One active address per User: create returns the active one if there is one, and resuming or regenerating while another is active is refused (decided in a transaction on `users/{uid}/settings/inboundEmail`)
 
 **Imports:**
 - `bulkCreateTransactionsCallable` - Bulk create transactions from CSV
@@ -272,17 +288,19 @@ AI usage is logged separately to `aiUsage` collection via `ctx.logAIUsage()`
 
 ### Server-Side Tool Registry (MCP/API)
 
-External AI integrations (OpenClaw, Claude Desktop, ChatGPT) use a shared tool registry:
+External AI integrations (OpenClaw, Claude Desktop, ChatGPT) and the chat assistant use
+one shared tool registry:
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    EXTERNAL AI TOOLS                            │
-│  OpenClaw  │  Claude Desktop (MCP)  │  ChatGPT  │  REST API     │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                    HTTP + API Key Auth
-                              │
-                              ▼
+┌──────────────────────────────────────────────┐  ┌──────────────────────────┐
+│               EXTERNAL AI TOOLS              │  │  Chat assistant          │
+│  OpenClaw │ Claude Desktop (MCP) │ ChatGPT   │  │  (lib/agent/tools/)      │
+└──────────────────────────────────────────────┘  └──────────────────────────┘
+                       │                                       │
+             HTTP + API key auth                  runTool callable, session auth
+                       │                                       │
+                       └───────────────────┬───────────────────┘
+                                           ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │              functions/src/tools/handlers.ts                    │
 │              (Single source of truth)                           │
@@ -294,26 +312,38 @@ External AI integrations (OpenClaw, Claude Desktop, ChatGPT) use a shared tool r
 - `functions/src/tools/handlers.ts` - All tool implementations
 - `functions/src/mcp-api/index.ts` - REST API endpoint (mcpApi)
 - `functions/src/mcp-api/mcp-sse.ts` - MCP protocol endpoint (mcpSse)
+- `functions/src/tools/runToolCallable.ts` - the same tools with the User's login session (#616)
+- `app/api/openapi.json/route.ts` - the one OpenAPI spec, derived from the definitions
 
-**A new tool touches five places**, and CI catches only some of them, one at a time:
-the definition in `functions/src/tools/definitions.ts`, its case in `handlers.ts`, its
-class in `functions/src/mcp-api/tool-annotations.ts` (read-only / write / destructive;
-`mcp-server.test.ts` fails without it), its entry and description in
-`functions/src/mcp-api/openapi.ts`, and the regenerated
-`lib/data/generated-tool-definitions.ts` (`npm run generate:tool-definitions`; CI's
-drift check runs only after the unit tests pass). The generator reads the compiled
-`functions/lib`; on a small host compile `src/tools/definitions.ts` alone instead of
-the whole project, into `functions/lib` with `src` as the root (a narrower root writes
-stray `.js` files into `src/`, and an old `functions/lib/tools/definitions.js` is read
-silently, so check the new tool's name is in the regenerated file):
+**A new tool touches four places, nothing is generated (#691).** Its definition in
+`functions/src/tools/definitions.ts` carries its annotation class (`annotation`:
+read-only / write / destructive, required by the type); its case goes in `handlers.ts`;
+its test; and, when the chat should run it too, its wrapper in
+`lib/agent/tools/mcp-tools.ts`. The OpenAPI spec, llm.txt and the chat's wrappers import
+`definitions.ts` directly, so it has no runtime import at all (type-only imports are
+erased and allowed); `functions/src/selfhost/browser-imports.test.ts` (`IMPORT_FREE`)
+fails on a runtime import there.
 
-```bash
-cd functions && rm -rf lib/tools && NODE_OPTIONS=--max-old-space-size=900 npx tsc --ignoreConfig \
-  src/tools/definitions.ts --outDir lib --rootDir src --module commonjs --target es2020 --skipLibCheck
-cd .. && npm run generate:tool-definitions
-```
+**The chat assistant runs these tools, it does not reimplement them (#616).** A chat tool
+with an MCP twin is a thin wrapper in `lib/agent/tools/mcp-tools.ts` over the `runTool`
+callable, which runs the named tool through `handleTool` as the session's User, with the
+plan feature gate and without the API-key rate limit. The MCP output shape is the contract
+external integrations depend on: a wrapper passes it through, reformatted for reading
+only (`forTheModel`: Timestamps as ISO strings; a File's OCR text and a Transaction's
+import and automation bookkeeping left out of list rows, the single get keeps them), and
+filtering or computing lives only in the shared tool. Chat-only tools (queue status,
+Transaction history, navigation, Gmail search, the Partner batch context) keep their own
+reads. Every amount the chat reads is integer cents, the chat-only tools' included.
+`functions/src/selfhost/chat-mcp-tools.test.ts` holds each wrapper to its twin's output
+and fails if one reads or writes the database itself.
 
-**Note**: Chat assistant (`lib/agent/tools/`) has separate implementations for performance (direct Admin SDK reads). Writes are already unified via Cloud Function callables.
+**Who called is the server's to say (#665).** `handleTool` takes a caller
+(`functions/src/tools/caller.ts`): MCP and the REST API by default, the chat agent when
+`runTool` calls it, with the worker type the worker runtime sends beside the arguments.
+A handler that records who made a write (a Partner assignment's `ai` / `api`, a File
+Connection's origin `agent` / `mcp`) or applies the agent's connect checks reads that
+parameter, never an argument. A User reaching `runTool` gets nothing the existing
+callables do not already allow.
 
 ## Business Rules
 
@@ -371,14 +401,11 @@ cd .. && npm run generate:tool-definitions
 
 ## Test Data
 
-### Generating Test Data
-The app includes a test data toggle on the Bank Accounts page (`/sources`):
-- **Enable Test Data**: Creates "Test Bank Account" with 100 sample transactions
-- **Disable Test Data**: Removes the test source and all its transactions
-
 ### Test Data Files
 - `/lib/test-data/generate-test-transactions.ts` - Generates test source + 100 transactions
-- `/hooks/use-test-source.ts` - Hook for activating/deactivating test data
+
+The Bank Accounts page no longer has a test data toggle; its browser writer was
+deleted with the other dead writers (#625).
 
 ### Updating Test Data
 When modifying transaction-related types, also update the test data generator:
@@ -466,10 +493,12 @@ Release trigger:
 ### Model Selection by Use Case
 
 **Never inline a model id at a callsite.** Use the roles in
-`functions/src/utils/models.ts` (backend) / `types/ai-usage.ts` (frontend). Those two
-files are hand-duplicated because `functions/tsconfig.json` pins `rootDir: "src"`;
-`functions/src/utils/models.sync.test.ts` fails the build if they drift, because the
-silent failure mode is mis-billing, not a crash.
+`functions/src/utils/models.ts`, the one copy of the roles and their pricing: the
+frontend and API routes import it as `@/functions/src/utils/models` (#689), so a role
+or price cannot drift between the two sides. Keep it browser-safe (no `firebase-admin`
+or `firebase-functions`; the #688 guard checks). A model a role points at must have a
+`MODEL_PRICING` entry, and a retired id keeps its entry: an unpriced model bills at
+the Sonnet fallback (`models.test.ts`).
 
 | Use Case | Role | Model | Reason |
 |----------|------|-------|--------|
@@ -500,8 +529,9 @@ All Gemini calls use **Vertex AI** (not Google AI Studio). This provides:
 **Pattern for new Gemini functions:**
 ```typescript
 import { VertexAI } from "@google-cloud/vertexai";
+import { MODELS } from "../utils/models";
 
-const GEMINI_MODEL = "gemini-2.0-flash-lite-001";
+const GEMINI_MODEL = MODELS.geminiLite;
 const VERTEX_LOCATION = process.env.VERTEX_LOCATION || "europe-west1";
 
 function getProjectId(): string {

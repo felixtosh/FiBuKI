@@ -22,6 +22,7 @@ import {
   CompanyLookupResult,
   VatValidationResult,
 } from "@/design-system/tool-results";
+import { fileResultFromRecord } from "@/design-system/tool-results/file-result-from-record";
 import { ToolCall } from "@/types/chat";
 
 /**
@@ -160,7 +161,7 @@ export function useToolResultRenderer(options: UseToolResultRendererOptions = {}
 
       return (
         <FileListResult
-          files={files}
+          files={files.map((f) => fileResultFromRecord(f as unknown as Record<string, unknown>))}
           uiActions={actions}
           searchQuery={searchQuery}
           totalCount={totalCount}

@@ -9,7 +9,6 @@ import {
   where,
   orderBy,
   Timestamp,
-  updateDoc,
 } from "firebase/firestore";
 import { OperationsContext } from "./types";
 import { AllowedEmail } from "@/types/auth";
@@ -115,30 +114,6 @@ export async function isEmailAllowed(
   const results = await getDocs(emailQuery);
 
   return !results.empty;
-}
-
-/**
- * Mark an email as used (after successful registration)
- */
-export async function markEmailAsUsed(
-  ctx: OperationsContext,
-  email: string,
-  registeredUserId: string
-): Promise<void> {
-  const normalizedEmail = email.toLowerCase().trim();
-  const emailsRef = collection(ctx.db, "allowedEmails");
-
-  const emailQuery = query(emailsRef, where("email", "==", normalizedEmail));
-  const results = await getDocs(emailQuery);
-
-  if (results.empty) {
-    return; // Email not in allowed list (might be super admin)
-  }
-
-  await updateDoc(results.docs[0].ref, {
-    usedAt: Timestamp.now(),
-    registeredUserId,
-  });
 }
 
 /**

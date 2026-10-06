@@ -38,12 +38,13 @@ import { getSqlClient } from "./firestore-shim";
 import { getTenantId } from "./db/tenant";
 import type { ExtractionRequest } from "../extraction/extractionQueue";
 import { extractQueuedFile, recordExtractionFailure } from "../extraction/extractQueuedFile";
+import {
+  externalExtractionServiceConfigured,
+  extractionTimeoutMs,
+} from "../extraction/extractionService";
 
 /** Reclaims after which a File is marked failed rather than put back again. */
 export const MAX_RECLAIMS = 3;
-
-/** The #161 contract's default service timeout. */
-const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 
 /** Idle poll interval. A finished run wakes the worker at once. */
 const POLL_INTERVAL_MS = 2000;
@@ -56,21 +57,14 @@ function positiveNumberFromEnv(name: string): number | undefined {
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
+// The service configuration and the timeout live with the Extraction Service
+// contract (#161), so the worker and the service call agree on both.
+export { externalExtractionServiceConfigured, extractionTimeoutMs };
+
 /**
- * True when an external Extraction Service replaces the built-in Gemini
- * (#161). One local model rarely takes more than one document at a time.
+ * How many Extractions one replica runs at once. One local model rarely
+ * takes more than one document at a time.
  */
-export function externalExtractionServiceConfigured(): boolean {
-  return !!process.env.FIBUKI_EXTRACTION_SERVICE_URL;
-}
-
-/** How long one Extraction may run before its File is marked failed. */
-export function extractionTimeoutMs(): number {
-  const seconds = positiveNumberFromEnv("FIBUKI_EXTRACTION_TIMEOUT_SECONDS");
-  return seconds ? seconds * 1000 : DEFAULT_TIMEOUT_MS;
-}
-
-/** How many Extractions one replica runs at once. */
 export function extractionConcurrency(): number {
   const n = positiveNumberFromEnv("FIBUKI_EXTRACTION_CONCURRENCY");
   if (n) return Math.floor(n);
@@ -108,20 +102,27 @@ async function inTenant<T>(fn: (q: Exec) => Promise<T>): Promise<T> {
  * after this one.
  */
 export async function enqueueExtractionJob(request: ExtractionRequest): Promise<void> {
-  const params = [getTenantId(), request.fileId, request.userId, request.skipClassification];
+  const params = [
+    getTenantId(),
+    request.fileId,
+    request.userId,
+    request.skipClassification,
+    request.overwriteCorrections === true,
+  ];
   await inTenant((q) =>
     request.kind === "new"
       ? q(
-          `INSERT INTO extraction_jobs (tenant_id, file_id, user_id, skip_classification)
-           VALUES ($1, $2, $3, $4)
+          `INSERT INTO extraction_jobs (tenant_id, file_id, user_id, skip_classification, overwrite_corrections)
+           VALUES ($1, $2, $3, $4, $5)
            ON CONFLICT (tenant_id, file_id) DO NOTHING`,
           params,
         )
       : q(
-          `INSERT INTO extraction_jobs (tenant_id, file_id, user_id, skip_classification)
-           VALUES ($1, $2, $3, $4)
+          `INSERT INTO extraction_jobs (tenant_id, file_id, user_id, skip_classification, overwrite_corrections)
+           VALUES ($1, $2, $3, $4, $5)
            ON CONFLICT (tenant_id, file_id) DO UPDATE
              SET skip_classification = EXCLUDED.skip_classification,
+                 overwrite_corrections = EXCLUDED.overwrite_corrections,
                  user_id = EXCLUDED.user_id,
                  attempts = 0,
                  rerun = extraction_jobs.claimed_at IS NOT NULL`,
@@ -171,6 +172,8 @@ export interface ClaimedExtractionJob {
   fileId: string;
   userId: string;
   skipClassification: boolean;
+  /** The forced re-extraction: overwrite the File's Hand Correction (#184, #639). */
+  overwriteCorrections: boolean;
   /** A Retry arrived while the File last ran: apply its reset before extracting. */
   resetFirst: boolean;
   /** Names this claim, so a reclaimed worker cannot touch the next owner's row. */
@@ -195,7 +198,7 @@ export async function claimExtractionJob(): Promise<ClaimedExtractionJob | null>
            LIMIT 1
            FOR UPDATE OF j SKIP LOCKED
         )
-      RETURNING file_id, user_id, skip_classification, reset_on_claim`,
+      RETURNING file_id, user_id, skip_classification, overwrite_corrections, reset_on_claim`,
       [tenantId, token],
     );
     const row = res.rows[0];
@@ -214,6 +217,7 @@ export async function claimExtractionJob(): Promise<ClaimedExtractionJob | null>
       fileId: String(row.file_id),
       userId: String(row.user_id),
       skipClassification: row.skip_classification === true,
+      overwriteCorrections: row.overwrite_corrections === true,
       resetFirst: row.reset_on_claim === true,
       token,
     };
@@ -302,6 +306,7 @@ export async function runExtractionJob(
     const run = extractQueuedFile(job.fileId, {
       skipClassification: job.skipClassification,
       resetFirst: job.resetFirst,
+      overwriteCorrections: job.overwriteCorrections,
     });
     let timer: NodeJS.Timeout | undefined;
     const outcome = await Promise.race([

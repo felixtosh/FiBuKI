@@ -1,0 +1,611 @@
+/**
+ * The values of a Hand Correction to a File's extracted record (fork #147):
+ * what each correctable field and descriptive field may hold, and which ones a
+ * form save actually moved. Part of the File facts module (#638); the Fact
+ * Change that uses them is `factChange.ts`.
+ *
+ * `retry_file_extraction` re-rolls the model, which converges only when the
+ * answer is on the page. It cannot converge when the right value depends on
+ * judgement the document does not state unambiguously: a Schlussrechnung
+ * printing both the full amount and the part already invoiced, VAT that is
+ * correctly extracted and legitimately not claimable, a one-cent OCR slip
+ * inside the reconciliation tolerance. Those need a person, and until this
+ * existed a person meant retyping the value in the UI.
+ *
+ * The builder is pure so the rules below are testable without a database.
+ */
+
+import { Timestamp } from "firebase-admin/firestore";
+import { ExtractedLineItem } from "../types/extraction";
+import { reconcileLineItemsWithDocumentTotal } from "../extraction/lineItemReconciliation";
+import { enforceLineItemVat } from "../extraction/taxFacts";
+import { isAdditionalFieldKey, normalizePaymentMethod } from "../extraction/fieldVocabulary";
+import { buildCorrectionProvenance, CORRECTABLE_FIELDS } from "./provenance";
+
+/**
+ * A correction. **Omitted is not null**: a key absent here is left untouched,
+ * a key set to `null` clears the stored value. Passing only `vatPercent` must
+ * never wipe the amount.
+ */
+export interface FileExtractionCorrection {
+  /** Document total in cents. Negative is legal — a credit note. */
+  amount?: number | null;
+  /** Document VAT in cents. */
+  vatAmount?: number | null;
+  /** Document VAT rate, 0-100. Zero is a real correction, not "unset". */
+  vatPercent?: number | null;
+  /** Document date as `YYYY-MM-DD`. */
+  date?: string | null;
+  /** The itemisation, replaced wholesale. */
+  lineItems?: ExtractedLineItem[] | null;
+  /**
+   * Which way the document points (#233): `incoming` is a purchase, `outgoing`
+   * a sale, `unknown` an honest absence. Until this existed the only way to
+   * change it was to edit the user's identity data and hope the backfill
+   * picked the file up.
+   */
+  invoiceDirection?: InvoiceDirection | null;
+  /**
+   * Freiwilliges Trinkgeld in cents that the document does NOT print (#217).
+   *
+   * The printed case is settled at extraction: a rate-group block that proves
+   * the tip was inside the total has already had it stripped out by
+   * `totalWithoutPrintedTip`, so `extractedAmount` is the VAT-bearing figure
+   * and `extractedTipAmount` sits beside it. This is the opposite shape — the
+   * terminal took a tip the Beleg never mentions, so the invoice total already
+   * IS the VAT base and only the bank line is larger. Setting it here explains
+   * that gap and nothing else.
+   *
+   * **It is therefore never subtracted from `extractedAmount`.** Doing so
+   * would shrink the VAT base by the tip and under-claim the return, quietly.
+   * Zero and null both mean "no tip"; a negative one is refused.
+   */
+  tipAmount?: number | null;
+}
+
+/** Mirrors `InvoiceDirection` on the file record. */
+export type InvoiceDirection = "incoming" | "outgoing" | "unknown";
+
+const INVOICE_DIRECTIONS: InvoiceDirection[] = ["incoming", "outgoing", "unknown"];
+
+export class ExtractionCorrectionError extends Error {}
+
+/**
+ * The corrections that make the person the authority on the file's VAT.
+ *
+ * `tipAmount` is deliberately not one of them (#217). A Trinkgeld is outside
+ * the scope of VAT — 0 net, 0 VAT, never a rate group — so setting one says
+ * nothing about the rates the document prints. Listing it here would clear
+ * `extractedRateGroups`, which is exactly the evidence `totalWithoutPrintedTip`
+ * arbitrates on: recording the tip a Beleg omitted would destroy the printed
+ * block of one that did not.
+ */
+const VAT_BEARING: Array<keyof FileExtractionCorrection> = [
+  "amount",
+  "vatAmount",
+  "vatPercent",
+  "lineItems",
+];
+
+function cents(value: unknown, field: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new ExtractionCorrectionError(`${field} must be a finite number of cents`);
+  }
+  return Math.round(value);
+}
+
+/**
+ * A tip is a positive amount of money or it is nothing. A negative one is not
+ * a credit note — the tip follows the document total's sign wherever it is
+ * read — so it is refused rather than stored and quietly ignored downstream.
+ */
+function normalizeTip(value: unknown): number | null {
+  if (value === null) return null;
+  const amount = cents(value, "tipAmount");
+  if (amount < 0) {
+    throw new ExtractionCorrectionError("tipAmount must not be negative");
+  }
+  return amount === 0 ? null : amount;
+}
+
+function normalizeLineItems(lineItems: unknown, field: string): ExtractedLineItem[] {
+  if (!Array.isArray(lineItems)) {
+    throw new ExtractionCorrectionError(`${field} must be an array`);
+  }
+  return lineItems.map((raw, index) => {
+    const item = (raw ?? {}) as Partial<ExtractedLineItem>;
+    const amount = cents(item.amount, `${field}[${index}].amount`);
+    const vatPercent =
+      typeof item.vatPercent === "number" &&
+      Number.isFinite(item.vatPercent) &&
+      item.vatPercent >= 0 &&
+      item.vatPercent <= 100
+        ? item.vatPercent
+        : null;
+    const vatAmount =
+      typeof item.vatAmount === "number" && Number.isFinite(item.vatAmount)
+        ? Math.round(item.vatAmount)
+        : 0;
+    return {
+      description:
+        typeof item.description === "string" && item.description.trim()
+          ? item.description.trim()
+          : `Item ${index + 1}`,
+      vatPercent,
+      vatAmount,
+      amount,
+    };
+  });
+}
+
+function parseIsoDate(value: unknown): Timestamp {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new ExtractionCorrectionError("date must be an ISO date string, YYYY-MM-DD");
+  }
+  const [y, m, d] = value.split("-").map((part) => parseInt(part, 10));
+  const date = new Date(Date.UTC(y, m - 1, d));
+  if (
+    date.getUTCFullYear() !== y ||
+    date.getUTCMonth() !== m - 1 ||
+    date.getUTCDate() !== d
+  ) {
+    throw new ExtractionCorrectionError(`date ${value} is not a real calendar date`);
+  }
+  return Timestamp.fromDate(date);
+}
+
+export interface BuiltCorrection {
+  updates: Record<string, unknown>;
+  /** Which fields the caller actually asked to change, for the log and the reply. */
+  changed: string[];
+}
+
+/**
+ * Turn a correction into the Firestore update, or throw.
+ *
+ * Two rules that are easy to get wrong and expensive when they are:
+ *
+ * **The corrected total is never re-derived from the line items.** The case
+ * that motivated this is a Schlussrechnung whose amount is 3180.00 while its
+ * items describe the full 6360.00 scope — consolidating the amount back out of
+ * the items would silently undo the correction the person just made.
+ *
+ * **A correction makes the person the authority**, so the artefacts that would
+ * outrank them are cleared: the printed rate-group block (which VAT derivation
+ * prefers over everything else, so a surviving block would quietly ignore a
+ * corrected rate) and the fork #137 downgrade markers. The reconciliation flag
+ * is NOT cleared but re-derived against the corrected values (#203) — a
+ * repaired file whose items now agree with its total leaves the review bucket,
+ * while one whose items still contradict it stays flagged so the UVA's
+ * amount-mismatch guard can refuse it. That happens for any VAT-bearing
+ * correction; a date-only fix leaves all of it be, since it says nothing about
+ * the VAT.
+ *
+ * **Every correction stamps its own provenance** (#184), merged onto whatever
+ * `previous` already carries. That is here rather than at the call site so a
+ * correction cannot be applied by any surface without saying a human made it —
+ * which is what a re-extraction later refuses on, and what a sweep reads to
+ * build its exclusion list.
+ */
+export function buildExtractionCorrection(
+  fields: FileExtractionCorrection,
+  previous: Record<string, unknown> = {},
+  at: Timestamp = Timestamp.now()
+): BuiltCorrection {
+  const updates: Record<string, unknown> = {};
+  const changed: string[] = [];
+
+  if (fields.amount !== undefined) {
+    updates.extractedAmount = fields.amount === null ? null : cents(fields.amount, "amount");
+    changed.push("amount");
+  }
+
+  if (fields.vatAmount !== undefined) {
+    updates.extractedVatAmount = fields.vatAmount === null ? null : cents(fields.vatAmount, "vatAmount");
+    changed.push("vatAmount");
+  }
+
+  if (fields.vatPercent !== undefined) {
+    if (fields.vatPercent === null) {
+      updates.extractedVatPercent = null;
+    } else {
+      if (
+        typeof fields.vatPercent !== "number" ||
+        !Number.isFinite(fields.vatPercent) ||
+        fields.vatPercent < 0 ||
+        fields.vatPercent > 100
+      ) {
+        throw new ExtractionCorrectionError("vatPercent must be a number between 0 and 100");
+      }
+      updates.extractedVatPercent = fields.vatPercent;
+    }
+    changed.push("vatPercent");
+  }
+
+  if (fields.tipAmount !== undefined) {
+    // Stored beside the total, never taken out of it: on a document that never
+    // printed the tip the total already is the VAT base (#217). Zero stores as
+    // null so the record carries one spelling of "no tip", the one the
+    // extractor writes.
+    updates.extractedTipAmount = normalizeTip(fields.tipAmount);
+    changed.push("tipAmount");
+  }
+
+  if (fields.date !== undefined) {
+    updates.extractedDate = fields.date === null ? null : parseIsoDate(fields.date);
+    changed.push("date");
+  }
+
+  if (fields.lineItems !== undefined) {
+    // #540: a row's VAT, rate and amount must agree with each other, whatever
+    // surface posted them (the editor, an MCP tool, an agent). Measured
+    // against the total as it will be after this write, so an itemisation
+    // that is net with its VAT on top is recognised and left as it is.
+    const documentTotal =
+      fields.amount !== undefined
+        ? (updates.extractedAmount as number | null)
+        : (previous.extractedAmount as number | null | undefined);
+    if (fields.lineItems === null) {
+      updates.extractedLineItems = null;
+    } else {
+      try {
+        updates.extractedLineItems = enforceLineItemVat(
+          normalizeLineItems(fields.lineItems, "lineItems"),
+          documentTotal
+        );
+      } catch (error) {
+        if (error instanceof RangeError) {
+          throw new ExtractionCorrectionError(`lineItems: ${error.message}`);
+        }
+        throw error;
+      }
+    }
+    changed.push("lineItems");
+  }
+
+  if (fields.invoiceDirection !== undefined) {
+    // Null clears it to `unknown` rather than removing the field: the review
+    // rule reads an absent direction and an explicit unknown identically, and
+    // one stored shape is easier to query than two.
+    if (fields.invoiceDirection === null) {
+      updates.invoiceDirection = "unknown";
+    } else {
+      if (!INVOICE_DIRECTIONS.includes(fields.invoiceDirection)) {
+        throw new ExtractionCorrectionError(
+          `invoiceDirection must be one of ${INVOICE_DIRECTIONS.join(", ")}`
+        );
+      }
+      updates.invoiceDirection = fields.invoiceDirection;
+    }
+    changed.push("invoiceDirection");
+  }
+
+  if (changed.length === 0) {
+    throw new ExtractionCorrectionError(
+      "Nothing to correct — pass at least one of amount, vatAmount, vatPercent, date, " +
+        "lineItems, invoiceDirection, tipAmount"
+    );
+  }
+
+  if (VAT_BEARING.some((field) => fields[field] !== undefined)) {
+    updates.extractedRateGroups = null;
+    updates.extractedRateGroupsSource = null;
+    updates.vatSourceDowngraded = false;
+    updates.vatFieldsPreserved = false;
+
+    // #203: the old code also asserted `lineItemsUnreconciled = false` here,
+    // which defeated the UVA's amount-mismatch guard twice over — it cleared
+    // the flag the guard tests AND (above) the rate groups whose presence is
+    // the guard's other escape. A correction invalidates the OLD
+    // reconciliation; it does not establish that the items now agree with the
+    // total. So the flag is re-derived from the record as it will be after
+    // this write, through the same rules extraction used to set it. When the
+    // items still contradict the total — the classic case is an extractor
+    // that skipped a printed discount row — the file stays flagged and the
+    // UVA refuses it instead of silently summing an incomplete itemisation.
+    const effectiveItems =
+      fields.lineItems !== undefined
+        ? (updates.extractedLineItems as ExtractedLineItem[] | null)
+        : (previous.extractedLineItems as ExtractedLineItem[] | null | undefined);
+    const effectiveAmount =
+      fields.amount !== undefined
+        ? (updates.extractedAmount as number | null)
+        : (previous.extractedAmount as number | null | undefined);
+    const effectiveVatPercent =
+      fields.vatPercent !== undefined
+        ? (updates.extractedVatPercent as number | null)
+        : (previous.extractedVatPercent as number | null | undefined);
+
+    const reconciled = reconcileLineItemsWithDocumentTotal(
+      Array.isArray(effectiveItems) ? effectiveItems : [],
+      effectiveAmount ?? null,
+      null, // the printed block is cleared above — the person outranks it
+      effectiveVatPercent ?? null
+    );
+    updates.lineItemsUnreconciled = reconciled.unreconciled;
+    updates.lineItemsUnreconciledRates =
+      reconciled.unreconciledRates.length > 0 ? reconciled.unreconciledRates : null;
+  }
+
+  Object.assign(updates, buildCorrectionProvenance(previous, changed, at));
+
+  updates.updatedAt = at;
+
+  return { updates, changed };
+}
+
+/** Where each correctable field is stored on the file record. */
+const STORED_FIELD: Record<(typeof CORRECTABLE_FIELDS)[number], string> = {
+  amount: "extractedAmount",
+  vatAmount: "extractedVatAmount",
+  vatPercent: "extractedVatPercent",
+  date: "extractedDate",
+  lineItems: "extractedLineItems",
+  // Not an extracted figure and not stored under `extracted*`: the direction is
+  // a read of the document, kept on the record itself (#233).
+  invoiceDirection: "invoiceDirection",
+  tipAmount: "extractedTipAmount",
+};
+
+/**
+ * Reduce a proposed correction to the fields that actually moved (#149).
+ *
+ * The MCP tool names the fields it means, so there "present" is "corrected".
+ * The file detail panel sends the whole extracted record on every save, so
+ * there "present" says nothing — passing that straight to
+ * `buildExtractionCorrection` would stamp all five fields the first time
+ * someone opens the panel and saves without typing, and a file stamped that
+ * way is a file `retry_file_extraction` refuses to touch forever.
+ *
+ * So the comparison is here, beside the builder that stamps, rather than in
+ * the client: one copy of "did this field really change", and it is the copy
+ * that owns cents, a Timestamp date and a line-item array.
+ *
+ * **A value it cannot compare counts as moved.** Dropping an unparseable date
+ * as "unchanged" would turn the builder's refusal into a silent no-op; keeping
+ * it lets the refusal happen where the message is.
+ */
+export function selectMovedCorrections(
+  fields: FileExtractionCorrection,
+  previous: Record<string, unknown>
+): FileExtractionCorrection {
+  const moved: Record<string, unknown> = {};
+
+  for (const field of CORRECTABLE_FIELDS) {
+    const proposed = (fields as Record<string, unknown>)[field];
+    if (proposed === undefined) continue;
+    if (!matchesStored(field, proposed, previous[STORED_FIELD[field]])) {
+      moved[field] = proposed;
+    }
+  }
+
+  return moved as FileExtractionCorrection;
+}
+
+function matchesStored(
+  field: (typeof CORRECTABLE_FIELDS)[number],
+  proposed: unknown,
+  stored: unknown
+): boolean {
+  if (field === "date") return datesMatch(proposed, stored);
+  if (field === "lineItems") return lineItemsMatch(proposed, stored);
+  if (field === "invoiceDirection") return directionsMatch(proposed, stored);
+  if (field === "tipAmount") return tipsMatch(proposed, stored);
+  return numbersMatch(proposed, stored, field !== "vatPercent");
+}
+
+/**
+ * The direction has three values and two spellings of "not established": the
+ * builder stores `unknown` where a caller passed null, and records written
+ * before #233 have no field at all. All three read as the same answer here, so
+ * re-sending `unknown` for a document nobody has placed is not a correction.
+ */
+function directionsMatch(proposed: unknown, stored: unknown): boolean {
+  const settled = (value: unknown) => (isEmpty(value) || value === "unknown" ? "unknown" : value);
+  return settled(proposed) === settled(stored);
+}
+
+/**
+ * A tip has two spellings of "none" — zero and absent — and the builder stores
+ * the absent one for both (#217). Comparing them as plain numbers would read a
+ * posted 0 on a document with no tip as a correction, and the panel posts every
+ * field on every save: opening a file and saving it would freeze it against
+ * re-extraction on a tip nobody set.
+ */
+function tipsMatch(proposed: unknown, stored: unknown): boolean {
+  const settled = (value: unknown) =>
+    isEmpty(value) || value === 0 ? null : value;
+  return numbersMatch(settled(proposed), settled(stored), true);
+}
+
+/** Absent and null are the same answer: the record holds no value. */
+function isEmpty(value: unknown): boolean {
+  return value === null || value === undefined;
+}
+
+function numbersMatch(proposed: unknown, stored: unknown, asCents: boolean): boolean {
+  if (isEmpty(proposed)) return isEmpty(stored);
+  if (typeof proposed !== "number" || !Number.isFinite(proposed)) return false;
+  if (typeof stored !== "number" || !Number.isFinite(stored)) return false;
+  return asCents ? Math.round(proposed) === Math.round(stored) : proposed === stored;
+}
+
+/**
+ * A date is compared by the day it names. The stored value is a Timestamp and
+ * the proposed one a `YYYY-MM-DD` string, so anything else would compare a
+ * wrapper object against text and call every save a correction.
+ *
+ * **Both time frames count as the same day.** Before #666, `extractionCore`
+ * wrote the stored Timestamp at midnight *local*. Cloud Functions run in UTC
+ * so the two agree there, but a self-host container running in Europe/Vienna
+ * stored 23:00 UTC of the day before, and reading that back in UTC only would
+ * report the date as moved on every save of a file nobody edited — stamping a
+ * correction that was never made. New Files are written at UTC midnight; the
+ * host-zone reading stays for the ones written before, and is the one
+ * exception the stored-day guard (#673) allows. Where the two
+ * readings straddle midnight the ambiguity is unresolvable, so it is resolved
+ * towards "unchanged": a phantom correction is the expensive answer, since it
+ * is what a later re-extraction refuses on.
+ */
+function datesMatch(proposed: unknown, stored: unknown): boolean {
+  if (isEmpty(proposed)) return isEmpty(stored);
+  if (typeof proposed !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(proposed)) return false;
+
+  const storedDate = toDate(stored);
+  if (!storedDate) return false;
+
+  return storedDate.toISOString().slice(0, 10) === proposed || localDay(storedDate) === proposed;
+}
+
+/** The day a Date names in the host's own time zone, as `YYYY-MM-DD`. */
+function localDay(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function toDate(value: unknown): Date | null {
+  if (value instanceof Date) return value;
+  const candidate = value as { toDate?: () => Date; _seconds?: number } | null;
+  if (candidate && typeof candidate.toDate === "function") {
+    const date = candidate.toDate();
+    return date instanceof Date && !isNaN(date.getTime()) ? date : null;
+  }
+  if (candidate && typeof candidate._seconds === "number") {
+    return new Date(candidate._seconds * 1000);
+  }
+  return null;
+}
+
+/**
+ * Itemisations are compared position by position: the order is what the
+ * document prints, so moving two rows is a correction even when the totals are
+ * untouched. Both sides go through the same normaliser, so a stored row that
+ * predates a shape change does not read as a change on every save.
+ */
+function lineItemsMatch(proposed: unknown, stored: unknown): boolean {
+  const storedItems = Array.isArray(stored) ? stored : [];
+  if (isEmpty(proposed)) return storedItems.length === 0;
+  if (!Array.isArray(proposed)) return false;
+
+  let left: ExtractedLineItem[];
+  let right: ExtractedLineItem[];
+  try {
+    left = normalizeLineItems(proposed, "lineItems");
+    right = normalizeLineItems(storedItems, "lineItems");
+  } catch {
+    // An item the builder will refuse, or a stored row too broken to normalise.
+    // Either way this is not a match the caller can rely on.
+    return false;
+  }
+
+  if (left.length !== right.length) return false;
+
+  return left.every((item, index) => {
+    const other = right[index];
+    return (
+      item.description === other.description &&
+      item.vatPercent === other.vatPercent &&
+      item.vatAmount === other.vatAmount &&
+      item.amount === other.amount
+    );
+  });
+}
+
+// ---------------------------------------------------------------------------
+// The descriptive fields
+// ---------------------------------------------------------------------------
+
+/** An extra field the extractor kept but nothing else reads structurally. */
+export interface EditedAdditionalField {
+  /** Canonical key from the extraction vocabulary (#252); absent on a row a person added. */
+  key?: string;
+  label: string;
+  value: string;
+  rawValue?: string;
+}
+
+/**
+ * The half of a correction that is description rather than judgement: who the
+ * counterparty is, their VAT id, the address on the page, and the rows the
+ * extractor kept beside the figures. None of it is a ruling on the figures, so
+ * none of it stamps the Hand Correction record. The one exception is a row
+ * the Due Date or Debit Date is read from: the date it states is recorded.
+ */
+export interface ExtractedDetails {
+  partner?: string | null;
+  vatId?: string | null;
+  iban?: string | null;
+  address?: string | null;
+  additionalFields?: EditedAdditionalField[] | null;
+}
+
+/** Where each descriptive field is stored on the File record. */
+export const DESCRIPTIVE_FIELDS: Record<keyof ExtractedDetails, string> = {
+  partner: "extractedPartner",
+  vatId: "extractedVatId",
+  iban: "extractedIban",
+  address: "extractedAddress",
+  additionalFields: "extractedAdditionalFields",
+};
+
+/**
+ * The descriptive boxes are free text, so they are taken as text and nothing
+ * else. Blank is no value.
+ */
+export function normalizeDetailText(value: unknown, field: string): string | null {
+  if (value === null) return null;
+  if (typeof value !== "string") {
+    throw new ExtractionCorrectionError(`${field} must be a string or null`);
+  }
+  const trimmed = value.trim();
+  return trimmed === "" ? null : trimmed;
+}
+
+/**
+ * Label/value pairs, each under a key from the closed vocabulary (#252, #540).
+ *
+ * A row with a key outside the vocabulary is refused rather than dropped: the
+ * editor only offers vocabulary keys, so anything else is a stale or hostile
+ * client, and silently losing a row a person typed is worse than saying so.
+ * A row WITHOUT a key is legacy: stored before the vocabulary closed. It is
+ * carried through a save (its value may be edited) only when the stored record
+ * already holds a keyless row under the same label, so the open bag cannot be
+ * re-created by hand.
+ */
+export function normalizeAdditionalFields(
+  value: unknown,
+  stored: unknown
+): Array<Record<string, string>> | null {
+  if (value === null) return null;
+  if (!Array.isArray(value)) {
+    throw new ExtractionCorrectionError("additionalFields must be an array or null");
+  }
+  const legacyLabels = new Set(
+    (Array.isArray(stored) ? stored : [])
+      .map((raw) => (raw ?? {}) as Partial<EditedAdditionalField>)
+      .filter((field) => !field.key && typeof field.label === "string")
+      .map((field) => (field.label as string).trim())
+  );
+
+  const fields = value
+    .map((raw) => (raw ?? {}) as Partial<EditedAdditionalField>)
+    .filter((field) => typeof field.label === "string" && typeof field.value === "string")
+    .map((field) => {
+      const hasKey = typeof field.key === "string" && field.key !== "";
+      if (hasKey && !isAdditionalFieldKey(field.key)) {
+        throw new ExtractionCorrectionError(`additionalFields: unknown key "${field.key}"`);
+      }
+      const label = (field.label as string).trim();
+      const text = (field.value as string).trim();
+      return {
+        ...(hasKey ? { key: field.key as string } : {}),
+        label,
+        value: field.key === "paymentMethod" ? normalizePaymentMethod(text) : text,
+        rawValue: typeof field.rawValue === "string" ? field.rawValue.trim() : text,
+      };
+    })
+    .filter((field) => field.label && field.value)
+    .filter((field) => field.key !== undefined || legacyLabels.has(field.label));
+
+  return fields.length > 0 ? fields : null;
+}

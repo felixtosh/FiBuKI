@@ -112,14 +112,112 @@ describe("net line items on a gross document total (fork #137)", () => {
     expect(r.unreconciled).toBe(true);
   });
 
-  it("defers to a validated printed rate-group block", () => {
-    // A block is an independent reading of the document and outranks any
-    // net/gross inference we could make from the rows.
+  it("keeps a validated printed rate-group block when it grosses the rows up against it", () => {
+    // The block is an independent reading of the document: it stays the VAT
+    // truth, and it is also what proves the rows were net.
     const block = [{ rate: 20, net: 265000, vat: 53000, gross: 318000 }];
 
     const r = reconcileLineItemsWithDocumentTotal([item(265000)], 318000, block, 20);
 
     expect(r.rateGroups).toEqual(block);
-    expect(r.lineItems[0].amount).toBe(265000);
+    expect(r.unreconciled).toBe(false);
+    expect(r.lineItems).toEqual([
+      { description: "row", vatPercent: 20, vatAmount: 53000, amount: 318000 },
+    ]);
+  });
+});
+
+/**
+ * The same net rows on a document that also printed its VAT summary block.
+ * The block-less gross-up above never ran here, and the per-group check
+ * accepts a group as gross or as net plus VAT, so the rows reconciled while
+ * staying net: 39 of 262 Files on the homelab instance, all of them with a
+ * block. Figures below are those records.
+ */
+describe("net line items under a printed rate-group block", () => {
+  it("grosses up a single net row the block proves net (Google Cloud prepayment)", () => {
+    const block = [{ rate: 20, net: 2083, vat: 417, gross: 2500 }];
+
+    const r = reconcileLineItemsWithDocumentTotal([item(2083, 20, 417)], 2500, block, 20);
+
+    expect(r.unreconciled).toBe(false);
+    expect(r.rateGroups).toEqual(block);
+    expect(r.lineItems).toEqual([
+      { description: "row", vatPercent: 20, vatAmount: 417, amount: 2500 },
+    ]);
+  });
+
+  it("grosses up a 10% taxi ride", () => {
+    const block = [{ rate: 10, net: 1112, vat: 111, gross: 1223 }];
+
+    const r = reconcileLineItemsWithDocumentTotal([item(1112, 10, 111)], 1223, block, 10);
+
+    expect(r.unreconciled).toBe(false);
+    expect(r.lineItems.map((i) => i.amount)).toEqual([1223]);
+  });
+
+  it("grosses up several net rows so they sum to the printed gross exactly", () => {
+    const block = [{ rate: 20, net: 180000, vat: 36000, gross: 216000 }];
+    const rows = [item(60000, 20, 12000), item(60000, 20, 12000), item(60000, 20, 12000)];
+
+    const r = reconcileLineItemsWithDocumentTotal(rows, 216000, block, 20);
+
+    expect(r.unreconciled).toBe(false);
+    expect(r.lineItems.map((i) => i.amount)).toEqual([72000, 72000, 72000]);
+    expect(r.lineItems.reduce((s, i) => s + i.vatAmount, 0)).toBe(36000);
+  });
+
+  it("takes the VAT from the block when the rows carry none", () => {
+    const block = [{ rate: 20, net: 2083, vat: 417, gross: 2500 }];
+
+    const r = reconcileLineItemsWithDocumentTotal([item(2083)], 2500, block, 20);
+
+    expect(r.unreconciled).toBe(false);
+    expect(r.lineItems).toEqual([
+      { description: "row", vatPercent: 20, vatAmount: 417, amount: 2500 },
+    ]);
+  });
+
+  it("converts only the net group when the other group is already gross", () => {
+    const block = [
+      { rate: 10, net: 3500, vat: 350, gross: 3850 },
+      { rate: 20, net: 750, vat: 150, gross: 900 },
+    ];
+    const rows = [
+      { description: "Pasta", vatPercent: 10, vatAmount: 350, amount: 3850 },
+      { description: "Wein", vatPercent: 20, vatAmount: 150, amount: 750 },
+    ];
+
+    const r = reconcileLineItemsWithDocumentTotal(rows, 4750, block);
+
+    expect(r.unreconciled).toBe(false);
+    expect(r.lineItems.map((i) => i.amount)).toEqual([3850, 900]);
+  });
+
+  it("leaves rows that already match the block as gross untouched", () => {
+    const block = [{ rate: 20, net: 2083, vat: 417, gross: 2500 }];
+    const rows = [item(2500, 20, 417)];
+
+    const r = reconcileLineItemsWithDocumentTotal(rows, 2500, block, 20);
+
+    expect(r.unreconciled).toBe(false);
+    expect(r.lineItems).toEqual(rows);
+  });
+
+  it("does not convert an unrated row on a multi-rate block", () => {
+    // Which group the row belongs to is not on the page.
+    const block = [
+      { rate: 10, net: 3500, vat: 350, gross: 3850 },
+      { rate: 20, net: 750, vat: 150, gross: 900 },
+    ];
+    const rows = [
+      { description: "Pasta", vatPercent: 10, vatAmount: 350, amount: 3850 },
+      { description: "Wein", vatPercent: null, vatAmount: 0, amount: 750 },
+    ];
+
+    const r = reconcileLineItemsWithDocumentTotal(rows, 4750, block);
+
+    expect(r.unreconciled).toBe(true);
+    expect(r.lineItems.map((i) => i.amount)).toEqual([3850, 750]);
   });
 });

@@ -26,8 +26,7 @@ export const resetInboundDailyLimits = onSchedule(
     console.log("[resetInboundDailyLimits] Starting daily reset");
 
     // Get yesterday's date (since we're running after midnight)
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const yesterdayStr = yesterday.toISOString().split("T")[0];
 
     // Find all addresses with yesterday's date (they need to be reset)

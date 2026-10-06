@@ -27,6 +27,12 @@ export interface CollectionPolicy {
   create: Access;
   update: Access;
   delete: Access;
+  /**
+   * When set, a client update may write only these top-level fields: an
+   * update or merge-set naming any other field is refused, and so is a set
+   * that would replace the whole document.
+   */
+  updateFields?: readonly string[];
 }
 
 const ownerCrud: CollectionPolicy = { read: "owner", create: "owner", update: "owner", delete: "owner" };
@@ -39,16 +45,20 @@ export const TOP_LEVEL_POLICIES: Readonly<Record<string, CollectionPolicy>> = {
   transactions: ownerCrud,
   files: ownerCrud,
   partners: ownerCrud,
-  emailIntegrations: ownerCrud,
-  imports: ownerCrud,
   noReceiptCategories: ownerCrud,
   // File Connections are written only by their one writer on the server (#612).
   fileConnections: ownerReadOnly,
-  inboundEmailAddresses: ownerCrud,
-  agentSearchSessions: ownerCrud,
 
-  aiUsage: { read: "owner", create: "owner", update: "none", delete: "none" },
-  precisionSearchQueue: { read: "owner", create: "owner", update: "none", delete: "none" },
+  // The browser reads domain data; only the server writes it (ADR-0016). These
+  // lost their last browser writer in #625.
+  emailIntegrations: ownerReadOnly,
+  agentSearchSessions: ownerReadOnly,
+  aiUsage: ownerReadOnly,
+  precisionSearchQueue: ownerReadOnly,
+  // Their four callables are the only writers (#626).
+  inboundEmailAddresses: ownerReadOnly,
+  // Remapping an Import saves its mappings in applyImportRemap (#628).
+  imports: ownerReadOnly,
 
   invoices: ownerReadOnly,
   functionCalls: ownerReadOnly,
@@ -108,17 +118,27 @@ export const SUBTREE_DOC_POLICIES: Readonly<Record<string, CollectionPolicy>> = 
   // callables. The client only reads it: a client write could mark steps done or change where the
   // user came from.
   "settings/onboarding": { read: "authed", create: "none", update: "none", delete: "none" },
+  // The business identity: the screens read it, only its module on the server writes it
+  // (functions/src/identity, #632, ADR-0016). A client write replaced the whole document
+  // and wiped the FinanzOnline status the server keeps in it.
+  "settings/userData": { read: "authed", create: "none", update: "none", delete: "none" },
   // The lock every invoice-number claim goes through (invoicing/numberAllocator.ts). Server-only:
   // nothing on it is the client's to read or change.
   "settings/invoiceNumbering": { read: "none", create: "none", update: "none", delete: "none" },
+  // The lock that keeps a User at one active inbound email address
+  // (email-inbound/inboundAddressCallables.ts, #626). Server-only, like the one above.
+  "settings/inboundEmail": { read: "none", create: "none", update: "none", delete: "none" },
 };
 
 /** users/{uid}/<name>/... — uid must equal auth.uid, then this table. */
 export const SUBTREE_POLICIES: Readonly<Record<string, CollectionPolicy>> = {
   settings: { read: "authed", create: "authed", update: "authed", delete: "authed" },
-  notifications: { read: "authed", create: "authed", update: "authed", delete: "authed" },
+  // Created and pruned only on the server; the browser only marks one or all read
+  // (markNotificationRead / markAllNotificationsRead write readAt; ADR-0016, #711).
+  notifications: { read: "authed", create: "none", update: "authed", delete: "none", updateFields: ["readAt"] },
   chatSessions: { read: "authed", create: "authed", update: "authed", delete: "authed" },
-  reports: { read: "authed", create: "authed", update: "authed", delete: "authed" },
+  // Read by the reports screen; written only on the server (ADR-0016, #625).
+  reports: { read: "authed", create: "none", update: "none", delete: "none" },
   // The WebAuthn challenge a passkey signature is verified against. Written
   // only by generatePasskey*Options; a client that could write it could set it
   // to the challenge of an assertion it captured earlier and replay that.
@@ -135,11 +155,14 @@ export const SUBTREE_POLICIES: Readonly<Record<string, CollectionPolicy>> = {
   system: denied, // learningQueue etc. — server-only
 };
 
-/** The users/{uid} document itself: read/write when uid matches. */
+/**
+ * The users/{uid} document itself, when uid matches: read only. The browser
+ * never creates or updates it; the server does (ADR-0016, #625, #711).
+ */
 export const USER_DOC_POLICY: CollectionPolicy = {
   read: "authed",
-  create: "authed",
-  update: "authed",
+  create: "none",
+  update: "none",
   delete: "none",
 };
 

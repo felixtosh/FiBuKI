@@ -160,7 +160,10 @@ describe("no oracle on another user's File state", () => {
   async function invoke(name: string, args: unknown): Promise<string> {
     const t = tools.find((x) => x.name === name)!;
     // Generated ids and seed timestamps differ run to run; nothing else may.
-    return JSON.stringify(await t.invoke(args, CONFIG)).replace(/"(connectionId|date)":"[^"]+"/g, "");
+    // (listTransactions returns whole records since #616, seed stamps included.)
+    return JSON.stringify(await t.invoke(args, CONFIG))
+      .replace(/"(connectionId|date)":"[^"]+"/g, "")
+      .replace(/"(createdAt|updatedAt)":("[^"]*"|\{[^}]*\})/g, "");
   }
 
   async function withVictimFile(state: Record<string, unknown>, run: () => Promise<string>): Promise<string> {
@@ -192,6 +195,27 @@ describe("no oracle on another user's File state", () => {
       expect(marked).toBe(plain);
     });
   }
+
+  // #616: another user's File must read exactly like one that does not exist,
+  // or the answer confirms the id is real. Both ids are the same length, and
+  // the id is masked so only the shape and wording are compared.
+  for (const name of ["getFile", "waitForFileExtraction"]) {
+    it(`${name} / another user's File answers like a missing one`, async () => {
+      await freshAccounts();
+      const missing = "x".repeat(V.file.length);
+      const ask = async (fileId: string) => {
+        const started = Date.now();
+        const out = JSON.stringify(await tools.find((x) => x.name === name)!.invoke({ fileId, timeoutSeconds: 4 }, CONFIG));
+        return { out: out.split(fileId).join("<id>"), ms: Date.now() - started };
+      };
+      const foreign = await ask(V.file);
+      const absent = await ask(missing);
+      expect(foreign.out).toBe(absent.out);
+      expect(foreign.out).not.toMatch(/authori[sz]ed/i);
+      // Same path: neither waits out a poll the other skips.
+      expect(Math.abs(foreign.ms - absent.ms)).toBeLessThan(1500);
+    });
+  }
 });
 
 describe("updateFile: a File may only point at a usable Partner", () => {
@@ -219,6 +243,37 @@ describe("updateFile: a File may only point at a usable Partner", () => {
     it(`refuses another user's Partner (${label})`, async () => {
       await freshAccounts();
       await expect(updateFile(data)).rejects.toMatchObject({ code: "not-found" });
+      expect(await partnerOf()).toBeUndefined();
+    });
+  }
+});
+
+describe("assignPartnerToFile: the UI's door takes only a usable Partner (#627)", () => {
+  async function assign(partnerId: string, partnerType: "user" | "global"): Promise<unknown> {
+    const barrel = (await barrelPromise) as Record<string, Callable>;
+    return barrel.assignPartnerToFile.run({
+      data: { fileId: A.file, partnerId, partnerType, matchedBy: "manual", confidence: 100 },
+      auth: { uid: ATTACKER, token: {} },
+    });
+  }
+  const partnerOf = async () => (await getFirestore().doc(`files/${A.file}`).get()).data()?.partnerId;
+
+  it("accepts my own user Partner and a Global Partner", async () => {
+    await freshAccounts();
+    await getFirestore().doc("globalPartners/g-partner-1").set({ name: "Global GmbH" });
+    await assign(A.partner, "user");
+    expect(await partnerOf()).toBe(A.partner);
+    await assign("g-partner-1", "global");
+    expect(await partnerOf()).toBe("g-partner-1");
+  });
+
+  for (const [label, partnerType] of [
+    ["user", "user"],
+    ["claimed global", "global"],
+  ] as const) {
+    it(`refuses another user's Partner (${label})`, async () => {
+      await freshAccounts();
+      await expect(assign(V.partner, partnerType)).rejects.toMatchObject({ code: "not-found" });
       expect(await partnerOf()).toBeUndefined();
     });
   }

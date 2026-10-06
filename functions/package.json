@@ -22,12 +22,19 @@
     "selfhost:export": "vite-node scripts/export-firebase-dump.ts",
     "selfhost:rewrite-urls": "vite-node --config vitest.selfhost.config.ts scripts/rewrite-download-urls.ts",
     "selfhost:strip-line-item-fields": "vite-node --config vitest.selfhost.config.ts scripts/strip-line-item-fields.ts",
+    "selfhost:gross-up-net-line-items": "vite-node --config vitest.selfhost.config.ts scripts/gross-up-net-line-items.ts",
     "selfhost:decode-partner-name-entities": "vite-node --config vitest.selfhost.config.ts scripts/decode-partner-name-entities.ts",
     "selfhost:migrate-file-hash": "vite-node --config vitest.selfhost.config.ts scripts/migrate-file-hash.ts",
     "selfhost:migrate-transaction-type": "vite-node --config vitest.selfhost.config.ts scripts/migrate-transaction-type.ts",
     "selfhost:remove-local-file-hints": "vite-node --config vitest.selfhost.config.ts scripts/remove-local-file-hints.ts",
     "selfhost:collapse-file-connections": "vite-node --config vitest.selfhost.config.ts scripts/collapse-file-connections.ts",
-    "selfhost:replay": "vite-node --config vitest.selfhost.config.ts scripts/replay.ts"
+    "selfhost:replay": "vite-node --config vitest.selfhost.config.ts scripts/replay.ts",
+    "selfhost:reextract-sepa-debit-dates": "vite-node --config vitest.selfhost.config.ts scripts/reextract-sepa-debit-dates.ts",
+    "selfhost:rematch-stretched-windows": "vite-node --config vitest.selfhost.config.ts scripts/rematch-stretched-windows.ts",
+    "selfhost:repair-rescored-connections": "vite-node --config vitest.selfhost.config.ts scripts/repair-rescored-connections.ts",
+    "selfhost:repair-mail-file-sizes": "vite-node --config vitest.selfhost.config.ts scripts/repair-mail-file-sizes.ts",
+    "selfhost:repair-inbound-daily-limits": "vite-node --config vitest.selfhost.config.ts scripts/repair-inbound-daily-limits.ts",
+    "selfhost:report-swept-hand-corrected-directions": "vite-node --config vitest.selfhost.config.ts scripts/report-swept-hand-corrected-directions.ts"
   },
   "engines": {
     "node": "22"

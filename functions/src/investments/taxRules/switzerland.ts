@@ -17,11 +17,11 @@ export function calculateYearEndHoldings(
   trades: InvestmentTrade[],
   year: number
 ): YearEndHolding[] {
-  const yearEnd = new Date(year, 11, 31, 23, 59, 59);
+  const nextYear = new Date(Date.UTC(year + 1, 0, 1));
 
   // Only consider trades up to year end
   const relevantTrades = trades.filter(
-    (t) => t.date.toDate() <= yearEnd
+    (t) => t.date.toDate() < nextYear
   );
 
   // Aggregate holdings per ticker

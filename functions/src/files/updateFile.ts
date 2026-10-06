@@ -13,10 +13,15 @@
 import { FieldValue } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { cancelPartnerWorkersForFile } from "../utils/cancelWorkers";
-import { classifyFileRecord, documentTypeFields } from "../documents/adapter";
-import { computeDirectionReviewFields } from "../documents/syncDirectionReview";
-import { syncDocumentationStateForTransactions } from "../documents/syncDocumentationState";
-import { buildCorrectionProvenance } from "./extractionProvenanceOps";
+import { applyFactChange } from "../fileFacts/applyFactChange";
+import { DESCRIPTIVE_FIELDS } from "../fileFacts/handCorrection";
+
+/** The descriptive fields this callable takes by stored name, keyed back to the module's names. */
+const DETAIL_KEY_BY_STORED_FIELD: Record<string, string> = Object.fromEntries(
+  Object.entries(DESCRIPTIVE_FIELDS)
+    .filter(([key]) => key !== "additionalFields")
+    .map(([key, stored]) => [stored, key])
+);
 
 export interface UpdateFileRequest {
   fileId: string;
@@ -27,7 +32,7 @@ export interface UpdateFileRequest {
     // Partner assignment
     partnerId?: string | null;
     partnerType?: "user" | "global" | null;
-    partnerMatchedBy?: "manual" | "suggestion" | "auto" | null;
+    partnerMatchedBy?: "manual" | "suggestion" | "auto" | "ai" | null;
     partnerMatchConfidence?: number | null;
     // Invoice status
     isNotInvoice?: boolean;
@@ -113,17 +118,6 @@ export async function updateFileInternal(
     throw new HttpsError("permission-denied", "Access denied");
   }
 
-  // Cancel running partner automation when user manually assigns or accepts suggestion
-  const isManualPartnerAssignment =
-    data.partnerId &&
-    (data.partnerMatchedBy === "manual" || data.partnerMatchedBy === "suggestion");
-
-  if (isManualPartnerAssignment) {
-    cancelPartnerWorkersForFile(ctx.userId, fileId).catch((err) => {
-      console.error("[updateFile] Failed to cancel partner workers:", err);
-    });
-  }
-
   // Refusing loudly beats stripping silently: a silent strip is the same
   // "correction that looks like it worked" this rule exists to end. The
   // figure fields get the specific message, since they have a correct door.
@@ -174,55 +168,57 @@ export async function updateFileInternal(
     }
   }
 
-  // Build update object, filtering undefined
+  // Cancel running partner automation when user manually assigns or accepts
+  // a suggestion. Only once the call has passed every check above: a refused
+  // call (another user's Partner, an unknown field) leaves the workers alone.
+  const isManualPartnerAssignment =
+    data.partnerId &&
+    (data.partnerMatchedBy === "manual" || data.partnerMatchedBy === "suggestion");
+
+  if (isManualPartnerAssignment) {
+    cancelPartnerWorkersForFile(ctx.userId, fileId).catch((err) => {
+      console.error("[updateFile] Failed to cancel partner workers:", err);
+    });
+  }
+
+  // The direction and the descriptive extracted fields are a File's extracted
+  // facts: setting them is a Hand Correction from the UI, which the File facts
+  // module decides and its applier writes (#638), the same as the detail
+  // panel's save. The § 11 classification, the direction review, the Hand
+  // Correction record a re-extraction refuses on (#233, #184) and the
+  // re-score all come with it. Everything else here is metadata.
+  const correction: Record<string, unknown> = {};
+  const details: Record<string, unknown> = {};
   const updateData: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(data)) {
     if (value === undefined) continue;
-    updateData[key] = value;
+    if (key === "invoiceDirection") correction[key] = value;
+    else if (DETAIL_KEY_BY_STORED_FIELD[key]) details[DETAIL_KEY_BY_STORED_FIELD[key]] = value;
+    else updateData[key] = value;
   }
 
-  // #233: the direction is a read of the document, and until now setting it
-  // through this callable left everything downstream stale — the § 11
-  // classification (which asks whether the user issued the document), the
-  // direction review flags, and the provenance a re-extraction reads before
-  // it overwrites a person's work.
-  if (data.invoiceDirection !== undefined) {
-    // Null stores `unknown` rather than removing the field: the review rule
-    // reads an absent direction and an explicit unknown identically.
-    updateData.invoiceDirection = data.invoiceDirection ?? "unknown";
-
-    // #184: a hand-set direction is a correction like any other, so a later
-    // re-extraction has to refuse the file rather than quietly undo it.
-    Object.assign(
-      updateData,
-      buildCorrectionProvenance(fileSnap.data(), ["invoiceDirection"])
-    );
-
-    const next = { ...fileSnap.data()!, ...updateData };
-    Object.assign(updateData, documentTypeFields(classifyFileRecord(next)));
-    Object.assign(updateData, await computeDirectionReviewFields(ctx.db, next));
+  let factFields: string[] = [];
+  if (Object.keys(correction).length > 0 || Object.keys(details).length > 0) {
+    const result = await applyFactChange(ctx.db, {
+      fileId,
+      userId: ctx.userId,
+      change: { origin: "ui-correction", correction, details },
+    });
+    if (result.refused) {
+      throw new HttpsError(result.code === "NOT_FOUND" ? "not-found" : "invalid-argument", result.message);
+    }
+    factFields = Object.keys(result.update);
   }
 
-  updateData.updatedAt = FieldValue.serverTimestamp();
-
-  await fileRef.update(updateData);
-
-  // A file's classification changing is invisible to onTransactionUpdate —
-  // nothing on the transaction document moved — so the propagation happens
-  // here, through the same derivation the trigger uses (#104).
-  const connectedTransactionIds = (fileSnap.data()?.transactionIds as string[] | undefined) ?? [];
-  if (
-    updateData.documentType !== undefined &&
-    updateData.documentType !== fileSnap.data()?.documentType &&
-    connectedTransactionIds.length > 0
-  ) {
-    await syncDocumentationStateForTransactions(ctx.db, connectedTransactionIds);
+  if (Object.keys(updateData).length > 0) {
+    updateData.updatedAt = FieldValue.serverTimestamp();
+    await fileRef.update(updateData);
   }
 
   console.log(`[updateFile] Updated file ${fileId}`, {
     userId: ctx.userId,
-    fields: Object.keys(updateData),
+    fields: [...Object.keys(updateData), ...factFields],
   });
 
   return { success: true };

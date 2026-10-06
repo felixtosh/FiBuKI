@@ -50,8 +50,8 @@ export async function readLinkedTransactions(
 /**
  * Compute the flags for one already-loaded file record.
  *
- * Exported so the extraction path can fold them into the write it is already
- * making, instead of writing the file twice.
+ * Extraction no longer calls this: the File facts module derives the same
+ * flags inside the write it returns (#639).
  */
 export async function computeDirectionReviewFields(
   db: Firestore,

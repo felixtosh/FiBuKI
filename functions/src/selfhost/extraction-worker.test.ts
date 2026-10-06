@@ -28,13 +28,16 @@ const fake = vi.hoisted(() => ({
   gate: null as Promise<void> | null,
   /** When set, a run with this fileId throws it. */
   failWith: new Map<string, Error>(),
+  /** The options each run was handed, by fileId. */
+  options: new Map<string, Record<string, unknown>>(),
 }));
 
 vi.mock("../extraction/extractionCore", async () => {
   const { getFirestore: db } = await import("./firestore-shim");
   return {
-    runExtraction: async (fileId: string) => {
+    runExtraction: async (fileId: string, _fileData: unknown, options: Record<string, unknown>) => {
       fake.started.push(fileId);
+      fake.options.set(fileId, options);
       fake.running++;
       fake.maxRunning = Math.max(fake.maxRunning, fake.running);
       try {
@@ -107,7 +110,7 @@ async function file(fileId: string): Promise<Record<string, unknown>> {
 async function jobs(): Promise<Record<string, unknown>[]> {
   return (
     await __rawSqlForTest(
-      `SELECT file_id, user_id, skip_classification, claimed_at, attempts, rerun
+      `SELECT file_id, user_id, skip_classification, overwrite_corrections, claimed_at, attempts, rerun
          FROM extraction_jobs ORDER BY created_at, file_id`,
     )
   ).rows;
@@ -134,6 +137,7 @@ beforeEach(async () => {
   fake.maxRunning = 0;
   fake.gate = null;
   fake.failWith.clear();
+  fake.options.clear();
 });
 
 describe("leaving the trigger queue", () => {
@@ -301,6 +305,152 @@ describe("lifting a not-an-invoice mark", () => {
     await markFileAsCopy(db as never, ALICE, { fileId: "dup", originalFileId: "orig" }, "user");
     await drainTriggers();
     expect(await jobs()).toHaveLength(0);
+  });
+});
+
+describe("a File with a Hand Correction, by every queuing path (#639)", () => {
+  /** A File a person corrected by hand, its facts as they left them. */
+  const corrected = (extra: Record<string, unknown> = {}) => ({
+    userId: ALICE,
+    fileName: "corrected.pdf",
+    storagePath: "uploads/corrected.pdf",
+    extractedAmount: 9900,
+    extractionCorrectedFields: { amount: Timestamp.now() },
+    extractionCorrectedAt: Timestamp.now(),
+    transactionIds: [],
+    ...extra,
+  });
+
+  it("the worker refuses a waiting Extraction and marks the File complete, its facts untouched", async () => {
+    // The correction landed while the upload's job waited.
+    await upload("w", ALICE, corrected({ extractionComplete: false }));
+    await drainTriggers();
+    expect(await jobs()).toHaveLength(1);
+
+    expect(await drainExtractionQueue()).toBe(1);
+    expect(fake.started).toEqual([]);
+    expect(await jobs()).toHaveLength(0);
+    expect(await file("w")).toMatchObject({ extractionComplete: true, extractionError: null, extractedAmount: 9900 });
+  });
+
+  it("undelete queues it and the worker refuses it", async () => {
+    await db.collection("files").doc("u").set(corrected({ extractionComplete: false, deletedAt: Timestamp.now() }));
+    await drainTriggers();
+    expect(await jobs()).toHaveLength(0);
+
+    await db.collection("files").doc("u").update({ deletedAt: null });
+    await drainTriggers();
+    expect(await jobs()).toHaveLength(1);
+
+    await drainExtractionQueue();
+    expect(fake.started).toEqual([]);
+    expect(await file("u")).toMatchObject({ extractionComplete: true, extractedAmount: 9900 });
+  });
+
+  it("the boot resweep queues it and the worker refuses it", async () => {
+    await db.collection("files").doc("r").set(corrected({ extractionComplete: false }));
+    await drainTriggers();
+    await __rawSqlForTest(`DELETE FROM extraction_jobs`);
+
+    expect(await resweepPendingExtractions(() => {})).toBe(1);
+    await drainExtractionQueue();
+    expect(fake.started).toEqual([]);
+    expect(await file("r")).toMatchObject({ extractionComplete: true, extractedAmount: 9900 });
+  });
+
+  it("a Retry is refused before anything is queued, unless it overwrites", async () => {
+    await db.collection("files").doc("t").set(corrected({ extractionComplete: true }));
+    await drainTriggers();
+
+    await expect(
+      retryExtractionForFile(db as never, { fileId: "t", userId: ALICE, force: true })
+    ).rejects.toMatchObject({ code: "HAND_CORRECTED" });
+    expect(await jobs()).toHaveLength(0);
+
+    await retryExtractionForFile(db as never, {
+      fileId: "t",
+      userId: ALICE,
+      force: true,
+      overwriteCorrections: true,
+    });
+    expect(await jobs()).toMatchObject([{ file_id: "t", overwrite_corrections: true }]);
+    await drainExtractionQueue();
+    // The overwrite reached the run, which is what lets the module write.
+    expect(fake.options.get("t")).toMatchObject({ overwriteCorrections: true });
+  });
+
+  it("a later Retry without the overwrite takes it back from the waiting job", async () => {
+    await upload("o", ALICE, { extractionComplete: false });
+    await drainTriggers();
+    await retryExtractionForFile(db as never, {
+      fileId: "o",
+      userId: ALICE,
+      force: true,
+      overwriteCorrections: true,
+    });
+    expect(await jobs()).toMatchObject([{ file_id: "o", overwrite_corrections: true }]);
+
+    await retryExtractionForFile(db as never, { fileId: "o", userId: ALICE, force: true });
+    expect(await jobs()).toMatchObject([{ file_id: "o", overwrite_corrections: false }]);
+    // An upload's own request never overwrites.
+    await enqueueExtractionJob({ fileId: "o", userId: ALICE, skipClassification: false, kind: "new" });
+    expect(await jobs()).toMatchObject([{ file_id: "o", overwrite_corrections: false }]);
+  });
+
+  it("un-marking Not Invoice is refused, by the MCP tool and the callable, and queues nothing", async () => {
+    await db.collection("files").doc("n").set(
+      corrected({
+        isNotInvoice: true,
+        notInvoiceReason: "Marked by user",
+        extractionComplete: true,
+        extractedAmount: null,
+      })
+    );
+    await drainTriggers();
+
+    await expect(unmarkFileAsNotInvoice(ALICE, { fileId: "n" })).rejects.toThrow(
+      "hand corrections a re-extraction would discard (amount)"
+    );
+    await expect(
+      (unmarkFileAsNotInvoiceCallable as unknown as { run: (r: unknown) => Promise<unknown> }).run({
+        data: { fileId: "n" },
+        auth: { uid: ALICE, token: {} },
+      })
+    ).rejects.toMatchObject({
+      code: "failed-precondition",
+      message: expect.stringContaining("overwriteCorrections"),
+      // Structured, so the UI asks with the fields named (#639).
+      details: { code: "HAND_CORRECTED", fields: ["amount"] },
+    });
+
+    await drainTriggers();
+    expect(await jobs()).toHaveLength(0);
+    expect(await file("n")).toMatchObject({ isNotInvoice: true, extractionComplete: true });
+  });
+
+  it("marking a hidden hand-corrected re-send as a Copy is refused, since it would un-mark it", async () => {
+    await db.collection("files").doc("orig").set({
+      userId: ALICE,
+      fileName: "orig.pdf",
+      extractionComplete: true,
+      transactionIds: [],
+    });
+    await db.collection("files").doc("hidden").set(
+      corrected({ isNotInvoice: true, extractionComplete: true, extractedAmount: null })
+    );
+    await drainTriggers();
+
+    await expect(
+      markFileAsCopy(db as never, ALICE, { fileId: "hidden", originalFileId: "orig" }, "user")
+    ).rejects.toMatchObject({
+      code: "failed-precondition",
+      message: expect.stringContaining("HAND_CORRECTED"),
+      details: { code: "HAND_CORRECTED", fields: ["amount"] },
+    });
+    await drainTriggers();
+    expect(await jobs()).toHaveLength(0);
+    expect((await file("hidden")).copyOfFileId).toBeUndefined();
+    expect((await file("hidden")).isNotInvoice).toBe(true);
   });
 });
 

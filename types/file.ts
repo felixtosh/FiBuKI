@@ -183,6 +183,16 @@ export interface SplitSegment {
   total: number | null;
 }
 
+/** One instalment a document prints (#615): its amount, due day and printed wording. */
+export interface ExtractedInstalment {
+  /** Cents, as printed. */
+  amount: number;
+  /** The day it is due, UTC midnight of that day; null when the row prints none. */
+  dueDate: Timestamp | null;
+  /** The printed wording ("Anzahlung", "Rate 1/3"), or null. */
+  label: string | null;
+}
+
 export interface TaxFile {
   id: string;
 
@@ -309,6 +319,16 @@ export interface TaxFile {
   extractedDueDate?: Timestamp | null;
   /** The Debit Date (Einzugsdatum) a SEPA direct-debit invoice states (#136). */
   extractedDebitDate?: Timestamp | null;
+
+  /**
+   * The instalments the document prints (#615, ADR-0013): a deposit, part
+   * payments or a schedule of due dates with amounts, each due date the
+   * stored day. A payment of exactly one of them may connect itself; the
+   * matcher scores a first payment against the nearest one. null when the
+   * document prints none (a single due date of the full amount is none);
+   * absent on Files extracted before the field existed.
+   */
+  extractedInstalments?: ExtractedInstalment[] | null;
 
   /** AI-extracted amount in cents */
   extractedAmount?: number | null;
@@ -743,6 +763,19 @@ export interface TaxFile {
   extractionError?: string | null;
 
   /**
+   * Which Extraction Service produced the Extraction (#161): the built-in
+   * Gemini or the deployment's external one. Absent on Files extracted
+   * before #161, which read as Gemini.
+   */
+  extractionProvider?: "gemini" | "external";
+
+  /** The service's own name and version; for Gemini, "gemini" and the model id (#161). */
+  extractionService?: { name: string; version: string };
+
+  /** The Extraction Service contract version the Extraction was made under (#161). */
+  extractionContractVersion?: string;
+
+  /**
    * When an extraction worker picked this File up (#603). Until then an
    * incomplete Extraction is only queued; after it, it is being analyzed.
    * Cleared when a Retry queues the File again.
@@ -980,9 +1013,12 @@ export interface FileConnection {
    * [ADR-0008](../docs/adr/0008-remainder-auto-connect-is-same-day-only.md).
    * `paired` (#571): the File followed the other File of its Receipt Link
    * onto the Transaction, past the Coverage gate (ADR-0012 rule 6).
+   * `instalment` (#615): one payment of several of the File, its amount a
+   * printed instalment or the exact close of the File's Outstanding amount —
+   * see [ADR-0013](../docs/adr/0013-an-instalment-auto-connects-only-on-printed-evidence.md).
    * Absent on every other Connection, including a full-amount auto-connect.
    */
-  autoConnectReason?: "remainder_same_day" | "paired";
+  autoConnectReason?: "remainder_same_day" | "paired" | "instalment";
 
   /** Score breakdown by factor (amount, date, partner, iban, reference, hint) */
   scoreBreakdown?: {
@@ -1182,6 +1218,11 @@ export interface ExtractedFieldLocation {
 export interface ExtractedQrCode {
   format: "rksv" | "epc" | "swissQr" | "url" | "unknown";
   payload: string;
+  /**
+   * How the payload was decoded (#161): by a barcode decoder, or transcribed
+   * by a model. Absent on codes stored before the field existed: "model".
+   */
+  decodedBy?: "barcode" | "model";
   cashRegisterId?: string;
   receiptNumber?: string;
   date?: string;
@@ -1203,7 +1244,7 @@ export interface ExtractedQrCode {
 
 export interface ExtractedAdditionalField {
   /**
-   * Canonical key from the extraction vocabulary (types/extraction-fields.ts) — "invoiceNumber",
+   * Canonical key from the extraction vocabulary (functions/src/extraction/fieldVocabulary.ts) — "invoiceNumber",
    * "customerNumber", "dueDate", "paymentTerms", "orderNumber",
    * "deliveryNoteNumber", "referenceNumber", "poNumber".
    */
