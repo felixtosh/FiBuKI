@@ -100,7 +100,11 @@ the cold start.
    `compare.mjs`). Report per File: connection kept, added, removed or changed; Partner
    kept or changed; extracted fields Stefan corrected; per Transaction: Partner and
    No-document Category kept or changed; UVA figures before and after. Join each change
-   with its line from `q3-notes.md`.
+   with its line from `q3-notes.md`. A change between the snapshots is not always
+   Stefan's: accepting a suggestion teaches a Partner, and automation may then connect
+   or categorise other lines on its own. Split the changes by who made them (each
+   Transaction's automation history, and the Connection Origin where it is readable), and
+   count automation's own follow-up moves as automation, not as corrections.
 5. **Findings to issues (Claude, then Stefan).** Group the changes by cause. Check each
    group against #719–#722 and the open tracker. Draft every body to acceptance criteria,
    show the drafts to Stefan, then file. A rule question opens a grilling issue with
