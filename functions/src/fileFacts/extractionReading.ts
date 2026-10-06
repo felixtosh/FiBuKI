@@ -26,9 +26,7 @@ import type { ParsedQrCode } from "../extraction/qrCodes";
 import type { InvoiceDirection } from "../utils/identity-matcher";
 import type { RecipientIdentity } from "../matching/recipientIdentity";
 import { applyVatDowngradeGuard } from "../extraction/vatSourceGuard";
-import { dueDateFromAdditionalFields } from "../matching/dueDate";
-import { debitDateFromAdditionalFields } from "../matching/debitDate";
-import { toDateSafe } from "../utils/toDateSafe";
+import { derivePaymentDates } from "./paymentDates";
 
 /**
  * The document's facts as one Extraction read them, after its own
@@ -249,14 +247,7 @@ export function extractionFields(
   // File is left with, against the issue date it is left with. A reading with
   // no such row clears the stored date (#639), so a date from an earlier
   // reading does not linger.
-  const after = { ...record, ...update };
-  const issueDate = toDateSafe(after.extractedDate);
-  update.extractedDueDate = asStoredDate(
-    dueDateFromAdditionalFields(after.extractedAdditionalFields, issueDate)
-  );
-  update.extractedDebitDate = asStoredDate(
-    debitDateFromAdditionalFields(after.extractedAdditionalFields, issueDate)
-  );
+  Object.assign(update, derivePaymentDates({ ...record, ...update }));
 
   // Fork #137: a weaker reading never overwrites a stronger record's VAT.
   applyVatDowngradeGuard(record, update);
@@ -293,8 +284,4 @@ function storedInstalments(
     dueDate: row.dueDate ? storedIssueDate(row.dueDate) : null,
     label: row.label ?? null,
   }));
-}
-
-function asStoredDate(date: Date | null): Timestamp | null {
-  return date ? Timestamp.fromDate(date) : null;
 }
