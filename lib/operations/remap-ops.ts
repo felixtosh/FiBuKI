@@ -3,8 +3,6 @@ import {
   query,
   where,
   getDocs,
-  doc,
-  updateDoc,
 } from "firebase/firestore";
 import { Transaction } from "@/types/transaction";
 import {
@@ -410,7 +408,7 @@ export async function generateRemapPreview(
 }
 
 /**
- * Apply remapping to existing transactions.
+ * Apply remapping to existing transactions and save the new mappings on the import.
  * Preserves user-provided data (partners, files, descriptions, categories).
  * Updates parsed fields (date, amount, name, partner text, reference, partnerIban).
  */
@@ -482,34 +480,22 @@ export async function applyRemapping(
     }
   }
 
+  // Every chunk carries the mappings, which the server saves on the import (#628); at least one
+  // call goes out, so the mappings are saved even when no row parsed under them.
   let updated = 0;
-  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+  for (let i = 0; i === 0 || i < rows.length; i += BATCH_SIZE) {
     const chunk = rows.slice(i, i + BATCH_SIZE);
     const result = await callFunction<
-      { importJobId: string; sourceId: string; rows: typeof chunk },
+      { importJobId: string; sourceId: string; fieldMappings: FieldMapping[]; rows: typeof chunk },
       { updated: number; skipped: number }
-    >("applyImportRemap", { importJobId, sourceId, rows: chunk });
+    >("applyImportRemap", { importJobId, sourceId, fieldMappings: newMappings, rows: chunk });
     updated += result.updated;
     skipped += result.skipped;
 
     if (onProgress) {
-      onProgress(50 + Math.round((Math.min(i + chunk.length, rows.length) / rows.length) * 50));
+      onProgress(50 + Math.round((Math.min(i + chunk.length, rows.length) / Math.max(rows.length, 1)) * 50));
     }
   }
 
   return { updated, skipped, errors };
-}
-
-/**
- * Update the import record with new mappings after remapping
- */
-export async function updateImportMappings(
-  ctx: OperationsContext,
-  importId: string,
-  newMappings: FieldMapping[]
-): Promise<void> {
-  const docRef = doc(ctx.db, "imports", importId);
-  await updateDoc(docRef, {
-    fieldMappings: newMappings,
-  });
 }

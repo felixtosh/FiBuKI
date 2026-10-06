@@ -29,6 +29,7 @@ const LOCKED_TOP_LEVEL = [
   "aiUsage",
   "precisionSearchQueue",
   "inboundEmailAddresses",
+  "imports",
 ] as const;
 
 describe("the policy", () => {
@@ -75,6 +76,7 @@ describe("the data plane enforces it", () => {
     ["aiUsage/au-1", { userId: USER, function: "chat", inputTokens: 1 }],
     ["precisionSearchQueue/ps-1", { userId: USER, status: "pending" }],
     ["inboundEmailAddresses/ia-1", { userId: USER, email: "invoices-x@fibuki.com", isActive: true, dailyLimit: 100, todayCount: 0 }],
+    ["imports/im-1", { userId: USER, sourceId: "s-1", status: "completed", fieldMappings: [] }],
     [`users/${USER}/reports/r-1`, { status: "draft" }],
     [`users/${USER}/settings/userData`, { personalEntity: { name: "Max Muster" }, finanzonline: { isConfigured: true } }],
     [`users/${USER}`, { email: "me@example.test" }],

@@ -5,19 +5,11 @@
 
 import { Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
-
-interface FieldMapping {
-  csvColumn: string;
-  targetField: string | null;
-  confidence: number;
-  userConfirmed: boolean;
-  keepAsMetadata: boolean;
-  format?: string | null;
-}
+import { validateFieldMappings, type StoredFieldMapping } from "./fieldMappings";
 
 interface UpdateDraftMappingsRequest {
   importId: string;
-  fieldMappings: FieldMapping[];
+  fieldMappings: StoredFieldMapping[];
 }
 
 interface UpdateDraftMappingsResponse {
@@ -30,14 +22,15 @@ export const updateDraftMappingsCallable = createCallable<
 >(
   { name: "updateDraftMappings" },
   async (ctx, request) => {
-    const { importId, fieldMappings } = request;
+    const { importId } = request;
 
-    if (!importId || !fieldMappings) {
+    if (!importId || !request.fieldMappings) {
       throw new HttpsError(
         "invalid-argument",
         "importId and fieldMappings are required"
       );
     }
+    const fieldMappings = validateFieldMappings(request.fieldMappings);
 
     // Get the import record
     const importRef = ctx.db.collection("imports").doc(importId);

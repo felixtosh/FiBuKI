@@ -4,11 +4,18 @@
  * The browser parses the CSV rows with the user's new mapping (the parsers and the mapping UI live
  * there) and sends the parsed values; everything that must not drift lives here: the ownership
  * checks, the dedupe hash (imports/dedupe.ts, the one copy) and the write.
+ *
+ * The same call saves the new column mappings on the Import (#628): the browser never writes the
+ * Imports table. The client sends its rows in chunks with the mappings on each; the last batch of
+ * each call commits them with its Transactions, and every chunk writes the same values, so a
+ * repeated chunk changes nothing. Draft Imports keep their mappings through
+ * updateDraftMappings, the import wizard's callable.
  */
 
 import { Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { computeDedupeHash } from "./dedupe";
+import { validateFieldMappings, type StoredFieldMapping } from "./fieldMappings";
 
 export interface RemapRow {
   transactionId: string;
@@ -26,6 +33,8 @@ export interface RemapRow {
 interface ApplyImportRemapRequest {
   importJobId: string;
   sourceId: string;
+  /** The mappings the rows were parsed with; saved on the Import. */
+  fieldMappings: StoredFieldMapping[];
   rows: RemapRow[];
 }
 
@@ -59,6 +68,7 @@ export const applyImportRemapCallable = createCallable<ApplyImportRemapRequest, 
     if (!Array.isArray(rows)) throw new HttpsError("invalid-argument", "rows is required");
     if (rows.length > MAX_ROWS) throw new HttpsError("invalid-argument", `Cannot remap more than ${MAX_ROWS} rows at once`);
     rows.forEach(validateRow);
+    const fieldMappings = validateFieldMappings(request.fieldMappings);
 
     const sourceSnap = await ctx.db.collection("sources").doc(sourceId).get();
     if (!sourceSnap.exists) throw new HttpsError("not-found", "Source not found");
@@ -69,10 +79,21 @@ export const applyImportRemapCallable = createCallable<ApplyImportRemapRequest, 
     const sourceIdentifier = (source.iban as string | undefined) || sourceId;
     const currency = (source.currency as string | undefined) ?? "EUR";
 
+    const importRef = ctx.db.collection("imports").doc(importJobId);
+    const importSnap = await importRef.get();
+    if (!importSnap.exists) throw new HttpsError("not-found", "Import not found");
+    const importRecord = importSnap.data()!;
+    if (importRecord.userId !== ctx.userId) throw new HttpsError("permission-denied", "Import access denied");
+    if (importRecord.sourceId !== sourceId) throw new HttpsError("invalid-argument", "Import is not from this bank account");
+    if (importRecord.status === "draft") {
+      throw new HttpsError("failed-precondition", "Cannot remap a draft import; the import wizard saves its mappings");
+    }
+
     let updated = 0;
     let skipped = 0;
 
-    for (let i = 0; i < rows.length; i += CHUNK) {
+    // At least one pass, so a call with no rows still saves the mappings.
+    for (let i = 0; i === 0 || i < rows.length; i += CHUNK) {
       const chunk = rows.slice(i, i + CHUNK);
       const refs = chunk.map((row) => ctx.db.collection("transactions").doc(row.transactionId));
       const snaps = await Promise.all(refs.map((ref) => ref.get()));
@@ -105,7 +126,9 @@ export const applyImportRemapCallable = createCallable<ApplyImportRemapRequest, 
         inBatch += 1;
       });
 
-      if (inBatch > 0) await batch.commit();
+      const last = i + CHUNK >= rows.length;
+      if (last) batch.update(importRef, { fieldMappings, updatedAt: Timestamp.now() });
+      if (inBatch > 0 || last) await batch.commit();
       updated += inBatch;
     }
 
