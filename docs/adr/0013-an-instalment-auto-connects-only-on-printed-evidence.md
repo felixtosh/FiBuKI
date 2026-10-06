@@ -74,7 +74,28 @@ claimed fraction capped so a File's instalments never claim more than the whole 
   connected-payments summary Coverage uses, so the Receipt Link's "a pair counts once"
   holds here too.
 - Auto-connects made under rule 4 carry their own reason, `instalment`, beside
-  `remainder_same_day` and `paired`, so they are findable as a class.
+  `remainder_same_day` and `paired`, so they are findable as a class, whichever surface
+  makes them (the upload trigger, Partner matching, find-receipt).
+- A middle instalment is no mismatch against what is left. Once a payment is connected,
+  the paid instalments are the earliest printed rows whose amounts add up to what is paid
+  (within 1 EUR); the others are unpaid. A further payment is judged against the
+  Outstanding amount or the nearest unpaid printed instalment, whichever fits better, and
+  rule 4's "equals a printed instalment" means the one it was judged against. When no rows
+  add up to what is paid, no printed row is known to be unpaid, and only the Outstanding
+  amount counts.
+- A later instalment is paid months after the invoice, on the day the schedule names. So a
+  payment judged as a printed instalment, or closing the Outstanding amount of a File that
+  prints instalments, has its date scored against that instalment's printed due date, and
+  the File is matched within the usual window around each printed due date too. A File
+  printing no instalments keeps its own dates and window. A printed due date more than a
+  month before the File's date, or more than a year after it, is taken for a misread and
+  counts for neither.
+- Equal instalments that qualify in one run are no rivals when each is dated against a
+  different printed due date: each connects, as long as together with what is paid they
+  do not exceed the File's total (else none does). Only payments dated against the same
+  due date fall under the tie rule: the nearest wins, an exact tie connects nothing. Every
+  surface that auto-connects (the upload trigger, Partner matching, find-receipt) applies
+  the same judgement.
 - The File detail panel shows the Outstanding amount, and an overpayment beside "paid in
   full": Outstanding never goes below zero, but what the payments came to beyond the File
   stays visible.
