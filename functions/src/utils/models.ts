@@ -1,10 +1,10 @@
 /**
- * Centralized AI model registry for Cloud Functions.
+ * The AI model registry: model roles and their pricing, the one copy (#689).
  *
- * IMPORTANT: This file is mirrored at `/types/ai-usage.ts` for frontend/API-route
- * consumption. `functions/tsconfig.json` has `rootDir: "src"`, so functions cannot
- * import from `../../types/`. Keep both files in sync when adding/changing models
- * or pricing.
+ * Browser-safe and import-free, so the frontend and API routes import it as
+ * `@/functions/src/utils/models` and bill against the same table the backend
+ * does. Keep it free of `firebase-admin` / `firebase-functions`; the #688 guard
+ * fails if browser code reaches either.
  *
  * To swap a model (e.g. when a Vertex AI model is retired), change the value here
  * in one place. Do NOT inline model IDs at callsites.
@@ -79,5 +79,18 @@ export const MODEL_PRICING: Record<string, { input: number; output: number }> = 
   "gemini-2.5-flash-preview-05-20": { input: 0.15, output: 0.6 },
 };
 
-/** Fallback model used when a usage record's model isn't in the pricing table. */
+/**
+ * The model an unpriced model is billed as: Claude Sonnet ($3/$15), the dearest
+ * entry a role points at, so a gap overstates cost rather than hiding it.
+ */
 export const PRICING_FALLBACK_MODEL = "claude-sonnet-4-20250514";
+
+/**
+ * Estimated cost in USD of one model call. The one cost rule every surface uses
+ * (callables, the AI usage logger, the chat, the usage summaries): a model
+ * missing from MODEL_PRICING costs as PRICING_FALLBACK_MODEL.
+ */
+export function estimateModelCost(model: string, inputTokens: number, outputTokens: number): number {
+  const pricing = MODEL_PRICING[model] ?? MODEL_PRICING[PRICING_FALLBACK_MODEL];
+  return (inputTokens * pricing.input + outputTokens * pricing.output) / 1_000_000;
+}

@@ -7,7 +7,7 @@
 import { onCall, HttpsError, CallableRequest } from "firebase-functions/v2/https";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { SecretParam } from "firebase-functions/params";
-import { MODEL_PRICING, PRICING_FALLBACK_MODEL } from "./models";
+import { estimateModelCost } from "./models";
 import type { CallableName } from "../callableRegistry";
 
 // Re-export HttpsError for convenience
@@ -79,8 +79,7 @@ function calculateAICost(
   inputTokens: number,
   outputTokens: number
 ): number {
-  const pricing = MODEL_PRICING[model] || MODEL_PRICING[PRICING_FALLBACK_MODEL];
-  return (inputTokens * pricing.input + outputTokens * pricing.output) / 1_000_000;
+  return estimateModelCost(model, inputTokens, outputTokens);
 }
 
 /**

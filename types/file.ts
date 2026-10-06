@@ -1244,7 +1244,7 @@ export interface ExtractedQrCode {
 
 export interface ExtractedAdditionalField {
   /**
-   * Canonical key from the extraction vocabulary (types/extraction-fields.ts) — "invoiceNumber",
+   * Canonical key from the extraction vocabulary (functions/src/extraction/fieldVocabulary.ts) — "invoiceNumber",
    * "customerNumber", "dueDate", "paymentTerms", "orderNumber",
    * "deliveryNoteNumber", "referenceNumber", "poNumber".
    */

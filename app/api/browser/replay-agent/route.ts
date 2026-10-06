@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { VertexAI } from "@google-cloud/vertexai";
-import { MODELS } from "@/types/ai-usage";
+import { MODELS } from "@/functions/src/utils/models";
 
 const GEMINI_MODEL = MODELS.geminiLite;
 const PROJECT_ID = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "taxstudio-f12fb";

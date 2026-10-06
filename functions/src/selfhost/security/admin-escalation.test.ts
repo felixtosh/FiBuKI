@@ -2,10 +2,10 @@
  * Admin-only callables must decide "admin" from something the caller cannot
  * write.
  *
- * users/{uid} is the caller's own document on the client data plane
- * (USER_DOC_POLICY: create when the uid matches), so an admin check that
- * reads a flag from it is a check the caller answers for themselves. The
- * admin bit lives in the verified token's claims.
+ * users/{uid} is the caller's own document, and an admin check that reads a
+ * flag from it trusts whoever wrote it. The client data plane refuses every
+ * write to it (USER_DOC_POLICY, #711), and the admin-only callables read the
+ * admin bit from the verified token's claims, never from the user doc.
  */
 
 process.env.FIBUKI_STORAGE = "memory";
@@ -52,20 +52,24 @@ beforeEach(async () => {
 });
 
 /**
- * The attacker grants themselves every admin-looking flag, through the real data
- * plane. A client cannot update its user doc (ADR-0016), but it can still create
- * it, so the attacker writes the flags into a user doc that does not exist yet.
+ * The attacker tries to grant themselves every admin-looking flag through the
+ * real data plane, into a user doc that does not exist yet. The data plane
+ * refuses it (ADR-0016, #711), so the flags are then planted server-side: the
+ * callables must refuse even a user doc that carries them.
  */
-async function selfGrantAdmin(): Promise<void> {
+async function plantAdminFlagsAfterRefusedSelfGrant(): Promise<void> {
+  const flags = { admin: true, isAdmin: true, role: "admin" };
   await getFirestore().doc(`users/${ATTACKER}`).delete();
-  const res = await fetch(`${base}/__data/write`, {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: "Bearer tok-attacker" },
-    body: JSON.stringify({
-      ops: [{ type: "set", path: `users/${ATTACKER}`, data: { admin: true, isAdmin: true, role: "admin" }, merge: true }],
-    }),
-  });
-  expect(res.status, "the data plane lets a user create their own user doc").toBe(200);
+  for (const merge of [false, true]) {
+    const res = await fetch(`${base}/__data/write`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer tok-attacker" },
+      body: JSON.stringify({ ops: [{ type: "set", path: `users/${ATTACKER}`, data: flags, merge }] }),
+    });
+    expect(res.status, "the data plane refuses a user creating their own user doc").toBe(403);
+  }
+  expect((await getFirestore().doc(`users/${ATTACKER}`).get()).exists).toBe(false);
+  await getFirestore().doc(`users/${ATTACKER}`).set(flags);
 }
 
 const ADMIN_CALLS: Array<[string, Record<string, unknown>]> = [
@@ -77,8 +81,8 @@ const ADMIN_CALLS: Array<[string, Record<string, unknown>]> = [
 
 describe("admin-only callables", () => {
   for (const [name, data] of ADMIN_CALLS) {
-    it(`${name}(${JSON.stringify(data)}) refuses a user who wrote admin flags into their own user doc`, async () => {
-      await selfGrantAdmin();
+    it(`${name}(${JSON.stringify(data)}) refuses a user whose user doc carries admin flags (their own write of them is refused)`, async () => {
+      await plantAdminFlagsAfterRefusedSelfGrant();
       for (const auth of [ATTACKER_AUTH, NO_EMAIL_AUTH]) {
         let code: string | undefined;
         try {

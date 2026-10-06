@@ -217,6 +217,29 @@ function assertSafeFieldPaths(record: Record<string, unknown>): void {
   for (const key of Object.keys(record)) assertSafeFieldPath(key);
 }
 
+/**
+ * A policy with updateFields lets a client change only those fields: every
+ * key must name one exactly (a dotted key writes inside another field), and a
+ * set without merge would replace the rest of the document.
+ */
+function requireUpdateFields(
+  policy: CollectionPolicy,
+  record: Record<string, unknown>,
+  replaces: boolean,
+  docPath: string,
+): void {
+  const allowed = policy.updateFields;
+  if (!allowed) return;
+  if (replaces) {
+    throw new DataPlaneError("permission-denied", `update on ${docPath} may not replace the document`);
+  }
+  for (const key of Object.keys(record)) {
+    if (!allowed.includes(key)) {
+      throw new DataPlaneError("permission-denied", `update on ${docPath} may not write "${key}"`);
+    }
+  }
+}
+
 /** Precondition check shared by update/set/delete — 409 aborts on mismatch. */
 function checkPrecondition(
   existing: Record<string, unknown> | undefined,
@@ -510,6 +533,7 @@ export function createDataPlane(
               if (resolved.policy.update === "owner" && !ownsRow(existing, auth.uid)) {
                 throw new DataPlaneError("permission-denied", "document belongs to another user");
               }
+              if (record) requireUpdateFields(resolved.policy, record, op.merge !== true, docPath);
             } else {
               requireAccess(resolved.policy.create, auth, `create on ${docPath}`);
               if (resolved.policy.create === "owner" && record?.userId !== auth.uid) {
@@ -527,6 +551,7 @@ export function createDataPlane(
               throw new DataPlaneError("not-found", `update on missing doc ${docPath}`);
             }
             if (!record) throw new DataPlaneError("invalid-argument", "update op needs data");
+            requireUpdateFields(resolved.policy, record, false, docPath);
             checkPrecondition(existing, op.ifUnchanged, docPath);
             prepared.push({ kind: "update", ref, data: record, id });
           } else if (op.type === "delete") {

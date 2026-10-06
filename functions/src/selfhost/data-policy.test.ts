@@ -45,8 +45,18 @@ describe("the policy", () => {
     expect(SUBTREE_DOC_POLICIES["settings/userData"]).toEqual(readOnly("authed"));
   });
 
-  it("the users/{uid} document can be created and read, never updated or deleted", () => {
-    expect(USER_DOC_POLICY).toEqual({ read: "authed", create: "authed", update: "none", delete: "none" });
+  it("the users/{uid} document is read-only for the client", () => {
+    expect(USER_DOC_POLICY).toEqual(readOnly("authed"));
+  });
+
+  it("notifications can only be read and marked read by the client", () => {
+    expect(SUBTREE_POLICIES.notifications).toEqual({
+      read: "authed",
+      create: "none",
+      update: "authed",
+      delete: "none",
+      updateFields: ["readAt"],
+    });
   });
 });
 
@@ -144,5 +154,79 @@ describe("the data plane enforces it", () => {
     const r = await call("write", { ops: [{ type: "set", path, data: { personalEntity: { name: "Planted" } } }] });
     expect(r.status, r.text).toBe(403);
     expect((await getFirestore().doc(path).get()).exists).toBe(false);
+  });
+
+  it("users/{uid} refuses a client create when the document does not exist yet", async () => {
+    await getFirestore().doc(`users/${USER}`).delete();
+    for (const op of [
+      { type: "set", path: `users/${USER}`, data: { pendingDeletion: true, admin: true } },
+      { type: "set", path: `users/${USER}`, data: { pendingDeletion: true, admin: true }, merge: true },
+    ]) {
+      const r = await call("write", { ops: [op] });
+      expect(r.status, `${JSON.stringify(op)} -> ${r.text}`).toBe(403);
+    }
+    expect((await getFirestore().doc(`users/${USER}`).get()).exists).toBe(false);
+  });
+
+  describe("notifications", () => {
+    const NOTIFICATIONS = `users/${USER}/notifications`;
+    const unread = { title: "Done", readAt: null };
+
+    beforeEach(async () => {
+      await getFirestore().doc(`${NOTIFICATIONS}/n-1`).set(unread);
+      await getFirestore().doc(`${NOTIFICATIONS}/n-2`).set(unread);
+    });
+
+    it("refuses a client create and leaves nothing behind", async () => {
+      for (const op of [
+        { type: "add", path: NOTIFICATIONS, data: unread },
+        { type: "set", path: `${NOTIFICATIONS}/planted`, data: unread },
+      ]) {
+        const r = await call("write", { ops: [op] });
+        expect(r.status, `${op.type} ${NOTIFICATIONS} -> ${r.text}`).toBe(403);
+      }
+      const all = await getFirestore().collection(NOTIFICATIONS).get();
+      expect(all.docs.map((d) => d.id).sort()).toEqual(["n-1", "n-2"]);
+    });
+
+    it("refuses a client delete and leaves the notification in place", async () => {
+      const r = await call("write", { ops: [{ type: "delete", path: `${NOTIFICATIONS}/n-1` }] });
+      expect(r.status, r.text).toBe(403);
+      expect((await getFirestore().doc(`${NOTIFICATIONS}/n-1`).get()).data()).toEqual(unread);
+    });
+
+    it("refuses a client update of any field but readAt and leaves the notification unchanged", async () => {
+      const path = `${NOTIFICATIONS}/n-1`;
+      for (const op of [
+        { type: "update", path, data: { title: "Rewritten" } },
+        { type: "update", path, data: { readAt: 1, title: "Rewritten" } },
+        { type: "update", path, data: { "readAt.nested": 1 } },
+        { type: "set", path, data: { type: "planted" }, merge: true },
+      ]) {
+        const r = await call("write", { ops: [op] });
+        expect(r.status, `${JSON.stringify(op)} -> ${r.text}`).toBe(403);
+      }
+      expect((await getFirestore().doc(path).get()).data()).toEqual(unread);
+    });
+
+    it("refuses a client overwrite of the whole notification, even with readAt alone", async () => {
+      const path = `${NOTIFICATIONS}/n-1`;
+      const r = await call("write", { ops: [{ type: "set", path, data: { readAt: 1 } }] });
+      expect(r.status, r.text).toBe(403);
+      expect((await getFirestore().doc(path).get()).data()).toEqual(unread);
+    });
+
+    it("still lets the client mark one read", async () => {
+      const r = await call("write", { ops: [{ type: "update", path: `${NOTIFICATIONS}/n-1`, data: { readAt: 1 } }] });
+      expect(r.status, r.text).toBe(200);
+      expect((await getFirestore().doc(`${NOTIFICATIONS}/n-1`).get()).get("readAt")).toBe(1);
+    });
+
+    it("still lets the client mark all read in one batch", async () => {
+      const ops = ["n-1", "n-2"].map((id) => ({ type: "update", path: `${NOTIFICATIONS}/${id}`, data: { readAt: 1 } }));
+      const r = await call("write", { ops });
+      expect(r.status, r.text).toBe(200);
+      for (const id of ["n-1", "n-2"]) expect((await getFirestore().doc(`${NOTIFICATIONS}/${id}`).get()).get("readAt")).toBe(1);
+    });
   });
 });
