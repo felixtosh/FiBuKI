@@ -8,6 +8,7 @@ import { Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { Invoice, parsePaymentTermsToDays } from "./types";
 import { addDays, viennaToday } from "../utils/storedDay";
+import { generatedInvoiceFileFacts } from "../fileFacts/factChange";
 
 export interface DuplicateInvoiceRequest {
   invoiceId: string;
@@ -88,8 +89,8 @@ export async function performDuplicateInvoice(
     isNotInvoice: false,
     isFibukiGenerated: true,
     invoiceId: newRef.id,
-    invoiceDirection: "outgoing",
-    matchedUserAccount: "issuer",
+    // The User is the issuer; the File facts module writes it (#640).
+    ...generatedInvoiceFileFacts(null, now),
     transactionIds: [],
     uploadedAt: now,
     createdAt: now,

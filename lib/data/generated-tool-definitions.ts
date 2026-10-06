@@ -800,7 +800,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     "name": "mark_file_as_not_invoice",
     "annotation": "write",
-    "description": "Flag a file as not an invoice (payment reminder, statement, anything that documents nothing). Clears its extracted data and takes it out of the unmatched-file queue. Refuses while the file is still connected to a transaction. Reversible with unmark_file_as_not_invoice. For a second copy of an invoice already held, use mark_file_as_copy instead: it records which File it is a copy of.",
+    "description": "Flag a file as not an invoice (payment reminder, statement, anything that documents nothing). Clears its extracted data, hand corrections included (un-marking then re-extracts it), and takes it out of the unmatched-file queue. Refuses while the file is still connected to a transaction. Reversible with unmark_file_as_not_invoice. For a second copy of an invoice already held, use mark_file_as_copy instead: it records which File it is a copy of.",
     "inputSchema": {
       "type": "object",
       "properties": {

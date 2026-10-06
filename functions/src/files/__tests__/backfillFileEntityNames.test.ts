@@ -8,12 +8,32 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { store, createMockFirestore, createTestFile } from "../../test/setup";
 
+// The backfill writes through the File facts module (#640), which stamps its
+// writes with a Timestamp rather than a server timestamp.
+const BACKFILL_AT = new Date("2026-09-12T12:00:00Z");
+
 vi.mock("firebase-admin/firestore", () => {
+  class MockTimestamp {
+    constructor(private readonly date: Date) {}
+    static fromDate(d: Date) {
+      return new MockTimestamp(d);
+    }
+    static now() {
+      return new MockTimestamp(new Date("2026-09-12T12:00:00Z"));
+    }
+    toDate() {
+      return this.date;
+    }
+    toMillis() {
+      return this.date.getTime();
+    }
+  }
   return {
     getFirestore: () => createMockFirestore(),
     FieldValue: {
       serverTimestamp: () => new Date("2026-09-12T12:00:00Z"),
     },
+    Timestamp: MockTimestamp,
   };
 });
 
@@ -170,12 +190,19 @@ describe("backfillFileEntityNamesCallable — extractedPartner (#300)", () => {
   it("leaves a partner name with a bare '&' byte-identical, and is re-runnable", async () => {
     store.setDoc("files", "f1", createTestFile({ userId, extractedPartner: "AT&T" }));
     store.setDoc("files", "f2", createTestFile({ userId, extractedPartner: "AL&amp;FA Taxi KG" }));
+    const untouchedAt = file("f1").updatedAt;
 
     const first = await call();
     expect(first.updated).toBe(1);
     expect(file("f1").extractedPartner).toBe("AT&T");
-    // Not written at all: the backfill's own timestamp never reached it.
-    expect(file("f1").updatedAt).not.toEqual(new Date("2026-09-12T12:00:00Z"));
+    // Not written at all: the backfill's own stamp never reached it.
+    expect(file("f1").updatedAt).toEqual(untouchedAt);
+    expect(file("f1").lastFactChange).toBeUndefined();
+    // The File it did decode carries the stamp. (The mock store turns any
+    // Timestamp into "now", so the stamp is read off lastFactChange.)
+    const stamp = file("f2").lastFactChange as { origin: string; at: { toDate: () => Date } };
+    expect(stamp.origin).toBe("entity-name-backfill");
+    expect(stamp.at.toDate()).toEqual(BACKFILL_AT);
 
     // The second run finds nothing left to decode.
     const second = await call();

@@ -54,7 +54,6 @@ const BROWSER_ALLOWED: Allowances = {
   },
   "lib/operations/remap-ops.ts": { count: 1, why: "import remap (#628)" },
   "lib/operations/source-ops.ts": { count: 1, why: "sources (#634)" },
-  "lib/operations/user-data-ops.ts": { count: 1, why: "business identity (#632)" },
   "hooks/use-worker-queue.ts": { count: 6, why: "worker jobs (#633)" },
 };
 

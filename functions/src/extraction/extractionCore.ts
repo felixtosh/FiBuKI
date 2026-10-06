@@ -523,6 +523,8 @@ export async function runExtraction(
       paidInvoiceNumber: extracted.paidInvoiceNumber ?? null,
       // #206: the figure the document itself designates as due.
       payableAmount: extracted.payableAmount ?? null,
+      // #615: the deposit, part payments or schedule the document prints.
+      instalments: extracted.instalments ?? null,
       // #156: recorded only, never a Partner.
       invoicingAgent: extractedInvoicingAgent,
     };

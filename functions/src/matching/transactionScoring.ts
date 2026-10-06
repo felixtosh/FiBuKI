@@ -156,6 +156,24 @@ export interface ScoreBreakdown {
    * This is what makes a stored Match identifiable as a Remainder Match.
    */
   scoredAgainstRemainder?: number;
+  /**
+   * Present only when `amount` was scored against the File's Outstanding
+   * amount (#615, ADR-0013): a payment is connected and this Transaction was
+   * judged as a further one. The figure, in cents.
+   */
+  scoredAgainstOutstanding?: number;
+  /**
+   * Present only when `amount` was scored against the nearest instalment the
+   * File prints, nothing being paid yet (#615). That instalment, in cents.
+   */
+  scoredAgainstInstalment?: number;
+  /**
+   * Present only when the bank line cites the File's invoice number and pays
+   * part of it, with no printed instalment or Outstanding amount to judge it
+   * by (#615): the amount is no mismatch, the Confidence stays below
+   * AUTO_MATCH_THRESHOLD, and it never connects itself.
+   */
+  instalmentCandidate?: true;
 }
 
 export interface TransactionPreview {
@@ -243,6 +261,34 @@ export interface FileMatchingData {
    * rather than as any particular type.
    */
   documentType?: DocumentType | null;
+  /**
+   * The instalments the File prints (#615), as stored. Before any payment
+   * the nearest one is what a Transaction's amount is judged against, and a
+   * payment of exactly one may connect itself (ADR-0013).
+   */
+  extractedInstalments?: FileInstalment[] | null;
+  /**
+   * The File's Outstanding amount in cents (#615), set by the matcher once a
+   * payment is connected. Above zero, a further Transaction is scored against
+   * it, never against the full total. Zero (paid in full) or null (no figure,
+   * a payment in another currency): the full total, as before. Absent:
+   * nothing is paid yet.
+   */
+  outstanding?: number | null;
+  /**
+   * The Transactions the File is already on, set by the matcher (#615). None
+   * of them is judged as a further payment.
+   */
+  transactionIds?: string[];
+}
+
+/** One instalment a File prints, as the scorer reads it (#615). */
+export interface FileInstalment {
+  /** Cents, as a magnitude. */
+  amount: number;
+  /** The stored day it is due (UTC midnight), or null. */
+  dueDate: Timestamp | null;
+  label: string | null;
 }
 
 export interface TransactionData {
@@ -915,6 +961,90 @@ export function isRemainderMatch(match: TransactionMatchScore): boolean {
 }
 
 /**
+ * Is this an Outstanding Match (#615, ADR-0013): a Transaction judged as one
+ * of several payments of the File, against its Outstanding amount, against a
+ * printed instalment, or as an instalment the bank line's reference names?
+ * Read off the breakdown, like `isRemainderMatch`.
+ */
+export function isOutstandingMatch(match: TransactionMatchScore): boolean {
+  const { breakdown } = match;
+  return (
+    breakdown.scoredAgainstOutstanding != null ||
+    breakdown.scoredAgainstInstalment != null ||
+    breakdown.instalmentCandidate === true
+  );
+}
+
+/**
+ * What a reference-only instalment candidate's amount scores (#615): the
+ * lowest rung of the amount ladder. The bank line names the document, so the
+ * part payment is no mismatch; it says nothing about whether the amount is
+ * right, so it earns no more than "within 10 %" would.
+ */
+const INSTALMENT_CANDIDATE_AMOUNT_SCORE = 20;
+
+/** How a Transaction's amount is judged when it may be one of several payments of a File. */
+type FurtherPayment =
+  | { kind: "outstanding"; against: number }
+  | { kind: "instalment"; against: number }
+  | { kind: "candidate" };
+
+/**
+ * Is this Transaction judged as one of several payments of the File (#615,
+ * ADR-0013), and against what? Only in the File's own currency, and never for
+ * a Transaction the File is already on.
+ *
+ *  - A payment is connected and part is Outstanding: against that, always.
+ *    Paid in full, or with no figure in its currency: the full total.
+ *  - Nothing paid yet and the File prints instalments: against the nearest
+ *    one, when it scores better than the full total does (a File paid in one
+ *    go keeps its full-total Match).
+ *  - Neither, and the bank line cites the File's invoice number for less than
+ *    its total: a candidate, its amount no mismatch, when the full total
+ *    scores nothing better.
+ *
+ * Null: the full total, as before #615.
+ */
+function furtherPaymentOf(
+  fileData: FileMatchingData,
+  txData: TransactionData,
+  filePayment: number,
+  fullScore: number
+): FurtherPayment | null {
+  if (!isSameCurrency(fileData.extractedCurrency, txData.currency)) return null;
+  if (fileData.transactionIds?.includes(txData.id)) return null;
+  const absTx = Math.abs(txData.amount);
+  if (absTx === 0) return null;
+
+  if (fileData.outstanding !== undefined) {
+    // A payment is connected: what is left is the only figure. Paid in full,
+    // or in another currency, it is the full total, as before.
+    return fileData.outstanding != null && fileData.outstanding > 0
+      ? { kind: "outstanding", against: fileData.outstanding }
+      : null;
+  }
+
+  const instalments = fileData.extractedInstalments ?? [];
+  if (instalments.length > 0) {
+    let nearest: FileInstalment | null = null;
+    for (const row of instalments) {
+      if (!nearest || Math.abs(row.amount - absTx) < Math.abs(nearest.amount - absTx)) nearest = row;
+    }
+    const score = calculateRemainderAmountScore(nearest!.amount, absTx).score;
+    if (score > 0 && score > fullScore) return { kind: "instalment", against: nearest!.amount };
+  }
+
+  if (
+    absTx < Math.abs(filePayment) &&
+    fullScore < INSTALMENT_CANDIDATE_AMOUNT_SCORE &&
+    calculateReferenceScore(fileData, txData, 0).score === SCORING_CONFIG.INVOICE_NUMBER_MATCH
+  ) {
+    return { kind: "candidate" };
+  }
+  return null;
+}
+
+/**
  * Map a transaction Firestore doc's data into the shape `scoreTransaction`
  * expects. `documentedAmount` is what the Files already connected to this
  * transaction explain (#239); leave it out and the pair is scored against the
@@ -986,7 +1116,31 @@ export function toFileMatchingData(data: FirebaseFirestore.DocumentData): FileMa
     partnerId: data.partnerId,
     precisionSearchHint: data.precisionSearchHint,
     documentType: data.documentType,
+    // #615: what the File prints it is paid in.
+    extractedInstalments: instalmentsOf(data.extractedInstalments),
   };
+}
+
+/**
+ * The stored instalments as the scorer reads them (#615). A File that is not
+ * stored yet sends them as JSON, its due dates as strings, so each row is read
+ * defensively: no positive amount, no row.
+ */
+function instalmentsOf(value: unknown): FileInstalment[] | null {
+  if (!Array.isArray(value)) return null;
+  const rows: FileInstalment[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") continue;
+    const row = entry as Record<string, unknown>;
+    if (typeof row.amount !== "number" || !Number.isFinite(row.amount) || row.amount === 0) continue;
+    const due = toDateSafe(row.dueDate);
+    rows.push({
+      amount: Math.abs(Math.round(row.amount)),
+      dueDate: due ? Timestamp.fromDate(due) : null,
+      label: typeof row.label === "string" ? row.label : null,
+    });
+  }
+  return rows.length > 0 ? rows : null;
 }
 
 /**
@@ -1169,6 +1323,7 @@ export function scoreTransaction(
   // documentation rule below, which was written for a candidate documenting
   // the SAME payment.
   let closesRemainder = false;
+  let further: FurtherPayment | null = null;
   if (filePayment != null && againstRemainder) {
     const result = calculateRemainderAmountScore(filePayment, coverage.remainder);
     amountScore = result.score;
@@ -1187,9 +1342,23 @@ export function scoreTransaction(
       readBankOriginalAmount(txData._original?.rawRow),
       { referenceRate: options?.fxReferenceRate }
     );
-    amountScore = result.score;
-    amountExact = result.source === "amount_exact" && !result.currencyMismatch;
-    if (result.source) matchSources.push(result.source);
+    // #615, ADR-0013: one File paid by several Transactions. A further
+    // payment is judged against what is Outstanding, a first one against the
+    // instalment the File prints, with the Remainder's amount scorer; a part
+    // payment the bank line's reference names is no mismatch.
+    further = furtherPaymentOf(fileData, txData, filePayment, result.score);
+    if (further && further.kind !== "candidate") {
+      const judged = calculateRemainderAmountScore(further.against, txData.amount);
+      amountScore = judged.score;
+      amountExact = judged.source === "amount_exact";
+      if (judged.source) matchSources.push(judged.source);
+    } else if (further) {
+      amountScore = INSTALMENT_CANDIDATE_AMOUNT_SCORE;
+    } else {
+      amountScore = result.score;
+      amountExact = result.source === "amount_exact" && !result.currencyMismatch;
+      if (result.source) matchSources.push(result.source);
+    }
   }
 
   // 2. Date scoring (0-25, boosted when partner matches), over the payment
@@ -1355,6 +1524,11 @@ export function scoreTransaction(
     confidence = applyDocumentationOutcome(scoredConfidence, outcome);
     documentation = { ...assessment, outcome, confidenceBefore: scoredConfidence };
   }
+  // #615: the reference names the document, not the amount, so a part
+  // payment it names is a suggestion at most.
+  if (further?.kind === "candidate") {
+    confidence = Math.min(confidence, SCORING_CONFIG.AUTO_MATCH_THRESHOLD - 1);
+  }
 
   return {
     transactionId: txData.id,
@@ -1373,6 +1547,9 @@ export function scoreTransaction(
       ...(filePayment != null && againstRemainder
         ? { scoredAgainstRemainder: coverage.remainder }
         : {}),
+      ...(further?.kind === "outstanding" ? { scoredAgainstOutstanding: further.against } : {}),
+      ...(further?.kind === "instalment" ? { scoredAgainstInstalment: further.against } : {}),
+      ...(further?.kind === "candidate" ? { instalmentCandidate: true as const } : {}),
     },
     preview: {
       date: txData.date,
@@ -1399,5 +1576,12 @@ export function formatScoreBreakdown(breakdown: ScoreBreakdown): string {
   if (breakdown.scoredAgainstRemainder != null) {
     parts.push(`vs-remainder:${(breakdown.scoredAgainstRemainder / 100).toFixed(2)}`);
   }
+  if (breakdown.scoredAgainstOutstanding != null) {
+    parts.push(`vs-outstanding:${(breakdown.scoredAgainstOutstanding / 100).toFixed(2)}`);
+  }
+  if (breakdown.scoredAgainstInstalment != null) {
+    parts.push(`vs-instalment:${(breakdown.scoredAgainstInstalment / 100).toFixed(2)}`);
+  }
+  if (breakdown.instalmentCandidate) parts.push("instalment-candidate");
   return parts.join(" + ");
 }

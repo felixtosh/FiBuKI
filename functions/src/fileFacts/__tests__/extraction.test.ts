@@ -61,6 +61,7 @@ function facts(overrides: Partial<ExtractedFacts> = {}): ExtractedFacts {
     referencedInvoiceNumber: null,
     paidInvoiceNumber: null,
     payableAmount: null,
+    instalments: null,
     invoicingAgent: null,
     ...overrides,
   };
@@ -241,6 +242,31 @@ describe("an Extraction's facts", () => {
   });
 });
 
+describe("the printed instalments of an Extraction (#615)", () => {
+  const schedule = [
+    { amount: 4000, dueDate: "2026-03-01", label: "Rate 1/3" },
+    { amount: 4000, dueDate: "2026-04-01", label: "Rate 2/3" },
+    { amount: 4000, dueDate: null, label: null },
+  ];
+
+  it("are stored with each due date as the stored day", () => {
+    const { update } = accepted(decide({}, invoice({ instalments: schedule })));
+    const stored = update.extractedInstalments as Array<{ amount: number; dueDate: unknown; label: unknown }>;
+    expect(stored.map((r) => [r.amount, isoOf(r.dueDate), r.label])).toEqual([
+      [4000, "2026-03-01", "Rate 1/3"],
+      [4000, "2026-04-01", "Rate 2/3"],
+      [4000, null, null],
+    ]);
+    expect((stored[0].dueDate as Timestamp).toDate().toISOString()).toBe("2026-03-01T00:00:00.000Z");
+  });
+
+  it("are cleared when the reading finds none", () => {
+    const stored = { extractedInstalments: [{ amount: 4000, dueDate: day("2026-03-01"), label: "Rate 1/3" }] };
+    const { update } = accepted(decide(stored, invoice({ instalments: null })));
+    expect(update.extractedInstalments).toBeNull();
+  });
+});
+
 describe("a not-invoice Extraction", () => {
   it("clears every fact, the Due Date and Debit Date included, and the flags that pointed at them", () => {
     const stored = {
@@ -251,6 +277,7 @@ describe("a not-invoice Extraction", () => {
       extractedAdditionalFields: [{ key: "dueDate", label: "Fällig", value: "2026-03-15" }],
       extractedDueDate: day("2026-03-15"),
       extractedDebitDate: day("2026-03-18"),
+      extractedInstalments: [{ amount: 4000, dueDate: day("2026-03-15"), label: "Rate 1/3" }],
       needsVatRateReview: true,
       vatRatesOutsideSet: [7],
       needsRepairReview: true,
@@ -268,6 +295,7 @@ describe("a not-invoice Extraction", () => {
       "extractedPartner",
       "extractedLineItems",
       "extractedRateGroups",
+      "extractedInstalments",
     ]) {
       expect(update[field], field).toBeNull();
     }
