@@ -50,6 +50,10 @@ function handleOf(container: HTMLElement, columnId: string): HTMLElement {
   return th.querySelector(".cursor-col-resize") as HTMLElement;
 }
 
+function overlayOf(container: HTMLElement): Element | null {
+  return container.querySelector(".fixed.inset-0.cursor-col-resize");
+}
+
 describe("ResizableDataTable remembered column widths", () => {
   beforeEach(() => localStorage.clear());
   afterEach(() => vi.restoreAllMocks());
@@ -195,13 +199,18 @@ describe("ResizableDataTable remembered column widths", () => {
       const setItem = vi.spyOn(Storage.prototype, "setItem");
       const { container } = renderTable();
       fireEvent.pointerDown(handleOf(container, "name"), { ...pointer, clientX: 100 });
+      // The drag did start: the resize overlay is up until the pointer lifts
+      expect(overlayOf(container)).not.toBeNull();
       fireEvent.pointerUp(document, { ...pointer, clientX: 100 });
+      expect(overlayOf(container)).toBeNull();
       expect(setItem).not.toHaveBeenCalled();
     });
 
     it("ignores a second finger or pen while one drag is running", () => {
       const { container } = renderTable();
       fireEvent.pointerDown(handleOf(container, "name"), { ...pointer, clientX: 100 });
+      // Another pointer pressing a handle starts no second drag
+      fireEvent.pointerDown(handleOf(container, "amount"), { ...pointer, pointerId: 8, clientX: 300 });
       fireEvent.pointerMove(document, { ...pointer, pointerId: 8, clientX: 400 });
       fireEvent.pointerUp(document, { ...pointer, pointerId: 8, clientX: 400 });
       expect(colWidths(container)[1]).toBe("200px");
@@ -218,6 +227,106 @@ describe("ResizableDataTable remembered column widths", () => {
       // A cancelled pointerdown also stops the emulated mouse events and the
       // long-press text selection that would follow it
       expect(fireEvent.pointerDown(handle, { ...pointer, clientX: 100 })).toBe(false);
+    });
+
+    it("leaves a non-primary pointer alone, e.g. a second finger landing first on the edge", () => {
+      const { container } = renderTable();
+      const handle = handleOf(container, "name");
+      expect(fireEvent.pointerDown(handle, { ...pointer, isPrimary: false, clientX: 100 })).toBe(true);
+      expect(overlayOf(container)).toBeNull();
+      fireEvent.pointerMove(document, { ...pointer, isPrimary: false, clientX: 160 });
+      expect(colWidths(container)[1]).toBe("200px");
+    });
+
+    describe("double-tap", () => {
+      beforeEach(() => {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        vi.setSystemTime(new Date("2026-10-05T12:00:00Z"));
+      });
+      afterEach(() => vi.useRealTimers());
+
+      function tap(handle: HTMLElement, clientX: number, clientY = 10) {
+        fireEvent.pointerDown(handle, { ...pointer, clientX, clientY });
+        fireEvent.pointerUp(document, { ...pointer, clientX, clientY });
+      }
+
+      it("fits the column to its content, as a double-click does", () => {
+        localStorage.setItem(KEY, JSON.stringify({ name: 400 }));
+        const { container } = renderTable();
+        const handle = handleOf(container, "name");
+        tap(handle, 100);
+        vi.advanceTimersByTime(200);
+        // jsdom measures every cell as 0 wide, so the fit lands on the default
+        expect(fireEvent.pointerDown(handle, { ...pointer, clientX: 104, clientY: 12 })).toBe(false);
+        expect(colWidths(container)[1]).toBe("200px");
+        expect(JSON.parse(localStorage.getItem(KEY)!)).toEqual({ name: 200 });
+        // The second tap starts no drag
+        expect(overlayOf(container)).toBeNull();
+      });
+
+      it("is not two taps too far apart in time", () => {
+        localStorage.setItem(KEY, JSON.stringify({ name: 400 }));
+        const { container } = renderTable();
+        const handle = handleOf(container, "name");
+        tap(handle, 100);
+        vi.advanceTimersByTime(600);
+        tap(handle, 100);
+        expect(colWidths(container)[1]).toBe("400px");
+      });
+
+      it("is not two taps too far apart on screen", () => {
+        localStorage.setItem(KEY, JSON.stringify({ name: 400 }));
+        const { container } = renderTable();
+        const handle = handleOf(container, "name");
+        tap(handle, 100, 10);
+        vi.advanceTimersByTime(100);
+        tap(handle, 100, 80);
+        expect(colWidths(container)[1]).toBe("400px");
+      });
+
+      it("is not a drag followed by a tap", () => {
+        localStorage.setItem(KEY, JSON.stringify({ name: 400 }));
+        const { container } = renderTable();
+        const handle = handleOf(container, "name");
+        fireEvent.pointerDown(handle, { ...pointer, clientX: 100, clientY: 10 });
+        fireEvent.pointerMove(document, { ...pointer, clientX: 150, clientY: 10 });
+        fireEvent.pointerUp(document, { ...pointer, clientX: 150, clientY: 10 });
+        vi.advanceTimersByTime(100);
+        tap(handle, 150);
+        expect(colWidths(container)[1]).toBe("450px");
+      });
+
+      it("is not a cancelled press followed by a tap", () => {
+        localStorage.setItem(KEY, JSON.stringify({ name: 400 }));
+        const { container } = renderTable();
+        const handle = handleOf(container, "name");
+        fireEvent.pointerDown(handle, { ...pointer, clientX: 100, clientY: 10 });
+        fireEvent.pointerCancel(document, { ...pointer, clientX: 100, clientY: 10 });
+        vi.advanceTimersByTime(100);
+        tap(handle, 100);
+        expect(colWidths(container)[1]).toBe("400px");
+      });
+
+      it("is not a tap with one kind of pointer and then another", () => {
+        localStorage.setItem(KEY, JSON.stringify({ name: 400 }));
+        const { container } = renderTable();
+        const handle = handleOf(container, "name");
+        const other = { ...pointer, pointerId: 9, pointerType: pointerType === "touch" ? "pen" : "touch" };
+        fireEvent.pointerDown(handle, { ...other, clientX: 100, clientY: 10 });
+        fireEvent.pointerUp(document, { ...other, clientX: 100, clientY: 10 });
+        vi.advanceTimersByTime(100);
+        tap(handle, 100);
+        expect(colWidths(container)[1]).toBe("400px");
+      });
+
+      it("is not a tap on one column's edge and then another's", () => {
+        localStorage.setItem(KEY, JSON.stringify({ name: 400 }));
+        const { container } = renderTable();
+        tap(handleOf(container, "amount"), 100);
+        vi.advanceTimersByTime(100);
+        tap(handleOf(container, "name"), 100);
+        expect(colWidths(container)[1]).toBe("400px");
+      });
     });
   });
 
