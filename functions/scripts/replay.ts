@@ -2,7 +2,7 @@
  * Replay: does a branch decide your real account differently from main?
  * See docs/replay.md.
  *
- *   npm run selfhost:replay -- export --user <uid> --out felix.replay-set.json [--label Felix] [--keep-text]
+ *   npm run selfhost:replay -- export --user <uid> --out felix.replay-set.json [--label Felix] [--months 12] [--keep-text]
  *   npm run selfhost:replay -- sheet  --set felix.replay-set.json --out main.sheet.json [--label main]
  *   npm run selfhost:replay -- diff   main.sheet.json pr-660.sheet.json [--md report.md] [--json diff.json]
  *
@@ -30,7 +30,8 @@ import { diffSheets, renderDiffMarkdown } from "../src/replay/diff";
 const USAGE = `replay: run the matcher over a real account on two commits and diff the decisions
 
 Usage:
-  replay export --user <uid> --out <set.json> [--label <name>] [--keep-text]
+  replay export --user <uid> --out <set.json> [--label <name>] [--months <n>] [--keep-text]
+                 --months: the most recent calendar months only (default 12; 0 = everything)
   replay sheet  --set <set.json> --out <sheet.json> [--label <name>]
   replay diff   <base.sheet.json> <head.sheet.json> [--md <report.md>] [--json <diff.json>]
 
@@ -75,14 +76,20 @@ async function runExport(args: string[]): Promise<number> {
   if (!out) usageError("--out <set.json> is required");
   if (!process.env.DATABASE_URL) usageError("export reads the deployment: DATABASE_URL must be set");
 
+  const monthsFlag = flagValue(args, "--months");
+  const months = monthsFlag === undefined ? 12 : Number(monthsFlag);
+  if (!Number.isInteger(months) || months < 0) usageError("--months needs a whole number of months (0 = everything)");
+
   const set = await exportReplaySet(getFirestore(), userId, {
     label: flagValue(args, "--label"),
     keepText: args.includes("--keep-text"),
+    months: months === 0 ? undefined : months,
   });
   await fs.writeFile(out, JSON.stringify(set));
   const counts = replaySetCounts(set);
   console.log(
-    `exported ${set.label}: ${counts.transactions} transactions, ${counts.files} files, ` +
+    `exported ${set.label} (${months === 0 ? "everything" : `last ${months} months`}): ` +
+      `${counts.transactions} transactions, ${counts.files} files, ` +
       `${counts.partners} partners, ${counts.fileConnections} connections, ${counts.globalPartners} global partners` +
       ` -> ${out}`
   );

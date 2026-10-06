@@ -513,3 +513,17 @@ describe("routes that spend model money require a signed-in user", () => {
     });
   }
 });
+
+describe("/api/admin/replay serves the caller's own reports only", () => {
+  // The internal-secret identity is never an admin (isServerUserAdmin reads the
+  // verified token only), so through this door the route refuses outright and
+  // leaks nothing. Which account an admin sees is replay-admin-route.test.ts.
+  it("refuses a non-admin, with or without a pr", async () => {
+    const { GET } = await import("@/app/api/admin/replay/route");
+    for (const query of ["", "?pr=660", `?pr=../${VICTIM}`]) {
+      const res = await GET(asUser(ATTACKER, `/api/admin/replay${query}`));
+      expect(res.status).toBe(403);
+      assertNoLeak(await res.text(), "admin/replay");
+    }
+  });
+});

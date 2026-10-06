@@ -976,5 +976,61 @@
       "notInvoice": "This File is marked as not an invoice, so it is not matched.",
       "foreignRecipient": "This File is addressed to someone else, so it is not matched. Confirm the recipient to match it."
     }
+  },
+
+  "admin": {
+    "replay": {
+      "navLabel": "Replay",
+      "title": "Replay",
+      "intro": "For each PR with the replay label, the matcher ran over your own account on the PR's base commit and on its head. Only the Files and Transactions the branch decides differently are listed, each marked against your own hand decisions. You see your account only; another admin sees theirs.",
+      "notConfigured": "No report directory is configured on this deployment (FIBUKI_REPLAY_DIR).",
+      "loadFailed": "The reports could not be loaded.",
+      "runs": "Runs",
+      "runsHint": "One row per PR, newest first. Click a row to read its report.",
+      "empty": "No replay has run for your account yet. Put the replay label on a PR.",
+      "download": "Download as Markdown",
+      "versus": "vs",
+      "setLine": "Account {label}, exported {exportedAt}",
+      "totals": "{files} Files in the set, {filesUnchanged} unchanged. {transactions} Transactions, {transactionsUnchanged} unchanged.",
+      "columns": {
+        "pr": "PR",
+        "when": "Built",
+        "commits": "Base → head",
+        "filesChanged": "Files changed",
+        "transactionsChanged": "Transactions changed"
+      },
+      "verdict": {
+        "now_agrees": "now agrees with a hand decision",
+        "now_disagrees": "no longer agrees with a hand decision",
+        "contradicts": "contradicts a hand decision or a Rejection",
+        "unverified": "changed, nobody has ruled on it"
+      },
+      "verdictLine": {
+        "none": "No behaviour change. The branch decides every File and Transaction as the base does.",
+        "ok": "Nothing got worse against your hand decisions. Read the ❓ rows.",
+        "worse": "Something got worse against your hand decisions. Start with the ❌ rows."
+      },
+      "sections": {
+        "files": "Files ({count} changed)",
+        "transactions": "Transactions, Partner assignment ({count} changed)"
+      },
+      "table": {
+        "file": "File",
+        "transaction": "Transaction",
+        "amount": "Amount",
+        "date": "Date",
+        "autoConnect": "Auto-connect before → after",
+        "suggestions": "Suggestions before → after",
+        "wouldAssign": "Would assign before → after",
+        "topCandidate": "Top candidate before → after",
+        "hand": "Hand decision",
+        "storedPartner": "Stored Partner",
+        "why": "Why"
+      },
+      "hand": {
+        "connected": "connected {ids}",
+        "rejected": "rejected {ids}"
+      }
+    }
   }
 }

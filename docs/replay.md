@@ -26,8 +26,9 @@ $DC exec -T fibuki-api npm run selfhost:replay -- export --user <your uid> --lab
 $DC cp fibuki-api:/tmp/felix.replay-set.json ~/replay/felix.replay-set.json
 ```
 
-The set holds your Transactions, Files (without the OCR text), Partners, File
-Connections, Invoices, the active Global Partners and the ECB rate months. It reads
+The set holds your Transactions and Files of the most recent 12 calendar months
+(`--months`, `0` for everything), the Files without their OCR text, plus all Partners,
+File Connections, Invoices, the active Global Partners and the ECB rate months. It reads
 only. **It is your real financial data**: `*.replay-set.json` is gitignored, keep it
 on your machine, and share it only with the people you want to see your bank lines.
 
@@ -91,10 +92,42 @@ what is stored today.
 A PR that touches `functions/src/matching/` should carry its report (or its counts) in
 the Evidence section.
 
+## One click: the `replay` label
+
+The three steps above are the engine. On fibuki.com they run by themselves:
+
+1. Put the **`replay`** label on a PR. Every push to that PR from then on runs the
+   replay (`.github/workflows/replay.yml`, shipped as `deploy/selfhost/replay.workflow.yml` until it is moved there; see its header).
+2. The workflow ships the PR's and the base commit's `functions/` trees to the box and
+   runs `deploy/selfhost/replay.sh` there. The script exports every account listed in
+   `/opt/fibuki-replay/accounts` fresh through the running API container (read-only),
+   builds the two sheets in throwaway Node containers with no database, and diffs.
+3. The counts come back as one PR comment, updated in place. The full reports stay on
+   the box under `/opt/fibuki-replay/reports/<pr>/` and are read on
+   **fibuki.com/admin/replay**, where each admin sees the report for their own account
+   and nobody else's.
+
+Only a maintainer can put the label on, and a fork PR never runs (GitHub hands it no
+secrets, and the job condition refuses it). The comment carries counts only.
+
+Box-side setup, once:
+
+```
+mkdir -p /opt/fibuki-replay && chmod 700 /opt/fibuki-replay
+printf '%s\n' '# <uid> <label> [months, default 12]' \
+  '<felix uid> Felix 12' \
+  '<stefan uid> Stefan 12' > /opt/fibuki-replay/accounts
+```
+
+`/opt/fibuki-replay` sits outside `/opt/fibuki` on purpose: the deploy rsyncs
+`/opt/fibuki` with `--delete`. The web container reads the reports through the
+`/replay` mount in `docker-compose.prod.yml` (`FIBUKI_REPLAY_DIR`).
+
 ## Two accounts, or more
 
-Every set is one account. Stefan exports his own the same way and keeps it on his
-machine. A PR is then run against both:
+Every set is one account. With the label, every account in `accounts` runs on every
+labelled PR, and each owner reads their own report. By hand, Stefan exports his own set
+the same way and keeps it on his machine. A PR is then run against both:
 
 ```bash
 for who in felix stefan; do
@@ -122,5 +155,9 @@ person's set to run their side; sharing the two `report.md` files is enough.
 - `functions/src/replay/set.ts`: the set format, export and load.
 - `functions/src/replay/sheet.ts`: the sheet builder, on top of the matcher.
 - `functions/src/replay/diff.ts`: the verdicts and the Markdown report.
-- `functions/scripts/replay.ts`: the CLI.
+- `functions/scripts/replay.ts`: the CLI (`--months` keeps the most recent calendar
+  months, default 12; `0` takes everything).
 - `functions/src/selfhost/replay.test.ts`: the whole chain on a two-transaction account.
+- `deploy/selfhost/replay.sh` and `.github/workflows/replay.yml`: the label-triggered run.
+- `app/api/admin/replay/route.ts` and `app/(dashboard)/admin/replay/page.tsx`: the
+  reports page, one account per admin.

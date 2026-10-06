@@ -104,6 +104,26 @@ describe("replay", () => {
     expect(sheet.transactions["t-theirs"]).toBeUndefined();
   });
 
+  it("months keeps the recent window: Transactions by date, Files by document date or upload", async () => {
+    await seed();
+    await db.collection("transactions").doc("t-old").set({ userId: ME, amount: -500, currency: "EUR", date: day("2025-01-15"), name: "OLD" });
+    await db.collection("files").doc("f-old").set({ userId: ME, fileName: "old.pdf", extractionComplete: true, extractedDate: day("2025-01-10") });
+    await db.collection("files").doc("f-undated-new").set({ userId: ME, fileName: "new.pdf", extractionComplete: true, createdAt: day("2026-03-01") });
+    await db.collection("files").doc("f-undated-old").set({ userId: ME, fileName: "older.pdf", extractionComplete: true, createdAt: day("2025-02-01") });
+
+    const set = await exportReplaySet(db, ME, { months: 12, now: () => new Date("2026-10-05T12:00:00Z") });
+    // The window starts on the first of the month 12 months ago: 2025-10-01.
+    expect(set.collections.transactions.map((l) => l.id).sort()).toEqual(["t-decoy", "t-hetzner"]);
+    expect(set.collections.files.map((l) => l.id).sort()).toEqual(["f-hetzner", "f-undated-new"]);
+    // Everything else is taken whole.
+    expect(set.collections.fileConnections).toHaveLength(1);
+    expect(set.collections.partners).toHaveLength(1);
+
+    const everything = await exportReplaySet(db, ME, { now: () => new Date("2026-10-05T12:00:00Z") });
+    expect(everything.collections.transactions).toHaveLength(3);
+    expect(everything.collections.files).toHaveLength(4);
+  });
+
   it("the diff names what changed and whether it agrees with the owner", async () => {
     await seed();
     const set = await exportReplaySet(db, ME);

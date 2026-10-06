@@ -349,6 +349,14 @@ the box (pull, no inbound SSH at all) or Tailscale.
 The key is root-equivalent on the box. A forced command cannot be used to narrow
 it, because the deploy needs both `rsync` and a shell step.
 
+## Replay: a PR against the real accounts
+
+`docs/replay.md`. The `replay` label on a PR runs `replay.sh` on this box over the
+accounts in `/opt/fibuki-replay/accounts` (`<uid> <label> [months]`, one per line) and
+posts the counts on the PR. Reports land in `/opt/fibuki-replay/reports/<pr>/` and are
+read on `/admin/replay`, each admin their own. The directory sits outside `/opt/fibuki`
+because the deploy rsyncs that tree with `--delete`. Same SSH key as the deploy.
+
 ## Decision: the API keeps the hostname `new-api.fibuki.com`, permanently
 
 Decided 2026-07-30, and since carried out. At cutover **only the web host changed** —

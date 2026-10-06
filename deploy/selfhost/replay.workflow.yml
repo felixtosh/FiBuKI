@@ -1,0 +1,141 @@
+# Replay a PR against the real accounts on the box (docs/replay.md).
+#
+# Lives here because the session that wrote it could not create a workflow
+# file (the GitHub App token has no `workflows` permission). To enable it:
+#
+#   git mv deploy/selfhost/replay.workflow.yml .github/workflows/replay.yml
+#
+# and commit. Nothing in it changes with the move.
+#
+# Put the `replay` label on a PR, and every push to it from then on runs the
+# matcher over each configured account on fibuki.com, once on the PR's base
+# commit and once on its head, and posts the counts as one PR comment
+# (updated in place). The data never leaves the box: the runner ships the two
+# functions/ trees in and gets a JSON of counts back. The full reports, with
+# bank lines in them, stay under /opt/fibuki-replay/reports and are read on
+# fibuki.com/admin/replay by each account's owner.
+#
+# Same key and host as deploy-hetzner.yml. A fork PR never runs: GitHub hands
+# no secrets to it, and the job condition says so up front.
+
+name: Replay
+
+on:
+  pull_request:
+    types: [labeled, synchronize]
+
+concurrency:
+  group: replay-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  replay:
+    name: Replay on fibuki.com
+    if: >-
+      ${{ contains(github.event.pull_request.labels.*.name, 'replay') &&
+          github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 30
+    env:
+      PR: ${{ github.event.pull_request.number }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+    steps:
+      - name: Check out the PR head
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: head
+
+      - name: Check out the base commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+
+      - name: Load the deploy key, pin the host key
+        id: key
+        env:
+          SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.HETZNER_SSH_KNOWN_HOSTS }}
+        run: |
+          : "${SSH_KEY:?HETZNER_SSH_KEY is not set}"
+          : "${KNOWN_HOSTS:?HETZNER_SSH_KNOWN_HOSTS is not set}"
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/deploy_key ~/.ssh/known_hosts
+
+      - name: Ship both functions/ trees
+        env:
+          HOST: ${{ secrets.HETZNER_HOST }}
+          DEPLOY_USER: ${{ secrets.HETZNER_USER || 'root' }}
+        run: |
+          : "${HOST:?HETZNER_HOST is not set}"
+          SSH="ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
+          $SSH "$DEPLOY_USER@$HOST" "mkdir -p /opt/fibuki-replay/src/$PR/head /opt/fibuki-replay/src/$PR/base"
+          for side in head base; do
+            rsync -az --delete --exclude node_modules --exclude lib --exclude '.env*' \
+              -e "$SSH" "$side/functions/" "$DEPLOY_USER@$HOST:/opt/fibuki-replay/src/$PR/$side/functions/"
+          done
+          # The box-side script comes from the PR head, so a change to it is tested by itself.
+          rsync -az -e "$SSH" head/deploy/selfhost/replay.sh "$DEPLOY_USER@$HOST:/opt/fibuki-replay/replay.sh"
+
+      - name: Run the replay on the box
+        id: run
+        env:
+          HOST: ${{ secrets.HETZNER_HOST }}
+          DEPLOY_USER: ${{ secrets.HETZNER_USER || 'root' }}
+        run: |
+          out=$(ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            "$DEPLOY_USER@$HOST" "bash /opt/fibuki-replay/replay.sh '$PR' '$HEAD_SHA' '$BASE_SHA'")
+          printf '%s\n' "$out" | sed '$d'
+          summary=$(printf '%s\n' "$out" | tail -1 | sed -n 's/^REPLAY_SUMMARY=//p')
+          [ -n "$summary" ] || { echo "no summary line from the box"; exit 1; }
+          echo "summary=$summary" >> "$GITHUB_OUTPUT"
+
+      - name: Post the counts on the PR
+        uses: actions/github-script@v8
+        env:
+          SUMMARY: ${{ steps.run.outputs.summary }}
+          APP_URL: ${{ vars.FIBUKI_APP_URL || 'https://fibuki.com' }}
+        with:
+          script: |
+            const s = JSON.parse(process.env.SUMMARY);
+            const marker = "<!-- fibuki-replay -->";
+            const rows = s.accounts.map((a) =>
+              `| ${a.label} | ${a.files.changed} / ${a.files.total} | ${a.transactions.changed} / ${a.transactions.total} | ` +
+              `${a.counts.now_agrees} | ${a.counts.now_disagrees + a.counts.contradicts} | ${a.counts.unverified} |`);
+            const worse = s.accounts.some((a) => a.counts.now_disagrees + a.counts.contradicts > 0);
+            const changed = s.accounts.some((a) => a.files.changed + a.transactions.changed > 0);
+            const verdict = worse
+              ? "**Something got worse** against a hand decision. Start with the ❌ rows in the report."
+              : changed
+                ? "**Nothing got worse** against the hand decisions. Read the ❓ rows in the report."
+                : "**No behaviour change.** The branch decides every File and Transaction as the base does.";
+            const body = [
+              marker,
+              `## Replay: \`${s.head.slice(0, 7)}\` vs base \`${s.base.slice(0, 7)}\``,
+              "",
+              "| Account | Files changed | Transactions changed | ✅ | ❌ | ❓ |",
+              "|---|---:|---:|---:|---:|---:|",
+              ...rows,
+              "",
+              verdict,
+              "",
+              `Full report, per account owner: ${process.env.APP_URL}/admin/replay?pr=${s.pr} (counts only here; the rows hold real bank lines).`,
+              "",
+              "---",
+              "_Generated by [Claude Code](https://claude.ai/code)_",
+            ].join("\n");
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number, per_page: 100 });
+            const mine = comments.find((c) => c.body && c.body.includes(marker));
+            if (mine) await github.rest.issues.updateComment({ owner, repo, comment_id: mine.id, body });
+            else await github.rest.issues.createComment({ owner, repo, issue_number, body });

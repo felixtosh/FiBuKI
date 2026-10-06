@@ -52,7 +52,34 @@ export interface ExportReplaySetOptions {
   label?: string;
   /** Keep each File's `extractedText`. Off by default: large and never scored. */
   keepText?: boolean;
+  /**
+   * Only the most recent months: a Transaction dated inside them, a File
+   * whose document date is inside them (an undated File by its upload). The
+   * window starts on the first day of the month `months` months ago, so a
+   * run on the 3rd and a run on the 28th cover the same calendar months.
+   * Everything else (Partners, Connections, Invoices) is taken whole; it is
+   * small, and a Connection outside the window is what the Remainder reads.
+   */
+  months?: number;
   now?: () => Date;
+}
+
+/** The window's first day as the stored dates are written: UTC midnight. */
+export function monthsWindowStart(months: number, now: Date): Date {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - months, 1));
+}
+
+function dateOf(value: unknown): Date | null {
+  if (value instanceof Date) return value;
+  if (value && typeof value === "object" && typeof (value as { toDate?: unknown }).toDate === "function") {
+    return (value as { toDate: () => Date }).toDate();
+  }
+  return null;
+}
+
+function insideWindow(value: unknown, start: Date): boolean {
+  const date = dateOf(value);
+  return date !== null && date.getTime() >= start.getTime();
 }
 
 /** Collections scoped to the User; the others are deployment-wide. */
@@ -64,12 +91,19 @@ const USER_SCOPED: ReadonlySet<ReplayCollection> = new Set<ReplayCollection>([
   "invoices",
 ]);
 
-async function readCollection(db: Db, name: ReplayCollection, userId: string): Promise<DocLine[]> {
+async function readCollection(
+  db: Db,
+  name: ReplayCollection,
+  userId: string,
+  keep: (data: Record<string, unknown>) => boolean = () => true
+): Promise<DocLine[]> {
   let query: FirebaseFirestore.Query = db.collection(name);
   if (USER_SCOPED.has(name)) query = query.where("userId", "==", userId);
   else if (name === "globalPartners") query = query.where("isActive", "==", true);
   const snapshot = await query.get();
-  return snapshot.docs.map((doc) => ({ id: doc.id, data: serializeDocData(doc.data() ?? {}) }));
+  return snapshot.docs
+    .filter((doc) => keep(doc.data() ?? {}))
+    .map((doc) => ({ id: doc.id, data: serializeDocData(doc.data() ?? {}) }));
 }
 
 /** Read one User's matching inputs. Reads only. */
@@ -78,9 +112,19 @@ export async function exportReplaySet(
   userId: string,
   options: ExportReplaySetOptions = {}
 ): Promise<ReplaySet> {
+  const now = options.now ?? (() => new Date());
+  const start = options.months != null ? monthsWindowStart(options.months, now()) : null;
+  const keepTransaction = (data: Record<string, unknown>) => start === null || insideWindow(data.date, start);
+  const keepFile = (data: Record<string, unknown>) => {
+    if (start === null) return true;
+    if (dateOf(data.extractedDate)) return insideWindow(data.extractedDate, start);
+    return insideWindow(data.createdAt, start) || insideWindow(data.uploadedAt, start);
+  };
+
   const collections = {} as Record<ReplayCollection, DocLine[]>;
   for (const name of REPLAY_COLLECTIONS) {
-    collections[name] = await readCollection(db, name, userId);
+    const keep = name === "transactions" ? keepTransaction : name === "files" ? keepFile : undefined;
+    collections[name] = await readCollection(db, name, userId, keep);
   }
   if (!options.keepText) {
     for (const line of collections.files) delete line.data.extractedText;
@@ -89,7 +133,7 @@ export async function exportReplaySet(
     version: REPLAY_SET_VERSION,
     userId,
     label: options.label ?? userId,
-    exportedAt: (options.now ?? (() => new Date()))().toISOString(),
+    exportedAt: now().toISOString(),
     collections,
   };
 }

@@ -12,6 +12,15 @@
 # bypassed by Docker's iptables rules.
 
 services:
+  # Replay reports (docs/replay.md): written on the host by replay.sh under
+  # /opt/fibuki-replay (outside /opt/fibuki, which the deploy rsyncs with
+  # --delete), read by /api/admin/replay for each account's own owner.
+  fibuki-web:
+    environment:
+      FIBUKI_REPLAY_DIR: /replay
+    volumes:
+      - /opt/fibuki-replay/reports:/replay:ro
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
