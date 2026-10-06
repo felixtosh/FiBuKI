@@ -43,7 +43,6 @@ export const TOP_LEVEL_POLICIES: Readonly<Record<string, CollectionPolicy>> = {
   noReceiptCategories: ownerCrud,
   // File Connections are written only by their one writer on the server (#612).
   fileConnections: ownerReadOnly,
-  inboundEmailAddresses: ownerCrud,
 
   // The browser reads domain data; only the server writes it (ADR-0016). These
   // lost their last browser writer in #625.
@@ -51,6 +50,8 @@ export const TOP_LEVEL_POLICIES: Readonly<Record<string, CollectionPolicy>> = {
   agentSearchSessions: ownerReadOnly,
   aiUsage: ownerReadOnly,
   precisionSearchQueue: ownerReadOnly,
+  // Their four callables are the only writers (#626).
+  inboundEmailAddresses: ownerReadOnly,
 
   invoices: ownerReadOnly,
   functionCalls: ownerReadOnly,
@@ -117,6 +118,9 @@ export const SUBTREE_DOC_POLICIES: Readonly<Record<string, CollectionPolicy>> = 
   // The lock every invoice-number claim goes through (invoicing/numberAllocator.ts). Server-only:
   // nothing on it is the client's to read or change.
   "settings/invoiceNumbering": { read: "none", create: "none", update: "none", delete: "none" },
+  // The lock that keeps a User at one active inbound email address
+  // (email-inbound/inboundAddressCallables.ts, #626). Server-only, like the one above.
+  "settings/inboundEmail": { read: "none", create: "none", update: "none", delete: "none" },
 };
 
 /** users/{uid}/<name>/... — uid must equal auth.uid, then this table. */

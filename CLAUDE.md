@@ -267,6 +267,9 @@ Next API route connects through the callable as the user (`lib/api/connect-file.
 - `markUvaPeriodFiledCallable` - Record what was filed for a period (append-only, editable figures); refused while the period has blockers
 - `getUvaFiledStatusCallable` - Blockers, filed vs now per Kennzahl, and earlier filed periods whose figures moved
 
+**Inbound email addresses (#626):**
+- `createInboundEmailAddressCallable` / `updateInboundEmailAddressCallable` / `regenerateInboundEmailAddressCallable` / `deleteInboundEmailAddressCallable` - The table's only writers. The User sets the display name, allowed domains and active/paused; the daily limit and the counters are the server's, and a request naming them is refused. One active address per User: create returns the active one if there is one, and resuming or regenerating while another is active is refused (decided in a transaction on `users/{uid}/settings/inboundEmail`)
+
 **Imports:**
 - `bulkCreateTransactionsCallable` - Bulk create transactions from CSV
 - `createImportRecordCallable` - Create import record

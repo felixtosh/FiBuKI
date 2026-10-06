@@ -43,7 +43,6 @@ type Allowances = Record<string, { count: number; why: string }>;
 const BROWSER_ALLOWED: Allowances = {
   "lib/operations/category-ops.ts": { count: 10, why: "No-document Categories (#629, #630)" },
   "lib/operations/chat-ops.ts": { count: 5, why: "chat sessions stay writable (ADR-0016)" },
-  "lib/operations/email-inbound-ops.ts": { count: 4, why: "inbound email addresses (#626)" },
   "lib/operations/email-integration-ops.ts": { count: 1, why: "removeEmailPatternFromPartner: Partner email learning (#631)" },
   "lib/operations/file-ops.ts": { count: 5, why: "assigning a Partner to a File (#627); Files lock in #635" },
   "lib/operations/invite-ops.ts": { count: 3, why: "allowed emails: an admin table, admins only (ADR-0016)" },
@@ -60,9 +59,6 @@ const BROWSER_ALLOWED: Allowances = {
 /** Server routes: path -> client write calls plus operations-layer writers imported. */
 const ROUTE_ALLOWED: Allowances = {
   "app/api/browser/log/route.ts": { count: 1, why: "browser debug log, not a domain table" },
-  "app/api/email-inbound/[id]/regenerate/route.ts": { count: 1, why: "inbound email addresses (#626)" },
-  "app/api/email-inbound/[id]/route.ts": { count: 2, why: "inbound email addresses (#626)" },
-  "app/api/email-inbound/route.ts": { count: 1, why: "inbound email addresses (#626)" },
   "app/api/sources/delete-orphans/route.ts": { count: 3, why: "sources (#634)" },
   "app/api/truelayer/accounts/route.ts": { count: 4, why: "sources (#634)" },
   "app/api/truelayer/callback/route.ts": { count: 1, why: "bank connections (#634)" },

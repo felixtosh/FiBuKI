@@ -117,6 +117,12 @@ export { convertHtmlToPdfCallable as convertHtmlToPdf } from "./precision-search
 // Export inbound email functions
 export { receiveInboundEmail, testInboundEmail } from "./email-inbound/receiveEmail";
 export { resetInboundDailyLimits } from "./email-inbound/resetDailyLimits";
+export {
+  createInboundEmailAddressCallable as createInboundEmailAddress,
+  updateInboundEmailAddressCallable as updateInboundEmailAddress,
+  regenerateInboundEmailAddressCallable as regenerateInboundEmailAddress,
+  deleteInboundEmailAddressCallable as deleteInboundEmailAddress,
+} from "./email-inbound/inboundAddressCallables";
 
 // Export auth functions
 export {
