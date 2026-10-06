@@ -734,7 +734,9 @@ async function createFileFromAttachment(
     userId,
     fileName: attachment.filename,
     fileType: contentType, // Use corrected MIME type
-    fileSize: attachment.size,
+    // The stored bytes, not the provider's figure: IMAP reports the encoded
+    // part's size (#722).
+    fileSize: attachmentData.length,
     storagePath,
     downloadUrl,
     contentHash,

@@ -1,11 +1,12 @@
 /**
  * Mark a file as "not an invoice" (user override)
- * Clears extracted data and resets downstream matching.
+ * Clears extracted data, and the Hand Correction record for the figures it
+ * wipes (#640), and resets downstream matching, through the File facts module.
  * Preserves manually-set partner assignments.
  */
 
 import { createCallable, HttpsError } from "../utils/createCallable";
-import { buildMarkNotInvoiceUpdates } from "./notInvoiceOps";
+import { markFileNotInvoice } from "./notInvoiceOps";
 
 interface MarkFileAsNotInvoiceRequest {
   fileId: string;
@@ -40,7 +41,7 @@ export const markFileAsNotInvoiceCallable = createCallable<
       throw new HttpsError("permission-denied", "Access denied");
     }
 
-    await fileRef.update(buildMarkNotInvoiceUpdates(fileData, reason));
+    await markFileNotInvoice(ctx.db, fileId, ctx.userId, reason);
 
     console.log(`[markFileAsNotInvoice] Marked file ${fileId} as not invoice`, {
       userId: ctx.userId,

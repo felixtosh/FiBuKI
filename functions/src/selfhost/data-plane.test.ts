@@ -441,9 +441,10 @@ describe("data plane: write", () => {
     const stored = (await db.doc(path).get()).data()!;
     expect(stored.isComplete).toBe(false);
 
-    // Neighbouring settings documents are unaffected.
+    // Neighbouring settings documents are unaffected. (Not userData: the business
+    // identity is read-only for the client too since #632.)
     const other = await call("write", {
-      ops: [{ type: "set", path: `users/${USER}/settings/userData`, data: { theme: "dark" } }],
+      ops: [{ type: "set", path: `users/${USER}/settings/preferences`, data: { theme: "dark" } }],
     });
     expect(other.status).toBe(200);
     // And it is still the caller's own: another user's is out of reach.
