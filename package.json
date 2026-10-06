@@ -34,7 +34,6 @@
     "test:components:watch": "vitest --config vitest.components.config.ts",
     "setup": "bash scripts/setup.sh",
     "generate:mcp-automations": "node scripts/generate-mcp-automations.js",
-    "generate:tool-definitions": "node scripts/generate-tool-definitions.js",
     "check:corpus-anchors": "node scripts/check-corpus-anchors.js"
   },
   "dependencies": {

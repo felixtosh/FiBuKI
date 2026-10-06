@@ -23,7 +23,14 @@ const TOKEN = "tok-policy-user";
 /** Read-only for the client: what each locked table still lets a browser do. */
 const readOnly = (read: CollectionPolicy["read"]): CollectionPolicy => ({ read, create: "none", update: "none", delete: "none" });
 
-const LOCKED_TOP_LEVEL = ["emailIntegrations", "agentSearchSessions", "aiUsage", "precisionSearchQueue", "imports"] as const;
+const LOCKED_TOP_LEVEL = [
+  "emailIntegrations",
+  "agentSearchSessions",
+  "aiUsage",
+  "precisionSearchQueue",
+  "inboundEmailAddresses",
+  "imports",
+] as const;
 
 describe("the policy", () => {
   it.each(LOCKED_TOP_LEVEL)("%s is read-only for the client", (name) => {
@@ -58,6 +65,7 @@ describe("the data plane enforces it", () => {
     ["agentSearchSessions/as-1", { userId: USER, status: "active" }],
     ["aiUsage/au-1", { userId: USER, function: "chat", inputTokens: 1 }],
     ["precisionSearchQueue/ps-1", { userId: USER, status: "pending" }],
+    ["inboundEmailAddresses/ia-1", { userId: USER, email: "invoices-x@fibuki.com", isActive: true, dailyLimit: 100, todayCount: 0 }],
     ["imports/im-1", { userId: USER, sourceId: "s-1", status: "completed", fieldMappings: [] }],
     [`users/${USER}/reports/r-1`, { status: "draft" }],
     [`users/${USER}/settings/userData`, { personalEntity: { name: "Max Muster" }, finanzonline: { isConfigured: true } }],
@@ -97,6 +105,21 @@ describe("the data plane enforces it", () => {
     }
     const after = await getFirestore().doc(path).get();
     expect(after.data()).toEqual(data);
+  });
+
+  it("the inbound email lock (#626) is neither readable nor writable", async () => {
+    const path = `users/${USER}/settings/inboundEmail`;
+    await getFirestore().doc(path).set({ updatedAt: 1 });
+    expect((await call("get", { path })).status).toBe(403);
+    for (const op of [
+      { type: "set", path, data: { updatedAt: 2 } },
+      { type: "update", path, data: { updatedAt: 2 } },
+      { type: "delete", path },
+    ]) {
+      const r = await call("write", { ops: [op] });
+      expect(r.status, `${op.type} ${path} -> ${r.text}`).toBe(403);
+    }
+    expect((await getFirestore().doc(path).get()).data()).toEqual({ updatedAt: 1 });
   });
 
   // settings/ holds other documents a client may still write; the identity's own

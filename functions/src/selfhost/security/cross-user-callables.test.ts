@@ -58,6 +58,7 @@ const ID_KEYS = [
   "sessionId", "chatSessionId",
   "notificationId",
   "keyId", "apiKeyId",
+  "addressId",
   "storagePath", "downloadUrl", "path",
   "userId", "uid", "targetUserId", "ownerId",
 ];
@@ -114,6 +115,8 @@ function ownPayloads(): Array<Record<string, unknown>> {
     { importJobId: A.import, sourceId: A.source, fieldMappings: REMAP_MAPPINGS, rows: [] },
     // #632: the identity, its entities linked to a Partner.
     identityPayload(A.partner),
+    // #626: an inbound email address takes only its User's settings.
+    { addressId: A.inboundAddress, data: { displayName: "probe" } },
   ];
 }
 
@@ -147,6 +150,7 @@ function handOverPayloads(): Array<Record<string, unknown>> {
     { categoryId: A.category, data: { name: "Mine", userId: VICTIM } },
     { sourceId: A.source, data: { name: "Mine", userId: VICTIM } },
     { invoiceId: A.invoice, data: { recipientName: "Mine", userId: VICTIM } },
+    { addressId: A.inboundAddress, data: { displayName: "Mine", userId: VICTIM } },
     // #616: a tool's arguments carry no owner; one smuggled in is just an argument.
     { tool: "update_transaction", arguments: { transactionId: A.transaction, description: "mine", userId: VICTIM } },
   ];
@@ -164,6 +168,7 @@ function payloads(): Array<Record<string, unknown>> {
     { transactionId: V.transaction, updates: { name: "pwned", userId: ATTACKER } },
     { fileId: V.file, data: { fileName: "pwned", userId: ATTACKER } },
     { partnerId: V.partner, data: { name: "pwned", userId: ATTACKER } },
+    { addressId: V.inboundAddress, data: { isActive: false } },
     // One side mine, one side theirs: each pair both ways round.
     { fileId: V.file, transactionId: A.transaction },
     { fileId: A.file, transactionId: V.transaction },

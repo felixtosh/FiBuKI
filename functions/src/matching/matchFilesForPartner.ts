@@ -16,7 +16,7 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { MODELS } from "../utils/models";
 import { connectFiles } from "../fileConnections/writer";
-import { autoConnectHolds, fileDateRangesFor, matchableFiles, pairsAmong } from "./matcher";
+import { autoConnectJudgements, fileDateRangesFor, matchableFiles, pairsAmong, type AutoConnectJudgement } from "./matcher";
 import { isOutstandingMatch } from "./transactionScoring";
 import { SCORING_CONFIG } from "./transactionScoring";
 import { toDateSafe } from "../utils/toDateSafe";
@@ -328,25 +328,33 @@ export async function matchFilesForPartnerInternal(
   // A File tied at the threshold (#667) connects none of the tied
   // Transactions, and an instalment without printed evidence (#615) stays a
   // suggestion, judged on the File's own matches as on upload, not on this
-  // Partner's pool alone.
+  // Partner's pool alone. The same judgement says which instalments a File
+  // takes in one run (#716).
   const filesAtThreshold = new Set(
     allScores.filter((m) => m.confidence >= SCORING_CONFIG.AUTO_MATCH_THRESHOLD).map((m) => m.fileId)
   );
-  const ties =
+  const judgements =
     filesAtThreshold.size > 0
-      ? await autoConnectHolds(db, userId, unconnectedFiles.filter((f) => filesAtThreshold.has(f.id)))
-      : new Map<string, Set<string>>();
+      ? await autoConnectJudgements(db, userId, unconnectedFiles.filter((f) => filesAtThreshold.has(f.id)))
+      : new Map<string, AutoConnectJudgement>();
+  const ties = new Map([...judgements].filter(([, j]) => j.held.size > 0).map(([id, j]) => [id, j.held]));
 
   // 5. Create connections for auto-matches
-  // Greedy matching: each file to at most one transaction, each transaction to at most one file
+  // Greedy matching: each file to at most one transaction, each transaction
+  // to at most one file. Except a File paid in instalments: it takes every
+  // instalment the upload trigger's rules would connect in one run, one per
+  // printed due date (#716), and nothing else beside them.
   const usedFiles = new Set<string>();
+  const instalmentFiles = new Set<string>();
   const usedTransactions = new Set<string>();
   const chosen: typeof allScores = [];
   let autoMatched = 0;
   let suggested = 0;
 
   for (const match of allScores) {
-    if (usedFiles.has(match.fileId) || usedTransactions.has(match.transactionId)) {
+    const instalmentPick = judgements.get(match.fileId)?.instalments.has(match.transactionId) ?? false;
+    const fileTaken = usedFiles.has(match.fileId) && !(instalmentPick && instalmentFiles.has(match.fileId));
+    if (fileTaken || usedTransactions.has(match.transactionId)) {
       continue;
     }
 
@@ -360,6 +368,7 @@ export async function matchFilesForPartnerInternal(
     } else if (match.confidence >= SCORING_CONFIG.AUTO_MATCH_THRESHOLD) {
       chosen.push(match);
       usedFiles.add(match.fileId);
+      if (instalmentPick) instalmentFiles.add(match.fileId);
       usedTransactions.add(match.transactionId);
     } else {
       // Counted only; the File's own suggestions are the trigger's.
@@ -388,9 +397,13 @@ export async function matchFilesForPartnerInternal(
       autoMatched++;
     } else if (outcome.status === "refused") {
       // Free for the AI pass, which the writer refuses the same way.
-      usedFiles.delete(chosen[i].fileId);
       usedTransactions.delete(chosen[i].transactionId);
     }
+  });
+  // A File stays taken while any of its chosen pairs connected.
+  usedFiles.clear();
+  scoreOutcomes.forEach((outcome, i) => {
+    if (outcome.status !== "refused") usedFiles.add(chosen[i].fileId);
   });
 
   console.log(

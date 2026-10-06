@@ -36,7 +36,7 @@ import {
 } from "../precision-search/generateSearchQueries";
 import { readBankOriginalAmount } from "../fx/bankOriginalAmount";
 import { autoConnectHolds, filesForTransaction } from "../matching/matcher";
-import { SCORING_CONFIG } from "../matching/transactionScoring";
+import { SCORING_CONFIG, isOutstandingMatch } from "../matching/transactionScoring";
 
 /**
  * Below this a Gmail candidate is not surfaced. On the attachment scorer's
@@ -140,6 +140,12 @@ export interface ConnectFileArgs {
   fileId: string;
   matchConfidence: number;
   connectionType: "auto_matched";
+  /**
+   * Set when the File is connected as one payment of several on printed
+   * evidence (#615, #716, ADR-0013), as every other auto-connecting surface
+   * stamps it. Server-side only: the connect callable takes no reason.
+   */
+  autoConnectReason?: "instalment";
 }
 
 export interface FindReceiptDeps {
@@ -262,6 +268,7 @@ export async function findReceiptForTransaction(
   const candidates: FindReceiptCandidate[] = [];
   const stored = await filesForTransaction(db, userId, txSnap);
   const localFileCount = stored.totalCandidates;
+  const storedMatchOf = new Map(stored.matches.map((m) => [m.fileId, m]));
 
   for (const match of stored.matches) {
     if (match.confidence < suggestionThreshold) break;
@@ -481,12 +488,17 @@ export async function findReceiptForTransaction(
     !tx.quotaExceeded &&
     !(await heldBackOn(db, userId, top.fileId, transactionId))
   ) {
+    // An Outstanding Match that is not held back carries printed evidence
+    // (the holds refuse one without it), so it is stamped as an instalment
+    // like Partner matching and the upload trigger stamp it (#716).
+    const topMatch = storedMatchOf.get(top.fileId);
     await connectFileToTransaction({
       userId,
       transactionId,
       fileId: top.fileId,
       matchConfidence: top.score,
       connectionType: "auto_matched",
+      ...(topMatch && isOutstandingMatch(topMatch) ? { autoConnectReason: "instalment" as const } : {}),
     });
     return {
       status: "connected",

@@ -20,6 +20,10 @@
  *    of times. The list only shrinks: a new file fails, a pinned file using it
  *    more often fails, and so does one using it less often until its number
  *    (or, at zero, its entry) comes down.
+ * 4. **The modules in IMPORT_FREE have no runtime import at all.** The tool
+ *    definitions are read by the OpenAPI spec, llm.txt and the chat's wrappers
+ *    (#691); rules 1 and 2 would still let them reach `firebase-admin` or any
+ *    other server-only module, so they are held to type-only imports.
  *
  * Each file is parsed with the TypeScript compiler, so comments and string
  * literals (`"image/*"`) never read as code. The walk follows `import`/`export
@@ -48,6 +52,9 @@ const FUNCTIONS = /^firebase-functions(?:\/|$)/;
 
 /** The two homes of `httpsCallable` (#647 decision 3). */
 const CALLABLE_HOMES = ["lib/firebase/callable.ts", "lib/selfhost/functions-client.ts"];
+
+/** Shared modules that may import types only (#691), by path from the repo root. */
+const IMPORT_FREE = ["functions/src/tools/definitions.ts"];
 
 interface Pinned {
   /** References to `httpsCallable` outside its import. */
@@ -93,7 +100,7 @@ const CALLABLE_RATCHET: Record<string, Pinned> = {
     uses: 4,
     calls: "assignNoReceiptCategory, matchCategories, learnPartnerCategoryPatterns",
   },
-  "lib/operations/file-ops.ts": { uses: 6, calls: "matchFilesForPartner, retryFileExtraction" },
+  "lib/operations/file-ops.ts": { uses: 4, calls: "matchFilesForPartner, retryFileExtraction" },
 };
 
 const CODE = /\.(?:tsx?|jsx?|mjs|cjs)$/;
@@ -409,6 +416,12 @@ describe("browser code reaches no Firebase server SDK (#688)", () => {
     ]);
   });
 
+  it("fails a runtime import in an import-free module, and lets a type-only one pass", () => {
+    expect(scan(`import type { PlanFeatureKey } from "../billing/config";`, "d.ts").imports).toEqual([]);
+    expect(scan(`import { PLANS } from "../billing/config";`, "d.ts").imports).toEqual(["../billing/config"]);
+    expect(scan(`import "firebase-admin";`, "d.ts").imports).toEqual(["firebase-admin"]);
+  });
+
   it("holds on the repo", () => {
     const frontend = listFrontend();
     // The walk sees the backend modules the frontend imports; an empty graph
@@ -417,5 +430,6 @@ describe("browser code reaches no Firebase server SDK (#688)", () => {
     expect(buildGraph(disk, frontend).size).toBeGreaterThan(frontend.length);
     expect(offenders(disk, frontend, CALLABLE_RATCHET)).toEqual(clean);
     for (const home of CALLABLE_HOMES) expect(scan(disk.read(home), home).callableUses, home).toBeGreaterThan(0);
+    for (const path of IMPORT_FREE) expect(scan(disk.read(path), path).imports, path).toEqual([]);
   });
 });

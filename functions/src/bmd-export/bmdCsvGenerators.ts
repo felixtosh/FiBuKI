@@ -11,7 +11,7 @@ import {
   KREDITOR_ACCOUNT_BASE,
   DEBITOR_ACCOUNT_BASE,
 } from "../types/bmd-export";
-import { buildUvaTransaction, type CategoryRecord, type FileRecord } from "../uva/adapter";
+import { buildUvaTransaction, type CategoryRecord, type FileRecord, type TransactionRecord } from "../uva/adapter";
 import { deriveTransactionVat } from "../uva/transactionVat";
 import { assessTip, documentsTotalWithTip, isTipPartialPayment } from "../uva/tip";
 import { documentsInBankCurrency, RECONCILE_TOLERANCE_CENTS } from "../uva/calculateUva";
@@ -173,6 +173,16 @@ export function generatePersonenkontenCsv(
 
   return [headers.join(";"), ...csvRows].join("\n");
 }
+
+/**
+ * Every field of `T` listed; an optional one may be listed as `undefined`. A
+ * hand-built record typed this way stops compiling when `T` gains a field
+ * nobody mapped, where an optional field would compile and silently drop out
+ * of the export (#715).
+ */
+export type EveryField<T> = {
+  [K in keyof Required<T>]: {} extends Pick<T, K> ? T[K] | undefined : T[K];
+};
 
 /**
  * Transaction data for export
@@ -341,7 +351,7 @@ function vatRowsFor(
       noReceiptCategoryTemplateId: tx.noReceiptCategoryTemplateId ?? null,
       fileIds: tx.fileIds,
       partialPaymentAcceptance: tx.partialPaymentAcceptance ?? null,
-    },
+    } satisfies EveryField<TransactionRecord>,
     {
       filesById,
       categoriesById,

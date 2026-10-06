@@ -244,7 +244,8 @@ export const FILE_MATCHING_AUTOMATIONS: AutomationStep[] = [
     longDescription:
       `Automatically matches uploaded receipts and invoices to transactions using a scoring algorithm. ` +
       `The system considers: invoice amount (exact or close matches), date proximity (within ${MATCH_WINDOW_DAYS} days, ` +
-      `or up to ${MATCH_WINDOW_ANCHOR_GRACE_DAYS} days past a stated due date or debit date), ` +
+      `or up to ${MATCH_WINDOW_ANCHOR_GRACE_DAYS} days past a stated due date or debit date, ` +
+      `and within ${MATCH_WINDOW_DAYS} days of each printed instalment's due date), ` +
       `partner overlap (same company on both), IBAN presence, and reference/invoice numbers. ` +
       `Matches scoring ${TRANSACTION_MATCH_CONFIG.AUTO_MATCH_THRESHOLD}+ points are auto-connected; ` +
       `scores ${TRANSACTION_MATCH_CONFIG.SUGGESTION_THRESHOLD}-${TRANSACTION_MATCH_CONFIG.AUTO_MATCH_THRESHOLD - 1} appear as suggestions.`,
