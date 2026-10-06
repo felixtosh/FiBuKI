@@ -1,12 +1,5 @@
 # Replay a PR against the real accounts on the box (docs/replay.md).
 #
-# Lives here because the session that wrote it could not create a workflow
-# file (the GitHub App token has no `workflows` permission). To enable it:
-#
-#   git mv deploy/selfhost/replay.workflow.yml .github/workflows/replay.yml
-#
-# and commit. Nothing in it changes with the move.
-#
 # Put the `replay` label on a PR, and every push to it from then on runs the
 # matcher over each configured account on fibuki.com, once on the PR's base
 # commit and once on its head, and posts the counts as one PR comment

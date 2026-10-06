@@ -97,7 +97,7 @@ the Evidence section.
 The three steps above are the engine. On fibuki.com they run by themselves:
 
 1. Put the **`replay`** label on a PR. Every push to that PR from then on runs the
-   replay (`.github/workflows/replay.yml`, shipped as `deploy/selfhost/replay.workflow.yml` until it is moved there; see its header).
+   replay (`.github/workflows/replay.yml`).
 2. The workflow ships the PR's and the base commit's `functions/` trees to the box and
    runs `deploy/selfhost/replay.sh` there. The script exports every account listed in
    `/opt/fibuki-replay/accounts` fresh through the running API container (read-only),
