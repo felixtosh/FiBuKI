@@ -1,4 +1,5 @@
 import { toDateSafe } from "@/lib/utils";
+import { needsPartner } from "@/lib/reports/needs-partner";
 import {
   collection,
   query,
@@ -110,9 +111,7 @@ export async function getReportReadiness(
       missingReceipts.push(tx.id);
     }
 
-    // Check if partner is assigned (for significant amounts)
-    if (Math.abs(tx.amount) > 10000 && !tx.partnerId) {
-      // > 100 EUR
+    if (needsPartner(tx)) {
       missingPartners.push(tx.id);
     }
   }
