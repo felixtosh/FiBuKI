@@ -307,6 +307,35 @@ describe("findReceiptForTransaction", () => {
     }
   });
 
+  it("searches an IMAP Mail Integration too, handing it the suggestions as neutral terms (#746)", async () => {
+    store.setDoc(
+      "transactions",
+      "tx-1",
+      createTestTransaction({
+        userId: "u1",
+        amount: -1999,
+        partner: "Netflix",
+        date: new Date("2026-02-15"),
+      })
+    );
+    store.setDoc("emailIntegrations", "imap-1", {
+      userId: "u1",
+      provider: "imap",
+      isActive: true,
+      needsReauth: false,
+      email: "stefan@example.com",
+    });
+    const deps = buildDeps();
+
+    await findReceiptForTransaction({ transactionId: "tx-1", userId: "u1" }, deps);
+
+    expect(deps.searchGmail).toHaveBeenCalledTimes(1);
+    const args = (deps.searchGmail as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(args.integrationIds).toEqual(["imap-1"]);
+    expect(args.terms.length).toBeGreaterThan(0);
+    expect(JSON.stringify(args.terms)).toMatch(/netflix/i);
+  });
+
   it("filters out integrations needing reauth", async () => {
     store.setDoc(
       "transactions",

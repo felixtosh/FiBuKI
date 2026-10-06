@@ -18,6 +18,7 @@ import { WorkerType, WorkerMessage, WorkerRun, WorkerTriggerContext } from "@/ty
 import { ToolCallSummary } from "@/types/notification";
 import { TOOL_LABELS, SKIP_TOOLS, parseToolResult, cleanToolSummary } from "@/lib/tool-summary";
 import { ModelProvider } from "@/lib/agent/model";
+import { chatMailIntegrations } from "@/lib/agent/tools/mail-integrations";
 
 const db = getAdminDb();
 
@@ -171,28 +172,14 @@ async function getGmailReauthBlock(userId: string): Promise<{
   blocked: boolean;
   affectedEmails: string[];
 }> {
-  const integrationsSnap = await db
-    .collection("emailIntegrations")
-    .where("userId", "==", userId)
-    .where("provider", "==", "gmail")
-    .where("isActive", "==", true)
-    .get();
+  // Every mailbox the mail tools read, Gmail or IMAP (#746).
+  const { connected, searched, needingReauth } = await chatMailIntegrations(db, userId);
 
-  if (integrationsSnap.empty) {
+  if (connected.length === 0 || searched.length > 0) {
     return { blocked: false, affectedEmails: [] };
   }
 
-  const integrations = integrationsSnap.docs.map((doc) => doc.data() as {
-    email?: string;
-    needsReauth?: boolean;
-  });
-  const hasHealthyIntegration = integrations.some((integration) => integration.needsReauth !== true);
-
-  if (hasHealthyIntegration) {
-    return { blocked: false, affectedEmails: [] };
-  }
-
-  const affectedEmails = integrations
+  const affectedEmails = needingReauth
     .map((integration) => integration.email)
     .filter((email): email is string => typeof email === "string" && email.length > 0);
 
@@ -231,7 +218,7 @@ async function createGmailReauthNotification(
   affectedEmails: string[]
 ): Promise<void> {
   const now = Timestamp.now();
-  const emailPreview = affectedEmails[0] || "your Gmail account";
+  const emailPreview = affectedEmails[0] || "Your mailbox";
   const message = `${emailPreview} needs reconnection. Automated matching is paused and will resume automatically once reconnected.`;
   const notificationRef = db
     .collection(`users/${userId}/notifications`)
@@ -241,7 +228,7 @@ async function createGmailReauthNotification(
   await notificationRef.set({
     userId,
     type: "gmail_reauth_required",
-    title: "Reconnect Gmail to Resume Matching",
+    title: "Reconnect Your Mailbox to Resume Matching",
     message,
     readAt: null, // re-open the reminder every time this condition recurs
     createdAt: notificationSnap.exists
@@ -1082,7 +1069,7 @@ export async function POST(req: Request) {
       const gmailBlock = await getGmailReauthBlock(userId);
       if (gmailBlock.blocked) {
         const pauseMessage =
-          "Paused: Gmail reconnection required. This worker will resume automatically after reconnect.";
+          "Paused: a mailbox needs reconnection. This worker will resume automatically after reconnect.";
 
         await requeueWorkerRequestForReauth(
           userId,
@@ -1422,7 +1409,7 @@ export async function POST(req: Request) {
           await requeueWorkerRequestForReauth(
             userId,
             workerRequestId,
-            "Paused: Gmail reconnection required. This worker will resume automatically after reconnect.",
+            "Paused: a mailbox needs reconnection. This worker will resume automatically after reconnect.",
             GMAIL_REAUTH_RETRY_DELAY_MS
           );
           await createGmailReauthNotification(userId, []);
@@ -1446,7 +1433,7 @@ export async function POST(req: Request) {
           return {
             runId,
             status: "blocked_for_reauth",
-            error: "Paused: Gmail reconnection required. This worker will resume automatically after reconnect.",
+            error: "Paused: a mailbox needs reconnection. This worker will resume automatically after reconnect.",
             errorCode: "REAUTH_REQUIRED",
             retryAfterMs: GMAIL_REAUTH_RETRY_DELAY_MS,
             ...(sessionId ? { sessionId } : {}),

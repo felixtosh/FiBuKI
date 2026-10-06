@@ -9,10 +9,12 @@
  * inside the 10-point lead.
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { getFirestore, Timestamp, __resetFirestoreShim } from "./firestore-shim";
 import { findReceiptForTransactionCallable } from "../workflows/findReceiptForTransactionCallable";
 import type { FindReceiptResult } from "../workflows/findReceiptForTransaction";
+import { __setMailProviderFactory } from "../mail/searchMailboxes";
+import type { MailProvider, MailSearchOptions } from "../mail/provider";
 
 const db = getFirestore();
 const ME = "fr-me";
@@ -196,5 +198,81 @@ describe("Rejections keep a File out, as in the trigger", () => {
 
     expect(result.status).toBe("no_match");
     expect(await connections()).toHaveLength(0);
+  });
+});
+
+describe("find-receipt reads IMAP Mail Integrations (#746)", () => {
+  async function imapMailbox(id: string) {
+    await db.collection("emailIntegrations").doc(id).set({
+      userId: ME,
+      provider: "imap",
+      email: `${id}@example.com`,
+      isActive: true,
+      needsReauth: false,
+    });
+    await db.collection("emailTokens").doc(id).set({ provider: "imap", secret: "cipher", secretIv: "iv" });
+  }
+
+  async function netflixCharge() {
+    await db.collection("transactions").doc("t").update({ name: "NETFLIX.COM", partner: "Netflix" });
+  }
+
+  afterEach(() => __setMailProviderFactory(null));
+
+  it("searches the IMAP mailbox by the suggestions' terms and offers its invoice", async () => {
+    await netflixCharge();
+    await imapMailbox("imap-1");
+    const searches: MailSearchOptions[] = [];
+    const mailbox: MailProvider = {
+      async search(opts) {
+        searches.push(opts);
+        return { messages: [{ id: "42" }] };
+      },
+      async getMessage() {
+        return {
+          id: "42",
+          messageId: "<42@imap.example>",
+          from: "Netflix <info@netflix.com>",
+          subject: "Ihre Netflix Rechnung",
+          date: new Date("2026-03-10T08:00:00Z"),
+          attachments: [{ attachmentId: "2", filename: "netflix-rechnung.pdf", mimeType: "application/pdf", size: 10 }],
+        };
+      },
+      async getAttachment() {
+        return Buffer.from("%PDF");
+      },
+      async close() {},
+    };
+    __setMailProviderFactory(async () => mailbox);
+
+    const result = await findReceipt({ transactionId: "t" });
+
+    expect(searches.length).toBeGreaterThan(0);
+    expect(JSON.stringify(searches.map((s) => [s.keywords, s.from]))).toMatch(/netflix/i);
+    expect(result.sourcesChecked.gmailEmails).toBe(1);
+    expect(result.sourcesChecked.gmailAttachments).toBe(1);
+  });
+
+  it("marks an IMAP mailbox whose login is refused as needing new credentials", async () => {
+    await netflixCharge();
+    await imapMailbox("imap-1");
+    __setMailProviderFactory(async () => ({
+      async search() {
+        throw Object.assign(new Error("Command failed"), { authenticationFailed: true });
+      },
+      async getMessage() {
+        throw new Error("unreachable");
+      },
+      async getAttachment() {
+        throw new Error("unreachable");
+      },
+      async close() {},
+    }));
+
+    await findReceipt({ transactionId: "t" });
+
+    const record = (await db.collection("emailIntegrations").doc("imap-1").get()).data()!;
+    expect(record.needsReauth).toBe(true);
+    expect(record.receiptSearchLastError).toMatch(/Authentication failed/);
   });
 });

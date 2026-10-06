@@ -221,7 +221,7 @@ async function mailFiles() {
       mailbox: f.gmailIntegrationId,
       message: f.mailMessageId,
       attachment: f.mailAttachmentId,
-      nominated: f.precisionSearchHint?.transactionId ?? null,
+      nominated: (f.precisionSearchHint as { transactionId?: string } | undefined)?.transactionId ?? null,
     }));
 }
 

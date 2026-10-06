@@ -43,7 +43,8 @@ import {
   classifyEmail,
   GmailAttachment,
 } from "./shared-utils";
-import type { MailMessage, MailSearchLimitation, MailSearchTerms } from "../mail/provider";
+import type { MailMessage, MailSearchLimitation } from "../mail/provider";
+import { namedSearchTerms } from "../mail/search-terms";
 import { searchedMailIntegrations, SEARCHABLE_MAIL_PROVIDERS, mailProviderOf } from "../mail/searchable";
 import {
   MAIL_PROVIDER_SECRETS,
@@ -340,22 +341,6 @@ function mailWindow(txDate: Date): { dateFrom: Date; dateTo: Date } {
     dateFrom: new Date(txDate.getTime() - MAIL_WINDOW_DAYS * MS_PER_DAY),
     dateTo: new Date(txDate.getTime() + MAIL_WINDOW_DAYS * MS_PER_DAY),
   };
-}
-
-/**
- * One suggestion's terms as a search names them: an omitted keyword or
- * filename list means the suggestion named none, never the invoice sweep a
- * provider falls back to when nothing is named (#240). Null when the
- * suggestion names nothing a mailbox can search for.
- */
-function searchTermsOf(terms: MailSearchTerms): MailSearchTerms | null {
-  const named =
-    (terms.keywords?.length ?? 0) > 0 ||
-    (terms.anyOf?.length ?? 0) > 0 ||
-    Boolean(terms.from) ||
-    (terms.filenames?.length ?? 0) > 0;
-  if (!named) return null;
-  return { ...terms, keywords: terms.keywords ?? [], filenames: terms.filenames ?? [] };
 }
 
 /** Keep each constraint a provider could not execute once per mailbox, on the attempt. */
@@ -1158,7 +1143,7 @@ async function executeEmailAttachmentStrategy(
       if (greatMatchCount >= GREAT_MATCH_COUNT) break;
       for (const suggestion of suggestions) {
         if (greatMatchCount >= GREAT_MATCH_COUNT || !isUsable(mailbox)) break;
-        const terms = searchTermsOf(suggestion.terms);
+        const terms = namedSearchTerms(suggestion.terms);
         if (!terms) continue;
 
         let messageRefs: Array<{ id: string }>;
@@ -1549,7 +1534,7 @@ async function executeEmailInvoiceStrategy(
       if (greatMatchCount >= GREAT_MATCH_COUNT) break;
       for (const suggestion of suggestions) {
         if (greatMatchCount >= GREAT_MATCH_COUNT || !isUsable(mailbox)) break;
-        const terms = searchTermsOf(suggestion.terms);
+        const terms = namedSearchTerms(suggestion.terms);
         if (!terms) continue;
 
         let messageRefs: Array<{ id: string }>;

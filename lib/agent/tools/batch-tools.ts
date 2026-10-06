@@ -10,6 +10,7 @@ import { toDateSafe } from "@/lib/utils";
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { callFirebaseFunction } from "@/lib/api/firebase-callable";
+import { NO_MAILBOX_CONNECTED, chatMailIntegrations } from "./mail-integrations";
 // See the note on the same import in search-tools: one reader of the dismissal
 // fields, not a per-call-site re-derivation.
 import { readDismissedTransactionIds } from "../../../functions/src/matching/dismissedTransactions";
@@ -366,17 +367,12 @@ export const searchGmailForPartnerTool = tool(
     try {
       const db = await getDb();
 
-      // Look up user's active Gmail integrations
-      const integrationsSnapshot = await db
-        .collection("emailIntegrations")
-        .where("userId", "==", userId)
-        .where("provider", "==", "gmail")
-        .where("isActive", "==", true)
-        .get();
+      // Every Mail Integration the receipt search reads, Gmail and IMAP alike (#746)
+      const mailboxes = await chatMailIntegrations(db, userId);
 
-      if (integrationsSnapshot.empty) {
+      if (mailboxes.connected.length === 0) {
         return {
-          error: "Gmail is not connected. Connect Gmail to search email attachments.",
+          error: NO_MAILBOX_CONNECTED,
           results: [],
           totalCount: 0,
           query: searchQuery,
@@ -385,6 +381,7 @@ export const searchGmailForPartnerTool = tool(
 
       const allMessages: Array<{
         messageId: string;
+        integrationId: string;
         subject: string;
         from: string;
         date: string;
@@ -392,26 +389,34 @@ export const searchGmailForPartnerTool = tool(
         attachments: Array<{ filename: string; mimeType: string; size: number }>;
       }> = [];
 
-      for (const integrationDoc of integrationsSnapshot.docs) {
-        const searchResponse = await callFirebaseFunction<
-          { integrationId: string; query: string; hasAttachments: boolean; expandThreads: boolean; limit: number },
-          { messages?: Array<{ messageId: string; subject: string; from: string; date: string; snippet: string; attachments?: Array<{ filename: string; mimeType: string; size: number }> }> }
-        >(
-          "searchGmailCallable",
-          {
-            integrationId: integrationDoc.id,
-            query: searchQuery,
-            hasAttachments: false,
-            expandThreads: true,
-            limit: 50,
-          },
-          authHeader
-        );
+      for (const integration of mailboxes.searched) {
+        // One mailbox failing does not lose the others' results.
+        let messages: Array<{ messageId: string; subject: string; from: string; date: string; snippet: string; attachments?: Array<{ filename: string; mimeType: string; size: number }> }>;
+        try {
+          const searchResponse = await callFirebaseFunction<
+            { integrationId: string; query: string; hasAttachments: boolean; expandThreads: boolean; limit: number },
+            { messages?: typeof messages }
+          >(
+            "searchGmailCallable",
+            {
+              integrationId: integration.id,
+              query: searchQuery,
+              hasAttachments: false,
+              expandThreads: true,
+              limit: 50,
+            },
+            authHeader
+          );
+          messages = searchResponse?.messages || [];
+        } catch (err) {
+          console.error(`[searchGmailForPartner] Error searching integration ${integration.id}:`, err);
+          continue;
+        }
 
-        const messages = searchResponse?.messages || [];
         for (const msg of messages) {
           allMessages.push({
             messageId: msg.messageId,
+            integrationId: integration.id,
             subject: msg.subject,
             from: msg.from,
             date: msg.date,
@@ -427,13 +432,13 @@ export const searchGmailForPartnerTool = tool(
         query: searchQuery,
       };
     } catch (err) {
-      return { error: `Gmail search failed: ${(err as Error).message}` };
+      return { error: `Mail search failed: ${(err as Error).message}` };
     }
   },
   {
     name: "searchGmailForPartner",
     description:
-      "Search Gmail for attachments from a partner. Uses the partner's known email domains and patterns. Results are shared across all batch items.",
+      "Search every connected mailbox (Gmail or IMAP) for attachments from a partner. Uses the partner's known email domains and patterns. Results are shared across all batch items.",
     schema: z.object({
       partnerId: z.string().describe("The partner ID"),
       searchQuery: z.string().describe("Gmail search query (e.g., 'from:amazon.de has:attachment')"),

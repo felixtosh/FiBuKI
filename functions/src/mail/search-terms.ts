@@ -134,3 +134,20 @@ export function termsFromQuery(query: string): MailSearchTerms {
     ...(hasAttachment !== undefined ? { hasAttachment } : {}),
   };
 }
+
+/**
+ * One suggestion's terms as a search names them: an omitted keyword or
+ * filename list means the suggestion named none, never the invoice sweep a
+ * provider falls back to when nothing is named. Null when the terms name
+ * nothing a mailbox can search for, so a caller skips them rather than search
+ * the whole window (#746).
+ */
+export function namedSearchTerms(terms: MailSearchTerms): MailSearchTerms | null {
+  const named =
+    (terms.keywords?.length ?? 0) > 0 ||
+    (terms.anyOf?.length ?? 0) > 0 ||
+    Boolean(terms.from) ||
+    (terms.filenames?.length ?? 0) > 0;
+  if (!named) return null;
+  return { ...terms, keywords: terms.keywords ?? [], filenames: terms.filenames ?? [] };
+}
