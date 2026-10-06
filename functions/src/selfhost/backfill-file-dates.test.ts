@@ -8,6 +8,7 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
+import { toDateSafe } from "../utils/toDateSafe";
 import { getFirestore, Timestamp, __resetFirestoreShim, __whenShimIdle } from "./firestore-shim";
 import { __resetTriggerShim } from "./trigger-shim";
 import { backfillFileDates, type FileDatesBackfillOptions } from "./backfill-file-dates";
@@ -19,7 +20,7 @@ const OTHER = "dates-other";
 const AT = Timestamp.fromDate(new Date("2026-10-06T10:00:00Z"));
 const EARLIER = Timestamp.fromDate(new Date("2026-09-01T10:00:00Z"));
 const day = (iso: string) => Timestamp.fromDate(new Date(`${iso}T00:00:00Z`));
-const isoOf = (value: unknown) => (value as Timestamp | null | undefined)?.toDate().toISOString().slice(0, 10) ?? null;
+const isoOf = (value: unknown) => toDateSafe(value)?.toISOString().slice(0, 10) ?? null;
 
 const ISSUE = "2026-03-02";
 const due = (value: string) => ({ key: "dueDate", label: "Fällig am", value });

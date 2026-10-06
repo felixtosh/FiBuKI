@@ -11,12 +11,13 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { toDateSafe } from "../../utils/toDateSafe";
 import { Timestamp } from "firebase-admin/firestore";
 import { decideFactChange, type FactOutcome, type FactUpdate } from "../factChange";
 
 const AT = Timestamp.fromDate(new Date("2026-10-06T10:00:00Z"));
 const day = (iso: string) => Timestamp.fromDate(new Date(`${iso}T00:00:00Z`));
-const isoOf = (value: unknown) => (value as Timestamp | null)?.toDate().toISOString().slice(0, 10) ?? null;
+const isoOf = (value: unknown) => toDateSafe(value)?.toISOString().slice(0, 10) ?? null;
 
 const ISSUE = "2026-03-02";
 const DUE_ROW = { key: "dueDate", label: "Fällig am", value: "2026-03-16" };
