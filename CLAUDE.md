@@ -436,6 +436,25 @@ as a hardcoded string. Don't raise the allowance for these; reshape the code ins
 a type alias (`type IdSet = Set<string>`), `{cond ? (<A />) : null}` blocks instead of
 chained ternaries, counts or helpers moved below the component.
 
+## Design system (`/design-system`)
+
+The page renders the real components from `components/ui/`, never copies of them.
+
+- **Reuse before you write.** Before creating a component, check the existing ones
+  (`npm run lint:design-system -- --list` prints each with its one-line purpose). If one
+  nearly fits, add a variant or a prop to it. `.claude/hooks/check-new-component.sh`
+  shows the same list the first time a new file under `components/` is written.
+- **Every `components/ui/<name>.tsx` has a `<name>.examples.tsx` beside it** (a folder
+  such as `data-table/` has one for the folder): a default-exported `ComponentDoc`
+  (`lib/design-system/types.ts`) with a title, a one-line `purpose`, a `layer`
+  (primitive, pattern, brand) and examples that render the real component. Import it in
+  `app/(dashboard)/design-system/registry.ts`. When you change a component, update its
+  examples in the same commit.
+- **A new theme token** in `app/globals.css` goes into `app/(dashboard)/design-system/tokens.ts`.
+- CI enforces this: `npm run lint:design-system` fails on a missing examples file,
+  registry entry or token, and `tests-components/design-system-examples.test.tsx`
+  mounts every example.
+
 ## List pages (Files, Transactions, Partners)
 
 The lists share one pattern (noted where one differs); a new list reuses it rather
