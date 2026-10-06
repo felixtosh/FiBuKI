@@ -7,7 +7,7 @@ has to end in a fileable quarter.
 
 ## Goal
 
-Curate Q3 on Stefan's homelab account (`fibuki.home.syh.at`) and come out with three things:
+Curate Q3 on Stefan's account on the homelab instance and come out with three things:
 
 1. **An unbiased accuracy figure for a returning User:** automation's untouched state
    compared with the curated one, on the same account.
@@ -47,9 +47,26 @@ because they hold real bookkeeping data:
 
 - `export-answer-key.mjs <from> <to>`: read-only snapshot of Stefan's account for a date
   range, through his API key (`~/.secrets/fibuki.env`).
-- `replay.mjs`, `compare.mjs`, `lib.mjs`: the H1 replay into the test account (Authentik
-  user `fibuki-replay`, key in `~/.secrets/fibuki-replay.env`) and its report.
+- `replay.mjs`, `compare.mjs`, `lib.mjs`: the H1 replay into a dedicated empty test User
+  (key in `~/.secrets/fibuki-replay.env`) and its report. This is the "cold start" that
+  [`docs/replay.md`](../docs/replay.md) lists as not built: real uploads, real Extraction,
+  nothing learned.
 - `q3-before-20261005-1836/`: a first Q3 snapshot. It is **not** the baseline (see step 2).
+
+## The repo's replay is the other half
+
+[`docs/replay.md`](../docs/replay.md) runs the matcher offline over a frozen export of an
+account, once on `main` and once on a branch, and says where the branch decides
+differently from what the owner did by hand. No uploads, no model calls, seconds per run.
+Use it where it fits instead of the live harness:
+
+- **#719 (threshold):** a branch with a lower auto-connect line, replayed against Stefan's
+  account, measures the same question without the upload burst.
+- **After step 4:** once Q3 is curated, a fresh export makes Q3's hand decisions part of
+  the set every later PR is replayed against.
+
+The live harness stays the tool for what the repo's replay does not cover: Extraction and
+the cold start.
 
 ## Steps
 
