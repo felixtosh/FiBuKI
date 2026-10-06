@@ -467,23 +467,14 @@ function decideExtraction(current: CurrentFile, change: ExtractionChange): FactO
   const { reading } = change;
   const update = extractionFields(record, reading);
 
-  const stored = { ...record, ...update } as FileRecord;
-  Object.assign(update, documentTypeFields(classifyFileRecord(stored)));
-  Object.assign(update, vatRateReviewFields(reviewFileRecordVatRates(stored)));
   Object.assign(
     update,
-    directionReviewFields(reviewDirection(toDirectionFacts(stored, current.linkedTransactions)))
-  );
-  Object.assign(
-    update,
-    repairReviewFields(
-      reviewRepair({
-        ambiguousFields: reading.kind === "invoice" ? reading.repairAmbiguousFields : [],
-        isNotInvoice: update.isNotInvoice === true,
-      })
+    readingDerivedFields(
+      { ...record, ...update },
+      current.linkedTransactions,
+      reading.kind === "invoice" ? reading.repairAmbiguousFields : []
     )
   );
-  Object.assign(update, rksvCodeReviewFields(reviewFileRecordRksvCode(stored)));
 
   update[LAST_FACT_CHANGE_FIELD] = { origin: change.origin, at };
   update.updatedAt = at;
@@ -497,21 +488,49 @@ function decideExtraction(current: CurrentFile, change: ExtractionChange): FactO
   };
 }
 
+/**
+ * The derived fields of a File that a reading of the document, or a ruling
+ * that there is nothing to read, leaves (#639, #710): the Document Type, the
+ * 11 % rate review, the direction review, the repair flags (from this reading
+ * alone, #275) and the RKSV review, computed on the File as the write leaves
+ * it. An Extraction and marking a File Not Invoice both call this, so a File
+ * ruled not an invoice gets the same derived fields whichever path ruled it.
+ */
+function readingDerivedFields(
+  stored: Record<string, unknown>,
+  linkedTransactions: DirectionTransactionFacts[],
+  repairAmbiguousFields: string[]
+): Record<string, unknown> {
+  const file = stored as FileRecord;
+  return {
+    ...documentTypeFields(classifyFileRecord(file)),
+    ...vatRateReviewFields(reviewFileRecordVatRates(file)),
+    ...directionReviewFields(reviewDirection(toDirectionFacts(file, linkedTransactions))),
+    ...repairReviewFields(
+      reviewRepair({ ambiguousFields: repairAmbiguousFields, isNotInvoice: file.isNotInvoice === true })
+    ),
+    ...rksvCodeReviewFields(reviewFileRecordRksvCode(file)),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // The other writers (#640)
 // ---------------------------------------------------------------------------
 
 /**
- * Marking a File Not Invoice: the field set it has always written, plus the
- * tip, its bound, the Due Date and the Debit Date, and the Hand Correction
- * record cleared for the figures it wipes (`notInvoice.ts`). Its derived
- * fields are the ones it always set (the review flags off, the matching
- * reset); the Document Type and the direction review stay as they were, as
- * before.
+ * Marking a File Not Invoice: the facts an Extraction's not-invoice reading
+ * clears, the matching reset, and the Hand Correction record cleared for the
+ * figures it wipes (`notInvoice.ts`). Its derived fields come from the same
+ * derivation as an Extraction's (#710), so the Document Type, the direction
+ * review and the other review flags are the ones Extraction's not-invoice
+ * path leaves, and a moved Document Type re-derives the connected
+ * Transactions' Documentation State.
  */
 function decideNotInvoice(current: CurrentFile, change: NotInvoiceChange): FactOutcome {
-  const update = notInvoiceFields(current.record, change.reason);
-  return stamped(current.record, update, change.origin, change.at ?? Timestamp.now());
+  const { record } = current;
+  const update = notInvoiceFields(record, change.reason);
+  Object.assign(update, readingDerivedFields({ ...record, ...update }, current.linkedTransactions, []));
+  return stamped(record, update, change.origin, change.at ?? Timestamp.now());
 }
 
 /**

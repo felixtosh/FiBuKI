@@ -1,14 +1,17 @@
 /**
- * Marking a File Not Invoice, as the File facts module writes it (#640).
+ * Marking a File Not Invoice, as the File facts module writes it (#640, #710).
  *
  * A person rules that the document is not an invoice. There is nothing to
  * extract from it, so its facts are cleared and the matching derived from
- * them starts over. The field set is the one the callable and the MCP tool
- * have always written, with two additions:
+ * them starts over.
  *
- * - The tip, its bound, the Due Date and the Debit Date go too. They are
- *   figures the Hand Correction record can name, and a File ruled not an
- *   invoice claims none (Stefan, 2026-10-05). So do the instalments (#615).
+ * - The facts cleared are the ones an Extraction's own not-invoice reading
+ *   clears (`notInvoiceClearedFacts`), so both paths leave the same File with
+ *   the same facts. The tip, its bound, the Due Date, the Debit Date and the
+ *   instalments are among them (Stefan, 2026-10-05; #615).
+ * - The derived fields (the Document Type, the direction review and the other
+ *   review flags) are not set here: the module computes them on the File as
+ *   this leaves it, with the derivation an Extraction uses (#710).
  * - The Hand Correction record is cleared for the figures this wipes, in the
  *   same write. Every figure it can name is wiped here, so a record that
  *   named only those is gone, and un-marking the File later re-extracts it
@@ -19,8 +22,9 @@
  */
 
 import { RECORDED_FIELDS } from "./provenance";
+import { notInvoiceClearedFacts } from "./extractionReading";
 
-/** The `isNotInvoice` transition the module returns for a File record. */
+/** The `isNotInvoice` transition the module returns for a File record, before its derived fields. */
 export function notInvoiceFields(
   record: Record<string, unknown>,
   reason: string | undefined
@@ -29,43 +33,11 @@ export function notInvoiceFields(
     isNotInvoice: true,
     notInvoiceReason: reason || "Marked by user",
     classificationComplete: true,
-    // Clear all extracted data since it's not an invoice
-    extractedDate: null,
-    extractedAmount: null,
-    extractedCurrency: null,
-    extractedVatPercent: null,
-    extractedVatAmount: null,
-    extractedLineItems: null,
-    extractedRateGroups: null,
-    extractedRateGroupsSource: null,
-    extractedTipAmount: null,
-    extractedTipBound: null,
-    extractedDueDate: null,
-    extractedDebitDate: null,
-    // The instalments the document printed (#615) go with the other figures.
-    extractedInstalments: null,
-    lineItemsUnreconciled: false,
-    lineItemsUnreconciledRates: null,
-    vatSourceDowngraded: false,
-    vatFieldsPreserved: false,
-    // The rates the review flag pointed at are among the fields just cleared
-    // (#203), so the flag goes with them.
-    needsVatRateReview: false,
-    vatRatesOutsideSet: [],
-    // Likewise a repaired escape's flag (#275): the transcribed values it
-    // pointed at are among the fields cleared here, so nothing is left to doubt.
-    needsRepairReview: false,
-    repairAmbiguousFields: [],
-    // And the RKSV Code's flag (#166): the printed block it compared is gone.
-    needsRksvCodeReview: false,
-    rksvCodeDisagreeingRates: [],
-    extractedPartner: null,
-    extractedVatId: null,
-    extractedIban: null,
-    extractedAddress: null,
+    // Every fact, as an Extraction's not-invoice reading clears them (#710).
+    ...notInvoiceClearedFacts(),
+    // What the last Extraction run left besides the facts: a person's ruling
+    // read nothing, so nothing of a reading stays.
     extractedText: null,
-    extractedRaw: null,
-    extractedAdditionalFields: null,
     extractedFields: null,
     extractionConfidence: null,
     invoiceDirection: null,

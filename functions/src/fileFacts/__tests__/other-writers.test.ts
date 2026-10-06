@@ -135,7 +135,8 @@ describe("marking a File Not Invoice", () => {
     expect(update.lastFactChange).toEqual({ origin: "not-invoice", at: AT });
     expect(update.updatedAt).toBe(AT);
 
-    // Nothing else beyond the old set: no Document Type, no direction review,
+    // Beyond the old set: the facts Extraction's not-invoice reading clears
+    // as well (#710), the Document Type and the direction review it derives,
     // and no Hand Correction keys on a File that has no record.
     const added = Object.keys(update).filter((field) => !(field in MARKED_BEFORE_640));
     expect(added.sort()).toEqual(
@@ -145,6 +146,26 @@ describe("marking a File Not Invoice", () => {
         "extractedInstalments",
         "extractedTipAmount",
         "extractedTipBound",
+        // #710: the rest of Extraction's not-invoice clearing list.
+        "extractedDocumentVatAmount",
+        "extractedQrCodes",
+        "extractedCountry",
+        "extractedWebsite",
+        "extractedSelfDesignation",
+        "extractedInvoiceNumber",
+        "extractedReferencedInvoiceNumber",
+        "extractedPaidInvoiceNumber",
+        "extractedPayableAmount",
+        "extractedInvoicingAgent",
+        // #710: the derived fields, through Extraction's derivation.
+        "documentType",
+        "documentTypeBasis",
+        "documentTypeMissingElements",
+        "foreignRecipient",
+        "needsDirectionReview",
+        "directionReviewReason",
+        "directionSuggested",
+        "directionConflictTransactionIds",
         "lastFactChange",
         "updatedAt",
       ].sort()
@@ -186,10 +207,142 @@ describe("marking a File Not Invoice", () => {
     expect("partnerMatchedBy" in update).toBe(false);
   });
 
-  it("asks for no follow-up: the Document Type is not moved", () => {
-    const { followUps } = decide(invoiceFile({ transactionIds: ["t1"] }), { origin: "not-invoice", at: AT });
+  it("re-derives the connected Transactions' Documentation State when the Document Type moves (#710)", () => {
+    const { update, followUps } = decide(invoiceFile({ transactionIds: ["t1", "t2"] }), {
+      origin: "not-invoice",
+      at: AT,
+    });
 
-    expect(followUps).toEqual([]);
+    expect(update.documentType).toBe("other");
+    expect(followUps).toEqual([{ kind: "sync-documentation-state", transactionIds: ["t1", "t2"] }]);
+  });
+
+  it("asks for no follow-up when the Document Type was already Other, or nothing is connected", () => {
+    const already = decide(invoiceFile({ transactionIds: ["t1"], documentType: "other" }), {
+      origin: "not-invoice",
+      at: AT,
+    });
+    const unconnected = decide(invoiceFile(), { origin: "not-invoice", at: AT });
+
+    expect(already.followUps).toEqual([]);
+    expect(unconnected.followUps).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Not Invoice and Extraction's not-invoice path leave the same derived fields (#710)
+// ---------------------------------------------------------------------------
+
+/** Every field the derivation writes onto a File ruled not an invoice. */
+const DERIVED_FIELDS = [
+  "documentType",
+  "documentTypeBasis",
+  "documentTypeMissingElements",
+  "foreignRecipient",
+  "needsDirectionReview",
+  "directionReviewReason",
+  "directionSuggested",
+  "directionConflictTransactionIds",
+  "needsVatRateReview",
+  "vatRatesOutsideSet",
+  "needsRepairReview",
+  "repairAmbiguousFields",
+  "needsRksvCodeReview",
+  "rksvCodeDisagreeingRates",
+] as const;
+
+describe("marking Not Invoice derives what Extraction's not-invoice path derives (#710)", () => {
+  /**
+   * An invoice whose derived fields all say something: a Document Type with a
+   * self-designation in its basis, a direction the connected Transaction
+   * contradicts, a rate outside the Austrian set, a repaired escape, an RKSV
+   * disagreement, and a recipient that is somebody else.
+   */
+  const flagged = () =>
+    invoiceFile({
+      transactionIds: ["t-out"],
+      invoiceDirection: "outgoing",
+      matchedUserAccount: "issuer",
+      recipientIdentityMatch: "third-party",
+      extractedSelfDesignation: "Rechnung",
+      extractedInvoiceNumber: "R-2026-17",
+      extractedQrCodes: [{ kind: "rksv", raw: "_R1-AT0_x" }],
+      extractedRateGroupsSource: "document",
+      documentType: "invoice",
+      documentTypeBasis: { reason: "invoice-complete", selfDesignation: "Rechnung" },
+      foreignRecipient: false,
+      needsDirectionReview: true,
+      directionReviewReason: "conflict",
+      directionSuggested: "incoming",
+      directionConflictTransactionIds: ["t-out"],
+      needsVatRateReview: true,
+      vatRatesOutsideSet: [7],
+      needsRepairReview: true,
+      repairAmbiguousFields: ["partner"],
+      needsRksvCodeReview: true,
+      rksvCodeDisagreeingRates: [20],
+    });
+  const linked = [{ id: "t-out", amount: -12000 }];
+
+  const notInvoiceReading = (counterparty?: unknown): FactChange => ({
+    origin: "extraction",
+    at: AT,
+    reading: {
+      kind: "not-invoice",
+      reason: "Bank statement",
+      run: { extractionComplete: true, extractionError: null, extractedText: "(classification only - not an invoice)" },
+      ...(counterparty ? { counterparty } : {}),
+    } as never,
+  });
+
+  it("field by field, with the same follow-ups, on the same File", () => {
+    const marked = decide(flagged(), { origin: "not-invoice", reason: "Bank statement", at: AT }, linked);
+    const extracted = decide(flagged(), notInvoiceReading(), linked);
+
+    for (const field of DERIVED_FIELDS) {
+      expect(marked.update[field], field).toEqual(extracted.update[field]);
+    }
+    expect(marked.followUps).toEqual(extracted.followUps);
+
+    // And what they are: Other, nothing to review, the Transaction re-derived.
+    expect(marked.update).toMatchObject({
+      documentType: "other",
+      documentTypeMissingElements: [],
+      foreignRecipient: false,
+      needsDirectionReview: false,
+      directionReviewReason: null,
+      directionSuggested: null,
+      directionConflictTransactionIds: [],
+      needsVatRateReview: false,
+      needsRepairReview: false,
+      needsRksvCodeReview: false,
+    });
+    expect(marked.update.documentTypeBasis).toMatchObject({
+      reason: "not-a-financial-document",
+      selfDesignation: null,
+      recipientIdentity: "third-party",
+    });
+    expect(marked.followUps).toEqual([{ kind: "sync-documentation-state", transactionIds: ["t-out"] }]);
+  });
+
+  it("clears the same facts as Extraction's not-invoice reading", () => {
+    const marked = decide(flagged(), { origin: "not-invoice", at: AT }, linked);
+    const extracted = decide(flagged(), notInvoiceReading(), linked);
+
+    const clearedByExtraction = Object.entries(extracted.update)
+      .filter(([field]) => field.startsWith("extracted") && field !== "extractedText" && field !== "extractedFields")
+      .map(([field]) => field);
+    expect(clearedByExtraction.length).toBeGreaterThan(20);
+    for (const field of clearedByExtraction) {
+      expect(marked.update[field], field).toEqual(extracted.update[field]);
+    }
+  });
+
+  it("a stale Document Type on a File already marked is put right by marking it again", () => {
+    // As #640 left a marked File: Not Invoice, the old Document Type and flag kept.
+    const stale = { ...flagged(), isNotInvoice: true, extractedAmount: null };
+    const { update } = decide(stale, { origin: "not-invoice", at: AT }, linked);
+    expect(update).toMatchObject({ documentType: "other", needsDirectionReview: false });
   });
 });
 
