@@ -12,6 +12,14 @@
  *   - nothing returned or thrown carries the victim's CANARY, and
  *   - the victim's account is byte-identical, storage included, after every
  *     trigger the calls set off has run.
+ *
+ * One file would take seven minutes on CI, longer than the rest of the suite
+ * put together, so the barrel is dealt out over the cross-user-callables.*.test.ts
+ * files: each calls defineCrossUserCallableSuite(shard, of) and attacks every
+ * callable whose index modulo `of` is its shard. Vitest runs files in parallel,
+ * so the wall time is the longest shard. The single-callable checks run in the
+ * first shard only; the barrel-size check runs in every shard so a shard that
+ * loads an empty barrel fails rather than passes.
  */
 
 process.env.FIBUKI_STORAGE = "memory";
@@ -213,14 +221,13 @@ function payloads(): Array<Record<string, unknown>> {
 
 const barrelPromise = import("../../index");
 
-let callables: Array<[string, Callable]> = [];
-
-beforeAll(async () => {
+/** Every callable the barrel exports, in export order (stable across shards). */
+async function loadCallables(): Promise<Array<[string, Callable]>> {
   const barrel = (await barrelPromise) as Record<string, unknown>;
-  callables = Object.entries(barrel).filter(
+  return Object.entries(barrel).filter(
     (e): e is [string, Callable] => typeof e[1] === "function" && "__selfhostCallable" in (e[1] as object),
   );
-}, 120_000);
+}
 
 async function freshAccounts(): Promise<Map<string, string>> {
   await __whenShimIdle(); // the previous test's fire-and-forget writes, finished
@@ -231,24 +238,38 @@ async function freshAccounts(): Promise<Map<string, string>> {
   return victimRows();
 }
 
-describe("cross-user isolation: every callable", () => {
+export function defineCrossUserCallableSuite(shard: number, of: number): void {
+  if (!Number.isInteger(shard) || !Number.isInteger(of) || of < 1 || shard < 0 || shard >= of) {
+    throw new Error(`cross-user callables: shard ${shard} of ${of} is not a valid slice`);
+  }
+  /** This shard's slice of the barrel; `all` is the whole barrel for the size check. */
+  let all: Array<[string, Callable]> = [];
+  let callables: Array<[string, Callable]> = [];
+
+  beforeAll(async () => {
+    all = await loadCallables();
+    callables = all.filter((_, i) => i % of === shard);
+  }, 120_000);
+
+describe(`cross-user isolation: every callable (shard ${shard + 1} of ${of})`, () => {
   it("covers the whole barrel", () => {
     // A barrel that failed to load would make every case below vacuous.
-    expect(callables.length).toBeGreaterThan(100);
+    expect(all.length).toBeGreaterThan(100);
+    expect(callables.length).toBeGreaterThan(0);
   });
 
-  it("the harness reaches handlers: the attacker can change their own data", async () => {
+  it.skipIf(shard !== 0)("the harness reaches handlers: the attacker can change their own data", async () => {
     await freshAccounts();
-    const update = callables.find(([n]) => n === "updateTransaction")?.[1];
+    const update = all.find(([n]) => n === "updateTransaction")?.[1];
     expect(update).toBeDefined();
     await update!.run({ data: { id: A.transaction, data: { foreignSupplyKind: "service" } }, auth: ATTACKER_AUTH });
     const mine = await getFirestore().doc(`transactions/${A.transaction}`).get();
     expect(mine.data()?.foreignSupplyKind).toBe("service");
   });
 
-  it("refuses to set what another user's 0% sale is (#565)", async () => {
+  it.skipIf(shard !== 0)("refuses to set what another user's 0% sale is (#565)", async () => {
     const before = await freshAccounts();
-    const update = callables.find(([n]) => n === "updateTransaction")?.[1];
+    const update = all.find(([n]) => n === "updateTransaction")?.[1];
     await expect(
       update!.run({
         data: { id: V.transaction, data: { saleSupplyKind: "service-non-eu" } },
@@ -259,13 +280,16 @@ describe("cross-user isolation: every callable", () => {
     await assertVictimUntouched(before, "updateTransaction saleSupplyKind");
   });
 
-  it("the identity cannot link an entity to another user's Partner (#632)", async () => {
+  it.skipIf(shard !== 0)("the identity cannot link an entity to another user's Partner (#632)", async () => {
     await freshAccounts();
-    const save = callables.find(([n]) => n === "saveIdentity")?.[1];
+    const save = all.find(([n]) => n === "saveIdentity")?.[1];
     expect(save).toBeDefined();
     const company = { id: "a-company", type: "company", name: "Mine GmbH", aliases: [], ibans: [] };
     const linked = (partnerId: string) => ({ companies: [{ ...company, partnerId }] });
-    const identity = async () => (await getFirestore().doc(`users/${ATTACKER}/settings/userData`).get()).data()!;
+    const identity = async () =>
+      (await getFirestore().doc(`users/${ATTACKER}/settings/userData`).get()).data() as {
+        companies: Array<{ partnerId: string }>;
+      };
 
     // "This is me" with the attacker's own Partner works.
     await save!.run({ data: linked(A.partner), auth: ATTACKER_AUTH });
@@ -387,3 +411,4 @@ describe("cross-user isolation: every callable", () => {
     expect(failures).toEqual([]);
   }, 1_800_000);
 });
+}

@@ -79,9 +79,18 @@ jobs:
       - run: npx tsc --noEmit
       - run: npm test
 
+  # Both self-host jobs deal the suite out over four runners (vitest --shard):
+  # whole, it is the longest job here by five minutes, and the deploy waits
+  # on the same suite. A shard is a slice of the test FILES, so a slow file
+  # still takes its own time; the cross-user callables fuzz is split into
+  # files of its own for that reason (cross-user-callables.suite.ts).
   functions-selfhost:
-    name: Self-host suite (PGlite + in-memory storage)
+    name: Self-host suite (PGlite + in-memory storage, ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     defaults:
       run:
         working-directory: functions
@@ -103,11 +112,15 @@ jobs:
       - run: npm ci
         working-directory: .
       - run: npm ci
-      - run: npm run test:selfhost
+      - run: npm run test:selfhost -- --shard=${{ matrix.shard }}/4
 
   functions-selfhost-compose:
-    name: Self-host suite (real Postgres + real S3)
+    name: Self-host suite (real Postgres + real S3, ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -139,7 +152,7 @@ jobs:
       # Same suite as functions-selfhost, pointed at the compose services.
       # Sequential (--no-file-parallelism): every worker would share the one
       # Postgres `docs` table, unlike the per-process PGlite default.
-      - run: npm run test:selfhost -- --no-file-parallelism
+      - run: npm run test:selfhost -- --no-file-parallelism --shard=${{ matrix.shard }}/4
         working-directory: functions
         env:
           DATABASE_URL: postgres://fibuki:fibuki-ci@localhost:5433/fibuki_ci
