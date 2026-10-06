@@ -13,7 +13,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Receipt, Building2, Users, Settings, Activity, Globe, Files, Tag, Link2, User, LogOut, UserPlus, Palette, Shield, Zap, FileText, FlaskConical, Download, CreditCard, Mail, Bell } from "lucide-react";
+import { Receipt, Building2, Users, Settings, Activity, Globe, Files, Tag, Link2, User, LogOut, UserPlus, Palette, Shield, Zap, FileText, FlaskConical, Download, CreditCard, Mail, Bell, Repeat } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { settingsNavItems } from "@/lib/config/settings-nav";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
 import Link from "next/link";
@@ -98,6 +99,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
   const { user, isAdmin, signOut } = useAuth();
   const { hasFeature, loading: subLoading } = useSubscription();
   const [isLogoJumping, setIsLogoJumping] = useState(false);
+  const tReplay = useTranslations("admin.replay");
   const [isCompactNavigation, setIsCompactNavigation] = useState(false);
   const [hoveredNavItem, setHoveredNavItem] = useState<string | null>(null);
 
@@ -368,6 +370,12 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
                       <Link href="/admin/testing" className="flex items-center gap-2">
                         <FlaskConical className="h-4 w-4" />
                         Tests
+                      </Link>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem asChild>
+                      <Link href="/admin/replay" className="flex items-center gap-2">
+                        <Repeat className="h-4 w-4" />
+                        {tReplay("navLabel")}
                       </Link>
                     </DropdownMenuItem>
                     <DropdownMenuItem asChild>
