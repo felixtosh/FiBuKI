@@ -118,17 +118,6 @@ export async function updateFileInternal(
     throw new HttpsError("permission-denied", "Access denied");
   }
 
-  // Cancel running partner automation when user manually assigns or accepts suggestion
-  const isManualPartnerAssignment =
-    data.partnerId &&
-    (data.partnerMatchedBy === "manual" || data.partnerMatchedBy === "suggestion");
-
-  if (isManualPartnerAssignment) {
-    cancelPartnerWorkersForFile(ctx.userId, fileId).catch((err) => {
-      console.error("[updateFile] Failed to cancel partner workers:", err);
-    });
-  }
-
   // Refusing loudly beats stripping silently: a silent strip is the same
   // "correction that looks like it worked" this rule exists to end. The
   // figure fields get the specific message, since they have a correct door.
@@ -177,6 +166,19 @@ export async function updateFileInternal(
         throw new HttpsError("not-found", "Partner not found");
       }
     }
+  }
+
+  // Cancel running partner automation when user manually assigns or accepts
+  // a suggestion. Only once the call has passed every check above: a refused
+  // call (another user's Partner, an unknown field) leaves the workers alone.
+  const isManualPartnerAssignment =
+    data.partnerId &&
+    (data.partnerMatchedBy === "manual" || data.partnerMatchedBy === "suggestion");
+
+  if (isManualPartnerAssignment) {
+    cancelPartnerWorkersForFile(ctx.userId, fileId).catch((err) => {
+      console.error("[updateFile] Failed to cancel partner workers:", err);
+    });
   }
 
   // The direction and the descriptive extracted fields are a File's extracted

@@ -272,6 +272,8 @@ export function formatFunctionDisplayName(functionName: string): string {
     dismissTransactionSuggestion: "Dismiss Suggestion",
     undismissTransactionSuggestion: "Undo Dismiss Suggestion",
     unrejectFileFromTransaction: "Unreject File",
+    assignPartnerToFile: "Assign Partner to File",
+    removePartnerFromFile: "Remove Partner from File",
     // Partner operations
     createUserPartner: "Create Partner",
     updateUserPartner: "Update Partner",

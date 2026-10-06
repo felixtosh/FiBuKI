@@ -7,6 +7,7 @@
 
 export { createFileCallable } from "./createFile";
 export { updateFileCallable } from "./updateFile";
+export { assignPartnerToFileCallable, removePartnerFromFileCallable } from "./filePartner";
 export { updateFileExtractedFieldsCallable } from "./updateFileExtractedFields";
 export { deleteFileCallable } from "./deleteFile";
 export { restoreFileCallable } from "./restoreFile";

@@ -247,3 +247,34 @@ describe("updateFile: a File may only point at a usable Partner", () => {
     });
   }
 });
+
+describe("assignPartnerToFile: the UI's door takes only a usable Partner (#627)", () => {
+  async function assign(partnerId: string, partnerType: "user" | "global"): Promise<unknown> {
+    const barrel = (await barrelPromise) as Record<string, Callable>;
+    return barrel.assignPartnerToFile.run({
+      data: { fileId: A.file, partnerId, partnerType, matchedBy: "manual", confidence: 100 },
+      auth: { uid: ATTACKER, token: {} },
+    });
+  }
+  const partnerOf = async () => (await getFirestore().doc(`files/${A.file}`).get()).data()?.partnerId;
+
+  it("accepts my own user Partner and a Global Partner", async () => {
+    await freshAccounts();
+    await getFirestore().doc("globalPartners/g-partner-1").set({ name: "Global GmbH" });
+    await assign(A.partner, "user");
+    expect(await partnerOf()).toBe(A.partner);
+    await assign("g-partner-1", "global");
+    expect(await partnerOf()).toBe("g-partner-1");
+  });
+
+  for (const [label, partnerType] of [
+    ["user", "user"],
+    ["claimed global", "global"],
+  ] as const) {
+    it(`refuses another user's Partner (${label})`, async () => {
+      await freshAccounts();
+      await expect(assign(V.partner, partnerType)).rejects.toMatchObject({ code: "not-found" });
+      expect(await partnerOf()).toBeUndefined();
+    });
+  }
+});
