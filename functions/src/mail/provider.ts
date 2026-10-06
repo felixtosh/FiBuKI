@@ -38,6 +38,12 @@ export interface MailMessage {
   date: Date;
   /** Attachments already narrowed to invoice-type mimetypes. */
   attachments: MailAttachment[];
+  /**
+   * A short plain-text preview, where the provider has one for free (Gmail's
+   * `snippet`). Absent elsewhere: the receipt search reads it only to classify
+   * a message, and falls back to the subject.
+   */
+  snippet?: string;
 }
 
 /**
@@ -159,8 +165,9 @@ export interface MailProvider {
   getAttachment(message: MailMessage, attachment: MailAttachment): Promise<Buffer>;
 
   /**
-   * Fetch the message's HTML and plain-text body, for Mail to PDF (#245).
-   * Optional: the Gmail attach path still reads bodies through its own client.
+   * Fetch the message's HTML and plain-text body, for Mail to PDF (#245) and
+   * for the receipt search's mail-invoice check (#746). Optional: a provider
+   * without it gets no mail-invoice search.
    */
   getBody?(ref: MailMessageRef): Promise<MailBody>;
 

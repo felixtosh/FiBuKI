@@ -10,14 +10,6 @@
 /** Max messages fetched per search page (both providers paginate to this). */
 export const MAX_EMAILS_PER_BATCH = 50;
 
-/**
- * Providers the background sync machinery (daily scheduled sync, the
- * after-import gap sync) treats as mailboxes to keep current. Both legs of
- * the sync worker already speak IMAP; only the enqueue side used to ask for
- * Gmail alone, which left an IMAP mailbox synced exactly once.
- */
-export const SYNCABLE_MAIL_PROVIDERS = ["gmail", "imap"] as const;
-
 /** Invoice/receipt keywords (German + English) used to narrow a search. */
 export const INVOICE_KEYWORDS = [
   // German
@@ -55,3 +47,13 @@ export const INVOICE_MIME_TYPES = [
   "image/webp",
 ];
 
+/**
+ * Whether a message part is an invoice-type attachment: one of
+ * INVOICE_MIME_TYPES, or a PDF sent as `application/octet-stream`, which
+ * plenty of billing systems do. Both providers filter by this one rule.
+ */
+export function isInvoiceAttachment(mimeType: string, filename: string): boolean {
+  const type = mimeType.toLowerCase();
+  if (INVOICE_MIME_TYPES.includes(type)) return true;
+  return type === "application/octet-stream" && filename.toLowerCase().endsWith(".pdf");
+}

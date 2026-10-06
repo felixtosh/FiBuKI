@@ -23,7 +23,7 @@ import { runTransactionMatching } from "../matching/matchFileTransactions";
 import { calculateAmountScore, isLocalFileStrategy } from "../matching/transactionScoring";
 import { filePaymentTotal } from "../matching/coverage";
 import { readBankOriginalAmount } from "../fx/bankOriginalAmount";
-import { generateQueriesWithGemini } from "./generateQueriesWithGemini";
+import { generateTypedQueriesWithGemini } from "./generateQueriesWithGemini";
 import {
   expectedInvoiceWindow,
   QueryGenerationPartner,
@@ -40,12 +40,21 @@ import {
   GREAT_MATCH_COUNT,
 } from "./scoreAttachmentMatch";
 import {
-  buildGmailSearchQuery,
-} from "../gmail/searchGmailCallable";
-import {
   classifyEmail,
   GmailAttachment,
 } from "./shared-utils";
+import type { MailMessage, MailSearchLimitation, MailSearchTerms } from "../mail/provider";
+import { searchedMailIntegrations, SEARCHABLE_MAIL_PROVIDERS, mailProviderOf } from "../mail/searchable";
+import {
+  MAIL_PROVIDER_SECRETS,
+  SearchedMailbox,
+  closeSearchedMailboxes,
+  MailboxReadError,
+  failMailbox,
+  fromMailbox,
+  isUsable,
+  openSearchedMailboxes,
+} from "../mail/searchMailboxes";
 
 const db = getFirestore();
 const storage = getStorage();
@@ -56,7 +65,7 @@ const storage = getStorage();
 
 const PROCESSING_TIMEOUT_MS = 240000; // 4 minutes (leave buffer for 5 min timeout)
 const TRANSACTIONS_PER_BATCH = 20; // Process 20 transactions per invocation
-const REQUEST_DELAY_MS = 200; // Rate limiting for Gmail API
+const PENDING_ITEMS_PER_RUN = 10; // Paused items the scheduled run may move past
 
 // Strategy execution order (used when creating queue items)
 // email_invoice before email_attachment: prioritize finding the actual invoice email
@@ -172,39 +181,18 @@ interface Partner {
   billingCycle?: { effective?: ResolvedEffectiveCycle[] };
 }
 
-interface EmailIntegration {
-  id: string;
-  userId: string;
-  email: string;
-  isActive: boolean;
-  needsReauth: boolean;
-  isPaused?: boolean;
-  /** Mail Provider; missing on Gmail integrations made before IMAP existed. */
-  provider?: string;
-}
-
 /**
- * The email strategies speak only the Gmail API (#680). An IMAP mailbox has no
- * OAuth token to read and nothing here could search it, so every check below
- * passes over it until the search has an IMAP leg (yazzbert/homelab item 4).
+ * Whether the search waits for a mailbox that needs new credentials.
+ *
+ * Any Mail Provider (#746): the search runs once per Transaction, so a search
+ * that went ahead without the mailbox would never look there again after the
+ * repair. It pauses instead and resumes once the mailbox is reconnected.
  */
-function isGmailIntegration(data: { provider?: unknown }): boolean {
-  return ((data.provider as string | undefined) || "gmail") === "gmail";
-}
-
-/**
- * Check if Gmail is connected but needs reauthentication.
- * Returns true if processing should be paused (Gmail connected but needs reauth).
- * Returns false if:
- * - No Gmail integrations exist (proceed with non-email strategies)
- * - Gmail is connected and healthy (proceed normally)
- */
-async function shouldPauseForGmailReauth(userId: string): Promise<{
+async function shouldPauseForMailReauth(userId: string): Promise<{
   shouldPause: boolean;
   reason?: string;
   integrationEmail?: string;
 }> {
-  // Check for any email integrations that need reauth
   const needsReauthSnapshot = await db
     .collection("emailIntegrations")
     .where("userId", "==", userId)
@@ -212,13 +200,14 @@ async function shouldPauseForGmailReauth(userId: string): Promise<{
     .where("needsReauth", "==", true)
     .get();
 
-  const gmail = needsReauthSnapshot.docs.find((doc) => isGmailIntegration(doc.data()));
-  if (gmail) {
-    const integration = gmail.data() as EmailIntegration;
+  const waiting = needsReauthSnapshot.docs.find((doc) =>
+    (SEARCHABLE_MAIL_PROVIDERS as readonly string[]).includes(mailProviderOf(doc.data()))
+  );
+  if (waiting) {
     return {
       shouldPause: true,
-      reason: "Gmail connected but needs reconnection",
-      integrationEmail: integration.email,
+      reason: "A mailbox needs new credentials",
+      integrationEmail: waiting.data().email as string | undefined,
     };
   }
 
@@ -226,48 +215,14 @@ async function shouldPauseForGmailReauth(userId: string): Promise<{
 }
 
 /**
- * Check if user has ANY active Gmail integration (connected and not needing reauth).
- * If none exists, email strategies should be skipped entirely.
+ * Whether the receipt search reads any of the User's Mail Integrations. If
+ * not, the email strategies are skipped and no Gemini call is spent on them.
  */
-async function hasActiveEmailIntegration(userId: string): Promise<boolean> {
-  const activeIntegrationSnapshot = await db
-    .collection("emailIntegrations")
-    .where("userId", "==", userId)
-    .where("isActive", "==", true)
-    .where("needsReauth", "==", false)
-    .get();
-
-  return activeIntegrationSnapshot.docs.some((doc) => isGmailIntegration(doc.data()));
+async function hasSearchableMailIntegration(userId: string): Promise<boolean> {
+  const snapshot = await db.collection("emailIntegrations").where("userId", "==", userId).get();
+  return searchedMailIntegrations(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))).length > 0;
 }
 
-interface EmailTokenDocument {
-  accessToken: string;
-  refreshToken: string;
-  expiresAt: Timestamp;
-}
-
-interface GmailMessage {
-  id: string;
-  threadId: string;
-  internalDate: string;
-  snippet?: string; // Gmail API's short plain-text summary
-  payload: {
-    headers: Array<{ name: string; value: string }>;
-    parts?: GmailPart[];
-    body?: { attachmentId?: string; size?: number; data?: string };
-    mimeType: string;
-  };
-}
-
-interface GmailPart {
-  partId: string;
-  mimeType: string;
-  filename: string;
-  body: { attachmentId?: string; size?: number; data?: string };
-  parts?: GmailPart[];
-}
-
-// GmailAttachment imported from ./shared-utils
 
 interface SearchAttempt {
   strategy: SearchStrategy;
@@ -286,6 +241,12 @@ interface SearchAttempt {
   fileIdsNominated?: string[];
   bestMatchScore?: number; // Track the best score to decide if we should stop searching
   invoiceLinksFound?: string[];
+  /**
+   * Search constraints a Mail Provider could not execute as asked (#746), per
+   * mailbox: an IMAP server that refused the keyword search, a filename it
+   * cannot search. The results were wider or scanned, never silently narrower.
+   */
+  mailLimitations?: Array<{ integrationId: string } & MailSearchLimitation>;
   geminiCalls?: number;
   geminiTokensUsed?: number;
   error?: string;
@@ -306,13 +267,6 @@ function hasSplitParts(fileData: FirebaseFirestore.DocumentData): boolean {
 
 async function sha256(data: Buffer): Promise<string> {
   return crypto.createHash("sha256").update(data).digest("hex");
-}
-
-function extractHeader(message: GmailMessage, headerName: string): string | null {
-  const header = message.payload.headers.find(
-    (h) => h.name.toLowerCase() === headerName.toLowerCase()
-  );
-  return header?.value || null;
 }
 
 function extractEmailDomain(email: string): string {
@@ -359,220 +313,87 @@ function isLikelyReceiptAttachment(filename: string, mimeType: string): boolean 
 // classifyEmail, EmailClassification, MAIL_INVOICE_KEYWORDS, INVOICE_LINK_KEYWORDS
 // ============================================================================
 
+/** A message's invoice-type attachments, as the classifier and the filer read them. */
+function receiptAttachments(message: MailMessage): GmailAttachment[] {
+  return message.attachments.map((a) => ({
+    attachmentId: a.attachmentId,
+    filename: a.filename,
+    mimeType: a.mimeType,
+    size: a.size,
+    isLikelyReceipt: isLikelyReceiptAttachment(a.filename, a.mimeType),
+  }));
+}
+
+/** How far from the charge a mail may be dated and still be its receipt. */
+const MAIL_WINDOW_DAYS = 180;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
 /**
- * Extract ALL attachments from message (same as UI - no MIME type filtering)
- * The scoring logic decides what's relevant later
+ * The mail search window around a charge. Searched server-side, where the
+ * strategies used to filter by it only after fetching: a mailbox returns its
+ * newest matches first, so a window on the server keeps every match the
+ * after-the-fact filter kept and finds older ones a full page of newer mail
+ * used to push out.
  */
-function extractAttachments(message: GmailMessage): GmailAttachment[] {
-  const attachments: GmailAttachment[] = [];
-
-  function processPartsRecursively(parts: GmailPart[] | undefined): void {
-    if (!parts) return;
-
-    for (const part of parts) {
-      // Extract ALL attachments, not just invoice types
-      // Same behavior as UI's GmailClient.extractAttachments
-      if (part.body?.attachmentId && part.filename) {
-        attachments.push({
-          attachmentId: part.body.attachmentId,
-          filename: part.filename,
-          mimeType: part.mimeType,
-          size: part.body.size || 0,
-          isLikelyReceipt: isLikelyReceiptAttachment(part.filename, part.mimeType),
-        });
-      }
-      if (part.parts) {
-        processPartsRecursively(part.parts);
-      }
-    }
-  }
-
-  processPartsRecursively(message.payload.parts);
-  return attachments;
+function mailWindow(txDate: Date): { dateFrom: Date; dateTo: Date } {
+  return {
+    dateFrom: new Date(txDate.getTime() - MAIL_WINDOW_DAYS * MS_PER_DAY),
+    dateTo: new Date(txDate.getTime() + MAIL_WINDOW_DAYS * MS_PER_DAY),
+  };
 }
 
-function extractEmailBody(message: GmailMessage): { html?: string; text?: string } {
-  let html: string | undefined;
-  let text: string | undefined;
-
-  function processPartsRecursively(parts: GmailPart[] | undefined): void {
-    if (!parts) return;
-
-    for (const part of parts) {
-      if (part.body?.data) {
-        const decoded = Buffer.from(
-          part.body.data.replace(/-/g, "+").replace(/_/g, "/"),
-          "base64"
-        ).toString("utf-8");
-
-        if (part.mimeType === "text/html") {
-          html = decoded;
-        } else if (part.mimeType === "text/plain") {
-          text = decoded;
-        }
-      }
-      if (part.parts) {
-        processPartsRecursively(part.parts);
-      }
-    }
-  }
-
-  // Check main body first
-  if (message.payload.body?.data) {
-    const decoded = Buffer.from(
-      message.payload.body.data.replace(/-/g, "+").replace(/_/g, "/"),
-      "base64"
-    ).toString("utf-8");
-
-    if (message.payload.mimeType === "text/html") {
-      html = decoded;
-    } else if (message.payload.mimeType === "text/plain") {
-      text = decoded;
-    }
-  }
-
-  processPartsRecursively(message.payload.parts);
-
-  return { html, text };
+/**
+ * One suggestion's terms as a search names them: an omitted keyword or
+ * filename list means the suggestion named none, never the invoice sweep a
+ * provider falls back to when nothing is named (#240). Null when the
+ * suggestion names nothing a mailbox can search for.
+ */
+function searchTermsOf(terms: MailSearchTerms): MailSearchTerms | null {
+  const named =
+    (terms.keywords?.length ?? 0) > 0 ||
+    (terms.anyOf?.length ?? 0) > 0 ||
+    Boolean(terms.from) ||
+    (terms.filenames?.length ?? 0) > 0;
+  if (!named) return null;
+  return { ...terms, keywords: terms.keywords ?? [], filenames: terms.filenames ?? [] };
 }
 
-// ============================================================================
-// Gmail API Client
-// ============================================================================
-
-class GmailApiClient {
-  private accessToken: string;
-  private lastRequestTime = 0;
-
-  constructor(accessToken: string) {
-    this.accessToken = accessToken;
-  }
-
-  private async waitForRateLimit(): Promise<void> {
-    const now = Date.now();
-    const elapsed = now - this.lastRequestTime;
-    if (elapsed < REQUEST_DELAY_MS) {
-      await sleep(REQUEST_DELAY_MS - elapsed + Math.random() * 50);
-    }
-    this.lastRequestTime = Date.now();
-  }
-
-  async searchMessages(
-    query: string,
-    maxResults = 20
-  ): Promise<{ messages: Array<{ id: string }>; nextPageToken?: string }> {
-    await this.waitForRateLimit();
-
-    const params = new URLSearchParams({
-      q: query,
-      maxResults: String(maxResults),
-    });
-
-    const response = await fetch(
-      `https://gmail.googleapis.com/gmail/v1/users/me/messages?${params}`,
-      {
-        headers: { Authorization: `Bearer ${this.accessToken}` },
-      }
-    );
-
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Gmail search failed: ${response.status} - ${error}`);
-    }
-
-    const data = await response.json();
-    return {
-      messages: data.messages || [],
-      nextPageToken: data.nextPageToken,
-    };
-  }
-
-  async getMessage(messageId: string): Promise<GmailMessage> {
-    await this.waitForRateLimit();
-
-    const response = await fetch(
-      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}?format=full`,
-      {
-        headers: { Authorization: `Bearer ${this.accessToken}` },
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error(`Gmail get message failed: ${response.status}`);
-    }
-
-    return response.json();
-  }
-
-  async getAttachment(messageId: string, attachmentId: string): Promise<Buffer> {
-    await this.waitForRateLimit();
-
-    const response = await fetch(
-      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}/attachments/${attachmentId}`,
-      {
-        headers: { Authorization: `Bearer ${this.accessToken}` },
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error(`Gmail get attachment failed: ${response.status}`);
-    }
-
-    const data = await response.json();
-    const base64 = data.data.replace(/-/g, "+").replace(/_/g, "/");
-    return Buffer.from(base64, "base64");
+/** Keep each constraint a provider could not execute once per mailbox, on the attempt. */
+function noteLimitations(
+  attempt: SearchAttempt,
+  mailbox: SearchedMailbox,
+  limitations: MailSearchLimitation[] | undefined
+): void {
+  for (const limitation of limitations ?? []) {
+    const noted = (attempt.mailLimitations ??= []);
+    if (noted.some((n) => n.integrationId === mailbox.id && n.constraint === limitation.constraint)) continue;
+    noted.push({ integrationId: mailbox.id, ...limitation });
   }
 }
 
 /**
- * Get active Gmail clients for a user
+ * Files already made from this mail part in this mailbox. An IMAP message id
+ * is a UID, unique only within its mailbox, so the mailbox is part of the key;
+ * a File recorded without one (made before mailboxes were told apart) still
+ * counts.
  */
-async function getGmailClientsForUser(
-  userId: string
-): Promise<Array<{ client: GmailApiClient; integration: EmailIntegration }>> {
-  const integrationsSnapshot = await db
-    .collection("emailIntegrations")
+async function filesFromMailPart(
+  userId: string,
+  mailbox: SearchedMailbox,
+  messageId: string,
+  where: { attachmentId?: string; sourceType?: string }
+): Promise<FirebaseFirestore.QueryDocumentSnapshot[]> {
+  let query = db
+    .collection("files")
     .where("userId", "==", userId)
-    .where("isActive", "==", true)
-    .where("needsReauth", "==", false)
-    .get();
-
-  if (integrationsSnapshot.empty) {
-    return [];
-  }
-
-  const clients: Array<{ client: GmailApiClient; integration: EmailIntegration }> = [];
-
-  // At most 5 Gmail mailboxes, counted after the IMAP ones are passed over.
-  for (const doc of integrationsSnapshot.docs) {
-    if (clients.length >= 5) break;
-    const integration = { id: doc.id, ...doc.data() } as EmailIntegration;
-    if (!isGmailIntegration(integration)) continue;
-
-    // Get token
-    const tokenDoc = await db.collection("emailTokens").doc(integration.id).get();
-    if (!tokenDoc.exists) continue;
-
-    const tokenData = tokenDoc.data() as EmailTokenDocument;
-
-    // Check if token is expired
-    if (tokenData.expiresAt.toDate() < new Date()) {
-      // Mark as needing reauth
-      await db.collection("emailIntegrations").doc(integration.id).update({
-        needsReauth: true,
-        lastError: "Access token expired",
-        updatedAt: Timestamp.now(),
-      });
-      continue;
-    }
-
-    clients.push({
-      client: new GmailApiClient(tokenData.accessToken),
-      integration,
-    });
-  }
-
-  return clients;
+    .where("mailMessageId", "==", messageId);
+  if (where.attachmentId) query = query.where("mailAttachmentId", "==", where.attachmentId);
+  if (where.sourceType) query = query.where("sourceType", "==", where.sourceType);
+  const snap = await query.get();
+  return snap.docs.filter((doc) => {
+    const owner = doc.data().gmailIntegrationId;
+    return !owner || owner === mailbox.id;
+  });
 }
 
 interface PrecisionSearchHint {
@@ -592,7 +413,7 @@ async function createFileFromAttachment(
   userId: string,
   attachmentData: Buffer,
   attachment: GmailAttachment,
-  message: GmailMessage,
+  message: MailMessage,
   integrationId: string,
   integrationEmail?: string,
   precisionSearchHint?: PrecisionSearchHint
@@ -675,9 +496,9 @@ async function createFileFromAttachment(
   }
 
   // Extract email metadata
-  const from = extractHeader(message, "From") || "";
-  const subject = extractHeader(message, "Subject") || "";
-  const emailDate = new Date(parseInt(message.internalDate, 10));
+  const from = message.from;
+  const subject = message.subject;
+  const emailDate = message.date;
   const emailMatch = from.match(/<([^>]+)>/) || [null, from];
   const senderEmail = emailMatch[1] || from;
   const senderDomain = extractEmailDomain(senderEmail);
@@ -780,7 +601,7 @@ async function createFileFromHtmlPdf(
   userId: string,
   pdfBuffer: Buffer,
   filename: string,
-  message: GmailMessage,
+  message: MailMessage,
   integrationId: string,
   integrationEmail?: string,
   precisionSearchHint?: PrecisionSearchHint
@@ -823,9 +644,9 @@ async function createFileFromHtmlPdf(
   }
 
   // Extract email metadata
-  const from = extractHeader(message, "From") || "";
-  const subject = extractHeader(message, "Subject") || "";
-  const emailDate = new Date(parseInt(message.internalDate, 10));
+  const from = message.from;
+  const subject = message.subject;
+  const emailDate = message.date;
   const emailMatch = from.match(/<([^>]+)>/) || [null, from];
   const senderEmail = emailMatch[1] || from;
   const senderDomain = extractEmailDomain(senderEmail);
@@ -1241,15 +1062,17 @@ async function executeAmountFilesStrategy(
 
 /**
  * Execute Strategy 3: Email Attachment Search
- * Search Gmail for attachments that could match using Gemini-generated queries
+ * Search every Mail Integration the receipt search reads, Gmail and IMAP alike
+ * (#746), for attachments that could match, using Gemini-generated queries.
  */
 async function executeEmailAttachmentStrategy(
   transaction: Transaction,
   userId: string,
-  // #169: carried, not yet applied. Narrowing a mailbox query to the window is
-  // the IMAP port (yazzbert/homelab item 4); recording it here means that port
-  // inherits the window instead of designing one of its own.
-  dateWindow?: SearchDateWindow
+  // #169: carried, not yet applied. The mail window below is the fixed
+  // ±180 days the strategy has always kept; narrowing it to this window is
+  // its own decision.
+  dateWindow: SearchDateWindow | undefined,
+  openMailboxes: () => Promise<SearchedMailbox[]>
 ): Promise<SearchAttempt> {
   const startedAt = Timestamp.now();
   const attempt: SearchAttempt = {
@@ -1268,14 +1091,13 @@ async function executeEmailAttachmentStrategy(
   };
 
   try {
-    // Get Gmail clients
-    const clients = await getGmailClientsForUser(userId);
-    if (clients.length === 0) {
-      console.log(`[PrecisionSearch] email_attachment: No active Gmail integrations for user`);
+    const mailboxes = (await openMailboxes()).filter(isUsable);
+    if (mailboxes.length === 0) {
+      console.log(`[PrecisionSearch] email_attachment: No searchable Mail Integration for user`);
       attempt.completedAt = Timestamp.now();
       return attempt;
     }
-    console.log(`[PrecisionSearch] email_attachment: Found ${clients.length} Gmail integration(s)`);
+    console.log(`[PrecisionSearch] email_attachment: Searching ${mailboxes.length} Mail Integration(s)`);
 
     // Get partner info if available
     let partnerInfo: QueryGenerationPartner | undefined;
@@ -1298,22 +1120,23 @@ async function executeEmailAttachmentStrategy(
       }
     }
 
-    // Generate search queries using Gemini (same as UI)
-    const allQueries = await generateQueriesWithGemini(
-      {
-        name: transaction.name,
-        partner: transaction.partner,
-        description: transaction.description,
-        reference: transaction.reference,
-        amount: transaction.amount,
-      },
-      partnerInfo,
-      8,
-      userId
-    );
-
-    // Take first 3 queries
-    const queries = allQueries.slice(0, 3);
+    // Generate search suggestions using Gemini (same as UI); each carries its
+    // provider-neutral terms (#240), which is what a mailbox is searched by.
+    const suggestions = (
+      await generateTypedQueriesWithGemini(
+        {
+          name: transaction.name,
+          partner: transaction.partner,
+          description: transaction.description,
+          reference: transaction.reference,
+          amount: transaction.amount,
+        },
+        partnerInfo,
+        8,
+        userId
+      )
+    ).slice(0, 3);
+    const queries = suggestions.map((s) => s.query);
     console.log(`[PrecisionSearch] email_attachment: Using ${queries.length} Gemini queries for tx "${transaction.name}":`, queries);
 
     if (queries.length === 0) {
@@ -1326,299 +1149,293 @@ async function executeEmailAttachmentStrategy(
       queries,
     };
 
-    // Search each Gmail account with each query
-    // NOTE: Don't add date filter to Gmail query - let Gmail rank by relevance (same as UI)
-    // We filter by date AFTER fetching (see isEmailDateInRange check below)
     const processedMessageIds = new Set<string>();
     const txDate = transaction.date.toDate();
+    const { dateFrom, dateTo } = mailWindow(txDate);
     let greatMatchCount = 0; // Stop trying more queries after GREAT_MATCH_COUNT matches at GREAT_MATCH_THRESHOLD%
 
-    for (const { client, integration } of clients) {
+    for (const mailbox of mailboxes) {
       if (greatMatchCount >= GREAT_MATCH_COUNT) break;
-      for (const query of queries) {
-        if (greatMatchCount >= GREAT_MATCH_COUNT) break;
+      for (const suggestion of suggestions) {
+        if (greatMatchCount >= GREAT_MATCH_COUNT || !isUsable(mailbox)) break;
+        const terms = searchTermsOf(suggestion.terms);
+        if (!terms) continue;
+
+        let messageRefs: Array<{ id: string }>;
         try {
-          // Use shared query builder (same as UI callable) - no date filter, let Gmail rank by relevance
-          const fullQuery = buildGmailSearchQuery({
-            query,
-            hasAttachments: true,
-          });
+          const page = await mailbox.mail.search({ ...terms, hasAttachment: true, dateFrom, dateTo, limit: 20 });
+          mailbox.searched = true;
+          noteLimitations(attempt, mailbox, page.limitations);
+          messageRefs = page.messages;
+        } catch (searchError) {
+          console.error(`[PrecisionSearch] Error searching ${mailbox.id} with query "${suggestion.query}":`, searchError);
+          await failMailbox(db, mailbox, searchError);
+          continue;
+        }
+        console.log(`[PrecisionSearch] email_attachment: Query "${suggestion.query.substring(0, 50)}..." returned ${messageRefs.length} messages in ${mailbox.id}`);
+        attempt.candidatesFound += messageRefs.length;
 
-          const searchResult = await client.searchMessages(fullQuery, 20);
-          console.log(`[PrecisionSearch] email_attachment: Query "${query.substring(0, 50)}..." returned ${searchResult.messages.length} messages`);
-          attempt.candidatesFound += searchResult.messages.length;
+        for (const { id: messageId } of messageRefs) {
+          if (!isUsable(mailbox)) break;
+          // Skip already processed messages; an IMAP UID is unique only within its mailbox
+          const seenKey = `${mailbox.id}:${messageId}`;
+          if (processedMessageIds.has(seenKey)) continue;
+          processedMessageIds.add(seenKey);
 
-          for (const { id: messageId } of searchResult.messages) {
-            // Skip already processed messages
-            if (processedMessageIds.has(messageId)) continue;
-            processedMessageIds.add(messageId);
+          attempt.candidatesEvaluated++;
 
-            attempt.candidatesEvaluated++;
+          try {
+            const message = await fromMailbox(mailbox.mail.getMessage({ id: messageId }));
 
-            try {
-              const message = await client.getMessage(messageId);
+            // Verify email date is within range (the search window is the same; a provider may round it to the day)
+            const emailDate = message.date;
+            if (!isEmailDateInRange(emailDate, txDate, MAIL_WINDOW_DAYS)) {
+              console.log(`[PrecisionSearch] Skipping message - date ${emailDate.toISOString().split("T")[0]} outside ±180 days of tx`);
+              continue;
+            }
 
-              // Verify email date is within range (extra safety check)
-              const emailDate = new Date(parseInt(message.internalDate, 10));
-              if (!isEmailDateInRange(emailDate, txDate, 180)) {
-                console.log(`[PrecisionSearch] Skipping message - date ${emailDate.toISOString().split("T")[0]} outside ±180 days of tx`);
+            const allAttachments = receiptAttachments(message);
+
+            // Classify email BEFORE processing attachments
+            const subject = message.subject;
+            const classification = classifyEmail(subject, message.snippet || "", allAttachments);
+
+            console.log(`[PrecisionSearch] Email classification for ${messageId}: ` +
+              `hasPdf=${classification.hasPdfAttachment}, mailInvoice=${classification.possibleMailInvoice}, ` +
+              `invoiceLink=${classification.possibleInvoiceLink}, confidence=${classification.confidence}%` +
+              (classification.matchedKeywords.length > 0 ? ` [${classification.matchedKeywords.join(", ")}]` : ""));
+
+            // Skip if this is a mail-invoice-only (no PDF) - let email_invoice strategy handle it
+            if (classification.possibleMailInvoice && !classification.hasPdfAttachment) {
+              console.log(`[PrecisionSearch] Skipping ${messageId} - mail invoice without PDF attachment (handled by email_invoice strategy)`);
+              continue;
+            }
+
+            // Log all attachments for debugging
+            console.log(`[PrecisionSearch] Message ${messageId} has ${allAttachments.length} attachment(s):`,
+              allAttachments.map(a => `${a.filename} (${a.mimeType}, isLikelyReceipt=${a.isLikelyReceipt})`));
+
+            // Filter to likely receipts (PDFs) for processing
+            const attachments = allAttachments.filter(a => a.isLikelyReceipt);
+
+            if (attachments.length === 0) {
+              console.log(`[PrecisionSearch] No likely receipt attachments in message ${messageId}`);
+              continue;
+            }
+
+            // Sort: PDFs first, then images (prioritize PDFs as they're usually better quality)
+            const sortedAttachments = [...attachments].sort((a, b) => {
+              const aIsPdf = a.mimeType === "application/pdf" || a.filename.toLowerCase().endsWith(".pdf");
+              const bIsPdf = b.mimeType === "application/pdf" || b.filename.toLowerCase().endsWith(".pdf");
+              if (aIsPdf && !bIsPdf) return -1;
+              if (!aIsPdf && bIsPdf) return 1;
+              return 0;
+            });
+
+            let foundPdfMatch = false;
+
+            // Process each attachment (PDFs first)
+            for (const attachment of sortedAttachments) {
+              // Skip images if we already found a PDF match in this message
+              const isPdf = attachment.mimeType === "application/pdf" || attachment.filename.toLowerCase().endsWith(".pdf");
+              if (foundPdfMatch && !isPdf) {
+                console.log(`[PrecisionSearch] Skipping image ${attachment.filename} - PDF already matched in this message`);
                 continue;
               }
-
-              const allAttachments = extractAttachments(message);
-
-              // Classify email BEFORE processing attachments
-              const subject = extractHeader(message, "Subject") || "";
-              const classification = classifyEmail(subject, message.snippet || "", allAttachments);
-
-              console.log(`[PrecisionSearch] Email classification for ${messageId}: ` +
-                `hasPdf=${classification.hasPdfAttachment}, mailInvoice=${classification.possibleMailInvoice}, ` +
-                `invoiceLink=${classification.possibleInvoiceLink}, confidence=${classification.confidence}%` +
-                (classification.matchedKeywords.length > 0 ? ` [${classification.matchedKeywords.join(", ")}]` : ""));
-
-              // Skip if this is a mail-invoice-only (no PDF) - let email_invoice strategy handle it
-              if (classification.possibleMailInvoice && !classification.hasPdfAttachment) {
-                console.log(`[PrecisionSearch] Skipping ${messageId} - mail invoice without PDF attachment (handled by email_invoice strategy)`);
-                continue;
-              }
-
-              // Log all attachments for debugging
-              console.log(`[PrecisionSearch] Message ${messageId} has ${allAttachments.length} attachment(s):`,
-                allAttachments.map(a => `${a.filename} (${a.mimeType}, isLikelyReceipt=${a.isLikelyReceipt})`));
-
-              // Filter to likely receipts (PDFs, images) for processing
-              // Same behavior as UI which shows all attachments but highlights likely receipts
-              const attachments = allAttachments.filter(a => a.isLikelyReceipt);
-
-              if (attachments.length === 0) {
-                console.log(`[PrecisionSearch] No likely receipt attachments in message ${messageId}`);
-                continue;
-              }
-
-              // Sort: PDFs first, then images (prioritize PDFs as they're usually better quality)
-              const sortedAttachments = [...attachments].sort((a, b) => {
-                const aIsPdf = a.mimeType === "application/pdf" || a.filename.toLowerCase().endsWith(".pdf");
-                const bIsPdf = b.mimeType === "application/pdf" || b.filename.toLowerCase().endsWith(".pdf");
-                if (aIsPdf && !bIsPdf) return -1;
-                if (!aIsPdf && bIsPdf) return 1;
-                return 0;
+              // Check if we already have this attachment
+              const existingFiles = await filesFromMailPart(userId, mailbox, messageId, {
+                attachmentId: attachment.attachmentId,
               });
 
-              let foundPdfMatch = false;
+              if (existingFiles.length > 0) {
+                // File already exists - score it and potentially connect to transaction
+                const existingDoc = existingFiles[0];
+                const existingFile = { id: existingDoc.id, ...existingDoc.data() } as TaxFile;
+                const fileName = existingFile.fileName || attachment.filename;
 
-              // Process each attachment (PDFs first)
-              for (const attachment of sortedAttachments) {
-                // Skip images if we already found a PDF match in this message
-                const isPdf = attachment.mimeType === "application/pdf" || attachment.filename.toLowerCase().endsWith(".pdf");
-                if (foundPdfMatch && !isPdf) {
-                  console.log(`[PrecisionSearch] Skipping image ${attachment.filename} - PDF already matched in this message`);
-                  continue;
-                }
-                // Check if we already have this attachment
-                const existingFileQuery = await db
-                  .collection("files")
-                  .where("userId", "==", userId)
-                  .where("mailMessageId", "==", messageId)
-                  .where("mailAttachmentId", "==", attachment.attachmentId)
-                  .limit(1)
-                  .get();
-
-                if (!existingFileQuery.empty) {
-                  // File already exists - score it and potentially connect to transaction
-                  const existingDoc = existingFileQuery.docs[0];
-                  const existingFile = { id: existingDoc.id, ...existingDoc.data() } as TaxFile;
-                  const fileName = existingFile.fileName || attachment.filename;
-
-                  // Skip if already connected to this transaction
-                  if (existingFile.transactionIds?.includes(transaction.id)) {
-                    console.log(`[PrecisionSearch] File already connected: ${fileName}`);
-                    continue;
-                  }
-
-                  // Score the existing file using unified scoring (same as UI)
-                  // Include email metadata for better scoring
-                  const from = extractHeader(message, "From") || "";
-                  const subject = extractHeader(message, "Subject") || "";
-                  const emailDate = new Date(parseInt(message.internalDate, 10));
-
-                  const scoreInput: ScoreAttachmentInput = {
-                    filename: fileName,
-                    mimeType: attachment.mimeType,
-                    emailSubject: subject,
-                    emailFrom: from,
-                    emailBodyText: existingFile.extractedText,
-                    emailDate,
-                    integrationId: integration.id,
-                    transactionAmount: transaction.amount,
-                    transactionOriginalAmount: originalAmountOf(transaction),
-                    transactionDate: transaction.date.toDate(),
-                    transactionName: transaction.name,
-                    transactionReference: transaction.reference,
-                    transactionPartner: transaction.partner,
-                    partnerName: partnerInfo?.name,
-                    partnerEmailDomains: partnerInfo?.emailDomains,
-                  };
-                  const score = scoreAttachmentMatch(scoreInput);
-                  console.log(
-                    `[PrecisionSearch] Match score for file ${fileName} (${existingFile.id}): ${score.score}% ` +
-                    `[${score.reasons.slice(0, 3).join(", ")}]`
-                  );
-
-                  // If score meets threshold, add hint to trigger re-matching
-                  if (score.score >= ATTACHMENT_MATCH_THRESHOLD) {
-                    // Check if this file was rejected by the transaction
-                    if (isFileRejectedByTransaction(existingFile.id, transaction)) {
-                      console.log(`[PrecisionSearch] Skipping rejected file ${fileName} (${existingFile.id})`);
-                      continue;
-                    }
-                    // ...or dismissed on the file's side
-                    if (isTransactionDismissed(existingFile, transaction.id)) {
-                      console.log(
-                        `[PrecisionSearch] Skipping dismissed pair: file ${fileName} ` +
-                        `(${existingFile.id}) x transaction ${transaction.id}`
-                      );
-                      continue;
-                    }
-                    await db.collection("files").doc(existingFile.id).update({
-                      precisionSearchHint: {
-                        transactionId: transaction.id,
-                        transactionAmount: transaction.amount,
-                        transactionDate: transaction.date,
-                        searchStrategy: "email_attachment",
-                        matchConfidence: score.score,
-                        searchedAt: Timestamp.now(),
-                      },
-                      transactionMatchComplete: false, // Re-trigger matching
-                      updatedAt: Timestamp.now(),
-                    });
-                    attempt.fileIdsConnected.push(existingFile.id);
-                    attempt.matchesFound++;
-                    if (isPdf) foundPdfMatch = true;
-                    console.log(`[PrecisionSearch] Existing file ${fileName} matched at ${score.score}%`);
-
-                    // Stop trying more queries if this is a great match
-                    if (score.score >= GREAT_MATCH_THRESHOLD) {
-                      greatMatchCount++;
-                      console.log(`[PrecisionSearch] Great match found (${score.score}%), count: ${greatMatchCount}/${GREAT_MATCH_COUNT}`);
-                    }
-                  } else {
-                    console.log(`[PrecisionSearch] Existing file ${fileName} scored ${score.score}% (below ${ATTACHMENT_MATCH_THRESHOLD}% threshold)`);
-                  }
+                // Skip if already connected to this transaction
+                if (existingFile.transactionIds?.includes(transaction.id)) {
+                  console.log(`[PrecisionSearch] File already connected: ${fileName}`);
                   continue;
                 }
 
-                // Download and create new file (with hint for matching)
-                const attachmentData = await client.getAttachment(messageId, attachment.attachmentId);
-                const result = await createFileFromAttachment(
-                  userId,
-                  attachmentData,
-                  attachment,
-                  message,
-                  integration.id,
-                  integration.email,
-                  {
-                    transactionId: transaction.id,
-                    transactionAmount: transaction.amount,
-                    transactionDate: transaction.date,
-                    searchStrategy: "email_attachment",
-                    searchedAt: Timestamp.now(),
-                  }
+                // Score the existing file using unified scoring (same as UI)
+                // Include email metadata for better scoring
+                const scoreInput: ScoreAttachmentInput = {
+                  filename: fileName,
+                  mimeType: attachment.mimeType,
+                  emailSubject: message.subject,
+                  emailFrom: message.from,
+                  emailBodyText: existingFile.extractedText,
+                  emailDate,
+                  integrationId: mailbox.id,
+                  transactionAmount: transaction.amount,
+                  transactionOriginalAmount: originalAmountOf(transaction),
+                  transactionDate: transaction.date.toDate(),
+                  transactionName: transaction.name,
+                  transactionReference: transaction.reference,
+                  transactionPartner: transaction.partner,
+                  partnerName: partnerInfo?.name,
+                  partnerEmailDomains: partnerInfo?.emailDomains,
+                };
+                const score = scoreAttachmentMatch(scoreInput);
+                console.log(
+                  `[PrecisionSearch] Match score for file ${fileName} (${existingFile.id}): ${score.score}% ` +
+                  `[${score.reasons.slice(0, 3).join(", ")}]`
                 );
 
-                if (result) {
-                  // Check if this is an existing file (found by hash)
-                  if (result.startsWith("existing:")) {
-                    const existingFileId = result.substring(9);
-                    const existingDoc = await db.collection("files").doc(existingFileId).get();
-                    if (existingDoc.exists) {
-                      const existingFile = { id: existingDoc.id, ...existingDoc.data() } as TaxFile;
-                      const fileName = existingFile.fileName || attachment.filename;
-
-                      // Skip if already connected to this transaction
-                      if (existingFile.transactionIds?.includes(transaction.id)) {
-                        console.log(`[PrecisionSearch] File already connected: ${fileName}`);
-                        continue;
-                      }
-
-                      // Score the existing file using unified scoring
-                      const from = extractHeader(message, "From") || "";
-                      const subject = extractHeader(message, "Subject") || "";
-                      const emailDate = new Date(parseInt(message.internalDate, 10));
-
-                      const scoreInput: ScoreAttachmentInput = {
-                        filename: fileName,
-                        mimeType: attachment.mimeType,
-                        emailSubject: subject,
-                        emailFrom: from,
-                        emailBodyText: existingFile.extractedText,
-                        emailDate,
-                        integrationId: integration.id,
-                        transactionAmount: transaction.amount,
-                        transactionOriginalAmount: originalAmountOf(transaction),
-                        transactionDate: transaction.date.toDate(),
-                        transactionName: transaction.name,
-                        transactionReference: transaction.reference,
-                        transactionPartner: transaction.partner,
-                        partnerName: partnerInfo?.name,
-                        partnerEmailDomains: partnerInfo?.emailDomains,
-                      };
-                      const score = scoreAttachmentMatch(scoreInput);
-                      console.log(
-                        `[PrecisionSearch] Match score for file ${fileName} (${existingFileId}): ${score.score}% ` +
-                        `[${score.reasons.slice(0, 3).join(", ")}]`
-                      );
-
-                      if (score.score >= ATTACHMENT_MATCH_THRESHOLD) {
-                        // Check if this file was rejected by the transaction
-                        if (isFileRejectedByTransaction(existingFileId, transaction)) {
-                          console.log(`[PrecisionSearch] Skipping rejected file ${fileName} (${existingFileId})`);
-                        } else if (isTransactionDismissed(existingFile, transaction.id)) {
-                          console.log(
-                            `[PrecisionSearch] Skipping dismissed pair: file ${fileName} ` +
-                            `(${existingFileId}) x transaction ${transaction.id}`
-                          );
-                        } else {
-                          await db.collection("files").doc(existingFileId).update({
-                            precisionSearchHint: {
-                              transactionId: transaction.id,
-                              transactionAmount: transaction.amount,
-                              transactionDate: transaction.date,
-                              searchStrategy: "email_attachment",
-                              matchConfidence: score.score,
-                              searchedAt: Timestamp.now(),
-                            },
-                            transactionMatchComplete: false,
-                            updatedAt: Timestamp.now(),
-                          });
-                          attempt.fileIdsConnected.push(existingFileId);
-                          attempt.matchesFound++;
-                          if (isPdf) foundPdfMatch = true;
-                          console.log(`[PrecisionSearch] Existing file ${fileName} matched at ${score.score}%`);
-
-                          // Stop trying more queries if this is a great match
-                          if (score.score >= GREAT_MATCH_THRESHOLD) {
-                            greatMatchCount++;
-                            console.log(`[PrecisionSearch] Great match found (${score.score}%), count: ${greatMatchCount}/${GREAT_MATCH_COUNT}`);
-                          }
-                        }
-                      } else {
-                        console.log(`[PrecisionSearch] Existing file ${fileName} scored ${score.score}% (below threshold)`);
-                      }
-                    }
-                  } else {
-                    // New file created - matchFileTransactions will handle connection after extraction
-                    attempt.fileIdsConnected.push(result);
-                    attempt.matchesFound++;
-                    if (isPdf) foundPdfMatch = true;
+                // If score meets threshold, add hint to trigger re-matching
+                if (score.score >= ATTACHMENT_MATCH_THRESHOLD) {
+                  // Check if this file was rejected by the transaction
+                  if (isFileRejectedByTransaction(existingFile.id, transaction)) {
+                    console.log(`[PrecisionSearch] Skipping rejected file ${fileName} (${existingFile.id})`);
+                    continue;
                   }
+                  // ...or dismissed on the file's side
+                  if (isTransactionDismissed(existingFile, transaction.id)) {
+                    console.log(
+                      `[PrecisionSearch] Skipping dismissed pair: file ${fileName} ` +
+                      `(${existingFile.id}) x transaction ${transaction.id}`
+                    );
+                    continue;
+                  }
+                  await db.collection("files").doc(existingFile.id).update({
+                    precisionSearchHint: {
+                      transactionId: transaction.id,
+                      transactionAmount: transaction.amount,
+                      transactionDate: transaction.date,
+                      searchStrategy: "email_attachment",
+                      matchConfidence: score.score,
+                      searchedAt: Timestamp.now(),
+                    },
+                    transactionMatchComplete: false, // Re-trigger matching
+                    updatedAt: Timestamp.now(),
+                  });
+                  attempt.fileIdsConnected.push(existingFile.id);
+                  attempt.matchesFound++;
+                  if (isPdf) foundPdfMatch = true;
+                  console.log(`[PrecisionSearch] Existing file ${fileName} matched at ${score.score}%`);
+
+                  // Stop trying more queries if this is a great match
+                  if (score.score >= GREAT_MATCH_THRESHOLD) {
+                    greatMatchCount++;
+                    console.log(`[PrecisionSearch] Great match found (${score.score}%), count: ${greatMatchCount}/${GREAT_MATCH_COUNT}`);
+                  }
+                } else {
+                  console.log(`[PrecisionSearch] Existing file ${fileName} scored ${score.score}% (below ${ATTACHMENT_MATCH_THRESHOLD}% threshold)`);
+                }
+                continue;
+              }
+
+              // Download and create new file (with hint for matching)
+              const attachmentData = await fromMailbox(mailbox.mail.getAttachment(message, attachment));
+              const result = await createFileFromAttachment(
+                userId,
+                attachmentData,
+                attachment,
+                message,
+                mailbox.id,
+                mailbox.email,
+                {
+                  transactionId: transaction.id,
+                  transactionAmount: transaction.amount,
+                  transactionDate: transaction.date,
+                  searchStrategy: "email_attachment",
+                  searchedAt: Timestamp.now(),
+                }
+              );
+
+              if (result) {
+                // Check if this is an existing file (found by hash)
+                if (result.startsWith("existing:")) {
+                  const existingFileId = result.substring(9);
+                  const existingDoc = await db.collection("files").doc(existingFileId).get();
+                  if (existingDoc.exists) {
+                    const existingFile = { id: existingDoc.id, ...existingDoc.data() } as TaxFile;
+                    const fileName = existingFile.fileName || attachment.filename;
+
+                    // Skip if already connected to this transaction
+                    if (existingFile.transactionIds?.includes(transaction.id)) {
+                      console.log(`[PrecisionSearch] File already connected: ${fileName}`);
+                      continue;
+                    }
+
+                    // Score the existing file using unified scoring
+                    const scoreInput: ScoreAttachmentInput = {
+                      filename: fileName,
+                      mimeType: attachment.mimeType,
+                      emailSubject: message.subject,
+                      emailFrom: message.from,
+                      emailBodyText: existingFile.extractedText,
+                      emailDate,
+                      integrationId: mailbox.id,
+                      transactionAmount: transaction.amount,
+                      transactionOriginalAmount: originalAmountOf(transaction),
+                      transactionDate: transaction.date.toDate(),
+                      transactionName: transaction.name,
+                      transactionReference: transaction.reference,
+                      transactionPartner: transaction.partner,
+                      partnerName: partnerInfo?.name,
+                      partnerEmailDomains: partnerInfo?.emailDomains,
+                    };
+                    const score = scoreAttachmentMatch(scoreInput);
+                    console.log(
+                      `[PrecisionSearch] Match score for file ${fileName} (${existingFileId}): ${score.score}% ` +
+                      `[${score.reasons.slice(0, 3).join(", ")}]`
+                    );
+
+                    if (score.score >= ATTACHMENT_MATCH_THRESHOLD) {
+                      // Check if this file was rejected by the transaction
+                      if (isFileRejectedByTransaction(existingFileId, transaction)) {
+                        console.log(`[PrecisionSearch] Skipping rejected file ${fileName} (${existingFileId})`);
+                      } else if (isTransactionDismissed(existingFile, transaction.id)) {
+                        console.log(
+                          `[PrecisionSearch] Skipping dismissed pair: file ${fileName} ` +
+                          `(${existingFileId}) x transaction ${transaction.id}`
+                        );
+                      } else {
+                        await db.collection("files").doc(existingFileId).update({
+                          precisionSearchHint: {
+                            transactionId: transaction.id,
+                            transactionAmount: transaction.amount,
+                            transactionDate: transaction.date,
+                            searchStrategy: "email_attachment",
+                            matchConfidence: score.score,
+                            searchedAt: Timestamp.now(),
+                          },
+                          transactionMatchComplete: false,
+                          updatedAt: Timestamp.now(),
+                        });
+                        attempt.fileIdsConnected.push(existingFileId);
+                        attempt.matchesFound++;
+                        if (isPdf) foundPdfMatch = true;
+                        console.log(`[PrecisionSearch] Existing file ${fileName} matched at ${score.score}%`);
+
+                        // Stop trying more queries if this is a great match
+                        if (score.score >= GREAT_MATCH_THRESHOLD) {
+                          greatMatchCount++;
+                          console.log(`[PrecisionSearch] Great match found (${score.score}%), count: ${greatMatchCount}/${GREAT_MATCH_COUNT}`);
+                        }
+                      }
+                    } else {
+                      console.log(`[PrecisionSearch] Existing file ${fileName} scored ${score.score}% (below threshold)`);
+                    }
+                  }
+                } else {
+                  // New file created - matchFileTransactions will handle connection after extraction
+                  attempt.fileIdsConnected.push(result);
+                  attempt.matchesFound++;
+                  mailbox.filesCreated++;
+                  if (isPdf) foundPdfMatch = true;
                 }
               }
-            } catch (msgError) {
-              console.error(`[PrecisionSearch] Error processing message ${messageId}:`, msgError);
             }
+          } catch (msgError) {
+            console.error(`[PrecisionSearch] Error processing message ${messageId} in ${mailbox.id}:`, msgError);
+            // Only a failure reading the mailbox is the mailbox's; a storage or
+            // AI failure is logged with the message and the search moves on.
+            if (msgError instanceof MailboxReadError) await failMailbox(db, mailbox, msgError.cause);
           }
-        } catch (searchError) {
-          console.error(`[PrecisionSearch] Error searching with query "${query}":`, searchError);
         }
       }
     }
@@ -1634,13 +1451,15 @@ async function executeEmailAttachmentStrategy(
 
 /**
  * Execute Strategy 4: Email Invoice Parsing
- * Parse email content for invoice links or HTML invoices
+ * Parse email content for invoice links or HTML invoices, in every Mail
+ * Integration whose Mail Provider can read a message body (#746).
  */
 async function executeEmailInvoiceStrategy(
   transaction: Transaction,
   userId: string,
   // #169: carried, not yet applied — see `executeEmailAttachmentStrategy`.
-  dateWindow?: SearchDateWindow
+  dateWindow: SearchDateWindow | undefined,
+  openMailboxes: () => Promise<SearchedMailbox[]>
 ): Promise<SearchAttempt> {
   const startedAt = Timestamp.now();
   const attempt: SearchAttempt = {
@@ -1661,14 +1480,13 @@ async function executeEmailInvoiceStrategy(
   };
 
   try {
-    // Get Gmail clients
-    const clients = await getGmailClientsForUser(userId);
-    if (clients.length === 0) {
-      console.log(`[PrecisionSearch] email_invoice: No active Gmail integrations for user`);
+    const mailboxes = (await openMailboxes()).filter((m) => isUsable(m) && typeof m.mail.getBody === "function");
+    if (mailboxes.length === 0) {
+      console.log(`[PrecisionSearch] email_invoice: No searchable Mail Integration for user`);
       attempt.completedAt = Timestamp.now();
       return attempt;
     }
-    console.log(`[PrecisionSearch] email_invoice: Found ${clients.length} Gmail integration(s)`);
+    console.log(`[PrecisionSearch] email_invoice: Searching ${mailboxes.length} Mail Integration(s)`);
 
     // Get partner info if available
     let partnerInfo: Partner | undefined;
@@ -1685,30 +1503,30 @@ async function executeEmailInvoiceStrategy(
       }
     }
 
-    // Generate search queries using Gemini (same as UI)
-    const allQueries = await generateQueriesWithGemini(
-      {
-        name: transaction.name,
-        partner: transaction.partner,
-        description: transaction.description,
-        reference: transaction.reference,
-        amount: transaction.amount,
-      },
-      partnerInfo ? {
-        name: partnerInfo.name,
-        emailDomains: partnerInfo.emailDomains,
-        website: partnerInfo.website,
-        ibans: partnerInfo.ibans,
-        vatId: partnerInfo.vatId,
-        aliases: partnerInfo.aliases,
-        fileSourcePatterns: partnerInfo.fileSourcePatterns,
-      } : undefined,
-      8,
-      userId
-    );
-
-    // Take first 3 queries (same as clicking suggestions in UI)
-    const queries = allQueries.slice(0, 3);
+    // Generate search suggestions using Gemini (same as UI)
+    const suggestions = (
+      await generateTypedQueriesWithGemini(
+        {
+          name: transaction.name,
+          partner: transaction.partner,
+          description: transaction.description,
+          reference: transaction.reference,
+          amount: transaction.amount,
+        },
+        partnerInfo ? {
+          name: partnerInfo.name,
+          emailDomains: partnerInfo.emailDomains,
+          website: partnerInfo.website,
+          ibans: partnerInfo.ibans,
+          vatId: partnerInfo.vatId,
+          aliases: partnerInfo.aliases,
+          fileSourcePatterns: partnerInfo.fileSourcePatterns,
+        } : undefined,
+        8,
+        userId
+      )
+    ).slice(0, 3); // First 3 (same as clicking suggestions in UI)
+    const queries = suggestions.map((s) => s.query);
     console.log(`[PrecisionSearch] email_invoice: Using ${queries.length} queries for tx "${transaction.name}":`, queries);
 
     if (queries.length === 0) {
@@ -1721,214 +1539,212 @@ async function executeEmailInvoiceStrategy(
       queries,
     };
 
-    // Search each Gmail account with each query (exclude attachment requirement)
-    // NOTE: Don't add date filter to Gmail query - let Gmail rank by relevance (same as UI)
-    // We filter by date AFTER fetching (see isEmailDateInRange check below)
+    // Search each mailbox with each query, without the attachment requirement
     const processedMessageIds = new Set<string>();
     const txDate = transaction.date.toDate();
+    const { dateFrom, dateTo } = mailWindow(txDate);
     let greatMatchCount = 0; // Stop trying more queries after GREAT_MATCH_COUNT matches at GREAT_MATCH_THRESHOLD%
 
-    for (const { client, integration } of clients) {
+    for (const mailbox of mailboxes) {
       if (greatMatchCount >= GREAT_MATCH_COUNT) break;
-      for (const query of queries) {
-        if (greatMatchCount >= GREAT_MATCH_COUNT) break;
+      for (const suggestion of suggestions) {
+        if (greatMatchCount >= GREAT_MATCH_COUNT || !isUsable(mailbox)) break;
+        const terms = searchTermsOf(suggestion.terms);
+        if (!terms) continue;
+
+        let messageRefs: Array<{ id: string }>;
         try {
-          // Use shared query builder (same as UI callable) - no date filter, no attachment requirement
-          const cleanQuery = buildGmailSearchQuery({
-            query: query.replace(/has:attachment/gi, "").trim(),
-            hasAttachments: false,
-          });
+          const page = await mailbox.mail.search({ ...terms, hasAttachment: false, dateFrom, dateTo, limit: 20 });
+          mailbox.searched = true;
+          noteLimitations(attempt, mailbox, page.limitations);
+          messageRefs = page.messages;
+        } catch (searchError) {
+          console.error(`[PrecisionSearch] Error searching ${mailbox.id} with query "${suggestion.query}":`, searchError);
+          await failMailbox(db, mailbox, searchError);
+          continue;
+        }
+        console.log(`[PrecisionSearch] email_invoice: Query "${suggestion.query.substring(0, 50)}..." returned ${messageRefs.length} messages in ${mailbox.id}`);
+        attempt.candidatesFound += messageRefs.length;
 
-          const searchResult = await client.searchMessages(cleanQuery, 20);
-          console.log(`[PrecisionSearch] email_invoice: Query "${cleanQuery.substring(0, 50)}..." returned ${searchResult.messages.length} messages`);
-          attempt.candidatesFound += searchResult.messages.length;
+        for (const { id: messageId } of messageRefs) {
+          if (!isUsable(mailbox)) break;
+          const seenKey = `${mailbox.id}:${messageId}`;
+          if (processedMessageIds.has(seenKey)) continue;
+          processedMessageIds.add(seenKey);
 
-          for (const { id: messageId } of searchResult.messages) {
-            if (processedMessageIds.has(messageId)) continue;
-            processedMessageIds.add(messageId);
+          attempt.candidatesEvaluated++;
 
-            attempt.candidatesEvaluated++;
+          try {
+            const message = await fromMailbox(mailbox.mail.getMessage({ id: messageId }));
+            const from = message.from;
+            const subject = message.subject;
 
-            try {
-              const message = await client.getMessage(messageId);
-              const from = extractHeader(message, "From") || "";
-              const subject = extractHeader(message, "Subject") || "";
+            // Pre-classify email to prioritize likely mail invoices
+            const allAttachments = receiptAttachments(message);
+            const classification = classifyEmail(subject, message.snippet || "", allAttachments);
 
-              // Pre-classify email to prioritize likely mail invoices
-              const allAttachments = extractAttachments(message);
-              const classification = classifyEmail(subject, message.snippet || "", allAttachments);
+            console.log(`[PrecisionSearch] email_invoice: Classification for ${messageId}: ` +
+              `hasPdf=${classification.hasPdfAttachment}, mailInvoice=${classification.possibleMailInvoice}, ` +
+              `invoiceLink=${classification.possibleInvoiceLink}, confidence=${classification.confidence}%`);
 
-              console.log(`[PrecisionSearch] email_invoice: Classification for ${messageId}: ` +
-                `hasPdf=${classification.hasPdfAttachment}, mailInvoice=${classification.possibleMailInvoice}, ` +
-                `invoiceLink=${classification.possibleInvoiceLink}, confidence=${classification.confidence}%`);
+            // Skip if has PDF attachment - email_attachment strategy handles those
+            if (classification.hasPdfAttachment) {
+              console.log(`[PrecisionSearch] Skipping ${messageId} - has PDF attachment (handled by email_attachment strategy)`);
+              continue;
+            }
 
-              // Skip if has PDF attachment - email_attachment strategy handles those
-              if (classification.hasPdfAttachment) {
-                console.log(`[PrecisionSearch] Skipping ${messageId} - has PDF attachment (handled by email_attachment strategy)`);
-                continue;
+            // Check email date is within range
+            const emailDate = message.date;
+            if (!isEmailDateInRange(emailDate, txDate, MAIL_WINDOW_DAYS)) {
+              console.log(`[PrecisionSearch] Skipping message - date ${emailDate.toISOString().split("T")[0]} outside ±180 days of tx`);
+              continue;
+            }
+
+            const body = await fromMailbox(mailbox.mail.getBody!({ id: messageId }));
+            const html = body.html ?? undefined;
+            const text = body.text ?? undefined;
+
+            // Analyze email content with Gemini
+            const analysis = await analyzeEmailForInvoice(
+              { subject, from, htmlBody: html, textBody: text },
+              {
+                name: transaction.name,
+                partner: transaction.partner,
+                amount: transaction.amount,
+              },
+              userId
+            );
+
+            attempt.geminiCalls = (attempt.geminiCalls || 0) + 1;
+            attempt.geminiTokensUsed =
+              (attempt.geminiTokensUsed || 0) + analysis.usage.inputTokens + analysis.usage.outputTokens;
+
+            // Handle invoice links - store on partner
+            if (analysis.hasInvoiceLink && analysis.invoiceLinks.length > 0 && partnerId) {
+              const now = Timestamp.now();
+              for (const link of analysis.invoiceLinks) {
+                attempt.invoiceLinksFound?.push(link.url);
+
+                // Add invoice link to partner
+                await db
+                  .collection(partnerType === "global" ? "globalPartners" : "partners")
+                  .doc(partnerId)
+                  .update({
+                    invoiceLinks: FieldValue.arrayUnion({
+                      url: link.url,
+                      anchorText: link.anchorText,
+                      emailMessageId: messageId,
+                      emailSubject: subject,
+                      discoveredAt: now,
+                    }),
+                    invoiceLinksUpdatedAt: now,
+                    updatedAt: now,
+                  });
               }
 
-              // Check email date is within range
-              const emailDate = new Date(parseInt(message.internalDate, 10));
-              if (!isEmailDateInRange(emailDate, txDate, 180)) {
-                console.log(`[PrecisionSearch] Skipping message - date ${emailDate.toISOString().split("T")[0]} outside ±180 days of tx`);
-                continue;
-              }
+              console.log(
+                `[PrecisionSearch] Found ${analysis.invoiceLinks.length} invoice links for partner ${partnerId}`
+              );
+            }
 
-              const { html, text } = extractEmailBody(message);
-
-              // Analyze email content with Gemini
-              const analysis = await analyzeEmailForInvoice(
-                { subject, from, htmlBody: html, textBody: text },
-                {
-                  name: transaction.name,
-                  partner: transaction.partner,
-                  amount: transaction.amount,
-                },
-                userId
+            // Handle mail invoice (email itself is the invoice)
+            if (analysis.isMailInvoice && analysis.mailInvoiceConfidence >= 0.7 && html) {
+              // Score the email using unified scoring (same as UI)
+              // Use the provider's snippet where it has one, with body text as fallback
+              const bodyText = text || (html ? html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim() : undefined);
+              const emailScoreInput: ScoreAttachmentInput = {
+                filename: `${subject}.pdf`,
+                mimeType: "application/pdf",
+                emailSubject: subject,
+                emailFrom: from,
+                emailSnippet: message.snippet || bodyText?.substring(0, 500),
+                emailBodyText: bodyText,
+                emailDate,
+                integrationId: mailbox.id,
+                transactionAmount: transaction.amount,
+                transactionOriginalAmount: originalAmountOf(transaction),
+                transactionDate: txDate,
+                transactionName: transaction.name,
+                transactionReference: transaction.reference,
+                // Use name as fallback when partner is not assigned
+                transactionPartner: transaction.partner || transaction.name,
+                partnerName: partnerInfo?.name,
+                partnerEmailDomains: partnerInfo?.emailDomains,
+              };
+              const emailScore = scoreAttachmentMatch(emailScoreInput);
+              console.log(
+                `[PrecisionSearch] Email invoice score for "${subject.substring(0, 40)}...": ${emailScore.score}% ` +
+                `[${emailScore.reasons.join(", ")}]`
               );
 
-              attempt.geminiCalls = (attempt.geminiCalls || 0) + 1;
-              attempt.geminiTokensUsed =
-                (attempt.geminiTokensUsed || 0) + analysis.usage.inputTokens + analysis.usage.outputTokens;
-
-              // Handle invoice links - store on partner
-              if (analysis.hasInvoiceLink && analysis.invoiceLinks.length > 0 && partnerId) {
-                const now = Timestamp.now();
-                for (const link of analysis.invoiceLinks) {
-                  attempt.invoiceLinksFound?.push(link.url);
-
-                  // Add invoice link to partner
-                  await db
-                    .collection(partnerType === "global" ? "globalPartners" : "partners")
-                    .doc(partnerId)
-                    .update({
-                      invoiceLinks: FieldValue.arrayUnion({
-                        url: link.url,
-                        anchorText: link.anchorText,
-                        emailMessageId: messageId,
-                        emailSubject: subject,
-                        discoveredAt: now,
-                      }),
-                      invoiceLinksUpdatedAt: now,
-                      updatedAt: now,
-                    });
-                }
-
-                console.log(
-                  `[PrecisionSearch] Found ${analysis.invoiceLinks.length} invoice links for partner ${partnerId}`
-                );
+              // Track best score
+              if (!attempt.bestMatchScore || emailScore.score > attempt.bestMatchScore) {
+                attempt.bestMatchScore = emailScore.score;
               }
 
-              // Handle mail invoice (email itself is the invoice)
-              if (analysis.isMailInvoice && analysis.mailInvoiceConfidence >= 0.7 && html) {
-                // Verify email date is within range of transaction (extra safety check)
-                const emailDate = new Date(parseInt(message.internalDate, 10));
-                if (!isEmailDateInRange(emailDate, txDate, 180)) {
-                  console.log(`[PrecisionSearch] Skipping email invoice - date ${emailDate.toISOString()} outside ±180 days of tx ${txDate.toISOString()}`);
-                  continue;
-                }
+              // Only convert if score meets threshold
+              if (emailScore.score < ATTACHMENT_MATCH_THRESHOLD) {
+                console.log(`[PrecisionSearch] Email invoice scored ${emailScore.score}% (below ${ATTACHMENT_MATCH_THRESHOLD}% threshold), skipping`);
+                continue;
+              }
 
-                // Score the email using unified scoring (same as UI)
-                // Use message.snippet from Gmail API (same as UI), with body text as fallback
-                const bodyText = text || (html ? html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim() : undefined);
-                const emailScoreInput: ScoreAttachmentInput = {
-                  filename: `${subject}.pdf`,
-                  mimeType: "application/pdf",
-                  emailSubject: subject,
-                  emailFrom: from,
-                  // Use snippet from Gmail API like UI does, fallback to extracted body
-                  emailSnippet: message.snippet || bodyText?.substring(0, 500),
-                  emailBodyText: bodyText,
-                  emailDate,
-                  integrationId: integration.id,
-                  transactionAmount: transaction.amount,
-                  transactionOriginalAmount: originalAmountOf(transaction),
-                  transactionDate: txDate,
-                  transactionName: transaction.name,
-                  transactionReference: transaction.reference,
-                  // Use name as fallback when partner is not assigned
-                  transactionPartner: transaction.partner || transaction.name,
-                  partnerName: partnerInfo?.name,
-                  partnerEmailDomains: partnerInfo?.emailDomains,
-                };
-                const emailScore = scoreAttachmentMatch(emailScoreInput);
-                console.log(
-                  `[PrecisionSearch] Email invoice score for "${subject.substring(0, 40)}...": ${emailScore.score}% ` +
-                  `[${emailScore.reasons.join(", ")}]`
+              // Check if we already converted this email
+              const existingFiles = await filesFromMailPart(userId, mailbox, messageId, {
+                sourceType: "gmail_html_invoice",
+              });
+
+              if (existingFiles.length === 0) {
+                // Convert HTML to PDF
+                const pdfResult = await convertHtmlToPdf(html, {
+                  subject,
+                  from,
+                  date: emailDate,
+                });
+
+                // Create filename from subject
+                const sanitizedSubject = subject
+                  .replace(/[^a-zA-Z0-9\s]/g, "")
+                  .trim()
+                  .substring(0, 50);
+                const filename = `${sanitizedSubject || "invoice"}_${emailDate.toISOString().split("T")[0]}.pdf`;
+
+                const fileId = await createFileFromHtmlPdf(
+                  userId,
+                  pdfResult.pdfBuffer,
+                  filename,
+                  message,
+                  mailbox.id,
+                  mailbox.email,
+                  {
+                    transactionId: transaction.id,
+                    transactionAmount: transaction.amount,
+                    transactionDate: transaction.date,
+                    searchStrategy: "email_invoice",
+                    searchedAt: Timestamp.now(),
+                  }
                 );
 
-                // Track best score
-                if (!attempt.bestMatchScore || emailScore.score > attempt.bestMatchScore) {
-                  attempt.bestMatchScore = emailScore.score;
-                }
+                if (fileId) {
+                  // File created - matchFileTransactions will handle connection after extraction
+                  attempt.fileIdsConnected.push(fileId);
+                  attempt.matchesFound++;
+                  if (!fileId.startsWith("existing:")) mailbox.filesCreated++;
+                  console.log(`[PrecisionSearch] Created PDF from mail invoice: ${filename} (score: ${emailScore.score}%)`);
 
-                // Only convert if score meets threshold
-                if (emailScore.score < ATTACHMENT_MATCH_THRESHOLD) {
-                  console.log(`[PrecisionSearch] Email invoice scored ${emailScore.score}% (below ${ATTACHMENT_MATCH_THRESHOLD}% threshold), skipping`);
-                  continue;
-                }
-
-                // Check if we already converted this email
-                const existingFile = await db
-                  .collection("files")
-                  .where("userId", "==", userId)
-                  .where("mailMessageId", "==", messageId)
-                  .where("sourceType", "==", "gmail_html_invoice")
-                  .limit(1)
-                  .get();
-
-                if (existingFile.empty) {
-                  // Convert HTML to PDF
-                  const pdfResult = await convertHtmlToPdf(html, {
-                    subject,
-                    from,
-                    date: emailDate,
-                  });
-
-                  // Create filename from subject
-                  const sanitizedSubject = subject
-                    .replace(/[^a-zA-Z0-9\s]/g, "")
-                    .trim()
-                    .substring(0, 50);
-                  const filename = `${sanitizedSubject || "invoice"}_${emailDate.toISOString().split("T")[0]}.pdf`;
-
-                  const fileId = await createFileFromHtmlPdf(
-                    userId,
-                    pdfResult.pdfBuffer,
-                    filename,
-                    message,
-                    integration.id,
-                    integration.email,
-                    {
-                      transactionId: transaction.id,
-                      transactionAmount: transaction.amount,
-                      transactionDate: transaction.date,
-                      searchStrategy: "email_invoice",
-                      searchedAt: Timestamp.now(),
-                    }
-                  );
-
-                  if (fileId) {
-                    // File created - matchFileTransactions will handle connection after extraction
-                    attempt.fileIdsConnected.push(fileId);
-                    attempt.matchesFound++;
-                    console.log(`[PrecisionSearch] Created PDF from mail invoice: ${filename} (score: ${emailScore.score}%)`);
-
-                    // Stop trying more queries if this is a great match
-                    if (emailScore.score >= GREAT_MATCH_THRESHOLD) {
-                      greatMatchCount++;
-                      console.log(`[PrecisionSearch] Great match found (${emailScore.score}%), count: ${greatMatchCount}/${GREAT_MATCH_COUNT}`);
-                    }
+                  // Stop trying more queries if this is a great match
+                  if (emailScore.score >= GREAT_MATCH_THRESHOLD) {
+                    greatMatchCount++;
+                    console.log(`[PrecisionSearch] Great match found (${emailScore.score}%), count: ${greatMatchCount}/${GREAT_MATCH_COUNT}`);
                   }
                 }
               }
-            } catch (msgError) {
-              console.error(`[PrecisionSearch] Error processing message ${messageId}:`, msgError);
             }
+          } catch (msgError) {
+            console.error(`[PrecisionSearch] Error processing message ${messageId} in ${mailbox.id}:`, msgError);
+            // Only a failure reading the mailbox is the mailbox's; a storage or
+            // AI failure is logged with the message and the search moves on.
+            if (msgError instanceof MailboxReadError) await failMailbox(db, mailbox, msgError.cause);
           }
-        } catch (searchError) {
-          console.error(`[PrecisionSearch] Error searching with query "${query}":`, searchError);
         }
       }
     }
@@ -1950,7 +1766,8 @@ async function executeStrategy(
   transaction: Transaction,
   userId: string,
   dateWindow: SearchDateWindow | undefined,
-  nominatedFileIds: Set<string>
+  nominatedFileIds: Set<string>,
+  openMailboxes: () => Promise<SearchedMailbox[]>
 ): Promise<SearchAttempt> {
   switch (strategy) {
     case "partner_files":
@@ -1958,9 +1775,9 @@ async function executeStrategy(
     case "amount_files":
       return executeAmountFilesStrategy(transaction, userId, dateWindow, nominatedFileIds);
     case "email_attachment":
-      return executeEmailAttachmentStrategy(transaction, userId, dateWindow);
+      return executeEmailAttachmentStrategy(transaction, userId, dateWindow, openMailboxes);
     case "email_invoice":
-      return executeEmailInvoiceStrategy(transaction, userId, dateWindow);
+      return executeEmailInvoiceStrategy(transaction, userId, dateWindow, openMailboxes);
     default:
       throw new Error(`Unknown strategy: ${strategy}`);
   }
@@ -2028,7 +1845,35 @@ async function logSearchAttempt(
 // Queue Processor
 // ============================================================================
 
+/**
+ * Run one queue item with the User's mailboxes opened at most once for it
+ * (#746): every Transaction and both email strategies share the connections,
+ * so an Import of fifty lines costs one IMAP login per mailbox, not a burst of
+ * one per line. Closed, and the search recorded on each mailbox, at the end.
+ */
 async function processQueueItem(queueItem: PrecisionSearchQueueItem): Promise<{
+  paused?: boolean;
+  pauseReason?: string;
+}> {
+  let opened: Promise<SearchedMailbox[]> | null = null;
+  const openMailboxes = () => (opened ??= openSearchedMailboxes(db, queueItem.userId));
+  try {
+    return await runQueueItem(queueItem, openMailboxes);
+  } finally {
+    if (opened) {
+      try {
+        await closeSearchedMailboxes(db, await opened);
+      } catch (error) {
+        console.error(`[PrecisionSearch] Recording the search on the mailboxes failed:`, error);
+      }
+    }
+  }
+}
+
+async function runQueueItem(
+  queueItem: PrecisionSearchQueueItem,
+  openMailboxes: () => Promise<SearchedMailbox[]>
+): Promise<{
   paused?: boolean;
   pauseReason?: string;
 }> {
@@ -2037,24 +1882,24 @@ async function processQueueItem(queueItem: PrecisionSearchQueueItem): Promise<{
     `[PrecisionSearch] Processing queue ${queueItem.id} (${queueItem.scope}, ${queueItem.triggeredBy})`
   );
 
-  // Check if Gmail needs reauth - pause processing to avoid incomplete searches
-  const gmailStatus = await shouldPauseForGmailReauth(queueItem.userId);
-  if (gmailStatus.shouldPause) {
+  // A mailbox needs new credentials - pause rather than search without it
+  const mailStatus = await shouldPauseForMailReauth(queueItem.userId);
+  if (mailStatus.shouldPause) {
     console.log(
-      `[PrecisionSearch] Pausing queue ${queueItem.id}: ${gmailStatus.reason} (${gmailStatus.integrationEmail})`
+      `[PrecisionSearch] Pausing queue ${queueItem.id}: ${mailStatus.reason} (${mailStatus.integrationEmail})`
     );
-    // Revert to pending so it will be picked up again after Gmail reconnection
+    // Revert to pending so it will be picked up again after the mailbox is reconnected
     await db.collection("precisionSearchQueue").doc(queueItem.id).update({
       status: "pending",
       startedAt: null,
-      lastError: `Paused: ${gmailStatus.reason}. Will resume when Gmail is reconnected.`,
+      lastError: `Paused: ${mailStatus.reason}. Will resume when the mailbox is reconnected.`,
     });
-    return { paused: true, pauseReason: gmailStatus.reason };
+    return { paused: true, pauseReason: mailStatus.reason };
   }
 
-  // Check if user has any active email integration - if not, skip email strategies entirely
-  // This avoids wasting Gemini API calls generating search queries when there's no Gmail to search
-  const hasEmailIntegration = await hasActiveEmailIntegration(queueItem.userId);
+  // No mailbox the search reads - skip the email strategies entirely,
+  // which also saves the Gemini calls that would generate their queries
+  const hasEmailIntegration = await hasSearchableMailIntegration(queueItem.userId);
   if (!hasEmailIntegration) {
     const originalStrategies = queueItem.strategies;
     queueItem.strategies = queueItem.strategies.filter(
@@ -2198,7 +2043,7 @@ async function processQueueItem(queueItem: PrecisionSearchQueueItem): Promise<{
           // Skip if transaction already completed (from initial data)
           if (tx.isComplete) break;
 
-          const attempt = await executeStrategy(strategy, tx, queueItem.userId, dateWindow, nominatedFileIds);
+          const attempt = await executeStrategy(strategy, tx, queueItem.userId, dateWindow, nominatedFileIds, openMailboxes);
 
           // Log the attempt
           await logSearchAttempt(tx.id, queueItem.id, queueItem.triggeredBy, attempt);
@@ -2396,16 +2241,19 @@ export const processPrecisionSearchQueue = onSchedule(
     region: "europe-west1",
     memory: "1GiB",
     timeoutSeconds: 300,
+    secrets: MAIL_PROVIDER_SECRETS,
   },
   async () => {
     console.log("[PrecisionSearch] Starting queue processor...");
 
-    // Get oldest pending queue item
+    // The oldest pending queue items. A paused item goes back to pending with
+    // its old createdAt, so it would be the oldest on every run; the run moves
+    // past it to the next one instead of letting it hold up every other User.
     const pendingSnapshot = await db
       .collection("precisionSearchQueue")
       .where("status", "==", "pending")
       .orderBy("createdAt", "asc")
-      .limit(1)
+      .limit(PENDING_ITEMS_PER_RUN)
       .get();
 
     if (pendingSnapshot.empty) {
@@ -2413,25 +2261,26 @@ export const processPrecisionSearchQueue = onSchedule(
       return;
     }
 
-    const queueDoc = pendingSnapshot.docs[0];
-    const queueItem = {
-      id: queueDoc.id,
-      ...queueDoc.data(),
-    } as PrecisionSearchQueueItem;
+    for (const queueDoc of pendingSnapshot.docs) {
+      const queueItem = {
+        id: queueDoc.id,
+        ...queueDoc.data(),
+      } as PrecisionSearchQueueItem;
 
-    // Mark as processing
-    await queueDoc.ref.update({
-      status: "processing",
-      startedAt: Timestamp.now(),
-    });
+      // Mark as processing
+      await queueDoc.ref.update({
+        status: "processing",
+        startedAt: Timestamp.now(),
+      });
 
-    try {
-      const result = await processQueueItem(queueItem);
-      if (result.paused) {
+      try {
+        const result = await processQueueItem(queueItem);
+        if (!result.paused) return;
         console.log(`[PrecisionSearch] Queue item paused: ${result.pauseReason}`);
+      } catch (error) {
+        console.error("[PrecisionSearch] Queue processor error:", error);
+        return;
       }
-    } catch (error) {
-      console.error("[PrecisionSearch] Queue processor error:", error);
     }
   }
 );
@@ -2446,6 +2295,7 @@ export const onPrecisionSearchQueueCreated = onDocumentCreated(
     region: "europe-west1",
     memory: "1GiB",
     timeoutSeconds: 300,
+    secrets: MAIL_PROVIDER_SECRETS,
   },
   async (event) => {
     const data = event.data?.data();
@@ -2472,7 +2322,7 @@ export const onPrecisionSearchQueueCreated = onDocumentCreated(
       const result = await processQueueItem(queueItem);
       if (result.paused) {
         console.log(`[PrecisionSearch] Queue item paused: ${result.pauseReason}`);
-        // Don't retry - item is already set back to pending and will resume when Gmail reconnects
+        // Don't retry - item is already set back to pending and will resume when the mailbox is reconnected
         return;
       }
     } catch (error) {

@@ -16,7 +16,7 @@
 
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { onSchedule } from "firebase-functions/v2/scheduler";
-import { SYNCABLE_MAIL_PROVIDERS } from "../mail/constants";
+import { isSearchableMailIntegration } from "../mail/searchable";
 import { selectEffectiveCycleForAmount } from "../matching/billingCycle";
 import { isPassiveMode } from "../utils/checkAutomationMode";
 import { toDateSafe } from "../utils/toDateSafe";
@@ -67,13 +67,17 @@ export interface TimedSearchDeps {
 }
 
 async function usersWithMailbox(db: FirebaseFirestore.Firestore): Promise<string[]> {
-  const snap = await db
-    .collection("emailIntegrations")
-    .where("provider", "in", [...SYNCABLE_MAIL_PROVIDERS])
-    .where("isActive", "==", true)
-    .where("needsReauth", "==", false)
-    .get();
-  return [...new Set(snap.docs.map((d) => d.data().userId as string).filter(Boolean))];
+  // The receipt search's own rule for which mailboxes it reads (#746).
+  const snap = await db.collection("emailIntegrations").where("isActive", "==", true).get();
+  return [
+    ...new Set(
+      snap.docs
+        .map((d) => d.data())
+        .filter(isSearchableMailIntegration)
+        .map((data) => data.userId as string)
+        .filter(Boolean)
+    ),
+  ];
 }
 
 export async function runTimedReceiptSearches(deps: TimedSearchDeps = {}): Promise<TimedSearchReport> {

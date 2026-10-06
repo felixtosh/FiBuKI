@@ -206,3 +206,53 @@ describe("makeProvider", () => {
     expect(() => makeProvider("carrier-pigeon", {})).toThrow(/Unknown mail provider/);
   });
 });
+
+// ---- the receipt search's reads (#746) --------------------------------------
+
+describe("GmailProvider for the receipt search (#746)", () => {
+  const b64url = (s: string) => Buffer.from(s).toString("base64url");
+  const fullMessage = {
+    id: "m9",
+    threadId: "t9",
+    internalDate: String(Date.parse("2026-07-18T08:00:00Z")),
+    snippet: "Ihre Rechnung Juli",
+    payload: {
+      mimeType: "multipart/mixed",
+      headers: [
+        { name: "From", value: "Acme <billing@acme.example>" },
+        { name: "Subject", value: "Rechnung" },
+      ],
+      parts: [
+        {
+          partId: "0",
+          mimeType: "multipart/alternative",
+          filename: "",
+          body: {},
+          parts: [
+            { partId: "0.0", mimeType: "text/plain", filename: "", body: { data: b64url("plain body") } },
+            { partId: "0.1", mimeType: "text/html", filename: "", body: { data: b64url("<p>html body</p>") } },
+          ],
+        },
+        // A PDF sent as octet-stream is still an invoice attachment.
+        { partId: "1", mimeType: "application/octet-stream", filename: "Rechnung.PDF", body: { attachmentId: "a1", size: 10 } },
+        { partId: "2", mimeType: "application/octet-stream", filename: "data.bin", body: { attachmentId: "a2", size: 10 } },
+      ],
+    },
+  };
+
+  it("keeps a PDF sent as application/octet-stream and carries Gmail's snippet", async () => {
+    handler = () => ({ ok: true, body: fullMessage });
+    const message = await new GmailProvider("tok").getMessage({ id: "m9" });
+    expect(message.attachments.map((a) => a.filename)).toEqual(["Rechnung.PDF"]);
+    expect(message.snippet).toBe("Ihre Rechnung Juli");
+  });
+
+  it("reads the body of the message it just fetched without a second request", async () => {
+    handler = () => ({ ok: true, body: fullMessage });
+    const provider = new GmailProvider("tok");
+    await provider.getMessage({ id: "m9" });
+    const body = await provider.getBody({ id: "m9" });
+    expect(body).toEqual({ html: "<p>html body</p>", text: "plain body" });
+    expect(calls).toHaveLength(1);
+  });
+});
