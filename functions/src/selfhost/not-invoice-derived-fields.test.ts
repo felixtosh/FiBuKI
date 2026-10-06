@@ -239,7 +239,7 @@ describe("un-marking re-extracts and recomputes them again (#710)", () => {
     const reread = await fileData(fileId);
     expect(reread).toMatchObject({ isNotInvoice: false, extractionComplete: true, extractedAmount: 12000 });
     expect((reread.lastFactChange as { origin: string }).origin).toBe("extraction");
-    expect(reread.documentType).not.toBe("other");
+    expect(reread.documentType).toBe("invoice");
     expect((reread.documentTypeBasis as { reason: string }).reason).not.toBe("not-a-financial-document");
     return reread;
   }
@@ -268,7 +268,7 @@ describe("un-marking re-extracts and recomputes them again (#710)", () => {
       directionSuggested: "incoming",
     });
     // The Transaction follows the Document Type back.
-    expect(await stateOf("tx-f")).toBe(reread.documentType === "invoice" ? "invoice" : "receipt-only");
+    expect(await stateOf("tx-f")).toBe("invoice");
   });
 
   it("by MCP: the Document Type and the direction review come back from the new reading", async () => {

@@ -325,6 +325,27 @@ describe("marking Not Invoice derives what Extraction's not-invoice path derives
     expect(marked.followUps).toEqual([{ kind: "sync-documentation-state", transactionIds: ["t-out"] }]);
   });
 
+  it("also against a not-invoice reading that decided a counterparty (the transcription phase)", () => {
+    // The reading's recipient verdict is the stored one, so both paths see the
+    // same File; the direction it decided feeds no derived field once the File
+    // is ruled not an invoice.
+    const counterparty = {
+      invoiceDirection: "incoming",
+      matchedUserAccount: "recipient",
+      recipientIdentityMatch: "third-party",
+      issuer: null,
+      recipient: null,
+    };
+    const marked = decide(flagged(), { origin: "not-invoice", at: AT }, linked);
+    const extracted = decide(flagged(), notInvoiceReading(counterparty), linked);
+
+    expect(extracted.update.invoiceDirection).toBe("incoming");
+    for (const field of DERIVED_FIELDS) {
+      expect(marked.update[field], field).toEqual(extracted.update[field]);
+    }
+    expect(marked.followUps).toEqual(extracted.followUps);
+  });
+
   it("clears the same facts as Extraction's not-invoice reading", () => {
     const marked = decide(flagged(), { origin: "not-invoice", at: AT }, linked);
     const extracted = decide(flagged(), notInvoiceReading(), linked);
