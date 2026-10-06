@@ -23,11 +23,16 @@
  * classification derived from it are re-derived by the `onUserDataUpdate`
  * sweep, which runs on the next identity edit, and by re-extraction — this
  * pass deliberately does not duplicate that derivation.
+ *
+ * What it writes is the File facts module's decision (#640,
+ * `fileFacts/entityNames.ts`), through the one applier. It is a one-off: once
+ * every deployment's call log (`functionCalls`, functionName
+ * "backfillFileEntityNames") shows a successful run per user, it can go.
  */
 
-import { FieldValue } from "firebase-admin/firestore";
 import { createCallable } from "../utils/createCallable";
-import { decodeHtmlEntities } from "../utils/htmlEntities";
+import { applyFactChange } from "../fileFacts/applyFactChange";
+import { decodedEntityNameFields } from "../fileFacts/entityNames";
 
 interface BackfillFileEntityNamesRequest {
   // empty — operates on all files for the calling user
@@ -37,23 +42,6 @@ interface BackfillFileEntityNamesResponse {
   success: boolean;
   updated: number;
   skipped: number;
-}
-
-/** The stored entity shape, read defensively: these are legacy records. */
-type StoredEntity = { name?: unknown } & Record<string, unknown>;
-
-/**
- * The decoded name for a stored entity, or null when there is nothing to
- * write — no entity, no string name, or a name that decodes to itself.
- */
-function decodedName(entity: unknown): string | null {
-  if (!entity || typeof entity !== "object") return null;
-
-  const name = (entity as StoredEntity).name;
-  if (typeof name !== "string" || !name) return null;
-
-  const decoded = decodeHtmlEntities(name);
-  return decoded === name ? null : decoded;
 }
 
 export const backfillFileEntityNamesCallable = createCallable<
@@ -71,36 +59,23 @@ export const backfillFileEntityNamesCallable = createCallable<
     let skipped = 0;
 
     for (const fileDoc of filesSnap.docs) {
-      const data = fileDoc.data();
-
-      const issuerName = decodedName(data.extractedIssuer);
-      const recipientName = decodedName(data.extractedRecipient);
-      const partnerName = decodedName({ name: data.extractedPartner });
-
-      if (issuerName === null && recipientName === null && partnerName === null) {
+      // Asked of the module up front, so a File with nothing to decode costs
+      // no second read; the applier asks again on the File as it is now.
+      if (Object.keys(decodedEntityNameFields(fileDoc.data())).length === 0) {
         skipped++;
         continue;
       }
 
-      // Rewrite the whole entity rather than a dotted path: the entity is a
-      // map and only its `name` moves, so spreading keeps every other field
-      // exactly as stored.
-      const update: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
-      if (issuerName !== null) {
-        update.extractedIssuer = { ...(data.extractedIssuer as StoredEntity), name: issuerName };
-      }
-      if (recipientName !== null) {
-        update.extractedRecipient = {
-          ...(data.extractedRecipient as StoredEntity),
-          name: recipientName,
-        };
+      const outcome = await applyFactChange(ctx.db, {
+        fileId: fileDoc.id,
+        userId: ctx.userId,
+        change: { origin: "entity-name-backfill" },
+      });
+      if (outcome.refused || Object.keys(outcome.update).length === 0) {
+        skipped++;
+        continue;
       }
 
-      if (partnerName !== null) {
-        update.extractedPartner = partnerName;
-      }
-
-      await fileDoc.ref.update(update);
       console.log(`[backfillFileEntityNames] Decoded entity names on file ${fileDoc.id}`);
       updated++;
     }
