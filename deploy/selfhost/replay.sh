@@ -61,7 +61,10 @@ sheet() {
 }
 
 echo "replay PR #$PR: head $HEAD_SHA, base $BASE_SHA"
-while read -r uid label months; do
+# The accounts file is read on fd 3, not stdin: `compose exec -T` inherits the
+# loop's stdin and would swallow every line after the first account (the first
+# run on fibuki.com reported one account of two for that reason).
+while read -r -u 3 uid label months; do
   [[ -z "$uid" || "$uid" == \#* ]] && continue
   months="${months:-12}"
   echo "== $label ($uid), last $months months"
@@ -80,7 +83,7 @@ while read -r uid label months; do
     sh -c "npm run -s selfhost:replay -- diff /out/$uid.base.sheet.json /out/$uid.head.sheet.json --md /out/$uid.md --json /out/$uid.json > /dev/null" \
     || true
   rm -f "$OUT/$uid.base.sheet.json" "$OUT/$uid.head.sheet.json"
-done < "$ACCOUNTS"
+done 3< "$ACCOUNTS"
 
 # One summary for the PR comment and the admin page: counts per account, no rows.
 export PR HEAD_SHA BASE_SHA

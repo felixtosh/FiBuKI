@@ -60,6 +60,8 @@ const ALLOWED: Record<string, string> = {
     "builds an in-memory UVA view of a Transaction; writes nothing",
   [`functions${sep}src${sep}uva${sep}reconcile.ts`]: "a derivation's own fileIds, not a Transaction's",
   [`functions${sep}src${sep}selfhost${sep}security${sep}victim.ts`]: "seeds the cross-user suites' fixture",
+  [`functions${sep}src${sep}selfhost${sep}security${sep}cross-user-callables.suite.ts`]:
+    "the cross-user callables fuzz's attack payloads: a callable's argument, not a stored list",
   [`components${sep}sidebar${sep}transaction-details.tsx`]: "a callable's argument, not a stored list",
   [`functions${sep}src${sep}auth${sep}migrateUserData.ts`]:
     "moves every record of an account to its new uid, the account's Files and Transactions with it",
