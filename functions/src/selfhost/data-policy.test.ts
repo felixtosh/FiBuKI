@@ -14,7 +14,7 @@ process.env.FIBUKI_STORAGE = "memory";
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { __resetFirestoreShim, __whenShimIdle, getFirestore } from "./firestore-shim";
 import { __resetTriggerShim } from "./trigger-shim";
-import { TOP_LEVEL_POLICIES, SUBTREE_POLICIES, USER_DOC_POLICY, type CollectionPolicy } from "./data-policy";
+import { TOP_LEVEL_POLICIES, SUBTREE_POLICIES, SUBTREE_DOC_POLICIES, USER_DOC_POLICY, type CollectionPolicy } from "./data-policy";
 import { startTestDataPlane, type TestServer } from "./test-helpers";
 
 const USER = "policy-user";
@@ -40,6 +40,10 @@ describe("the policy", () => {
     expect(SUBTREE_POLICIES.reports).toEqual(readOnly("authed"));
   });
 
+  it("the business identity under users/{uid}/settings is read-only for the client (#632)", () => {
+    expect(SUBTREE_DOC_POLICIES["settings/userData"]).toEqual(readOnly("authed"));
+  });
+
   it("the users/{uid} document can be created and read, never updated or deleted", () => {
     expect(USER_DOC_POLICY).toEqual({ read: "authed", create: "authed", update: "none", delete: "none" });
   });
@@ -62,6 +66,7 @@ describe("the data plane enforces it", () => {
     ["precisionSearchQueue/ps-1", { userId: USER, status: "pending" }],
     ["inboundEmailAddresses/ia-1", { userId: USER, email: "invoices-x@fibuki.com", isActive: true, dailyLimit: 100, todayCount: 0 }],
     [`users/${USER}/reports/r-1`, { status: "draft" }],
+    [`users/${USER}/settings/userData`, { personalEntity: { name: "Max Muster" }, finanzonline: { isConfigured: true } }],
     [`users/${USER}`, { email: "me@example.test" }],
   ];
 
@@ -115,7 +120,11 @@ describe("the data plane enforces it", () => {
     expect((await getFirestore().doc(path).get()).data()).toEqual({ updatedAt: 1 });
   });
 
-  it.each(rows.filter(([path]) => path !== `users/${USER}`))("%s refuses a client create", async (path, data) => {
+  // settings/ holds other documents a client may still write; the identity's own
+  // create case is below.
+  const created = (path: string) => path !== `users/${USER}` && !path.startsWith(`users/${USER}/settings/`);
+
+  it.each(rows.filter(([path]) => created(path)))("%s refuses a client create", async (path, data) => {
     const collection = path.slice(0, path.lastIndexOf("/"));
     for (const op of [
       { type: "add", path: collection, data },
@@ -125,5 +134,13 @@ describe("the data plane enforces it", () => {
       expect(r.status, `${op.type} ${collection} -> ${r.text}`).toBe(403);
     }
     expect((await getFirestore().doc(`${collection}/planted`).get()).exists).toBe(false);
+  });
+
+  it("the business identity refuses a client create when the user has none yet (#632)", async () => {
+    const path = `users/${USER}/settings/userData`;
+    await getFirestore().doc(path).delete();
+    const r = await call("write", { ops: [{ type: "set", path, data: { personalEntity: { name: "Planted" } } }] });
+    expect(r.status, r.text).toBe(403);
+    expect((await getFirestore().doc(path).get()).exists).toBe(false);
   });
 });

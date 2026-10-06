@@ -173,6 +173,7 @@ export const CALLABLE_NAMES = [
   "runTool",
   "saveBrowserRecipe",
   "saveFinanzOnlineCredentials",
+  "saveIdentity",
   "scheduleAccountDeletion",
   "scoreAttachmentMatchCallable",
   "scoreFileTransactionMatch",
