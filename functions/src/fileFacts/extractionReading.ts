@@ -200,17 +200,7 @@ export function extractionFields(
   if (reading.kind === "not-invoice") {
     update.isNotInvoice = true;
     update.notInvoiceReason = reading.reason;
-    // A document that is not a financial document has no facts, so whatever
-    // an earlier reading or a person left goes, the Due Date and Debit Date
-    // with the rows they were read from.
-    for (const field of Object.values(FACT_FIELD)) update[field] = null;
-    update.extractedTipBound = null;
-    update.extractedDueDate = null;
-    update.extractedDebitDate = null;
-    update.lineItemsUnreconciled = false;
-    update.lineItemsUnreconciledRates = null;
-    update.vatSourceDowngraded = false;
-    update.vatFieldsPreserved = false;
+    Object.assign(update, notInvoiceClearedFacts());
     return update;
   }
 
@@ -262,6 +252,27 @@ export function extractionFields(
   applyVatDowngradeGuard(record, update);
 
   return update;
+}
+
+/**
+ * The facts a File ruled not an invoice is left without, whichever path ruled
+ * it: an Extraction's not-invoice reading, or a person marking it Not Invoice
+ * (#710). A document that is not a financial document has no facts, so
+ * whatever an earlier reading or a person left goes, the Due Date and Debit
+ * Date with the rows they were read from. One list, so both paths classify
+ * the same File from the same facts.
+ */
+export function notInvoiceClearedFacts(): Record<string, unknown> {
+  const cleared: Record<string, unknown> = {};
+  for (const field of Object.values(FACT_FIELD)) cleared[field] = null;
+  cleared.extractedTipBound = null;
+  cleared.extractedDueDate = null;
+  cleared.extractedDebitDate = null;
+  cleared.lineItemsUnreconciled = false;
+  cleared.lineItemsUnreconciledRates = null;
+  cleared.vatSourceDowngraded = false;
+  cleared.vatFieldsPreserved = false;
+  return cleared;
 }
 
 function counterpartyFields(counterparty: ExtractedCounterparty): Record<string, unknown> {
