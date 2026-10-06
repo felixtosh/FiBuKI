@@ -296,6 +296,29 @@ describe("ResizableDataTable remembered column widths", () => {
         expect(colWidths(container)[1]).toBe("450px");
       });
 
+      it("is not a cancelled press followed by a tap", () => {
+        localStorage.setItem(KEY, JSON.stringify({ name: 400 }));
+        const { container } = renderTable();
+        const handle = handleOf(container, "name");
+        fireEvent.pointerDown(handle, { ...pointer, clientX: 100, clientY: 10 });
+        fireEvent.pointerCancel(document, { ...pointer, clientX: 100, clientY: 10 });
+        vi.advanceTimersByTime(100);
+        tap(handle, 100);
+        expect(colWidths(container)[1]).toBe("400px");
+      });
+
+      it("is not a tap with one kind of pointer and then another", () => {
+        localStorage.setItem(KEY, JSON.stringify({ name: 400 }));
+        const { container } = renderTable();
+        const handle = handleOf(container, "name");
+        const other = { ...pointer, pointerId: 9, pointerType: pointerType === "touch" ? "pen" : "touch" };
+        fireEvent.pointerDown(handle, { ...other, clientX: 100, clientY: 10 });
+        fireEvent.pointerUp(document, { ...other, clientX: 100, clientY: 10 });
+        vi.advanceTimersByTime(100);
+        tap(handle, 100);
+        expect(colWidths(container)[1]).toBe("400px");
+      });
+
       it("is not a tap on one column's edge and then another's", () => {
         localStorage.setItem(KEY, JSON.stringify({ name: 400 }));
         const { container } = renderTable();
