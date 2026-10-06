@@ -10,6 +10,7 @@
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { getFirestore, Timestamp, FieldValue } from "firebase-admin/firestore";
 import { AutomationMeta } from "../automation/types";
+import { isSearchableMailIntegration } from "../mail/searchable";
 
 // =============================================================================
 // AUTOMATION METADATA
@@ -58,19 +59,12 @@ export const AUTOMATION_META: AutomationMeta = {
 const db = getFirestore();
 
 /**
- * Check if user has any active email integration (connected and not needing reauth).
- * If no email integration exists, receipt search should be skipped entirely.
+ * Whether the receipt search reads any of the user's Mail Integrations, by
+ * its own rule (#746). If none, the receipt search is skipped entirely.
  */
 async function hasActiveEmailIntegration(userId: string): Promise<boolean> {
-  const activeIntegrationSnapshot = await db
-    .collection("emailIntegrations")
-    .where("userId", "==", userId)
-    .where("isActive", "==", true)
-    .where("needsReauth", "==", false)
-    .limit(1)
-    .get();
-
-  return !activeIntegrationSnapshot.empty;
+  const snapshot = await db.collection("emailIntegrations").where("userId", "==", userId).get();
+  return snapshot.docs.some((doc) => isSearchableMailIntegration(doc.data()));
 }
 
 // Get the app URL for server-to-server calls
@@ -293,7 +287,7 @@ export async function queueReceiptSearchForTransaction(
   // (new emails arrived, different queries generated, etc.).
 
   // Check if user has an active email integration
-  // Skip receipt search if no Gmail is connected - avoids wasting resources
+  // Skip receipt search if no mailbox is connected - avoids wasting resources
   const hasEmailIntegration = await hasActiveEmailIntegration(userId);
   if (!hasEmailIntegration) {
     console.log(`[QueueReceiptSearch] No active email integration for user ${userId}, skipping receipt search`);

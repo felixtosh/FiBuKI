@@ -2,6 +2,7 @@
 
 import { use, useState, useEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useFormatter, useTranslations } from "next-intl";
 import { formatDistanceToNow } from "date-fns";
 import {
   ArrowLeft,
@@ -53,6 +54,8 @@ export default function IntegrationDetailPage({ params }: IntegrationDetailPageP
   const searchParams = useSearchParams();
   const { integrations, loading, disconnect, refresh } = useEmailIntegrations();
   const { stats, loading: statsLoading } = useIntegrationFileStats(id);
+  const t = useTranslations("integrations.receiptSearch");
+  const format = useFormatter();
 
   const [disconnecting, setDisconnecting] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -297,6 +300,45 @@ export default function IntegrationDetailPage({ params }: IntegrationDetailPageP
             </CardContent>
           </Card>
 
+          {/* What the receipt search did here (#746) */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">{t("title")}</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex justify-between text-sm gap-4">
+                <span className="text-muted-foreground shrink-0">{t("lastSearched")}</span>
+                <span className="font-medium">
+                  {integration.receiptSearchLastSearchedAt
+                    ? format.relativeTime(integration.receiptSearchLastSearchedAt.toDate())
+                    : t("notSearchedYet")}
+                </span>
+              </div>
+              <div className="flex justify-between text-sm gap-4">
+                <span className="text-muted-foreground shrink-0">{t("filesCreated")}</span>
+                <span className="font-medium">{integration.receiptSearchFilesCreated ?? 0}</span>
+              </div>
+              <div className="flex justify-between text-sm gap-4">
+                <span className="text-muted-foreground shrink-0">{t("lastError")}</span>
+                <span
+                  className={cn(
+                    "font-medium text-right",
+                    integration.receiptSearchLastError && "text-destructive"
+                  )}
+                >
+                  {integration.receiptSearchLastError
+                    ? integration.receiptSearchLastErrorAt
+                      ? t("errorAt", {
+                          when: format.relativeTime(integration.receiptSearchLastErrorAt.toDate()),
+                          message: integration.receiptSearchLastError,
+                        })
+                      : integration.receiptSearchLastError
+                    : t("noError")}
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground">{t("explanation")}</p>
+            </CardContent>
+          </Card>
         </div>
 
         {/* Right Column - Connection Details */}
@@ -335,10 +377,6 @@ export default function IntegrationDetailPage({ params }: IntegrationDetailPageP
                   {needsReauth || isExpired ? "Needs Reconnection" : "Active"}
                 </span>
               </div>
-              <p className="text-xs text-muted-foreground">
-                FiBuKI searches this mailbox for the receipts your open
-                transactions are missing. Nothing else is read or downloaded.
-              </p>
             </CardContent>
           </Card>
 
