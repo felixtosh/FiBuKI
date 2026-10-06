@@ -27,6 +27,12 @@ export interface CollectionPolicy {
   create: Access;
   update: Access;
   delete: Access;
+  /**
+   * When set, a client update may write only these top-level fields: an
+   * update or merge-set naming any other field is refused, and so is a set
+   * that would replace the whole document.
+   */
+  updateFields?: readonly string[];
 }
 
 const ownerCrud: CollectionPolicy = { read: "owner", create: "owner", update: "owner", delete: "owner" };
@@ -126,7 +132,9 @@ export const SUBTREE_DOC_POLICIES: Readonly<Record<string, CollectionPolicy>> = 
 /** users/{uid}/<name>/... — uid must equal auth.uid, then this table. */
 export const SUBTREE_POLICIES: Readonly<Record<string, CollectionPolicy>> = {
   settings: { read: "authed", create: "authed", update: "authed", delete: "authed" },
-  notifications: { read: "authed", create: "authed", update: "authed", delete: "authed" },
+  // Created and pruned only on the server; the browser only marks one or all read
+  // (markNotificationRead / markAllNotificationsRead write readAt; ADR-0016, #711).
+  notifications: { read: "authed", create: "none", update: "authed", delete: "none", updateFields: ["readAt"] },
   chatSessions: { read: "authed", create: "authed", update: "authed", delete: "authed" },
   // Read by the reports screen; written only on the server (ADR-0016, #625).
   reports: { read: "authed", create: "none", update: "none", delete: "none" },
@@ -147,12 +155,12 @@ export const SUBTREE_POLICIES: Readonly<Record<string, CollectionPolicy>> = {
 };
 
 /**
- * The users/{uid} document itself, when uid matches: read and create. No browser
- * code updates it; the server does (ADR-0016, #625).
+ * The users/{uid} document itself, when uid matches: read only. The browser
+ * never creates or updates it; the server does (ADR-0016, #625, #711).
  */
 export const USER_DOC_POLICY: CollectionPolicy = {
   read: "authed",
-  create: "authed",
+  create: "none",
   update: "none",
   delete: "none",
 };
