@@ -28,6 +28,11 @@ jobs:
       # nothing for a reader and everything for the instance it came from.
       - name: No anchors to one operator's private documents
         run: node scripts/check-corpus-anchors.js
+      # Needs no dependencies either. Every components/ui component has an
+      # examples file shown on /design-system, and every theme token is listed
+      # there, so the page cannot drift from the code again.
+      - name: Design system shows every component
+        run: node scripts/check-design-system.mjs
       - run: npm ci
       - run: npx tsc --noEmit
       - run: npm run lint

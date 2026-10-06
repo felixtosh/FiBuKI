@@ -12,6 +12,17 @@
             "statusMessage": "Checking host memory headroom"
           }
         ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/check-new-component.sh\"",
+            "timeout": 10,
+            "statusMessage": "Checking for an existing component"
+          }
+        ]
       }
     ]
   },
