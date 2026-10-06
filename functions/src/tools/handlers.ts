@@ -27,8 +27,8 @@ import { buildDownloadUrl } from "../utils/buildDownloadUrl";
 import { dayStartUtc, dayEndExclusiveUtc } from "../uva/dateWindow";
 import { SALE_SUPPLY_KINDS, type SaleSupplyKind } from "../uva/types";
 import {
-  buildMarkNotInvoiceUpdates,
   buildUnmarkNotInvoiceUpdates,
+  markFileNotInvoice,
   queueExtractionAfterUnmark,
   unmarkRefusal,
 } from "../files/notInvoiceOps";
@@ -79,6 +79,10 @@ import { createFileRecord, findFileByContentHash } from "../files/createFileReco
 import { computeDedupeHash, splitDuplicates } from "../imports/dedupe";
 import { fetchPublicUrl, UnsafeUrlError } from "../utils/safeFetch";
 import { syncOnboarding, toStatus, updateOnboarding } from "../onboarding/onboardingState";
+import {
+  createIdentityEntity as createIdentityEntityInModule,
+  updateIdentityEntity as updateIdentityEntityInModule,
+} from "../identity/identity";
 import { isOnboardingOrigin, isOnboardingStep } from "../onboarding/onboardingRules";
 import { generatedInvoiceRefusal } from "../files/generatedInvoiceGuard";
 import { connectFiles } from "../fileConnections/writer";
@@ -1604,7 +1608,7 @@ export async function markFileAsNotInvoice(userId: string, args: Record<string, 
     );
   }
 
-  await fileRef.update(buildMarkNotInvoiceUpdates(fileData, args.reason as string | undefined));
+  await markFileNotInvoice(db, fileId, userId, args.reason as string | undefined);
 
   console.log(`[markFileAsNotInvoice] Marked file ${fileId} as not invoice`, {
     userId,
@@ -2145,140 +2149,19 @@ export async function listIdentityEntities(userId: string) {
 }
 
 /**
- * Patch an existing identity entity (personalEntity or one of companies[]).
- * Accepts a sparse patch of name / vatId / ibans / address. Used by MCP
- * agents to bring a company entity up to invoice-ready state (IBAN, VAT,
- * address) without forcing the user into the settings UI.
- */
-export async function updateIdentityEntity(
-  userId: string,
-  args: Record<string, unknown>,
-) {
-  const entityId = String(args.entityId || "");
-  if (!entityId) throw new Error("entityId is required");
-  const patch = (args.patch as Record<string, unknown>) || {};
-
-  const docRef = db.doc(`users/${userId}/settings/userData`);
-  await db.runTransaction(async (tx) => {
-    const snap = await tx.get(docRef);
-    if (!snap.exists) throw new Error("User data not found");
-    const data = snap.data() as Record<string, unknown>;
-
-    const personal = data.personalEntity as Record<string, unknown> | undefined;
-    if (personal && personal.id === entityId) {
-      data.personalEntity = applyIdentityPatch(personal, patch);
-    } else {
-      const companies = (data.companies as Array<Record<string, unknown>>) || [];
-      const idx = companies.findIndex((c) => c.id === entityId);
-      if (idx < 0) throw new Error(`Identity entity ${entityId} not found`);
-      companies[idx] = applyIdentityPatch(companies[idx], patch);
-      data.companies = companies;
-    }
-    data.updatedAt = FieldValue.serverTimestamp();
-    tx.set(docRef, data, { merge: true });
-  });
-
-  return { success: true, entityId };
-}
-
-/**
- * Apply a sparse patch of name / vatId / ibans / aliases / address to an identity
- * entity, with the same normalisation the settings page applies. Shared by
- * update_identity_entity and create_identity_entity so the two cannot drift.
- */
-function applyIdentityPatch(
-  entity: Record<string, unknown>,
-  patch: Record<string, unknown>
-): Record<string, unknown> {
-  const next: Record<string, unknown> = { ...entity };
-  if (typeof patch.name === "string") next.name = patch.name.trim();
-  if (typeof patch.vatId === "string") {
-    const v = patch.vatId.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-    if (v) next.vatId = v; else delete next.vatId;
-  }
-  if (Array.isArray(patch.ibans)) {
-    next.ibans = (patch.ibans as unknown[])
-      .map((i) => String(i).trim().toUpperCase().replace(/\s+/g, ""))
-      .filter(Boolean);
-  }
-  if (Array.isArray(patch.aliases)) {
-    next.aliases = (patch.aliases as unknown[])
-      .map((a) => String(a).trim())
-      .filter(Boolean);
-  }
-  if (patch.address !== undefined) {
-    const addr = (patch.address as Record<string, string> | null) || null;
-    if (addr) {
-      const clean: Record<string, string> = {};
-      if (addr.street?.trim()) clean.street = addr.street.trim();
-      if (addr.postalCode?.trim()) clean.postalCode = addr.postalCode.trim();
-      if (addr.city?.trim()) clean.city = addr.city.trim();
-      if (addr.country?.trim()) clean.country = addr.country.trim().toUpperCase();
-      if (Object.keys(clean).length > 0) next.address = clean;
-    } else {
-      delete next.address;
-    }
-  }
-  return next;
-}
-
-/**
- * Create the user's personal entity or a company, for someone who has none yet.
- * The settings page does the same; update_identity_entity only patches what exists,
- * so without this a new user would have to open fibuki.com before anything else.
+ * Patch an existing identity entity (personalEntity or one of companies[]), and
+ * create the personal entity or a company for someone who has none yet. Both
+ * write through the business identity module (#632), the same writer as the
+ * settings screen, so one input stores one identity whichever way it came in.
  * Writing the document is what makes FiBuKI create the identity Partner and tell
  * the user's own issued invoices from the ones they receive.
  */
+export async function updateIdentityEntity(userId: string, args: Record<string, unknown>) {
+  return updateIdentityEntityInModule(db, userId, args);
+}
+
 export async function createIdentityEntity(userId: string, args: Record<string, unknown>) {
-  const type = args.type;
-  if (type !== "person" && type !== "company") throw new Error("type must be 'person' or 'company'");
-  const name = typeof args.name === "string" ? args.name.trim() : "";
-  if (!name) throw new Error("name is required");
-
-  const docRef = db.doc(`users/${userId}/settings/userData`);
-  const entityId = `entity_${Date.now()}_${randomUUID().slice(0, 9)}`;
-
-  const entity = await db.runTransaction(async (tx) => {
-    const snap = await tx.get(docRef);
-    const data = (snap.exists ? snap.data() : {}) as Record<string, unknown>;
-    const companies = Array.isArray(data.companies) ? [...(data.companies as Array<Record<string, unknown>>)] : [];
-
-    if (type === "person" && (data.personalEntity as { id?: string } | undefined)?.id) {
-      throw new Error("A personal entity already exists. Use update_identity_entity to change it.");
-    }
-    if (type === "company" && companies.some((c) => String(c.name ?? "").trim().toLowerCase() === name.toLowerCase())) {
-      throw new Error(`A company named "${name}" already exists. Use update_identity_entity to change it.`);
-    }
-
-    const created = applyIdentityPatch(
-      {
-        id: entityId,
-        type,
-        name,
-        aliases: [],
-        ibans: [],
-        order: type === "person" ? 0 : companies.length,
-        createdAt: Timestamp.now(),
-      },
-      args
-    );
-
-    const next: Record<string, unknown> = {
-      country: data.country || "AT",
-      taxNumber: data.taxNumber || "",
-      ownEmails: data.ownEmails || [],
-      createdAt: data.createdAt || Timestamp.now(),
-      ...data,
-      updatedAt: FieldValue.serverTimestamp(),
-    };
-    if (type === "person") next.personalEntity = created;
-    else next.companies = [...companies, created];
-
-    tx.set(docRef, next);
-    return created;
-  });
-
-  return { success: true, entityId, entity };
+  return createIdentityEntityInModule(db, userId, args);
 }
 
 /**

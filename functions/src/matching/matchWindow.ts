@@ -19,3 +19,11 @@ export const MATCH_WINDOW_ANCHOR_GRACE_DAYS = 7;
  * wrong year would open a window over a year wide) and does not stretch it.
  */
 export const MATCH_WINDOW_MAX_ANCHOR_DAYS = 90;
+
+/**
+ * A printed instalment's due date more than this many days after the File's
+ * date is a misread, like one more than MATCH_WINDOW_DAYS before it (#716):
+ * it opens no window, and no payment's date is scored against it. A year
+ * covers a twelve-month plan.
+ */
+export const MATCH_WINDOW_MAX_INSTALMENT_DAYS = 366;

@@ -18,8 +18,9 @@
  * - **the date window**: within MATCH_WINDOW_DAYS of the File's date,
  *   reaching forward to a week past its Due Date or Debit Date (#614); an
  *   undated File around that date, or without one against the
- *   UNDATED_RECENT_TRANSACTIONS most recent Transactions; the hinted or
- *   nominated Transaction always. A User's search lifts it.
+ *   UNDATED_RECENT_TRANSACTIONS most recent Transactions; around each due
+ *   date a File prints for its instalments (#716); the hinted or nominated
+ *   Transaction always. A User's search lifts it.
  * - **input assembly**: the Partner's aliases, bands and learned weights, what
  *   the Files already on a Transaction explain (the Remainder, #239) and the
  *   ECB rate for a foreign-currency pair (#555). The pure scoring core in
@@ -36,7 +37,7 @@ import { isSameCurrency } from "../fx/fxPlausibility";
 import { toDateSafe } from "../utils/toDateSafe";
 import { connectFiles, writeConnectionScores, type ConnectionScore } from "../fileConnections/writer";
 import { deriveDocumentationState } from "../documents/documentationState";
-import { deriveCoverage, filePaymentTotal, isRemainderClosed } from "./coverage";
+import { REMAINDER_CLOSE_TOLERANCE, deriveCoverage, filePaymentTotal, isRemainderClosed } from "./coverage";
 import { readDismissedTransactionIds } from "./dismissedTransactions";
 import {
   documentedAmountsOf,
@@ -63,7 +64,7 @@ import {
   scoreTransaction,
   toFileMatchingData,
   toTransactionData,
-  type FileInstalment,
+  instalmentDueDateOf,
   type PartnerScoringContext,
   type TransactionMatchScore,
   type TransactionMatchSource,
@@ -253,6 +254,48 @@ export function dateWindowOf(fileData: Data): DateWindow | null {
 }
 
 /**
+ * The windows a File's printed instalments add to its date window (#716):
+ * each printed due date ± MATCH_WINDOW_DAYS, so a later instalment paid
+ * months after the invoice is still a candidate, and is scored against that
+ * due date. Only the due dates the scorer reads (`instalmentDueDateOf`: on a
+ * dated File, none more than a month before it or a year after it, which is
+ * a misread). A File printing no
+ * instalments, or none with a due date, adds none: its window is exactly
+ * `dateWindowOf`'s.
+ */
+export function instalmentWindowsOf(fileData: Data): DateWindow[] {
+  const instalments = toFileMatchingData(fileData).extractedInstalments ?? [];
+  const fileDate = fileDateOf(fileData);
+  const windows: DateWindow[] = [];
+  for (const row of instalments) {
+    const due = instalmentDueDateOf(row, fileDate);
+    if (!due) continue;
+    windows.push({
+      start: dayRange(dayNumber(due) - MATCH_WINDOW_DAYS).start,
+      end: dayRange(dayNumber(due) + MATCH_WINDOW_DAYS).end,
+    });
+  }
+  return merged(windows);
+}
+
+/** Every window a File may be matched in: its date window and what its printed instalments add (#716). */
+interface FileWindows {
+  /** `dateWindowOf`; null sends the File to the most recent Transactions. */
+  main: DateWindow | null;
+  /** `instalmentWindowsOf`. */
+  instalments: DateWindow[];
+}
+
+function fileWindowsOf(fileData: Data): FileWindows {
+  return { main: dateWindowOf(fileData), instalments: instalmentWindowsOf(fileData) };
+}
+
+/** Every window of these Files that reads Transactions by date, for `readRanges`. */
+function datedWindows(windows: FileWindows[]): DateWindow[] {
+  return windows.flatMap((w) => (w.main ? [w.main, ...w.instalments] : w.instalments));
+}
+
+/**
  * Does the File's window reach past its date + 30 days, a Due Date or Debit
  * Date stretching it (#614)? The one-time rematch after release selects
  * these Files.
@@ -288,12 +331,12 @@ export function matchDatesKey(fileData: Data): string {
 }
 
 /**
- * Is this Transaction within the File's date window? `window` is
- * `dateWindowOf(fileData)`, worked out once per File by the caller.
+ * Is this Transaction within one of the File's windows? `windows` is
+ * `fileWindowsOf(fileData)`, worked out once per File by the caller.
  */
 function inWindow(
   fileData: Data,
-  window: DateWindow | null,
+  windows: FileWindows,
   transactionId: string,
   txData: Data,
   ctx: WindowContext
@@ -302,10 +345,12 @@ function inWindow(
   // is still this File's (#589).
   if (fileData.precisionSearchHint?.transactionId === transactionId) return true;
   if (ctx.nominatedIds?.has(transactionId)) return true;
-  if (!window) return ctx.recentIds.has(transactionId);
   const txDate = toDateSafe(txData.date);
-  if (!txDate) return false;
-  return txDate.getTime() >= window.start && txDate.getTime() <= window.end;
+  const within = (w: DateWindow) => txDate !== null && txDate.getTime() >= w.start && txDate.getTime() <= w.end;
+  // #716: around a printed instalment's due date.
+  if (windows.instalments.some(within)) return true;
+  if (!windows.main) return ctx.recentIds.has(transactionId);
+  return within(windows.main);
 }
 
 /** The span ±30 days around these dates reaches. */
@@ -389,9 +434,9 @@ async function windowPool(
 ): Promise<{ pool: TxDoc[]; ctx: WindowContext }> {
   const byId = new Map<string, TxDoc>();
   const base = baseSpan(files.map((f) => fileDateOf(f.data)).filter((d): d is Date => d !== null));
-  const windows = files.map((f) => dateWindowOf(f.data));
+  const windows = files.map((f) => fileWindowsOf(f.data));
 
-  for (const range of readRanges(base, windows.filter((w): w is DateWindow => w !== null))) {
+  for (const range of readRanges(base, datedWindows(windows))) {
     const span = toTimestamps(range);
     const snapshot = await db
       .collection("transactions")
@@ -411,7 +456,7 @@ async function windowPool(
   }
 
   let recentIds = new Set<string>();
-  if (windows.some((w) => w === null)) {
+  if (windows.some((w) => w.main === null)) {
     const snapshot = await db
       .collection("transactions")
       .where("userId", "==", userId)
@@ -606,6 +651,12 @@ export interface TransactionsForFileResult {
   connectedFiles: Map<string, ConnectedFile[]>;
   /** What those Files explain, per candidate (#239). */
   documentedAmounts: Map<string, number>;
+  /**
+   * The File's Outstanding amount as it was scored (#615): absent when
+   * nothing is paid, null when no figure (another currency). What the
+   * instalment picks are held to the File's total with (#716).
+   */
+  outstanding?: number | null;
 }
 
 const NO_TRANSACTIONS = (ineligible: IneligibleReason | null): TransactionsForFileResult => ({
@@ -698,8 +749,8 @@ async function windowMatches(
     files.map(async (file, i) => {
       if (reasons[i]) return NO_TRANSACTIONS(reasons[i]);
       const excluded = excludedTransactionIds(file, options);
-      const window = dateWindowOf(file.data);
-      const inFileWindow = pool.filter((doc) => inWindow(file.data, window, doc.id, doc.data() ?? {}, ctx));
+      const windows = fileWindowsOf(file.data);
+      const inFileWindow = pool.filter((doc) => inWindow(file.data, windows, doc.id, doc.data() ?? {}, ctx));
       const candidates = inFileWindow.filter(
         (doc) =>
           !excluded.has(doc.id) && hiddenReasonOf(file.id, file.data, doc.id, doc.data() ?? {}) === null
@@ -707,6 +758,7 @@ async function windowMatches(
       const connectedFiles = withoutFile(connected, file.id);
       const documentedAmounts = documentedAmountsOf(connectedFiles);
       const partner = await partnerFor(file.data.partnerId);
+      const fileOutstanding = file.id ? outstanding.get(file.id) : undefined;
       const matches = scoreAgainst(
         file,
         candidates,
@@ -714,7 +766,7 @@ async function windowMatches(
         connectedFiles,
         documentedAmounts,
         ecbRates,
-        file.id ? outstanding.get(file.id) : undefined
+        fileOutstanding
       )
         .map((m): Match => ({ ...m, fileId: file.id }))
         .sort(byConfidence);
@@ -725,6 +777,7 @@ async function windowMatches(
         windowSize: inFileWindow.length,
         connectedFiles,
         documentedAmounts,
+        ...(fileOutstanding !== undefined ? { outstanding: fileOutstanding } : {}),
       };
     })
   );
@@ -748,6 +801,7 @@ async function scoreFileAgainstPool(
   const hiddenById = new Map(
     candidates.map((doc) => [doc.id, hiddenReasonOf(file.id, file.data, doc.id, doc.data() ?? {})])
   );
+  const fileOutstanding = file.id ? outstanding.get(file.id) : undefined;
   const matches = scoreAgainst(
     file,
     candidates,
@@ -755,7 +809,7 @@ async function scoreFileAgainstPool(
     connected,
     documentedAmounts,
     ecbRates,
-    file.id ? outstanding.get(file.id) : undefined
+    fileOutstanding
   )
     .map((m): Match => {
       const hidden = markHidden ? hiddenById.get(m.transactionId) : null;
@@ -769,6 +823,7 @@ async function scoreFileAgainstPool(
     windowSize: candidates.length,
     connectedFiles: connected,
     documentedAmounts,
+    ...(fileOutstanding !== undefined ? { outstanding: fileOutstanding } : {}),
   };
 }
 
@@ -844,9 +899,9 @@ export async function filesForTransaction(
   } else {
     // Each File's own window, stretched or not (#614): a Transaction finds a
     // File exactly when that File's window holds the Transaction's date.
-    const windows = files.map((f) => dateWindowOf(f.data));
+    const windows = files.map((f) => fileWindowsOf(f.data));
     const ctx: WindowContext = {
-      recentIds: windows.some((w) => w === null) ? await recentTransactionIds(db, userId) : new Set(),
+      recentIds: windows.some((w) => w.main === null) ? await recentTransactionIds(db, userId) : new Set(),
     };
     candidates = files
       .filter((f, i) => {
@@ -905,9 +960,9 @@ export async function pairsAmong(
   const matchable = await matchableFiles(db, files);
   if (matchable.length === 0 || transactions.length === 0) return [];
 
-  const windows = new Map(matchable.map((f) => [f, dateWindowOf(f.data)]));
+  const windows = new Map(matchable.map((f) => [f, fileWindowsOf(f.data)]));
   const ctx: WindowContext = {
-    recentIds: [...windows.values()].some((w) => w === null)
+    recentIds: [...windows.values()].some((w) => w.main === null)
       ? await recentTransactionIds(db, userId)
       : new Set(),
   };
@@ -926,7 +981,7 @@ export async function pairsAmong(
         const txData = doc.data() ?? {};
         return (
           hiddenReasonOf(file.id, file.data, doc.id, txData) === null &&
-          inWindow(file.data, windows.get(file) ?? null, doc.id, txData, ctx)
+          inWindow(file.data, windows.get(file)!, doc.id, txData, ctx)
         );
       });
       const others = withoutFile(connected, file.id);
@@ -1047,8 +1102,10 @@ export interface AutoConnectRefusal {
  * which then keeps the File alone. An Outstanding Match (#615, ADR-0013)
  * connects only on printed evidence: a printed instalment's amount, or the
  * exact close of the Outstanding amount, with the Partner agreeing and no
- * undocumented Transaction wanting the File as much; between equal instalment
- * picks the one nearest its printed due date wins.
+ * undocumented Transaction wanting the File as much. Equal instalment picks
+ * compete per printed due date (#716): of those dated against the same one,
+ * the nearest wins; those against different ones each connect, unless
+ * together they pay more than the File's total.
  */
 export async function selectAutoConnects(
   db: Db,
@@ -1116,7 +1173,7 @@ export async function selectAutoConnects(
       continue;
     }
     if (isOutstandingMatch(match)) {
-      const refusal = instalmentRefusal(match, fileMatchingData.extractedInstalments ?? [], result.matches, holdsFiles);
+      const refusal = instalmentRefusal(match, result.matches, holdsFiles);
       if (refusal) {
         refusals.push({
           transactionId: match.transactionId,
@@ -1163,7 +1220,7 @@ export async function selectAutoConnects(
     });
   }
 
-  const tied = tiedPicks(picks, fileMatchingData.extractedInstalments ?? []);
+  const tied = tiedPicks(picks);
   for (const { match } of tied) {
     refusals.push({
       transactionId: match.transactionId,
@@ -1174,7 +1231,17 @@ export async function selectAutoConnects(
       tie: true,
     });
   }
-  return { picks: picks.filter((p) => !tied.includes(p)), refusals };
+  const kept = picks.filter((p) => !tied.includes(p));
+  const overTotal = instalmentsOverTotal(kept, candidatePayment, result.outstanding);
+  for (const { match } of overTotal) {
+    refusals.push({
+      transactionId: match.transactionId,
+      confidence: match.confidence,
+      reason: "instalments that together pay more than the File's total",
+      instalment: true,
+    });
+  }
+  return { picks: kept.filter((p) => !overTotal.includes(p)), refusals };
 }
 
 function currencyOf(match: Match): string {
@@ -1186,7 +1253,8 @@ const sameAmount = (a: Match, b: Match) =>
 
 /**
  * Why an Outstanding Match (#615) stays a suggestion, or null when it may
- * connect itself (ADR-0013 rule 4): the amount is a printed instalment or
+ * connect itself (ADR-0013 rule 4): the amount equals the printed instalment
+ * it was judged against (an unpaid one once a payment is connected, #716) or
  * closes the Outstanding amount, the Partner agrees, and no Transaction
  * holding no Files scores at or above it (ADR-0008's guard). A Transaction of
  * the same amount is no rival: two equal instalments are the tie rule's to
@@ -1196,7 +1264,6 @@ const sameAmount = (a: Match, b: Match) =>
  */
 function instalmentRefusal(
   match: Match,
-  instalments: FileInstalment[],
   scored: Match[],
   holdsFiles: (transactionId: string) => boolean
 ): string | null {
@@ -1205,7 +1272,7 @@ function instalmentRefusal(
     return "an instalment the bank reference names, not one the File prints";
   }
   const paid = Math.abs(match.preview.amount);
-  const printed = instalments.some((row) => row.amount === paid);
+  const printed = breakdown.scoredAgainstInstalment === paid;
   const closes =
     breakdown.scoredAgainstOutstanding != null && isRemainderClosed(breakdown.scoredAgainstOutstanding - paid);
   if (!printed && !closes) {
@@ -1226,12 +1293,18 @@ function instalmentRefusal(
 /**
  * The picks that tie (#667): two or more with the same amount in the same
  * currency. Where one of them is a paired pick (#571), the Receipt Link
- * decides: the paired pick stays and only the others are tied. Where all of
- * them are instalment picks (#615), the one booked nearest the printed due
- * date of an instalment of that amount stays; a tie on that too, or no
- * printed due date, ties them all.
+ * decides: the paired pick stays and only the others are tied.
+ *
+ * Where all of them are instalment picks (#615), the tie rule applies per
+ * printed instalment (#716): each pick competes only with the picks dated
+ * against the same printed due date (`scoredAgainstDueDate`, the due date
+ * nearest its booking). Of those, the one booked nearest that due date stays;
+ * an exact tie ties them all. Picks dated against different due dates are no
+ * rivals and each stays (`instalmentsOverTotal` still holds them to the
+ * File's total). A pick of the group without a printed due date ties the
+ * whole group, as before #716: nothing says which instalment it is.
  */
-function tiedPicks(picks: AutoConnectPick[], instalments: FileInstalment[]): AutoConnectPick[] {
+function tiedPicks(picks: AutoConnectPick[]): AutoConnectPick[] {
   const byAmount = new Map<string, AutoConnectPick[]>();
   for (const pick of picks) {
     const key = `${currencyOf(pick.match)}|${pick.match.preview.amount}`;
@@ -1240,39 +1313,100 @@ function tiedPicks(picks: AutoConnectPick[], instalments: FileInstalment[]): Aut
   return [...byAmount.values()]
     .filter((group) => group.length > 1)
     .flatMap((group) => {
-      if (group.every((p) => p.autoConnectReason === "instalment")) {
-        const nearest = nearestToDueDate(group, instalments);
-        return nearest ? group.filter((p) => p !== nearest) : group;
+      if (!group.every((p) => p.autoConnectReason === "instalment")) {
+        return group.filter((p) => p.autoConnectReason !== "paired");
       }
-      return group.filter((p) => p.autoConnectReason !== "paired");
+      if (group.some((p) => !p.match.breakdown.scoredAgainstDueDate)) return group;
+      const byDueDate = new Map<string, AutoConnectPick[]>();
+      for (const pick of group) {
+        const due = pick.match.breakdown.scoredAgainstDueDate!;
+        byDueDate.set(due, [...(byDueDate.get(due) ?? []), pick]);
+      }
+      return [...byDueDate.entries()]
+        .filter(([, competing]) => competing.length > 1)
+        .flatMap(([due, competing]) => {
+          const nearest = nearestToDueDate(competing, due);
+          return nearest ? competing.filter((p) => p !== nearest) : competing;
+        });
     });
 }
 
 /**
- * Of equal instalment picks, the one whose bank day is nearest the printed due
- * date of an instalment of that amount, or null when none is nearest alone.
- * Days are read as the stored day (UTC midnight of the Vienna day).
+ * Of instalment picks dated against the same printed due date, the one whose
+ * bank day is nearest it, or null when none is nearest alone. `due` is the
+ * stored day as `YYYY-MM-DD`; days are counted zone-free.
  */
-function nearestToDueDate(group: AutoConnectPick[], instalments: FileInstalment[]): AutoConnectPick | null {
-  const amount = Math.abs(group[0].match.preview.amount);
-  const dueDays = instalments
-    .filter((row) => row.amount === amount)
-    .map((row) => toDateSafe(row.dueDate))
-    .filter((d): d is Date => d !== null)
-    .map(dayNumber);
-  if (dueDays.length === 0) return null;
-
+function nearestToDueDate(competing: AutoConnectPick[], due: string): AutoConnectPick | null {
+  const dueDay = dayNumber(new Date(`${due}T00:00:00Z`));
   const distanceOf = (pick: AutoConnectPick): number => {
     const booked = toDateSafe(pick.match.preview.date);
-    if (!booked) return Infinity;
-    const day = dayNumber(booked);
-    return Math.min(...dueDays.map((due) => Math.abs(day - due)));
+    return booked ? Math.abs(dayNumber(booked) - dueDay) : Infinity;
   };
-  const ranked = group
+  const ranked = competing
     .map((pick) => ({ pick, distance: distanceOf(pick) }))
     .sort((a, b) => a.distance - b.distance);
   if (!Number.isFinite(ranked[0].distance) || ranked[0].distance === ranked[1].distance) return null;
   return ranked[0].pick;
+}
+
+/**
+ * The instalment picks to hold back because together with what is already
+ * paid they pay more than the File's total (#716), within
+ * REMAINDER_CLOSE_TOLERANCE: all of them, since nothing says which one is
+ * too many. One instalment pick, or none, is never held here: its amount was
+ * already judged against what is Outstanding or a printed row.
+ */
+function instalmentsOverTotal(
+  picks: AutoConnectPick[],
+  filePayment: number | null,
+  outstanding: number | null | undefined
+): AutoConnectPick[] {
+  const instalments = picks.filter((p) => p.autoConnectReason === "instalment");
+  if (instalments.length < 2 || filePayment == null) return [];
+  const total = Math.abs(filePayment);
+  // Absent: nothing paid yet. Null (no figure in the File's currency) makes no
+  // instalment picks, so reading it as nothing paid changes nothing.
+  const paid = outstanding == null ? 0 : total - outstanding;
+  const paying = instalments.reduce((sum, p) => sum + Math.abs(p.match.preview.amount), 0);
+  return paid + paying > total + REMAINDER_CLOSE_TOLERANCE ? instalments : [];
+}
+
+/** How the upload trigger's rules judge one File's matches, for a surface that connects it from elsewhere. */
+export interface AutoConnectJudgement {
+  /** Transactions it may not connect itself to: a tie (#667) or an instalment refusal (#615, #716). */
+  held: Set<string>;
+  /**
+   * Transactions it connects as instalments (#615). A File may take several
+   * in one run, one per printed due date (#716).
+   */
+  instalments: Set<string>;
+}
+
+/**
+ * For a surface that auto-connects a File from elsewhere (Partner matching,
+ * find-receipt): each File's matches judged by `selectAutoConnects`, exactly
+ * as the upload trigger judges them, so every surface refuses and takes the
+ * same pairs. Keyed by File id.
+ */
+export async function autoConnectJudgements(
+  db: Db,
+  userId: string,
+  files: MatcherFile[]
+): Promise<Map<string, AutoConnectJudgement>> {
+  const judgements = new Map<string, AutoConnectJudgement>();
+  const results = await transactionsForFiles(db, userId, files);
+  for (let i = 0; i < files.length; i++) {
+    const id = files[i].id;
+    if (!id) continue;
+    const { picks, refusals } = await selectAutoConnects(db, userId, files[i], results[i]);
+    judgements.set(id, {
+      held: new Set(refusals.filter((r) => r.tie || r.instalment).map((r) => r.transactionId)),
+      instalments: new Set(
+        picks.filter((p) => p.autoConnectReason === "instalment").map((p) => p.match.transactionId)
+      ),
+    });
+  }
+  return judgements;
 }
 
 /**
@@ -1289,11 +1423,8 @@ export async function autoConnectHolds(
   files: MatcherFile[]
 ): Promise<Map<string, Set<string>>> {
   const holds = new Map<string, Set<string>>();
-  const results = await transactionsForFiles(db, userId, files);
-  for (let i = 0; i < files.length; i++) {
-    const { refusals } = await selectAutoConnects(db, userId, files[i], results[i]);
-    const held = refusals.filter((r) => r.tie || r.instalment).map((r) => r.transactionId);
-    if (held.length > 0 && files[i].id) holds.set(files[i].id!, new Set(held));
+  for (const [id, { held }] of await autoConnectJudgements(db, userId, files)) {
+    if (held.size > 0) holds.set(id, held);
   }
   return holds;
 }
