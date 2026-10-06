@@ -299,7 +299,9 @@ through the MCP correction tool, which take the same fields. Changing the counte
 name, VAT id, IBAN or address is not recorded. One that moves the amount, the date, the
 Due Date, the Debit Date, or the counterparty's name, VAT id or IBAN re-scores the File's
 suggestions; none connects or disconnects a Transaction, a Receipt Link's paired File
-included: after one, the pair check only suggests.
+included: after one, the pair check only suggests. The identity sweep keeps a direction
+set by hand. Marking the File not an invoice clears the figures and the record with them,
+so un-marking it re-extracts it freely.
 _Deutsch_: von Hand geändert
 _Avoid_: correction (that is the **Invoice Correction**), override, edit
 _Avoid (de)_: Korrektur, Rechnungskorrektur (both name the **Invoice Correction**)
@@ -488,6 +490,20 @@ _Deutsch_: Ausstehender Betrag (ausstehend)
 _Avoid_: unpaid part, File Remainder, open amount, balance due
 _Avoid (de)_: offener Teil, offener Betrag, Restbetrag (that is the **Remainder**),
 Restschuld
+
+**Instalment**:
+One printed part of a File's total: a deposit, a part payment, a numbered instalment
+("Rate 2/3") or one row of a payment schedule, with its amount and, where printed, its due
+date. Read off the document by the Extraction, never computed from the total. Not an
+instalment: a single due date for the full amount, a cash discount (Skonto) and its reduced
+amount, and a schedule whose parts add up to more than the File's total (such as next
+year's advance payments on an annual utility bill). Before any payment, a Transaction is
+scored against the nearest printed Instalment; one paying exactly a printed Instalment may
+connect itself, a payment of any other part stays a suggestion — see
+[ADR-0013](docs/adr/0013-an-instalment-auto-connects-only-on-printed-evidence.md).
+_Deutsch_: Rate / Teilzahlung
+_Avoid_: partial invoice, split, tranche
+_Avoid (de)_: Teilrechnung (that is a document of its own), Tranche
 
 **Rejection**:
 The standing "this File and this Transaction do not belong together", whoever recorded it

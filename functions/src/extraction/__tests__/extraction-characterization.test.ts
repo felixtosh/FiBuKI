@@ -100,6 +100,8 @@ describe("characterization: geminiParser.parseWithGemini", () => {
       // #206: null when the response designates no figure as due — the
       // document total is NOT copied into it as a fallback.
       payableAmount: null,
+      // #615: no printed instalments is an absence too.
+      instalments: null,
       currency: "EUR",
       vatPercent: null,
       // #540: no printed VAT total and no QR code are absences too.

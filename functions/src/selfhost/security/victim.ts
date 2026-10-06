@@ -35,6 +35,7 @@ export const V = {
   chat: "v-chat-1",
   notification: "v-note-1",
   apiKey: "v-key-1",
+  inboundAddress: "v-inbound-1",
   storagePath: `files/${VICTIM}/v-file-1.pdf`,
 };
 
@@ -51,6 +52,7 @@ export const A = {
   chat: "a-chat-1",
   notification: "a-note-1",
   apiKey: "a-key-1",
+  inboundAddress: "a-inbound-1",
   storagePath: `files/${ATTACKER}/a-file-1.pdf`,
 };
 
@@ -112,6 +114,7 @@ export async function seedAccounts(): Promise<void> {
   await db.doc(`invoices/${V.invoice}`).set({ ...owned, number: CANARY, recipientName: CANARY, status: "draft" });
   await db.doc(`fileConnections/${V.connection}`).set({ ...owned, fileId: V.file, transactionId: V.transaction, note: CANARY });
   await db.doc(`apiKeys/${V.apiKey}`).set({ ...owned, name: CANARY, keyHash: CANARY });
+  await db.doc(`inboundEmailAddresses/${V.inboundAddress}`).set({ ...owned, email: `invoices-${CANARY}@fibuki.com`, emailPrefix: CANARY, displayName: CANARY, allowedDomains: ["victim.test"], isActive: true, emailsReceived: 3, filesCreated: 2, dailyLimit: 100, todayCount: 1 });
   await getStorage().bucket().file(V.storagePath).save(Buffer.from(`%PDF ${CANARY}`));
 
   // The attacker's own minimal account, so handlers get past "not found" on
@@ -132,6 +135,7 @@ export async function seedAccounts(): Promise<void> {
   await db.doc(`invoices/${A.invoice}`).set({ ...mine, number: "A-1", recipientName: "Mine", status: "draft" });
   await db.doc(`fileConnections/${A.connection}`).set({ ...mine, fileId: A.file, transactionId: A.transaction });
   await db.doc(`apiKeys/${A.apiKey}`).set({ ...mine, name: "Mine", keyHash: "mine" });
+  await db.doc(`inboundEmailAddresses/${A.inboundAddress}`).set({ ...mine, email: "invoices-mine@fibuki.com", emailPrefix: "mine", isActive: true, emailsReceived: 0, filesCreated: 0, dailyLimit: 100, todayCount: 0 });
   await getStorage().bucket().file(A.storagePath).save(Buffer.from("%PDF mine"));
 }
 
@@ -228,6 +232,8 @@ function valueFor(name: string, ids: IdSet, uid: string): unknown {
   if (n.includes("session") || n.includes("chat")) return pick(ids.chat);
   if (n.includes("notification")) return pick(ids.notification);
   if (n.includes("key")) return pick(ids.apiKey);
+  // Only the id: a plain "address" is a postal address in the tool schemas.
+  if (n === "addressid" || n === "addressids") return pick(ids.inboundAddress);
   if (n.includes("path") || n.includes("url")) return ids.storagePath;
   if (n === "id" || n === "ids" || n.endsWith("id") || n.endsWith("ids")) return pick(ids.transaction);
   return undefined;
@@ -259,7 +265,7 @@ export function retarget(payload: unknown): unknown {
 /** Every victim id, for payloads that want them all at once. */
 export const ALL_VICTIM_IDS = [
   V.source, V.transaction, V.file, V.partner, V.category, V.import, V.integration,
-  V.invoice, V.connection, V.chat, V.notification, V.apiKey,
+  V.invoice, V.connection, V.chat, V.notification, V.apiKey, V.inboundAddress,
 ];
 
 /** Resolve after `ms` with a marker instead of hanging the run on one call. */

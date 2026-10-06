@@ -508,57 +508,6 @@ export async function retryFileExtraction(
   });
 }
 
-/**
- * Re-extract all files connected to a partner.
- * Used when a partner is marked as "this is my company" to recalculate counterparties.
- * Returns the number of files queued for re-extraction.
- *
- * Files are processed in parallel batches for better performance.
- */
-export async function reextractFilesForPartner(
-  ctx: OperationsContext,
-  partnerId: string
-): Promise<{ queuedCount: number; fileIds: string[] }> {
-  // Find all files with this partner
-  const q = query(
-    collection(ctx.db, FILES_COLLECTION),
-    where("userId", "==", ctx.userId),
-    where("partnerId", "==", partnerId)
-  );
-
-  const snapshot = await getDocs(q);
-  const allFileIds = snapshot.docs.map((doc) => doc.id);
-
-  if (allFileIds.length === 0) {
-    return { queuedCount: 0, fileIds: [] };
-  }
-
-  // Queue re-extraction in parallel batches for better performance
-  const { getFunctions, httpsCallable } = await import("firebase/functions");
-  const functions = getFunctions(undefined, "europe-west1");
-  const retryFn = httpsCallable(functions, "retryFileExtraction");
-
-  const BATCH_SIZE = 5; // Process 5 files in parallel at a time
-  const successfulIds: string[] = [];
-
-  for (let i = 0; i < allFileIds.length; i += BATCH_SIZE) {
-    const batch = allFileIds.slice(i, i + BATCH_SIZE);
-    const results = await Promise.allSettled(
-      batch.map((fileId) => retryFn({ fileId, force: true }).then(() => fileId))
-    );
-
-    for (const result of results) {
-      if (result.status === "fulfilled") {
-        successfulIds.push(result.value);
-      } else {
-        console.error(`Failed to queue re-extraction:`, result.reason);
-      }
-    }
-  }
-
-  return { queuedCount: successfulIds.length, fileIds: successfulIds };
-}
-
 // === File-Transaction Connection Operations ===
 
 /**

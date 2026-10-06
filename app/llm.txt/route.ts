@@ -4,11 +4,10 @@
  * https://fibuki.com/llm.txt
  *
  * Follows the llm.txt convention for AI-discoverable APIs.
- * Tool list is auto-generated from functions/src/tools/definitions.ts
- * via: npm run generate:tool-definitions
+ * Tool list is read from functions/src/tools/definitions.ts
  */
 
-import { TOOL_DEFINITIONS } from "@/lib/data/generated-tool-definitions";
+import { TOOL_DEFINITIONS } from "@/functions/src/tools/definitions";
 
 export async function GET() {
   const toolLines = TOOL_DEFINITIONS.map((t) => {
