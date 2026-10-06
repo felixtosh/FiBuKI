@@ -61,5 +61,11 @@ export default defineConfig({
     include: ["src/selfhost/**/*.test.ts"],
     testTimeout: 30000,
     hookTimeout: 30000,
+    // Console output only from failing tests. The cross-user fuzzers alone
+    // log ~90k lines per run through vitest's console relay, which costs
+    // minutes on CI and buries the one line that matters. A test's own
+    // process.stderr.write (the fuzzers' OUTCOMES line) is not relayed and
+    // still shows.
+    silent: "passed-only",
   },
 });

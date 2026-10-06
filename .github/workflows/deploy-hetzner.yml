@@ -82,10 +82,16 @@ jobs:
           FIBUKI_BACKEND: selfhost
           NEXT_TELEMETRY_DISABLED: 1
 
+  # Four runners, one shard of the suite each (see ci.yml): whole, this gate
+  # took eight of the eleven minutes a push needed to reach fibuki.com.
   gate-selfhost:
-    name: Gate (self-host suite)
+    name: Gate (self-host suite, ${{ matrix.shard }}/4)
     if: ${{ !inputs.skip_gate }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     defaults:
       run:
         working-directory: functions
@@ -103,7 +109,7 @@ jobs:
       - run: npm ci
         working-directory: .
       - run: npm ci
-      - run: npm run test:selfhost
+      - run: npm run test:selfhost -- --shard=${{ matrix.shard }}/4
 
   deploy:
     name: Deploy to fibuki.com
