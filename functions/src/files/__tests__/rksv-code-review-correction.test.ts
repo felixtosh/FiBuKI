@@ -55,7 +55,7 @@ vi.mock("firebase-functions/params", () => ({
 }));
 
 const { updateFileExtraction } = await import("../../tools/handlers");
-const { buildMarkNotInvoiceUpdates } = await import("../notInvoiceOps");
+const { decideFactChange } = await import("../../fileFacts/factChange");
 
 const userId = "user-1";
 
@@ -111,7 +111,12 @@ describe("a correction and the RKSV Code review (#166)", () => {
 
 describe("marking a File not an invoice (#166)", () => {
   it("clears the source and the flag with the Rate Groups", () => {
-    const updates = buildMarkNotInvoiceUpdates({});
+    const outcome = decideFactChange(
+      { record: {}, linkedTransactions: [] },
+      { origin: "not-invoice" }
+    );
+    if (outcome.refused) throw new Error(outcome.message);
+    const updates = outcome.update;
 
     expect(updates.extractedRateGroups).toBeNull();
     expect(updates.extractedRateGroupsSource).toBeNull();

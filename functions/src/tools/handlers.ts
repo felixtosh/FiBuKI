@@ -27,8 +27,8 @@ import { buildDownloadUrl } from "../utils/buildDownloadUrl";
 import { dayStartUtc, dayEndExclusiveUtc } from "../uva/dateWindow";
 import { SALE_SUPPLY_KINDS, type SaleSupplyKind } from "../uva/types";
 import {
-  buildMarkNotInvoiceUpdates,
   buildUnmarkNotInvoiceUpdates,
+  markFileNotInvoice,
   queueExtractionAfterUnmark,
   unmarkRefusal,
 } from "../files/notInvoiceOps";
@@ -1608,7 +1608,7 @@ export async function markFileAsNotInvoice(userId: string, args: Record<string, 
     );
   }
 
-  await fileRef.update(buildMarkNotInvoiceUpdates(fileData, args.reason as string | undefined));
+  await markFileNotInvoice(db, fileId, userId, args.reason as string | undefined);
 
   console.log(`[markFileAsNotInvoice] Marked file ${fileId} as not invoice`, {
     userId,

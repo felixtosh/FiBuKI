@@ -438,3 +438,64 @@ describe("selfhost: onUserDataUpdate invoice-direction sweep accounting (#158)",
     expect(stored.data()!.complete).toBe(true);
   });
 });
+
+describe("selfhost: the sweep keeps a hand-corrected direction (#640)", () => {
+  const CORRECTED_AT = Timestamp.fromDate(new Date("2026-09-01T10:00:00.000Z"));
+
+  it("leaves the direction as the User set it, with the counterparty, and names the File as kept", async () => {
+    // The User ruled this one a sale; the entities read it as a purchase.
+    await seedFile("hand", {
+      invoiceDirection: "outgoing",
+      matchedUserAccount: "issuer",
+      extractedPartner: "Stefan Bandit",
+      partnerId: "p-chosen",
+      partnerMatchedBy: "manual",
+      extractionCorrectedFields: { invoiceDirection: CORRECTED_AT },
+      extractionCorrectedAt: CORRECTED_AT,
+    });
+    await seedFile("plain");
+    await drainTriggers();
+
+    await editIdentity(["AT611904300234573201"]);
+
+    const hand = (await db.collection("files").doc("hand").get()).data()!;
+    expect(hand.invoiceDirection).toBe("outgoing");
+    expect(hand.matchedUserAccount).toBe("issuer");
+    expect(hand.extractedPartner).toBe("Stefan Bandit");
+    expect(hand.partnerId).toBe("p-chosen");
+    // The recipient verdict is not the User's ruling, so it still moved.
+    expect(hand.recipientIdentityMatch).toBe("user");
+    expect((hand.lastFactChange as { origin: string }).origin).toBe("identity-sweep");
+    // Its sibling, which nobody corrected, flipped as before.
+    expect(await directionOf("plain")).toBe("incoming");
+
+    const run = workingRun(await sweepRuns());
+    expect(run.keepsHandCorrectedDirections).toBe(true);
+    expect(run.directionsKept).toBe(1);
+    expect(run.keptDirections).toEqual([{ fileId: "hand", kept: "outgoing", derived: "incoming" }]);
+    expect(run.keptDirectionsTruncated).toBe(false);
+    expect(run.byDirection).toMatchObject({ outgoing: 1, incoming: 1 });
+    expect(run.candidates).toBe(totalOutcomes(run));
+    expect(run.complete).toBe(true);
+  });
+
+  it("records a kept direction even when nothing else about the File moved", async () => {
+    await seedFile("hand", {
+      invoiceDirection: "outgoing",
+      matchedUserAccount: "issuer",
+      recipientIdentityMatch: "user",
+      extractionCorrectedFields: { invoiceDirection: CORRECTED_AT },
+      extractionCorrectedAt: CORRECTED_AT,
+    });
+    await drainTriggers();
+
+    await editIdentity(["AT611904300234573201"]);
+
+    expect(await directionOf("hand")).toBe("outgoing");
+    expect(await updatedAtOf("hand")).toBe(PRE_RUN.toDate().toISOString());
+    const runs = await sweepRuns();
+    const run = runs[runs.length - 1];
+    expect(run.outcomes["already-correct"]).toBe(1);
+    expect(run.keptDirections).toEqual([{ fileId: "hand", kept: "outgoing", derived: "incoming" }]);
+  });
+});

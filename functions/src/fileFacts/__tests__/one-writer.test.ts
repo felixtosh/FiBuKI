@@ -6,12 +6,10 @@
  * again, so this walk fails the build when one appears in `functions/src`,
  * `app`, `lib`, `components` or `hooks`.
  *
- * ALLOWED holds the writers the next slice moves into the module: the
- * identity sweep, Not Invoice, generated invoices and the entity-name backfill
- * (#640). Extraction writes through the module since #639. Those entries only
- * shrink; when they are gone the module is the one writer. Besides them it
- * names files that write no File's facts: a test fixture and one-off
- * row-shape migrations.
+ * Every writer goes through the module: Extraction since #639, the identity
+ * sweep, Not Invoice, generated invoices and the entity-name backfill since
+ * #640. ALLOWED names only files that write no File's facts: a test fixture
+ * and one-off row-shape migrations. No writer of facts is ever added to it.
  *
  * A static walk, so it reads shapes, not intent. A line it flags that writes
  * no extracted fact goes in ALLOWED with the reason, never a looser pattern.
@@ -80,12 +78,6 @@ const f = (...parts: string[]) => parts.join(sep);
 
 /** Path (from the repo root) -> which slice moves it into the module, or why it writes no fact. */
 const ALLOWED: Record<string, string> = {
-  // #640: the other writers of extracted facts.
-  [f("functions", "src", "matching", "onUserDataUpdate.ts")]: "#640: the identity sweep",
-  [f("functions", "src", "files", "backfillFileEntityNames.ts")]: "#640: the entity-name backfill (#299)",
-  [f("functions", "src", "files", "notInvoiceOps.ts")]: "#640: marking a File Not Invoice",
-  [f("functions", "src", "invoicing", "buildInvoiceFileFields.ts")]: "#640: a generated invoice's File",
-  [f("functions", "src", "invoicing", "duplicateInvoice.ts")]: "#640: a generated invoice's draft File",
   // Not writers of a File's facts.
   [f("functions", "src", "selfhost", "security", "victim.ts")]: "seeds the cross-user suites' fixture",
   [f("functions", "src", "selfhost", "migrate-strip-line-item-fields.ts")]:
