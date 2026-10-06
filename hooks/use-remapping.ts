@@ -9,7 +9,6 @@ import {
   downloadImportCSV,
   generateRemapPreview,
   applyRemapping,
-  updateImportMappings,
   OperationsContext,
 } from "@/lib/operations";
 import { parseCSV } from "@/lib/import/csv-parser";
@@ -189,9 +188,6 @@ export function useRemapping(importId: string, source: TransactionSource | null)
         source.id,
         (progress) => setState((s) => ({ ...s, progress }))
       );
-
-      // Update the import record with new mappings
-      await updateImportMappings(ctx, importId, state.mappings);
 
       setState((s) => ({
         ...s,
