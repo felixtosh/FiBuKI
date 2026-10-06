@@ -24,13 +24,11 @@ import type { DocumentType, DocumentationState } from "../documents/types";
 import {
   SETTLEMENT_LAG_MIN_FREQUENCY_DAYS,
   daysAfter,
-  dueDateFromAdditionalFields,
   isDueDateHit,
   learnedCycleSettlementLag,
 } from "./dueDate";
 import {
   DEBIT_DATE_SETTLEMENT_DAYS,
-  debitDateFromAdditionalFields,
   isDebitDateHit,
 } from "./debitDate";
 import type { TransactionType } from "../imports/transactionType";
@@ -1225,16 +1223,6 @@ export function toTransactionData(
   };
 }
 
-function legacyDueDate(additionalFields: unknown): Timestamp | null {
-  const date = dueDateFromAdditionalFields(additionalFields);
-  return date ? Timestamp.fromDate(date) : null;
-}
-
-function legacyDebitDate(additionalFields: unknown): Timestamp | null {
-  const date = debitDateFromAdditionalFields(additionalFields);
-  return date ? Timestamp.fromDate(date) : null;
-}
-
 /** Map a file Firestore doc's data into the shape `scoreTransaction` expects. */
 export function toFileMatchingData(data: FirebaseFirestore.DocumentData): FileMatchingData {
   return {
@@ -1242,19 +1230,11 @@ export function toFileMatchingData(data: FirebaseFirestore.DocumentData): FileMa
     extractedTipAmount: data.extractedTipAmount,
     extractedCurrency: data.extractedCurrency,
     extractedDate: data.extractedDate,
-    // #236: the typed field where extraction wrote it; on a record written
-    // before it existed, read off the additional-fields bag instead, which
-    // is what backfills every legacy File without re-extraction. Null on the
-    // record means extraction looked and found none, and is kept.
-    extractedDueDate:
-      "extractedDueDate" in data
-        ? data.extractedDueDate ?? null
-        : legacyDueDate(data.extractedAdditionalFields),
-    // #136: same backfill rule as the Due Date.
-    extractedDebitDate:
-      "extractedDebitDate" in data
-        ? data.extractedDebitDate ?? null
-        : legacyDebitDate(data.extractedAdditionalFields),
+    // #236, #136: the stored dates only. The File facts module derives them
+    // from the rows and the issue date and stores them (#641); the scorer
+    // never reads the rows itself, so a record without them states none.
+    extractedDueDate: data.extractedDueDate ?? null,
+    extractedDebitDate: data.extractedDebitDate ?? null,
     extractedPartner: data.extractedPartner,
     extractedIban: data.extractedIban,
     extractedText: data.extractedText,
@@ -1295,8 +1275,7 @@ function instalmentsOf(value: unknown): FileInstalment[] | null {
  * Date when there is one, else the Due Date. What the billing-cycle learner
  * measures the payment term to, so it learns what the Partner prints rather
  * than when the bank happened to book it. Takes the File record as stored and
- * reads it through `toFileMatchingData`, so a legacy record falls back to its
- * additional-fields rows exactly as it does when scored.
+ * reads it through `toFileMatchingData`, the stored dates only, as when scored.
  *
  * Each date only where the scorer would use it: a Due Date that opens a
  * window (after the issue date), a Debit Date not before the issue date.

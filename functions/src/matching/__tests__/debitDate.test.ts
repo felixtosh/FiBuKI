@@ -20,7 +20,6 @@ import {
 import { debitDateFromAdditionalFields, isDebitDateHit } from "../debitDate";
 import { dueDateFromAdditionalFields } from "../dueDate";
 import { normalizeTransactionType, transactionTypeFromRawRow } from "../../imports/transactionType";
-import { toDateSafe } from "../../utils/toDateSafe";
 
 function ts(dateStr: string): Timestamp {
   return Timestamp.fromDate(new Date(dateStr));
@@ -202,12 +201,12 @@ describe("scoreTransaction with a Debit Date", () => {
     expect(scoreTransaction(file, far)).toEqual(scoreTransaction({ ...file, extractedDebitDate: null }, far));
   });
 
-  it("reads the typed field, and on a legacy record the additional-fields bag", () => {
+  it("reads the stored field only, never the additional-fields bag (#641)", () => {
     expect(toFileMatchingData({ extractedDebitDate: ts(DEBIT) }).extractedDebitDate).toEqual(ts(DEBIT));
-    const legacy = toFileMatchingData({
+    const unstored = toFileMatchingData({
       extractedAdditionalFields: [{ key: "debitDate", label: "Einzugsdatum", value: DEBIT }],
     });
-    expect(toDateSafe(legacy.extractedDebitDate)?.getUTCDate()).toBe(20);
+    expect(unstored.extractedDebitDate).toBeNull();
   });
 
   it("carries the Transaction's type into the scorer", () => {

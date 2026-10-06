@@ -200,8 +200,8 @@ export const learnBillingCycleCallable = createCallable<
 
 /**
  * One connected file's delay sample (#618): its extracted date, and the
- * payment date it states, read through the scorer's own readers (typed field,
- * then legacy row). Null `statedDate` keeps measuring to the booking. Null
+ * payment date it states, as the scorer reads it (the stored dates, #641).
+ * Null `statedDate` keeps measuring to the booking. Null
  * for a file with no extracted date.
  */
 export function delaySampleForFile(

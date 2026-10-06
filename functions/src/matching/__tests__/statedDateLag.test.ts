@@ -124,14 +124,18 @@ describe("scoreTransaction: the observed telecom invoice", () => {
     expect(result.matchSources).not.toContain("debit_date");
   });
 
-  it("reads the legacy 'Zahlungstermin' row the older Extraction stored", () => {
-    const legacy = toFileMatchingData({
+  it("reads the stored Due Date, never the 'Zahlungstermin' row it was derived from (#641)", () => {
+    const record = {
       extractedAmount: 4590,
       extractedCurrency: "EUR",
       extractedDate: ts(ISSUE),
       extractedAdditionalFields: [{ label: "Zahlungstermin", value: DUE }],
-    });
-    expect(scoreTransaction(legacy, tx).breakdown.hardFacts).toBe(
+    };
+    expect(scoreTransaction(toFileMatchingData(record), tx).breakdown.hardFacts).not.toBe(
+      SCORING_CONFIG.HARD_FACTS_BONUS_SAME_DAY
+    );
+    const stored = toFileMatchingData({ ...record, extractedDueDate: ts(DUE) });
+    expect(scoreTransaction(stored, tx).breakdown.hardFacts).toBe(
       SCORING_CONFIG.HARD_FACTS_BONUS_SAME_DAY
     );
   });
@@ -369,12 +373,11 @@ describe("statedPaymentDate: what the learner measures to", () => {
     expect(statedPaymentDate(file)?.toISOString().slice(0, 10)).toBe(DUE);
   });
 
-  it("is the Due Date otherwise, read off the legacy row when the typed field is missing", () => {
-    const file = {
-      extractedDate: ts(ISSUE),
-      extractedAdditionalFields: [{ label: "Zahlungstermin", value: DUE }],
-    };
+  it("is the stored Due Date otherwise; rows without a stored date state none (#641)", () => {
+    const rows = [{ label: "Zahlungstermin", value: DUE }];
+    const file = { extractedDate: ts(ISSUE), extractedDueDate: ts(DUE), extractedAdditionalFields: rows };
     expect(statedPaymentDate(file)?.toISOString().slice(0, 10)).toBe(DUE);
+    expect(statedPaymentDate({ extractedDate: ts(ISSUE), extractedAdditionalFields: rows })).toBeNull();
   });
 
   it("prefers the typed field: a typed null means extraction found none", () => {
@@ -402,6 +405,7 @@ describe("delaySampleForFile: one connected File's delay sample", () => {
   it("a File stating a date measures to it", () => {
     const sample = delaySampleForFile({
       extractedDate: ts(ISSUE),
+      extractedDueDate: ts(DUE),
       extractedAdditionalFields: [{ key: "dueDate", label: "Zahlungstermin", value: DUE }],
     });
     expect(sample?.invoiceDate.toISOString().slice(0, 10)).toBe(ISSUE);
@@ -412,6 +416,12 @@ describe("delaySampleForFile: one connected File's delay sample", () => {
     const sample = delaySampleForFile({ extractedDate: ts(ISSUE) });
     expect(sample?.invoiceDate.toISOString().slice(0, 10)).toBe(ISSUE);
     expect(sample?.statedDate).toBeNull();
+    // A row the File does not store as a date is not read (#641).
+    const unstored = delaySampleForFile({
+      extractedDate: ts(ISSUE),
+      extractedAdditionalFields: [{ key: "dueDate", label: "Zahlungstermin", value: DUE }],
+    });
+    expect(unstored?.statedDate).toBeNull();
   });
 
   it("a File with no date contributes nothing", () => {
