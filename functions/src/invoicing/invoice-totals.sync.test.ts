@@ -9,8 +9,7 @@
  * The failure mode of drift is not a crash: the stored, issued PDF and the
  * invoice the recipient sees on screen would print different totals for the
  * same invoice. So this reads both files as TEXT and compares the functions.
- * Text, not imports, for the same reason as utils/models.sync.test.ts: importing
- * across that boundary is what tsconfig forbids.
+ * Text, not imports: importing across that boundary is what tsconfig forbids.
  */
 
 import { describe, it, expect } from "vitest";

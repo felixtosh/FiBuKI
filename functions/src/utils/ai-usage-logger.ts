@@ -1,7 +1,7 @@
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { USER_TOKEN_RATE_PER_100K_EUR } from "../billing/config";
 import { resolveBudgetFields } from "../billing/checkAIBudget";
-import { MODEL_PRICING, PRICING_FALLBACK_MODEL } from "./models";
+import { estimateModelCost } from "./models";
 
 type AIFunction =
   | "chat"
@@ -51,8 +51,7 @@ export function calculateAICost(
   inputTokens: number,
   outputTokens: number
 ): number {
-  const pricing = MODEL_PRICING[model] || MODEL_PRICING[PRICING_FALLBACK_MODEL];
-  return (inputTokens * pricing.input + outputTokens * pricing.output) / 1_000_000;
+  return estimateModelCost(model, inputTokens, outputTokens);
 }
 
 /**

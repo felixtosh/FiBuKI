@@ -48,7 +48,7 @@ import {
   PAYMENT_METHODS,
   isAdditionalFieldKey,
   isPaymentMethod,
-} from "@/types/extraction-fields";
+} from "@/functions/src/extraction/fieldVocabulary";
 
 // Consistent field row component (matching transaction-details.tsx)
 // Uses container queries to stack vertically when panel is narrow (<340px)

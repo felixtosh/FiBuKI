@@ -34,11 +34,12 @@ import {
   CheckCircle,
 } from "lucide-react";
 import { UsageChart } from "./usage-chart";
-import { AIFunction, AI_MODEL_PRICING } from "@/types/ai-usage";
+import { AIFunction } from "@/types/ai-usage";
+import { MODEL_PRICING } from "@/functions/src/utils/models";
 import { cn } from "@/lib/utils";
 
 function getModelPricing(model: string): { input: number; output: number } | null {
-  return AI_MODEL_PRICING[model] || null;
+  return MODEL_PRICING[model] || null;
 }
 
 function formatPricing(pricing: { input: number; output: number }): string {

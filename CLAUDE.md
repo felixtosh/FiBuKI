@@ -492,10 +492,12 @@ Release trigger:
 ### Model Selection by Use Case
 
 **Never inline a model id at a callsite.** Use the roles in
-`functions/src/utils/models.ts` (backend) / `types/ai-usage.ts` (frontend). Those two
-files are hand-duplicated because `functions/tsconfig.json` pins `rootDir: "src"`;
-`functions/src/utils/models.sync.test.ts` fails the build if they drift, because the
-silent failure mode is mis-billing, not a crash.
+`functions/src/utils/models.ts`, the one copy of the roles and their pricing: the
+frontend and API routes import it as `@/functions/src/utils/models` (#689), so a role
+or price cannot drift between the two sides. Keep it browser-safe (no `firebase-admin`
+or `firebase-functions`; the #688 guard checks). A model a role points at must have a
+`MODEL_PRICING` entry, and a retired id keeps its entry: an unpriced model bills at
+the Sonnet fallback (`models.test.ts`).
 
 | Use Case | Role | Model | Reason |
 |----------|------|-------|--------|
@@ -526,8 +528,9 @@ All Gemini calls use **Vertex AI** (not Google AI Studio). This provides:
 **Pattern for new Gemini functions:**
 ```typescript
 import { VertexAI } from "@google-cloud/vertexai";
+import { MODELS } from "../utils/models";
 
-const GEMINI_MODEL = "gemini-2.0-flash-lite-001";
+const GEMINI_MODEL = MODELS.geminiLite;
 const VERTEX_LOCATION = process.env.VERTEX_LOCATION || "europe-west1";
 
 function getProjectId(): string {

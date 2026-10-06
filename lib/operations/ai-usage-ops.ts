@@ -12,8 +12,8 @@ import {
   AIUsageSummary,
   AIUsageDailyStats,
   AIFunction,
-  AI_MODEL_PRICING,
 } from "@/types/ai-usage";
+import { estimateModelCost } from "@/functions/src/utils/models";
 import { OperationsContext } from "./types";
 
 const AI_USAGE_COLLECTION = "aiUsage";
@@ -34,8 +34,7 @@ export function calculateCost(
   inputTokens: number,
   outputTokens: number
 ): number {
-  const pricing = AI_MODEL_PRICING[model] || AI_MODEL_PRICING["claude-sonnet-4-20250514"];
-  return (inputTokens * pricing.input + outputTokens * pricing.output) / 1_000_000;
+  return estimateModelCost(model, inputTokens, outputTokens);
 }
 
 /**
