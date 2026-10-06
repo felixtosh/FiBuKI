@@ -16,8 +16,17 @@
  * correction; an MCP caller names the fields it means, so what it passes is
  * what it corrects. An Extraction hands over its reading
  * (`extractionReading.ts`); on a File with a Hand Correction it is refused as
- * a whole unless forced. The identity sweep, Not Invoice and generated
- * invoices join as origins of their own (#640).
+ * a whole unless forced. The other writers are origins of their own (#640):
+ * marking a File Not Invoice (`not-invoice`), the identity sweep
+ * (`identity-sweep`), a generated invoice (`generated-invoice`) and the
+ * entity-name backfill (`entity-name-backfill`).
+ *
+ * Most writers go through the one applier (`applyFactChange.ts`). Two take
+ * the module's decision and write it in a batch of their own, because the
+ * applier's read-then-write does not fit them: the identity sweep writes up
+ * to 500 Files per batch and attributes a refused write to its File (#158),
+ * and a generated invoice's File is written in the same batch or transaction
+ * as its invoice, often before the File exists.
  *
  * Derived here, so no caller can forget one: the Document Type, the 11 % rate
  * review, the RKSV review, the direction review, the Line Item reconciliation,
@@ -54,6 +63,11 @@ import {
 } from "./handCorrection";
 import { buildCorrectionProvenance, correctedFieldsOf, CORRECTABLE_FIELDS } from "./provenance";
 import { extractionFields, type ExtractionReading } from "./extractionReading";
+import { notInvoiceFields } from "./notInvoice";
+import { sweepFields, type SweepDerivation } from "./identitySweep";
+import { draftInvoiceFacts, issuedInvoiceFacts } from "./generatedInvoice";
+import { decodedEntityNameFields } from "./entityNames";
+import type { Invoice } from "../invoicing/types";
 
 // ---------------------------------------------------------------------------
 // The interface
@@ -100,7 +114,50 @@ export interface ExtractionChange {
   at?: Timestamp;
 }
 
-export type FactChange = HandCorrectionChange | ExtractionChange;
+/**
+ * A person rules the File is not an invoice (#640): its facts are cleared,
+ * and the Hand Correction record with them (Stefan, 2026-10-05).
+ */
+export interface NotInvoiceChange {
+  origin: "not-invoice";
+  reason?: string;
+  at?: Timestamp;
+}
+
+/**
+ * The identity sweep re-derived the File's direction and counterparty from
+ * its entities and the User's identity now (#640). A hand-corrected direction
+ * is kept.
+ */
+export interface IdentitySweepChange {
+  origin: "identity-sweep";
+  derived: SweepDerivation;
+  at?: Timestamp;
+}
+
+/**
+ * FiBuKI generated the document (#640): the File's facts are the invoice's.
+ * `invoice` is null for a draft's stub, which carries only its direction.
+ */
+export interface GeneratedInvoiceChange {
+  origin: "generated-invoice";
+  invoice: Invoice | null;
+  at?: Timestamp;
+}
+
+/** The one-off backfill that decodes HTML references in stored names (#299, #640). */
+export interface EntityNameBackfillChange {
+  origin: "entity-name-backfill";
+  at?: Timestamp;
+}
+
+export type FactChange =
+  | HandCorrectionChange
+  | ExtractionChange
+  | NotInvoiceChange
+  | IdentitySweepChange
+  | GeneratedInvoiceChange
+  | EntityNameBackfillChange;
 
 /**
  * What the applier does after the write.
@@ -133,6 +190,11 @@ export interface FactUpdate {
   changed: string[];
   /** The stored names of the descriptive fields whose value this change moved. */
   movedDetails: string[];
+  /**
+   * The identity sweep only: the direction a Hand Correction kept, when the
+   * sweep derived a different one. The sweep records it in its run report.
+   */
+  keptDirection?: { stored: string; derived: string } | null;
 }
 
 export type FactOutcome = FactUpdate | FactRefusal;
@@ -218,6 +280,10 @@ const SCORED_FIELDS = [
 
 export function decideFactChange(current: CurrentFile, change: FactChange): FactOutcome {
   if (change.origin === "extraction") return decideExtraction(current, change);
+  if (change.origin === "not-invoice") return decideNotInvoice(current, change);
+  if (change.origin === "identity-sweep") return decideIdentitySweep(current, change);
+  if (change.origin === "generated-invoice") return decideGeneratedInvoice(change);
+  if (change.origin === "entity-name-backfill") return decideEntityNames(current, change);
   try {
     return decideHandCorrection(current, change);
   } catch (error) {
@@ -429,6 +495,98 @@ function decideExtraction(current: CurrentFile, change: ExtractionChange): FactO
     changed: [],
     movedDetails: [],
   };
+}
+
+// ---------------------------------------------------------------------------
+// The other writers (#640)
+// ---------------------------------------------------------------------------
+
+/**
+ * Marking a File Not Invoice: the field set it has always written, plus the
+ * tip, its bound, the Due Date and the Debit Date, and the Hand Correction
+ * record cleared for the figures it wipes (`notInvoice.ts`). Its derived
+ * fields are the ones it always set (the review flags off, the matching
+ * reset); the Document Type and the direction review stay as they were, as
+ * before.
+ */
+function decideNotInvoice(current: CurrentFile, change: NotInvoiceChange): FactOutcome {
+  const update = notInvoiceFields(current.record, change.reason);
+  return stamped(current.record, update, change.origin, change.at ?? Timestamp.now());
+}
+
+/**
+ * The identity sweep: the direction, the counterparty and the recipient
+ * verdict it derived, unless a Hand Correction keeps the direction
+ * (`identitySweep.ts`). Nothing moved, nothing written: a sweep does not
+ * re-classify an unchanged File. When something moved, the Document Type, the
+ * 11 % rate review, the RKSV review and the direction review are computed on
+ * the File as it is left. The repair flags are an Extraction's and stay.
+ */
+function decideIdentitySweep(current: CurrentFile, change: IdentitySweepChange): FactOutcome {
+  const { record } = current;
+  const { update, keptDirection } = sweepFields(record, change.derived);
+  if (Object.keys(update).length === 0) {
+    return { refused: false, update, followUps: [], changed: [], movedDetails: [], keptDirection };
+  }
+
+  const swept = { ...record, ...update } as FileRecord;
+  Object.assign(update, documentTypeFields(classifyFileRecord(swept)));
+  Object.assign(update, vatRateReviewFields(reviewFileRecordVatRates(swept)));
+  Object.assign(update, rksvCodeReviewFields(reviewFileRecordRksvCode(swept)));
+  Object.assign(
+    update,
+    directionReviewFields(reviewDirection(toDirectionFacts(swept, current.linkedTransactions)))
+  );
+  return { ...stamped(record, update, change.origin, change.at ?? Timestamp.now()), keptDirection };
+}
+
+/** A generated invoice: the invoice's facts, no derived field (`generatedInvoice.ts`). */
+function decideGeneratedInvoice(change: GeneratedInvoiceChange): FactOutcome {
+  const update = change.invoice ? issuedInvoiceFacts(change.invoice) : draftInvoiceFacts();
+  return stamped({}, update, change.origin, change.at ?? Timestamp.now());
+}
+
+/** The entity-name backfill: the decoded names, nothing derived (`entityNames.ts`). */
+function decideEntityNames(current: CurrentFile, change: EntityNameBackfillChange): FactOutcome {
+  const update = decodedEntityNameFields(current.record);
+  if (Object.keys(update).length === 0) {
+    return { refused: false, update, followUps: [], changed: [], movedDetails: [] };
+  }
+  return stamped(current.record, update, change.origin, change.at ?? Timestamp.now());
+}
+
+/** Stamp a write that is neither a Hand Correction nor an Extraction, and derive its follow-ups. */
+function stamped(
+  record: Record<string, unknown>,
+  update: Record<string, unknown>,
+  origin: FactChange["origin"],
+  at: Timestamp
+): FactUpdate {
+  update[LAST_FACT_CHANGE_FIELD] = { origin, at };
+  update.updatedAt = at;
+  return {
+    refused: false,
+    update,
+    followUps: followUpsOf(record, update, false),
+    changed: [],
+    movedDetails: [],
+  };
+}
+
+/**
+ * The fact fields of a generated invoice's File, for the batch or transaction
+ * that writes its invoice. Never refused.
+ */
+export function generatedInvoiceFileFacts(
+  invoice: Invoice | null,
+  at: Timestamp = Timestamp.now()
+): Record<string, unknown> {
+  const outcome = decideFactChange(
+    { record: {}, linkedTransactions: [] },
+    { origin: "generated-invoice", invoice, at }
+  );
+  if (outcome.refused) throw new Error(outcome.message);
+  return outcome.update;
 }
 
 // ---------------------------------------------------------------------------

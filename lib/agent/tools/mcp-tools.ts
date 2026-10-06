@@ -16,7 +16,7 @@
  * checks), it is because runTool calls it as the agent, never because of
  * anything a wrapper sends.
  *
- * The parameters come from the MCP definition (lib/data/generated-tool-definitions.ts),
+ * The parameters come from the MCP definition (functions/src/tools/definitions.ts),
  * so a parameter added there reaches the chat without a second edit. Only the
  * description, the default page size and the agent's own connect parameters
  * are the chat's.
@@ -28,7 +28,7 @@
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { callFirebaseFunction } from "@/lib/api/firebase-callable";
-import { TOOL_DEFINITIONS } from "@/lib/data/generated-tool-definitions";
+import { TOOL_DEFINITIONS } from "@/functions/src/tools/definitions";
 
 /** Chat tool name -> the MCP tool it wraps. */
 export const MCP_TWINS = {
