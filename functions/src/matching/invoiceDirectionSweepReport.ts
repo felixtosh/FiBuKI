@@ -73,6 +73,22 @@ export interface SweepFailure {
  */
 export const MAX_NAMED_FAILURES = 50;
 
+/**
+ * A File whose direction the User set by hand and the sweep derived
+ * differently (#640). The sweep keeps the User's direction and names the File
+ * here, so the disagreement is on record without being acted on.
+ */
+export interface KeptDirection {
+  fileId: string;
+  /** The direction the User set, which the File keeps. */
+  kept: InvoiceDirection;
+  /** The direction the sweep derived from the entities and the identity. */
+  derived: InvoiceDirection;
+}
+
+/** How many kept directions a summary names. The count stays complete past it. */
+export const MAX_NAMED_KEPT = 200;
+
 export interface InvoiceDirectionSweepSummary {
   runId: string;
   userId: string;
@@ -87,7 +103,8 @@ export interface InvoiceDirectionSweepSummary {
   /** Candidates skipped before any derivation ran. */
   neverEvaluated: number;
   /**
-   * The direction the derivation produced, over evaluated Files only. An
+   * The direction each evaluated File holds after the run: the one the
+   * derivation produced, or a hand-corrected one it kept (#640). An
    * `unknown` here was evaluated and left `unknown` — it is not a File the
    * run missed.
    */
@@ -95,6 +112,17 @@ export interface InvoiceDirectionSweepSummary {
   /** Files the run could not finish, by name. Cut at {@link MAX_NAMED_FAILURES}. */
   failures: SweepFailure[];
   failuresTruncated: boolean;
+  /**
+   * Set on every run since #640: this run kept every hand-corrected
+   * direction, so it changed none. A run without it may have flipped one;
+   * `report-swept-hand-corrected-directions` reads that difference.
+   */
+  keepsHandCorrectedDirections: true;
+  /** Files whose hand-corrected direction the derivation disagreed with, and the run kept. */
+  directionsKept: number;
+  /** Those Files by name. Cut at {@link MAX_NAMED_KEPT}. */
+  keptDirections: KeptDirection[];
+  keptDirectionsTruncated: boolean;
   /**
    * True only when every candidate is accounted for and nothing failed. A
    * consumer of `invoiceDirection` that sees `false` is looking at a corpus
@@ -135,6 +163,8 @@ export class SweepLedger {
   readonly byDirection = emptyDirectionCounts();
   private readonly failures: SweepFailure[] = [];
   private failureCount = 0;
+  private readonly keptDirections: KeptDirection[] = [];
+  private keptCount = 0;
   private candidates = 0;
   private scanCeilingReached = false;
   private readonly startedAt = new Date().toISOString();
@@ -147,6 +177,18 @@ export class SweepLedger {
   /** The scan stopped short, so the candidate set does not cover the corpus. */
   ceilingReached(): void {
     this.scanCeilingReached = true;
+  }
+
+  /**
+   * A hand-corrected direction the derivation disagreed with was kept (#640).
+   * Not an outcome: the File still lands in exactly one bucket, `written` when
+   * something else about it moved, `already-correct` when nothing did.
+   */
+  kept(fileId: string, kept: InvoiceDirection, derived: InvoiceDirection): void {
+    this.keptCount++;
+    if (this.keptDirections.length < MAX_NAMED_KEPT) {
+      this.keptDirections.push({ fileId, kept, derived });
+    }
   }
 
   record(fileId: string, outcome: SweepOutcome, detail?: { direction?: InvoiceDirection; message?: string }): void {
@@ -187,6 +229,10 @@ export class SweepLedger {
       byDirection: { ...this.byDirection },
       failures: [...this.failures],
       failuresTruncated: this.failureCount > this.failures.length,
+      keepsHandCorrectedDirections: true,
+      directionsKept: this.keptCount,
+      keptDirections: [...this.keptDirections],
+      keptDirectionsTruncated: this.keptCount > this.keptDirections.length,
       // A File evaluated but neither written nor attributed to a named skip
       // reason would break the first term: that is the run reporting itself
       // as failed rather than as a success with a short report.
@@ -204,7 +250,7 @@ export interface PlannedFileWrite {
   ref: FirebaseFirestore.DocumentReference;
   fileId: string;
   updates: Record<string, unknown>;
-  /** The direction the derivation produced, for the run's direction counts. */
+  /** The direction the File holds after the write, for the run's direction counts. */
   direction: InvoiceDirection;
   /** Transactions whose documentation state moves only if this write lands. */
   affectedTransactionIds: string[];
@@ -290,7 +336,8 @@ export function formatSweepSummary(summary: InvoiceDirectionSweepSummary): strin
     `${summary.complete ? "complete" : "INCOMPLETE"}: ` +
     `${summary.candidates} candidates (${outcomes || "none"}), ` +
     `directions incoming=${summary.byDirection.incoming} ` +
-    `outgoing=${summary.byDirection.outgoing} unknown=${summary.byDirection.unknown}`
+    `outgoing=${summary.byDirection.outgoing} unknown=${summary.byDirection.unknown}` +
+    (summary.directionsKept > 0 ? `, hand-corrected directions kept=${summary.directionsKept}` : "")
   );
 }
 

@@ -35,7 +35,7 @@ import {
   QueryGenerationPartner,
 } from "../precision-search/generateSearchQueries";
 import { readBankOriginalAmount } from "../fx/bankOriginalAmount";
-import { autoConnectTies, filesForTransaction } from "../matching/matcher";
+import { autoConnectHolds, filesForTransaction } from "../matching/matcher";
 import { SCORING_CONFIG } from "../matching/transactionScoring";
 
 /**
@@ -165,16 +165,17 @@ function emptySources(): FindReceiptResult["sourcesChecked"] {
 }
 
 /**
- * Whether the File ties on this Transaction at the threshold (#667): another
- * uncovered Transaction of the same amount wants it as much. Judged on the
- * File's own matches, as the upload trigger judges them, so a tie connects
- * nothing from this side either.
+ * Whether the File is held back from this Transaction at the threshold: a tie
+ * (#667), another uncovered Transaction of the same amount wanting it as
+ * much, or an instalment without printed evidence (#615, ADR-0013). Judged on
+ * the File's own matches, as the upload trigger judges them, so neither
+ * connects from this side either.
  */
-async function tiesOn(db: Firestore, userId: string, fileId: string, transactionId: string): Promise<boolean> {
+async function heldBackOn(db: Firestore, userId: string, fileId: string, transactionId: string): Promise<boolean> {
   const snap = await db.collection("files").doc(fileId).get();
   if (!snap.exists || snap.data()?.userId !== userId) return false;
-  const ties = await autoConnectTies(db, userId, [{ id: fileId, data: snap.data()! }]);
-  return ties.get(fileId)?.has(transactionId) ?? false;
+  const holds = await autoConnectHolds(db, userId, [{ id: fileId, data: snap.data()! }]);
+  return holds.get(fileId)?.has(transactionId) ?? false;
 }
 
 export async function findReceiptForTransaction(
@@ -478,7 +479,7 @@ export async function findReceiptForTransaction(
     top.source === "local_file" &&
     top.fileId &&
     !tx.quotaExceeded &&
-    !(await tiesOn(db, userId, top.fileId, transactionId))
+    !(await heldBackOn(db, userId, top.fileId, transactionId))
   ) {
     await connectFileToTransaction({
       userId,
