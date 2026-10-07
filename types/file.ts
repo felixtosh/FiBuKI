@@ -5,6 +5,7 @@ import {
   PartnerSuggestion,
 } from "./partner";
 import { InvoiceDirection } from "./user-data";
+import type { AutomationHistoryEntry } from "./transaction";
 
 /**
  * Entity information extracted from a document (issuer or recipient).
@@ -198,6 +199,12 @@ export interface TaxFile {
 
   /** Owner of this file */
   userId: string;
+
+  /**
+   * The File's activity log (#752): every change a person, the matcher or an
+   * AI made to it, the same entries a Transaction keeps.
+   */
+  automationHistory?: AutomationHistoryEntry[];
 
   // === Storage ===
 

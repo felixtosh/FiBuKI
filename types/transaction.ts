@@ -99,7 +99,32 @@ export interface AutomationHistoryEntry {
     | "category_removed"
     | "file_connected"
     | "file_disconnected"
-    | "category_matched";
+    | "category_matched"
+    // #752: on Files, and the newer Transaction entries
+    | "partner_suggested"
+    | "transaction_connected"
+    | "transaction_disconnected"
+    | "transaction_suggested"
+    | "connection_confirmed"
+    | "category_suggested"
+    | "file_created"
+    | "file_deleted"
+    | "file_restored"
+    | "extracted"
+    | "extraction_failed"
+    | "marked_not_invoice"
+    | "facts_corrected"
+    | "facts_derived"
+    | "copy_marked"
+    | "copy_suggested"
+    | "receipt_linked"
+    | "receipt_unlinked"
+    | "correction_linked"
+    | "transaction_edited"
+    | "reconciled"
+    | "reconciliation_suggested"
+    | "ruling_recorded"
+    | "ruling_revoked";
   /** When it ran */
   ranAt: Timestamp;
   /** Status of the run */
@@ -116,6 +141,10 @@ export interface AutomationHistoryEntry {
   fileId?: string;
   /** File name for display */
   fileName?: string;
+  /** Transaction involved, on a File's log (#752) */
+  transactionId?: string;
+  /** Transaction name for display */
+  transactionName?: string;
   /** Category name for display */
   categoryName?: string;
   /** Match confidence (0-100) */

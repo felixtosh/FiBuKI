@@ -1,5 +1,5 @@
 import { onDocumentUpdated } from "firebase-functions/v2/firestore";
-import { getFirestore, FieldValue, DocumentSnapshot, Timestamp } from "firebase-admin/firestore";
+import { getFirestore, FieldValue, DocumentSnapshot } from "firebase-admin/firestore";
 import {
   matchTransactionToCategories,
   shouldAutoApplyCategory,
@@ -17,6 +17,7 @@ import {
 } from "../documents/documentationState";
 import { deriveForTransaction } from "../documents/syncDocumentationState";
 import { syncDirectionReviewForFiles } from "../documents/syncDirectionReview";
+import { categoryMatchActivity } from "./categoryActivity";
 
 // =============================================================================
 // AUTOMATION METADATA
@@ -403,17 +404,6 @@ export const onTransactionUpdate = onDocumentUpdated(
             console.log(`Linked partner ${after.partnerId} to category ${topMatch.templateId}`);
           }
 
-          // Log category auto-match to activity log
-          updates.automationHistory = FieldValue.arrayUnion({
-            type: "category_matched",
-            ranAt: Timestamp.now(),
-            status: "completed",
-            actor: "auto",
-            level: "outcome" as const,
-            categoryName: topMatch.templateId,
-            confidence: topMatch.confidence,
-            summary: `Category "${topMatch.templateId}" auto-assigned (${topMatch.confidence}%)`,
-          });
 
           console.log(
             `Auto-matched transaction ${transactionId} to category ${topMatch.templateId} (${topMatch.confidence}%)`
@@ -424,6 +414,8 @@ export const onTransactionUpdate = onDocumentUpdated(
           );
         }
 
+        const logged = categoryMatchActivity(after, updates, categories, "category matching");
+        if (logged) updates.automationHistory = FieldValue.arrayUnion(logged);
         await db.collection("transactions").doc(transactionId).update(updates);
       }
     } catch (error) {

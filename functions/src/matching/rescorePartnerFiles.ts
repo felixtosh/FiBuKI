@@ -27,6 +27,8 @@
 
 import { Timestamp } from "firebase-admin/firestore";
 import { storedSuggestionsOf, transactionsForFiles } from "./matcher";
+import { transactionSuggestionsActivity } from "./suggestionActivity";
+import { logActivity } from "../utils/activity";
 
 /** Firestore batch write cap is 500; chunk with headroom. */
 const BATCH_CHUNK_SIZE = 400;
@@ -89,10 +91,13 @@ export async function rescoreUnconnectedFilesForPartners(
       // Never matched (deleted, a Copy, not an invoice, addressed to someone
       // else): left as it is.
       if (results[i].ineligible) continue;
+      const suggestions = storedSuggestionsOf(results[i].matches);
+      const logged = transactionSuggestionsActivity(fileDoc.data().transactionSuggestions, suggestions, "rescoring after a Partner changed");
       batch.update(fileDoc.ref, {
-        transactionSuggestions: storedSuggestionsOf(results[i].matches),
+        transactionSuggestions: suggestions,
         transactionMatchedAt: Timestamp.now(),
         updatedAt: Timestamp.now(),
+        ...(logged ? logActivity(logged) : {}),
       });
       pending++;
       filesRescored++;

@@ -4,6 +4,7 @@
 
 import { Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
+import { activityEntry, logActivity } from "../utils/activity";
 
 interface DeleteUserPartnerRequest {
   partnerId: string;
@@ -62,6 +63,14 @@ export const deleteUserPartnerCallable = createCallable<
       .where("partnerId", "==", partnerId)
       .get();
 
+    // The log (#752) on every Transaction and File that loses the Partner.
+    const deletedLog = logActivity(activityEntry({
+      type: "partner_removed",
+      actor: "manual",
+      forPartnerId: partnerId,
+      summary: "Partner removed: the Partner was deleted",
+    }));
+
     if (!transactionsQuery.empty) {
       for (let i = 0; i < transactionsQuery.docs.length; i += BATCH_SIZE) {
         const batch = ctx.db.batch();
@@ -74,6 +83,7 @@ export const deleteUserPartnerCallable = createCallable<
             partnerMatchedBy: null,
             partnerMatchConfidence: null,
             updatedAt: now,
+            ...deletedLog,
           });
           unlinkedTransactions++;
         }
@@ -101,6 +111,7 @@ export const deleteUserPartnerCallable = createCallable<
             partnerMatchedBy: null,
             partnerMatchConfidence: null,
             updatedAt: now,
+            ...deletedLog,
           });
           unlinkedFiles++;
         }

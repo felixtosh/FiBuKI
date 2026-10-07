@@ -55,6 +55,12 @@ interface AmountMatchDisplayProps {
    * becomes its tooltip, so the File cell stays one pill whatever it says.
    */
   warning?: string;
+  /**
+   * Plays the check's pop when it appears. Off by default: a pill that appears
+   * with its row shows the check as it is; pass PlayOnChange's `changed` so it
+   * pops only when a File is connected on screen.
+   */
+  animateCheck?: boolean;
 }
 
 /**
@@ -73,6 +79,7 @@ export function AmountMatchDisplay({
   className,
   primaryOriginal,
   warning,
+  animateCheck = false,
 }: AmountMatchDisplayProps) {
   const convert = useEcbConverter();
   const Icon = FileText;
@@ -297,7 +304,7 @@ export function AmountMatchDisplay({
       ) : (rightText || showCheck) && (
         <span className={cn("flex items-center gap-1 text-xs", rightColor)}>
           {rightText && <span className="truncate">{rightText}</span>}
-          {showCheck && <Check className="h-3 w-3 flex-shrink-0 animate-check-appear" strokeWidth={3} />}
+          {showCheck && <Check className={cn("h-3 w-3 flex-shrink-0", animateCheck && "animate-check-appear")} strokeWidth={3} />}
         </span>
       )}
     </div>

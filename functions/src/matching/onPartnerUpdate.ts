@@ -24,6 +24,7 @@ import {
 } from "../utils/filePartnerMatcher";
 import { AutomationMeta } from "../automation/types";
 import { MERGE_WRITE_ID_FIELD, isMergeWrite } from "../partners/mergeWriteMarker";
+import { activityEntry, logActivity } from "../utils/activity";
 
 // =============================================================================
 // AUTOMATION METADATA
@@ -184,6 +185,27 @@ async function reMatchFilePartner(
     newPartnerId = null;
 
     console.log(`[PartnerUpdate] Cleared partner from file ${fileDoc.id} (no confident match)`);
+  }
+
+  // The log (#752): what the re-match changed on the File.
+  const nameOf = (id: string) => [...userPartners, ...globalPartners].find((p) => p.id === id)?.name ?? id;
+  if (action === "rematched" && topMatch) {
+    Object.assign(update, logActivity(activityEntry({
+      type: "partner_assigned",
+      actor: "auto",
+      partnerName: nameOf(topMatch.partnerId),
+      forPartnerId: topMatch.partnerId,
+      confidence: topMatch.confidence,
+      summary: `Partner "${nameOf(topMatch.partnerId)}" assigned after a Partner changed (${Math.round(topMatch.confidence)}%)`,
+    })));
+  } else if (action === "cleared" && previousPartnerId) {
+    Object.assign(update, logActivity(activityEntry({
+      type: "partner_removed",
+      actor: "auto",
+      partnerName: nameOf(previousPartnerId),
+      forPartnerId: previousPartnerId,
+      summary: `Partner "${nameOf(previousPartnerId)}" removed after a Partner changed: no confident match any more`,
+    })));
   }
 
   await db.collection("files").doc(fileDoc.id).update(update);

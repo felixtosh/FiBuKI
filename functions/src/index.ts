@@ -51,6 +51,12 @@ export {
   adminDeleteUser,
 } from "./admin/userManagement";
 export { impersonateUser } from "./admin/impersonateUser";
+export {
+  setBenchmarkMemberCallable as setBenchmarkMember,
+  buildBenchmarkVersionCallable as buildBenchmarkVersion,
+  listBenchmarkVersionsCallable as listBenchmarkVersions,
+  deleteBenchmarkVersionCallable as deleteBenchmarkVersion,
+} from "./benchmark/benchmarkCallables";
 
 // Export import functions
 export { matchColumns } from "./import/matchColumns";

@@ -384,6 +384,23 @@ callables do not already allow.
 
 **Claude Code Hook**: `.claude/hooks/check-cloud-function-pattern.sh` warns if local scoring is detected.
 
+### Matching changes run the replay
+
+A PR that changes how Files, Transactions or Partners are matched gets the `replay`
+label and its counts in the Evidence section. It warns, it never blocks. How it works:
+[`docs/replay.md`](docs/replay.md); results, decisions and what to build next:
+[`docs/benchmarking.md`](docs/benchmarking.md).
+
+### Every change is in the item's activity log (#752)
+
+A write that changes what the User sees on a Transaction or a File (a value set or
+cleared, suggestions whose top choice changes, a connection made or taken apart)
+appends one entry to the item's `automationHistory`, built with `activityEntry()` /
+`logActivity()` from `functions/src/utils/activity.ts`. The actor says who: `manual`
+(the User), `auto` (the matcher, a trigger, a sweep), `ai` (an LLM, the chat agent, an
+MCP client). A run that changes nothing writes nothing. Derived bookkeeping
+(`documentationState`, the `isComplete` sync) is not logged.
+
 ### Transaction Deletion NOT Allowed
 
 **CRITICAL**: Individual transactions cannot be deleted through the UI or MCP.
@@ -448,12 +465,17 @@ The page renders the real components from `components/ui/`, never copies of them
   such as `data-table/` has one for the folder): a default-exported `ComponentDoc`
   (`lib/design-system/types.ts`) with a title, a one-line `purpose`, a `layer`
   (primitive, pattern, brand) and examples that render the real component. Import it in
-  `app/(dashboard)/design-system/registry.ts`. When you change a component, update its
-  examples in the same commit.
-- **A new theme token** in `app/globals.css` goes into `app/(dashboard)/design-system/tokens.ts`.
+  `app/(dashboard)/design-system/registry.ts` and place it in its group, most used first.
+  When you change a component, update its examples in the same commit.
+- **A new color token** in `app/globals.css` goes into `app/(dashboard)/design-system/tokens.ts`.
+- **Motion:** a panel or menu that slides or pops uses `ease-slide` (the `--ease-slide`
+  curve), never `ease-in-out`. A new `animate-*` class or `--ease-*` token goes into
+  `app/(dashboard)/design-system/motion.tsx` with where it is used; one nothing uses is
+  deleted, not listed. `tailwindcss-animate` is loaded with `@plugin` in `globals.css`
+  (Tailwind 4 ignores `tailwind.config.ts`).
 - CI enforces this: `npm run lint:design-system` fails on a missing examples file,
-  registry entry or token, and `tests-components/design-system-examples.test.tsx`
-  mounts every example.
+  registry entry, token or animation, and `tests-components/design-system-examples.test.tsx`
+  mounts every example and motion demo.
 
 ## List pages (Files, Transactions, Partners)
 

@@ -36,9 +36,10 @@ export async function markFileNotInvoice(
   db: Firestore,
   fileId: string,
   userId: string,
-  reason?: string
+  reason?: string,
+  actor: "manual" | "ai" = "manual"
 ): Promise<void> {
-  const outcome = await applyFactChange(db, { fileId, userId, change: { origin: "not-invoice", reason } });
+  const outcome = await applyFactChange(db, { fileId, userId, change: { origin: "not-invoice", reason }, actor });
   if (outcome.refused) throw new Error(outcome.message);
 }
 

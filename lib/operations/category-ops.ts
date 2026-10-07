@@ -328,7 +328,8 @@ export async function removeCategoryFromTransaction(
   // Check if transaction has files (if so, it's still complete)
   const hasFiles = txData.fileIds && txData.fileIds.length > 0;
 
-  // Clear category fields
+  // Clear category fields, and say so in the activity log (#752)
+  const categoryName = (await getUserCategory(ctx, categoryId))?.name ?? categoryId;
   batch.update(txDoc, {
     noReceiptCategoryId: null,
     noReceiptCategoryTemplateId: null,
@@ -338,6 +339,15 @@ export async function removeCategoryFromTransaction(
     // Only mark incomplete if no files attached
     isComplete: hasFiles,
     updatedAt: Timestamp.now(),
+    automationHistory: arrayUnion({
+      type: "category_removed",
+      actor: "manual",
+      level: "decision",
+      status: "completed",
+      ranAt: Timestamp.now(),
+      categoryName,
+      summary: `Category "${categoryName}" removed`,
+    }),
   });
 
   // Decrement category transaction count

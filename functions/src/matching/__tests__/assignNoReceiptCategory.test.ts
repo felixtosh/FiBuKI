@@ -152,6 +152,21 @@ describe("assignNoReceiptCategoryToTransaction (#164 shared writer)", () => {
     expect(category?.transactionCount).toBe(1);
   });
 
+  it("confirming the category a transaction already has makes it manual without counting it twice", async () => {
+    seedTransaction("tx-c", { partnerId: null, noReceiptCategoryId: "cat-c", noReceiptCategoryMatchedBy: "auto" });
+    seedCategory("cat-c");
+
+    const db = createMockFirestore();
+    await assignNoReceiptCategoryToTransaction(db as any, userId, {
+      transactionId: "tx-c",
+      categoryId: "cat-c",
+      matchedBy: "manual",
+    });
+
+    expect(store.getDoc("transactions", "tx-c")?.noReceiptCategoryMatchedBy).toBe("manual");
+    expect(store.getDoc("noReceiptCategories", "cat-c")?.transactionCount).toBe(0);
+  });
+
   it("assigns cleanly and adds nothing to matchedPartnerIds when the transaction has no partner", async () => {
     seedTransaction("tx-2", { partnerId: null });
     seedCategory("cat-2");
@@ -297,9 +312,13 @@ describe("web callable and MCP tool handler write identical state from one fixtu
     expect(store.getDoc("transactions", "tx-web")?.noReceiptCategoryId).toBe("cat-web");
     expect(store.getDoc("transactions", "tx-mcp")?.noReceiptCategoryId).toBe("cat-mcp");
 
-    const webTx = normalize(store.getDoc("transactions", "tx-web"));
-    const mcpTx = normalize(store.getDoc("transactions", "tx-mcp"));
+    // The activity log names who assigned it (#752): the web is the User, the
+    // tool surface is AI. Everything else must be identical.
+    const { automationHistory: webLog, ...webTx } = normalize(store.getDoc("transactions", "tx-web")) as Record<string, unknown>;
+    const { automationHistory: mcpLog, ...mcpTx } = normalize(store.getDoc("transactions", "tx-mcp")) as Record<string, unknown>;
     expect(mcpTx).toEqual(webTx);
+    expect(JSON.stringify(webLog)).toContain('"actor":"manual"');
+    expect(JSON.stringify(mcpLog)).toContain('"actor":"ai"');
 
     const webCategory = normalize(store.getDoc("noReceiptCategories", "cat-web"));
     const mcpCategory = normalize(store.getDoc("noReceiptCategories", "cat-mcp"));

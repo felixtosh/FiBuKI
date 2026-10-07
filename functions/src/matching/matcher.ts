@@ -197,10 +197,8 @@ function fileDateOf(fileData: Data): Date | null {
 
 /**
  * What the window reaches to (#614): the later of the File's Due Date and
- * Debit Date, read through the scorer's own readers (typed field first, a
- * legacy keyless row second), so a File extracted before the typed fields
- * stretches without re-extraction. A printed payment term is a period, not a
- * date, and those readers never return one.
+ * Debit Date, the stored dates as the scorer reads them (#641). A printed
+ * payment term is a period, not a date, and is never stored as one.
  *
  * With a File date, each of the two dates is checked on its own: one more
  * than 90 days after the File date is a misread (a wrong year would open a
@@ -319,7 +317,7 @@ export function anchorChangesWindow(fileData: Data): boolean {
 
 /**
  * The dates matching reads off a File, as calendar days: its date, Due Date
- * and Debit Date, read as the scorer reads them (a legacy row included). Two
+ * and Debit Date, read as the scorer reads them (the stored dates). Two
  * versions of a File with different keys are matched differently, so a hand
  * edit that changes the key re-scores the File's suggestions (#614).
  */

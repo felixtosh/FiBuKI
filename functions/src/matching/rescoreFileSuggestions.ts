@@ -23,6 +23,8 @@
 
 import { Timestamp } from "firebase-admin/firestore";
 import { storedSuggestionsOf, transactionsForFile } from "./matcher";
+import { transactionSuggestionsActivity } from "./suggestionActivity";
+import { logActivity } from "../utils/activity";
 
 export interface RescoreFileSuggestionsResult {
   rescored: boolean;
@@ -58,10 +60,12 @@ export async function rescoreFileSuggestions(
   if (result.ineligible) return { rescored: false, skipped: "ineligible" };
 
   const suggestions = storedSuggestionsOf(result.matches);
+  const logged = transactionSuggestionsActivity(data.transactionSuggestions, suggestions, "rescoring after an edit");
   await ref.update({
     transactionSuggestions: suggestions,
     transactionMatchedAt: Timestamp.now(),
     updatedAt: Timestamp.now(),
+    ...(logged ? logActivity(logged) : {}),
   });
 
   return { rescored: true, suggestionCount: suggestions.length };

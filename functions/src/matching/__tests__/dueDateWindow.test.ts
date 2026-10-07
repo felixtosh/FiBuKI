@@ -20,7 +20,6 @@ import {
   TransactionData,
 } from "../transactionScoring";
 import { dueDateFromAdditionalFields, parseIsoDueDate } from "../dueDate";
-import { toDateSafe } from "../../utils/toDateSafe";
 
 function d(dateStr: string): Date {
   return new Date(dateStr);
@@ -123,14 +122,12 @@ describe("dueDateFromAdditionalFields", () => {
 });
 
 describe("toFileMatchingData: extractedDueDate", () => {
-  it("backfills a legacy record from the 'Due Date' row, without re-extraction", () => {
+  it("reads the stored date only: a record without it states none, whatever its rows say (#641)", () => {
     const data = toFileMatchingData({
       extractedDate: ts(ISSUE),
       extractedAdditionalFields: [{ label: "Due Date", value: DUE, rawValue: "20.01.2026" }],
     });
-    const due = toDateSafe(data.extractedDueDate);
-    expect(due).toBeDefined();
-    expect([due!.getUTCFullYear(), due!.getUTCMonth(), due!.getUTCDate()]).toEqual([2026, 0, 20]);
+    expect(data.extractedDueDate).toBeNull();
   });
 
   it("prefers the typed field, and a typed null means extraction found none", () => {

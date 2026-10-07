@@ -3,10 +3,9 @@
  *
  * Extraction already transcribes it, but into the untyped additional-fields
  * bag, where the Match cannot reach it. This is the one reader of that bag for
- * the purpose: extraction calls it to write the typed `extractedDueDate`, the
- * detail editor calls it when a person edits the rows, and the scorer calls
- * it on a record written before the typed field existed, which is what
- * backfills every legacy File without re-extraction.
+ * the purpose. The File facts module calls it to store the typed
+ * `extractedDueDate` (on an Extraction, a Hand Correction and the one-time
+ * backfill, #641); the scorer reads the stored date, never the rows.
  *
  * Deliberately narrow. It accepts the extraction vocabulary's `dueDate` key
  * (#252) and, on a keyless legacy row, the printed synonyms of the

@@ -54,7 +54,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn, toDateSafe } from "@/lib/utils";
-import { isRecentlyUpdated, MOTION } from "@/design-system";
+import { PlayOnChange } from "@/components/ui/play-on-change";
 
 export interface FileAmountData {
   totalAmount: number;
@@ -209,183 +209,192 @@ export function getTransactionColumns(
     {
       id: "assignedPartner",
       header: "Partner",
-      cell: ({ row }) => {
-        const { partnerId, partnerType, partnerMatchConfidence } = row.original;
+      // Animates only when the Partner changes on screen, not when the row appears (PlayOnChange).
+      cell: ({ row }) => (
+        <PlayOnChange value={row.original.partnerId || resolveSuggestions(row.original)[0]?.partnerId || null}>
+          {(changed) => {
+            const { partnerId, partnerType, partnerMatchConfidence } = row.original;
 
-        // The top suggestion as the detail panel sees it: same filtering, same
-        // order (lib/partners/partner-suggestions.ts). Reading them differently
-        // made a row show a suggestion the panel did not, and opening it then
-        // re-ran matching and rewrote the row.
-        const top = resolveSuggestions(row.original)[0];
-        const topSuggestionId: string | null = top?.partnerId ?? null;
-        const topSuggestionType: "global" | "user" | null = top?.partnerType ?? null;
-        const topSuggestionConfidence: number | null = top?.confidence ?? null;
+            // The top suggestion as the detail panel sees it: same filtering, same
+            // order (lib/partners/partner-suggestions.ts). Reading them differently
+            // made a row show a suggestion the panel did not, and opening it then
+            // re-ran matching and rewrote the row.
+            const top = resolveSuggestions(row.original)[0];
+            const topSuggestionId: string | null = top?.partnerId ?? null;
+            const topSuggestionType: "global" | "user" | null = top?.partnerType ?? null;
+            const topSuggestionConfidence: number | null = top?.confidence ?? null;
 
-        // Determine what to display: assigned partner wins, else top suggestion
-        const isAssigned = !!partnerId;
-        const displayId = partnerId || topSuggestionId;
-        const displayType = isAssigned ? partnerType : topSuggestionType;
+            // Determine what to display: assigned partner wins, else top suggestion
+            const isAssigned = !!partnerId;
+            const displayId = partnerId || topSuggestionId;
+            const displayType = isAssigned ? partnerType : topSuggestionType;
 
-        if (!displayId) {
-          return <span className="text-sm text-muted-foreground">—</span>;
-        }
+            if (!displayId) {
+              return <span className="text-sm text-muted-foreground">—</span>;
+            }
 
-        const partner = displayType === "global"
-          ? globalPartnerMap.get(displayId)
-          : userPartnerMap.get(displayId);
+            const partner = displayType === "global"
+              ? globalPartnerMap.get(displayId)
+              : userPartnerMap.get(displayId);
 
-        if (!partner) {
-          return <span className="text-sm text-muted-foreground">—</span>;
-        }
+            if (!partner) {
+              return <span className="text-sm text-muted-foreground">—</span>;
+            }
 
-        const isSuggestion = !isAssigned;
-        const recent = isRecentlyUpdated(row.original.updatedAt, MOTION.JUST_COMPLETED_THRESHOLD_MS);
-        // Pop-in only when genuinely new: recently assigned AND different from what was showing
-        const isNewPartner = isAssigned && recent && displayId !== topSuggestionId;
+            const isSuggestion = !isAssigned;
+            // Pop-in only for an assigned Partner; a suggestion just appears.
+            const isNewPartner = isAssigned && changed;
 
-        return (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <PartnerPill
-                key={displayId}
-                name={partner.name}
-                variant={isSuggestion ? "suggestion" : "default"}
-                confidence={isAssigned ? (partnerMatchConfidence ?? undefined) : (topSuggestionConfidence ?? undefined)}
-                matchedBy={isAssigned ? row.original.partnerMatchedBy : undefined}
-                animate={isNewPartner}
-              />
-            </TooltipTrigger>
-            {isSuggestion && (
-              <TooltipContent>
-                <p className="text-xs">Click row to confirm</p>
-              </TooltipContent>
-            )}
-          </Tooltip>
-        );
-      },
+            return (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <PartnerPill
+                    key={displayId}
+                    name={partner.name}
+                    variant={isSuggestion ? "suggestion" : "default"}
+                    confidence={isAssigned ? (partnerMatchConfidence ?? undefined) : (topSuggestionConfidence ?? undefined)}
+                    matchedBy={isAssigned ? row.original.partnerMatchedBy : undefined}
+                    animate={isNewPartner}
+                  />
+                </TooltipTrigger>
+                {isSuggestion && (
+                  <TooltipContent>
+                    <p className="text-xs">Click row to confirm</p>
+                  </TooltipContent>
+                )}
+              </Tooltip>
+            );
+          }}
+        </PlayOnChange>
+      ),
     },
     {
       id: "file",
       header: "File",
-      cell: ({ row }) => {
-        const fileCount = row.original.fileIds?.length || 0;
-        const hasFile = fileCount > 0;
-        const categoryTemplateId = row.original.noReceiptCategoryTemplateId;
-        const hasNoReceiptCategory = !!categoryTemplateId;
-        const txId = row.original.id;
-        const isSearching = searchingTransactionIds?.has(txId);
+      // The check and the category pill pop only when a File or category changes on screen.
+      cell: ({ row }) => (
+        <PlayOnChange value={`${row.original.fileIds?.length || 0}:${row.original.noReceiptCategoryTemplateId ?? ""}`}>
+          {(changed) => {
+            const fileCount = row.original.fileIds?.length || 0;
+            const hasFile = fileCount > 0;
+            const categoryTemplateId = row.original.noReceiptCategoryTemplateId;
+            const hasNoReceiptCategory = !!categoryTemplateId;
+            const txId = row.original.id;
+            const isSearching = searchingTransactionIds?.has(txId);
 
-        // A charge of a recurring partner that is missing what its recurrence
-        // expects. Computed here rather than in each branch below because the
-        // marker outlives a pending suggestion: a suggestion is a proposal to
-        // cover the charge, not the cover itself.
-        const missingBand = findMissingChargeCycle(
-          row.original,
-          row.original.partnerId ? userPartnerMap.get(row.original.partnerId) : undefined
-        );
+            // A charge of a recurring partner that is missing what its recurrence
+            // expects. Computed here rather than in each branch below because the
+            // marker outlives a pending suggestion: a suggestion is a proposal to
+            // cover the charge, not the cover itself.
+            const missingBand = findMissingChargeCycle(
+              row.original,
+              row.original.partnerId ? userPartnerMap.get(row.original.partnerId) : undefined
+            );
 
-        // Show loading spinner when precision search is in progress
-        if (isSearching && !hasFile) {
-          return (
-            <div className="flex items-center gap-1.5 text-muted-foreground">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              <span className="text-xs">Searching...</span>
-            </div>
-          );
-        }
+            // Show loading spinner when precision search is in progress
+            if (isSearching && !hasFile) {
+              return (
+                <div className="flex items-center gap-1.5 text-muted-foreground">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <span className="text-xs">Searching...</span>
+                </div>
+              );
+            }
 
-        if (hasFile) {
-          const fileData = fileAmountsMap?.get(txId);
-          // Use transaction/payment date for currency conversion
-          const txDate = toDateSafe(row.original.date) ?? undefined;
-          // A payment confirmation is not a § 11 invoice: the row is green
-          // but earns no Vorsteuer. The pill says so itself, so the cell stays
-          // one pill. An accepted receipt (#165) is a ruling that nothing
-          // better will come, so it stops warning.
-          const receiptOnly =
-            row.original.documentationState === "receipt-only" &&
-            !isAcceptanceLive(row.original);
-          return (
-            <div className="flex items-center gap-1.5 min-w-0">
-              <AmountMatchDisplay
-                count={fileCount}
-                countType="file"
-                primaryAmount={row.original.amount}
-                primaryCurrency={row.original.currency || "EUR"}
-                // #112: lets the pill compare in the document's currency when
-                // the bank stated what it charged before settling, instead of
-                // converting.
-                primaryOriginal={readBankOriginalAmount(row.original._original?.rawRow)}
-                secondaryAmounts={fileData?.amounts || []}
-                conversionDate={txDate}
-                isExtracting={fileData?.hasExtractingFiles}
-                warning={receiptOnly ? labels.receiptOnlyWarning : undefined}
-              />
-            </div>
-          );
-        }
-
-        if (hasNoReceiptCategory) {
-          const template = getCategoryTemplate(categoryTemplateId);
-          const label = template?.name || "No receipt";
-          const categoryConfidence = row.original.noReceiptCategoryConfidence;
-          const categoryMatchedBy = row.original.noReceiptCategoryMatchedBy;
-          const recent = isRecentlyUpdated(row.original.updatedAt, MOTION.JUST_COMPLETED_THRESHOLD_MS);
-          return (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <div>
-                  <Pill
-                    label={label}
-                    icon={Tag}
-                    confidence={categoryConfidence ?? undefined}
-                    matchedBy={categoryMatchedBy}
-                    animate={recent}
+            if (hasFile) {
+              const fileData = fileAmountsMap?.get(txId);
+              // Use transaction/payment date for currency conversion
+              const txDate = toDateSafe(row.original.date) ?? undefined;
+              // A payment confirmation is not a § 11 invoice: the row is green
+              // but earns no Vorsteuer. The pill says so itself, so the cell stays
+              // one pill. An accepted receipt (#165) is a ruling that nothing
+              // better will come, so it stops warning.
+              const receiptOnly =
+                row.original.documentationState === "receipt-only" &&
+                !isAcceptanceLive(row.original);
+              return (
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <AmountMatchDisplay
+                    count={fileCount}
+                    countType="file"
+                    primaryAmount={row.original.amount}
+                    primaryCurrency={row.original.currency || "EUR"}
+                    // #112: lets the pill compare in the document's currency when
+                    // the bank stated what it charged before settling, instead of
+                    // converting.
+                    primaryOriginal={readBankOriginalAmount(row.original._original?.rawRow)}
+                    secondaryAmounts={fileData?.amounts || []}
+                    conversionDate={txDate}
+                    isExtracting={fileData?.hasExtractingFiles}
+                    warning={receiptOnly ? labels.receiptOnlyWarning : undefined}
+                    animateCheck={changed}
                   />
                 </div>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p className="text-xs">{template?.helperText || "No receipt required"}</p>
-              </TooltipContent>
-            </Tooltip>
-          );
-        }
+              );
+            }
 
-        // Check for category suggestion
-        const catSuggestion = categorySuggestions?.get(txId);
-        if (catSuggestion) {
-          const category = categoryMap.get(catSuggestion.categoryId);
-          const label = category?.name || "Category";
-          return (
-            <div className="flex items-center gap-1.5 min-w-0">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div>
-                    <Pill
-                      label={label}
-                      icon={Tag}
-                      variant="suggestion"
-                      confidence={catSuggestion.confidence}
-                    />
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p className="text-xs">Click row to assign</p>
-                </TooltipContent>
-              </Tooltip>
-              {missingBand && <RecurringChargeMarker band={missingBand} />}
-            </div>
-          );
-        }
+            if (hasNoReceiptCategory) {
+              const template = getCategoryTemplate(categoryTemplateId);
+              const label = template?.name || "No receipt";
+              const categoryConfidence = row.original.noReceiptCategoryConfidence;
+              const categoryMatchedBy = row.original.noReceiptCategoryMatchedBy;
+              return (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div>
+                      <Pill
+                        label={label}
+                        icon={Tag}
+                        confidence={categoryConfidence ?? undefined}
+                        matchedBy={categoryMatchedBy}
+                        animate={changed}
+                      />
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p className="text-xs">{template?.helperText || "No receipt required"}</p>
+                  </TooltipContent>
+                </Tooltip>
+              );
+            }
 
-        if (missingBand) {
-          return <RecurringChargeMarker band={missingBand} />;
-        }
+            // Check for category suggestion
+            const catSuggestion = categorySuggestions?.get(txId);
+            if (catSuggestion) {
+              const category = categoryMap.get(catSuggestion.categoryId);
+              const label = category?.name || "Category";
+              return (
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div>
+                        <Pill
+                          label={label}
+                          icon={Tag}
+                          variant="suggestion"
+                          confidence={catSuggestion.confidence}
+                        />
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p className="text-xs">Click row to assign</p>
+                    </TooltipContent>
+                  </Tooltip>
+                  {missingBand && <RecurringChargeMarker band={missingBand} />}
+                </div>
+              );
+            }
 
-        return (
-          <span className="text-sm text-muted-foreground">—</span>
-        );
-      },
+            if (missingBand) {
+              return <RecurringChargeMarker band={missingBand} />;
+            }
+
+            return (
+              <span className="text-sm text-muted-foreground">—</span>
+            );
+          }}
+        </PlayOnChange>
+      ),
     },
     /*
       The `documentation` column lived here. It existed because a receipt-only

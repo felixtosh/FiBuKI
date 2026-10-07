@@ -120,7 +120,7 @@ export function DetailPanelLayout({
       <div
         {...mainProps}
         data-slot="detail-panel-main"
-        className={cn(mainClassName, "transition-[margin] duration-200 ease-in-out")}
+        className={cn(mainClassName, "transition-[margin] duration-200 ease-slide")}
         style={{ ...mainProps?.style, marginRight: open ? width : 0 }}
       >
         {children}

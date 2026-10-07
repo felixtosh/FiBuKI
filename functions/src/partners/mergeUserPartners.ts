@@ -107,6 +107,7 @@ import {
   PartnerData,
   TransactionData,
 } from "../utils/partner-matcher";
+import { activityEntry, logActivity, type ActivityActor } from "../utils/activity";
 
 const PARTNERS = "partners";
 const TRANSACTIONS = "transactions";
@@ -915,7 +916,9 @@ function findVatIdConflicts(
 export async function mergeUserPartnersInternal(
   db: FirebaseFirestore.Firestore,
   userId: string,
-  request: MergeUserPartnersRequest
+  request: MergeUserPartnersRequest,
+  /** Who merges, for the activity log (#752); the tool surface passes `ai`. */
+  actor: ActivityActor = "manual"
 ): Promise<MergeUserPartnersResponse> {
   const survivorId = text(request?.survivorId).trim();
   if (!survivorId) {
@@ -1054,11 +1057,22 @@ export async function mergeUserPartnersInternal(
   const alongsidePointer = { partnerType: "user", updatedAt: now };
 
   for (const loser of loserDocs) {
+    // The log (#752) on every Transaction and File that moves.
+    const merged = {
+      ...alongsidePointer,
+      ...logActivity(activityEntry({
+        type: "partner_assigned",
+        actor,
+        forPartnerId: survivorId,
+        partnerName: text(survivorDoc.name) || null,
+        summary: `Partner "${text((loser as Doc).name) || loser.id}" merged into "${text(survivorDoc.name) || survivorId}"`,
+      }, now)),
+    };
     repointed.transactions += await repointByPartnerId(
-      db, TRANSACTIONS, userId, loser.id, survivorId, alongsidePointer
+      db, TRANSACTIONS, userId, loser.id, survivorId, merged
     );
     repointed.files += await repointByPartnerId(
-      db, FILES, userId, loser.id, survivorId, alongsidePointer
+      db, FILES, userId, loser.id, survivorId, merged
     );
     repointed.invoices += await repointInvoices(db, userId, loser.id, survivorId, now);
     repointed.invoiceFetchQueue += await repointByPartnerId(

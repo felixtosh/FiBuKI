@@ -1,8 +1,11 @@
 /**
- * Every components/ui example file, in one list. The design-system page and
- * tests-components/design-system-examples.test.tsx both read it, and
+ * Every components/ui example file, grouped and ordered for the
+ * design-system page: brand first, then the components used most, then the
+ * specialised ones. Inside a group, the most used come first.
+ *
  * scripts/check-design-system.mjs fails when a component has no examples file
- * or its examples file is missing here.
+ * or its examples file is not imported here; lint fails when one is imported
+ * but not placed in a group.
  */
 
 import type { ComponentDoc } from "@/lib/design-system/types";
@@ -16,6 +19,7 @@ import cardDoc from "@/components/ui/card.examples";
 import checkboxDoc from "@/components/ui/checkbox.examples";
 import choiceFilterDoc from "@/components/ui/choice-filter.examples";
 import collapsibleDoc from "@/components/ui/collapsible.examples";
+import confirmMarkDoc from "@/components/ui/confirm-mark.examples";
 import connectButtonDoc from "@/components/ui/connect-button.examples";
 import connectResultRowDoc from "@/components/ui/connect-result-row.examples";
 import contentOverlayDoc from "@/components/ui/content-overlay.examples";
@@ -31,6 +35,7 @@ import inputDoc from "@/components/ui/input.examples";
 import labelDoc from "@/components/ui/label.examples";
 import overflowFilterRowDoc from "@/components/ui/overflow-filter-row.examples";
 import pillDoc from "@/components/ui/pill.examples";
+import playOnChangeDoc from "@/components/ui/play-on-change.examples";
 import popoverDoc from "@/components/ui/popover.examples";
 import progressCounterDoc from "@/components/ui/progress-counter.examples";
 import progressDoc from "@/components/ui/progress.examples";
@@ -48,52 +53,77 @@ import switchDoc from "@/components/ui/switch.examples";
 import tableEmptyStateDoc from "@/components/ui/table-empty-state.examples";
 import tableDoc from "@/components/ui/table.examples";
 import tabsDoc from "@/components/ui/tabs.examples";
-import telegramLogoDoc from "@/components/ui/telegram-logo.examples";
+import telegramIconDoc from "@/components/ui/telegram-icon.examples";
 import tooltipDoc from "@/components/ui/tooltip.examples";
 
-export const componentDocs: ComponentDoc[] = [
-  alertDialogDoc,
-  alertDoc,
-  amountMatchDisplayDoc,
-  badgeDoc,
-  buttonDoc,
-  calendarDoc,
-  cardDoc,
-  checkboxDoc,
-  choiceFilterDoc,
-  collapsibleDoc,
-  connectButtonDoc,
-  connectResultRowDoc,
-  contentOverlayDoc,
-  dataTableDoc,
-  dateRangeFilterDoc,
-  detailPanelLayoutDoc,
-  detailPanelPrimitivesDoc,
-  dialogDoc,
-  dropdownMenuDoc,
-  fibukiMascotDoc,
-  infoPopoverDoc,
-  inputDoc,
-  labelDoc,
-  overflowFilterRowDoc,
-  pillDoc,
-  popoverDoc,
-  progressCounterDoc,
-  progressDoc,
-  scrollAreaDoc,
-  searchButtonDoc,
-  searchInputDoc,
-  selectDoc,
-  separatorDoc,
-  settingsPageHeaderDoc,
-  sheetDoc,
-  showMoreButtonDoc,
-  skeletonDoc,
-  summaryToastDoc,
-  switchDoc,
-  tableEmptyStateDoc,
-  tableDoc,
-  tabsDoc,
-  telegramLogoDoc,
-  tooltipDoc,
+export interface ComponentGroup {
+  id: string;
+  title: string;
+  intro: string;
+  docs: ComponentDoc[];
+}
+
+export const componentGroups: ComponentGroup[] = [
+  {
+    id: "brand",
+    title: "Brand",
+    intro: "The mascot.",
+    docs: [fibukiMascotDoc],
+  },
+  {
+    id: "actions",
+    title: "Actions and labels",
+    intro: "What you click and what labels things. The most used components in the app.",
+    docs: [buttonDoc, badgeDoc, pillDoc, dropdownMenuDoc],
+  },
+  {
+    id: "forms",
+    title: "Forms",
+    intro: "Fields and choices.",
+    docs: [inputDoc, labelDoc, selectDoc, checkboxDoc, switchDoc, searchInputDoc, calendarDoc],
+  },
+  {
+    id: "layout",
+    title: "Layout",
+    intro: "Boxes, dividers and sections that hold content.",
+    docs: [cardDoc, scrollAreaDoc, settingsPageHeaderDoc, separatorDoc, tabsDoc, collapsibleDoc],
+  },
+  {
+    id: "feedback",
+    title: "Feedback",
+    intro: "Telling the user what happened or what is loading.",
+    docs: [alertDoc, skeletonDoc, progressDoc, tableEmptyStateDoc, summaryToastDoc, playOnChangeDoc],
+  },
+  {
+    id: "overlays",
+    title: "Overlays",
+    intro: "Things that open on top of the page.",
+    docs: [tooltipDoc, dialogDoc, popoverDoc, alertDialogDoc, sheetDoc, infoPopoverDoc],
+  },
+  {
+    id: "lists",
+    title: "List pages",
+    intro: "The parts every list page (Files, Transactions, Partners) is built from.",
+    docs: [dataTableDoc, tableDoc, searchButtonDoc, overflowFilterRowDoc, choiceFilterDoc, dateRangeFilterDoc, progressCounterDoc],
+  },
+  {
+    id: "detail",
+    title: "Detail panels",
+    intro: "The panel that opens on the right when a row is picked.",
+    docs: [detailPanelPrimitivesDoc, detailPanelLayoutDoc, showMoreButtonDoc],
+  },
+  {
+    id: "connect",
+    title: "Connecting Files and Transactions",
+    intro: "Specialised: the connect flow and its match display.",
+    docs: [amountMatchDisplayDoc, connectButtonDoc, connectResultRowDoc, confirmMarkDoc, contentOverlayDoc],
+  },
+  {
+    id: "icons",
+    title: "Icons",
+    intro: "Our own icons, drawn to sit next to lucide's: 24px grid, 2px stroke, currentColor.",
+    docs: [telegramIconDoc],
+  },
 ];
+
+export const componentDocs: ComponentDoc[] = componentGroups.flatMap((group) => group.docs);

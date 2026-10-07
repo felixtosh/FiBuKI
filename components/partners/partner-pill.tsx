@@ -1,7 +1,10 @@
 "use client";
 
-import { X, Building2, Globe, UserCheck, Sparkles } from "lucide-react";
+import { X, Building2, Globe, Sparkles } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
+import { ConfirmMark } from "@/components/ui/confirm-mark";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface PartnerPillProps {
   name: string;
@@ -9,6 +12,14 @@ interface PartnerPillProps {
   /** How the partner was matched - shows badge instead of confidence for manual/ai */
   matchedBy?: "manual" | "ai" | "auto" | "suggestion" | null;
   onRemove?: () => void;
+  /**
+   * Confirm an automatic or AI assignment: re-assign it as the User's own, so
+   * the matcher learns from it. Shows a check mark left of the X; a manual or
+   * accepted assignment shows the green user-check instead.
+   */
+  onConfirm?: () => void;
+  /** A confirm in flight. */
+  confirming?: boolean;
   onClick?: (e?: React.MouseEvent) => void;
   variant?: "default" | "suggestion";
   partnerType?: "user" | "global";
@@ -23,6 +34,8 @@ export function PartnerPill({
   confidence,
   matchedBy,
   onRemove,
+  onConfirm,
+  confirming,
   onClick,
   variant = "default",
   partnerType,
@@ -30,8 +43,10 @@ export function PartnerPill({
   animate,
   className
 }: PartnerPillProps) {
+  const t = useTranslations("common.confirmMatch");
   const isInteractive = onRemove || onClick;
   const isSuggestion = variant === "suggestion";
+  const isConfirmed = matchedBy === "manual" || matchedBy === "suggestion";
 
   const handleClick = (e: React.MouseEvent) => {
     if (disabled) return;
@@ -74,22 +89,34 @@ export function PartnerPill({
         )
       )}
       <span className="truncate">{name}</span>
-      {matchedBy === "manual" || matchedBy === "suggestion" ? (
-        <span className="inline-flex items-center gap-0.5 text-xs flex-shrink-0 ml-auto text-green-600" title={matchedBy === "manual" ? "Manually assigned" : "Accepted suggestion"}>
-          <UserCheck className="h-3 w-3" />
-        </span>
-      ) : matchedBy === "ai" ? (
-        <span className="inline-flex items-center gap-0.5 text-xs flex-shrink-0 ml-auto text-violet-500" title="AI assigned">
-          <Sparkles className="h-3 w-3" />
-        </span>
-      ) : confidence !== undefined && (
+      {matchedBy === "ai" && !isConfirmed ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="inline-flex items-center flex-shrink-0 ml-auto text-violet-500" aria-label={t("partnerAi")}>
+              <Sparkles className="h-3 w-3" />
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>{t("partnerAi")}</TooltipContent>
+        </Tooltip>
+      ) : !isConfirmed && confidence !== undefined ? (
         <span className={cn(
           "text-xs flex-shrink-0 ml-auto",
           isSuggestion ? "text-info-foreground/70" : "text-muted-foreground"
         )}>
           {Math.round(confidence)}%
         </span>
-      )}
+      ) : null}
+      {!isSuggestion && (isConfirmed || onConfirm || confirming) ? (
+        <ConfirmMark
+          confirmed={isConfirmed}
+          onConfirm={onConfirm}
+          pending={confirming}
+          disabled={disabled}
+          confirmedLabel={t("partnerConfirmed")}
+          confirmLabel={t("partnerConfirm")}
+          className={isConfirmed || (matchedBy !== "ai" && confidence === undefined) ? "ml-auto" : undefined}
+        />
+      ) : null}
       {onRemove && (
         <button
           type="button"

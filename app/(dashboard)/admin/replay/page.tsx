@@ -16,6 +16,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useAuth } from "@/components/auth";
 import { pushQuery } from "@/lib/navigation/query-url";
+import { BenchmarkVersionsCard } from "@/components/admin/benchmark-versions-card";
 
 type Verdict = "now_agrees" | "now_disagrees" | "contradicts" | "unverified";
 type Counts = Record<Verdict, number>;
@@ -165,6 +166,8 @@ export default function AdminReplayPage() {
         <p className="text-sm text-muted-foreground max-w-3xl">{t("intro")}</p>
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
         {!configured ? <p className="text-sm text-muted-foreground">{t("notConfigured")}</p> : null}
+
+        {selectedPr ? null : <BenchmarkVersionsCard />}
 
         <Card>
           <CardHeader>

@@ -1,13 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import type { ComponentDoc, DesignLayer } from "@/lib/design-system/types";
+import type { ComponentDoc } from "@/lib/design-system/types";
 import { cn } from "@/lib/utils";
-import { componentDocs } from "./registry";
-import { colorGroups, motionTokens } from "./tokens";
+import { motionGroups, type MotionEntry } from "./motion";
+import { componentGroups, type ComponentGroup } from "./registry";
+import { colorGroups } from "./tokens";
 
 /*
  * Every component below is the real one from components/ui, rendered by the
@@ -15,12 +18,6 @@ import { colorGroups, motionTokens } from "./tokens";
  * to change what it shows, change a `*.examples.tsx`. See
  * scripts/check-design-system.mjs for what CI enforces.
  */
-
-const LAYERS: { layer: DesignLayer; title: string; intro: string }[] = [
-  { layer: "primitive", title: "Primitives", intro: "Generic building blocks with no FiBuKI meaning." },
-  { layer: "pattern", title: "Patterns", intro: "FiBuKI building blocks made of primitives. Reuse these before writing a new one." },
-  { layer: "brand", title: "Brand", intro: "Logos and the mascot." },
-];
 
 const FOUNDATIONS = [
   { id: "colors", title: "Colors" },
@@ -46,16 +43,13 @@ export default function DesignSystemPage() {
   const [active, setActive] = useState("colors");
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const groups = useMemo(() => {
+  // Brand first, then the foundations, then the component groups in the
+  // registry's order (most used first).
+  const [brand, ...rest] = useMemo(() => {
     const q = query.trim().toLowerCase();
     const matches = (doc: ComponentDoc) =>
       !q || doc.title.toLowerCase().includes(q) || doc.purpose.toLowerCase().includes(q);
-    return LAYERS.map((group) => ({
-      ...group,
-      docs: componentDocs
-        .filter((doc) => doc.layer === group.layer && matches(doc))
-        .sort((a, b) => a.title.localeCompare(b.title)),
-    }));
+    return componentGroups.map((group) => ({ ...group, docs: group.docs.filter(matches) }));
   }, [query]);
 
   useEffect(() => {
@@ -69,7 +63,7 @@ export default function DesignSystemPage() {
     );
     root.querySelectorAll("[data-ds-section]").forEach((el) => observer.observe(el));
     return () => observer.disconnect();
-  }, [groups]);
+  }, [brand, rest]);
 
   const scrollTo = (id: string) => {
     const root = scrollRef.current;
@@ -103,19 +97,33 @@ export default function DesignSystemPage() {
             <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find a component" className="h-8" />
           </div>
           <div className="flex-1 overflow-y-auto p-3 space-y-4">
+            {brand.docs.length > 0 ? (
+              <NavGroup title={brand.title}>{brand.docs.map((doc) => navItem(slug(doc), doc.title))}</NavGroup>
+            ) : null}
             <NavGroup title="Foundations">{FOUNDATIONS.map((f) => navItem(f.id, f.title))}</NavGroup>
-            {groups.map((group) =>
+            {rest.map((group) =>
               group.docs.length > 0 ? (
-                <NavGroup key={group.layer} title={group.title}>
+                <NavGroup key={group.id} title={group.title}>
                   {group.docs.map((doc) => navItem(slug(doc), doc.title))}
                 </NavGroup>
               ) : null
             )}
           </div>
+          <div className="border-t p-3">
+            <Link
+              href="/design-system/motion-lab"
+              className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <Sparkles className="h-4 w-4" />
+              Motion lab
+            </Link>
+          </div>
         </nav>
 
         <div ref={scrollRef} className="flex-1 overflow-y-auto">
           <div className="max-w-5xl mx-auto px-4 py-8 md:p-8 space-y-16">
+            <GroupSection group={brand} first />
+
             <Section id="colors" title="Colors" intro="Theme tokens from app/globals.css. Use the Tailwind class (bg-primary, text-amount-negative), never a raw color.">
               {colorGroups.map((group) => (
                 <div key={group.title} className="space-y-3">
@@ -145,23 +153,28 @@ export default function DesignSystemPage() {
               </div>
             </Section>
 
-            <Section id="motion" title="Motion" intro="Duration and easing tokens from app/globals.css. Press play to compare them.">
-              <MotionPreview />
+            <Section id="motion" title="Motion" intro="Every animation the app actually runs, with its real classes and curve.">
+              <Button asChild size="sm" variant="outline">
+                <Link href="/design-system/motion-lab">Open the motion lab: tune how list rows arrive, change and leave</Link>
+              </Button>
+              {motionGroups.map((group) => (
+                <div key={group.title} className="space-y-3">
+                  <div>
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{group.title}</h3>
+                    <p className="text-sm text-muted-foreground">{group.intro}</p>
+                  </div>
+                  <div className="rounded-lg border divide-y">
+                    {group.entries.map((entry) => (
+                      <MotionRow key={entry.name} entry={entry} />
+                    ))}
+                  </div>
+                </div>
+              ))}
             </Section>
 
-            {groups.map((group) =>
-              group.docs.length > 0 ? (
-                <div key={group.layer} className="space-y-12">
-                  <div className="border-t pt-8">
-                    <h2 className="text-2xl font-bold">{group.title}</h2>
-                    <p className="text-sm text-muted-foreground mt-1">{group.intro}</p>
-                  </div>
-                  {group.docs.map((doc) => (
-                    <ComponentSection key={doc.title} doc={doc} />
-                  ))}
-                </div>
-              ) : null
-            )}
+            {rest.map((group) => (
+              <GroupSection key={group.id} group={group} />
+            ))}
           </div>
         </div>
       </div>
@@ -209,31 +222,34 @@ function ComponentSection({ doc }: { doc: ComponentDoc }) {
   );
 }
 
-function MotionPreview() {
-  const [moved, setMoved] = useState(false);
-  const durations = motionTokens.filter((m) => m.token.startsWith("--duration-"));
-  const easings = motionTokens.filter((m) => m.token.startsWith("--ease-"));
-  const track = (key: string, label: string, use: string, style: React.CSSProperties) => (
-    <div key={key} className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
-      <div className="sm:w-56 shrink-0">
-        <code className="text-[11px]">{label}</code>
-        <p className="text-[11px] text-muted-foreground">{use}</p>
+function GroupSection({ group, first = false }: { group: ComponentGroup; first?: boolean }) {
+  if (group.docs.length === 0) return null;
+  return (
+    <div className="space-y-12">
+      <div className={first ? undefined : "border-t pt-8"}>
+        <h2 className="text-2xl font-bold">{group.title}</h2>
+        <p className="text-sm text-muted-foreground mt-1">{group.intro}</p>
       </div>
-      <div className="relative h-8 flex-1 rounded-md bg-muted">
-        <div
-          className="absolute top-1 left-1 h-6 w-6 rounded bg-primary transition-transform"
-          style={{ ...style, transform: moved ? "translateX(calc(min(60vw, 32rem) - 2rem))" : "translateX(0)" }}
-        />
-      </div>
+      {group.docs.map((doc) => (
+        <ComponentSection key={doc.title} doc={doc} />
+      ))}
     </div>
   );
+}
+
+function MotionRow({ entry }: { entry: MotionEntry }) {
+  const { Demo } = entry;
   return (
-    <div className="space-y-3">
-      <Button size="sm" variant="outline" onClick={() => setMoved((m) => !m)}>
-        Play
-      </Button>
-      {durations.map((m) => track(m.token, m.token, m.use, { transitionDuration: `var(${m.token})`, transitionTimingFunction: "ease-out" }))}
-      {easings.map((m) => track(m.token, m.token, m.use, { transitionDuration: "700ms", transitionTimingFunction: `var(${m.token})` }))}
+    <div className="grid gap-3 p-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)] md:items-center">
+      <div className="space-y-1 min-w-0">
+        <p className="text-sm font-medium">{entry.name}</p>
+        <p className="text-xs text-muted-foreground">{entry.used}</p>
+        <p className="text-xs">{entry.timing}</p>
+        <code className="block text-[11px] text-muted-foreground break-words">{entry.code}</code>
+      </div>
+      <div className="min-w-0">
+        <Demo />
+      </div>
     </div>
   );
 }

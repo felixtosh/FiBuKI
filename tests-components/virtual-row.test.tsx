@@ -91,6 +91,7 @@ interface HarnessProps {
   className?: string;
   dataAttributes?: Record<string, string>;
   rowStateKey?: string | number | boolean;
+  columns?: ColumnDef<TestRow, unknown>[];
 }
 
 /**
@@ -104,9 +105,10 @@ interface HarnessProps {
  * follows the HTML parser's table rules, so a bare <tr> would be dropped.
  */
 function Harness(props: HarnessProps) {
+  const columns = props.columns ?? COLUMNS;
   const table = useReactTable({
     data: DATA,
-    columns: COLUMNS,
+    columns,
     getCoreRowModel: getCoreRowModel(),
   });
   const row = table.getRowModel().rows[0];
@@ -125,6 +127,7 @@ function Harness(props: HarnessProps) {
           className={props.className}
           dataAttributes={props.dataAttributes}
           rowStateKey={props.rowStateKey}
+          columns={columns}
         />
       </tbody>
     </table>
@@ -300,5 +303,22 @@ describe("VirtualRow memo contract: props the comparator watches", () => {
     rerenderHarness({ className: "bg-green-50" });
 
     expect(renderCount()).toBe(2);
+  });
+});
+
+describe("VirtualRow memo contract: new columns reach the cells", () => {
+  it("re-renders when the column definitions change though the row object does not", () => {
+    // The page builds its columns over lookups it loads after the rows: the
+    // Partners, the Files. Same data, so TanStack hands over the same Row
+    // object; only the columns are new. Before the fix the row kept the empty
+    // lookups until something else (a click) re-rendered it.
+    const withLookup = (label: string): ColumnDef<TestRow, unknown>[] => [
+      { id: "partner", cell: () => <span data-testid="partner-cell">{label}</span> },
+    ];
+    const { getByTestId, rerenderHarness } = renderHarness({ columns: withLookup("—") });
+    expect(getByTestId("partner-cell").textContent).toBe("—");
+
+    rerenderHarness({ columns: withLookup("Autonomy, Inc.") });
+    expect(getByTestId("partner-cell").textContent).toBe("Autonomy, Inc.");
   });
 });

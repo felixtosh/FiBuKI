@@ -65,6 +65,17 @@ export interface ResizableDataTableProps<TData extends { id: string }> {
   minColumnWidth?: number;
   getRowClassName?: (row: TData, isSelected: boolean) => string;
   getRowDataAttributes?: (row: TData) => Record<string, string>;
+  /**
+   * The row is done (green). When it flips on screen, the row turns green (or
+   * back) as LIST_MOTION says. Leave it out for lists without a done state.
+   */
+  isRowComplete?: (row: TData) => boolean;
+  /**
+   * Rows arrive on the list's first load, turn green (or back) and glide
+   * (lib/motion, LIST_MOTION). On by default; the motion lab turns it off and
+   * runs the same engine with its own settings.
+   */
+  animateRows?: boolean;
   /** Get row-specific state key - changes to this value trigger row re-render (e.g., searching state) */
   getRowStateKey?: (row: TData) => string | number | boolean | undefined;
   estimateRowSize?: number;
@@ -117,4 +128,11 @@ export interface VirtualRowProps<TData extends { id: string }> {
   dataAttributes?: Record<string, string>;
   /** Row-specific state that should trigger re-render when changed (e.g., searching state) */
   rowStateKey?: string | number | boolean;
+  /**
+   * The table's column definitions. TanStack keeps a row object as long as the
+   * data does, even when the columns change, so the memo has to see the
+   * columns themselves: a cell that reads a lookup the page loads later (the
+   * Partners, the Files) only shows it if the row re-renders when they arrive.
+   */
+  columns?: unknown;
 }

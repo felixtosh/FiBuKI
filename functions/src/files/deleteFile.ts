@@ -11,6 +11,7 @@ import { Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { generatedInvoiceRefusal } from "./generatedInvoiceGuard";
 import { detachFile, type DetachedTransaction } from "../fileConnections/writer";
+import { activityEntry, logActivity } from "../utils/activity";
 
 interface DeleteFileRequest {
   fileId: string;
@@ -37,7 +38,9 @@ export async function performDeleteFile(
   db: FirebaseFirestore.Firestore,
   userId: string,
   fileId: string,
-  fileData: FirebaseFirestore.DocumentData
+  fileData: FirebaseFirestore.DocumentData,
+  /** Who deleted it and why, for the activity log (#752). Defaults to the User. */
+  how: { actor: "manual" | "auto" | "ai"; summary: string } = { actor: "manual", summary: "File deleted" }
 ): Promise<PerformDeleteFileResult> {
   // 1. Hide the file. The row stays — a Sync-sourced File needs it to
   // deduplicate against, and every File needs it to be restorable — and the
@@ -56,12 +59,13 @@ export async function performDeleteFile(
     deletedAt: now,
     updatedAt: now,
     ...(listedAttached ? { hadTransactionConnections: true } : {}),
+    ...logActivity(activityEntry({ type: "file_deleted", actor: how.actor, summary: how.summary }, now)),
   });
 
   // 2. Take the File off every Transaction, through the File Connection
   // writer (#612). A Partner the payee rule filled from it is derived again
   // from the Files that remain (#584).
-  const { removedConnections, detachedTransactions } = await detachFile(db, userId, fileId, fileData);
+  const { removedConnections, detachedTransactions } = await detachFile(db, userId, fileId, fileData, how);
   if (!listedAttached && detachedTransactions.length > 0) {
     // Attached by a record or a Transaction's list the File did not carry.
     await fileRef.update({ hadTransactionConnections: true });

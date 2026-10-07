@@ -29,6 +29,7 @@ import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { runExtraction } from "./extractionCore";
 import { buildRetryResetUpdates } from "./retryReset";
 import { reExtractionRefusal } from "../fileFacts/factChange";
+import { activityEntry, logActivity } from "../utils/activity";
 
 /** What became of one waiting Extraction. */
 export type QueuedExtractionOutcome = "extracted" | "failed" | "dropped" | "refused";
@@ -42,6 +43,7 @@ export async function recordExtractionFailure(fileId: string, message: string): 
     extractionComplete: true,
     extractionError: message,
     updatedAt: Timestamp.now(),
+    ...logActivity(activityEntry({ type: "extraction_failed", actor: "ai", status: "failed", summary: `Reading the document failed: ${message}` })),
   });
 }
 

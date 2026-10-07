@@ -2,8 +2,9 @@
 // Keeps /design-system in step with the code. Every component in components/ui/
 // has a `<name>.examples.tsx` next to it (a folder such as data-table/ has one
 // `<folder>.examples.tsx` for the whole folder), every examples file is listed
-// in the page's registry, and every theme token in app/globals.css is listed
-// in the page's tokens.
+// in the page's registry, every color token in app/globals.css is listed in
+// the page's tokens, and every easing token and `animate-*` class is in its
+// motion catalogue.
 //
 //   node scripts/check-design-system.mjs          check (CI)
 //   node scripts/check-design-system.mjs --list   print every component and its purpose
@@ -17,6 +18,7 @@ const ROOT = join(fileURLToPath(import.meta.url), "..", "..");
 const UI = "components/ui";
 const REGISTRY = "app/(dashboard)/design-system/registry.ts";
 const TOKENS = "app/(dashboard)/design-system/tokens.ts";
+const MOTION = "app/(dashboard)/design-system/motion.tsx";
 const GLOBALS = "app/globals.css";
 const LAYERS = ["primitive", "pattern", "brand"];
 
@@ -44,9 +46,16 @@ export function readDoc(source) {
   return { title: field("title"), purpose: field("purpose")?.replace(/\\"/g, '"'), layer: field("layer") };
 }
 
-/** globals.css @theme tokens the page has to show: colors, durations, easings. */
-export function themeTokens(css) {
-  return [...new Set(css.match(/--(?:color|duration|ease)-[a-z0-9-]+(?=\s*:)/g) ?? [])];
+/** globals.css color tokens, which the page's tokens list has to show. */
+export function colorTokens(css) {
+  return [...new Set(css.match(/--color-[a-z0-9-]+(?=\s*:)/g) ?? [])];
+}
+
+/** globals.css easing tokens and animate-* classes, which the motion catalogue has to show. */
+export function motionNames(css) {
+  const eases = css.match(/--(?:ease|duration)-[a-z0-9-]+(?=\s*:)/g) ?? [];
+  const classes = (css.match(/^\s*\.animate-[a-z0-9-]+(?=[\s,{])/gm) ?? []).map((c) => c.trim().slice(1));
+  return [...new Set([...eases, ...classes])];
 }
 
 export function problems() {
@@ -66,9 +75,16 @@ export function problems() {
       found.push(`${unit.examples} is not imported in ${REGISTRY}`);
     }
   }
-  const listed = read(TOKENS);
-  for (const token of themeTokens(read(GLOBALS))) {
-    if (!listed.includes(`"${token}"`)) found.push(`${GLOBALS} token ${token} is not listed in ${TOKENS}`);
+  const css = read(GLOBALS);
+  const colors = read(TOKENS);
+  for (const token of colorTokens(css)) {
+    if (!colors.includes(`"${token}"`)) found.push(`${GLOBALS} token ${token} is not listed in ${TOKENS}`);
+  }
+  const motion = read(MOTION);
+  for (const name of motionNames(css)) {
+    if (!motion.includes(name)) {
+      found.push(`${GLOBALS} defines ${name}, which ${MOTION} does not show (list it where it is used, or delete it if nothing uses it)`);
+    }
   }
   return found;
 }
@@ -90,7 +106,8 @@ function main() {
   for (const problem of found) console.error(`  ${problem}`);
   console.error(
     "\nEvery components/ui component gets a <name>.examples.tsx next to it (default export: ComponentDoc," +
-      "\nsee lib/design-system/types.ts), imported in the registry. A new theme token goes into tokens.ts."
+      "\nsee lib/design-system/types.ts), imported in the registry and placed in a group. A new color" +
+      "\ntoken goes into tokens.ts, a new easing or animate-* class into motion.tsx."
   );
   process.exit(1);
 }

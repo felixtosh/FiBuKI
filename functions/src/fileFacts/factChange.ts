@@ -19,7 +19,9 @@
  * a whole unless forced. The other writers are origins of their own (#640):
  * marking a File Not Invoice (`not-invoice`), the identity sweep
  * (`identity-sweep`), a generated invoice (`generated-invoice`) and the
- * entity-name backfill (`entity-name-backfill`).
+ * entity-name backfill (`entity-name-backfill`). The one-time date backfill
+ * (`date-backfill`, #641) stores the Due Date and Debit Date on every File
+ * that has no Hand Correction on them.
  *
  * Most writers go through the one applier (`applyFactChange.ts`). Two take
  * the module's decision and write it in a batch of their own, because the
@@ -51,6 +53,7 @@ import { dueDateFromAdditionalFields } from "../matching/dueDate";
 import { debitDateFromAdditionalFields } from "../matching/debitDate";
 import { toDateSafe } from "../utils/toDateSafe";
 import { checkTipBound } from "./tipBound";
+import { derivePaymentDates } from "./paymentDates";
 import {
   DESCRIPTIVE_FIELDS,
   ExtractionCorrectionError,
@@ -151,22 +154,32 @@ export interface EntityNameBackfillChange {
   at?: Timestamp;
 }
 
+/**
+ * The one-time backfill that stores every File's Due Date and Debit Date as
+ * the module derives them (#641), so the scorer reads stored dates only.
+ */
+export interface DateBackfillChange {
+  origin: "date-backfill";
+  at?: Timestamp;
+}
+
 export type FactChange =
   | HandCorrectionChange
   | ExtractionChange
   | NotInvoiceChange
   | IdentitySweepChange
   | GeneratedInvoiceChange
-  | EntityNameBackfillChange;
+  | EntityNameBackfillChange
+  | DateBackfillChange;
 
 /**
  * What the applier does after the write.
  *
  * - `sync-documentation-state`: the Document Type moved, so the stored
  *   Documentation State of each connected Transaction is re-derived (#104).
- * - `rescore-suggestions`: a Hand Correction moved a fact the scorer reads, so
- *   the File's suggestions are re-scored in the matcher's suggestions-only
- *   mode. Nothing is connected or disconnected (#637 user story 13).
+ * - `rescore-suggestions`: a Hand Correction (or the date backfill, #641)
+ *   moved a fact the scorer reads, so the File's suggestions are re-scored in
+ *   the matcher's suggestions-only mode. Nothing is connected or disconnected (#637 user story 13).
  */
 export type FollowUp =
   | { kind: "sync-documentation-state"; transactionIds: string[] }
@@ -284,6 +297,7 @@ export function decideFactChange(current: CurrentFile, change: FactChange): Fact
   if (change.origin === "identity-sweep") return decideIdentitySweep(current, change);
   if (change.origin === "generated-invoice") return decideGeneratedInvoice(change);
   if (change.origin === "entity-name-backfill") return decideEntityNames(current, change);
+  if (change.origin === "date-backfill") return decideDateBackfill(current, change);
   try {
     return decideHandCorrection(current, change);
   } catch (error) {
@@ -382,13 +396,7 @@ function decideHandCorrection(current: CurrentFile, change: HandCorrectionChange
   const rowsSent = details.additionalFields !== undefined;
   const after = { ...record, ...update };
   if (rowsSent || changed.includes("date")) {
-    const issueDate = toDateSafe(after.extractedDate);
-    update.extractedDueDate = asStoredDate(
-      dueDateFromAdditionalFields(after.extractedAdditionalFields, issueDate)
-    );
-    update.extractedDebitDate = asStoredDate(
-      debitDateFromAdditionalFields(after.extractedAdditionalFields, issueDate)
-    );
+    Object.assign(update, derivePaymentDates(after));
 
     // A person who changed the date a row states set that date by hand, so
     // the Hand Correction record names it and a later Extraction refuses the
@@ -555,6 +563,54 @@ function decideEntityNames(current: CurrentFile, change: EntityNameBackfillChang
   return stamped(current.record, update, change.origin, change.at ?? Timestamp.now());
 }
 
+/**
+ * The date backfill (#641): the Due Date and Debit Date as `derivePaymentDates`
+ * reads them off the File's rows and issue date, written only where they
+ * differ from what is stored (absent and null alike), so a second run writes
+ * nothing.
+ *
+ * Refused for a File whose Hand Correction record names the Due Date or the
+ * Debit Date: the User set that date, and the backfill does not touch it.
+ * A hand-corrected issue date, amount or anything else is no reason to skip:
+ * the derivation reads the issue date as the File holds it, the User's
+ * included, which is what a correction of it does too (#637 user story 1).
+ *
+ * A date that moved re-scores the File's suggestions, suggestions only: the
+ * window and the date score read it, and the stored suggestions were scored
+ * on the date as it was.
+ */
+function decideDateBackfill(current: CurrentFile, change: DateBackfillChange): FactOutcome {
+  const { record } = current;
+  const handSet = correctedFieldsOf(record).filter((field) => field === "dueDate" || field === "debitDate");
+  if (handSet.length > 0) {
+    return {
+      refused: true,
+      code: "HAND_CORRECTED",
+      fields: handSet,
+      message: `File carries a hand-set ${handSet.join(" and ")}; the date backfill leaves it as it is.`,
+    };
+  }
+
+  const update: Record<string, unknown> = {};
+  for (const [field, value] of Object.entries(derivePaymentDates(record))) {
+    if (!sameStored(value, record[field])) update[field] = value;
+  }
+  if (Object.keys(update).length === 0) {
+    return { refused: false, update, followUps: [], changed: [], movedDetails: [] };
+  }
+
+  const at = change.at ?? Timestamp.now();
+  update[LAST_FACT_CHANGE_FIELD] = { origin: change.origin, at };
+  update.updatedAt = at;
+  return {
+    refused: false,
+    update,
+    followUps: followUpsOf(record, update, true),
+    changed: [],
+    movedDetails: [],
+  };
+}
+
 /** Stamp a write that is neither a Hand Correction nor an Extraction, and derive its follow-ups. */
 function stamped(
   record: Record<string, unknown>,
@@ -593,7 +649,10 @@ export function generatedInvoiceFileFacts(
 // Follow-ups
 // ---------------------------------------------------------------------------
 
-/** `mayRescore`: a Hand Correction that moved something. An Extraction never re-scores here. */
+/**
+ * `mayRescore`: a Hand Correction that moved something, or the date backfill.
+ * An Extraction never re-scores here.
+ */
 function followUpsOf(
   record: Record<string, unknown>,
   update: Record<string, unknown>,
@@ -663,10 +722,6 @@ function onlyDescriptiveKeys(details: ExtractedDetails): ExtractedDetails {
     if (value !== undefined) clean[key] = value;
   }
   return clean as ExtractedDetails;
-}
-
-function asStoredDate(date: Date | null): Timestamp | null {
-  return date ? Timestamp.fromDate(date) : null;
 }
 
 /** Did the date the rows state move, the issue-date guard aside? */

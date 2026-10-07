@@ -52,6 +52,7 @@ import {
 import { FilePreview } from "./file-preview";
 import { FileExtractedInfo } from "./file-extracted-info";
 import { FileConnectionsList } from "./file-connections-list";
+import { ActivityHistory } from "@/components/activity/activity-history";
 import { FileCopySection, type CopyAct, type MarkCopyAct } from "./file-copy-section";
 import { FileCorrectionSection } from "./file-correction-section";
 import { FileReceiptLinkSection } from "./file-receipt-link-section";
@@ -301,6 +302,12 @@ function FileDetailPanelInner({
     },
     [onCreatePartner, handleAssignPartner]
   );
+
+  /** Confirm the automatic or AI Partner: the same Partner, now the User's own, so the matcher learns from it. */
+  const handleConfirmPartner = useCallback(async () => {
+    if (!file.partnerId || !file.partnerType) return;
+    await handleAssignPartner(file.partnerId, file.partnerType, "manual", file.partnerMatchConfidence ?? 100);
+  }, [file.partnerId, file.partnerType, file.partnerMatchConfidence, handleAssignPartner]);
 
   const handleSelectExistingPartner = useCallback(
     async (partnerId: string, partnerType: "user" | "global") => {
@@ -639,6 +646,8 @@ function FileDetailPanelInner({
                     partnerType={file.partnerType ?? undefined}
                     onClick={handleNavigateToPartner}
                     onRemove={handleRemovePartner}
+                    onConfirm={handleConfirmPartner}
+                    confirming={isAssigningPartner}
                   />
                 ) : (
                   <Button
@@ -721,6 +730,10 @@ function FileDetailPanelInner({
               isAiSearching={isWandActive}
             />
 
+            <Separator />
+
+            {/* Every change a person, the matcher or an AI made to this File (#752) */}
+            <ActivityHistory entries={file.automationHistory} />
           </div>
         </ScrollArea>
 

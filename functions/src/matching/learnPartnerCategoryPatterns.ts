@@ -6,6 +6,7 @@ import { MODELS } from "../utils/models";
 import { matchPatternFlexible } from "../utils/pattern-utils";
 import { matchCategoriesForTransactions } from "./matchCategories";
 import { learnPatterns, TxSample, CollisionTxSample } from "./patternEngine";
+import { activityEntry, logActivity } from "../utils/activity";
 
 const GEMINI_MODEL = MODELS.geminiLite;
 const VERTEX_LOCATION = process.env.VERTEX_LOCATION || "europe-west1";
@@ -112,6 +113,12 @@ async function cascadeUnassignTransactions(
       noReceiptCategoryConfidence: null,
       isComplete: false,
       updatedAt: FieldValue.serverTimestamp(),
+      ...logActivity(activityEntry({
+        type: "category_removed",
+        actor: "auto",
+        categoryName: (txDoc.data().noReceiptCategoryTemplateId as string | undefined) ?? null,
+        summary: "Automatic category removed: the learned rule no longer matches this Transaction",
+      })),
     });
     unassignedCount++;
   }

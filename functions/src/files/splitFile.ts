@@ -305,7 +305,7 @@ export async function performSplitFile(
     }
   }
 
-  await performDeleteFile(db, userId, fileId, fileData);
+  await performDeleteFile(db, userId, fileId, fileData, { actor: "manual", summary: "Split into its parts" });
   await fileRef.update({
     splitInto: parts.map((p) => p.fileId),
     splitSuggestion: null,

@@ -10,6 +10,7 @@ import {
   CategoryMatchRule,
   CategoryMatchOptions,
 } from "../utils/category-matcher";
+import { categoryMatchActivity } from "./categoryActivity";
 
 const db = getFirestore();
 
@@ -292,6 +293,8 @@ export async function matchCategoriesForUser(
         withSuggestions++;
       }
 
+      const logged = categoryMatchActivity(txDoc.data() ?? {}, updates, categories, "category matching");
+      if (logged) updates.automationHistory = FieldValue.arrayUnion(logged);
       batch.update(txDoc.ref, updates);
       batchCount++;
 

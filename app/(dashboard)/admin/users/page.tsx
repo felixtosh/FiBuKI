@@ -100,6 +100,7 @@ interface UserInfo {
   stripeSubscriptionStatus: string;
   transactionCount: number;
   createdAt: string | null;
+  benchmark?: { inBenchmark: boolean; contractNote: string | null; mayDownload: boolean };
 }
 
 export default function AdminUsersPage() {
@@ -655,6 +656,9 @@ export default function AdminUsersPage() {
                 onDeleteUser={handleDeleteUser}
                 onImpersonate={handleImpersonate}
                 onBulkRescan={handleBulkRescan}
+                onBenchmarkChanged={(uid, benchmark) =>
+                  setAllUsers((prev) => prev.map((u) => (u.uid === uid ? { ...u, benchmark } : u)))
+                }
                 loading={
                   togglingAdmin === selectedUser.uid ||
                   settingOverride === selectedUser.uid

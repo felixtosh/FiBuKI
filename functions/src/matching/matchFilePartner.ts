@@ -38,6 +38,7 @@ import { checkAIBudget } from "../billing/checkAIBudget";
 import { isPassiveMode } from "../utils/checkAutomationMode";
 import { printedNameEquals } from "../utils/identity-matcher";
 import { payeeFillForTransaction } from "../partners/payeeSync";
+import { activityEntry, logActivity, type ActivityActor } from "../utils/activity";
 
 // =============================================================================
 // AUTOMATION METADATA
@@ -494,6 +495,16 @@ async function learnEmailDomainFromPartnerMatch(
   );
 }
 
+/** A Partner's name for a log line, or null when it cannot be read. */
+async function partnerNameOf(partnerId: string, partnerType: "user" | "global" | null | undefined): Promise<string | null> {
+  try {
+    const snap = await db.collection(partnerType === "global" ? "globalPartners" : "partners").doc(partnerId).get();
+    return (snap.data()?.name as string | undefined) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Mark partner matching as complete on a file
  */
@@ -503,7 +514,9 @@ async function markPartnerMatchComplete(
   partnerType: "user" | "global" | null,
   matchedBy: "auto" | "suggestion" | null,
   confidence: number | null,
-  suggestions: PartnerSuggestion[]
+  suggestions: PartnerSuggestion[],
+  /** How the Partner was found and by whom, for the File's activity log (#752). */
+  found: { via: string; actor?: ActivityActor } = { via: "partner matching" }
 ): Promise<void> {
   // Check if file still exists (could have been deleted in race condition)
   const fileDoc = await db.collection("files").doc(fileId).get();
@@ -511,6 +524,7 @@ async function markPartnerMatchComplete(
     console.log(`[PartnerMatch] File ${fileId} no longer exists, skipping update`);
     return;
   }
+  const before = fileDoc.data()!;
 
   const update: Record<string, unknown> = {
     partnerMatchComplete: true,
@@ -524,6 +538,34 @@ async function markPartnerMatchComplete(
     update.partnerType = partnerType;
     update.partnerMatchedBy = matchedBy;
     update.partnerMatchConfidence = confidence;
+  }
+
+  // The log (#752): a Partner set or changed, else a new top suggestion.
+  const actor: ActivityActor = found.actor ?? "auto";
+  if (partnerId && partnerId !== before.partnerId) {
+    const partnerName = await partnerNameOf(partnerId, partnerType);
+    Object.assign(update, logActivity(activityEntry({
+      type: "partner_assigned",
+      actor,
+      partnerName,
+      forPartnerId: partnerId,
+      confidence,
+      summary: `Partner "${partnerName ?? partnerId}" assigned by ${found.via}${confidence != null ? ` (${Math.round(confidence)}%)` : ""}`,
+    })));
+  } else if (!partnerId && suggestions.length > 0) {
+    const previousTop = Array.isArray(before.partnerSuggestions) ? before.partnerSuggestions[0]?.partnerId : undefined;
+    const top = suggestions[0];
+    if (top.partnerId !== previousTop) {
+      const partnerName = await partnerNameOf(top.partnerId, top.partnerType);
+      Object.assign(update, logActivity(activityEntry({
+        type: "partner_suggested",
+        actor,
+        partnerName,
+        forPartnerId: top.partnerId,
+        confidence: top.confidence,
+        summary: `Partner "${partnerName ?? top.partnerId}" suggested (${Math.round(top.confidence)}%)`,
+      })));
+    }
   }
 
   await db.collection("files").doc(fileId).update(update);
@@ -591,7 +633,20 @@ async function syncPartnerToConnectedTransactions(
     });
     if (!payeeFill) continue;
 
-    await txRef.update({ ...payeeFill, updatedAt: now });
+    const partnerName = await partnerNameOf(payeeFill.partnerId as string, payeeFill.partnerType as "user" | "global" | null);
+    await txRef.update({
+      ...payeeFill,
+      updatedAt: now,
+      ...logActivity(activityEntry({
+        type: "partner_assigned",
+        actor: "auto",
+        partnerName,
+        forPartnerId: payeeFill.partnerId as string,
+        fileId,
+        fileName: (fileData.fileName as string | undefined) ?? null,
+        summary: `Partner "${partnerName ?? payeeFill.partnerId}" taken from the connected File "${fileData.fileName ?? fileId}"`,
+      }, now)),
+    });
 
     console.log(
       `[PartnerMatch] Filled partner ${payeeFill.partnerId} from file ${fileId} on transaction ${transactionId}`
@@ -1043,7 +1098,8 @@ export async function runPartnerMatching(
         "user",
         "auto",
         95, // VAT ID match confidence
-        []
+        [],
+        { via: "its VAT ID" }
       );
 
       // If a global partner exists with this VAT but the local isn't linked yet,
@@ -1092,7 +1148,7 @@ export async function runPartnerMatching(
         `[PartnerMatch] Found existing global partner "${existingGlobalPartner.name}" with matching VAT ID, creating local copy`
       );
       const localPartnerId = await createLocalPartnerFromGlobal(userId, existingGlobalPartner.id);
-      await markPartnerMatchComplete(fileId, localPartnerId, "user", "auto", 95, []);
+      await markPartnerMatchComplete(fileId, localPartnerId, "user", "auto", 95, [], { via: "its VAT ID" });
       // Learn extracted name as alias and email domain (non-blocking)
       learnPartnerAlias(localPartnerId, extractedPartner, invoicingAgentName).catch(console.error);
       learnEmailDomainFromPartnerMatch(
@@ -1149,7 +1205,8 @@ export async function runPartnerMatching(
             "user",
             "auto",
             98, // Very high confidence for VIES-verified match
-            []
+            [],
+            { via: "the EU VAT registry (VIES)" }
           );
 
           // Learn email domain from Gmail files (non-blocking)
@@ -1230,7 +1287,8 @@ export async function runPartnerMatching(
       assignedPartnerType,
       "auto",
       topMatch.confidence,
-      suggestions
+      suggestions,
+      { via: "partner matching" }
     );
 
     // Learn extracted name as alias and email domain (non-blocking)
@@ -1314,7 +1372,8 @@ export async function runPartnerMatching(
           "user",
           "auto",
           CONFIG.LOOKUP_CREATED_CONFIDENCE,
-          [] // No suggestions since we created a new partner
+          [], // No suggestions since we created a new partner
+          { via: "an AI company lookup", actor: "ai" }
         );
 
         // Learn email domain from Gmail files (non-blocking)
@@ -1376,7 +1435,8 @@ export async function runPartnerMatching(
         "user",
         "auto",
         85, // Lower confidence since we only have extracted name
-        []
+        [],
+        { via: "the name on the document" }
       );
 
       // Learn email domain from Gmail files (non-blocking)

@@ -1,7 +1,7 @@
 /**
  * The theme tokens of app/globals.css (@theme), as the design-system page
  * shows them. scripts/check-design-system.mjs fails when globals.css gains a
- * color, duration or easing token that is not listed here.
+ * color token that is not listed here (easings and animations: motion.tsx).
  */
 
 export interface ColorToken {
@@ -47,8 +47,6 @@ export const colorGroups: { title: string; tokens: ColorToken[] }[] = [
       { token: "--color-amount-negative", name: "Amount -", use: "Expense amounts" },
       { token: "--color-complete-row", name: "Complete row", use: "A finished Transaction" },
       { token: "--color-complete-row-selected", name: "Complete selected", use: "A finished, selected Transaction" },
-      { token: "--color-complete-glow", name: "Complete glow", use: "The moment a row completes" },
-      { token: "--color-complete-glow-dark", name: "Complete glow dark", use: "The same, in dark mode" },
       { token: "--color-info", name: "Info", use: "Tips and suggestions" },
       { token: "--color-info-foreground", name: "Info FG", use: "Text on info" },
       { token: "--color-info-border", name: "Info border", use: "Outline of info boxes" },
@@ -65,13 +63,4 @@ export const colorGroups: { title: string; tokens: ColorToken[] }[] = [
       { token: "--color-chart-5", name: "Chart 5", use: "Chart series" },
     ],
   },
-];
-
-export const motionTokens: { token: string; use: string }[] = [
-  { token: "--duration-instant", use: "Hover and press feedback" },
-  { token: "--duration-fast", use: "Small transitions" },
-  { token: "--duration-normal", use: "Panels and overlays" },
-  { token: "--ease-out-expo", use: "Things coming to rest" },
-  { token: "--ease-out-back", use: "A slight overshoot" },
-  { token: "--ease-spring", use: "Playful pops, e.g. a Pill appearing" },
 ];

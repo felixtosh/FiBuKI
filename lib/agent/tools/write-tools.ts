@@ -806,9 +806,9 @@ export const bulkUpdateTransactionsTool = tool(
     }
 
     const result = await callFirebaseFunction<
-      { ids: string[]; data: typeof data },
+      { ids: string[]; data: typeof data; actor: "ai" },
       BulkUpdateTransactionsResponse
-    >("bulkUpdateTransactions", { ids: transactionIds, data }, authHeader);
+    >("bulkUpdateTransactions", { ids: transactionIds, data, actor: "ai" }, authHeader);
 
     // Not "success" when nothing was updated: the chat showed a green
     // "completed" for nine "Not found" rows.

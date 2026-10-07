@@ -110,7 +110,8 @@ The three steps above are the engine. On fibuki.com they run by themselves:
 Only a maintainer can put the label on, and a fork PR never runs (GitHub hands it no
 secrets, and the job condition refuses it). The comment carries counts only.
 
-Box-side setup, once:
+Box-side setup, once (done on fibuki.com on 2026-10-06; the accounts and their uids are in
+[`benchmarking.md`](benchmarking.md)):
 
 ```
 mkdir -p /opt/fibuki-replay && chmod 700 /opt/fibuki-replay
@@ -142,6 +143,9 @@ person's set to run their side; sharing the two `report.md` files is enough.
 
 ## What it does not cover
 
+What we decided about all of this, the results so far and the build order are in
+[`benchmarking.md`](benchmarking.md).
+
 - **Extraction.** The sheet reads the stored Extraction; a prompt or parser change
   needs real model calls on a fixed set of Files, and that is a different, paid tool.
 - **The "cold start"**: Partners, Learned Patterns and Rejections dropped. Not built
@@ -151,6 +155,10 @@ person's set to run their side; sharing the two `report.md` files is enough.
 - **The chat agent.** Keep ten real questions and compare answers on a preview.
 
 ## Where the code is
+
+- `functions/src/benchmark/`: the shared benchmark data (who is in it, versions, the
+  download), `app/api/admin/benchmark/route.ts`, and the cards in user management and on
+  `/admin/replay`. How to use it: [`benchmarking.md`](benchmarking.md).
 
 - `functions/src/replay/set.ts`: the set format, export and load.
 - `functions/src/replay/sheet.ts`: the sheet builder, on top of the matcher.

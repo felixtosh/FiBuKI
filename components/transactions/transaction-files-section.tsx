@@ -5,14 +5,12 @@ import { useTranslations } from "next-intl";
 import { format } from "date-fns";
 import {
   Loader2,
-  ChevronRight,
   Tag,
   X,
   Sparkles,
   Check,
   WandSparkles,
   AlertTriangle,
-  UserCheck,
   RotateCcw,
   ChevronDown,
   ChevronUp,
@@ -36,6 +34,8 @@ import { Section11MissingElements } from "@/components/documents/section-11-deta
 import { NoReceiptCategoryPopover } from "./no-receipt-category-popover";
 import { ReceiptLostDialog } from "./receipt-lost-dialog";
 import { useTransactionFiles, useFiles } from "@/hooks/use-files";
+import { useConnectionConfirmations, useConfirmConnection, type ConnectionConfirmation } from "@/hooks/use-connection-confirmations";
+import { ConfirmMark } from "@/components/ui/confirm-mark";
 import { TransactionFileCopies } from "@/components/files/file-copy-section";
 import { useEcbConverter } from "@/lib/currency";
 // Coverage, the Remainder and the tolerance that decides whether it is closed
@@ -249,10 +249,15 @@ interface FileRowProps {
   onDisconnect: () => void;
   disconnecting: boolean;
   pairRole?: PairRole | null;
+  /** Whether the User made or confirmed this Connection; absent while unknown. */
+  confirmation?: ConnectionConfirmation;
+  onConfirm?: () => void;
+  confirming?: boolean;
 }
 
-function FileRow({ file, transactionCurrency, transactionDate, onDisconnect, disconnecting, pairRole }: FileRowProps) {
+function FileRow({ file, transactionCurrency, transactionDate, onDisconnect, disconnecting, pairRole, confirmation, onConfirm, confirming }: FileRowProps) {
   const convert = useEcbConverter();
+  const tConfirm = useTranslations("common.confirmMatch");
   const tPair = useTranslations("files.receiptLink");
   const isExtracting = !file.extractionComplete && !file.isNotInvoice;
 
@@ -318,6 +323,17 @@ function FileRow({ file, transactionCurrency, transactionDate, onDisconnect, dis
             )}
           </span>
         )}
+        {confirmation || confirming ? (
+          <ConfirmMark
+            confirmed={confirmation === "confirmed"}
+            onConfirm={onConfirm}
+            pending={confirming}
+            disabled={disconnecting}
+            revealOnHover
+            confirmedLabel={tConfirm("connectionConfirmed")}
+            confirmLabel={tConfirm("connectionConfirm")}
+          />
+        ) : null}
         <button
           type="button"
           onClick={(e) => {
@@ -334,7 +350,6 @@ function FileRow({ file, transactionCurrency, transactionDate, onDisconnect, dis
             <X className="h-4 w-4 text-muted-foreground hover:text-destructive" />
           )}
         </button>
-        <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
       </div>
     </Link>
   );
@@ -455,6 +470,9 @@ export function TransactionFilesSection({
   partnerWebsite,
   extensionInstalled = false,
 }: TransactionFilesSectionProps) {
+  const confirmations = useConnectionConfirmations("transactionId", transaction.id);
+  const tConfirm = useTranslations("common.confirmMatch");
+  const { confirm, pendingPair } = useConfirmConnection();
   const [isReceiptLostDialogOpen, setIsReceiptLostDialogOpen] = useState(false);
   const receiptLostMounted = useMountOnceOpened(isReceiptLostDialogOpen);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
@@ -683,6 +701,25 @@ export function TransactionFilesSection({
     await removeFromTransaction(transaction.id);
   };
 
+  // The User's own category (picked or accepted) shows the green user-check;
+  // an automatic one a check mark that makes it theirs, so the matcher learns.
+  const categoryConfirmed =
+    transaction.noReceiptCategoryMatchedBy === "manual" || transaction.noReceiptCategoryMatchedBy === "suggestion";
+  const [confirmingCategory, setConfirmingCategory] = useState(false);
+  const handleConfirmCategory = async (categoryId: string) => {
+    setConfirmingCategory(true);
+    try {
+      await assignToTransaction(
+        transaction.id,
+        categoryId,
+        "manual",
+        transaction.noReceiptCategoryConfidence ?? undefined
+      );
+    } finally {
+      setConfirmingCategory(false);
+    }
+  };
+
   const loading = filesLoading || categoriesLoading;
 
   return (
@@ -880,6 +917,9 @@ export function TransactionFilesSection({
                       onDisconnect={() => handleDisconnectFile(file.id)}
                       disconnecting={disconnecting === file.id}
                       pairRole={pairedFiles.roleOf(file.id)}
+                      confirmation={confirmations.get(file.id)}
+                      onConfirm={() => confirm(file.id, transaction.id)}
+                      confirming={pendingPair === `${file.id}:${transaction.id}`}
                     />
                     {/* #162: the original's Copies, shown and never counted */}
                     <TransactionFileCopies copies={copiesOf(file.id)} />
@@ -1116,16 +1156,23 @@ export function TransactionFilesSection({
                   ({transaction.receiptLostEntry.reason})
                 </span>
               )}
-              {/* Show manual checkmark or confidence percentage */}
-              {transaction.noReceiptCategoryMatchedBy === "manual" ? (
-                <span className="inline-flex items-center text-green-600 flex-shrink-0">
-                  <UserCheck className="h-3 w-3" />
-                </span>
-              ) : transaction.noReceiptCategoryConfidence ? (
+              {/* Confidence of an automatic category, then the check mark that confirms it */}
+              {!categoryConfirmed && transaction.noReceiptCategoryConfidence ? (
                 <span className="text-xs text-muted-foreground flex-shrink-0">
                   {Math.round(transaction.noReceiptCategoryConfidence)}%
                 </span>
               ) : null}
+              <ConfirmMark
+                confirmed={categoryConfirmed}
+                onConfirm={
+                  assignedCategory.templateId === "receipt-lost"
+                    ? undefined
+                    : () => handleConfirmCategory(assignedCategory.id)
+                }
+                pending={confirmingCategory}
+                confirmedLabel={tConfirm("categoryConfirmed")}
+                confirmLabel={tConfirm("categoryConfirm")}
+              />
               <button
                 type="button"
                 onClick={(e) => {

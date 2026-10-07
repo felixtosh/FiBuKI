@@ -43,6 +43,7 @@ import {
   classifyEmail,
   GmailAttachment,
 } from "./shared-utils";
+import { activityEntry, logActivity } from "../utils/activity";
 import type { MailMessage, MailSearchLimitation } from "../mail/provider";
 import { namedSearchTerms } from "../mail/search-terms";
 import { searchedMailIntegrations, SEARCHABLE_MAIL_PROVIDERS, mailProviderOf } from "../mail/searchable";
@@ -457,6 +458,13 @@ async function createFileFromAttachment(
 
       const updateData: Record<string, unknown> = {
         deletedAt: null,
+        // The log (#752): a deleted File brought back by the search.
+        ...logActivity(activityEntry({
+          type: "file_restored",
+          actor: "auto",
+          transactionId: precisionSearchHint?.transactionId ?? null,
+          summary: "Restored: the receipt search found this deleted File again",
+        })),
         fileName: attachment.filename,
         fileType: attachment.mimeType === "application/octet-stream" && attachment.filename.toLowerCase().endsWith(".pdf")
           ? "application/pdf"
@@ -612,6 +620,13 @@ async function createFileFromHtmlPdf(
       console.log(`[PrecisionSearch] Undeleting soft-deleted PDF: ${filename} (${existingDoc.id})`);
       const updateData: Record<string, unknown> = {
         deletedAt: null,
+        // The log (#752): a deleted File brought back by the search.
+        ...logActivity(activityEntry({
+          type: "file_restored",
+          actor: "auto",
+          transactionId: precisionSearchHint?.transactionId ?? null,
+          summary: "Restored: the receipt search found this deleted File again",
+        })),
         fileName: filename,
         updatedAt: Timestamp.now(),
       };
