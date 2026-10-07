@@ -91,6 +91,7 @@ export {
 export { onMailServiceConnected, onMailServiceReconnected } from "./gmail/onMailServiceConnected";
 export { onTransactionsImported, onDraftImportCompleted } from "./gmail/onTransactionsImported";
 export { onTransactionsImportedCompanyCheck } from "./matching/onTransactionsImportedCompanyCheck";
+export { onDraftImportCompletedCompanyCheck } from "./matching/onTransactionsImportedCompanyCheck";
 export { searchGmailCallable } from "./gmail/searchGmailCallable";
 export {
   listFolderChoicesCallable as listFolderChoices,
