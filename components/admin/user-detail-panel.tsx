@@ -30,8 +30,11 @@ import {
 } from "@/components/ui/alert-dialog";
 import { formatDistanceToNow } from "date-fns";
 import { PLAN_COLORS, type UserRow } from "./user-columns";
+import { UserBenchmarkSection, type UserBenchmark } from "./user-benchmark-section";
 
 interface UserDetailPanelProps {
+  /** A benchmark switch changed for this user (docs/benchmarking.md). */
+  onBenchmarkChanged: (uid: string, benchmark: UserBenchmark) => void;
   user: UserRow;
   onClose: () => void;
   onMakeAdmin: (uid: string) => Promise<void>;
@@ -55,6 +58,7 @@ export function UserDetailPanel({
   onMakeAdmin,
   onRemoveAdmin,
   onSetOverride,
+  onBenchmarkChanged,
   onDeleteUser,
   onImpersonate,
   onBulkRescan,
@@ -171,6 +175,14 @@ export function UserDetailPanel({
             {user.transactionCount.toLocaleString()}
           </p>
         </div>
+
+        {/* Benchmark data (docs/benchmarking.md) */}
+        <UserBenchmarkSection
+          key={user.uid}
+          uid={user.uid}
+          benchmark={user.benchmark ?? { inBenchmark: false, contractNote: null, mayDownload: false }}
+          onChanged={onBenchmarkChanged}
+        />
 
         {/* Joined */}
         {user.createdAt && (

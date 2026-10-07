@@ -13,6 +13,7 @@ import { PLANS, createDefaultSubscriptionData } from "../billing/config";
 import type { PlanId, AdminOverride } from "../billing/config";
 import { clearQuotaExceeded } from "../billing/clearQuotaExceeded";
 import { deleteUserData } from "../user/deleteUserAccountCallable";
+import { readMembers } from "../benchmark/benchmarkData";
 
 const SUPER_ADMIN_EMAIL = process.env.SUPER_ADMIN_EMAIL || "";
 
@@ -60,8 +61,12 @@ export const listAllUsers = onCall(
       }
     }
 
+    // The two benchmark switches (docs/benchmarking.md), shown per user.
+    const members = await readMembers(db, uids);
+
     const users = listResult.users.map((user) => {
       const sub = subMap.get(user.uid);
+      const member = members.get(user.uid);
       return {
         uid: user.uid,
         email: user.email || null,
@@ -73,6 +78,11 @@ export const listAllUsers = onCall(
         stripeSubscriptionStatus: sub?.stripeSubscriptionStatus || "none",
         transactionCount: sub?.transactionCountCurrentMonth || 0,
         createdAt: user.metadata.creationTime || null,
+        benchmark: {
+          inBenchmark: member?.inBenchmark ?? false,
+          contractNote: member?.contractNote ?? null,
+          mayDownload: member?.mayDownload ?? false,
+        },
       };
     });
 

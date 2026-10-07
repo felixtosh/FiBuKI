@@ -32,15 +32,74 @@ posts one comment with counts per account:
 
 ### The accounts
 
-The box reads `/opt/fibuki-replay/accounts` (one `<uid> <label> [months]` per line).
-Since 2026-10-06 it holds Felix (`felix@i7v6.com`) and Stefan
-(`stefan@houseofbandits.at`), 12 months each. A uid is `auth_users.id` in Postgres, not
-the email.
+An admin decides which accounts are in the benchmark, in **user management**: open a
+user, section **Benchmark**, switch on **In the benchmark**. It asks for the agreement
+that allows it (for example "Contract of 2026-10-07"); that note, the date and the
+admin who set it are the consent record. Switching it off takes the account out of the
+next replay run and the next version.
 
-**Stefan:** your account runs on every labelled PR, but `/admin/replay` needs the admin
-flag, which your account does not have yet. Until Felix sets it in user management,
-ask for the counts in the PR comment, or read
-`/opt/fibuki-replay/reports/<pr>/<your uid>.md` on the box.
+`replay.sh` asks the API for that list on every run (`replay accounts`). While nobody
+is switched on, it falls back to the old hand-kept `/opt/fibuki-replay/accounts` file
+(one `<uid> <label> [months]` per line), which since 2026-10-06 holds Felix and Stefan.
+Switch both on in user management and the file is no longer read.
+
+**Stefan:** `/admin/replay` needs the admin flag, which your account does not have yet.
+Until Felix sets it, read the counts in the PR comment.
+
+## The shared benchmark data
+
+One frozen dataset for everyone who works on matching, so two people tuning the matcher
+measure on the same thing.
+
+**For an admin**, on fibuki.com/admin/replay, card **Benchmark data**:
+
+- **Build version** snapshots every account that is in the benchmark (the last 12
+  months each) into one file, `bench-YYYY-MM` (a second one in the same month is
+  `bench-YYYY-MM-2`), with a sha256 checksum. It reads the accounts and writes nothing
+  to them.
+- The card lists the versions with their accounts, checksum and size, and says how many
+  hand decisions came in since the newest one. Build the next version when that number
+  is worth it, and tell the others once: "bench-2026-11 is out".
+- **Delete** removes a version from the server. Copies already downloaded stay where
+  they are, so keep the list of people who may download short.
+
+**For a developer**, who needs the **May download benchmark data** switch (an admin sets
+it in user management, per person):
+
+1. Download a version: the download button on the same card, or with a personal API key
+   (Settings, API keys), for an agent or a script:
+
+   ```bash
+   curl -H "Authorization: Bearer $FIBUKI_API_KEY" \
+     "https://fibuki.com/api/admin/benchmark" # lists the versions
+   curl -H "Authorization: Bearer $FIBUKI_API_KEY" -o ~/bench/bench-2026-10.json \
+     "https://fibuki.com/api/admin/benchmark?version=bench-2026-10"
+   ```
+
+   Every download is logged with who, which version and how.
+2. Check it, from `functions/`:
+
+   ```bash
+   npm run selfhost:replay -- verify --bundle ~/bench/bench-2026-10.json
+   ```
+
+   It prints the version, checksum and accounts, and refuses a file that was changed.
+3. Run a branch against main on one account, and diff:
+
+   ```bash
+   git checkout main
+   npm run selfhost:replay -- sheet --bundle ~/bench/bench-2026-10.json --account Felix --out ~/bench/main.felix.json --label main
+   git checkout my-branch
+   npm run selfhost:replay -- sheet --bundle ~/bench/bench-2026-10.json --account Felix --out ~/bench/branch.felix.json --label my-branch
+   npm run selfhost:replay -- diff ~/bench/main.felix.json ~/bench/branch.felix.json --md ~/bench/felix.md
+   ```
+
+   Repeat per account. Every run prints `bench-2026-10 · checksum … · Felix, Stefan` first:
+   two results are comparable only when that line matches. No AI calls, no database:
+   `sheet` refuses to run with `DATABASE_URL` set.
+
+The file holds real bank lines. Keep it out of the repo (`*.json` under `~/bench`, not
+the checkout) and delete it when a newer version replaces it.
 
 ### Results so far
 
@@ -110,19 +169,8 @@ In order. Each item is one PR.
    where the top candidate is nearly always right and no hidden Rejection is acted
    on. Tune on the training half, check on the hidden half, over several cut-off
    dates, and keep a change only if it holds on every account.
-5. **The shared benchmark data**, behind user management:
-   - an admin-only "in the benchmark" flag per user, with the date and the contract
-     note as the consent record; the replay reads its accounts from this flag instead
-     of the file;
-   - a separate "may download benchmark data" flag per person;
-   - an admin button that builds a versioned snapshot (`bench-YYYY-MM`) of all opted-in
-     accounts on the box, with a checksum, and deletes old versions;
-   - a download that accepts the login (a button on the admin page) or a personal API
-     key (for agents), checks the flag and logs who took which version;
-   - the bench reads only that file, never a database, and prints the version and
-     checksum on its first line, so two scorecards are comparable only when those
-     match. A counter of new hand decisions since the current version says when to
-     cut the next one; one message per version, not per production change.
+5. ~~**The shared benchmark data** behind user management~~: built, see
+   [The shared benchmark data](#the-shared-benchmark-data) above.
 6. **A short "please confirm" list** of the cases near the threshold and the cases
    where main and a branch disagree. Those are the confirmations worth most.
 

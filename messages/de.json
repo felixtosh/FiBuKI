@@ -1014,6 +1014,33 @@
   },
 
   "admin": {
+    "benchmark": {
+      "title": "Benchmark",
+      "inBenchmark": "Im Benchmark",
+      "inBenchmarkHint": "Das Konto kommt in die gemeinsamen Benchmark-Daten. Nur mit einer Vereinbarung, die das erlaubt.",
+      "inBenchmarkBecause": "Erlaubt durch: {note}",
+      "contractNote": "Vereinbarung, die es erlaubt",
+      "contractNotePlaceholder": "z. B. Vertrag vom 07.10.2026",
+      "addToBenchmark": "Zum Benchmark hinzufügen",
+      "cancel": "Abbrechen",
+      "mayDownload": "Darf Benchmark-Daten herunterladen",
+      "mayDownloadHint": "Jeder Download wird mit der Version protokolliert.",
+      "versionsTitle": "Benchmark-Daten",
+      "versionsHint": "Eingefrorene Stände aller Konten im Benchmark, jeweils die letzten 12 Monate. Alle, die benchmarken, nutzen dieselbe Version, damit Ergebnisse vergleichbar sind.",
+      "build": "Version erstellen",
+      "sinceNewest": "{n} Entscheidungen von Hand seit {version}. Erstelle eine neue Version, sobald genug dazugekommen sind.",
+      "noVersions": "Noch keine Version erstellt. Füge in der Benutzerverwaltung Konten hinzu, dann erstelle eine.",
+      "version": "Version",
+      "builtAt": "Erstellt",
+      "accounts": "Konten",
+      "checksum": "Prüfsumme",
+      "size": "Größe",
+      "downloadVersion": "Herunterladen",
+      "deleteVersion": "Löschen",
+      "deleteConfirm": "{version} löschen? Bereits heruntergeladene Kopien bleiben, wo sie sind.",
+      "downloadNotAllowed": "Du darfst keine Benchmark-Daten herunterladen. Ein Admin legt das in der Benutzerverwaltung fest.",
+      "downloadFailed": "Der Download ist fehlgeschlagen."
+    },
     "replay": {
       "navLabel": "Replay",
       "title": "Replay",

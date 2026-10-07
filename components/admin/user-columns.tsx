@@ -17,6 +17,8 @@ export interface UserRow {
   stripeSubscriptionStatus: string;
   transactionCount: number;
   createdAt: string | null;
+  /** The two benchmark switches (docs/benchmarking.md). */
+  benchmark?: { inBenchmark: boolean; contractNote: string | null; mayDownload: boolean };
 }
 
 export const PLAN_COLORS: Record<PlanId, string> = {
