@@ -152,6 +152,21 @@ describe("assignNoReceiptCategoryToTransaction (#164 shared writer)", () => {
     expect(category?.transactionCount).toBe(1);
   });
 
+  it("confirming the category a transaction already has makes it manual without counting it twice", async () => {
+    seedTransaction("tx-c", { partnerId: null, noReceiptCategoryId: "cat-c", noReceiptCategoryMatchedBy: "auto" });
+    seedCategory("cat-c");
+
+    const db = createMockFirestore();
+    await assignNoReceiptCategoryToTransaction(db as any, userId, {
+      transactionId: "tx-c",
+      categoryId: "cat-c",
+      matchedBy: "manual",
+    });
+
+    expect(store.getDoc("transactions", "tx-c")?.noReceiptCategoryMatchedBy).toBe("manual");
+    expect(store.getDoc("noReceiptCategories", "cat-c")?.transactionCount).toBe(0);
+  });
+
   it("assigns cleanly and adds nothing to matchedPartnerIds when the transaction has no partner", async () => {
     seedTransaction("tx-2", { partnerId: null });
     seedCategory("cat-2");

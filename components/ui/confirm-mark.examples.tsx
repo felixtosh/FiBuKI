@@ -33,7 +33,7 @@ function States() {
 
 const doc: ComponentDoc = {
   title: "ConfirmMark",
-  purpose: "Beside the X of an automatic match (Partner pill, connected File or Transaction): a checkbox that confirms it, or the green user-check once the User stands behind it.",
+  purpose: "Beside the X of an automatic match (Partner pill, connected File or Transaction): a muted check mark that confirms it, or the green user-check once the User stands behind it.",
   layer: "pattern",
   examples: [{ name: "States", Example: States }],
 };

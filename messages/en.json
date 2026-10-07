@@ -223,7 +223,9 @@
       "partnerConfirm": "Confirm this Partner. FiBuKI learns from what you confirm.",
       "partnerAi": "Assigned by AI",
       "connectionConfirmed": "Connected by you. FiBuKI learns from it.",
-      "connectionConfirm": "Confirm this connection. FiBuKI learns from what you confirm."
+      "connectionConfirm": "Confirm this connection. FiBuKI learns from what you confirm.",
+      "categoryConfirmed": "Assigned by you. FiBuKI learns from it.",
+      "categoryConfirm": "Confirm this category. FiBuKI learns from what you confirm."
     }
   },
   "billingCycle": {
