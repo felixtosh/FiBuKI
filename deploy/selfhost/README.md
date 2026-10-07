@@ -78,6 +78,31 @@ from the chosen plan.
 The lever only exists on the selfhost tier: with `FIBUKI_TIER=cloud` (hosted
 fibuki.com) it is ignored and Stripe owns the plan.
 
+## Gmail (OAuth)
+
+A mailbox connects over IMAP (an app password, nothing to register) or over
+Gmail OAuth, which needs an OAuth client of your own at Google. The steps and
+variables are in the Gmail section of `.env.example`.
+
+**On a private host the app stays in Testing mode.** Google only publishes an
+OAuth app whose home page and privacy-policy URL are public, on a domain the
+owner has verified, and its branding check fetches both pages. A host reachable
+only over a VPN (a NetBird or WireGuard mesh, say) cannot pass that check, so
+the app is never published. In Testing mode:
+
+- every Google account that connects must be listed as a test user;
+- Google ends the login after 7 days, so the mailbox needs a reconnect weekly.
+
+The OAuth flow itself works on a private host: the redirect to the callback goes
+through the user's browser, which can reach the host, and the token exchange is
+an outbound call from the host to Google.
+
+**Do not connect over OAuth an address already connected over IMAP.** Doing so
+currently breaks the IMAP mailbox; see
+[felixtosh/FiBuKI#747](https://github.com/felixtosh/FiBuKI/issues/747) (one Mail
+Integration per address, switched in place when connected through the other
+provider).
+
 ## Notes
 
 - **Auth**: production uses OIDC (`OIDC_ISSUER` → `oidc-verifier.ts`, tested with
