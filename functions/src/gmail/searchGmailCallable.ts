@@ -549,9 +549,9 @@ async function searchViaProvider(
     const fetched = await Promise.all(
       page.messages.map((ref) => provider.getMessage(ref))
     );
-    // The attachment constraint is the provider's `scanned` limitation made
-    // good: it could not narrow the search to attachment-bearing messages, so
-    // the narrowing happens here, over the one bounded page it returned.
+    // Both providers already narrow the page to attachment-bearing mail, but
+    // Gmail's `has:attachment` counts any attachment, and getMessage keeps
+    // only the invoice-type ones, so a message can still arrive with none.
     const messages =
       params.terms.hasAttachment === false
         ? fetched

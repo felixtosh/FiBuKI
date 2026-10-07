@@ -27,9 +27,13 @@ import {
 import {
   INVOICE_KEYWORDS,
   MAX_EMAILS_PER_BATCH,
+  MAX_IMAP_ATTACHMENT_CHECKS,
   MAX_IMAP_SCAN_MESSAGES,
   isInvoiceAttachment,
 } from "../constants";
+
+/** Candidates whose BODYSTRUCTURE one fetch reads, for the attachment check. */
+const ATTACHMENT_CHECK_BATCH = 50;
 
 /** Everything ImapProvider needs to reach one mailbox. */
 export interface ImapConfig {
@@ -243,7 +247,7 @@ export class ImapProvider implements MailProvider {
    * mailbox that can answer does the work itself. Two terms it cannot answer
    * are reported rather than dropped — attachment filenames (IMAP SEARCH has no
    * key for them) and the attachment flag (BODYSTRUCTURE is only visible after
-   * a fetch, so the caller filters what it fetched).
+   * a fetch, so the provider reads it itself, bounded, before it cuts the page).
    *
    * When the server rejects the keyword search — dovecot and friends do reject
    * BODY searches on some mailboxes — the fall-back is a bounded fetch of the
@@ -280,15 +284,6 @@ export class ImapProvider implements MailProvider {
           "IMAP SEARCH has no attachment-filename key, so the results are not narrowed by filename.",
       });
     }
-    if (opts.hasAttachment !== false) {
-      limitations.push({
-        constraint: "hasAttachment",
-        handling: "scanned",
-        detail:
-          "IMAP SEARCH cannot see attachments; messages are filtered on BODYSTRUCTURE after they are fetched.",
-      });
-    }
-
     const query: ImapSearchQuery = { ...window };
     if (keywords.length > 0 || anyOf.length > 0) {
       Object.assign(query, named ? namedTerms(keywords, anyOf) : anyKeyword(keywords));
@@ -310,14 +305,84 @@ export class ImapProvider implements MailProvider {
     const remaining =
       cursor !== undefined ? uids.filter((u) => u < cursor) : uids;
 
-    const page = remaining.slice(0, opts.limit ?? MAX_EMAILS_PER_BATCH);
-    const hasMore = remaining.length > page.length;
+    const limit = opts.limit ?? MAX_EMAILS_PER_BATCH;
 
+    if (opts.hasAttachment === false) {
+      const page = remaining.slice(0, limit);
+      const hasMore = remaining.length > page.length;
+      return {
+        messages: page.map((uid) => ({ id: String(uid) })),
+        nextPageToken:
+          hasMore && page.length > 0 ? String(page[page.length - 1]) : undefined,
+        ...(limitations.length > 0 ? { limitations } : {}),
+      };
+    }
+
+    const { page, nextPageToken, stopped } = await this.keepWithAttachments(
+      client,
+      remaining,
+      limit
+    );
+    limitations.push({
+      constraint: "hasAttachment",
+      handling: "scanned",
+      detail:
+        "IMAP SEARCH cannot see attachments, so the provider reads each match's " +
+        "BODYSTRUCTURE, newest first, and keeps those with an invoice-type " +
+        `attachment, reading at most ${MAX_IMAP_ATTACHMENT_CHECKS} per page.` +
+        (stopped
+          ? ` It stopped at that bound before the page was full; the next page ` +
+            `continues below the last message read.`
+          : ""),
+    });
     return {
       messages: page.map((uid) => ({ id: String(uid) })),
-      nextPageToken:
-        hasMore && page.length > 0 ? String(page[page.length - 1]) : undefined,
+      nextPageToken,
       ...(limitations.length > 0 ? { limitations } : {}),
+    };
+  }
+
+  /**
+   * The attachment flag, honoured before the page is cut (#768): read each
+   * candidate's BODYSTRUCTURE, newest first and a batch at a time, and keep
+   * those with an invoice-type attachment until the page is full. Cutting the
+   * page first let mail without attachments take every slot.
+   */
+  private async keepWithAttachments(
+    client: ImapFlow,
+    candidates: number[],
+    limit: number
+  ): Promise<{ page: number[]; nextPageToken?: string; stopped: boolean }> {
+    const page: number[] = [];
+    const bound = Math.min(candidates.length, MAX_IMAP_ATTACHMENT_CHECKS);
+    let read = 0;
+
+    while (read < bound && page.length < limit) {
+      const batch = candidates.slice(read, Math.min(read + ATTACHMENT_CHECK_BATCH, bound));
+      const withAttachment = new Set<number>();
+      for await (const msg of client.fetch(
+        batch,
+        { uid: true, bodyStructure: true },
+        { uid: true }
+      )) {
+        if (msg.uid !== undefined && extractAttachments(msg.bodyStructure).length > 0) {
+          withAttachment.add(msg.uid);
+        }
+      }
+      // The server answers in its own order; the page keeps ours.
+      for (const uid of batch) {
+        read++;
+        if (withAttachment.has(uid)) page.push(uid);
+        if (page.length === limit) break;
+      }
+    }
+
+    const hasMore = read < candidates.length;
+    return {
+      page,
+      nextPageToken:
+        hasMore && read > 0 ? String(candidates[read - 1]) : undefined,
+      stopped: hasMore && page.length < limit,
     };
   }
 

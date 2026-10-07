@@ -366,7 +366,7 @@ class FakeImapMailbox implements MailProvider {
         {
           constraint: "hasAttachment",
           handling: "scanned",
-          detail: "IMAP SEARCH cannot see attachments; messages are filtered on BODYSTRUCTURE after they are fetched.",
+          detail: "IMAP SEARCH cannot see attachments, so the provider reads each match's BODYSTRUCTURE, newest first, and keeps those with an invoice-type attachment, reading at most 200 per page.",
         },
       ],
     };
